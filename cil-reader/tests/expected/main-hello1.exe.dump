@@ -1,0 +1,39 @@
+[module]
+name=hello1.exe
+mvid=24f1cfc9-faa8-4310-865f-9bee3004ab89
+kind=Console
+runtime=v1.1.4322
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000001
+[assembly]
+full-name=hello1, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=1.0.5000.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Program flags=0x00100000
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void Program::Main() flags=0x0091 impl=0x0000 rva=0x00002050
+0x06000002=System.Void Program::.ctor() flags=0x1886 impl=0x0000 rva=0x00002068
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Boolean,System.Boolean) args=((Boolean:False), (Boolean:True))
+[il]
+0x06000001 max-stack=1 init-locals=true code-size=11
+	IL_0000: ldstr "Hello world of Cecil !"
+	IL_0005: call System.Void System.Console::WriteLine(System.String)
+	IL_000a: ret
+0x06000002 max-stack=1 init-locals=true code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret

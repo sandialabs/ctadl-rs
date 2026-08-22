@@ -1,0 +1,55 @@
+[module]
+name=FieldRVAAlignment.dll
+mvid=00d10aec-769e-4945-bde5-f9ded6804efd
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=FieldRVAAlignment, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00000000
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001} flags=0x00000000
+	base=System.Object
+0x02000003=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=3 flags=0x00000113
+	base=System.ValueType
+	layout packing=1 size=3
+0x02000004=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=16 flags=0x00000113
+	base=System.ValueType
+	layout packing=8 size=16
+0x02000005=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=20 flags=0x00000113
+	base=System.ValueType
+	layout packing=4 size=20
+0x02000006=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=5 flags=0x00000113
+	base=System.ValueType
+	layout packing=1 size=5
+0x02000007=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=6 flags=0x00000113
+	base=System.ValueType
+	layout packing=2 size=6
+0x02000008=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=4Align=32 flags=0x00000113
+	base=System.ValueType
+	layout packing=32 size=4
+[fields]
+0x04000001=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=3 <PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}::$$method0x6000001-1 flags=0x0113 rva-data=010203
+0x04000002=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=20 <PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}::$$method0x6000001-2 flags=0x0113 rva-data=0100000002000000030000000400000005000000
+0x04000003=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=5 <PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}::$$method0x6000001-3 flags=0x0113 rva-data=0405060708
+0x04000004=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=20 <PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}::$$method0x6000001-4 flags=0x0113 rva-data=0100000002000000030000000500000006000000
+0x04000005=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=6 <PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}::$$method0x6000001-5 flags=0x0113 rva-data=08000c000d00
+0x04000006=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=16 <PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}::$$method0x6000001-6 flags=0x0113 rva-data=01000000020000000300000005000000
+0x04000007=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=3 <PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}::separator flags=0x0113 rva-data=010203
+0x04000008=<PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}/__StaticArrayInitTypeSize=4Align=32 <PrivateImplementationDetails>{9B33BB20-87EF-4094-9948-34882DB2F001}::32_align flags=0x0113 rva-data=01020304
+[methods]
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x02000002 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+[il]

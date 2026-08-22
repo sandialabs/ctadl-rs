@@ -1,0 +1,67 @@
+[module]
+name=fsapp.exe
+mvid=4eaa6393-25cd-ec4c-a745-03839363aa4e
+kind=Console
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000003
+entry-point=0x06000002
+[assembly]
+full-name=fsapp, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x0000c000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+0x23000002=FSharp.Core, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+[module-refs]
+[resources]
+embedded name=FSharpSignatureData.fsapp flags=0x00000001 size=570
+embedded name=FSharpOptimizationData.fsapp flags=0x00000001 size=190
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+	base=System.Object
+0x02000002=Program flags=0x00000181
+	base=System.Object
+0x02000003=<StartupCode$fsapp>.$Program flags=0x00000180
+	base=System.Object
+0x02000004=<StartupCode$fsapp>.$.NETFramework,Version=v4.0,Profile=Client.AssemblyAttributes flags=0x00000180
+	base=System.Object
+[fields]
+0x04000001=System.Int32 <StartupCode$fsapp>.$Program::init@ flags=0x0013
+[methods]
+0x06000001=System.Int32 Program::fact(System.Int32) flags=0x0016 impl=0x0000 rva=0x00002050
+	param 0 name=n flags=0x0000
+0x06000002=System.Void <StartupCode$fsapp>.$Program::main@() flags=0x0016 impl=0x0000 rva=0x00002078
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x04000001 ctor=System.Void System.Diagnostics.DebuggerBrowsableAttribute::.ctor(System.Diagnostics.DebuggerBrowsableState) args=!unresolved blob=0100000000000000
+ca parent=0x04000001 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x04000001 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x20000001 ctor=System.Void Microsoft.FSharp.Core.FSharpInterfaceDataVersionAttribute::.ctor(System.Int32,System.Int32,System.Int32) args=((I4:2), (I4:0), (I4:0))
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETFramework,Version=v4.0,Profile=Client")) property FrameworkDisplayName=(String:".NET Framework 4 Client Profile")
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100010100000000
+ca parent=0x02000002 ctor=System.Void Microsoft.FSharp.Core.CompilationMappingAttribute::.ctor(Microsoft.FSharp.Core.SourceConstructFlags) args=!unresolved blob=0100070000000000
+[il]
+0x06000001 max-stack=5 init-locals=true code-size=26
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: switch (IL_000d)
+	IL_000b: br.s IL_000f
+	IL_000d: ldc.i4.1
+	IL_000e: ret
+	IL_000f: ldarg.0
+	IL_0010: ldarg.0
+	IL_0011: ldc.i4.1
+	IL_0012: sub
+	IL_0013: call System.Int32 Program::fact(System.Int32)
+	IL_0018: mul
+	IL_0019: ret
+0x06000002 max-stack=3 init-locals=true code-size=13
+	IL_0000: nop
+	IL_0001: ldc.i4.5
+	IL_0002: call System.Int32 Program::fact(System.Int32)
+	IL_0007: call System.Void System.Console::WriteLine(System.Int32)
+	IL_000c: ret

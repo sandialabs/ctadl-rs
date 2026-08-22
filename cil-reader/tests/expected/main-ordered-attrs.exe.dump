@@ -1,0 +1,137 @@
+[module]
+name=ordered-attrs.exe
+mvid=4e1c3ebf-b67d-4aad-b64a-a565bd484bf1
+kind=Console
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000006
+[assembly]
+full-name=ordered-attrs, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=AAttribute flags=0x00100000
+	base=System.Attribute
+0x02000003=BAttribute flags=0x00100000
+	base=System.Attribute
+0x02000004=P1 flags=0x00100000
+	base=System.Object
+0x02000005=Program flags=0x00100000
+	base=System.Object
+0x02000006=P2 flags=0x00100000
+	base=System.Object
+0x02000007=P3 flags=0x00100000
+	base=System.Object
+[fields]
+0x04000001=System.String AAttribute::Value flags=0x0006
+0x04000002=System.String BAttribute::Value flags=0x0006
+[methods]
+0x06000001=System.Void AAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+0x06000002=System.Void BAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+0x06000003=System.Void P1::Foo() flags=0x0091 impl=0x0000 rva=0x00002059
+0x06000004=System.Void P1::Bar() flags=0x0091 impl=0x0000 rva=0x00002059
+0x06000005=System.Void P1::.ctor() flags=0x1886 impl=0x0000 rva=0x0000205c
+0x06000006=System.Void Program::Main() flags=0x0091 impl=0x0000 rva=0x00002059
+0x06000007=System.Void Program::Foo() flags=0x0091 impl=0x0000 rva=0x00002059
+0x06000008=System.Void Program::Bar() flags=0x0091 impl=0x0000 rva=0x00002059
+0x06000009=System.Void Program::.ctor() flags=0x1886 impl=0x0000 rva=0x0000205c
+0x0600000a=System.Void P2::Foo() flags=0x0091 impl=0x0000 rva=0x00002059
+0x0600000b=System.Void P2::Bar() flags=0x0091 impl=0x0000 rva=0x00002059
+0x0600000c=System.Void P2::.ctor() flags=0x1886 impl=0x0000 rva=0x0000205c
+0x0600000d=System.Void P3::Foo() flags=0x0091 impl=0x0000 rva=0x00002059
+0x0600000e=System.Void P3::Bar() flags=0x0091 impl=0x0000 rva=0x00002059
+0x0600000f=System.Void P3::.ctor() flags=0x1886 impl=0x0000 rva=0x0000205c
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x02000002 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=010044000000010054020d416c6c6f774d756c7469706c6501
+ca parent=0x06000003 ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Foo.A1")
+ca parent=0x06000003 ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Foo.A2")
+ca parent=0x02000003 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=010044000000010054020d416c6c6f774d756c7469706c6501
+ca parent=0x06000004 ctor=System.Void BAttribute::.ctor() args=() field Value=(String:"Bar.A")
+ca parent=0x02000005 ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Program.A")
+ca parent=0x02000005 ctor=System.Void BAttribute::.ctor() args=() field Value=(String:"Program.B")
+ca parent=0x06000006 ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Main.A1")
+ca parent=0x06000006 ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Main.A2")
+ca parent=0x06000006 ctor=System.Void BAttribute::.ctor() args=() field Value=(String:"Main.B1")
+ca parent=0x06000006 ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Main.A3")
+ca parent=0x06000006 ctor=System.Void BAttribute::.ctor() args=() field Value=(String:"Main.B2")
+ca parent=0x06000006 ctor=System.Void BAttribute::.ctor() args=() field Value=(String:"Main.B3")
+ca parent=0x06000007 ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Foo.A1")
+ca parent=0x06000007 ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Foo.A2")
+ca parent=0x06000008 ctor=System.Void BAttribute::.ctor() args=() field Value=(String:"Bar.A")
+ca parent=0x0600000a ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Foo.A1")
+ca parent=0x0600000a ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Foo.A2")
+ca parent=0x0600000b ctor=System.Void BAttribute::.ctor() args=() field Value=(String:"Bar.A")
+ca parent=0x0600000d ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Foo.A1")
+ca parent=0x0600000d ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Foo.A2")
+ca parent=0x0600000e ctor=System.Void BAttribute::.ctor() args=() field Value=(String:"Bar.A")
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000002 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000003 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000004 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000005 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000006 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000007 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000008 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000009 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x0600000a max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x0600000b max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x0600000c max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x0600000d max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x0600000e max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x0600000f max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret

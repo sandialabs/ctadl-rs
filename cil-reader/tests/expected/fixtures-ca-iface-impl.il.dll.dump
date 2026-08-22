@@ -1,0 +1,43 @@
+[module]
+name=CA.dll
+mvid=e54a58ac-5496-423d-a85d-bc8046ac343c
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=CA, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00000000
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=FooAttribute flags=0x00100001
+	base=System.Attribute
+0x02000003=IFoo flags=0x000000a1
+0x02000004=FooType flags=0x00100001
+	base=System.Object
+	interface=IFoo
+[fields]
+[methods]
+0x06000001=System.Void FooAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+0x06000002=System.Void FooType::.ctor() flags=0x1886 impl=0x0000 rva=0x00002058
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x09000001 ctor=System.Void FooAttribute::.ctor() args=()
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x06000002 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret

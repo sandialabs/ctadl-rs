@@ -1,0 +1,380 @@
+[module]
+name=BreakpointTest.Portable.dll
+mvid=bca2e4c5-23bf-4ac9-8f27-e598557dc478
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=BreakpointTest.Portable, Version=1.0.6133.24108, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+0x23000002=System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=BreakpointTest.Portable.TestService flags=0x00100181
+	base=System.Object
+0x02000003=BreakpointTest.Portable.TestService/<DoSomething1>c__async0 flags=0x00100103
+	base=System.ValueType
+	interface=System.Runtime.CompilerServices.IAsyncStateMachine
+0x02000004=BreakpointTest.Portable.TestService/<DoSomething2>c__async1 flags=0x00100103
+	base=System.ValueType
+	interface=System.Runtime.CompilerServices.IAsyncStateMachine
+0x02000005=BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2 flags=0x00100103
+	base=System.ValueType
+	interface=System.Runtime.CompilerServices.IAsyncStateMachine
+0x02000006=BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3 flags=0x00100103
+	base=System.ValueType
+	interface=System.Runtime.CompilerServices.IAsyncStateMachine
+[fields]
+0x04000001=System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$builder flags=0x0003
+0x04000002=System.Int32 BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$PC flags=0x0003
+0x04000003=System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$awaiter0 flags=0x0001
+0x04000004=System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$builder flags=0x0003
+0x04000005=System.Int32 BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$PC flags=0x0003
+0x04000006=System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$awaiter0 flags=0x0001
+0x04000007=System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$builder flags=0x0003
+0x04000008=System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$PC flags=0x0003
+0x04000009=System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$awaiter0 flags=0x0001
+0x0400000a=System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$builder flags=0x0003
+0x0400000b=System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$PC flags=0x0003
+0x0400000c=System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$awaiter0 flags=0x0001
+[methods]
+0x06000001=System.Threading.Tasks.Task BreakpointTest.Portable.TestService::DoSomething1() flags=0x0096 impl=0x0000 rva=0x00002050
+0x06000002=System.Threading.Tasks.Task BreakpointTest.Portable.TestService::DoSomething2() flags=0x0096 impl=0x0000 rva=0x00002080
+0x06000003=System.Threading.Tasks.Task BreakpointTest.Portable.TestService::MyAsyncAction2() flags=0x0091 impl=0x0000 rva=0x000020b0
+0x06000004=System.Threading.Tasks.Task BreakpointTest.Portable.TestService::MyAsyncAction1() flags=0x0091 impl=0x0000 rva=0x000020e0
+0x06000005=System.Void BreakpointTest.Portable.TestService/<DoSomething1>c__async0::MoveNext() flags=0x01e6 impl=0x0000 rva=0x00002110
+0x06000006=System.Void BreakpointTest.Portable.TestService/<DoSomething1>c__async0::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine) flags=0x01e6 impl=0x0000 rva=0x000021c8
+	param 1 name=stateMachine flags=0x0000
+0x06000007=System.Void BreakpointTest.Portable.TestService/<DoSomething2>c__async1::MoveNext() flags=0x01e6 impl=0x0000 rva=0x000021d8
+0x06000008=System.Void BreakpointTest.Portable.TestService/<DoSomething2>c__async1::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine) flags=0x01e6 impl=0x0000 rva=0x00002290
+	param 1 name=stateMachine flags=0x0000
+0x06000009=System.Void BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::MoveNext() flags=0x01e6 impl=0x0000 rva=0x000022a0
+0x0600000a=System.Void BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine) flags=0x01e6 impl=0x0000 rva=0x00002364
+	param 1 name=stateMachine flags=0x0000
+0x0600000b=System.Void BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::MoveNext() flags=0x01e6 impl=0x0000 rva=0x00002374
+0x0600000c=System.Void BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine) flags=0x01e6 impl=0x0000 rva=0x00002438
+	param 1 name=stateMachine flags=0x0000
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x06000001 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000001 ctor=System.Void System.Runtime.CompilerServices.AsyncStateMachineAttribute::.ctor(System.Type) args=((Type:typeof(BreakpointTest.Portable.TestService/<DoSomething1>c__async0)))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"BreakpointTest.Portable"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyDescriptionAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCopyrightAttribute::.ctor(System.String) args=((String:"jlipsky"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTrademarkAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100020100000000
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x06000002 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000002 ctor=System.Void System.Runtime.CompilerServices.AsyncStateMachineAttribute::.ctor(System.Type) args=((Type:typeof(BreakpointTest.Portable.TestService/<DoSomething2>c__async1)))
+ca parent=0x06000003 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000003 ctor=System.Void System.Runtime.CompilerServices.AsyncStateMachineAttribute::.ctor(System.Type) args=((Type:typeof(BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2)))
+ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000004 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000004 ctor=System.Void System.Runtime.CompilerServices.AsyncStateMachineAttribute::.ctor(System.Type) args=((Type:typeof(BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3)))
+ca parent=0x02000004 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000005 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000006 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000006 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000008 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000c ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[il]
+0x06000001 max-stack=3 init-locals=true code-size=33
+	local 0=BreakpointTest.Portable.TestService/<DoSomething1>c__async0
+	IL_0000: ldloca.s V_0
+	IL_0002: call System.Runtime.CompilerServices.AsyncTaskMethodBuilder System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Create()
+	IL_0007: stfld System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$builder
+	IL_000c: ldloca.s V_0
+	IL_000e: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$builder
+	IL_0013: dup
+	IL_0014: ldloca.s V_0
+	IL_0016: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Start<BreakpointTest.Portable.TestService/<DoSomething1>c__async0>(!!0&)
+	IL_001b: call System.Threading.Tasks.Task System.Runtime.CompilerServices.AsyncTaskMethodBuilder::get_Task()
+	IL_0020: ret
+0x06000002 max-stack=3 init-locals=true code-size=33
+	local 0=BreakpointTest.Portable.TestService/<DoSomething2>c__async1
+	IL_0000: ldloca.s V_0
+	IL_0002: call System.Runtime.CompilerServices.AsyncTaskMethodBuilder System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Create()
+	IL_0007: stfld System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$builder
+	IL_000c: ldloca.s V_0
+	IL_000e: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$builder
+	IL_0013: dup
+	IL_0014: ldloca.s V_0
+	IL_0016: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Start<BreakpointTest.Portable.TestService/<DoSomething2>c__async1>(!!0&)
+	IL_001b: call System.Threading.Tasks.Task System.Runtime.CompilerServices.AsyncTaskMethodBuilder::get_Task()
+	IL_0020: ret
+0x06000003 max-stack=3 init-locals=true code-size=33
+	local 0=BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2
+	IL_0000: ldloca.s V_0
+	IL_0002: call System.Runtime.CompilerServices.AsyncTaskMethodBuilder System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Create()
+	IL_0007: stfld System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$builder
+	IL_000c: ldloca.s V_0
+	IL_000e: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$builder
+	IL_0013: dup
+	IL_0014: ldloca.s V_0
+	IL_0016: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Start<BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2>(!!0&)
+	IL_001b: call System.Threading.Tasks.Task System.Runtime.CompilerServices.AsyncTaskMethodBuilder::get_Task()
+	IL_0020: ret
+0x06000004 max-stack=3 init-locals=true code-size=33
+	local 0=BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3
+	IL_0000: ldloca.s V_0
+	IL_0002: call System.Runtime.CompilerServices.AsyncTaskMethodBuilder System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Create()
+	IL_0007: stfld System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$builder
+	IL_000c: ldloca.s V_0
+	IL_000e: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$builder
+	IL_0013: dup
+	IL_0014: ldloca.s V_0
+	IL_0016: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Start<BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3>(!!0&)
+	IL_001b: call System.Threading.Tasks.Task System.Runtime.CompilerServices.AsyncTaskMethodBuilder::get_Task()
+	IL_0020: ret
+0x06000005 max-stack=3 init-locals=true code-size=156
+	local 0=System.UInt32
+	local 1=System.Exception
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$PC
+	IL_0006: stloc.0
+	IL_0007: ldarg.0
+	IL_0008: ldc.i4.m1
+	IL_0009: stfld System.Int32 BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$PC
+	IL_000e: ldloc.0
+	IL_000f: switch (IL_0021, IL_0060)
+	IL_001c: leave IL_009b
+	IL_0021: nop
+	IL_0022: ldarg.0
+	IL_0023: call System.Threading.Tasks.Task BreakpointTest.Portable.TestService::MyAsyncAction1()
+	IL_0028: callvirt System.Runtime.CompilerServices.TaskAwaiter System.Threading.Tasks.Task::GetAwaiter()
+	IL_002d: stfld System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$awaiter0
+	IL_0032: ldarg.0
+	IL_0033: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$awaiter0
+	IL_0038: call System.Boolean System.Runtime.CompilerServices.TaskAwaiter::get_IsCompleted()
+	IL_003d: brtrue IL_0060
+	IL_0042: ldarg.0
+	IL_0043: ldc.i4.1
+	IL_0044: stfld System.Int32 BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$PC
+	IL_0049: ldarg.0
+	IL_004a: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$builder
+	IL_004f: ldarg.0
+	IL_0050: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$awaiter0
+	IL_0055: ldarg.0
+	IL_0056: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::AwaitUnsafeOnCompleted<System.Runtime.CompilerServices.TaskAwaiter,BreakpointTest.Portable.TestService/<DoSomething1>c__async0>(!!0&,!!1&)
+	IL_005b: leave IL_009b
+	IL_0060: ldarg.0
+	IL_0061: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$awaiter0
+	IL_0066: call System.Void System.Runtime.CompilerServices.TaskAwaiter::GetResult()
+	IL_006b: leave IL_0089
+	IL_0070: stloc.1
+	IL_0071: ldarg.0
+	IL_0072: ldc.i4.m1
+	IL_0073: stfld System.Int32 BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$PC
+	IL_0078: ldarg.0
+	IL_0079: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$builder
+	IL_007e: ldloc.1
+	IL_007f: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetException(System.Exception)
+	IL_0084: leave IL_009b
+	IL_0089: ldarg.0
+	IL_008a: ldc.i4.m1
+	IL_008b: stfld System.Int32 BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$PC
+	IL_0090: ldarg.0
+	IL_0091: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$builder
+	IL_0096: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetResult()
+	IL_009b: ret
+	.try IL_000e to IL_0070 catch System.Exception handler IL_0070 to IL_0089
+0x06000006 max-stack=8 init-locals=false code-size=13
+	IL_0000: ldarg.0
+	IL_0001: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething1>c__async0::$builder
+	IL_0006: ldarg.1
+	IL_0007: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+	IL_000c: ret
+0x06000007 max-stack=3 init-locals=true code-size=156
+	local 0=System.UInt32
+	local 1=System.Exception
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$PC
+	IL_0006: stloc.0
+	IL_0007: ldarg.0
+	IL_0008: ldc.i4.m1
+	IL_0009: stfld System.Int32 BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$PC
+	IL_000e: ldloc.0
+	IL_000f: switch (IL_0021, IL_0060)
+	IL_001c: leave IL_009b
+	IL_0021: nop
+	IL_0022: ldarg.0
+	IL_0023: call System.Threading.Tasks.Task BreakpointTest.Portable.TestService::MyAsyncAction2()
+	IL_0028: callvirt System.Runtime.CompilerServices.TaskAwaiter System.Threading.Tasks.Task::GetAwaiter()
+	IL_002d: stfld System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$awaiter0
+	IL_0032: ldarg.0
+	IL_0033: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$awaiter0
+	IL_0038: call System.Boolean System.Runtime.CompilerServices.TaskAwaiter::get_IsCompleted()
+	IL_003d: brtrue IL_0060
+	IL_0042: ldarg.0
+	IL_0043: ldc.i4.1
+	IL_0044: stfld System.Int32 BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$PC
+	IL_0049: ldarg.0
+	IL_004a: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$builder
+	IL_004f: ldarg.0
+	IL_0050: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$awaiter0
+	IL_0055: ldarg.0
+	IL_0056: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::AwaitUnsafeOnCompleted<System.Runtime.CompilerServices.TaskAwaiter,BreakpointTest.Portable.TestService/<DoSomething2>c__async1>(!!0&,!!1&)
+	IL_005b: leave IL_009b
+	IL_0060: ldarg.0
+	IL_0061: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$awaiter0
+	IL_0066: call System.Void System.Runtime.CompilerServices.TaskAwaiter::GetResult()
+	IL_006b: leave IL_0089
+	IL_0070: stloc.1
+	IL_0071: ldarg.0
+	IL_0072: ldc.i4.m1
+	IL_0073: stfld System.Int32 BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$PC
+	IL_0078: ldarg.0
+	IL_0079: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$builder
+	IL_007e: ldloc.1
+	IL_007f: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetException(System.Exception)
+	IL_0084: leave IL_009b
+	IL_0089: ldarg.0
+	IL_008a: ldc.i4.m1
+	IL_008b: stfld System.Int32 BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$PC
+	IL_0090: ldarg.0
+	IL_0091: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$builder
+	IL_0096: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetResult()
+	IL_009b: ret
+	.try IL_000e to IL_0070 catch System.Exception handler IL_0070 to IL_0089
+0x06000008 max-stack=8 init-locals=false code-size=13
+	IL_0000: ldarg.0
+	IL_0001: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<DoSomething2>c__async1::$builder
+	IL_0006: ldarg.1
+	IL_0007: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+	IL_000c: ret
+0x06000009 max-stack=3 init-locals=true code-size=167
+	local 0=System.UInt32
+	local 1=System.Exception
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$PC
+	IL_0006: stloc.0
+	IL_0007: ldarg.0
+	IL_0008: ldc.i4.m1
+	IL_0009: stfld System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$PC
+	IL_000e: ldloc.0
+	IL_000f: switch (IL_0021, IL_0061)
+	IL_001c: leave IL_00a6
+	IL_0021: nop
+	IL_0022: ldarg.0
+	IL_0023: ldc.i4.1
+	IL_0024: call System.Threading.Tasks.Task System.Threading.Tasks.Task::Delay(System.Int32)
+	IL_0029: callvirt System.Runtime.CompilerServices.TaskAwaiter System.Threading.Tasks.Task::GetAwaiter()
+	IL_002e: stfld System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$awaiter0
+	IL_0033: ldarg.0
+	IL_0034: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$awaiter0
+	IL_0039: call System.Boolean System.Runtime.CompilerServices.TaskAwaiter::get_IsCompleted()
+	IL_003e: brtrue IL_0061
+	IL_0043: ldarg.0
+	IL_0044: ldc.i4.1
+	IL_0045: stfld System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$PC
+	IL_004a: ldarg.0
+	IL_004b: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$builder
+	IL_0050: ldarg.0
+	IL_0051: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$awaiter0
+	IL_0056: ldarg.0
+	IL_0057: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::AwaitUnsafeOnCompleted<System.Runtime.CompilerServices.TaskAwaiter,BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2>(!!0&,!!1&)
+	IL_005c: leave IL_00a6
+	IL_0061: ldarg.0
+	IL_0062: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$awaiter0
+	IL_0067: call System.Void System.Runtime.CompilerServices.TaskAwaiter::GetResult()
+	IL_006c: ldstr "Got here 2..."
+	IL_0071: call System.Void System.Diagnostics.Debug::WriteLine(System.String)
+	IL_0076: leave IL_0094
+	IL_007b: stloc.1
+	IL_007c: ldarg.0
+	IL_007d: ldc.i4.m1
+	IL_007e: stfld System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$PC
+	IL_0083: ldarg.0
+	IL_0084: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$builder
+	IL_0089: ldloc.1
+	IL_008a: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetException(System.Exception)
+	IL_008f: leave IL_00a6
+	IL_0094: ldarg.0
+	IL_0095: ldc.i4.m1
+	IL_0096: stfld System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$PC
+	IL_009b: ldarg.0
+	IL_009c: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$builder
+	IL_00a1: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetResult()
+	IL_00a6: ret
+	.try IL_000e to IL_007b catch System.Exception handler IL_007b to IL_0094
+0x0600000a max-stack=8 init-locals=false code-size=13
+	IL_0000: ldarg.0
+	IL_0001: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2::$builder
+	IL_0006: ldarg.1
+	IL_0007: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+	IL_000c: ret
+0x0600000b max-stack=3 init-locals=true code-size=167
+	local 0=System.UInt32
+	local 1=System.Exception
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$PC
+	IL_0006: stloc.0
+	IL_0007: ldarg.0
+	IL_0008: ldc.i4.m1
+	IL_0009: stfld System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$PC
+	IL_000e: ldloc.0
+	IL_000f: switch (IL_0021, IL_0061)
+	IL_001c: leave IL_00a6
+	IL_0021: nop
+	IL_0022: ldarg.0
+	IL_0023: ldc.i4.1
+	IL_0024: call System.Threading.Tasks.Task System.Threading.Tasks.Task::Delay(System.Int32)
+	IL_0029: callvirt System.Runtime.CompilerServices.TaskAwaiter System.Threading.Tasks.Task::GetAwaiter()
+	IL_002e: stfld System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$awaiter0
+	IL_0033: ldarg.0
+	IL_0034: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$awaiter0
+	IL_0039: call System.Boolean System.Runtime.CompilerServices.TaskAwaiter::get_IsCompleted()
+	IL_003e: brtrue IL_0061
+	IL_0043: ldarg.0
+	IL_0044: ldc.i4.1
+	IL_0045: stfld System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$PC
+	IL_004a: ldarg.0
+	IL_004b: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$builder
+	IL_0050: ldarg.0
+	IL_0051: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$awaiter0
+	IL_0056: ldarg.0
+	IL_0057: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::AwaitUnsafeOnCompleted<System.Runtime.CompilerServices.TaskAwaiter,BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3>(!!0&,!!1&)
+	IL_005c: leave IL_00a6
+	IL_0061: ldarg.0
+	IL_0062: ldflda System.Runtime.CompilerServices.TaskAwaiter BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$awaiter0
+	IL_0067: call System.Void System.Runtime.CompilerServices.TaskAwaiter::GetResult()
+	IL_006c: ldstr "Got here 1..."
+	IL_0071: call System.Void System.Diagnostics.Debug::WriteLine(System.String)
+	IL_0076: leave IL_0094
+	IL_007b: stloc.1
+	IL_007c: ldarg.0
+	IL_007d: ldc.i4.m1
+	IL_007e: stfld System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$PC
+	IL_0083: ldarg.0
+	IL_0084: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$builder
+	IL_0089: ldloc.1
+	IL_008a: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetException(System.Exception)
+	IL_008f: leave IL_00a6
+	IL_0094: ldarg.0
+	IL_0095: ldc.i4.m1
+	IL_0096: stfld System.Int32 BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$PC
+	IL_009b: ldarg.0
+	IL_009c: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$builder
+	IL_00a1: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetResult()
+	IL_00a6: ret
+	.try IL_000e to IL_007b catch System.Exception handler IL_007b to IL_0094
+0x0600000c max-stack=8 init-locals=false code-size=13
+	IL_0000: ldarg.0
+	IL_0001: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3::$builder
+	IL_0006: ldarg.1
+	IL_0007: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+	IL_000c: ret

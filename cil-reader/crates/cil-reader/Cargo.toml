@@ -1,0 +1,13 @@
+[package]
+name = "cil-reader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Read-only CIL (ECMA-335) metadata and bytecode reader, modeled on Mono.Cecil's reading API"
+
+[features]
+default = []
+mmap = ["dep:memmap2"]
+
+[dependencies]
+memmap2 = { version = "0.9", optional = true }

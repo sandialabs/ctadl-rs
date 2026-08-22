@@ -1,0 +1,39 @@
+[module]
+name=delay-signed.dll
+mvid=86dc6771-f8cf-4156-8681-b88df69b70ad
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=delay-signed, Version=0.0.0.0, Culture=neutral, PublicKeyToken=41cbb1194e85a193
+hash-algorithm=0x00008004
+flags=0x00000001
+public-key=0024000004800000940000000602000000240000525341310004000001000100c9931ffac55f4a52930a2d32a57dae379ee145062d17f7dd04354e9a84889272f66361dcf9807b7dd9f774d2bbe6d35dca88647b35a449dff771465b35e8875670055069ee71f71658c32649dd4bcb022306504914507eab1b803f001fcd94a7593473635cbeb643d1b93200eebbeb6a1e735e5c01d3168acbcfe42919f824a0
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Librar flags=0x00100000
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void Librar::Foo() flags=0x0096 impl=0x0000 rva=0x000020d0
+0x06000002=System.Void Librar::.ctor() flags=0x1886 impl=0x0000 rva=0x000020d3
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000002 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret

@@ -1,0 +1,1934 @@
+[module]
+name=MixedNativeCLI.exe
+mvid=74d20cbf-77ff-4b5e-8077-d36eb657e42b
+kind=Console
+runtime=v4.0.30319
+architecture=AMD64
+module-attributes=0x00000000
+entry-point=0x06000043
+[assembly]
+full-name=MixedNativeCLI, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+0x1a000001=KERNEL32.dll
+0x1a000002=
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=<CppImplementationDetails>.$ArrayType$$$BY0BI@$$CBD flags=0x00100108
+	base=System.ValueType
+	layout packing=0 size=24
+0x02000003=_GUID flags=0x00100108
+	base=System.ValueType
+	layout packing=0 size=16
+0x02000004=_EXCEPTION_POINTERS flags=0x00100108
+	base=System.ValueType
+	layout packing=0 size=16
+0x02000005=<CrtImplementationDetails>.ModuleLoadException flags=0x00102000
+	base=System.Exception
+0x02000006=<CrtImplementationDetails>.ModuleLoadExceptionHandlerException flags=0x00102000
+	base=<CrtImplementationDetails>.ModuleLoadException
+0x02000007=<CrtImplementationDetails>.ModuleUninitializer flags=0x00000000
+	base=System.Collections.Stack
+0x02000008=__scrt_native_startup_state flags=0x00100100
+	base=System.Enum
+0x02000009=<CrtImplementationDetails>.TriBool flags=0x00100100
+	base=System.Enum
+0x0200000a=<CrtImplementationDetails>.Progress flags=0x00100100
+	base=System.Enum
+0x0200000b=IUnknown flags=0x00100188
+	base=System.ValueType
+	layout packing=0 size=8
+0x0200000c=<CrtImplementationDetails>.LanguageSupport flags=0x00100108
+	base=System.ValueType
+	layout packing=0 size=8
+0x0200000d=gcroot<System::String ^> flags=0x00100108
+	base=System.ValueType
+	layout packing=0 size=8
+0x0200000e=__s_GUID flags=0x00100108
+	base=System.ValueType
+	layout packing=0 size=16
+0x0200000f=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ flags=0x00100108
+	base=System.ValueType
+	layout packing=0 size=1
+0x02000010=ICLRRuntimeHost flags=0x00100188
+	base=System.ValueType
+	layout packing=0 size=8
+0x02000011=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ flags=0x00100108
+	base=System.ValueType
+	layout packing=0 size=8
+0x02000012=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ flags=0x00100108
+	base=System.ValueType
+	layout packing=0 size=1
+0x02000013=ICorRuntimeHost flags=0x00100188
+	base=System.ValueType
+	layout packing=0 size=8
+0x02000014=<CrtImplementationDetails>.ThisModule flags=0x00100108
+	base=System.ValueType
+	layout packing=0 size=1
+[fields]
+0x04000001=<CppImplementationDetails>.$ArrayType$$$BY0BI@$$CBD modopt(System.Runtime.CompilerServices.IsConst) <Module>::??_C@_0BI@HDEIMHEA@In?5unmanaged?5function?4?6@ flags=0x0113 rva-data=496e20756e6d616e616765642066756e6374696f6e2e0a00
+0x04000002=System.UInt64 <Module>::?_OptionsStorage@?1??__local_stdio_printf_options@@YAPEA_KXZ@4_KA flags=0x0113 rva-data=0000000000000000
+0x04000003=method System.Int32 *() <Module>::__m2mep@?main@@$$HYAHXZ flags=0x0116 rva-data=0100000600000000
+0x04000004=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_cb2f6723_ab3a_11d2_9c40_00c04fa30a3e flags=0x0113 rva-data=23672fcb3aabd2119c4000c04fa30a3e
+0x04000005=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_cb2f6722_ab3a_11d2_9c40_00c04fa30a3e flags=0x0113 rva-data=22672fcb3aabd2119c4000c04fa30a3e
+0x04000006=System.Int32 <Module>::?Uninitialized@CurrentDomain@<CrtImplementationDetails>@@$$Q2HA flags=0x0013
+0x04000007=method System.Void *() <Module>::?A0xeb4f7d22.?Uninitialized$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1400000600000000
+0x04000008=<CrtImplementationDetails>.Progress <Module>::?InitializedNative@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A flags=0x0013
+0x04000009=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedNative$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1700000600000000
+0x0400000a=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_90f1a06c_7712_4762_86b5_7a5eba6bdb02 flags=0x0113 rva-data=6ca0f1901277624786b57a5eba6bdb02
+0x0400000b=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_90f1a06e_7712_4762_86b5_7a5eba6bdb02 flags=0x0113 rva-data=6ea0f1901277624786b57a5eba6bdb02
+0x0400000c=<CrtImplementationDetails>.Progress <Module>::?InitializedPerAppDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A flags=0x0013
+0x0400000d=System.Boolean <Module>::?Entered@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva-data=-
+0x0400000e=<CrtImplementationDetails>.TriBool <Module>::?hasNative@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A flags=0x0113
+0x0400000f=System.Boolean <Module>::?InitializedPerProcess@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva-data=-
+0x04000010=System.Int32 <Module>::?Count@AllDomains@<CrtImplementationDetails>@@2HA flags=0x0113 rva-data=-
+0x04000011=System.Int32 <Module>::?Initialized@CurrentDomain@<CrtImplementationDetails>@@$$Q2HA flags=0x0013
+0x04000012=System.Boolean <Module>::?InitializedNativeFromCCTOR@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva-data=-
+0x04000013=System.Boolean <Module>::?IsDefaultDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2_NA flags=0x0013
+0x04000014=<CrtImplementationDetails>.Progress <Module>::?InitializedVtables@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A flags=0x0013
+0x04000015=System.Boolean <Module>::?InitializedNative@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva-data=-
+0x04000016=<CrtImplementationDetails>.Progress <Module>::?InitializedPerProcess@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A flags=0x0013
+0x04000017=<CrtImplementationDetails>.TriBool <Module>::?hasPerProcess@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A flags=0x0113
+0x04000018=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_z flags=0x0113 rva-data=0000000000000000
+0x04000019=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xi_vt_z flags=0x0113 rva-data=0000000000000000
+0x0400001a=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedPerProcess$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1800000600000000
+0x0400001b=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_ma_a flags=0x0113 rva-data=0000000000000000
+0x0400001c=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_ma_z flags=0x0113 rva-data=0000000000000000
+0x0400001d=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedPerAppDomain$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1900000600000000
+0x0400001e=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xi_vt_a flags=0x0113 rva-data=0000000000000000
+0x0400001f=method System.Void *() <Module>::?A0xeb4f7d22.?Initialized$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1300000600000000
+0x04000020=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_a flags=0x0113 rva-data=0000000000000000
+0x04000021=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedVtables$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1600000600000000
+0x04000022=method System.Void *() <Module>::?A0xeb4f7d22.?IsDefaultDomain$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1500000600000000
+0x04000023=method System.Int32 *(System.Void*) <Module>::__m2mep@?DoNothing@DefaultDomain@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva-data=0d00000600000000
+0x04000024=method System.Int32 *(System.Void*) <Module>::__m2mep@?_UninitializeDefaultDomain@LanguageSupport@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva-data=2200000600000000
+0x04000025=System.Int32** <Module>::__unep@?DoNothing@DefaultDomain@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva-data=1040004001000000
+0x04000026=System.Int32** <Module>::__unep@?_UninitializeDefaultDomain@LanguageSupport@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva-data=2040004001000000
+0x04000027=method System.Void *()* <Module>::?A0xdf32f105.__onexitbegin_m flags=0x0113 rva-data=-
+0x04000028=System.UInt64 <Module>::?A0xdf32f105.__exit_list_size flags=0x0113 rva-data=-
+0x04000029=method System.Void *()* <Module>::__onexitend_app_domain flags=0x0013
+0x0400002a=System.Void* <Module>::?_lock@AtExitLock@<CrtImplementationDetails>@@$$Q0PEAXEA flags=0x0013
+0x0400002b=System.Int32 <Module>::?_ref_count@AtExitLock@<CrtImplementationDetails>@@$$Q0HA flags=0x0013
+0x0400002c=method System.Void *()* <Module>::?A0xdf32f105.__onexitend_m flags=0x0113 rva-data=-
+0x0400002d=System.UInt64 <Module>::__exit_list_size_app_domain flags=0x0013
+0x0400002e=method System.Void *()* <Module>::__onexitbegin_app_domain flags=0x0013
+0x0400002f=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_z flags=0x0113 rva-data=00
+0x04000030=__scrt_native_startup_state <Module>::__scrt_current_native_startup_state flags=0x0113
+0x04000031=System.Void* <Module>::__scrt_native_startup_lock flags=0x0113 rva-data=-
+0x04000032=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_a flags=0x0113 rva-data=00
+0x04000033=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_a flags=0x0113 rva-data=00
+0x04000034=System.UInt32 <Module>::__scrt_native_dllmain_reason flags=0x0113 rva-data=ffffffff
+0x04000035=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_z flags=0x0113 rva-data=00
+0x04000036=System.Int32 _GUID::<alignment member> flags=0x0001
+0x04000037=System.Int64 _EXCEPTION_POINTERS::<alignment member> flags=0x0001
+0x04000038=System.String <CrtImplementationDetails>.ModuleLoadException::Nested flags=0x8056 constant=String:"A nested exception occurred after the primary exception that caused the C++ module to fail to load.
+"
+0x04000039=System.String <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::formatString flags=0x8051 constant=String:"
+{0}: {1}
+--- Start of primary exception ---
+{2}
+--- End of primary exception ---
+
+--- Start of nested exception ---
+{3}
+--- End of nested exception ---
+"
+0x0400003a=System.Exception <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::<backing_store>NestedException flags=0x0001
+0x0400003b=System.Object <CrtImplementationDetails>.ModuleUninitializer::lock flags=0x0011
+0x0400003c=<CrtImplementationDetails>.ModuleUninitializer <CrtImplementationDetails>.ModuleUninitializer::_ModuleUninitializer flags=0x0013
+0x0400003d=System.Int32 __scrt_native_startup_state::value__ flags=0x0606
+0x0400003e=System.Int32 <CrtImplementationDetails>.TriBool::value__ flags=0x0606
+0x0400003f=System.Int32 <CrtImplementationDetails>.Progress::value__ flags=0x0606
+0x04000040=System.Int64 IUnknown::<alignment member> flags=0x0001
+0x04000041=System.Int64 <CrtImplementationDetails>.LanguageSupport::<alignment member> flags=0x0001
+0x04000042=System.Int64 gcroot<System::String ^>::<alignment member> flags=0x0001
+0x04000043=System.Int32 __s_GUID::<alignment member> flags=0x0001
+0x04000044=System.Int64 ICLRRuntimeHost::<alignment member> flags=0x0001
+0x04000045=System.Int64 ICorRuntimeHost::<alignment member> flags=0x0001
+[methods]
+0x06000001=System.Int32 modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::main() flags=0x0013 impl=0x0000 rva=0x0000109c
+0x06000002=System.Void <Module>::___CxxCallUnwindDtor(method System.Void *(System.Void*),System.Void*) flags=0x4013 impl=0x0000 rva=0x00001da0
+	param 0 name=pDtor flags=0x0000
+	param 1 name=pThis flags=0x0000
+0x06000003=System.Void <Module>::<CrtImplementationDetails>.ThrowNestedModuleLoadException(System.Exception,System.Exception) flags=0x0013 impl=0x0000 rva=0x000025a0
+	param 0 name=innerException flags=0x0000
+	param 1 name=nestedException flags=0x0000
+0x06000004=System.Void <Module>::<CrtImplementationDetails>.ThrowModuleLoadException(System.String) flags=0x0013 impl=0x0000 rva=0x00001f7c
+	param 0 name=errorMessage flags=0x0000
+0x06000005=System.Void <Module>::<CrtImplementationDetails>.ThrowModuleLoadException(System.String,System.Exception) flags=0x0013 impl=0x0000 rva=0x00001f90
+	param 0 name=errorMessage flags=0x0000
+	param 1 name=innerException flags=0x0000
+0x06000006=System.Void <Module>::<CrtImplementationDetails>.RegisterModuleUninitializer(System.EventHandler) flags=0x0013 impl=0x0000 rva=0x000020ac
+	param 0 name=handler flags=0x0000
+0x06000007=System.Guid <Module>::<CrtImplementationDetails>.FromGUID(_GUID modopt(System.Runtime.CompilerServices.IsConst)* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced)) flags=0x0013 impl=0x0000 rva=0x000020c4
+	param 0 name=guid flags=0x0000
+0x06000008=System.Int32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__get_default_appdomain(IUnknown**) flags=0x0013 impl=0x0000 rva=0x00002114
+	param 0 name=ppUnk flags=0x0000
+0x06000009=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__release_appdomain(IUnknown*) flags=0x0013 impl=0x0000 rva=0x00002194
+	param 0 name=ppUnk flags=0x0000
+0x0600000a=System.AppDomain <Module>::<CrtImplementationDetails>.GetDefaultDomain() flags=0x0013 impl=0x0000 rva=0x000021b0
+0x0600000b=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DoCallBackInDefaultDomain(method System.Int32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl) *(System.Void*),System.Void*) flags=0x0013 impl=0x0000 rva=0x00002210
+	param 0 name=function flags=0x0000
+	param 1 name=cookie flags=0x0000
+0x0600000c=System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__scrt_is_safe_for_managed_code() flags=0x0013 impl=0x0000 rva=0x0000229c
+0x0600000d=System.Int32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DefaultDomain.DoNothing(System.Void*) flags=0x0013 impl=0x0000 rva=0x000022d0
+	param 0 name=cookie flags=0x0000
+0x0600000e=System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DefaultDomain.HasPerProcess() flags=0x0013 impl=0x0000 rva=0x000022f0
+0x0600000f=System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DefaultDomain.HasNative() flags=0x0013 impl=0x0000 rva=0x00002344
+0x06000010=System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DefaultDomain.NeedsInitialization() flags=0x0013 impl=0x0000 rva=0x000023c4
+0x06000011=System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DefaultDomain.NeedsUninitialization() flags=0x0013 impl=0x0000 rva=0x000023fc
+0x06000012=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DefaultDomain.Initialize() flags=0x0013 impl=0x0000 rva=0x00002410
+0x06000013=System.Void <Module>::?A0xeb4f7d22.??__E?Initialized@CurrentDomain@<CrtImplementationDetails>@@$$Q2HA@@YMXXZ() flags=0x0013 impl=0x0000 rva=0x00001000
+0x06000014=System.Void <Module>::?A0xeb4f7d22.??__E?Uninitialized@CurrentDomain@<CrtImplementationDetails>@@$$Q2HA@@YMXXZ() flags=0x0013 impl=0x0000 rva=0x00001014
+0x06000015=System.Void <Module>::?A0xeb4f7d22.??__E?IsDefaultDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2_NA@@YMXXZ() flags=0x0013 impl=0x0000 rva=0x00001028
+0x06000016=System.Void <Module>::?A0xeb4f7d22.??__E?InitializedVtables@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A@@YMXXZ() flags=0x0013 impl=0x0000 rva=0x0000103c
+0x06000017=System.Void <Module>::?A0xeb4f7d22.??__E?InitializedNative@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A@@YMXXZ() flags=0x0013 impl=0x0000 rva=0x00001050
+0x06000018=System.Void <Module>::?A0xeb4f7d22.??__E?InitializedPerProcess@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A@@YMXXZ() flags=0x0013 impl=0x0000 rva=0x00001064
+0x06000019=System.Void <Module>::?A0xeb4f7d22.??__E?InitializedPerAppDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A@@YMXXZ() flags=0x0013 impl=0x0000 rva=0x00001078
+0x0600001a=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializeVtables(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x000025f4
+0x0600001b=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializeDefaultAppDomain(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x00002628
+0x0600001c=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializeNative(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x00002648
+0x0600001d=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializePerProcess(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x000026d8
+0x0600001e=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializePerAppDomain(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x00002718
+0x0600001f=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializeUninitializer(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x00002754
+0x06000020=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport._Initialize(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x00002780
+0x06000021=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.UninitializeAppDomain() flags=0x0013 impl=0x0000 rva=0x0000242c
+0x06000022=System.Int32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport._UninitializeDefaultDomain(System.Void*) flags=0x0013 impl=0x0000 rva=0x00002440
+	param 0 name=cookie flags=0x0000
+0x06000023=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.UninitializeDefaultDomain() flags=0x0013 impl=0x0000 rva=0x00002478
+0x06000024=System.Void <Module>::<CrtImplementationDetails>.LanguageSupport.DomainUnload(System.Object,System.EventArgs) flags=0x0013 impl=0x0000 rva=0x000024b0
+	param 0 name=A_0 flags=0x0000
+	param 1 name=A_1 flags=0x0000
+0x06000025=System.Void <Module>::<CrtImplementationDetails>.LanguageSupport.Cleanup(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst),System.Exception) flags=0x0013 impl=0x0000 rva=0x00002884
+	param 1 name=innerException flags=0x0000
+0x06000026=<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.{ctor}(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x000028f8
+0x06000027=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.{dtor}(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x00002910
+0x06000028=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.Initialize(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x00002924
+0x06000029=System.Void <Module>::.cctor() flags=0x1813 impl=0x0000 rva=0x000029e0
+0x0600002a=System.String <Module>::gcroot<System::String ^>..PE$AAVString@System@@(gcroot<System::String ^> modopt(System.Runtime.CompilerServices.IsConst)* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x000024ec
+0x0600002b=gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced) <Module>::gcroot<System::String ^>.=(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst),System.String) flags=0x0013 impl=0x0000 rva=0x00002510
+	param 1 name=t flags=0x0000
+0x0600002c=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::gcroot<System::String ^>.{dtor}(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x00002538
+0x0600002d=gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::gcroot<System::String ^>.{ctor}(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst)) flags=0x0013 impl=0x0000 rva=0x00002560
+0x0600002e=System.ValueType modopt(System.Runtime.InteropServices.GCHandle) modopt(System.Runtime.CompilerServices.IsBoxed) <Module>::<CrtImplementationDetails>.AtExitLock._handle() flags=0x0013 impl=0x0000 rva=0x00002a54
+0x0600002f=System.Void <Module>::<CrtImplementationDetails>.AtExitLock._lock_Construct(System.Object) flags=0x0013 impl=0x0000 rva=0x00002d14
+	param 0 name=value flags=0x0000
+0x06000030=System.Void <Module>::<CrtImplementationDetails>.AtExitLock._lock_Set(System.Object) flags=0x0013 impl=0x0000 rva=0x00002a84
+	param 0 name=value flags=0x0000
+0x06000031=System.Object <Module>::<CrtImplementationDetails>.AtExitLock._lock_Get() flags=0x0013 impl=0x0000 rva=0x00002ad4
+0x06000032=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.AtExitLock._lock_Destruct() flags=0x0013 impl=0x0000 rva=0x00002af8
+0x06000033=System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.AtExitLock.IsInitialized() flags=0x0013 impl=0x0000 rva=0x00002b20
+0x06000034=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.AtExitLock.AddRef() flags=0x0013 impl=0x0000 rva=0x00002d30
+0x06000035=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.AtExitLock.RemoveRef() flags=0x0013 impl=0x0000 rva=0x00002b3c
+0x06000036=System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::?A0xdf32f105.__alloc_global_lock() flags=0x0013 impl=0x0000 rva=0x00002d60
+0x06000037=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::?A0xdf32f105.__dealloc_global_lock() flags=0x0013 impl=0x0000 rva=0x00002b64
+0x06000038=System.Void <Module>::_exit_callback() flags=0x0013 impl=0x0000 rva=0x00002b78
+0x06000039=System.Int32 <Module>::_initatexit_m() flags=0x0013 impl=0x0000 rva=0x00002d78
+0x0600003a=System.Int32 <Module>::_initatexit_app_domain() flags=0x0013 impl=0x0000 rva=0x00002dc0
+0x0600003b=System.Void <Module>::_app_exit_callback() flags=0x0013 impl=0x0000 rva=0x00002c28
+0x0600003c=System.Void* <Module>::DecodePointer(System.Void*) flags=0x6016 impl=0x0080 rva=0x00000000 pinvoke=(KERNEL32.dll,DecodePointer,0x0100)
+	param 0 name=_Ptr flags=0x0000
+0x0600003d=System.Void* <Module>::EncodePointer(System.Void*) flags=0x6016 impl=0x0080 rva=0x00000000 pinvoke=(KERNEL32.dll,EncodePointer,0x0100)
+	param 0 name=_Ptr flags=0x0000
+0x0600003e=System.Int32 <Module>::_initterm_e(method System.Int32 modopt(System.Runtime.CompilerServices.CallConvCdecl) *()*,method System.Int32 modopt(System.Runtime.CompilerServices.CallConvCdecl) *()*) flags=0x0013 impl=0x0000 rva=0x00002e04
+	param 0 name=pfbegin flags=0x0000
+	param 1 name=pfend flags=0x0000
+0x0600003f=System.Void <Module>::_initterm(method System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) *()*,method System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) *()*) flags=0x0013 impl=0x0000 rva=0x00002e34
+	param 0 name=pfbegin flags=0x0000
+	param 1 name=pfend flags=0x0000
+0x06000040=System.ModuleHandle <Module>::<CrtImplementationDetails>.ThisModule.Handle() flags=0x0013 impl=0x0000 rva=0x00002e5c
+0x06000041=System.Void <Module>::_initterm_m(method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *() modopt(System.Runtime.CompilerServices.IsConst)*,method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *() modopt(System.Runtime.CompilerServices.IsConst)*) flags=0x4013 impl=0x0000 rva=0x00002eac
+	param 0 name=pfbegin flags=0x0000
+	param 1 name=pfend flags=0x0000
+0x06000042=method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *() <Module>::<CrtImplementationDetails>.ThisModule.ResolveMethod<void const * __clrcall(void)>(method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *()) flags=0x0013 impl=0x0000 rva=0x00002e80
+	param 0 name=methodToken flags=0x0000
+0x06000043=System.UInt32 <Module>::mainCRTStartup() flags=0x6013 impl=0x0085 rva=0x0000145c
+0x06000044=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::func2() flags=0x6013 impl=0x0085 rva=0x00001090
+0x06000045=System.Int32 modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__FrameUnwindFilter(_EXCEPTION_POINTERS*) flags=0x6013 impl=0x0085 rva=0x00002f8d pinvoke=(,,0x0240)
+0x06000046=System.Void** modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__current_exception_context() flags=0x6013 impl=0x0085 rva=0x00002ee5 pinvoke=(,,0x0240)
+0x06000047=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::terminate() flags=0x6013 impl=0x0085 rva=0x00002f81 pinvoke=(,,0x0240)
+0x06000048=System.Void** modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__current_exception() flags=0x6013 impl=0x0085 rva=0x00002edf pinvoke=(,,0x0240)
+0x06000049=System.Void* modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::_getFiberPtrId() flags=0x6013 impl=0x0085 rva=0x000022c0
+0x0600004a=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::_cexit() flags=0x6013 impl=0x0085 rva=0x00002f4b pinvoke=(,,0x0240)
+0x0600004b=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::Sleep(System.UInt32 modopt(System.Runtime.CompilerServices.IsLong)) flags=0x6013 impl=0x0085 rva=0x00002f87 pinvoke=(,,0x0240)
+0x0600004c=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::abort() flags=0x6013 impl=0x0085 rva=0x00002f93 pinvoke=(,,0x0240)
+0x0600004d=System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__security_init_cookie() flags=0x6013 impl=0x0085 rva=0x0000183c
+0x0600004e=System.Void <CrtImplementationDetails>.ModuleLoadException::.ctor(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext) flags=0x1884 impl=0x0000 rva=0x00001e10
+	param 1 name=info flags=0x0000
+	param 2 name=context flags=0x0000
+0x0600004f=System.Void <CrtImplementationDetails>.ModuleLoadException::.ctor(System.String,System.Exception) flags=0x1886 impl=0x0000 rva=0x00001df8
+	param 1 name=message flags=0x0000
+	param 2 name=innerException flags=0x0000
+0x06000050=System.Void <CrtImplementationDetails>.ModuleLoadException::.ctor(System.String) flags=0x1886 impl=0x0000 rva=0x00001de4
+	param 1 name=message flags=0x0000
+0x06000051=System.Void <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::.ctor(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext) flags=0x1884 impl=0x0000 rva=0x00001f3c
+	param 1 name=info flags=0x0000
+	param 2 name=context flags=0x0000
+0x06000052=System.Void <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::.ctor(System.String,System.Exception,System.Exception) flags=0x1886 impl=0x0000 rva=0x00002584
+	param 1 name=message flags=0x0000
+	param 2 name=innerException flags=0x0000
+	param 3 name=nestedException flags=0x0000
+0x06000053=System.Exception <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::get_NestedException() flags=0x0886 impl=0x0000 rva=0x00001e28 semantics=0x0002
+0x06000054=System.Void <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::set_NestedException(System.Exception) flags=0x0886 impl=0x0000 rva=0x00001e3c semantics=0x0001
+	param 1 name=__set_formal flags=0x0000
+0x06000055=System.String <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::ToString() flags=0x00c6 impl=0x0000 rva=0x00001e50
+0x06000056=System.Void <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext) flags=0x00c6 impl=0x0000 rva=0x00001f00
+	param 1 name=info flags=0x0000
+	param 2 name=context flags=0x0000
+0x06000057=System.Void <CrtImplementationDetails>.ModuleUninitializer::AddHandler(System.EventHandler) flags=0x0083 impl=0x0000 rva=0x00001fa8
+	param 1 name=handler flags=0x0000
+0x06000058=System.Void <CrtImplementationDetails>.ModuleUninitializer::.cctor() flags=0x1891 impl=0x0000 rva=0x00002a30
+0x06000059=System.Void <CrtImplementationDetails>.ModuleUninitializer::.ctor() flags=0x1881 impl=0x0000 rva=0x000025bc
+0x0600005a=System.Void <CrtImplementationDetails>.ModuleUninitializer::SingletonDomainUnload(System.Object,System.EventArgs) flags=0x0081 impl=0x0000 rva=0x00002008
+	param 1 name=source flags=0x0000
+	param 2 name=arguments flags=0x0000
+[properties]
+0x17000001=System.Exception <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::NestedException() flags=0x0000 getter=0x06000053 setter=0x06000054
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETFramework,Version=v4.7.2")) property FrameworkDisplayName=(String:".NET Framework 4.7.2")
+ca parent=0x20000001 ctor=System.Void System.Security.SecurityRulesAttribute::.ctor(System.Security.SecurityRuleSet) args=!unresolved blob=0100010000
+ca parent=0x06000002 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000002 ctor=System.Void System.Runtime.ExceptionServices.HandleProcessCorruptedStateExceptionsAttribute::.ctor() args=()
+ca parent=0x06000002 ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=!unresolved blob=010003000000020000000000
+ca parent=0x02000002 ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x02000002 ctor=System.Void System.Runtime.CompilerServices.UnsafeValueTypeAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.UnsafeValueTypeAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x04000006 ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x06000007 ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x06000008 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x04000008 ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x02000008 ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x02000009 ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x0600000a ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0200000a ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x0600000b ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0200000b ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x0400000c ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x0200000c ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x0600000d ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x0200000d ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x0600000e ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x0200000e ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x0200000e ctor=System.Void System.Runtime.CompilerServices.UnsafeValueTypeAttribute::.ctor() args=()
+ca parent=0x0600000f ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x0200000f ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x06000010 ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x02000010 ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x04000011 ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x02000011 ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x06000012 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x02000012 ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x04000013 ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x02000013 ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x04000014 ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x02000014 ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
+ca parent=0x04000016 ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x0600001a ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600001a ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x0600001b ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x0600001c ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600001c ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x0600001d ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600001d ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0600001e ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600001e ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0600001f ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600001f ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000020 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000020 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000020 ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=!unresolved blob=010003000000020000000000
+ca parent=0x06000021 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000022 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000023 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000024 ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=!unresolved blob=010003000000020000000000
+ca parent=0x06000024 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000024 ctor=System.Void System.Runtime.ConstrainedExecution.PrePrepareMethodAttribute::.ctor() args=()
+ca parent=0x06000025 ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=!unresolved blob=010003000000020000000000
+ca parent=0x06000025 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000025 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000026 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000027 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000028 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000028 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000028 ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=!unresolved blob=010003000000020000000000
+ca parent=0x06000029 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000029 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x04000029 ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x0600002a ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x0400002a ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x0600002b ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600002b ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0400002b ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x0600002c ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0600002c ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600002d ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600002d ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x0400002d ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x0600002e ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0600002e ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0400002e ctor=System.Void System.Runtime.CompilerServices.FixedAddressValueTypeAttribute::.ctor() args=()
+ca parent=0x0600002f ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0600002f ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000030 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000030 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000031 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000031 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000032 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000032 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000033 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000033 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000034 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000034 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000035 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000035 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000036 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000036 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000037 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000037 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000038 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000039 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000039 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600003a ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600003a ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0600003b ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0600003b ctor=System.Void System.Runtime.ExceptionServices.HandleProcessCorruptedStateExceptionsAttribute::.ctor() args=()
+ca parent=0x0600003c ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x0600003c ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0600003c ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=!unresolved blob=010003000000020000000000
+ca parent=0x0600003d ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0600003d ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x0600003d ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=!unresolved blob=010003000000020000000000
+ca parent=0x0600003e ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0600003e ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600003f ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x0600003f ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000040 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000041 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000041 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000042 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000042 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000043 ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x06000044 ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x06000045 ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x06000046 ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x06000047 ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x06000048 ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x06000049 ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x0600004a ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x0600004b ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x0600004c ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x0600004d ctor=System.Void System.Security.SuppressUnmanagedCodeSecurityAttribute::.ctor() args=()
+ca parent=0x06000056 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000057 ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x06000058 ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x06000059 ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
+ca parent=0x0600005a ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
+ca parent=0x0600005a ctor=System.Void System.Runtime.ConstrainedExecution.PrePrepareMethodAttribute::.ctor() args=()
+[il]
+0x06000001 max-stack=1 init-locals=false code-size=17
+	IL_0000: ldstr "In managed function."
+	IL_0005: call System.Void System.Console::WriteLine(System.String)
+	IL_000a: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::func2()
+	IL_000f: ldc.i4.0
+	IL_0010: ret
+0x06000002 max-stack=2 init-locals=false code-size=28
+	local 0=method System.Void *(System.Void*)
+	IL_0000: ldarg.0
+	IL_0001: stloc.0
+	IL_0002: ldarg.1
+	IL_0003: ldloc.0
+	IL_0004: calli System.Void(System.Void*)
+	IL_0009: leave.s IL_001b
+	IL_000b: pop
+	IL_000c: call System.IntPtr System.Runtime.InteropServices.Marshal::GetExceptionPointers()
+	IL_0011: call System.Int32 modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__FrameUnwindFilter(_EXCEPTION_POINTERS*)
+	IL_0016: endfilter
+	IL_0018: pop
+	IL_0019: leave.s IL_001b
+	IL_001b: ret
+	.try IL_0000 to IL_000b filter IL_000b handler IL_0018 to IL_001b
+0x06000003 max-stack=3 init-locals=false code-size=14
+	IL_0000: ldstr "A nested exception occurred after the primary exception that caused the C++ module to fail to load.
+"
+	IL_0005: ldarg.0
+	IL_0006: ldarg.1
+	IL_0007: newobj System.Void <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::.ctor(System.String,System.Exception,System.Exception)
+	IL_000c: throw
+	IL_000d: ret
+0x06000004 max-stack=1 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: newobj System.Void <CrtImplementationDetails>.ModuleLoadException::.ctor(System.String)
+	IL_0006: throw
+	IL_0007: ret
+0x06000005 max-stack=2 init-locals=false code-size=9
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: newobj System.Void <CrtImplementationDetails>.ModuleLoadException::.ctor(System.String,System.Exception)
+	IL_0007: throw
+	IL_0008: ret
+0x06000006 max-stack=2 init-locals=false code-size=12
+	IL_0000: ldsfld <CrtImplementationDetails>.ModuleUninitializer <CrtImplementationDetails>.ModuleUninitializer::_ModuleUninitializer
+	IL_0005: ldarg.0
+	IL_0006: call System.Void <CrtImplementationDetails>.ModuleUninitializer::AddHandler(System.EventHandler)
+	IL_000b: ret
+0x06000007 max-stack=13 init-locals=false code-size=68
+	local 0=System.Guid
+	IL_0000: ldloca.s V_0
+	IL_0002: ldarg.0
+	IL_0003: ldind.i4
+	IL_0004: ldarg.0
+	IL_0005: ldc.i4.4
+	IL_0006: conv.i8
+	IL_0007: add
+	IL_0008: ldind.u2
+	IL_0009: ldarg.0
+	IL_000a: ldc.i4.6
+	IL_000b: conv.i8
+	IL_000c: add
+	IL_000d: ldind.u2
+	IL_000e: ldarg.0
+	IL_000f: ldc.i4.8
+	IL_0010: conv.i8
+	IL_0011: add
+	IL_0012: ldind.u1
+	IL_0013: ldarg.0
+	IL_0014: ldc.i4.s 9
+	IL_0016: conv.i8
+	IL_0017: add
+	IL_0018: ldind.u1
+	IL_0019: ldarg.0
+	IL_001a: ldc.i4.s 10
+	IL_001c: conv.i8
+	IL_001d: add
+	IL_001e: ldind.u1
+	IL_001f: ldarg.0
+	IL_0020: ldc.i4.s 11
+	IL_0022: conv.i8
+	IL_0023: add
+	IL_0024: ldind.u1
+	IL_0025: ldarg.0
+	IL_0026: ldc.i4.s 12
+	IL_0028: conv.i8
+	IL_0029: add
+	IL_002a: ldind.u1
+	IL_002b: ldarg.0
+	IL_002c: ldc.i4.s 13
+	IL_002e: conv.i8
+	IL_002f: add
+	IL_0030: ldind.u1
+	IL_0031: ldarg.0
+	IL_0032: ldc.i4.s 14
+	IL_0034: conv.i8
+	IL_0035: add
+	IL_0036: ldind.u1
+	IL_0037: ldarg.0
+	IL_0038: ldc.i4.s 15
+	IL_003a: conv.i8
+	IL_003b: add
+	IL_003c: ldind.u1
+	IL_003d: call System.Void System.Guid::.ctor(System.UInt32,System.UInt16,System.UInt16,System.Byte,System.Byte,System.Byte,System.Byte,System.Byte,System.Byte,System.Byte,System.Byte)
+	IL_0042: ldloc.0
+	IL_0043: ret
+0x06000008 max-stack=4 init-locals=false code-size=87
+	local 0=ICorRuntimeHost*
+	local 1=System.Int32 modopt(System.Runtime.CompilerServices.IsLong)
+	local 2=System.Int64
+	local 3=System.Guid
+	local 4=System.IntPtr
+	IL_0000: ldc.i4.0
+	IL_0001: conv.i8
+	IL_0002: stloc.0
+	IL_0003: ldsflda __s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_cb2f6722_ab3a_11d2_9c40_00c04fa30a3e
+	IL_0008: call System.Guid <Module>::<CrtImplementationDetails>.FromGUID(_GUID modopt(System.Runtime.CompilerServices.IsConst)* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced))
+	IL_000d: stloc.3
+	IL_000e: ldsflda __s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_cb2f6723_ab3a_11d2_9c40_00c04fa30a3e
+	IL_0013: call System.Guid <Module>::<CrtImplementationDetails>.FromGUID(_GUID modopt(System.Runtime.CompilerServices.IsConst)* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced))
+	IL_0018: ldloc.3
+	IL_0019: call System.IntPtr System.Runtime.InteropServices.RuntimeEnvironment::GetRuntimeInterfaceAsIntPtr(System.Guid,System.Guid)
+	IL_001e: stloc.s V_4
+	IL_0020: ldloca.s V_4
+	IL_0022: call System.Void* System.IntPtr::ToPointer()
+	IL_0027: stloc.0
+	IL_0028: leave.s IL_0036
+	IL_002a: call System.Int32 System.Runtime.InteropServices.Marshal::GetHRForException(System.Exception)
+	IL_002f: stloc.1
+	IL_0030: leave.s IL_0032
+	IL_0032: ldloc.1
+	IL_0033: ldc.i4.0
+	IL_0034: blt.s IL_0055
+	IL_0036: ldloc.0
+	IL_0037: ldind.i8
+	IL_0038: ldc.i4.s 104
+	IL_003a: conv.i8
+	IL_003b: add
+	IL_003c: ldind.i8
+	IL_003d: stloc.2
+	IL_003e: ldloc.0
+	IL_003f: ldarg.0
+	IL_0040: ldloc.2
+	IL_0041: calli System.Int32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl)(System.IntPtr,IUnknown**)
+	IL_0046: stloc.1
+	IL_0047: ldloc.0
+	IL_0048: dup
+	IL_0049: ldind.i8
+	IL_004a: ldc.i4.s 16
+	IL_004c: conv.i8
+	IL_004d: add
+	IL_004e: ldind.i8
+	IL_004f: calli System.UInt32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl)(System.IntPtr)
+	IL_0054: pop
+	IL_0055: ldloc.1
+	IL_0056: ret
+	.try IL_0003 to IL_002a catch System.Exception handler IL_002a to IL_0032
+0x06000009 max-stack=3 init-locals=false code-size=15
+	IL_0000: ldarg.0
+	IL_0001: dup
+	IL_0002: ldind.i8
+	IL_0003: ldc.i4.s 16
+	IL_0005: conv.i8
+	IL_0006: add
+	IL_0007: ldind.i8
+	IL_0008: calli System.UInt32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl)(System.IntPtr)
+	IL_000d: pop
+	IL_000e: ret
+0x0600000a max-stack=4 init-locals=false code-size=54
+	local 0=System.Int32 modopt(System.Runtime.CompilerServices.IsLong)
+	local 1=IUnknown*
+	local 2=System.AppDomain
+	local 3=System.IntPtr
+	IL_0000: ldc.i4.0
+	IL_0001: conv.i8
+	IL_0002: stloc.1
+	IL_0003: ldloca.s V_1
+	IL_0005: call System.Int32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__get_default_appdomain(IUnknown**)
+	IL_000a: stloc.0
+	IL_000b: ldloc.0
+	IL_000c: ldc.i4.0
+	IL_000d: blt.s IL_002c
+	IL_000f: ldloca.s V_3
+	IL_0011: ldloc.1
+	IL_0012: call System.Void System.IntPtr::.ctor(System.Void*)
+	IL_0017: ldloc.3
+	IL_0018: call System.Object System.Runtime.InteropServices.Marshal::GetObjectForIUnknown(System.IntPtr)
+	IL_001d: castclass System.AppDomain
+	IL_0022: stloc.2
+	IL_0023: leave.s IL_0034
+	IL_0025: ldloc.1
+	IL_0026: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__release_appdomain(IUnknown*)
+	IL_002b: endfinally
+	IL_002c: ldloc.0
+	IL_002d: call System.Void System.Runtime.InteropServices.Marshal::ThrowExceptionForHR(System.Int32)
+	IL_0032: ldnull
+	IL_0033: ret
+	IL_0034: ldloc.2
+	IL_0035: ret
+	.try IL_000f to IL_0025 finally handler IL_0025 to IL_002c
+0x0600000b max-stack=5 init-locals=false code-size=97
+	local 0=ICLRRuntimeHost*
+	local 1=System.Int32 modopt(System.Runtime.CompilerServices.IsLong)
+	local 2=System.UInt32
+	local 3=System.Int64
+	local 4=System.Guid
+	local 5=System.IntPtr
+	IL_0000: ldsflda __s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_90f1a06c_7712_4762_86b5_7a5eba6bdb02
+	IL_0005: call System.Guid <Module>::<CrtImplementationDetails>.FromGUID(_GUID modopt(System.Runtime.CompilerServices.IsConst)* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced))
+	IL_000a: stloc.s V_4
+	IL_000c: ldsflda __s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_90f1a06e_7712_4762_86b5_7a5eba6bdb02
+	IL_0011: call System.Guid <Module>::<CrtImplementationDetails>.FromGUID(_GUID modopt(System.Runtime.CompilerServices.IsConst)* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced))
+	IL_0016: ldloc.s V_4
+	IL_0018: call System.IntPtr System.Runtime.InteropServices.RuntimeEnvironment::GetRuntimeInterfaceAsIntPtr(System.Guid,System.Guid)
+	IL_001d: stloc.s V_5
+	IL_001f: ldloca.s V_5
+	IL_0021: call System.Void* System.IntPtr::ToPointer()
+	IL_0026: stloc.0
+	IL_0027: call System.AppDomain <Module>::<CrtImplementationDetails>.GetDefaultDomain()
+	IL_002c: ldloc.0
+	IL_002d: ldind.i8
+	IL_002e: ldc.i4.s 64
+	IL_0030: conv.i8
+	IL_0031: add
+	IL_0032: ldind.i8
+	IL_0033: stloc.3
+	IL_0034: call System.Int32 System.AppDomain::get_Id()
+	IL_0039: stloc.2
+	IL_003a: ldloc.0
+	IL_003b: ldloc.2
+	IL_003c: ldarg.0
+	IL_003d: ldarg.1
+	IL_003e: ldloc.3
+	IL_003f: calli System.Int32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl)(System.IntPtr,System.UInt32 modopt(System.Runtime.CompilerServices.IsLong),method System.Int32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl) *(System.Void*),System.Void*)
+	IL_0044: stloc.1
+	IL_0045: ldloc.1
+	IL_0046: ldc.i4.0
+	IL_0047: bge.s IL_004f
+	IL_0049: ldloc.1
+	IL_004a: call System.Void System.Runtime.InteropServices.Marshal::ThrowExceptionForHR(System.Int32)
+	IL_004f: leave.s IL_0060
+	IL_0051: ldloc.0
+	IL_0052: dup
+	IL_0053: ldind.i8
+	IL_0054: ldc.i4.s 16
+	IL_0056: conv.i8
+	IL_0057: add
+	IL_0058: ldind.i8
+	IL_0059: calli System.UInt32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl)(System.IntPtr)
+	IL_005e: pop
+	IL_005f: endfinally
+	IL_0060: ret
+	.try IL_0027 to IL_0051 finally handler IL_0051 to IL_0060
+0x0600000c max-stack=2 init-locals=false code-size=17
+	local 0=System.UInt32
+	IL_0000: ldsfld System.UInt32 <Module>::__scrt_native_dllmain_reason
+	IL_0005: stloc.0
+	IL_0006: ldloc.0
+	IL_0007: brfalse.s IL_000f
+	IL_0009: ldloc.0
+	IL_000a: ldc.i4.1
+	IL_000b: beq.s IL_000f
+	IL_000d: ldc.i4.1
+	IL_000e: ret
+	IL_000f: ldc.i4.0
+	IL_0010: ret
+0x0600000d max-stack=1 init-locals=false code-size=17
+	IL_0000: ldc.i4 2147483647
+	IL_0005: box System.Int32
+	IL_000a: call System.Void System.GC::KeepAlive(System.Object)
+	IL_000f: ldc.i4.0
+	IL_0010: ret
+0x0600000e max-stack=2 init-locals=false code-size=71
+	local 0=System.Void**
+	IL_0000: ldsfld <CrtImplementationDetails>.TriBool <Module>::?hasPerProcess@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A
+	IL_0005: ldc.i4.2
+	IL_0006: bne.un.s IL_003d
+	IL_0008: ldsflda <CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_a
+	IL_000d: stloc.0
+	IL_000e: ldsflda <CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_a
+	IL_0013: ldsflda <CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_z
+	IL_0018: bge.un.s IL_0035
+	IL_001a: ldloc.0
+	IL_001b: ldind.i8
+	IL_001c: brtrue.s IL_002d
+	IL_001e: ldloc.0
+	IL_001f: ldc.i4.8
+	IL_0020: conv.i8
+	IL_0021: add
+	IL_0022: stloc.0
+	IL_0023: ldloc.0
+	IL_0024: ldsflda <CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_z
+	IL_0029: blt.un.s IL_001a
+	IL_002b: br.s IL_0035
+	IL_002d: ldc.i4.m1
+	IL_002e: stsfld <CrtImplementationDetails>.TriBool <Module>::?hasPerProcess@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A
+	IL_0033: ldc.i4.1
+	IL_0034: ret
+	IL_0035: ldc.i4.0
+	IL_0036: stsfld <CrtImplementationDetails>.TriBool <Module>::?hasPerProcess@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A
+	IL_003b: ldc.i4.0
+	IL_003c: ret
+	IL_003d: ldsfld <CrtImplementationDetails>.TriBool <Module>::?hasPerProcess@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A
+	IL_0042: ldc.i4.m1
+	IL_0043: ceq
+	IL_0045: conv.u1
+	IL_0046: ret
+0x0600000f max-stack=2 init-locals=false code-size=116
+	local 0=System.Void**
+	local 1=System.Void**
+	IL_0000: ldsfld <CrtImplementationDetails>.TriBool <Module>::?hasNative@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A
+	IL_0005: ldc.i4.2
+	IL_0006: bne.un.s IL_006a
+	IL_0008: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_a
+	IL_000d: stloc.1
+	IL_000e: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_a
+	IL_0013: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_z
+	IL_0018: bge.un.s IL_0035
+	IL_001a: ldloc.1
+	IL_001b: ldind.i8
+	IL_001c: brtrue.s IL_002d
+	IL_001e: ldloc.1
+	IL_001f: ldc.i4.8
+	IL_0020: conv.i8
+	IL_0021: add
+	IL_0022: stloc.1
+	IL_0023: ldloc.1
+	IL_0024: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_z
+	IL_0029: blt.un.s IL_001a
+	IL_002b: br.s IL_0035
+	IL_002d: ldc.i4.m1
+	IL_002e: stsfld <CrtImplementationDetails>.TriBool <Module>::?hasNative@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A
+	IL_0033: ldc.i4.1
+	IL_0034: ret
+	IL_0035: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_a
+	IL_003a: stloc.0
+	IL_003b: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_a
+	IL_0040: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_z
+	IL_0045: bge.un.s IL_0062
+	IL_0047: ldloc.0
+	IL_0048: ldind.i8
+	IL_0049: brtrue.s IL_005a
+	IL_004b: ldloc.0
+	IL_004c: ldc.i4.8
+	IL_004d: conv.i8
+	IL_004e: add
+	IL_004f: stloc.0
+	IL_0050: ldloc.0
+	IL_0051: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_z
+	IL_0056: blt.un.s IL_0047
+	IL_0058: br.s IL_0062
+	IL_005a: ldc.i4.m1
+	IL_005b: stsfld <CrtImplementationDetails>.TriBool <Module>::?hasNative@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A
+	IL_0060: ldc.i4.1
+	IL_0061: ret
+	IL_0062: ldc.i4.0
+	IL_0063: stsfld <CrtImplementationDetails>.TriBool <Module>::?hasNative@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A
+	IL_0068: ldc.i4.0
+	IL_0069: ret
+	IL_006a: ldsfld <CrtImplementationDetails>.TriBool <Module>::?hasNative@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A
+	IL_006f: ldc.i4.m1
+	IL_0070: ceq
+	IL_0072: conv.u1
+	IL_0073: ret
+0x06000010 max-stack=1 init-locals=false code-size=44
+	local 0=System.Int32
+	IL_0000: call System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DefaultDomain.HasPerProcess()
+	IL_0005: brfalse.s IL_000e
+	IL_0007: ldsfld System.Boolean <Module>::?InitializedPerProcess@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_000c: brfalse.s IL_0023
+	IL_000e: call System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DefaultDomain.HasNative()
+	IL_0013: brfalse.s IL_0027
+	IL_0015: ldsfld System.Boolean <Module>::?InitializedNative@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_001a: brtrue.s IL_0027
+	IL_001c: ldsfld __scrt_native_startup_state <Module>::__scrt_current_native_startup_state
+	IL_0021: brtrue.s IL_0027
+	IL_0023: ldc.i4.1
+	IL_0024: stloc.0
+	IL_0025: br.s IL_0029
+	IL_0027: ldc.i4.0
+	IL_0028: stloc.0
+	IL_0029: ldloc.0
+	IL_002a: conv.u1
+	IL_002b: ret
+0x06000011 max-stack=1 init-locals=false code-size=6
+	IL_0000: ldsfld System.Boolean <Module>::?Entered@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_0005: ret
+0x06000012 max-stack=2 init-locals=false code-size=13
+	IL_0000: ldsfld System.Int32** <Module>::__unep@?DoNothing@DefaultDomain@<CrtImplementationDetails>@@$$FCAJPEAX@Z
+	IL_0005: ldc.i4.0
+	IL_0006: conv.i8
+	IL_0007: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DoCallBackInDefaultDomain(method System.Int32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl) *(System.Void*),System.Void*)
+	IL_000c: ret
+0x06000013 max-stack=1 init-locals=false code-size=7
+	IL_0000: ldc.i4.0
+	IL_0001: stsfld System.Int32 <Module>::?Initialized@CurrentDomain@<CrtImplementationDetails>@@$$Q2HA
+	IL_0006: ret
+0x06000014 max-stack=1 init-locals=false code-size=7
+	IL_0000: ldc.i4.0
+	IL_0001: stsfld System.Int32 <Module>::?Uninitialized@CurrentDomain@<CrtImplementationDetails>@@$$Q2HA
+	IL_0006: ret
+0x06000015 max-stack=1 init-locals=false code-size=7
+	IL_0000: ldc.i4.0
+	IL_0001: stsfld System.Boolean <Module>::?IsDefaultDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2_NA
+	IL_0006: ret
+0x06000016 max-stack=1 init-locals=false code-size=7
+	IL_0000: ldc.i4.0
+	IL_0001: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedVtables@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_0006: ret
+0x06000017 max-stack=1 init-locals=false code-size=7
+	IL_0000: ldc.i4.0
+	IL_0001: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedNative@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_0006: ret
+0x06000018 max-stack=1 init-locals=false code-size=7
+	IL_0000: ldc.i4.0
+	IL_0001: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedPerProcess@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_0006: ret
+0x06000019 max-stack=1 init-locals=false code-size=7
+	IL_0000: ldc.i4.0
+	IL_0001: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedPerAppDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_0006: ret
+0x0600001a max-stack=2 init-locals=false code-size=40
+	IL_0000: ldarg.0
+	IL_0001: ldstr "The C++ module failed to load during vtable initialization.
+"
+	IL_0006: call gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced) <Module>::gcroot<System::String ^>.=(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst),System.String)
+	IL_000b: pop
+	IL_000c: ldc.i4.1
+	IL_000d: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedVtables@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_0012: ldsflda <CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xi_vt_a
+	IL_0017: ldsflda <CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xi_vt_z
+	IL_001c: call System.Void <Module>::_initterm_m(method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *() modopt(System.Runtime.CompilerServices.IsConst)*,method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *() modopt(System.Runtime.CompilerServices.IsConst)*)
+	IL_0021: ldc.i4.2
+	IL_0022: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedVtables@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_0027: ret
+0x0600001b max-stack=2 init-locals=false code-size=18
+	IL_0000: ldarg.0
+	IL_0001: ldstr "The C++ module failed to load while attempting to initialize the default appdomain.
+"
+	IL_0006: call gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced) <Module>::gcroot<System::String ^>.=(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst),System.String)
+	IL_000b: pop
+	IL_000c: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DefaultDomain.Initialize()
+	IL_0011: ret
+0x0600001c max-stack=2 init-locals=false code-size=129
+	IL_0000: ldarg.0
+	IL_0001: ldstr "The C++ module failed to load during native initialization.
+"
+	IL_0006: call gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced) <Module>::gcroot<System::String ^>.=(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst),System.String)
+	IL_000b: pop
+	IL_000c: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__security_init_cookie()
+	IL_0011: ldc.i4.1
+	IL_0012: stsfld System.Boolean <Module>::?InitializedNative@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_0017: call System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::__scrt_is_safe_for_managed_code()
+	IL_001c: brtrue.s IL_0023
+	IL_001e: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::abort()
+	IL_0023: ldsfld __scrt_native_startup_state <Module>::__scrt_current_native_startup_state
+	IL_0028: ldc.i4.1
+	IL_0029: bne.un.s IL_0030
+	IL_002b: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::abort()
+	IL_0030: ldsfld __scrt_native_startup_state <Module>::__scrt_current_native_startup_state
+	IL_0035: brtrue.s IL_0080
+	IL_0037: ldc.i4.1
+	IL_0038: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedNative@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_003d: ldc.i4.1
+	IL_003e: stsfld __scrt_native_startup_state <Module>::__scrt_current_native_startup_state
+	IL_0043: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_a
+	IL_0048: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_z
+	IL_004d: call System.Int32 <Module>::_initterm_e(method System.Int32 modopt(System.Runtime.CompilerServices.CallConvCdecl) *()*,method System.Int32 modopt(System.Runtime.CompilerServices.CallConvCdecl) *()*)
+	IL_0052: brfalse.s IL_005f
+	IL_0054: ldarg.0
+	IL_0055: call System.String <Module>::gcroot<System::String ^>..PE$AAVString@System@@(gcroot<System::String ^> modopt(System.Runtime.CompilerServices.IsConst)* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_005a: call System.Void <Module>::<CrtImplementationDetails>.ThrowModuleLoadException(System.String)
+	IL_005f: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_a
+	IL_0064: ldsflda <CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_z
+	IL_0069: call System.Void <Module>::_initterm(method System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) *()*,method System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) *()*)
+	IL_006e: ldc.i4.2
+	IL_006f: stsfld __scrt_native_startup_state <Module>::__scrt_current_native_startup_state
+	IL_0074: ldc.i4.1
+	IL_0075: stsfld System.Boolean <Module>::?InitializedNativeFromCCTOR@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_007a: ldc.i4.2
+	IL_007b: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedNative@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_0080: ret
+0x0600001d max-stack=2 init-locals=false code-size=52
+	IL_0000: ldarg.0
+	IL_0001: ldstr "The C++ module failed to load during process initialization.
+"
+	IL_0006: call gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced) <Module>::gcroot<System::String ^>.=(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst),System.String)
+	IL_000b: pop
+	IL_000c: ldc.i4.1
+	IL_000d: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedPerProcess@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_0012: call System.Int32 <Module>::_initatexit_m()
+	IL_0017: pop
+	IL_0018: ldsflda <CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_a
+	IL_001d: ldsflda <CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_z
+	IL_0022: call System.Void <Module>::_initterm_m(method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *() modopt(System.Runtime.CompilerServices.IsConst)*,method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *() modopt(System.Runtime.CompilerServices.IsConst)*)
+	IL_0027: ldc.i4.2
+	IL_0028: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedPerProcess@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_002d: ldc.i4.1
+	IL_002e: stsfld System.Boolean <Module>::?InitializedPerProcess@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_0033: ret
+0x0600001e max-stack=2 init-locals=false code-size=46
+	IL_0000: ldarg.0
+	IL_0001: ldstr "The C++ module failed to load during appdomain initialization.
+"
+	IL_0006: call gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced) <Module>::gcroot<System::String ^>.=(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst),System.String)
+	IL_000b: pop
+	IL_000c: ldc.i4.1
+	IL_000d: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedPerAppDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_0012: call System.Int32 <Module>::_initatexit_app_domain()
+	IL_0017: pop
+	IL_0018: ldsflda <CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_ma_a
+	IL_001d: ldsflda <CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_ma_z
+	IL_0022: call System.Void <Module>::_initterm_m(method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *() modopt(System.Runtime.CompilerServices.IsConst)*,method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *() modopt(System.Runtime.CompilerServices.IsConst)*)
+	IL_0027: ldc.i4.2
+	IL_0028: stsfld <CrtImplementationDetails>.Progress <Module>::?InitializedPerAppDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A
+	IL_002d: ret
+0x0600001f max-stack=2 init-locals=false code-size=30
+	IL_0000: ldarg.0
+	IL_0001: ldstr "The C++ module failed to load during registration for the unload events.
+"
+	IL_0006: call gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced) <Module>::gcroot<System::String ^>.=(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst),System.String)
+	IL_000b: pop
+	IL_000c: ldnull
+	IL_000d: ldftn System.Void <Module>::<CrtImplementationDetails>.LanguageSupport.DomainUnload(System.Object,System.EventArgs)
+	IL_0013: newobj System.Void System.EventHandler::.ctor(System.Object,System.IntPtr)
+	IL_0018: call System.Void <Module>::<CrtImplementationDetails>.RegisterModuleUninitializer(System.EventHandler)
+	IL_001d: ret
+0x06000020 max-stack=4 init-locals=false code-size=193
+	local 0=System.Int32
+	local 1=System.Int32
+	local 2=System.Void*
+	local 3=System.Int32
+	local 4=System.Void*
+	IL_0000: call System.AppDomain System.AppDomain::get_CurrentDomain()
+	IL_0005: call System.Boolean System.AppDomain::IsDefaultAppDomain()
+	IL_000a: stsfld System.Boolean <Module>::?IsDefaultDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2_NA
+	IL_000f: ldsfld System.Boolean <Module>::?IsDefaultDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2_NA
+	IL_0014: ldc.i4.0
+	IL_0015: bne.un.s IL_001e
+	IL_0017: ldsfld System.Boolean <Module>::?Entered@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_001c: br.s IL_001f
+	IL_001e: ldc.i4.1
+	IL_001f: stsfld System.Boolean <Module>::?Entered@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_0024: call System.Void* modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::_getFiberPtrId()
+	IL_0029: stloc.s V_4
+	IL_002b: ldc.i4.0
+	IL_002c: stloc.3
+	IL_002d: ldc.i4.0
+	IL_002e: stloc.0
+	IL_002f: ldc.i4.0
+	IL_0030: stloc.1
+	IL_0031: call System.Void System.Runtime.CompilerServices.RuntimeHelpers::PrepareConstrainedRegions()
+	IL_0036: ldloc.0
+	IL_0037: brtrue.s IL_006a
+	IL_0039: leave.s IL_005b
+	IL_003b: ldsflda System.Void* <Module>::__scrt_native_startup_lock
+	IL_0040: ldloc.s V_4
+	IL_0042: ldc.i4.0
+	IL_0043: conv.i8
+	IL_0044: call System.Int64 System.Threading.Interlocked::CompareExchange(System.Int64&,System.Int64,System.Int64)
+	IL_0049: stloc.2
+	IL_004a: ldloc.2
+	IL_004b: brtrue.s IL_0051
+	IL_004d: ldc.i4.1
+	IL_004e: stloc.0
+	IL_004f: br.s IL_005a
+	IL_0051: ldloc.2
+	IL_0052: ldloc.s V_4
+	IL_0054: bne.un.s IL_005a
+	IL_0056: ldc.i4.1
+	IL_0057: stloc.3
+	IL_0058: ldc.i4.1
+	IL_0059: stloc.0
+	IL_005a: endfinally
+	IL_005b: ldloc.0
+	IL_005c: brtrue.s IL_0068
+	IL_005e: ldc.i4 1000
+	IL_0063: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::Sleep(System.UInt32 modopt(System.Runtime.CompilerServices.IsLong))
+	IL_0068: br.s IL_0036
+	IL_006a: ldarg.0
+	IL_006b: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializeVtables(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_0070: ldsfld System.Boolean <Module>::?IsDefaultDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2_NA
+	IL_0075: brfalse.s IL_0085
+	IL_0077: ldarg.0
+	IL_0078: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializeNative(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_007d: ldarg.0
+	IL_007e: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializePerProcess(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_0083: br.s IL_0092
+	IL_0085: call System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DefaultDomain.NeedsInitialization()
+	IL_008a: ldc.i4.0
+	IL_008b: bne.un.s IL_0090
+	IL_008d: ldloc.1
+	IL_008e: br.s IL_0091
+	IL_0090: ldc.i4.1
+	IL_0091: stloc.1
+	IL_0092: leave.s IL_00a5
+	IL_0094: ldloc.3
+	IL_0095: brtrue.s IL_00a4
+	IL_0097: ldsflda System.Void* <Module>::__scrt_native_startup_lock
+	IL_009c: ldc.i4.0
+	IL_009d: conv.i8
+	IL_009e: call System.Int64 System.Threading.Interlocked::Exchange(System.Int64&,System.Int64)
+	IL_00a3: pop
+	IL_00a4: endfinally
+	IL_00a5: ldloc.1
+	IL_00a6: brfalse.s IL_00ae
+	IL_00a8: ldarg.0
+	IL_00a9: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializeDefaultAppDomain(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_00ae: ldarg.0
+	IL_00af: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializePerAppDomain(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_00b4: ldc.i4.1
+	IL_00b5: stsfld System.Int32 <Module>::?Initialized@CurrentDomain@<CrtImplementationDetails>@@$$Q2HA
+	IL_00ba: ldarg.0
+	IL_00bb: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.InitializeUninitializer(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_00c0: ret
+	.try IL_0039 to IL_003b finally handler IL_003b to IL_005b
+	.try IL_0036 to IL_0094 finally handler IL_0094 to IL_00a5
+0x06000021 max-stack=0 init-locals=false code-size=6
+	IL_0000: call System.Void <Module>::_app_exit_callback()
+	IL_0005: ret
+0x06000022 max-stack=1 init-locals=false code-size=43
+	IL_0000: call System.Void <Module>::_exit_callback()
+	IL_0005: ldc.i4.0
+	IL_0006: stsfld System.Boolean <Module>::?InitializedPerProcess@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_000b: ldsfld System.Boolean <Module>::?InitializedNativeFromCCTOR@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_0010: brfalse.s IL_0023
+	IL_0012: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::_cexit()
+	IL_0017: ldc.i4.0
+	IL_0018: stsfld __scrt_native_startup_state <Module>::__scrt_current_native_startup_state
+	IL_001d: ldc.i4.0
+	IL_001e: stsfld System.Boolean <Module>::?InitializedNativeFromCCTOR@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_0023: ldc.i4.0
+	IL_0024: stsfld System.Boolean <Module>::?InitializedNative@DefaultDomain@<CrtImplementationDetails>@@2_NA
+	IL_0029: ldc.i4.0
+	IL_002a: ret
+0x06000023 max-stack=2 init-locals=false code-size=42
+	IL_0000: call System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DefaultDomain.NeedsUninitialization()
+	IL_0005: brfalse.s IL_0029
+	IL_0007: call System.AppDomain System.AppDomain::get_CurrentDomain()
+	IL_000c: call System.Boolean System.AppDomain::IsDefaultAppDomain()
+	IL_0011: brfalse.s IL_001d
+	IL_0013: ldc.i4.0
+	IL_0014: conv.i8
+	IL_0015: call System.Int32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport._UninitializeDefaultDomain(System.Void*)
+	IL_001a: pop
+	IL_001b: br.s IL_0029
+	IL_001d: ldsfld System.Int32** <Module>::__unep@?_UninitializeDefaultDomain@LanguageSupport@<CrtImplementationDetails>@@$$FCAJPEAX@Z
+	IL_0022: ldc.i4.0
+	IL_0023: conv.i8
+	IL_0024: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.DoCallBackInDefaultDomain(method System.Int32 modopt(System.Runtime.CompilerServices.IsLong) modopt(System.Runtime.CompilerServices.CallConvCdecl) *(System.Void*),System.Void*)
+	IL_0029: ret
+0x06000024 max-stack=2 init-locals=false code-size=47
+	IL_0000: ldsfld System.Int32 <Module>::?Initialized@CurrentDomain@<CrtImplementationDetails>@@$$Q2HA
+	IL_0005: brfalse.s IL_002e
+	IL_0007: ldsflda System.Int32 <Module>::?Uninitialized@CurrentDomain@<CrtImplementationDetails>@@$$Q2HA
+	IL_000c: ldc.i4.1
+	IL_000d: call System.Int32 System.Threading.Interlocked::Exchange(System.Int32&,System.Int32)
+	IL_0012: brtrue.s IL_002e
+	IL_0014: ldsflda System.Int32 <Module>::?Count@AllDomains@<CrtImplementationDetails>@@2HA
+	IL_0019: call System.Int32 System.Threading.Interlocked::Decrement(System.Int32&)
+	IL_001e: ldc.i4.0
+	IL_001f: ceq
+	IL_0021: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.UninitializeAppDomain()
+	IL_0026: conv.u1
+	IL_0027: brfalse.s IL_002e
+	IL_0029: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.UninitializeDefaultDomain()
+	IL_002e: ret
+0x06000025 max-stack=4 init-locals=false code-size=51
+	local 0=System.Exception
+	local 1=System.Boolean
+	local 2=System.Object
+	IL_0000: ldsflda System.Int32 <Module>::?Count@AllDomains@<CrtImplementationDetails>@@2HA
+	IL_0005: call System.Int32 System.Threading.Interlocked::Decrement(System.Int32&)
+	IL_000a: ldc.i4.0
+	IL_000b: ceq
+	IL_000d: conv.u1
+	IL_000e: stloc.1
+	IL_000f: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.UninitializeAppDomain()
+	IL_0014: ldloc.1
+	IL_0015: brfalse.s IL_001c
+	IL_0017: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.UninitializeDefaultDomain()
+	IL_001c: leave.s IL_0032
+	IL_001e: stloc.0
+	IL_001f: ldarg.1
+	IL_0020: ldloc.0
+	IL_0021: call System.Void <Module>::<CrtImplementationDetails>.ThrowNestedModuleLoadException(System.Exception,System.Exception)
+	IL_0026: leave.s IL_0032
+	IL_0028: stloc.2
+	IL_0029: ldarg.1
+	IL_002a: ldnull
+	IL_002b: call System.Void <Module>::<CrtImplementationDetails>.ThrowNestedModuleLoadException(System.Exception,System.Exception)
+	IL_0030: leave.s IL_0032
+	IL_0032: ret
+	.try IL_0000 to IL_001e catch System.Exception handler IL_001e to IL_0028
+	.try IL_0000 to IL_001e catch System.Object handler IL_0028 to IL_0032
+0x06000026 max-stack=1 init-locals=false code-size=9
+	IL_0000: ldarg.0
+	IL_0001: call gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::gcroot<System::String ^>.{ctor}(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_0006: pop
+	IL_0007: ldarg.0
+	IL_0008: ret
+0x06000027 max-stack=1 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::gcroot<System::String ^>.{dtor}(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_0006: ret
+0x06000028 max-stack=4 init-locals=false code-size=99
+	local 0=System.Boolean
+	local 1=System.Exception
+	local 2=System.Object
+	IL_0000: ldc.i4.0
+	IL_0001: stloc.0
+	IL_0002: call System.Void System.Runtime.CompilerServices.RuntimeHelpers::PrepareConstrainedRegions()
+	IL_0007: ldarg.0
+	IL_0008: ldstr "The C++ module failed to load.
+"
+	IL_000d: call gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsImplicitlyDereferenced) <Module>::gcroot<System::String ^>.=(gcroot<System::String ^>* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst),System.String)
+	IL_0012: pop
+	IL_0013: call System.Void System.Runtime.CompilerServices.RuntimeHelpers::PrepareConstrainedRegions()
+	IL_0018: leave.s IL_0028
+	IL_001a: ldsflda System.Int32 <Module>::?Count@AllDomains@<CrtImplementationDetails>@@2HA
+	IL_001f: call System.Int32 System.Threading.Interlocked::Increment(System.Int32&)
+	IL_0024: pop
+	IL_0025: ldc.i4.1
+	IL_0026: stloc.0
+	IL_0027: endfinally
+	IL_0028: ldarg.0
+	IL_0029: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport._Initialize(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_002e: leave.s IL_0062
+	IL_0030: stloc.1
+	IL_0031: ldloc.0
+	IL_0032: brfalse.s IL_003b
+	IL_0034: ldarg.0
+	IL_0035: ldloc.1
+	IL_0036: call System.Void <Module>::<CrtImplementationDetails>.LanguageSupport.Cleanup(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst),System.Exception)
+	IL_003b: ldarg.0
+	IL_003c: call System.String <Module>::gcroot<System::String ^>..PE$AAVString@System@@(gcroot<System::String ^> modopt(System.Runtime.CompilerServices.IsConst)* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_0041: ldloc.1
+	IL_0042: call System.Void <Module>::<CrtImplementationDetails>.ThrowModuleLoadException(System.String,System.Exception)
+	IL_0047: leave.s IL_0062
+	IL_0049: stloc.2
+	IL_004a: ldloc.0
+	IL_004b: brfalse.s IL_0054
+	IL_004d: ldarg.0
+	IL_004e: ldnull
+	IL_004f: call System.Void <Module>::<CrtImplementationDetails>.LanguageSupport.Cleanup(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst),System.Exception)
+	IL_0054: ldarg.0
+	IL_0055: call System.String <Module>::gcroot<System::String ^>..PE$AAVString@System@@(gcroot<System::String ^> modopt(System.Runtime.CompilerServices.IsConst)* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_005a: ldnull
+	IL_005b: call System.Void <Module>::<CrtImplementationDetails>.ThrowModuleLoadException(System.String,System.Exception)
+	IL_0060: leave.s IL_0062
+	IL_0062: ret
+	.try IL_0018 to IL_001a finally handler IL_001a to IL_0028
+	.try IL_0007 to IL_0030 catch System.Exception handler IL_0030 to IL_0049
+	.try IL_0007 to IL_0030 catch System.Object handler IL_0049 to IL_0062
+0x06000029 max-stack=2 init-locals=false code-size=39
+	local 0=<CrtImplementationDetails>.LanguageSupport
+	IL_0000: ldloca.s V_0
+	IL_0002: call <CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.{ctor}(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_0007: pop
+	IL_0008: ldloca.s V_0
+	IL_000a: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.Initialize(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_000f: leave.s IL_001f
+	IL_0011: ldftn System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.{dtor}(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_0017: ldloca.s V_0
+	IL_0019: call System.Void <Module>::___CxxCallUnwindDtor(method System.Void *(System.Void*),System.Void*)
+	IL_001e: endfinally
+	IL_001f: ldloca.s V_0
+	IL_0021: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.LanguageSupport.{dtor}(<CrtImplementationDetails>.LanguageSupport* modopt(System.Runtime.CompilerServices.IsConst) modopt(System.Runtime.CompilerServices.IsConst))
+	IL_0026: ret
+	.try IL_0008 to IL_0011 fault handler IL_0011 to IL_001f
+0x0600002a max-stack=2 init-locals=false code-size=24
+	local 0=System.IntPtr
+	local 1=System.Runtime.InteropServices.GCHandle
+	IL_0000: ldloca.s V_0
+	IL_0002: ldarg.0
+	IL_0003: ldind.i8
+	IL_0004: call System.Void System.IntPtr::.ctor(System.Void*)
+	IL_0009: ldloc.0
+	IL_000a: call System.Runtime.InteropServices.GCHandle System.Runtime.InteropServices.GCHandle::op_Explicit(System.IntPtr)
+	IL_000f: stloc.1
+	IL_0010: ldloca.s V_1
+	IL_0012: call System.Object System.Runtime.InteropServices.GCHandle::get_Target()
+	IL_0017: ret
+0x0600002b max-stack=2 init-locals=false code-size=26
+	local 0=System.IntPtr
+	local 1=System.Runtime.InteropServices.GCHandle
+	IL_0000: ldloca.s V_0
+	IL_0002: ldarg.0
+	IL_0003: ldind.i8
+	IL_0004: call System.Void System.IntPtr::.ctor(System.Void*)
+	IL_0009: ldloc.0
+	IL_000a: call System.Runtime.InteropServices.GCHandle System.Runtime.InteropServices.GCHandle::op_Explicit(System.IntPtr)
+	IL_000f: stloc.1
+	IL_0010: ldloca.s V_1
+	IL_0012: ldarg.1
+	IL_0013: call System.Void System.Runtime.InteropServices.GCHandle::set_Target(System.Object)
+	IL_0018: ldarg.0
+	IL_0019: ret
+0x0600002c max-stack=2 init-locals=false code-size=28
+	local 0=System.IntPtr
+	local 1=System.Runtime.InteropServices.GCHandle
+	IL_0000: ldloca.s V_0
+	IL_0002: ldarg.0
+	IL_0003: ldind.i8
+	IL_0004: call System.Void System.IntPtr::.ctor(System.Void*)
+	IL_0009: ldloc.0
+	IL_000a: call System.Runtime.InteropServices.GCHandle System.Runtime.InteropServices.GCHandle::op_Explicit(System.IntPtr)
+	IL_000f: stloc.1
+	IL_0010: ldloca.s V_1
+	IL_0012: call System.Void System.Runtime.InteropServices.GCHandle::Free()
+	IL_0017: ldarg.0
+	IL_0018: ldc.i4.0
+	IL_0019: conv.i8
+	IL_001a: stind.i8
+	IL_001b: ret
+0x0600002d max-stack=2 init-locals=false code-size=23
+	local 0=System.IntPtr
+	IL_0000: ldnull
+	IL_0001: call System.Runtime.InteropServices.GCHandle System.Runtime.InteropServices.GCHandle::Alloc(System.Object)
+	IL_0006: call System.IntPtr System.Runtime.InteropServices.GCHandle::op_Explicit(System.Runtime.InteropServices.GCHandle)
+	IL_000b: stloc.0
+	IL_000c: ldarg.0
+	IL_000d: ldloca.s V_0
+	IL_000f: call System.Void* System.IntPtr::ToPointer()
+	IL_0014: stind.i8
+	IL_0015: ldarg.0
+	IL_0016: ret
+0x0600002e max-stack=2 init-locals=false code-size=33
+	local 0=System.IntPtr
+	IL_0000: ldsfld System.Void* <Module>::?_lock@AtExitLock@<CrtImplementationDetails>@@$$Q0PEAXEA
+	IL_0005: brfalse.s IL_001f
+	IL_0007: ldloca.s V_0
+	IL_0009: ldsfld System.Void* <Module>::?_lock@AtExitLock@<CrtImplementationDetails>@@$$Q0PEAXEA
+	IL_000e: call System.Void System.IntPtr::.ctor(System.Void*)
+	IL_0013: ldloc.0
+	IL_0014: call System.Runtime.InteropServices.GCHandle System.Runtime.InteropServices.GCHandle::FromIntPtr(System.IntPtr)
+	IL_0019: box System.Runtime.InteropServices.GCHandle
+	IL_001e: ret
+	IL_001f: ldnull
+	IL_0020: ret
+0x0600002f max-stack=1 init-locals=false code-size=14
+	IL_0000: ldc.i4.0
+	IL_0001: conv.i8
+	IL_0002: stsfld System.Void* <Module>::?_lock@AtExitLock@<CrtImplementationDetails>@@$$Q0PEAXEA
+	IL_0007: ldarg.0
+	IL_0008: call System.Void <Module>::<CrtImplementationDetails>.AtExitLock._lock_Set(System.Object)
+	IL_000d: ret
+0x06000030 max-stack=2 init-locals=false code-size=65
+	local 0=System.ValueType modopt(System.Runtime.InteropServices.GCHandle) modopt(System.Runtime.CompilerServices.IsBoxed)
+	local 1=System.IntPtr
+	IL_0000: call System.ValueType modopt(System.Runtime.InteropServices.GCHandle) modopt(System.Runtime.CompilerServices.IsBoxed) <Module>::<CrtImplementationDetails>.AtExitLock._handle()
+	IL_0005: stloc.0
+	IL_0006: ldloc.0
+	IL_0007: brtrue.s IL_0034
+	IL_0009: ldarg.0
+	IL_000a: call System.Runtime.InteropServices.GCHandle System.Runtime.InteropServices.GCHandle::Alloc(System.Object)
+	IL_000f: box System.Runtime.InteropServices.GCHandle
+	IL_0014: stloc.0
+	IL_0015: ldloc.0
+	IL_0016: unbox System.Runtime.InteropServices.GCHandle
+	IL_001b: ldobj System.Runtime.InteropServices.GCHandle
+	IL_0020: call System.IntPtr System.Runtime.InteropServices.GCHandle::ToIntPtr(System.Runtime.InteropServices.GCHandle)
+	IL_0025: stloc.1
+	IL_0026: ldloca.s V_1
+	IL_0028: call System.Void* System.IntPtr::ToPointer()
+	IL_002d: stsfld System.Void* <Module>::?_lock@AtExitLock@<CrtImplementationDetails>@@$$Q0PEAXEA
+	IL_0032: br.s IL_0040
+	IL_0034: ldloc.0
+	IL_0035: unbox System.Runtime.InteropServices.GCHandle
+	IL_003a: ldarg.0
+	IL_003b: call System.Void System.Runtime.InteropServices.GCHandle::set_Target(System.Object)
+	IL_0040: ret
+0x06000031 max-stack=1 init-locals=false code-size=23
+	local 0=System.ValueType modopt(System.Runtime.InteropServices.GCHandle) modopt(System.Runtime.CompilerServices.IsBoxed)
+	IL_0000: call System.ValueType modopt(System.Runtime.InteropServices.GCHandle) modopt(System.Runtime.CompilerServices.IsBoxed) <Module>::<CrtImplementationDetails>.AtExitLock._handle()
+	IL_0005: stloc.0
+	IL_0006: ldloc.0
+	IL_0007: brfalse.s IL_0015
+	IL_0009: ldloc.0
+	IL_000a: unbox System.Runtime.InteropServices.GCHandle
+	IL_000f: call System.Object System.Runtime.InteropServices.GCHandle::get_Target()
+	IL_0014: ret
+	IL_0015: ldnull
+	IL_0016: ret
+0x06000032 max-stack=1 init-locals=false code-size=28
+	local 0=System.ValueType modopt(System.Runtime.InteropServices.GCHandle) modopt(System.Runtime.CompilerServices.IsBoxed)
+	IL_0000: call System.ValueType modopt(System.Runtime.InteropServices.GCHandle) modopt(System.Runtime.CompilerServices.IsBoxed) <Module>::<CrtImplementationDetails>.AtExitLock._handle()
+	IL_0005: stloc.0
+	IL_0006: ldloc.0
+	IL_0007: brfalse.s IL_001b
+	IL_0009: ldloc.0
+	IL_000a: unbox System.Runtime.InteropServices.GCHandle
+	IL_000f: call System.Void System.Runtime.InteropServices.GCHandle::Free()
+	IL_0014: ldc.i4.0
+	IL_0015: conv.i8
+	IL_0016: stsfld System.Void* <Module>::?_lock@AtExitLock@<CrtImplementationDetails>@@$$Q0PEAXEA
+	IL_001b: ret
+0x06000033 max-stack=2 init-locals=false code-size=14
+	IL_0000: call System.Object <Module>::<CrtImplementationDetails>.AtExitLock._lock_Get()
+	IL_0005: ldnull
+	IL_0006: bne.un.s IL_000b
+	IL_0008: ldc.i4.0
+	IL_0009: br.s IL_000c
+	IL_000b: ldc.i4.1
+	IL_000c: conv.u1
+	IL_000d: ret
+0x06000034 max-stack=2 init-locals=false code-size=36
+	IL_0000: call System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.AtExitLock.IsInitialized()
+	IL_0005: brtrue.s IL_0017
+	IL_0007: newobj System.Void System.Object::.ctor()
+	IL_000c: call System.Void <Module>::<CrtImplementationDetails>.AtExitLock._lock_Construct(System.Object)
+	IL_0011: ldc.i4.0
+	IL_0012: stsfld System.Int32 <Module>::?_ref_count@AtExitLock@<CrtImplementationDetails>@@$$Q0HA
+	IL_0017: ldsfld System.Int32 <Module>::?_ref_count@AtExitLock@<CrtImplementationDetails>@@$$Q0HA
+	IL_001c: ldc.i4.1
+	IL_001d: add
+	IL_001e: stsfld System.Int32 <Module>::?_ref_count@AtExitLock@<CrtImplementationDetails>@@$$Q0HA
+	IL_0023: ret
+0x06000035 max-stack=2 init-locals=false code-size=25
+	IL_0000: ldsfld System.Int32 <Module>::?_ref_count@AtExitLock@<CrtImplementationDetails>@@$$Q0HA
+	IL_0005: ldc.i4.m1
+	IL_0006: add
+	IL_0007: stsfld System.Int32 <Module>::?_ref_count@AtExitLock@<CrtImplementationDetails>@@$$Q0HA
+	IL_000c: ldsfld System.Int32 <Module>::?_ref_count@AtExitLock@<CrtImplementationDetails>@@$$Q0HA
+	IL_0011: brtrue.s IL_0018
+	IL_0013: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.AtExitLock._lock_Destruct()
+	IL_0018: ret
+0x06000036 max-stack=1 init-locals=false code-size=11
+	IL_0000: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.AtExitLock.AddRef()
+	IL_0005: call System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.AtExitLock.IsInitialized()
+	IL_000a: ret
+0x06000037 max-stack=0 init-locals=false code-size=6
+	IL_0000: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::<CrtImplementationDetails>.AtExitLock.RemoveRef()
+	IL_0005: ret
+0x06000038 max-stack=3 init-locals=false code-size=162
+	local 0=method System.Void *()*
+	local 1=method System.Void *()*
+	local 2=method System.Void *()*
+	local 3=method System.Void *()*
+	local 4=method System.Void *()*
+	local 5=method System.Void *()*
+	local 6=System.IntPtr
+	IL_0000: ldsfld System.UInt64 <Module>::?A0xdf32f105.__exit_list_size
+	IL_0005: brfalse IL_00a1
+	IL_000a: ldsfld method System.Void *()* <Module>::?A0xdf32f105.__onexitbegin_m
+	IL_000f: call System.Void* <Module>::DecodePointer(System.Void*)
+	IL_0014: stloc.1
+	IL_0015: ldsfld method System.Void *()* <Module>::?A0xdf32f105.__onexitend_m
+	IL_001a: call System.Void* <Module>::DecodePointer(System.Void*)
+	IL_001f: stloc.0
+	IL_0020: ldloc.1
+	IL_0021: ldc.i8 -1
+	IL_002a: beq.s IL_009c
+	IL_002c: ldloc.1
+	IL_002d: brfalse.s IL_009c
+	IL_002f: ldloc.0
+	IL_0030: brfalse.s IL_009c
+	IL_0032: ldloc.1
+	IL_0033: stloc.s V_5
+	IL_0035: ldloc.0
+	IL_0036: stloc.s V_4
+	IL_0038: ldloc.0
+	IL_0039: ldc.i4.8
+	IL_003a: conv.i8
+	IL_003b: sub
+	IL_003c: stloc.0
+	IL_003d: ldloc.0
+	IL_003e: ldloc.1
+	IL_003f: blt.un.s IL_008d
+	IL_0041: ldloc.0
+	IL_0042: ldind.i8
+	IL_0043: ldc.i4.0
+	IL_0044: conv.i8
+	IL_0045: call System.Void* <Module>::EncodePointer(System.Void*)
+	IL_004a: beq.s IL_0038
+	IL_004c: ldloc.0
+	IL_004d: ldind.i8
+	IL_004e: call System.Void* <Module>::DecodePointer(System.Void*)
+	IL_0053: ldloc.0
+	IL_0054: ldc.i4.0
+	IL_0055: conv.i8
+	IL_0056: call System.Void* <Module>::EncodePointer(System.Void*)
+	IL_005b: stind.i8
+	IL_005c: calli System.Void()
+	IL_0061: ldsfld method System.Void *()* <Module>::?A0xdf32f105.__onexitbegin_m
+	IL_0066: call System.Void* <Module>::DecodePointer(System.Void*)
+	IL_006b: stloc.3
+	IL_006c: ldsfld method System.Void *()* <Module>::?A0xdf32f105.__onexitend_m
+	IL_0071: call System.Void* <Module>::DecodePointer(System.Void*)
+	IL_0076: stloc.2
+	IL_0077: ldloc.s V_5
+	IL_0079: ldloc.3
+	IL_007a: bne.un.s IL_0081
+	IL_007c: ldloc.s V_4
+	IL_007e: ldloc.2
+	IL_007f: beq.s IL_0038
+	IL_0081: ldloc.3
+	IL_0082: stloc.s V_5
+	IL_0084: ldloc.3
+	IL_0085: stloc.1
+	IL_0086: ldloc.2
+	IL_0087: stloc.s V_4
+	IL_0089: ldloc.2
+	IL_008a: stloc.0
+	IL_008b: br.s IL_0038
+	IL_008d: ldloca.s V_6
+	IL_008f: ldloc.1
+	IL_0090: call System.Void System.IntPtr::.ctor(System.Void*)
+	IL_0095: ldloc.s V_6
+	IL_0097: call System.Void System.Runtime.InteropServices.Marshal::FreeHGlobal(System.IntPtr)
+	IL_009c: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::?A0xdf32f105.__dealloc_global_lock()
+	IL_00a1: ret
+0x06000039 max-stack=3 init-locals=false code-size=58
+	local 0=System.IntPtr
+	IL_0000: ldc.i4.0
+	IL_0001: call System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::?A0xdf32f105.__alloc_global_lock()
+	IL_0006: ldc.i4.1
+	IL_0007: bne.un.s IL_0039
+	IL_0009: pop
+	IL_000a: ldc.i4 256
+	IL_000f: call System.IntPtr System.Runtime.InteropServices.Marshal::AllocHGlobal(System.Int32)
+	IL_0014: stloc.0
+	IL_0015: ldloca.s V_0
+	IL_0017: call System.Void* System.IntPtr::ToPointer()
+	IL_001c: call System.Void* <Module>::EncodePointer(System.Void*)
+	IL_0021: stsfld method System.Void *()* <Module>::?A0xdf32f105.__onexitbegin_m
+	IL_0026: ldsfld method System.Void *()* <Module>::?A0xdf32f105.__onexitbegin_m
+	IL_002b: stsfld method System.Void *()* <Module>::?A0xdf32f105.__onexitend_m
+	IL_0030: ldc.i4.s 32
+	IL_0032: conv.i8
+	IL_0033: stsfld System.UInt64 <Module>::?A0xdf32f105.__exit_list_size
+	IL_0038: ldc.i4.1
+	IL_0039: ret
+0x0600003a max-stack=2 init-locals=false code-size=56
+	local 0=System.IntPtr
+	IL_0000: call System.Boolean modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::?A0xdf32f105.__alloc_global_lock()
+	IL_0005: ldc.i4.1
+	IL_0006: bne.un.s IL_0036
+	IL_0008: ldc.i4 256
+	IL_000d: call System.IntPtr System.Runtime.InteropServices.Marshal::AllocHGlobal(System.Int32)
+	IL_0012: stloc.0
+	IL_0013: ldloca.s V_0
+	IL_0015: call System.Void* System.IntPtr::ToPointer()
+	IL_001a: call System.Void* <Module>::EncodePointer(System.Void*)
+	IL_001f: stsfld method System.Void *()* <Module>::__onexitbegin_app_domain
+	IL_0024: ldsfld method System.Void *()* <Module>::__onexitbegin_app_domain
+	IL_0029: stsfld method System.Void *()* <Module>::__onexitend_app_domain
+	IL_002e: ldc.i4.s 32
+	IL_0030: conv.i8
+	IL_0031: stsfld System.UInt64 <Module>::__exit_list_size_app_domain
+	IL_0036: ldc.i4.1
+	IL_0037: ret
+0x0600003b max-stack=2 init-locals=false code-size=193
+	local 0=method System.Void *()*
+	local 1=method System.Void *()*
+	local 2=method System.Void *()*
+	local 3=method System.Void *()*
+	local 4=method System.Void *()*
+	local 5=method System.Void *()*
+	local 6=method System.Void *()
+	local 7=System.IntPtr
+	local 8=method System.Void *()*
+	local 9=method System.Void *()*
+	IL_0000: ldsfld System.UInt64 <Module>::__exit_list_size_app_domain
+	IL_0005: brfalse IL_00c0
+	IL_000a: ldsfld method System.Void *()* <Module>::__onexitbegin_app_domain
+	IL_000f: call System.Void* <Module>::DecodePointer(System.Void*)
+	IL_0014: stloc.1
+	IL_0015: ldsfld method System.Void *()* <Module>::__onexitend_app_domain
+	IL_001a: call System.Void* <Module>::DecodePointer(System.Void*)
+	IL_001f: stloc.0
+	IL_0020: ldloc.1
+	IL_0021: ldc.i8 -1
+	IL_002a: beq IL_00a9
+	IL_002f: ldloc.1
+	IL_0030: brfalse IL_00a9
+	IL_0035: ldloc.0
+	IL_0036: brfalse.s IL_00a9
+	IL_0038: ldc.i4.0
+	IL_0039: conv.i8
+	IL_003a: stloc.s V_6
+	IL_003c: ldloc.1
+	IL_003d: stloc.s V_5
+	IL_003f: ldloc.0
+	IL_0040: stloc.s V_4
+	IL_0042: ldc.i4.0
+	IL_0043: conv.i8
+	IL_0044: stloc.s V_9
+	IL_0046: ldc.i4.0
+	IL_0047: conv.i8
+	IL_0048: stloc.s V_8
+	IL_004a: ldloc.0
+	IL_004b: ldc.i4.8
+	IL_004c: conv.i8
+	IL_004d: sub
+	IL_004e: stloc.0
+	IL_004f: ldloc.0
+	IL_0050: ldloc.1
+	IL_0051: blt.un.s IL_0060
+	IL_0053: ldloc.0
+	IL_0054: ldind.i8
+	IL_0055: ldc.i4.0
+	IL_0056: conv.i8
+	IL_0057: call System.Void* <Module>::EncodePointer(System.Void*)
+	IL_005c: bne.un.s IL_0060
+	IL_005e: br.s IL_004a
+	IL_0060: ldloc.0
+	IL_0061: ldloc.1
+	IL_0062: blt.un.s IL_00a9
+	IL_0064: ldloc.0
+	IL_0065: ldind.i8
+	IL_0066: call System.Void* <Module>::DecodePointer(System.Void*)
+	IL_006b: stloc.s V_6
+	IL_006d: ldloc.0
+	IL_006e: ldc.i4.0
+	IL_006f: conv.i8
+	IL_0070: call System.Void* <Module>::EncodePointer(System.Void*)
+	IL_0075: stind.i8
+	IL_0076: ldloc.s V_6
+	IL_0078: calli System.Void()
+	IL_007d: ldsfld method System.Void *()* <Module>::__onexitbegin_app_domain
+	IL_0082: call System.Void* <Module>::DecodePointer(System.Void*)
+	IL_0087: stloc.3
+	IL_0088: ldsfld method System.Void *()* <Module>::__onexitend_app_domain
+	IL_008d: call System.Void* <Module>::DecodePointer(System.Void*)
+	IL_0092: stloc.2
+	IL_0093: ldloc.s V_5
+	IL_0095: ldloc.3
+	IL_0096: bne.un.s IL_009d
+	IL_0098: ldloc.s V_4
+	IL_009a: ldloc.2
+	IL_009b: beq.s IL_00a7
+	IL_009d: ldloc.3
+	IL_009e: stloc.s V_5
+	IL_00a0: ldloc.3
+	IL_00a1: stloc.1
+	IL_00a2: ldloc.2
+	IL_00a3: stloc.s V_4
+	IL_00a5: ldloc.2
+	IL_00a6: stloc.0
+	IL_00a7: br.s IL_0042
+	IL_00a9: leave.s IL_00c0
+	IL_00ab: ldloca.s V_7
+	IL_00ad: ldloc.1
+	IL_00ae: call System.Void System.IntPtr::.ctor(System.Void*)
+	IL_00b3: ldloc.s V_7
+	IL_00b5: call System.Void System.Runtime.InteropServices.Marshal::FreeHGlobal(System.IntPtr)
+	IL_00ba: call System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl) <Module>::?A0xdf32f105.__dealloc_global_lock()
+	IL_00bf: endfinally
+	IL_00c0: ret
+	.try IL_0020 to IL_00ab finally handler IL_00ab to IL_00c0
+0x0600003e max-stack=2 init-locals=false code-size=34
+	local 0=System.Int32
+	local 1=System.UInt64
+	IL_0000: ldc.i4.0
+	IL_0001: stloc.0
+	IL_0002: ldarg.0
+	IL_0003: ldarg.1
+	IL_0004: bge.un.s IL_0020
+	IL_0006: ldloc.0
+	IL_0007: brtrue.s IL_0020
+	IL_0009: ldarg.0
+	IL_000a: ldind.i8
+	IL_000b: stloc.1
+	IL_000c: ldloc.1
+	IL_000d: brfalse.s IL_0016
+	IL_000f: ldloc.1
+	IL_0010: calli System.Int32 modopt(System.Runtime.CompilerServices.CallConvCdecl)()
+	IL_0015: stloc.0
+	IL_0016: ldarg.0
+	IL_0017: ldc.i4.8
+	IL_0018: conv.i8
+	IL_0019: add
+	IL_001a: starg.s 0
+	IL_001c: ldarg.0
+	IL_001d: ldarg.1
+	IL_001e: blt.un.s IL_0006
+	IL_0020: ldloc.0
+	IL_0021: ret
+0x0600003f max-stack=2 init-locals=false code-size=27
+	local 0=System.UInt64
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: bge.un.s IL_001a
+	IL_0004: ldarg.0
+	IL_0005: ldind.i8
+	IL_0006: stloc.0
+	IL_0007: ldloc.0
+	IL_0008: brfalse.s IL_0010
+	IL_000a: ldloc.0
+	IL_000b: calli System.Void modopt(System.Runtime.CompilerServices.CallConvCdecl)()
+	IL_0010: ldarg.0
+	IL_0011: ldc.i4.8
+	IL_0012: conv.i8
+	IL_0013: add
+	IL_0014: starg.s 0
+	IL_0016: ldarg.0
+	IL_0017: ldarg.1
+	IL_0018: blt.un.s IL_0004
+	IL_001a: ret
+0x06000040 max-stack=1 init-locals=false code-size=21
+	IL_0000: ldtoken <CrtImplementationDetails>.ThisModule
+	IL_0005: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_000a: callvirt System.Reflection.Module System.Type::get_Module()
+	IL_000f: call System.ModuleHandle System.Reflection.Module::get_ModuleHandle()
+	IL_0014: ret
+0x06000041 max-stack=2 init-locals=false code-size=33
+	local 0=System.UInt64
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: bge.un.s IL_0020
+	IL_0004: ldarg.0
+	IL_0005: ldind.i8
+	IL_0006: stloc.0
+	IL_0007: ldloc.0
+	IL_0008: brfalse.s IL_0016
+	IL_000a: ldloc.0
+	IL_000b: call method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *() <Module>::<CrtImplementationDetails>.ThisModule.ResolveMethod<void const * __clrcall(void)>(method System.Void modopt(System.Runtime.CompilerServices.IsConst)* *())
+	IL_0010: calli System.Void modopt(System.Runtime.CompilerServices.IsConst)*()
+	IL_0015: pop
+	IL_0016: ldarg.0
+	IL_0017: ldc.i4.8
+	IL_0018: conv.i8
+	IL_0019: add
+	IL_001a: starg.s 0
+	IL_001c: ldarg.0
+	IL_001d: ldarg.1
+	IL_001e: blt.un.s IL_0004
+	IL_0020: ret
+0x06000042 max-stack=2 init-locals=false code-size=32
+	local 0=System.IntPtr
+	local 1=System.RuntimeMethodHandle
+	local 2=System.ModuleHandle
+	IL_0000: call System.ModuleHandle <Module>::<CrtImplementationDetails>.ThisModule.Handle()
+	IL_0005: stloc.2
+	IL_0006: ldloca.s V_2
+	IL_0008: ldarg.0
+	IL_0009: conv.i4
+	IL_000a: call System.RuntimeMethodHandle System.ModuleHandle::ResolveMethodHandle(System.Int32)
+	IL_000f: stloc.1
+	IL_0010: ldloca.s V_1
+	IL_0012: call System.IntPtr System.RuntimeMethodHandle::GetFunctionPointer()
+	IL_0017: stloc.0
+	IL_0018: ldloca.s V_0
+	IL_001a: call System.Void* System.IntPtr::ToPointer()
+	IL_001f: ret
+0x0600004e max-stack=3 init-locals=false code-size=9
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: ldarg.2
+	IL_0003: call System.Void System.Exception::.ctor(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)
+	IL_0008: ret
+0x0600004f max-stack=3 init-locals=false code-size=9
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: ldarg.2
+	IL_0003: call System.Void System.Exception::.ctor(System.String,System.Exception)
+	IL_0008: ret
+0x06000050 max-stack=2 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: call System.Void System.Exception::.ctor(System.String)
+	IL_0007: ret
+0x06000051 max-stack=4 init-locals=false code-size=51
+	local 0=System.String
+	local 1=System.Type
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: ldarg.2
+	IL_0003: call System.Void <CrtImplementationDetails>.ModuleLoadException::.ctor(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)
+	IL_0008: ldtoken System.Exception
+	IL_000d: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_0012: stloc.1
+	IL_0013: ldstr "NestedException"
+	IL_0018: stloc.0
+	IL_0019: ldarg.0
+	IL_001a: ldarg.1
+	IL_001b: ldloc.0
+	IL_001c: ldloc.1
+	IL_001d: call System.Object System.Runtime.Serialization.SerializationInfo::GetValue(System.String,System.Type)
+	IL_0022: castclass System.Exception
+	IL_0027: call System.Void <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::set_NestedException(System.Exception)
+	IL_002c: ldarg.0
+	IL_002d: call System.Void System.GC::KeepAlive(System.Object)
+	IL_0032: ret
+0x06000052 max-stack=3 init-locals=false code-size=16
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: ldarg.2
+	IL_0003: call System.Void <CrtImplementationDetails>.ModuleLoadException::.ctor(System.String,System.Exception)
+	IL_0008: ldarg.0
+	IL_0009: ldarg.3
+	IL_000a: call System.Void <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::set_NestedException(System.Exception)
+	IL_000f: ret
+0x06000053 max-stack=1 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Exception <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::<backing_store>NestedException
+	IL_0006: ret
+0x06000054 max-stack=2 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld System.Exception <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::<backing_store>NestedException
+	IL_0007: ret
+0x06000055 max-stack=3 init-locals=false code-size=161
+	local 0=System.Object[]
+	local 1=System.String
+	local 2=System.String
+	local 3=System.String
+	local 4=System.String
+	local 5=System.String
+	local 6=System.Type
+	IL_0000: ldarg.0
+	IL_0001: callvirt System.Exception System.Exception::get_InnerException()
+	IL_0006: brfalse.s IL_0016
+	IL_0008: ldarg.0
+	IL_0009: callvirt System.Exception System.Exception::get_InnerException()
+	IL_000e: callvirt System.String System.Exception::ToString()
+	IL_0013: stloc.2
+	IL_0014: br.s IL_001c
+	IL_0016: ldsfld System.String System.String::Empty
+	IL_001b: stloc.2
+	IL_001c: ldarg.0
+	IL_001d: call System.Exception <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::get_NestedException()
+	IL_0022: brfalse.s IL_0032
+	IL_0024: ldarg.0
+	IL_0025: call System.Exception <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::get_NestedException()
+	IL_002a: callvirt System.String System.Exception::ToString()
+	IL_002f: stloc.1
+	IL_0030: br.s IL_0038
+	IL_0032: ldsfld System.String System.String::Empty
+	IL_0037: stloc.1
+	IL_0038: ldc.i4.4
+	IL_0039: newarr System.Object
+	IL_003e: stloc.0
+	IL_003f: ldarg.0
+	IL_0040: callvirt System.Type System.Exception::GetType()
+	IL_0045: stloc.s V_6
+	IL_0047: ldloc.0
+	IL_0048: ldc.i4.0
+	IL_0049: ldloc.s V_6
+	IL_004b: stelem.ref
+	IL_004c: ldarg.0
+	IL_004d: callvirt System.String System.Exception::get_Message()
+	IL_0052: brfalse.s IL_005e
+	IL_0054: ldarg.0
+	IL_0055: callvirt System.String System.Exception::get_Message()
+	IL_005a: stloc.s V_5
+	IL_005c: br.s IL_0065
+	IL_005e: ldsfld System.String System.String::Empty
+	IL_0063: stloc.s V_5
+	IL_0065: ldloc.0
+	IL_0066: ldc.i4.1
+	IL_0067: ldloc.s V_5
+	IL_0069: stelem.ref
+	IL_006a: ldloc.2
+	IL_006b: brfalse.s IL_0072
+	IL_006d: ldloc.2
+	IL_006e: stloc.s V_4
+	IL_0070: br.s IL_0079
+	IL_0072: ldsfld System.String System.String::Empty
+	IL_0077: stloc.s V_4
+	IL_0079: ldloc.0
+	IL_007a: ldc.i4.2
+	IL_007b: ldloc.s V_4
+	IL_007d: stelem.ref
+	IL_007e: ldloc.1
+	IL_007f: brfalse.s IL_0085
+	IL_0081: ldloc.1
+	IL_0082: stloc.3
+	IL_0083: br.s IL_008b
+	IL_0085: ldsfld System.String System.String::Empty
+	IL_008a: stloc.3
+	IL_008b: ldloc.0
+	IL_008c: ldc.i4.3
+	IL_008d: ldloc.3
+	IL_008e: stelem.ref
+	IL_008f: ldstr "
+{0}: {1}
+--- Start of primary exception ---
+{2}
+--- End of primary exception ---
+
+--- Start of nested exception ---
+{3}
+--- End of nested exception ---
+"
+	IL_0094: ldloc.0
+	IL_0095: call System.String System.String::Format(System.String,System.Object[])
+	IL_009a: ldarg.0
+	IL_009b: call System.Void System.GC::KeepAlive(System.Object)
+	IL_00a0: ret
+0x06000056 max-stack=4 init-locals=false code-size=46
+	local 0=System.Exception
+	local 1=System.Type
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: ldarg.2
+	IL_0003: call System.Void System.Exception::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)
+	IL_0008: ldtoken System.Exception
+	IL_000d: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_0012: stloc.1
+	IL_0013: ldarg.0
+	IL_0014: call System.Exception <CrtImplementationDetails>.ModuleLoadExceptionHandlerException::get_NestedException()
+	IL_0019: stloc.0
+	IL_001a: ldarg.1
+	IL_001b: ldstr "NestedException"
+	IL_0020: ldloc.0
+	IL_0021: ldloc.1
+	IL_0022: call System.Void System.Runtime.Serialization.SerializationInfo::AddValue(System.String,System.Object,System.Type)
+	IL_0027: ldarg.0
+	IL_0028: call System.Void System.GC::KeepAlive(System.Object)
+	IL_002d: ret
+0x06000057 max-stack=4 init-locals=false code-size=54
+	local 0=System.Boolean
+	IL_0000: ldc.i4.0
+	IL_0001: stloc.0
+	IL_0002: call System.Void System.Runtime.CompilerServices.RuntimeHelpers::PrepareConstrainedRegions()
+	IL_0007: call System.Void System.Runtime.CompilerServices.RuntimeHelpers::PrepareConstrainedRegions()
+	IL_000c: ldsfld System.Object <CrtImplementationDetails>.ModuleUninitializer::lock
+	IL_0011: ldloca.s V_0
+	IL_0013: call System.Void System.Threading.Monitor::Enter(System.Object,System.Boolean&)
+	IL_0018: ldarg.1
+	IL_0019: call System.Void System.Runtime.CompilerServices.RuntimeHelpers::PrepareDelegate(System.Delegate)
+	IL_001e: ldarg.0
+	IL_001f: ldarg.1
+	IL_0020: callvirt System.Void System.Collections.Stack::Push(System.Object)
+	IL_0025: leave.s IL_0035
+	IL_0027: ldloc.0
+	IL_0028: brfalse.s IL_0034
+	IL_002a: ldsfld System.Object <CrtImplementationDetails>.ModuleUninitializer::lock
+	IL_002f: call System.Void System.Threading.Monitor::Exit(System.Object)
+	IL_0034: endfinally
+	IL_0035: ret
+	.try IL_0007 to IL_0027 finally handler IL_0027 to IL_0035
+0x06000058 max-stack=1 init-locals=false code-size=21
+	IL_0000: newobj System.Void System.Object::.ctor()
+	IL_0005: stsfld System.Object <CrtImplementationDetails>.ModuleUninitializer::lock
+	IL_000a: newobj System.Void <CrtImplementationDetails>.ModuleUninitializer::.ctor()
+	IL_000f: stsfld <CrtImplementationDetails>.ModuleUninitializer <CrtImplementationDetails>.ModuleUninitializer::_ModuleUninitializer
+	IL_0014: ret
+0x06000059 max-stack=2 init-locals=false code-size=42
+	local 0=System.EventHandler
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Collections.Stack::.ctor()
+	IL_0006: ldarg.0
+	IL_0007: ldftn System.Void <CrtImplementationDetails>.ModuleUninitializer::SingletonDomainUnload(System.Object,System.EventArgs)
+	IL_000d: newobj System.Void System.EventHandler::.ctor(System.Object,System.IntPtr)
+	IL_0012: stloc.0
+	IL_0013: call System.AppDomain System.AppDomain::get_CurrentDomain()
+	IL_0018: ldloc.0
+	IL_0019: callvirt System.Void System.AppDomain::add_DomainUnload(System.EventHandler)
+	IL_001e: call System.AppDomain System.AppDomain::get_CurrentDomain()
+	IL_0023: ldloc.0
+	IL_0024: callvirt System.Void System.AppDomain::add_ProcessExit(System.EventHandler)
+	IL_0029: ret
+0x0600005a max-stack=4 init-locals=false code-size=97
+	local 0=System.Collections.IEnumerator
+	local 1=System.IDisposable
+	local 2=System.Boolean
+	local 3=System.Collections.IEnumerator
+	IL_0000: ldc.i4.0
+	IL_0001: stloc.2
+	IL_0002: call System.Void System.Runtime.CompilerServices.RuntimeHelpers::PrepareConstrainedRegions()
+	IL_0007: call System.Void System.Runtime.CompilerServices.RuntimeHelpers::PrepareConstrainedRegions()
+	IL_000c: ldsfld System.Object <CrtImplementationDetails>.ModuleUninitializer::lock
+	IL_0011: ldloca.s V_2
+	IL_0013: call System.Void System.Threading.Monitor::Enter(System.Object,System.Boolean&)
+	IL_0018: ldarg.0
+	IL_0019: callvirt System.Collections.IEnumerator System.Collections.Stack::GetEnumerator()
+	IL_001e: stloc.0
+	IL_001f: ldloc.0
+	IL_0020: callvirt System.Boolean System.Collections.IEnumerator::MoveNext()
+	IL_0025: brfalse.s IL_003b
+	IL_0027: ldloc.0
+	IL_0028: callvirt System.Object System.Collections.IEnumerator::get_Current()
+	IL_002d: castclass System.EventHandler
+	IL_0032: ldarg.1
+	IL_0033: ldarg.2
+	IL_0034: callvirt System.Void System.EventHandler::Invoke(System.Object,System.EventArgs)
+	IL_0039: br.s IL_001f
+	IL_003b: leave.s IL_0050
+	IL_003d: ldloc.0
+	IL_003e: stloc.3
+	IL_003f: ldloc.0
+	IL_0040: isinst System.IDisposable
+	IL_0045: stloc.1
+	IL_0046: ldloc.1
+	IL_0047: brfalse.s IL_004f
+	IL_0049: ldloc.1
+	IL_004a: callvirt System.Void System.IDisposable::Dispose()
+	IL_004f: endfinally
+	IL_0050: leave.s IL_0060
+	IL_0052: ldloc.2
+	IL_0053: brfalse.s IL_005f
+	IL_0055: ldsfld System.Object <CrtImplementationDetails>.ModuleUninitializer::lock
+	IL_005a: call System.Void System.Threading.Monitor::Exit(System.Object)
+	IL_005f: endfinally
+	IL_0060: ret
+	.try IL_001f to IL_003d finally handler IL_003d to IL_0050
+	.try IL_0007 to IL_0052 finally handler IL_0052 to IL_0060

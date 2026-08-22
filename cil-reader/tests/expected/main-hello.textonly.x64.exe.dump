@@ -1,0 +1,42 @@
+[module]
+name=hello.x64.exe
+mvid=da7c6470-9a34-4df2-8dad-ea78f1883de6
+kind=Console
+runtime=v4.0.30319
+architecture=AMD64
+module-attributes=0x00000001
+entry-point=0x06000001
+[assembly]
+full-name=hello.x64, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Program flags=0x00100000
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void Program::Main() flags=0x0091 impl=0x0000 rva=0x00002060
+0x06000002=System.Void Program::.ctor() flags=0x1886 impl=0x0000 rva=0x0000206e
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=13
+	IL_0000: nop
+	IL_0001: ldstr "foo!"
+	IL_0006: call System.Void System.Console::WriteLine(System.String)
+	IL_000b: nop
+	IL_000c: ret
+0x06000002 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret

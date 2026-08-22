@@ -1,0 +1,41 @@
+[module]
+name=empty-str-const.exe
+mvid=c3f82889-cf09-47bb-96f4-303f404f5826
+kind=Console
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000001
+[assembly]
+full-name=empty-str-const, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=<Program>$ flags=0x00100180
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void <Program>$::<Main>$(System.String[]) flags=0x0091 impl=0x0000 rva=0x00002050
+	param 0 name=args flags=0x0000
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x02000002 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+[il]
+0x06000001 max-stack=2 init-locals=true code-size=14
+	local 0=System.Int32
+	IL_0000: ldstr ""
+	IL_0005: ldloca.s V_0
+	IL_0007: call System.Boolean System.Int32::TryParse(System.String,System.Int32&)
+	IL_000c: pop
+	IL_000d: ret

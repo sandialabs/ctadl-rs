@@ -1,0 +1,70 @@
+[module]
+name=TypeDefinitionDebugInformation.dll
+mvid=cb11e738-172b-4ee8-a6e2-0e81cbd1abb4
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=TypeDefinitionDebugInformation, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=netstandard, Version=2.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Microsoft.CodeAnalysis.EmbeddedAttribute flags=0x00100100
+	base=System.Attribute
+0x02000003=System.Runtime.CompilerServices.RefSafetyRulesAttribute flags=0x00100100
+	base=System.Attribute
+0x02000004=TypeDefinitionDebugInformation.Enum flags=0x00000101
+	base=System.Enum
+0x02000005=TypeDefinitionDebugInformation.Interface flags=0x001000a1
+[fields]
+0x04000001=System.Int32 System.Runtime.CompilerServices.RefSafetyRulesAttribute::Version flags=0x0026
+0x04000002=System.Int32 TypeDefinitionDebugInformation.Enum::value__ flags=0x0606
+0x04000003=TypeDefinitionDebugInformation.Enum TypeDefinitionDebugInformation.Enum::A flags=0x8056 constant=I4:0
+0x04000004=TypeDefinitionDebugInformation.Enum TypeDefinitionDebugInformation.Enum::B flags=0x8056 constant=I4:1
+0x04000005=TypeDefinitionDebugInformation.Enum TypeDefinitionDebugInformation.Enum::C flags=0x8056 constant=I4:2
+[methods]
+0x06000001=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+0x06000002=System.Void System.Runtime.CompilerServices.RefSafetyRulesAttribute::.ctor(System.Int32) flags=0x1886 impl=0x0000 rva=0x00002059
+0x06000003=System.Void TypeDefinitionDebugInformation.Interface::Method() flags=0x05c6 impl=0x0000 rva=0x00000000
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x00000001 ctor=System.Void System.Runtime.CompilerServices.RefSafetyRulesAttribute::.ctor(System.Int32) args=((I4:11))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETStandard,Version=v2.0")) property FrameworkDisplayName=(String:".NET Standard 2.0")
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:"TypeDefinitionDebugInformation"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String) args=((String:"Debug"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"1.0.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyInformationalVersionAttribute::.ctor(System.String) args=((String:"1.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"TypeDefinitionDebugInformation"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"TypeDefinitionDebugInformation"))
+ca parent=0x02000002 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000002 ctor=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=010002000000020054020d416c6c6f774d756c7469706c6500540209496e6865726974656400
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000002 max-stack=8 init-locals=false code-size=15
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: ldarg.0
+	IL_0008: ldarg.1
+	IL_0009: stfld System.Int32 System.Runtime.CompilerServices.RefSafetyRulesAttribute::Version
+	IL_000e: ret

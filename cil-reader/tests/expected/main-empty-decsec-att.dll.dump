@@ -1,0 +1,50 @@
+[module]
+name=cs20-SecurityAction.dll
+mvid=69ca5daf-8b57-4109-860e-b07283f71289
+kind=Dll
+runtime=v2.0.50727
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=cs20-SecurityAction, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=System.Drawing, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000002=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+0x23000003=System, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=TestSecurityAction.ModalUITypeEditor flags=0x00100081
+	base=System.Drawing.Design.UITypeEditor
+[fields]
+[methods]
+0x06000001=System.Drawing.Design.UITypeEditorEditStyle TestSecurityAction.ModalUITypeEditor::GetEditStyle(System.ComponentModel.ITypeDescriptorContext) flags=0x40c6 impl=0x0000 rva=0x00002050
+	param 1 name=context flags=0x0000
+0x06000002=System.Void TestSecurityAction.ModalUITypeEditor::.ctor() flags=0x1884 impl=0x0000 rva=0x0000206c
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+[il]
+0x06000001 max-stack=2 init-locals=true code-size=13
+	local 0=System.Drawing.Design.UITypeEditorEditStyle
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldarg.1
+	IL_0003: call System.Drawing.Design.UITypeEditorEditStyle System.Drawing.Design.UITypeEditor::GetEditStyle(System.ComponentModel.ITypeDescriptorContext)
+	IL_0008: stloc.0
+	IL_0009: br.s IL_000b
+	IL_000b: ldloc.0
+	IL_000c: ret
+0x06000002 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Drawing.Design.UITypeEditor::.ctor()
+	IL_0006: ret

@@ -1,0 +1,52 @@
+[module]
+name=varargs
+mvid=7dd9e057-4a7c-47bc-af46-82153c752696
+kind=Console
+runtime=v2.0.50727
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000003
+[assembly]
+full-name=varargs, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00000000
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+[fields]
+[methods]
+0x06000001=System.Void <Module>::Foo() flags=0x0016 impl=0x0000 rva=0x00002050
+0x06000002=System.Void <Module>::Bar(System.String) flags=0x0016 impl=0x0000 rva=0x00002068
+	param 0 name=s flags=0x0000
+0x06000003=System.Void <Module>::Baz() flags=0x0016 impl=0x0000 rva=0x0000207e
+[properties]
+[events]
+[custom-attributes]
+[il]
+0x06000001 max-stack=8 init-locals=true code-size=10
+	local 0=System.ArgIterator
+	IL_0000: ldloca.s V_0
+	IL_0002: arglist
+	IL_0004: call System.Void System.ArgIterator::.ctor(System.RuntimeArgumentHandle)
+	IL_0009: ret
+0x06000002 max-stack=8 init-locals=true code-size=10
+	local 0=System.ArgIterator
+	IL_0000: ldloca.s V_0
+	IL_0002: arglist
+	IL_0004: call System.Void System.ArgIterator::.ctor(System.RuntimeArgumentHandle)
+	IL_0009: ret
+0x06000003 max-stack=8 init-locals=false code-size=41
+	IL_0000: ldc.i4 0
+	IL_0005: ldc.i4 1
+	IL_000a: call System.Void <Module>::Foo(...,System.Int32,System.Int32)
+	IL_000f: ldstr "gazonk"
+	IL_0014: ldc.i4 2
+	IL_0019: ldc.i4 3
+	IL_001e: ldc.i4 4
+	IL_0023: call System.Void <Module>::Bar(System.String,...,System.Int32,System.Int32,System.Int32)
+	IL_0028: ret

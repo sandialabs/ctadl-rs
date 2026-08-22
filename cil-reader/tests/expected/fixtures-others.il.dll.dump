@@ -1,0 +1,92 @@
+[module]
+name=Others.dll
+mvid=a4515137-99b3-4ee3-a4b0-187dca444fe9
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=Others, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00000000
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Others flags=0x00000000
+	base=System.Object
+[fields]
+0x04000001=System.String Others::_context flags=0x0001
+0x04000002=System.EventHandler Others::_handler flags=0x0001
+[methods]
+0x06000001=System.String Others::get_Context() flags=0x0806 impl=0x0000 rva=0x00002050 semantics=0x0002
+0x06000002=System.Void Others::set_Context(System.String) flags=0x0806 impl=0x0000 rva=0x00002058 semantics=0x0001
+	param 1 name=val flags=0x0000
+0x06000003=System.Void Others::let_Context(System.String) flags=0x0806 impl=0x0000 rva=0x00002061 semantics=0x0004
+	param 1 name=val flags=0x0000
+0x06000004=System.Void Others::bet_Context(System.String) flags=0x0806 impl=0x0000 rva=0x0000206a semantics=0x0004
+	param 1 name=val flags=0x0000
+0x06000005=System.Void Others::remove_Handler(System.EventHandler) flags=0x0806 impl=0x0000 rva=0x00002073 semantics=0x0010
+	param 1 name=A_0 flags=0x0000
+0x06000006=System.Void Others::add_Handler(System.EventHandler) flags=0x0806 impl=0x0000 rva=0x00002075 semantics=0x0008
+	param 1 name=A_0 flags=0x0000
+0x06000007=System.Void Others::dang_Handler(System.EventHandler) flags=0x0806 impl=0x0000 rva=0x00002077 semantics=0x0004
+	param 1 name=A_0 flags=0x0000
+0x06000008=System.Void Others::fang_Handler(System.EventHandler) flags=0x0806 impl=0x0000 rva=0x00002079 semantics=0x0004
+	param 1 name=A_0 flags=0x0000
+0x06000009=System.Void Others::OverloadedWithFpArg(method System.Int32 *(System.Int32)) flags=0x0016 impl=0x0000 rva=0x0000207b
+	param 0 name=X flags=0x0000
+0x0600000a=System.Void Others::OverloadedWithFpArg(method System.Int32 *(System.Int64)) flags=0x0016 impl=0x0000 rva=0x0000207d
+	param 0 name=X flags=0x0000
+0x0600000b=System.Void Others::OverloadedWithFpArg(method System.Int32 *(System.Int32)) flags=0x0016 impl=0x0000 rva=0x0000207f
+	param 0 name=X flags=0x0000
+0x0600000c=System.Void Others::SameMethodNameInstanceStatic() flags=0x0006 impl=0x0000 rva=0x00002081
+0x0600000d=System.Void Others::SameMethodNameInstanceStatic() flags=0x0016 impl=0x0000 rva=0x00002083
+[properties]
+0x17000001=System.String Others::Context() flags=0x0000 getter=0x06000001 setter=0x06000002
+[events]
+0x14000001=Handler flags=0x0000 type=System.EventHandler add=0x06000006 remove=0x06000005
+[custom-attributes]
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.String Others::_context
+	IL_0006: ret
+0x06000002 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld System.String Others::_context
+	IL_0007: ret
+0x06000003 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld System.String Others::_context
+	IL_0007: ret
+0x06000004 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld System.String Others::_context
+	IL_0007: ret
+0x06000005 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x06000006 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x06000007 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x06000008 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x06000009 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x0600000a max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x0600000b max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x0600000c max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x0600000d max-stack=8 init-locals=false code-size=1
+	IL_0000: ret

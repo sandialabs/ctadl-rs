@@ -1,0 +1,2 @@
+tests/fixtures/** binary
+tests/expected/** -diff

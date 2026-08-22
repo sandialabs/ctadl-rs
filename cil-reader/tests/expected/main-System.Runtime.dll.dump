@@ -1,0 +1,141 @@
+[module]
+name=System.Runtime.dll
+mvid=e26714e1-cf4b-4642-b34b-759c8fd62e7b
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000009
+entry-point=-
+[assembly]
+full-name=System.Runtime, Version=2.5.19.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+hash-algorithm=0x00008004
+flags=0x00000001
+public-key=002400000480000094000000060200000024000052534131000400000100010007d1fa57c4aed9f0a32e84aa0faefd0de9e8fd6aec8f87fb03766c834c99921eb23be79ad9d5dcc1dd9ad236132102900b723cf980957fc4e177108fc607774f29e8320e92ea05ece4e821c0a5efe8f1645c4c0c93c1ab99285d622caa652c1dfad63d745d6f2de5f17e5eaf0fc4963d261c8a12436518206dc093344d5ad293
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.5.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e, Retargetable=Yes
+[module-refs]
+[resources]
+[exported-types]
+0x27000001=System.Func`6 scope=mscorlib flags=0x00200000
+0x27000002=System.Tuple scope=mscorlib flags=0x00200000
+0x27000003=System.Tuple`1 scope=mscorlib flags=0x00200000
+0x27000004=System.Tuple`2 scope=mscorlib flags=0x00200000
+0x27000005=System.Tuple`3 scope=mscorlib flags=0x00200000
+0x27000006=System.Tuple`4 scope=mscorlib flags=0x00200000
+0x27000007=System.Tuple`5 scope=mscorlib flags=0x00200000
+0x27000008=System.Tuple`6 scope=mscorlib flags=0x00200000
+0x27000009=System.Tuple`7 scope=mscorlib flags=0x00200000
+0x2700000a=System.Tuple`8 scope=mscorlib flags=0x00200000
+0x2700000b=System.Collections.IStructuralComparable scope=mscorlib flags=0x00200000
+0x2700000c=System.Collections.IStructuralEquatable scope=mscorlib flags=0x00200000
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=System.IProgress`1 flags=0x000000a1
+	generic-param 0 name=T flags=0x0002
+0x02000003=System.Runtime.CompilerServices.StateMachineAttribute flags=0x00100001
+	base=System.Attribute
+0x02000004=System.Runtime.CompilerServices.AsyncStateMachineAttribute flags=0x00100101
+	base=System.Runtime.CompilerServices.StateMachineAttribute
+0x02000005=System.Runtime.CompilerServices.CallerMemberNameAttribute flags=0x00100101
+	base=System.Attribute
+0x02000006=System.Runtime.CompilerServices.CallerLineNumberAttribute flags=0x00100101
+	base=System.Attribute
+0x02000007=System.Runtime.CompilerServices.CallerFilePathAttribute flags=0x00100101
+	base=System.Attribute
+0x02000008=System.Runtime.CompilerServices.IteratorStateMachineAttribute flags=0x00100101
+	base=System.Runtime.CompilerServices.StateMachineAttribute
+0x02000009=System.Reflection.AssemblyMetadataAttribute flags=0x00100000
+	base=System.Attribute
+[fields]
+0x04000001=System.Type System.Runtime.CompilerServices.StateMachineAttribute::<StateMachineType>k__BackingField flags=0x0001
+[methods]
+0x06000001=System.Void System.IProgress`1::Report(T) flags=0x05c6 impl=0x0000 rva=0x00000000
+	param 1 name=value flags=0x0000
+0x06000002=System.Void System.Runtime.CompilerServices.StateMachineAttribute::.ctor(System.Type) flags=0x1886 impl=0x0000 rva=0x000020d0
+	param 1 name=stateMachineType flags=0x0000
+0x06000003=System.Type System.Runtime.CompilerServices.StateMachineAttribute::get_StateMachineType() flags=0x0886 impl=0x0000 rva=0x000020df semantics=0x0002
+0x06000004=System.Void System.Runtime.CompilerServices.StateMachineAttribute::set_StateMachineType(System.Type) flags=0x0881 impl=0x0000 rva=0x000020e7 semantics=0x0001
+	param 1 name=value flags=0x0000
+0x06000005=System.Void System.Runtime.CompilerServices.AsyncStateMachineAttribute::.ctor(System.Type) flags=0x1886 impl=0x0000 rva=0x000020f0
+	param 1 name=stateMachineType flags=0x0000
+0x06000006=System.Void System.Runtime.CompilerServices.CallerMemberNameAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x000020f9
+0x06000007=System.Void System.Runtime.CompilerServices.CallerLineNumberAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x00002101
+0x06000008=System.Void System.Runtime.CompilerServices.CallerFilePathAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x00002109
+0x06000009=System.Void System.Runtime.CompilerServices.IteratorStateMachineAttribute::.ctor(System.Type) flags=0x1886 impl=0x0000 rva=0x00002111
+	param 1 name=stateMachineType flags=0x0000
+0x0600000a=System.Void System.Reflection.AssemblyMetadataAttribute::.ctor(System.String,System.String) flags=0x1886 impl=0x0000 rva=0x0000211a
+	param 1 name=key flags=0x0000
+	param 2 name=value flags=0x0000
+[properties]
+0x17000001=System.Type System.Runtime.CompilerServices.StateMachineAttribute::StateMachineType() flags=0x0000 getter=0x06000003 setter=0x06000004
+[events]
+[custom-attributes]
+ca parent=0x04000001 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyInformationalVersionAttribute::.ctor(System.String) args=((String:"2.5.19.0"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyMetadataAttribute::.ctor(System.String,System.String) args=((String:"BuildLabel"), (String:"130417.1"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyMetadataAttribute::.ctor(System.String,System.String) args=((String:"BuildBranch"), (String:"Release\BCL\1.0"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETPortable,Version=v4.0,Profile=Profile36")) property FrameworkDisplayName=(String:".NET Portable Subset")
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"2.5.19.0"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCopyrightAttribute::.ctor(System.String) args=((String:"© Microsoft Corporation.  All rights reserved."))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:"Microsoft Corporation"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"System.Runtime"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyDescriptionAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"System.Runtime"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTrademarkAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Resources.NeutralResourcesLanguageAttribute::.ctor(System.String) args=((String:"en"))
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100020000000000
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x06000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=0100400000000200540209496e686572697465640054020d416c6c6f774d756c7469706c6500
+ca parent=0x06000004 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=0100400000000200540209496e686572697465640054020d416c6c6f774d756c7469706c6500
+ca parent=0x02000005 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=0100000800000100540209496e6865726974656400
+ca parent=0x02000006 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=0100000800000100540209496e6865726974656400
+ca parent=0x02000007 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=0100000800000100540209496e6865726974656400
+ca parent=0x02000008 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=0100400000000200540209496e686572697465640054020d416c6c6f774d756c7469706c6500
+ca parent=0x02000009 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=010001000000010054020d416c6c6f774d756c7469706c6501
+[il]
+0x06000002 max-stack=8 init-locals=false code-size=14
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ldarg.0
+	IL_0007: ldarg.1
+	IL_0008: call System.Void System.Runtime.CompilerServices.StateMachineAttribute::set_StateMachineType(System.Type)
+	IL_000d: ret
+0x06000003 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Type System.Runtime.CompilerServices.StateMachineAttribute::<StateMachineType>k__BackingField
+	IL_0006: ret
+0x06000004 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld System.Type System.Runtime.CompilerServices.StateMachineAttribute::<StateMachineType>k__BackingField
+	IL_0007: ret
+0x06000005 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: call System.Void System.Runtime.CompilerServices.StateMachineAttribute::.ctor(System.Type)
+	IL_0007: ret
+0x06000006 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x06000007 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x06000008 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x06000009 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: call System.Void System.Runtime.CompilerServices.StateMachineAttribute::.ctor(System.Type)
+	IL_0007: ret
+0x0600000a max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret

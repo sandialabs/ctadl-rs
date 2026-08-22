@@ -1,0 +1,1182 @@
+[module]
+name=VBConsApp.exe
+mvid=03d330cb-90dd-46f6-bb1a-ac4f37ea5e4f
+kind=Console
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000003
+entry-point=0x06000028
+[assembly]
+full-name=VBConsApp, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+0x23000002=Microsoft.VisualBasic, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000003=System.Xml.Linq, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+0x23000004=System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+0x23000005=System.Core, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+embedded name=VBConsApp.Resources.resources flags=0x00000001 size=180
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=VBConsApp.My.MyApplication flags=0x00000000
+	base=Microsoft.VisualBasic.ApplicationServices.ConsoleApplicationBase
+0x02000003=VBConsApp.My.MyComputer flags=0x00000000
+	base=Microsoft.VisualBasic.Devices.Computer
+0x02000004=VBConsApp.My.MyProject flags=0x00100100
+	base=System.Object
+0x02000005=VBConsApp.My.MyProject/MyWebServices flags=0x00000105
+	base=System.Object
+0x02000006=VBConsApp.My.MyProject/ThreadSafeObjectProvider`1 flags=0x00000105
+	base=System.Object
+	generic-param 0 name=T flags=0x0010
+0x02000007=VBConsApp.My.InternalXmlHelper flags=0x00000100
+	base=System.Object
+0x02000008=VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure flags=0x00000103
+	base=System.Object
+0x02000009=VBConsApp.My.Resources.Resources flags=0x00000100
+	base=System.Object
+0x0200000a=VBConsApp.My.MySettings flags=0x00100100
+	base=System.Configuration.ApplicationSettingsBase
+0x0200000b=VBConsApp.My.MySettingsProperty flags=0x00000100
+	base=System.Object
+0x0200000c=VBConsApp.Program flags=0x00000000
+	base=System.Object
+[fields]
+0x04000001=VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyComputer> VBConsApp.My.MyProject::m_ComputerObjectProvider flags=0x0031
+0x04000002=VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyApplication> VBConsApp.My.MyProject::m_AppObjectProvider flags=0x0031
+0x04000003=VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User> VBConsApp.My.MyProject::m_UserObjectProvider flags=0x0031
+0x04000004=VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyProject/MyWebServices> VBConsApp.My.MyProject::m_MyWebServicesObjectProvider flags=0x0031
+0x04000005=T VBConsApp.My.MyProject/ThreadSafeObjectProvider`1::m_ThreadStaticValue flags=0x0011
+0x04000006=System.String[] VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_inScopePrefixes flags=0x0021
+0x04000007=System.Xml.Linq.XNamespace[] VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_inScopeNs flags=0x0021
+0x04000008=System.Collections.Generic.List`1<System.Xml.Linq.XAttribute> VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_attributes flags=0x0021
+0x04000009=System.Resources.ResourceManager VBConsApp.My.Resources.Resources::resourceMan flags=0x0011
+0x0400000a=System.Globalization.CultureInfo VBConsApp.My.Resources.Resources::resourceCulture flags=0x0011
+0x0400000b=VBConsApp.My.MySettings VBConsApp.My.MySettings::defaultInstance flags=0x0011
+[methods]
+0x06000001=System.Void VBConsApp.My.MyApplication::.ctor() flags=0x1806 impl=0x0000 rva=0x00002108
+0x06000002=System.Void VBConsApp.My.MyComputer::.ctor() flags=0x1806 impl=0x0000 rva=0x00002114
+0x06000003=System.Void VBConsApp.My.MyProject::.cctor() flags=0x1811 impl=0x0000 rva=0x00002120
+0x06000004=VBConsApp.My.MyComputer VBConsApp.My.MyProject::get_Computer() flags=0x0813 impl=0x0000 rva=0x0000214c semantics=0x0002
+0x06000005=VBConsApp.My.MyApplication VBConsApp.My.MyProject::get_Application() flags=0x0813 impl=0x0000 rva=0x00002168 semantics=0x0002
+0x06000006=Microsoft.VisualBasic.ApplicationServices.User VBConsApp.My.MyProject::get_User() flags=0x0813 impl=0x0000 rva=0x00002184 semantics=0x0002
+0x06000007=VBConsApp.My.MyProject/MyWebServices VBConsApp.My.MyProject::get_WebServices() flags=0x0813 impl=0x0000 rva=0x000021a0 semantics=0x0002
+0x06000008=System.Boolean VBConsApp.My.MyProject/MyWebServices::Equals(System.Object) flags=0x0246 impl=0x0000 rva=0x000021bc
+	param 1 name=o flags=0x0000
+0x06000009=System.Int32 VBConsApp.My.MyProject/MyWebServices::GetHashCode() flags=0x0246 impl=0x0000 rva=0x000021dc
+0x0600000a=System.Type VBConsApp.My.MyProject/MyWebServices::GetType() flags=0x0083 impl=0x0000 rva=0x000021f4
+0x0600000b=System.String VBConsApp.My.MyProject/MyWebServices::ToString() flags=0x0246 impl=0x0000 rva=0x00002210
+0x0600000c=T VBConsApp.My.MyProject/MyWebServices::Create__Instance__(T) flags=0x0011 impl=0x0000 rva=0x00002228
+	generic-param 0 name=T flags=0x0010
+	param 0 name=instance flags=0x0000
+0x0600000d=System.Void VBConsApp.My.MyProject/MyWebServices::Dispose__Instance__(T&) flags=0x0001 impl=0x0000 rva=0x00002254
+	generic-param 0 name=T flags=0x0000
+	param 1 name=instance flags=0x0000
+0x0600000e=System.Void VBConsApp.My.MyProject/MyWebServices::.ctor() flags=0x1806 impl=0x0000 rva=0x00002274
+0x0600000f=T VBConsApp.My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance() flags=0x0803 impl=0x0000 rva=0x00002280 semantics=0x0002
+0x06000010=System.Void VBConsApp.My.MyProject/ThreadSafeObjectProvider`1::.ctor() flags=0x1806 impl=0x0000 rva=0x000022b4
+0x06000011=System.Void VBConsApp.My.InternalXmlHelper::.ctor() flags=0x1801 impl=0x0000 rva=0x000022c0
+0x06000012=System.String VBConsApp.My.InternalXmlHelper::get_Value(System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>) flags=0x0816 impl=0x0000 rva=0x000022cc semantics=0x0002
+	param 0 name=source flags=0x0000
+0x06000013=System.Void VBConsApp.My.InternalXmlHelper::set_Value(System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>,System.String) flags=0x0816 impl=0x0000 rva=0x0000232c semantics=0x0001
+	param 0 name=source flags=0x0000
+	param 1 name=value flags=0x0000
+0x06000014=System.String VBConsApp.My.InternalXmlHelper::get_AttributeValue(System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>,System.Xml.Linq.XName) flags=0x0816 impl=0x0000 rva=0x0000238c semantics=0x0002
+	param 0 name=source flags=0x0000
+	param 1 name=name flags=0x0000
+0x06000015=System.Void VBConsApp.My.InternalXmlHelper::set_AttributeValue(System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>,System.Xml.Linq.XName,System.String) flags=0x0816 impl=0x0000 rva=0x000023f4 semantics=0x0001
+	param 0 name=source flags=0x0000
+	param 1 name=name flags=0x0000
+	param 2 name=value flags=0x0000
+0x06000016=System.String VBConsApp.My.InternalXmlHelper::get_AttributeValue(System.Xml.Linq.XElement,System.Xml.Linq.XName) flags=0x0816 impl=0x0000 rva=0x00002454 semantics=0x0002
+	param 0 name=source flags=0x0000
+	param 1 name=name flags=0x0000
+0x06000017=System.Void VBConsApp.My.InternalXmlHelper::set_AttributeValue(System.Xml.Linq.XElement,System.Xml.Linq.XName,System.String) flags=0x0816 impl=0x0000 rva=0x00002474 semantics=0x0001
+	param 0 name=source flags=0x0000
+	param 1 name=name flags=0x0000
+	param 2 name=value flags=0x0000
+0x06000018=System.Xml.Linq.XAttribute VBConsApp.My.InternalXmlHelper::CreateAttribute(System.Xml.Linq.XName,System.Object) flags=0x0016 impl=0x0000 rva=0x00002484
+	param 0 name=name flags=0x0000
+	param 1 name=value flags=0x0000
+0x06000019=System.Xml.Linq.XAttribute VBConsApp.My.InternalXmlHelper::CreateNamespaceAttribute(System.Xml.Linq.XName,System.Xml.Linq.XNamespace) flags=0x0016 impl=0x0000 rva=0x000024b0
+	param 0 name=name flags=0x0000
+	param 1 name=ns flags=0x0000
+0x0600001a=System.Object VBConsApp.My.InternalXmlHelper::RemoveNamespaceAttributes(System.String[],System.Xml.Linq.XNamespace[],System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>,System.Object) flags=0x0016 impl=0x0000 rva=0x000024d8
+	param 0 name=inScopePrefixes flags=0x0000
+	param 1 name=inScopeNs flags=0x0000
+	param 2 name=attributes flags=0x0000
+	param 3 name=obj flags=0x0000
+0x0600001b=System.Collections.IEnumerable VBConsApp.My.InternalXmlHelper::RemoveNamespaceAttributes(System.String[],System.Xml.Linq.XNamespace[],System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>,System.Collections.IEnumerable) flags=0x0016 impl=0x0000 rva=0x00002538
+	param 0 name=inScopePrefixes flags=0x0000
+	param 1 name=inScopeNs flags=0x0000
+	param 2 name=attributes flags=0x0000
+	param 3 name=obj flags=0x0000
+0x0600001c=System.Xml.Linq.XElement VBConsApp.My.InternalXmlHelper::RemoveNamespaceAttributes(System.String[],System.Xml.Linq.XNamespace[],System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>,System.Xml.Linq.XElement) flags=0x0016 impl=0x0000 rva=0x000025ac
+	param 0 name=inScopePrefixes flags=0x0000
+	param 1 name=inScopeNs flags=0x0000
+	param 2 name=attributes flags=0x0000
+	param 3 name=e flags=0x0000
+0x0600001d=System.Void VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::.ctor(System.String[],System.Xml.Linq.XNamespace[],System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>) flags=0x1803 impl=0x0000 rva=0x00002750
+	param 1 name=inScopePrefixes flags=0x0000
+	param 2 name=inScopeNs flags=0x0000
+	param 3 name=attributes flags=0x0000
+0x0600001e=System.Xml.Linq.XElement VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::ProcessXElement(System.Xml.Linq.XElement) flags=0x0003 impl=0x0000 rva=0x00002770
+	param 1 name=elem flags=0x0000
+0x0600001f=System.Object VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::ProcessObject(System.Object) flags=0x0003 impl=0x0000 rva=0x0000279c
+	param 1 name=obj flags=0x0000
+0x06000020=System.Resources.ResourceManager VBConsApp.My.Resources.Resources::get_ResourceManager() flags=0x0813 impl=0x0000 rva=0x000027e0 semantics=0x0002
+0x06000021=System.Globalization.CultureInfo VBConsApp.My.Resources.Resources::get_Culture() flags=0x0813 impl=0x0000 rva=0x00002828 semantics=0x0002
+0x06000022=System.Void VBConsApp.My.Resources.Resources::set_Culture(System.Globalization.CultureInfo) flags=0x0813 impl=0x0000 rva=0x00002840 semantics=0x0001
+	param 0 name=value flags=0x0000
+0x06000023=System.Void VBConsApp.My.MySettings::.cctor() flags=0x1811 impl=0x0000 rva=0x0000284c
+0x06000024=System.Void VBConsApp.My.MySettings::.ctor() flags=0x1806 impl=0x0000 rva=0x00002864
+0x06000025=VBConsApp.My.MySettings VBConsApp.My.MySettings::get_Default() flags=0x0816 impl=0x0000 rva=0x00002870 semantics=0x0002
+0x06000026=VBConsApp.My.MySettings VBConsApp.My.MySettingsProperty::get_Settings() flags=0x0813 impl=0x0000 rva=0x00002888 semantics=0x0002
+0x06000027=System.Void VBConsApp.Program::.ctor() flags=0x1806 impl=0x0000 rva=0x000028a0
+0x06000028=System.Void VBConsApp.Program::Main() flags=0x0016 impl=0x0000 rva=0x000028ac
+0x06000029=System.Int32 VBConsApp.Program::Factorial(System.Int32) flags=0x0016 impl=0x0000 rva=0x000028d0
+	param 0 name=n flags=0x0000
+[properties]
+0x17000001=VBConsApp.My.MyComputer VBConsApp.My.MyProject::Computer() flags=0x0000 getter=0x06000004
+0x17000002=VBConsApp.My.MyApplication VBConsApp.My.MyProject::Application() flags=0x0000 getter=0x06000005
+0x17000003=Microsoft.VisualBasic.ApplicationServices.User VBConsApp.My.MyProject::User() flags=0x0000 getter=0x06000006
+0x17000004=VBConsApp.My.MyProject/MyWebServices VBConsApp.My.MyProject::WebServices() flags=0x0000 getter=0x06000007
+0x17000005=T VBConsApp.My.MyProject/ThreadSafeObjectProvider`1::GetInstance() flags=0x0000 getter=0x0600000f
+0x17000006=System.String VBConsApp.My.InternalXmlHelper::Value(System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>) flags=0x0000 getter=0x06000012 setter=0x06000013
+0x17000007=System.String VBConsApp.My.InternalXmlHelper::AttributeValue(System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>,System.Xml.Linq.XName) flags=0x0000 getter=0x06000014 setter=0x06000015
+0x17000008=System.String VBConsApp.My.InternalXmlHelper::AttributeValue(System.Xml.Linq.XElement,System.Xml.Linq.XName) flags=0x0000 getter=0x06000016 setter=0x06000017
+0x17000009=System.Resources.ResourceManager VBConsApp.My.Resources.Resources::ResourceManager() flags=0x0000 getter=0x06000020
+0x1700000a=System.Globalization.CultureInfo VBConsApp.My.Resources.Resources::Culture() flags=0x0000 getter=0x06000021 setter=0x06000022
+0x1700000b=VBConsApp.My.MySettings VBConsApp.My.MySettings::Default() flags=0x0000 getter=0x06000025
+0x1700000c=VBConsApp.My.MySettings VBConsApp.My.MySettingsProperty::Settings() flags=0x0000 getter=0x06000026
+[events]
+[custom-attributes]
+ca parent=0x06000001 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x17000001 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.Computer"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyDescriptionAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"VBConsApp"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"VBConsApp"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETFramework,Version=v4.0,Profile=Client")) property FrameworkDisplayName=(String:".NET Framework 4 Client Profile")
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"1.0.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.GuidAttribute::.ctor(System.String) args=((String:"6f0e9e8b-b888-488a-8393-8667a8c0dc8c"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.ComVisibleAttribute::.ctor(System.Boolean) args=((Boolean:False))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTrademarkAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCopyrightAttribute::.ctor(System.String) args=((String:"Copyright ©  2011"))
+ca parent=0x06000002 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000002 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x02000002 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x02000002 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"MyTemplate"), (String:"10.0.0.0"))
+ca parent=0x17000002 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.Application"))
+ca parent=0x06000003 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"MyTemplate"), (String:"10.0.0.0"))
+ca parent=0x02000003 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x17000003 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.User"))
+ca parent=0x06000004 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void Microsoft.VisualBasic.CompilerServices.StandardModuleAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"MyTemplate"), (String:"10.0.0.0"))
+ca parent=0x02000004 ctor=System.Void Microsoft.VisualBasic.HideModuleNameAttribute::.ctor() args=()
+ca parent=0x17000004 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.WebServices"))
+ca parent=0x06000005 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x04000005 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x04000005 ctor=System.Void System.ThreadStaticAttribute::.ctor() args=()
+ca parent=0x02000005 ctor=System.Void Microsoft.VisualBasic.MyGroupCollectionAttribute::.ctor(System.String,System.String,System.String,System.String) args=((String:"System.Web.Services.Protocols.SoapHttpClientProtocol"), (String:"Create__Instance__"), (String:"Dispose__Instance__"), (String:""))
+ca parent=0x02000005 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000006 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000006 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x02000006 ctor=System.Void System.Runtime.InteropServices.ComVisibleAttribute::.ctor(System.Boolean) args=((Boolean:False))
+ca parent=0x17000006 ctor=System.Void System.Runtime.CompilerServices.ExtensionAttribute::.ctor() args=()
+ca parent=0x06000007 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000007 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x02000007 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x02000007 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x17000007 ctor=System.Void System.Runtime.CompilerServices.ExtensionAttribute::.ctor() args=()
+ca parent=0x06000008 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000008 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000008 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x02000008 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000008 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x17000008 ctor=System.Void System.Runtime.CompilerServices.ExtensionAttribute::.ctor() args=()
+ca parent=0x06000009 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000009 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x02000009 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x02000009 ctor=System.Void Microsoft.VisualBasic.HideModuleNameAttribute::.ctor() args=()
+ca parent=0x02000009 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000009 ctor=System.Void Microsoft.VisualBasic.CompilerServices.StandardModuleAttribute::.ctor() args=()
+ca parent=0x02000009 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"System.Resources.Tools.StronglyTypedResourceBuilder"), (String:"4.0.0.0"))
+ca parent=0x17000009 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100020000000000
+ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000a ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0200000a ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.VisualStudio.Editors.SettingsDesigner.SettingsSingleFileGenerator"), (String:"10.0.0.0"))
+ca parent=0x0200000a ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100020000000000
+ca parent=0x0200000a ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x1700000a ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100020000000000
+ca parent=0x0600000b ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000b ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0200000b ctor=System.Void Microsoft.VisualBasic.HideModuleNameAttribute::.ctor() args=()
+ca parent=0x0200000b ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x0200000b ctor=System.Void Microsoft.VisualBasic.CompilerServices.StandardModuleAttribute::.ctor() args=()
+ca parent=0x0200000b ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x0600000c ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x1700000c ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.Settings"))
+ca parent=0x0600000d ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000e ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000e ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0600000f ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000010 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000010 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000011 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000018 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000019 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0600001a ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0600001b ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0600001c ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0600001d ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0600001e ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0600001f ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000024 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x06000027 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x06000028 ctor=System.Void System.STAThreadAttribute::.ctor() args=()
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=9
+	IL_0000: ldarg.0
+	IL_0001: call System.Void Microsoft.VisualBasic.ApplicationServices.ConsoleApplicationBase::.ctor()
+	IL_0006: nop
+	IL_0007: nop
+	IL_0008: ret
+0x06000002 max-stack=8 init-locals=false code-size=10
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Void Microsoft.VisualBasic.Devices.Computer::.ctor()
+	IL_0007: nop
+	IL_0008: nop
+	IL_0009: ret
+0x06000003 max-stack=8 init-locals=false code-size=42
+	IL_0000: newobj System.Void VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyComputer>::.ctor()
+	IL_0005: stsfld VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyComputer> VBConsApp.My.MyProject::m_ComputerObjectProvider
+	IL_000a: newobj System.Void VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyApplication>::.ctor()
+	IL_000f: stsfld VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyApplication> VBConsApp.My.MyProject::m_AppObjectProvider
+	IL_0014: newobj System.Void VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User>::.ctor()
+	IL_0019: stsfld VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User> VBConsApp.My.MyProject::m_UserObjectProvider
+	IL_001e: newobj System.Void VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyProject/MyWebServices>::.ctor()
+	IL_0023: stsfld VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyProject/MyWebServices> VBConsApp.My.MyProject::m_MyWebServicesObjectProvider
+	IL_0028: nop
+	IL_0029: ret
+0x06000004 max-stack=1 init-locals=true code-size=16
+	local 0=VBConsApp.My.MyComputer
+	IL_0000: nop
+	IL_0001: ldsfld VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyComputer> VBConsApp.My.MyProject::m_ComputerObjectProvider
+	IL_0006: callvirt T VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyComputer>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000005 max-stack=1 init-locals=true code-size=16
+	local 0=VBConsApp.My.MyApplication
+	IL_0000: nop
+	IL_0001: ldsfld VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyApplication> VBConsApp.My.MyProject::m_AppObjectProvider
+	IL_0006: callvirt T VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyApplication>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000006 max-stack=1 init-locals=true code-size=16
+	local 0=Microsoft.VisualBasic.ApplicationServices.User
+	IL_0000: nop
+	IL_0001: ldsfld VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User> VBConsApp.My.MyProject::m_UserObjectProvider
+	IL_0006: callvirt T VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000007 max-stack=1 init-locals=true code-size=16
+	local 0=VBConsApp.My.MyProject/MyWebServices
+	IL_0000: nop
+	IL_0001: ldsfld VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyProject/MyWebServices> VBConsApp.My.MyProject::m_MyWebServicesObjectProvider
+	IL_0006: callvirt T VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<VBConsApp.My.MyProject/MyWebServices>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000008 max-stack=2 init-locals=true code-size=18
+	local 0=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldarg.1
+	IL_0003: call System.Object System.Runtime.CompilerServices.RuntimeHelpers::GetObjectValue(System.Object)
+	IL_0008: call System.Boolean System.Object::Equals(System.Object)
+	IL_000d: stloc.0
+	IL_000e: br.s IL_0010
+	IL_0010: ldloc.0
+	IL_0011: ret
+0x06000009 max-stack=1 init-locals=true code-size=12
+	local 0=System.Int32
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Int32 System.Object::GetHashCode()
+	IL_0007: stloc.0
+	IL_0008: br.s IL_000a
+	IL_000a: ldloc.0
+	IL_000b: ret
+0x0600000a max-stack=1 init-locals=true code-size=16
+	local 0=System.Type
+	IL_0000: nop
+	IL_0001: ldtoken VBConsApp.My.MyProject/MyWebServices
+	IL_0006: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x0600000b max-stack=1 init-locals=true code-size=12
+	local 0=System.String
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.String System.Object::ToString()
+	IL_0007: stloc.0
+	IL_0008: br.s IL_000a
+	IL_000a: ldloc.0
+	IL_000b: ret
+0x0600000c max-stack=2 init-locals=true code-size=32
+	local 0=T
+	local 1=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: box T
+	IL_0007: ldnull
+	IL_0008: ceq
+	IL_000a: stloc.1
+	IL_000b: ldloc.1
+	IL_000c: brfalse.s IL_0018
+	IL_000e: call !!0 System.Activator::CreateInstance<T>()
+	IL_0013: stloc.0
+	IL_0014: br.s IL_001e
+	IL_0016: br.s IL_001d
+	IL_0018: nop
+	IL_0019: ldarg.0
+	IL_001a: stloc.0
+	IL_001b: br.s IL_001e
+	IL_001d: nop
+	IL_001e: ldloc.0
+	IL_001f: ret
+0x0600000d max-stack=2 init-locals=true code-size=18
+	local 0=T
+	IL_0000: nop
+	IL_0001: ldarg.1
+	IL_0002: ldloca.s V_0
+	IL_0004: initobj T
+	IL_000a: ldloc.0
+	IL_000b: stobj T
+	IL_0010: nop
+	IL_0011: ret
+0x0600000e max-stack=8 init-locals=false code-size=10
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Void System.Object::.ctor()
+	IL_0007: nop
+	IL_0008: nop
+	IL_0009: ret
+0x0600000f max-stack=2 init-locals=true code-size=38
+	local 0=T
+	local 1=System.Boolean
+	IL_0000: nop
+	IL_0001: ldsfld T VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<T>::m_ThreadStaticValue
+	IL_0006: box T
+	IL_000b: ldnull
+	IL_000c: ceq
+	IL_000e: stloc.1
+	IL_000f: ldloc.1
+	IL_0010: brfalse.s IL_001c
+	IL_0012: call !!0 System.Activator::CreateInstance<T>()
+	IL_0017: stsfld T VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<T>::m_ThreadStaticValue
+	IL_001c: ldsfld T VBConsApp.My.MyProject/ThreadSafeObjectProvider`1<T>::m_ThreadStaticValue
+	IL_0021: stloc.0
+	IL_0022: br.s IL_0024
+	IL_0024: ldloc.0
+	IL_0025: ret
+0x06000010 max-stack=8 init-locals=false code-size=10
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Void System.Object::.ctor()
+	IL_0007: nop
+	IL_0008: nop
+	IL_0009: ret
+0x06000011 max-stack=8 init-locals=false code-size=10
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Void System.Object::.ctor()
+	IL_0007: nop
+	IL_0008: nop
+	IL_0009: ret
+0x06000012 max-stack=2 init-locals=true code-size=67
+	local 0=System.String
+	local 1=System.Xml.Linq.XElement
+	local 2=System.Collections.Generic.IEnumerator`1<System.Xml.Linq.XElement>
+	local 3=System.Boolean
+	IL_0000: nop
+	IL_0001: nop
+	IL_0002: ldarg.0
+	IL_0003: callvirt System.Collections.Generic.IEnumerator`1<!0> System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>::GetEnumerator()
+	IL_0008: stloc.2
+	IL_0009: br.s IL_001c
+	IL_000b: ldloc.2
+	IL_000c: callvirt !0 System.Collections.Generic.IEnumerator`1<System.Xml.Linq.XElement>::get_Current()
+	IL_0011: stloc.1
+	IL_0012: ldloc.1
+	IL_0013: callvirt System.String System.Xml.Linq.XElement::get_Value()
+	IL_0018: stloc.0
+	IL_0019: leave.s IL_0041
+	IL_001b: nop
+	IL_001c: ldloc.2
+	IL_001d: callvirt System.Boolean System.Collections.IEnumerator::MoveNext()
+	IL_0022: stloc.3
+	IL_0023: ldloc.3
+	IL_0024: brtrue.s IL_000b
+	IL_0026: nop
+	IL_0027: leave.s IL_003d
+	IL_0029: ldloc.2
+	IL_002a: ldnull
+	IL_002b: ceq
+	IL_002d: ldc.i4.0
+	IL_002e: ceq
+	IL_0030: stloc.3
+	IL_0031: ldloc.3
+	IL_0032: brfalse.s IL_003b
+	IL_0034: ldloc.2
+	IL_0035: callvirt System.Void System.IDisposable::Dispose()
+	IL_003a: nop
+	IL_003b: nop
+	IL_003c: endfinally
+	IL_003d: ldnull
+	IL_003e: stloc.0
+	IL_003f: br.s IL_0041
+	IL_0041: ldloc.0
+	IL_0042: ret
+	.try IL_0002 to IL_0029 finally handler IL_0029 to IL_003d
+0x06000013 max-stack=2 init-locals=true code-size=65
+	local 0=System.Xml.Linq.XElement
+	local 1=System.Collections.Generic.IEnumerator`1<System.Xml.Linq.XElement>
+	local 2=System.Boolean
+	IL_0000: nop
+	IL_0001: nop
+	IL_0002: ldarg.0
+	IL_0003: callvirt System.Collections.Generic.IEnumerator`1<!0> System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>::GetEnumerator()
+	IL_0008: stloc.1
+	IL_0009: br.s IL_001e
+	IL_000b: ldloc.1
+	IL_000c: callvirt !0 System.Collections.Generic.IEnumerator`1<System.Xml.Linq.XElement>::get_Current()
+	IL_0011: stloc.0
+	IL_0012: ldloc.0
+	IL_0013: ldarg.1
+	IL_0014: callvirt System.Void System.Xml.Linq.XElement::set_Value(System.String)
+	IL_0019: nop
+	IL_001a: nop
+	IL_001b: br.s IL_0028
+	IL_001d: nop
+	IL_001e: ldloc.1
+	IL_001f: callvirt System.Boolean System.Collections.IEnumerator::MoveNext()
+	IL_0024: stloc.2
+	IL_0025: ldloc.2
+	IL_0026: brtrue.s IL_000b
+	IL_0028: nop
+	IL_0029: leave.s IL_003f
+	IL_002b: ldloc.1
+	IL_002c: ldnull
+	IL_002d: ceq
+	IL_002f: ldc.i4.0
+	IL_0030: ceq
+	IL_0032: stloc.2
+	IL_0033: ldloc.2
+	IL_0034: brfalse.s IL_003d
+	IL_0036: ldloc.1
+	IL_0037: callvirt System.Void System.IDisposable::Dispose()
+	IL_003c: nop
+	IL_003d: nop
+	IL_003e: endfinally
+	IL_003f: nop
+	IL_0040: ret
+	.try IL_0002 to IL_002b finally handler IL_002b to IL_003f
+0x06000014 max-stack=2 init-locals=true code-size=73
+	local 0=System.String
+	local 1=System.Xml.Linq.XElement
+	local 2=System.Collections.Generic.IEnumerator`1<System.Xml.Linq.XElement>
+	local 3=System.Boolean
+	IL_0000: nop
+	IL_0001: nop
+	IL_0002: ldarg.0
+	IL_0003: callvirt System.Collections.Generic.IEnumerator`1<!0> System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>::GetEnumerator()
+	IL_0008: stloc.2
+	IL_0009: br.s IL_0022
+	IL_000b: ldloc.2
+	IL_000c: callvirt !0 System.Collections.Generic.IEnumerator`1<System.Xml.Linq.XElement>::get_Current()
+	IL_0011: stloc.1
+	IL_0012: ldloc.1
+	IL_0013: ldarg.1
+	IL_0014: callvirt System.Xml.Linq.XAttribute System.Xml.Linq.XElement::Attribute(System.Xml.Linq.XName)
+	IL_0019: call System.String System.Xml.Linq.XAttribute::op_Explicit(System.Xml.Linq.XAttribute)
+	IL_001e: stloc.0
+	IL_001f: leave.s IL_0047
+	IL_0021: nop
+	IL_0022: ldloc.2
+	IL_0023: callvirt System.Boolean System.Collections.IEnumerator::MoveNext()
+	IL_0028: stloc.3
+	IL_0029: ldloc.3
+	IL_002a: brtrue.s IL_000b
+	IL_002c: nop
+	IL_002d: leave.s IL_0043
+	IL_002f: ldloc.2
+	IL_0030: ldnull
+	IL_0031: ceq
+	IL_0033: ldc.i4.0
+	IL_0034: ceq
+	IL_0036: stloc.3
+	IL_0037: ldloc.3
+	IL_0038: brfalse.s IL_0041
+	IL_003a: ldloc.2
+	IL_003b: callvirt System.Void System.IDisposable::Dispose()
+	IL_0040: nop
+	IL_0041: nop
+	IL_0042: endfinally
+	IL_0043: ldnull
+	IL_0044: stloc.0
+	IL_0045: br.s IL_0047
+	IL_0047: ldloc.0
+	IL_0048: ret
+	.try IL_0002 to IL_002f finally handler IL_002f to IL_0043
+0x06000015 max-stack=3 init-locals=true code-size=66
+	local 0=System.Xml.Linq.XElement
+	local 1=System.Collections.Generic.IEnumerator`1<System.Xml.Linq.XElement>
+	local 2=System.Boolean
+	IL_0000: nop
+	IL_0001: nop
+	IL_0002: ldarg.0
+	IL_0003: callvirt System.Collections.Generic.IEnumerator`1<!0> System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>::GetEnumerator()
+	IL_0008: stloc.1
+	IL_0009: br.s IL_001f
+	IL_000b: ldloc.1
+	IL_000c: callvirt !0 System.Collections.Generic.IEnumerator`1<System.Xml.Linq.XElement>::get_Current()
+	IL_0011: stloc.0
+	IL_0012: ldloc.0
+	IL_0013: ldarg.1
+	IL_0014: ldarg.2
+	IL_0015: callvirt System.Void System.Xml.Linq.XElement::SetAttributeValue(System.Xml.Linq.XName,System.Object)
+	IL_001a: nop
+	IL_001b: nop
+	IL_001c: br.s IL_0029
+	IL_001e: nop
+	IL_001f: ldloc.1
+	IL_0020: callvirt System.Boolean System.Collections.IEnumerator::MoveNext()
+	IL_0025: stloc.2
+	IL_0026: ldloc.2
+	IL_0027: brtrue.s IL_000b
+	IL_0029: nop
+	IL_002a: leave.s IL_0040
+	IL_002c: ldloc.1
+	IL_002d: ldnull
+	IL_002e: ceq
+	IL_0030: ldc.i4.0
+	IL_0031: ceq
+	IL_0033: stloc.2
+	IL_0034: ldloc.2
+	IL_0035: brfalse.s IL_003e
+	IL_0037: ldloc.1
+	IL_0038: callvirt System.Void System.IDisposable::Dispose()
+	IL_003d: nop
+	IL_003e: nop
+	IL_003f: endfinally
+	IL_0040: nop
+	IL_0041: ret
+	.try IL_0002 to IL_002c finally handler IL_002c to IL_0040
+0x06000016 max-stack=2 init-locals=true code-size=18
+	local 0=System.String
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldarg.1
+	IL_0003: callvirt System.Xml.Linq.XAttribute System.Xml.Linq.XElement::Attribute(System.Xml.Linq.XName)
+	IL_0008: call System.String System.Xml.Linq.XAttribute::op_Explicit(System.Xml.Linq.XAttribute)
+	IL_000d: stloc.0
+	IL_000e: br.s IL_0010
+	IL_0010: ldloc.0
+	IL_0011: ret
+0x06000017 max-stack=8 init-locals=false code-size=12
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldarg.1
+	IL_0003: ldarg.2
+	IL_0004: callvirt System.Void System.Xml.Linq.XElement::SetAttributeValue(System.Xml.Linq.XName,System.Object)
+	IL_0009: nop
+	IL_000a: nop
+	IL_000b: ret
+0x06000018 max-stack=2 init-locals=true code-size=31
+	local 0=System.Xml.Linq.XAttribute
+	local 1=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.1
+	IL_0002: ldnull
+	IL_0003: ceq
+	IL_0005: stloc.1
+	IL_0006: ldloc.1
+	IL_0007: brfalse.s IL_000d
+	IL_0009: ldnull
+	IL_000a: stloc.0
+	IL_000b: br.s IL_001d
+	IL_000d: nop
+	IL_000e: ldarg.0
+	IL_000f: ldarg.1
+	IL_0010: call System.Object System.Runtime.CompilerServices.RuntimeHelpers::GetObjectValue(System.Object)
+	IL_0015: newobj System.Void System.Xml.Linq.XAttribute::.ctor(System.Xml.Linq.XName,System.Object)
+	IL_001a: stloc.0
+	IL_001b: br.s IL_001d
+	IL_001d: ldloc.0
+	IL_001e: ret
+0x06000019 max-stack=2 init-locals=true code-size=28
+	local 0=System.Xml.Linq.XAttribute
+	local 1=System.Xml.Linq.XAttribute
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldarg.1
+	IL_0003: callvirt System.String System.Xml.Linq.XNamespace::get_NamespaceName()
+	IL_0008: newobj System.Void System.Xml.Linq.XAttribute::.ctor(System.Xml.Linq.XName,System.Object)
+	IL_000d: stloc.0
+	IL_000e: ldloc.0
+	IL_000f: ldarg.1
+	IL_0010: callvirt System.Void System.Xml.Linq.XObject::AddAnnotation(System.Object)
+	IL_0015: nop
+	IL_0016: ldloc.0
+	IL_0017: stloc.1
+	IL_0018: br.s IL_001a
+	IL_001a: ldloc.1
+	IL_001b: ret
+0x0600001a max-stack=4 init-locals=true code-size=84
+	local 0=System.Object
+	local 1=System.Xml.Linq.XElement
+	local 2=System.Collections.IEnumerable
+	local 3=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.3
+	IL_0002: ldnull
+	IL_0003: ceq
+	IL_0005: ldc.i4.0
+	IL_0006: ceq
+	IL_0008: stloc.3
+	IL_0009: ldloc.3
+	IL_000a: brfalse.s IL_004d
+	IL_000c: ldarg.3
+	IL_000d: isinst System.Xml.Linq.XElement
+	IL_0012: stloc.1
+	IL_0013: ldloc.1
+	IL_0014: ldnull
+	IL_0015: ceq
+	IL_0017: ldc.i4.0
+	IL_0018: ceq
+	IL_001a: stloc.3
+	IL_001b: ldloc.3
+	IL_001c: brfalse.s IL_002c
+	IL_001e: ldarg.0
+	IL_001f: ldarg.1
+	IL_0020: ldarg.2
+	IL_0021: ldloc.1
+	IL_0022: call System.Xml.Linq.XElement VBConsApp.My.InternalXmlHelper::RemoveNamespaceAttributes(System.String[],System.Xml.Linq.XNamespace[],System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>,System.Xml.Linq.XElement)
+	IL_0027: stloc.0
+	IL_0028: br.s IL_0052
+	IL_002a: br.s IL_004c
+	IL_002c: nop
+	IL_002d: ldarg.3
+	IL_002e: isinst System.Collections.IEnumerable
+	IL_0033: stloc.2
+	IL_0034: ldloc.2
+	IL_0035: ldnull
+	IL_0036: ceq
+	IL_0038: ldc.i4.0
+	IL_0039: ceq
+	IL_003b: stloc.3
+	IL_003c: ldloc.3
+	IL_003d: brfalse.s IL_004b
+	IL_003f: ldarg.0
+	IL_0040: ldarg.1
+	IL_0041: ldarg.2
+	IL_0042: ldloc.2
+	IL_0043: call System.Collections.IEnumerable VBConsApp.My.InternalXmlHelper::RemoveNamespaceAttributes(System.String[],System.Xml.Linq.XNamespace[],System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>,System.Collections.IEnumerable)
+	IL_0048: stloc.0
+	IL_0049: br.s IL_0052
+	IL_004b: nop
+	IL_004c: nop
+	IL_004d: nop
+	IL_004e: ldarg.3
+	IL_004f: stloc.0
+	IL_0050: br.s IL_0052
+	IL_0052: ldloc.0
+	IL_0053: ret
+0x0600001b max-stack=4 init-locals=true code-size=104
+	local 0=System.Collections.IEnumerable
+	local 1=System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>
+	local 2=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.3
+	IL_0002: ldnull
+	IL_0003: ceq
+	IL_0005: ldc.i4.0
+	IL_0006: ceq
+	IL_0008: stloc.2
+	IL_0009: ldloc.2
+	IL_000a: brfalse.s IL_0061
+	IL_000c: ldarg.3
+	IL_000d: isinst System.Collections.Generic.IEnumerable`1<System.Xml.Linq.XElement>
+	IL_0012: stloc.1
+	IL_0013: ldloc.1
+	IL_0014: ldnull
+	IL_0015: ceq
+	IL_0017: ldc.i4.0
+	IL_0018: ceq
+	IL_001a: stloc.2
+	IL_001b: ldloc.2
+	IL_001c: brfalse.s IL_003d
+	IL_001e: ldloc.1
+	IL_001f: ldarg.0
+	IL_0020: ldarg.1
+	IL_0021: ldarg.2
+	IL_0022: newobj System.Void VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::.ctor(System.String[],System.Xml.Linq.XNamespace[],System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>)
+	IL_0027: dup
+	IL_0028: ldvirtftn System.Xml.Linq.XElement VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::ProcessXElement(System.Xml.Linq.XElement)
+	IL_002e: newobj System.Void System.Func`2<System.Xml.Linq.XElement,System.Xml.Linq.XElement>::.ctor(System.Object,System.IntPtr)
+	IL_0033: call System.Collections.Generic.IEnumerable`1<!!1> System.Linq.Enumerable::Select<System.Xml.Linq.XElement,System.Xml.Linq.XElement>(System.Collections.Generic.IEnumerable`1<!!0>,System.Func`2<!!0,!!1>)
+	IL_0038: stloc.0
+	IL_0039: br.s IL_0066
+	IL_003b: br.s IL_0060
+	IL_003d: nop
+	IL_003e: ldarg.3
+	IL_003f: call System.Collections.Generic.IEnumerable`1<!!0> System.Linq.Enumerable::Cast<System.Object>(System.Collections.IEnumerable)
+	IL_0044: ldarg.0
+	IL_0045: ldarg.1
+	IL_0046: ldarg.2
+	IL_0047: newobj System.Void VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::.ctor(System.String[],System.Xml.Linq.XNamespace[],System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>)
+	IL_004c: dup
+	IL_004d: ldvirtftn System.Object VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::ProcessObject(System.Object)
+	IL_0053: newobj System.Void System.Func`2<System.Object,System.Object>::.ctor(System.Object,System.IntPtr)
+	IL_0058: call System.Collections.Generic.IEnumerable`1<!!1> System.Linq.Enumerable::Select<System.Object,System.Object>(System.Collections.Generic.IEnumerable`1<!!0>,System.Func`2<!!0,!!1>)
+	IL_005d: stloc.0
+	IL_005e: br.s IL_0066
+	IL_0060: nop
+	IL_0061: nop
+	IL_0062: ldarg.3
+	IL_0063: stloc.0
+	IL_0064: br.s IL_0066
+	IL_0066: ldloc.0
+	IL_0067: ret
+0x0600001c max-stack=2 init-locals=true code-size=407
+	local 0=System.Xml.Linq.XElement
+	local 1=System.Xml.Linq.XAttribute
+	local 2=System.Xml.Linq.XAttribute
+	local 3=System.Xml.Linq.XNamespace
+	local 4=System.String
+	local 5=System.Int32
+	local 6=System.Xml.Linq.XNamespace
+	local 7=System.String
+	local 8=System.Int32
+	local 9=System.Int32
+	local 10=System.Xml.Linq.XAttribute
+	local 11=System.Xml.Linq.XNamespace
+	local 12=System.String
+	local 13=System.Int32
+	local 14=System.Int32
+	local 15=System.Int32
+	local 16=System.Boolean
+	local 17=System.Boolean
+	local 18=System.Int32
+	local 19=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.3
+	IL_0002: ldnull
+	IL_0003: ceq
+	IL_0005: ldc.i4.0
+	IL_0006: ceq
+	IL_0008: stloc.s V_16
+	IL_000a: ldloc.s V_16
+	IL_000c: brfalse IL_0190
+	IL_0011: ldarg.3
+	IL_0012: callvirt System.Xml.Linq.XAttribute System.Xml.Linq.XElement::get_FirstAttribute()
+	IL_0017: stloc.1
+	IL_0018: br IL_0180
+	IL_001d: ldloc.1
+	IL_001e: callvirt System.Xml.Linq.XAttribute System.Xml.Linq.XAttribute::get_NextAttribute()
+	IL_0023: stloc.2
+	IL_0024: ldloc.1
+	IL_0025: callvirt System.Boolean System.Xml.Linq.XAttribute::get_IsNamespaceDeclaration()
+	IL_002a: stloc.s V_16
+	IL_002c: ldloc.s V_16
+	IL_002e: brfalse IL_017c
+	IL_0033: ldloc.1
+	IL_0034: callvirt !!0 System.Xml.Linq.XObject::Annotation<System.Xml.Linq.XNamespace>()
+	IL_0039: stloc.3
+	IL_003a: ldloc.1
+	IL_003b: callvirt System.Xml.Linq.XName System.Xml.Linq.XAttribute::get_Name()
+	IL_0040: callvirt System.String System.Xml.Linq.XName::get_LocalName()
+	IL_0045: stloc.s V_4
+	IL_0047: ldloc.3
+	IL_0048: ldnull
+	IL_0049: ceq
+	IL_004b: ldc.i4.0
+	IL_004c: ceq
+	IL_004e: stloc.s V_16
+	IL_0050: ldloc.s V_16
+	IL_0052: brfalse IL_017b
+	IL_0057: ldarg.0
+	IL_0058: brfalse.s IL_005d
+	IL_005a: ldarg.1
+	IL_005b: brtrue.s IL_0060
+	IL_005d: ldc.i4.0
+	IL_005e: br.s IL_0061
+	IL_0060: ldc.i4.1
+	IL_0061: stloc.s V_17
+	IL_0063: ldloc.s V_17
+	IL_0065: brfalse.s IL_00bf
+	IL_0067: ldarg.0
+	IL_0068: ldlen
+	IL_0069: conv.ovf.i4
+	IL_006a: ldc.i4.1
+	IL_006b: sub.ovf
+	IL_006c: stloc.s V_5
+	IL_006e: ldc.i4.0
+	IL_006f: ldloc.s V_5
+	IL_0071: stloc.s V_14
+	IL_0073: stloc.s V_8
+	IL_0075: br.s IL_00b5
+	IL_0077: ldarg.0
+	IL_0078: ldloc.s V_8
+	IL_007a: ldelem.ref
+	IL_007b: stloc.s V_7
+	IL_007d: ldarg.1
+	IL_007e: ldloc.s V_8
+	IL_0080: ldelem.ref
+	IL_0081: stloc.s V_6
+	IL_0083: ldloc.s V_4
+	IL_0085: ldloc.s V_7
+	IL_0087: callvirt System.Boolean System.String::Equals(System.String)
+	IL_008c: stloc.s V_17
+	IL_008e: ldloc.s V_17
+	IL_0090: brfalse.s IL_00ad
+	IL_0092: ldloc.3
+	IL_0093: ldloc.s V_6
+	IL_0095: call System.Boolean System.Xml.Linq.XNamespace::op_Equality(System.Xml.Linq.XNamespace,System.Xml.Linq.XNamespace)
+	IL_009a: stloc.s V_16
+	IL_009c: ldloc.s V_16
+	IL_009e: brfalse.s IL_00a7
+	IL_00a0: ldloc.1
+	IL_00a1: callvirt System.Void System.Xml.Linq.XAttribute::Remove()
+	IL_00a6: nop
+	IL_00a7: nop
+	IL_00a8: ldnull
+	IL_00a9: stloc.1
+	IL_00aa: nop
+	IL_00ab: br.s IL_00bf
+	IL_00ad: nop
+	IL_00ae: nop
+	IL_00af: ldloc.s V_8
+	IL_00b1: ldc.i4.1
+	IL_00b2: add.ovf
+	IL_00b3: stloc.s V_8
+	IL_00b5: ldloc.s V_8
+	IL_00b7: ldloc.s V_14
+	IL_00b9: stloc.s V_18
+	IL_00bb: ldloc.s V_18
+	IL_00bd: ble.s IL_0077
+	IL_00bf: nop
+	IL_00c0: ldloc.1
+	IL_00c1: ldnull
+	IL_00c2: ceq
+	IL_00c4: ldc.i4.0
+	IL_00c5: ceq
+	IL_00c7: stloc.s V_17
+	IL_00c9: ldloc.s V_17
+	IL_00cb: brfalse IL_017a
+	IL_00d0: ldarg.2
+	IL_00d1: ldnull
+	IL_00d2: ceq
+	IL_00d4: ldc.i4.0
+	IL_00d5: ceq
+	IL_00d7: stloc.s V_16
+	IL_00d9: ldloc.s V_16
+	IL_00db: brfalse.s IL_015c
+	IL_00dd: ldarg.2
+	IL_00de: callvirt System.Int32 System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>::get_Count()
+	IL_00e3: ldc.i4.1
+	IL_00e4: sub.ovf
+	IL_00e5: stloc.s V_9
+	IL_00e7: ldc.i4.0
+	IL_00e8: ldloc.s V_9
+	IL_00ea: stloc.s V_15
+	IL_00ec: stloc.s V_13
+	IL_00ee: br.s IL_0152
+	IL_00f0: ldarg.2
+	IL_00f1: ldloc.s V_13
+	IL_00f3: callvirt !0 System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>::get_Item(System.Int32)
+	IL_00f8: stloc.s V_10
+	IL_00fa: ldloc.s V_10
+	IL_00fc: callvirt System.Xml.Linq.XName System.Xml.Linq.XAttribute::get_Name()
+	IL_0101: callvirt System.String System.Xml.Linq.XName::get_LocalName()
+	IL_0106: stloc.s V_12
+	IL_0108: ldloc.s V_10
+	IL_010a: callvirt !!0 System.Xml.Linq.XObject::Annotation<System.Xml.Linq.XNamespace>()
+	IL_010f: stloc.s V_11
+	IL_0111: ldloc.s V_11
+	IL_0113: ldnull
+	IL_0114: ceq
+	IL_0116: ldc.i4.0
+	IL_0117: ceq
+	IL_0119: stloc.s V_17
+	IL_011b: ldloc.s V_17
+	IL_011d: brfalse.s IL_014a
+	IL_011f: ldloc.s V_4
+	IL_0121: ldloc.s V_12
+	IL_0123: callvirt System.Boolean System.String::Equals(System.String)
+	IL_0128: stloc.s V_16
+	IL_012a: ldloc.s V_16
+	IL_012c: brfalse.s IL_0149
+	IL_012e: ldloc.3
+	IL_012f: ldloc.s V_11
+	IL_0131: call System.Boolean System.Xml.Linq.XNamespace::op_Equality(System.Xml.Linq.XNamespace,System.Xml.Linq.XNamespace)
+	IL_0136: stloc.s V_19
+	IL_0138: ldloc.s V_19
+	IL_013a: brfalse.s IL_0143
+	IL_013c: ldloc.1
+	IL_013d: callvirt System.Void System.Xml.Linq.XAttribute::Remove()
+	IL_0142: nop
+	IL_0143: nop
+	IL_0144: ldnull
+	IL_0145: stloc.1
+	IL_0146: nop
+	IL_0147: br.s IL_015c
+	IL_0149: nop
+	IL_014a: nop
+	IL_014b: nop
+	IL_014c: ldloc.s V_13
+	IL_014e: ldc.i4.1
+	IL_014f: add.ovf
+	IL_0150: stloc.s V_13
+	IL_0152: ldloc.s V_13
+	IL_0154: ldloc.s V_15
+	IL_0156: stloc.s V_18
+	IL_0158: ldloc.s V_18
+	IL_015a: ble.s IL_00f0
+	IL_015c: nop
+	IL_015d: ldloc.1
+	IL_015e: ldnull
+	IL_015f: ceq
+	IL_0161: ldc.i4.0
+	IL_0162: ceq
+	IL_0164: stloc.s V_19
+	IL_0166: ldloc.s V_19
+	IL_0168: brfalse.s IL_0179
+	IL_016a: ldloc.1
+	IL_016b: callvirt System.Void System.Xml.Linq.XAttribute::Remove()
+	IL_0170: nop
+	IL_0171: ldarg.2
+	IL_0172: ldloc.1
+	IL_0173: callvirt System.Void System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>::Add(!0)
+	IL_0178: nop
+	IL_0179: nop
+	IL_017a: nop
+	IL_017b: nop
+	IL_017c: nop
+	IL_017d: ldloc.2
+	IL_017e: stloc.1
+	IL_017f: nop
+	IL_0180: ldloc.1
+	IL_0181: ldnull
+	IL_0182: ceq
+	IL_0184: ldc.i4.0
+	IL_0185: ceq
+	IL_0187: stloc.s V_19
+	IL_0189: ldloc.s V_19
+	IL_018b: brtrue IL_001d
+	IL_0190: nop
+	IL_0191: ldarg.3
+	IL_0192: stloc.0
+	IL_0193: br.s IL_0195
+	IL_0195: ldloc.0
+	IL_0196: ret
+0x0600001d max-stack=8 init-locals=false code-size=31
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Void System.Object::.ctor()
+	IL_0007: nop
+	IL_0008: ldarg.0
+	IL_0009: ldarg.1
+	IL_000a: stfld System.String[] VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_inScopePrefixes
+	IL_000f: ldarg.0
+	IL_0010: ldarg.2
+	IL_0011: stfld System.Xml.Linq.XNamespace[] VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_inScopeNs
+	IL_0016: ldarg.0
+	IL_0017: ldarg.3
+	IL_0018: stfld System.Collections.Generic.List`1<System.Xml.Linq.XAttribute> VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_attributes
+	IL_001d: nop
+	IL_001e: ret
+0x0600001e max-stack=4 init-locals=true code-size=30
+	local 0=System.Xml.Linq.XElement
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldfld System.String[] VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_inScopePrefixes
+	IL_0007: ldarg.0
+	IL_0008: ldfld System.Xml.Linq.XNamespace[] VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_inScopeNs
+	IL_000d: ldarg.0
+	IL_000e: ldfld System.Collections.Generic.List`1<System.Xml.Linq.XAttribute> VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_attributes
+	IL_0013: ldarg.1
+	IL_0014: call System.Xml.Linq.XElement VBConsApp.My.InternalXmlHelper::RemoveNamespaceAttributes(System.String[],System.Xml.Linq.XNamespace[],System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>,System.Xml.Linq.XElement)
+	IL_0019: stloc.0
+	IL_001a: br.s IL_001c
+	IL_001c: ldloc.0
+	IL_001d: ret
+0x0600001f max-stack=4 init-locals=true code-size=56
+	local 0=System.Xml.Linq.XElement
+	local 1=System.Object
+	local 2=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.1
+	IL_0002: isinst System.Xml.Linq.XElement
+	IL_0007: stloc.0
+	IL_0008: ldloc.0
+	IL_0009: ldnull
+	IL_000a: ceq
+	IL_000c: ldc.i4.0
+	IL_000d: ceq
+	IL_000f: stloc.2
+	IL_0010: ldloc.2
+	IL_0011: brfalse.s IL_0030
+	IL_0013: ldarg.0
+	IL_0014: ldfld System.String[] VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_inScopePrefixes
+	IL_0019: ldarg.0
+	IL_001a: ldfld System.Xml.Linq.XNamespace[] VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_inScopeNs
+	IL_001f: ldarg.0
+	IL_0020: ldfld System.Collections.Generic.List`1<System.Xml.Linq.XAttribute> VBConsApp.My.InternalXmlHelper/RemoveNamespaceAttributesClosure::m_attributes
+	IL_0025: ldloc.0
+	IL_0026: call System.Xml.Linq.XElement VBConsApp.My.InternalXmlHelper::RemoveNamespaceAttributes(System.String[],System.Xml.Linq.XNamespace[],System.Collections.Generic.List`1<System.Xml.Linq.XAttribute>,System.Xml.Linq.XElement)
+	IL_002b: stloc.1
+	IL_002c: br.s IL_0036
+	IL_002e: br.s IL_0035
+	IL_0030: nop
+	IL_0031: ldarg.1
+	IL_0032: stloc.1
+	IL_0033: br.s IL_0036
+	IL_0035: nop
+	IL_0036: ldloc.1
+	IL_0037: ret
+0x06000020 max-stack=2 init-locals=true code-size=59
+	local 0=System.Resources.ResourceManager
+	local 1=System.Resources.ResourceManager
+	local 2=System.Boolean
+	IL_0000: nop
+	IL_0001: ldsfld System.Resources.ResourceManager VBConsApp.My.Resources.Resources::resourceMan
+	IL_0006: ldnull
+	IL_0007: call System.Boolean System.Object::ReferenceEquals(System.Object,System.Object)
+	IL_000c: stloc.2
+	IL_000d: ldloc.2
+	IL_000e: brfalse.s IL_0030
+	IL_0010: ldstr "VBConsApp.Resources"
+	IL_0015: ldtoken VBConsApp.My.Resources.Resources
+	IL_001a: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_001f: callvirt System.Reflection.Assembly System.Type::get_Assembly()
+	IL_0024: newobj System.Void System.Resources.ResourceManager::.ctor(System.String,System.Reflection.Assembly)
+	IL_0029: stloc.1
+	IL_002a: ldloc.1
+	IL_002b: stsfld System.Resources.ResourceManager VBConsApp.My.Resources.Resources::resourceMan
+	IL_0030: nop
+	IL_0031: ldsfld System.Resources.ResourceManager VBConsApp.My.Resources.Resources::resourceMan
+	IL_0036: stloc.0
+	IL_0037: br.s IL_0039
+	IL_0039: ldloc.0
+	IL_003a: ret
+0x06000021 max-stack=1 init-locals=true code-size=11
+	local 0=System.Globalization.CultureInfo
+	IL_0000: nop
+	IL_0001: ldsfld System.Globalization.CultureInfo VBConsApp.My.Resources.Resources::resourceCulture
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x06000022 max-stack=8 init-locals=false code-size=9
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: stsfld System.Globalization.CultureInfo VBConsApp.My.Resources.Resources::resourceCulture
+	IL_0007: nop
+	IL_0008: ret
+0x06000023 max-stack=8 init-locals=false code-size=22
+	IL_0000: newobj System.Void VBConsApp.My.MySettings::.ctor()
+	IL_0005: call System.Configuration.SettingsBase System.Configuration.SettingsBase::Synchronized(System.Configuration.SettingsBase)
+	IL_000a: castclass VBConsApp.My.MySettings
+	IL_000f: stsfld VBConsApp.My.MySettings VBConsApp.My.MySettings::defaultInstance
+	IL_0014: nop
+	IL_0015: ret
+0x06000024 max-stack=8 init-locals=false code-size=9
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Configuration.ApplicationSettingsBase::.ctor()
+	IL_0006: nop
+	IL_0007: nop
+	IL_0008: ret
+0x06000025 max-stack=1 init-locals=true code-size=11
+	local 0=VBConsApp.My.MySettings
+	IL_0000: nop
+	IL_0001: ldsfld VBConsApp.My.MySettings VBConsApp.My.MySettings::defaultInstance
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x06000026 max-stack=1 init-locals=true code-size=11
+	local 0=VBConsApp.My.MySettings
+	IL_0000: nop
+	IL_0001: call VBConsApp.My.MySettings VBConsApp.My.MySettings::get_Default()
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x06000027 max-stack=8 init-locals=false code-size=9
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: nop
+	IL_0008: ret
+0x06000028 max-stack=1 init-locals=true code-size=23
+	local 0=System.Int32
+	IL_0000: nop
+	IL_0001: call System.Void System.Diagnostics.Debugger::Break()
+	IL_0006: nop
+	IL_0007: ldc.i4.5
+	IL_0008: call System.Int32 VBConsApp.Program::Factorial(System.Int32)
+	IL_000d: stloc.0
+	IL_000e: ldloc.0
+	IL_000f: call System.Void System.Console::WriteLine(System.Int32)
+	IL_0014: nop
+	IL_0015: nop
+	IL_0016: ret
+0x06000029 max-stack=3 init-locals=true code-size=32
+	local 0=System.Int32
+	local 1=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldc.i4.2
+	IL_0003: clt
+	IL_0005: stloc.1
+	IL_0006: ldloc.1
+	IL_0007: brfalse.s IL_000f
+	IL_0009: ldc.i4.1
+	IL_000a: stloc.0
+	IL_000b: br.s IL_001e
+	IL_000d: br.s IL_001d
+	IL_000f: nop
+	IL_0010: ldarg.0
+	IL_0011: ldarg.0
+	IL_0012: ldc.i4.1
+	IL_0013: sub.ovf
+	IL_0014: call System.Int32 VBConsApp.Program::Factorial(System.Int32)
+	IL_0019: mul.ovf
+	IL_001a: stloc.0
+	IL_001b: br.s IL_001e
+	IL_001d: nop
+	IL_001e: ldloc.0
+	IL_001f: ret

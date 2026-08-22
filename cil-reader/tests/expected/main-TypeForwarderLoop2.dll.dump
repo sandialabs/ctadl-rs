@@ -1,0 +1,38 @@
+[module]
+name=TypeForwarderLoop2.dll
+mvid=d29a08f0-765f-4aae-af47-3c051890fc63
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=TypeForwarderLoop2, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=System.Runtime, Version=7.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000002=TypeForwarderLoop1, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+[module-refs]
+[resources]
+[exported-types]
+0x27000001=MyNamespace.MyType scope=TypeForwarderLoop1 flags=0x00200000
+[types]
+0x02000001=<Module> flags=0x00000000
+[fields]
+[methods]
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETCoreApp,Version=v7.0")) property FrameworkDisplayName=(String:".NET 7.0")
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:"TypeForwarderLoop2"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String) args=((String:"Debug"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"1.0.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyInformationalVersionAttribute::.ctor(System.String) args=((String:"1.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"TypeForwarderLoop2"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"TypeForwarderLoop2"))
+[il]

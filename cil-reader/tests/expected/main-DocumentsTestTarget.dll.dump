@@ -1,0 +1,57 @@
+[module]
+name=DocumentsTestTarget.dll
+mvid=eafef8df-3a51-4321-a4b8-479803f2fbcc
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=DocumentsTestTarget, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Microsoft.CodeAnalysis.EmbeddedAttribute flags=0x00100100
+	base=System.Attribute
+0x02000003=System.Runtime.CompilerServices.RefSafetyRulesAttribute flags=0x00100100
+	base=System.Attribute
+0x02000004=DocumentsTestTarget.I flags=0x001000a0
+[fields]
+0x04000001=System.Int32 System.Runtime.CompilerServices.RefSafetyRulesAttribute::Version flags=0x0026
+[methods]
+0x06000001=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+0x06000002=System.Void System.Runtime.CompilerServices.RefSafetyRulesAttribute::.ctor(System.Int32) flags=0x1886 impl=0x0000 rva=0x00002059
+0x06000003=System.Void DocumentsTestTarget.I::M() flags=0x05c6 impl=0x0000 rva=0x00000000
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x00000001 ctor=System.Void System.Runtime.CompilerServices.RefSafetyRulesAttribute::.ctor(System.Int32) args=((I4:11))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x02000002 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000002 ctor=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=010002000000020054020d416c6c6f774d756c7469706c6500540209496e6865726974656400
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000002 max-stack=8 init-locals=false code-size=15
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: ldarg.0
+	IL_0008: ldarg.1
+	IL_0009: stfld System.Int32 System.Runtime.CompilerServices.RefSafetyRulesAttribute::Version
+	IL_000e: ret

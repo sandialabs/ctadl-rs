@@ -1,0 +1,178 @@
+[module]
+name=GenericAttributes.dll
+mvid=44c36f22-c01b-424e-ab7c-377bd6fd2de9
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=GenericAttributes, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Microsoft.CodeAnalysis.EmbeddedAttribute flags=0x00100100
+	base=System.Attribute
+0x02000003=System.Runtime.CompilerServices.NullableAttribute flags=0x00100100
+	base=System.Attribute
+0x02000004=System.Runtime.CompilerServices.NullableContextAttribute flags=0x00100100
+	base=System.Attribute
+0x02000005=WithGenericAttribute_OfString flags=0x00100000
+	base=System.Object
+0x02000006=WithGenericAttribute_OfInt flags=0x00100000
+	base=System.Object
+0x02000007=WithConstrainedGenericAttribute flags=0x00100000
+	base=System.Object
+0x02000008=GenericAttribute`1 flags=0x00100000
+	base=System.Attribute
+	generic-param 0 name=T flags=0x0000
+0x02000009=ConstraintType flags=0x00100000
+	base=System.Object
+0x0200000a=DerivedFromConstraintType flags=0x00100000
+	base=ConstraintType
+0x0200000b=ConstrainedGenericAttribute`1 flags=0x00100000
+	base=System.Attribute
+	generic-param 0 name=T flags=0x0000
+		constraint=ConstraintType
+[fields]
+0x04000001=System.Byte[] System.Runtime.CompilerServices.NullableAttribute::NullableFlags flags=0x0026
+0x04000002=System.Byte System.Runtime.CompilerServices.NullableContextAttribute::Flag flags=0x0026
+0x04000003=T GenericAttribute`1::F flags=0x0006
+0x04000004=T GenericAttribute`1::<P>k__BackingField flags=0x0001
+[methods]
+0x06000001=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+0x06000002=System.Void System.Runtime.CompilerServices.NullableAttribute::.ctor(System.Byte) flags=0x1886 impl=0x0000 rva=0x00002059
+0x06000003=System.Void System.Runtime.CompilerServices.NullableAttribute::.ctor(System.Byte[]) flags=0x1886 impl=0x0000 rva=0x00002072
+0x06000004=System.Void System.Runtime.CompilerServices.NullableContextAttribute::.ctor(System.Byte) flags=0x1886 impl=0x0000 rva=0x00002082
+0x06000005=System.Void WithGenericAttribute_OfString::.ctor() flags=0x1886 impl=0x0000 rva=0x00002092
+0x06000006=System.Void WithGenericAttribute_OfInt::.ctor() flags=0x1886 impl=0x0000 rva=0x0000209b
+0x06000007=System.Void WithConstrainedGenericAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x000020a4
+0x06000008=System.Void GenericAttribute`1::.ctor(T) flags=0x1886 impl=0x0000 rva=0x000020ad
+	param 1 name=t flags=0x0000
+0x06000009=T GenericAttribute`1::get_P() flags=0x0886 impl=0x0000 rva=0x000020b7 semantics=0x0002
+0x0600000a=System.Void GenericAttribute`1::set_P(T) flags=0x0886 impl=0x0000 rva=0x000020bf semantics=0x0001
+	param 1 name=value flags=0x0000
+0x0600000b=System.Void ConstraintType::.ctor() flags=0x1886 impl=0x0000 rva=0x000020c8
+0x0600000c=System.Void DerivedFromConstraintType::.ctor() flags=0x1886 impl=0x0000 rva=0x000020d1
+0x0600000d=System.Void ConstrainedGenericAttribute`1::.ctor() flags=0x1886 impl=0x0000 rva=0x000020da
+[properties]
+0x17000001=T GenericAttribute`1::P() flags=0x0000 getter=0x06000009 setter=0x0600000a
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETFramework,Version=v4.6.1")) property FrameworkDisplayName=(String:".NET Framework 4.6.1")
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:"GenericAttributes"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String) args=((String:"Debug"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"1.0.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyInformationalVersionAttribute::.ctor(System.String) args=((String:"1.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"GenericAttributes"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"GenericAttributes"))
+ca parent=0x2a000001 ctor=System.Void System.Runtime.CompilerServices.NullableAttribute::.ctor(System.Byte) args=((U1:2))
+ca parent=0x2c000001 ctor=System.Void System.Runtime.CompilerServices.NullableAttribute::.ctor(System.Byte) args=((U1:1))
+ca parent=0x02000002 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000002 ctor=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=0100846b0000020054020d416c6c6f774d756c7469706c6500540209496e6865726974656400
+ca parent=0x04000004 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x04000004 ctor=System.Void System.Diagnostics.DebuggerBrowsableAttribute::.ctor(System.Diagnostics.DebuggerBrowsableState) args=!unresolved blob=0100000000000000
+ca parent=0x02000004 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=01004c140000020054020d416c6c6f774d756c7469706c6500540209496e6865726974656400
+ca parent=0x02000005 ctor=System.Void GenericAttribute`1<System.String>::.ctor(T) args=((String:"t")) field F=(String:"f") property P=(String:"p")
+ca parent=0x02000006 ctor=System.Void GenericAttribute`1<System.Int32>::.ctor(T) args=((I4:1)) field F=(I4:2) property P=(I4:3)
+ca parent=0x02000007 ctor=System.Void ConstrainedGenericAttribute`1<DerivedFromConstraintType>::.ctor() args=()
+ca parent=0x02000008 ctor=System.Void System.Runtime.CompilerServices.NullableContextAttribute::.ctor(System.Byte) args=((U1:1))
+ca parent=0x02000008 ctor=System.Void System.Runtime.CompilerServices.NullableAttribute::.ctor(System.Byte) args=((U1:0))
+ca parent=0x06000009 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x0600000a ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000002 max-stack=8 init-locals=false code-size=24
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: ldarg.0
+	IL_0008: ldc.i4.1
+	IL_0009: newarr System.Byte
+	IL_000e: dup
+	IL_000f: ldc.i4.0
+	IL_0010: ldarg.1
+	IL_0011: stelem.i1
+	IL_0012: stfld System.Byte[] System.Runtime.CompilerServices.NullableAttribute::NullableFlags
+	IL_0017: ret
+0x06000003 max-stack=8 init-locals=false code-size=15
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: ldarg.0
+	IL_0008: ldarg.1
+	IL_0009: stfld System.Byte[] System.Runtime.CompilerServices.NullableAttribute::NullableFlags
+	IL_000e: ret
+0x06000004 max-stack=8 init-locals=false code-size=15
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: ldarg.0
+	IL_0008: ldarg.1
+	IL_0009: stfld System.Byte System.Runtime.CompilerServices.NullableContextAttribute::Flag
+	IL_000e: ret
+0x06000005 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000006 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000007 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000008 max-stack=8 init-locals=false code-size=9
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: nop
+	IL_0008: ret
+0x06000009 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld T GenericAttribute`1<T>::<P>k__BackingField
+	IL_0006: ret
+0x0600000a max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld T GenericAttribute`1<T>::<P>k__BackingField
+	IL_0007: ret
+0x0600000b max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x0600000c max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void ConstraintType::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x0600000d max-stack=8 init-locals=false code-size=9
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: nop
+	IL_0007: nop
+	IL_0008: ret

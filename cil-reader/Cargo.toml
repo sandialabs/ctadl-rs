@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["crates/cil-reader", "crates/cil-dump", "xtask"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"

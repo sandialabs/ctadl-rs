@@ -1,0 +1,42 @@
+[module]
+name=nullable-parameter.dll
+mvid=737edb42-7d17-47a0-a6f6-1b416f795e8e
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=nullable-parameter, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Test flags=0x00100000
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void Test::Foo(System.Nullable`1<System.Int32>,System.Nullable`1<System.Int32>,System.Int32) flags=0x0091 impl=0x0000 rva=0x00002050
+	param 0 name=foo flags=0x1010 constant=I4:1234
+	param 1 name=bar flags=0x1010 constant=Null
+	param 2 name=baz flags=0x1010 constant=I4:12
+0x06000002=System.Void Test::.ctor() flags=0x1886 impl=0x0000 rva=0x00002053
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000002 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret

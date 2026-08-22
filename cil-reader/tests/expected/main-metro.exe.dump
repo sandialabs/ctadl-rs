@@ -1,0 +1,1188 @@
+[module]
+name=RegularAppWithoutNotify.exe
+mvid=1cdb5339-43f9-42d6-b215-9a2db934743b
+kind=Windows
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00020003
+entry-point=0x0600000d
+[assembly]
+full-name=RegularAppWithoutNotify, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=Windows, Version=255.255.255.255, Culture=neutral, PublicKeyToken=null
+0x23000002=System.Runtime, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000003=System.Collections, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000004=System.Runtime.InteropServices.WindowsRuntime, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000005=System.Diagnostics.Tools, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000006=System.Diagnostics.Debug, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000007=System.Runtime.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=RegularAppWithoutNotify.App flags=0x00100101
+	base=Windows.UI.Xaml.Application
+	interface=Windows.UI.Xaml.Markup.IComponentConnector
+	interface=Windows.UI.Xaml.Markup.IXamlMetadataProvider
+0x02000003=RegularAppWithoutNotify.MainPage flags=0x00100101
+	base=Windows.UI.Xaml.Controls.Page
+	interface=Windows.UI.Xaml.Markup.IComponentConnector
+0x02000004=RegularAppWithoutNotify.Program flags=0x00100181
+	base=System.Object
+0x02000005=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider flags=0x00100000
+	base=System.Object
+0x02000006=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType flags=0x00100000
+	base=System.Object
+	interface=Windows.UI.Xaml.Markup.IXamlType
+0x02000007=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator flags=0x00000100
+	base=System.MulticastDelegate
+0x02000008=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection flags=0x00000100
+	base=System.MulticastDelegate
+0x02000009=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary flags=0x00000100
+	base=System.MulticastDelegate
+0x0200000a=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType flags=0x00100000
+	base=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType
+0x0200000b=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter flags=0x00000100
+	base=System.MulticastDelegate
+0x0200000c=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter flags=0x00000100
+	base=System.MulticastDelegate
+0x0200000d=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember flags=0x00100000
+	base=System.Object
+	interface=Windows.UI.Xaml.Markup.IXamlMember
+[fields]
+0x04000001=System.Boolean RegularAppWithoutNotify.App::_contentLoaded flags=0x0001
+0x04000002=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.App::_provider flags=0x0001
+0x04000003=System.Boolean RegularAppWithoutNotify.MainPage::_contentLoaded flags=0x0001
+0x04000004=Windows.UI.Xaml.ApplicationInitializationCallback RegularAppWithoutNotify.Program::CS$<>9__CachedAnonymousMethodDelegate1 flags=0x0011
+0x04000005=System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlType> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlTypes flags=0x0001
+0x04000006=System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlMember> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlMembers flags=0x0001
+0x04000007=System.Collections.Generic.Dictionary`2<System.Type,System.String> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlTypeToStandardName flags=0x0001
+0x04000008=System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::_fullName flags=0x0001
+0x04000009=System.Type RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::_underlyingType flags=0x0001
+0x0400000a=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_provider flags=0x0001
+0x0400000b=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_baseType flags=0x0001
+0x0400000c=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_isArray flags=0x0001
+0x0400000d=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_isMarkupExtension flags=0x0001
+0x0400000e=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_isBindable flags=0x0001
+0x0400000f=System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_contentPropertyName flags=0x0001
+0x04000010=System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_itemTypeName flags=0x0001
+0x04000011=System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_keyTypeName flags=0x0001
+0x04000012=System.Collections.Generic.Dictionary`2<System.String,System.String> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_memberNames flags=0x0001
+0x04000013=System.Collections.Generic.Dictionary`2<System.String,System.Object> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_enumValues flags=0x0001
+0x04000014=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::<Activator>k__BackingField flags=0x0001
+0x04000015=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::<CollectionAdd>k__BackingField flags=0x0001
+0x04000016=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::<DictionaryAdd>k__BackingField flags=0x0001
+0x04000017=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_provider flags=0x0001
+0x04000018=System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_name flags=0x0001
+0x04000019=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_isAttachable flags=0x0001
+0x0400001a=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_isDependencyProperty flags=0x0001
+0x0400001b=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_isReadOnly flags=0x0001
+0x0400001c=System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_typeName flags=0x0001
+0x0400001d=System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_targetTypeName flags=0x0001
+0x0400001e=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::<Getter>k__BackingField flags=0x0001
+0x0400001f=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::<Setter>k__BackingField flags=0x0001
+[methods]
+0x06000001=System.Void RegularAppWithoutNotify.App::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+0x06000002=System.Void RegularAppWithoutNotify.App::OnLaunched(Windows.ApplicationModel.Activation.LaunchActivatedEventArgs) flags=0x00c4 impl=0x0000 rva=0x00002094
+	param 1 name=args flags=0x0000
+0x06000003=System.Void RegularAppWithoutNotify.App::OnSuspending(System.Object,Windows.ApplicationModel.SuspendingEventArgs) flags=0x0081 impl=0x0000 rva=0x000020f8
+	param 1 name=sender flags=0x0000
+	param 2 name=e flags=0x0000
+0x06000004=System.Void RegularAppWithoutNotify.App::InitializeComponent() flags=0x0086 impl=0x0000 rva=0x00002117
+0x06000005=System.Void RegularAppWithoutNotify.App::Connect(System.Int32,System.Object) flags=0x01e6 impl=0x0000 rva=0x00002129
+	param 1 name=connectionId flags=0x0000
+	param 2 name=target flags=0x0000
+0x06000006=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.App::GetXamlType(System.Type) flags=0x01e6 impl=0x0000 rva=0x00002132
+	param 1 name=type flags=0x0000
+0x06000007=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.App::GetXamlType(System.String) flags=0x01e6 impl=0x0000 rva=0x00002153
+	param 1 name=typeName flags=0x0000
+0x06000008=Windows.UI.Xaml.Markup.XmlnsDefinition[] RegularAppWithoutNotify.App::GetXmlnsDefinitions() flags=0x01e6 impl=0x0000 rva=0x00002174
+0x06000009=System.Void RegularAppWithoutNotify.MainPage::.ctor() flags=0x1886 impl=0x0000 rva=0x0000217c
+0x0600000a=System.Void RegularAppWithoutNotify.MainPage::OnNavigatedTo(Windows.UI.Xaml.Navigation.NavigationEventArgs) flags=0x00c4 impl=0x0000 rva=0x0000218a
+	param 1 name=e flags=0x0000
+0x0600000b=System.Void RegularAppWithoutNotify.MainPage::InitializeComponent() flags=0x0086 impl=0x0000 rva=0x0000218c
+0x0600000c=System.Void RegularAppWithoutNotify.MainPage::Connect(System.Int32,System.Object) flags=0x01e6 impl=0x0000 rva=0x000021af
+	param 1 name=connectionId flags=0x0000
+	param 2 name=target flags=0x0000
+0x0600000d=System.Void RegularAppWithoutNotify.Program::Main(System.String[]) flags=0x0091 impl=0x0000 rva=0x000021c0
+	param 0 name=args flags=0x0000
+0x0600000e=System.Void RegularAppWithoutNotify.Program::<Main>b__0(Windows.UI.Xaml.ApplicationInitializationCallbackParams) flags=0x0091 impl=0x0000 rva=0x000021b8
+	param 0 name=p flags=0x0000
+0x0600000f=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetXamlTypeByType(System.Type) flags=0x0086 impl=0x0000 rva=0x000021e4
+	param 1 name=type flags=0x0000
+0x06000010=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetXamlTypeByName(System.String) flags=0x0086 impl=0x0000 rva=0x0000221c
+	param 1 name=typeName flags=0x0000
+0x06000011=Windows.UI.Xaml.Markup.IXamlMember RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetMemberByLongName(System.String) flags=0x0086 impl=0x0000 rva=0x00002260
+	param 1 name=longMemberName flags=0x0000
+0x06000012=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::AddToMapOfTypeToStandardName(System.Type,System.String) flags=0x0081 impl=0x0000 rva=0x000022a2
+	param 1 name=t flags=0x0000
+	param 2 name=str flags=0x0000
+0x06000013=System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::Activate_0_MainPage() flags=0x0081 impl=0x0000 rva=0x000022bf
+0x06000014=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::CreateXamlType(System.String) flags=0x0081 impl=0x0000 rva=0x000022c8
+	param 1 name=typeName flags=0x0000
+0x06000015=Windows.UI.Xaml.Markup.IXamlMember RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::CreateXamlMember(System.String) flags=0x0081 impl=0x0000 rva=0x00002360
+	param 1 name=longMemberName flags=0x0000
+0x06000016=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::.ctor() flags=0x1886 impl=0x0000 rva=0x00002370
+0x06000017=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::.ctor(System.String,System.Type) flags=0x1886 impl=0x0000 rva=0x00002399
+	param 1 name=fullName flags=0x0000
+	param 2 name=underlyingType flags=0x0000
+0x06000018=System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_FullName() flags=0x09e6 impl=0x0000 rva=0x000023af semantics=0x0002
+0x06000019=System.Type RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_UnderlyingType() flags=0x09e6 impl=0x0000 rva=0x000023b7 semantics=0x0002
+0x0600001a=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_BaseType() flags=0x09c6 impl=0x0000 rva=0x000023bf semantics=0x0002
+0x0600001b=Windows.UI.Xaml.Markup.IXamlMember RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_ContentProperty() flags=0x09c6 impl=0x0000 rva=0x000023c6 semantics=0x0002
+0x0600001c=Windows.UI.Xaml.Markup.IXamlMember RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::GetMember(System.String) flags=0x01c6 impl=0x0000 rva=0x000023cd
+	param 1 name=name flags=0x0000
+0x0600001d=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_IsArray() flags=0x09c6 impl=0x0000 rva=0x000023d4 semantics=0x0002
+0x0600001e=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_IsCollection() flags=0x09c6 impl=0x0000 rva=0x000023db semantics=0x0002
+0x0600001f=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_IsConstructible() flags=0x09c6 impl=0x0000 rva=0x000023e2 semantics=0x0002
+0x06000020=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_IsDictionary() flags=0x09c6 impl=0x0000 rva=0x000023e9 semantics=0x0002
+0x06000021=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_IsMarkupExtension() flags=0x09c6 impl=0x0000 rva=0x000023f0 semantics=0x0002
+0x06000022=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_IsBindable() flags=0x09c6 impl=0x0000 rva=0x000023f7 semantics=0x0002
+0x06000023=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_ItemType() flags=0x09c6 impl=0x0000 rva=0x000023fe semantics=0x0002
+0x06000024=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_KeyType() flags=0x09c6 impl=0x0000 rva=0x00002405 semantics=0x0002
+0x06000025=System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::ActivateInstance() flags=0x01c6 impl=0x0000 rva=0x0000240c
+0x06000026=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::AddToMap(System.Object,System.Object,System.Object) flags=0x01c6 impl=0x0000 rva=0x00002413
+	param 1 name=instance flags=0x0000
+	param 2 name=key flags=0x0000
+	param 3 name=item flags=0x0000
+0x06000027=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::AddToVector(System.Object,System.Object) flags=0x01c6 impl=0x0000 rva=0x0000241a
+	param 1 name=instance flags=0x0000
+	param 2 name=item flags=0x0000
+0x06000028=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::RunInitializer() flags=0x01c6 impl=0x0000 rva=0x00002421
+0x06000029=System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::CreateFromString(System.String) flags=0x01c6 impl=0x0000 rva=0x00002428
+	param 1 name=input flags=0x0000
+0x0600002a=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator::.ctor(System.Object,System.IntPtr) flags=0x1886 impl=0x0003 rva=0x00000000
+	param 1 name=object flags=0x0000
+	param 2 name=method flags=0x0000
+0x0600002b=System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator::Invoke() flags=0x01c6 impl=0x0003 rva=0x00000000
+0x0600002c=System.IAsyncResult RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator::BeginInvoke(System.AsyncCallback,System.Object) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=callback flags=0x0000
+	param 2 name=object flags=0x0000
+0x0600002d=System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator::EndInvoke(System.IAsyncResult) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=result flags=0x0000
+0x0600002e=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection::.ctor(System.Object,System.IntPtr) flags=0x1886 impl=0x0003 rva=0x00000000
+	param 1 name=object flags=0x0000
+	param 2 name=method flags=0x0000
+0x0600002f=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection::Invoke(System.Object,System.Object) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=instance flags=0x0000
+	param 2 name=item flags=0x0000
+0x06000030=System.IAsyncResult RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection::BeginInvoke(System.Object,System.Object,System.AsyncCallback,System.Object) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=instance flags=0x0000
+	param 2 name=item flags=0x0000
+	param 3 name=callback flags=0x0000
+	param 4 name=object flags=0x0000
+0x06000031=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection::EndInvoke(System.IAsyncResult) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=result flags=0x0000
+0x06000032=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary::.ctor(System.Object,System.IntPtr) flags=0x1886 impl=0x0003 rva=0x00000000
+	param 1 name=object flags=0x0000
+	param 2 name=method flags=0x0000
+0x06000033=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary::Invoke(System.Object,System.Object,System.Object) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=instance flags=0x0000
+	param 2 name=key flags=0x0000
+	param 3 name=item flags=0x0000
+0x06000034=System.IAsyncResult RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary::BeginInvoke(System.Object,System.Object,System.Object,System.AsyncCallback,System.Object) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=instance flags=0x0000
+	param 2 name=key flags=0x0000
+	param 3 name=item flags=0x0000
+	param 4 name=callback flags=0x0000
+	param 5 name=object flags=0x0000
+0x06000035=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary::EndInvoke(System.IAsyncResult) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=result flags=0x0000
+0x06000036=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::.ctor(RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider,System.String,System.Type,Windows.UI.Xaml.Markup.IXamlType) flags=0x1886 impl=0x0000 rva=0x0000242f
+	param 1 name=provider flags=0x0000
+	param 2 name=fullName flags=0x0000
+	param 3 name=fullType flags=0x0000
+	param 4 name=baseType flags=0x0000
+0x06000037=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_BaseType() flags=0x08c6 impl=0x0000 rva=0x00002448 semantics=0x0002
+0x06000038=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_IsArray() flags=0x08c6 impl=0x0000 rva=0x00002450 semantics=0x0002
+0x06000039=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_IsCollection() flags=0x08c6 impl=0x0000 rva=0x00002458 semantics=0x0002
+0x0600003a=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_IsConstructible() flags=0x08c6 impl=0x0000 rva=0x00002466 semantics=0x0002
+0x0600003b=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_IsDictionary() flags=0x08c6 impl=0x0000 rva=0x00002474 semantics=0x0002
+0x0600003c=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_IsMarkupExtension() flags=0x08c6 impl=0x0000 rva=0x00002482 semantics=0x0002
+0x0600003d=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_IsBindable() flags=0x08c6 impl=0x0000 rva=0x0000248a semantics=0x0002
+0x0600003e=Windows.UI.Xaml.Markup.IXamlMember RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_ContentProperty() flags=0x08c6 impl=0x0000 rva=0x00002492 semantics=0x0002
+0x0600003f=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_ItemType() flags=0x08c6 impl=0x0000 rva=0x000024a5 semantics=0x0002
+0x06000040=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_KeyType() flags=0x08c6 impl=0x0000 rva=0x000024b8 semantics=0x0002
+0x06000041=Windows.UI.Xaml.Markup.IXamlMember RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::GetMember(System.String) flags=0x00c6 impl=0x0000 rva=0x000024cc
+	param 1 name=name flags=0x0000
+0x06000042=System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::ActivateInstance() flags=0x00c6 impl=0x0000 rva=0x00002501
+0x06000043=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::AddToMap(System.Object,System.Object,System.Object) flags=0x00c6 impl=0x0000 rva=0x0000250e
+	param 1 name=instance flags=0x0000
+	param 2 name=key flags=0x0000
+	param 3 name=item flags=0x0000
+0x06000044=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::AddToVector(System.Object,System.Object) flags=0x00c6 impl=0x0000 rva=0x0000251e
+	param 1 name=instance flags=0x0000
+	param 2 name=item flags=0x0000
+0x06000045=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::RunInitializer() flags=0x00c6 impl=0x0000 rva=0x0000252d
+0x06000046=System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::CreateFromString(System.String) flags=0x00c6 impl=0x0000 rva=0x00002540
+	param 1 name=input flags=0x0000
+0x06000047=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_Activator() flags=0x0886 impl=0x0000 rva=0x00002680 semantics=0x0002
+0x06000048=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::set_Activator(RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator) flags=0x0886 impl=0x0000 rva=0x00002688 semantics=0x0001
+	param 1 name=value flags=0x0000
+0x06000049=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_CollectionAdd() flags=0x0886 impl=0x0000 rva=0x00002691 semantics=0x0002
+0x0600004a=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::set_CollectionAdd(RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection) flags=0x0886 impl=0x0000 rva=0x00002699 semantics=0x0001
+	param 1 name=value flags=0x0000
+0x0600004b=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_DictionaryAdd() flags=0x0886 impl=0x0000 rva=0x000026a2 semantics=0x0002
+0x0600004c=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::set_DictionaryAdd(RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary) flags=0x0886 impl=0x0000 rva=0x000026aa semantics=0x0001
+	param 1 name=value flags=0x0000
+0x0600004d=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::SetContentPropertyName(System.String) flags=0x0086 impl=0x0000 rva=0x000026b3
+	param 1 name=contentPropertyName flags=0x0000
+0x0600004e=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::SetIsArray() flags=0x0086 impl=0x0000 rva=0x000026bc
+0x0600004f=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::SetIsMarkupExtension() flags=0x0086 impl=0x0000 rva=0x000026c5
+0x06000050=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::SetIsBindable() flags=0x0086 impl=0x0000 rva=0x000026ce
+0x06000051=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::SetItemTypeName(System.String) flags=0x0086 impl=0x0000 rva=0x000026d7
+	param 1 name=itemTypeName flags=0x0000
+0x06000052=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::SetKeyTypeName(System.String) flags=0x0086 impl=0x0000 rva=0x000026e0
+	param 1 name=keyTypeName flags=0x0000
+0x06000053=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::AddMemberName(System.String) flags=0x0086 impl=0x0000 rva=0x000026e9
+	param 1 name=shortName flags=0x0000
+0x06000054=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::AddEnumValue(System.String,System.Object) flags=0x0086 impl=0x0000 rva=0x0000271b
+	param 1 name=name flags=0x0000
+	param 2 name=value flags=0x0000
+0x06000055=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter::.ctor(System.Object,System.IntPtr) flags=0x1886 impl=0x0003 rva=0x00000000
+	param 1 name=object flags=0x0000
+	param 2 name=method flags=0x0000
+0x06000056=System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter::Invoke(System.Object) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=instance flags=0x0000
+0x06000057=System.IAsyncResult RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter::BeginInvoke(System.Object,System.AsyncCallback,System.Object) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=instance flags=0x0000
+	param 2 name=callback flags=0x0000
+	param 3 name=object flags=0x0000
+0x06000058=System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter::EndInvoke(System.IAsyncResult) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=result flags=0x0000
+0x06000059=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter::.ctor(System.Object,System.IntPtr) flags=0x1886 impl=0x0003 rva=0x00000000
+	param 1 name=object flags=0x0000
+	param 2 name=method flags=0x0000
+0x0600005a=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter::Invoke(System.Object,System.Object) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=instance flags=0x0000
+	param 2 name=value flags=0x0000
+0x0600005b=System.IAsyncResult RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter::BeginInvoke(System.Object,System.Object,System.AsyncCallback,System.Object) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=instance flags=0x0000
+	param 2 name=value flags=0x0000
+	param 3 name=callback flags=0x0000
+	param 4 name=object flags=0x0000
+0x0600005c=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter::EndInvoke(System.IAsyncResult) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=result flags=0x0000
+0x0600005d=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::.ctor(RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider,System.String,System.String) flags=0x1886 impl=0x0000 rva=0x0000273d
+	param 1 name=provider flags=0x0000
+	param 2 name=name flags=0x0000
+	param 3 name=typeName flags=0x0000
+0x0600005e=System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_Name() flags=0x09e6 impl=0x0000 rva=0x0000275a semantics=0x0002
+0x0600005f=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_Type() flags=0x09e6 impl=0x0000 rva=0x00002762 semantics=0x0002
+0x06000060=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::SetTargetTypeName(System.String) flags=0x0086 impl=0x0000 rva=0x00002775
+	param 1 name=targetTypeName flags=0x0000
+0x06000061=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_TargetType() flags=0x09e6 impl=0x0000 rva=0x0000277e semantics=0x0002
+0x06000062=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::SetIsAttachable() flags=0x0086 impl=0x0000 rva=0x00002791
+0x06000063=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_IsAttachable() flags=0x09e6 impl=0x0000 rva=0x0000279a semantics=0x0002
+0x06000064=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::SetIsDependencyProperty() flags=0x0086 impl=0x0000 rva=0x000027a2
+0x06000065=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_IsDependencyProperty() flags=0x09e6 impl=0x0000 rva=0x000027ab semantics=0x0002
+0x06000066=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::SetIsReadOnly() flags=0x0086 impl=0x0000 rva=0x000027b3
+0x06000067=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_IsReadOnly() flags=0x09e6 impl=0x0000 rva=0x000027bc semantics=0x0002
+0x06000068=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_Getter() flags=0x0886 impl=0x0000 rva=0x000027c4 semantics=0x0002
+0x06000069=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::set_Getter(RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter) flags=0x0886 impl=0x0000 rva=0x000027cc semantics=0x0001
+	param 1 name=value flags=0x0000
+0x0600006a=System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::GetValue(System.Object) flags=0x01e6 impl=0x0000 rva=0x000027d5
+	param 1 name=instance flags=0x0000
+0x0600006b=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_Setter() flags=0x0886 impl=0x0000 rva=0x000027f6 semantics=0x0002
+0x0600006c=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::set_Setter(RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter) flags=0x0886 impl=0x0000 rva=0x000027fe semantics=0x0001
+	param 1 name=value flags=0x0000
+0x0600006d=System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::SetValue(System.Object,System.Object) flags=0x01e6 impl=0x0000 rva=0x00002807
+	param 1 name=instance flags=0x0000
+	param 2 name=value flags=0x0000
+[properties]
+0x17000001=System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::FullName() flags=0x0000 getter=0x06000018
+0x17000002=System.Type RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::UnderlyingType() flags=0x0000 getter=0x06000019
+0x17000003=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::BaseType() flags=0x0000 getter=0x0600001a
+0x17000004=Windows.UI.Xaml.Markup.IXamlMember RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::ContentProperty() flags=0x0000 getter=0x0600001b
+0x17000005=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::IsArray() flags=0x0000 getter=0x0600001d
+0x17000006=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::IsCollection() flags=0x0000 getter=0x0600001e
+0x17000007=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::IsConstructible() flags=0x0000 getter=0x0600001f
+0x17000008=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::IsDictionary() flags=0x0000 getter=0x06000020
+0x17000009=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::IsMarkupExtension() flags=0x0000 getter=0x06000021
+0x1700000a=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::IsBindable() flags=0x0000 getter=0x06000022
+0x1700000b=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::ItemType() flags=0x0000 getter=0x06000023
+0x1700000c=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::KeyType() flags=0x0000 getter=0x06000024
+0x1700000d=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::BaseType() flags=0x0000 getter=0x06000037
+0x1700000e=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::IsArray() flags=0x0000 getter=0x06000038
+0x1700000f=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::IsCollection() flags=0x0000 getter=0x06000039
+0x17000010=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::IsConstructible() flags=0x0000 getter=0x0600003a
+0x17000011=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::IsDictionary() flags=0x0000 getter=0x0600003b
+0x17000012=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::IsMarkupExtension() flags=0x0000 getter=0x0600003c
+0x17000013=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::IsBindable() flags=0x0000 getter=0x0600003d
+0x17000014=Windows.UI.Xaml.Markup.IXamlMember RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::ContentProperty() flags=0x0000 getter=0x0600003e
+0x17000015=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::ItemType() flags=0x0000 getter=0x0600003f
+0x17000016=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::KeyType() flags=0x0000 getter=0x06000040
+0x17000017=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::Activator() flags=0x0000 getter=0x06000047 setter=0x06000048
+0x17000018=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::CollectionAdd() flags=0x0000 getter=0x06000049 setter=0x0600004a
+0x17000019=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::DictionaryAdd() flags=0x0000 getter=0x0600004b setter=0x0600004c
+0x1700001a=System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::Name() flags=0x0000 getter=0x0600005e
+0x1700001b=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::Type() flags=0x0000 getter=0x0600005f
+0x1700001c=Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::TargetType() flags=0x0000 getter=0x06000061
+0x1700001d=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::IsAttachable() flags=0x0000 getter=0x06000063
+0x1700001e=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::IsDependencyProperty() flags=0x0000 getter=0x06000065
+0x1700001f=System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::IsReadOnly() flags=0x0000 getter=0x06000067
+0x17000020=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::Getter() flags=0x0000 getter=0x06000068 setter=0x06000069
+0x17000021=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::Setter() flags=0x0000 getter=0x0600006b setter=0x0600006c
+[events]
+[custom-attributes]
+ca parent=0x04000001 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.Windows.UI.Xaml.Build.Tasks"), (String:" 4.0.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.ComVisibleAttribute::.ctor(System.Boolean) args=((Boolean:False))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"1.0.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"RegularAppWithoutNotify"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTrademarkAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100020000000000
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETCore,Version=v4.5")) property FrameworkDisplayName=(String:".NET for Metro style apps")
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyDescriptionAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:"Microsoft"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"RegularAppWithoutNotify"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCopyrightAttribute::.ctor(System.String) args=((String:"Copyright © Microsoft 2012"))
+ca parent=0x04000003 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.Windows.UI.Xaml.Build.Tasks"), (String:" 4.0.0.0"))
+ca parent=0x06000004 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.Windows.UI.Xaml.Build.Tasks"), (String:" 4.0.0.0"))
+ca parent=0x06000004 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x04000004 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000005 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x06000005 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.Windows.UI.Xaml.Build.Tasks"), (String:" 4.0.0.0"))
+ca parent=0x02000005 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.Windows.UI.Xaml.Build.Tasks"), (String:"4.0.0.0"))
+ca parent=0x02000005 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x02000006 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.Windows.UI.Xaml.Build.Tasks"), (String:"4.0.0.0"))
+ca parent=0x02000006 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x0200000a ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x0200000a ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.Windows.UI.Xaml.Build.Tasks"), (String:"4.0.0.0"))
+ca parent=0x0600000b ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.Windows.UI.Xaml.Build.Tasks"), (String:" 4.0.0.0"))
+ca parent=0x0600000b ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x0600000c ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x0600000c ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.Windows.UI.Xaml.Build.Tasks"), (String:" 4.0.0.0"))
+ca parent=0x0600000d ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.Windows.UI.Xaml.Build.Tasks"), (String:" 4.0.0.0"))
+ca parent=0x0600000d ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x0200000d ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x0200000d ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.Windows.UI.Xaml.Build.Tasks"), (String:"4.0.0.0"))
+ca parent=0x0600000e ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x04000014 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x04000015 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x04000016 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x0400001e ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x0400001f ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000047 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000048 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000049 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x0600004a ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x0600004b ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x0600004c ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000068 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000069 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x0600006b ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x0600006c ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+[il]
+0x06000001 max-stack=4 init-locals=true code-size=56
+	local 0=RegularAppWithoutNotify.App
+	IL_0000: ldarg.0
+	IL_0001: call System.Void Windows.UI.Xaml.Application::.ctor()
+	IL_0006: ldarg.0
+	IL_0007: call System.Void RegularAppWithoutNotify.App::InitializeComponent()
+	IL_000c: ldarg.0
+	IL_000d: stloc.0
+	IL_000e: ldloc.0
+	IL_000f: ldftn System.Runtime.InteropServices.WindowsRuntime.EventRegistrationToken Windows.UI.Xaml.Application::add_Suspending(Windows.UI.Xaml.SuspendingEventHandler)
+	IL_0015: newobj System.Void System.Func`2<Windows.UI.Xaml.SuspendingEventHandler,System.Runtime.InteropServices.WindowsRuntime.EventRegistrationToken>::.ctor(System.Object,System.IntPtr)
+	IL_001a: ldloc.0
+	IL_001b: ldftn System.Void Windows.UI.Xaml.Application::remove_Suspending(System.Runtime.InteropServices.WindowsRuntime.EventRegistrationToken)
+	IL_0021: newobj System.Void System.Action`1<System.Runtime.InteropServices.WindowsRuntime.EventRegistrationToken>::.ctor(System.Object,System.IntPtr)
+	IL_0026: ldarg.0
+	IL_0027: ldftn System.Void RegularAppWithoutNotify.App::OnSuspending(System.Object,Windows.ApplicationModel.SuspendingEventArgs)
+	IL_002d: newobj System.Void Windows.UI.Xaml.SuspendingEventHandler::.ctor(System.Object,System.IntPtr)
+	IL_0032: call System.Void System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeMarshal::AddEventHandler<Windows.UI.Xaml.SuspendingEventHandler>(System.Func`2<!!0,System.Runtime.InteropServices.WindowsRuntime.EventRegistrationToken>,System.Action`1<System.Runtime.InteropServices.WindowsRuntime.EventRegistrationToken>,!!0)
+	IL_0037: ret
+0x06000002 max-stack=2 init-locals=true code-size=86
+	local 0=Windows.UI.Xaml.Controls.Frame
+	IL_0000: ldarg.1
+	IL_0001: callvirt Windows.ApplicationModel.Activation.ApplicationExecutionState Windows.ApplicationModel.Activation.LaunchActivatedEventArgs::get_PreviousExecutionState()
+	IL_0006: ldc.i4.1
+	IL_0007: bne.un.s IL_0014
+	IL_0009: call Windows.UI.Xaml.Window Windows.UI.Xaml.Window::get_Current()
+	IL_000e: callvirt System.Void Windows.UI.Xaml.Window::Activate()
+	IL_0013: ret
+	IL_0014: ldarg.1
+	IL_0015: callvirt Windows.ApplicationModel.Activation.ApplicationExecutionState Windows.ApplicationModel.Activation.LaunchActivatedEventArgs::get_PreviousExecutionState()
+	IL_001a: ldc.i4.3
+	IL_001b: pop
+	IL_001c: pop
+	IL_001d: newobj System.Void Windows.UI.Xaml.Controls.Frame::.ctor()
+	IL_0022: stloc.0
+	IL_0023: ldloc.0
+	IL_0024: ldtoken RegularAppWithoutNotify.MainPage
+	IL_0029: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_002e: callvirt System.Boolean Windows.UI.Xaml.Controls.Frame::Navigate(System.Type)
+	IL_0033: brtrue.s IL_0040
+	IL_0035: ldstr "Failed to create initial page"
+	IL_003a: newobj System.Void System.Exception::.ctor(System.String)
+	IL_003f: throw
+	IL_0040: call Windows.UI.Xaml.Window Windows.UI.Xaml.Window::get_Current()
+	IL_0045: ldloc.0
+	IL_0046: callvirt System.Void Windows.UI.Xaml.Window::put_Content(Windows.UI.Xaml.UIElement)
+	IL_004b: call Windows.UI.Xaml.Window Windows.UI.Xaml.Window::get_Current()
+	IL_0050: callvirt System.Void Windows.UI.Xaml.Window::Activate()
+	IL_0055: ret
+0x06000003 max-stack=1 init-locals=true code-size=19
+	local 0=Windows.ApplicationModel.SuspendingDeferral
+	IL_0000: ldarg.2
+	IL_0001: callvirt Windows.ApplicationModel.SuspendingOperation Windows.ApplicationModel.SuspendingEventArgs::get_SuspendingOperation()
+	IL_0006: callvirt Windows.ApplicationModel.SuspendingDeferral Windows.ApplicationModel.SuspendingOperation::GetDeferral()
+	IL_000b: stloc.0
+	IL_000c: ldloc.0
+	IL_000d: callvirt System.Void Windows.ApplicationModel.SuspendingDeferral::Complete()
+	IL_0012: ret
+0x06000004 max-stack=8 init-locals=false code-size=17
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Boolean RegularAppWithoutNotify.App::_contentLoaded
+	IL_0006: brfalse.s IL_0009
+	IL_0008: ret
+	IL_0009: ldarg.0
+	IL_000a: ldc.i4.1
+	IL_000b: stfld System.Boolean RegularAppWithoutNotify.App::_contentLoaded
+	IL_0010: ret
+0x06000005 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldc.i4.1
+	IL_0002: stfld System.Boolean RegularAppWithoutNotify.App::_contentLoaded
+	IL_0007: ret
+0x06000006 max-stack=8 init-locals=false code-size=32
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.App::_provider
+	IL_0006: brtrue.s IL_0013
+	IL_0008: ldarg.0
+	IL_0009: newobj System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::.ctor()
+	IL_000e: stfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.App::_provider
+	IL_0013: ldarg.0
+	IL_0014: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.App::_provider
+	IL_0019: ldarg.1
+	IL_001a: callvirt Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetXamlTypeByType(System.Type)
+	IL_001f: ret
+0x06000007 max-stack=8 init-locals=false code-size=32
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.App::_provider
+	IL_0006: brtrue.s IL_0013
+	IL_0008: ldarg.0
+	IL_0009: newobj System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::.ctor()
+	IL_000e: stfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.App::_provider
+	IL_0013: ldarg.0
+	IL_0014: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.App::_provider
+	IL_0019: ldarg.1
+	IL_001a: callvirt Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetXamlTypeByName(System.String)
+	IL_001f: ret
+0x06000008 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldc.i4.0
+	IL_0001: newarr Windows.UI.Xaml.Markup.XmlnsDefinition
+	IL_0006: ret
+0x06000009 max-stack=8 init-locals=false code-size=13
+	IL_0000: ldarg.0
+	IL_0001: call System.Void Windows.UI.Xaml.Controls.Page::.ctor()
+	IL_0006: ldarg.0
+	IL_0007: call System.Void RegularAppWithoutNotify.MainPage::InitializeComponent()
+	IL_000c: ret
+0x0600000a max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x0600000b max-stack=8 init-locals=false code-size=34
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Boolean RegularAppWithoutNotify.MainPage::_contentLoaded
+	IL_0006: brfalse.s IL_0009
+	IL_0008: ret
+	IL_0009: ldarg.0
+	IL_000a: ldc.i4.1
+	IL_000b: stfld System.Boolean RegularAppWithoutNotify.MainPage::_contentLoaded
+	IL_0010: ldarg.0
+	IL_0011: ldstr "ms-appx:///MainPage.xaml"
+	IL_0016: newobj System.Void System.Uri::.ctor(System.String)
+	IL_001b: ldc.i4.0
+	IL_001c: call System.Void Windows.UI.Xaml.Application::LoadComponent(System.Object,System.Uri,Windows.UI.Xaml.Controls.Primitives.ComponentResourceLocation)
+	IL_0021: ret
+0x0600000c max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldc.i4.1
+	IL_0002: stfld System.Boolean RegularAppWithoutNotify.MainPage::_contentLoaded
+	IL_0007: ret
+0x0600000d max-stack=8 init-locals=false code-size=35
+	IL_0000: ldsfld Windows.UI.Xaml.ApplicationInitializationCallback RegularAppWithoutNotify.Program::CS$<>9__CachedAnonymousMethodDelegate1
+	IL_0005: brtrue.s IL_0018
+	IL_0007: ldnull
+	IL_0008: ldftn System.Void RegularAppWithoutNotify.Program::<Main>b__0(Windows.UI.Xaml.ApplicationInitializationCallbackParams)
+	IL_000e: newobj System.Void Windows.UI.Xaml.ApplicationInitializationCallback::.ctor(System.Object,System.IntPtr)
+	IL_0013: stsfld Windows.UI.Xaml.ApplicationInitializationCallback RegularAppWithoutNotify.Program::CS$<>9__CachedAnonymousMethodDelegate1
+	IL_0018: ldsfld Windows.UI.Xaml.ApplicationInitializationCallback RegularAppWithoutNotify.Program::CS$<>9__CachedAnonymousMethodDelegate1
+	IL_001d: call System.Void Windows.UI.Xaml.Application::Start(Windows.UI.Xaml.ApplicationInitializationCallback)
+	IL_0022: ret
+0x0600000e max-stack=8 init-locals=false code-size=7
+	IL_0000: newobj System.Void RegularAppWithoutNotify.App::.ctor()
+	IL_0005: pop
+	IL_0006: ret
+0x0600000f max-stack=3 init-locals=true code-size=43
+	local 0=System.String
+	local 1=Windows.UI.Xaml.Markup.IXamlType
+	IL_0000: ldnull
+	IL_0001: stloc.1
+	IL_0002: ldarg.0
+	IL_0003: ldfld System.Collections.Generic.Dictionary`2<System.Type,System.String> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlTypeToStandardName
+	IL_0008: ldarg.1
+	IL_0009: ldloca.s V_0
+	IL_000b: callvirt System.Boolean System.Collections.Generic.Dictionary`2<System.Type,System.String>::TryGetValue(!0,!1&)
+	IL_0010: brfalse.s IL_001c
+	IL_0012: ldarg.0
+	IL_0013: ldloc.0
+	IL_0014: call Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetXamlTypeByName(System.String)
+	IL_0019: stloc.1
+	IL_001a: br.s IL_0029
+	IL_001c: ldarg.0
+	IL_001d: ldarg.1
+	IL_001e: callvirt System.String System.Type::get_FullName()
+	IL_0023: call Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetXamlTypeByName(System.String)
+	IL_0028: stloc.1
+	IL_0029: ldloc.1
+	IL_002a: ret
+0x06000010 max-stack=3 init-locals=true code-size=54
+	local 0=Windows.UI.Xaml.Markup.IXamlType
+	IL_0000: ldarg.1
+	IL_0001: call System.Boolean System.String::IsNullOrEmpty(System.String)
+	IL_0006: brfalse.s IL_000a
+	IL_0008: ldnull
+	IL_0009: ret
+	IL_000a: ldarg.0
+	IL_000b: ldfld System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlType> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlTypes
+	IL_0010: ldarg.1
+	IL_0011: ldloca.s V_0
+	IL_0013: callvirt System.Boolean System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlType>::TryGetValue(!0,!1&)
+	IL_0018: brfalse.s IL_001c
+	IL_001a: ldloc.0
+	IL_001b: ret
+	IL_001c: ldarg.0
+	IL_001d: ldarg.1
+	IL_001e: call Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::CreateXamlType(System.String)
+	IL_0023: stloc.0
+	IL_0024: ldloc.0
+	IL_0025: brfalse.s IL_0034
+	IL_0027: ldarg.0
+	IL_0028: ldfld System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlType> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlTypes
+	IL_002d: ldarg.1
+	IL_002e: ldloc.0
+	IL_002f: callvirt System.Void System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlType>::Add(!0,!1)
+	IL_0034: ldloc.0
+	IL_0035: ret
+0x06000011 max-stack=3 init-locals=true code-size=54
+	local 0=Windows.UI.Xaml.Markup.IXamlMember
+	IL_0000: ldarg.1
+	IL_0001: call System.Boolean System.String::IsNullOrEmpty(System.String)
+	IL_0006: brfalse.s IL_000a
+	IL_0008: ldnull
+	IL_0009: ret
+	IL_000a: ldarg.0
+	IL_000b: ldfld System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlMember> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlMembers
+	IL_0010: ldarg.1
+	IL_0011: ldloca.s V_0
+	IL_0013: callvirt System.Boolean System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlMember>::TryGetValue(!0,!1&)
+	IL_0018: brfalse.s IL_001c
+	IL_001a: ldloc.0
+	IL_001b: ret
+	IL_001c: ldarg.0
+	IL_001d: ldarg.1
+	IL_001e: call Windows.UI.Xaml.Markup.IXamlMember RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::CreateXamlMember(System.String)
+	IL_0023: stloc.0
+	IL_0024: ldloc.0
+	IL_0025: brfalse.s IL_0034
+	IL_0027: ldarg.0
+	IL_0028: ldfld System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlMember> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlMembers
+	IL_002d: ldarg.1
+	IL_002e: ldloc.0
+	IL_002f: callvirt System.Void System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlMember>::Add(!0,!1)
+	IL_0034: ldloc.0
+	IL_0035: ret
+0x06000012 max-stack=8 init-locals=false code-size=28
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Collections.Generic.Dictionary`2<System.Type,System.String> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlTypeToStandardName
+	IL_0006: ldarg.1
+	IL_0007: callvirt System.Boolean System.Collections.Generic.Dictionary`2<System.Type,System.String>::ContainsKey(!0)
+	IL_000c: brtrue.s IL_001b
+	IL_000e: ldarg.0
+	IL_000f: ldfld System.Collections.Generic.Dictionary`2<System.Type,System.String> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlTypeToStandardName
+	IL_0014: ldarg.1
+	IL_0015: ldarg.2
+	IL_0016: callvirt System.Void System.Collections.Generic.Dictionary`2<System.Type,System.String>::Add(!0,!1)
+	IL_001b: ret
+0x06000013 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void RegularAppWithoutNotify.MainPage::.ctor()
+	IL_0005: ret
+0x06000014 max-stack=5 init-locals=true code-size=140
+	local 0=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType
+	local 1=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType
+	local 2=System.String
+	IL_0000: ldnull
+	IL_0001: stloc.0
+	IL_0002: ldarg.1
+	IL_0003: dup
+	IL_0004: stloc.2
+	IL_0005: brfalse IL_008a
+	IL_000a: ldloc.2
+	IL_000b: ldstr "Windows.UI.Xaml.Controls.Page"
+	IL_0010: call System.Boolean System.String::op_Equality(System.String,System.String)
+	IL_0015: brtrue.s IL_0033
+	IL_0017: ldloc.2
+	IL_0018: ldstr "Windows.UI.Xaml.Controls.UserControl"
+	IL_001d: call System.Boolean System.String::op_Equality(System.String,System.String)
+	IL_0022: brtrue.s IL_0046
+	IL_0024: ldloc.2
+	IL_0025: ldstr "RegularAppWithoutNotify.MainPage"
+	IL_002a: call System.Boolean System.String::op_Equality(System.String,System.String)
+	IL_002f: brtrue.s IL_0059
+	IL_0031: br.s IL_008a
+	IL_0033: ldarg.1
+	IL_0034: ldtoken Windows.UI.Xaml.Controls.Page
+	IL_0039: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_003e: newobj System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::.ctor(System.String,System.Type)
+	IL_0043: stloc.0
+	IL_0044: br.s IL_008a
+	IL_0046: ldarg.1
+	IL_0047: ldtoken Windows.UI.Xaml.Controls.UserControl
+	IL_004c: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_0051: newobj System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::.ctor(System.String,System.Type)
+	IL_0056: stloc.0
+	IL_0057: br.s IL_008a
+	IL_0059: ldarg.0
+	IL_005a: ldarg.1
+	IL_005b: ldtoken RegularAppWithoutNotify.MainPage
+	IL_0060: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_0065: ldarg.0
+	IL_0066: ldstr "Windows.UI.Xaml.Controls.Page"
+	IL_006b: call Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetXamlTypeByName(System.String)
+	IL_0070: newobj System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::.ctor(RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider,System.String,System.Type,Windows.UI.Xaml.Markup.IXamlType)
+	IL_0075: stloc.1
+	IL_0076: ldloc.1
+	IL_0077: ldarg.0
+	IL_0078: ldftn System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::Activate_0_MainPage()
+	IL_007e: newobj System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator::.ctor(System.Object,System.IntPtr)
+	IL_0083: callvirt System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::set_Activator(RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator)
+	IL_0088: ldloc.1
+	IL_0089: stloc.0
+	IL_008a: ldloc.0
+	IL_008b: ret
+0x06000015 max-stack=1 init-locals=true code-size=4
+	local 0=RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember
+	IL_0000: ldnull
+	IL_0001: stloc.0
+	IL_0002: ldloc.0
+	IL_0003: ret
+0x06000016 max-stack=8 init-locals=false code-size=40
+	IL_0000: ldarg.0
+	IL_0001: newobj System.Void System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlType>::.ctor()
+	IL_0006: stfld System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlType> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlTypes
+	IL_000b: ldarg.0
+	IL_000c: newobj System.Void System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlMember>::.ctor()
+	IL_0011: stfld System.Collections.Generic.Dictionary`2<System.String,Windows.UI.Xaml.Markup.IXamlMember> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlMembers
+	IL_0016: ldarg.0
+	IL_0017: newobj System.Void System.Collections.Generic.Dictionary`2<System.Type,System.String>::.ctor()
+	IL_001c: stfld System.Collections.Generic.Dictionary`2<System.Type,System.String> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::_xamlTypeToStandardName
+	IL_0021: ldarg.0
+	IL_0022: call System.Void System.Object::.ctor()
+	IL_0027: ret
+0x06000017 max-stack=8 init-locals=false code-size=21
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ldarg.0
+	IL_0007: ldarg.1
+	IL_0008: stfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::_fullName
+	IL_000d: ldarg.0
+	IL_000e: ldarg.2
+	IL_000f: stfld System.Type RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::_underlyingType
+	IL_0014: ret
+0x06000018 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::_fullName
+	IL_0006: ret
+0x06000019 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Type RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::_underlyingType
+	IL_0006: ret
+0x0600001a max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x0600001b max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x0600001c max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x0600001d max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x0600001e max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x0600001f max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x06000020 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x06000021 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x06000022 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x06000023 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x06000024 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x06000025 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x06000026 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x06000027 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x06000028 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x06000029 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotImplementedException::.ctor()
+	IL_0005: throw
+0x06000036 max-stack=8 init-locals=false code-size=24
+	IL_0000: ldarg.0
+	IL_0001: ldarg.2
+	IL_0002: ldarg.3
+	IL_0003: call System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::.ctor(System.String,System.Type)
+	IL_0008: ldarg.0
+	IL_0009: ldarg.1
+	IL_000a: stfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_provider
+	IL_000f: ldarg.0
+	IL_0010: ldarg.s 4
+	IL_0012: stfld Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_baseType
+	IL_0017: ret
+0x06000037 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_baseType
+	IL_0006: ret
+0x06000038 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_isArray
+	IL_0006: ret
+0x06000039 max-stack=8 init-locals=false code-size=13
+	IL_0000: ldarg.0
+	IL_0001: call RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_CollectionAdd()
+	IL_0006: ldnull
+	IL_0007: ceq
+	IL_0009: ldc.i4.0
+	IL_000a: ceq
+	IL_000c: ret
+0x0600003a max-stack=8 init-locals=false code-size=13
+	IL_0000: ldarg.0
+	IL_0001: call RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_Activator()
+	IL_0006: ldnull
+	IL_0007: ceq
+	IL_0009: ldc.i4.0
+	IL_000a: ceq
+	IL_000c: ret
+0x0600003b max-stack=8 init-locals=false code-size=13
+	IL_0000: ldarg.0
+	IL_0001: call RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_DictionaryAdd()
+	IL_0006: ldnull
+	IL_0007: ceq
+	IL_0009: ldc.i4.0
+	IL_000a: ceq
+	IL_000c: ret
+0x0600003c max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_isMarkupExtension
+	IL_0006: ret
+0x0600003d max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_isBindable
+	IL_0006: ret
+0x0600003e max-stack=8 init-locals=false code-size=18
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_provider
+	IL_0006: ldarg.0
+	IL_0007: ldfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_contentPropertyName
+	IL_000c: callvirt Windows.UI.Xaml.Markup.IXamlMember RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetMemberByLongName(System.String)
+	IL_0011: ret
+0x0600003f max-stack=8 init-locals=false code-size=18
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_provider
+	IL_0006: ldarg.0
+	IL_0007: ldfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_itemTypeName
+	IL_000c: callvirt Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetXamlTypeByName(System.String)
+	IL_0011: ret
+0x06000040 max-stack=8 init-locals=false code-size=18
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_provider
+	IL_0006: ldarg.0
+	IL_0007: ldfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_keyTypeName
+	IL_000c: callvirt Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetXamlTypeByName(System.String)
+	IL_0011: ret
+0x06000041 max-stack=3 init-locals=true code-size=41
+	local 0=System.String
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Collections.Generic.Dictionary`2<System.String,System.String> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_memberNames
+	IL_0006: brtrue.s IL_000a
+	IL_0008: ldnull
+	IL_0009: ret
+	IL_000a: ldarg.0
+	IL_000b: ldfld System.Collections.Generic.Dictionary`2<System.String,System.String> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_memberNames
+	IL_0010: ldarg.1
+	IL_0011: ldloca.s V_0
+	IL_0013: callvirt System.Boolean System.Collections.Generic.Dictionary`2<System.String,System.String>::TryGetValue(!0,!1&)
+	IL_0018: brfalse.s IL_0027
+	IL_001a: ldarg.0
+	IL_001b: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_provider
+	IL_0020: ldloc.0
+	IL_0021: callvirt Windows.UI.Xaml.Markup.IXamlMember RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetMemberByLongName(System.String)
+	IL_0026: ret
+	IL_0027: ldnull
+	IL_0028: ret
+0x06000042 max-stack=8 init-locals=false code-size=12
+	IL_0000: ldarg.0
+	IL_0001: call RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_Activator()
+	IL_0006: callvirt System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator::Invoke()
+	IL_000b: ret
+0x06000043 max-stack=8 init-locals=false code-size=15
+	IL_0000: ldarg.0
+	IL_0001: call RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_DictionaryAdd()
+	IL_0006: ldarg.1
+	IL_0007: ldarg.2
+	IL_0008: ldarg.3
+	IL_0009: callvirt System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary::Invoke(System.Object,System.Object,System.Object)
+	IL_000e: ret
+0x06000044 max-stack=8 init-locals=false code-size=14
+	IL_0000: ldarg.0
+	IL_0001: call RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::get_CollectionAdd()
+	IL_0006: ldarg.1
+	IL_0007: ldarg.2
+	IL_0008: callvirt System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection::Invoke(System.Object,System.Object)
+	IL_000d: ret
+0x06000045 max-stack=8 init-locals=false code-size=17
+	IL_0000: ldarg.0
+	IL_0001: call System.Type RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_UnderlyingType()
+	IL_0006: callvirt System.RuntimeTypeHandle System.Type::get_TypeHandle()
+	IL_000b: call System.Void System.Runtime.CompilerServices.RuntimeHelpers::RunClassConstructor(System.RuntimeTypeHandle)
+	IL_0010: ret
+0x06000046 max-stack=4 init-locals=true code-size=265
+	local 0=System.Int32
+	local 1=System.String[]
+	local 2=System.String
+	local 3=System.Object
+	local 4=System.Int32
+	local 5=System.String
+	local 6=System.Char[]
+	local 7=System.String[]
+	local 8=System.Int32
+	local 9=System.Collections.Generic.Dictionary`2/KeyCollection/Enumerator<System.String,System.Object>
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Collections.Generic.Dictionary`2<System.String,System.Object> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_enumValues
+	IL_0006: brfalse IL_00fc
+	IL_000b: ldc.i4.0
+	IL_000c: stloc.0
+	IL_000d: ldarg.1
+	IL_000e: ldc.i4.1
+	IL_000f: newarr System.Char
+	IL_0014: stloc.s V_6
+	IL_0016: ldloc.s V_6
+	IL_0018: ldc.i4.0
+	IL_0019: ldc.i4.s 44
+	IL_001b: stelem.i2
+	IL_001c: ldloc.s V_6
+	IL_001e: callvirt System.String[] System.String::Split(System.Char[])
+	IL_0023: stloc.1
+	IL_0024: ldloc.1
+	IL_0025: stloc.s V_7
+	IL_0027: ldc.i4.0
+	IL_0028: stloc.s V_8
+	IL_002a: br IL_00ea
+	IL_002f: ldloc.s V_7
+	IL_0031: ldloc.s V_8
+	IL_0033: ldelem.ref
+	IL_0034: stloc.2
+	IL_0035: ldc.i4.0
+	IL_0036: stloc.s V_4
+	IL_0038: ldarg.0
+	IL_0039: ldfld System.Collections.Generic.Dictionary`2<System.String,System.Object> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_enumValues
+	IL_003e: ldloc.2
+	IL_003f: callvirt System.String System.String::Trim()
+	IL_0044: ldloca.s V_3
+	IL_0046: callvirt System.Boolean System.Collections.Generic.Dictionary`2<System.String,System.Object>::TryGetValue(!0,!1&)
+	IL_004b: brfalse.s IL_0057
+	IL_004d: ldloc.3
+	IL_004e: call System.Int32 System.Convert::ToInt32(System.Object)
+	IL_0053: stloc.s V_4
+	IL_0055: br.s IL_00cf
+	IL_0057: ldloc.2
+	IL_0058: callvirt System.String System.String::Trim()
+	IL_005d: call System.Int32 System.Convert::ToInt32(System.String)
+	IL_0062: stloc.s V_4
+	IL_0064: leave.s IL_00cf
+	IL_0066: pop
+	IL_0067: ldarg.0
+	IL_0068: ldfld System.Collections.Generic.Dictionary`2<System.String,System.Object> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_enumValues
+	IL_006d: callvirt System.Collections.Generic.Dictionary`2/KeyCollection<!0,!1> System.Collections.Generic.Dictionary`2<System.String,System.Object>::get_Keys()
+	IL_0072: callvirt System.Collections.Generic.Dictionary`2/KeyCollection/Enumerator<!0,!1> System.Collections.Generic.Dictionary`2/KeyCollection<System.String,System.Object>::GetEnumerator()
+	IL_0077: stloc.s V_9
+	IL_0079: br.s IL_00b4
+	IL_007b: ldloca.s V_9
+	IL_007d: call !0 System.Collections.Generic.Dictionary`2/KeyCollection/Enumerator<System.String,System.Object>::get_Current()
+	IL_0082: stloc.s V_5
+	IL_0084: ldloc.2
+	IL_0085: callvirt System.String System.String::Trim()
+	IL_008a: ldloc.s V_5
+	IL_008c: ldc.i4.5
+	IL_008d: call System.Int32 System.String::Compare(System.String,System.String,System.StringComparison)
+	IL_0092: brtrue.s IL_00b4
+	IL_0094: ldarg.0
+	IL_0095: ldfld System.Collections.Generic.Dictionary`2<System.String,System.Object> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_enumValues
+	IL_009a: ldloc.s V_5
+	IL_009c: callvirt System.String System.String::Trim()
+	IL_00a1: ldloca.s V_3
+	IL_00a3: callvirt System.Boolean System.Collections.Generic.Dictionary`2<System.String,System.Object>::TryGetValue(!0,!1&)
+	IL_00a8: brfalse.s IL_00b4
+	IL_00aa: ldloc.3
+	IL_00ab: call System.Int32 System.Convert::ToInt32(System.Object)
+	IL_00b0: stloc.s V_4
+	IL_00b2: br.s IL_00bd
+	IL_00b4: ldloca.s V_9
+	IL_00b6: call System.Boolean System.Collections.Generic.Dictionary`2/KeyCollection/Enumerator<System.String,System.Object>::MoveNext()
+	IL_00bb: brtrue.s IL_007b
+	IL_00bd: leave.s IL_00cd
+	IL_00bf: ldloca.s V_9
+	IL_00c1: constrained. System.Collections.Generic.Dictionary`2/KeyCollection/Enumerator<System.String,System.Object>
+	IL_00c7: callvirt System.Void System.IDisposable::Dispose()
+	IL_00cc: endfinally
+	IL_00cd: leave.s IL_00cf
+	IL_00cf: ldloc.0
+	IL_00d0: ldloc.s V_4
+	IL_00d2: or
+	IL_00d3: stloc.0
+	IL_00d4: leave.s IL_00e4
+	IL_00d6: pop
+	IL_00d7: ldarg.1
+	IL_00d8: ldarg.0
+	IL_00d9: call System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_FullName()
+	IL_00de: newobj System.Void System.ArgumentException::.ctor(System.String,System.String)
+	IL_00e3: throw
+	IL_00e4: ldloc.s V_8
+	IL_00e6: ldc.i4.1
+	IL_00e7: add
+	IL_00e8: stloc.s V_8
+	IL_00ea: ldloc.s V_8
+	IL_00ec: ldloc.s V_7
+	IL_00ee: ldlen
+	IL_00ef: conv.i4
+	IL_00f0: blt IL_002f
+	IL_00f5: ldloc.0
+	IL_00f6: box System.Int32
+	IL_00fb: ret
+	IL_00fc: ldarg.1
+	IL_00fd: ldarg.0
+	IL_00fe: call System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_FullName()
+	IL_0103: newobj System.Void System.ArgumentException::.ctor(System.String,System.String)
+	IL_0108: throw
+	.try IL_0079 to IL_00bf finally handler IL_00bf to IL_00cd
+	.try IL_0057 to IL_0066 catch System.FormatException handler IL_0066 to IL_00cf
+	.try IL_0038 to IL_00d6 catch System.FormatException handler IL_00d6 to IL_00e4
+0x06000047 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::<Activator>k__BackingField
+	IL_0006: ret
+0x06000048 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Activator RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::<Activator>k__BackingField
+	IL_0007: ret
+0x06000049 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::<CollectionAdd>k__BackingField
+	IL_0006: ret
+0x0600004a max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToCollection RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::<CollectionAdd>k__BackingField
+	IL_0007: ret
+0x0600004b max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::<DictionaryAdd>k__BackingField
+	IL_0006: ret
+0x0600004c max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.AddToDictionary RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::<DictionaryAdd>k__BackingField
+	IL_0007: ret
+0x0600004d max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_contentPropertyName
+	IL_0007: ret
+0x0600004e max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldc.i4.1
+	IL_0002: stfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_isArray
+	IL_0007: ret
+0x0600004f max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldc.i4.1
+	IL_0002: stfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_isMarkupExtension
+	IL_0007: ret
+0x06000050 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldc.i4.1
+	IL_0002: stfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_isBindable
+	IL_0007: ret
+0x06000051 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_itemTypeName
+	IL_0007: ret
+0x06000052 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_keyTypeName
+	IL_0007: ret
+0x06000053 max-stack=8 init-locals=false code-size=49
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Collections.Generic.Dictionary`2<System.String,System.String> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_memberNames
+	IL_0006: brtrue.s IL_0013
+	IL_0008: ldarg.0
+	IL_0009: newobj System.Void System.Collections.Generic.Dictionary`2<System.String,System.String>::.ctor()
+	IL_000e: stfld System.Collections.Generic.Dictionary`2<System.String,System.String> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_memberNames
+	IL_0013: ldarg.0
+	IL_0014: ldfld System.Collections.Generic.Dictionary`2<System.String,System.String> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_memberNames
+	IL_0019: ldarg.1
+	IL_001a: ldarg.0
+	IL_001b: call System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlSystemBaseType::get_FullName()
+	IL_0020: ldstr "."
+	IL_0025: ldarg.1
+	IL_0026: call System.String System.String::Concat(System.String,System.String,System.String)
+	IL_002b: callvirt System.Void System.Collections.Generic.Dictionary`2<System.String,System.String>::Add(!0,!1)
+	IL_0030: ret
+0x06000054 max-stack=8 init-locals=false code-size=33
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Collections.Generic.Dictionary`2<System.String,System.Object> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_enumValues
+	IL_0006: brtrue.s IL_0013
+	IL_0008: ldarg.0
+	IL_0009: newobj System.Void System.Collections.Generic.Dictionary`2<System.String,System.Object>::.ctor()
+	IL_000e: stfld System.Collections.Generic.Dictionary`2<System.String,System.Object> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_enumValues
+	IL_0013: ldarg.0
+	IL_0014: ldfld System.Collections.Generic.Dictionary`2<System.String,System.Object> RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlUserType::_enumValues
+	IL_0019: ldarg.1
+	IL_001a: ldarg.2
+	IL_001b: callvirt System.Void System.Collections.Generic.Dictionary`2<System.String,System.Object>::Add(!0,!1)
+	IL_0020: ret
+0x0600005d max-stack=8 init-locals=false code-size=28
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ldarg.0
+	IL_0007: ldarg.2
+	IL_0008: stfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_name
+	IL_000d: ldarg.0
+	IL_000e: ldarg.3
+	IL_000f: stfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_typeName
+	IL_0014: ldarg.0
+	IL_0015: ldarg.1
+	IL_0016: stfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_provider
+	IL_001b: ret
+0x0600005e max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_name
+	IL_0006: ret
+0x0600005f max-stack=8 init-locals=false code-size=18
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_provider
+	IL_0006: ldarg.0
+	IL_0007: ldfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_typeName
+	IL_000c: callvirt Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetXamlTypeByName(System.String)
+	IL_0011: ret
+0x06000060 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_targetTypeName
+	IL_0007: ret
+0x06000061 max-stack=8 init-locals=false code-size=18
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_provider
+	IL_0006: ldarg.0
+	IL_0007: ldfld System.String RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_targetTypeName
+	IL_000c: callvirt Windows.UI.Xaml.Markup.IXamlType RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlTypeInfoProvider::GetXamlTypeByName(System.String)
+	IL_0011: ret
+0x06000062 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldc.i4.1
+	IL_0002: stfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_isAttachable
+	IL_0007: ret
+0x06000063 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_isAttachable
+	IL_0006: ret
+0x06000064 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldc.i4.1
+	IL_0002: stfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_isDependencyProperty
+	IL_0007: ret
+0x06000065 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_isDependencyProperty
+	IL_0006: ret
+0x06000066 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldc.i4.1
+	IL_0002: stfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_isReadOnly
+	IL_0007: ret
+0x06000067 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Boolean RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::_isReadOnly
+	IL_0006: ret
+0x06000068 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::<Getter>k__BackingField
+	IL_0006: ret
+0x06000069 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::<Getter>k__BackingField
+	IL_0007: ret
+0x0600006a max-stack=8 init-locals=false code-size=32
+	IL_0000: ldarg.0
+	IL_0001: call RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_Getter()
+	IL_0006: brfalse.s IL_0015
+	IL_0008: ldarg.0
+	IL_0009: call RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_Getter()
+	IL_000e: ldarg.1
+	IL_000f: callvirt System.Object RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Getter::Invoke(System.Object)
+	IL_0014: ret
+	IL_0015: ldstr "GetValue"
+	IL_001a: newobj System.Void System.InvalidOperationException::.ctor(System.String)
+	IL_001f: throw
+0x0600006b max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::<Setter>k__BackingField
+	IL_0006: ret
+0x0600006c max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::<Setter>k__BackingField
+	IL_0007: ret
+0x0600006d max-stack=8 init-locals=false code-size=33
+	IL_0000: ldarg.0
+	IL_0001: call RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_Setter()
+	IL_0006: brfalse.s IL_0016
+	IL_0008: ldarg.0
+	IL_0009: call RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.XamlMember::get_Setter()
+	IL_000e: ldarg.1
+	IL_000f: ldarg.2
+	IL_0010: callvirt System.Void RegularAppWithoutNotify.RegularAppWithoutNotify_XamlTypeInfo.Setter::Invoke(System.Object,System.Object)
+	IL_0015: ret
+	IL_0016: ldstr "SetValue"
+	IL_001b: newobj System.Void System.InvalidOperationException::.ctor(System.String)
+	IL_0020: throw

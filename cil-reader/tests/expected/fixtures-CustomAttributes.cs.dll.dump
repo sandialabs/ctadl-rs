@@ -1,0 +1,383 @@
+[module]
+name=CustomAttributes.dll
+mvid=f64b73c7-2f1b-4dfe-8183-6387dcc3ac1a
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=CustomAttributes, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=System.Runtime, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000002=System.Security.AccessControl, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000003=System.Collections, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+[module-refs]
+[resources]
+[exported-types]
+0x27000001=System.Diagnostics.DebuggableAttribute scope=System.Runtime flags=0x00200000
+0x27000002=System.Diagnostics.DebuggableAttribute/DebuggingModes scope=System.Runtime flags=0x00000000
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Bingo flags=0x00000100
+	base=System.Enum
+0x02000003=GenericWithEnum`1 flags=0x00100000
+	base=System.Object
+	generic-param 0 name=T flags=0x0000
+0x02000004=FooAttribute flags=0x00100000
+	base=System.Attribute
+0x02000005=Hamster flags=0x00100000
+	base=System.Object
+0x02000006=Dentist flags=0x00100000
+	base=System.Object
+0x02000007=Steven flags=0x00100000
+	base=System.Object
+0x02000008=Seagull flags=0x00100000
+	base=System.Object
+0x02000009=Rifle flags=0x00100000
+	base=System.Object
+0x0200000a=Worm flags=0x00100000
+	base=System.Object
+0x0200000b=Sheep flags=0x00100000
+	base=System.Object
+0x0200000c=Angola flags=0x00100000
+	base=System.Object
+0x0200000d=BoxedStringField flags=0x00100000
+	base=System.Object
+0x0200000e=Zero flags=0x00100000
+	base=System.Object
+0x0200000f=Ace flags=0x00100000
+	base=System.Object
+0x02000010=Bzzz flags=0x00100000
+	base=System.Object
+0x02000011=Typed flags=0x00100000
+	base=System.Object
+0x02000012=NestedTyped flags=0x00100000
+	base=System.Object
+0x02000013=Truc flags=0x00100000
+	base=System.Object
+0x02000014=Machin flags=0x00100000
+	base=System.Object
+0x02000015=OpenGeneric`2 flags=0x00100000
+	base=System.Object
+	generic-param 0 name=X flags=0x0000
+	generic-param 1 name=Y flags=0x0000
+0x02000016=ClosedGeneric flags=0x00100000
+	base=System.Object
+0x02000017=Parent flags=0x00100000
+	base=System.Object
+0x02000018=NullCharInString flags=0x00100000
+	base=System.Object
+0x02000019=BoxedValueEnumOnGenericType flags=0x00100000
+	base=System.Object
+0x0200001a=ValueEnumOnGenericType flags=0x00100000
+	base=System.Object
+0x0200001b=FieldEnumOnGenericType flags=0x00100000
+	base=System.Object
+0x0200001c=PropertyEnumOnGenericType flags=0x00100000
+	base=System.Object
+0x0200001d=WithAttributeUsingNestedEnumArray flags=0x00100000
+	base=System.Object
+0x0200001e=GenericWithEnum`1/OnGenericNumber flags=0x00000102
+	base=System.Enum
+	generic-param 0 name=T flags=0x0000
+0x0200001f=FooAttribute/Token flags=0x00100005
+	base=System.Object
+0x02000020=Parent/Child flags=0x00100002
+	base=System.Object
+[fields]
+0x04000001=System.Int16 Bingo::value__ flags=0x0606
+0x04000002=Bingo Bingo::Fuel flags=0x8056 constant=I2:2
+0x04000003=Bingo Bingo::Binga flags=0x8056 constant=I2:4
+0x04000004=System.Object FooAttribute::Pan flags=0x0006
+0x04000005=System.String[] FooAttribute::PanPan flags=0x0006
+0x04000006=System.Type FooAttribute::Chose flags=0x0006
+0x04000007=GenericWithEnum`1/OnGenericNumber<System.Byte> FooAttribute::NumberEnumField flags=0x0006
+0x04000008=GenericWithEnum`1/OnGenericNumber<System.Byte> FooAttribute::<NumberEnumProperty>k__BackingField flags=0x0001
+0x04000009=System.Int32 GenericWithEnum`1/OnGenericNumber::value__ flags=0x0606
+0x0400000a=GenericWithEnum`1/OnGenericNumber<T> GenericWithEnum`1/OnGenericNumber::One flags=0x8056 constant=I4:0
+0x0400000b=GenericWithEnum`1/OnGenericNumber<T> GenericWithEnum`1/OnGenericNumber::Two flags=0x8056 constant=I4:1
+[methods]
+0x06000001=System.Void GenericWithEnum`1::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+0x06000002=System.Void FooAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x00002058
+0x06000003=System.Void FooAttribute::.ctor(System.String) flags=0x1886 impl=0x0000 rva=0x00002060
+	param 1 name=str flags=0x0000
+0x06000004=System.Void FooAttribute::.ctor(System.SByte,System.Byte,System.Boolean,System.Boolean,System.UInt16,System.Int16,System.Char) flags=0x1886 impl=0x0000 rva=0x00002068
+	param 1 name=a flags=0x0000
+	param 2 name=b flags=0x0000
+	param 3 name=c flags=0x0000
+	param 4 name=d flags=0x0000
+	param 5 name=e flags=0x0000
+	param 6 name=f flags=0x0000
+	param 7 name=g flags=0x0000
+0x06000005=System.Void FooAttribute::.ctor(System.Int32,System.UInt32,System.Single,System.Int64,System.UInt64,System.Double) flags=0x1886 impl=0x0000 rva=0x00002070
+	param 1 name=a flags=0x0000
+	param 2 name=b flags=0x0000
+	param 3 name=c flags=0x0000
+	param 4 name=d flags=0x0000
+	param 5 name=e flags=0x0000
+	param 6 name=f flags=0x0000
+0x06000006=System.Void FooAttribute::.ctor(System.Char[]) flags=0x1886 impl=0x0000 rva=0x00002078
+	param 1 name=chars flags=0x0000
+0x06000007=System.Void FooAttribute::.ctor(System.Object,System.Object) flags=0x1886 impl=0x0000 rva=0x00002080
+	param 1 name=a flags=0x0000
+	param 2 name=b flags=0x0000
+0x06000008=System.Void FooAttribute::.ctor(Bingo) flags=0x1886 impl=0x0000 rva=0x00002088
+	param 1 name=bingo flags=0x0000
+0x06000009=System.Void FooAttribute::.ctor(System.Security.AccessControl.AceFlags) flags=0x1886 impl=0x0000 rva=0x00002090
+	param 1 name=flags flags=0x0000
+0x0600000a=System.Void FooAttribute::.ctor(System.Type) flags=0x1886 impl=0x0000 rva=0x00002098
+	param 1 name=type flags=0x0000
+0x0600000b=System.Void FooAttribute::.ctor(GenericWithEnum`1/OnGenericNumber<Bingo>) flags=0x1886 impl=0x0000 rva=0x000020a0
+	param 1 name=number flags=0x0000
+0x0600000c=System.Int32 FooAttribute::get_Bang() flags=0x0886 impl=0x0000 rva=0x000020a8 semantics=0x0002
+0x0600000d=System.Void FooAttribute::set_Bang(System.Int32) flags=0x0886 impl=0x0000 rva=0x000020ab semantics=0x0001
+	param 1 name=value flags=0x0000
+0x0600000e=System.String FooAttribute::get_Fiou() flags=0x0886 impl=0x0000 rva=0x000020ad semantics=0x0002
+0x0600000f=System.Void FooAttribute::set_Fiou(System.String) flags=0x0886 impl=0x0000 rva=0x000020b4 semantics=0x0001
+	param 1 name=value flags=0x0000
+0x06000010=GenericWithEnum`1/OnGenericNumber<System.Byte> FooAttribute::get_NumberEnumProperty() flags=0x0886 impl=0x0000 rva=0x000020b6 semantics=0x0002
+0x06000011=System.Void FooAttribute::set_NumberEnumProperty(GenericWithEnum`1/OnGenericNumber<System.Byte>) flags=0x0886 impl=0x0000 rva=0x000020be semantics=0x0001
+	param 1 name=value flags=0x0000
+0x06000012=System.Void Hamster::.ctor() flags=0x1886 impl=0x0000 rva=0x000020c7
+0x06000013=System.Void Dentist::.ctor() flags=0x1886 impl=0x0000 rva=0x000020cf
+0x06000014=System.Void Steven::.ctor() flags=0x1886 impl=0x0000 rva=0x000020d7
+0x06000015=System.Void Seagull::.ctor() flags=0x1886 impl=0x0000 rva=0x000020df
+0x06000016=System.Void Rifle::.ctor() flags=0x1886 impl=0x0000 rva=0x000020e7
+0x06000017=System.Void Worm::.ctor() flags=0x1886 impl=0x0000 rva=0x000020ef
+0x06000018=System.Void Sheep::.ctor() flags=0x1886 impl=0x0000 rva=0x000020f7
+0x06000019=System.Void Angola::.ctor() flags=0x1886 impl=0x0000 rva=0x000020ff
+0x0600001a=System.Void BoxedStringField::.ctor() flags=0x1886 impl=0x0000 rva=0x00002107
+0x0600001b=System.Void Zero::.ctor() flags=0x1886 impl=0x0000 rva=0x0000210f
+0x0600001c=System.Void Ace::.ctor() flags=0x1886 impl=0x0000 rva=0x00002117
+0x0600001d=System.Void Bzzz::.ctor() flags=0x1886 impl=0x0000 rva=0x0000211f
+0x0600001e=System.Void Typed::.ctor() flags=0x1886 impl=0x0000 rva=0x00002127
+0x0600001f=System.Void NestedTyped::.ctor() flags=0x1886 impl=0x0000 rva=0x0000212f
+0x06000020=System.Void Truc::.ctor() flags=0x1886 impl=0x0000 rva=0x00002137
+0x06000021=System.Void Machin::.ctor() flags=0x1886 impl=0x0000 rva=0x0000213f
+0x06000022=System.Void OpenGeneric`2::.ctor() flags=0x1886 impl=0x0000 rva=0x00002147
+0x06000023=System.Void ClosedGeneric::.ctor() flags=0x1886 impl=0x0000 rva=0x0000214f
+0x06000024=System.Void Parent::.ctor() flags=0x1886 impl=0x0000 rva=0x00002157
+0x06000025=System.Void NullCharInString::.ctor() flags=0x1886 impl=0x0000 rva=0x0000215f
+0x06000026=System.Void BoxedValueEnumOnGenericType::.ctor() flags=0x1886 impl=0x0000 rva=0x00002167
+0x06000027=System.Void ValueEnumOnGenericType::.ctor() flags=0x1886 impl=0x0000 rva=0x0000216f
+0x06000028=System.Void FieldEnumOnGenericType::.ctor() flags=0x1886 impl=0x0000 rva=0x00002177
+0x06000029=System.Void PropertyEnumOnGenericType::.ctor() flags=0x1886 impl=0x0000 rva=0x0000217f
+0x0600002a=System.Void WithAttributeUsingNestedEnumArray::.ctor() flags=0x1886 impl=0x0000 rva=0x00002187
+0x0600002b=System.Void FooAttribute/Token::.ctor() flags=0x1886 impl=0x0000 rva=0x0000218f
+0x0600002c=System.Void Parent/Child::.ctor() flags=0x1886 impl=0x0000 rva=0x00002197
+[properties]
+0x17000001=System.Int32 FooAttribute::Bang() flags=0x0000 getter=0x0600000c setter=0x0600000d
+0x17000002=System.String FooAttribute::Fiou() flags=0x0000 getter=0x0600000e setter=0x0600000f
+0x17000003=GenericWithEnum`1/OnGenericNumber<System.Byte> FooAttribute::NumberEnumProperty() flags=0x0000 getter=0x06000010 setter=0x06000011
+[events]
+[custom-attributes]
+ca parent=0x00000001 ctor=System.Void System.Runtime.CompilerServices.RefSafetyRulesAttribute::.ctor(System.Int32) args=((I4:11))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100020000000000
+ca parent=0x20000001 ctor=System.Void FooAttribute::.ctor(System.String) args=((String:"bingo"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETCoreApp,Version=v8.0")) property FrameworkDisplayName=(String:".NET 8.0")
+ca parent=0x02000005 ctor=System.Void FooAttribute::.ctor(System.String) args=((String:"bar"))
+ca parent=0x02000006 ctor=System.Void FooAttribute::.ctor(System.String) args=((String:null))
+ca parent=0x02000007 ctor=System.Void FooAttribute::.ctor(System.SByte,System.Byte,System.Boolean,System.Boolean,System.UInt16,System.Int16,System.Char) args=((I1:-12), (U1:242), (Boolean:True), (Boolean:False), (U2:4242), (I2:-1983), (Char:char:0x0063))
+ca parent=0x04000008 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000008 ctor=System.Void FooAttribute::.ctor(System.Int32,System.UInt32,System.Single,System.Int64,System.UInt64,System.Double) args=((I4:-100000), (U4:200000), (R4:r4:0x4141eb85), (I8:9223372036854775807), (U8:18446744073709551615), (R8:r8:0x4050295faa8a82a5))
+ca parent=0x02000009 ctor=System.Void FooAttribute::.ctor(System.Char[]) args=((Char[]:{(Char:char:0x0063), (Char:char:0x0065), (Char:char:0x0063), (Char:char:0x0069), (Char:char:0x006c)}))
+ca parent=0x0200000a ctor=System.Void FooAttribute::.ctor(System.Object,System.Object) args=((Object:(String:"2")), (Object:(I4:2)))
+ca parent=0x0200000b ctor=System.Void FooAttribute::.ctor(System.Object,System.Object) args=((Object:(Object[]:{(Object:(String:"2")), (Object:(I4:2)), (Object:(Char:char:0x0063))})), (Object:(Object[]:{(Object:(Object[]:{(Object:(I4:1)), (Object:(I4:2)), (Object:(I4:3))})), (Object:(String:null))})))
+ca parent=0x0200000c ctor=System.Void FooAttribute::.ctor() args=() field PanPan=(String[]:{(String:"yo"), (String:"yo")}) field Pan=(Object:(Object[]:{(Object:(I4:1)), (Object:(String:"2")), (Object:(Char:char:0x0033))})) property Bang=(I4:42) property Fiou=(String:null)
+ca parent=0x0200000d ctor=System.Void FooAttribute::.ctor() args=() field Pan=(Object:(String:"fiouuu"))
+ca parent=0x0200000e ctor=System.Void FooAttribute::.ctor(Bingo) args=((Bingo:2))
+ca parent=0x0200000f ctor=System.Void FooAttribute::.ctor(System.Security.AccessControl.AceFlags) args=!unresolved blob=0100040000
+ca parent=0x06000010 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000010 ctor=System.Void FooAttribute::.ctor(System.Object,System.Object) args=!unresolved blob=01001d5102000000550542696e676f0200550542696e676f04000eff010053510350616e55808853797374656d2e53656375726974792e416363657373436f6e74726f6c2e416365466c6167732c2053797374656d2e53656375726974792e416363657373436f6e74726f6c2c2056657273696f6e3d382e302e302e302c2043756c747572653d6e65757472616c2c205075626c69634b6579546f6b656e3d6230336635663766313164353061336104
+ca parent=0x06000011 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000011 ctor=System.Void FooAttribute::.ctor(System.Type) args=((Type:typeof(Bingo)))
+ca parent=0x02000012 ctor=System.Void FooAttribute::.ctor(System.Type) args=((Type:typeof(FooAttribute/Token)))
+ca parent=0x02000013 ctor=System.Void FooAttribute::.ctor() args=() field Chose=(Type:typeof(Typed))
+ca parent=0x02000014 ctor=System.Void FooAttribute::.ctor() args=() field Chose=(Type:null)
+ca parent=0x02000015 ctor=System.Void FooAttribute::.ctor(System.Type) args=((Type:typeof(System.Collections.Generic.Dictionary`2)))
+ca parent=0x02000016 ctor=System.Void FooAttribute::.ctor(System.Type) args=((Type:typeof(System.Collections.Generic.Dictionary`2<System.String,OpenGeneric`2<Machin,System.Int32>[,]>)))
+ca parent=0x02000017 ctor=System.Void FooAttribute::.ctor(System.Type) args=((Type:typeof(Parent/Child[])))
+ca parent=0x02000018 ctor=System.Void FooAttribute::.ctor(System.String) args=((String:"Foo Bar "))
+ca parent=0x02000019 ctor=System.Void FooAttribute::.ctor(System.Object,System.Object) args=((Object:(GenericWithEnum`1/OnGenericNumber<System.Int32>:0)), (Object:(GenericWithEnum`1/OnGenericNumber<System.String>:1)))
+ca parent=0x0200001a ctor=System.Void FooAttribute::.ctor(GenericWithEnum`1/OnGenericNumber<Bingo>) args=((GenericWithEnum`1/OnGenericNumber<Bingo>:1))
+ca parent=0x0200001b ctor=System.Void FooAttribute::.ctor() args=() field NumberEnumField=(GenericWithEnum`1/OnGenericNumber<System.Byte>:0)
+ca parent=0x0200001c ctor=System.Void FooAttribute::.ctor() args=() property NumberEnumProperty=(GenericWithEnum`1/OnGenericNumber<System.Byte>:1)
+ca parent=0x0200001d ctor=System.Void FooAttribute::.ctor() args=() field Pan=(Object:(GenericWithEnum`1/OnGenericNumber<System.String>[]:{(GenericWithEnum`1/OnGenericNumber<System.String>:0), (GenericWithEnum`1/OnGenericNumber<System.String>:1)}))
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000002 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x06000003 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x06000004 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x06000005 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x06000006 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x06000007 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x06000008 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x06000009 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x0600000a max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x0600000b max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret
+0x0600000c max-stack=8 init-locals=false code-size=2
+	IL_0000: ldc.i4.0
+	IL_0001: ret
+0x0600000d max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x0600000e max-stack=8 init-locals=false code-size=6
+	IL_0000: ldstr "fiou"
+	IL_0005: ret
+0x0600000f max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x06000010 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld GenericWithEnum`1/OnGenericNumber<System.Byte> FooAttribute::<NumberEnumProperty>k__BackingField
+	IL_0006: ret
+0x06000011 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld GenericWithEnum`1/OnGenericNumber<System.Byte> FooAttribute::<NumberEnumProperty>k__BackingField
+	IL_0007: ret
+0x06000012 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000013 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000014 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000015 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000016 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000017 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000018 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000019 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x0600001a max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x0600001b max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x0600001c max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x0600001d max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x0600001e max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x0600001f max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000020 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000021 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000022 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000023 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000024 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000025 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000026 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000027 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000028 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000029 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x0600002a max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x0600002b max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x0600002c max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret

@@ -1,0 +1,49 @@
+[module]
+name=pinvoke.exe
+mvid=bd4e3c91-fa53-4281-83c7-752499e32d99
+kind=Console
+runtime=v2.0.50727
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000003
+[assembly]
+full-name=pinvoke, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+0x1a000001=kernel32.dll
+0x1a000002=shell32.dll
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Foo flags=0x00100000
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Boolean Foo::Beep(System.UInt32,System.UInt32) flags=0x2096 impl=0x0080 rva=0x00000000 pinvoke=(kernel32.dll,Beep,0x0140)
+	param 0 name=dwFreq flags=0x0000
+	param 1 name=dwDuration flags=0x0000
+0x06000002=System.UInt32 Foo::SHFormatDrive(System.IntPtr,System.UInt32,System.UInt32,System.UInt32) flags=0x2096 impl=0x0080 rva=0x00000000 pinvoke=(shell32.dll,SHFormatDrive,0x0100)
+	param 0 name=hwnd flags=0x0000
+	param 1 name=drive flags=0x0000
+	param 2 name=fmtID flags=0x0000
+	param 3 name=options flags=0x0000
+0x06000003=System.Void Foo::Main() flags=0x0091 impl=0x0000 rva=0x00002050
+0x06000004=System.Void Foo::.ctor() flags=0x1886 impl=0x0000 rva=0x00002053
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[il]
+0x06000003 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000004 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret

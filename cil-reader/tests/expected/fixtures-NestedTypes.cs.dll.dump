@@ -1,0 +1,70 @@
+[module]
+name=NestedTypes.dll
+mvid=3133276d-ee2d-4165-a7be-c6b54d35a33e
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=NestedTypes, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=System.Runtime, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Foo flags=0x00100000
+	base=System.Object
+0x02000003=Bingo flags=0x00100000
+	base=System.Object
+0x02000004=Foo/Bar flags=0x00100003
+	base=System.Object
+0x02000005=Bingo/Fuel flags=0x00100002
+	base=System.Object
+0x02000006=Foo/Bar/Baz flags=0x00100003
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void Foo::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+0x06000002=Bingo/Fuel Bingo::GetFuel() flags=0x0096 impl=0x0000 rva=0x00002058
+0x06000003=System.Void Bingo::.ctor() flags=0x1886 impl=0x0000 rva=0x0000205b
+0x06000004=System.Void Foo/Bar::.ctor() flags=0x1886 impl=0x0000 rva=0x00002063
+0x06000005=System.Void Bingo/Fuel::.ctor() flags=0x1886 impl=0x0000 rva=0x0000206b
+0x06000006=System.Void Foo/Bar/Baz::.ctor() flags=0x1886 impl=0x0000 rva=0x00002073
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x00000001 ctor=System.Void System.Runtime.CompilerServices.RefSafetyRulesAttribute::.ctor(System.Int32) args=((I4:11))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100020000000000
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETCoreApp,Version=v8.0")) property FrameworkDisplayName=(String:".NET 8.0")
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000002 max-stack=8 init-locals=false code-size=2
+	IL_0000: ldnull
+	IL_0001: ret
+0x06000003 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000004 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000005 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000006 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret

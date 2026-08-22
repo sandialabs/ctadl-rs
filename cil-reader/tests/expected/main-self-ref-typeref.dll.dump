@@ -1,0 +1,328 @@
+[module]
+name=SharpFuzz.Target.dll
+mvid=815e8273-35d0-421f-b5ee-a7b2574059f0
+kind=Console
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000003
+[assembly]
+full-name=SharpFuzz.Target, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=System.Runtime, Version=4.2.1.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000002=System.Console, Version=4.1.1.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000003=System.Private.CoreLib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=SharpFuzz.Target.Program flags=0x00100001
+	base=System.Object
+0x02000003=SharpFuzz.Common.Memory flags=0x00100181
+	base=System.Object
+[fields]
+0x04000001=System.Byte[] SharpFuzz.Common.Memory::SharedMem flags=0x0016
+0x04000002=System.Int32 SharpFuzz.Common.Memory::PrevLocation flags=0x0016
+[methods]
+0x06000001=System.Int32 SharpFuzz.Target.Program::N(System.Int32) flags=0x0096 impl=0x0000 rva=0x00002050
+	param 0 name=y flags=0x0000
+0x06000002=System.Int32 SharpFuzz.Target.Program::M(System.Int32) flags=0x0096 impl=0x0000 rva=0x000021c0
+	param 0 name=x flags=0x0000
+0x06000003=System.Void SharpFuzz.Target.Program::Main(System.String[]) flags=0x0096 impl=0x0000 rva=0x000022c8
+	param 0 name=args flags=0x0000
+0x06000004=System.Void SharpFuzz.Target.Program::.ctor() flags=0x1886 impl=0x0000 rva=0x00002314
+0x06000005=System.Void SharpFuzz.Common.Memory::.cctor() flags=0x1891 impl=0x0000 rva=0x00002341
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(DebuggingModes) args=()
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETCoreApp,Version=v2.1")) property FrameworkDisplayName=(String:"")
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:"SharpFuzz.Target"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String) args=((String:"release"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"1.0.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyInformationalVersionAttribute::.ctor(System.String) args=((String:"1.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"SharpFuzz.Target"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"SharpFuzz.Target"))
+[il]
+0x06000001 max-stack=3 init-locals=true code-size=338
+	local 0=System.Int32
+	IL_0000: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_0005: ldc.i4 43580
+	IL_000a: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_000f: xor
+	IL_0010: ldelema System.Byte
+	IL_0015: dup
+	IL_0016: ldind.u1
+	IL_0017: ldc.i4.1
+	IL_0018: add
+	IL_0019: conv.u1
+	IL_001a: stind.i1
+	IL_001b: ldc.i4 21790
+	IL_0020: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_0025: ldarg.0
+	IL_0026: ldc.i4.1
+	IL_0027: bne.un.s IL_0051
+	IL_0029: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_002e: ldc.i4 6086
+	IL_0033: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_0038: xor
+	IL_0039: ldelema System.Byte
+	IL_003e: dup
+	IL_003f: ldind.u1
+	IL_0040: ldc.i4.1
+	IL_0041: add
+	IL_0042: conv.u1
+	IL_0043: stind.i1
+	IL_0044: ldc.i4 3043
+	IL_0049: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_004e: ldc.i4.s 10
+	IL_0050: ret
+	IL_0051: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_0056: ldc.i4 16976
+	IL_005b: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_0060: xor
+	IL_0061: ldelema System.Byte
+	IL_0066: dup
+	IL_0067: ldind.u1
+	IL_0068: ldc.i4.1
+	IL_0069: add
+	IL_006a: conv.u1
+	IL_006b: stind.i1
+	IL_006c: ldc.i4 8488
+	IL_0071: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_0076: nop
+	IL_0077: ldarg.0
+	IL_0078: ldc.i4.2
+	IL_0079: beq.s IL_00cb
+	IL_007b: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_0080: ldc.i4 65500
+	IL_0085: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_008a: xor
+	IL_008b: ldelema System.Byte
+	IL_0090: dup
+	IL_0091: ldind.u1
+	IL_0092: ldc.i4.1
+	IL_0093: add
+	IL_0094: conv.u1
+	IL_0095: stind.i1
+	IL_0096: ldc.i4 32750
+	IL_009b: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_00a0: ldarg.0
+	IL_00a1: ldc.i4.3
+	IL_00a2: beq.s IL_00f5
+	IL_00a4: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_00a9: ldc.i4 41994
+	IL_00ae: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_00b3: xor
+	IL_00b4: ldelema System.Byte
+	IL_00b9: dup
+	IL_00ba: ldind.u1
+	IL_00bb: ldc.i4.1
+	IL_00bc: add
+	IL_00bd: conv.u1
+	IL_00be: stind.i1
+	IL_00bf: ldc.i4 20997
+	IL_00c4: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_00c9: br.s IL_011f
+	IL_00cb: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_00d0: ldc.i4 29508
+	IL_00d5: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_00da: xor
+	IL_00db: ldelema System.Byte
+	IL_00e0: dup
+	IL_00e1: ldind.u1
+	IL_00e2: ldc.i4.1
+	IL_00e3: add
+	IL_00e4: conv.u1
+	IL_00e5: stind.i1
+	IL_00e6: ldc.i4 14754
+	IL_00eb: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_00f0: ldc.i4.s 20
+	IL_00f2: stloc.0
+	IL_00f3: leave.s IL_0150
+	IL_00f5: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_00fa: ldc.i4 5817
+	IL_00ff: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_0104: xor
+	IL_0105: ldelema System.Byte
+	IL_010a: dup
+	IL_010b: ldind.u1
+	IL_010c: ldc.i4.1
+	IL_010d: add
+	IL_010e: conv.u1
+	IL_010f: stind.i1
+	IL_0110: ldc.i4 2908
+	IL_0115: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_011a: ldc.i4.s 30
+	IL_011c: stloc.0
+	IL_011d: leave.s IL_0150
+	IL_011f: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_0124: ldc.i4 14043
+	IL_0129: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_012e: xor
+	IL_012f: ldelema System.Byte
+	IL_0134: dup
+	IL_0135: ldind.u1
+	IL_0136: ldc.i4.1
+	IL_0137: add
+	IL_0138: conv.u1
+	IL_0139: stind.i1
+	IL_013a: ldc.i4 7021
+	IL_013f: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_0144: newobj System.Void System.Exception::.ctor()
+	IL_0149: throw
+	IL_014a: pop
+	IL_014b: ldc.i4.s 40
+	IL_014d: stloc.0
+	IL_014e: leave.s IL_0150
+	IL_0150: ldloc.0
+	IL_0151: ret
+	.try IL_0077 to IL_014a catch System.Object handler IL_014a to IL_0150
+0x06000002 max-stack=3 init-locals=true code-size=252
+	local 0=System.Int32
+	IL_0000: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_0005: ldc.i4 30615
+	IL_000a: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_000f: xor
+	IL_0010: ldelema System.Byte
+	IL_0015: dup
+	IL_0016: ldind.u1
+	IL_0017: ldc.i4.1
+	IL_0018: add
+	IL_0019: conv.u1
+	IL_001a: stind.i1
+	IL_001b: ldc.i4 15307
+	IL_0020: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_0025: ldc.i4.0
+	IL_0026: stloc.0
+	IL_0027: ldarg.0
+	IL_0028: ldc.i4.0
+	IL_0029: ble.s IL_0057
+	IL_002b: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_0030: ldc.i4 5658
+	IL_0035: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_003a: xor
+	IL_003b: ldelema System.Byte
+	IL_0040: dup
+	IL_0041: ldind.u1
+	IL_0042: ldc.i4.1
+	IL_0043: add
+	IL_0044: conv.u1
+	IL_0045: stind.i1
+	IL_0046: ldc.i4 2829
+	IL_004b: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_0050: ldc.i4.1
+	IL_0051: stloc.0
+	IL_0052: br IL_00d5
+	IL_0057: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_005c: ldc.i4 1978
+	IL_0061: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_0066: xor
+	IL_0067: ldelema System.Byte
+	IL_006c: dup
+	IL_006d: ldind.u1
+	IL_006e: ldc.i4.1
+	IL_006f: add
+	IL_0070: conv.u1
+	IL_0071: stind.i1
+	IL_0072: ldc.i4 989
+	IL_0077: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_007c: ldarg.0
+	IL_007d: ldc.i4.0
+	IL_007e: bge.s IL_00a9
+	IL_0080: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_0085: ldc.i4 5758
+	IL_008a: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_008f: xor
+	IL_0090: ldelema System.Byte
+	IL_0095: dup
+	IL_0096: ldind.u1
+	IL_0097: ldc.i4.1
+	IL_0098: add
+	IL_0099: conv.u1
+	IL_009a: stind.i1
+	IL_009b: ldc.i4 2879
+	IL_00a0: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_00a5: ldc.i4.m1
+	IL_00a6: stloc.0
+	IL_00a7: br.s IL_00fa
+	IL_00a9: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_00ae: ldc.i4 61157
+	IL_00b3: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_00b8: xor
+	IL_00b9: ldelema System.Byte
+	IL_00be: dup
+	IL_00bf: ldind.u1
+	IL_00c0: ldc.i4.1
+	IL_00c1: add
+	IL_00c2: conv.u1
+	IL_00c3: stind.i1
+	IL_00c4: ldc.i4 30578
+	IL_00c9: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_00ce: ldc.i4.0
+	IL_00cf: call System.Int32 SharpFuzz.Target.Program::N(System.Int32)
+	IL_00d4: stloc.0
+	IL_00d5: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_00da: ldc.i4 8658
+	IL_00df: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_00e4: xor
+	IL_00e5: ldelema System.Byte
+	IL_00ea: dup
+	IL_00eb: ldind.u1
+	IL_00ec: ldc.i4.1
+	IL_00ed: add
+	IL_00ee: conv.u1
+	IL_00ef: stind.i1
+	IL_00f0: ldc.i4 4329
+	IL_00f5: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_00fa: ldloc.0
+	IL_00fb: ret
+0x06000003 max-stack=3 init-locals=false code-size=64
+	IL_0000: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_0005: ldc.i4 30922
+	IL_000a: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_000f: xor
+	IL_0010: ldelema System.Byte
+	IL_0015: dup
+	IL_0016: ldind.u1
+	IL_0017: ldc.i4.1
+	IL_0018: add
+	IL_0019: conv.u1
+	IL_001a: stind.i1
+	IL_001b: ldc.i4 15461
+	IL_0020: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_0025: ldstr "{0}"
+	IL_002a: ldc.i4.0
+	IL_002b: call System.Int32 SharpFuzz.Target.Program::M(System.Int32)
+	IL_0030: box System.Int32
+	IL_0035: call System.String System.String::Format(System.String,System.Object)
+	IL_003a: call System.Void System.Console::WriteLine(System.String)
+	IL_003f: ret
+0x06000004 max-stack=8 init-locals=false code-size=44
+	IL_0000: ldsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_0005: ldc.i4 56062
+	IL_000a: ldsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_000f: xor
+	IL_0010: ldelema System.Byte
+	IL_0015: dup
+	IL_0016: ldind.u1
+	IL_0017: ldc.i4.1
+	IL_0018: add
+	IL_0019: conv.u1
+	IL_001a: stind.i1
+	IL_001b: ldc.i4 28031
+	IL_0020: stsfld System.Int32 SharpFuzz.Common.Memory::PrevLocation
+	IL_0025: ldarg.0
+	IL_0026: call System.Void System.Object::.ctor()
+	IL_002b: ret
+0x06000005 max-stack=8 init-locals=false code-size=16
+	IL_0000: ldc.i4 65536
+	IL_0005: newarr System.Byte
+	IL_000a: stsfld System.Byte[] SharpFuzz.Common.Memory::SharedMem
+	IL_000f: ret

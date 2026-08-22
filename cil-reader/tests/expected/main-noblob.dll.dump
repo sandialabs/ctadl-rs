@@ -1,0 +1,26 @@
+[module]
+name=noblob.dll
+mvid=c7fb2d19-ba40-4e48-a087-cb42e888bd39
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=noblob, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+[module-refs]
+[resources]
+embedded name=res.resources flags=0x00000001 size=204
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+[fields]
+[methods]
+[properties]
+[events]
+[custom-attributes]
+[il]

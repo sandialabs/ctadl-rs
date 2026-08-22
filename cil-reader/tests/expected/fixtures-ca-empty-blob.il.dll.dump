@@ -1,0 +1,34 @@
+[module]
+name=CaEmptyBlob.dll
+mvid=c019b29d-5a2b-4f78-b1f4-1bc7dc17fb46
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=CaEmptyBlob, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00000000
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=CustomAttribute flags=0x00000001
+	base=System.Attribute
+[fields]
+[methods]
+0x06000001=System.Void CustomAttribute::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x02000002 ctor=System.Void CustomAttribute::.ctor() args=()
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Attribute::.ctor()
+	IL_0006: ret

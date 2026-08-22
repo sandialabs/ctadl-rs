@@ -1,0 +1,85 @@
+[module]
+name=Hello.dll
+mvid=70e092a6-dd09-4d69-a057-382c77c858b2
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=Hello, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00000000
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Foo flags=0x00000000
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void Foo::.ctor() flags=0x1806 impl=0x0000 rva=0x00002050
+0x06000002=System.Void Foo::Bar(System.Int32,System.Int32) flags=0x0016 impl=0x0000 rva=0x00002058
+	param 0 name=a flags=0x0000
+	param 1 name=b flags=0x0000
+0x06000003=System.Void Foo::Baz(System.Int32) flags=0x0016 impl=0x0000 rva=0x0000206f
+	param 0 name=a flags=0x0000
+0x06000004=System.Void Foo::Gazonk() flags=0x0006 impl=0x0000 rva=0x00002071
+0x06000005=System.Void Foo::PrintEmpty() flags=0x0016 impl=0x0000 rva=0x00002078
+0x06000006=System.Boolean Foo::TestFilter(System.Boolean) flags=0x0016 impl=0x0000 rva=0x00002084
+	param 0 name=b flags=0x0000
+0x06000007=T Foo::GetState(System.String,T) flags=0x0016 impl=0x0000 rva=0x000020c0
+	generic-param 0 name=T flags=0x0000
+	param 0 name=var flags=0x0000
+	param 1 name=defaultValue flags=0x1010 constant=Null
+[properties]
+[events]
+[custom-attributes]
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000002 max-stack=8 init-locals=true code-size=11
+	local 0=System.Int32
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: mul
+	IL_0003: stloc.0
+	IL_0004: ldloc.0
+	IL_0005: call System.Void Foo::Baz(System.Int32)
+	IL_000a: ret
+0x06000003 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x06000004 max-stack=8 init-locals=false code-size=6
+	IL_0000: ldarg 0
+	IL_0004: pop
+	IL_0005: ret
+0x06000005 max-stack=8 init-locals=false code-size=11
+	IL_0000: ldsfld System.String System.String::Empty
+	IL_0005: call System.Void System.Console::WriteLine(System.String)
+	IL_000a: ret
+0x06000006 max-stack=2 init-locals=true code-size=31
+	local 0=System.Boolean
+	IL_0000: newobj System.Void System.Exception::.ctor()
+	IL_0005: throw
+	IL_0006: leave IL_001b
+	IL_000b: pop
+	IL_000c: ldarg.0
+	IL_000d: endfilter
+	IL_000f: ldc.i4.1
+	IL_0010: stloc.0
+	IL_0011: leave IL_001d
+	IL_0016: leave IL_001b
+	IL_001b: ldc.i4.0
+	IL_001c: stloc.0
+	IL_001d: ldloc.0
+	IL_001e: ret
+	.try IL_0000 to IL_000b filter IL_000b handler IL_000f to IL_001b
+0x06000007 max-stack=8 init-locals=false code-size=2
+	IL_0000: ldarg.1
+	IL_0001: ret

@@ -1,0 +1,5 @@
+/target
+/extern/cecil
+tools/CecilDump/bin
+tools/CecilDump/obj
+target/
