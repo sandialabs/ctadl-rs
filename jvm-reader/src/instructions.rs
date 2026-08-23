@@ -413,9 +413,6 @@ fn format_cp_comment(cf: &ClassFile, index: u16) -> Result<String, ClassFileErro
     Ok(match entry {
         CpEntry::Class { .. } => format!("class {}", cf.get_class_name(index)?),
         CpEntry::String { .. } => {
-            // A string constant may hold unpaired surrogates, which a listing
-            // must render rather than fail on. `?` is what javap emits, since
-            // no charset can encode a lone surrogate.
             let s = cf
                 .get_jvm_string(match entry {
                     CpEntry::String { string_index } => *string_index,
