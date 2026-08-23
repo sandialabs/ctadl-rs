@@ -1,312 +1,328 @@
-# CTADL JVM frontend: defect confirmation and fix plan
+# CTADL JVM frontend: second-round defect confirmation and fix plan
 
-> **Implemented.** Every defect below is fixed and covered by tests; see
-> `JVM_FRONTEND_FIX_SUMMARY.md` for what landed, including the two further
-> defects the new fixtures exposed in the disassembler and the `xtask` CFG
-> check. The `repro/` fixtures moved into `jvm-reader/tests/`. The text below is
-> kept as the original analysis.
+This plan covers the CVE reproducibility report on CTADL 0.1.2 (APISIX, Emissary,
+Spring AI, OpenMRS, Yamcs, Junrar, GeoTools). It replaces the first-round plan,
+whose defects — switch selectors, shift opcode ranges, `iushr` length,
+modified UTF-8, wide parameter ordinals, error context, the `xtask` skip — are
+all fixed and landed; see `JVM_FRONTEND_FIX_SUMMARY.md` for that round.
 
-Status: all defects in `bug1.md` reproduced locally from first principles, plus
-two additional defects the report did not cover. Nothing in the tree has been
-modified — `git status` is clean apart from the new `repro/` directory and this
-file.
+Of the report's seven cases, **one was already fixed** (GeoTools), **two were
+real and are now fixed** (Emissary, Spring AI's `SearchRequest`), **one is
+untouched and needs Lua work** (APISIX), and **three could not be reproduced
+directly** because the artifacts are not on this machine (OpenMRS, Yamcs,
+Junrar) — but every failure mode they describe is now absent from a 333k-method
+corpus. Three defects the report did not name were found along the way.
 
-## How this was reproduced
+## Verdict against the report
 
-The report reproduces against a retained Apktool checkout that is not present on
-this machine. Instead, every defect is reproduced from purpose-written Java
-compiled by `javac` with no post-processing, so there is no question of
-malformed input: the fixtures are ordinary, verifiable major-version-52 (Java 8)
-class files.
+| # | Report case | Report's primary defect | Verdict |
+| --- | --- | --- | --- |
+| 1 | APISIX CVE-2022-29266 | Lua table-selected callback resolution | **Open.** Not addressed; needs Lua frontend work (below) |
+| 2 | Emissary CVE-2026-35582 | JVM category-2 field width | **Was real, now fixed** (defect A) |
+| 3 | Spring AI CVE-2026-40967 | Category-2 fields, stack joins | **Field half was real, now fixed** (defect A). Join half not reproduced (below) |
+| 4 | OpenMRS CVE-2026-40075 | Operand-stack join handling | **Not reproduced.** Every join failure in the corpus was a symptom of A–D |
+| 5 | Yamcs CVE-2026-44632 | Unclassified stack underflow | **Not reproduced.** That message fired 19× pre-fix, 0× post-fix |
+| 6 | Junrar CVE-2026-41245 | Operand-stack join handling | Same as #4. Licensing exclusion is unaffected either way |
+| 7 | GeoTools CVE-2026-76904 | Shift-opcode table | **Already fixed** in the first round; re-verified |
 
-```
-cargo build --bin ctadl
-./repro/run.sh                    # compiles repro/src/*.java, imports each class
-./repro/run.sh /path/to/ctadl     # or point at another binary
-```
+Two of the report's prescriptions turned out **not** to be indicated:
 
-`run.sh` picks up a JDK 8 from the Nix store automatically
-(`/nix/store/*zulu-ca-jdk-8*`); set `JAVA_HOME` to override. JDK 8 is used only
-to keep the fixtures on major version 52, matching the reported case.
+- *"Parse the invokedynamic descriptor and preserve category-2 argument widths."*
+  `decode_call` already does this — `descriptor_param_slot_count` sums
+  `slot_width`, and `descriptor_return_slot_count` returns 2 for `J`/`D`.
+  `SearchRequest.toString` failed because the **`double` field** it loaded
+  pushed one word, not because the `invokedynamic` consumed the wrong count.
+  The reported `consumed=5` was already correct.
+- *"Replace exact slot-identity comparison at joins with typed frame merging /
+  phi-like join slots."* Not needed, and it would mask defects rather than fix
+  them. See "The join checks" below.
 
-Fixtures, one per root cause:
+## Defects
 
-| Fixture | Targets |
-| --- | --- |
-| `SparseSwitch.java` | `lookupswitch` selector not consumed |
-| `DenseSwitch.java` | `tableswitch` selector not consumed |
-| `StringSwitch.java` | Java 8 string switch: both selectors at once |
-| `GuardedStringSwitch.java` | same, where the join is also an exception-handler edge |
-| `IushrLength.java` | `iushr` stack effect and instruction length |
-| `SurrogateConstants.java` | modified-UTF-8 constants with unpaired surrogates |
-| `PairedOnly.java` | modified-UTF-8 constant with only a *well-formed* pair |
-| `WideParams.java` | `long`/`double` parameter slot indexing |
+Four decoder defects, all in `jvm-reader/src/flow.rs`. Each is a table or
+descriptor omission; none needs a new analysis.
 
-## Confirmed defects
+### A. Field opcodes ignore the descriptor's category-2 width
 
-### 1. Switch instructions have no stack effect
-
-`jvm-reader/src/flow.rs:1764` — `misc_stack_effect` models conditional branches
-but omits `tableswitch` (0xaa) and `lookupswitch` (0xab). Both pop one int
-selector. Switches decode to no dataflow and to `InstructionKind::Other`
-(`flow.rs:1194`), so `misc_stack_effect` is the correct place for them.
-
-The selector survives as a phantom slot, and the discrepancy surfaces at the
-first join that the switch dominates:
-
-```
-SparseSwitch:  block 0 (pc 0)   <- block 6 (pc 108),  existing_len=0, new_len=1
-DenseSwitch:   block 0 (pc 0)   <- block 7 (pc 113),  existing_len=0, new_len=1
-StringSwitch:  block 13 (pc 143) <- block 11 (pc 139), existing_len=0, new_len=2
-```
-
-`SparseSwitch.parseTable` is a deliberate structural copy of
-`BinaryResourceParser.parseTable`: a `while` loop whose `default` arm branches
-back to the loop header, giving exactly the reported 0 → 1 discrepancy.
-`StringSwitch.decode` reproduces the two-selector case — `javac` lowers a string
-switch to `lookupswitch` on `hashCode()` at pc 8 followed by `tableswitch` at
-pc 84, joining at `new StringBuilder` (pc 139), which matches
-`ResFileDecoder.decode` instruction for instruction.
-
-`GuardedStringSwitch` reproduces §3 of the report: the same two phantom slots
-meeting an exception handler that pops its exception object. Locally the edge is
-reported as `existing_len=0, new_len=2` rather than the report's `2 → 0`; the
-orientation just depends on which predecessor the worklist visits first, so this
-is the same defect, not a distinct one.
-
-**Fix.** In `misc_stack_effect`, beside the conditional-branch arms:
+`long` and `double` occupy two operand-stack words. All four field opcodes moved
+exactly one, whatever the descriptor said:
 
 ```rust
-// Switches consume their int selector.
-0xaa | 0xab => (1, 0), // tableswitch, lookupswitch
+0xb2 => { …; destinations.push(Location::StackOutput); }              // getstatic
+0xb3 => { sources.push(Location::StackInput(0)); … }                  // putstatic
+0xb4 => { …; destinations.push(Location::StackOutput); }              // getfield
+0xb5 => { sources.push(StackInput(0)); sources.push(StackInput(1)); } // putfield
 ```
 
-**Verified.** With only this change, `SparseSwitch`, `DenseSwitch`,
-`StringSwitch` and `GuardedStringSwitch` all import cleanly.
+The shortfall does not fail at the field access; it fails at whatever consumes
+the value, which is why the report saw it at `lcmp`. Reproduced from a
+purpose-written class, matching Emissary's `Roller.incrementProgress` and
+`Executrix.execute` exactly:
 
-### 2. Shift stack effects are assigned by range and are off by one
+```
+$ ctadl import -l jvm -n t LongField.class
+stack underflow while rewriting StackInput: class=LongField
+method=overBudget(J)Z pc=5 opcode=0x94 mnem=lcmp depth=3 stack_len=3
+```
 
-`jvm-reader/src/flow.rs:1749-1750`:
+and Spring AI's `SearchRequest.toString`, where the same missing word lands on a
+string-concat `invokedynamic` instead:
+
+```
+$ ctadl import -l jvm -n t Concat.class
+stack underflow while rewriting call argument StackInput: class=Concat
+method=toString()Ljava/lang/String; pc=16 opcode=0xba mnem=invokedynamic
+depth=4 stack_len=4 consumed=5
+```
+
+**Fix.** A `field_slot_width(descriptor)` helper — 2 for `J`/`D`, 1 otherwise —
+applied to all four opcodes: `getstatic` pushes it, `putstatic` pops it,
+`getfield` pops the receiver and pushes it, `putfield` pops it plus the receiver
+underneath.
+
+### B. `sastore` is misnamed and unmodelled
+
+`0x56` is `sastore`, the last of the array stores. The mnemonic table called it
+`dup2_x2` (which is `0x5e`), and the array-store arms — in both `decode_dataflow`
+and `opcode_kind` — stopped at `0x55` (`castore`). So every `short[]` store was
+modelled as a no-op and left its arrayref, index and value on the simulated
+stack. The three phantom slots surface at the first join the store dominates:
+
+```
+java/util/Arrays.fill([SS)V: inconsistent operand stack height at basic-block
+join: block 1 (pc 5) <- block 2 (pc 10), existing_len=0, new_len=3
+```
+
+This is the single largest source of join-height failures in the corpus, and it
+presents exactly as the "operand-stack join handling" defect the report
+attributes to OpenMRS and Junrar — as a join error whose real cause is several
+instructions upstream.
+
+**Fix.** `0x56 => "sastore"`, and extend both arms to `0x4f..=0x56`.
+
+### C. `sipush` reads four operand bytes
 
 ```rust
-0x78..=0x7a => (2, 1), // ishl, ishr, iushr     <- actually ishl, lshl, ishr
-0x7b..=0x7d => (3, 2), // lshl, lshr, lushr     <- actually lshr, iushr, lushr
+0x11 => { let s = read_i32_be(code, pc + 1)? as i16 as i32; … }
 ```
 
-The int and long shifts alternate; they are not contiguous. The ranges therefore
-give `lshl` (0x79) the int effect and `iushr` (0x7c) the long effect. The
-comments describe the intended grouping, so this reads as a transcription slip
-rather than a misunderstanding.
-
-`iushr` claiming to pop 3 slots when 2 are present aborts before any join check:
+`sipush`'s operand is a two-byte signed short. Reading four bytes and narrowing
+takes the *following* two bytes as the constant — so the decoded value is wrong
+whenever the read succeeds — and runs off the end of the code array whenever
+`sipush` sits within three bytes of it. `static int limit() { return 1024; }`
+compiles to `sipush 1024; ireturn`, four bytes total, and fails the class:
 
 ```
-stack underflow while rewriting StackInput: class=IushrLength
-method=unpackLanguageOrRegion(ICZ)I pc=3 opcode=0x7c mnem=iushr depth=2 stack_len=2
+com/sun/corba/se/impl/orb/ORBSingleton.getGIOPFragmentSize:
+OutOfBounds { offset: 1, size: 4, len: 4 }
 ```
 
-**Fix.** Enumerate by opcode, exactly as the report recommends:
-
-```rust
-0x78 | 0x7a | 0x7c => (2, 1), // ishl, ishr, iushr
-0x79 | 0x7b | 0x7d => (3, 2), // lshl, lshr, lushr
-```
-
-### 3. `iushr` is given two inline operand bytes
-
-`jvm-reader/src/flow.rs:993` — `operand_byte_count` has `0x7c => 2`. `iushr` is
-a one-byte instruction with no inline operands. `instruction_length` feeds
-`decode_flow_instruction` (`flow.rs:1304`), which is the sole instruction
-iterator, so a wrong length desynchronizes the entire remaining decode of the
+`instruction_length` was already right (`0x11 => 2`), so this never
+desynchronized the decoder — it only corrupted the constant or aborted the
 method.
 
-This is genuinely independent of defect 2, not a duplicate. With defect 2 fixed
-in isolation, the same fixture fails differently:
+**Fix.** `read_u16_be(code, pc + 1)? as i16 as i32`.
+
+### D. `multianewarray` has no stack effect
+
+`0xc5` pops one int count per dimension and pushes the array reference. It was
+neither in `decode_dataflow` nor in `misc_stack_effect`, so every `new T[a][b]`
+left its counts behind:
 
 ```
-stack underflow while rewriting StackInput: class=IushrLength
-method=unpackLanguageOrRegion(ICZ)I pc=6 opcode=0x7e mnem=iand depth=1 stack_len=1
+com/sun/media/sound/SoftAbstractResampler$ModelAbstractResamplerStream.open:
+inconsistent operand stack height at basic-block join:
+block 2 (pc 48) <- block 1 (pc 27), existing_len=0, new_len=1
 ```
 
-`iushr` sits at pc 3; length 3 advances the decoder to pc 6 (`iand`), skipping
-`bipush 31` at pc 4. `iand` then finds one slot where it needs two.
+**Fix.** Decode it like the other allocations: one `StackInput` per dimension
+plus a `Location::Allocation` source, one `StackOutput` destination, and
+`InstructionKind::Dataflow`.
 
-**Fix.** Delete the `0x7c => 2` arm. Nothing else in the table needs to change;
-`_ => 0` already gives the correct length for every other arithmetic opcode.
+## Evidence
 
-### 4. Modified UTF-8: no surrogate-pair recombination, and no representation for unpaired surrogates
+A sweep runs `basic_blocks_with_stack_slots` over every method with code in a
+JAR and tallies the failures by kind and opcode. Corpus: JDK 8 `rt.jar`, JDK 21
+(`java.base`, `java.desktop`, `java.xml`, `java.sql`, `java.logging`,
+`jdk.compiler`, `java.management`, extracted with `jimage`), apktool-lib 2.9.3,
+baksmali 3.0.9-fat (which vendors Guava), commons-io 2.15.1.
 
-`jvm-reader/src/parse_utils.rs:68-116`. The decoder collects each three-byte
-sequence as an independent code unit and then maps `char::from_u32` over the
-result at line 112.
+| Stage | Corpus | Failing methods |
+| --- | --- | --- |
+| Before any fix | `rt.jar` | 2,288 of 161,225 |
+| After A | 4 JARs | 224 — 128 join-height, 96 `OutOfBounds` |
+| After A, B, C | 5 corpora | 23 — all `multianewarray` |
+| After A, B, C, D | 5 corpora | **0 of 333,125** |
 
-The report frames this as an unpaired-surrogate problem. It is broader than
-that: the decoder never recombines *well-formed* surrogate pairs either, so
-**any** Java class containing a supplementary character in a string constant
-fails. `PairedOnly.java` contains one emoji and nothing else:
+The pre-fix `rt.jar` breakdown is worth keeping, because it shows how far a
+category-2 shortfall travels from its cause: 1,026 `StackInput` underflows (468
+at `lcmp`, the rest at `ladd`/`lsub`/`land`/`dcmp*`/`dmul`/`lstore_*`/`dup2`/
+`putfield`), 677 receiver underflows, 238 call-argument underflows, 235
+join-height mismatches, 93 `OutOfBounds`, and 19 bare "stack underflow in
+stack-slot simulation" — the exact message the report could not classify for
+Yamcs. All six kinds are now zero.
 
-```
-$ ctadl import -l jvm -n paired PairedOnly.class
-jvm decoding error
-InvalidUtf8
-```
+## What is still open
 
-That is a much larger blast radius than a hand-written lexer table — it is every
-class with an emoji, a CJK extension character, or a supplementary symbol in a
-literal. The class file encodes these as CESU-8 pairs (`ED A0 B8 ED B8 80`);
-recombination is mandatory, not optional.
+### 1. APISIX: Lua function values in tables — untouched
 
-Unpaired surrogates are a second, harder problem. They are legal in the class
-file (`ED A0 80` is `U+D800`) and are used deliberately as packed-table data.
-Rust's `String` cannot hold them at all, so this cannot be fixed inside the
-current return type.
+Nothing on this branch changes the Lua frontend. Today
+`LuaLower::indirect_call_target` lowers a call to `CallStyle::FuncPtrCall` only
+when the callee is a **bare name** bound to a local or parameter. APISIX's
 
-**Fix, staged.**
-
-*Stage A (small, unblocks the common case).* Recombine well-formed
-high/low surrogate pairs into a single scalar before `char::from_u32`. Handles
-every ordinary class. Leave unpaired surrogates erroring for now — but with a
-better error than `InvalidUtf8` (see defect 6).
-
-*Stage B (correct, larger).* Give `CpEntry::Utf8` a representation that can hold
-arbitrary UTF-16 code units. The recommendation is a `JvmString` newtype owning
-the raw modified-UTF-8 bytes, with:
-
-- `as_str(&self) -> Option<&str>` for the overwhelmingly common well-formed case,
-- `to_string_lossy(&self) -> Cow<'_, str>` substituting `U+FFFD` for unpaired
-  surrogates, for names, display and diagnostics,
-- `code_units(&self) -> impl Iterator<Item = u16>` for exact data access.
-
-Class, method, field and descriptor names can never legally contain unpaired
-surrogates, so those call sites can keep using `&str` and treat a lossy result as
-a hard error; only string *constants* need the lossy or code-unit path. Note
-that merely pairing valid surrogates — the Stage A fix alone — will not handle
-the deliberately unpaired values in `smaliFlexLexer`, exactly as the report says.
-
-Decide between A-only and A+B before starting: Stage A is a contained change to
-one function; Stage B touches `CpEntry`, `parser.rs`, and every consumer of
-`get_utf8`.
-
-### 5. NEW — `long`/`double` parameters are indexed in the wrong space
-
-Not in `bug1.md`; found while validating the fixes above. It is fully
-independent and reproduces on a pristine tree.
-
-`jvm-reader/src/flow.rs:1213` builds `Location::Parameter(slot)` from the **local
-variable slot index**. `ctadl-ascent/src/languages/jvm/mod.rs:35`
-(`jvm_descriptor_to_params`) builds the function's parameter list with one entry
-per **declared parameter**. `long` and `double` occupy two local slots, so the
-two index spaces diverge the moment a method takes a wide parameter:
-
-```
-$ ctadl import -l jvm -n wideparams WideParams.class
-IR verify error
-  > in function: LWideParams;->onlyLong(JIZ)J: reference to nonexistent parameter: '3'
-  > in function: LWideParams;->withDouble(DI)D: reference to nonexistent parameter: '2'
+```lua
+phase_func(plugins[i + 1], api_ctx)
 ```
 
-For `static long onlyLong(long v, int n, boolean flag)`: `v` occupies slots 0-1,
-`n` slot 2, `flag` slot 3 — but only ordinals 0, 1, 2 exist. `noWide` in the same
-class, with no wide parameter, verifies fine.
+does get a `FuncPtrCall`, because `phase_func` is a local — but nothing
+connects that local back to `plugins.jwt-auth.rewrite`, because function values
+are not tracked through table fields, array reads, or the plugin registration
+structures they are stored in. The report's required fix stands as written:
 
-**Why this matters for the Apktool case.** Defects 1-3 abort those methods before
-the IR verifier ever sees them. Fixing the decoder unmasks this one: it is what
-`IushrLength.java` hits once defects 1-3 are patched. Any plan that stops after
-the decoder fixes will simply trade one Apktool failure for another.
+- track function values stored in tables, arrays and registration structures;
+- propagate them through indexed reads such as `plugins[i + 1]`;
+- resolve the `phase_func` call to compatible plugin-phase implementations,
+  discriminated by table identity, field name, registration site or receiver
+  context, so the edge is not "every indirect call to every plugin";
+- preserve the relationship through indexing.
 
-**Fix.** Map slot → parameter ordinal at the point `Location::Parameter` is
-constructed. `descriptor_parameter_info` already carries `slot_width`, so build a
-`Vec<u16>` slot-to-ordinal table once per method (accounting for the implicit
-`this` slot on instance methods) and index it in `local_slot_to_location`. A slot
-that lands in the *second* half of a wide parameter should map to that
-parameter's ordinal, not to the next one.
+Acceptance criterion unchanged: the existing models produce a path through
+`jwt-auth.rewrite` to `apisix.core.response.exit` with no summary specifically
+connecting `<indirect-call>` to that handler.
 
-`local_slot_to_location` currently takes only `param_slot_count`, so this changes
-its signature and those of its callers within `flow.rs`.
+This is the one item in the report that is a missing analysis rather than a
+decoder table, and it is the only one that needs its own design.
 
-### 6. Errors carry no context
+### 2. Two error sites still carry no context
 
-Three separate gaps, all cheap:
+The report is right that the diagnostics blocked its own diagnosis, and two
+sites are still bare `InvalidClassFile(&'static str)`:
 
-- `jvm-reader/src/jar.rs:38` and `:59` — `ClassFileParser::parse(&data)?`
-  propagates without attaching `entry.name()`. The whole-JAR failure is therefore
-  just `InvalidUtf8` with no indication of which entry failed, confirmed against
-  `repro.jar`.
-- `InvalidUtf8` (`error.rs:11`) is a unit variant. It should carry the
-  constant-pool index and the offending byte offset or code unit.
-- Join and underflow errors already name class, method, pc and opcode via
-  `InvalidClassFileMessage`; extend the same treatment to the parse-side errors
-  so a failure identifies JAR entry, class, method descriptor, pc, opcode and
-  predecessor edge.
+- `flow.rs` — `"inconsistent operand stack layout at basic-block join"`, the
+  message the report quotes for Spring AI's `AbstractFilterExpressionConverter`.
+  No class, method, pc, or edge.
+- `flow.rs` — `"stack underflow in stack-slot simulation"`, the message the
+  report quotes for Yamcs. No class, method, pc, or opcode.
 
-### 7. `xtask` skips a variant that is no longer produced
+Everything else already reports class, method, descriptor, pc, opcode, mnemonic
+and depths; `StackHeightMismatch` additionally reports the block edge. Give
+these two the same treatment — a structured variant apiece, carrying the frame
+and the predecessor edge alongside what the others already carry. Cheap, and it
+is what would have let the report name the Yamcs and OpenMRS instructions.
 
-`xtask/src/jvm.rs:459` matches:
+### 3. The join checks — do not replace them with phi merging
 
-```rust
-Err(ClassFileError::InvalidClassFile("inconsistent operand stack height at basic-block join")) => { skipped_join_shape += 1; continue; }
+The report asks for typed frames and phi/canonical join slots. That is the wrong
+change here, and it would have hidden defects A–D rather than fixing them: every
+join failure in the corpus was a real decoder bug several instructions upstream,
+and a merge that accepts mismatched frames would have swallowed all of them.
+
+The height check is doing exactly its job and should stay.
+
+The **layout** check is a different matter, but the fix is smaller than phi
+merging. Stack-slot ids in `simulate_block` are positional — a slot's id *is* its
+depth (`remaining_len + i`) — so two predecessors at equal height always produce
+identical slot vectors, and the layout check is vacuous by construction. The one
+exception is `handler_entry_slots`, which draws the exception object's id from a
+separate global counter (`next_slot_id`). A handler entry slot therefore gets a
+non-positional id, and the layout check can only ever fire on a block reachable
+from both a handler and a normal edge.
+
+That shape does not occur in this corpus: instrumenting the propagation loop
+found **zero** blocks in 333,125 methods with both an exception and a
+non-exception predecessor. So the Spring AI failure could not be reproduced, and
+its more likely explanation is defect A, which independently and provably breaks
+`AbstractFilterExpressionConverter`'s class (it is a `double`-carrying converter
+in the same JAR as `SearchRequest`).
+
+The change to make anyway, when the Spring AI JAR is available to confirm
+against: **allocate the handler's entry slot positionally** — the exception
+reference is at depth 0, so its id is `0` — and delete `handler_entry_slots` and
+`next_slot_id`. That makes the layout check vacuous in every case rather than
+almost every case, and it removes a latent second problem: `next_slot_id` is
+per-method-global, so a method with 64 or more handlers would emit slot ids past
+the `id >= 64` bound that `xtask`'s `assert_normalized` treats as corruption.
+
+### 4. Smaller category-2 and legacy gaps, none currently reachable
+
+Found while auditing; all inert today, all worth closing when that code is
+touched:
+
+- `misc_stack_effect` gives `0xac..=0xb0` (all five value returns) `(1, 0)`.
+  `lreturn` and `dreturn` pop two. Harmless because a return block has no
+  successors, so the phantom slot never reaches a join.
+- `jsr` (0xa8) does not push its return address, `ret` (0xa9) is missing from
+  `operand_byte_count` (it takes a one-byte local index), and neither has a
+  stack effect. `jsr`/`ret` are illegal from class version 51 on, so nothing in
+  the corpus exercises them; a pre-Java-7 artifact would desynchronize.
+- `mnemonic` lumps `0x85..=0x93` into a single `"conv_or_cmp"`. That is a real
+  disassembly gap — `javap` prints `i2l`, `l2i`, `f2d` and the rest — and it is
+  only invisible to `jvm:javap` because no sample fixture contains a numeric
+  conversion.
+
+### 5. The report's remaining asks, resolved
+
+- *"Re-enable the currently ignored `loop_flow_main_stack_normalizes` test."*
+  No such test exists anywhere in the tree, and no `#[ignore]` remains in
+  `jvm-reader`. The equivalent coverage is the `Jvm:LoopFlow` taint case and the
+  `jvm:stack-slots` check, both passing.
+- *"Add the seven real artifacts as regression tests."* Not possible here: none
+  of the seven are on this machine, and Junrar is excluded for licensing
+  regardless. The four fixtures below reproduce every root cause from first
+  principles, and the 333k-method corpus sweep covers breadth that seven
+  artifacts would not.
+
+## Tests
+
+### Fixtures and cases
+
+Four taint cases in `nightly/tests/java`, each of which the harness runs as both
+a `Dex:` and a `Jvm:` case, and each added to `JVM_E2E_ENFORCED` so a `Jvm:`
+failure is a failure rather than an XFAIL. Classes import atomically, so a
+method that fails to decode takes its class's whole flow with it — which is what
+gives each case its teeth.
+
+| Case | Construct | Defect |
+| --- | --- | --- |
+| `WideFieldFlow` | `long`/`double` instance and static fields: `putfield`/`getfield`/`putstatic`/`getstatic` under `lcmp` and `dcmp` | A |
+| `ShortArrayFlow` | `short[]` store and load with a join after the store | B |
+| `SmallConstantFlow` | a method that is exactly `sipush 1024; ireturn` | C |
+| `MultiArrayFlow` | two-dimensional `multianewarray` with a store and load | D |
+
+### Unit tests
+
+Hermetic, in `flow.rs`; the field and `multianewarray` tests build the constant
+pool they need in Rust rather than loading a compiled class:
+
+- `field_slot_width_follows_the_descriptor`
+- `field_opcodes_move_the_descriptor_width` — all four opcodes × wide and narrow
+- `sastore_is_an_array_store` — mnemonic and decode, plus that `0x5e` is still
+  `dup2_x2`
+- `sipush_reads_two_operand_bytes` — value and sign
+- `multianewarray_consumes_one_slot_per_dimension` — one through four
+
+### Mutation-tested
+
+Each defect was reintroduced one at a time; each kills exactly its own case and
+nothing else:
+
+| Reintroduced | Case that fails |
+| --- | --- |
+| field opcodes move one word | `Jvm:WideFieldFlow` |
+| `sastore` outside the array-store arm | `Jvm:ShortArrayFlow` |
+| `sipush` reads four bytes | `Jvm:SmallConstantFlow` |
+| `multianewarray` unmodelled | `Jvm:MultiArrayFlow` |
+
+## Verification
+
+```
+cargo test --workspace                      39 suites, 0 failed
+xtask regression --frontend jvm,dex         72 passed, 1 skipped, 0 failed, 0 xfail
+cargo fmt --all -- --check                  clean
+cargo clippy --workspace --all-targets      no new warnings
+corpus sweep (5 corpora)                    333,125 methods, 0 failures
+ctadl import -l jar (apktool, baksmali, commons-io)   all import
 ```
 
-`flow.rs:545` now returns `InvalidClassFileMessage(format!("inconsistent operand
-stack height at basic-block join: block {} (pc {}) <- ...", ...))`. The literal
-`&'static str` match cannot fire, so what was meant to be a counted skip becomes
-a `bail!`.
-
-**Fix.** Match on `InvalidClassFileMessage(msg)` with
-`msg.starts_with("inconsistent operand stack height at basic-block join")`. Better
-still, add a dedicated `ClassFileError::StackHeightMismatch { .. }` variant with
-structured fields so neither the message text nor a prefix match is load-bearing;
-that also gives defect 6 somewhere to put its context.
-
-## Suggested ordering
-
-The decoder defects mask each other and mask defect 5, so land them in this
-order and re-run `repro/run.sh` after each step.
-
-1. **Defect 7** first — it is one line and it restores `xtask`'s ability to
-   report on the rest without bailing.
-2. **Defects 1, 2, 3** together, as one "JVM opcode tables" change. They are
-   three small table edits in `flow.rs` with a shared test surface.
-3. **Defect 5** immediately after — step 2 unmasks it, and leaving the pair
-   split means the Apktool classes still fail.
-4. **Defect 4 Stage A** — self-contained, and it fixes far more classes than the
-   Apktool case alone.
-5. **Defect 6** — do it alongside step 4 if `InvalidUtf8` is gaining fields
-   anyway.
-6. **Defect 4 Stage B** — separate change, separate review.
-
-## Regression suite
-
-Add as fixtures under `jvm-reader/tests/sample/` (the existing tests load
-compiled classes via `JVM_READER_TEST_FIXTURES`, built by the `jvm-reader-tests`
-check in `flake.nix`, with no `.class` files committed — `repro/src/*.java` can
-move there directly):
-
-- Sparse integer switch → `lookupswitch`, with a back-edge join.
-- Dense integer switch → `tableswitch`, with a back-edge join.
-- Java 8 string switch → both instructions, joining at the default arm.
-- The same string switch wrapped in `try`/`catch`, so the join is an
-  exception-handler edge.
-- `iushr` followed by meaningful one-byte instructions, plus the full
-  `ishl`/`lshl`/`ishr`/`lshr`/`iushr`/`lushr` set.
-- `long` and `double` parameters in leading, middle and trailing positions, on
-  both static and instance methods.
-- Modified-UTF-8 constants: paired surrogates, unpaired high, unpaired low, and a
-  packed table mixing them.
-
-Two unit tests worth adding directly, independent of any fixture, since both
-defects are pure table lookups:
-
-- `instruction_length` returns 1 for every opcode in `0x60..=0x83`.
-- `stack_effect` returns `(2, 1)` for `0x78`, `0x7a`, `0x7c` and `(3, 2)` for
-  `0x79`, `0x7b`, `0x7d`.
-
-If the Apktool checkout is restored, add the ordinary and R8 builds of
-`BinaryResourceParser` and `ResFileDecoder` as end-to-end fixtures. Until then,
-the fixtures above cover every root cause the report identified.
-
-## What is not addressed here
-
-Nothing has been fixed; this is confirmation and plan only. The `repro/`
-directory is self-contained and can be deleted, or moved into
-`jvm-reader/tests/sample/` as the starting point for the regression suite.
+The one skip is `dex:baksmali` (`baksmali` not on this machine's PATH); the
+clippy `items after a test module` warning in `flow.rs` predates this change.

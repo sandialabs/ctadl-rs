@@ -925,6 +925,19 @@ pub fn descriptor_returns_value(descriptor: &str) -> bool {
     }
 }
 
+/// Operand-stack slots a value of this field descriptor occupies.
+///
+/// `long` and `double` are category-2 and take two; every other field type,
+/// reference types included, takes one. The four field opcodes push or pop this
+/// many words, so decoding them without consulting the descriptor leaves the
+/// simulated stack a word short at every `long`/`double` field access.
+pub fn field_slot_width(descriptor: &str) -> u8 {
+    match descriptor.as_bytes().first() {
+        Some(b'J') | Some(b'D') => 2,
+        _ => 1,
+    }
+}
+
 /// Returns the number of local variable slots used by the method parameters (JVM convention:
 /// long/double use 2 slots, rest use 1).
 pub fn descriptor_param_slot_count(descriptor: &str) -> usize {
@@ -1141,7 +1154,7 @@ fn mnemonic(opcode: u8) -> &'static str {
         0x53 => "aastore",
         0x54 => "bastore",
         0x55 => "castore",
-        0x56 => "dup2_x2",
+        0x56 => "sastore",
         0x57 => "pop",
         0x58 => "pop2",
         0x59 => "dup",
@@ -1252,7 +1265,7 @@ fn opcode_kind(opcode: u8) -> InstructionKind {
         0x01..=0x14 => InstructionKind::Dataflow,
         0x15..=0x35 => InstructionKind::Dataflow,
         0x36..=0x4e => InstructionKind::Dataflow,
-        0x4f..=0x55 => InstructionKind::Dataflow,
+        0x4f..=0x56 => InstructionKind::Dataflow,
         0x59..=0x5f => InstructionKind::Dataflow,
         0x60..=0x77 => InstructionKind::Dataflow,
         0x78..=0x83 => InstructionKind::Dataflow,
@@ -1262,6 +1275,7 @@ fn opcode_kind(opcode: u8) -> InstructionKind {
         0xb6..=0xba => InstructionKind::Call,
         0xbb => InstructionKind::Dataflow,
         0xbc | 0xbd => InstructionKind::Dataflow,
+        0xc5 => InstructionKind::Dataflow,
         _ => InstructionKind::Other,
     }
 }
@@ -1470,7 +1484,7 @@ fn decode_dataflow(
             destinations.push(Location::StackOutput);
         }
         0x11 => {
-            let s = read_i32_be(code, pc + 1)? as i16 as i32;
+            let s = read_u16_be(code, pc + 1)? as i16 as i32;
             sources.push(Location::Constant(ConstantValue::Integer(s)));
             destinations.push(Location::StackOutput);
         }
@@ -1561,7 +1575,7 @@ fn decode_dataflow(
             }
             destinations.push(local_slot_to_location(slot, params));
         }
-        0x4f..=0x55 => {
+        0x4f..=0x56 => {
             match opcode {
                 // lastore, dastore: value is two slots under index/arrayref.
                 0x50 | 0x52 => {
@@ -1651,6 +1665,16 @@ fn decode_dataflow(
             sources.push(Location::Allocation(format!("[L{};", class_name)));
             destinations.push(Location::StackOutput);
         }
+        0xc5 => {
+            let idx = read_u16_be(code, pc + 1)?;
+            let dimensions = read_u8(code, pc + 3)?;
+            let class_name = cf.get_class_name(idx)?.to_string();
+            for i in 0..dimensions {
+                sources.push(Location::StackInput(i));
+            }
+            sources.push(Location::Allocation(class_name));
+            destinations.push(Location::StackOutput);
+        }
         0x60..=0x83 => {
             let (consume, produce) = stack_effect(opcode);
             for i in 0..consume {
@@ -1729,27 +1753,38 @@ fn decode_dataflow(
         0xb2 => {
             let idx = read_u16_be(code, pc + 1)?;
             let fr = resolve_field_ref(cf, idx)?;
+            let width = field_slot_width(&fr.descriptor);
             sources.push(Location::FieldRef(fr.clone()));
-            destinations.push(Location::StackOutput);
+            for _ in 0..width {
+                destinations.push(Location::StackOutput);
+            }
         }
         0xb3 => {
             let idx = read_u16_be(code, pc + 1)?;
             let fr = resolve_field_ref(cf, idx)?;
-            sources.push(Location::StackInput(0));
+            let width = field_slot_width(&fr.descriptor);
+            for i in 0..width {
+                sources.push(Location::StackInput(i));
+            }
             destinations.push(Location::FieldRef(fr));
         }
         0xb4 => {
             let idx = read_u16_be(code, pc + 1)?;
             let fr = resolve_field_ref(cf, idx)?;
+            let width = field_slot_width(&fr.descriptor);
             sources.push(Location::StackInput(0));
             sources.push(Location::FieldRef(fr.clone()));
-            destinations.push(Location::StackOutput);
+            for _ in 0..width {
+                destinations.push(Location::StackOutput);
+            }
         }
         0xb5 => {
             let idx = read_u16_be(code, pc + 1)?;
             let fr = resolve_field_ref(cf, idx)?;
-            sources.push(Location::StackInput(0));
-            sources.push(Location::StackInput(1));
+            let width = field_slot_width(&fr.descriptor);
+            for i in 0..=width {
+                sources.push(Location::StackInput(i));
+            }
             destinations.push(Location::FieldRef(fr));
         }
         _ => {}
@@ -1845,8 +1880,9 @@ fn misc_stack_effect(opcode: u8) -> (usize, usize) {
 mod tests {
     use super::{
         decode_dataflow, descriptor_param_slot_count, descriptor_parameter_info,
-        descriptor_returns_value, instruction_length, misc_stack_effect, stack_effect, Location,
-        MethodParameterInfo, MethodParameterKind, ParameterSlotMap,
+        descriptor_returns_value, field_slot_width, instruction_length, misc_stack_effect,
+        stack_effect, ConstantValue, Location, MethodParameterInfo, MethodParameterKind,
+        ParameterSlotMap,
     };
     use crate::types::{ClassFile, CpEntry, JvmString};
 
@@ -2043,6 +2079,181 @@ mod tests {
                 .expect("decode");
         assert_eq!(sources, vec![Location::Allocation("Demo".to_string())]);
         assert_eq!(destinations, vec![Location::StackOutput]);
+    }
+
+    /// Constant-pool indices of the two `CONSTANT_Fieldref`s in
+    /// [`constant_pool_with_fields`]: one `long` field, one `int` field.
+    const WIDE_FIELD_INDEX: u16 = 3;
+    const NARROW_FIELD_INDEX: u16 = 4;
+
+    /// A `ClassFile` whose pool holds a `Demo.wide:J` and a `Demo.narrow:I`
+    /// field reference, so the four field opcodes can be decoded against a real
+    /// descriptor without compiling anything.
+    fn constant_pool_with_fields() -> ClassFile {
+        let mut cf = constant_pool_only();
+        cf.constant_pool.extend([
+            // 3: Demo.wide:J
+            Some(CpEntry::Fieldref {
+                class_index: CONSTANT_POOL_CLASS_INDEX,
+                name_and_type_index: 5,
+            }),
+            // 4: Demo.narrow:I
+            Some(CpEntry::Fieldref {
+                class_index: CONSTANT_POOL_CLASS_INDEX,
+                name_and_type_index: 6,
+            }),
+            // 5: wide:J
+            Some(CpEntry::NameAndType {
+                name_index: 7,
+                descriptor_index: 8,
+            }),
+            // 6: narrow:I
+            Some(CpEntry::NameAndType {
+                name_index: 9,
+                descriptor_index: 10,
+            }),
+            Some(CpEntry::Utf8(JvmString::Utf8("wide".to_string()))),
+            Some(CpEntry::Utf8(JvmString::Utf8("J".to_string()))),
+            Some(CpEntry::Utf8(JvmString::Utf8("narrow".to_string()))),
+            Some(CpEntry::Utf8(JvmString::Utf8("I".to_string()))),
+        ]);
+        cf
+    }
+
+    /// Decode one field opcode against the pool above and report how many stack
+    /// words it consumes and produces.
+    fn field_effect(opcode: u8, field_index: u16) -> (usize, usize) {
+        let cf = &constant_pool_with_fields();
+        let code = [opcode, (field_index >> 8) as u8, field_index as u8];
+        let (sources, destinations) =
+            decode_dataflow(&code, 0, cf, opcode, &ParameterSlotMap::default(), false)
+                .expect("decode");
+        let consumed = sources
+            .iter()
+            .filter(|l| matches!(l, Location::StackInput(_)))
+            .count();
+        let produced = destinations
+            .iter()
+            .filter(|l| matches!(l, Location::StackOutput))
+            .count();
+        (consumed, produced)
+    }
+
+    /// `long` and `double` are category-2: a field of either type occupies two
+    /// operand-stack words. Everything else, references included, occupies one.
+    #[test]
+    fn field_slot_width_follows_the_descriptor() {
+        assert_eq!(field_slot_width("J"), 2, "long");
+        assert_eq!(field_slot_width("D"), 2, "double");
+        for narrow in [
+            "I",
+            "Z",
+            "B",
+            "C",
+            "S",
+            "F",
+            "Ljava/lang/String;",
+            "[J",
+            "[D",
+        ] {
+            assert_eq!(field_slot_width(narrow), 1, "{narrow}");
+        }
+    }
+
+    /// All four field opcodes move a whole field value, so their stack effect is
+    /// the descriptor's width. Decoding them as one word regardless leaves the
+    /// simulated stack short by one at every `long`/`double` field access, which
+    /// then surfaces as an underflow at whatever consumes the value -- `lcmp`,
+    /// an arithmetic opcode, or a call argument several instructions later.
+    #[test]
+    fn field_opcodes_move_the_descriptor_width() {
+        // getstatic: no receiver, pushes the field.
+        assert_eq!(field_effect(0xb2, WIDE_FIELD_INDEX), (0, 2), "getstatic J");
+        assert_eq!(
+            field_effect(0xb2, NARROW_FIELD_INDEX),
+            (0, 1),
+            "getstatic I"
+        );
+        // putstatic: pops the field, no receiver.
+        assert_eq!(field_effect(0xb3, WIDE_FIELD_INDEX), (2, 0), "putstatic J");
+        assert_eq!(
+            field_effect(0xb3, NARROW_FIELD_INDEX),
+            (1, 0),
+            "putstatic I"
+        );
+        // getfield: pops the receiver, pushes the field.
+        assert_eq!(field_effect(0xb4, WIDE_FIELD_INDEX), (1, 2), "getfield J");
+        assert_eq!(field_effect(0xb4, NARROW_FIELD_INDEX), (1, 1), "getfield I");
+        // putfield: pops the field and the receiver under it.
+        assert_eq!(field_effect(0xb5, WIDE_FIELD_INDEX), (3, 0), "putfield J");
+        assert_eq!(field_effect(0xb5, NARROW_FIELD_INDEX), (2, 0), "putfield I");
+    }
+
+    /// `sastore` (0x56) closes the array-store block; it is not a stack-shuffle
+    /// opcode. Naming it `dup2_x2` -- which is 0x5e -- also left it outside the
+    /// `0x4f..=0x55` arm, so it consumed nothing and left its arrayref, index
+    /// and value behind as phantom slots.
+    #[test]
+    fn sastore_is_an_array_store() {
+        assert_eq!(super::mnemonic(0x56), "sastore");
+        assert_eq!(super::mnemonic(0x5e), "dup2_x2");
+        let cf = &constant_pool_only();
+        let (sources, destinations) =
+            decode_dataflow(&[0x56], 0, cf, 0x56, &ParameterSlotMap::default(), false)
+                .expect("decode");
+        assert_eq!(sources, vec![Location::StackInput(0)]);
+        match &destinations[0] {
+            Location::ArrayElement { base, offset } => {
+                assert_eq!(**base, Location::StackInput(2));
+                assert_eq!(**offset, Location::StackInput(1));
+            }
+            _ => panic!("expected ArrayElement destination"),
+        }
+    }
+
+    /// `sipush`'s operand is a two-byte signed short. Reading four bytes and
+    /// narrowing takes the *following* two bytes as the constant, and runs off
+    /// the end of `code` whenever `sipush` is within three bytes of it.
+    #[test]
+    fn sipush_reads_two_operand_bytes() {
+        let cf = &constant_pool_only();
+        // sipush 1024, ireturn -- four bytes, the shape a `return 1024;` compiles to.
+        let code = [0x11, 0x04, 0x00, 0xac];
+        let (sources, _) = decode_dataflow(&code, 0, cf, 0x11, &ParameterSlotMap::default(), false)
+            .expect("decode");
+        assert_eq!(
+            sources,
+            vec![Location::Constant(ConstantValue::Integer(1024))]
+        );
+        // The operand is signed.
+        let code = [0x11, 0xff, 0xff, 0xac];
+        let (sources, _) = decode_dataflow(&code, 0, cf, 0x11, &ParameterSlotMap::default(), false)
+            .expect("decode");
+        assert_eq!(
+            sources,
+            vec![Location::Constant(ConstantValue::Integer(-1))]
+        );
+    }
+
+    /// `multianewarray` pops one int count per dimension and pushes the array.
+    /// It was decoded as neither dataflow nor a modelled stack effect, so every
+    /// `new T[a][b]` left its counts on the simulated stack.
+    #[test]
+    fn multianewarray_consumes_one_slot_per_dimension() {
+        let cf = &constant_pool_with_fields();
+        for dimensions in 1u8..=4 {
+            let code = [0xc5, 0x00, CONSTANT_POOL_CLASS_INDEX as u8, dimensions];
+            let (sources, destinations) =
+                decode_dataflow(&code, 0, cf, 0xc5, &ParameterSlotMap::default(), false)
+                    .expect("decode");
+            let consumed = sources
+                .iter()
+                .filter(|l| matches!(l, Location::StackInput(_)))
+                .count();
+            assert_eq!(consumed, dimensions as usize, "{dimensions} dimensions");
+            assert_eq!(destinations, vec![Location::StackOutput]);
+            assert!(sources.contains(&Location::Allocation("Demo".to_string())));
+        }
     }
 
     // ================= Opcode tables =================

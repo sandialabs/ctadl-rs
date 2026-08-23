@@ -1,8 +1,14 @@
-# CTADL JVM frontend: what was fixed
+# CTADL JVM frontend: round one — what was fixed
 
-Implements `JVM_FRONTEND_FIX_PLAN.md` end to end — all seven defects it lists,
-plus two more the new fixtures exposed. Every fixture in the plan's regression
-suite is in the tree and passing, and the full regression run is green.
+This is the **first** round of JVM frontend fixes: switch selectors, the shift
+opcode table, `iushr`'s length, modified UTF-8, wide parameter ordinals, error
+context, and the `xtask` skip — all seven defects of the round-one plan, plus
+two more the new fixtures exposed. Every fixture is in the tree and passing.
+
+`JVM_FRONTEND_FIX_PLAN.md` has since been replaced by the **second** round,
+which covers the CVE reproducibility report (category-2 field widths, `sastore`,
+`sipush`, `multianewarray`, and what remains open). Read that for current state;
+this file is the record of round one.
 
 The changes are on `misc-bugfixes` (`3162a0c1 JVM fixes`).
 

@@ -68,14 +68,18 @@ const JVM_E2E_ENFORCED: &[&str] = &[
     "Jvm:InstanceMethodFlow",
     "Jvm:LoopFlow",
     "Jvm:MethodCallFlow",
+    "Jvm:MultiArrayFlow",
     "Jvm:ObjectSensitivity",
     "Jvm:Reassignment",
     "Jvm:ShiftFlow",
+    "Jvm:ShortArrayFlow",
+    "Jvm:SmallConstantFlow",
     "Jvm:SourceSinkExample",
     "Jvm:StaticFieldFlow",
     "Jvm:StringBuilderFlow",
     "Jvm:StringSwitchFlow",
     "Jvm:SwitchFlow",
+    "Jvm:WideFieldFlow",
     "Jvm:WideParamFlow",
 ];
 
