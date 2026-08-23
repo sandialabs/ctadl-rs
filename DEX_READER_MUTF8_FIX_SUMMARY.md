@@ -1,4 +1,4 @@
-# dex-reader: modified UTF-8
+# dex-reader: modified UTF-8 - DO-NOT-MERGE
 
 Finishes the one substantive item `JVM_FRONTEND_FIX_SUMMARY.md` left open:
 dex-reader's modified-UTF-8 decoder had the same defect jvm-reader's did
