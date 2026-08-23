@@ -6,11 +6,6 @@
 //! and re-check the `.jar` (parsed classes compared against `jar tf`). No
 //! compiled `.class`/`.jar` artifacts are committed; everything is built here.
 //!
-//! `tests/sample-jvm-only/` is compiled here too. Those sources are held apart
-//! because `tests/sample/` is shared with the dex-reader checks, and they carry
-//! UTF-16 surrogate constants that dex-reader's own modified-UTF-8 decoder
-//! still rejects -- the same defect this crate fixed, unfixed there.
-//!
 //! These checks are a faithful port of the former `jvm-reader/tests/test_disas.rs`
 //! integration tests, restructured to report pass/fail rather than panic and to
 //! run against freshly compiled inputs instead of committed binaries.
@@ -52,12 +47,7 @@ pub fn run_checks(samples_dir: &Path, work: &Path) -> Result<Vec<(String, Outcom
         }
     }
 
-    // Resolved up front so its absence can be *reported* rather than silently
-    // shrinking the input set: a caller that passes a bare copy of the shared
-    // sample dir (a Nix store path, say) gets a Skip in the report, not a
-    // quietly narrower run that still says PASS.
-    let jvm_only = jvm_only_dir(samples_dir);
-    let samples = build_samples(samples_dir, jvm_only.as_deref(), work)?;
+    let samples = build_samples(samples_dir, work)?;
     if samples.is_empty() {
         bail!("no .java samples found in {}", samples_dir.display());
     }
@@ -76,22 +66,10 @@ pub fn run_checks(samples_dir: &Path, work: &Path) -> Result<Vec<(String, Outcom
         ("jvm:utf8-constants", check_utf8_constants),
     ];
 
-    let mut results: Vec<(String, Outcome)> = Vec::new();
-    if jvm_only.is_none() {
-        results.push((
-            "jvm:sample-jvm-only".to_string(),
-            Outcome::Skip(format!(
-                "no `sample-jvm-only` directory beside {}; its fixtures were not compiled",
-                samples_dir.display()
-            )),
-        ));
-    }
-    results.extend(
-        checks
-            .into_iter()
-            .map(|(name, run)| (name.to_string(), to_outcome(run(&samples)))),
-    );
-    Ok(results)
+    Ok(checks
+        .into_iter()
+        .map(|(name, run)| (name.to_string(), to_outcome(run(&samples))))
+        .collect())
 }
 
 fn to_outcome(result: Result<()>) -> Outcome {
@@ -103,34 +81,12 @@ fn to_outcome(result: Result<()>) -> Outcome {
 
 // --- compilation ----------------------------------------------------------
 
-/// The jvm-only sample directory: a sibling of `samples_dir` named
-/// `sample-jvm-only`. `None` when `--jvm-samples` points somewhere that has no
-/// such sibling, which is not an error -- the shared samples still run -- but
-/// is reported as a Skip by `run_checks`, since it means two fixtures went
-/// unexercised. Note that this makes the *parent* of `--jvm-samples` part of
-/// the interface: pass `<...>/tests/sample`, not a lone copy of `sample`.
-fn jvm_only_dir(samples_dir: &Path) -> Option<PathBuf> {
-    let dir = samples_dir.parent()?.join("sample-jvm-only");
-    dir.is_dir().then_some(dir)
-}
-
-fn java_sources_in(dir: &Path) -> Result<Vec<PathBuf>> {
-    Ok(std::fs::read_dir(dir)
-        .with_context(|| format!("reading {}", dir.display()))?
+fn build_samples(samples_dir: &Path, work: &Path) -> Result<Vec<Sample>> {
+    let mut sources: Vec<PathBuf> = std::fs::read_dir(samples_dir)
+        .with_context(|| format!("reading {}", samples_dir.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("java"))
-        .collect())
-}
-
-fn build_samples(
-    samples_dir: &Path,
-    jvm_only_dir: Option<&Path>,
-    work: &Path,
-) -> Result<Vec<Sample>> {
-    let mut sources = java_sources_in(samples_dir)?;
-    if let Some(dir) = jvm_only_dir {
-        sources.extend(java_sources_in(dir)?);
-    }
+        .collect();
     sources.sort();
 
     let mut samples = Vec::new();
@@ -659,7 +615,8 @@ fn check_switch_shapes(samples: &[Sample]) -> Result<()> {
 ///
 /// No taint case can stand in for this: an unpaired surrogate is inert data in
 /// a constant, so a decoder that mangles it changes no flow. These two fixtures
-/// carry nothing else, which is why they live in `sample-jvm-only/`.
+/// carry nothing else. `dex:utf8-constants` is the same check on the other
+/// frontend, over the same two sources compiled to DEX.
 fn check_utf8_constants(samples: &[Sample]) -> Result<()> {
     // A supplementary character arrives as a CESU-8 pair and must recombine.
     let bytes = class_bytes(samples, "PairedOnly")?;

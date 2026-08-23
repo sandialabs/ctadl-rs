@@ -8,7 +8,9 @@ exercises jvm-reader on the resulting `.class` files (disassembly compared
 against `javap`, plus line-map / basic-block / stack-slot analyses, and the
 `jvm:switch-shapes` / `jvm:utf8-constants` checks), then bundles them with `jar`
 and re-checks the `.jar` (parsed classes compared against `jar tf`). See
-`xtask/src/jvm.rs`. `xtask/src/dex.rs` compiles the same sources down to `.dex`.
+`xtask/src/jvm.rs`. `xtask/src/dex.rs` compiles the same sources down to `.dex`
+(`javac --release 8` then `dx`) and runs the `dex:*` checks over them, so every
+source here is read by both frontends.
 
 Nothing else compiles them. `jvm-reader`'s own unit tests are hermetic — they
 build the two-entry constant pool they need in Rust — so a plain `cargo test`
@@ -68,9 +70,19 @@ decoder bug on ordinary, verifiable major-version-52 bytecode straight out of
   trailing positions, on static and instance methods. Wide parameters take two
   local slots but one ordinal, so a decoder that reports the slot as
   `Location::Parameter` names parameters that do not exist.
-
-The modified-UTF-8 fixtures live in `../sample-jvm-only/` instead; see the
-README there for why.
+- **PairedOnly.java** – a single emoji and nothing else. The class file encodes
+  it as a CESU-8 surrogate pair, so this is the *common* modified-UTF-8 case:
+  every class with a supplementary character in a literal, not just deliberately
+  packed data.
+- **SurrogateConstants.java** – a well-formed pair, a lone high surrogate, a
+  lone low surrogate, and a packed table mixing them, in the style of the
+  generated `smaliFlexLexer` table that first surfaced this. Unpaired
+  surrogates are legal in a class file and are used on purpose as UTF-16 data;
+  Rust's `String` cannot hold them, so they survive as code units in
+  `JvmString::Utf16` / `DexString::Utf16` and are only rendered lossily. These
+  two are what `jvm:utf8-constants` and `dex:utf8-constants` read; there is no
+  taint case for them, and there cannot be — an unpaired surrogate in a constant
+  is inert data, so mangling it changes no flow.
 
 > These samples also feed the **dex-reader** checks (`xtask/src/dex.rs`): each is
 > compiled down to `.dex` and parsed, line-mapped, and diffed against baksmali.
@@ -83,6 +95,6 @@ README there for why.
 > `javap -c` comparison already skipped these, and `javap -c` doesn't render
 > annotations anyway).
 
-Both `xtask/src/jvm.rs` and `xtask/src/dex.rs` glob these directories rather
-than naming files, so a new `.java` dropped in either one is picked up with
-nothing to keep in step. Adding a fixture only needs a line in the list above.
+Both `xtask/src/jvm.rs` and `xtask/src/dex.rs` glob this directory rather than
+naming files, so a new `.java` dropped in here is picked up by both with nothing
+to keep in step. Adding a fixture only needs a line in the list above.

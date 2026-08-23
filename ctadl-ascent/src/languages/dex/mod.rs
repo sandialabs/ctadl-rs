@@ -636,16 +636,18 @@ impl Context {
                 let value = (f.lit as i64) << 48;
                 Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
             }
-            // String constant (regular)
+            // String constant (regular). Lossy on purpose: a DEX string
+            // constant may legally hold unpaired UTF-16 surrogates -- packed
+            // lexer tables do -- and no `str` can.
             Instruction::ConstString(f) => {
-                if let Ok(s) = parser.constant_pool().strings.get(f.idx.0 as usize) {
+                if let Ok(s) = parser.constant_pool().strings.get_lossy(f.idx.0 as usize) {
                     Some(Exp::new_str(&s))
                 } else {
                     None
                 }
             }
             Instruction::ConstStringJumbo(f) => {
-                if let Ok(s) = parser.constant_pool().strings.get(f.idx.0 as usize) {
+                if let Ok(s) = parser.constant_pool().strings.get_lossy(f.idx.0 as usize) {
                     Some(Exp::new_str(&s))
                 } else {
                     None

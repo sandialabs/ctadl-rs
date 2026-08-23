@@ -187,8 +187,8 @@ The `repro/src/*.java` sources moved into the test tree, as the plan suggested:
 | `tests/sample/GuardedStringSwitch.java` | same, join is an exception-handler edge |
 | `tests/sample/IushrLength.java` | `iushr` length + the full shift family |
 | `tests/sample/WideParams.java` | wide params leading/middle/trailing, static and instance |
-| `tests/sample-jvm-only/PairedOnly.java` | a well-formed surrogate pair, nothing else |
-| `tests/sample-jvm-only/SurrogateConstants.java` | paired, unpaired high, unpaired low, packed table |
+| `tests/sample/PairedOnly.java` | a well-formed surrogate pair, nothing else |
+| `tests/sample/SurrogateConstants.java` | paired, unpaired high, unpaired low, packed table |
 
 `WideParams.java` was extended from the three static methods it had to eleven,
 so leading, middle and trailing wide parameters are covered on both static and
@@ -200,8 +200,8 @@ cases, and each consumer globs its directories rather than naming files:
 
 | Consumer | Compiles | Runs |
 | --- | --- | --- |
-| `xtask/src/jvm.rs` (`xtask regression --frontend jvm`) | `sample/*.java` + `sample-jvm-only/*.java`, `javac` then `jar` | the eleven `jvm:*` checks |
-| `xtask/src/dex.rs` (`xtask regression --frontend dex`) | `sample/*.java`, `javac --release 8` then `dx` | `dex:samples`, `dex:line-map`, `dex:baksmali` |
+| `xtask/src/jvm.rs` (`xtask regression --frontend jvm`) | `sample/*.java`, `javac` then `jar` | the eleven `jvm:*` checks |
+| `xtask/src/dex.rs` (`xtask regression --frontend dex`) | `sample/*.java`, `javac --release 8` then `dx` | `dex:samples`, `dex:line-map`, `dex:utf8-constants`, `dex:baksmali` |
 
 Both are the same `xtask` harness the taint cases run under, and both glob their
 directories rather than naming files. Nix builds no fixtures and neither does
@@ -230,15 +230,12 @@ so a `javac` lowering change cannot quietly make the taint cases vacuous) and
 `jvm:utf8-constants` (surrogate constants are inert data, so no flow depends on
 them).
 
-**Why `sample-jvm-only/` exists.** `tests/sample/` is shared with the dex-reader
-checks, which compile every source there down to `.dex`. dex-reader's
-`decode_mutf8` has the identical defect this change fixed in jvm-reader — it maps
-each three-byte sequence through `char::from_u32` independently — so both
-surrogate fixtures would fail `dex:samples` for a reason that has nothing to do
-with the sample. They are held in a sibling directory that only the jvm-reader
-checks and `flow.rs`'s own test module compile. **Fixing `dex-reader/src/parse_utils.rs`
-the same way is left as a separate change**; move the two fixtures into
-`tests/sample/` when it lands.
+**The two surrogate fixtures.** As shipped they sat in a `tests/sample-jvm-only/`
+sibling, because `tests/sample/` is shared with the dex-reader checks and
+dex-reader's `decode_mutf8` had the identical defect. That has since been fixed
+(see `DEX_READER_MUTF8_FIX_SUMMARY.md`), the sibling directory is gone, and both
+fixtures now live in `tests/sample/` and are read by `jvm:utf8-constants` and
+`dex:utf8-constants` alike.
 
 ### New tests
 
@@ -314,17 +311,17 @@ jvm-reader/src/parser.rs                   builds JvmString, attaches cp index
 jvm-reader/src/types.rs                    JvmString, get_jvm_string, get_utf8_lossy
 jvm-reader/tests/sample/*.java             six fixtures (moved from repro/src)
 jvm-reader/tests/sample/README.md          documents them
-jvm-reader/tests/sample-jvm-only/          two surrogate fixtures + README
+jvm-reader/tests/sample-jvm-only/          two surrogate fixtures + README (since folded into sample/)
 xtask/src/jvm.rs                           defect 7, entry-block check, jvm-only dir
 ```
 
 ## Not done
 
-- **dex-reader's modified-UTF-8 decoder** has the same defect (defect 4) and is
-  untouched. It is a separate crate with a separate blast radius — its string
-  table feeds type, method and field names as well as constants — and fixing it
-  means giving `dex-reader` the `JvmString` treatment throughout. The two
-  surrogate fixtures are parked in `sample-jvm-only/` until it lands.
+- ~~**dex-reader's modified-UTF-8 decoder** has the same defect (defect 4) and is
+  untouched.~~ **Done since** — see `DEX_READER_MUTF8_FIX_SUMMARY.md`. dex-reader
+  got the same treatment (`DexString`, structured errors, a `get`/`get_lossy`
+  split on the string table), and the two surrogate fixtures moved into
+  `tests/sample/`.
 - The plan's suggestion to add the ordinary and R8 builds of Apktool's
   `BinaryResourceParser` and `ResFileDecoder` as end-to-end fixtures — the
   Apktool checkout is not on this machine. The eight fixtures above reproduce

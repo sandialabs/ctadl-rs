@@ -276,13 +276,8 @@
                   # no source tree, so point xtask at them explicitly or they
                   # would self-skip here -- which is the one place the drift is
                   # meant to be caught.
-                  # Import `tests`, not `tests/sample`: xtask finds
-                  # `sample-jvm-only` as a *sibling* of --jvm-samples, and a
-                  # store path for `sample` alone has /nix/store as its parent,
-                  # so those two fixtures would go uncompiled (reported as a
-                  # `jvm:sample-jvm-only` Skip).
                   ${self.packages.${system}.default}/bin/xtask regression \
-                    --jvm-samples ${./jvm-reader/tests}/sample \
+                    --jvm-samples ${./jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
                     --models-dir ${./ctadl-ascent/src/models}
 

@@ -599,27 +599,39 @@ pub fn parse_string_ids<'a>(data: &'a [u8], header: &DexHeader) -> DexResult<Str
 }
 
 impl<'a> StringTable<'a> {
-    pub fn get(&self, index: usize) -> DexResult<String> {
+    /// The raw contents of a string table entry, code units and all.
+    ///
+    /// Every other accessor is this one plus a policy for unpaired surrogates.
+    pub fn get_dex_string(&self, index: usize) -> DexResult<DexString> {
         let string_id = self
             .string_ids
             .get(index)
             .ok_or(DexError::InvalidDex("string index out of bounds"))?;
 
-        let mut offset = string_id.string_data_off as usize;
+        read_string_data_item(self.data, string_id.string_data_off as usize)
+            .map(|(s, _utf16_len, _end)| s)
+            .map_err(|e| e.with_string_index(index))
+    }
 
-        // Read the UTF-16 codepoint count (ULEB128)
-        let (_utf16_len, new_offset) = read_uleb128(self.data, offset)?;
-        offset = new_offset;
+    /// A string table entry as a `String`.
+    ///
+    /// Errors when the entry holds unpaired surrogates. That is the right
+    /// answer for most callers here -- type descriptors, method and field
+    /// names, source file names -- because none of them may legally contain
+    /// one; string *constants* should use [`StringTable::get_lossy`] or
+    /// [`DexString::code_units`] instead.
+    pub fn get(&self, index: usize) -> DexResult<String> {
+        self.get_dex_string(index)?
+            .into_string()
+            .map_err(|e| e.with_string_index(index))
+    }
 
-        // Read bytes until null terminator (0x00)
-        let mut end = offset;
-        while *self.data.get(end).ok_or(DexError::InvalidUtf8)? != 0 {
-            end += 1;
-        }
-
-        let bytes = &self.data[offset..end];
-        let s = decode_mutf8(bytes)?;
-        Ok(s)
+    /// A string table entry with unpaired surrogates replaced by `U+FFFD`.
+    ///
+    /// For string constants and diagnostics, which must not fail just because
+    /// the DEX file carries UTF-16 data a `str` cannot hold.
+    pub fn get_lossy(&self, index: usize) -> DexResult<String> {
+        Ok(self.get_dex_string(index)?.to_string_lossy().into_owned())
     }
 }
 
