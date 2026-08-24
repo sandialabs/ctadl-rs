@@ -1524,45 +1524,43 @@ fn error_on_ast_promotes_source_problem() {
 
 #[test_log::test]
 fn bare_block_then_statement_recovers() {
-    // Regression for the CFG-wiring bug that aborted dropbear's `svr_dropbear_exit`
-    // import. A bare compound block `{ ... }` written as a statement makes the
-    // end-of-compound link install an *implicit `return`* on the enclosing block
-    // when that block's continuation is the fall-off-the-end sentinel (`None`).
-    // The next statement in the same body then tries to add a fall-through edge
-    // out of a block that already returns -- which used to be a hard ingestion
-    // error. It now drops the redundant edge and recovers, so the function still
-    // lowers. This is the minimal trigger: a bare block followed by any further
-    // statement (an `if` here, matching dropbear). Skips under CTADL_ERROR_ON_AST,
-    // which restores the hard error (see `error_on_ast_promotes_bare_block_edge`).
-    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
-        return;
-    }
+    // The general shape, kept from when this bug was only *recovered* from: a bare
+    // compound block `{ ... }` written as a statement, followed by more statements in the
+    // same body. A `JustScope` compound shares the enclosing basic block, so the whole
+    // body is one straight line -- the bare braces are a scope, not a branch, and they
+    // must neither terminate the block nor start a new one. Runs under
+    // `force_error_on_ast`, so any residual recoverable report fails the test: this is
+    // also the pin that the shape reports NO frontend gap.
+    let _strict = super::force_error_on_ast();
     let src = r"
+        void h(void); void k(void); void m(void);
         void f(void) {
             { h(); }
-            if (c) { k(); }
+            k();
+            { m(); }
         }";
-    // program_from_string asserts the recovered CFG is well-formed -- no block is
-    // left without a terminator -- and that tree-sitter saw no syntax error.
-    let prog = program_from_string(src).0;
-    assert!(
-        function_named(&prog, "f").is_some(),
-        "recovered program should still define f\n{prog}"
-    );
+    let prog = super::parse_c_program(src)
+        .expect("a bare block followed by statements must not gap in strict mode")
+        .0;
+    check_block_count(&prog, 1);
+    check_successors(&prog, 0, &[]);
+    // Nothing was dropped on the floor: every call is still in the (single, reachable)
+    // block, in particular the ones written after the bare block.
+    check_has_direct_call(&prog, "f", "h");
+    check_has_direct_call(&prog, "f", "k");
+    check_has_direct_call(&prog, "f", "m");
 }
 
 #[test_log::test]
 fn svr_dropbear_exit_shape_recovers() {
-    // The reduced shape of dropbear's `svr_dropbear_exit`, the function this bug
-    // was found on: an if / else-if / else chain, then a bare `{ }` block (the
-    // remnant of a compiled-out `#if DROPBEAR_VFORK` that had guarded a lone
-    // `{ session_cleanup(); }`), then a trailing `if` (`if (svr_opts.hostkey)`).
-    // The bare-block-then-if pair is what actually triggers the wiring bug -- not,
-    // despite first appearances, the returning arms of the chain. Must recover and
-    // still lower the function.
-    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
-        return;
-    }
+    // The reduced shape of dropbear's `svr_dropbear_exit`, the function this bug was
+    // found on: an if / else-if / else chain, then a bare `{ }` block (the remnant of a
+    // compiled-out `#if DROPBEAR_VFORK` that had guarded a lone `{ session_cleanup(); }`),
+    // then a trailing `if` (`if (svr_opts.hostkey)`). The bare-block-then-if pair is what
+    // triggered the wiring bug -- not, despite first appearances, the returning arms of
+    // the chain. With the compound arm no longer asking for an end-of-compound link, the
+    // shape lowers with no gap at all, so this runs under `force_error_on_ast`.
+    let _strict = super::force_error_on_ast();
     let src = r"
         void svr_dropbear_exit(int exitcode) {
             int add_delay = 0;
@@ -1572,31 +1570,141 @@ fn svr_dropbear_exit_shape_recovers() {
             { session_cleanup(); }
             if (hostkey) { free_key(hostkey); }
         }";
-    let prog = program_from_string(src).0;
+    let prog = super::parse_c_program(src)
+        .expect("the svr_dropbear_exit shape must not gap in strict mode")
+        .0;
     assert!(
         function_named(&prog, "svr_dropbear_exit").is_some(),
-        "recovered program should still define svr_dropbear_exit\n{prog}"
+        "program should still define svr_dropbear_exit\n{prog}"
     );
+    // The load-bearing half: the statements on either side of the bare block are still
+    // reachable. Before the fix `session_cleanup()`'s block carried an implicit `return`
+    // and the trailing `if` was an unreachable island, so `free_key` was dead code.
+    check_has_direct_call(&prog, "svr_dropbear_exit", "session_cleanup");
+    check_has_direct_call(&prog, "svr_dropbear_exit", "free_key");
+    get_summary(prog).expect("CFG must verify and index");
 }
 
 #[test_log::test]
 fn error_on_ast_promotes_bare_block_edge() {
-    // Strict side of the switch: under CTADL_ERROR_ON_AST the recovered
-    // continuation edge out of an already-returning block is a hard ingestion
-    // error again, exactly as before the demotion to a warning.
+    // Historical name, inverted assertion: this used to pin that CTADL_ERROR_ON_AST
+    // *promoted* the recovered `continuation edge into a block that already returns` back
+    // to a hard ingestion error. There is no longer an edge to drop -- the bare block does
+    // not close the block it shares -- so the strict mode this test guards is now the
+    // strongest available statement that the gap is gone: strict ingestion of the very
+    // source that used to fail must succeed. Kept under its original name so the fix's
+    // before/after is traceable to the report it came from.
     let _strict = super::force_error_on_ast();
     let src = r"
         void f(void) {
             { h(); }
             if (c) { k(); }
         }";
-    let err = super::parse_c_program(src)
-        .expect_err("strict mode must reject the continuation-into-return edge");
-    assert!(
-        err.to_string()
-            .contains("continuation edge into a block that already returns"),
-        "unexpected error: {err}"
-    );
+    // `program_from_string` panics if ingestion errors, which under `force_error_on_ast`
+    // is exactly "some frontend gap was reported".
+    let prog = program_from_string(src).0;
+    check_successors(&prog, 0, &[1, 2]);
+}
+
+#[test_log::test]
+fn bare_block_then_if_keeps_branch_edge() {
+    // The wiring fix, stated as a CFG assertion: a bare `{ ... }` shares the enclosing
+    // basic block, so when the walk leaves it the enclosing block must still be open and
+    // must branch into the following `if` -- not carry an implicit `return` that orphans
+    // everything after the braces.
+    let src = r"
+        void h(void); void k(int); int c;
+        void f(int a) {
+            { h(); }
+            if (c) { k(a); }
+        }";
+    let prog = program_from_string(src).0;
+    check_successors(&prog, 0, &[1, 2]);
+    // ...and the then-arm is genuinely on the graph, not a dead island.
+    check_has_direct_call(&prog, "f", "k");
+}
+
+#[test_log::test]
+fn bare_block_then_if_preserves_flow() {
+    // The dataflow half: the CFG damage cost real taint. `r = a` sits behind the `if`
+    // that followed the bare block, so before the fix the assignment lived in an
+    // unreachable block and @p0 never reached the return.
+    let src = r"
+        int f(int a) {
+            int r = 0;
+            { r = 0; }
+            if (a) { r = a; }
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn bare_block_then_while_keeps_branch_edge() {
+    // Same shape with a `while` instead of an `if` -- the other block-creating statement
+    // that triggered the dropped continuation edge in the corpora.
+    let src = r"
+        void h(void); void k(int); int c;
+        void f(int a) {
+            { h(); }
+            while (c) { k(a); }
+        }";
+    let prog = program_from_string(src).0;
+    // The entry block falls through into the loop condition (block 1) rather than
+    // returning; the condition then branches to the continuation (2) and the body (3).
+    check_successors(&prog, 0, &[1]);
+    check_successors(&prog, 1, &[2, 3]);
+    check_has_direct_call(&prog, "f", "k");
+}
+
+#[test_log::test]
+fn bare_block_shadow_does_not_leak() {
+    // The bare-block arm threads the *block* the inner walk ended in back to the caller
+    // but deliberately restores the caller's *scope*: a bare `{ ... }` is a lexical scope,
+    // so a name declared inside it must not be visible after the closing brace. `r` is
+    // shadowed inside the braces and assigned `a` there; the `return r` afterwards must
+    // resolve to the outer `r` (= `b`), so `b` reaches the return and `a` does not.
+    // (`block_shadow_does_not_leak` covers the same rule for an `if` body, which takes a
+    // different path -- `walk_if`, not the compound arm.)
+    let src = r"
+        int f(int a, int b) {
+            int r = b;
+            { int r = a; }
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 1, ""); // outer r = b reaches the return
+    check_does_not_return_param(&s, 0, ""); // the block-scoped shadow (a) must not leak
+}
+
+#[test_log::test]
+fn bare_block_with_return_diverges() {
+    // The secondary defect: the bare block's *divergence* has to reach the enclosing
+    // compound too. `{ return; }` terminates the shared block, so `h()` after it is
+    // unreachable and must lower into its own dead block -- not get appended after the
+    // `return` in the block that already terminated. Strict mode pins that neither the
+    // dropped-edge gap nor an unterminated-block gap is reported.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        void h(void);
+        void f(void) {
+            { return; }
+            h();
+        }";
+    let prog = super::parse_c_program(src)
+        .expect("a diverging bare block must not gap in strict mode")
+        .0;
+    check_successors(&prog, 0, &[]);
+    // Two blocks, not one: `h()` must land in its own unreachable block. Without the
+    // divergence signal the enclosing compound kept filling the block the `return`
+    // already terminated, so `h()` sat *after* the terminator in the entry block.
+    check_block_count(&prog, 2);
+    check_successors(&prog, 1, &[]);
+    check_has_direct_call(&prog, "f", "h");
+    get_summary(prog).expect("CFG must verify and index");
 }
 
 #[test_log::test]

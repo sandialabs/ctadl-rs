@@ -1687,13 +1687,17 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn walk_compound_statement(
+    /// Walk the statements of `compound`, starting in `scope_view_meowsers`, and return the
+    /// scope view the walk ended in together with whether the last statement *diverged*.
+    /// Performs no end-of-compound link: that is the caller's call, because it depends on
+    /// whether the compound was given a basic block of its own.
+    fn walk_compound_body(
         &mut self,
         source: &'a str,
         program: &mut Program,
         scope_view_meowsers: &ScopeView,
         compound: &CompoundProxy<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<(ScopeView, bool), Error> {
         let mut scope_view = scope_view_meowsers.clone();
         // Set when the statement just walked diverged (return/break/continue, or a label
         // whose body diverges): the current block is terminated and has no fall-through.
@@ -1722,6 +1726,21 @@ impl<'a> Context<'a> {
             }
             diverged = self.walk_statement(source, program, &mut scope_view, child)?;
         }
+
+        Ok((scope_view, diverged))
+    }
+
+    /// Walk a compound that owns a basic block (an `if`/`while`/`for`/`switch` arm, a
+    /// function body, ...) and link its fall-through to the enclosing continuation.
+    fn walk_compound_statement(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view_meowsers: &ScopeView,
+        compound: &CompoundProxy<'_>,
+    ) -> Result<(), Error> {
+        let (scope_view, diverged) =
+            self.walk_compound_body(source, program, scope_view_meowsers, compound)?;
 
         // A compound whose last statement diverged has no fall-through, so the
         // end-of-compound link is skipped (it would push a continuation edge into a
@@ -1782,7 +1801,27 @@ impl<'a> Context<'a> {
                     true,
                     "compound_statement",
                 )?;
-                self.walk_compound_statement(source, program, &inner_view, &cp)?;
+                // A bare `{ ... }` in statement position gets a `JustScope` view: a fresh
+                // lexical scope that deliberately *shares* the enclosing basic block. So it
+                // has no end-of-compound edge to link, and asking `walk_compound_statement`
+                // for one is what broke the CFG: with the function body's fall-off-the-end
+                // sentinel (`continuation_blidx == None`) inherited, `link_blocks` stamped
+                // an implicit `return` onto the block we are still filling, and every
+                // following statement was then either orphaned (its incoming edge dropped
+                // with a `continuation edge into a block that already returns` gap) or
+                // appended behind that terminator.
+                //
+                // Walk the body directly instead, then thread the block it ended in back to
+                // the caller -- keeping the caller's scope, since names declared inside the
+                // braces must not outlive them -- and propagate its divergence, so
+                // `{ return; }` still ends the enclosing compound's fall-through.
+                let (end_view, diverged) =
+                    self.walk_compound_body(source, program, &inner_view, &cp)?;
+                *scope_view = ScopeView {
+                    sidx: scope_view.sidx,
+                    ..end_view
+                };
+                return Ok(diverged);
             }
             "declaration" => {
                 self.walk_declaration(source, program, scope_view, child)?;
