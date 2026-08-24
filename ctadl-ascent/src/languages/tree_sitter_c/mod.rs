@@ -62,6 +62,16 @@
 //! return x;
 //! }
 //!
+//! ## `asm goto`
+//!
+//! GNU inline assembly is lowered as an operand transfer ([`Context::flatten_gnu_asm`]): every
+//! input operand may reach every output operand, and a `"+"` operand keeps its identity flow.
+//! `asm goto` additionally *jumps* to one of its labels, and those are real CFG edges out of an
+//! expression -- `flatten_expr` yields a value and has no way to add successors -- so the jumps
+//! are not modeled and the construct keeps reporting a frontend gap. Its operands still lower.
+//! Pinned by the `#[ignore]`d `asm_goto_is_a_known_limitation`. No corpus (dropbear, OpenSSH,
+//! nginx) uses it.
+//!
 
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
@@ -2870,6 +2880,12 @@ impl<'a> Context<'a> {
                     program[scope_view.fidx].locals.get_or_intern(&temp_name),
                 )))
             }
+            // GNU inline assembly (`__asm__ ("..." : outs : ins : clobbers)`). The assembly text
+            // is opaque to this frontend, so it is modeled as the operand transfer it is rather
+            // than dropped -- see `flatten_gnu_asm`. Without this arm every `__asm__` hit the
+            // catch-all below, so a value laundered through inline asm lost its taint and an
+            // `"+r"` in/out operand lost its identity flow (the openssh `crypto_int*` shapes).
+            "gnu_asm_expression" => self.flatten_gnu_asm(program, node, source, scope_view),
             _ => {
                 debug_print_tree(node, 0, None, None);
                 unexpected_ast(format!(
@@ -2884,6 +2900,102 @@ impl<'a> Context<'a> {
                     program[scope_view.fidx].locals.get_or_intern(&temp_name),
                 )))
             }
+        }
+    }
+
+    /// Lowers a GNU inline-assembly expression as an opaque **operand transfer**.
+    ///
+    /// The assembly body is never analyzed, so the only sound model is that the black box
+    /// relates all of its operands: every input operand may reach every output operand. That is
+    /// emitted as one blend temp holding all the inputs, assigned into each output. Funnelling
+    /// through a single temp -- rather than handing each write two operands -- is what lets an
+    /// output that is a *field* path carry the value at all: a store lowers exactly one value
+    /// (see [`Context::add_assign_to_program`]), so a second operand would be silently dropped.
+    ///
+    /// An output constrained with `+` is read-modify-write, so its old value is also a source:
+    /// that is what keeps the `x -> x` identity flow in openssh's
+    /// `__asm__ ("sarw $15,%0" : "+r"(x) : : "cc")`. Every read is emitted before every write,
+    /// matching the C semantics. Clobbers name registers, not C locations, so they carry no
+    /// dataflow and are ignored.
+    ///
+    /// `asm goto` still reports a frontend gap: its jumps to the label list are real CFG edges
+    /// out of an expression, which cannot be built from here. The operands are modeled anyway,
+    /// so only the control edges are missing (see `asm_goto_is_a_known_limitation`). No corpus
+    /// uses it.
+    fn flatten_gnu_asm(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        source: &str,
+        scope_view: &ScopeView,
+    ) -> Result<Exp, Error> {
+        if node
+            .child_by_field_name("goto_labels")
+            .is_some_and(|labels| labels.child_by_field_name("label").is_some())
+        {
+            unexpected_ast(
+                "asm goto: jumps to the label list are not modeled as CFG edges (operands still \
+                 lower)"
+                    .to_string(),
+            )?;
+        }
+
+        let outputs = gnu_asm_operands(node, "output_operands");
+        let inputs = gnu_asm_operands(node, "input_operands");
+
+        // Reads first, writes after: the asm consumes every input before producing any output,
+        // so a `"+r"` operand that is both must be read while it still holds the old value.
+        let mut sources = Vec::with_capacity(inputs.len() + outputs.len());
+        for operand in &inputs {
+            let value = gnu_asm_operand_value(*operand);
+            sources.push(self.flatten_expr(program, value, source, scope_view)?);
+        }
+        let mut targets = Vec::with_capacity(outputs.len());
+        for operand in &outputs {
+            let value = gnu_asm_operand_value(*operand);
+            let target = self.flatten_lvalue(program, value, source, scope_view)?;
+            if gnu_asm_operand_is_readwrite(*operand, source) {
+                let old = self.emit_loads(program, scope_view, target.clone());
+                sources.push(Exp::access_path(old));
+            }
+            targets.push(target);
+        }
+
+        // Blend the sources into one temp, folding in one operand at a time -- the same
+        // `t = src op t` shape a compound assignment (`y += x`) lowers to, so the running value
+        // is read before this statement redefines it. A temp with no sources at all is never
+        // written, which is exactly the opaque value an operand-less `__asm__ ("pause")` yields.
+        let blend_name = self.allocator.next_temp();
+        let blend = self.build_access_path(
+            blend_name.as_str(),
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
+        for (i, src) in sources.iter().enumerate() {
+            let running = if i == 0 {
+                None
+            } else {
+                let so_far = self.emit_loads(program, scope_view, blend.clone());
+                Some(Exp::access_path(so_far))
+            };
+            self.add_assign_to_program(program, scope_view, &blend, src, running.as_ref());
+        }
+
+        let blended = Exp::access_path(self.emit_loads(program, scope_view, blend));
+        for target in &targets {
+            self.add_assign_to_program(program, scope_view, target, &blended, None);
+        }
+
+        // The value of an asm expression is the first output operand's location; with no
+        // outputs it is the opaque blend temp. In practice nothing reads it -- every real site
+        // is a statement -- but `flatten_expr` must yield something.
+        match targets.first() {
+            Some(target) => {
+                let read_back = self.emit_loads(program, scope_view, target.clone());
+                Ok(Exp::access_path(read_back))
+            }
+            None => Ok(blended),
         }
     }
 
@@ -3616,6 +3728,35 @@ fn unexpected_ast(msg: String) -> Result<(), Error> {
 /// [`unexpected_ast`]; the warning attributes the fault to the source.
 fn malformed_source(msg: String) -> Result<(), Error> {
     recoverable_report("source problem", msg)
+}
+
+/// The `operand` children of a `gnu_asm_expression`'s `output_operands` / `input_operands` list.
+/// Both fields are optional AND a present list may still be empty -- `__asm__ ("pause")` has no
+/// lists at all, while `__asm__ ("mfence" ::: "memory")` parses as two empty ones -- so this
+/// yields nothing in either case.
+fn gnu_asm_operands<'t>(node: Node<'t>, field: &str) -> Vec<Node<'t>> {
+    let Some(list) = node.child_by_field_name(field) else {
+        return Vec::new();
+    };
+    let mut cursor = list.walk();
+    list.children_by_field_name("operand", &mut cursor)
+        .collect()
+}
+
+/// The C expression an asm operand names: the lvalue written for an output, the value read for
+/// an input. Required by the grammar for both operand kinds.
+fn gnu_asm_operand_value<'t>(operand: Node<'t>) -> Node<'t> {
+    operand
+        .child_by_field_name("value")
+        .expect("a gnu asm operand always has a value")
+}
+
+/// Whether an asm output operand is read-modify-write. GNU spells that with a `+` in the
+/// constraint (`"+r"`, `"+&r"`, the multi-alternative `"+r,m"`), as against write-only `"="`.
+fn gnu_asm_operand_is_readwrite(operand: Node<'_>, source: &str) -> bool {
+    operand
+        .child_by_field_name("constraint")
+        .is_some_and(|c| to_str(&c, source).contains('+'))
 }
 
 /// Recursively prints a Tree-sitter node and all its descendants.

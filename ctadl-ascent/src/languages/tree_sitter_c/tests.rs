@@ -1441,19 +1441,23 @@ fn labeled_empty_statement_parses() {
 
 #[test_log::test]
 fn unsupported_expression_warns_and_recovers() {
-    // An AST shape the frontend does not lower (here `asm("nop")`, which reaches
+    // An AST shape the frontend does not lower (here `_Generic`, which reaches
     // `flatten_expr`'s catch-all, ERR 78) is a warning by default, not an ingestion
     // error: the expression becomes an opaque temp via `unexpected_ast` and the rest
     // of the function still lowers, so `f`'s param->return flow survives. Setting
     // CTADL_ERROR_ON_AST restores the hard error; that side isn't exercised here
     // because the env var is process-global and tests run in parallel -- instead the
     // test skips when the var is set, so a strict-mode environment doesn't fail it.
+    //
+    // `_Generic` is only a stand-in for "some expression kind with no arm"; if a later
+    // spec lowers it, swap in another unhandled kind rather than deleting the test.
+    // (It used to be `asm("nop")`, which now lowers -- see `flatten_gnu_asm`.)
     if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
         return;
     }
     let src = r#"
         int f(int a) {
-            asm("nop");
+            _Generic(a, int: 1, default: 0);
             return a;
         }"#;
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
@@ -1486,11 +1490,12 @@ fn error_on_ast_promotes_frontend_gap() {
     // The strict side of the switch: under CTADL_ERROR_ON_AST an unsupported
     // expression is a hard ingestion error again, exactly as before the warning
     // demotion. Strictness comes from the per-thread test override, not the env var,
-    // which is process-global and would race the parallel test harness.
+    // which is process-global and would race the parallel test harness. Same stand-in
+    // caveat as `unsupported_expression_warns_and_recovers`.
     let _strict = super::force_error_on_ast();
     let src = r#"
         int f(int a) {
-            asm("nop");
+            _Generic(a, int: 1, default: 0);
             return a;
         }"#;
     let err = super::parse_c_program(src).expect_err("strict mode must reject the frontend gap");
@@ -2977,4 +2982,132 @@ fn compound_literal_array_elements_flow() {
         .unwrap_or_else(|| panic!("the argument's local is not in the locals table\n{prog}"));
     check_assign_or_update(&prog, &format!("{obj}.deref"), ["@p0"], None);
     check_assign_or_update(&prog, &format!("{obj}.[1].deref"), ["#0"], None);
+}
+
+#[test_log::test]
+fn asm_input_flows_to_output() {
+    // Inline assembly is a black box, so it is modeled as an operand transfer: any input operand
+    // may reach any output operand. Here `a` is the only input and `y` the only output, so the
+    // parameter must reach the return through the asm. Before this, `gnu_asm_expression` hit
+    // `flatten_expr`'s catch-all and the whole transfer was dropped -- taint laundered through
+    // any `__asm__` vanished.
+    let src = r#"
+        int f(int a) {
+            int y = 0;
+            __asm__ ("nop" : "=r"(y) : "r"(a) : "cc");
+            return y;
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_readwrite_operand_keeps_identity_flow() {
+    // A `"+"` constraint is one operand that is both read and written (openssh's
+    // `crypto_int16_negative_mask` and its 77 siblings). The old value must be read *before* the
+    // write, so `x -> x` survives; treating `"+r"` as write-only would kill the taint on `x`
+    // instead of passing it through.
+    let src = r#"
+        int f(int a) {
+            int x = a;
+            __asm__ ("sarw $15,%0" : "+r"(x) : : "cc");
+            return x;
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_multiple_outputs_all_written() {
+    // nginx's `ngx_cpuid`: four outputs fed by one input. Every output operand is a write (the
+    // asm defines it), and each receives the blended inputs, so `i` reaches all four. Pins both
+    // halves: one write apiece, and the transfer from the single input.
+    let src = r#"
+        int f(int i) {
+            int eax, ebx, ecx, edx;
+            __asm__ ( "cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(i) );
+            return eax + ebx + ecx + edx;
+        }"#;
+    let (prog, _dump) = program_from_string(src);
+    for out in ["eax", "ebx", "ecx", "edx"] {
+        check_writes_to(&prog, out, 1);
+    }
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_without_operands_lowers() {
+    // nginx's `ngx_cpu_pause()`: assembly with no operand lists at all. There is nothing to
+    // transfer, so the only requirement is that it is not a gap and does not disturb the
+    // surrounding function -- the flow across it still lowers.
+    let src = r#"
+        int f(int a) {
+            int x = a;
+            __asm__ ("pause");
+            return x;
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_is_no_longer_a_frontend_gap() {
+    // Strict-mode pin for the whole class: under `force_error_on_ast` any frontend gap is a hard
+    // error, so `program_from_string` succeeding at all is the assertion that none of these asm
+    // shapes reports one. Covers the corpus forms -- `"+r"` read-modify-write, two outputs with
+    // two inputs, a `__volatile__` qualifier with only clobbers, and the bare no-operand form.
+    let _strict = super::force_error_on_ast();
+    let src = r#"
+        int f(int a, int b) {
+            int x = a;
+            int y = 0;
+            int z = 0, q = 0;
+            __asm__ ("nop" : "=r"(y) : "r"(a) : "cc");
+            __asm__ ("sarw $15,%0" : "+r"(x) : : "cc");
+            __asm__ ("xorw %0,%0\n cmovew %1,%0" : "=&r"(z), "=&r"(q) : "r"(a), "r"(b) : "cc");
+            __asm__ __volatile__ ("mfence" ::: "memory");
+            __asm__ ("pause");
+            return x + y + z + q;
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn asm_output_into_struct_field_is_stored() {
+    // An output operand need not be a bare local: `"=m"(p->f)` is a *store* into a field path.
+    // That is the case the single-operand blend temp exists for -- a store lowers exactly one
+    // value (`add_assign_to_program`), so handing the write two operands would silently drop
+    // the second and lose half the transfer.
+    let src = r#"
+        struct S { int f; int g; };
+        void f(int a, struct S *p) {
+            __asm__ ("nop" : "=m"(p->f) : "r"(a) : "memory");
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 0, "", 1, ".f");
+}
+
+#[test_log::test]
+#[ignore = "limitation: `asm goto` transfers control to its label list, which needs CFG edges out \
+            of an expression -- `flatten_expr` returns a value and cannot build them. The operands \
+            still lower (the data model above applies unchanged); only the jumps are missing, and \
+            the construct keeps reporting a frontend gap. No corpus (dropbear/openssh/nginx) uses \
+            it. Un-ignore once asm statements can add successors."]
+fn asm_goto_is_a_known_limitation() {
+    // Aspirational: the `err` label is reachable only through the `asm goto`, so with real CFG
+    // edges `a` would reach the return along that path. Today the jump is invisible, the label
+    // block has no predecessor carrying `a`, and the flow is absent.
+    let src = r#"
+        int f(int a) {
+            int r = 0;
+            __asm__ goto ("jmp %l0" : : "r"(a) : : err);
+            return r;
+        err:
+            return a;
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
 }
