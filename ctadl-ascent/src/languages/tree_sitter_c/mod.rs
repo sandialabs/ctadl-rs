@@ -1660,16 +1660,39 @@ impl<'a> Context<'a> {
         compound: &CompoundProxy<'_>,
     ) -> Result<(), Error> {
         let mut scope_view = scope_view_meowsers.clone();
+        // Set when the statement just walked diverged (return/break/continue, or a label
+        // whose body diverges): the current block is terminated and has no fall-through.
+        let mut diverged = false;
 
         for &child in &compound.nodes {
-            if !child.is_named() {
-                continue; // we skip , ( stuff like that...
+            if !child.is_named() || child.kind() == "comment" {
+                continue; // we skip , ( comments, stuff like that...
             }
-            // A statement that diverges (return/break/continue, or a label whose body
-            // diverges) ends the compound; the trailing fall-through link is skipped.
-            if self.walk_statement(source, program, &mut scope_view, child)? {
-                return Ok(());
+            if diverged {
+                // The previous statement diverged yet siblings remain. They are
+                // unreachable by fall-through, but a `goto` label among them -- the
+                // ubiquitous `out:` cleanup idiom -- is still reachable through its jump
+                // edge, and its body has to lower or the cleanup code is dropped from the
+                // IR entirely (`finalize_terminators` would then patch the orphaned label
+                // block with an implicit empty `return` and report a frontend gap).
+                // Keep walking in a fresh unlinked block, exactly as `walk_goto` does for
+                // the statements that follow a `goto`.
+                scope_view = add_block(
+                    program,
+                    &scope_view,
+                    &mut self.scope_tree,
+                    false,
+                    &format!("after_diverge::{}", get_line_num(&child)),
+                )?;
             }
+            diverged = self.walk_statement(source, program, &mut scope_view, child)?;
+        }
+
+        // A compound whose last statement diverged has no fall-through, so the
+        // end-of-compound link is skipped (it would push a continuation edge into a
+        // block that already returns).
+        if diverged {
+            return Ok(());
         }
 
         //walked off a compound_statement

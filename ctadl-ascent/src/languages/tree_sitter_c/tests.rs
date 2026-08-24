@@ -1596,17 +1596,14 @@ fn error_on_ast_promotes_bare_block_edge() {
 
 #[test_log::test]
 fn goto_label_after_return_lowers() {
-    // A goto label that sits after a diverging statement: `walk_compound_statement`
-    // stops at the `return`, so the pre-created `out:` block is never walked (its
-    // statements are dropped) yet stays reachable through the `goto` edge. The
-    // frontend must give it an implicit empty `return` (`finalize_terminators`)
-    // because the IR does not tolerate a terminator-less block anywhere. This is
-    // the shape that aborted real dropbear imports. Skips under
-    // CTADL_ERROR_ON_AST, where the sweep's report is a hard error instead (see
-    // `error_on_ast_promotes_unterminated_block`).
-    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
-        return;
-    }
+    // The goto-cleanup idiom: a label sitting *after* a diverging statement, reached
+    // only through its `goto` edge. `walk_compound_statement` stops falling through at
+    // the `return`, but the trailing siblings still have to be walked -- otherwise the
+    // pre-created `out:` block is never visited, `finalize_terminators` patches it with
+    // an implicit empty `return`, and `cleanup()` is silently dropped from the IR. The
+    // walk continues in a fresh unreachable block (as it already did after a `goto`),
+    // so the label lowers normally. No CTADL_ERROR_ON_AST guard: this shape no longer
+    // reports a gap in either mode.
     let src = r"
         void f(void) {
             if (c) goto out;
@@ -1618,27 +1615,88 @@ fn goto_label_after_return_lowers() {
     let prog = program_from_string(src).0;
     assert!(
         function_named(&prog, "f").is_some(),
-        "patched program should still define f\n{prog}"
+        "program should define f\n{prog}"
     );
-    // End-to-end through verify() + SSA + codegen: the patched CFG satisfies the
-    // basic-block contract with no tolerance on the ctadl-ir side.
-    get_summary(prog).expect("patched CFG must verify and index");
+    // The load-bearing assertion: the label body is actually in the IR. Under the old
+    // drop-and-patch behavior `out:`'s block was empty and this call was absent.
+    check_has_direct_call(&prog, "f", "cleanup");
+    // End-to-end through verify() + SSA + codegen: the CFG satisfies the basic-block
+    // contract with no tolerance on the ctadl-ir side.
+    get_summary(prog).expect("CFG must verify and index");
+}
+
+#[test_log::test]
+fn label_after_return_dataflow() {
+    // The dataflow half of `goto_label_after_return_lowers`: lowering the label body is
+    // only worth anything if taint actually flows through it. `out:` writes parameter
+    // `a` into global `g`, so the summary must carry @p0 -> $globals.g. Runs under
+    // `force_error_on_ast`, which turns any residual recoverable report into a hard
+    // error -- so this also pins that the goto-cleanup shape reports NO frontend gap in
+    // strict mode.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int g;
+        void f(int a) {
+            if (c) goto out;
+            return;
+        out:
+            g = a;
+        }";
+    let prog = super::parse_c_program(src)
+        .expect("goto-cleanup must not gap in strict mode")
+        .0;
+    let (s, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&s, &si, "f", 0, ".g");
+}
+
+#[test_log::test]
+fn statements_after_return_still_import() {
+    // The degenerate case of the same continuation: plain unreachable statements after a
+    // `return`, with no label to jump back in. They lower into a dead block that nothing
+    // branches to, which must still be terminated (`verify()` rejects a terminator-less
+    // block regardless of reachability) and must not disturb the reachable part of the
+    // function. Strict mode, so an unterminated leftover would be a hard error rather
+    // than a warning.
+    //
+    // `f` is `void` on purpose. The implicit return that closes an unreachable trailing
+    // block is the empty one (`return;`), and in a *non-void* function that trips
+    // `verify()`'s `InconsistentReturns` (arity 1 vs 0) -- but that is the pre-existing
+    // fall-off-the-end-of-a-non-void-function gap, reproducible on plain
+    // `int f(int a) { int b = a; }` with or without this change, and out of scope here.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int g;
+        void f(int a) {
+            g = a;
+            return;
+            cleanup();
+        }";
+    let prog = super::parse_c_program(src)
+        .expect("unreachable trailing code must not gap")
+        .0;
+    // The reachable write survives untouched, and the dead `cleanup()` block is
+    // terminated well enough for verify()/SSA/codegen to run end to end.
+    let (s, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&s, &si, "f", 0, ".g");
 }
 
 #[test_log::test]
 fn error_on_ast_promotes_unterminated_block() {
-    // Strict side of the sweep: under CTADL_ERROR_ON_AST a block the walk never
-    // terminated (its statements were dropped) is a hard ingestion error.
+    // Strict side of the `finalize_terminators` sweep: under CTADL_ERROR_ON_AST a block
+    // the walk never terminated (its statements were dropped) is a hard ingestion error.
+    // The goto-after-return shape no longer reaches the sweep now that trailing siblings
+    // are walked, so this points at the shape that still orphans a block: a duplicate
+    // label, whose first pre-created block `label_blocks` drops on the floor (see
+    // `duplicate_label_orphan_block_terminated` for the non-strict side).
     let _strict = super::force_error_on_ast();
     let src = r"
         void f(void) {
-            if (c) goto out;
-            return;
-        out:
-            cleanup();
+            goto l;
+        l:  a();
+        l:  b();
         }";
     let err =
-        super::parse_c_program(src).expect_err("strict mode must reject the dropped label body");
+        super::parse_c_program(src).expect_err("strict mode must reject the orphaned label block");
     assert!(
         err.to_string().contains("without a terminator"),
         "unexpected error: {err}"
