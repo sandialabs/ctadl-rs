@@ -2031,6 +2031,53 @@ fn ternary_both_arms_flow() {
 }
 
 #[test_log::test]
+fn elvis_ternary_both_arms_flow() {
+    // GNU's `a ?: c` omits the consequence: the value is `a` itself when `a` is truthy,
+    // otherwise `c`. tree-sitter parses this as a `conditional_expression` with NO
+    // `consequence` field -- the shape that used to panic `flatten_expr` with
+    // "conditional_expression always has a consequence" (the Linux kernel uses `?:`
+    // heavily, e.g. `sk->sk_bound_dev_if ?: dev->ifindex`). Both the condition and the
+    // alternative must reach the result.
+    let src = r"
+        int f(int a, int c) {
+            return a ?: c;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, ""); // a is the value when truthy -- a data source here
+    check_returns_param(&s, 1, ""); // c (alternative arm)
+}
+
+#[test_log::test]
+fn elvis_ternary_is_not_a_frontend_gap() {
+    // Strict-mode pin: `a ?: c` must lower cleanly, not merely recover. Under
+    // CTADL_ERROR_ON_AST any `unexpected_ast` report becomes a hard error, so this
+    // failing would mean the elvis shape had regressed to the catch-all.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int f(int a, int c) {
+            return a ?: c;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn elvis_ternary_propagates_struct_field() {
+    // The kernel's `container ?: fallback` idiom usually blends a field read with a
+    // fallback. Reusing the condition's already-lowered value (rather than re-lowering
+    // it) keeps the field path intact, so `p->x` still reaches the result.
+    let src = r"
+        typedef struct Field { int x; } Field;
+        int f(Field *p, int c) {
+            return p->x ?: c;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, ".x");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
 fn cast_passthrough() {
     // A cast is value-preserving for taint: `(long)a` still carries `a` to the return.
     // `flatten_expr` lowers `cast_expression` by passing the operand straight through.

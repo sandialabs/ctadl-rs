@@ -2894,18 +2894,23 @@ impl<'a> Context<'a> {
             // value, so blend both into a temp (like `flatten_binary`). The condition is
             // a control dependence, not a data source -- evaluate it for side effects but
             // don't blend it into the result.
+            //
+            // GNU's `c ?: b` omits the consequence, and there the condition IS the value
+            // when it is truthy (evaluated once). tree-sitter leaves the `consequence`
+            // field absent for that shape, so reuse the condition's already-computed
+            // value as the consequent arm rather than assuming the field is present.
             "conditional_expression" => {
                 let cond = node
                     .child_by_field_name("condition")
                     .expect("conditional_expression always has a condition");
-                let cons = node
-                    .child_by_field_name("consequence")
-                    .expect("conditional_expression always has a consequence");
                 let alt = node
                     .child_by_field_name("alternative")
                     .expect("conditional_expression always has an alternative");
-                self.flatten_expr(program, cond, source, scope_view)?;
-                let cons_val = self.flatten_expr(program, cons, source, scope_view)?;
+                let cond_val = self.flatten_expr(program, cond, source, scope_view)?;
+                let cons_val = match node.child_by_field_name("consequence") {
+                    Some(cons) => self.flatten_expr(program, cons, source, scope_view)?,
+                    None => cond_val,
+                };
                 let alt_val = self.flatten_expr(program, alt, source, scope_view)?;
                 let temp_name = self.allocator.next_temp();
                 let target = self.build_access_path(
