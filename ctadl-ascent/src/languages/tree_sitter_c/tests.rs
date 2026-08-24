@@ -2874,3 +2874,107 @@ fn unknown_record_type_falls_back_to_positional_elements() {
     let prog = program_from_string(src).0;
     check_assign_or_update(&prog, "e.deref", ["@p0"], None);
 }
+
+// --- C99 compound literals ------------------------------------------------------------
+//
+// `(T){ ... }` is an unnamed object of type `T` initialized by the brace, and the expression's
+// value is that object. The frontend materializes a temp for the object and runs the *same*
+// brace lowering a declaration's initializer gets, so designators land on `T`'s members and
+// array forms take element numbering. Before this the literal hit `flatten_expr`'s catch-all
+// (ERR 78) and every value inside the braces was dropped -- the largest gap class in the
+// openssh/dropbear corpora (497 + 308 sites).
+
+#[test_log::test]
+fn compound_literal_designated_member_flows() {
+    // `(struct pair){ .start = src }` must write the *member* `start` of the object it
+    // materializes, so the later `p.start` read resolves to it and the param reaches the return.
+    let src = r"
+        struct pair { int start; int end; };
+        int f(int src) {
+            struct pair p = (struct pair){ .start = src, .end = 0 };
+            return p.start;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn compound_literal_argument_carries_value() {
+    // A literal in argument position is the corpus shape (`f(blocks, ((Range){ .start = s }))`).
+    // The call must receive *the object the literal was materialized into*, not the unrelated
+    // opaque temp the catch-all recovery used to substitute -- so find the store that put the
+    // param at `.start` and require the argument to be that same base variable.
+    let src = r"
+        struct pair { int start; int end; };
+        int use(struct pair p);
+        int f(int a) { return use((struct pair){ .start = a, .end = 0 }); }";
+    let prog = program_from_string(src).0;
+    check_has_direct_call(&prog, "f", "use");
+
+    let param = exp_from_str("@p0", &ctadl_ir::Locals::default());
+    let object = statements_of(&prog)
+        .find_map(|stmt| match &stmt.kind {
+            StatementKind::Store { dest, field, value }
+                if field.as_str() == "start" && *value == param =>
+            {
+                Some(dest.variable_ref.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected a store of @p0 at `.start`\n{prog}"));
+    let args = direct_calls_in(&prog, "f")
+        .into_iter()
+        .find(|(callees, _)| callees.iter().any(|c| c == "use"))
+        .map(|(_, args)| args)
+        .expect("checked above that the call exists");
+    assert_eq!(
+        args.as_slice(),
+        [Exp::Variable(object)],
+        "expected the call's argument to be the literal's own object\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn compound_literal_is_no_longer_a_frontend_gap() {
+    // Under `force_error_on_ast` any frontend gap becomes a hard error, so `program_from_string`
+    // succeeding at all is the assertion that `compound_literal_expression` no longer reports
+    // one (ERR 78: Unsupported expression type). This is the spec's minimal reproducer.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        struct pair { int start; int end; };
+        int use(struct pair p);
+        int f(int a, int b) { return use((struct pair){ .start = a, .end = b }); }";
+    let prog = program_from_string(src).0;
+    check_has_direct_call(&prog, "f", "use");
+}
+
+#[test_log::test]
+fn compound_literal_array_elements_flow() {
+    // The array form `(int[]){ a, 0 }` has no members to name, so its elements take the element
+    // numbering an array initializer gets: element 0 at `.deref`, element 1 at `.[1].deref`. The
+    // rank comes from the type descriptor's *abstract* array declarator -- the unnamed spelling
+    // of `int a[]` -- which is why `array_declarator_rank` counts the `abstract_*` kinds too.
+    let src = r"
+        int use(int *p);
+        int f(int a) { return use((int[]){ a, 0 }); }";
+    let prog = program_from_string(src).0;
+    let object = match call_args(&prog, "f", "use").as_slice() {
+        [Exp::Variable(v)] => v.clone(),
+        args => panic!("expected `use` to take just the literal's object, got {args:?}\n{prog}"),
+    };
+    // Recover the object's name so the element stores can be spelled in the path DSL. It is the
+    // frontend's temp for the unnamed literal, and which `<tN>` that is depends on how many temps
+    // the surrounding expression allocated first -- so ask the program, don't assume a number.
+    let idx = object
+        .variable
+        .local()
+        .unwrap_or_else(|| panic!("the literal's object must be a local\n{prog}"));
+    let obj = function_named(&prog, "f")
+        .expect("checked above that the call exists")
+        .locals
+        .iter_enumerated()
+        .find_map(|(i, decl)| (i == idx).then(|| decl.name.as_str().to_owned()))
+        .unwrap_or_else(|| panic!("the argument's local is not in the locals table\n{prog}"));
+    check_assign_or_update(&prog, &format!("{obj}.deref"), ["@p0"], None);
+    check_assign_or_update(&prog, &format!("{obj}.[1].deref"), ["#0"], None);
+}

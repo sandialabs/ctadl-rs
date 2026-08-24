@@ -1053,16 +1053,22 @@ fn declaration_type_tag<'s>(decl_node: Node<'_>, source: &'s str) -> Option<&'s 
 /// identifier 0. The declared type describes the innermost element, so this is how many brace
 /// levels an initializer must descend before that type's layout applies. Descends through
 /// parenthesized and pointer declarators, which do not add a dimension.
+///
+/// The `abstract_*` spellings are the same declarators written without a name, which is how a
+/// `type_descriptor` spells them: `(int[]){ .. }`'s type carries an `abstract_array_declarator`
+/// and must count as rank 1 exactly like `int a[]` does.
 fn array_declarator_rank(decl: Node<'_>) -> usize {
     match decl.kind() {
-        "array_declarator" => {
+        "array_declarator" | "abstract_array_declarator" => {
             1 + decl
                 .child_by_field_name("declarator")
                 .map(array_declarator_rank)
                 .unwrap_or(0)
         }
-        "parenthesized_declarator" => decl.named_child(0).map(array_declarator_rank).unwrap_or(0),
-        "pointer_declarator" | "init_declarator" => decl
+        "parenthesized_declarator" | "abstract_parenthesized_declarator" => {
+            decl.named_child(0).map(array_declarator_rank).unwrap_or(0)
+        }
+        "pointer_declarator" | "abstract_pointer_declarator" | "init_declarator" => decl
             .child_by_field_name("declarator")
             .map(array_declarator_rank)
             .unwrap_or(0),
@@ -1423,6 +1429,25 @@ impl<'a> Context<'a> {
 
         let base_ap = self.flatten_lvalue(program, decl_ident, source, scope_view)?;
 
+        self.lower_braced_value(source, program, scope_view, &base_ap, init_list, own, rank)
+    }
+
+    /// Store a brace-enclosed value into `base_ap`, given the record layout its type names
+    /// (`own`) and that type's array `rank`. Shared by the two places a brace can appear: a
+    /// declaration's initializer ([`Context::collect_initializer_list`]) and a C99 compound
+    /// literal in expression position (`(T){ ... }`, lowered in [`Context::flatten_expr`]).
+    /// The two differ only in where the base path comes from -- a declarator versus a fresh
+    /// temp -- so everything downstream of that is here.
+    fn lower_braced_value(
+        &mut self,
+        source: &str,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        base_ap: &RawPath,
+        init_list: Node<'_>,
+        own: Option<Vec<MemberSlot>>,
+        rank: usize,
+    ) -> Result<(), Error> {
         // A braced **scalar** (`int x = { v };`) is not an aggregate: it has no elements to
         // place and its single value initializes the variable itself, exactly as `int x = v;`
         // does. Numbering it as element 0 would write the synthetic `deref` field of a scalar.
@@ -1436,7 +1461,7 @@ impl<'a> Context<'a> {
                 && !matches!(elem.kind(), "initializer_list" | "initializer_pair")
             {
                 let rhs = self.flatten_expr(program, elem, source, scope_view)?;
-                self.add_assign_to_program(program, scope_view, &base_ap, &rhs, None);
+                self.add_assign_to_program(program, scope_view, base_ap, &rhs, None);
                 return Ok(());
             }
         }
@@ -1452,7 +1477,7 @@ impl<'a> Context<'a> {
             source,
             program,
             scope_view,
-            &base_ap,
+            base_ap,
             init_list,
             members.as_deref(),
             elem_layout.as_deref(),
@@ -2780,6 +2805,42 @@ impl<'a> Context<'a> {
             // so it must not carry taint from the operand. Lower it as a constant (the
             // source text), exactly like a numeric literal; the operand is never visited.
             "sizeof_expression" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
+            // A C99 compound literal `(T){ .a = x }` is an unnamed object of type `T`
+            // initialized by the brace, and the expression's value is that object. Model it
+            // exactly that way: materialize a fresh temp to stand for the object, run the
+            // *same* brace lowering a declaration's initializer gets (so designators and
+            // positions land on `T`'s members, unknown tags fall back to element numbering),
+            // and yield the temp. Without this the literal hit the catch-all below and every
+            // value inside the braces was dropped -- the largest gap class in the corpus.
+            //
+            // The `type_descriptor` node has the same `type` field a declaration does, so
+            // `declaration_type_tag` reads its record tag unchanged; its optional `declarator`
+            // is the abstract spelling of an array declarator, and carries the rank.
+            "compound_literal_expression" => {
+                let ty = node
+                    .child_by_field_name("type")
+                    .expect("compound_literal_expression always has a type");
+                let value = node
+                    .child_by_field_name("value")
+                    .expect("compound_literal_expression always has a value");
+                let own = declaration_type_tag(ty, source)
+                    .and_then(|tag| self.struct_layouts.get(tag).cloned());
+                let rank = ty
+                    .child_by_field_name("declarator")
+                    .map(array_declarator_rank)
+                    .unwrap_or(0);
+                let temp_name = self.allocator.next_temp();
+                let base_ap = self.build_access_path(
+                    temp_name.as_str(),
+                    Default::default(),
+                    scope_view,
+                    &mut program[scope_view.fidx].locals,
+                );
+                self.lower_braced_value(source, program, scope_view, &base_ap, value, own, rank)?;
+                Ok(Exp::Variable(VariableRef::new_local_idx(
+                    program[scope_view.fidx].locals.get_or_intern(&temp_name),
+                )))
+            }
             // A ternary `c ? a : b` is path-insensitive here: either arm may be the
             // value, so blend both into a temp (like `flatten_binary`). The condition is
             // a control dependence, not a data source -- evaluate it for side effects but
