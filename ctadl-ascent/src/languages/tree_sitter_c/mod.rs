@@ -1296,9 +1296,9 @@ impl<'a> Context<'a> {
 
     fn collect_assignment(
         &mut self,
-        source: &str,
+        source: &'a str,
         program: &mut Program,
-        scope_view: &ScopeView,
+        scope_view: &mut ScopeView,
         target_node: Node<'_>,
         expr_node: Node<'_>,
         operator_node: Option<Node<'_>>,
@@ -1422,9 +1422,9 @@ impl<'a> Context<'a> {
     /// carry the element type's layout down so an array **of** records maps its members too.
     fn collect_initializer_list(
         &mut self,
-        source: &str,
+        source: &'a str,
         program: &mut Program,
-        scope_view: &ScopeView,
+        scope_view: &mut ScopeView,
         decl_node: Node<'_>,
         decl_ident: Node<'_>,
         init_list: Node<'_>,
@@ -1450,9 +1450,9 @@ impl<'a> Context<'a> {
     /// temp -- so everything downstream of that is here.
     fn lower_braced_value(
         &mut self,
-        source: &str,
+        source: &'a str,
         program: &mut Program,
-        scope_view: &ScopeView,
+        scope_view: &mut ScopeView,
         base_ap: &RawPath,
         init_list: Node<'_>,
         own: Option<Vec<MemberSlot>>,
@@ -1511,9 +1511,9 @@ impl<'a> Context<'a> {
     #[allow(clippy::too_many_arguments)]
     fn lower_initializer_list(
         &mut self,
-        source: &str,
+        source: &'a str,
         program: &mut Program,
-        scope_view: &ScopeView,
+        scope_view: &mut ScopeView,
         base_ap: &RawPath,
         init_list: Node<'_>,
         members: Option<&[MemberSlot]>,
@@ -1908,7 +1908,7 @@ impl<'a> Context<'a> {
         &mut self,
         source: &'a str,
         program: &mut Program,
-        scope_view: &ScopeView,
+        scope_view: &mut ScopeView,
         node: Node<'_>,
     ) -> Result<(), Error> {
         let mut cursor = node.walk();
@@ -1994,7 +1994,7 @@ impl<'a> Context<'a> {
         if let Some(ret_val_node) = child.child(1)
             && ret_val_node.kind() != ";"
         {
-            let ret_exp = self.flatten_expr(program, ret_val_node, source, &*scope_view)?;
+            let ret_exp = self.flatten_expr(program, ret_val_node, source, scope_view)?;
             let term = Terminator::new_kind(TerminatorKind::Return {
                 args: vec![ret_exp].into(),
             });
@@ -2243,7 +2243,7 @@ impl<'a> Context<'a> {
         let condition = child
             .child_by_field_name("condition")
             .expect("switch always has a condition");
-        self.flatten_expr(program, condition, source, &*scope_view)?;
+        self.flatten_expr(program, condition, source, scope_view)?;
 
         let body = child
             .child_by_field_name("body")
@@ -2372,7 +2372,7 @@ impl<'a> Context<'a> {
     /// (unlinked) block.
     fn walk_goto(
         &mut self,
-        source: &str,
+        source: &'a str,
         program: &mut Program,
         scope_view: &mut ScopeView,
         child: Node<'_>,
@@ -2459,7 +2459,7 @@ impl<'a> Context<'a> {
         let condition = child
             .child_by_field_name("condition")
             .expect("always has condition");
-        self.flatten_expr(program, condition, source, &*scope_view)?; // gather field accesses and what not but we don't care about the condition result,etc.
+        self.flatten_expr(program, condition, source, scope_view)?; // gather field accesses and what not but we don't care about the condition result,etc.
         let consequence = child
             .child_by_field_name("consequence")
             .expect("always has consequence");
@@ -2683,8 +2683,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> Result<Exp, Error> {
         //debug_print_tree(node, 0, Some("FLATTEN_EXPR"), Some(50));
         let text = to_str(&node, source); //.to_string();
@@ -2890,6 +2890,30 @@ impl<'a> Context<'a> {
                     program[scope_view.fidx].locals.get_or_intern(&temp_name),
                 )))
             }
+            // A GNU statement expression `({ s1; s2; value; })`. tree-sitter-c 0.24.1 has no
+            // node for the construct: it parses as a `parenthesized_expression` wrapping a
+            // `compound_statement`, so it lands here with `node.kind() == "compound_statement"`.
+            // See `lower_statement_expression_effects`.
+            "compound_statement" => {
+                let outer_sidx = scope_view.sidx;
+                let outer_span = self.cur_span;
+                let value = match self
+                    .lower_statement_expression_effects(program, node, source, scope_view)?
+                {
+                    Some(inner) => self.flatten_expr(program, inner, source, scope_view)?,
+                    // A `void`-valued statement expression has no value to yield; hand back a
+                    // temp nothing reads, exactly as the recovery path would.
+                    None => {
+                        let temp_name = self.allocator.next_temp();
+                        Exp::Variable(VariableRef::new_local_idx(
+                            program[scope_view.fidx].locals.get_or_intern(&temp_name),
+                        ))
+                    }
+                };
+                scope_view.sidx = outer_sidx;
+                self.cur_span = outer_span;
+                Ok(value)
+            }
             // A ternary `c ? a : b` is path-insensitive here: either arm may be the
             // value, so blend both into a temp (like `flatten_binary`). The condition is
             // a control dependence, not a data source -- evaluate it for side effects but
@@ -2947,6 +2971,114 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// Lowers the *effects* of a GNU statement expression `({ s1; s2; value; })` -- everything
+    /// between the braces except the value -- and hands back the expression node that produces
+    /// the value, if there is one.
+    ///
+    /// The construct is by a wide margin the kernel's most pervasive idiom (`container_of`,
+    /// `READ_ONCE`/`WRITE_ONCE`, `min`/`max`, `smp_load_acquire`, every locked bit-op and every
+    /// instrumented atomic expands to one) and, at 27k occurrences, was the largest gap class the
+    /// kernel census found. Before this it reached `flatten_expr`'s catch-all, which substituted
+    /// a temp nothing reads or writes: both the statements inside the braces and the value they
+    /// produce were dropped, so taint entering a statement expression never left it.
+    ///
+    /// Its value is the value of the **last** statement, which C requires to be an expression
+    /// statement. So the leading statements go through the ordinary statement walker -- making
+    /// the declarations, calls and assignments inside the braces real IR -- and the trailing
+    /// expression is left to the caller: `flatten_expr` wants its `Exp`, while `flatten_lvalue`
+    /// wants its access path, because `container_of(p, T, m)->f = v` puts a statement expression
+    /// in store position.
+    ///
+    /// Like a bare block (`walk_statement`'s `compound_statement` arm) the braces get a fresh
+    /// lexical scope but deliberately *share* the enclosing basic block -- a statement expression
+    /// continues the enclosing block, it does not close it -- so there is no end-of-compound link
+    /// to make. On return `scope_view` names that inner scope and the block the body ended in, so
+    /// the caller can lower the value node there; the caller then restores its own `sidx` (names
+    /// declared between the braces must not outlive them) and `cur_span` (walking the body
+    /// retargets the span at every statement inside).
+    ///
+    /// The block has to be threaded back out because statements inside may open blocks of their
+    /// own -- `do { } while (0)` sits in every `READ_ONCE` -- and everything lowered afterwards
+    /// has to land in the block control actually reaches. Statement expressions nest, too (the
+    /// kernel's RCU accessors put one inside another), and this is re-entrant: the nested one is
+    /// just another `flatten_expr` call on the value node.
+    fn lower_statement_expression_effects<'t>(
+        &mut self,
+        program: &mut Program,
+        node: Node<'t>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<Option<Node<'t>>, Error> {
+        let (inner_view, cp) = self.setup_compound(
+            program,
+            scope_view,
+            node,
+            BlockTypeRequest::JustScope,
+            true,
+            "statement_expression",
+        )?;
+
+        // Split off the trailing statement: it produces the value, everything before it runs
+        // only for its effects. `cp.nodes` still holds the braces and any comments.
+        let mut stmts = cp.nodes;
+        stmts.retain(|child| child.is_named() && child.kind() != "comment");
+        let value_node = stmts.pop();
+        let prefix = CompoundProxy {
+            nodes: stmts,
+            was_compound: true,
+        };
+
+        let (mut end_view, mut diverged) =
+            self.walk_compound_body(source, program, &inner_view, &prefix)?;
+        if diverged {
+            end_view = self.block_after_stmt_expr_diverge(program, &end_view, node)?;
+        }
+
+        let value = match value_node {
+            // `({ ...; e; })` -- the ordinary shape. `e` is the value of the construct.
+            Some(last) if last.kind() == "expression_statement" => {
+                self.cur_span = self.span_for_node(last);
+                // `({ ...; ; })` -- a trailing empty statement carries no expression.
+                last.child(0).filter(|inner| !_is_empty(inner))
+            }
+            // A `void`-valued statement expression, e.g. the kernel's ubiquitous
+            // `({ do { } while (0); })`. Well-defined C, not a gap: lower the statement here
+            // and leave the caller to invent a value nothing reads.
+            Some(last) => {
+                diverged = self.walk_statement(source, program, &mut end_view, last)?;
+                if diverged {
+                    end_view = self.block_after_stmt_expr_diverge(program, &end_view, node)?;
+                }
+                None
+            }
+            // `({ })`, or braces holding nothing but comments.
+            None => None,
+        };
+
+        *scope_view = end_view;
+        Ok(value)
+    }
+
+    /// Opens a fresh *unlinked* block to keep lowering a statement expression into after its
+    /// body diverged (a `return`/`break`/`continue` between the braces). The value expression
+    /// and everything after the construct are unreachable, but they still have to lower
+    /// somewhere: appending them to the block the divergence terminated would strand IR behind
+    /// a terminator. Same recovery `walk_compound_body` uses for statements after a divergence.
+    fn block_after_stmt_expr_diverge(
+        &mut self,
+        program: &mut Program,
+        view: &ScopeView,
+        node: Node<'_>,
+    ) -> Result<ScopeView, Error> {
+        add_block(
+            program,
+            view,
+            &mut self.scope_tree,
+            false,
+            &format!("after_stmt_expr_diverge::{}", get_line_num(&node)),
+        )
+    }
+
     /// Lowers a GNU inline-assembly expression as an opaque **operand transfer**.
     ///
     /// The assembly body is never analyzed, so the only sound model is that the black box
@@ -2970,8 +3102,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> Result<Exp, Error> {
         if node
             .child_by_field_name("goto_labels")
@@ -3047,8 +3179,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
         //how come only this declarator came up in expr? see pointer_decl way?
         // ... well function_declarators come up too.  see the logic there //TODO: why does this not worry about parenthesized_declarators?
@@ -3092,8 +3224,8 @@ impl<'a> Context<'a> {
         program: &mut Program,
         node: Node<'_>,
         operator: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
         // 1. Extract the children
         let left_node = node.child_by_field_name("left").expect("missing left");
@@ -3135,8 +3267,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
         // The location being updated (`x`, `p->f`, `a[i]`, ...).
         let argument = node.child_by_field_name("argument").expect("missing left");
@@ -3164,8 +3296,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
         // A subscript read on the RHS: resolve the location (base path + index field) and lower
         // it to loads. (As an lvalue it is handled by `flatten_lvalue` instead.)
@@ -3177,8 +3309,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         arg_list: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> Result<ctadl_ir::ThinVec<Exp>, Error> {
         let mut result = ctadl_ir::ThinVec::new();
 
@@ -3210,8 +3342,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
         temp_name: String,
     ) -> Result<Exp, Error> {
         let func_node = node.child_by_field_name("function").expect("always has");
@@ -3492,8 +3624,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> Result<Option<AccessPath>, Error> {
         match node.kind() {
             "parenthesized_expression" => {
@@ -3525,8 +3657,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> Result<RawPath, Error> {
         match node.kind() {
             "identifier" => Ok(self.build_access_path(
@@ -3582,6 +3714,34 @@ impl<'a> Context<'a> {
                 let mut ap = base;
                 push_element(&mut ap.fields, constant_index(&index));
                 Ok(ap)
+            }
+            // A GNU statement expression in lvalue position -- `container_of(p, T, m)->f = v`
+            // and the rest of the kernel's list/RCU accessors. The location it names is the
+            // location its value expression names, so run the braces for their effects and
+            // resolve that value node as the lvalue. Falling through to the catch-all below
+            // instead only worked when the value happened to lower to a bare variable; anything
+            // else (a field path, a cast) reported `not an lvalue: compound_statement` and the
+            // store was dropped onto a dead temp.
+            "compound_statement" => {
+                let outer_sidx = scope_view.sidx;
+                let outer_span = self.cur_span;
+                let path = match self
+                    .lower_statement_expression_effects(program, node, source, scope_view)?
+                {
+                    Some(inner) => self.flatten_lvalue(program, inner, source, scope_view)?,
+                    None => {
+                        let temp_name = self.allocator.next_temp();
+                        RawPath::new(
+                            VariableRef::new_local_idx(
+                                program[scope_view.fidx].locals.get_or_intern(&temp_name),
+                            ),
+                            ThinVec::new(),
+                        )
+                    }
+                };
+                scope_view.sidx = outer_sidx;
+                self.cur_span = outer_span;
+                Ok(path)
             }
             "parenthesized_expression" | "parenthesized_declarator" => {
                 let inner = node.child(1).expect("missing inner expr");

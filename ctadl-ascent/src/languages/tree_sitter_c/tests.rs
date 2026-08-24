@@ -3266,3 +3266,92 @@ fn asm_goto_is_a_known_limitation() {
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&s, 0, "");
 }
+
+#[test_log::test]
+fn statement_expression_value_flows() {
+    // A GNU statement expression `({ ...; e; })` has the value of its last statement. The
+    // catch-all recovery used to substitute a temp nothing wrote, so `r` was born opaque and
+    // the parameter never reached the return.
+    let src = r"
+        int f(int a) { int r = ({ int t = a; t; }); return r; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn statement_expression_side_effect_is_observed() {
+    // The statements *before* the value are the whole point of the construct -- the kernel's
+    // `READ_ONCE`/`container_of` do their work there. Here the write to the enclosing local `o`
+    // happens inside the braces and the value (`1`) is discarded, so only the side effect can
+    // carry the parameter to the return.
+    let src = r"
+        int f(int a) { int o = 0; int r = ({ o = a; 1; }); return o; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn nested_statement_expression_flows() {
+    // Statement expressions nest -- the kernel's RCU accessors put one inside another (see the
+    // `expand_files` shape in spec 061). The value expression is lowered by an ordinary
+    // `flatten_expr` call, so the arm must be re-entrant.
+    let src = r"
+        int f(int a) { return ({ int t = ({ int u = a; u; }); t; }); }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn statement_expression_body_block_threads_continuation() {
+    // `do { } while (0)` inside the braces opens basic blocks of its own, so the body does not
+    // end in the block it started in. That end block has to be threaded back to the caller:
+    // lowering the rest of the enclosing statement -- and every statement after it -- into the
+    // stale block would strand them behind the loop's terminator, exactly the breakage spec 033
+    // fixed for bare blocks. This is the `READ_ONCE` shape the kernel uses everywhere.
+    let src = r"
+        int f(int a) { int r = ({ do { } while (0); a; }); int o = r; return o; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn void_statement_expression_is_not_a_gap() {
+    // `({ do { } while (0); })` -- a statement expression whose last statement is not an
+    // expression statement, so it has no value. That is well-defined C, not a gap: it must lower
+    // silently, which under `force_error_on_ast` is what `program_from_string` succeeding proves.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int f(int a) { ({ do { } while (0); }); return a; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn statement_expression_is_no_longer_a_frontend_gap() {
+    // Strict-mode pin for the class: under `force_error_on_ast` any frontend gap is a hard error,
+    // so `program_from_string` succeeding at all is the assertion that `compound_statement` no
+    // longer reaches `flatten_expr`'s catch-all (ERR 78: Unsupported expression type). This is
+    // spec 061's minimal reproducer -- 27,062 occurrences in the kernel census.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int f(int a) { int r = ({ int t = a; t; }); return r; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn statement_expression_in_store_position_writes_through() {
+    // The kernel's list/RCU accessors put a statement expression in *store* position --
+    // `container_of(entry, struct T, member)->field = v`, whose value is an interior address
+    // computed from the entry pointer. So the braces have to resolve as an *lvalue*, not merely
+    // as a value: an address carrying an offset segment is not a bare variable, and the
+    // `flatten_lvalue` catch-all (which accepts only one) reported `not an lvalue:
+    // compound_statement` and dropped the store onto a dead temp. The write must land exactly
+    // where the direct `(&a[1])->f = x` spelling puts it.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        struct S { int f; };
+        void f(struct S *a, int x) { ({ int t = 0; &a[1]; })->f = x; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 1, "", 0, ".[1].deref.f");
+}
