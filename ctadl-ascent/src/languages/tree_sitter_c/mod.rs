@@ -1732,7 +1732,7 @@ impl<'a> Context<'a> {
             "assignment_expression" => {
                 self.flatten_expr(program, child, source, scope_view)?;
             }
-            "expression_statement" | "update_expression" => {
+            "expression_statement" => {
                 // An empty statement (`;`) -- e.g. the body of a label, `done: ;` --
                 // parses as an `expression_statement` whose only child is the `;` token.
                 // There is no expression to lower, so skip it; otherwise the bare `;`
@@ -1742,6 +1742,18 @@ impl<'a> Context<'a> {
                 {
                     self.flatten_expr(program, inner_child, source, scope_view)?;
                 }
+            }
+            "update_expression" => {
+                // A bare `++i` / `i++` in statement position -- in practice a `for`'s update
+                // clause, which arrives here directly rather than wrapped in an
+                // `expression_statement`. Lower the whole node: `flatten_expr` dispatches to
+                // `flatten_update_expression`, which reads the `argument` field and so handles
+                // prefix and postfix alike. Descending to `child(0)` instead (as the shared
+                // `expression_statement` arm does) is wrong for both spellings: for prefix that
+                // child is the `++` operator token, which reaches `flatten_expr`'s catch-all
+                // ("ERR 78: Unsupported expression type: ++"), and for postfix it is the bare
+                // identifier, which lowers to a read and silently drops the increment.
+                self.flatten_expr(program, child, source, scope_view)?;
             }
             "parenthesized_expression" => {
                 if let Some(inner_child) = child.child(1) {

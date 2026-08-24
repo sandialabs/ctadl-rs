@@ -2095,6 +2095,64 @@ fn for_init_clause_flows() {
 }
 
 #[test_log::test]
+fn for_update_prefix_increment_lowers() {
+    // A prefix `++i` in the for-update clause used to reach `walk_statement`'s
+    // `update_expression` arm, which lowered `child.child(0)` -- for a *prefix* update that
+    // child is the `++` operator token, so it fell into `flatten_expr`'s catch-all and logged
+    // `frontend gap: ERR 78: Unsupported expression type: ++`. Routing the whole
+    // `update_expression` node through `flatten_expr` reaches `flatten_update_expression`,
+    // which reads the `argument` field and so handles prefix and postfix alike.
+    // Structural contract: `i` is written twice -- once by the init clause, once by `++i`.
+    let src = r"
+        int f(int n) {
+            int x = 0;
+            for (int i = 0; i < n; ++i) {
+                x = n;
+            }
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_writes_to(&prog, "i", 2);
+}
+
+#[test_log::test]
+fn for_update_postfix_increment_lowers() {
+    // The postfix twin of `for_update_prefix_increment_lowers`. Postfix never warned -- it was
+    // worse than that: `child.child(0)` of `i++` is the bare identifier `i`, so lowering it
+    // produced a read and the increment was *silently dropped*. Counting writes to `i`
+    // (init + increment = 2) is what catches that; a dump-string or warning check would not.
+    let src = r"
+        int f(int n) {
+            int x = 0;
+            for (int i = 0; i < n; i++) {
+                x = n;
+            }
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_writes_to(&prog, "i", 2);
+}
+
+#[test_log::test]
+fn for_update_prefix_decrement_lowers() {
+    // `--i` is the same gap as `++i` (the operator token differs, the AST shape does not), and it
+    // is the form the openssh corpus hits alongside `++`. Under `force_error_on_ast` any frontend
+    // gap becomes a hard error, so `program_from_string` succeeding at all is the assertion that
+    // the construct no longer reports one; the write count then pins the increment itself.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int f(int n) {
+            int x = 0;
+            for (int i = n; i > 0; --i) {
+                x = n;
+            }
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_writes_to(&prog, "i", 2);
+}
+
+#[test_log::test]
 fn post_increment_value_is_operand() {
     // `int x = y++;` consumes the *value* of `y++` (post-increment yields the old y, then increments),
     // so y flows to x and on to the return. We only ever tested `++` as a standalone statement before;
