@@ -3356,21 +3356,82 @@ fn asm_output_into_struct_field_is_stored() {
 }
 
 #[test_log::test]
-#[ignore = "limitation: `asm goto` transfers control to its label list, which needs CFG edges out \
-            of an expression -- `flatten_expr` returns a value and cannot build them. The operands \
-            still lower (the data model above applies unchanged); only the jumps are missing, and \
-            the construct keeps reporting a frontend gap. No corpus (dropbear/openssh/nginx) uses \
-            it. Un-ignore once asm statements can add successors."]
-fn asm_goto_is_a_known_limitation() {
-    // Aspirational: the `err` label is reachable only through the `asm goto`, so with real CFG
-    // edges `a` would reach the return along that path. Today the jump is invisible, the label
-    // block has no predecessor carrying `a`, and the flow is absent.
+fn asm_goto_label_is_reachable() {
+    // `err` is reachable *only* through the `asm goto`: it sits after a `return`, so nothing
+    // falls into it. With the jump modeled (`link_asm_goto_labels`) the label block has a
+    // predecessor and `a` reaches the return along that path; without it the label was dead IR
+    // and this flow was absent. Every kernel static key has this shape (`arch_static_branch`
+    // returns `false` on the fall-through and `true` under the label).
     let src = r#"
         int f(int a) {
             int r = 0;
             __asm__ goto ("jmp %l0" : : "r"(a) : : err);
             return r;
         err:
+            return a;
+        }"#;
+    let (prog, _dump) = program_from_string(src);
+    // 0 = entry (holds the asm), 1 = the pre-created `err` block, 2 = the fall-through.
+    check_successors(&prog, 0, &[1, 2]);
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_goto_also_falls_through() {
+    // The other half of the branch: an `asm goto` may jump, but it may equally fall out the
+    // bottom, so it must not be modeled as diverging the way a plain `goto` is. Here the only
+    // path carrying `a` to the return is the fall-through (`r = a; return r;`) -- the label
+    // returns a constant -- so terminating the block with just the label edges would lose it.
+    let src = r#"
+        int f(int a) {
+            int r = 0;
+            __asm__ goto ("" : : "r"(a) : : hit);
+            r = a;
+            return r;
+        hit:
+            return 0;
+        }"#;
+    let (prog, _dump) = program_from_string(src);
+    // Block 0 holds the asm; 1 is the pre-created `hit` block, 2 the fall-through it opens.
+    check_successors(&prog, 0, &[1, 2]);
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_goto_multiple_labels_all_link() {
+    // The label list is a list: GNU allows any number of targets and the kernel's jump-label
+    // macros do use more than one. Every one of them is an edge, so linking only the first
+    // would leave the rest of the arms dead.
+    let src = r#"
+        int f(int a) {
+            int r = 0;
+            __asm__ goto ("" : : "r"(a) : : one, two);
+            return r;
+        one:
+            return a;
+        two:
+            return a + 1;
+        }"#;
+    let (prog, _dump) = program_from_string(src);
+    // 1 and 2 are the pre-created `one`/`two` blocks (pre-scan order), 3 the fall-through.
+    check_successors(&prog, 0, &[1, 2, 3]);
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_goto_is_no_longer_a_frontend_gap() {
+    // Strict-mode pin: under `force_error_on_ast` a frontend gap is a hard error, so
+    // `program_from_string` succeeding is the assertion that `asm goto` no longer reports one.
+    // Spec 032 deliberately raised that gap and this closes it.
+    let _strict = super::force_error_on_ast();
+    let src = r#"
+        int f(int a) {
+            __asm__ goto ("" : : "r"(a) : : hit);
+            return 0;
+        hit:
             return a;
         }"#;
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();

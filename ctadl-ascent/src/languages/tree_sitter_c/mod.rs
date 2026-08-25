@@ -66,11 +66,13 @@
 //!
 //! GNU inline assembly is lowered as an operand transfer ([`Context::flatten_gnu_asm`]): every
 //! input operand may reach every output operand, and a `"+"` operand keeps its identity flow.
-//! `asm goto` additionally *jumps* to one of its labels, and those are real CFG edges out of an
-//! expression -- `flatten_expr` yields a value and has no way to add successors -- so the jumps
-//! are not modeled and the construct keeps reporting a frontend gap. Its operands still lower.
-//! Pinned by the `#[ignore]`d `asm_goto_is_a_known_limitation`. No corpus (dropbear, OpenSSH,
-//! nginx) uses it.
+//! `asm goto` additionally *jumps* to one of its labels. Those are real CFG edges, and they are
+//! built from inside the expression walk ([`Context::link_asm_goto_labels`]): the block the asm
+//! sits in gets an edge to each label's pre-created block *plus* the fall-through edge into a
+//! fresh block that the rest of the statement continues in. Unlike `goto`, an `asm goto` does
+//! not diverge -- it may fall through -- so it is not reported as a divergence. Pinned by
+//! `asm_goto_label_is_reachable`, `asm_goto_also_falls_through` and
+//! `asm_goto_multiple_labels_all_link`. Every kernel static key (`arch_static_branch`) is one.
 //!
 
 use hashbrown::hash_map::HashMap;
@@ -3203,10 +3205,10 @@ impl<'a> Context<'a> {
     /// matching the C semantics. Clobbers name registers, not C locations, so they carry no
     /// dataflow and are ignored.
     ///
-    /// `asm goto` still reports a frontend gap: its jumps to the label list are real CFG edges
-    /// out of an expression, which cannot be built from here. The operands are modeled anyway,
-    /// so only the control edges are missing (see `asm_goto_is_a_known_limitation`). No corpus
-    /// uses it.
+    /// `asm goto` carries a label list on top of that, and those jumps are real CFG edges. They
+    /// are wired by [`Context::link_asm_goto_labels`] *after* all of the operand statements are
+    /// emitted, because linking sets the block's terminator and nothing may be appended to a
+    /// block past its terminator.
     fn flatten_gnu_asm(
         &mut self,
         program: &mut Program,
@@ -3214,17 +3216,6 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> Result<Exp, Error> {
-        if node
-            .child_by_field_name("goto_labels")
-            .is_some_and(|labels| labels.child_by_field_name("label").is_some())
-        {
-            unexpected_ast(
-                "asm goto: jumps to the label list are not modeled as CFG edges (operands still \
-                 lower)"
-                    .to_string(),
-            )?;
-        }
-
         let outputs = gnu_asm_operands(node, "output_operands");
         let inputs = gnu_asm_operands(node, "input_operands");
 
@@ -3274,14 +3265,83 @@ impl<'a> Context<'a> {
 
         // The value of an asm expression is the first output operand's location; with no
         // outputs it is the opaque blend temp. In practice nothing reads it -- every real site
-        // is a statement -- but `flatten_expr` must yield something.
-        match targets.first() {
+        // is a statement -- but `flatten_expr` must yield something. Read it back *before* the
+        // `asm goto` edges are wired: `emit_loads` appends statements, and after
+        // `link_asm_goto_labels` the current block is a different, already-linked one.
+        let value = match targets.first() {
             Some(target) => {
                 let read_back = self.emit_loads(program, scope_view, target.clone());
-                Ok(Exp::access_path(read_back))
+                Exp::access_path(read_back)
             }
-            None => Ok(blended),
+            None => blended,
+        };
+
+        self.link_asm_goto_labels(program, node, source, scope_view)?;
+        Ok(value)
+    }
+
+    /// Turns the label list of a GNU `asm goto` into real CFG edges.
+    ///
+    /// The labels are ordinary `goto` targets, so this drives the very machinery `walk_goto`
+    /// does: the per-function pre-scan in `collect_functions` already created a block for every
+    /// `labeled_statement` in the body and recorded it in `label_blocks`, which is what makes a
+    /// forward jump (the usual shape -- `l_yes:` sits *after* the asm) resolve. `link_blocks`
+    /// then appends each target to the current block's `Goto` terminator.
+    ///
+    /// Where `goto` *diverges*, an `asm goto` may or may not jump: control either lands on one
+    /// of the labels or falls out the bottom. So the fall-through is an edge like any other --
+    /// a fresh block, linked from the same terminator, that the rest of the enclosing statement
+    /// and its siblings continue in. Nothing is reported as diverging, so the enclosing compound
+    /// keeps walking normally.
+    ///
+    /// Building the edges from expression context (rather than a `walk_statement` pre-pass) is
+    /// what `scope_view: &mut ScopeView` is for: it names the current function *and* block, and
+    /// threading a new block back out through it is exactly how `lower_statement_expression_effects`
+    /// already moves the walk forward from inside `flatten_expr`. A pre-pass would have to find
+    /// the asm before its operands lower and could not place the split after them.
+    fn link_asm_goto_labels(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<(), Error> {
+        let Some(list) = node.child_by_field_name("goto_labels") else {
+            return Ok(());
+        };
+        let mut cursor = list.walk();
+        let labels: Vec<Node<'_>> = list.children_by_field_name("label", &mut cursor).collect();
+        if labels.is_empty() {
+            return Ok(());
         }
+
+        // A label may legally appear twice in one list; the edge is the same edge, and pushing
+        // it twice would put a duplicate successor in the terminator.
+        let mut linked: Vec<BasicBlockIdx> = Vec::with_capacity(labels.len());
+        for label_node in labels {
+            let label = to_str(&label_node, source);
+            let Some(&target) = self.label_blocks.get(label) else {
+                malformed_source(format!("`asm goto` to undefined label `{label}`"))?;
+                continue;
+            };
+            if linked.contains(&target) {
+                continue;
+            }
+            linked.push(target);
+            let mut to = scope_view.clone();
+            to.blidx = target;
+            link_blocks(program, scope_view, &to, false)?;
+        }
+
+        let after = add_block(
+            program,
+            scope_view,
+            &mut self.scope_tree,
+            true,
+            &format!("after_asm_goto::{}", get_line_num(&node)),
+        )?;
+        *scope_view = after;
+        Ok(())
     }
 
     fn flatten_nested_decl(
