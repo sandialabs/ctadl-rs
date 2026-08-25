@@ -2121,6 +2121,98 @@ fn sizeof_does_not_evaluate() {
 }
 
 #[test_log::test]
+fn alignof_type_is_a_constant() {
+    // `_Alignof`/`__alignof__` yields a compile-time alignment, so it lowers to the same thing a
+    // numeric literal does: an `Exp::Str` of the node's own source text. It shares
+    // `sizeof_expression`'s `flatten_expr` arm because the rule is identical (unevaluated operand,
+    // constant result); before that arm it fell through to the catch-all and reported
+    // "ERR 78: Unsupported expression type: alignof_expression" 280x in the kernel corpus.
+    let src = r"
+        int f(void) {
+            return __alignof__(long);
+        }";
+    let prog = program_from_string(src).0;
+    check_returns_const(&prog, "f", "__alignof__(long)");
+}
+
+#[test_log::test]
+fn alignof_does_not_carry_operand_taint() {
+    // The GNU expression spelling `__alignof__(a)` still does not *evaluate* `a`, so the parameter
+    // must NOT reach the return -- the alignof twin of `sizeof_does_not_evaluate`. It holds for two
+    // reinforcing reasons: tree-sitter-c 0.24.1's `alignof_expression` only accepts a
+    // `type_descriptor`, so `a` parses as a `type_identifier` and is never an expression node, and
+    // the arm lowers the whole node as constant text without visiting any child. Unlike the other
+    // two alignof tests this one also passed BEFORE the fix -- the catch-all's opaque temp had no
+    // inflow either -- so it is a regression guard on the arm, not a pre-fix failure.
+    let src = r"
+        int f(int a) {
+            return __alignof__(a);
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_does_not_return_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn alignof_is_no_longer_a_frontend_gap() {
+    // Under `force_error_on_ast` any frontend gap becomes a hard error, so `program_from_string`
+    // succeeding at all is the assertion that `alignof_expression` no longer reports one. Both
+    // spellings the corpus uses are pinned: the C11 keyword `_Alignof(T)` and the GNU
+    // `__alignof__(...)`, which the kernel writes over struct tags and pointer types alike.
+    let _strict = super::force_error_on_ast();
+    for (src, constant) in [
+        (
+            "int f(void) { return _Alignof(unsigned long long); }",
+            "_Alignof(unsigned long long)",
+        ),
+        (
+            "int f(void) { return __alignof__(void *); }",
+            "__alignof__(void *)",
+        ),
+        (
+            "struct mm_cid { int x; }; int f(void) { return __alignof__(struct mm_cid); }",
+            "__alignof__(struct mm_cid)",
+        ),
+    ] {
+        let prog = program_from_string(src).0;
+        check_returns_const(&prog, "f", constant);
+    }
+}
+
+#[test_log::test]
+fn alignof_of_an_expression_operand_is_a_grammar_limit() {
+    // The one price of lowering `alignof_expression` to a constant, pinned so it is not a
+    // surprise. tree-sitter-c 0.24.1's `alignof_expression` accepts ONLY a `type_descriptor`,
+    // so GNU's `__alignof__(<expr>)` over anything the type grammar cannot swallow is a parse
+    // error: `__alignof__(p->f)` recovers as a `field_expression` whose *base* is the alignof
+    // node, plus a stray `)`. `flatten_lvalue`'s catch-all then routes that base through
+    // `flatten_expr`, which now yields `Exp::Str` rather than the old opaque temp, so the base
+    // is reported `not an lvalue: alignof_expression` instead of being silently accepted.
+    //
+    // That is a correct diagnosis of the tree the front end is handed -- the tree is what is
+    // wrong -- and it is root cause (2) in `linux_kernel_gaps.md`, owned by spec 064's
+    // reclassification of parse-recovery debris. Exactly one corpus site has this shape
+    // (`__alignof__(tfm->__crt_ctx)`, `net__ipv4__tcp.c`), against 280 `ERR 78` warnings
+    // removed. `program_from_string` cannot be used here: it asserts the parse is clean.
+    let src = r"
+        struct crypto_tfm { char __crt_ctx[1]; };
+        unsigned f(struct crypto_tfm *tfm) { return __alignof__(tfm->__crt_ctx); }";
+    let (_prog, has_error, _markup) =
+        super::parse_c_program(src).expect("non-strict ingestion recovers");
+    assert!(
+        has_error,
+        "expected tree-sitter-c to reject an expression operand to __alignof__"
+    );
+
+    let _strict = super::force_error_on_ast();
+    let err = super::parse_c_program(src).expect_err("strict mode must reject the recovered tree");
+    assert!(
+        err.to_string()
+            .contains("not an lvalue: alignof_expression"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
 fn whole_struct_copy_carries_field() {
     // A whole-struct assignment (`t = s`) copies field taint: a later `t.a` read still resolves back
     // to the source struct's field. So s.a (@p0.a) reaches the return through the copy.

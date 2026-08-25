@@ -2853,7 +2853,19 @@ impl<'a> Context<'a> {
             // `sizeof` does NOT evaluate its operand -- it yields a compile-time size --
             // so it must not carry taint from the operand. Lower it as a constant (the
             // source text), exactly like a numeric literal; the operand is never visited.
-            "sizeof_expression" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
+            //
+            // `_Alignof` / `__alignof__` / `__alignof` / `_alignof` / `alignof` (all one
+            // `alignof_expression` node) obey the same rule -- unevaluated operand,
+            // compile-time constant result -- so they share this arm. In tree-sitter-c
+            // 0.24.1 an `alignof_expression`'s operand is always a `type_descriptor`, so
+            // even the GNU expression spelling `__alignof__(x)` parses `x` as a type name
+            // and never reaches a value; lowering the whole node as its source text keeps
+            // it that way. (An operand the type grammar cannot swallow, e.g.
+            // `__alignof__(p->f)`, is a parse error before we ever get here -- a
+            // tree-sitter-c grammar limit, not a frontend gap.)
+            "sizeof_expression" | "alignof_expression" => {
+                Ok(Exp::Str(ArcIntern::<str>::from(text)))
+            }
             // A C99 compound literal `(T){ .a = x }` is an unnamed object of type `T`
             // initialized by the brace, and the expression's value is that object. Model it
             // exactly that way: materialize a fresh temp to stand for the object, run the
