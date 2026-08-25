@@ -405,10 +405,24 @@ fn link_blocks(
 /// its statements were dropped, a frontend gap worth surfacing under
 /// CTADL_ERROR_ON_AST. Same pattern as the Lua frontend's
 /// `finalize_terminators`.
+///
+/// `stranded_labels` names the blocks pre-created for labels `walk_labeled_statement` never
+/// entered. In a body the parser did not fully parse (`body_holds_recovery`) those are
+/// patched like any other but **not** reported: the label sits in parse-recovery output,
+/// which this frontend deliberately does not analyze, so the loss is a fact about the
+/// analyzed source and is stated as one -- once per function, by
+/// `Context::report_unanalyzed_recovery` -- rather than a second time as a frontend gap. That
+/// is spec 064's rule applied to the last class that still broke it: all 29 of the kernel
+/// census's remaining `left without a terminator` warnings were label blocks of this kind.
+/// In a body that parsed cleanly a stranded label block is still a gap and still reported --
+/// a duplicate label orphans one (`error_on_ast_promotes_unterminated_block`), and that block
+/// is not in `stranded_labels` at all, since `label_blocks` kept only the later of the two.
 fn finalize_terminators(
     program: &mut Program,
     fidx: FunctionIdx,
     func_name: &str,
+    stranded_labels: &HashSet<BasicBlockIdx>,
+    body_holds_recovery: bool,
 ) -> Result<(), Error> {
     let mut patched: Vec<BasicBlockIdx> = Vec::new();
     for (bb, data) in program.functions[fidx]
@@ -420,6 +434,9 @@ fn finalize_terminators(
             data.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
                 args: vec![].into(),
             }));
+            if body_holds_recovery && stranded_labels.contains(&bb) {
+                continue;
+            }
             patched.push(bb);
         }
     }
@@ -664,6 +681,12 @@ struct Context<'a> {
     /// notice is one per function rather than one per node the recovery left behind (41,751
     /// of them in the kernel census). See [`Context::report_unanalyzed_recovery`].
     functions_with_recovery: HashSet<String>,
+    /// The pre-created label blocks [`Context::walk_labeled_statement`] actually entered.
+    /// Reset per function alongside `label_blocks`; its complement within `label_blocks` is
+    /// the set of labels the walk never reached, which [`finalize_terminators`] needs in
+    /// order to tell a label stranded in parse-recovery output from a genuinely dropped
+    /// block.
+    walked_label_blocks: HashSet<BasicBlockIdx>,
 }
 
 /// One data member in a [`Context::struct_layouts`] entry.
@@ -1197,9 +1220,30 @@ fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
     n.utf8_text(source.as_bytes()).unwrap().trim()
 }
 
-/// Collect the names of every `labeled_statement` label reachable under `node`
-/// (recursing through nested blocks/ifs/loops). Used to pre-create a block per label
-/// before the body is walked, so a `goto` to a not-yet-seen label still resolves.
+/// The `goto` labels of the function whose body is `node`, in tree order, so
+/// `collect_functions` can pre-create a block for each and a forward `goto L` resolves.
+///
+/// A nested `function_definition` is not descended into. A label's scope in C is the function
+/// that contains it, so a `goto` in this body can never target one, and the same query that
+/// found this body finds the nested one and lowers it as a function of its own -- with its
+/// own label blocks, walked there. Pre-creating them here instead leaves blocks nothing ever
+/// enters and nothing ever terminates, which `finalize_terminators` then patched and charged
+/// to a function whose own code is fine. In the kernel corpus these are rarely GNU nested
+/// functions: they are parse recovery, which resumes by re-parenting the following
+/// definitions into the previous function's `compound_statement` (spec 064) -- which is how
+/// `resource_intersection`, three straight-line statements with no label at all, came to own
+/// a 1 MB body holding 2,208 of them, and two `out:` labels with it.
+///
+/// A `sizeof`/`_Alignof` operand is not descended into either, for the same reason from the
+/// other direction: the operand is *unevaluated*, so `flatten_expr` lowers the whole
+/// construct to the compile-time constant it is (`Exp::Str` of its own source text, spec 063)
+/// and never walks inside it. A label in there names no reachable code -- `goto` into an
+/// unevaluated operand is not C -- so its block, too, would only ever be an empty orphan.
+///
+/// A label the *recovery* holds is a different matter and is deliberately still collected:
+/// plenty of well-formed code lowers out of a damaged body (that is spec 064's whole point),
+/// and dropping its labels would break its `goto`s. Its block simply goes unentered, which
+/// [`finalize_terminators`] knows not to charge to the frontend.
 fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
     if node.kind() == "labeled_statement"
         && let Some(label) = node.child_by_field_name("label")
@@ -1208,6 +1252,12 @@ fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
+        if matches!(
+            child.kind(),
+            "function_definition" | "sizeof_expression" | "alignof_expression"
+        ) {
+            continue;
+        }
         collect_labels(child, source, out);
     }
 }
@@ -2488,6 +2538,7 @@ impl<'a> Context<'a> {
             .label_blocks
             .get(label)
             .expect("label block pre-created in collect_functions");
+        self.walked_label_blocks.insert(label_blidx);
 
         // Fall through from the current block into the (pre-created) label block, then
         // make it the current block — the inner statement and any following siblings
@@ -3699,6 +3750,7 @@ impl<'a> Context<'a> {
             // Pre-create a block for every `goto` label in this function so forward
             // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
             self.label_blocks.clear();
+            self.walked_label_blocks.clear();
             // Address-of aliases are function-local and confined to a straight-line block.
             self.addr_alias.clear();
             // Union-typed locals are function-scoped.
@@ -3717,7 +3769,21 @@ impl<'a> Context<'a> {
             }
 
             self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
-            finalize_terminators(program, fidx, func_name)?;
+
+            // Label blocks the walk never entered. In a damaged body they are the parse
+            // recovery's labels, not this function's: say so once, as a source problem, and
+            // let `finalize_terminators` patch them without blaming the frontend.
+            let stranded: HashSet<BasicBlockIdx> = self
+                .label_blocks
+                .values()
+                .copied()
+                .filter(|blidx| !self.walked_label_blocks.contains(blidx))
+                .collect();
+            let body_holds_recovery = body_node.has_error();
+            if body_holds_recovery && !stranded.is_empty() {
+                self.report_unanalyzed_recovery(func_name)?;
+            }
+            finalize_terminators(program, fidx, func_name, &stranded, body_holds_recovery)?;
         }
         Ok(())
     }

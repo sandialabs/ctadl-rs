@@ -1853,6 +1853,162 @@ fn duplicate_label_orphan_block_terminated() {
     get_summary(program_from_string(src).0).expect("orphaned label block must get a terminator");
 }
 
+// ---------------------------------------------------------------------------------------
+// Labels the walk cannot reach (spec 066). `collect_functions` pre-creates a basic block for
+// every label `collect_labels` finds anywhere under the body, so that a forward `goto L`
+// resolves. A block pre-created for a label the walk never enters is an empty orphan, and
+// `finalize_terminators` used to patch it and report `N block(s) left without a terminator` --
+// "their statements were dropped" -- against a function whose own code lowered perfectly.
+// Those were the last 29 warnings of that class in the kernel census.
+//
+// Three ways a label ends up unreachable, and each is answered where it belongs: two by not
+// collecting the label at all (it is not this function's), one by not blaming the frontend for
+// the parser's wreckage.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn label_in_an_unevaluated_sizeof_operand_strands_no_block() {
+    // `sizeof`'s operand is not evaluated, so `flatten_expr` lowers the whole construct to a
+    // compile-time constant without walking inside it (spec 063). A label in there names no
+    // reachable code -- there is no `goto` into an unevaluated operand -- so pre-creating a
+    // block for it only ever produced an orphan, and the "their statements were dropped"
+    // report was doubly wrong: nothing was dropped, because nothing runs there.
+    //
+    // Strict mode, so this is a pin and not a wish: the shape reports nothing at all now,
+    // where it used to be a hard error. It is also the only member of this class that can be
+    // pinned strictly -- the other two carry an independent report of their own by design (a
+    // nested function is still a gap, a parse error is still a source problem).
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int g;
+        int f(int a) {
+            g = a;
+            int n = sizeof(({ int t = a; lbl: t; }));
+            return n;
+        }";
+    let prog = super::parse_c_program(src)
+        .expect("an unevaluated operand's label must not gap")
+        .0;
+    // The real statements around it still lower: `a` reaches the global.
+    let (summary, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&summary, &si, "f", 0, ".g");
+}
+
+#[test_log::test]
+fn a_nested_functions_label_is_not_the_enclosing_functions() {
+    // A label's scope in C is the function containing it, and `collect_functions` queries the
+    // whole tree -- so the nested definition is lowered as a function of its own, with its own
+    // label block, walked there. Pre-creating a second block for it in the *enclosing*
+    // function left an orphan and reported `f` as having dropped statements it never had.
+    //
+    // This is the kernel corpus's shape, where the "nested" definitions are not GNU nested
+    // functions at all but parse recovery re-parenting the following definitions into the
+    // previous function's body (spec 064): `fastopen_queue_tune`, three statements long,
+    // acquired a 113 KB body holding 206 of them and both of their `out:` labels.
+    let src = r"
+        int outer(int a) {
+            int inner(int b) {
+                if (b) goto out;
+                return 0;
+            out:
+                return b;
+            }
+            return a;
+        }";
+    let reports = reports_for(src);
+    assert!(
+        !reports
+            .iter()
+            .any(|(_, m)| m.contains("without a terminator")),
+        "the enclosing function must not be charged for the nested one's label: {reports:?}"
+    );
+    // Exactly the one report this shape is *supposed* to draw: a GNU nested function is a
+    // construct this frontend does not model (`nested_function_definition_is_still_a_frontend_gap`).
+    assert_eq!(
+        reports.len(),
+        1,
+        "expected only the nested-function gap: {reports:?}"
+    );
+    assert!(
+        reports[0]
+            .1
+            .contains("Unsupported expression type: function_definition"),
+        "unexpected report: {reports:?}"
+    );
+
+    // And the label's own statements really do lower -- in `inner`, the function they belong
+    // to. `out: return b;` is the only path that returns the parameter.
+    let prog = super::parse_c_program(src).expect("ingestion recovers").0;
+    let (summary, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&summary, &si, "inner", 0, "");
+}
+
+#[test_log::test]
+fn a_label_stranded_in_recovery_output_is_not_a_frontend_gap() {
+    // The third way: the label is real, but it sits in output tree-sitter's error recovery
+    // produced, which `walk_statement`'s `ERROR` arm and `flatten_expr`'s recovery-region arm
+    // both skip by design (spec 064). Its block is never entered.
+    //
+    // Here the label *is* still collected -- a damaged body still lowers plenty of good code,
+    // and dropping its labels would break that code's `goto`s (see
+    // `a_goto_still_resolves_in_a_damaged_body`). What changes is the attribution: an unentered
+    // label block in a body the parser did not finish is the source's problem, said once per
+    // function, not a second helping of blame for the frontend.
+    let src = r"
+        int g;
+        void f(int a) {
+            g = a;
+            case 1 ... 3:
+        out:
+            g = a;
+        }";
+    let reports = reports_for(src);
+    for (attribution, msg) in &reports {
+        assert_ne!(
+            *attribution, "frontend gap",
+            "a label the recovery swallowed is not a frontend gap: {msg}"
+        );
+    }
+    assert!(
+        reports.iter().any(|(_, m)| m.contains("not analyzed")),
+        "the loss must still be stated once, against the source: {reports:?}"
+    );
+
+    // Suppressing the blame must not suppress the analysis: the code that did parse still
+    // lowers, so `a` still reaches the global.
+    let prog = super::parse_c_program(src).expect("ingestion recovers").0;
+    let (summary, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&summary, &si, "f", 0, ".g");
+}
+
+#[test_log::test]
+fn a_goto_still_resolves_in_a_damaged_body() {
+    // The guard on the decision above. It would have been easy to stop collecting labels in
+    // any damaged body and drive the warning to zero that way -- and it would have thrown away
+    // real dataflow, because a parse error in one statement does not stop the rest of the
+    // function from lowering. The `goto`/label pair here shares a body with an unparsable
+    // construct and must still work: `a` reaches the global only through `out:`.
+    let src = r"
+        int g;
+        void f(int a) {
+            switch (a) { case 1 ... 3: break; }
+            if (a) goto out;
+            return;
+        out:
+            g = a;
+        }";
+    let reports = reports_for(src);
+    for (attribution, msg) in &reports {
+        assert_ne!(
+            *attribution, "frontend gap",
+            "nothing here is the frontend's fault: {msg}"
+        );
+    }
+    let prog = super::parse_c_program(src).expect("ingestion recovers").0;
+    let (summary, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&summary, &si, "f", 0, ".g");
+}
+
 #[test_log::test]
 fn compound_assign_accumulates() {
     // Compound assignment (`y += b`) is an accumulate, not an overwrite: it lowers to `y = b + y`,
