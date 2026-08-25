@@ -2055,6 +2055,21 @@ impl<'a> Context<'a> {
                     self.flatten_expr(program, nest_decl, source, scope_view)?;
                     continue;
                 }
+                // The asm annotation on a declarator, not a declarator: a GCC
+                // explicit-register variable (`register unsigned long sp asm("rsp");`, from
+                // x86's `current_stack_pointer`) or an asm label on an object
+                // (`extern int v asm("othersym");`). The grammar files it under the *same*
+                // `declarator` field as the name it annotates --
+                // `field('declarator', seq(_declaration_declarator, optional(gnu_asm_expression)))`
+                // -- and tree-sitter distributes a field over every element of the sequence,
+                // so `children_by_field_name("declarator")` yields two children for one
+                // declared name: the declarator, handled by the arms above on the previous
+                // iteration, and this. What it names is where the variable is stored (a
+                // machine register) or the symbol it is emitted under; neither is a value and
+                // neither carries dataflow, so there is nothing to lower. Deliberately NOT
+                // routed to `flatten_gnu_asm`: that models an operand transfer, and this asm
+                // has no operands at all -- only a register-name string.
+                "gnu_asm_expression" => continue,
                 _ => {
                     unexpected_ast(format!(
                         "Declaration declarator had an unexpected kind {decl_kind}"
@@ -4014,6 +4029,25 @@ impl<'a> Context<'a> {
                 self.cur_span = outer_span;
                 Ok(path)
             }
+            // A string literal as a location: `"\004\002\006\006"[(flags) & 3]`, the
+            // kernel's `ACC_MODE()`. C makes a string literal an object -- an unnamed array
+            // of char with static storage -- so it is a legitimate subscript base and a
+            // legitimate operand of `&`, and `flatten_lvalue` is reached for the *base* of a
+            // subscript even when the whole expression is a pure read. It is also a
+            // compile-time constant: there is nothing to store into it and nothing in it to
+            // taint, the same reason `flatten_expr` lowers `sizeof`/`_Alignof` operands to a
+            // constant rather than walking them. So give it a location nothing else names,
+            // and the read lowers to a load that yields nothing. Falling through to the
+            // catch-all reported `not an lvalue: string_literal` and burned an anonymous
+            // temp -- the identical recovery, minus the false accusation.
+            "string_literal" | "concatenated_string" => Ok(RawPath::new(
+                VariableRef::new_local_idx(
+                    program[scope_view.fidx]
+                        .locals
+                        .get_or_intern(&self.allocator.next_temp()),
+                ),
+                ThinVec::new(),
+            )),
             "parenthesized_expression" | "parenthesized_declarator" => {
                 let inner = node.child(1).expect("missing inner expr");
                 self.flatten_lvalue(program, inner, source, scope_view)
@@ -4044,7 +4078,22 @@ impl<'a> Context<'a> {
             _ => match self.flatten_expr(program, node, source, scope_view)? {
                 Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
                 _ => {
-                    unexpected_ast(format!("not an lvalue: {}", node.kind()))?;
+                    // Spec 064's rule, applied to the store side: before blaming the
+                    // frontend, ask whether the parser reached here from well-formed source.
+                    // A node the recovery produced or re-parented names no location because
+                    // it is not the program -- the kernel's `min()` over a `typeof` of a cast
+                    // (a tree-sitter-c 0.24.1 grammar limit) leaves whole statements
+                    // re-parented into a chain of `assignment_expression`s that never
+                    // appeared in the source, and charging the frontend with "not an lvalue:
+                    // assignment_expression" asserts ctadl failed to support a construct
+                    // nobody wrote. Say once that this body holds recovery output, and drop
+                    // the store silently like every other node in the region.
+                    if recovery_region(node).is_some() {
+                        let func_name = scope_view.func_name.clone();
+                        self.report_unanalyzed_recovery(&func_name)?;
+                    } else {
+                        unexpected_ast(format!("not an lvalue: {}", node.kind()))?;
+                    }
                     // Recover by targeting a dead temp: this one store is dropped,
                     // the rest of the function still lowers.
                     let temp_name = self.allocator.next_temp();

@@ -2345,10 +2345,13 @@ fn alignof_of_an_expression_operand_is_a_grammar_limit() {
     // is reported `not an lvalue: alignof_expression` instead of being silently accepted.
     //
     // That is a correct diagnosis of the tree the front end is handed -- the tree is what is
-    // wrong -- and it is root cause (2) in `linux_kernel_gaps.md`, owned by spec 064's
-    // reclassification of parse-recovery debris. Exactly one corpus site has this shape
-    // (`__alignof__(tfm->__crt_ctx)`, `net__ipv4__tcp.c`), against 280 `ERR 78` warnings
-    // removed. `program_from_string` cannot be used here: it asserts the parse is clean.
+    // wrong -- and it is root cause (2) in `linux_kernel_gaps.md`. Spec 063 left the report
+    // charged to the frontend and named spec 064's reclassification as its owner; spec 067
+    // collected the debt, extending `recovery_region` to `flatten_lvalue`'s catch-all, so
+    // the one corpus site with this shape (`__alignof__(tfm->__crt_ctx)`, `net__ipv4__tcp.c`)
+    // is now reported against the source that could not be parsed. The construct is still
+    // rejected in strict mode -- `CTADL_ERROR_ON_AST` promotes source problems too -- which
+    // is what this asserts. `program_from_string` cannot be used here: it asserts a clean parse.
     let src = r"
         struct crypto_tfm { char __crt_ctx[1]; };
         unsigned f(struct crypto_tfm *tfm) { return __alignof__(tfm->__crt_ctx); }";
@@ -2361,10 +2364,12 @@ fn alignof_of_an_expression_operand_is_a_grammar_limit() {
 
     let _strict = super::force_error_on_ast();
     let err = super::parse_c_program(src).expect_err("strict mode must reject the recovered tree");
+    let err = err.to_string();
+    assert!(err.contains("not analyzed"), "unexpected error: {err}");
     assert!(
-        err.to_string()
-            .contains("not an lvalue: alignof_expression"),
-        "unexpected error: {err}"
+        !err.contains("not an lvalue"),
+        "a store target inside a body that did not parse must not be charged to the \
+         frontend: {err}"
     );
 }
 
@@ -3967,5 +3972,197 @@ fn parse_error_message_is_truncated() {
     assert!(
         msg.contains("chars elided"),
         "a cut quote must say how much was cut: {msg}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// The three rarest kernel gap classes (spec 067). Two are constructs -- GCC's
+// explicit-register variable and a string literal used as an array -- and the third turned
+// out not to be a construct at all.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn register_asm_variable_declares_an_ordinary_local() {
+    // GCC's explicit-register variable: `asm("eax")` says where `r` lives, not what it is.
+    // The declaration is otherwise ordinary, so the variable must be usable -- assigned
+    // from a parameter and returned, with the flow intact.
+    //
+    // The grammar is why this ever gapped: `declaration`'s `declarator` field covers a
+    // *sequence* (`_declaration_declarator` then an optional `gnu_asm_expression`), and
+    // tree-sitter distributes a field over every element, so one declared name yields two
+    // `declarator` children. The second is the annotation, and `walk_declaration` reported
+    // it as a declarator of an unexpected kind -- 25 times in the kernel census.
+    let src = r#"
+        int f(int a) {
+            register int r asm("eax");
+            r = a;
+            return r;
+        }"#;
+    let _ = super::take_reports();
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    // The flow above held before the fix too -- the *real* declarator is the loop's first
+    // child and lowered normally; it was the second child that drew the warning. So the
+    // report log is what actually pins this, and it is checked here rather than in a
+    // strict-mode twin because every corpus site sits in a body that also failed to parse
+    // (see `register_asm_variable_at_file_scope_is_not_a_gap`), where strict mode would
+    // stop on the parse error first.
+    assert_eq!(
+        super::take_reports(),
+        vec![],
+        "an explicit-register declaration must draw no report at all"
+    );
+
+    // The corpus's own spelling: x86's `__put_user` ladder, whose register variable takes
+    // its type from a `__typeof__` and its register from a concatenated string.
+    let corpus = r#"
+        int g(int *ufd, int v) {
+            register __typeof__(*(ufd)) __val_pu asm("%""rax");
+            __val_pu = v;
+            *ufd = __val_pu;
+            return 0;
+        }"#;
+    let _ = super::take_reports();
+    let _ = super::parse_c_program(corpus).expect("non-strict ingestion recovers");
+    for (attribution, msg) in super::take_reports() {
+        assert_ne!(
+            attribution, "frontend gap",
+            "the corpus spelling must not be charged to the frontend: {msg}"
+        );
+    }
+}
+
+#[test_log::test]
+fn register_asm_variable_at_file_scope_is_not_a_gap() {
+    // The spec named this shape -- `arch/x86/include/asm/current.h` via `thread_info.h`,
+    // one per translation unit -- as the exemplar, and the census disagrees: measured on
+    // the parse tree, all 30 corpus occurrences of it are at *file* scope, which
+    // `walk_declaration` never walks, and every warning the class produced came instead
+    // from the 23 function-local `register __typeof__(*(p)) __val_pu asm("%""rax");`
+    // declarations x86's `__put_user` expands to. So this is a boundary pin, not the pin:
+    // it holds that a file-scope explicit-register variable stays silent, which it did
+    // before the fix as well. `register_asm_variable_declares_an_ordinary_local` is where
+    // the class is actually pinned.
+    let _strict = super::force_error_on_ast();
+    let src = r#"
+        register unsigned long current_stack_pointer asm("rsp");
+        int f(int a) { return a; }"#;
+    super::parse_c_program(src)
+        .expect("a GCC explicit-register variable must not be reported as a frontend gap");
+}
+
+#[test_log::test]
+fn asm_label_on_a_declarator_carries_no_dataflow() {
+    // The other shape the same syntax spells: an asm label, renaming the symbol an object
+    // or function is emitted under. On a function the grammar puts the asm *inside* the
+    // `function_declarator` (so it never reaches `walk_declaration`'s declarator loop at
+    // all); on an object it is a second `declarator` child, exactly like the register case.
+    // Neither is a value: `g` must still be an ordinary call whose argument reaches the
+    // return, and the annotation must contribute no flow of its own.
+    let src = r#"
+        extern int g(int x) asm("real_g");
+        int f(int a) {
+            extern int myvar asm("othervar");
+            myvar = a;
+            return g(myvar);
+        }"#;
+    let _ = super::take_reports();
+    let (prog, has_error, _markup) =
+        super::parse_c_program(src).expect("an asm label must not be reported as a frontend gap");
+    assert!(!has_error, "this input must parse cleanly");
+    assert_eq!(
+        super::take_reports(),
+        vec![],
+        "an asm label must draw no report at all"
+    );
+    check_has_direct_call(&prog, "f", "g");
+}
+
+#[test_log::test]
+fn string_literal_subscript_is_a_constant() {
+    // The kernel's `ACC_MODE()` (`include/linux/fs.h`), reached by `build_open_flags` in
+    // `fs/open.c`: a constant lookup table spelled as a subscript on a string literal.
+    //
+    // A string literal is an object in C, so it is a legitimate subscript base, and
+    // `flatten_lvalue` resolves the base of every subscript -- read or write. There is
+    // nothing to store into it and nothing in it to taint, so the read lowers silently to a
+    // load of a location nothing else names. Strict mode pins that no gap is reported, and
+    // the summary pins the other half: indexing a constant table with a tainted index must
+    // not carry the index's taint into the result.
+    let _strict = super::force_error_on_ast();
+    let src = r#"
+        int f(int i) { return "\004\002\006\006"[i & 3]; }"#;
+    let (prog, has_error, _markup) =
+        super::parse_c_program(src).expect("a string-literal subscript must not be a frontend gap");
+    assert!(!has_error, "this input must parse cleanly");
+    let (s, _si) = get_summary(prog).unwrap();
+    check_does_not_return_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn a_store_target_in_a_damaged_body_is_a_source_problem() {
+    // The third class was never a construct. `min()` over a `typeof` of a cast --
+    // `__typecheck(x, y)` from `include/linux/minmax.h` -- is a tree-sitter-c 0.24.1
+    // grammar limit (spec 050's Findings), and the recovery from it re-parents the rest of
+    // the statement into a chain of `assignment_expression`s that appear nowhere in the
+    // source. `flatten_lvalue`'s catch-all then charged the frontend with "not an lvalue:
+    // assignment_expression" for a store position nobody wrote.
+    //
+    // `flatten_expr`'s catch-all has asked `recovery_region` this question since spec 064;
+    // this pins the store side asking it too. What must survive is the attribution, not the
+    // silence: the body is still named once as holding unanalyzed recovery output.
+    // `3[a]` is the construct, because it is the *smallest* store target that reaches
+    // `flatten_lvalue`'s catch-all from source that parses (see the clean-source twin
+    // below). What makes this case different is only the `case 1 ... 3` above it: the
+    // enclosing body no longer parsed, so nothing inside it is evidence about the frontend.
+    let src = r"
+        void f(int a, int b) {
+            switch (a) { case 1 ... 3: break; }
+            3[a] = b;
+        }";
+    let reports = reports_for(src);
+    for (attribution, msg) in &reports {
+        assert_ne!(
+            *attribution, "frontend gap",
+            "parse-recovery debris must not be charged to the frontend: {msg}"
+        );
+        assert!(
+            !msg.contains("not an lvalue"),
+            "unexpected gap report: {msg}"
+        );
+    }
+    assert!(
+        reports
+            .iter()
+            .any(|(_, msg)| msg.contains("function `f`") && msg.contains("not analyzed")),
+        "the damaged body must still be named once: {reports:?}"
+    );
+}
+
+#[test_log::test]
+fn a_non_lvalue_store_in_clean_source_is_still_a_frontend_gap() {
+    // The scoping pin for the re-attribution above, in the shape spec 064's
+    // `nested_function_definition_is_still_a_frontend_gap` takes: the suppression keys on
+    // the parse-recovery region, never on the node kind. A store whose target is not a
+    // location, in a body that parsed *cleanly*, is still something this frontend cannot
+    // place and must keep saying so -- otherwise the fix would read as "an
+    // `assignment_expression` in store position is fine", which it is not.
+    // The same store as the damaged-body test, with the parse error removed. `3[a] = b`
+    // is legal C -- a subscript is commutative, so this is `a[3] = b` -- and this frontend
+    // does not model a literal in base position, so it keeps saying so.
+    let src = r"
+        void f(int *a, int b) {
+            3[a] = b;
+        }";
+    let (_prog, has_error, _markup) = super::parse_c_program(src).expect("ingestion recovers");
+    assert!(!has_error, "this input must parse cleanly");
+
+    let _strict = super::force_error_on_ast();
+    let err = super::parse_c_program(src)
+        .expect_err("a non-location store target in clean source is still a gap")
+        .to_string();
+    assert!(
+        err.contains("not an lvalue: number_literal"),
+        "unexpected error: {err}"
     );
 }
