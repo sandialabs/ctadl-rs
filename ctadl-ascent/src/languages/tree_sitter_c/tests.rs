@@ -3563,3 +3563,192 @@ fn if_arm_return_then_statement_strict() {
         }";
     super::parse_c_program(src).expect("if-arm return + following statement must not gap");
 }
+
+// ---------------------------------------------------------------------------------------
+// Parse-recovery debris (spec 064). tree-sitter signals a syntax error in two ways, and
+// only one of them is a node kind: an `ERROR` node over text it could not parse, and --
+// once it resumes -- an ordinary well-formed subtree re-parented somewhere it does not
+// belong. Both are facts about the analyzed source, so both belong to `malformed_source`,
+// reported once per region; neither is a gap in this frontend.
+// ---------------------------------------------------------------------------------------
+
+/// The reports `parse_c_program` made while ingesting `src`, as `(attribution, message)`.
+/// Uses `parse_c_program` directly because `program_from_string` asserts a clean parse and
+/// every input here is deliberately unparsable.
+fn reports_for(src: &str) -> Vec<(&'static str, String)> {
+    let _ = super::take_reports();
+    super::parse_c_program(src).expect("non-strict ingestion must recover");
+    super::take_reports()
+}
+
+#[test_log::test]
+fn parse_error_is_a_source_problem_not_a_frontend_gap() {
+    // `case A ... B:` is a GNU case range, which tree-sitter-c 0.24.1 has no rule for (it is
+    // in every kernel TU, via linux/printk.h's printk_get_level). The parse error is a fact
+    // about the analyzed source, so the one report it draws is attributed to the source --
+    // it used to be logged as "frontend gap: Unknown token(2): ERROR: ... 3", which asserts
+    // ctadl is at fault for a construct no frontend change can make parse.
+    let src = r"
+        int f(int c) { switch (c) { case 1 ... 3: return 1; default: return 0; } }
+        struct S { int x; };
+        int g(int a) { return a; }";
+    let reports = reports_for(src);
+    assert_eq!(
+        reports.len(),
+        1,
+        "expected exactly one report for one parse error, got {reports:?}"
+    );
+    let (attribution, msg) = &reports[0];
+    assert_eq!(*attribution, "source problem", "wrong attribution: {msg}");
+    assert!(msg.contains("parse error"), "unexpected message: {msg}");
+    assert!(
+        msg.contains("ERROR: ... 3"),
+        "the message must still quote the unparsable construct (run-linux.sh's parse-error \
+         triage classifies it from this tail): {msg}"
+    );
+
+    // The strict switch still fires -- `CTADL_ERROR_ON_AST` promotes source problems too
+    // (`error_on_ast_promotes_source_problem`) -- but on the source, not on a frontend gap.
+    let _strict = super::force_error_on_ast();
+    let err = super::parse_c_program(src).expect_err("strict mode rejects the parse error");
+    let err = err.to_string();
+    assert!(err.contains("parse error"), "unexpected error: {err}");
+    assert!(
+        !err.contains("Unknown token") && !err.contains("Unsupported expression type"),
+        "nothing on this path may call unexpected_ast any more: {err}"
+    );
+}
+
+#[test_log::test]
+fn declarations_after_a_parse_error_are_not_reported_as_expressions() {
+    // The shape that dominates the kernel census, and it is NOT an `ERROR` node's children:
+    // tree-sitter recovers from the unparsable construct by re-parenting the declarations
+    // that follow into the enclosing `compound_statement`, where they look exactly like
+    // block-scope declarations. `walk_statement`'s catch-all handed each to `flatten_expr`,
+    // which reported the *declaration's* node kind as an unsupported expression -- 23,268
+    // "function_definition" and 8,373 "struct_specifier" warnings for 180 parse errors.
+    //
+    // Now the one parse error is reported once and the wreckage around it is skipped.
+    let src = r"
+        int f(int c) {
+            switch (c) { case 1 ... 3: return 1; default: return 0; }
+            struct S { int x; };
+            int g(int a) { return a; }
+        }";
+    let reports = reports_for(src);
+    for (attribution, msg) in &reports {
+        assert_ne!(
+            *attribution, "frontend gap",
+            "parse-recovery debris must not be charged to the frontend: {msg}"
+        );
+        assert!(
+            !msg.contains("Unsupported expression type"),
+            "unexpected gap report: {msg}"
+        );
+    }
+    // Exactly the two tiers, once each -- not once per re-parented node. The construct that
+    // could not be parsed, named; and the body that therefore holds recovery output, named.
+    assert_eq!(reports.len(), 2, "expected the two tiers, got {reports:?}");
+    assert!(
+        reports[0].1.contains("ERROR: ... 3"),
+        "first report must name the unparsable construct: {reports:?}"
+    );
+    assert!(
+        reports[1].1.contains("function `f`") && reports[1].1.contains("not analyzed"),
+        "second report must name the body that is not analyzed: {reports:?}"
+    );
+
+    // Strict mode is the second, independent pin: any surviving `unexpected_ast` call on
+    // this path would be a hard error naming the node kind.
+    let _strict = super::force_error_on_ast();
+    let err = super::parse_c_program(src)
+        .expect_err("strict mode still rejects the parse error itself")
+        .to_string();
+    assert!(
+        !err.contains("function_definition") && !err.contains("struct_specifier"),
+        "a re-parented declaration is still being reported as an expression: {err}"
+    );
+}
+
+#[test_log::test]
+fn declarations_after_a_parse_error_still_import() {
+    // Suppressing the *warning* must not suppress the *code*. `collect_functions` queries the
+    // whole tree, so a function the recovery re-parented into another function's body is
+    // still collected and lowered -- which is why the kernel corpus imports 12k functions
+    // despite a parse error in every TU. Pinned so a future "skip the region" optimisation
+    // cannot quietly drop them.
+    let src = r"
+        void f(int c) {
+            switch (c) { case 1 ... 3: return; default: return; }
+            int g(int a) { return a; }
+        }";
+    let (prog, has_error, _markup) = super::parse_c_program(src).expect("ingestion recovers");
+    assert!(has_error, "the input is deliberately unparsable");
+    assert!(
+        function_named(&prog, "g").is_some(),
+        "the re-parented definition of `g` must still be collected:\n{prog}"
+    );
+    let (summary, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&summary, &si, "g", 0, "");
+}
+
+#[test_log::test]
+fn nested_function_definition_is_still_a_frontend_gap() {
+    // The scoping pin: the suppression keys on the parse-recovery region, never on the node
+    // kind. A GNU nested function in a body that parsed *cleanly* is a real construct this
+    // frontend does not model (its body is lowered as a separate top-level function, so it
+    // does not see `f`'s locals), and it must keep saying so. Without this, spec 064's fix
+    // would read as "function_definition in statement position is fine", which it is not.
+    let src = r"
+        int f(int a) { int g(int x) { return x; } return g(a); }";
+    let (_prog, has_error, _markup) = super::parse_c_program(src).expect("ingestion recovers");
+    assert!(!has_error, "this input must parse cleanly");
+
+    let _strict = super::force_error_on_ast();
+    let err = super::parse_c_program(src)
+        .expect_err("a nested function in clean source is still a gap")
+        .to_string();
+    assert!(
+        err.contains("Unsupported expression type: function_definition"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
+fn parse_error_message_is_truncated() {
+    // The old message embedded the whole `ERROR` node. Preprocessed kernel source puts a
+    // macro expansion on one line, so a single warning ran to kilobytes -- the longest in
+    // the census was 23,268 characters -- and an embedded newline split one warning across
+    // log lines, so `grep -c` counted lines rather than warnings. The quote is now
+    // whitespace-collapsed and cut, with the elided count reported.
+    //
+    // The bound is 280 rather than the 200 the spec suggested, because the quote must stay
+    // long enough for `run-linux.sh`'s triage to find the grammar-limit marker in it; see
+    // `PARSE_ERROR_QUOTE_CHARS`. Either way the point of the criterion holds: the message
+    // is a constant length, not a slice of source.
+    // The x86 `get_user()` ladder, as `clang -E` leaves it: one line, and the `ERROR` node
+    // tree-sitter recovers it with is over 200 characters.
+    let src = r#"
+        int f(int *p) {
+            int r;
+            register __typeof__( __builtin_choose_expr(sizeof(*(p))<=sizeof(char),(unsigned char)0,__builtin_choose_expr(sizeof(*(p))<=sizeof(short),(unsigned short)0,__builtin_choose_expr(sizeof(*(p))<=sizeof(int),(unsigned int)0,__builtin_choose_expr(sizeof(*(p))<=sizeof(long),(unsigned long)0,(unsigned long long)0))))) v asm("ax");
+            r = v;
+            return r;
+        }"#;
+    let reports = reports_for(src);
+    assert_eq!(reports.len(), 1, "expected one report, got {reports:?}");
+    let (_attribution, msg) = &reports[0];
+    assert!(
+        msg.chars().count() <= 280,
+        "parse-error message is {} chars, must stay bounded: {msg}",
+        msg.chars().count()
+    );
+    assert!(
+        !msg.contains('\n'),
+        "a warning must stay on one line: {msg}"
+    );
+    assert!(
+        msg.contains("chars elided"),
+        "a cut quote must say how much was cut: {msg}"
+    );
+}

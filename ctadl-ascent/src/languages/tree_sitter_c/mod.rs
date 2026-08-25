@@ -655,6 +655,13 @@ struct Context<'a> {
     /// in another translation unit) simply takes the positional-element fallback, so an
     /// incomplete registry is always safe.
     struct_layouts: HashMap<String, Vec<MemberSlot>>,
+    /// `ERROR` nodes already reported as unparsable constructs, by `Node::id`, so one
+    /// syntax error draws one warning. See [`Context::report_unparsable_construct`].
+    reported_parse_errors: HashSet<usize>,
+    /// Functions whose body was already reported as holding parse-recovery output, so the
+    /// notice is one per function rather than one per node the recovery left behind (41,751
+    /// of them in the kernel census). See [`Context::report_unanalyzed_recovery`].
+    functions_with_recovery: HashSet<String>,
 }
 
 /// One data member in a [`Context::struct_layouts`] entry.
@@ -1893,15 +1900,73 @@ impl<'a> Context<'a> {
             "labeled_statement" => {
                 return self.walk_labeled_statement(source, program, scope_view, child);
             }
+            // A syntax error in statement position: a problem in the analyzed source,
+            // not a gap in this frontend. This is the position in which tree-sitter's
+            // ERROR node still names the construct that defeated it, so it is quoted --
+            // see `Context::report_unparsable_construct`.
             "ERROR" => {
-                let node_str = to_str(&child, source);
-                unexpected_ast(format!("Unknown token(2): {kind}: {node_str}"))?;
+                self.report_unparsable_construct(child, source)?;
             }
             _ => {
                 self.flatten_expr(program, child, source, scope_view)?;
             }
         }
         Ok(false)
+    }
+
+    /// Report an unparsable construct: an `ERROR` node met where a *statement* was
+    /// expected, which is the position in which tree-sitter's ERROR node still names the
+    /// construct that defeated it. Reported once per node, against the analyzed source.
+    ///
+    /// This is the same population the old `frontend gap: Unknown token(2): ERROR: ...`
+    /// warning covered (180 nodes in the kernel census), re-attributed and with the quote
+    /// bounded. `run-linux.sh`'s parse-error triage classifies these by the
+    /// `ERROR: <construct>` tail, so that tail is load-bearing -- do not drop it.
+    fn report_unparsable_construct(
+        &mut self,
+        error_node: Node<'_>,
+        source: &'a str,
+    ) -> Result<(), Error> {
+        if !self.reported_parse_errors.insert(error_node.id()) {
+            return Ok(());
+        }
+        let (quote, elided) = quote_construct(to_str(&error_node, source));
+        let elision = if elided > 0 {
+            format!(" (+{elided} chars elided)")
+        } else {
+            String::new()
+        };
+        malformed_source(format!(
+            "parse error{elision}; construct not parsed -- ERROR: {quote}"
+        ))
+    }
+
+    /// Report that a function's body contains parse-recovery output that is not analyzed,
+    /// once per function.
+    ///
+    /// Everything the recovery produced or re-parented is then skipped silently. Reporting
+    /// each such node as a construct the frontend failed to support is what blamed ctadl
+    /// 41,751 times in the kernel census -- for 180 actual parse errors -- and, worse,
+    /// described the wreckage as if it were the analyzed program: a `int foo(void) {...}`
+    /// tree-sitter re-parented into the previous function's body was logged as
+    /// "Unsupported expression type: function_definition".
+    ///
+    /// Per *function*, not per region, and deliberately without an `ERROR: <text>` tail.
+    /// The nodes on this path are in expression position, where an `ERROR` is a shard of
+    /// the recovery (`long`, `*`, `struct`, `{ return f(x`) rather than the construct that
+    /// failed -- quoting them would flood the triage with 1,600 "constructs" that are not
+    /// constructs. What the body did choke on is reported by
+    /// [`Context::report_unparsable_construct`]; what a reader needs here is which function
+    /// is not trustworthy.
+    fn report_unanalyzed_recovery(&mut self, func_name: &str) -> Result<(), Error> {
+        if self.functions_with_recovery.contains(func_name) {
+            return Ok(());
+        }
+        self.functions_with_recovery.insert(func_name.to_string());
+        malformed_source(format!(
+            "function `{func_name}`: tree-sitter parse-recovery output in this body is not \
+             analyzed (the code it displaced is not in the parse tree)"
+        ))
     }
 
     fn walk_declaration(
@@ -2984,11 +3049,26 @@ impl<'a> Context<'a> {
             // `"+r"` in/out operand lost its identity flow (the openssh `crypto_int*` shapes).
             "gnu_asm_expression" => self.flatten_gnu_asm(program, node, source, scope_view),
             _ => {
-                debug_print_tree(node, 0, None, None);
-                unexpected_ast(format!(
-                    "ERR 78: Unsupported expression type: {}",
-                    node.kind()
-                ))?;
+                // Before blaming the frontend, ask whether the parser even reached here
+                // from well-formed source. A node the recovery produced or re-parented is
+                // not a construct this frontend failed to support: say once that this
+                // body holds recovery output, and skip the rest of the wreckage silently.
+                // In the kernel census that is the difference between 41,751 "frontend
+                // gap" warnings and 180 honest parse errors -- the `int foo(void) {...}`
+                // logged as "Unsupported expression type: function_definition" is a
+                // perfectly good function tree-sitter re-parented into the *previous*
+                // function's body, and is imported and lowered normally by
+                // `collect_functions`, which queries the whole tree.
+                if recovery_region(node).is_some() {
+                    let func_name = scope_view.func_name.clone();
+                    self.report_unanalyzed_recovery(&func_name)?;
+                } else {
+                    debug_print_tree(node, 0, None, None);
+                    unexpected_ast(format!(
+                        "ERR 78: Unsupported expression type: {}",
+                        node.kind()
+                    ))?;
+                }
                 // Recover with a fresh temp nothing else reads or writes: this
                 // expression's value becomes opaque (no flows in or out), but the
                 // surrounding statement still lowers.
@@ -3944,13 +4024,33 @@ impl TempAllocator {
 /// recover and the user still gets useful results from the rest of the program. Set
 /// `CTADL_ERROR_ON_AST` (to any value) to promote every such report to a hard
 /// ingestion error, which is what you want when hunting frontend gaps.
-fn recoverable_report(attribution: &str, msg: String) -> Result<(), Error> {
+fn recoverable_report(attribution: &'static str, msg: String) -> Result<(), Error> {
+    #[cfg(test)]
+    REPORTS.with(|r| r.borrow_mut().push((attribution, msg.clone())));
     if error_on_ast() {
         Err(Error::TreeSitterParse(msg))
     } else {
         log::warn!("{attribution}: {msg} (recovering; set CTADL_ERROR_ON_AST to fail instead)");
         Ok(())
     }
+}
+
+// Test-only: every `recoverable_report` made on this thread, newest last. Lets a test assert
+// not just that ingestion survived but *what* was reported and who was blamed -- the
+// distinction spec 064 turns on, since a suppressed warning and a re-attributed one are both
+// invisible to a test that only checks the program came out. (A plain comment, not a doc
+// comment: rustdoc does not document items produced by a macro invocation.)
+#[cfg(test)]
+thread_local! {
+    static REPORTS: std::cell::RefCell<Vec<(&'static str, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Test-only: drain and return this thread's reports. Each `#[test]` runs on its own
+/// thread, so the log starts empty per test and needs no explicit reset.
+#[cfg(test)]
+fn take_reports() -> Vec<(&'static str, String)> {
+    REPORTS.with(|r| std::mem::take(&mut *r.borrow_mut()))
 }
 
 /// Whether AST/source problems are hard errors: `CTADL_ERROR_ON_AST` in the
@@ -3984,19 +4084,94 @@ fn force_error_on_ast() -> impl Drop {
     Reset
 }
 
+/// Attribution prefix of an [`unexpected_ast`] warning: this frontend is at fault.
+const FRONTEND_GAP: &str = "frontend gap";
+
+/// Attribution prefix of a [`malformed_source`] warning: the analyzed code is at fault.
+const SOURCE_PROBLEM: &str = "source problem";
+
+/// How much of an unparsable construct a parse-error warning quotes, in characters.
+/// Preprocessed kernel source puts a whole macro expansion on one line, so an `ERROR`
+/// node there is routinely kilobytes long -- the longest in the kernel census is 23,268
+/// characters -- and the old message embedded all of it.
+///
+/// 200 rather than something tighter because the quote has to stay *diagnostic*:
+/// `run-linux.sh`'s triage identifies the grammar limit behind each parse error by finding
+/// the `typeof(`/`...` marker in this text, and in the corpus's worst case (a
+/// `WRITE_ONCE(x, min_t(...))` expansion) that marker sits at character 142. A 120-char
+/// quote was tried first and left 9 of the census's 180 constructs unclassifiable.
+const PARSE_ERROR_QUOTE_CHARS: usize = 200;
+
+/// The parse-recovery region `node` belongs to, or `None` if the parser produced it
+/// from source it parsed cleanly.
+///
+/// tree-sitter signals a syntax error in two ways and only the first is a node kind:
+/// an `ERROR` node covering text it could not parse, and -- once it resumes -- an
+/// ordinary, perfectly well-formed subtree re-parented somewhere it does not belong.
+/// The kernel corpus is dominated by the second. An unparsable
+/// `__typeof(__builtin_choose_expr(...))` in a top-level declarator (`SYSCALL_DEFINE`)
+/// leaves the ~87 function definitions that follow it re-parented into the *previous*
+/// function's `compound_statement`, where each looks exactly like a GNU nested
+/// function. Not one of them is inside an `ERROR` node, so an ancestry-only test finds
+/// nothing; what marks them is that the body holding them did not parse.
+///
+/// So: the innermost enclosing `ERROR` node if there is one, else the innermost enclosing
+/// `compound_statement` whose own subtree failed to parse.
+///
+/// The `compound_statement` fallback deliberately stops at the *first* enclosing body
+/// rather than walking to the root. It has to: in `fs__read_write.c` the parse fails so
+/// badly that the **root node itself is an `ERROR`**, and in `net__ipv4__route.c` one
+/// top-level `ERROR` spans 2.1 MB of the 3.2 MB file. A rule that looked for damage
+/// anywhere above would excuse every gap in those translation units. Stopping at the first
+/// enclosing body keeps a construct inside a cleanly parsed body reported as the frontend
+/// gap it is, even when the function next to it is wreckage.
+fn recovery_region(node: Node<'_>) -> Option<Node<'_>> {
+    if node.is_error() {
+        return Some(node);
+    }
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        if n.is_error() {
+            return Some(n);
+        }
+        if n.kind() == "compound_statement" {
+            return n.has_error().then_some(n);
+        }
+        cur = n.parent();
+    }
+    None
+}
+
+/// The text of an unparsable construct, normalized for a one-line warning: runs of
+/// whitespace collapse to a single space (so one warning is one log line, and
+/// `grep -c` counts warnings rather than source lines) and the result is cut at
+/// [`PARSE_ERROR_QUOTE_CHARS`]. Returns the quote and how many characters were elided.
+fn quote_construct(text: &str) -> (String, usize) {
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let len = one_line.chars().count();
+    if len <= PARSE_ERROR_QUOTE_CHARS {
+        (one_line, 0)
+    } else {
+        (
+            one_line.chars().take(PARSE_ERROR_QUOTE_CHARS).collect(),
+            len - PARSE_ERROR_QUOTE_CHARS,
+        )
+    }
+}
+
 /// An AST shape the frontend does not lower (unknown statement kinds, unsupported
 /// expressions, declarators we don't recognize) — a gap in the frontend, not a
 /// problem in the analyzed source. Call sites recover by skipping the construct or
 /// substituting a fresh opaque temp.
 fn unexpected_ast(msg: String) -> Result<(), Error> {
-    recoverable_report("frontend gap", msg)
+    recoverable_report(FRONTEND_GAP, msg)
 }
 
 /// A construct the analyzed source itself misuses (`break` outside a loop, `goto` to
 /// an undefined label) — a problem in that code, not a frontend gap. Same switch as
 /// [`unexpected_ast`]; the warning attributes the fault to the source.
 fn malformed_source(msg: String) -> Result<(), Error> {
-    recoverable_report("source problem", msg)
+    recoverable_report(SOURCE_PROBLEM, msg)
 }
 
 /// Splits a `generic_expression` into its controlling expression and the *values* of its
