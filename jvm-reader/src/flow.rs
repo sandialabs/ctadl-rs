@@ -1,7 +1,7 @@
 // Instruction flow abstraction: iterate every instruction in a JAR with
 // Dataflow/Call/Other kind and source/destination locations.
 
-use crate::error::{ClassFileError, ClassFileResult};
+use crate::error::{ClassFileError, ClassFileResult, MethodContext};
 use crate::parse_utils::{read_i32_be, read_u16_be, read_u8};
 use crate::parser::ClassFileParser;
 use crate::types::{ClassFile, CpEntry, MethodInfo};
@@ -478,6 +478,32 @@ fn descriptor_return_slot_count(descriptor: &str) -> usize {
     }
 }
 
+/// Identify the method being simulated, for the error variants that report
+/// where a failure happened.
+///
+/// Each name falls back to a placeholder rather than failing: a method whose
+/// own name cannot be read is a worse error than the one being reported, and
+/// hiding the latter behind the former is what left these sites bare.
+fn method_context(cfg: &MethodBasicBlocks<'_>) -> Box<MethodContext> {
+    Box::new(MethodContext {
+        class_name: cfg
+            .class_file
+            .this_class_name()
+            .unwrap_or("<class-name-error>")
+            .to_string(),
+        method_name: cfg
+            .class_file
+            .get_utf8(cfg.method.name_index)
+            .unwrap_or("<method-utf8-error>")
+            .to_string(),
+        method_descriptor: cfg
+            .class_file
+            .get_utf8(cfg.method.descriptor_index)
+            .unwrap_or("<descriptor-utf8-error>")
+            .to_string(),
+    })
+}
+
 /// Normalize stack-related locations in a method so that all stack uses and
 /// definitions refer to function-wide stack slots instead of per-instruction
 /// StackInput/StackOutput.
@@ -492,8 +518,6 @@ pub fn normalize_stack_slots_for_method<'a>(
     let mut in_state: Vec<Option<StackState>> = vec![None; blocks_len];
     let mut out_state: Vec<Option<StackState>> = vec![None; blocks_len];
     let mut worklist: Vec<usize> = Vec::new();
-    let mut next_slot_id: StackSlotId = 0;
-    let mut handler_entry_slots: HashMap<usize, StackSlotId> = HashMap::new();
 
     in_state[0] = Some(StackState { slots: Vec::new() });
     worklist.push(0);
@@ -523,13 +547,17 @@ pub fn normalize_stack_slots_for_method<'a>(
             if s >= blocks_len {
                 continue;
             }
-            let propagated = if cfg.exception_edges.contains(&(b, s)) {
-                let slot = *handler_entry_slots.entry(s).or_insert_with(|| {
-                    let id = next_slot_id;
-                    next_slot_id += 1;
-                    id
-                });
-                StackState { slots: vec![slot] }
+            // A handler is entered with a one-deep stack holding the exception
+            // reference. Slot ids are positional everywhere else -- a slot's id
+            // is its depth (`remaining_len + i` in `simulate_block`) -- so the
+            // exception reference, at depth 0, is slot 0. Drawing it from a
+            // separate counter instead would make it the one non-positional id
+            // in the method: it could differ from a normal predecessor's slot
+            // at the same depth, and past 64 handlers it would run off the end
+            // of the id range `xtask`'s `assert_normalized` treats as valid.
+            let exception_edge = cfg.exception_edges.contains(&(b, s));
+            let propagated = if exception_edge {
+                StackState { slots: vec![0] }
             } else {
                 exit.clone()
             };
@@ -541,21 +569,7 @@ pub fn normalize_stack_slots_for_method<'a>(
                 Some(existing) => {
                     if existing.slots.len() != propagated.slots.len() {
                         return Err(ClassFileError::StackHeightMismatch {
-                            class_name: cfg
-                                .class_file
-                                .this_class_name()
-                                .unwrap_or("<class-name-error>")
-                                .to_string(),
-                            method_name: cfg
-                                .class_file
-                                .get_utf8(cfg.method.name_index)
-                                .unwrap_or("<method-utf8-error>")
-                                .to_string(),
-                            method_descriptor: cfg
-                                .class_file
-                                .get_utf8(cfg.method.descriptor_index)
-                                .unwrap_or("<descriptor-utf8-error>")
-                                .to_string(),
+                            method: method_context(cfg),
                             block: s,
                             block_pc: cfg.blocks[s].start_pc,
                             pred_block: b,
@@ -565,9 +579,16 @@ pub fn normalize_stack_slots_for_method<'a>(
                         });
                     }
                     if existing.slots != propagated.slots {
-                        return Err(ClassFileError::InvalidClassFile(
-                            "inconsistent operand stack layout at basic-block join",
-                        ));
+                        return Err(ClassFileError::StackLayoutMismatch {
+                            method: method_context(cfg),
+                            block: s,
+                            block_pc: cfg.blocks[s].start_pc,
+                            pred_block: b,
+                            pred_pc: cfg.blocks[b].start_pc,
+                            exception_edge,
+                            existing_slots: existing.slots.clone(),
+                            new_slots: propagated.slots.clone(),
+                        });
                     }
                 }
             }
@@ -784,9 +805,18 @@ fn simulate_block<'a>(
         let produce = stack_outputs.max(call_produce).max(misc_produce);
 
         if state.slots.len() < consume {
-            return Err(ClassFileError::InvalidClassFile(
-                "stack underflow in stack-slot simulation",
-            ));
+            return Err(ClassFileError::StackUnderflow {
+                method: Box::new(MethodContext {
+                    class_name: class_name.to_string(),
+                    method_name: method_name.to_string(),
+                    method_descriptor: method_desc.to_string(),
+                }),
+                pc: inst.pc,
+                opcode: inst.opcode,
+                mnemonic: inst.mnemonic,
+                consumed: consume,
+                stack_len: state.slots.len(),
+            });
         }
 
         // Rewrite StackOutput destinations using the *absolute* stack depth position
@@ -1049,6 +1079,7 @@ fn operand_byte_count(opcode: u8, _code: &[u8], _pc: usize) -> ClassFileResult<u
         0x12 => 1,
         0x13 | 0x14 => 2,
         0x15..=0x19 | 0x36..=0x3a => 1,
+        0xa9 => 1, // ret: local index u8 (the wide form is handled above)
         0x84 => 2, // iinc: index u8, const i8
         0xbc => 1,
         0xbd | 0xc0 | 0xc1 => 2,
@@ -1201,7 +1232,21 @@ fn mnemonic(opcode: u8) -> &'static str {
         0x82 => "ixor",
         0x83 => "lxor",
         0x84 => "iinc",
-        0x85..=0x93 => "conv_or_cmp",
+        0x85 => "i2l",
+        0x86 => "i2f",
+        0x87 => "i2d",
+        0x88 => "l2i",
+        0x89 => "l2f",
+        0x8a => "l2d",
+        0x8b => "f2i",
+        0x8c => "f2l",
+        0x8d => "f2d",
+        0x8e => "d2i",
+        0x8f => "d2l",
+        0x90 => "d2f",
+        0x91 => "i2b",
+        0x92 => "i2c",
+        0x93 => "i2s",
         0x94 => "lcmp",
         0x95 => "fcmpl",
         0x96 => "fcmpg",
@@ -1859,9 +1904,17 @@ fn misc_stack_effect(opcode: u8) -> (usize, usize) {
         // to InstructionKind::Other, so this is where their stack effect lives.
         0xaa | 0xab => (1, 0), // tableswitch, lookupswitch
 
-        // Returns
-        0xac..=0xb0 => (1, 0), // i/l/f/d/a return (slot-approx)
-        0xb1 => (0, 0),        // return
+        // Returns. `lreturn` and `dreturn` pop two words, like every other
+        // category-2 consumer.
+        0xac | 0xae | 0xb0 => (1, 0), // ireturn, freturn, areturn
+        0xad | 0xaf => (2, 0),        // lreturn, dreturn
+        0xb1 => (0, 0),               // return
+
+        // `jsr`/`ret`. Illegal from class version 51 on, so nothing current
+        // reaches them, but a pre-Java-7 artifact would: `jsr` pushes the
+        // return address it later hands to `ret`, which consumes nothing (it
+        // reads the address out of a local).
+        0xa8 | 0xc9 => (0, 1), // jsr, jsr_w
 
         // Object/array and type ops not covered by decode_dataflow.
         0xbe => (1, 1), // arraylength
@@ -1879,12 +1932,13 @@ fn misc_stack_effect(opcode: u8) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_dataflow, descriptor_param_slot_count, descriptor_parameter_info,
-        descriptor_returns_value, field_slot_width, instruction_length, misc_stack_effect,
-        stack_effect, ConstantValue, Location, MethodParameterInfo, MethodParameterKind,
+        compute_basic_blocks_for_method, decode_dataflow, descriptor_param_slot_count,
+        descriptor_parameter_info, descriptor_returns_value, field_slot_width, instruction_length,
+        misc_stack_effect, normalize_stack_slots_for_method, stack_effect, ClassFileError,
+        ClassFileResult, ConstantValue, Location, MethodParameterInfo, MethodParameterKind,
         ParameterSlotMap,
     };
-    use crate::types::{ClassFile, CpEntry, JvmString};
+    use crate::types::{ClassFile, CodeAttribute, CpEntry, ExceptionEntry, JvmString, MethodInfo};
 
     /// Constant-pool index of the one `CONSTANT_Class` in [`constant_pool_only`].
     const CONSTANT_POOL_CLASS_INDEX: u16 = 1;
@@ -2370,6 +2424,184 @@ mod tests {
             ordinals("(II)V", true),
             vec![Some(0), Some(1), Some(2), None]
         );
+    }
+
+    /// `lreturn` and `dreturn` pop two words like every other category-2
+    /// consumer. Giving all five value returns `(1, 0)` left a phantom slot,
+    /// which is inert only because a return block has no successors for it to
+    /// reach.
+    #[test]
+    fn wide_returns_pop_two_slots() {
+        assert_eq!(misc_stack_effect(0xac), (1, 0), "ireturn");
+        assert_eq!(misc_stack_effect(0xad), (2, 0), "lreturn");
+        assert_eq!(misc_stack_effect(0xae), (1, 0), "freturn");
+        assert_eq!(misc_stack_effect(0xaf), (2, 0), "dreturn");
+        assert_eq!(misc_stack_effect(0xb0), (1, 0), "areturn");
+        assert_eq!(misc_stack_effect(0xb1), (0, 0), "return");
+    }
+
+    /// `jsr`/`ret` are illegal from class version 51 on, so nothing current
+    /// exercises them -- but a pre-Java-7 artifact would, and a missing operand
+    /// byte desynchronizes the linear decoder for the rest of the method.
+    #[test]
+    fn jsr_and_ret_are_decoded() {
+        // ret takes a one-byte local index; the wide form takes two.
+        assert_eq!(instruction_length(&[0xa9, 0x01], 0).expect("ret"), 2);
+        assert_eq!(
+            instruction_length(&[0xc4, 0xa9, 0x01, 0x02], 0).expect("wide ret"),
+            4
+        );
+        // jsr and jsr_w keep the branch-offset lengths they already had.
+        assert_eq!(instruction_length(&[0xa8, 0x00, 0x03], 0).expect("jsr"), 3);
+        assert_eq!(
+            instruction_length(&[0xc9, 0x00, 0x00, 0x00, 0x05], 0).expect("jsr_w"),
+            5
+        );
+        // jsr pushes the return address it later hands to ret; ret consumes
+        // nothing, reading the address out of a local.
+        assert_eq!(misc_stack_effect(0xa8), (0, 1), "jsr");
+        assert_eq!(misc_stack_effect(0xc9), (0, 1), "jsr_w");
+        assert_eq!(misc_stack_effect(0xa9), (0, 0), "ret");
+    }
+
+    /// The numeric conversions had one shared mnemonic, `"conv_or_cmp"`, which
+    /// named neither the conversion nor the comparisons it swept up. It is what
+    /// the underflow diagnostics print, so a report could not say which
+    /// instruction failed.
+    #[test]
+    fn numeric_conversions_have_their_own_mnemonics() {
+        let expected = [
+            (0x85u8, "i2l"),
+            (0x86, "i2f"),
+            (0x87, "i2d"),
+            (0x88, "l2i"),
+            (0x89, "l2f"),
+            (0x8a, "l2d"),
+            (0x8b, "f2i"),
+            (0x8c, "f2l"),
+            (0x8d, "f2d"),
+            (0x8e, "d2i"),
+            (0x8f, "d2l"),
+            (0x90, "d2f"),
+            (0x91, "i2b"),
+            (0x92, "i2c"),
+            (0x93, "i2s"),
+        ];
+        for (opcode, name) in expected {
+            assert_eq!(super::mnemonic(opcode), name, "0x{opcode:02x}");
+        }
+        // The comparisons that used to share the arm keep their own names.
+        assert_eq!(super::mnemonic(0x94), "lcmp");
+        assert_eq!(super::mnemonic(0x98), "dcmpg");
+    }
+
+    // ================= Stack-slot simulation =================
+
+    /// Build a method whose whole body is `code`, with `handlers` as its
+    /// exception table, and run it through the CFG builder and the stack-slot
+    /// normalizer -- the two passes `basic_blocks_with_stack_slots` chains.
+    fn normalize(code: Vec<u8>, handlers: Vec<ExceptionEntry>) -> ClassFileResult<()> {
+        let cf = ClassFile {
+            magic: 0xCAFE_BABE,
+            minor_version: 0,
+            major_version: 52,
+            constant_pool: vec![
+                Some(CpEntry::Class { name_index: 2 }),
+                Some(CpEntry::Utf8(JvmString::Utf8("Demo".to_string()))),
+                Some(CpEntry::Utf8(JvmString::Utf8("run".to_string()))),
+                Some(CpEntry::Utf8(JvmString::Utf8("()V".to_string()))),
+            ],
+            access_flags: 0,
+            this_class: CONSTANT_POOL_CLASS_INDEX,
+            super_class: 0,
+            interfaces: Vec::new(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+            attributes: Vec::new(),
+            source_file: None,
+        };
+        let method = MethodInfo {
+            access_flags: 0x0008, // static
+            name_index: 3,
+            descriptor_index: 4,
+            attributes: Vec::new(),
+            code: Some(CodeAttribute {
+                max_stack: 4,
+                max_locals: 2,
+                code,
+                exception_table: handlers,
+                attributes: Vec::new(),
+                code_byte_offset_in_classfile: 0,
+            }),
+        };
+        let mut cfg = compute_basic_blocks_for_method(&cf, &method)?;
+        normalize_stack_slots_for_method(&mut cfg)
+    }
+
+    /// A handler is entered with the exception reference at depth 0, so its
+    /// entry slot id is 0 like every other slot at that depth. Drawing it from
+    /// a separate counter made it the one non-positional id in the method, so a
+    /// block reachable from both a handler and a normal edge compared unequal
+    /// layouts at equal heights and failed a join that is in fact consistent.
+    ///
+    /// The second handler is the one that matters: the first would draw id 0
+    /// from the counter too, and the defect would not show.
+    #[test]
+    fn a_handler_entry_slot_is_positional() {
+        // 0: aconst_null      protected by the handler at 4
+        // 1: goto +6 -> 7     leaves one word on the stack
+        // 4: pop              <- handler A, protected by the handler at 7
+        // 5: aconst_null
+        // 6: athrow
+        // 7: athrow           <- handler B: reached as a handler from the block
+        //                        at 4, and by the goto from the block at 0
+        let code = vec![0x01, 0xa7, 0x00, 0x06, 0x57, 0x01, 0xbf, 0xbf];
+        let handlers = vec![
+            ExceptionEntry {
+                start_pc: 0,
+                end_pc: 4,
+                handler_pc: 4,
+                catch_type: 0,
+            },
+            ExceptionEntry {
+                start_pc: 4,
+                end_pc: 7,
+                handler_pc: 7,
+                catch_type: 0,
+            },
+        ];
+        normalize(code, handlers).expect("handler and normal edges agree at the join");
+    }
+
+    /// The aggregate stack-effect check is the last one to fire, and it named
+    /// neither the class, the method nor the instruction. `lreturn` on a
+    /// one-deep stack reaches it: the opcode carries no dataflow, so nothing
+    /// upstream rewrites a `StackInput` and reports first.
+    #[test]
+    fn a_stack_underflow_names_the_instruction() {
+        // 0: iconst_m1   pushes one word
+        // 1: lreturn     consumes two
+        let err = normalize(vec![0x02, 0xad], Vec::new()).expect_err("underflow");
+        match err {
+            ClassFileError::StackUnderflow {
+                method,
+                pc,
+                opcode,
+                mnemonic,
+                consumed,
+                stack_len,
+            } => {
+                assert_eq!(method.class_name, "Demo");
+                assert_eq!(method.method_name, "run");
+                assert_eq!(method.method_descriptor, "()V");
+                assert_eq!(pc, 1);
+                assert_eq!(opcode, 0xad);
+                assert_eq!(mnemonic, "lreturn");
+                assert_eq!(consumed, 2);
+                assert_eq!(stack_len, 1);
+            }
+            other => panic!("expected StackUnderflow, got {other:?}"),
+        }
     }
 }
 

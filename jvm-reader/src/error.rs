@@ -1,5 +1,27 @@
 use core::fmt;
 
+/// The method a stack-slot simulation failure happened in.
+///
+/// Boxed by the variants that carry it: three `String`s are more than half of
+/// `ClassFileError`'s size budget, and that type sits in the `Err` of every
+/// `Result` the reader returns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MethodContext {
+    pub class_name: String,
+    pub method_name: String,
+    pub method_descriptor: String,
+}
+
+impl fmt::Display for MethodContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "class={} method={}{}",
+            self.class_name, self.method_name, self.method_descriptor
+        )
+    }
+}
+
 #[derive(Debug)]
 pub enum ClassFileError {
     InvalidMagic,
@@ -39,9 +61,7 @@ pub enum ClassFileError {
     /// Structured rather than a formatted message so callers can recognize it
     /// without matching on text (`xtask regression` counts these as skips).
     StackHeightMismatch {
-        class_name: String,
-        method_name: String,
-        method_descriptor: String,
+        method: Box<MethodContext>,
         /// Index and start pc of the block being entered.
         block: usize,
         block_pc: u32,
@@ -52,6 +72,45 @@ pub enum ClassFileError {
         existing_len: usize,
         /// Height `pred_block` arrives with.
         new_len: usize,
+    },
+    /// Two predecessors reach a basic block at the same operand-stack height
+    /// but with different slot identities.
+    ///
+    /// Slot ids are positional -- a slot's id is its depth -- so equal heights
+    /// normally imply equal layouts and this cannot fire. It is kept as a
+    /// consistency check on that invariant, and structured for the same reason
+    /// as [`ClassFileError::StackHeightMismatch`]: the layout, the edge and
+    /// whether the edge is an exception edge are what identify the cause.
+    StackLayoutMismatch {
+        method: Box<MethodContext>,
+        /// Index and start pc of the block being entered.
+        block: usize,
+        block_pc: u32,
+        /// Index and start pc of the predecessor supplying the new layout.
+        pred_block: usize,
+        pred_pc: u32,
+        /// Whether `pred_block` reaches `block` as an exception handler edge.
+        exception_edge: bool,
+        /// Layout already recorded for `block` from an earlier predecessor.
+        existing_slots: Vec<u32>,
+        /// Layout `pred_block` arrives with.
+        new_slots: Vec<u32>,
+    },
+    /// An instruction consumes more operand-stack words than the simulated
+    /// frame holds.
+    ///
+    /// Unlike the underflows reported while rewriting a specific `StackInput`,
+    /// this one is raised on the instruction's aggregate stack effect, so it
+    /// names no operand -- the opcode and the two depths are what locate it.
+    StackUnderflow {
+        method: Box<MethodContext>,
+        pc: u32,
+        opcode: u8,
+        mnemonic: &'static str,
+        /// Words the instruction's stack effect says it consumes.
+        consumed: usize,
+        /// Words the frame holds at that point.
+        stack_len: usize,
     },
     InvalidClassFile(&'static str),
     InvalidClassFileMessage(String),
@@ -131,9 +190,7 @@ impl fmt::Display for ClassFileError {
                 cp_index_suffix(cp_index)
             ),
             ClassFileError::StackHeightMismatch {
-                class_name,
-                method_name,
-                method_descriptor,
+                method,
                 block,
                 block_pc,
                 pred_block,
@@ -142,10 +199,42 @@ impl fmt::Display for ClassFileError {
                 new_len,
             } => write!(
                 f,
-                "inconsistent operand stack height at basic-block join: \
-                 class={class_name} method={method_name}{method_descriptor} \
+                "inconsistent operand stack height at basic-block join: {method} \
                  block {block} (pc {block_pc}) <- block {pred_block} (pc {pred_pc}), \
                  existing_len={existing_len}, new_len={new_len}"
+            ),
+            ClassFileError::StackLayoutMismatch {
+                method,
+                block,
+                block_pc,
+                pred_block,
+                pred_pc,
+                exception_edge,
+                existing_slots,
+                new_slots,
+            } => write!(
+                f,
+                "inconsistent operand stack layout at basic-block join: {method} \
+                 block {block} (pc {block_pc}) <- block {pred_block} (pc {pred_pc}){}, \
+                 existing={existing_slots:?}, new={new_slots:?}",
+                if *exception_edge {
+                    " [exception edge]"
+                } else {
+                    ""
+                }
+            ),
+            ClassFileError::StackUnderflow {
+                method,
+                pc,
+                opcode,
+                mnemonic,
+                consumed,
+                stack_len,
+            } => write!(
+                f,
+                "stack underflow in stack-slot simulation: {method} \
+                 pc={pc} opcode=0x{opcode:02x} mnem={mnemonic} \
+                 consumed={consumed} stack_len={stack_len}"
             ),
             ClassFileError::InEntry { entry, source } => write!(f, "in entry {entry}: {source}"),
             _ => write!(f, "{:?}", self),
@@ -173,7 +262,15 @@ pub type ClassFileResult<T> = Result<T, ClassFileError>;
 
 #[cfg(test)]
 mod tests {
-    use super::ClassFileError;
+    use super::{ClassFileError, MethodContext};
+
+    fn method(class_name: &str, method_name: &str, method_descriptor: &str) -> Box<MethodContext> {
+        Box::new(MethodContext {
+            class_name: class_name.to_string(),
+            method_name: method_name.to_string(),
+            method_descriptor: method_descriptor.to_string(),
+        })
+    }
 
     /// A whole-JAR failure must say which entry it came from; without it the
     /// only clue is the error kind, across thousands of classes.
@@ -196,9 +293,7 @@ mod tests {
     #[test]
     fn stack_height_mismatch_names_the_edge() {
         let err = ClassFileError::StackHeightMismatch {
-            class_name: "ResFileDecoder".to_string(),
-            method_name: "decode".to_string(),
-            method_descriptor: "(Ljava/lang/String;)V".to_string(),
+            method: method("ResFileDecoder", "decode", "(Ljava/lang/String;)V"),
             block: 17,
             block_pc: 221,
             pred_block: 14,
@@ -214,6 +309,66 @@ mod tests {
             "block 14 (pc 181)",
             "existing_len=0",
             "new_len=2",
+        ] {
+            assert!(msg.contains(needle), "{needle:?} missing from {msg:?}");
+        }
+    }
+
+    /// The layout join error used to be a bare `&'static str`, so the one shape
+    /// it can report -- a block reached from both a handler and a normal edge --
+    /// was the one thing it did not say.
+    #[test]
+    fn stack_layout_mismatch_names_the_edge_and_the_layouts() {
+        let err = ClassFileError::StackLayoutMismatch {
+            method: method(
+                "AbstractFilterExpressionConverter",
+                "convert",
+                "(Ljava/lang/String;)V",
+            ),
+            block: 5,
+            block_pc: 61,
+            pred_block: 3,
+            pred_pc: 40,
+            exception_edge: true,
+            existing_slots: vec![0],
+            new_slots: vec![7],
+        };
+        let msg = err.to_string();
+        for needle in [
+            "AbstractFilterExpressionConverter",
+            "convert(Ljava/lang/String;)V",
+            "block 5 (pc 61)",
+            "block 3 (pc 40)",
+            "[exception edge]",
+            "existing=[0]",
+            "new=[7]",
+        ] {
+            assert!(msg.contains(needle), "{needle:?} missing from {msg:?}");
+        }
+    }
+
+    /// The aggregate underflow error used to be a bare `&'static str` too --
+    /// the message the CVE report quotes for Yamcs and could not attribute to
+    /// any instruction.
+    #[test]
+    fn stack_underflow_names_the_instruction() {
+        let err = ClassFileError::StackUnderflow {
+            method: method("org/yamcs/Processor", "start", "()V"),
+            pc: 94,
+            opcode: 0xad,
+            mnemonic: "lreturn",
+            consumed: 2,
+            stack_len: 1,
+        };
+        let msg = err.to_string();
+        for needle in [
+            "org/yamcs/Processor",
+            "start()V",
+            "pc=94",
+            "opcode=0xad",
+            "mnem=lreturn",
+            "consumed=2",
+            "stack_len=1",
         ] {
             assert!(msg.contains(needle), "{needle:?} missing from {msg:?}");
         }
