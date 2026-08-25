@@ -22,9 +22,9 @@ use derive_builder::Builder;
 use packed_struct::prelude::*;
 
 use crate::facts::{
-    CallArgId, FlowEdge, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
-    FunctionId, IdMap, InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection,
-    TaintEndpoint, TaintState, isout,
+    CallArgId, CallString, FlowEdge, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex,
+    FormalType, FunctionId, IdMap, InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path,
+    TaintDirection, TaintEndpoint, TaintState, isout,
 };
 
 // same as a TaintEndpoint but with a functionId
@@ -190,6 +190,26 @@ pub struct QueryFacts {
     pub call: Vec<(PackedInsnSiteId, FunctionId)>,
     #[builder(default)]
     pub assign: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
+    /// Context-conditional assignments: `assign` rows that hold only under the calling context
+    /// their `CallString` names. Kept separate from `assign` on purpose -- folding them in would
+    /// union the contexts away, which is precisely the precision this table exists to keep, and
+    /// would also feed context-conditional empty-path copies into the union-find, merging two
+    /// copy classes unconditionally.
+    #[builder(default)]
+    pub context_assign: Vec<(
+        FunctionId,
+        FlowVariable,
+        Path,
+        FlowVariable,
+        Path,
+        CallString,
+    )>,
+    /// Resolved callees of dynamically dispatched sites: `(site function, site instruction,
+    /// target, context)`, an empty context meaning unconditional. `call` covers only the static
+    /// call graph -- the fixpoint never extends it -- so these are the only call/return edges a
+    /// resolved indirect site has.
+    #[builder(default)]
+    pub resolved_call: Vec<(FunctionId, crate::facts::InsnId, FunctionId, CallString)>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
     /// External (unmodeled) functions. Used to derive `absorbing_functions`: an
@@ -353,6 +373,33 @@ pub(crate) fn compute_copy_alias(
     out
 }
 
+/// Drops the `resolved_call` rows an *unconditional* resolution of the same `(site, target)`
+/// already dominates.
+///
+/// A row with an empty call string says "this site resolves to that target, no matter how the
+/// frame was entered"; a row with a non-empty one says "…when the stack looks like this". The
+/// former subsumes every one of the latter for the same pair, so keeping both would multiply the
+/// search's per-context state without adding an edge. This is the one subsumption the design
+/// takes, and it is taken here rather than in the fixpoint: the index has no reason to prefer one
+/// derivation over another, but the query pays per surviving context.
+///
+/// Rows are otherwise returned unchanged and in input order, so a caller's edge index stays
+/// deterministic.
+pub(crate) fn subsume_resolved_calls(
+    rows: &[(FunctionId, crate::facts::InsnId, FunctionId, CallString)],
+) -> Vec<(FunctionId, crate::facts::InsnId, FunctionId, CallString)> {
+    use std::collections::HashSet;
+    let unconditional: HashSet<(FunctionId, crate::facts::InsnId, FunctionId)> = rows
+        .iter()
+        .filter(|(_, _, _, cs)| cs.is_empty())
+        .map(|(f, i, t, _)| (*f, *i, *t))
+        .collect();
+    rows.iter()
+        .filter(|(f, i, t, cs)| cs.is_empty() || !unconditional.contains(&(*f, *i, *t)))
+        .cloned()
+        .collect()
+}
+
 /// Runs the query-phase taint analysis.
 ///
 /// The default regime is the demand-driven graph search ([`search::taint_search`]):
@@ -374,6 +421,14 @@ pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult 
 /// phase and a set of taint sources. Returns a relation containing the set of vertices tainted by
 /// each taint source. This is the closure (fixpoint) engine; the default regime is the
 /// demand-driven search in [`search`], which materializes only what its searches reach.
+///
+/// **Contexts are collapsed here.** This engine has no annotation to carry a call string on, so
+/// the two context-conditional tables are folded into their unconditional counterparts before
+/// the fixpoint runs: `context_assign` becomes plain `assign_like`, and `resolved_call` becomes
+/// plain `call`. The two regimes therefore agree on *which flows exist* modulo precision — this
+/// one finds everything the search finds and, where a call string would have pruned a flow, some
+/// more. That direction is deliberate: a fallback that silently found *fewer* flows than the
+/// default would be a trap.
 pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     ascent! {
         struct QueryEngine;
@@ -579,12 +634,34 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
             let label = src.label.clone();
     }
 
-    let copy_alias = compute_copy_alias(&facts.assign);
+    // The collapse (see this function's doc comment). Both folds happen before `copy_alias` is
+    // computed, so the union-find sees the context rows too -- which is exactly the imprecision
+    // the search regime avoids and this one accepts by construction.
+    let mut assign = facts.assign;
+    assign.extend(
+        facts
+            .context_assign
+            .into_iter()
+            .map(|(f, v1, p1, v2, p2, _cs)| (f, v1, p1, v2, p2)),
+    );
+    let mut call = facts.call;
+    call.extend(
+        facts
+            .resolved_call
+            .into_iter()
+            .filter_map(|(f, insn, target, _cs)| {
+                PackedInsnSiteId::try_from_parts(f, insn)
+                    .ok()
+                    .map(|site| (site, target))
+            }),
+    );
+
+    let copy_alias = compute_copy_alias(&assign);
 
     let mut engine = QueryEngine {
         formal_param: facts.formal_param,
-        call: facts.call,
-        assign_like: facts.assign,
+        call,
+        assign_like: assign,
         paths: facts.paths,
         external_function: facts.external_function,
         sources: facts.endpoints,

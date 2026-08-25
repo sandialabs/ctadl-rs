@@ -290,6 +290,18 @@ pub struct IndexArgs {
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub alias_rule: Option<bool>,
 
+    /// Collapse context-conditional assignments into unconditional ones during indexing.
+    ///
+    /// Off by default. The index derives a summary instantiation for each dynamically resolved
+    /// call, tagged with the calling context that resolved it; the query engine traverses those
+    /// under a matching context. This flag instead unions the contexts away at index time. It is
+    /// the A/B baseline for the query-side design, and the escape hatch if per-context query
+    /// state ever becomes a problem -- but it is strictly weaker: it cannot express a flow that
+    /// starts or ends *inside* a resolved callee, because whether such a flow crosses the call
+    /// depends on where the query's sources and sinks are.
+    #[arg(long)]
+    pub index_context_collapse: bool,
+
     /// Dump the index graph to a dot file
     #[arg(long)]
     pub dump_index_graph: Option<PathBuf>,
@@ -477,6 +489,7 @@ fn main() -> anyhow::Result<()> {
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
+                index_context_collapse: false,
                 dump_index_graph: args.dump_index_graph.clone(),
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
@@ -621,6 +634,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
+                index_context_collapse: false,
                 dump_index_graph: None,
             };
             index_artifacts_to_store(&index_args)?;
@@ -742,6 +756,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
             strategy: args.strategy,
             prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
             alias_rule: args.alias_rule.unwrap_or(true),
+            context_collapse: args.index_context_collapse,
             dump_index_graph: args.dump_index_graph.as_deref(),
         },
     )?;

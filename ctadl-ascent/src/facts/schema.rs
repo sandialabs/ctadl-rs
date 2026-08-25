@@ -10,8 +10,8 @@ use source_info::FileSpanId;
 use crate::error::Error;
 use crate::facts::parquet;
 use crate::facts::{
-    FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, ImportId, InsnId, Path,
-    TaintState,
+    CallString, FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, ImportId,
+    InsnId, Path, TaintState,
 };
 use crate::query_engine::QueryEndpoint;
 
@@ -111,6 +111,51 @@ pub mod summary {
     save_load!();
 }
 
+pub mod context_assign {
+    use super::*;
+    /// An assignment derived by instantiating a resolved callee's summary at a dynamically
+    /// dispatched call site, valid only under the calling context `call_string` names.
+    ///
+    /// Persisted (unlike the rest of the hybrid-inlining machinery) because the query engine
+    /// traverses these rows under a context annotation rather than having the index collapse
+    /// them into plain `assign_like`: collapsing unions the per-context answer away, and the
+    /// index worked to compute it. The call string is non-empty by invariant.
+    pub type Record = (
+        FunctionId,
+        FlowVariable,
+        Path,
+        FlowVariable,
+        Path,
+        CallString,
+    );
+    pub const COLUMNS: [&str; 6] = [
+        "func_id",
+        "dst_var",
+        "dst_path",
+        "src_var",
+        "src_path",
+        "call_string",
+    ];
+    pub const FILENAME: &str = "context_assign.parquet";
+    save_load!();
+}
+
+pub mod resolved_call {
+    use super::*;
+    /// The resolved callee of a dynamically dispatched site, under the context that resolves it.
+    /// An empty `call_string` means the resolution is unconditional (the target was stored in the
+    /// very frame holding the call); a non-empty one names the stack configuration it holds under.
+    ///
+    /// The call-graph edge a resolved indirect site otherwise has none of: `call` is an input
+    /// relation the fixpoint never extends, so without this table a flow that *starts or ends
+    /// inside* the resolved callee cannot cross the site at all — only a formal-to-out-formal
+    /// flow, which the callee's summary already describes, can.
+    pub type Record = (FunctionId, InsnId, FunctionId, CallString);
+    pub const COLUMNS: [&str; 4] = ["func_id", "insn_id", "target_id", "call_string"];
+    pub const FILENAME: &str = "resolved_call.parquet";
+    save_load!();
+}
+
 pub mod paths {
     use super::*;
     pub type Record = (Path,);
@@ -202,7 +247,8 @@ pub mod external_function {
 #[cfg(test)]
 mod tests {
     use crate::facts::{
-        CallTargetObject, FlowEdge, FlowVariable, FunctionId, InsnId, PackedInsnSiteId, Path,
+        CallString, CallTargetObject, FlowEdge, FlowVariable, FunctionId, InsnId, PackedInsnSiteId,
+        Path,
     };
 
     /// The `call_target_assign` schema encodes a [`CallTargetObject`] into a tag column
@@ -368,6 +414,85 @@ mod tests {
                 FlowEdge::Return(site)
             ]
         );
+        assert_eq!(loaded, records);
+    }
+
+    /// A [`CallString`] column encodes as a delimited string of its frames, so both ends of the
+    /// range must survive a round trip: the empty string (an *unconditional* resolution, which
+    /// is what tells the query engine an edge needs no context) and a multi-frame one (a real
+    /// stack configuration, whose frame *order* is what `refine`/`pop` read). Collapsing either
+    /// would silently change which flows a query can cross.
+    #[test]
+    fn resolved_call_call_string_round_trips() {
+        let site = |f: u32, i: u64| {
+            PackedInsnSiteId::try_from_parts(FunctionId::new(f), InsnId::new(i)).unwrap()
+        };
+        let multi = CallString::intern(&[site(1, 10), site(2, 20), site(3, 30)]);
+        let single = CallString::intern(&[site(4, 40)]);
+        let records: Vec<super::resolved_call::Record> = vec![
+            // Unconditional: the in-frame bypass's shape.
+            (
+                FunctionId::new(1),
+                InsnId::new(5),
+                FunctionId::new(99),
+                CallString::new(),
+            ),
+            (
+                FunctionId::new(2),
+                InsnId::new(6),
+                FunctionId::new(98),
+                single,
+            ),
+            (
+                FunctionId::new(3),
+                InsnId::new(7),
+                FunctionId::new(97),
+                multi,
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::resolved_call::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::resolved_call::try_load(dir.path()).unwrap();
+        assert_eq!(loaded, records);
+        // Frame order is load-bearing (the current frame is the *last*), so assert it explicitly
+        // rather than relying on `CallString`'s pointer equality to have caught a reversal.
+        assert_eq!(loaded[2].3.len(), 3);
+        assert_eq!(loaded[2].3.top(), Some(site(3, 30)));
+    }
+
+    /// The `context_assign` schema is the `assign` schema plus a [`CallString`]. Its rows are
+    /// non-empty by invariant, but the codec is shared with `resolved_call`, so this pins the
+    /// six-column shape and the path/variable columns riding alongside the context.
+    #[test]
+    fn context_assign_round_trips() {
+        let site = |f: u32, i: u64| {
+            PackedInsnSiteId::try_from_parts(FunctionId::new(f), InsnId::new(i)).unwrap()
+        };
+        let var = FlowVariable::default();
+        let cs = CallString::intern(&[site(1, 10), site(2, 20)]);
+        let records: Vec<super::context_assign::Record> = vec![
+            (
+                FunctionId::new(1),
+                var,
+                Path::empty(),
+                var,
+                Path::empty(),
+                cs,
+            ),
+            (
+                FunctionId::new(2),
+                var,
+                Path::empty(),
+                var,
+                Path::empty(),
+                CallString::intern(&[site(7, 70)]),
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::context_assign::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::context_assign::try_load(dir.path()).unwrap();
         assert_eq!(loaded, records);
     }
 }

@@ -177,6 +177,10 @@ pub struct IndexOptions<'a> {
     pub strategy: CallResolutionStrategy,
     pub prune_unreachable_cfg_nodes: bool,
     pub alias_rule: bool,
+    /// Collapse the context-conditional assignments into plain `assign_like`. See
+    /// [`crate::index_engine::IndexConfig::context_collapse`]; off by default, and the A/B
+    /// baseline for the query-side contexts rather than a feature.
+    pub context_collapse: bool,
     pub dump_index_graph: Option<&'a Path>,
 }
 
@@ -188,6 +192,7 @@ impl Default for IndexOptions<'_> {
             strategy: CallResolutionStrategy::Mixed,
             prune_unreachable_cfg_nodes: true,
             alias_rule: true,
+            context_collapse: false,
             dump_index_graph: None,
         }
     }
@@ -210,6 +215,7 @@ pub fn index(
         strategy,
         prune_unreachable_cfg_nodes,
         alias_rule,
+        context_collapse,
         dump_index_graph,
     } = opts;
     use crate::index_engine::phys_footprint_mb;
@@ -399,7 +405,10 @@ pub fn index(
         "[mem cp] after facts.try_save: {:.1} MB",
         phys_footprint_mb()
     );
-    let config = crate::index_engine::IndexConfig { alias_rule };
+    let config = crate::index_engine::IndexConfig {
+        alias_rule,
+        context_collapse,
+    };
     log::info!("indexing (computing the flow relation)");
     let result = taint_index_with_config(facts, config, Some(&sites));
 
@@ -632,6 +641,8 @@ pub fn query(
             .actual_param(index_facts.actual_param.clone())
             .call(index_facts.call.clone())
             .assign(index_result.assign_like)
+            .context_assign(index_result.context_assign)
+            .resolved_call(index_result.resolved_call)
             .paths(index_result.paths)
             .external_function(index_result.external_function);
         builder.build().unwrap()

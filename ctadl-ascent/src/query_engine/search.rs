@@ -20,9 +20,12 @@ The regime:
    ([`TaintSearchGraph`]). Expansion reaches the aliases of a node (its copy
    class, routed through the union-find representative; the bases of the loads
    that defined it) as well as its direct assignment successors. The search
-   threads a [`TaintState`] annotation along the edges so call/return matching
+   threads a [`PathState`] annotation along the edges so call/return matching
    is respected: a `Call` edge enters `Restricted`, and a `Return` edge is only
-   traversable while `Free`.
+   traversable while `Free`. The annotation also carries a [`CallString`]
+   *context obligation*, so the context-conditional edges of a dynamically
+   dispatched site — the contextual assignments and the resolved call/return
+   edges — are traversed only under a context they are consistent with.
 4. Sink endpoints are the search targets. Every sink reached gets a
    (breadth-first shortest) path from the source set, and found paths are
    reported through the existing means: the returned [`QueryResult`] carries
@@ -44,11 +47,11 @@ type HashMap<K, V> = hashbrown::HashMap<K, V, BuildHasherDefault<FxHasher>>;
 type HashSet<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 
 use crate::facts::{
-    CallArgId, FlowEdge, FlowVariable, FormalType, FunctionId, IdMap, InsnSiteId, Label,
-    PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintLevel, TaintState, isout,
+    CallArgId, CallString, FlowEdge, FlowVariable, FormalType, FunctionId, IdMap, InsnSiteId,
+    Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintLevel, TaintState, isout,
 };
 
-use super::{QueryEndpoint, QueryFacts, QueryResult, compute_copy_alias};
+use super::{QueryEndpoint, QueryFacts, QueryResult, compute_copy_alias, subsume_resolved_calls};
 
 /// A node of the implicit taint graph: a variable and access path within a
 /// function, plus the [`TaintLevel`] magnitude carried in-band. The level must
@@ -63,6 +66,76 @@ pub type TaintNode = (FunctionId, FlowVariable, Path, TaintLevel);
 /// lattice "collapses" to a plain reached state).
 type TaintVertex = (FunctionId, FlowVariable, Path);
 
+/// The label a search edge carries.
+///
+/// `FlowEdge` is what gets *persisted* (in `taint_edge.parquet`), and it has no room for a
+/// calling context; rather than widen a stored schema for a search-local concern, the search
+/// uses its own label and maps back to `FlowEdge` when it emits path edges. `Ctx` names the
+/// context the edge holds under; a contextual assign emits as an `Intra` step at the call site,
+/// and a contextual call/return keeps its `Call`/`Return`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Step {
+    /// An unconditional edge: valid whatever the calling context.
+    Flow(FlowEdge),
+    /// An edge derived from a context-conditional row, valid only under the call string it
+    /// carries. Traversable iff [`refine`] accepts it against the state's current obligation.
+    Ctx(CallString, FlowEdge),
+}
+
+impl Step {
+    /// The persisted [`FlowEdge`] this step reports as. A contextual step reports as the plain
+    /// edge of the same kind: the context is how the search *decided* to take it, not part of
+    /// the flow a consumer walks.
+    fn flow_edge(&self) -> FlowEdge {
+        match self {
+            Step::Flow(e) => *e,
+            Step::Ctx(_, e) => *e,
+        }
+    }
+}
+
+/// The search annotation: the one-bit call/return discipline plus the calling-context
+/// obligation accumulated along the path.
+///
+/// Deliberately *not* the persisted [`TaintState`]: that is a bool column of `taint.parquet`
+/// (`facts::schema::taint`), and the context is a search-local concern. `taint` rows are emitted
+/// from `state` alone. [`CallString`] is interned and `Copy`, so this stays `Copy` and satisfies
+/// [`LazyAnnotation`]'s `Eq + Hash` bound.
+///
+/// Cost note: a search state is `(node, annotation)`, so a vertex reached under *k* distinct
+/// contexts becomes *k* states. Contexts are introduced only by contextual edges and only shrink
+/// at returns, so *k* is bounded by the distinct call strings on the rows a search actually
+/// touches — zero on a target with no resolvable dispatch, which is the common case.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct PathState {
+    /// The call/return discipline: `Call` enters `Restricted`, `Return` needs `Free`.
+    pub state: TaintState,
+    /// What this path has committed to about the stack it is running on. Empty means "no
+    /// obligation yet", which is compatible with everything.
+    pub ctx: CallString,
+}
+
+/// The conjunction of two context obligations, or `None` if they cannot both hold.
+///
+/// A call string is ordered outermost-first, innermost-last (`push` appends, `pop` takes the
+/// last), so the *current* frame sits at the end. `[s1,s2]` and `[s2]` agree — both say "this
+/// frame was entered at s2"; the first adds that its caller was entered at s1 — so two
+/// obligations are jointly satisfiable exactly when one is a suffix of the other, and their
+/// conjunction is the longer (the more refined) of the two. The empty context is a suffix of
+/// everything, which is the "no obligation yet" case.
+fn refine(ctx: CallString, row: CallString) -> Option<CallString> {
+    let (long, short) = if ctx.len() >= row.len() {
+        (ctx, row)
+    } else {
+        (row, ctx)
+    };
+    if long[long.len() - short.len()..] == short[..] {
+        Some(long)
+    } else {
+        None
+    }
+}
+
 /// The implicit taint dataflow graph: edges are computed on demand from indexed
 /// program tables, never materialized. Edge expansion mirrors the closure
 /// engine's forward propagation rules — direct assigns with path substitution,
@@ -74,6 +147,16 @@ pub struct TaintSearchGraph {
     /// `assign_like` edges indexed by source variable:
     /// `(f, src) -> [(dst, dst_path, src_path)]`.
     assign_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path, Path)>>,
+    /// `context_assign` edges, indexed exactly as `assign_by_src` but carrying the call string
+    /// each row holds under: `(f, src) -> [(dst, dst_path, src_path, context)]`. These are the
+    /// summary instantiations of a resolved indirect call — the rows the index computes and
+    /// then has no rule to *use* in the frame that contains the call.
+    ctx_assign_by_src:
+        HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path, Path, CallString)>>,
+    /// The load-shaped `context_assign` rows, indexed by destination: the contextual twin of
+    /// `loads_by_dst`. Without it the alias back-flow that a collapse into `assign_like` would
+    /// have got for free is simply missing from the contextual rows.
+    ctx_loads_by_dst: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path, CallString)>>,
     /// Field/offset loads `x = a.q` (destination path empty, `q` non-empty)
     /// indexed by destination: `(f, x) -> [(a, q)]`. A load makes `x` an
     /// *alias* of `a.q`, so taint on `x` also lives at `a.q` — the back-flow
@@ -88,8 +171,18 @@ pub struct TaintSearchGraph {
     formal_ty: HashMap<(FunctionId, FlowVariable), FormalType>,
     /// Call sites indexed by callee, for formal-to-actual (function exit) steps.
     callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>>,
-    /// Callee of each call site, for actual-to-formal (call entry) steps.
-    callee_by_site: HashMap<PackedInsnSiteId, FunctionId>,
+    /// Callees of each call site, for actual-to-formal (call entry) steps.
+    callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>>,
+    /// Resolved callees of each dynamically dispatched site, with the context each resolution
+    /// holds under: the call-entry direction of `resolved_call`. Anchored on the *dispatch*
+    /// instruction the index recorded, so the call-arg vertices this fans out from are exactly
+    /// the ones that site's `actual_param` rows created — which is what keeps the argument
+    /// convention right without the engine having to know the frontend's.
+    resolved_by_site: HashMap<PackedInsnSiteId, Vec<(FunctionId, CallString)>>,
+    /// The same rows indexed by target: the *return* direction. This is the edge D4b is about —
+    /// a flow that starts or ends inside a resolved callee has no summary describing it, so a
+    /// summary instantiation, contextual or not, cannot carry it across the site.
+    resolved_by_target: HashMap<FunctionId, Vec<(PackedInsnSiteId, CallString)>>,
     /// The materialized access paths; a step producing a non-materialized path
     /// is dropped, the same gate the closure engine's `paths(p)` premises apply.
     paths: HashSet<Path>,
@@ -137,6 +230,33 @@ impl TaintSearchGraph {
             }
         }
 
+        // The contextual rows get their own two indices, mirroring `assign_by_src` and
+        // `loads_by_dst`. They are deliberately NOT added to those maps, nor to the union-find
+        // in `compute_copy_alias` below: most `context_assign` rows are empty-path call-arg
+        // copies, and a context-conditional copy entering the union-find merges two copy classes
+        // *unconditionally* — handing back exactly the imprecision the contexts exist to avoid.
+        // They are also not fed to `loads_by_src`, whose only consumer is the saturating rule.
+        let mut ctx_assign_by_src: HashMap<
+            (FunctionId, FlowVariable),
+            Vec<(FlowVariable, Path, Path, CallString)>,
+        > = HashMap::default();
+        let mut ctx_loads_by_dst: HashMap<
+            (FunctionId, FlowVariable),
+            Vec<(FlowVariable, Path, CallString)>,
+        > = HashMap::default();
+        for (f, dst, dp, src, sp, cs) in &facts.context_assign {
+            ctx_assign_by_src
+                .entry((*f, *src))
+                .or_default()
+                .push((*dst, *dp, *sp, *cs));
+            if dp.is_empty() && !sp.is_empty() {
+                ctx_loads_by_dst
+                    .entry((*f, *dst))
+                    .or_default()
+                    .push((*src, *sp, *cs));
+            }
+        }
+
         let formal_ty = facts
             .formal_param
             .iter()
@@ -144,10 +264,40 @@ impl TaintSearchGraph {
             .collect();
 
         let mut callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>> = HashMap::default();
-        let mut callee_by_site = HashMap::default();
+        let mut callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>> = HashMap::default();
         for (site, callee) in &facts.call {
             callers_by_callee.entry(*callee).or_default().push(*site);
-            callee_by_site.insert(*site, *callee);
+            callee_by_site.entry(*site).or_default().push(*callee);
+        }
+        for callees in callee_by_site.values_mut() {
+            callees.sort_unstable();
+            callees.dedup();
+        }
+
+        // The resolved-call edges, in both directions. `subsume_resolved_calls` first drops the
+        // conditional rows an unconditional resolution of the same (site, target) already
+        // dominates, so a site that resolves both ways costs one context instead of several.
+        let mut resolved_by_site: HashMap<PackedInsnSiteId, Vec<(FunctionId, CallString)>> =
+            HashMap::default();
+        let mut resolved_by_target: HashMap<FunctionId, Vec<(PackedInsnSiteId, CallString)>> =
+            HashMap::default();
+        for (f, insn, target, cs) in subsume_resolved_calls(&facts.resolved_call) {
+            let Ok(site) = PackedInsnSiteId::try_from_parts(f, insn) else {
+                continue;
+            };
+            resolved_by_site.entry(site).or_default().push((target, cs));
+            resolved_by_target
+                .entry(target)
+                .or_default()
+                .push((site, cs));
+        }
+        for targets in resolved_by_site.values_mut() {
+            targets.sort_unstable();
+            targets.dedup();
+        }
+        for sites in resolved_by_target.values_mut() {
+            sites.sort_unstable();
+            sites.dedup();
         }
 
         let paths = facts.paths.iter().map(|(p,)| *p).collect();
@@ -178,11 +328,15 @@ impl TaintSearchGraph {
 
         TaintSearchGraph {
             assign_by_src,
+            ctx_assign_by_src,
+            ctx_loads_by_dst,
             loads_by_dst,
             loads_by_src,
             formal_ty,
             callers_by_callee,
             callee_by_site,
+            resolved_by_site,
+            resolved_by_target,
             paths,
             copy_rep,
             copy_members,
@@ -193,9 +347,9 @@ impl TaintSearchGraph {
 
 impl LazySuccessors for TaintSearchGraph {
     type Node = TaintNode;
-    type Label = FlowEdge;
+    type Label = Step;
 
-    fn labeled_successors(&self, node: &TaintNode) -> Vec<(TaintNode, FlowEdge)> {
+    fn labeled_successors(&self, node: &TaintNode) -> Vec<(TaintNode, Step)> {
         let (f, v, p, level) = *node;
         let mut out = Vec::new();
 
@@ -210,7 +364,22 @@ impl LazySuccessors for TaintSearchGraph {
                 if let Some(p2) = p.substitute_prefix(sp, dp)
                     && self.paths.contains(&p2)
                 {
-                    out.push(((f, *dst, p2, level), FlowEdge::Intra));
+                    out.push(((f, *dst, p2, level), Step::Flow(FlowEdge::Intra)));
+                }
+            }
+        }
+
+        // The same step, for the context-conditional rows: a resolved callee's summary
+        // instantiated at the dispatch site. This is D4 — the index derives these and, before
+        // this rule, had no consumer that made one usable *where it sits*, so a flow consumed in
+        // the frame holding the indirect call was dropped. Whether the edge is actually taken is
+        // the annotation's call: `Step::Ctx` is traversable only under a compatible context.
+        if let Some(edges) = self.ctx_assign_by_src.get(&(f, v)) {
+            for (dst, dp, sp, cs) in edges {
+                if let Some(p2) = p.substitute_prefix(sp, dp)
+                    && self.paths.contains(&p2)
+                {
+                    out.push(((f, *dst, p2, level), Step::Ctx(*cs, FlowEdge::Intra)));
                 }
             }
         }
@@ -225,11 +394,25 @@ impl LazySuccessors for TaintSearchGraph {
         if let Some(loads) = self.loads_by_dst.get(&(f, v)) {
             for (a, q) in loads {
                 if p.is_empty() {
-                    out.push(((f, *a, *q, level), FlowEdge::Intra));
+                    out.push(((f, *a, *q, level), Step::Flow(FlowEdge::Intra)));
                 } else {
                     let qp = q.concat(&p);
                     if self.paths.contains(&qp) {
-                        out.push(((f, *a, qp, level), FlowEdge::Intra));
+                        out.push(((f, *a, qp, level), Step::Flow(FlowEdge::Intra)));
+                    }
+                }
+            }
+        }
+
+        // Field-alias back-flow for the contextual rows, the exact mirror of the block above.
+        if let Some(loads) = self.ctx_loads_by_dst.get(&(f, v)) {
+            for (a, q, cs) in loads {
+                if p.is_empty() {
+                    out.push(((f, *a, *q, level), Step::Ctx(*cs, FlowEdge::Intra)));
+                } else {
+                    let qp = q.concat(&p);
+                    if self.paths.contains(&qp) {
+                        out.push(((f, *a, qp, level), Step::Ctx(*cs, FlowEdge::Intra)));
                     }
                 }
             }
@@ -242,11 +425,11 @@ impl LazySuccessors for TaintSearchGraph {
         // two hops.
         if p.is_empty() || self.paths.contains(&p) {
             if let Some(rep) = self.copy_rep.get(&(f, v)) {
-                out.push(((f, *rep, p, level), FlowEdge::Intra));
+                out.push(((f, *rep, p, level), Step::Flow(FlowEdge::Intra)));
             }
             if let Some(members) = self.copy_members.get(&(f, v)) {
                 for m in members {
-                    out.push(((f, *m, p, level), FlowEdge::Intra));
+                    out.push(((f, *m, p, level), Step::Flow(FlowEdge::Intra)));
                 }
             }
         }
@@ -265,7 +448,7 @@ impl LazySuccessors for TaintSearchGraph {
                 for (dst, _q) in loads {
                     out.push((
                         (f, *dst, Path::empty(), TaintLevel::Saturating),
-                        FlowEdge::Intra,
+                        Step::Flow(FlowEdge::Intra),
                     ));
                 }
             }
@@ -281,7 +464,10 @@ impl LazySuccessors for TaintSearchGraph {
             if let Some(qs) = self.sink_ext_by_var.get(&(f, v)) {
                 for q in qs {
                     if q.len() > p.len() && q.is_extension_of(&p) {
-                        out.push(((f, v, *q, TaintLevel::Saturating), FlowEdge::Intra));
+                        out.push((
+                            (f, v, *q, TaintLevel::Saturating),
+                            Step::Flow(FlowEdge::Intra),
+                        ));
                     }
                 }
             }
@@ -302,7 +488,33 @@ impl LazySuccessors for TaintSearchGraph {
                 let call_arg = PackedCallArg::try_from_parts(insn_id, formal).unwrap();
                 out.push((
                     (func_id, FlowVariable::call_arg_packed(call_arg), p, level),
-                    FlowEdge::Return(*site),
+                    Step::Flow(FlowEdge::Return(*site)),
+                ));
+            }
+        }
+
+        // Formal-to-actual across a *dynamically resolved* call (D4b).
+        if let Some(fty) = self.formal_ty.get(&(f, v))
+            && let Some(formal) = v.as_formal()
+            && isout(&formal, *fty, &p)
+            && let Some(sites) = self.resolved_by_target.get(&f)
+        {
+            for (site, cs) in sites {
+                let InsnSiteId { func_id, insn_id } = InsnSiteId::try_from(site).unwrap();
+                let Ok(call_arg) = PackedCallArg::try_from_parts(insn_id, formal) else {
+                    continue;
+                };
+                let to = (func_id, FlowVariable::call_arg_packed(call_arg), p, level);
+                // An unconditional resolution is a plain return: it obeys the pop discipline
+                // like any other. A conditional one is a contextual edge, refined rather than
+                // popped — its call string describes the frame being returned *into*.
+                out.push((
+                    to,
+                    if cs.is_empty() {
+                        Step::Flow(FlowEdge::Return(*site))
+                    } else {
+                        Step::Ctx(*cs, FlowEdge::Return(*site))
+                    },
                 ));
             }
         }
@@ -312,10 +524,34 @@ impl LazySuccessors for TaintSearchGraph {
         if let Some(packed) = v.as_call_arg() {
             let call_arg_id = CallArgId::try_from(packed).unwrap();
             let site = PackedInsnSiteId::try_from_parts(f, call_arg_id.insn_id).unwrap();
-            if let Some(callee) = self.callee_by_site.get(&site) {
+            if let Some(callees) = self.callee_by_site.get(&site) {
                 let formal_var = FlowVariable::formal_index(call_arg_id.formal());
-                if self.formal_ty.contains_key(&(*callee, formal_var)) {
-                    out.push(((*callee, formal_var, p, level), FlowEdge::Call(site)));
+                // Every target of the site, not just one: a multi-target site is
+                // several independent entry edges (D4c).
+                for callee in callees {
+                    if self.formal_ty.contains_key(&(*callee, formal_var)) {
+                        out.push((
+                            (*callee, formal_var, p, level),
+                            Step::Flow(FlowEdge::Call(site)),
+                        ));
+                    }
+                }
+            }
+
+            // Actual-to-formal across a dynamically resolved call.
+            if let Some(targets) = self.resolved_by_site.get(&site) {
+                let formal_var = FlowVariable::formal_index(call_arg_id.formal());
+                for (target, cs) in targets {
+                    if self.formal_ty.contains_key(&(*target, formal_var)) {
+                        out.push((
+                            (*target, formal_var, p, level),
+                            if cs.is_empty() {
+                                Step::Flow(FlowEdge::Call(site))
+                            } else {
+                                Step::Ctx(*cs, FlowEdge::Call(site))
+                            },
+                        ));
+                    }
                 }
             }
         }
@@ -324,30 +560,95 @@ impl LazySuccessors for TaintSearchGraph {
     }
 }
 
-/// The same one-bit call/return discipline the formatter's realizable-path
-/// search uses (see the [`Annotation`](ctadl_ir::graph::Annotation) impl for
-/// [`TaintState`] in the formatter), applied during taint discovery itself: an
-/// `Intra` step preserves the state, a `Call` step enters `Restricted`, and a
-/// `Return` step is only traversable while `Free`.
-impl LazyAnnotation<TaintSearchGraph> for TaintState {
+/// The same one-bit call/return discipline the formatter's realizable-path search uses (see the
+/// [`Annotation`](ctadl_ir::graph::Annotation) impl for [`TaintState`] in the formatter), applied
+/// during taint discovery itself — plus the calling-context obligation that makes the
+/// context-conditional edges of a resolved indirect call safe to take.
+///
+/// The three rules, matching the three edge shapes:
+///
+/// - **Unconditional edge** ([`Step::Flow`]) — an `Intra` step preserves the state, a `Call`
+///   step enters `Restricted`, and a `Return` step is only traversable while `Free`. A `Return`
+///   additionally *pops*: when the obligation is non-empty its top frame must be this return's
+///   site, since the current frame sits at the end of a call string; a mismatch prunes.
+/// - **Contextual edge** ([`Step::Ctx`]) — traversable iff [`refine`] can conjoin the row's call
+///   string with the current obligation; the new obligation is that refinement. A contextual
+///   `Return` still needs `Free`, but it is refined rather than popped: its call string
+///   describes the frame it returns *into*, so it is an obligation being acquired, not
+///   discharged.
+/// - **`Call`** — pushes nothing, contextual or not.
+///
+/// The asymmetry between pushing and popping is deliberate. `resolvent` and `context_assign` are
+/// lattices keyed on their non-context columns, so the recorded call string is a *witness*, not an
+/// enumeration: a tuple derivable under two contexts records only the smaller. Pushing on `Call`
+/// and testing entry against that witness would reject flows entering through the merged-away site.
+/// Popping on `Return` is safe by comparison, because what it can prune are flows that *leave* the
+/// frame, and leaving already has a complete mechanism of its own: the index lifts a contextual
+/// flow reaching an out-formal into a `context_summary` and pops it into the caller. The residual
+/// gap — a flow that both starts inside the frame and returns has no summary counterpart, and the
+/// witness may name a different caller — is narrow; the mitigation, should it show up, is to clear
+/// the obligation on mismatch instead of pruning.
+impl LazyAnnotation<TaintSearchGraph> for PathState {
     fn start() -> Self {
-        TaintState::Free
+        PathState {
+            state: TaintState::Free,
+            ctx: CallString::new(),
+        }
     }
 
     fn expand(
         &self,
         _graph: &TaintSearchGraph,
         _from: &TaintNode,
-        label: &FlowEdge,
+        label: &Step,
         _to: &TaintNode,
     ) -> Option<Self> {
         match label {
-            FlowEdge::Intra => Some(*self),
-            FlowEdge::Call(_) => Some(TaintState::Restricted),
-            FlowEdge::Return(_) => match self {
-                TaintState::Free => Some(TaintState::Free),
-                TaintState::Restricted => None,
-            },
+            Step::Flow(FlowEdge::Intra) => Some(*self),
+            Step::Flow(FlowEdge::Call(_)) => Some(PathState {
+                state: TaintState::Restricted,
+                ctx: self.ctx,
+            }),
+            Step::Flow(FlowEdge::Return(site)) => {
+                if self.state != TaintState::Free {
+                    return None;
+                }
+                match self.ctx.top() {
+                    // No obligation: the plain pre-context behaviour.
+                    None => Some(*self),
+                    Some(top) if top == *site => {
+                        let (popped, _) = self.ctx.pop();
+                        Some(PathState {
+                            state: TaintState::Free,
+                            ctx: popped,
+                        })
+                    }
+                    // Returning through a site the obligation says we did not enter through.
+                    Some(_) => None,
+                }
+            }
+            Step::Ctx(row, edge) => {
+                let ctx = refine(self.ctx, *row)?;
+                match edge {
+                    FlowEdge::Intra => Some(PathState {
+                        state: self.state,
+                        ctx,
+                    }),
+                    FlowEdge::Call(_) => Some(PathState {
+                        state: TaintState::Restricted,
+                        ctx,
+                    }),
+                    FlowEdge::Return(_) => {
+                        if self.state != TaintState::Free {
+                            return None;
+                        }
+                        Some(PathState {
+                            state: TaintState::Free,
+                            ctx,
+                        })
+                    }
+                }
+            }
         }
     }
 }
@@ -451,7 +752,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
             }
         }
 
-        let search = find_annotated_paths_from_set(&graph, starts, |n, _s: &TaintState| {
+        let search = find_annotated_paths_from_set(&graph, starts, |n, _s: &PathState| {
             sink_nodes.contains_key(&(n.0, n.1, n.2))
         });
         states_total += search.states.len();
@@ -483,7 +784,9 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
             // Emission drops the level (the "collapse"): every reached state is a
             // plain tainted row, exactly as before.
             let ep = &endpoints[origin[i] as usize];
-            taint.push((st.node.0, st.annot, st.node.1, st.node.2, ep.clone()));
+            // Emission drops the context along with the level: `taint` is a persisted table
+            // whose state column is a bool, and the obligation is a search-local concern.
+            taint.push((st.node.0, st.annot.state, st.node.1, st.node.2, ep.clone()));
         }
 
         // One (breadth-first shortest) path per sink vertex reached: the
@@ -508,7 +811,10 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
                 let from = &search.states[w[0] as usize].node;
                 let st = &search.states[w[1] as usize];
                 taint_edge.insert((
-                    st.edge.unwrap(),
+                    // A contextual step reports as the plain edge of the same kind; the
+                    // formatter re-walks `taint_edge` with the ordinary `TaintState`
+                    // discipline and is unaffected by how the search decided to take it.
+                    st.edge.unwrap().flow_edge(),
                     from.0,
                     from.1,
                     from.2,
@@ -520,7 +826,13 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
             for i in path {
                 let st = &search.states[i as usize];
                 for sink in &sink_nodes[&vertex] {
-                    sink_tags.insert((st.node.0, st.annot, st.node.1, st.node.2, sink.clone()));
+                    sink_tags.insert((
+                        st.node.0,
+                        st.annot.state,
+                        st.node.1,
+                        st.node.2,
+                        sink.clone(),
+                    ));
                 }
             }
         }
@@ -548,10 +860,12 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         if !v.is_globals() && *call_arg_id.formal() >= 0 {
             tainted_insn.insert((site, src.label.clone(), *v, *p));
         }
-        if let Some(target) = graph.callee_by_site.get(&site)
-            && external.contains(target)
-        {
-            absorbing.insert((*target, src.clone(), call_arg_id.formal()));
+        if let Some(targets) = graph.callee_by_site.get(&site) {
+            for target in targets {
+                if external.contains(target) {
+                    absorbing.insert((*target, src.clone(), call_arg_id.formal()));
+                }
+            }
         }
     }
 
@@ -588,7 +902,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::facts::{FlowVertex, Label};
+    use crate::facts::{FlowVertex, FormalIndex, InsnId, Label};
 
     /// A single-field access path `.field`.
     fn field_path(field: &str) -> Path {
@@ -707,6 +1021,263 @@ mod tests {
         assert!(
             plain.taint_edge.is_empty(),
             "plain source at the bare path must not reach the `.field` sink"
+        );
+    }
+
+    /// D4c: a call site with several `call` rows is a *multi*-target site, and
+    /// the call-entry edge must fan out over every one of them. Building
+    /// `callee_by_site` with a plain `insert` kept whichever row loaded last, so
+    /// a flow into any other target silently vanished — while the datalog
+    /// regime, which joins `call` as a relation, found it. Both targets must get
+    /// an entry edge.
+    #[test]
+    fn multi_target_site_enters_every_callee() {
+        let caller = FunctionId::new(0);
+        let callee_a = FunctionId::new(1);
+        let callee_b = FunctionId::new(2);
+        let insn = InsnId::new(7);
+        let site = PackedInsnSiteId::try_from_parts(caller, insn).unwrap();
+        let formal = FormalIndex::new(0);
+        let call_arg = PackedCallArg::try_from_parts(insn, formal).unwrap();
+        let arg_var = FlowVariable::call_arg_packed(call_arg);
+        let formal_var = FlowVariable::formal_index(formal);
+
+        let facts = QueryFacts {
+            // Both targets are reachable from the one site.
+            call: vec![(site, callee_a), (site, callee_b)],
+            formal_param: vec![
+                (callee_a, formal_var, FormalType::ByVal),
+                (callee_b, formal_var, FormalType::ByVal),
+            ],
+            paths: vec![(Path::empty(),)],
+            ..Default::default()
+        };
+        let graph = TaintSearchGraph::new(&facts);
+
+        let succs = graph.labeled_successors(&(caller, arg_var, Path::empty(), TaintLevel::Plain));
+        let entered: Vec<FunctionId> = succs
+            .iter()
+            .filter(|(_, e)| matches!(e, Step::Flow(FlowEdge::Call(s)) if *s == site))
+            .map(|(n, _)| n.0)
+            .collect();
+        assert!(
+            entered.contains(&callee_a) && entered.contains(&callee_b),
+            "call entry must fan out over both targets, got {entered:?}"
+        );
+    }
+
+    /// [`refine`] is suffix compatibility, not identity: two obligations are jointly satisfiable
+    /// exactly when one is a suffix of the other (the current frame sits at the *end* of a call
+    /// string), and their conjunction is the longer one.
+    #[test]
+    fn refine_conjoins_suffix_compatible_contexts() {
+        let s = |f: u32, i: u64| {
+            PackedInsnSiteId::try_from_parts(FunctionId::new(f), InsnId::new(i)).unwrap()
+        };
+        let (a, b, c) = (s(1, 1), s(2, 2), s(3, 3));
+        let empty = CallString::new();
+        let ab = CallString::intern(&[a, b]);
+        let b_only = CallString::intern(&[b]);
+        let cb = CallString::intern(&[c, b]);
+        let a_only = CallString::intern(&[a]);
+
+        // Empty is a suffix of everything: no obligation yet, so anything refines it.
+        assert_eq!(refine(empty, ab), Some(ab));
+        assert_eq!(refine(ab, empty), Some(ab));
+        assert_eq!(refine(empty, empty), Some(empty));
+        // `[a,b]` and `[b]` agree that this frame was entered at `b`; the refinement is the
+        // longer, which additionally says the caller was entered at `a`.
+        assert_eq!(refine(ab, b_only), Some(ab));
+        assert_eq!(refine(b_only, ab), Some(ab));
+        // Identity.
+        assert_eq!(refine(ab, ab), Some(ab));
+        // `[a,b]` and `[c,b]` agree on this frame but disagree about the caller: incompatible.
+        assert_eq!(refine(ab, cb), None);
+        // `[a]` says this frame was entered at `a`; `[b]` says at `b`. Not a suffix either way.
+        assert_eq!(refine(a_only, b_only), None);
+        // A *prefix* is not a suffix: `[a,b]` vs `[a]` disagree about the current frame.
+        assert_eq!(refine(ab, a_only), None);
+    }
+
+    /// A `context_assign` row is traversable under a compatible obligation and pruned under an
+    /// incompatible one, and traversing it *acquires* the obligation.
+    #[test]
+    fn a_contextual_edge_is_traversed_only_under_a_compatible_context() {
+        let s = |f: u32, i: u64| {
+            PackedInsnSiteId::try_from_parts(FunctionId::new(f), InsnId::new(i)).unwrap()
+        };
+        let row = CallString::intern(&[s(1, 1)]);
+        let other = CallString::intern(&[s(2, 2)]);
+        let graph = TaintSearchGraph::new(&QueryFacts::default());
+        let node = (
+            FunctionId::new(0),
+            FlowVariable::default(),
+            Path::empty(),
+            TaintLevel::Plain,
+        );
+        let label = Step::Ctx(row, FlowEdge::Intra);
+
+        // No obligation yet: traversable, and the row's context becomes the obligation.
+        let start = <PathState as LazyAnnotation<TaintSearchGraph>>::start();
+        let got = start
+            .expand(&graph, &node, &label, &node)
+            .expect("compatible");
+        assert_eq!(got.ctx, row);
+        assert_eq!(got.state, TaintState::Free);
+
+        // An obligation the row contradicts prunes the edge outright.
+        let conflicting = PathState {
+            state: TaintState::Free,
+            ctx: other,
+        };
+        assert!(
+            conflicting.expand(&graph, &node, &label, &node).is_none(),
+            "a row whose context contradicts the obligation must not be traversable"
+        );
+    }
+
+    /// The pop discipline on an ordinary return: the obligation names the site the current frame
+    /// was entered through, so a return through any other site is not realizable and is pruned,
+    /// and a return through *that* site discharges it.
+    #[test]
+    fn an_ordinary_return_pops_its_site_and_prunes_a_mismatch() {
+        let s = |f: u32, i: u64| {
+            PackedInsnSiteId::try_from_parts(FunctionId::new(f), InsnId::new(i)).unwrap()
+        };
+        let (entered_at, elsewhere) = (s(1, 1), s(2, 2));
+        let outer = s(3, 3);
+        let graph = TaintSearchGraph::new(&QueryFacts::default());
+        let node = (
+            FunctionId::new(0),
+            FlowVariable::default(),
+            Path::empty(),
+            TaintLevel::Plain,
+        );
+        let st = PathState {
+            state: TaintState::Free,
+            ctx: CallString::intern(&[outer, entered_at]),
+        };
+
+        // Returning through the site the obligation names: allowed, and the frame is popped, so
+        // what survives is the obligation about the caller.
+        let ok = st
+            .expand(
+                &graph,
+                &node,
+                &Step::Flow(FlowEdge::Return(entered_at)),
+                &node,
+            )
+            .expect("returning through the entry site is realizable");
+        assert_eq!(ok.ctx, CallString::intern(&[outer]));
+
+        // Returning through any other site contradicts the obligation.
+        assert!(
+            st.expand(
+                &graph,
+                &node,
+                &Step::Flow(FlowEdge::Return(elsewhere)),
+                &node
+            )
+            .is_none(),
+            "a return through a site the context did not enter through must be pruned"
+        );
+
+        // And the pre-existing one-bit discipline is unchanged: a `Return` still needs `Free`.
+        let restricted = PathState {
+            state: TaintState::Restricted,
+            ctx: CallString::new(),
+        };
+        assert!(
+            restricted
+                .expand(
+                    &graph,
+                    &node,
+                    &Step::Flow(FlowEdge::Return(entered_at)),
+                    &node
+                )
+                .is_none(),
+            "a Return out of a Restricted state is still unrealizable"
+        );
+    }
+
+    /// D4b, end to end through the graph: a `resolved_call` row gives the dispatch site both a
+    /// call-entry edge into the resolved target and a return edge back out of it. Neither
+    /// exists in `call`, which the fixpoint never extends, so without these the flow cannot
+    /// cross the site at all unless the callee's summary happens to describe it.
+    #[test]
+    fn a_resolved_call_gives_the_site_entry_and_return_edges() {
+        let caller = FunctionId::new(0);
+        let target = FunctionId::new(1);
+        let insn = InsnId::new(7);
+        let site = PackedInsnSiteId::try_from_parts(caller, insn).unwrap();
+        let in_formal = FormalIndex::new(0);
+        let ret_formal = FormalIndex::new(-1);
+        let arg_var =
+            FlowVariable::call_arg_packed(PackedCallArg::try_from_parts(insn, in_formal).unwrap());
+        let in_var = FlowVariable::formal_index(in_formal);
+        let ret_var = FlowVariable::formal_index(ret_formal);
+
+        let facts = QueryFacts {
+            // Unconditional resolution, so the edges are plain `Step::Flow`.
+            resolved_call: vec![(caller, insn, target, CallString::new())],
+            formal_param: vec![
+                (target, in_var, FormalType::ByVal),
+                (target, ret_var, FormalType::ByVal),
+            ],
+            paths: vec![(Path::empty(),)],
+            ..Default::default()
+        };
+        let graph = TaintSearchGraph::new(&facts);
+
+        // Entry: the call-arg vertex at the dispatch site steps into the target's formal.
+        let entry = graph.labeled_successors(&(caller, arg_var, Path::empty(), TaintLevel::Plain));
+        assert!(
+            entry.iter().any(|(n, e)| n.0 == target
+                && n.1 == in_var
+                && matches!(e, Step::Flow(FlowEdge::Call(s)) if *s == site)),
+            "a resolved site must enter its target; got {entry:?}"
+        );
+
+        // Return: the target's out-formal steps back to the call-arg vertex at the same site.
+        let exit = graph.labeled_successors(&(target, ret_var, Path::empty(), TaintLevel::Plain));
+        assert!(
+            exit.iter().any(|(n, e)| n.0 == caller
+                && matches!(e, Step::Flow(FlowEdge::Return(s)) if *s == site)),
+            "a resolved site must carry a return out of its target; got {exit:?}"
+        );
+    }
+
+    /// The load-time subsumption: an unconditional resolution of a `(site, target)` pair makes
+    /// every conditional row for that pair redundant, so the search does not pay a context for
+    /// an edge it could take anyway. Rows for *other* pairs are untouched.
+    #[test]
+    fn an_unconditional_resolution_subsumes_the_conditional_ones() {
+        let s = |f: u32, i: u64| {
+            PackedInsnSiteId::try_from_parts(FunctionId::new(f), InsnId::new(i)).unwrap()
+        };
+        let f = FunctionId::new(0);
+        let insn = InsnId::new(1);
+        let dominated = FunctionId::new(2);
+        let conditional_only = FunctionId::new(3);
+        let cs1 = CallString::intern(&[s(9, 9)]);
+        let cs2 = CallString::intern(&[s(8, 8)]);
+
+        let rows = vec![
+            (f, insn, dominated, cs1),
+            (f, insn, dominated, CallString::new()),
+            (f, insn, dominated, cs2),
+            // A different target at the same site, with no unconditional row of its own.
+            (f, insn, conditional_only, cs1),
+        ];
+        let kept = subsume_resolved_calls(&rows);
+        assert_eq!(
+            kept,
+            vec![
+                (f, insn, dominated, CallString::new()),
+                (f, insn, conditional_only, cs1),
+            ],
+            "only the unconditional row survives for the dominated pair, and the \
+             conditional-only pair is untouched"
         );
     }
 }

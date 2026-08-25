@@ -287,11 +287,25 @@ impl IndexFacts {
 #[derive(Debug, Clone, Builder, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct IndexConfig {
     pub alias_rule: bool,
+    /// Collapse the context-conditional assignments into plain `assign_like` at index time,
+    /// unioning their calling contexts away.
+    ///
+    /// Off by default, and kept as the A/B baseline for the query-side design rather than as a
+    /// feature: it is strictly the weaker configuration. Collapsing makes a resolved call's
+    /// summary instantiation usable in the frame that holds the call (shape 2 / D4), but it
+    /// cannot reach the shapes whose flow starts or ends *inside* the resolved callee (D4b) --
+    /// those edges depend on where the query's sources and sinks are, which the index does not
+    /// know, so they cannot be pre-instantiated here at all. It is also the escape hatch if
+    /// query-state multiplication ever surprises us on a large corpus.
+    pub context_collapse: bool,
 }
 
 impl Default for IndexConfig {
     fn default() -> Self {
-        IndexConfig { alias_rule: true }
+        IndexConfig {
+            alias_rule: true,
+            context_collapse: false,
+        }
     }
 }
 
@@ -315,6 +329,10 @@ pub struct IndexStats {
     pub hybrid_context_assign: usize,
     pub hybrid_context_locals: usize,
     pub hybrid_context_summary: usize,
+    /// Rows of `resolved_call`: the *realized* fan-out of the dynamically dispatched sites,
+    /// one per (site, target, context). Complements the codegen-side dispatch cap, which
+    /// bounds what is emitted rather than what the fixpoint actually resolved.
+    pub hybrid_resolved_call: usize,
 }
 
 impl IndexStats {
@@ -367,6 +385,10 @@ impl IndexStats {
             self.final_locals,
             self.hybrid_context_summary
         );
+        log::debug!(
+            "hybrid inlining: resolved_call: {}",
+            self.hybrid_resolved_call
+        );
     }
 }
 
@@ -376,6 +398,22 @@ pub struct IndexResult {
     pub summary: Vec<FunctionSummary>,
     pub assign_like: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
     pub call_target_assign_like: Vec<(FunctionId, FlowVariable, Path, CallTargetObject)>,
+    /// Context-conditional assignments: a resolved callee's summary instantiated at a
+    /// dynamically dispatched site, valid only under the call string each row carries. Persisted
+    /// so the query engine can traverse them under a context annotation instead of the index
+    /// unioning the contexts away.
+    pub context_assign: Vec<(
+        FunctionId,
+        FlowVariable,
+        Path,
+        FlowVariable,
+        Path,
+        CallString,
+    )>,
+    /// The realized fan-out of the dynamically dispatched sites: `(site function, site
+    /// instruction, resolved target, context)`, with an empty context meaning unconditional.
+    /// This is the call-graph edge such a site otherwise lacks.
+    pub resolved_call: Vec<(FunctionId, InsnId, FunctionId, CallString)>,
     pub paths: Vec<(Path,)>,
     pub external_function: Vec<(FunctionId,)>,
     pub stats: IndexStats,
@@ -389,9 +427,12 @@ impl IndexResult {
         // here, in the parquet writer, not in the fixpoint. Report row counts too so peak
         // bytes can be attributed to a specific table.
         log::debug!(
-            "[mem cp] result.try_save start (summary={} assign_like={} paths={} ext={}): {:.1} MB",
+            "[mem cp] result.try_save start (summary={} assign_like={} context_assign={} \
+             resolved_call={} paths={} ext={}): {:.1} MB",
             self.summary.len(),
             self.assign_like.len(),
+            self.context_assign.len(),
+            self.resolved_call.len(),
             self.paths.len(),
             self.external_function.len(),
             phys_footprint_mb()
@@ -408,6 +449,11 @@ impl IndexResult {
             assign_like_rows,
             phys_footprint_mb()
         );
+        // The two context tables. Both are small next to `assign_like` -- `resolved_call` drops
+        // the cross product with the callee's summary rows that `context_assign` carries -- so
+        // they are written without their own memory checkpoints.
+        context_assign::try_save(&dir, self.context_assign)?;
+        resolved_call::try_save(&dir, self.resolved_call)?;
         let paths_rows = self.paths.len();
         paths::try_save(&dir, self.paths)?;
         log::debug!(
@@ -427,12 +473,16 @@ impl IndexResult {
         use crate::facts::schema::*;
         let summary = summary::try_load(&dir)?;
         let assign_like = assign::try_load(&dir)?;
+        let context_assign = context_assign::try_load(&dir)?;
+        let resolved_call = resolved_call::try_load(&dir)?;
         let paths = paths::try_load(&dir)?;
         let external_function = external_function::try_load(&dir)?;
         Ok(IndexResult {
             summary,
             assign_like,
             call_target_assign_like: Vec::new(),
+            context_assign,
+            resolved_call,
             paths,
             external_function,
             stats: IndexStats::default(),
@@ -1038,6 +1088,9 @@ pub fn taint_index_with_config(
             (func_id, insn_id, *target)
         })
         .collect();
+    // Read back after the fixpoint (the relation takes ownership), so keep the one bit the
+    // result construction below needs.
+    let context_collapse = config.context_collapse;
     let config_val = vec![(config,)];
 
     // Precompute `alias_of_formal` in its own small fixpoint, BEFORE the main ascent -- see
@@ -1115,6 +1168,21 @@ pub fn taint_index_with_config(
         lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
         // Invariant: call string is non-empty.
         lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, SmallestCallString);
+
+        // The resolved callee of a dynamically dispatched site, under the context that resolves
+        // it; an empty call string means unconditional. This is the single definition of "this
+        // site resolves to that function under this context", factored out of the two rules that
+        // resolve a call (contextual rule 3.1 and the in-frame bypass) -- which now join it
+        // instead of repeating its premises. Every other `callee_info` premise in this program
+        // resolves nothing.
+        //
+        // A plain relation, NOT a lattice keyed on `(func, insn, target)`: two *different*
+        // non-empty contexts resolving the same site to the same target are independent entry
+        // conditions -- each is a real stack configuration -- and a lattice would keep only one
+        // of them, losing flows at query time. `resolvent` accepts that witness-vs-enumeration
+        // trade because it is the hot relation; this one is small (it drops the cross product
+        // with the callee's summary rows that `context_assign` carries), so there is no reason to.
+        relation resolved_call(FunctionId, InsnId, FunctionId, CallString);
 
         // Sets up paths from input program with static info. Paths must remain finite so we
         // shouldn't add paths from constructed summaries directly.
@@ -1245,15 +1313,34 @@ pub fn taint_index_with_config(
             let call_site_id = PackedInsnSiteId::try_from_parts(*caller, arg.insn_id).unwrap(),
             if let Some(new_cs) = cs.push(call_site_id);
 
-        // 3.1: Contextual Assignment (seed). Given a resolvent that reaches a call site,
-        // instantiate a contextual assignment doing normal summary instantiation. The resolvent
-        // object itself and the dispatch key from the call site are used to determine the resolvent
-        // function. The context of the resolvent is associated with the assign.
-        context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), cs_lat.clone()) <--
+        // 3.0a: Contextual call resolution. A resolvent that reaches a call site resolves it:
+        // the resolvent object plus the site's dispatch key name the concrete callee, and the
+        // resolvent's context is the context under which that resolution holds. These are the
+        // premises rule 3.1 used to carry; it now joins the result. `resolvent`'s call string is
+        // non-empty by invariant, so every row this rule emits is a *conditional* resolution.
+        resolved_call(caller, call_insn, resolvent_func, *cs) <--
             callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
             locals(caller, v_rec, p_rec, n, p),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
-            callee_resolvents(resolvent_obj, dispatch_key, resolvent_func),
+            if let SmallestCallString::Value(cs) = cs_lat,
+            callee_resolvents(resolvent_obj, dispatch_key, resolvent_func);
+
+        // 3.0b: In-frame call resolution. The call target is stored in the very frame holding the
+        // indirect / virtual call, so the resolution is unconditional and carries no context.
+        // These are the premises of the local-dispatch bypass rule below, which now joins the
+        // result.
+        resolved_call(func_id, insn_id, resolve_tgt, CallString::new()) <--
+            callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
+            call_target_assign_like(func_id, arg, arg_p, cto),
+            callee_resolvents(cto, dispatch_key, resolve_tgt);
+
+        // 3.1: Contextual Assignment (seed). Instantiate the resolved callee's summary at the
+        // call site, tagged with the context that resolved it. The `!cs.is_empty()` guard keeps
+        // `context_assign`'s non-empty-call-string invariant: the empty-string rows are 3.0b's,
+        // and they belong to the unconditional `assign_like` head further down.
+        context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), SmallestCallString::Value(*cs)) <--
+            resolved_call(caller, call_insn, resolvent_func, cs),
+            if !cs.is_empty(),
             summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
             let v2 = call_arg!(*call_insn, *n2_sum),
             let v1 = call_arg!(*call_insn, *n1_sum);
@@ -1317,12 +1404,22 @@ pub fn taint_index_with_config(
             if isout(&n1, *formal_ty, p1),
             if n1 != *n2 || p1 != p2;
 
-        // Local virtual / indirect call and resolvent, bypassing the resolvent / summary machinery
+        // The collapse, behind `--index-context-collapse` (see `IndexConfig::context_collapse`).
+        // One rule: every contextual assignment also becomes an unconditional one, so the frame
+        // holding the indirect call can use it -- at the cost of every context the index
+        // computed. Off by default; the query engine traverses `context_assign` under its
+        // context instead, which keeps the contexts *and* reaches the shapes this cannot.
+        assign_like(f, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
+            context_assign(f, v1, p1, v2, p2, _),
+            config(c),
+            if c.context_collapse;
+
+        // Local virtual / indirect call and resolvent, bypassing the resolvent / summary
+        // machinery: the same summary instantiation as rule 3.1, with no context to carry, so it
+        // lands in plain `assign_like`. The `cs.is_empty()` guard selects exactly 3.0b's rows.
         assign_like(func_id, v1.into(), p1, v2.into(), p2) <--
-            callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
-            call_target_assign_like(func_id, arg, arg_p, cto),
-            callee_resolvents(cto, dispatch_key, resolve_tgt),
-            let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+            resolved_call(func_id, insn_id, resolve_tgt, cs),
+            if cs.is_empty(),
             summary(resolve_tgt, n1, p1, n2, p2),
             let n2_id = PackedCallArg::try_from_parts(*insn_id, *n2).unwrap(),
             let n1_id = PackedCallArg::try_from_parts(*insn_id, *n1).unwrap(),
@@ -1509,6 +1606,7 @@ pub fn taint_index_with_config(
         hybrid_context_assign: prog.context_assign.len(),
         hybrid_context_locals: prog.context_locals.len(),
         hybrid_context_summary: prog.context_summary.len(),
+        hybrid_resolved_call: prog.resolved_call.len(),
     };
     stats.log();
 
@@ -1516,6 +1614,38 @@ pub fn taint_index_with_config(
         summary: prog.summary.into_iter().collect(),
         assign_like: assign_like_out,
         call_target_assign_like: prog.call_target_assign_like.into_iter().collect(),
+        // `context_assign` is a lattice whose value column is a `SmallestCallString`; the
+        // persisted column is a bare `CallString`. A row only exists because some rule derived it
+        // with a `Value`, so `Bottom` (the join identity) never survives to here -- but it is
+        // filtered rather than unwrapped, since an unconditional row would violate the relation's
+        // non-empty-call-string invariant downstream.
+        //
+        // Under `--index-context-collapse` both context tables are withheld instead. That is
+        // what makes the flag a real A/B rather than an addition: the collapse rule above has
+        // already folded every contextual assignment into `assign_like`, so shipping the rows
+        // as well would give the query engine both regimes at once -- the per-context state the
+        // flag exists to avoid, on top of edges it can already take unconditionally. Withheld
+        // rather than skipped: the tables are still written (empty), so the on-disk format is
+        // the same either way.
+        context_assign: if context_collapse {
+            Vec::new()
+        } else {
+            prog.context_assign
+                .into_iter()
+                .filter_map(|(f, v1, p1, v2, p2, cs)| match cs {
+                    SmallestCallString::Value(cs) => Some((f, v1, p1, v2, p2, cs)),
+                    SmallestCallString::Bottom => None,
+                })
+                .collect()
+        },
+        // Withheld under the same flag, and for the reason the flag's own doc comment gives:
+        // the collapse baseline is the configuration *without* query-side call/return edges at
+        // a resolved site, which is exactly what makes it the weaker one.
+        resolved_call: if context_collapse {
+            Vec::new()
+        } else {
+            prog.resolved_call.into_iter().collect()
+        },
         paths: prog.paths.into_iter().collect(),
         external_function: facts.external_function,
         stats,
@@ -1526,4 +1656,169 @@ pub fn taint_index_with_config(
         std::mem::size_of::<FlowVariable>()
     );
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::facts::{CallDispatchKey, FormalIndex};
+
+    /// Builds a `PackedInsnSiteId` from raw ids.
+    fn site(f: u32, i: u64) -> PackedInsnSiteId {
+        PackedInsnSiteId::try_from_parts(FunctionId::new(f), InsnId::new(i)).unwrap()
+    }
+
+    /// A `ByVal` in-formal and its `-1` return slot, for a function with one parameter.
+    fn one_param_signature(f: FunctionId) -> Vec<(FunctionId, FlowVariable, FormalType)> {
+        vec![
+            (
+                f,
+                FlowVariable::formal_index(FormalIndex::new(0)),
+                FormalType::ByVal,
+            ),
+            (
+                f,
+                FlowVariable::formal_index(FormalIndex::new(-1)),
+                FormalType::ByVal,
+            ),
+        ]
+    }
+
+    /// The in-frame arm of call resolution: the function pointer is stored in the very frame
+    /// that makes the indirect call, so the resolution holds unconditionally and the
+    /// `resolved_call` row carries an *empty* call string.
+    ///
+    /// The empty string is not cosmetic -- it is what routes the row to the unconditional
+    /// `assign_like` head rather than to `context_assign`, and what lets the query engine take
+    /// the edge under any context.
+    #[test]
+    fn in_frame_dispatch_resolves_with_an_empty_call_string() {
+        let main = FunctionId::new(1);
+        let target = FunctionId::new(2);
+        let fp = FlowVariable::local("fp".into());
+        let call_insn = InsnId::new(10);
+        let cto = CallTargetObject::FunctionId(target);
+
+        let facts = IndexFacts {
+            formal_param: one_param_signature(target),
+            // `fp = &target`, in `main`.
+            call_target_assign: vec![(site(1, 9), FlowVertex(fp, Path::empty()), cto.clone())],
+            // `fp(...)`, in `main`.
+            callee_info: vec![(
+                site(1, call_insn.id),
+                FlowVertex(fp, Path::empty()),
+                CallDispatchKey::C,
+            )],
+            callee_resolvents: vec![(cto, CallDispatchKey::C, target)],
+            // The callee passes its argument to its return, so it has a summary to instantiate.
+            summary: vec![(
+                target,
+                FormalIndex::new(-1),
+                Path::empty(),
+                FormalIndex::new(0),
+                Path::empty(),
+            )],
+            ..Default::default()
+        };
+
+        let result = taint_index(facts);
+        let rows: Vec<_> = result
+            .resolved_call
+            .iter()
+            .filter(|(f, i, t, _)| *f == main && *i == call_insn && *t == target)
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "expected exactly one resolution of the in-frame site, got {rows:?}"
+        );
+        assert!(
+            rows[0].3.is_empty(),
+            "an in-frame resolution is unconditional, so its call string must be empty; got {}",
+            rows[0].3
+        );
+    }
+
+    /// The contextual arm: the function pointer arrives from a *caller*, so the resolution holds
+    /// only under the call string that pushed it down -- and the `resolved_call` row must carry
+    /// exactly that string, naming the caller's call site.
+    ///
+    /// This is the row the query engine turns into a context-conditional call/return edge; a
+    /// resolution recorded without its context would be a claim the site always reaches that
+    /// target, which is not what the index derived.
+    #[test]
+    fn caller_supplied_dispatch_resolves_under_the_resolvents_call_string() {
+        let run = FunctionId::new(2);
+        let target = FunctionId::new(3);
+        let fp = FlowVariable::local("fp".into());
+        // `main` calls `run(fp)` at insn 20; `run` invokes its formal 0 at insn 30.
+        let main_call_site = site(1, 20);
+        let indirect_insn = InsnId::new(30);
+        let cto = CallTargetObject::FunctionId(target);
+
+        let mut formal_param = one_param_signature(run);
+        formal_param.extend(one_param_signature(target));
+
+        let facts = IndexFacts {
+            formal_param,
+            // `run(fp)`: the pointer is the call's argument 0.
+            actual_param: vec![(
+                main_call_site,
+                FormalIndex::new(0),
+                FlowVertex(fp, Path::empty()),
+            )],
+            call: vec![(main_call_site, run)],
+            // `fp = &target`, in `main`.
+            call_target_assign: vec![(site(1, 19), FlowVertex(fp, Path::empty()), cto.clone())],
+            // `f(...)` inside `run`, on its own formal 0.
+            callee_info: vec![(
+                site(2, indirect_insn.id),
+                FlowVertex(
+                    FlowVariable::formal_index(FormalIndex::new(0)),
+                    Path::empty(),
+                ),
+                CallDispatchKey::C,
+            )],
+            callee_resolvents: vec![(cto, CallDispatchKey::C, target)],
+            summary: vec![(
+                target,
+                FormalIndex::new(-1),
+                Path::empty(),
+                FormalIndex::new(0),
+                Path::empty(),
+            )],
+            ..Default::default()
+        };
+
+        let result = taint_index(facts);
+        let rows: Vec<_> = result
+            .resolved_call
+            .iter()
+            .filter(|(f, i, t, _)| *f == run && *i == indirect_insn && *t == target)
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "expected exactly one resolution of the caller-supplied site, got {rows:?}"
+        );
+        let cs = rows[0].3;
+        assert_eq!(
+            cs.len(),
+            1,
+            "the context is the single frame `main` entered `run` through; got {cs}"
+        );
+        assert_eq!(
+            cs.top(),
+            Some(main_call_site),
+            "the innermost frame must be the caller's call site; got {cs}"
+        );
+        // And the same resolution must feed the contextual assignment, tagged with that string.
+        assert!(
+            result
+                .context_assign
+                .iter()
+                .any(|(f, _, _, _, _, row_cs)| *f == run && *row_cs == cs),
+            "the contextual summary instantiation should carry the resolution's call string"
+        );
+    }
 }

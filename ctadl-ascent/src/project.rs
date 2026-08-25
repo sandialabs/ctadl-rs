@@ -138,7 +138,13 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   column cannot say which import's source-info database to read one in -- which is exactly
 ///   how a multi-import project used to render every result once per import, each copy
 ///   carrying an unrelated line from another artifact.
-pub const INDEX_FORMAT_VERSION: &str = "3";
+/// - `4`: the index gained `context_assign.parquet` and `resolved_call.parquet`. They carry the
+///   contextual assignments and the resolved call-graph edges of dynamically dispatched sites,
+///   which the query engine needs to cross a resolved indirect call at all when the flow starts
+///   or ends inside the callee. An index without them has no such edges, and a query against one
+///   would silently lose those flows rather than fail, so the version gate is what makes the
+///   omission visible.
+pub const INDEX_FORMAT_VERSION: &str = "4";
 
 /// Filename of an index's config, which records its [`INDEX_FORMAT_VERSION`], inside a project's
 /// `index/` directory.
