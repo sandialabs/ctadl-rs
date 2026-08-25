@@ -1441,7 +1441,7 @@ fn labeled_empty_statement_parses() {
 
 #[test_log::test]
 fn unsupported_expression_warns_and_recovers() {
-    // An AST shape the frontend does not lower (here `_Generic`, which reaches
+    // An AST shape the frontend does not lower (here `offsetof`, which reaches
     // `flatten_expr`'s catch-all, ERR 78) is a warning by default, not an ingestion
     // error: the expression becomes an opaque temp via `unexpected_ast` and the rest
     // of the function still lowers, so `f`'s param->return flow survives. Setting
@@ -1449,15 +1449,17 @@ fn unsupported_expression_warns_and_recovers() {
     // because the env var is process-global and tests run in parallel -- instead the
     // test skips when the var is set, so a strict-mode environment doesn't fail it.
     //
-    // `_Generic` is only a stand-in for "some expression kind with no arm"; if a later
+    // `offsetof` is only a stand-in for "some expression kind with no arm"; if a later
     // spec lowers it, swap in another unhandled kind rather than deleting the test.
-    // (It used to be `asm("nop")`, which now lowers -- see `flatten_gnu_asm`.)
+    // (It used to be `asm("nop")` and then `_Generic`, both of which now lower -- see
+    // `flatten_gnu_asm` and `flatten_expr`'s `generic_expression` arm.)
     if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
         return;
     }
     let src = r#"
+        struct S { int m; };
         int f(int a) {
-            _Generic(a, int: 1, default: 0);
+            offsetof(struct S, m);
             return a;
         }"#;
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
@@ -1494,8 +1496,9 @@ fn error_on_ast_promotes_frontend_gap() {
     // caveat as `unsupported_expression_warns_and_recovers`.
     let _strict = super::force_error_on_ast();
     let src = r#"
+        struct S { int m; };
         int f(int a) {
-            _Generic(a, int: 1, default: 0);
+            offsetof(struct S, m);
             return a;
         }"#;
     let err = super::parse_c_program(src).expect_err("strict mode must reject the frontend gap");
@@ -3354,4 +3357,84 @@ fn statement_expression_in_store_position_writes_through() {
         void f(struct S *a, int x) { ({ int t = 0; &a[1]; })->f = x; }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_flow(&s, 1, "", 0, ".[1].deref.f");
+}
+
+#[test_log::test]
+fn generic_selection_blends_every_arm() {
+    // `_Generic` selects on the *type* of its controlling expression, which this frontend has
+    // no way to compute -- so, exactly like a ternary, every association's value is lowered and
+    // blended into one temp and any of them may be the result. Two shapes pin that: an arm that
+    // is the parameter (the parameter reaches the return through it), and two arms naming
+    // *different* parameters, where BOTH have to reach the return -- picking one arm would drop
+    // the other's flow. Before this the whole selection was an opaque temp and neither flowed.
+    let src = r"
+        int f(int a) { return _Generic(a, int: a, default: 0); }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+
+    let src = r"
+        int f(int a, int b) { return _Generic(a, char: a, default: b); }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn generic_selection_arm_calls_are_in_the_call_graph() {
+    // The kernel's type-polymorphic macros put the real work *inside* the arms -- the
+    // `__seqprop_*` family, `container_of`, `min`/`max` all dispatch this way -- so collapsing
+    // the selection into a temp erased those calls from the call graph entirely. Every arm is
+    // lowered, so every arm's callee is a direct call of `f`.
+    let src = r"
+        int pick_int(int);
+        long pick_long(long);
+        int f(int a) { return _Generic(a, int: pick_int(a), default: pick_long(a)); }";
+    let prog = program_from_string(src).0;
+    check_has_direct_call(&prog, "f", "pick_int");
+    check_has_direct_call(&prog, "f", "pick_long");
+}
+
+#[test_log::test]
+fn generic_selection_controlling_expression_is_not_the_value() {
+    // C does not evaluate the controlling expression -- `_Generic` inspects its type -- so it is
+    // a selection dependence, not a data source, and must not join the blend. That is the
+    // ternary condition's treatment, and it is what keeps `a` out of the return here. It is
+    // still *lowered*, for its side effects and because the kernel's
+    // `_Generic(*(&sl->seqcount), ...)` mentions the object nowhere else.
+    let src = r"
+        int f(int a, int b) { return _Generic(a, default: b); }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, "");
+    check_does_not_return_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn generic_selection_is_no_longer_a_frontend_gap() {
+    // The strict-mode pin: `_Generic` used to reach `flatten_expr`'s catch-all (ERR 78), the
+    // 4th-largest gap class in the kernel census at 1,589 occurrences across all 30 TUs. With an
+    // arm of its own it is not a gap at all, so ingestion succeeds even under CTADL_ERROR_ON_AST.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int pick_int(int);
+        long pick_long(long);
+        int f(int a) { return _Generic(a, int: pick_int(a), default: pick_long(a)); }";
+    let prog = program_from_string(src).0;
+    check_has_direct_call(&prog, "f", "pick_int");
+}
+
+#[test_log::test]
+fn generic_selection_in_store_position_writes_through() {
+    // `_Generic` also appears on the LEFT of an assignment: the kernel's `INET_ECN_xmit` writes
+    // `_Generic(sk, const typeof(*sk) *: container_of(...), default: container_of(...))->tos |=
+    // ...`. There is no `flatten_lvalue` arm for it -- the catch-all there routes through
+    // `flatten_expr`, and the blend temp this arm yields IS an `Exp::Variable`, so it is accepted
+    // without a warning and the store composes back through the copy onto the arm's own base.
+    // Pinned here because the alternative -- an lvalue arm -- would have to pick ONE arm's
+    // location and silently drop the stores to the others.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        struct S { int f; };
+        void g(struct S *p, int x) { _Generic(p, struct S *: p, default: p)->f = x; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 1, "", 0, ".f");
 }

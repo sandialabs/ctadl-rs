@@ -2936,17 +2936,34 @@ impl<'a> Context<'a> {
                     None => cond_val,
                 };
                 let alt_val = self.flatten_expr(program, alt, source, scope_view)?;
-                let temp_name = self.allocator.next_temp();
-                let target = self.build_access_path(
-                    temp_name.as_str(),
-                    Default::default(),
-                    scope_view,
-                    &mut program[scope_view.fidx].locals,
-                );
-                self.add_assign_to_program(program, scope_view, &target, &cons_val, Some(&alt_val));
-                Ok(Exp::Variable(VariableRef::new_local_idx(
-                    program[scope_view.fidx].locals.get_or_intern(&temp_name),
-                )))
+                Ok(self.blend_into_temp(program, scope_view, &[cons_val, alt_val]))
+            }
+            // A C11 generic selection `_Generic(ctrl, T1: e1, ..., default: eN)`. Only the arm
+            // whose type matches the controlling expression is evaluated, and picking it needs
+            // the static type of `ctrl` -- which this frontend does not have and must not start
+            // computing. So the selection is treated exactly like the ternary above, just with
+            // N arms instead of two: any of them may be the value, so all of them lower and all
+            // of them blend into one temp.
+            //
+            // The controlling expression is NOT evaluated in C (`_Generic` selects on its
+            // *type*), so it must not join the blend -- but it cannot simply be skipped either,
+            // because the kernel's `_Generic(*(&sl->seqcount), ...)` mentions the object nowhere
+            // else. It gets the ternary condition's treatment: lowered for its effects, its
+            // value dropped.
+            //
+            // Without this arm every `_Generic` became an opaque temp, which in the kernel meant
+            // the whole `__seqprop_*`/`container_of`/`min`/`max` dispatch family -- the calls in
+            // the arms included -- was invisible.
+            "generic_expression" => {
+                let (ctrl, arms) = generic_selection_parts(node);
+                if let Some(ctrl) = ctrl {
+                    self.flatten_expr(program, ctrl, source, scope_view)?;
+                }
+                let mut values = Vec::with_capacity(arms.len());
+                for arm in arms {
+                    values.push(self.flatten_expr(program, arm, source, scope_view)?);
+                }
+                Ok(self.blend_into_temp(program, scope_view, &values))
             }
             // GNU inline assembly (`__asm__ ("..." : outs : ins : clobbers)`). The assembly text
             // is opaque to this frontend, so it is modeled as the operand transfer it is rather
@@ -3553,6 +3570,42 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
+    /// Blends every expression in `values` into one fresh temp and yields it -- the value of a
+    /// construct where the frontend cannot tell which of several expressions is the result, so
+    /// all of them may be (a ternary's two arms, a generic selection's N).
+    ///
+    /// Two values fit in a single `assign`, which is the statement a ternary has always lowered
+    /// to; any further value folds in with the running temp as the second operand -- the
+    /// `t = src, t` shape [`Context::flatten_gnu_asm`] uses -- because an `assign` carries at
+    /// most two. A blend of nothing is a temp that is never written, i.e. an opaque value.
+    fn blend_into_temp(
+        &mut self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        values: &[Exp],
+    ) -> Exp {
+        let temp_name = self.allocator.next_temp();
+        let target = self.build_access_path(
+            temp_name.as_str(),
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
+        let mut rest = values.iter();
+        if let Some(first) = rest.next() {
+            let second = rest.next();
+            self.add_assign_to_program(program, scope_view, &target, first, second);
+            for extra in rest {
+                let so_far = self.emit_loads(program, scope_view, target.clone());
+                let running = Exp::access_path(so_far);
+                self.add_assign_to_program(program, scope_view, &target, extra, Some(&running));
+            }
+        }
+        Exp::Variable(VariableRef::new_local_idx(
+            program[scope_view.fidx].locals.get_or_intern(&temp_name),
+        ))
+    }
+
     //this is a helper function to take the SSA list and shove them all into the block
     fn add_assign_to_program(
         &mut self,
@@ -3932,6 +3985,33 @@ fn unexpected_ast(msg: String) -> Result<(), Error> {
 /// [`unexpected_ast`]; the warning attributes the fault to the source.
 fn malformed_source(msg: String) -> Result<(), Error> {
     recoverable_report("source problem", msg)
+}
+
+/// Splits a `generic_expression` into its controlling expression and the *values* of its
+/// associations (`_Generic(ctrl, T1: e1, ..., default: eN)` -> `ctrl`, `[e1, ..., eN]`).
+///
+/// tree-sitter-c 0.24.1 gives the construct no field names and no per-association node: the
+/// named children are the controlling expression followed by a flat `type_descriptor`, value,
+/// `type_descriptor`, value, ... sequence, and `default:` is spelled as a `type_descriptor`
+/// whose type is the identifier `default`. So the values are exactly the named children after
+/// the first that are not `type_descriptor`s -- reading them positionally instead would break
+/// on `comment`, which is an `extra` and may appear anywhere.
+///
+/// An `ERROR` child counts as a value, so it is lowered (and reported) like any other. The
+/// kernel produces one per `container_of`: `_Generic(sk, const typeof(*(sk)) *: ...)` has an
+/// association type tree-sitter-c cannot parse, and the stray `*` it recovers with lands here.
+/// Charging that to the ERROR-debris class is deliberate -- it is the same parse debris every
+/// other dispatch point reports, and reclassifying all of it at once is its own spec.
+fn generic_selection_parts<'t>(node: Node<'t>) -> (Option<Node<'t>>, Vec<Node<'t>>) {
+    let mut cursor = node.walk();
+    let mut named = node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() != "comment");
+    let controlling = named.next();
+    let values = named
+        .filter(|child| child.kind() != "type_descriptor")
+        .collect();
+    (controlling, values)
 }
 
 /// The `operand` children of a `gnu_asm_expression`'s `output_operands` / `input_operands` list.
