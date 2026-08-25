@@ -3453,3 +3453,21 @@ fn generic_selection_in_store_position_writes_through() {
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_flow(&s, 1, "", 0, ".f");
 }
+
+#[test_log::test]
+fn if_arm_return_then_statement_strict() {
+    // An if-arm that returns, followed by reachable code. The arm's compound diverges,
+    // so `walk_compound_statement` must skip the end-of-compound link; linking anyway
+    // would push a continuation edge into the Return-terminated arm block and raise the
+    // recoverable report, which strict mode promotes to a hard error. This is the only
+    // unit-level pin of the skip-link-on-divergence half of the `diverged` logic -- the
+    // fresh-block half is pinned by `label_after_return_dataflow`.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        void g(void);
+        void f(int a) {
+            if (a) { return; }
+            g();
+        }";
+    super::parse_c_program(src).expect("if-arm return + following statement must not gap");
+}
