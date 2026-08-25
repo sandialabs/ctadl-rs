@@ -1527,13 +1527,21 @@ fn error_on_ast_promotes_source_problem() {
 
 #[test_log::test]
 fn bare_block_then_statement_recovers() {
-    // The general shape, kept from when this bug was only *recovered* from: a bare
-    // compound block `{ ... }` written as a statement, followed by more statements in the
-    // same body. A `JustScope` compound shares the enclosing basic block, so the whole
-    // body is one straight line -- the bare braces are a scope, not a branch, and they
-    // must neither terminate the block nor start a new one. Runs under
-    // `force_error_on_ast`, so any residual recoverable report fails the test: this is
-    // also the pin that the shape reports NO frontend gap.
+    // Scope-semantics invariant, NOT a regression pin for the bare-block wiring bug: a
+    // bare compound block `{ ... }` written as a statement is pure scope, so the whole
+    // body is one straight line -- the braces must neither terminate the enclosing basic
+    // block nor start a new one, and nothing written after them may be dropped. Runs
+    // under `force_error_on_ast`, so any recoverable report fails the test.
+    //
+    // What review of the spec-033 rewrite established empirically: this shape, with
+    // *plain-statement* followers, never triggered the historic wiring bug -- this exact
+    // test also passes on the pre-fix front end. The old comment's "followed by any
+    // further statement" was wrong: the bug fired only when the follower was a
+    // compound-BEARING statement (an `if`, as in dropbear), because only those asked for
+    // the end-of-compound link that installed the bogus implicit `return`. The
+    // behavioral pin that fails pre-fix and passes post-fix is
+    // `svr_dropbear_exit_shape_recovers` below. (The `_recovers` in this test's name is
+    // historical; nothing is recovered from any more.)
     let _strict = super::force_error_on_ast();
     let src = r"
         void h(void); void k(void); void m(void);
@@ -1556,13 +1564,20 @@ fn bare_block_then_statement_recovers() {
 
 #[test_log::test]
 fn svr_dropbear_exit_shape_recovers() {
+    // THE regression pin for the bare-block wiring bug (spec 033): on the pre-fix front
+    // end this fails in strict mode with `continuation edge into a block that already
+    // returns, dropped: BasicBlockIdx(2) -> BasicBlockIdx(7)`; post-fix it lowers with
+    // no gap at all, which is what `force_error_on_ast` asserts here.
+    //
     // The reduced shape of dropbear's `svr_dropbear_exit`, the function this bug was
     // found on: an if / else-if / else chain, then a bare `{ }` block (the remnant of a
     // compiled-out `#if DROPBEAR_VFORK` that had guarded a lone `{ session_cleanup(); }`),
-    // then a trailing `if` (`if (svr_opts.hostkey)`). The bare-block-then-if pair is what
-    // triggered the wiring bug -- not, despite first appearances, the returning arms of
-    // the chain. With the compound arm no longer asking for an end-of-compound link, the
-    // shape lowers with no gap at all, so this runs under `force_error_on_ast`.
+    // then a trailing `if` (`if (svr_opts.hostkey)`). The bare-block-then-IF pair is the
+    // trigger -- not, despite first appearances, the returning arms of the chain, and not
+    // bare-block-then-plain-statement either (see `bare_block_then_statement_recovers`):
+    // only a compound-bearing follower asked for the end-of-compound link that installed
+    // the bogus implicit `return`. With the compound arm no longer asking for that link,
+    // the shape lowers cleanly.
     let _strict = super::force_error_on_ast();
     let src = r"
         void svr_dropbear_exit(int exitcode) {
