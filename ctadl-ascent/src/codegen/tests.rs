@@ -171,6 +171,8 @@ fn test_basic2_source_sink() {
         actual_param: facts.actual_param,
         call: facts.call,
         assign: index_result.assign_like,
+        context_assign: index_result.context_assign,
+        resolved_call: index_result.resolved_call,
         paths: facts.paths,
         external_function: index_result.external_function,
         endpoints: [ss.source.clone(), ss.sink.clone()]

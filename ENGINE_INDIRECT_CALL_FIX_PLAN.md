@@ -569,3 +569,251 @@ D1/D2/D3/D5/D6. Everything asserted here was produced from this tree with
   0.00 (0/144170)`, `context_summary: 0` — the hybrid-inlining machinery is idle
   on that artifact today, which is why this plan is gated on micro-shapes rather
   than on APISIX.
+
+---
+
+# Implementation summary (2026-08-24)
+
+All five steps landed. **Shapes 1–5 all report, in C and in Lua, under both query
+regimes**, and the D4c multi-target case reports with the sink in either target.
+Index wall-clock and peak RSS *improved*; the one cost is query-state
+multiplication, reported in full below.
+
+## What was built
+
+| step | change | where |
+| --- | --- | --- |
+| E1 | `callee_by_site` becomes a multimap; the call-entry edge and the `absorbing_functions` projection fan out over every target | `query_engine/search.rs` |
+| E2 | `resolved_call` factored out of rule 3.1 and the in-frame bypass; both now join it | `index_engine/mod.rs` |
+| E3 | `context_assign.parquet` + `resolved_call.parquet`; a `CallString` parquet codec; `INDEX_FORMAT_VERSION` 3 → 4 | `facts/schema.rs`, `facts/parquet.rs`, `index_engine/mod.rs`, `project.rs` |
+| E4 | `PathState`, `refine`, `Step`, the contextual assign / load / call / return edges, and the datalog fallback's collapse | `query_engine/search.rs`, `query_engine/mod.rs`, `cli/mod.rs` |
+| E5 | `--index-context-collapse` (default off) | `index_engine/mod.rs`, `cli/mod.rs`, `main.rs` |
+
+Two design points that the plan left open and the implementation had to settle:
+
+- **A contextual `Return` is refined, not popped.** The plan's three edge rules
+  are disjoint, and a `resolved_call` return edge with a non-empty call string is
+  a *contextual* edge, so it goes through `refine` rather than through the pop
+  discipline. That is not a detail: its call string describes the frame it
+  returns *into*, so taking it is an obligation being **acquired**. Popping it
+  instead would prune shape 3 outright — the search arrives at the callee's
+  out-formal with an empty context, and the row's own frame is not the dispatch
+  site. Shape 4 is what shows the two rules composing: the contextual return
+  acquires `[S]` on the way into `run`, and the *ordinary* return out of `run`
+  at `S` then discharges it by popping. A contextual `Return` still requires
+  `Free`; the one-bit discipline is orthogonal to the context and unchanged.
+- **`--index-context-collapse` withholds both context tables.** §7 describes the
+  flag as an A/B baseline *and* an escape hatch from query-state multiplication.
+  Emitting the collapsed `assign_like` rows while still shipping
+  `context_assign.parquet` would be neither: the query engine would traverse both
+  regimes at once, paying the per-context state the flag exists to avoid on top
+  of edges it can already take unconditionally. So under the flag the fixpoint
+  runs the collapse rule and the result withholds both tables (written, but
+  empty, so the on-disk format is unchanged). This is what makes the E5 gate
+  measurable at all.
+
+## Corpora
+
+The plan names APISIX 2.13.0, Emissary and Spring. **None is present on this
+machine**, so two substitutes of the same shape were used, and the numbers below
+are theirs:
+
+- **Kong** (`/Users/dbueno/proj/kong/kong`, 605 `.lua` files, 4,306 functions) —
+  a Lua API gateway, the same class of artifact as APISIX. It is a *better* cost
+  benchmark than APISIX would have been: APISIX reports `resolvent: 0` and
+  `context_assign: 0/144170`, i.e. the machinery is idle on it, whereas Kong has
+  `resolvent: 259`, `context_assign: 23`, `resolved_call: 87` — so it actually
+  exercises the code under test.
+- **baksmali 3.0.9 (fat jar)** (26,221 functions) — the JVM corpus, standing in
+  for Emissary/Spring, and where state multiplication would show up first.
+  `resolvent: 4217`, `context_assign: 1350`, `resolved_call: 16532`.
+
+`--strategy cha` on baksmali does not reach a fixpoint within 10 minutes **on the
+pre-change tree as well as after** — it is a pre-existing property of that
+strategy on a 26k-function artifact, not a regression. The default (mixed)
+strategy is what is measured.
+
+## Micro-shapes: correctness
+
+| # | shape | C before | C after | Lua before | Lua after |
+| --- | --- | --- | --- | --- | --- |
+| 1 | callee summary, sink in the caller | 1 | 1 | 1 | 1 |
+| 2 | callee summary, sink in the frame (D4) | **0** | **1** | **0** | **1** |
+| 3 | return out of the callee, sink in the frame (D4b) | **0** | **1** | **0** | **1** |
+| 4 | return out of the callee, sink one frame up (D4b) | **0** | **1** | **0** | **1** |
+| 5 | argument into the callee, sink inside it (D4b) | **0** | **1** | **0** | **1** |
+
+(code-flow counts). D4c, on the two-target Lua dispatch case:
+
+| sink in | search before | datalog before | search after | datalog after |
+| --- | --- | --- | --- | --- |
+| `A:go` (the target the map dropped) | **0** | 1 | **1** | 1 |
+| `B:go` (the target that survived) | 1 | 1 | 1 | 1 |
+
+The two regimes now agree on **every** nightly case, C and Lua — checked
+case-by-case, not just on the new ones.
+
+## Cost
+
+Index timing is best-of-7; query timing best-of-3. Memory is the in-process
+`phys_footprint` at the `[mem cp] ascent_run returned` checkpoint.
+
+### Kong (Lua, 4,306 functions)
+
+| metric | baseline | after E1 | after E2 | final (E4) | Δ vs baseline |
+| --- | --- | --- | --- | --- | --- |
+| index wall-clock | 1.166 s | — | 1.144 s | **1.133 s** | **−2.8 %** |
+| fixpoint peak RSS | 237.9 MB | — | 238.6 MB | **224.9 MB** | **−5.5 %** |
+| `resolvent` / `context_assign` / `context_summary` | 259 / 23 / 18 | same | **same** | same | 0 |
+| index size, total | 8,312 KB | 8,312 | 8,312 | **8,324 KB** | **+0.14 %** |
+| — `context_assign.parquet` | — | — | — | 8 KB | new |
+| — `resolved_call.parquet` | — | — | — | 4 KB | new |
+| query wall-clock | 1.27 s | 1.30 s | 1.45 s | **1.29 s** | **+1.6 %** |
+| **query states** | 6,599 | **39,113** | 39,113 | **55,564** | **+742 %** |
+| results / code flows | 933 / 2 | 933 / 2 | 933 / 2 | 933 / 2 | 0 lost, 0 gained |
+
+### baksmali (JVM, 26,221 functions)
+
+| metric | baseline | after E2 | final (E4) | Δ vs baseline |
+| --- | --- | --- | --- | --- |
+| index wall-clock | 3.538 s | 3.320 s | **3.251 s** | **−8.1 %** |
+| fixpoint peak RSS | 616.8 MB | 610.2 MB | **601.0 MB** | **−2.6 %** |
+| `resolvent` / `context_assign` / `context_summary` | 4217 / 1350 / 579 | **same** | same | 0 |
+| index size, total | 19,100 KB | 19,036 | **19,204 KB** | **+0.54 %** |
+| — `context_assign.parquet` | — | — | 36 KB | new |
+| — `resolved_call.parquet` | — | — | 132 KB | new |
+| query wall-clock | 2.32 s | 2.69 s | **2.35 s** | **+1.3 %** |
+| **query states** | 261,013 | 261,013 | **310,671** | **+19 %** |
+| results / code flows | 313 / 18 | 313 / 18 | **316 / 27** | **0 lost, +3 gained** |
+
+## Time and memory regressions
+
+**There is no index-side time or memory regression. Both improved.** E2's
+factoring replaced three joins with one in each of the two rules that resolve a
+call, and the fixpoint got measurably faster on both corpora (−2.8 % Kong,
+−8.1 % baksmali) with peak RSS flat to slightly down. The plan budgeted "E2
+within noise; overall ≤ +10 %"; the outcome is better than budget in the
+opposite direction. Query wall-clock is within +2 % on both corpora, far under
+the +25 % budget.
+
+**The one real cost is query-state multiplication, and it is almost entirely
+E1's, not E4's.** On Kong the state count goes 6,599 → 55,564, a factor of 8.4 —
+but the step-by-step attribution says:
+
+- **E1 (D4c) accounts for 6,599 → 39,113, a factor of 5.9.** This is the
+  fan-out the plan flagged as "the one step here that adds search work on
+  corpora that never resolve an indirect call": a Lua method call emits its whole
+  CHA target set, so making the entry edge follow every target is, on a
+  method-heavy Lua corpus, several times the entry edges it followed before. It
+  is a correctness fix — those edges were always supposed to be there, and the
+  datalog regime always took them — but it is not free, and it is the number to
+  watch on a CHA-heavy target.
+- **E4 accounts for 39,113 → 55,564, a factor of 1.42**, and on baksmali for the
+  whole +19 %. That is the per-context state the design predicted, and it is
+  within the "0 on an idle artifact, small where the machinery is live" bound
+  §6 argued for.
+
+At these absolute sizes (55 K and 311 K states) neither shows up in wall-clock.
+On a corpus large enough that it does, `--index-context-collapse` retires E4's
+share; E1's share has no flag, because reverting it would reintroduce a
+silent-wrong-answer bug.
+
+**Results are strictly additive.** A SARIF diff keyed on flow *endpoints* —
+result location plus the first and last code-flow step, so a shorter witness for
+the same source/sink pair is not counted as a loss — reports **0 lost** on both
+corpora, with +3 results and +9 code flows gained on baksmali. (A diff keyed on
+the full step sequence shows a handful of results whose trace got *shorter*; that
+is the search finding a better witness, not a lost result.)
+
+## Gates
+
+| step | gate | result |
+| --- | --- | --- |
+| E1 | multi-target case reports with the sink in either target, both regimes | **pass** |
+| E1 | query states within budget | see above — +493 % on Kong, 0 on baksmali; wall-clock flat |
+| E2 | `context_assign` and `assign_like` **row-for-row identical** | **pass** — byte-identical dumps of both relations on both corpora (23 / 497,733 rows Kong; 1,350 / 967,971 baksmali) |
+| E2 | fixpoint wall-clock and peak RSS within noise | **pass** (both improved) |
+| E3 | round-trip tests for both tables | **pass** — including an empty and a three-frame `CallString`, with frame *order* asserted |
+| E3 | index size grows only by the two tables | **pass** (+12 KB Kong, +156 KB baksmali) |
+| E4 | all five shapes report, in Lua and in C | **pass** |
+| E4 | nightly suite green | **pass** (C and Lua; see caveat below) |
+| E4 | `CTADL_QUERY_SIZES` within budget | reported above |
+| E5 | flag on → shape 2 reports, shapes 3–5 do not | **pass**, in C *and* Lua |
+
+The E5 gate doubles as the A/B the plan asked for, and it settles the design
+question: the collapse reaches shape 2 and nothing beyond it, exactly as §7
+predicted, so E4-on is strictly stronger rather than differently-shaped. It also
+independently confirms that E4's query-side machinery — and not some incidental
+effect of E1/E2/E3 — is what makes shapes 3–5 report.
+
+## Tests
+
+Nightly cases added (all passing):
+
+| case | defect | shape |
+| --- | --- | --- |
+| `c/funcptrcalleeframe.c` | D4 | 2 |
+| `c/funcptrcalleesource.c` | D4b | 3 **and** 4 (two sinks, one frame apart) |
+| `c/funcptrcalleesink.c` | D4b | 5 |
+| `lua/caller-supplied-callback-flow` | D4 | 2 |
+| `lua/resolved-callee-source-flow` | D4b | 3 |
+| `lua/resolved-callee-source-return-flow` | D4b | 4 |
+| `lua/resolved-callee-sink-flow` | D4b | 5 |
+| `lua/multi-target-dispatch-flow` | D4c | two CHA targets, sink in the one the map dropped |
+
+`nightly/tests/c/funcptr.c` — the shape-1 guard — still passes.
+
+One thing worth recording for whoever writes the next Lua case: **the callback
+must be a closure declared inside a function**. A module-level `local h =
+function(x) ... end` produces no call-target fact at all (`resolvent: 0`), so
+the case silently tests nothing. Every Lua case above declares its closure inside
+`main`.
+
+Unit tests added:
+
+- `index_engine` — a caller-supplied dispatch yields a `resolved_call` row
+  carrying the resolvent's call string (and feeds a `context_assign` tagged with
+  it); the in-frame bypass yields one with an empty call string.
+- `facts::schema` — parquet round-trips for both tables, including an empty and a
+  multi-frame `CallString` with frame order asserted explicitly.
+- `query_engine::search` — `refine` over suffix-compatible, suffix-incompatible,
+  prefix-not-suffix, and empty-on-either-side inputs; a contextual edge traversed
+  under a compatible context and pruned under an incompatible one; an ordinary
+  `Return` popping its site and pruning a mismatch (and still requiring `Free`);
+  a `resolved_call` producing *both* an entry and a return edge; a multi-target
+  site producing an entry edge into both targets (D4c); and the load-time
+  subsumption dropping conditional rows dominated by an unconditional one.
+
+`cargo test --release --workspace`: **792 passed, 0 failed** across 39 suites.
+
+Nightly suite, run two ways:
+
+- Locally (`cargo xtask regression`), which is what this worktree can drive:
+  `--frontend lua` **28/28 pass**; `--frontend c` **26 pass, 2 xfail**
+  (`C:ptrarith` and `C:defaultmodels`, both pre-existing and unrelated).
+- The canonical flake check, `nix build .#checks.aarch64-darwin.regression`,
+  which builds `jvm-reader` / `dex-reader` / Ghidra / the Java toolchain itself
+  and runs **every** frontend: **158 passed, 0 skipped, 0 failed, 2 xfail of 160**
+  — the two xfails being the same pre-existing `C:` pair (`C:ptrarith`,
+  `C:defaultmodels`). That run covers the JVM, DEX, JNI and pcode cases this
+  worktree cannot drive on its own, so "the existing nightly suite is green" is
+  established across all of them, not just C and Lua.
+
+  It was run twice. The first pass, before the new case files were staged, is the
+  clean "did the engine change break anything" measurement: Nix reads only tracked
+  paths, so it ran the **pre-existing** suite alone against the changed engine —
+  147 passed, 0 failed, 2 xfail of 149. The second pass, with the eight new case
+  files staged, adds their eleven registrations (each C case registers under both
+  the `pcode` and the tree-sitter `c` frontend) and all eleven pass — **including
+  the three pcode variants**, so the new C cases' `expected_lines` hold under
+  Ghidra + `addr2line` as well as under source spans.
+
+## Not verified here
+
+- **APISIX, Emissary and Spring** — absent from this machine; Kong and baksmali
+  stand in, as described above. The APISIX end-to-end acceptance criterion still
+  belongs to `LUA_FRONTEND_FIX_PLAN.md` and is still gated on its D1/D2/D3.
+- **The recall risk of the return-side context check** (§3, "Risks") was not
+  observed on any corpus or case, so the mitigation — clearing the context on
+  mismatch instead of pruning — was **not** implemented. The pruning behaviour is
+  what ships.

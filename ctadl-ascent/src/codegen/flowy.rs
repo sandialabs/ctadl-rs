@@ -431,6 +431,11 @@ pub fn check<P: AsRef<Path>>(
         // endpoints to their call-site-anchored forms during the query check.
         call: index_facts.call.clone(),
         assign: index_result.assign_like,
+        // Flowy runs the index in-process, so the two context tables come straight off the
+        // result rather than through the store -- but they travel the same way any other index
+        // output does, so a flowy artifact exercising indirect dispatch gets the same edges.
+        context_assign: index_result.context_assign,
+        resolved_call: index_result.resolved_call,
         paths: index_facts.paths,
         external_function: index_result.external_function,
         endpoints,

@@ -518,7 +518,6 @@ macro_rules! impl_encode_newtype {
     };
 }
 
-// Custom encoding for Path since it's now VecDeque<mir::FieldAccess> instead of Str
 impl EncodeColumn<facts::Path> for DefaultEncoder {
     #[inline]
     fn encode_column(name: &str, col: Vec<facts::Path>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
@@ -551,6 +550,68 @@ impl DecodeColumn<facts::Path> for DefaultDecoder {
             })
     }
 }
+
+// A `CallString` is a sequence of `PackedInsnSiteId` frames, outermost-first. Encoded as one
+// string column the way `Path` is: the frames' u64 values in order, `;`-separated. An empty call
+// string (the unconditional context) is the empty string, which is exactly what a `Path::empty()`
+// encodes to as well, so the two columns read alike.
+impl EncodeColumn<facts::CallString> for DefaultEncoder {
+    #[inline]
+    fn encode_column(
+        name: &str,
+        col: Vec<facts::CallString>,
+    ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
+        let strings: Vec<Str> = col
+            .into_iter()
+            .map(|cs| call_string_to_string(&cs).into())
+            .collect();
+        <Self as EncodeColumn<Str>>::encode_column(name, strings)
+    }
+}
+
+impl DecodeColumn<facts::CallString> for DefaultDecoder {
+    #[inline]
+    fn into_decode_array(
+        name: &str,
+        batch: &RecordBatch,
+    ) -> impl IntoIterator<Item = facts::CallString> {
+        <Self as DecodeColumn<Str>>::into_decode_array(name, batch)
+            .into_iter()
+            .map(move |s| call_string_from_str(s.as_str(), name))
+    }
+}
+
+/// Renders a [`facts::CallString`] as the `;`-separated decimal frame ids its parquet column
+/// holds. Outermost frame first, matching the in-memory order (`push` appends).
+fn call_string_to_string(cs: &facts::CallString) -> String {
+    use itertools::Itertools;
+    cs.iter()
+        .map(|site| u64::from_be_bytes(site.0).to_string())
+        .join(";")
+}
+
+/// Inverse of [`call_string_to_string`]. Panics with the same "re-run `ctadl index`" guidance
+/// [`facts::Path`]'s decoder gives, for the same reason: a column that does not parse was written
+/// by an incompatible build, and silently dropping frames would silently lose contexts.
+fn call_string_from_str(s: &str, name: &str) -> facts::CallString {
+    if s.is_empty() {
+        return facts::CallString::new();
+    }
+    let frames: Vec<facts::PackedInsnSiteId> = s
+        .split(';')
+        .map(|frame| {
+            let raw: u64 = frame.parse().unwrap_or_else(|e| {
+                panic!(
+                    "corrupt call string {s:?} in fact column {name:?}: {e}\n\
+                     this index was written by an incompatible build; re-run `ctadl index`"
+                )
+            });
+            facts::PackedInsnSiteId(raw.to_be_bytes())
+        })
+        .collect();
+    facts::CallString::intern(&frames)
+}
+
 impl_encode_newtype!(facts::Function, Str, GenericStringArray<i64>);
 impl_encode_newtype!(facts::Label, Str, GenericStringArray<i64>);
 impl_encode_newtype!(facts::FormalIndex, i16, Int16Array);
