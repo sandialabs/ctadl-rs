@@ -164,6 +164,9 @@ Yamcs. All six kinds are now zero.
 
 ## What is still open
 
+Only item 1 below. Items 2, 3 and 4 have since been implemented; each keeps its
+section, rewritten to record what landed.
+
 ### 1. APISIX: Lua function values in tables — untouched
 
 Nothing on this branch changes the Lua frontend. Today
@@ -193,24 +196,27 @@ connecting `<indirect-call>` to that handler.
 This is the one item in the report that is a missing analysis rather than a
 decoder table, and it is the only one that needs its own design.
 
-### 2. Two error sites still carry no context
+### 2. The two bare error sites — **done**
 
-The report is right that the diagnostics blocked its own diagnosis, and two
-sites are still bare `InvalidClassFile(&'static str)`:
+Both were `InvalidClassFile(&'static str)`; both are now structured variants
+carrying what the others already carry:
 
-- `flow.rs` — `"inconsistent operand stack layout at basic-block join"`, the
-  message the report quotes for Spring AI's `AbstractFilterExpressionConverter`.
-  No class, method, pc, or edge.
-- `flow.rs` — `"stack underflow in stack-slot simulation"`, the message the
-  report quotes for Yamcs. No class, method, pc, or opcode.
+- `StackLayoutMismatch` — the message the report quotes for Spring AI's
+  `AbstractFilterExpressionConverter`. Adds class, method, descriptor, the block
+  edge, whether that edge is an exception edge, and both slot vectors.
+- `StackUnderflow` — the message the report quotes for Yamcs. Adds class,
+  method, descriptor, pc, opcode, mnemonic, and the consumed/available depths.
+  Unlike the three `StackInput` underflows it sits beside, this one fires on an
+  instruction's *aggregate* stack effect, so it names no operand: the opcode and
+  the two depths are what locate it.
 
-Everything else already reports class, method, descriptor, pc, opcode, mnemonic
-and depths; `StackHeightMismatch` additionally reports the block edge. Give
-these two the same treatment — a structured variant apiece, carrying the frame
-and the predecessor edge alongside what the others already carry. Cheap, and it
-is what would have let the report name the Yamcs and OpenMRS instructions.
+The three `String`s naming the method are now a boxed `MethodContext`, shared by
+these two and by `StackHeightMismatch`. Boxing is what keeps `ClassFileError`
+inside clippy's `result_large_err` budget: it is the `Err` of every `Result` the
+reader returns, and three inline `String`s plus two slot vectors would push the
+enum past 128 bytes.
 
-### 3. The join checks — do not replace them with phi merging
+### 3. The join checks — kept, not replaced with phi merging; handler slots now positional
 
 The report asks for typed frames and phi/canonical join slots. That is the wrong
 change here, and it would have hidden defects A–D rather than fixing them: every
@@ -235,30 +241,42 @@ its more likely explanation is defect A, which independently and provably breaks
 `AbstractFilterExpressionConverter`'s class (it is a `double`-carrying converter
 in the same JAR as `SearchRequest`).
 
-The change to make anyway, when the Spring AI JAR is available to confirm
-against: **allocate the handler's entry slot positionally** — the exception
-reference is at depth 0, so its id is `0` — and delete `handler_entry_slots` and
-`next_slot_id`. That makes the layout check vacuous in every case rather than
-almost every case, and it removes a latent second problem: `next_slot_id` is
-per-method-global, so a method with 64 or more handlers would emit slot ids past
-the `id >= 64` bound that `xtask`'s `assert_normalized` treats as corruption.
+**Done:** the handler's entry slot is now allocated positionally — the exception
+reference is at depth 0, so its id is `0` — and `handler_entry_slots` and
+`next_slot_id` are deleted. The layout check is now vacuous in every case rather
+than almost every case, and the one non-positional id in a method is gone.
 
-### 4. Smaller category-2 and legacy gaps, none currently reachable
+One correction to the reasoning above. The counter could not in fact have
+tripped `xtask`'s `assert_normalized`: `simulate_block` rewrites every emitted
+`StackInput`/`StackOutput` from the *depth* (`stack_len - 1 - depth`,
+`remaining_len + i`), never from the propagated state, so a handler's entry slot
+id reached the join comparison and nothing else. The defect it caused is the one
+the layout check reports, and only that.
 
-Found while auditing; all inert today, all worth closing when that code is
-touched:
+`a_handler_entry_slot_is_positional` builds the shape by hand — a block that is
+both a `goto` target and a second handler's entry, which `javac` does not emit —
+and confirms it: with the counter reinstated the test fails with
+`StackLayoutMismatch { … existing_slots: [0], new_slots: [1] }`.
 
-- `misc_stack_effect` gives `0xac..=0xb0` (all five value returns) `(1, 0)`.
-  `lreturn` and `dreturn` pop two. Harmless because a return block has no
-  successors, so the phantom slot never reaches a join.
-- `jsr` (0xa8) does not push its return address, `ret` (0xa9) is missing from
-  `operand_byte_count` (it takes a one-byte local index), and neither has a
-  stack effect. `jsr`/`ret` are illegal from class version 51 on, so nothing in
-  the corpus exercises them; a pre-Java-7 artifact would desynchronize.
-- `mnemonic` lumps `0x85..=0x93` into a single `"conv_or_cmp"`. That is a real
-  disassembly gap — `javap` prints `i2l`, `l2i`, `f2d` and the rest — and it is
-  only invisible to `jvm:javap` because no sample fixture contains a numeric
-  conversion.
+### 4. Smaller category-2 and legacy gaps — **done**
+
+Found while auditing; all were inert, all are now closed:
+
+- `misc_stack_effect` gave `0xac..=0xb0` (all five value returns) `(1, 0)`.
+  `lreturn` and `dreturn` pop two: they are now `0xad | 0xaf => (2, 0)`. Inert
+  because a return block has no successors, so the phantom slot never reached a
+  join.
+- `jsr` (0xa8) did not push its return address and `ret` (0xa9) was missing from
+  `operand_byte_count` (it takes a one-byte local index; only the `wide` form
+  was handled). Now `0xa8 | 0xc9 => (0, 1)` and `0xa9 => 1`. Both are illegal
+  from class version 51 on, so nothing in the corpus exercises them; a
+  pre-Java-7 artifact would have desynchronized on the missing operand byte.
+- `mnemonic` lumped `0x85..=0x93` into a single `"conv_or_cmp"`; all fifteen
+  conversions now have their own names. Correcting the earlier note: this was
+  never a `jvm:javap` gap — `instructions.rs` has its own table and already
+  printed `i2l`, `l2i`, `f2d` and the rest. `flow.rs`'s table is what the
+  underflow diagnostics print, so the cost was a report that could not say which
+  instruction failed.
 
 ### 5. The report's remaining asks, resolved
 
@@ -301,6 +319,23 @@ pool they need in Rust rather than loading a compiled class:
 - `sipush_reads_two_operand_bytes` — value and sign
 - `multianewarray_consumes_one_slot_per_dimension` — one through four
 
+For items 2–4, in `flow.rs` and `error.rs`. The last two build a whole method —
+constant pool, `Code` attribute and exception table — in Rust and run it through
+`compute_basic_blocks_for_method` + `normalize_stack_slots_for_method`, which is
+what `basic_blocks_with_stack_slots` chains:
+
+- `wide_returns_pop_two_slots` — all five value returns and `return`
+- `jsr_and_ret_are_decoded` — `ret`/wide `ret`/`jsr`/`jsr_w` lengths, and the
+  three stack effects
+- `numeric_conversions_have_their_own_mnemonics` — all fifteen, plus that
+  `lcmp`/`dcmpg` still have theirs
+- `a_handler_entry_slot_is_positional` — a block entered both by a `goto` and as
+  a second handler; fails with the counter reinstated
+- `a_stack_underflow_names_the_instruction` — `lreturn` on a one-deep stack, the
+  shape that reaches the aggregate check rather than a `StackInput` rewrite
+- `stack_layout_mismatch_names_the_edge_and_the_layouts`,
+  `stack_underflow_names_the_instruction` — what the two new Displays say
+
 ### Mutation-tested
 
 Each defect was reintroduced one at a time; each kills exactly its own case and
@@ -312,6 +347,8 @@ nothing else:
 | `sastore` outside the array-store arm | `Jvm:ShortArrayFlow` |
 | `sipush` reads four bytes | `Jvm:SmallConstantFlow` |
 | `multianewarray` unmodelled | `Jvm:MultiArrayFlow` |
+| handler entry slots from `next_slot_id` | `a_handler_entry_slot_is_positional` |
+| all five value returns pop one | `wide_returns_pop_two_slots`, `a_stack_underflow_names_the_instruction` |
 
 ## Verification
 
@@ -326,3 +363,21 @@ ctadl import -l jar (apktool, baksmali, commons-io)   all import
 
 The one skip is `dex:baksmali` (`baksmali` not on this machine's PATH); the
 clippy `items after a test module` warning in `flow.rs` predates this change.
+
+Re-run after items 2–4, inside `nix develop .#regression` (which supplies
+`javac`, `dx`, `baksmali` and the two reader binaries, so nothing skips):
+
+```
+cargo test -p jvm-reader                    42 tests, 0 failed
+cargo test --workspace                      39 suites, 0 failed
+xtask regression --frontend jvm,dex         73 passed, 0 skipped, 0 failed, 0 xfail
+cargo fmt --all -- --check                  clean
+cargo clippy --workspace --all-targets      no new warnings
+corpus sweep (JDK 8 rt.jar, JDK 17)         368,270 methods, 0 failures
+```
+
+The sweep is the check that matters for the return widths: `lreturn`/`dreturn`
+now consume a word that was previously left on the frame, so a class where some
+other shortfall left the stack short would newly fail. `rt.jar` reproduces the
+plan's 161,225-method count exactly, and JDK 17 adds 207,045; neither has a
+failure of any kind.

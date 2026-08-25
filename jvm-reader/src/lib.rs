@@ -7,7 +7,7 @@ pub mod parse_utils;
 pub mod parser;
 pub mod types;
 
-pub use error::{ClassFileError, ClassFileResult};
+pub use error::{ClassFileError, ClassFileResult, MethodContext};
 pub use flow::{
     compute_basic_blocks_for_method, descriptor_parameter_info, descriptor_returns_value,
     normalize_stack_slots_for_method, BasicBlock, CallInfo, CallKind, ConstantValue, DataflowInfo,
