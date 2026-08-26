@@ -4166,3 +4166,109 @@ fn a_non_lvalue_store_in_clean_source_is_still_a_frontend_gap() {
         "unexpected error: {err}"
     );
 }
+
+// ---------------------------------------------------------------------------------------
+// Names tree-sitter inserted (spec 070). Where the grammar requires a name and the parse
+// fails there, tree-sitter repairs the tree by INSERTING a zero-width `identifier` /
+// `field_identifier`: a node with a kind, a position, and no text at all. The empty string
+// is not a name -- lowering it as one mints the global `$globals.` with an empty first path
+// segment, and `facts::Path`'s parser rejects an empty segment, so a single such token
+// anywhere in a corpus makes the whole index unqueryable (`ctadl query` panics reading the
+// parquet it just wrote, before printing a result). A token nobody wrote names nothing, so
+// it gets spec 064's treatment: the body is named once as holding recovery output and the
+// name lowers to a fresh temp instead.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn inserted_identifier_does_not_become_an_empty_path_segment() {
+    // The corpus shape, from x86's percpu accessors (`arch/x86/include/asm/percpu.h`,
+    // reached by every kernel TU through `cpu_kernelmode_gs_base`): `typeof` of a
+    // dereference is a tree-sitter-c 0.24.1 grammar limit, and recovering from it leaves
+    // the cast's `*` parsed as a multiplication whose right operand the parser has to
+    // invent. Two translation units of the kernel corpus held 134 of them.
+    let src = r"
+        struct S { unsigned long f; };
+        struct S fixed;
+        unsigned long g(void) {
+            return (unsigned long)((typeof(*(&(fixed.f))) *)((&(fixed.f))));
+        }";
+    let _ = super::take_reports();
+    let (prog, has_error, _markup) =
+        super::parse_c_program(src).expect("non-strict ingestion must recover");
+    assert!(has_error, "this input is the parse error under test");
+
+    let symbols = field_symbols(&prog);
+    assert!(
+        !symbols.iter().any(|s| s.is_empty()),
+        "an inserted name must not become a path segment; symbols: {symbols:?}\n{prog}"
+    );
+    // The real global next to it still resolves, so the guard keys on the *name* being
+    // empty and not on the body being damaged.
+    assert!(
+        symbols.contains(&"fixed"),
+        "the named global in the same expression must still resolve: {symbols:?}\n{prog}"
+    );
+
+    let reports = super::take_reports();
+    assert!(
+        reports
+            .iter()
+            .all(|(attribution, _)| *attribution == "source problem"),
+        "an inserted token is the source's parse error, not a frontend gap: {reports:?}"
+    );
+    assert!(
+        reports
+            .iter()
+            .any(|(_, msg)| msg.contains("function `g`") && msg.contains("not analyzed")),
+        "the damaged body must be named once: {reports:?}"
+    );
+}
+
+#[test_log::test]
+fn inserted_field_name_does_not_become_an_empty_path_segment() {
+    // The other position the grammar requires a name in: the member of a `field_expression`.
+    // Appending an empty segment here would be worse than useless -- the access would
+    // silently alias the whole object -- so the object's effects stay lowered and the access
+    // itself names a dead temp.
+    let src = r"
+        struct S { int f; };
+        int h(struct S *p, int v) {
+            p-> = v;
+            return p->;
+        }";
+    let _ = super::take_reports();
+    let (prog, has_error, _markup) =
+        super::parse_c_program(src).expect("non-strict ingestion must recover");
+    assert!(has_error, "this input is the parse error under test");
+
+    let symbols = field_symbols(&prog);
+    assert!(
+        !symbols.iter().any(|s| s.is_empty()),
+        "a missing member name must not become a path segment; symbols: {symbols:?}\n{prog}"
+    );
+    let reports = super::take_reports();
+    assert!(
+        reports
+            .iter()
+            .all(|(attribution, _)| *attribution == "source problem"),
+        "a missing member name is the source's parse error, not a frontend gap: {reports:?}"
+    );
+}
+
+#[test_log::test]
+fn a_named_global_still_lowers_to_a_symbolic_field() {
+    // The scoping pin, in the shape spec 064's
+    // `nested_function_definition_is_still_a_frontend_gap` takes: the guard keys on the name
+    // being empty, never on "identifier in a body that did not parse". A global read in a
+    // cleanly parsed body must keep the field that names it -- a fix that dropped every
+    // identifier in a damaged body, or that renamed globals to temps, would pass the two
+    // tests above and delete the analysis.
+    let src = r"
+        unsigned long named;
+        unsigned long f(void) { return named; }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        field_symbols(&prog).contains(&"named"),
+        "a global read must still load `$globals.named`\n{dump}"
+    );
+}

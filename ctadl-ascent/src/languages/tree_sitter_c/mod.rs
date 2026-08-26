@@ -2021,6 +2021,48 @@ impl<'a> Context<'a> {
         ))
     }
 
+    /// Report a name node that quotes to the empty string, and say whose fault it is.
+    ///
+    /// `identifier` and `field_identifier` are *required* by the grammar in the positions this
+    /// frontend reads a name from, so when the parse fails there tree-sitter repairs it by
+    /// INSERTING a zero-width token -- a node with a kind, a position and no text at all. The
+    /// empty string is not a name: handed to [`Context::build_access_path`] it resolves to
+    /// nothing in scope and mints the global `$globals.` with an empty first path segment,
+    /// which serializes to the access path `"."` -- and `facts::Path`'s own parser rejects
+    /// that, so ONE such token anywhere in a corpus makes the whole index unqueryable
+    /// (`ctadl query` panics reading the parquet it just wrote, before printing any result).
+    /// The kernel's x86 percpu headers put 134 of them into two translation units.
+    ///
+    /// A token nobody wrote names nothing, so this is spec 064's rule again: an inserted token
+    /// only exists because the body around it did not parse, so say once that the body holds
+    /// recovery output and let the caller substitute a fresh temp -- the same recovery the
+    /// `flatten_expr`/`flatten_lvalue` catch-alls use. The `else` arm cannot fire on a
+    /// tree-sitter tree (an inserted token sets `has_error` on every ancestor, so
+    /// `recovery_region` always finds one) and is kept so a nameless node arriving any other
+    /// way is still reported rather than silently dropped.
+    fn report_missing_name(&mut self, node: Node<'_>, scope_view: &ScopeView) -> Result<(), Error> {
+        if recovery_region(node).is_some() {
+            let func_name = scope_view.func_name.clone();
+            self.report_unanalyzed_recovery(&func_name)
+        } else {
+            unexpected_ast(format!(
+                "{} with no name (a zero-width node names no object)",
+                node.kind()
+            ))
+        }
+    }
+
+    /// A fresh local nothing else names, as an access path: the standard recovery for a
+    /// location this frontend could not resolve. A store to it is dropped; a read of it is
+    /// opaque. Either way the surrounding function still lowers.
+    fn dead_temp_path(&mut self, program: &mut Program, scope_view: &ScopeView) -> RawPath {
+        let temp_name = self.allocator.next_temp();
+        RawPath::new(
+            VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name)),
+            ThinVec::new(),
+        )
+    }
+
     fn walk_declaration(
         &mut self,
         source: &'a str,
@@ -2822,6 +2864,16 @@ impl<'a> Context<'a> {
         //debug_print_tree(node, 0, Some("FLATTEN_EXPR"), Some(50));
         let text = to_str(&node, source); //.to_string();
         match node.kind() {
+            // A name tree-sitter inserted to repair the parse, quoting to the empty string.
+            // It cannot become a path segment (see `report_missing_name`), so the read is
+            // opaque: a fresh temp nothing else writes.
+            "identifier" if text.is_empty() => {
+                self.report_missing_name(node, scope_view)?;
+                let temp_name = self.allocator.next_temp();
+                Ok(Exp::Variable(VariableRef::new_local_idx(
+                    program[scope_view.fidx].locals.get_or_intern(&temp_name),
+                )))
+            }
             "identifier" => {
                 // A bare identifier that names a known function (and is not shadowed by
                 // a variable in scope) is a function *reference* used as a value -- the
@@ -3947,6 +3999,12 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
     ) -> Result<RawPath, Error> {
         match node.kind() {
+            // The store side of the same repair: a name tree-sitter inserted quotes to the
+            // empty string and names no location, so the store lands on a dead temp.
+            "identifier" if to_str(&node, source).is_empty() => {
+                self.report_missing_name(node, scope_view)?;
+                Ok(self.dead_temp_path(program, scope_view))
+            }
             "identifier" => Ok(self.build_access_path(
                 to_str(&node, source),
                 Default::default(),
@@ -3968,6 +4026,14 @@ impl<'a> Context<'a> {
                     .child_by_field_name("field")
                     .expect("field_expression always has a field");
                 let mut base = self.flatten_lvalue(program, argument, source, scope_view)?;
+                // `p->` with the member name missing: tree-sitter inserted the
+                // `field_identifier`, so it quotes to the empty string and cannot be a path
+                // segment. Appending nothing would silently alias the whole access to `p`, so
+                // the object's effects stay lowered and the access itself names a dead temp.
+                if to_str(&field, source).is_empty() {
+                    self.report_missing_name(field, scope_view)?;
+                    return Ok(self.dead_temp_path(program, scope_view));
+                }
                 // Collapse a union member access to the shared `$union` field so a write to one
                 // member is observed at a read of another (union members alias; F4). Only the
                 // access *on the union variable itself* collapses -- detected by the resolved

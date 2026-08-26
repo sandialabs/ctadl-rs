@@ -566,6 +566,31 @@ pub(crate) fn check_writes_to(prog: &Program, dst: &str, count: usize) {
     );
 }
 
+/* Every symbolic field name the program's `Load`/`Store` statements read or write, across ALL
+functions.
+
+The invariant it exists for is [`StatementKind::Load`]'s own -- "the loaded field must be
+non-empty". `facts::Path` serializes an access path as its segments joined by `.` and its parser
+rejects an empty segment, so ONE empty field name anywhere in a corpus makes the whole index
+unreadable: `ctadl query` panics on the parquet it just wrote, before printing a single result.
+Whole-program rather than one function because only tree-sitter's parse recovery can produce an
+empty name, and an input that provokes the recovery is never a tidy one-function program. */
+pub(crate) fn field_symbols(prog: &Program) -> Vec<&str> {
+    prog.functions
+        .functions
+        .raw
+        .iter()
+        .flat_map(|f| f.blocks.iter())
+        .flat_map(|b| b.statements.iter())
+        .filter_map(|s| match &s.kind {
+            StatementKind::Load { field, .. } | StatementKind::Store { field, .. } => {
+                Some(field.as_str())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 pub(crate) fn check_match(prog_str: &str, needle: &str) -> bool {
     if prog_str.contains(needle) {
         return true;
