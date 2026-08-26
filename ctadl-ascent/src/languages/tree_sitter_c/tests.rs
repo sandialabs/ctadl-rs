@@ -4742,3 +4742,259 @@ fn a_null_pointer_constant_is_still_a_constant_value() {
         "a null pointer constant names no location\n{dump}"
     );
 }
+
+// ---------------------------------------------------------------------------------------
+// A definition that returns a pointer (spec 130).
+//
+// `collect_functions` matched `function_definition > declarator: (function_declarator ...)`,
+// and tree-sitter-c wraps that `function_declarator` in one `pointer_declarator` per `*`. So
+// no definition returning a pointer ever matched: its body was never walked, its parameters
+// were never bound, and its return arity stayed 0 -- with no warning of any attribution, which
+// is why the class survived every census that read the warning log rather than the IR.
+//
+// It is a soundness hole and not merely missing coverage, because the NAME still reaches the
+// function table -- from a prototype, or from `define_extern_functions` at a call site -- so a
+// call lowered to a `direct-call` of an arity-0 stub, and taint entering it could not come back
+// out. `scripts/definition_census.py` sized it against clang's own AST: 298 of the 30 curated
+// kernel sources' 2,292 definitions, 308 of openssh's 2,215, 354 of nginx's 1,356, 80 of
+// dropbear's 747 -- and, after spec 110, the only coverage hole any of the four had left.
+//
+// The fix captures the declarator whole and unwraps it in `function_head`, so pointer depth
+// stops being something the query has to spell out.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn pointer_returning_definition_is_collected() {
+    // The minimal case. Before the fix `dup` was not in the program at all -- `function_named`
+    // returned None -- so this fails on the very first assertion rather than on the arity.
+    let src = r"char *dup(char *s) { return s; }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        function_named(&prog, "dup").is_some(),
+        "a `char *` definition must be collected\n{dump}"
+    );
+    check_return_arity(&prog, "dup", 1);
+    check_params(&prog, &[ByRef]);
+    check_block_count(&prog, 1);
+}
+
+#[test_log::test]
+fn taint_flows_through_a_pointer_returning_function() {
+    // What the dropped body cost: the summary of `dup` says nothing, so a caller's taint dies
+    // at the call. With the body walked, parameter 0 reaches the return.
+    let src = r"char *dup(char *s) { return s; }";
+    let (summary, _) = get_summary(program_from_string(src).0).expect("must verify");
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn taint_returns_through_a_call_to_a_pointer_returning_function() {
+    // The soundness statement in full, across a call: `use` passes its parameter to `dup` and
+    // stores what comes back, so `use` returns its own parameter. Before the fix `dup` was an
+    // arity-0 stub that `define_extern_functions` had invented from the call site, and this
+    // flow did not exist.
+    let src = r"
+        char *dup(char *s) { return s; }
+        char *use(char *p) { return dup(p); }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "use", "dup");
+    check_return_arity(&prog, "dup", 1);
+    assert!(
+        check_no_match(&dump, "define dup(@p0[byref]) -> 0"),
+        "`dup` must not be an arity-0 stub\n{dump}"
+    );
+    let (summary, info) = get_summary(prog).expect("must verify");
+    check_returns_param_in(&summary, &info, "use", 0, "");
+}
+
+#[test_log::test]
+fn double_pointer_returning_definition_is_collected() {
+    // Pointer depth is not something the query enumerates: `char **` and `char ***` are two and
+    // three nested `pointer_declarator`s, and `function_head` walks all of them.
+    let two = r"char **argv_of(char **v) { return v; }";
+    let (prog, dump) = program_from_string(two);
+    assert!(
+        function_named(&prog, "argv_of").is_some(),
+        "a `char **` definition must be collected\n{dump}"
+    );
+    check_return_arity(&prog, "argv_of", 1);
+    check_block_count(&prog, 1);
+
+    let three = r"char ***deep(char ***v) { return v; }";
+    let (prog, dump) = program_from_string(three);
+    assert!(
+        function_named(&prog, "deep").is_some(),
+        "a `char ***` definition must be collected\n{dump}"
+    );
+    check_return_arity(&prog, "deep", 1);
+}
+
+#[test_log::test]
+fn taint_returns_through_a_double_pointer_return() {
+    // The flow through a `char **` return. The parameter here is a *single* pointer on
+    // purpose: `collect_params` does not bind a `char **` PARAMETER at all (its query wants a
+    // `pointer_declarator` whose own declarator is an identifier, and a double pointer nests
+    // two), which silently drops it and shifts every later parameter's index down. That is a
+    // different defect in a different query -- spec 140 -- and pinning it here would tie this
+    // test to it.
+    let src = r"
+        struct env { char **argv; };
+        char **argv_of(struct env *e) { return e->argv; }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        function_named(&prog, "argv_of").is_some(),
+        "a `char **` definition must be collected\n{dump}"
+    );
+    check_return_arity(&prog, "argv_of", 1);
+    let (summary, _) = get_summary(prog).expect("must verify");
+    check_returns_param(&summary, 0, ".argv");
+}
+
+#[test_log::test]
+fn every_spelling_of_a_pointer_return_is_collected() {
+    // The spec's reproducer, verbatim. `one` and `two` bracket it because they were always
+    // collected: the five in between were the whole of the loss, and nothing was said about
+    // any of them. `void *` is the one that also needs the arity rule -- its `type:` capture
+    // IS `void`, but the `void` describes the pointee, so the function returns a value.
+    let src = r"
+        struct S { int f; };
+        int one(int a) { return a; }
+        char *d1(char *s) { return s; }
+        static char *d2(char *s) { return s; }
+        char * d3(char *s) { return s; }
+        struct S *d4(struct S *s) { return s; }
+        void *d5(void *s) { return s; }
+        int two(int a) { return a; }";
+    let (prog, dump) = program_from_string(src);
+    for name in ["one", "d1", "d2", "d3", "d4", "d5", "two"] {
+        assert!(
+            function_named(&prog, name).is_some(),
+            "`{name}` must be collected\n{dump}"
+        );
+        check_return_arity(&prog, name, 1);
+    }
+    let (summary, info) = get_summary(prog).expect("must verify");
+    for name in ["d1", "d2", "d3", "d4", "d5"] {
+        check_returns_param_in(&summary, &info, name, 0, "");
+    }
+}
+
+#[test_log::test]
+fn a_void_definition_still_returns_nothing() {
+    // The arity rule cuts both ways: `void f()` is still arity 0. Reading `returns_pointer`
+    // before the `void` check must not turn every `void` function into one that returns.
+    let src = r"void f(int a) { int b; b = a; }";
+    let (prog, _dump) = program_from_string(src);
+    check_return_arity(&prog, "f", 0);
+}
+
+#[test_log::test]
+fn a_pointer_returning_prototype_is_still_not_a_definition() {
+    // The boundary. A declaration is a `declaration` node, not a `function_definition`, so
+    // widening the definition query must not start inventing bodies for prototypes: `strdup`
+    // is known (a call resolves to it, via `define_extern_functions`) and empty.
+    // (Through `program_from_files`, because it is the import path that runs
+    // `define_extern_functions` and so the only one where a prototype gets a function at all.)
+    let (prog, dump) = program_from_files(&[(
+        "s.c",
+        r"char *strdup(const char *);
+          char *caller(char *p) { return strdup(p); }",
+    )]);
+    check_has_direct_call(&prog, "caller", "strdup");
+    let stub = function_named(&prog, "strdup").expect("the extern pass names it");
+    assert!(
+        stub.blocks.is_empty(),
+        "a prototype has no body to collect\n{dump}"
+    );
+    // and `caller`, which IS a definition, does have one.
+    let defined = function_named(&prog, "caller").expect("a definition is collected");
+    assert!(!defined.blocks.is_empty(), "caller has a body\n{dump}");
+}
+
+#[test_log::test]
+fn a_parenthesized_declarator_declares_what_it_wraps() {
+    // The other wrapper the query could not follow, and the corpus finds it too: openssh's
+    // `openbsd-compat/getrrsetbyname.c` defines `_getshort` under
+    // `#define _getshort(x) (_ssh_compat_getshort(x))`, so the DEFINITION preprocesses to
+    // `static u_int16_t (_ssh_compat_getshort(const u_char *msgp)) { ... }` -- parentheses
+    // around the whole function declarator. `(f)(int)`, parentheses around just the name, is
+    // the same idiom written on purpose. Both declare `f`, so both are collected. These two
+    // definitions are the entire residue of openssh's coverage hole once the pointer class is
+    // closed; §4.16 had recorded them as clang artifacts rather than losses, and they are not.
+    let whole = r"static unsigned (_ssh_compat_getshort(unsigned char *msgp)) { return *msgp; }";
+    let (prog, dump) = program_from_string(whole);
+    assert!(
+        function_named(&prog, "_ssh_compat_getshort").is_some(),
+        "parens around the declarator do not change what it declares\n{dump}"
+    );
+    check_return_arity(&prog, "_ssh_compat_getshort", 1);
+
+    let name_only = r"char *(strdup2)(char *s) { return s; }";
+    let (prog, dump) = program_from_string(name_only);
+    assert!(
+        function_named(&prog, "strdup2").is_some(),
+        "parens around the name do not change it either\n{dump}"
+    );
+    check_return_arity(&prog, "strdup2", 1);
+    let (summary, _) = get_summary(prog).expect("must verify");
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn a_declarator_that_names_no_function_is_reported() {
+    // The residual, said out loud. A function returning a function pointer
+    // (`char *(*signal_handler(int))(int)`) parses as a `function_declarator` wrapping a
+    // `parenthesized_declarator`, which names no single function this IR can give a return
+    // type -- so it is still dropped, but as a `frontend gap` naming the declarator, not in
+    // silence. Silence is exactly how the pointer-returning class survived this long.
+    let src = r"
+        char *(*signal_handler(int sig))(int) { return 0; }
+        int ok(int a) { return a; }";
+    let reports = reports_for(src);
+    assert!(
+        reports.iter().any(|(who, msg)| *who == "frontend gap"
+            && msg.contains("unsupported declarator in a function definition")),
+        "the dropped definition must be reported: {reports:?}"
+    );
+    // Recovery is per definition: the next one is still collected.
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        function_named(&prog, "ok").is_some(),
+        "recovery must not lose the rest of the file\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn pointer_returning_definitions_of_one_name_keep_their_own_bodies() {
+    // The class joins spec 120's identity machinery for free, because `function_head` feeds
+    // the same pre-pass: two files with their own `static char *fmt` are two functions, not
+    // one, and the second is named for its file.
+    let (prog, dump) = program_from_files(&[
+        ("a.c", "static char *fmt(char *s) { return s; }"),
+        (
+            "b.c",
+            "static char *fmt(char *s) { char *t; t = s; return t; }",
+        ),
+    ]);
+    assert!(
+        function_named(&prog, "fmt").is_some() && function_named(&prog, "fmt$b.c").is_some(),
+        "two pointer-returning definitions of one name are two functions\n{dump}"
+    );
+    check_return_arity(&prog, "fmt", 1);
+    check_return_arity(&prog, "fmt$b.c", 1);
+}
+
+#[test_log::test]
+fn a_pointer_returning_definition_is_not_a_frontend_gap() {
+    // Strict mode: the whole reproducer must import with `CTADL_ERROR_ON_AST` set. It always
+    // did -- that is the point, the class was invisible -- so this pins that the fix did not
+    // *introduce* a gap while walking bodies nobody had walked before.
+    let src = r"
+        struct S { int f; };
+        char *d1(char *s) { return s; }
+        char **d2(char **s) { return s; }
+        void *d3(void *s) { return s; }
+        struct S *d4(struct S *s) { return s; }";
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("a pointer-returning definition is not a frontend gap");
+}

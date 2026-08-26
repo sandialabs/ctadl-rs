@@ -562,6 +562,18 @@ fn add_scope(
     }
 }
 
+/// The three things [`function_head`] recovers from a definition's declarator.
+struct FunctionHead<'tree> {
+    /// The `identifier` naming the function.
+    name: Node<'tree>,
+    /// Its `parameter_list`.
+    params: Node<'tree>,
+    /// Whether the declarator wraps the `function_declarator` in at least one
+    /// `pointer_declarator`, i.e. the function returns a pointer. `void *f()` returns a
+    /// value even though its `type:` is `void` -- the `void` is the pointee.
+    returns_pointer: bool,
+}
+
 /// One `function_definition` the frontend found, as [`Context::plan_definitions`] sees it:
 /// enough to decide whether it is a function of its own, a character-for-character copy of
 /// another translation unit's, or a second function that merely shares a name.
@@ -1352,6 +1364,62 @@ fn declarator_member_name<'s>(decl: Node<'_>, source: &'s str) -> Option<(&'s st
             .map(|(n, _)| (n, false)),
         _ => None,
     }
+}
+
+/// What a `function_definition`'s declarator says about the function it defines: the node
+/// that names it, its parameter list, and whether the value it returns is a pointer.
+///
+/// tree-sitter-c's `function_definition` accepts any `_declarator`, and a pointer return wraps
+/// the `function_declarator` in one `pointer_declarator` per `*`, so `char **argv_of(void) {}`
+/// parses as `function_definition > pointer_declarator > pointer_declarator >
+/// function_declarator`. A query pattern cannot recurse, so [`Context::collect_functions`]
+/// captures the declarator whole and this unwraps it -- for years the pattern demanded a
+/// `function_declarator` directly, and every pointer-returning definition in every corpus was
+/// dropped without a word (spec 130).
+///
+/// `None` for a declarator that names no single function: a definition made through a
+/// parenthesized declarator (`char *(*f(int))(void)`, a function returning a function
+/// pointer), an array or attributed declarator, or parse-recovery debris.
+fn function_head(declarator: Node<'_>) -> Option<FunctionHead<'_>> {
+    let mut node = unparenthesize(declarator)?;
+    let mut returns_pointer = false;
+    while node.kind() == "pointer_declarator" {
+        returns_pointer = true;
+        node = unparenthesize(node.child_by_field_name("declarator")?)?;
+    }
+    if node.kind() != "function_declarator" {
+        return None;
+    }
+    // `(f)(int)` and `(f(int))` both declare `f`; a macro-shy definition writes one of them.
+    // The parens are NOT redundant when what they hold is a pointer -- `char *(*f(int))(void)`
+    // returns a function pointer -- and that shape is rejected here, by the identifier test.
+    let name = unparenthesize(node.child_by_field_name("declarator")?)?;
+    if name.kind() != "identifier" {
+        return None;
+    }
+    Some(FunctionHead {
+        name,
+        params: node.child_by_field_name("parameters")?,
+        returns_pointer,
+    })
+}
+
+/// The declarator inside any number of layers of parentheses: `(d)` declares exactly what `d`
+/// declares, so a parenthesized declarator is transparent to [`function_head`]. `None` if the
+/// parentheses hold nothing (parse-recovery debris).
+///
+/// openssh spells one this way without meaning to: `openbsd-compat/getrrsetbyname.c` defines
+/// `_getshort` under a `#define _getshort(x) (_ssh_compat_getshort(x))`, so the *definition*
+/// preprocesses to `static u_int16_t (_ssh_compat_getshort(const u_char *msgp)) { ... }`.
+fn unparenthesize(node: Node<'_>) -> Option<Node<'_>> {
+    let mut node = node;
+    while node.kind() == "parenthesized_declarator" {
+        let mut cursor = node.walk();
+        node = node
+            .named_children(&mut cursor)
+            .find(|child| child.kind() != "comment")?;
+    }
+    Some(node)
 }
 
 fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
@@ -4052,13 +4120,14 @@ impl<'a> Context<'a> {
         program: &mut Program,
         global_sidx: usize,
     ) -> anyhow::Result<(), Error> {
+        // The declarator is captured whole, not pattern-matched: `_declarator` is a CHOICE
+        // in the grammar and a pointer return nests a `pointer_declarator` per `*` around the
+        // `function_declarator`, which no single query pattern can follow. [`function_head`]
+        // does the unwrapping and rejects the shapes that name no single function.
         let query_src = r#"
             (function_definition
-                type: (primitive_type)? @return_type            	
-                declarator: (function_declarator
-                    declarator: (identifier) @func.name
-                    parameters: (parameter_list) @param_list                                        
-                ) @func.dev
+                type: (primitive_type)? @return_type
+                declarator: (_) @func.decl
                 body: (compound_statement) @body) @func.def
             "#;
 
@@ -4082,16 +4151,33 @@ impl<'a> Context<'a> {
         let mut name_matches = name_cursor.matches(&query, tree.root_node(), source.as_bytes());
         while let Some(m) = name_matches.next() {
             let extract = MatchExtractor::new(&query, m);
-            if let (Ok(name_node), Ok(def_node)) =
-                (extract.get("func.name"), extract.get("func.def"))
-            {
-                defs.push(Definition {
-                    id: def_node.id(),
-                    name: to_str(&name_node, source),
-                    text: to_str(&def_node, source),
-                    file: self.file_of(def_node.start_byte()),
-                });
-            }
+            let (Ok(decl_node), Ok(def_node)) = (extract.get("func.decl"), extract.get("func.def"))
+            else {
+                continue;
+            };
+            let Some(head) = function_head(decl_node) else {
+                // A definition whose declarator names no single function. Dropping it is
+                // still dropping a body, so it is said out loud here rather than left to be
+                // noticed as a bodyless `define` -- which is exactly how the whole
+                // pointer-returning class hid for as long as it did.
+                let (quote, elided) = quote_construct(to_str(&decl_node, source));
+                let elision = if elided > 0 {
+                    format!(" (+{elided} chars elided)")
+                } else {
+                    String::new()
+                };
+                unexpected_ast(format!(
+                    "unsupported declarator in a function definition{elision}; the function it \
+                     defines has no body in the IR -- declarator: {quote}"
+                ))?;
+                continue;
+            };
+            defs.push(Definition {
+                id: def_node.id(),
+                name: to_str(&head.name, source),
+                text: to_str(&def_node, source),
+                file: self.file_of(def_node.start_byte()),
+            });
         }
         let plan = self.plan_definitions(&defs)?;
         for def in &defs {
@@ -4112,10 +4198,14 @@ impl<'a> Context<'a> {
             let extract = MatchExtractor::new(&query, m);
             //boo, so TREE_SITTER doesn't add a node for an implicit int function type
             let return_type = extract.get_opt("return_type");
-            let func_name_node = extract.get("func.name")?;
-            let param_list = extract.get("param_list")?;
             let body_node = extract.get("body")?;
             let def_node = extract.get("func.def")?;
+            // Already reported by the pre-pass, which saw the same matches.
+            let Some(head) = function_head(extract.get("func.decl")?) else {
+                continue;
+            };
+            let func_name_node = head.name;
+            let param_list = head.params;
             //debug_print_tree(body_node, 0, None, Some(50));
             // A definition another translation unit already contributed, character for
             // character: one function, lowered once, at the first copy.
@@ -4141,7 +4231,11 @@ impl<'a> Context<'a> {
             fdat.name = func_name.to_string();
 
             //return type, remember C can have an implicit int return type. boo
-            let ret_ct = if let Some(rt) = return_type
+            // A pointer return is a return: `void *xmalloc(size_t)` has `type: void` and an
+            // arity of 1, because the `void` describes the pointee, not the function.
+            let ret_ct = if head.returns_pointer {
+                1
+            } else if let Some(rt) = return_type
                 && to_str(&rt, source).eq_ignore_ascii_case("void")
             {
                 0
