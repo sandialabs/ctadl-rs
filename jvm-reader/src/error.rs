@@ -347,9 +347,6 @@ mod tests {
         }
     }
 
-    /// The aggregate underflow error used to be a bare `&'static str` too --
-    /// the message the CVE report quotes for Yamcs and could not attribute to
-    /// any instruction.
     #[test]
     fn stack_underflow_names_the_instruction() {
         let err = ClassFileError::StackUnderflow {
