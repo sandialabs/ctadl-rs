@@ -4,7 +4,7 @@ Scope: `ctadl-ascent/src/query_engine/search.rs` and the generic search it drive
 `ctadl-ir/src/graph/mod.rs`.
 
 This document had one subject — the state-space blowup from context obligations
-(`56728caf`) and its subsumption fix. That fix **landed** (`f4849565`); §7 keeps its
+(`cf558108`) and its subsumption fix. That fix **landed** (`c666df16`); §7 keeps its
 measurements because they are the memory budget every change below has to live inside.
 The live subject is now a **correctness property the search does not have**, stated in §0
 and violated three independent ways (§2). §3 is the change.
@@ -36,10 +36,10 @@ in silence.
 
 | item | state |
 | --- | --- |
-| `LazyAnnotation::generalization` hook + contract (`graph/mod.rs:270`) | landed `f4849565` |
+| `LazyAnnotation::generalization` hook + contract (`graph/mod.rs:270`) | landed `c666df16` |
 | `subsumed` chain walk at both visited checks (`graph/mod.rs:363`, `:392`, `:424`) | landed |
 | Two frontiers, general drained first (`graph/mod.rs:386`, `:414`) | landed |
-| `PathState::generalization` / `CallString::drop_outermost` (`search.rs:682`, `facts.rs:325`) | landed |
+| `PathState::generalization` / `CallString::drop_outermost` (`search.rs:682`, `facts.rs:333`) | landed |
 | Per-label `ctx_bearing` debug line (`search.rs:886`) | landed |
 | `CallString` as a `u32` id; `edge: Option<L>` out of `SearchState` (old §6) | **open**, still the other 1.8× |
 
@@ -147,7 +147,7 @@ Even with 1–3 fixed, two formatter-side facts bound the property:
   resolvable source span (`formatter.rs:2667`). A witnessed pair whose whole path misses such
   a node is never tested. Usually harmless (the sink is an argument at a call), but
   function-anchored endpoints — the `anchored_at_callsites` fallback for a callerless function
-  or the globals pseudo-formal (`mod.rs:105`–`:133`) — land outside it.
+  or the globals pseudo-formal (`mod.rs:104`–`:133`) — land outside it.
 - **The reported path is re-derived, not carried.** The formatter searches the union of all
   emitted edges (`formatter.rs:2702`), so it can answer a pair with a walk spliced out of two
   other pairs' witnesses. Pair completeness survives that; clause two of §0 does not.
@@ -301,7 +301,7 @@ optimization, not part of the property.
 | many sources, sinks reached | 1 + `E` | up to `(1+E)×` this label | `max(gate, one witness pass)` |
 
 `E` = distinct source *start vertices* for the label, which is the number of call sites the
-model's source functions have (`anchored_at_callsites`, `mod.rs:105`): 2 in the reproducer,
+model's source functions have (`anchored_at_callsites`, `mod.rs:104`): 2 in the reproducer,
 one per `getenv`/`getDeviceId` call site on a real target. The per-label debug line already
 prints it — **measure `E` per label on the corpus before landing**, because it is the whole
 cost story.
@@ -369,7 +369,7 @@ Emit both as `invocations[0]` notifications the way `dropped_no_location` alread
    binaries** (§7.2 — per-side imports are not a valid differential; the same unmodified
    binary swung 353 vs 357 across two imports of `cajino_baidu`). Expectations, and they are
    *not* "identical counts" this time:
-   - findings must be a **superset** of the branch tip's — every new one is a pair that was
+   - findings must be a **superset** of `c666df16`'s — every new one is a pair that was
      connected and unreported;
    - `cajino_baidu` must still include the 3 findings D4 bought (≥ 353 on the import that
      produces 353);
@@ -430,16 +430,16 @@ undercounts on macOS.
 | commit | wall | peak footprint |
 | --- | ---: | ---: |
 | `6ecbfb45` (main) | 5.90 s | 1.48 GB |
-| `862ad660` (= `56728caf^`) | 6.00 s | 1.48 GB |
-| **`56728caf`** "Query finds sinks under contexts" | **10.59 s** | **4.10 GB** |
-| `f3895bca` (branch tip, `ascent_par!`) | 10.45 s | 4.08 GB |
-| `f4849565` (subsumption landed) | — | 2.17 GB / 6,471,144 states |
+| `6a58056a` (= `cf558108^`) | 6.00 s | 1.48 GB |
+| **`cf558108`** "Query finds sinks under contexts" | **10.59 s** | **4.10 GB** |
+| `9c18bad5` (`ascent_par!`) | 10.45 s | 4.08 GB |
+| `c666df16` (subsumption landed) | — | 2.17 GB / 6,471,144 states |
 
 One commit owned the whole delta. `taint_search` runs one search per source label; the
 `file_input` search was untouched (3.62 M states, 0 context-bearing) and `argv_input` was the
 regression:
 
-| | main | `56728caf` |
+| | main | `cf558108` |
 | --- | ---: | ---: |
 | states in the `argv_input` search | 6,194,425 | **14,029,871** |
 | — context-free | 6,194,425 | 6,194,551 |
@@ -470,7 +470,7 @@ Open items, in order, after §3 lands and is measured:
 
 ### 7.2 Why per-import finding counts move: index row order, read through a lossy emission
 
-Measured on `cajino_baidu` with the branch tip: 11 import+index runs gave 345 findings nine
+Measured on `cajino_baidu` at `9c18bad5`: 11 import+index runs gave 345 findings nine
 times and 349 twice (a different harness from the sweep's 353/357; the ±4 spread is the
 point). **The index is order-nondeterministic, not content-nondeterministic** — take a
 345-store and a 349-store and every relation is multiset-identical; only row *order* differs,
