@@ -1475,10 +1475,10 @@ fn is_type_name(node: Node<'_>) -> bool {
 /// a function and lost the call edge to the real one.
 ///
 /// A GNU statement expression `({ ... })(x)` is NOT peeled. Those parentheses are part of the
-/// construct rather than grouping around an expression, and what the peel would leave is a
-/// `compound_statement` -- still not a name, so still lowered as a direct call to its own text.
-/// Peeling would only relabel that gap (the kernel's `static_call()`, 220 invented names);
-/// naming it faithfully leaves it findable.
+/// construct rather than grouping around an expression, so peeling them would leave a
+/// `compound_statement` that is not the callee's spelling either. There is nothing to peel *to*:
+/// what stands in callee position is the whole construct, and [`is_statement_expression`] is what
+/// [`Context::collect_call`] asks about it.
 fn unparenthesized_callee(node: Node<'_>) -> Node<'_> {
     let mut node = node;
     while node.kind() == "parenthesized_expression" {
@@ -1488,6 +1488,23 @@ fn unparenthesized_callee(node: Node<'_>) -> Node<'_> {
         }
     }
     node
+}
+
+/// Is `node` a GNU statement expression -- `({ s1; s2; value; })`?
+///
+/// tree-sitter-c 0.24.1 has no node for the construct: it parses as a `parenthesized_expression`
+/// wrapping a `compound_statement`, which is why [`Context::flatten_expr`] and
+/// [`Context::flatten_lvalue`] both key on the inner `compound_statement` and reach it through
+/// their `parenthesized_expression` arms. A caller holding the OUTER node --
+/// [`unparenthesized_callee`] hands one back unpeeled -- asks here instead.
+fn is_statement_expression(node: Node<'_>) -> bool {
+    match node.kind() {
+        "compound_statement" => true,
+        "parenthesized_expression" => {
+            first_named_child(node).is_some_and(|inner| inner.kind() == "compound_statement")
+        }
+        _ => false,
+    }
 }
 
 /// The name a parameter's declarator declares, and whether the parameter is a reference.
@@ -4129,6 +4146,18 @@ impl<'a> Context<'a> {
                 })
         };
 
+        // A GNU statement expression in callee position produces a VALUE, and calling a value is
+        // calling through it -- the kernel's `static_call(cond_resched)(...)`, which expands to
+        // `({ ...; (&__SCT__cond_resched); })(...)`. The rule below cannot see that from the
+        // access path alone: the value node resolves to the bare global path
+        // `$globals.__SCT__cond_resched`, which is exactly the shape of a global callee that IS a
+        // name (`hook(1)`, see `a_bare_global_callee_is_still_a_name`). What tells them apart is
+        // the construct in callee position -- `({ ... })`, not `__SCT__cond_resched` -- so ask it
+        // here. Left as a name, the callee was named by the braces' own source text, and since
+        // the expansion embeds a `__UNIQUE_ID___...` counter every one of the 220 kernel call
+        // sites invented an empty-bodied function of its own.
+        let callee_is_a_value = is_statement_expression(func_node);
+
         // Direct call or indirect call, decided by what the callee *resolved to* rather than by
         // how it was spelled: a callee that is a name is a direct call to that name, and a
         // callee that is a location holding a function pointer is a call through what that
@@ -4167,7 +4196,10 @@ impl<'a> Context<'a> {
             // .handler` are function pointers a file-scope object holds, not functions, and
             // naming a call edge after the expression's source text both invented an empty
             // function to receive it and lost the indirect call the program actually makes.
-            Variable::GlobalHeap if access_path.fields.len() > 1 => {
+            //
+            // The second disjunct is that same conclusion reached from the construct instead of
+            // from the path, for the one shape whose path cannot say it: see `callee_is_a_value`.
+            Variable::GlobalHeap if access_path.fields.len() > 1 || callee_is_a_value => {
                 log::debug!("This is an Indirect GLOBAL call: {func_name}");
                 let callee = self.emit_loads(program, scope_view, access_path);
                 CallStyle::FuncPtrCall {

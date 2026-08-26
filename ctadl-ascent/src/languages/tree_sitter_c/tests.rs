@@ -5455,14 +5455,13 @@ fn a_cast_shaped_call_is_not_a_frontend_gap() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational: a GNU statement expression in callee position is still named by its text"]
 fn a_statement_expression_callee_is_an_indirect_call() {
-    // What this spec deliberately leaves. The kernel's `static_call(f)(args)` expands to a GNU
+    // Spec 170's class, in miniature. The kernel's `static_call(f)(args)` expands to a GNU
     // statement expression in callee position, `({ ...; (&__SCT__f); })(args)`, which is a
     // `parenthesized_expression` wrapping a `compound_statement` -- the cast shape's grammar,
     // and not a cast. Those parentheses are part of the construct, so `unparenthesized_callee`
-    // does not peel them, and the callee keeps being named by its own source text: 220 of the
-    // kernel corpus's invented functions are one of these. The value it yields is a function
+    // does not peel them, and the callee used to be named by its own source text: 220 of the
+    // kernel corpus's invented functions were one of these. The value it yields is a function
     // pointer, so the answer is an indirect call through it.
     let src = r"
         void target(int x);
@@ -5472,7 +5471,16 @@ fn a_statement_expression_callee_is_an_indirect_call() {
         direct_calls_in(&prog, "fire").is_empty(),
         "a statement expression names no function\n{dump}"
     );
-    assert!(check_match(&dump, "funcptr-call"), "{dump}");
+    assert!(
+        function_named(&prog, "({ target; })").is_none(),
+        "no function is invented for the braces' source text\n{dump}"
+    );
+    check_loads(&prog, "$globals.target");
+    let callee = local_render(&prog, "fire", "<t1>");
+    assert!(
+        check_match(&dump, &format!("funcptr-call {callee} ")),
+        "the callee is the statement expression's loaded value\n{dump}"
+    );
 }
 
 // ---------------------------------------------------------------------------------------
@@ -5685,4 +5693,172 @@ fn an_argument_of_a_call_through_a_global_field_reaches_the_callee_parameter() {
         crate::codegen::GLOBALS_INDEX,
         ".taken",
     );
+}
+
+// ---------------------------------------------------------------------------------------
+// Spec 170: a GNU statement expression in callee position.
+//
+// The kernel's `static_call(cond_resched)(...)` expands to `({ ...; (&__SCT__cond_resched); })(...)`
+// -- a statement expression whose value is the address of a trampoline, immediately called.
+// tree-sitter parses that as a `call_expression` whose `function` is a `parenthesized_expression`
+// wrapping a `compound_statement`, and `collect_call` named the callee by its own source text: a
+// direct call to a function literally spelled `({ ...; (&__SCT__cond_resched); })`, which
+// `define_extern_functions` then invented an empty body for. Because the expansion embeds a
+// `__UNIQUE_ID___...` counter, every one of the kernel corpus's 220 call sites invented a function
+// of its own, and the indirect call the program actually makes was in the IR nowhere.
+//
+// Spec 160 made the call style a question about the resolved access path, and this shape is the
+// one place that question cannot answer on its own: the value node resolves to a bare global path
+// (`$globals.__SCT__cond_resched`), which is exactly what a global callee that IS a name resolves
+// to. The construct in callee position is what tells them apart -- see `is_statement_expression`.
+
+#[test_log::test]
+fn the_kernels_static_call_expansion_is_an_indirect_call() {
+    // The real expansion, spelled out: a `static` addressable alias declared for its side effect,
+    // an empty statement from the `;;`, and the trampoline's address as the value. Nothing here
+    // is a name in callee position, so nothing may be invented from the braces' text.
+    let src = r"
+        void __SCK__cond_resched(void);
+        void __SCT__cond_resched(void);
+        void fire(void) {
+            ({ static void *__UNIQUE_ID___addressable___SCK__cond_resched134 =
+                   (void *)&__SCK__cond_resched;; (&__SCT__cond_resched); })();
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "fire").is_empty(),
+        "the braces name no function\n{dump}"
+    );
+    assert!(
+        prog.functions
+            .functions
+            .raw
+            .iter()
+            .all(|f| !f.name.starts_with("({")),
+        "no function is invented for the braces' source text\n{dump}"
+    );
+    check_loads(&prog, "$globals.__SCT__cond_resched");
+    assert!(check_match(&dump, "funcptr-call"), "{dump}");
+}
+
+#[test_log::test]
+fn a_statement_expression_callee_lowers_the_braces_effects() {
+    // The statements before the value are not scenery -- the whole construct exists for them.
+    // They run whether or not the call resolves, so the write to `o` inside the braces must be
+    // real IR: only it can carry the parameter to the return here.
+    let src = r"
+        void (*hook)(int);
+        int f(int a) { int o = 0; ({ o = a; hook; })(1); return o; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn taint_crosses_a_statement_expression_callee() {
+    // What the fix buys, end to end: the statement expression yields `g`, `g` is bound to `id`,
+    // so the argument reaches `id`'s parameter and comes back. Before the fix the call went to an
+    // invented, empty-bodied function named `({ g; })`, and an empty body returns nothing.
+    let src = r"
+        int id(int p) { return p; }
+        int (*g)(int);
+        int wrap(int b) {
+            g = id;
+            return ({ g; })(b);
+        }";
+    let (summary, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&summary, &si, "wrap", 0, "");
+}
+
+#[test_log::test]
+fn an_argument_of_a_statement_expression_callee_reaches_the_callee_parameter() {
+    // The same crossing from the argument side, with the `check_no_flow_in` control that makes it
+    // a measurement: `a` is passed to nothing, so an over-approximation letting any argument reach
+    // any callee would show up as a second flow into `$globals.taken`.
+    let src = r"
+        int taken;
+        void store_it(int p) { taken = p; }
+        void (*g)(int);
+        void wrap(int a, int b) {
+            g = store_it;
+            ({ g; })(b);
+        }";
+    let (summary, si) = get_summary(program_from_string(src).0).unwrap();
+    check_param_into_global_in(&summary, &si, "wrap", 1, ".taken");
+    check_no_flow_in(
+        &summary,
+        &si,
+        "wrap",
+        0,
+        "",
+        crate::codegen::GLOBALS_INDEX,
+        ".taken",
+    );
+}
+
+#[test_log::test]
+fn a_static_call_trampoline_carries_no_flow_within_one_unit() {
+    // What the analysis can NOT do here, stated rather than implied. The two tests above resolve
+    // the indirect call because the unit binds the pointer; the kernel's `__SCT__cond_resched` is
+    // a trampoline patched in by assembly, so no translation unit assigns it and there is nothing
+    // to resolve. The call is in the IR as an indirect call through `$globals.__SCT__f` -- which
+    // is what a whole-program run needs in order to resolve it at all, and strictly more than the
+    // edge to an invented empty function it replaced -- but within the unit no taint crosses it.
+    let src = r"
+        int taken;
+        void __SCT__f(int);
+        void fire(int x) { ({ (&__SCT__f); })(x); }";
+    let (summary, si) = get_summary(program_from_string(src).0).unwrap();
+    check_no_flow_in(
+        &summary,
+        &si,
+        "fire",
+        0,
+        "",
+        crate::codegen::GLOBALS_INDEX,
+        ".taken",
+    );
+}
+
+#[test_log::test]
+fn a_statement_expression_callee_is_not_a_frontend_gap() {
+    // Strict mode. The class was entirely silent -- an invented function is not a warning -- so
+    // this pins that reading the callee as a value introduces no gap of its own, including for
+    // the `void`-valued braces that yield no callee at all.
+    let src = r"
+        void (*hook)(int);
+        void fire(int x) { ({ hook; })(x); ({ do { } while (0); })(x); }";
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("a statement-expression callee is not a frontend gap");
+}
+
+#[test_log::test]
+fn the_other_statement_expression_positions_and_the_call_shapes_are_unchanged() {
+    // The boundary, in one fixture. A statement expression in VALUE position (spec 061) and in
+    // LVALUE position (spec 062) both already worked and must not move; a genuine direct call and
+    // a cast written with parentheses (spec 150) must not be dragged onto the indirect path by a
+    // rule that keys on the callee's construct. Exactly one call here is indirect.
+    let src = r"
+        typedef unsigned short __be16;
+        struct S { int f; };
+        void (*hook)(int);
+        int plain(int x);
+        int f(struct S *a, int x) {
+            int v = ({ int t = x; t; });     // value position: unchanged
+            ({ int t = 0; &a[1]; })->f = v;  // lvalue position: unchanged
+            ({ hook; })(v);                  // callee position: this spec
+            return plain((__be16)(x));       // a direct call and a cast: unchanged
+        }";
+    let (prog, dump) = program_from_string(src);
+    let direct: Vec<String> = direct_calls_in(&prog, "f")
+        .into_iter()
+        .flat_map(|(names, _)| names)
+        .collect();
+    assert_eq!(direct, vec!["plain".to_string()], "{dump}");
+    assert_eq!(
+        dump.matches("funcptr-call").count(),
+        1,
+        "only the callee-position statement expression is indirect\n{dump}"
+    );
+    let (s, si) = get_summary(prog).unwrap();
+    check_flow_in(&s, &si, "f", 1, "", 0, ".[1].deref.f");
 }
