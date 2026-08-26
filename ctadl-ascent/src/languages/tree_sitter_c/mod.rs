@@ -562,9 +562,45 @@ fn add_scope(
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-#[repr(transparent)]
-struct FunctionName<'a>(&'a str);
+/// One `function_definition` the frontend found, as [`Context::plan_definitions`] sees it:
+/// enough to decide whether it is a function of its own, a character-for-character copy of
+/// another translation unit's, or a second function that merely shares a name.
+#[derive(Debug)]
+struct Definition<'a> {
+    /// Identity of the `function_definition` node, so the walk can look its plan up again.
+    id: usize,
+    /// The name as written.
+    name: &'a str,
+    /// The definition's source text. This frontend lowers text, so two definitions that
+    /// quote the same characters lower to the same IR -- which is what makes deduplicating
+    /// them exact rather than a guess.
+    text: &'a str,
+    /// File the definition came from, or `None` when the parse buffer is not a concatenation
+    /// of files (the [`parse_c_program`] path used by tests).
+    file: Option<String>,
+}
+
+/// What [`Context::plan_definitions`] decided about the definitions in one parse: which are
+/// copies to lower once, and which need a name of their own. Both are keyed by
+/// `function_definition` node id; a definition in neither is the ordinary case -- the only
+/// definition of its name -- and keeps the name it was written with.
+#[derive(Debug, Default)]
+struct DefinitionPlan {
+    /// Definitions that repeat an earlier one character for character. The same function,
+    /// included by two translation units; lowered once.
+    duplicates: HashSet<usize>,
+    /// IR name of a definition that cannot keep its bare name because another definition of
+    /// that name got there first.
+    effective: HashMap<usize, String>,
+}
+
+impl DefinitionPlan {
+    /// The IR name of the definition `id`, which is the name it was written with unless this
+    /// plan gave it one of its own.
+    fn name_of<'n>(&'n self, id: usize, written: &'n str) -> &'n str {
+        self.effective.get(&id).map_or(written, String::as_str)
+    }
+}
 
 /// Synthetic field name that all members of a `union` variable collapse to, so they share a
 /// single access path (union members alias -- they occupy the same storage). The `$` keeps it
@@ -682,8 +718,26 @@ fn push_element(fields: &mut ThinVec<PathSegment>, index: Option<i64>) {
 
 #[derive(Debug, Default)]
 struct Context<'a> {
-    functions: HashMap<FunctionName<'a>, FunctionIdx>,
-    param_names: HashMap<FunctionName<'a>, IndexVec<ParameterIdx, &'a str>>,
+    /// Every function this parse knows, by IR name. The name is the one written in the
+    /// source except where [`Context::plan_definitions`] had to mint one (see
+    /// `file_local_functions`), so an extern declaration, a call from a translation unit
+    /// that defines nothing of that name, and every taint model still resolve by the plain
+    /// name.
+    functions: HashMap<String, FunctionIdx>,
+    param_names: HashMap<String, IndexVec<ParameterIdx, &'a str>>,
+    /// Names that more than one function definition in this import lays claim to. Guards the
+    /// per-file lookup below, which is pure overhead for the overwhelming majority of names.
+    colliding_names: HashSet<String>,
+    /// For a file, the IR name each colliding function name resolves to *within that file*.
+    ///
+    /// A directory imports as ONE buffer (see [`read_c_source`]), so definitions that C keeps
+    /// apart -- a `static` helper is scoped to its own file, and a header's `static inline`
+    /// becomes one definition per translation unit that included it -- land in a single
+    /// namespace. C resolves a call to the definition the caller's own translation unit
+    /// holds, so that is what a reference from this file resolves to; a file that defines
+    /// none of them falls back to the bare name. Empty unless some name really is claimed
+    /// twice (spec 120).
+    file_local_functions: HashMap<String, HashMap<String, String>>,
     scope_tree: ScopeTree,
     allocator: TempAllocator,
     /// Block that each `goto` label maps to, for the function currently being walked.
@@ -971,6 +1025,21 @@ pub fn parse_c_program(source: &str) -> anyhow::Result<(Program, bool, String), 
     Ok((program, tree.root_node().has_error(), marked_up))
 }
 
+/// Parse several named C files as ONE translation unit -- the shape [`import_c`] produces for
+/// a directory -- and return the program together with its marked-up dump.
+///
+/// The import path, not [`parse_c_program`]: it records source info, it installs the
+/// [`FileMap`] that tells the frontend which file each construct came from, and it creates the
+/// extern stubs. That is what a test needs in order to pin anything about several translation
+/// units meeting in one buffer, which is where a `static` function's file scope stops being
+/// implicit (spec 120).
+pub fn parse_c_files(files: &[(String, String)]) -> Result<(Program, String), Error> {
+    let (source, file_map) = combine_sources(files);
+    let (program, _source_info, _has_error, marked_up) =
+        parse_c_with_source_info(&source, file_map)?;
+    Ok((program, marked_up))
+}
+
 /// Import C source at `path` into a [`ProgramInfo`], ready for [`crate::cli::import`].
 ///
 /// `path` may be a single C source file (`.c`) or header (`.h`), or a directory
@@ -1066,27 +1135,40 @@ fn read_c_source(path: &std::path::Path) -> Result<(String, FileMap), Error> {
     headers.sort();
     sources.sort();
 
+    let mut files = Vec::new();
+    for file in headers.iter().chain(sources.iter()) {
+        files.push((file.display().to_string(), std::fs::read_to_string(file)?));
+    }
+    Ok(combine_sources(&files))
+}
+
+/// Concatenate `files` (each a display path and its contents) into the single buffer the
+/// frontend parses, plus the [`FileMap`] that says where each one landed. Split out of
+/// [`read_c_source`] so a test can build a multi-file translation unit without touching the
+/// filesystem -- which is the only way to exercise anything that depends on which FILE a
+/// construct came from, e.g. two files that each define their own `static g`
+/// ([`Context::plan_definitions`]).
+fn combine_sources(files: &[(String, String)]) -> (String, FileMap) {
     let mut combined = String::new();
     let mut map = FileMap::default();
-    for file in headers.iter().chain(sources.iter()) {
-        let contents = std::fs::read_to_string(file)?;
+    for (path, contents) in files {
         // Mark where each file's contents begin (aids debugging the merged unit)
         // and separate files with newlines so tokens across a boundary never merge.
-        combined.push_str(&format!("// ==== {} ====\n", file.display()));
+        combined.push_str(&format!("// ==== {path} ====\n"));
         // The file's content begins *after* the marker line; record that so spans
         // land at the right offset within the original file.
         let combined_start = combined.len();
         let hash = source_info::sha256(contents.as_bytes());
-        combined.push_str(&contents);
+        combined.push_str(contents);
         map.slices.push(FileSlice {
             combined_start,
             len: contents.len(),
-            path: file.display().to_string(),
+            path: path.clone(),
             hash,
         });
         combined.push('\n');
     }
-    Ok((combined, map))
+    (combined, map)
 }
 
 /// Recursively collect `.h` files into `headers` and `.c` files into `sources`
@@ -2776,7 +2858,7 @@ impl<'a> Context<'a> {
     }
 
     fn get_param_idx(&self, func_name: &str, var_name: &str) -> Option<ParameterIdx> {
-        let param_vec = self.param_names.get(&FunctionName(func_name)).unwrap();
+        let param_vec = self.param_names.get(func_name).unwrap();
         // Find returns Option<(ParameterIdx, &String)>
         // Map transforms it into Option<ParameterIdx>
         param_vec
@@ -2854,12 +2936,12 @@ impl<'a> Context<'a> {
         source: &'a str,
         param_list: &Node<'_>,
         fdat: &mut FunctionData,
-        function_name: &'a str,
+        function_name: &str,
         scope_view: &ScopeView,
     ) -> anyhow::Result<(), Error> {
         let param_names = self
             .param_names
-            .entry(FunctionName(function_name))
+            .entry(function_name.to_string())
             .or_default();
 
         let query_src = r#"
@@ -2945,9 +3027,12 @@ impl<'a> Context<'a> {
                     .scope_tree
                     .find_variable(scope_view.sidx, text)
                     .is_none()
-                    && self.functions.keys().any(|f| f.0 == text)
+                    && self.functions.contains_key(text)
                 {
-                    Ok(Exp::ObjectRef(CallObject::FunctionPtr(text.into())))
+                    // Which definition of `text` this file means, when more than one file
+                    // defines one (see `Context::resolve_reference`).
+                    let target = self.resolve_reference(text, node.start_byte());
+                    Ok(Exp::ObjectRef(CallObject::FunctionPtr(target.into())))
                 } else {
                     // A read of a variable. A global identifier `a` is really `$globals.a` (a
                     // field of the globals object), so this may lower to a load; a local is a
@@ -3710,7 +3795,11 @@ impl<'a> Context<'a> {
         let func_node = node.child_by_field_name("function").expect("always has");
         let func_name = to_str(&func_node, source);
 
-        let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec![func_name.to_string()]);
+        // A call names the definition the *caller's* file holds when several files define
+        // that name; `resolve_reference` is the identity function for every other name.
+        let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec![
+            self.resolve_reference(func_name, func_node.start_byte())
+        ]);
 
         let arg_node = node.child_by_field_name("arguments").expect("always has");
         let args = self.collect_arguments(program, arg_node, source, scope_view)?;
@@ -3789,6 +3878,172 @@ impl<'a> Context<'a> {
         ))
     }
 
+    /// The file combined-buffer offset `off` came from, by full path -- or `None` when the
+    /// buffer is not a concatenation of files, which is every [`parse_c_program`] caller
+    /// (the unit tests and the marked-up dump). See [`read_c_source`] and [`FileMap`].
+    ///
+    /// The full path, not the base name: this is the key a name is resolved *against*, and
+    /// two directories may each hold a `util.c`. The minted name that goes into the IR uses
+    /// the base name, which is for reading; see [`Context::plan_definitions`].
+    fn file_of(&self, off: usize) -> Option<String> {
+        let (key, _, _) = self.file_map.locate(off)?;
+        Some(key.path)
+    }
+
+    /// The IR name a reference to the function `name` written at buffer offset `off`
+    /// resolves to.
+    ///
+    /// Almost always `name` itself. It differs only for a name several definitions claim,
+    /// where C resolves the reference within the referring translation unit first: a call to
+    /// `g` in `ssh-agent.c` means *that* file's `static g`, not the one `ssh-add.c` happens
+    /// to define under the same name. A file that defines no `g` falls back to the bare name,
+    /// which is both what C does (the external definition) and what keeps an undefined `g`
+    /// resolvable -- [`define_extern_functions`], and every taint model, matches by name.
+    fn resolve_reference(&self, name: &str, off: usize) -> String {
+        if self.colliding_names.contains(name) {
+            let file = self.file_of(off).unwrap_or_default();
+            if let Some(effective) = self
+                .file_local_functions
+                .get(file.as_str())
+                .and_then(|by_name| by_name.get(name))
+            {
+                return effective.clone();
+            }
+        }
+        name.to_string()
+    }
+
+    /// Decide what each definition in this parse *is*, before any of them is lowered.
+    ///
+    /// A name is not an identity here. [`import_c`] concatenates a directory into one buffer,
+    /// so the definitions of every translation unit under it arrive in a single namespace,
+    /// and two things that C keeps apart collide in it:
+    ///
+    /// * a header's `static inline` is one definition per translation unit that included it
+    ///   -- 137,596 of the Linux corpus's 148,001 definitions are repeats of this kind, and
+    ///   1,294 of nginx's 2,308;
+    /// * a `static` helper is scoped to its own file, so two files may each define their own
+    ///   `parse_dest_constraint`, and a corpus of several programs has one `main` per program
+    ///   (openssh: 70 names with more than one definition, 21 of them `main`).
+    ///
+    /// Keying the function table on the name alone lowered every one of those into ONE
+    /// `FunctionData`: parameter lists concatenated, the return arity of whichever body was
+    /// walked last imposed on all of them, and every call site resolving to the chimera --
+    /// silently, with no warning of any attribution (spec 120).
+    ///
+    /// So: definitions that quote the same characters are the same function. This frontend
+    /// lowers *text*, so N copies of one header's inline produce N identical bodies; keeping
+    /// the first and dropping the rest is exact, not an approximation. What is left after
+    /// that really is several functions sharing a name, and each gets a name of its own,
+    /// `g$ssh-agent.c`, saying which file it came from. The first keeps the bare `g`, so an
+    /// extern declaration, a call from a file that defines none of them, and every taint
+    /// model still resolve; `file_local_functions` sends a call from a file that *does* have
+    /// its own definition to that one instead.
+    fn plan_definitions(&mut self, defs: &[Definition<'a>]) -> Result<DefinitionPlan, Error> {
+        let mut plan = DefinitionPlan::default();
+        let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (i, def) in defs.iter().enumerate() {
+            by_name.entry(def.name).or_default().push(i);
+        }
+        // Every name as written is spoken for: a minted name must never shadow a real one.
+        let mut used: HashSet<String> = defs.iter().map(|def| def.name.to_string()).collect();
+        let mut planned: HashSet<&str> = HashSet::new();
+
+        for def in defs {
+            if !planned.insert(def.name) {
+                continue;
+            }
+            let group = &by_name[def.name];
+            if group.len() == 1 {
+                continue; // the ordinary case, and the overwhelming majority of names
+            }
+
+            // Copies first: `owner[k]` is the definition whose body group member `k` shares.
+            let mut owner_of_text: HashMap<&str, usize> = HashMap::new();
+            let mut owner: Vec<usize> = Vec::with_capacity(group.len());
+            let mut distinct: Vec<usize> = Vec::new();
+            for &i in group {
+                if let Some(&first) = owner_of_text.get(defs[i].text) {
+                    plan.duplicates.insert(defs[i].id);
+                    owner.push(first);
+                } else {
+                    owner_of_text.insert(defs[i].text, i);
+                    distinct.push(i);
+                    owner.push(i);
+                }
+            }
+            if distinct.len() == 1 {
+                log::debug!(
+                    "`{}` is defined identically in {} translation units; lowering it once",
+                    def.name,
+                    group.len()
+                );
+                continue;
+            }
+
+            // What is left is genuinely several functions with one name.
+            for (k, &i) in distinct.iter().enumerate().skip(1) {
+                let base = match &defs[i].file {
+                    // The base name is the readable half of the path and the half that
+                    // identifies the translation unit; two files that share one still get
+                    // distinct names, from the `#n` below.
+                    Some(file) => format!(
+                        "{}${}",
+                        def.name,
+                        std::path::Path::new(file)
+                            .file_name()
+                            .map_or(file.as_str(), |f| f.to_str().unwrap_or(file.as_str()))
+                    ),
+                    None => format!("{}${}", def.name, k),
+                };
+                let mut minted = base.clone();
+                let mut n = 2;
+                while !used.insert(minted.clone()) {
+                    minted = format!("{base}#{n}");
+                    n += 1;
+                }
+                log::debug!(
+                    "`{}` also names a definition analyzed as `{minted}`",
+                    def.name
+                );
+                plan.effective.insert(defs[i].id, minted);
+            }
+            self.colliding_names.insert(def.name.to_string());
+
+            // Which of them a reference from a given file means.
+            for (pos, &i) in group.iter().enumerate() {
+                let file = defs[i].file.clone().unwrap_or_default();
+                let effective = plan.name_of(defs[owner[pos]].id, def.name).to_string();
+                let held = self
+                    .file_local_functions
+                    .entry(file)
+                    .or_default()
+                    .entry(def.name.to_string())
+                    .or_insert_with(|| effective.clone());
+                if *held != effective {
+                    // Two DIFFERENT definitions of one name in ONE translation unit is not C
+                    // -- and not a concatenation artifact either, since they were written
+                    // that way. Lower both (the second under its minted name, so neither
+                    // body is thrown away or glued onto the other) and say what a call to
+                    // the name means here, which is the first one.
+                    let minted = effective;
+                    let first = held.clone();
+                    let place = match &defs[i].file {
+                        Some(file) => format!("`{file}`"),
+                        None => "this translation unit".to_string(),
+                    };
+                    malformed_source(format!(
+                        "`{}` is defined more than once in {place}; C gives a name one \
+                         definition per translation unit, so this one is analyzed as \
+                         `{minted}` and a call to `{}` here resolves to `{first}`",
+                        def.name, def.name
+                    ))?;
+                }
+            }
+        }
+        Ok(plan)
+    }
+
     /// parses and creates new functions and parameters
     fn collect_functions(
         &mut self,
@@ -3804,24 +4059,49 @@ impl<'a> Context<'a> {
                     declarator: (identifier) @func.name
                     parameters: (parameter_list) @param_list                                        
                 ) @func.dev
-                body: (compound_statement) @body)
+                body: (compound_statement) @body) @func.def
             "#;
 
         let query = compile_query(query_src);
 
-        // Pre-pass: register every function name up front so a function-pointer
-        // reference to a function defined LATER in the file (`fp = later;`) is already
-        // known when its using function is lowered. Without this, `flatten_expr` would
-        // not recognise `later` as a function and would drop the indirect-call taint.
+        // Pre-pass. Two things happen here.
+        //
+        // Every function is registered up front, so a function-pointer reference to a
+        // function defined LATER in the file (`fp = later;`) is already known when its using
+        // function is lowered. Without this, `flatten_expr` would not recognise `later` as a
+        // function and would drop the indirect-call taint.
+        //
+        // And every definition is given an *identity*, which a name alone is not: this
+        // frontend imports a directory as one concatenated buffer, so definitions several
+        // translation units keep apart arrive in one namespace, and keying the function table
+        // on the name alone lowered all of them into a single `FunctionData` -- parameter
+        // lists concatenated, the last one walked winning the return arity, every call site
+        // resolving to the chimera. See [`Context::plan_definitions`] (spec 120).
+        let mut defs: Vec<Definition<'a>> = Vec::new();
         let mut name_cursor = QueryCursor::new();
         let mut name_matches = name_cursor.matches(&query, tree.root_node(), source.as_bytes());
         while let Some(m) = name_matches.next() {
             let extract = MatchExtractor::new(&query, m);
-            if let Ok(name_node) = extract.get("func.name") {
-                let func_name = to_str(&name_node, source);
-                self.functions
-                    .entry(FunctionName(func_name))
-                    .or_insert_with(|| program.new_function());
+            if let (Ok(name_node), Ok(def_node)) =
+                (extract.get("func.name"), extract.get("func.def"))
+            {
+                defs.push(Definition {
+                    id: def_node.id(),
+                    name: to_str(&name_node, source),
+                    text: to_str(&def_node, source),
+                    file: self.file_of(def_node.start_byte()),
+                });
+            }
+        }
+        let plan = self.plan_definitions(&defs)?;
+        for def in &defs {
+            if plan.duplicates.contains(&def.id) {
+                continue;
+            }
+            let name = plan.name_of(def.id, def.name);
+            if !self.functions.contains_key(name) {
+                let fidx = program.new_function();
+                self.functions.insert(name.to_string(), fidx);
             }
         }
 
@@ -3835,13 +4115,27 @@ impl<'a> Context<'a> {
             let func_name_node = extract.get("func.name")?;
             let param_list = extract.get("param_list")?;
             let body_node = extract.get("body")?;
+            let def_node = extract.get("func.def")?;
             //debug_print_tree(body_node, 0, None, Some(50));
-            let func_name = to_str(&func_name_node, source);
+            // A definition another translation unit already contributed, character for
+            // character: one function, lowered once, at the first copy.
+            if plan.duplicates.contains(&def_node.id()) {
+                log::debug!(
+                    "skipping a repeated definition of `{}`",
+                    to_str(&func_name_node, source)
+                );
+                continue;
+            }
+            let func_name = plan.name_of(def_node.id(), to_str(&func_name_node, source));
             self.allocator.reset();
-            let fidx = *self
-                .functions
-                .entry(FunctionName(func_name))
-                .or_insert_with(|| program.new_function());
+            let fidx = match self.functions.get(func_name) {
+                Some(fidx) => *fidx,
+                None => {
+                    let fidx = program.new_function();
+                    self.functions.insert(func_name.to_string(), fidx);
+                    fidx
+                }
+            };
 
             let fdat = &mut program.functions[fidx];
             fdat.name = func_name.to_string();

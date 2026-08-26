@@ -61,6 +61,26 @@ pub(crate) fn program_from_string(src: &str) -> (Program, String) {
     (result.0, result.2)
 }
 
+/* Compile several named files as ONE translation unit -- what `import_c` does with a
+directory, and the only way to write a test whose answer depends on which FILE a
+construct came from (`program_from_string` parses a buffer with no files in it). This
+goes through the import path, so the program also carries the extern stubs
+`define_extern_functions` creates. */
+pub(crate) fn program_from_files(files: &[(&str, &str)]) -> (Program, String) {
+    let owned: Vec<(String, String)> = files
+        .iter()
+        .map(|(name, src)| ((*name).to_string(), (*src).to_string()))
+        .collect();
+    let (program, dump) = tree_sitter_c::parse_c_files(&owned).expect("Failed to parse C program.");
+    // A block with no terminator is always a CFG defect, so fail loudly here rather than
+    // let a test silently pass on a malformed control-flow graph.
+    assert!(
+        !dump.contains("<no terminator>"),
+        "Parsed IR contains a block with no terminator:\n{dump}"
+    );
+    (program, dump)
+}
+
 /* Compile a program from a file. */
 pub(crate) fn program_from_file<P: AsRef<std::path::Path>>(filename: P) -> Result<Program> {
     let path = filename.as_ref();

@@ -4351,27 +4351,265 @@ fn implicit_return_in_a_void_function_is_still_empty() {
     );
 }
 
+// ---------------------------------------------------------------------------------------
+// One name, several definitions (spec 120).
+//
+// `import_c` concatenates a directory into ONE buffer, so definitions C keeps apart meet in a
+// single namespace: a `static` helper is scoped to its own file, and a header's `static
+// inline` becomes one definition per translation unit that included it. Keying the function
+// table on the name alone lowered all of them into ONE `FunctionData` -- 137,596 of the Linux
+// corpus's 148,001 definitions are repeats of this kind, 1,294 of nginx's 2,308, and openssh
+// has 70 names carrying more than one definition (21 of them `main`). The merge concatenated
+// the parameter lists, imposed the return arity of whichever body was walked last on all of
+// them, and pointed every call site at the chimera -- silently, no warning of any
+// attribution, `ctadl import` exit 0.
+//
+// `plan_definitions` gives each definition an identity instead. Definitions that quote the
+// same characters ARE one function -- this frontend lowers text, so N copies of a header's
+// inline produce N identical bodies -- and are lowered once. What is left really is several
+// functions with one name: the first keeps the bare name, so an extern declaration, a call
+// from a file that defines none of them, and every taint model still resolve by it, and the
+// rest are named for the file they came from (`g$ssh-agent.c`). A call resolves within its
+// own file first, which is what C does.
+// ---------------------------------------------------------------------------------------
+
 #[test_log::test]
-#[ignore = "spec 120: two definitions sharing a name merge into one function, so the arity of \
-            whichever is walked last is imposed on both bodies' returns"]
 fn colliding_definitions_of_one_name_verify() {
-    // The 3 empty returns (2 functions) the fix leaves in the openssh corpus, and the only
-    // ones left in any of the four. They are NOT an implicit return: `parse_dest_constraint`
-    // and `parse_dest_constraint_hop` are each defined `static void` in ssh-add.c and `static
-    // int` in ssh-agent.c, and since a directory imports as one concatenated translation unit
-    // and `collect_functions` keys the function table on the name alone, the two definitions
-    // land in ONE `FunctionData`. The last one walked wins the return type, so the `void`
-    // body's returns -- correctly empty when they were built -- are retroactively wrong.
+    // The 3 empty returns (2 functions) spec 090 left in the openssh corpus, and the only
+    // ones in any of the four. They were NOT an implicit return: `parse_dest_constraint` and
+    // `parse_dest_constraint_hop` are each defined `static void` in ssh-add.c and `static int`
+    // in ssh-agent.c, and the merge gave the `void` body the `int` definition's arity, so its
+    // returns -- correctly empty when they were built -- became wrong retroactively.
     //
-    // The merge damages far more than the arity, which is why this is spec 120's problem and
-    // not something to paper over here: the two parameter lists concatenate too, so the
-    // fixture below lowers to a single `g(@p0, @p1)` holding both bodies, and no warning of
-    // any attribution is logged. Un-ignore when definitions get distinct identities.
+    // Both definitions here are in ONE translation unit, which is not C: a name gets one
+    // definition per unit. So this fixture draws a source problem (asserted below) as well as
+    // being split -- but it is split, which is what makes the arity right for each body and
+    // the IR verifiable.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
     let src = r"
         static void g(int a) { h(a); }
         static int g(int a) { return a; }";
-    get_summary(program_from_string(src).0)
+    let (prog, _dump) = program_from_string(src);
+    check_return_arity(&prog, "g", 0);
+    check_return_arity(&prog, "g$1", 1);
+    assert_eq!(
+        function_named(&prog, "g")
+            .expect("first definition keeps the name")
+            .params
+            .len(),
+        1,
+        "each definition keeps its OWN parameter list; the merge concatenated them"
+    );
+    get_summary(prog)
         .expect("two definitions sharing a name must not produce IR that fails to verify");
+}
+
+#[test_log::test]
+fn two_definitions_in_one_translation_unit_are_a_source_problem() {
+    // Whose fault it is. Two files that each define their own `static g` are ordinary C and
+    // draw nothing (see the next test); two definitions in one unit are the analyzed code's
+    // problem, so they are reported as one -- and the report says which name the second body
+    // was given and which one a call in that unit reaches, because the answer to the second
+    // question is not "both".
+    let reports = reports_for(
+        r"
+        static void g(int a) { h(a); }
+        static int g(int a) { return a; }",
+    );
+    assert_eq!(reports.len(), 1, "expected exactly one report: {reports:?}");
+    assert_eq!(reports[0].0, "source problem", "reports: {reports:?}");
+    assert!(
+        reports[0].1.contains("`g` is defined more than once") && reports[0].1.contains("`g$1`"),
+        "report must name the second definition's identity: {reports:?}"
+    );
+}
+
+#[test_log::test]
+fn two_files_each_keep_their_own_static_helper() {
+    // The openssh shape, as it actually arrives: two translation units, each with its own
+    // file-local `g`. Two functions, each with its own parameter list and its own return
+    // arity, and each file's call reaching its own -- `cb`'s call used to land on the merged
+    // `g(@p0, @p1)`, where the argument it passed belonged to ssh-add.c's body.
+    let (prog, _dump) = program_from_files(&[
+        (
+            "ssh-add.c",
+            r"static void g(int a) { sink(a); }
+              void ca(int x) { g(x); }",
+        ),
+        (
+            "ssh-agent.c",
+            r"static int g(int a) { return a; }
+              int cb(int x) { return g(x); }",
+        ),
+    ]);
+    check_has_direct_call(&prog, "ca", "g");
+    check_has_direct_call(&prog, "cb", "g$ssh-agent.c");
+    check_return_arity(&prog, "g", 0);
+    check_return_arity(&prog, "g$ssh-agent.c", 1);
+    for name in ["g", "g$ssh-agent.c"] {
+        assert_eq!(
+            function_named(&prog, name).expect(name).params.len(),
+            1,
+            "`{name}` takes one parameter; the merge concatenated both lists"
+        );
+    }
+}
+
+#[test_log::test]
+fn taint_follows_the_definition_the_calling_file_holds() {
+    // The dataflow the split buys, stated as a flow rather than a shape. Only ssh-agent.c's
+    // `g` returns what it was passed, so `cb` returns its parameter and `ca` does not. Under
+    // the merge there was one `g` and one summary for both call sites, and the argument
+    // `cb` passed went to the parameter of the OTHER file's body.
+    let (prog, _dump) = program_from_files(&[
+        (
+            "ssh-add.c",
+            r"static int g(int a) { return 0; }
+              int ca(int x) { return g(x); }",
+        ),
+        (
+            "ssh-agent.c",
+            r"static int g(int a) { return a; }
+              int cb(int x) { return g(x); }",
+        ),
+    ]);
+    let (summary, source_info) = get_summary(prog).expect("must verify");
+    check_returns_param_in(&summary, &source_info, "cb", 0, "");
+    check_does_not_return_param_in(&summary, &source_info, "ca", 0, "");
+}
+
+#[test_log::test]
+fn a_header_inline_included_twice_is_one_function() {
+    // The 137,596-definition case. Both files quote the same characters because both included
+    // the same header, so they are not two functions -- they are one, seen twice, and lowering
+    // it once is exact rather than an approximation: this frontend lowers text. What used to
+    // happen instead is the assertion on the parameter list, which held `h`'s parameter twice.
+    let inline = r"static inline int h(int a) { return a; }";
+    let (prog, dump) = program_from_files(&[
+        (
+            "a.c",
+            &format!(
+                "{inline}
+int ua(int x) {{ return h(x); }}"
+            ),
+        ),
+        (
+            "b.c",
+            &format!(
+                "{inline}
+int ub(int x) {{ return h(x); }}"
+            ),
+        ),
+    ]);
+    assert_eq!(
+        function_named(&prog, "h")
+            .expect("the one `h`")
+            .params
+            .len(),
+        1,
+        "one function, one parameter list\n{dump}"
+    );
+    assert!(
+        function_named(&prog, "h$b.c").is_none(),
+        "the second copy is the same function, not a second one\n{dump}"
+    );
+    check_has_direct_call(&prog, "ua", "h");
+    check_has_direct_call(&prog, "ub", "h");
+    let (summary, source_info) = get_summary(prog).expect("must verify");
+    check_returns_param_in(&summary, &source_info, "ua", 0, "");
+    check_returns_param_in(&summary, &source_info, "ub", 0, "");
+}
+
+#[test_log::test]
+fn one_definition_and_an_undefined_callee_are_left_alone() {
+    // The pin that the fix does not disturb the ordinary case: one definition of a name still
+    // owns it, a call from another file still resolves to it directly, and a name with no
+    // definition anywhere still gets its `define_extern_functions` stub -- which is what every
+    // taint model matches on, so a change to function identity that lost it would silently
+    // unhook every model in the corpus.
+    let (prog, _dump) = program_from_files(&[
+        ("a.c", r"int g(int a) { return a; }"),
+        ("b.c", r"int c(int x) { return g(x) + undefined_sink(x); }"),
+    ]);
+    check_has_direct_call(&prog, "c", "g");
+    assert!(
+        function_named(&prog, "g$b.c").is_none(),
+        "a name only one file defines is not qualified"
+    );
+    let stub = function_named(&prog, "undefined_sink").expect("extern stub");
+    assert!(stub.blocks.is_empty(), "an extern stub has no body");
+    assert_eq!(stub.params.len(), 1, "sized from the call site");
+}
+
+#[test_log::test]
+fn a_call_from_a_file_defining_no_such_name_takes_the_first_definition() {
+    // What C would do with this corpus is refuse to link it: `c.c` calls a `g` that only
+    // exists as two file-local definitions in two other files, so there is no right answer --
+    // and the front end has to pick one, because the alternative is an unresolved call and a
+    // dropped flow. It picks the first definition, which is also the one an `extern int g();`
+    // declaration and every taint model naming `g` resolve to. Recorded here because it is a
+    // choice, not a consequence.
+    let (prog, _dump) = program_from_files(&[
+        ("a.c", r"static int g(int a) { return a; }"),
+        ("b.c", r"static int g(int a) { return 0; }"),
+        ("c.c", r"int cc(int x) { return g(x); }"),
+    ]);
+    check_has_direct_call(&prog, "cc", "g");
+}
+
+#[test_log::test]
+fn files_that_share_a_base_name_still_get_distinct_identities() {
+    // The minted name is built from the base name because that is the readable half of a
+    // path, but a name is resolved against the FULL path -- an import tree may hold any
+    // number of `util.c`s, and a call in one of them means its own `g`. Three do here, so
+    // the second and third also exercise the `#n` that keeps two minted names apart.
+    let (prog, _dump) = program_from_files(&[
+        (
+            "a/util.c",
+            r"static int g(int a) { return a; }
+              int ca(int x) { return g(x); }",
+        ),
+        (
+            "b/util.c",
+            r"static int g(int a) { return 0; }
+              int cb(int x) { return g(x); }",
+        ),
+        (
+            "c/util.c",
+            r"static int g(int a) { return 1; }
+              int cc(int x) { return g(x); }",
+        ),
+    ]);
+    check_has_direct_call(&prog, "ca", "g");
+    check_has_direct_call(&prog, "cb", "g$util.c");
+    check_has_direct_call(&prog, "cc", "g$util.c#2");
+    let (summary, source_info) = get_summary(prog).expect("must verify");
+    check_returns_param_in(&summary, &source_info, "ca", 0, "");
+    check_does_not_return_param_in(&summary, &source_info, "cb", 0, "");
+    check_does_not_return_param_in(&summary, &source_info, "cc", 0, "");
+}
+
+#[test_log::test]
+fn a_function_pointer_reference_resolves_within_its_own_file() {
+    // A name used as a VALUE resolves the same way a call does. `take(g)` in b.c binds b.c's
+    // `g`, so indirect-call resolution follows the function pointer to the body that file
+    // actually passed -- the same question `collect_call` answers, asked at the other place
+    // a function name can appear.
+    let (_prog, dump) = program_from_files(&[
+        ("a.c", r"static void g(int a) { }"),
+        (
+            "b.c",
+            r"static void g(int a) { sink(a); }
+              void take(void (*fp)(int));
+              void b(void) { take(g); }",
+        ),
+    ]);
+    assert!(
+        dump.contains("ptr<g$b.c>"),
+        "the reference must name b.c's own `g`\n{dump}"
+    );
 }
 
 // ---------------------------------------------------------------------------------------
