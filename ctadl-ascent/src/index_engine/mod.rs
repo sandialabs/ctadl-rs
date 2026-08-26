@@ -1158,13 +1158,13 @@ pub fn taint_index_with_config(
         // instead of repeating its premises. Every other `callee_info` premise in this program
         // resolves nothing.
         //
-        // A plain relation, NOT a lattice keyed on `(func, insn, target)`: two *different*
-        // non-empty contexts resolving the same site to the same target are independent entry
-        // conditions -- each is a real stack configuration -- and a lattice would keep only one
-        // of them, losing flows at query time. `resolvent` accepts that witness-vs-enumeration
-        // trade because it is the hot relation; this one is small (it drops the cross product
-        // with the callee's summary rows that `context_assign` carries), so there is no reason to.
-        relation resolved_call(FunctionId, InsnId, FunctionId, CallString);
+        // Keyed on `(func, insn, target)` with the call string as the lattice value, so a site
+        // carries at most one context per target: the smallest one that resolves it. Empty is
+        // top, so an *unconditional* resolution of a pair always wins over the conditional
+        // derivations of the same pair -- the site then feeds the unconditional `assign_like`
+        // head instead of seeding a `context_assign` per surviving context, and the query
+        // engine pays no per-context state for an edge it could take anyway.
+        lattice resolved_call(FunctionId, InsnId, FunctionId, SmallestCallString);
 
         // Sets up paths from input program with static info. Paths must remain finite so we
         // shouldn't add paths from constructed summaries directly.
@@ -1299,8 +1299,10 @@ pub fn taint_index_with_config(
         // the resolvent object plus the site's dispatch key name the concrete callee, and the
         // resolvent's context is the context under which that resolution holds. These are the
         // premises rule 3.1 used to carry; it now joins the result. `resolvent`'s call string is
-        // non-empty by invariant, so every row this rule emits is a *conditional* resolution.
-        resolved_call(caller, call_insn, resolvent_func, *cs) <--
+        // non-empty by invariant, so every row this rule *contributes* is a conditional
+        // resolution -- 3.0b's empty string, if the same pair also resolves in-frame, wins the
+        // join and makes the pair unconditional.
+        resolved_call(caller, call_insn, resolvent_func, SmallestCallString::Value(*cs)) <--
             callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
             locals(caller, v_rec, p_rec, n, p),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
@@ -1311,7 +1313,7 @@ pub fn taint_index_with_config(
         // indirect / virtual call, so the resolution is unconditional and carries no context.
         // These are the premises of the local-dispatch bypass rule below, which now joins the
         // result.
-        resolved_call(func_id, insn_id, resolve_tgt, CallString::new()) <--
+        resolved_call(func_id, insn_id, resolve_tgt, SmallestCallString::top()) <--
             callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
             call_target_assign_like(func_id, arg, arg_p, cto),
             callee_resolvents(cto, dispatch_key, resolve_tgt);
@@ -1321,7 +1323,8 @@ pub fn taint_index_with_config(
         // `context_assign`'s non-empty-call-string invariant: the empty-string rows are 3.0b's,
         // and they belong to the unconditional `assign_like` head further down.
         context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), SmallestCallString::Value(*cs)) <--
-            resolved_call(caller, call_insn, resolvent_func, cs),
+            resolved_call(caller, call_insn, resolvent_func, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat,
             if !cs.is_empty(),
             summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
             let v2 = call_arg!(*call_insn, *n2_sum),
@@ -1400,7 +1403,8 @@ pub fn taint_index_with_config(
         // machinery: the same summary instantiation as rule 3.1, with no context to carry, so it
         // lands in plain `assign_like`. The `cs.is_empty()` guard selects exactly 3.0b's rows.
         assign_like(func_id, v1.into(), p1, v2.into(), p2) <--
-            resolved_call(func_id, insn_id, resolve_tgt, cs),
+            resolved_call(func_id, insn_id, resolve_tgt, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat,
             if cs.is_empty(),
             summary(resolve_tgt, n1, p1, n2, p2),
             let n2_id = PackedCallArg::try_from_parts(*insn_id, *n2).unwrap(),
@@ -1631,7 +1635,14 @@ pub fn taint_index_with_config(
         resolved_call: if context_collapse {
             Vec::new()
         } else {
-            prog.resolved_call.into_iter().collect()
+            prog.resolved_call
+                .into_iter()
+                .map(|row| row.into_inner().unwrap())
+                .filter_map(|(f, insn, target, cs)| match cs {
+                    SmallestCallString::Value(cs) => Some((f, insn, target, cs)),
+                    SmallestCallString::Bottom => None,
+                })
+                .collect()
         },
         paths: prog.paths.into_iter().collect(),
         external_function: facts.external_function,

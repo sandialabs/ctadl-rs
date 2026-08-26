@@ -379,9 +379,13 @@ pub(crate) fn compute_copy_alias(
 /// A row with an empty call string says "this site resolves to that target, no matter how the
 /// frame was entered"; a row with a non-empty one says "…when the stack looks like this". The
 /// former subsumes every one of the latter for the same pair, so keeping both would multiply the
-/// search's per-context state without adding an edge. This is the one subsumption the design
-/// takes, and it is taken here rather than in the fixpoint: the index has no reason to prefer one
-/// derivation over another, but the query pays per surviving context.
+/// search's per-context state without adding an edge.
+///
+/// The index takes this subsumption in the fixpoint: `resolved_call` is a lattice keyed on
+/// `(func, insn, target)` whose value is a [`crate::facts::SmallestCallString`], and the empty
+/// call string is its top, so a freshly built index already holds at most the dominating row per
+/// pair and this pass finds nothing to drop. It stays as a load-time guard, because an index on
+/// disk at the same [`crate::project::INDEX_FORMAT_VERSION`] may predate the lattice.
 ///
 /// Rows are otherwise returned unchanged and in input order, so a caller's edge index stays
 /// deterministic.
