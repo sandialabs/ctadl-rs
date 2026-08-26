@@ -11,12 +11,31 @@ tracked through tables). That is one of **six** independent defects on the
 path, and it is not the first one that bites. Three of the six are in the index
 and query engines, not the Lua frontend, and are language-neutral — they
 reproduce just as cleanly in C. Two of those three were found while assessing
-the repair for the first, and one of them (D4b) is why that repair, on its own,
+the repair for the first, and one of them (D4b) was why that repair, on its own,
 would not have closed the chain.
 
-Those three engine defects — D4, D4b, D4c — are now carried by
-**`ENGINE_INDIRECT_CALL_FIX_PLAN.md`**, which owns their reproduction, repair
-and benchmarking. They are summarized here only as far as this chain needs them.
+Those three engine defects — D4, D4b, D4c — were carried by
+**`ENGINE_INDIRECT_CALL_FIX_PLAN.md`** and **have since landed** (`56728caf`,
+"Query finds sinks under contexts"). They are summarized here only as far as
+this chain needs them.
+
+## Status
+
+| phase | defect | state |
+| --- | --- | --- |
+| 1 | D1 — call sites allocate two return slots | **outstanding** |
+| 2 | D4 / D4b / D4c — engine | **done** — see `ENGINE_INDIRECT_CALL_FIX_PLAN.md` |
+| 3 | D2 — `function T.f` binds no function value | **outstanding** |
+| 4 | D3 — field-name dispatch for table-selected callbacks | **outstanding** |
+| 5 | D5, D6 — `require` / builtin name resolution | **outstanding** |
+
+The Lua frontend is untouched on this branch — `ctadl-ascent/src/languages/lua/mod.rs`
+has not changed since `e41fdc6a` — so every reproduction and IR quotation below
+still holds verbatim, and the artifact still yields `resolvent: 0`. The engine
+work of Phase 2 remains **unobservable on APISIX** until D2 and D3 land, which
+is why it was gated on micro-shapes and benchmarked on Kong and baksmali
+instead. Phases 1, 3, 4 and 5 — all of them frontend-only — are what remains
+between this tree and the acceptance criterion.
 
 ## Reproduction
 
@@ -73,10 +92,11 @@ For CTADL to report, five things must hold:
    name as a string literal (`init.lua:443`, `init.lua:463`, `plugin.lua:801`).
 5. None of this may connect *every* indirect call to *every* plugin.
 
-Today (2) is silently discarded by the frontend (D1), and would have nowhere to
-travel even once it isn't, because call resolution never yields a call-graph
-edge (D4b); (3) is dropped by the index engine (D4); and (1) has no mechanism
-at all. Each is reproduced below on a self-contained case.
+Today (2) is silently discarded by the frontend (D1), and (1) has no mechanism
+at all. The two engine-side blockers are gone: a resolved indirect call now
+yields real call and return edges (D4b) and a flow consumed in the frame that
+holds the call is no longer dropped (D4). Each remaining defect is reproduced
+below on a self-contained case.
 
 ## Defects
 
@@ -214,51 +234,51 @@ only when it is spelled exactly `table.insert`. Both miss. Any fix that depends
 on tracking *which* table `plugins[i]` is will not close this chain; the
 resolution has to key on something else. See D5/D6 and "Why field-name keying".
 
-### D4, D4b, D4c. A resolved indirect call is unusable — engine, language-neutral *(see `ENGINE_INDIRECT_CALL_FIX_PLAN.md`)*
+### D4, D4b, D4c. A resolved indirect call was unusable — engine, language-neutral — **fixed** *(see `ENGINE_INDIRECT_CALL_FIX_PLAN.md`)*
 
 Three defects in the index and query engines, reproduced there in full, in Lua
-and in C. What this chain needs to know about them:
+and in C, and repaired there. What this chain needs to know about them:
 
-- **D4** — when the function pointer arrives from a *caller*, resolution yields a
-  `context_assign` tagged with a call string (rule 3.1,
-  `index_engine/mod.rs:1248`) that no rule makes usable *in the frame that
-  contains the call*. A flow consumed there is dropped. APISIX has exactly that
-  sink placement: `core.response.exit(code, body)` sits inside `run_plugin`, the
-  frame holding the indirect call, while the phase string that must drive
-  resolution comes from `run_plugin`'s callers.
-- **D4b** — call resolution produces *summary instantiations and nothing else*.
-  `call` is an input relation the fixpoint never extends (`mod.rs:1112`), and the
-  query engine builds every call and return step from it (`search.rs:145`), so a
-  dynamically resolved callee has no call edge and no return edge. Taint crosses
-  the site only if the callee's **summary** describes it — only for a
-  formal-to-out-formal flow. The in-frame bypass (`mod.rs:1320`) has the same
-  blind spot, so this is a property of resolving a call into a summary
-  instantiation at all, not of the call-string machinery.
-- **D4c** — `callee_by_site` is a `HashMap`, not a multimap (`search.rs:147`), so
-  a site with several `call` rows keeps whichever loaded last. Live today on the
-  default strategy for Lua method calls and under `--strategy cha` for every
-  frontend. It matters here because a resolved indirect site is multi-target by
-  construction.
+- **D4** — when the function pointer arrived from a *caller*, resolution yielded a
+  `context_assign` tagged with a call string that no rule made usable *in the
+  frame that contains the call*, so a flow consumed there was dropped. APISIX has
+  exactly that sink placement: `core.response.exit(code, body)` sits inside
+  `run_plugin`, the frame holding the indirect call, while the phase string that
+  must drive resolution comes from `run_plugin`'s callers. The query engine now
+  traverses a contextual assign under a call-string obligation
+  (`query_engine/search.rs`, `PathState` / `refine`).
+- **D4b** — call resolution produced *summary instantiations and nothing else*, so
+  a dynamically resolved callee had no call edge and no return edge, and taint
+  crossed the site only for a formal-to-out-formal flow. A `resolved_call`
+  relation is now factored out of the two rules that resolve a call, persisted as
+  `resolved_call.parquet`, and turned into real call and return edges at query
+  time.
+- **D4c** — `callee_by_site` was a `HashMap`, not a multimap, so a site with
+  several `call` rows kept whichever loaded last. It is now
+  `HashMap<PackedInsnSiteId, Vec<FunctionId>>` and the entry edge fans out over
+  every target. It matters here because a resolved indirect site is multi-target
+  by construction.
 
 Five shapes distinguish them — one indirect call each, differing only in where
-taint enters and where it is consumed:
+taint enters and where it is consumed. All five now report, in C and in Lua,
+under both query regimes:
 
-| # | taint crosses the site as | sink | `context_assign` rows | today |
+| # | taint crosses the site as | sink | before Phase 2 | now |
 | --- | --- | --- | --- | --- |
-| 1 | callee summary (arg → ret) | caller of the frame | 1 | **flow found** |
-| 2 | callee summary (arg → ret) | the frame itself | 1 | no flow — **D4** |
-| 3 | return out of the callee | the frame itself | **0** | no flow — **D4b** |
-| 4 | return out of the callee | caller of the frame | **0** | no flow — **D4b** |
-| 5 | argument into the callee | inside the callee | **0** | no flow — **D4b** |
+| 1 | callee summary (arg → ret) | caller of the frame | flow found | flow found |
+| 2 | callee summary (arg → ret) | the frame itself | no flow — **D4** | flow found |
+| 3 | return out of the callee | the frame itself | no flow — **D4b** | flow found |
+| 4 | return out of the callee | caller of the frame | no flow — **D4b** | flow found |
+| 5 | argument into the callee | inside the callee | no flow — **D4b** | flow found |
 
 **APISIX is shape 3.** `fetch_jwt_token` is a *direct* call inside
 `plugins.jwt-auth.rewrite`, so the source vertex sits in `rewrite`'s frame and
 has to leave on `rewrite`'s second return, through `plugin.lua:743`'s
-`funcptr-call`. No summary of `rewrite` carries it. The engine needs a **return
-edge** at that site; a summary instantiation, contextual or not, cannot
-substitute for one. Fixing D4 alone does not close this chain.
+`funcptr-call`. No summary of `rewrite` carries it; the site needs a **return
+edge**, which is what D4b's repair supplies.
 
-And on the real artifact the machinery is idle in any case:
+But on the real artifact the machinery is still idle, and stays idle until D2
+and D3 land:
 
 ```
 $ RUST_LOG=debug ctadl index apisix
@@ -267,9 +287,9 @@ hybrid inlining: critical_summary: 0.12 (171/1386), resolvent: 0,
 ```
 
 Zero resolvents: `phase_func` is read off `[_elem_]` and no function value was
-ever stored where it could be read (D2 + D3), so rule 2.1 never fires. The
-engine work is therefore **unobservable on APISIX** until D2 and D3 land — which
-is the other reason it is a separate plan, gated against micro-shapes.
+ever stored where it could be read (D2 + D3), so rule 2.1 never fires. This is
+why the engine work was a separate plan gated against micro-shapes, and why it
+cannot be *demonstrated* on APISIX until Phases 3 and 4 land.
 
 ### D5. `require` resolution is literal-only *(secondary)*
 
@@ -289,16 +309,10 @@ modelled in `lua-index.jsonl`.
 
 ## Fix plan
 
-Repair order is dictated by what hides what — but not on the same artifact. D1
-must land first or nothing downstream is observable on APISIX. Phase 2
-(D4/D4b/D4c) is an engine change with its own plan
-(`ENGINE_INDIRECT_CALL_FIX_PLAN.md`), implemented and benchmarked independently:
-it is not observable on APISIX at all until D2 and D3 land — with no function
-value anywhere `phase_func` can read it, the artifact yields `resolvent: 0` and
-`context_assign: 0` today — so it is developed and gated against micro-shapes
-rather than against the artifact. It still comes second in *this* sequence,
-because shapes 3–5 — the APISIX chain among them — travel on what it adds, and
-because Phase 4's dispatch design terminates in it.
+Phase 2 is **done**. What remains is Phases 1, 3, 4 and 5, all frontend-only,
+in that order: D1 must land first or nothing downstream is observable on APISIX
+(`body` is literally `nil` in the IR), and Phase 4's dispatch has nothing to
+resolve to until Phase 3 puts function values into the tables.
 
 ### Phase 1 — D1: correct return-slot allocation
 
@@ -324,25 +338,25 @@ because Phase 4's dispatch design terminates in it.
 Gate: the D1 case above reports a flow; `multiple-return-flow` still passes with
 its clean binding still clean.
 
-### Phase 2 — D4, D4b, D4c: make a resolved indirect call usable *(separate plan)*
+### Phase 2 — D4, D4b, D4c: make a resolved indirect call usable — **done**
 
-**`ENGINE_INDIRECT_CALL_FIX_PLAN.md`** — an engine change with no Lua component,
-implemented and benchmarked on its own. In outline: factor a `resolved_call`
-relation out of the two rules that resolve a call today, persist it and
-`context_assign`, and teach the query engine to traverse contextual assigns under
-a call-string obligation and to build **call and return edges** from
-`resolved_call`. The edges shapes 3–5 need cannot be pre-instantiated in the
-index at all — whether taint crosses a resolved call depends on where the query's
-sources and sinks are — which is why the repair is query-side rather than a
-collapse of `context_assign` into `assign_like` (that collapse survives only as
-`--index-context-collapse`, the A/B baseline; it reaches shape 2 and no further).
+Landed in `56728caf` under **`ENGINE_INDIRECT_CALL_FIX_PLAN.md`**, whose
+implementation summary carries the gates, tests, benchmarks and the two design
+points the plan left open. In outline, what shipped: a `resolved_call` relation
+factored out of the two rules that resolve a call, `context_assign.parquet` and
+`resolved_call.parquet` persisted (`INDEX_FORMAT_VERSION` 3 → 4), a query engine
+that traverses contextual assigns under a call-string obligation and builds
+**call and return edges** from `resolved_call`, `callee_by_site` as a multimap,
+and `--index-context-collapse` (default off) as the A/B baseline. All five shapes
+report in C and Lua under both query regimes; index time and RSS improved; the
+one cost is query-state multiplication, most of it D4c's fan-out.
 
-What this chain needs from it, and what the two plans owe each other:
+What this chain gets from it, and what Phase 4 still owes it:
 
 - The **return edge** at `plugin.lua:743`. Phase 4's dispatch resolves
-  `phase_func` to `plugins.jwt-auth.rewrite`; without Phase 2 that resolution
-  instantiates a summary which does not describe the flow (D4b), and the chain
-  still does not close.
+  `phase_func` to `plugins.jwt-auth.rewrite`, and that resolution now yields a
+  real return edge rather than only a summary instantiation that does not
+  describe the flow.
 - **D4c's multimap fix**, since a field-dispatched site is multi-target by
   construction.
 - `resolved_call` is what "`phase_func` resolving to ≤ 24 targets" in Acceptance
@@ -350,19 +364,15 @@ What this chain needs from it, and what the two plans owe each other:
   `--max-field-resolvents`, which caps what dispatch codegen emits in the first
   place. A cap applied at the engine would gate the query-side edges but could
   not retract a summary instantiation the fixpoint has already derived.
-- Phase 2 owes Phase 4 an anchoring rule for the **entry** edge: it inherits the
-  site's argument convention, and a `FuncPtrCall` carries the callee value as
-  actual argument 0 (`languages/lua/mod.rs:2169`), which lines up with a
-  closure's leading `%self` but is off by one for a named `function _M.f(...)`.
-  A `LuaField` dispatch row must therefore be anchored at Phase 4 option (a)'s
-  plain-argument statement, not the self-prefixed one. Returns sit at negative
-  indices and are unaffected — which is why the APISIX chain is insensitive to
-  it, but the entry edge is not.
-
-Ordering: it comes second, ahead of Phases 3–4 that make it observable here,
-because shapes 3–5 — the APISIX chain among them — travel on what it adds, and
-because Phase 4's dispatch design terminates in it. Its own gates, tests,
-benchmarks and risks live in that plan.
+- **Phase 4 must satisfy the engine's anchoring rule for the entry edge.** The
+  entry edge inherits the site's argument convention, and a `FuncPtrCall` carries
+  the callee value as actual argument 0 (`languages/lua/mod.rs:2169`), which lines
+  up with a closure's leading `%self` but is off by one for a named
+  `function _M.f(...)`. A `LuaField` dispatch row must therefore be anchored at
+  Phase 4 option (a)'s plain-argument statement, not the self-prefixed one — the
+  engine cannot paper over it. Returns sit at negative indices and are
+  unaffected, which is why the APISIX chain itself is insensitive to this but the
+  entry edge is not.
 
 ### Phase 3 — D2: named function definitions are function values
 
@@ -417,11 +427,11 @@ functions is the plugin set, not "every indirect call to every plugin".
    field name.
 
 2. *Make a field name a first-class object.* Add `CallObject::LuaField(Symbol)`
-   next to `LuaClass` (`ctadl-ir/src/mir/call.rs:122`) and
+   next to `LuaClass` (`ctadl-ir/src/mir/call.rs:127`) and
    `fx::CallTargetObject::LuaField` / `fx::CallDispatchKey::LuaField` in the
    facts schema. A string literal whose content is a known callback field name
    lowers to a temp carrying both the constant and the tag — the pattern
-   `eval_setmetatable` (`mod.rs:2296`) already uses:
+   `eval_setmetatable` (`mod.rs:2275`) already uses:
 
    ```rust
    assign %t = <const: "\"rewrite\"">, ObjectRef(LuaField("rewrite"))
@@ -446,13 +456,11 @@ functions is the plugin set, not "every indirect call to every plugin".
 4. *Dispatch at the call site.* Emit
    `callee_info(site, FlowVertex(callee_var, callee_path ++ .%key), LuaField)`.
    Reuse `CallResolutionStrategy::Mixed` exactly as the `LuaCall` arm does
-   (`codegen/mod.rs:565`): a singleton resolvent becomes a direct `call` edge,
-   an empty one emits nothing, and a larger set is deferred to `callee_info`.
-   The deferred set is resolved by the engine, which — after Phase 2 — turns it
-   into a `resolved_call` row and hence a real call/return edge. That last step
-   is what the APISIX chain travels on; without Phase 2 this dispatch resolves
-   `phase_func` to `plugins.jwt-auth.rewrite` and then instantiates a summary
-   that does not describe the flow (D4b).
+   (`codegen/mod.rs:535`, `:599`): a singleton resolvent becomes a direct `call`
+   edge, an empty one emits nothing, and a larger set is deferred to
+   `callee_info`. The deferred set is resolved by the engine, which — since
+   Phase 2 — turns it into a `resolved_call` row and hence a real call/return
+   edge. That last step is what the APISIX chain travels on.
 
 **The argument-convention problem, and what to do about it.** `eval_call`
 inserts the callee value as actual argument 0 for a `FuncPtrCall`
@@ -483,7 +491,7 @@ Three ways out:
 Note for triage: even under (a) with the misalignment left in place, the APISIX
 flow would still be found, because it travels on the **return** and the return
 slots are unaffected. The alignment fix is correctness, not a blocker. That it
-travels on the return is also why Phase 2 has to supply a *return edge* at the
+travels on the return is also why Phase 2 had to supply a *return edge* at the
 site: neither the argument convention nor `jwt-auth.rewrite`'s summary carries
 it.
 
@@ -547,17 +555,18 @@ New nightly cases under `nightly/tests/lua/`, each a source/sink pair with its
 | `table-field-named-function-flow` | D2 | `function M.h()` read back as `t.h` |
 | `function-name-as-value-flow` | D2 | `M.h = g` where `g` is `local function g` |
 | `dynamic-key-callback-flow` | D3 | `t[k]` with `k` a literal passed in from a caller |
-| `plugin-registry-flow` | D1–D4b | the full APISIX shape, ~30 lines (below) |
+| `plugin-registry-flow` | D1–D3 | the full APISIX shape, ~30 lines (below) |
 | `dynamic-key-wrong-name-no-flow` | D3 | negative: a different field name must not connect |
 
-The D4/D4b/D4c cases — the five micro-shapes in Lua and C, and the multi-target
-dispatch case — belong to `ENGINE_INDIRECT_CALL_FIX_PLAN.md` and are listed
-there.
+None of these exist yet. The D4/D4b/D4c cases — the five micro-shapes in Lua and
+C, and the multi-target dispatch case — landed with
+`ENGINE_INDIRECT_CALL_FIX_PLAN.md` and are in the tree
+(`nightly/tests/lua/caller-supplied-callback-flow`,
+`resolved-callee-{source,source-return,sink}-flow`, `multi-target-dispatch-flow`,
+and `nightly/tests/c/funcptrcallee{frame,source,sink}.c`).
 
 The last positive case is the whole chain in miniature and is the one to write
-first — it fails today at five separate points (and note that its taint, like
-APISIX's, originates *inside* the callback, so D4b is on its path and D4 alone
-is not enough):
+first — it fails today at three separate points, all of them frontend-side:
 
 ```lua
 local function source() return io.read() end
@@ -583,10 +592,10 @@ end
 run_phase("rewrite")
 ```
 
-It cannot pass until the engine plan lands either: its taint originates inside
-the callback, so it is shape 3 and needs the D4b return edge. Until then it is a
-useful *IR* test — assert the return-slot allocation, the `FunctionPtr` store and
-the `.%key` store are all present — and a flow test afterwards.
+Its taint originates inside the callback, so it is shape 3 and travels on the
+D4b return edge — which now exists. Before Phase 4 completes it is still a useful
+*IR* test — assert the return-slot allocation, the `FunctionPtr` store and the
+`.%key` store are all present — and a flow test once the dispatch lands.
 
 Unit tests in `languages/lua/mod.rs`'s test module (which imports from strings,
 so they are cheap):
@@ -597,8 +606,8 @@ so they are cheap):
   definitions out of it;
 - call-site `rets` length tracks the callee's declared arity.
 
-Engine-level unit tests (`index_engine`, `query_engine::search`) are in
-`ENGINE_INDIRECT_CALL_FIX_PLAN.md`.
+Engine-level unit tests (`index_engine`, `facts::schema`, `query_engine::search`)
+landed with `ENGINE_INDIRECT_CALL_FIX_PLAN.md`.
 
 Finally, add the APISIX 2.13.0 tree to the import corpus as a non-regression
 import test (194 files, no external toolchain needed — `--frontend lua` already
@@ -606,19 +615,20 @@ runs without one).
 
 ## Risks
 
-- **Phase 2's engine risks** — the behaviour-preserving refactor of two hot-SCC
-  rules, query-state multiplication from the contexts, the recall of the
-  return-side context check, and the index format bump — are carried by
-  `ENGINE_INDIRECT_CALL_FIX_PLAN.md`. Only the last of them touches this plan:
-  Phase 4's facts schema change needs the same `INDEX_FORMAT_VERSION` bump
-  (3 → 4, `project.rs:141`), so land them in one release.
+- **Phase 2's residual engine risks** — query-state multiplication from the
+  contexts (measured: +742 % states on Kong, +19 % on baksmali, invisible in
+  wall-clock) and the un-mitigated recall risk of the return-side context check —
+  are carried by `ENGINE_INDIRECT_CALL_FIX_PLAN.md`. Phase 4's dispatch is the
+  first thing that will make those contexts live on a Lua artifact of APISIX's
+  size, so re-measure `CTADL_QUERY_SIZES` when it lands.
 - **Field-name fan-out.** Bounded by the cap, but a program that names every
   handler `run` will see wide unions. The cap plus the per-site trace log makes
   this visible rather than silent.
 - **Facts schema change.** `CallTargetObject::LuaField` /
   `CallDispatchKey::LuaField` are persisted; the parquet schema needs updating
-  and old stores need re-indexing — covered by the same version bump as Phase 2's
-  new tables.
+  and old stores need re-indexing. Phase 2 already spent the 3 → 4 bump, so
+  Phase 4 needs its own: `INDEX_FORMAT_VERSION` 4 → 5 (`project.rs:147`, and the
+  assertion in `ctadl-ascent/tests/cli.rs`).
 - **Extra statement per table-selected call site** under option (a). Small
   (166 sites in APISIX) and reversible once option (c) lands.
 
@@ -630,9 +640,12 @@ the defect sections and each is a few lines of Lua or C. The APISIX artifact is
 `https://github.com/apache/apisix/archive/refs/tags/2.13.0.tar.gz`, imported
 from its `apisix/` subdirectory.
 
-Re-verified end to end while assessing Phase 2; the engine-side reproductions
-(the five shapes in Lua and C, and D4c under both query regimes) are recorded in
-`ENGINE_INDIRECT_CALL_FIX_PLAN.md`:
+Captured before Phase 2 landed, and still current for the Lua-side claims: no
+frontend change has been made since, so the import counts, the IR quotations and
+`resolvent: 0` all still hold. The engine-side reproductions (the five shapes in
+Lua and C, and D4c under both query regimes) and their post-fix numbers are
+recorded in `ENGINE_INDIRECT_CALL_FIX_PLAN.md`; the `hybrid inlining` line below
+is the pre-fix format and now also reports `resolved_call`.
 
 - Import reproduces exactly — 194 files, 25 metatable warnings, 742 unresolved
   callees, 1336 functions. The query (source on
@@ -641,7 +654,7 @@ Re-verified end to end while assessing Phase 2; the engine-side reproductions
   and reports `C0001.tainted-path` with no flow.
 - `RUST_LOG=debug ctadl index apisix` reports `resolvent: 0`,
   `context_assign: 0.00 (0/144170)`, `context_summary: 0` — the hybrid-inlining
-  machinery is idle on this artifact today (D4b).
+  machinery is idle on this artifact, and stays idle until D2 and D3 land.
 - `run_plugin`'s IR is unchanged from the quotations above, including
   `assign %body = <const: "nil">` and the two `[_elem_]` loads;
   `plugins.jwt-auth.rewrite` calls `fetch_jwt_token` **directly** and returns
