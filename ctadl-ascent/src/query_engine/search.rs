@@ -651,6 +651,43 @@ impl LazyAnnotation<TaintSearchGraph> for PathState {
             }
         }
     }
+
+    /// Weaken the obligation by one frame, keeping [`PathState::state`] exactly.
+    ///
+    /// An obligation only ever *restricts*; no arm of [`PathState::expand`] is reachable
+    /// only under a non-empty context. So `{s, a}` simulates `{s, b}` whenever `a` is a
+    /// suffix of `b`, and the chain `[s1,s2] -> [s2] -> []` walks that order one link at a
+    /// time. Arm by arm, with `a` a suffix of `b`:
+    ///
+    /// - `Flow(Intra)` and `Flow(Call)` leave the context alone, so successors stay related.
+    /// - `Flow(Return(site))` needs `Free` on both sides. At `a` empty it always passes, to
+    ///   the empty context. At `a` non-empty it shares its top frame with `b` — a suffix of
+    ///   a non-empty string ends where the string ends — so it passes whenever `b` does, and
+    ///   `pop(a)` is a suffix of `pop(b)`.
+    /// - `Ctx(row, _)`: `a` and `b` are both suffixes of `b`, hence suffix-comparable with
+    ///   anything `b` is, so [`refine`] succeeds at `a` whenever it succeeds at `b`, and
+    ///   `refine(a, row)` is a suffix of `refine(b, row)` either way the case splits.
+    ///
+    /// Enabledness never goes the other way, which is why the pruning cannot suppress a
+    /// traversal — hence a finding — the unpruned search would have made.
+    ///
+    /// [`PathState::state`] is *not* weakened here even though `Free` simulates `Restricted`
+    /// (`Intra` preserves it, `Call` sends both to `Restricted`, and only `Free` survives a
+    /// `Return`): `st.annot.state` is written into the `taint` table, so folding the two
+    /// would change persisted rows and what the formatter re-walks. That is a separate
+    /// change; `{Restricted, []}` must not subsume `{Free, [s]}` here.
+    ///
+    /// Uses [`CallString::drop_outermost`], not [`CallString::pop`]: the generalization order
+    /// removes the *caller* end, and `pop` removes the current frame.
+    fn generalization(&self) -> Option<Self> {
+        if self.ctx.is_empty() {
+            return None;
+        }
+        Some(PathState {
+            state: self.state,
+            ctx: self.ctx.drop_outermost(),
+        })
+    }
 }
 
 /// Runs the demand-driven taint search and packages the outcome as a
@@ -836,10 +873,21 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
                 }
             }
         }
+        // How much of the state space the calling-context obligations cost: a vertex reached
+        // under k distinct contexts is k states, and `generalization` pruning is what keeps k
+        // near 1 where the contextual region overlaps the context-free one. A large residue
+        // here is the signal that the pruning is not firing (or that the target's contextual
+        // region genuinely is disjoint, in which case the states are load-bearing).
+        let ctx_bearing = search
+            .states
+            .iter()
+            .filter(|st| !st.annot.ctx.is_empty())
+            .count();
         log::debug!(
-            "taint search: label '{label}' with {} source endpoint(s): {} states, {} sink vertices reached",
+            "taint search: label '{label}' with {} source endpoint(s): {} states ({} context-bearing), {} sink vertices reached",
             endpoints.len(),
             search.states.len(),
+            ctx_bearing,
             paths_found,
         );
     }

@@ -251,6 +251,25 @@ pub trait LazyAnnotation<G: LazySuccessors>: Clone + Eq + std::hash::Hash {
     /// `from -> to` (whose label is `label`), given `self`, the annotation
     /// carried by `from`. Returning `None` prunes the edge.
     fn expand(&self, graph: &G, from: &G::Node, label: &G::Label, to: &G::Node) -> Option<Self>;
+
+    /// The next-more-general annotation, or `None` at the top of the chain.
+    ///
+    /// Contract: every edge enabled at `self` must be enabled at the returned annotation,
+    /// with successors again so related — a simulation. The search may therefore skip a
+    /// state whose generalization is already visited for the same node: anything that state
+    /// could have reached, the more general one reaches too.
+    ///
+    /// Any new edge shape the annotation learns to inspect must be checked against that
+    /// contract; it is what licenses the pruning in [`find_annotated_paths_from_set`].
+    ///
+    /// Walking the chain must terminate: `generalization` is applied repeatedly until it
+    /// yields `None`, so each step must strictly shrink some well-founded measure. The
+    /// default `None` makes every impl that does not opt in behaviour-identical.
+    ///
+    /// Must be allocation-free where possible: it runs on every candidate edge.
+    fn generalization(&self) -> Option<Self> {
+        None
+    }
 }
 
 /// One state reached by [`find_annotated_paths_from_set`]: a node together with
@@ -274,8 +293,11 @@ pub struct AnnotatedSetSearch<N, L, A> {
     pub states: Vec<SearchState<N, L, A>>,
     /// Indices into `states` of every state satisfying the target predicate, in
     /// discovery order. A node reached with several annotations can appear once
-    /// per annotation; because discovery is breadth-first, the first entry for a
-    /// node is on a shortest path to it.
+    /// per annotation; discovery is breadth-first *within* each frontier class
+    /// (see [`LazyAnnotation::generalization`]), and the most general class is
+    /// drained first, so the first entry for a node is on a shortest path
+    /// among the most general routes that reach it — not necessarily on a
+    /// shortest path overall.
     pub targets: Vec<u32>,
 }
 
@@ -304,8 +326,15 @@ impl<N, L, A> AnnotatedSetSearch<N, L, A> {
 /// [`LazySuccessors::labeled_successors`] on demand, so nothing is
 /// materialized beyond the states actually reached; and instead of stopping at
 /// the nearest target it explores the whole reachable state space, recording
-/// every target state it encounters. The traversal is breadth-first, so the
-/// first target entry for a node lies on a shortest path from the start set.
+/// every target state it encounters.
+///
+/// The traversal is breadth-first within each annotation class, where a class is
+/// "the annotation is at the top of its [`LazyAnnotation::generalization`] chain"
+/// or not; the general class is drained first, and a candidate state is skipped
+/// when a generalization of its annotation is already visited for that node. For
+/// an annotation that does not override `generalization` (the default) there is
+/// exactly one class and no pruning, so the traversal is plain breadth-first and
+/// the first target entry for a node lies on a shortest path from the start set.
 ///
 /// The returned [`AnnotatedSetSearch`] carries the full first-reach forest
 /// (every state with its parent link and traversed edge label), so callers can
@@ -324,18 +353,47 @@ where
     use hashbrown::hash_map::HashMap;
     use std::collections::VecDeque;
 
+    /// Is `(node, annot)` already covered by a strictly more general state?
+    ///
+    /// Walks the [`LazyAnnotation::generalization`] chain one link at a time, probing
+    /// `visited` for each. A hit means some already-reached state simulates this one, so
+    /// everything it could reach is reached anyway and the candidate can be dropped.
+    /// Costs at most `chain length` probes, and is not entered at all for an annotation
+    /// already at the top of its chain.
+    fn subsumed<G, A>(visited: &HashMap<(G::Node, A), u32>, node: &G::Node, annot: &A) -> bool
+    where
+        G: LazySuccessors,
+        A: LazyAnnotation<G>,
+    {
+        let mut general = annot.generalization();
+        while let Some(g) = general {
+            if visited.contains_key(&(node.clone(), g.clone())) {
+                return true;
+            }
+            general = g.generalization();
+        }
+        false
+    }
+
     let mut visited: HashMap<(G::Node, A), u32> = HashMap::new();
     let mut states: Vec<SearchState<G::Node, G::Label, A>> = Vec::new();
     let mut targets: Vec<u32> = Vec::new();
+    // Two frontiers, the general one drained first: a state whose annotation is already at
+    // the top of its generalization chain is dequeued before any state carrying a
+    // generalizable annotation. Subsumption only fires when the more general state is
+    // *already* visited, so this ordering is what makes the pruning structural rather than
+    // dependent on which route to a node happened to be enqueued first.
     let mut queue: VecDeque<u32> = VecDeque::new();
+    let mut deferred: VecDeque<u32> = VecDeque::new();
 
     for node in starts {
         let annot = A::start();
         let key = (node.clone(), annot.clone());
-        if visited.contains_key(&key) {
+        if visited.contains_key(&key) || subsumed::<G, A>(&visited, &node, &annot) {
             continue;
         }
         let idx = states.len() as u32;
+        let general = annot.generalization().is_none();
         visited.insert(key, idx);
         if is_target(&node, &annot) {
             targets.push(idx);
@@ -346,10 +404,14 @@ where
             parent: None,
             edge: None,
         });
-        queue.push_back(idx);
+        if general {
+            queue.push_back(idx);
+        } else {
+            deferred.push_back(idx);
+        }
     }
 
-    while let Some(cur) = queue.pop_front() {
+    while let Some(cur) = queue.pop_front().or_else(|| deferred.pop_front()) {
         // The successor computation and annotation expansion borrow the current
         // state immutably; the push below appends, so the borrow is re-taken.
         let succs = graph.labeled_successors(&states[cur as usize].node);
@@ -359,11 +421,12 @@ where
                 continue;
             };
             let key = (next, annot);
-            if visited.contains_key(&key) {
+            if visited.contains_key(&key) || subsumed::<G, A>(&visited, &key.0, &key.1) {
                 continue;
             }
             let idx = states.len() as u32;
             let (next, annot) = key.clone();
+            let general = annot.generalization().is_none();
             visited.insert(key, idx);
             if is_target(&next, &annot) {
                 targets.push(idx);
@@ -374,7 +437,11 @@ where
                 parent: Some(cur),
                 edge: Some(label),
             });
-            queue.push_back(idx);
+            if general {
+                queue.push_back(idx);
+            } else {
+                deferred.push_back(idx);
+            }
         }
     }
 

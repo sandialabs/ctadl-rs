@@ -326,6 +326,17 @@ impl CallString {
         (CallString::intern(new_slice), popped)
     }
 
+    /// Drops the *outermost* frame — the opposite end from [`CallString::pop`], which takes
+    /// the innermost (current) one. `[s1,s2]` becomes `[s2]`: the same claim about the
+    /// current frame, minus the claim about its caller, so the result is a suffix of the
+    /// original and therefore weaker. Empty is a fixed point.
+    pub fn drop_outermost(&self) -> Self {
+        if self.0.is_empty() {
+            return *self;
+        }
+        CallString::intern(&self.0[1..])
+    }
+
     /// Pushes a new call site onto the call string.
     /// Returns None if a cycle is detected (i.e., the function is already in the call string).
     pub fn push(&self, site: PackedInsnSiteId) -> Option<Self> {

@@ -444,3 +444,168 @@ fn find_path_to_set_handles_deep_graph() {
     let g2 = TestGraph::new(0, &(0..N).map(|i| (i, i + 1)).collect::<Vec<_>>());
     assert!(find_path_to_set(&g2, 0, |n| n == N + 5).is_none());
 }
+
+/// A calling-context obligation, the shape [`LazyAnnotation::generalization`] exists for:
+/// a call string, outermost-first, that a `Call` extends and a matching `Return`
+/// discharges. It only ever *restricts* — no edge is enabled only under a non-empty
+/// context — so a suffix of an obligation simulates it, and dropping the outermost frame
+/// walks that order one link at a time.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+struct Ctx(Vec<u32>);
+
+impl LazyAnnotation<LabeledGraph> for Ctx {
+    fn start() -> Self {
+        Ctx(vec![])
+    }
+
+    fn expand(
+        &self,
+        _graph: &LabeledGraph,
+        _from: &usize,
+        label: &Edge,
+        _to: &usize,
+    ) -> Option<Self> {
+        match label {
+            Edge::Intra => Some(self.clone()),
+            Edge::Call(site) => {
+                let mut stack = self.0.clone();
+                stack.push(*site);
+                Some(Ctx(stack))
+            }
+            // A return needs the frame it leaves to be the one the obligation names;
+            // with no obligation it is unconstrained.
+            Edge::Return(site) => match self.0.last() {
+                None => Some(self.clone()),
+                Some(top) if top == site => {
+                    let mut stack = self.0.clone();
+                    stack.pop();
+                    Some(Ctx(stack))
+                }
+                Some(_) => None,
+            },
+        }
+    }
+
+    fn generalization(&self) -> Option<Self> {
+        if self.0.is_empty() {
+            None
+        } else {
+            Some(Ctx(self.0[1..].to_vec()))
+        }
+    }
+}
+
+#[test]
+fn find_annotated_paths_from_set_prunes_states_a_generalization_covers() {
+    // 4 is reached both context-free (0 -> 4) and under [11,12] (0 -> 1 -> 4); the
+    // latter is subsumed. 5 and 6 hang off the contextual region only, so they are not
+    // reachable any other way and must survive.
+    let g = LabeledGraph::new(
+        7,
+        &[
+            (0, 4, Edge::Intra),
+            (0, 1, Edge::Call(11)),
+            (1, 4, Edge::Call(12)),
+            (1, 5, Edge::Call(13)),
+            (5, 6, Edge::Intra),
+            (4, 3, Edge::Intra),
+        ],
+    );
+
+    let search = find_annotated_paths_from_set(&g, [0usize], |n, _a: &Ctx| *n == 6 || *n == 3);
+
+    // (4, [11,12]) is dropped: its chain [12] -> [] hits the already-visited (4, []).
+    // Its successor (3, [11,12]) therefore never exists either.
+    let mut reached: Vec<(usize, Vec<u32>)> = search
+        .states
+        .iter()
+        .map(|s| (s.node, s.annot.0.clone()))
+        .collect();
+    reached.sort();
+    assert_eq!(
+        reached,
+        vec![
+            (0, vec![]),
+            (1, vec![11]),
+            (3, vec![]),
+            (4, vec![]),
+            (5, vec![11, 13]),
+            (6, vec![11, 13]),
+        ]
+    );
+
+    // Pruning never costs a target: both are still found, 6 by the contextual route.
+    let mut found: Vec<usize> = search
+        .targets
+        .iter()
+        .map(|&t| search.states[t as usize].node)
+        .collect();
+    found.sort();
+    assert_eq!(found, vec![3, 6]);
+}
+
+#[test]
+fn find_annotated_paths_from_set_drains_general_states_first() {
+    // 2 is reached contextually in one hop and context-free in two, and the contextual
+    // edge is expanded first, so (2, [9]) is created before (2, []) exists — subsumption
+    // is a check on candidates, and cannot retract a state already recorded.
+    //
+    // What the frontier split buys is that (2, [9]) is not *expanded* until the whole
+    // context-free region has been: under plain breadth-first order it would be dequeued
+    // first and drag the entire 3, 4 tail along as a second contextual copy. Here that
+    // tail exists only context-free.
+    let g = LabeledGraph::new(
+        5,
+        &[
+            (0, 2, Edge::Call(9)),
+            (0, 1, Edge::Intra),
+            (1, 2, Edge::Intra),
+            (2, 3, Edge::Intra),
+            (3, 4, Edge::Intra),
+        ],
+    );
+
+    let search = find_annotated_paths_from_set(&g, [0usize], |n, _a: &Ctx| *n == 4);
+    assert_eq!(search.targets.len(), 1);
+
+    // The one surviving path to the target runs through the context-free route.
+    let path: Vec<usize> = search
+        .path_to(search.targets[0])
+        .iter()
+        .map(|&i| search.states[i as usize].node)
+        .collect();
+    assert_eq!(path, vec![0, 1, 2, 3, 4]);
+
+    // Exactly one context-bearing state: the head of the contextual route. Its successors
+    // are all subsumed by the context-free copies that exist by the time it is expanded.
+    let ctx_bearing: Vec<usize> = search
+        .states
+        .iter()
+        .filter(|s| !s.annot.0.is_empty())
+        .map(|s| s.node)
+        .collect();
+    assert_eq!(ctx_bearing, vec![2]);
+    // 0, (2, [9]), 1, (2, []), 3, 4 — one node duplicated, not a whole tail.
+    assert_eq!(search.states.len(), 6);
+}
+
+#[test]
+fn find_annotated_paths_from_set_keeps_states_no_generalization_covers() {
+    // The contextual region is disjoint from the context-free one: 2 is only reachable
+    // under [9], so nothing subsumes it and the search must explore it in full. This is
+    // the case where the obligations are load-bearing and pruning buys nothing.
+    let g = LabeledGraph::new(
+        4,
+        &[
+            (0, 1, Edge::Call(9)),
+            (1, 2, Edge::Intra),
+            (2, 3, Edge::Return(9)),
+        ],
+    );
+
+    let search = find_annotated_paths_from_set(&g, [0usize], |n, _a: &Ctx| *n == 3);
+    assert_eq!(search.states.len(), 4);
+    assert_eq!(search.targets.len(), 1);
+    // The return discharges [9], so the target is reached context-free.
+    assert_eq!(search.states[search.targets[0] as usize].annot, Ctx(vec![]));
+}
