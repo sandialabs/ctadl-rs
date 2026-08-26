@@ -309,6 +309,43 @@ fn get_line_num(node: &Node<'_>) -> usize {
     node.start_position().row //hmm our tests always start w/ a lf.
 }
 
+/// The name of the local every synthesized return reads. Angle brackets are not legal in a C
+/// identifier, so this can never collide with a name from the source (the same trick
+/// [`TempAllocator::next_temp`] uses for `<tN>`). One per function is enough: it is never
+/// written, so every read of it is the same absence of a value.
+const IMPLICIT_RETURN_LOCAL: &str = "<implicit-return>";
+
+/// The terminator to close a block with when the frontend, not the source, decides it returns.
+///
+/// `collect_functions` gives every function whose declared return type is not `void` a
+/// [`ReturnType`] of arity 1, and `verify()` rejects a `Return` carrying a different number of
+/// arguments ([`ctadl_ir::mir::VerifyError::InconsistentReturns`]), so the empty `return` is
+/// only well-formed in a `void` function. Three places have no expression to return and used to
+/// emit the empty one regardless -- falling off the end of a body (see [`link_blocks`]),
+/// patching a block the walk left unterminated ([`finalize_terminators`]), and a bare `return;`
+/// written inside a non-`void` function, which is legal C and common in `int` error paths. All
+/// three produced IR that did not verify, silently: no warning is logged, and nothing on the
+/// `ctadl import` path checks -- unlike the dex, jvm and pcode front ends, this one never calls
+/// `program.verify()`, and `ssa::transform_program`'s post-SSA check passes because
+/// `complete()` has already rewritten every `Return` into a goto to a single exit block. Only
+/// `get_summary` in this module's tests ever asked, which is why no census saw it.
+///
+/// Satisfy the arity contract with a local that is never assigned. C says the value of such a
+/// return is indeterminate, and an unwritten local is exactly that in this IR: it carries no
+/// taint into the return, so no flow is invented -- the same "value nothing reads" shape
+/// [`Context::flatten_gnu_asm`]'s operand-less blend already yields.
+fn implicit_return(program: &mut Program, fidx: FunctionIdx) -> Terminator {
+    let fdat = &mut program.functions[fidx];
+    let arity = fdat.return_type.arity as usize;
+    let args: Vec<Exp> = if arity == 0 {
+        vec![]
+    } else {
+        let local = VariableRef::new_local_idx(fdat.locals.get_or_intern(IMPLICIT_RETURN_LOCAL));
+        vec![Exp::Variable(local); arity]
+    };
+    Terminator::new_kind(TerminatorKind::Return { args: args.into() })
+}
+
 fn link_blocks(
     program: &mut Program,
     from_sv: &ScopeView,
@@ -329,24 +366,22 @@ fn link_blocks(
         match to_sv.continuation_blidx {
             Some(idx) => idx,
             None => {
-                // Falls off the end of the function body: emit an implicit empty
+                // Falls off the end of the function body: emit an implicit
                 // `return` (SSA `complete()` rewrites it into a goto-to-exit).
-                // Mirrors the empty-return shape produced by `walk_return`.
-                if let Some(block) = program.functions[from_sv.fidx]
-                    .blocks
-                    .get_mut(from_sv.blidx)
-                {
-                    if block.terminator.is_none() {
-                        block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-                            args: vec![].into(),
-                        }));
+                // Mirrors the shape `walk_return` produces for a bare `return;`.
+                match program.functions[from_sv.fidx].blocks.get(from_sv.blidx) {
+                    Some(block) if block.terminator.is_some() => return Ok(()),
+                    Some(_) => {}
+                    None => {
+                        return Err(Error::TreeSitterParse(format!(
+                            "attempt to link a non existing from block: {:?}",
+                            from_sv
+                        )));
                     }
-                    return Ok(());
                 }
-                return Err(Error::TreeSitterParse(format!(
-                    "attempt to link a non existing from block: {:?}",
-                    from_sv
-                )));
+                let term = implicit_return(program, from_sv.fidx);
+                program.functions[from_sv.fidx].blocks[from_sv.blidx].terminator = Some(term);
+                return Ok(());
             }
         }
     } else {
@@ -424,21 +459,22 @@ fn finalize_terminators(
     stranded_labels: &HashSet<BasicBlockIdx>,
     body_holds_recovery: bool,
 ) -> Result<(), Error> {
-    let mut patched: Vec<BasicBlockIdx> = Vec::new();
-    for (bb, data) in program.functions[fidx]
+    // Collect first, patch second: `implicit_return` needs the whole function (it reads the
+    // return arity and interns a local), which it cannot have while a block is borrowed.
+    let unterminated: Vec<BasicBlockIdx> = program.functions[fidx]
         .blocks
-        .blocks_mut()
-        .iter_enumerated_mut()
-    {
-        if data.terminator.is_none() {
-            data.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-                args: vec![].into(),
-            }));
-            if body_holds_recovery && stranded_labels.contains(&bb) {
-                continue;
-            }
-            patched.push(bb);
+        .iter_enumerated()
+        .filter(|(_, data)| data.terminator.is_none())
+        .map(|(bb, _)| bb)
+        .collect();
+    let mut patched: Vec<BasicBlockIdx> = Vec::new();
+    for bb in unterminated {
+        let term = implicit_return(program, fidx);
+        program.functions[fidx].blocks[bb].terminator = Some(term);
+        if body_holds_recovery && stranded_labels.contains(&bb) {
+            continue;
         }
+        patched.push(bb);
     }
     if !patched.is_empty() {
         unexpected_ast(format!(
@@ -2174,10 +2210,11 @@ impl<'a> Context<'a> {
             });
             program.functions[scope_view.fidx].blocks[scope_view.blidx].terminator = Some(term);
         } else {
-            program.functions[scope_view.fidx].blocks[scope_view.blidx].terminator =
-                Some(Terminator::new_kind(TerminatorKind::Return {
-                    args: vec![].into(),
-                }));
+            // A bare `return;`. Legal in a non-`void` function (and common in `int` error
+            // paths), where the arity contract still demands an argument: `implicit_return`
+            // supplies the indeterminate value C says such a return has.
+            let term = implicit_return(program, scope_view.fidx);
+            program.functions[scope_view.fidx].blocks[scope_view.blidx].terminator = Some(term);
         }
         Ok(())
     }

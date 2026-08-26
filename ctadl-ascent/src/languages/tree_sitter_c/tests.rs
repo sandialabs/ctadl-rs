@@ -915,26 +915,25 @@ fn returned_blend_operands_flow() {
     check_returns_param(&s, 1, "");
 }
 
-/*
-
 #[test_log::test]
-#[ignore = "Issue 54: Implicit return"]
 fn implicit_return() {
+    // Issue 54, closed by spec 090. `foo` declares `int` and never returns, so `link_blocks`
+    // closes its body with a synthesized return -- which was the *empty* one regardless of the
+    // declared arity, and `verify()` rejected it with
+    // `InconsistentReturns { expected_arity: 1, actual_arity: 0 }`. This test predates the fix
+    // and sat commented out (against a `get_summary` signature that no longer exists); it is
+    // revived here at its original name because it is the oldest statement of the class. The
+    // rest of it -- the other two synthesis sites, and the precision pin on the value returned
+    // -- is in the implicit-return section at the end of this file.
     let src = r"
             int foo() {
             //no explicit_return
             }
         ";
-    let (program, _dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    let (_, _) = get_summary(program_info).expect("Verify probably bonked");
+    get_summary(program_from_string(src).0).expect("Verify probably bonked");
 }
-//TODO_JDB:  I don't think i handled *(p+1) = f; or (p+1)->f()
 
- */
+//TODO_JDB:  I don't think i handled *(p+1) = f; or (p+1)->f()
 
 #[test_log::test]
 fn simple_else() {
@@ -1841,11 +1840,16 @@ fn duplicate_label_orphan_block_terminated() {
     // unterminated. `is_connected` never visits it, but `verify()` rejects any
     // block without a terminator regardless of reachability, so the sweep must
     // patch orphans too.
+    //
+    // `f` returns `int` deliberately: that makes this the pin on `finalize_terminators`'
+    // half of spec 090 as well. The terminator the sweep invents has to satisfy the
+    // function's return arity like any other, and `verify()` rejects it either way --
+    // for the missing terminator before the sweep, for the wrong arity after it.
     if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
         return;
     }
     let src = r"
-        void f(void) {
+        int f(void) {
             goto l;
         l:  a();
         l:  b();
@@ -4271,4 +4275,101 @@ fn a_named_global_still_lowers_to_a_symbolic_field() {
         field_symbols(&prog).contains(&"named"),
         "a global read must still load `$globals.named`\n{dump}"
     );
+}
+
+// ---------------------------------------------------------------------------------------
+// Implicit returns and the return-arity contract (spec 090).
+//
+// `collect_functions` gives every function whose declared return type is not `void` a
+// `ReturnType` of arity 1, and `verify()` rejects a `Return` carrying a different number of
+// arguments, so the *empty* return the frontend synthesizes is only well-formed in a `void`
+// function. Three call sites emitted it regardless -- `link_blocks` (falling off the end of
+// the body), `finalize_terminators` (patching a block the walk orphaned, pinned by
+// `duplicate_label_orphan_block_terminated`), and `walk_return` (a bare `return;`).
+//
+// The failure was silent, which is why no census in this campaign surfaced it. No warning of
+// any attribution is logged; the C import path never calls `program.verify()` (the dex, jvm and
+// pcode front ends all do); and the post-SSA check inside `ssa::transform_program` passes
+// because `complete()` has already rewritten every return into a goto to a single exit block,
+// zipping zero arguments against one retvar without complaint. `get_summary` below is the only
+// thing in the tree that asks the question -- and one bad function fails the whole program's
+// `verify()`, so the answer costs every other function in the import too.
+//
+// `implicit_return` closes such a block with a local that is never written. That is what C
+// says the value of such a return is (indeterminate), and an unwritten local is exactly that
+// here: it satisfies the arity contract without becoming a conduit.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn fall_off_end_of_nonvoid_verifies() {
+    // The reproducer, and the `link_blocks` call site: no `goto`, no unreachable code, no
+    // parse damage -- just a non-`void` function that runs off the end of its body, which is
+    // `to_sv.continuation_blidx == None`. Before the fix this returned
+    // `InconsistentReturns { expected_arity: 1, actual_arity: 0 }`.
+    let src = r"int f(int a) { int b = a; }";
+    get_summary(program_from_string(src).0)
+        .expect("a non-void function that falls off the end of its body must verify");
+}
+
+#[test_log::test]
+fn bare_return_in_nonvoid_verifies() {
+    // The `walk_return` call site. `return;` in a function declared `int` is legal C and is
+    // the shape of half the error paths in any such function, so it has to produce a return
+    // of the declared arity too -- while the value-carrying `return a;` on the other path
+    // keeps the flow it always had.
+    let src = r"int f(int a) { if (a) return; return a; }";
+    let (summary, _) = get_summary(program_from_string(src).0)
+        .expect("a bare `return;` in a non-void function must verify");
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn implicit_return_carries_no_taint() {
+    // The precision pin. The local the synthesized return reads is never assigned, so the
+    // parameter reaches `b` and stops: nothing flows out of the function. A fix that
+    // satisfied the arity contract by returning something that *does* have a value -- the
+    // last temp computed, or the parameter -- would pass the two tests above and invent a
+    // return flow in every function that falls off the end -- 77 of them in the openssh
+    // corpus, 27 in nginx, 17 in dropbear.
+    let src = r"int f(int a) { int b = a; }";
+    let (summary, _) = get_summary(program_from_string(src).0).expect("must verify");
+    check_does_not_return_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn implicit_return_in_a_void_function_is_still_empty() {
+    // The boundary pin: arity 0 means the empty return is the *correct* shape, and inventing
+    // an argument there would break `verify()` in the opposite direction. `void` functions
+    // that fall off the end are the overwhelming majority of implicit returns in every
+    // corpus, so this is the case the fix must not touch.
+    let src = r"void f(int a) { int b = a; }";
+    let (prog, dump) = program_from_string(src);
+    get_summary(prog).expect("a void function that falls off the end must still verify");
+    assert!(
+        check_no_match(&dump, "<implicit-return>"),
+        "a void function needs no return value\n{dump}"
+    );
+}
+
+#[test_log::test]
+#[ignore = "spec 120: two definitions sharing a name merge into one function, so the arity of \
+            whichever is walked last is imposed on both bodies' returns"]
+fn colliding_definitions_of_one_name_verify() {
+    // The 3 empty returns (2 functions) the fix leaves in the openssh corpus, and the only
+    // ones left in any of the four. They are NOT an implicit return: `parse_dest_constraint`
+    // and `parse_dest_constraint_hop` are each defined `static void` in ssh-add.c and `static
+    // int` in ssh-agent.c, and since a directory imports as one concatenated translation unit
+    // and `collect_functions` keys the function table on the name alone, the two definitions
+    // land in ONE `FunctionData`. The last one walked wins the return type, so the `void`
+    // body's returns -- correctly empty when they were built -- are retroactively wrong.
+    //
+    // The merge damages far more than the arity, which is why this is spec 120's problem and
+    // not something to paper over here: the two parameter lists concatenate too, so the
+    // fixture below lowers to a single `g(@p0, @p1)` holding both bodies, and no warning of
+    // any attribution is logged. Un-ignore when definitions get distinct identities.
+    let src = r"
+        static void g(int a) { h(a); }
+        static int g(int a) { return a; }";
+    get_summary(program_from_string(src).0)
+        .expect("two definitions sharing a name must not produce IR that fails to verify");
 }
