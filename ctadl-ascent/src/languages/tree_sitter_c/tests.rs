@@ -4998,3 +4998,215 @@ fn a_pointer_returning_definition_is_not_a_frontend_gap() {
     let _strict = super::force_error_on_ast();
     super::parse_c_program(src).expect("a pointer-returning definition is not a frontend gap");
 }
+
+/* Spec 140: a parameter's declarator nests, and its index is its position.
+
+`collect_params` used a query that enumerated one-level declarator spellings, so `char **v`
+matched nothing and was dropped -- and because the loop numbered parameters by MATCH order,
+the drop took every later parameter down a slot with it. The same "matches anywhere in the
+subtree" property bound a function-pointer parameter's OWN parameters as the enclosing
+function's. Both are index bugs, not just coverage bugs: a taint model names `Argument(1)`. */
+
+#[test_log::test]
+fn a_double_pointer_parameter_is_bound() {
+    // The reproducer, verbatim: `v` used to be gone and `w` used to be `@p0`.
+    let src = r"void f(char **v, char *w) { char **a; char *b; a = v; b = w; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByRef, ByRef]);
+    let (a, b) = (local_render(&prog, "f", "a"), local_render(&prog, "f", "b"));
+    assert!(
+        check_match(&dump, &format!("assign {a} = @p0")),
+        "the double pointer is the FIRST parameter\n{dump}"
+    );
+    assert!(
+        check_match(&dump, &format!("assign {b} = @p1")),
+        "and the one after it keeps its own index\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn main_binds_argc_and_argv_in_that_order() {
+    // The headline. `main(int argc, char **argv)` imported as `define main(@p0)`, and the one
+    // parameter it did bind was the right one only by luck -- `argv` is last, so nothing
+    // shifted. Depth 3 is here too, because depth is not a list of cases.
+    let src = r"int main(int argc, char **argv) { int n; char **a; n = argc; a = argv; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByVal, ByRef]);
+    let (n, a) = (
+        local_render(&prog, "main", "n"),
+        local_render(&prog, "main", "a"),
+    );
+    assert!(
+        check_match(&dump, &format!("assign {n} = @p0"))
+            && check_match(&dump, &format!("assign {a} = @p1")),
+        "argc is @p0 and argv is @p1\n{dump}"
+    );
+
+    let deep = r"void g(char ***v, int n) { char ***a; int b; a = v; b = n; }";
+    let (prog, dump) = program_from_string(deep);
+    check_params(&prog, &[ByRef, ByVal]);
+    let (a, b) = (local_render(&prog, "g", "a"), local_render(&prog, "g", "b"));
+    assert!(
+        check_match(&dump, &format!("assign {a} = @p0"))
+            && check_match(&dump, &format!("assign {b} = @p1")),
+        "`char ***` is one parameter at index 0\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn taint_flows_through_a_double_pointer_parameter() {
+    // The soundness statement spec 130 left unpinned on purpose, with the comment naming this
+    // spec: with `v` unbound, `return v` read an implicit GLOBAL of that name and the summary
+    // was empty. The parameter is a `char **` on both sides now.
+    let src = r"char **argv_of(char **v) { return v; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByRef]);
+    check_return_arity(&prog, "argv_of", 1);
+    assert!(
+        check_match(&dump, "return @p0"),
+        "the return reads the parameter, not a global\n{dump}"
+    );
+    let (summary, _) = get_summary(prog).expect("must verify");
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn a_parameter_is_by_reference_at_every_depth() {
+    // `ParameterType` is a property of the declarator's shape, not of how many layers the
+    // query happened to spell: anything that dereferences to storage the caller can see is
+    // `ByRef`, at any depth, and a plain value is `ByVal`.
+    for (src, want) in [
+        (r"void f(int a) { int x; x = a; }", ByVal),
+        (r"void f(char *a) { char *x; x = a; }", ByRef),
+        (r"void f(char **a) { char **x; x = a; }", ByRef),
+        (r"void f(char ***a) { char ***x; x = a; }", ByRef),
+        (r"void f(char *a[]) { char **x; x = a; }", ByRef),
+        (r"void f(char a[10][20]) { char *x; x = a[0]; }", ByRef),
+        (r"void f(struct S **a) { struct S **x; x = a; }", ByRef),
+    ] {
+        let (prog, dump) = program_from_string(src);
+        let got = get_only_function(&prog)
+            .expect("one function")
+            .params
+            .parameters
+            .raw
+            .as_slice();
+        assert_eq!(got, &[want], "wrong parameter type for `{src}`\n{dump}");
+    }
+}
+
+#[test_log::test]
+fn a_function_pointer_parameter_is_one_parameter() {
+    // The boundary the old query crossed in the other direction. `int (*cb)(int a, int b)`
+    // declares ONE parameter, `cb`; `a` and `b` belong to the type, not to `g`. The query
+    // matched `(parameter_declaration declarator: (identifier))` anywhere under the parameter
+    // list, so `g` came out with four parameters and `s` -- the real second one -- at index 3.
+    // A function pointer stays `ByVal`: what it points at is code, not storage.
+    let src = r"void g(int (*cb)(int a, int b), char *s) { char *t; t = s; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByVal, ByRef]);
+    let t = local_render(&prog, "g", "t");
+    assert!(
+        check_match(&dump, &format!("assign {t} = @p1")),
+        "`s` is the second parameter, not the fourth\n{dump}"
+    );
+
+    // A function-TYPED parameter (`int cb(int)`, which adjusts to a pointer) is the same one
+    // parameter, and so is a pointer to a function returning a pointer.
+    let typed = r"void h(int cb(int a), char *s) { char *t; t = s; }";
+    let (prog, dump) = program_from_string(typed);
+    check_params(&prog, &[ByVal, ByRef]);
+    let t = local_render(&prog, "h", "t");
+    assert!(
+        check_match(&dump, &format!("assign {t} = @p1")),
+        "a function-typed parameter is one parameter\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_nameless_parameter_holds_its_slot_without_binding_a_name() {
+    // The other half of "the index is the position": an abstract declarator names nothing, so
+    // nothing in the body can read it -- but it still occupies a place in the C parameter
+    // list, and `Argument(1)` means the second one. The slot is reserved; no name is bound.
+    let src = r"void k(char **, int n) { int x; x = n; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByRef, ByVal]);
+    let x = local_render(&prog, "k", "x");
+    assert!(
+        check_match(&dump, &format!("assign {x} = @p1")),
+        "`n` is the second parameter\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_void_parameter_list_is_still_empty() {
+    // The boundary that a "reserve a slot for a parameter that declares no name" rule would
+    // otherwise break, and it is in every second function in the corpora: the `void` in
+    // `f(void)` IS the empty list, not a parameter. It is a `parameter_declaration` with a
+    // type and NO declarator, which is why that shape reserves nothing -- an abstract
+    // declarator (`f(char **)`) is the one that does.
+    let (prog, _dump) = program_from_string(r"void f(void) { int x; x = 1; }");
+    check_params(&prog, &[]);
+    let (prog, _dump) = program_from_string(r"void f() { int x; x = 1; }");
+    check_params(&prog, &[]);
+}
+
+#[test_log::test]
+#[ignore = "aspirational: C23's nameless `f(int)` is a parameter, and no definition in the corpora writes one"]
+fn a_nameless_value_parameter_would_hold_its_slot_too() {
+    // What "a parameter declaration with no declarator declares no parameter" gives up. C23
+    // lets a DEFINITION leave a parameter unnamed, so `void f(int, int n)` has two -- but that
+    // shape is spelled exactly like the `void` in `f(void)` and exactly like what tree-sitter
+    // leaves when a parameter list does not parse (the kernel's `__typeof(...)` syscall
+    // wrappers, 140 definitions). Between inventing a parameter for every one of those and
+    // dropping this one, the corpora decide: no definition in any of the four writes it.
+    let (prog, _dump) = program_from_string(r"void f(int, int n) { int x; x = n; }");
+    check_params(&prog, &[ByVal, ByVal]);
+}
+
+#[test_log::test]
+fn a_variadic_marker_is_not_a_parameter() {
+    // `...` is a `variadic_parameter` node, not a `parameter_declaration`; clang does not
+    // count it as a formal either, so neither does the census this spec is measured by.
+    let src = r"void logmsg(const char *fmt, int level, ...) { int x; x = level; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByRef, ByVal]);
+    let x = local_render(&prog, "logmsg", "x");
+    assert!(
+        check_match(&dump, &format!("assign {x} = @p1")),
+        "`level` is the second parameter and `...` is not a third\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_prototype_declares_no_parameters() {
+    // The boundary pin the spec asks for. `collect_params` runs over a DEFINITION's parameter
+    // list only -- a prototype is a `declaration` node -- so widening it must not start
+    // reading prototypes. `takes` is known only because a call resolves to it, and its arity
+    // comes from that call site (one argument), not from the three formals it was declared
+    // with.
+    let (prog, dump) = program_from_files(&[(
+        "s.c",
+        r"void takes(char **, int, int);
+          void caller(char **p) { takes(p); }",
+    )]);
+    check_has_direct_call(&prog, "caller", "takes");
+    let stub = function_named(&prog, "takes").expect("the extern pass names it");
+    assert!(
+        stub.blocks.is_empty() && stub.params.parameters.raw.len() == 1,
+        "a prototype's parameter list is not collected\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_double_pointer_parameter_is_not_a_frontend_gap() {
+    // Strict mode: the whole reproducer imports with `CTADL_ERROR_ON_AST` set. It always did
+    // -- the class was silent, which is why it survived spec 130 -- so this pins that binding
+    // parameters nobody had bound before does not introduce a gap.
+    let src = r"
+        struct env { char **argv; };
+        int main(int argc, char **argv) { char **a; a = argv; return argc; }
+        void each(struct env *e, char ***out, int (*cb)(int a, int b), ...) { *out = e->argv; }";
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("a double-pointer parameter is not a frontend gap");
+}

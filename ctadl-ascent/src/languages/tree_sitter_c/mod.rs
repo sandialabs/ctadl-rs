@@ -1422,6 +1422,60 @@ fn unparenthesize(node: Node<'_>) -> Option<Node<'_>> {
     Some(node)
 }
 
+/// The name a parameter's declarator declares, and whether the parameter is a reference.
+///
+/// A declarator is not a fixed list of spellings, it NESTS: `char **argv` is a
+/// `pointer_declarator` inside a `pointer_declarator`, `char *v[]` an `array_declarator`
+/// inside one, `int (*cb)(int, int)` a `function_declarator` around a parenthesized one, and
+/// any of them can wear parentheses. Walking down to the identifier binds every depth; the
+/// query this replaced enumerated the one-level shapes and dropped the rest in silence
+/// (spec 140), which cost `main` its `argv`.
+///
+/// The name is `None` when the declarator declares none -- an abstract declarator
+/// (`void f(char **)`), or parse debris. That is not the same as "there is no parameter":
+/// see [`Context::collect_params`], which still owns the slot.
+///
+/// A pointer or an array parameter is [`ParameterType::ByRef`] -- it is a handle on storage
+/// the caller can see written -- at every depth. A function pointer is not: what it points at
+/// is code, so `int (*cb)(int, int)` stays `ByVal`, as the query had it.
+fn param_head(declarator: Node<'_>) -> (Option<Node<'_>>, ParameterType) {
+    let mut node = declarator;
+    let (mut is_ref, mut is_function, mut name) = (false, false, None);
+    loop {
+        let Some(current) = unparenthesize(node) else {
+            break;
+        };
+        match current.kind() {
+            "identifier" => {
+                name = Some(current);
+                break;
+            }
+            "pointer_declarator"
+            | "abstract_pointer_declarator"
+            | "array_declarator"
+            | "abstract_array_declarator" => is_ref = true,
+            "function_declarator" | "abstract_function_declarator" => is_function = true,
+            // A declarator shape with no name in it to find (an attribute, debris).
+            _ => break,
+        }
+        // `char **` bottoms out at an `abstract_pointer_declarator` with no inner declarator.
+        match current.child_by_field_name("declarator") {
+            Some(inner) => node = inner,
+            None => break,
+        }
+    }
+    let param_type = if is_ref && !is_function {
+        ParameterType::ByRef
+    } else {
+        ParameterType::ByVal
+    };
+    (name, param_type)
+}
+
+/// The name recorded for a parameter that declares none, so that `param_names` stays indexed
+/// by parameter position. A NUL cannot occur in a C identifier, so no lookup can reach it.
+const UNNAMED_PARAM: &str = "\0<unnamed>";
+
 fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
     n.utf8_text(source.as_bytes()).unwrap().trim()
 }
@@ -3012,48 +3066,55 @@ impl<'a> Context<'a> {
             .entry(function_name.to_string())
             .or_default();
 
-        let query_src = r#"
-        (parameter_declaration
-            declarator: [
-                (identifier) @var_name
-                (pointer_declarator declarator: (identifier) @var_name) @is_ref
-                (array_declarator declarator: (identifier) @var_name) @is_ref
-                (function_declarator
-                    declarator: (parenthesized_declarator
-                        (pointer_declarator declarator: (identifier) @var_name)))
-            ]
-        )
-    "#;
-        //       debug_print_tree(*param_list, 0, None, None); //depth, field_name, depth_limit);
-        let query = compile_query(query_src);
-
-        let mut cursor = QueryCursor::new();
-        let mut matches_iter = cursor.matches(&query, *param_list, source.as_bytes());
-
+        // The parameters are the parameter list's own children, walked in order, and a
+        // parameter's index is its position among them. The query this replaced matched
+        // `parameter_declaration` ANYWHERE under the list and numbered by match order, which
+        // made position and index two different things: it bound a function pointer's own
+        // formals as this function's, and a declarator shape it did not enumerate (`char **v`,
+        // via `param_head`) took every later parameter down a slot with it.
+        let mut cursor = param_list.walk();
         let mut ctr = 0;
-        while let Some(m) = matches_iter.next() {
-            let extract = MatchExtractor::new(&query, m);
-            let param_name = extract.get("var_name")?;
-            let is_ref = extract.get_opt("is_ref");
-
-            // Check the AST node type of the wrapper!
-            let param_type = if is_ref.is_some() {
-                ParameterType::ByRef
-            } else {
-                ParameterType::ByVal
+        for decl in param_list.named_children(&mut cursor) {
+            // `...` is a `variadic_parameter`, not a formal (clang does not count it either);
+            // an old-style `f(a, b)` list holds bare `identifier`s, whose types live in the
+            // declarations between the list and the body, and which this does not bind.
+            if decl.kind() != "parameter_declaration" {
+                continue;
+            }
+            // A `parameter_declaration` with no declarator at all declares no parameter here.
+            // In well-formed C that shape is `f(void)` -- where the `void` IS the empty list
+            // -- or C23's nameless `f(int)`, which no definition in the corpora writes. It is
+            // also what a parameter list tree-sitter could not parse leaves behind: the
+            // kernel's SYSCALL_DEFINE expands to `__typeof(__builtin_choose_expr(...)) fd`,
+            // whose `__typeof` has no grammar rule, and the recovery reads the type as one
+            // parameter and the NAME as a second bare type. Reserving a slot for both would
+            // invent a parameter per formal in 140 kernel definitions. An abstract declarator
+            // (`char **`, below) is a different matter: that one is unambiguous.
+            let Some(declarator) = decl.child_by_field_name("declarator") else {
+                continue;
             };
+            let (param_name, param_type) = param_head(declarator);
 
             fdat.params.push(param_type);
-            let pn = to_str(&param_name, source);
-            param_names.push(pn);
-
-            self.scope_tree.add_variable(
-                scope_view.sidx,
-                pn.to_string(),
-                VarKind::Parameter,
-                Some(ctr),
-                Some(param_type),
-            );
+            match param_name {
+                Some(param_name) => {
+                    let pn = to_str(&param_name, source);
+                    param_names.push(pn);
+                    self.scope_tree.add_variable(
+                        scope_view.sidx,
+                        pn.to_string(),
+                        VarKind::Parameter,
+                        Some(ctr),
+                        Some(param_type),
+                    );
+                }
+                // An abstract declarator names nothing, so nothing in the body can read this
+                // parameter -- but it still occupies a position, and a taint model naming
+                // `Argument(1)` means the second one. The slot is held; only the name is not.
+                None => {
+                    param_names.push(UNNAMED_PARAM);
+                }
+            }
             ctr += 1;
         }
         Ok(())
