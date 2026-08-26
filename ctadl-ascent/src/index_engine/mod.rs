@@ -291,12 +291,7 @@ pub struct IndexConfig {
     /// unioning their calling contexts away.
     ///
     /// Off by default, and kept as the A/B baseline for the query-side design rather than as a
-    /// feature: it is strictly the weaker configuration. Collapsing makes a resolved call's
-    /// summary instantiation usable in the frame that holds the call (shape 2 / D4), but it
-    /// cannot reach the shapes whose flow starts or ends *inside* the resolved callee (D4b) --
-    /// those edges depend on where the query's sources and sinks are, which the index does not
-    /// know, so they cannot be pre-instantiated here at all. It is also the escape hatch if
-    /// query-state multiplication ever surprises us on a large corpus.
+    /// feature: it is strictly the weaker configuration.
     pub context_collapse: bool,
 }
 
@@ -329,9 +324,6 @@ pub struct IndexStats {
     pub hybrid_context_assign: usize,
     pub hybrid_context_locals: usize,
     pub hybrid_context_summary: usize,
-    /// Rows of `resolved_call`: the *realized* fan-out of the dynamically dispatched sites,
-    /// one per (site, target, context). Complements the codegen-side dispatch cap, which
-    /// bounds what is emitted rather than what the fixpoint actually resolved.
     pub hybrid_resolved_call: usize,
 }
 
@@ -372,7 +364,7 @@ impl IndexStats {
             self.num_functions
         );
         log::debug!(
-            "hybrid inlining: critical_summary: {:.2} ({}/{}), resolvent: {}, context_assign: {:.2} ({}/{}) (ratio over final assign_like), context_locals: {:.2} ({}/{}) (ratio over final locals), context_summary: {}",
+            "hybrid inlining: critical_summary: {:.2} ({}/{}), resolvent: {}, context_assign: {:.2} ({}/{}) (ratio over final assign_like), context_locals: {:.2} ({}/{}) (ratio over final locals), context_summary: {}, resolved_call: {}",
             ratio(self.hybrid_critical_summary, self.num_functions),
             self.hybrid_critical_summary,
             self.num_functions,
@@ -383,10 +375,7 @@ impl IndexStats {
             ratio(self.hybrid_context_locals, self.final_locals),
             self.hybrid_context_locals,
             self.final_locals,
-            self.hybrid_context_summary
-        );
-        log::debug!(
-            "hybrid inlining: resolved_call: {}",
+            self.hybrid_context_summary,
             self.hybrid_resolved_call
         );
     }
@@ -398,10 +387,7 @@ pub struct IndexResult {
     pub summary: Vec<FunctionSummary>,
     pub assign_like: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
     pub call_target_assign_like: Vec<(FunctionId, FlowVariable, Path, CallTargetObject)>,
-    /// Context-conditional assignments: a resolved callee's summary instantiated at a
-    /// dynamically dispatched site, valid only under the call string each row carries. Persisted
-    /// so the query engine can traverse them under a context annotation instead of the index
-    /// unioning the contexts away.
+    /// Context-conditional assignments
     pub context_assign: Vec<(
         FunctionId,
         FlowVariable,
@@ -410,9 +396,7 @@ pub struct IndexResult {
         Path,
         CallString,
     )>,
-    /// The realized fan-out of the dynamically dispatched sites: `(site function, site
-    /// instruction, resolved target, context)`, with an empty context meaning unconditional.
-    /// This is the call-graph edge such a site otherwise lacks.
+    /// Dynamic dispatch call edges
     pub resolved_call: Vec<(FunctionId, InsnId, FunctionId, CallString)>,
     pub paths: Vec<(Path,)>,
     pub external_function: Vec<(FunctionId,)>,
@@ -449,9 +433,6 @@ impl IndexResult {
             assign_like_rows,
             phys_footprint_mb()
         );
-        // The two context tables. Both are small next to `assign_like` -- `resolved_call` drops
-        // the cross product with the callee's summary rows that `context_assign` carries -- so
-        // they are written without their own memory checkpoints.
         context_assign::try_save(&dir, self.context_assign)?;
         resolved_call::try_save(&dir, self.resolved_call)?;
         let paths_rows = self.paths.len();
