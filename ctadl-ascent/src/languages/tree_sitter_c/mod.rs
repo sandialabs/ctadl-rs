@@ -590,6 +590,26 @@ const UNION_FIELD: &str = "$union";
 /// with no offset, so `a[n]` and `a[0]` are one path. See [`push_element`].
 const DEREF_FIELD: &str = "deref";
 
+/// The field of the globals object that names the object at a compile-time constant address --
+/// the location `(T *)K` designates, for the constant `K` exactly as it is spelled in the
+/// source. `((struct inet_sock *)0)->sk` becomes `$globals.<address 0>.sk`.
+///
+/// A global rather than a fresh temp per site, because two casts of the same constant designate
+/// the same object in C: a store through `*(volatile u32 *)0xfee00300` must be observed at a
+/// read of it. Keyed on the constant's *text*, so `0` and `0x0` are two names for what is really
+/// one address -- accepted deliberately, since normalizing would mean re-implementing C integer
+/// literal semantics (bases, suffixes, character constants) for a distinction the corpus does not
+/// draw: all 2,177 sites in the kernel corpus spell it `0`.
+///
+/// `<...>` is not C identifier syntax, so this can never collide with a global the program
+/// declares -- the collision-proofing `next_temp` uses for `<tN>` and spec 090 for
+/// `<implicit-return>`.
+fn literal_address_path(constant: &str) -> RawPath {
+    let mut fields = ThinVec::with_capacity(1);
+    fields.push(PathSegment::symbol(format!("<address {constant}>")));
+    RawPath::new(VariableRef::new_global(), fields)
+}
+
 /// True for the synthetic dereference field ([`DEREF_FIELD`]) -- the memory at an address, as
 /// opposed to a struct member. Taking the address of such an access (`&a[i]`) drops this field,
 /// leaving the address itself.
@@ -3033,6 +3053,23 @@ impl<'a> Context<'a> {
                     return Ok(Exp::access_path(addr));
                 }
                 let arg_exp = self.flatten_expr(program, arg, source, scope_view)?;
+                // `*(T *)K` -- a read through a constant address. `flatten_lvalue`'s
+                // `cast_expression` arm gives that address a location, so the read must name the
+                // same one: the pass-through would yield the constant `K` and a store through
+                // `*(volatile u32 *)0xfee00300` would be unobservable at a read of it, which is
+                // the whole reason the store side names a global rather than a fresh temp. Only
+                // a cast, and only when the cast's value is the constant -- `*p` on a variable
+                // keeps the pass-through, which is already symmetric because both sides name
+                // `p`. Re-deriving the path here rather than calling `flatten_lvalue` avoids
+                // lowering the operand twice; it is a literal, so `arg_exp` cost nothing.
+                if is_deref
+                    && arg.kind() == "cast_expression"
+                    && let Exp::Str(constant) = &arg_exp
+                    && !constant.is_empty()
+                {
+                    let ap = literal_address_path(constant);
+                    return Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)));
+                }
                 // A plain local pointer is an `Exp::Variable`; a pathless access path also names
                 // a bare pointer. Either can carry a same-block address-of alias.
                 let ptr_ref = match &arg_exp {
@@ -4178,37 +4215,73 @@ impl<'a> Context<'a> {
                 }
                 Ok(ptr)
             }
+            // A cast in lvalue position. The cast itself is value-preserving (`flatten_expr`'s
+            // `cast_expression` arm passes the operand straight through), so the location a
+            // cast names is the location its operand names -- which is why `((struct S *)p)->f
+            // = v` and `*(int *)(t->q) = v` already resolved through the catch-all below, where
+            // the operand happens to lower to a variable.
+            //
+            // What did not resolve is the one thing C has a cast FOR in this position: naming
+            // an address that is not any declared object. `(T *)<constant>` is an address
+            // constant, and the operand lowers to an `Exp::Str`, not a variable, so the
+            // catch-all charged the frontend with `not an lvalue: cast_expression` and dropped
+            // the access onto a dead temp. That is the whole of spec 100's class -- 2,177
+            // occurrences across the kernel corpus, every single one of them `(T *)0`, from
+            // `container_of()`'s type check (`__same_type(*(ptr), ((type *)0)->member)`, which
+            // names a member's TYPE and evaluates nothing) -- and a driver's
+            // `*(volatile u32 *)0xfee00300` is the same construct with a store behind it.
+            //
+            // A constant address is an lvalue in C: `*(T *)K` designates the object at `K`, and
+            // two such designations with the same `K` designate the SAME object. So give it a
+            // location that says exactly that -- a field of the globals object named after the
+            // constant -- rather than a fresh temp per occurrence, which would silently make
+            // every reference to one hardware register a distinct location. The name cannot
+            // collide with anything the program declares because `<...>` is not C identifier
+            // syntax (the trick `next_temp` uses for `<tN>` and spec 090 for
+            // `<implicit-return>`), and it is never empty, which is the invariant spec 070's
+            // `"."` access path broke.
+            //
+            // Only a *cast* gets this reading. A bare constant in location position (`3[a] = b`
+            // -- legal C, the commuted subscript) is not an address and still says so through
+            // the catch-all: the rule keys on the construct that turns a constant into an
+            // address, not on "the value came out constant".
+            "cast_expression" => match self.flatten_expr(program, node, source, scope_view)? {
+                Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
+                Exp::Str(constant) if !constant.is_empty() => Ok(literal_address_path(&constant)),
+                _ => self.not_a_location(program, node, scope_view),
+            },
             _ => match self.flatten_expr(program, node, source, scope_view)? {
                 Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
-                _ => {
-                    // Spec 064's rule, applied to the store side: before blaming the
-                    // frontend, ask whether the parser reached here from well-formed source.
-                    // A node the recovery produced or re-parented names no location because
-                    // it is not the program -- the kernel's `min()` over a `typeof` of a cast
-                    // (a tree-sitter-c 0.24.1 grammar limit) leaves whole statements
-                    // re-parented into a chain of `assignment_expression`s that never
-                    // appeared in the source, and charging the frontend with "not an lvalue:
-                    // assignment_expression" asserts ctadl failed to support a construct
-                    // nobody wrote. Say once that this body holds recovery output, and drop
-                    // the store silently like every other node in the region.
-                    if recovery_region(node).is_some() {
-                        let func_name = scope_view.func_name.clone();
-                        self.report_unanalyzed_recovery(&func_name)?;
-                    } else {
-                        unexpected_ast(format!("not an lvalue: {}", node.kind()))?;
-                    }
-                    // Recover by targeting a dead temp: this one store is dropped,
-                    // the rest of the function still lowers.
-                    let temp_name = self.allocator.next_temp();
-                    Ok(RawPath::new(
-                        VariableRef::new_local_idx(
-                            program[scope_view.fidx].locals.get_or_intern(&temp_name),
-                        ),
-                        ThinVec::new(),
-                    ))
-                }
+                _ => self.not_a_location(program, node, scope_view),
             },
         }
+    }
+
+    /// The recovery for a node in location position that names no location: say whose fault
+    /// that is, then target a dead temp so the one access is dropped and the rest of the
+    /// function still lowers.
+    ///
+    /// Spec 064's rule, applied to the store side: before blaming the frontend, ask whether the
+    /// parser reached here from well-formed source. A node the recovery produced or re-parented
+    /// names no location because it is not the program -- the kernel's `min()` over a `typeof`
+    /// of a cast (a tree-sitter-c 0.24.1 grammar limit) leaves whole statements re-parented into
+    /// a chain of `assignment_expression`s that never appeared in the source, and charging the
+    /// frontend with "not an lvalue: assignment_expression" asserts ctadl failed to support a
+    /// construct nobody wrote. Say once that this body holds recovery output, and drop the store
+    /// silently like every other node in the region.
+    fn not_a_location(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        scope_view: &ScopeView,
+    ) -> Result<RawPath, Error> {
+        if recovery_region(node).is_some() {
+            let func_name = scope_view.func_name.clone();
+            self.report_unanalyzed_recovery(&func_name)?;
+        } else {
+            unexpected_ast(format!("not an lvalue: {}", node.kind()))?;
+        }
+        Ok(self.dead_temp_path(program, scope_view))
     }
 
     /// Lowers the symbolic-field reads of `ap` into a sequence of loads (see

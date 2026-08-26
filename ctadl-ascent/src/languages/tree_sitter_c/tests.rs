@@ -4373,3 +4373,134 @@ fn colliding_definitions_of_one_name_verify() {
     get_summary(program_from_string(src).0)
         .expect("two definitions sharing a name must not produce IR that fails to verify");
 }
+
+// ---------------------------------------------------------------------------------------
+// A cast in location position (spec 100).
+//
+// A cast is value-preserving for dataflow, so the location `(T *)e` names is the location `e`
+// names -- and when `e` is an object that already worked, through `flatten_lvalue`'s catch-all,
+// which accepts whatever `flatten_expr` hands back as long as it is a variable.
+//
+// It is not a variable for the one thing a cast exists for in this position: naming an address
+// that is not any declared object. `(T *)K` for a constant `K` lowers to an `Exp::Str`, so the
+// catch-all charged the frontend with `not an lvalue: cast_expression` and dropped the access
+// onto a dead temp. That was 2,177 of the kernel census's 2,194 remaining frontend gaps -- the
+// only shape left -- and every single one is `(T *)0`, from `container_of()`'s type check
+// (`__same_type(*(ptr), ((type *)0)->member)`, which names a member's TYPE and evaluates
+// nothing). A driver's `*(volatile u32 *)0xfee00300` is the same construct with a live store
+// behind it.
+//
+// A constant address IS an lvalue in C -- `*(T *)K` designates the object at `K`, and two such
+// designations with the same `K` designate the SAME object -- so it gets a location that says
+// so: `$globals.<address K>`. A fresh temp per site would have silenced the warning just as
+// well and made every reference to one hardware register a distinct object.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn store_through_cast_of_a_constant_writes_through() {
+    // The store lands on a location the rest of the program can name, instead of on a dead
+    // temp. `<t0>` is the address `$globals.<address 0x1000>` loaded out of the globals object
+    // -- the same two-statement shape `((struct S *)t->q)->f = x` lowers to, which is the point:
+    // a constant address is just another way of spelling the pointer.
+    let src = r"
+        struct S { int f; };
+        void e(int x) { ((struct S *)0x1000)->f = x; }";
+    let (prog, _dump) = program_from_string(src);
+    check_loads(&prog, "$globals.<address 0x1000>");
+    check_assign_or_update(&prog, "<t0>.f", ["@p0"], None);
+}
+
+#[test_log::test]
+fn a_store_through_a_literal_address_is_observed_at_a_read() {
+    // Why the location is a global keyed on the constant and not a fresh temp: the two
+    // occurrences of `0xfee00300` below are the same object, so the value written through the
+    // first reaches the read in the second. A per-site temp silences the warning and loses this
+    // flow -- and so does the pass-through on the read side, which is why `flatten_expr`'s
+    // `pointer_expression` arm resolves a dereference of a constant address the same way
+    // `flatten_lvalue` does rather than yielding the constant `0xfee00300`.
+    let src = r"int roundtrip(int x) {
+                    *(volatile int *)0xfee00300 = x;
+                    return *(volatile int *)0xfee00300;
+                }";
+    let (summary, _) = get_summary(program_from_string(src).0).expect("must verify");
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn cast_in_lvalue_position_is_no_longer_a_frontend_gap() {
+    // The corpus spelling, in strict mode. `((struct inet_sock *)0)->sk` inside
+    // `__builtin_types_compatible_p(typeof(...), typeof(...))` is `container_of()`'s
+    // `__same_type` check as the kernel headers expand it; `typeof` is not a keyword the
+    // grammar admits in expression position, so tree-sitter parses each one as a call, which
+    // is what walks the argument and reaches the cast. 1,070 of the corpus's occurrences are
+    // this exact type.
+    let src = r#"
+        struct inet_sock { int sk; };
+        int f(struct inet_sock *p) {
+            return __builtin_types_compatible_p(typeof(*(p)),
+                                                typeof(((struct inet_sock *)0)->sk));
+        }"#;
+    let (_prog, has_error, _dump) = super::parse_c_program(src).expect("ingestion recovers");
+    assert!(!has_error, "this input must parse cleanly");
+
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src)
+        .expect("a cast of a constant in location position is not a frontend gap");
+}
+
+#[test_log::test]
+fn a_cast_of_an_object_in_lvalue_position_is_unchanged() {
+    // The scoping pin. The fix must not read as "a cast in location position resolves to
+    // whatever is convenient": every shape whose cast operand is an OBJECT keeps the lowering
+    // it already had, because those never went through the constant path at all. Pinning them
+    // here is what makes the new arm a strictly additional case rather than a rewrite of the
+    // catch-all it replaced for this node kind.
+    let thru_param = r"
+        struct S { int f; };
+        void a(char *p, int x) { ((struct S *)p)->f = x; }";
+    let (prog, _) = program_from_string(thru_param);
+    check_assign_or_update(&prog, "@p0.f", ["@p1"], None);
+
+    let thru_field = r"
+        struct S { int f; };  struct T { char *q; };
+        void b(struct T *t, int x) { ((struct S *)t->q)->f = x; }";
+    let (prog, _) = program_from_string(thru_field);
+    check_loads(&prog, "@p0.q");
+    check_assign_or_update(&prog, "<t0>.f", ["@p1"], None);
+
+    let deref_of_field = r"
+        struct T { char *q; };
+        void c(struct T *t, int x) { *(int *)(t->q) = x; }";
+    let (prog, _) = program_from_string(deref_of_field);
+    check_loads(&prog, "@p0.q");
+    check_assign_or_update(&prog, "<t0>", ["@p1"], None);
+
+    let thru_arithmetic = r"
+        struct S { int f; };
+        void d(char *p, int x) { ((struct S *)(p - 8))->f = x; }";
+    let (prog, _) = program_from_string(thru_arithmetic);
+    check_assign_or_update(&prog, "<t0>", ["@p0", "#8"], None);
+    check_writes_to(&prog, "<t0>.f", 1);
+
+    // and none of the four says anything about the frontend.
+    let reports = reports_for(&format!(
+        "{thru_param}\n{thru_field}\n{deref_of_field}\n{thru_arithmetic}"
+    ));
+    assert!(reports.is_empty(), "unexpected reports: {reports:?}");
+}
+
+#[test_log::test]
+fn a_null_pointer_constant_is_still_a_constant_value() {
+    // The other boundary, and the reason the new reading lives in `flatten_lvalue` and in one
+    // guarded case of `flatten_expr`'s dereference, never in `flatten_expr`'s `cast_expression`
+    // arm: `(struct S *)0` in VALUE position is the null pointer constant, a value. Giving it
+    // the location it would name if dereferenced would make every `p = NULL` in a corpus a
+    // reference to one shared object, aliasing every null-valued pointer with every other.
+    let src = r"void n(void) { int *p; p = (int *)0; }";
+    let (prog, dump) = program_from_string(src);
+    check_assign_or_update(&prog, "p", ["#0"], None);
+    assert!(
+        check_no_match(&dump, "<address"),
+        "a null pointer constant names no location\n{dump}"
+    );
+}
