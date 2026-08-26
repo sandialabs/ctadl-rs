@@ -5210,3 +5210,267 @@ fn a_double_pointer_parameter_is_not_a_frontend_gap() {
     let _strict = super::force_error_on_ast();
     super::parse_c_program(src).expect("a double-pointer parameter is not a frontend gap");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Spec 150 -- `(T)(x)` is a cast, and tree-sitter can only read it as a call.
+// ---------------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn a_typedef_cast_is_a_value_conversion_not_a_call() {
+    // The class. `(( __be16)(x))` is a cast written with the operand parenthesized, which is
+    // how the kernel's byteorder helpers spell every one of them. tree-sitter has no symbol
+    // table, so it reads `(A)(B)` as a call through a parenthesized callee; lowering that as a
+    // call to a function named `( __be16)` gave the taint an empty-bodied, nothing-returning
+    // stub to disappear into. As a conversion it is value-preserving: `x` reaches the result.
+    let src = r"
+        typedef unsigned short __be16;
+        int convert(int x) {
+            int v;
+            v = (( __be16)(x));
+            return v;
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "convert").is_empty(),
+        "a cast is not a call\n{dump}"
+    );
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn a_cast_shaped_call_invents_no_function() {
+    // The other half of the same defect, and the one the corpus census counts: a call to a
+    // name nothing defines makes `define_extern_functions` invent it, so the IR carried 259
+    // functions in the kernel corpus whose names are not C identifiers (`( __be16)`,
+    // `( gfp_t)`, `( __le32)`). Goes through `program_from_files` because that is the path
+    // that creates the stubs.
+    let (prog, dump) = program_from_files(&[(
+        "byteorder.c",
+        r"typedef unsigned short __be16;
+          void store(int *v, int x) { *v = (( __be16)(x)); }",
+    )]);
+    assert!(
+        function_named(&prog, "( __be16)").is_none(),
+        "no function is invented for the cast\n{dump}"
+    );
+    let odd: Vec<&str> = prog
+        .functions
+        .functions
+        .raw
+        .iter()
+        .map(|f| f.name.as_str())
+        .filter(|name| !name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_'))
+        .collect();
+    assert!(
+        odd.is_empty(),
+        "invented non-identifier names: {odd:?}\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_type_name_from_a_system_header_still_reads_as_a_cast() {
+    // `type_names` is filled from every `type_identifier` in the unit, not from `typedef`
+    // declarations alone, and that is not a convenience: the corpora preprocess project
+    // headers but not system ones, so nginx and openssh cast to `u_char` and `uid_t` without
+    // the buffer ever declaring them. What the buffer does hold is uses -- `u_char *p` in a
+    // parameter list -- which tree-sitter itself parses as a `type_identifier`.
+    let src = r"
+        int convert(u_char *p, int x) {
+            int v;
+            v = (u_char)(x);
+            return v;
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "convert").is_empty(),
+        "a cast to a type the unit only uses is still a cast\n{dump}"
+    );
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn a_cast_over_a_comma_expression_yields_its_last_operand() {
+    // What `(T)(a, b)` means, and the reason the operand list is walked rather than required
+    // to hold exactly one node: tree-sitter cannot tell a cast over a comma expression from a
+    // two-argument call any more than it can tell the one-operand case. C evaluates both and
+    // the value is the last, so `b` reaches the return and `a` does not.
+    let src = r"
+        typedef int T;
+        int pick(int a, int b) {
+            int r;
+            r = (T)(a, b);
+            return r;
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "pick").is_empty(),
+        "a cast over a comma expression is not a call\n{dump}"
+    );
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 1, "");
+    check_does_not_return_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn a_parenthesized_function_name_is_still_a_direct_call() {
+    // The boundary, from the side that costs a call edge rather than a conversion. openssh
+    // compiles the BSD red-black-tree macros, whose comparison expands to
+    // `comp = (blob_cmp)(elm, parent);` -- redundant parentheses around a plain function name.
+    // The callee was named by its source text, so this was a direct call to `(blob_cmp)`: a
+    // function invented on the spot, and the edge to the real `blob_cmp` lost.
+    let src = r"
+        int blob_cmp(int a, int b) { return a; }
+        int find(int a, int b) {
+            int c;
+            c = (blob_cmp)(a, b);
+            return c;
+        }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "find", "blob_cmp");
+    assert!(
+        function_named(&prog, "(blob_cmp)").is_none(),
+        "the parentheses are not part of the name\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_call_through_a_parenthesized_function_pointer_stays_indirect() {
+    // The boundary the disambiguation exists for: `(fp)(1)` is spelled exactly like a cast and
+    // is not one. Both legacy spellings -- with and without the dereference -- stay indirect,
+    // because `fp` is a variable in scope and a variable in scope is never a type name here.
+    let src = r"
+        void call_both(void) {
+            void (*fp)(int);
+            (*fp)(1);
+            (fp)(1);
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "call_both").is_empty(),
+        "neither spelling is a direct call\n{dump}"
+    );
+    assert_eq!(
+        dump.matches("funcptr-call").count(),
+        2,
+        "both spellings are indirect calls\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_plain_direct_call_is_unchanged() {
+    // The third boundary the spec names: peeling parentheses off a callee must not disturb the
+    // callee that never had any.
+    let src = r"
+        void g(int x);
+        void caller(int a) { g(a); }";
+    let (prog, dump) = program_from_string(src);
+    check_direct_call(&prog, "caller", "g", ["@p0"]);
+    assert!(
+        check_no_match(&dump, "funcptr-call"),
+        "still direct\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_local_that_shadows_a_type_name_is_called_not_cast() {
+    // `(A)(B)` where `A` is a *variable*, spelled so that the type-name evidence points the
+    // wrong way: C lets a block-scope declaration shadow a typedef, so `fp_t` is a type at
+    // file scope and a function pointer inside `dispatch`. The scope wins -- the answer is a
+    // call -- and it wins by construction, because the shadowing declaration is the one the
+    // scope tree resolves.
+    let src = r"
+        typedef int fp_t;
+        void dispatch(int x) {
+            void (*fp_t)(int);
+            (fp_t)(x);
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "dispatch").is_empty(),
+        "the local shadows the typedef\n{dump}"
+    );
+    assert!(
+        check_match(&dump, "funcptr-call"),
+        "a shadowed type name is a call through the variable\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_record_tag_is_not_a_type_name() {
+    // Why `type_names` records every `type_identifier` EXCEPT a record tag. `struct stat` is a
+    // type; the bare name `stat` is not one, it is the function. Recording the tag would make
+    // `(stat)(path, buf)` -- the same redundant-parentheses spelling as `(blob_cmp)` -- read as
+    // a cast to `stat`, which silently deletes the call and yields its last argument instead.
+    let src = r"
+        struct stat { int mode; };
+        int stat(char *path, struct stat *buf);
+        int probe(char *path, struct stat *buf) { return (stat)(path, buf); }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "probe", "stat");
+    assert!(
+        function_named(&prog, "(stat)").is_none(),
+        "the parentheses are not part of the name\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_global_function_pointer_callee_is_not_a_cast() {
+    // The other half of "`A` is a variable, not a type": a file-scope function pointer is not
+    // in the scope tree at all (globals are resolved by the fallback in `build_access_path`),
+    // so the guard that catches the local shadow above cannot be what saves this one. What
+    // saves it is that `hook` is not a type name anywhere in the unit.
+    //
+    // Where it lands is spec 160's class, not this one: the callee is a global, so it is still
+    // lowered as a direct call to `hook` -- a name, at least, and the same name the
+    // unparenthesized spelling produces.
+    let src = r"
+        void (*hook)(int);
+        void fire(int x) { (hook)(x); }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "fire", "hook");
+    assert!(
+        function_named(&prog, "(hook)").is_none(),
+        "the parentheses are not part of the name\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_cast_shaped_call_is_not_a_frontend_gap() {
+    // Strict mode: the whole reproducer imports with `CTADL_ERROR_ON_AST` set. It always did --
+    // the class was entirely silent, which is why it survived every census up to spec 140 --
+    // so this pins that reading a cast as a cast introduces no gap of its own.
+    let src = r"
+        typedef unsigned short __be16;
+        int blob_cmp(int a, int b) { return a; }
+        int convert(int x, int y) {
+            void (*fp)(int);
+            (fp)(1);
+            (*fp)(2);
+            return (( __be16)(x)) + (blob_cmp)(x, y);
+        }";
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("a cast written as a call is not a frontend gap");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: a GNU statement expression in callee position is still named by its text"]
+fn a_statement_expression_callee_is_an_indirect_call() {
+    // What this spec deliberately leaves. The kernel's `static_call(f)(args)` expands to a GNU
+    // statement expression in callee position, `({ ...; (&__SCT__f); })(args)`, which is a
+    // `parenthesized_expression` wrapping a `compound_statement` -- the cast shape's grammar,
+    // and not a cast. Those parentheses are part of the construct, so `unparenthesized_callee`
+    // does not peel them, and the callee keeps being named by its own source text: 220 of the
+    // kernel corpus's invented functions are one of these. The value it yields is a function
+    // pointer, so the answer is an indirect call through it.
+    let src = r"
+        void target(int x);
+        void fire(int x) { ({ target; })(x); }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "fire").is_empty(),
+        "a statement expression names no function\n{dump}"
+    );
+    assert!(check_match(&dump, "funcptr-call"), "{dump}");
+}

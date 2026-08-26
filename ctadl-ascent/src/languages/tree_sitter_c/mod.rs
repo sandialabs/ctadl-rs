@@ -789,13 +789,26 @@ struct Context<'a> {
     /// the IR it expands into (calls, loads, stores) points back at that statement.
     cur_span: SourceInfo,
     /// **Record layout registry**: a record tag mapped to its data members in declaration
-    /// order. Filled once per translation unit by [`Context::collect_struct_layouts`], before
+    /// order. Filled once per translation unit by [`Context::collect_type_registry`], before
     /// any function is lowered, so a member's own type is available regardless of declaration
     /// order. Consulted only by [`Context::collect_initializer_list`], to map a *positional*
     /// brace initializer onto the members it writes. A tag that is absent (anonymous, declared
     /// in another translation unit) simply takes the positional-element fallback, so an
     /// incomplete registry is always safe.
     struct_layouts: HashMap<String, Vec<MemberSlot>>,
+    /// **Type-name registry**: every name this translation unit uses as a type. Filled by the
+    /// same pre-pass as `struct_layouts` (see [`Context::collect_type_registry`]), from the
+    /// `type_identifier` nodes tree-sitter itself produced -- a `typedef`'s declared name, and
+    /// equally a name used as a type in any declaration, which is the only evidence available
+    /// for a typedef that lives in a system header the corpus did not preprocess (nginx and
+    /// openssh use `u_char` and `uid_t` without ever declaring them).
+    ///
+    /// It exists to tell a cast from a call: tree-sitter cannot know `__be16` is a type, so
+    /// `(__be16)(x)` parses as a `call_expression` through a parenthesized callee -- the exact
+    /// shape of a genuine `(fp)(x)`. See [`Context::cast_shaped_call`], which is the only
+    /// consumer. A record TAG is deliberately not recorded: `struct stat` is a type but `stat`
+    /// alone is not one, and it is the name of a function.
+    type_names: HashSet<String>,
     /// `ERROR` nodes already reported as unparsable constructs, by `Node::id`, so one
     /// syntax error draws one warning. See [`Context::report_unparsable_construct`].
     reported_parse_errors: HashSet<usize>,
@@ -1422,6 +1435,61 @@ fn unparenthesize(node: Node<'_>) -> Option<Node<'_>> {
     Some(node)
 }
 
+/// The first named child that is not a comment -- the single expression a
+/// `parenthesized_expression` holds, or the first operand of an `argument_list`. `None` when
+/// there is none: empty parentheses (`f()`, or parse-recovery debris) have no named child.
+fn first_named_child(node: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find(|child| child.kind() != "comment")
+}
+
+/// Is this `type_identifier` a name that is a *type*?
+///
+/// Every `type_identifier` is, except one: the tag of a record or enum. `struct stat { ... }`
+/// puts `stat` in a namespace of its own, where it is only ever reachable through the keyword;
+/// the name `stat` on its own means the FUNCTION. Recording tags would make `(stat)(path, &st)`
+/// -- a call written with redundant parentheses -- read as a cast to `stat`, silently deleting
+/// the call. See [`Context::type_names`].
+fn is_type_name(node: Node<'_>) -> bool {
+    if node.kind() != "type_identifier" {
+        return false;
+    }
+    let is_tag = node.parent().is_some_and(|parent| {
+        matches!(
+            parent.kind(),
+            "struct_specifier" | "union_specifier" | "enum_specifier"
+        ) && parent
+            .child_by_field_name("name")
+            .is_some_and(|name| name.id() == node.id())
+    });
+    !is_tag
+}
+
+/// The callee of a call with its redundant grouping parentheses peeled: `(f)(x)` calls `f` and
+/// `(*fp)(x)` calls through `fp`, exactly as the unparenthesized spellings do.
+///
+/// The parentheses are not cosmetic to a frontend that names a callee by its source text: the
+/// BSD red-black-tree macros openssh compiles in expand to `comp = (blob_cmp)(elm, parent);`,
+/// and lowering that as a direct call to a function literally named `(blob_cmp)` both invented
+/// a function and lost the call edge to the real one.
+///
+/// A GNU statement expression `({ ... })(x)` is NOT peeled. Those parentheses are part of the
+/// construct rather than grouping around an expression, and what the peel would leave is a
+/// `compound_statement` -- still not a name, so still lowered as a direct call to its own text.
+/// Peeling would only relabel that gap (the kernel's `static_call()`, 220 invented names);
+/// naming it faithfully leaves it findable.
+fn unparenthesized_callee(node: Node<'_>) -> Node<'_> {
+    let mut node = node;
+    while node.kind() == "parenthesized_expression" {
+        match first_named_child(node) {
+            Some(inner) if inner.kind() != "compound_statement" => node = inner,
+            _ => break,
+        }
+    }
+    node
+}
+
 /// The name a parameter's declarator declares, and whether the parameter is a reference.
 ///
 /// A declarator is not a fixed list of spellings, it NESTS: `char **argv` is a
@@ -1687,12 +1755,18 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// Fill the [`Context::struct_layouts`] registry: for every record definition in the
-    /// translation unit, its data members in declaration order, keyed by the tag a declaration
-    /// can name it with. Two spellings are recorded:
+    /// Fill the two registries a translation unit's *types* provide, in one walk.
+    ///
+    /// [`Context::struct_layouts`]: for every record definition in the translation unit, its
+    /// data members in declaration order, keyed by the tag a declaration can name it with. Two
+    /// spellings are recorded:
     /// - a **tagged** definition (`struct P { ... };`) under its tag;
     /// - a **typedef** of a definition (`typedef struct { ... } P;`) under the typedef name,
     ///   which is how an otherwise-anonymous record becomes nameable.
+    ///
+    /// [`Context::type_names`]: every name used as a type anywhere in the unit, read off the
+    /// `type_identifier` nodes tree-sitter produced (see [`is_type_name`] for the one kind of
+    /// `type_identifier` that is *not* a type name).
     ///
     /// A recursive node walk rather than a tree-sitter query, because the record kinds differ
     /// per grammar (`class_specifier` exists only in C++, and a query naming it would not
@@ -1700,7 +1774,10 @@ impl<'a> Context<'a> {
     /// a grammar does not have simply never occurs. A layout that could not be read completely
     /// is **not** recorded (see [`record_member_slots`]), so positional mapping is only ever
     /// attempted where every slot is known.
-    fn collect_struct_layouts(&mut self, source: &'a str, node: Node<'_>) {
+    fn collect_type_registry(&mut self, source: &'a str, node: Node<'_>) {
+        if is_type_name(node) {
+            self.type_names.insert(to_str(&node, source).to_string());
+        }
         if let Some(slots) = record_member_slots(node, source) {
             // `struct P { ... }` -- nameable by its own tag.
             if let Some(name) = node.child_by_field_name("name") {
@@ -1723,7 +1800,7 @@ impl<'a> Context<'a> {
         }
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.collect_struct_layouts(source, child);
+            self.collect_type_registry(source, child);
         }
     }
 
@@ -3047,9 +3124,10 @@ impl<'a> Context<'a> {
         program: &mut Program,
     ) -> anyhow::Result<(), Error> {
         let global_sidx = self.scope_tree.add_scope("%GLOBAL".to_string(), None);
-        // Record layouts first: a positional brace initializer in any function body needs the
-        // layout of a record that may be defined anywhere in the translation unit.
-        self.collect_struct_layouts(source, tree.root_node());
+        // Types first: a positional brace initializer in any function body needs the layout of
+        // a record that may be defined anywhere in the translation unit, and telling a cast
+        // from a call needs the type names the whole unit uses, wherever they are declared.
+        self.collect_type_registry(source, tree.root_node());
         self.collect_functions(source, tree, program, global_sidx)
     }
 
@@ -3310,10 +3388,16 @@ impl<'a> Context<'a> {
                 Ok(arg_exp)
             }
             "subscript_expression" => self.flatten_subscript(program, node, source, scope_view),
-            "call_expression" => {
-                let x = self.allocator.next_temp();
-                self.collect_call(program, node, source, scope_view, x)
-            }
+            // `(__be16)(x)` is a cast that tree-sitter could only read as a call; when it is
+            // one, it lowers exactly like the `cast_expression` arm below. See
+            // `cast_shaped_call` for how the two are told apart.
+            "call_expression" => match self.cast_shaped_call(node, source, scope_view) {
+                Some(operands) => self.flatten_cast_operands(program, operands, source, scope_view),
+                None => {
+                    let x = self.allocator.next_temp();
+                    self.collect_call(program, node, source, scope_view, x)
+                }
+            },
             // A cast is value-preserving for taint: the target type is irrelevant to
             // dataflow, so lower the cast operand and pass it straight through
             // (`(long)x` carries `x`). Mirrors the `unary_expression` pass-through.
@@ -3909,6 +3993,89 @@ impl<'a> Context<'a> {
         Ok(result)
     }
 
+    /// The operand list of a **cast** that tree-sitter parsed as a call, or `None` when the
+    /// `call_expression` really is a call.
+    ///
+    /// `(A)(B)` is a cast iff `A` names a type, and C cannot be parsed without knowing which
+    /// names those are: tree-sitter-c has a fixed list of primitive types, so `(unsigned
+    /// long)(x)` and `(struct sock *)(x)` do come out as `cast_expression`s, but a name that
+    /// is a type only because something said `typedef` cannot. `(__be16)(x)` therefore parses
+    /// as a `call_expression` whose callee is a `parenthesized_expression` -- character for
+    /// character the shape of a genuine call through a parenthesized function pointer,
+    /// `(fp)(x)`.
+    ///
+    /// Lowering every one of them as a call was silent and unsound at once: `define_extern_
+    /// functions` invented an empty-bodied function named `( __be16)` (2,931 call sites in the
+    /// kernel corpus, 605 in openssh, 229 in nginx), and an empty body returns nothing, so the
+    /// taint that went into the cast did not come out.
+    ///
+    /// The evidence used is the translation unit's own [`Context::type_names`], and three
+    /// things override it, in the order they are checked -- each one is a name that is a type
+    /// SOMEWHERE in the buffer but is not one *here*:
+    ///
+    /// * a variable in scope. C lets a block-scope declaration shadow a typedef, and `(fp)(x)`
+    ///   with a local `fp` is a call however `fp` is spelled elsewhere.
+    /// * a function this parse defines. A directory imports as one buffer (see
+    ///   [`read_c_source`]), so a name one file typedefs and another defines as a function
+    ///   meets itself here; the definition wins, because a call to it has somewhere to go.
+    /// * an empty operand list. `(T)()` casts nothing and is not valid C; leaving it a call
+    ///   keeps the recovery that already reports it.
+    fn cast_shaped_call<'t>(
+        &self,
+        node: Node<'t>,
+        source: &'a str,
+        scope_view: &ScopeView,
+    ) -> Option<Node<'t>> {
+        let callee = node.child_by_field_name("function")?;
+        if callee.kind() != "parenthesized_expression" {
+            return None;
+        }
+        let inner = first_named_child(callee)?;
+        if !matches!(inner.kind(), "identifier" | "type_identifier") {
+            return None;
+        }
+        let name = to_str(&inner, source);
+        if !self.type_names.contains(name)
+            || self
+                .scope_tree
+                .find_variable(scope_view.sidx, name)
+                .is_some()
+            || self.functions.contains_key(name)
+        {
+            return None;
+        }
+        let operands = node.child_by_field_name("arguments")?;
+        first_named_child(operands)?;
+        Some(operands)
+    }
+
+    /// Lower the operands of a cast [`Context::cast_shaped_call`] recognised, and yield its
+    /// value.
+    ///
+    /// A cast is value-preserving for taint -- the target type is irrelevant to dataflow --
+    /// so this is the `cast_expression` arm's pass-through, reached through an `argument_list`
+    /// instead of a `value` field. More than one operand means the cast is over a comma
+    /// expression (`(T)(a, b)`, which tree-sitter cannot tell from a two-argument call
+    /// either): every operand is evaluated for its effects, and the value is the last one's.
+    fn flatten_cast_operands(
+        &mut self,
+        program: &mut Program,
+        operands: Node<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<Exp, Error> {
+        let mut cursor = operands.walk();
+        let nodes: Vec<Node<'_>> = operands
+            .named_children(&mut cursor)
+            .filter(|child| child.kind() != "comment")
+            .collect();
+        let mut value = None;
+        for child in nodes {
+            value = Some(self.flatten_expr(program, child, source, scope_view)?);
+        }
+        Ok(value.expect("cast_shaped_call rejects an empty operand list"))
+    }
+
     /*
     Call expression always 'assign' into a temp variable, that way the collect_assignment can be consistent
      */
@@ -3921,7 +4088,11 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         temp_name: String,
     ) -> Result<Exp, Error> {
-        let func_node = node.child_by_field_name("function").expect("always has");
+        // Grouping parentheses around the callee are peeled first: they change nothing about
+        // what is called, but a callee is named by its source text here, so `(f)(x)` without
+        // the peel names a function `(f)` that does not exist. See [`unparenthesized_callee`].
+        let func_node =
+            unparenthesized_callee(node.child_by_field_name("function").expect("always has"));
         let func_name = to_str(&func_node, source);
 
         // A call names the definition the *caller's* file holds when several files define
