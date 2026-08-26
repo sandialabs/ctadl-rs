@@ -4129,6 +4129,11 @@ impl<'a> Context<'a> {
                 })
         };
 
+        // Direct call or indirect call, decided by what the callee *resolved to* rather than by
+        // how it was spelled: a callee that is a name is a direct call to that name, and a
+        // callee that is a location holding a function pointer is a call through what that
+        // location holds. Every arm below reads the resolved access path, so the three storage
+        // classes only differ in how a location is spelled, not in what counts as one.
         let var = access_path.base.variable.clone();
         let style = match &*var {
             Variable::Local(name) => {
@@ -4147,6 +4152,23 @@ impl<'a> Context<'a> {
             }
             Variable::Param(idx) => {
                 log::debug!("This is an Indirect PARAMETER call: {}", idx.get());
+                let callee = self.emit_loads(program, scope_view, access_path);
+                CallStyle::FuncPtrCall {
+                    callee,
+                    signature: (Some("indirect-call".to_string())),
+                }
+            }
+            // A global's access path is `$globals.<name>.<fields>`, so the base variable being
+            // the globals object says nothing about whether the callee is a name -- what says
+            // it is the path. `$globals.hook` IS the object `hook`, and a bare global name is
+            // still resolved by name (see `a_bare_global_callee_is_still_a_name` for why it has
+            // to be). Anything past that leading segment is a location *inside* the object,
+            // reached by a load: `ses.remoteclosed`, `ngx_os_io.send`, `ses.packettypes[i]
+            // .handler` are function pointers a file-scope object holds, not functions, and
+            // naming a call edge after the expression's source text both invented an empty
+            // function to receive it and lost the indirect call the program actually makes.
+            Variable::GlobalHeap if access_path.fields.len() > 1 => {
+                log::debug!("This is an Indirect GLOBAL call: {func_name}");
                 let callee = self.emit_loads(program, scope_view, access_path);
                 CallStyle::FuncPtrCall {
                     callee,

@@ -5422,9 +5422,9 @@ fn a_global_function_pointer_callee_is_not_a_cast() {
     // so the guard that catches the local shadow above cannot be what saves this one. What
     // saves it is that `hook` is not a type name anywhere in the unit.
     //
-    // Where it lands is spec 160's class, not this one: the callee is a global, so it is still
-    // lowered as a direct call to `hook` -- a name, at least, and the same name the
-    // unparenthesized spelling produces.
+    // Where it lands is a direct call to `hook` -- a name, at least, and the same name the
+    // unparenthesized spelling produces. Spec 160 kept it that way deliberately; see
+    // `a_bare_global_callee_is_still_a_name`.
     let src = r"
         void (*hook)(int);
         void fire(int x) { (hook)(x); }";
@@ -5473,4 +5473,216 @@ fn a_statement_expression_callee_is_an_indirect_call() {
         "a statement expression names no function\n{dump}"
     );
     assert!(check_match(&dump, "funcptr-call"), "{dump}");
+}
+
+// ---------------------------------------------------------------------------------------
+// Spec 160: a function pointer in a field of a file-scope object.
+//
+// `ses.remoteclosed()` is a call THROUGH a pointer the object `ses` holds, and the frontend
+// lowered it as a direct call to a function literally named `ses.remoteclosed` -- the callee
+// expression's source text -- which `define_extern_functions` then invented an empty body for.
+// Two failures in one: the call edge pointed at a function that does not exist (no taint model
+// can name it, and one that matched the invented name would be matching a string), and the
+// indirect call the program actually makes was not in the IR at all.
+//
+// The trigger was the BASE, not the field. `collect_call` chose the call style from the
+// *storage class* of the resolved callee location's base variable: a local or a parameter took
+// the `FuncPtrCall` arm, and everything else -- which is to say every global -- took
+// `DirectCall`. But a global's access path is `$globals.<name>.<fields>`, so "the base is the
+// globals object" says nothing about whether the callee is a name. What says it is the PATH:
+// `$globals.hook` is the object `hook` itself and names it, while `$globals.ses.remoteclosed`
+// is a location *inside* `ses`, reached by a load, exactly like the local `s.f` that always
+// lowered correctly.
+
+#[test_log::test]
+fn a_call_through_a_field_of_a_global_is_indirect() {
+    // `.field` on a file-scope object -- dropbear's `ses.remoteclosed()`, nginx's
+    // `ngx_os_io.send(...)`. The field is loaded out of the global and called through.
+    let src = r"
+        struct ops { void (*f)(int); };
+        struct ops g;
+        void fire(int x) { g.f(x); }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "fire").is_empty(),
+        "a field is not a name\n{dump}"
+    );
+    assert!(
+        function_named(&prog, "g.f").is_none(),
+        "no function is invented for the callee's source text\n{dump}"
+    );
+    check_loads(&prog, "$globals.g");
+    check_loads(&prog, "<t1>.f");
+    let callee = local_render(&prog, "fire", "<t2>");
+    assert!(
+        check_match(&dump, &format!("funcptr-call {callee} ")),
+        "the callee is the loaded field\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_call_through_a_field_of_a_global_pointer_is_indirect() {
+    // `->field` on a file-scope pointer -- the kernel's `ipv6_stub->udpv6_encap_enable()` and
+    // `udp_tunnel_nic_ops->add_port(...)`. Same two loads: `->` is a field access here.
+    let src = r"
+        struct ops { void (*f)(int); };
+        struct ops *gp;
+        void fire(int x) { gp->f(x); }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "fire").is_empty(),
+        "a field is not a name\n{dump}"
+    );
+    assert!(
+        function_named(&prog, "gp->f").is_none(),
+        "no function is invented for the callee's source text\n{dump}"
+    );
+    check_loads(&prog, "$globals.gp");
+    check_loads(&prog, "<t1>.f");
+    let callee = local_render(&prog, "fire", "<t2>");
+    assert!(
+        check_match(&dump, &format!("funcptr-call {callee} ")),
+        "the callee is the loaded field\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_call_through_a_field_of_a_global_array_element_is_indirect() {
+    // `array[i].field` -- dropbear's dispatch table `ses.packettypes[i].handler(...)` and
+    // openssh's `handlers[i].handler(...)`. A non-constant index carries no offset segment
+    // (see the module header), so the element is the `deref` performed at the array's address
+    // and the field is loaded from what that yields.
+    let src = r"
+        struct ops { void (*f)(int); };
+        struct ops ga[4];
+        void fire(int i, int x) { ga[i].f(x); }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "fire").is_empty(),
+        "an element's field is not a name\n{dump}"
+    );
+    assert!(
+        function_named(&prog, "ga[i].f").is_none(),
+        "no function is invented for the callee's source text\n{dump}"
+    );
+    check_loads(&prog, "$globals.ga");
+    check_loads(&prog, "<t1>.deref");
+    check_loads(&prog, "<t2>.f");
+    let callee = local_render(&prog, "fire", "<t3>");
+    assert!(
+        check_match(&dump, &format!("funcptr-call {callee} ")),
+        "the callee is the loaded field\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_call_through_a_field_of_a_local_or_parameter_is_unchanged() {
+    // The boundary that says what the fix must not change: the same three shapes with a LOCAL
+    // or PARAMETER base already lowered as indirect calls (spec 140 moved openssh's
+    // `thread_start(arg)` onto this path by binding the parameter). They still do, and by the
+    // same rule -- the callee is a location, not a name -- rather than by the storage class the
+    // old code keyed on.
+    let src = r"
+        struct ops { void (*f)(int); };
+        void via_local(int x) { struct ops s; s.f(x); }
+        void via_param(struct ops *p, int x) { p->f(x); }
+        void via_param_elem(struct ops *a, int i, int x) { a[i].f(x); }";
+    let (prog, dump) = program_from_string(src);
+    for f in ["via_local", "via_param", "via_param_elem"] {
+        assert!(
+            direct_calls_in(&prog, f).is_empty(),
+            "{f}: still indirect\n{dump}"
+        );
+    }
+    assert_eq!(
+        dump.matches("funcptr-call").count(),
+        3,
+        "one indirect call each\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_bare_global_callee_is_still_a_name() {
+    // The other side of the same boundary, and the reason the rule is the PATH rather than the
+    // base: a plain `f(1)` and a call through a global function POINTER are both spelled as a
+    // bare identifier, and the frontend cannot tell them apart -- `plain` is only declared, so
+    // it is not in the function table either. Both keep resolving by name (`hook`'s value is a
+    // location the analysis reaches through `$globals.hook`, and a taint model naming `hook`
+    // still matches), which is what `a_global_function_pointer_callee_is_not_a_cast` pinned for
+    // the parenthesized spelling.
+    let src = r"
+        void (*hook)(int);
+        void plain(int x);
+        void fire(int x) { hook(x); plain(x); }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "fire", "hook");
+    check_has_direct_call(&prog, "fire", "plain");
+    assert!(
+        check_no_match(&dump, "funcptr-call"),
+        "a bare global name is still a direct call\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_call_through_a_field_of_a_global_is_not_a_frontend_gap() {
+    // Strict mode. The class was entirely silent -- an invented function is not a warning --
+    // which is why every census up to spec 140 walked past it; this pins that reading the
+    // callee as a location introduces no gap of its own.
+    let src = r"
+        struct ops { void (*f)(int); };
+        struct ops g;
+        struct ops *gp;
+        struct ops ga[4];
+        void fire(int i, int x) { g.f(x); gp->f(x); ga[i].f(x); }";
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("a call through a global's field is not a frontend gap");
+}
+
+#[test_log::test]
+fn taint_crosses_a_call_through_a_field_of_a_global() {
+    // What the fix buys, end to end: `sink`'s argument reaches `id`'s parameter and comes back,
+    // through the binding `g.f = id` -- the dispatch-table shape nginx's `ngx_os_io` and
+    // dropbear's `ses.packettypes[i].handler` are built out of. Before the fix there was no
+    // indirect call to resolve at all: the call went to an invented, empty-bodied `g.f`, and an
+    // empty body returns nothing, so the taint that went in did not come out.
+    let src = r"
+        int id(int p) { return p; }
+        struct Ops { int (*f)(int); };
+        struct Ops g;
+        int wrap(int a, int b) {
+            g.f = id;
+            return g.f(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn an_argument_of_a_call_through_a_global_field_reaches_the_callee_parameter() {
+    // The same crossing seen from the argument side, and the shape a real query walks: `b` is
+    // passed to `g.f(b)`, the dispatch table binds `g.f = store_it`, and `store_it` deposits its
+    // parameter in the global `taken` -- so `wrap` summarizes @p1 -> `$globals.taken` only if the
+    // indirect call resolves to `store_it`. The `check_no_flow_in` is what makes it a
+    // measurement rather than a coincidence: @p0 is never passed anywhere, so an
+    // over-approximation that let any argument reach any callee would show up here.
+    let src = r"
+        int taken;
+        void store_it(int p) { taken = p; }
+        struct Ops { void (*f)(int); };
+        struct Ops g;
+        void wrap(int a, int b) {
+            g.f = store_it;
+            g.f(b);
+        }";
+    let (summary, si) = get_summary(program_from_string(src).0).unwrap();
+    check_param_into_global_in(&summary, &si, "wrap", 1, ".taken");
+    check_no_flow_in(
+        &summary,
+        &si,
+        "wrap",
+        0,
+        "",
+        crate::codegen::GLOBALS_INDEX,
+        ".taken",
+    );
 }
