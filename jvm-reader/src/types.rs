@@ -1,13 +1,146 @@
 // JVM .class file types per JVMS §4.
 
+use std::borrow::Cow;
+
 use crate::error::*;
+
+// --- CONSTANT_Utf8 contents (JVMS §4.4.7) ---
+
+/// The contents of a `CONSTANT_Utf8_info` entry.
+///
+/// A class file stores strings as UTF-16 code units, so an entry may legally
+/// hold surrogates that no Rust `str` can represent: generated lexers abuse
+/// string constants as packed UTF-16 tables, and `smaliFlexLexer` has 25
+/// deliberately unpaired ones. Well-formed *pairs* are the far more common
+/// case -- every emoji, CJK extension and supplementary symbol in a literal is
+/// one -- and those recombine into ordinary scalar values.
+///
+/// So the two cases get two representations: the overwhelmingly common one
+/// stays a plain `String`, and only an entry that actually needs code units
+/// pays to keep them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JvmString {
+    /// Every code unit is a Unicode scalar value (surrogates, if any, paired).
+    Utf8(String),
+    /// Holds unpaired surrogates; kept as raw UTF-16 code units.
+    Utf16(Box<[u16]>),
+}
+
+impl JvmString {
+    /// Build from the UTF-16 code units of a `CONSTANT_Utf8` entry.
+    pub fn from_code_units(units: Vec<u16>) -> Self {
+        match String::from_utf16(&units) {
+            Ok(s) => JvmString::Utf8(s),
+            Err(_) => JvmString::Utf16(units.into_boxed_slice()),
+        }
+    }
+
+    /// The string, when it is a Unicode scalar sequence; `None` when it holds
+    /// unpaired surrogates.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            JvmString::Utf8(s) => Some(s.as_str()),
+            JvmString::Utf16(_) => None,
+        }
+    }
+
+    /// The string with each unpaired surrogate replaced by `U+FFFD`.
+    ///
+    /// For names, display and diagnostics. Borrows in the common case.
+    pub fn to_string_lossy(&self) -> Cow<'_, str> {
+        self.to_string_replacing('\u{FFFD}')
+    }
+
+    /// The string with each unpaired surrogate replaced by `replacement`.
+    ///
+    /// The disassembler wants `?` here rather than `U+FFFD`: no charset can
+    /// encode a lone surrogate, so `javap`'s own output stream substitutes one,
+    /// and matching it keeps the two listings comparable.
+    pub fn to_string_replacing(&self, replacement: char) -> Cow<'_, str> {
+        match self {
+            JvmString::Utf8(s) => Cow::Borrowed(s.as_str()),
+            JvmString::Utf16(units) => Cow::Owned(
+                char::decode_utf16(units.iter().copied())
+                    .map(|r| r.unwrap_or(replacement))
+                    .collect(),
+            ),
+        }
+    }
+
+    /// The exact UTF-16 code units, for callers that need the data rather than
+    /// text.
+    pub fn code_units(&self) -> Box<dyn Iterator<Item = u16> + '_> {
+        match self {
+            JvmString::Utf8(s) => Box::new(s.encode_utf16()),
+            JvmString::Utf16(units) => Box::new(units.iter().copied()),
+        }
+    }
+
+    /// Number of UTF-16 code units, i.e. what `String.length()` reports in Java.
+    pub fn len_utf16(&self) -> usize {
+        match self {
+            JvmString::Utf8(s) => s.encode_utf16().count(),
+            JvmString::Utf16(units) => units.len(),
+        }
+    }
+
+    /// Position and value of the first unpaired surrogate, if any.
+    fn first_unpaired_surrogate(&self) -> Option<(usize, u16)> {
+        let JvmString::Utf16(units) = self else {
+            return None;
+        };
+        let mut i = 0;
+        while i < units.len() {
+            let u = units[i];
+            if (0xD800..0xDC00).contains(&u) {
+                match units.get(i + 1) {
+                    Some(low) if (0xDC00..0xE000).contains(low) => i += 2,
+                    _ => return Some((i, u)),
+                }
+            } else if (0xDC00..0xE000).contains(&u) {
+                return Some((i, u));
+            } else {
+                i += 1;
+            }
+        }
+        None
+    }
+
+    /// The string for a call site that requires a `str` (a name or a
+    /// descriptor, none of which may legally contain an unpaired surrogate).
+    pub fn as_str_or_err(&self) -> ClassFileResult<&str> {
+        match self.as_str() {
+            Some(s) => Ok(s),
+            None => {
+                let (index, code_unit) = self.first_unpaired_surrogate().unwrap_or((0, 0));
+                Err(ClassFileError::UnpairedSurrogate {
+                    cp_index: None,
+                    index,
+                    code_unit,
+                })
+            }
+        }
+    }
+}
+
+impl From<&str> for JvmString {
+    fn from(s: &str) -> Self {
+        JvmString::Utf8(s.to_string())
+    }
+}
+
+impl From<String> for JvmString {
+    fn from(s: String) -> Self {
+        JvmString::Utf8(s)
+    }
+}
 
 // --- Constant pool (JVMS §4.4) ---
 
 /// Constant pool entry. 1-based indexing; Long/Double consume two slots.
 #[derive(Debug, Clone)]
 pub enum CpEntry {
-    Utf8(String),
+    Utf8(JvmString),
     Integer(i32),
     Float(u32),
     Long(i64),
@@ -136,12 +269,32 @@ impl ClassFile {
             .ok_or(ClassFileError::InvalidClassFile("invalid cp index"))
     }
 
-    /// Get UTF-8 string by constant pool index (must be CONSTANT_Utf8).
-    pub fn get_utf8(&self, index: u16) -> ClassFileResult<&str> {
+    /// Get the raw contents of a CONSTANT_Utf8 entry by constant pool index.
+    pub fn get_jvm_string(&self, index: u16) -> ClassFileResult<&JvmString> {
         match self.get_cp(index)? {
-            CpEntry::Utf8(s) => Ok(s.as_str()),
+            CpEntry::Utf8(s) => Ok(s),
             _ => Err(ClassFileError::InvalidClassFile("expected Utf8")),
         }
+    }
+
+    /// Get UTF-8 string by constant pool index (must be CONSTANT_Utf8).
+    ///
+    /// Errors when the entry holds unpaired surrogates. That is the right
+    /// answer for every caller here -- names and descriptors -- because none of
+    /// them may legally contain one; string *constants* should use
+    /// [`ClassFile::get_utf8_lossy`] or [`JvmString::code_units`] instead.
+    pub fn get_utf8(&self, index: u16) -> ClassFileResult<&str> {
+        self.get_jvm_string(index)?
+            .as_str_or_err()
+            .map_err(|e| e.with_cp_index(index))
+    }
+
+    /// Get a CONSTANT_Utf8 entry with unpaired surrogates replaced by `U+FFFD`.
+    ///
+    /// For string constants and diagnostics, which must not fail just because
+    /// the class file carries UTF-16 data a `str` cannot hold.
+    pub fn get_utf8_lossy(&self, index: u16) -> ClassFileResult<Cow<'_, str>> {
+        Ok(self.get_jvm_string(index)?.to_string_lossy())
     }
 
     /// Get class name (binary name in internal form, e.g. "java/lang/Object") by CONSTANT_Class index.

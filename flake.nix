@@ -140,22 +140,6 @@
           cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" "--lib" "--examples" ];
         };
 
-        # The two classes jvm-reader's `flow.rs` unit tests load at runtime,
-        # compiled from the committed sample sources (no `.class` is committed).
-        # Passed to the `jvm-reader-tests` check via JVM_READER_TEST_FIXTURES.
-        jvmTestFixtures =
-          pkgs.runCommand "jvm-reader-test-fixtures"
-            {
-              nativeBuildInputs = [ jdk ];
-              # Import the dir (not the files) so the sources keep their real
-              # names; javac requires a public class's file to match its name.
-              src = ./jvm-reader/tests/sample;
-            }
-            ''
-              mkdir -p "$out"
-              javac -encoding UTF-8 -d "$out" "$src/HelloWorld.java" "$src/ArrayFlow.java" "$src/LoopFlow.java"
-            '';
-
         # The external toolchain the regression scripts expect on PATH
         # (dex-reader, jvm-reader, javac, dx, gcc/addr2line, ghidra, jq,
         # python3). Deliberately excludes this repo's own package so that
@@ -323,20 +307,18 @@
               cargoTestOptions = opts: opts ++ [ "--package" "dex-reader" ];
             };
 
-            # jvm-reader's unit tests, same arrangement. `cargo test --workspace`
-            # does *not* subsume this one: the `flow.rs` tests are `#[ignore]`d
-            # and load two classes at runtime from JVM_READER_TEST_FIXTURES
-            # (compiled from source by jvmTestFixtures, below), so only a run
-            # with both the fixtures and `--include-ignored` exercises them.
-            # The integration-style checks were moved to `xtask regression`.
+            # jvm-reader's unit tests, same arrangement -- and, like dex-reader's,
+            # now entirely hermetic: no `#[ignore]`, no JDK, no fixture directory.
+            # Everything that needed a compiled class moved out, to the `jvm:*`
+            # checks in `xtask regression` and to the `SwitchFlow` /
+            # `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint cases.
             jvm-reader-tests = naersk-lib.buildPackage {
               src = ./.;
               version = workspaceVersion;
               name = "jvm-reader-tests";
               mode = "test";
-              JVM_READER_TEST_FIXTURES = "${jvmTestFixtures}";
               cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" ];
-              cargoTestOptions = opts: opts ++ [ "--package" "jvm-reader" "--" "--include-ignored" ];
+              cargoTestOptions = opts: opts ++ [ "--package" "jvm-reader" ];
             };
           in
           {
