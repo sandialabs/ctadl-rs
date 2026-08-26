@@ -39,7 +39,7 @@ to 0.f.
 
 use std::path;
 
-use ascent::ascent;
+use ascent::ascent_par;
 use ascent::ascent_run;
 use derive_builder::Builder;
 use hashbrown::hash_map::HashMap;
@@ -1083,9 +1083,10 @@ pub fn taint_index_with_config(
         phys_footprint_mb()
     );
 
-    ascent! {
+    ascent_par! {
         #![measure_rule_times]
         #![generate_run_timeout]
+        #![inter_rule_parallelism]
         struct IndexProg;
         // Facts:
 
@@ -1613,6 +1614,11 @@ pub fn taint_index_with_config(
         } else {
             prog.context_assign
                 .into_iter()
+                // Under `ascent_par!` a lattice's physical store is a
+                // `boxcar::Vec<RwLock<Row>>` -- the per-row lock is what lets rules
+                // `join_mut` into an existing row from several rayon threads. The fixpoint is
+                // over, so we own every lock uncontended and can take the rows out by value.
+                .map(|row| row.into_inner().unwrap())
                 .filter_map(|(f, v1, p1, v2, p2, cs)| match cs {
                     SmallestCallString::Value(cs) => Some((f, v1, p1, v2, p2, cs)),
                     SmallestCallString::Bottom => None,
