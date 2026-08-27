@@ -4,10 +4,13 @@ Scope: `ctadl-ascent/src/query_engine/search.rs` and the generic search it drive
 `ctadl-ir/src/graph/mod.rs`.
 
 This document had one subject — the state-space blowup from context obligations
-(`cf558108`) and its subsumption fix. That fix **landed** (`c666df16`); §7 keeps its
+(`cf558108`) and its subsumption fix. That fix **landed** (`c666df16`); the appendix keeps its
 measurements because they are the memory budget every change below has to live inside.
 The live subject is now a **correctness property the search does not have**, stated in §0
-and violated three independent ways (§2). §3 is the change.
+and violated three independent ways (§2). §3 is the change, and it is ordered: **§3.1 lands
+first and alone** — it is ~15 lines in `facts.rs`, it is the only part that changes what the
+index records, and it is the one with a prototype and a measurement behind it (§2.4, §6.1).
+§3.2–§3.6 are the query-side reporting work, unchanged in substance from the previous draft.
 
 ## 0. The property
 
@@ -22,11 +25,15 @@ Two clauses, and they fail separately:
   formatter already re-walks a graph to produce one, so a reported pair always comes with
   *some* path; §5.2 is about that path being *this pair's* path.
 
-"A data-flow path" means the engine's own realizable-path relation: the edges
-`TaintSearchGraph::labeled_successors` generates, walked under the `PathState` call/return
-discipline. It is deliberately **not** "any path the datalog oracle would find" — §6 lists
-the three places the two semantics differ on purpose, so a differential against
-`CTADL_QUERY_DATALOG=1` must not read those as violations.
+"A data-flow path" means the edges `TaintSearchGraph::labeled_successors` generates, walked
+under the **one-bit call/return discipline** — `TaintState::Free`/`Restricted`, the same
+matching rule the closure engine enforced. Context obligations are deliberately *not* part of
+the definition: they are a precision filter layered over it, and §2.4 is the claim that the
+filter as built removes paths the definition admits. (Defining the relation as "whatever
+`PathState::expand` accepts" would make that claim unfalsifiable, which is what an earlier
+draft of this section did.) It is also deliberately **not** "any path the datalog oracle would
+find" — §7 lists the three places those two semantics differ on purpose, so a differential
+against `CTADL_QUERY_DATALOG=1` must not read those as violations.
 
 Contrapositive worth stating, because it is the acceptance bar: **no reachable pair may be
 silently dropped.** A pair the engine cannot witness must show up in a counter (§5.3), not
@@ -117,26 +124,64 @@ neither is fixed by tagging alone.**
 Same for the sink-tag side: only nodes on that one path get the backward tag
 (`search.rs:866`), so a second source's route has no meeting node even when its edges exist.
 
-### 2.4 Cause 3 — context obligations prune on witness data
+### 2.4 Cause 3 — the context join keeps a witness, not an upper bound
 
-Two arms of `PathState::expand` return `None` on a context mismatch:
+`twosite.c` — two call sites of the same resolved callee through the same dispatch:
 
-- `Flow(Return(site))` with a non-empty obligation whose top frame is not `site`
-  (`search.rs:612`–`:628`).
-- `Step::Ctx(row, _)` when `refine` cannot conjoin the row's call string with the current
-  obligation (`search.rs:630`, `refine` at `search.rs:126`).
+```c
+int source();
+void sink(int x);
+typedef int (*fn0)(void);
 
-Both are unsound *for this property*, for the reason the code comment above the impl already
-names: `resolved_call` and `context_assign` are lattices keyed on their non-context columns,
-so a recorded call string is a **witness**, not an enumeration. A tuple derivable under two
-contexts records one. Pruning against it drops flows that exist. §7.2 has the direct
-evidence that the witness is not even stable: the same artifact indexed twice produced
-`resolved_call` with 1734 and 1735 rows — one extra contextual resolution, i.e. one context
-that one run knows about and the other does not.
+int makes_taint(void) { return source(); }
 
-This cause is narrower than 1 and 2 (it needs a resolved dispatch on the path) and it is the
-only one of the three that is a *policy* choice rather than a plain bug: pruning buys
-precision. §3.3 makes the policy explicit and defaults it to the property.
+int relay(fn0 g) { return g(); }        /* one dispatch insn, resolved to makes_taint */
+
+int main() {
+  int a = relay(makes_taint);           /* call site A -> main:12 */
+  sink(a);                              /* line 16 */
+  int b = relay(makes_taint);           /* call site B -> main:14 */
+  sink(b);                              /* line 18 */
+}
+```
+
+| | search (default) | datalog oracle |
+| --- | ---: | ---: |
+| `tainted-path` results | **1** (line 16 only) | **2** (lines 16, 18) |
+
+One source endpoint and two *distinct* sink vertices, both emitted as `taint-sink`, so
+Causes 1 and 2 are not in play. `context_assign` and `summary` are both empty in this index,
+so the D4b return edge is the whole flow.
+
+`resolved_call` holds exactly one row — `(relay, insn 7, makes_taint, [main:12])`. Both call
+sites derive that pair; the join kept the lexicographically smaller string. The trace:
+
+| step | edge | label | obligation after |
+| --- | --- | --- | --- |
+| W → X | `makes_taint` out-formal → `relay`'s `call-arg(7,-1)` | `Ctx([main:12], Return(relay:7))` | `[main:12]` |
+| X → Y | `relay`'s `call-arg(7,-1)` → `relay`'s out-formal | `Flow(Intra)` | `[main:12]` |
+| Y → Z | `relay`'s out-formal → `main`'s `call-arg(14,-1)` (`b`) | `Flow(Return(main:14))` | **pruned** |
+
+Y → Z dies at `search.rs:627`: `ctx.top() == main:12 != main:14`. Note where the prune is
+*not*: the witness edge W → X is taken, `refine(∅, [main:12])` succeeding as it should. The
+loss happens three steps later on an ordinary `Flow(Return)`, against the obligation the
+witness stamped onto the path. Patching that one arm to `Some({Free, ∅})` and rebuilding gives
+2 findings, lines 16 and 18 — which isolates the cause but treats the symptom (§3.4).
+
+The root cause is upstream: `resolvent`, `context_assign`, `context_locals`, `context_summary`
+and (since `ef13d498`) `resolved_call` are `SmallestCallString` lattices keyed on their
+non-context columns, and that lattice's join is `max` under a total order — it *picks* one of
+two incomparable call strings. A tuple derivable under two contexts records one, and nothing
+about the survivor covers the loser, so the obligation check is testing an enumeration against
+a witness. §3.1 fixes the join; §7.2's `resolved_call` 1734/1735 content nondeterminism is the
+same mechanism seen from outside.
+
+Two things this is *not*. It is not `ef13d498`'s doing: reverse-applying that commit's
+`index_engine` hunks still yields one `resolved_call` row and one finding, because `resolvent`
+(`index_engine/mod.rs:1142`) was already a lattice keyed on `(func, formal, path, target)` and
+the merge happens there regardless. And it is not a policy choice — the earlier reading of this
+section, that pruning trades completeness for precision, was wrong. Pruning against a *common
+suffix* keeps both; only pruning against a *witness* has to choose.
 
 ### 2.5 Cause 4 — the formatter's pairing gate (outside search.rs)
 
@@ -160,15 +205,111 @@ of the same emission, and Cause 2 hits it too.
 
 | cause | site | fixed by |
 | --- | --- | --- |
-| 1. one origin per state | `search.rs:777`, `:799`, `:826` | §3.1 + §3.2 |
-| 2. one path per sink vertex | `search.rs:837`, `:846`, `:866` | §3.1 + §3.2 |
-| 3. obligations prune on witness data | `search.rs:612`, `:630` | §3.3 |
+| 1. one origin per state | `search.rs:777`, `:799`, `:826` | §3.2 + §3.3 |
+| 2. one path per sink vertex | `search.rs:837`, `:846`, `:866` | §3.2 + §3.3 |
+| 3. context join keeps a witness, not a lub | `facts.rs:445` (read at `search.rs:612`, `:630`) | §3.1 |
 | 4a. pairing needs a detail node | `formatter.rs:2667` | §5.1 (formatter) |
 | 4b. path re-derived from a union graph | `formatter.rs:2702` | §5.2 (optional) |
 
 ## 3. The change
 
-### 3.1 Witness passes: one search per source start vertex
+Ordered: §3.1 lands first and alone. It is the smallest diff in this document, it is the
+only one that changes what the *index* records, and until it lands the obligation check is
+testing witnesses, so every measurement of §3.2–§3.6 would be taken against a moving floor.
+
+### 3.1 Land first: make the context join a least upper bound
+
+Cause 3 is a defect in `SmallestCallString::join_mut` (`facts.rs:445`), not in the obligation
+check that reads its output. Today the join is `max` under `call_string_height_cmp`
+(`facts.rs:382`): shorter wins, ties broken lexicographically. For two *incomparable* strings
+under one key that discards one of them outright — a choice of witness, not an upper bound.
+Nothing about the survivor covers the loser, which is exactly what makes reading the result as
+an enumeration wrong.
+
+Replace it with the **longest common suffix**:
+
+| operands | today | change |
+| --- | --- | --- |
+| `[s2]`, `[s1,s2]` | `[s2]` | `[s2]` (unchanged — already correct) |
+| `[s1,s2]`, `[s3,s2]` | `[s1,s2]` or `[s3,s2]`, by tie-break | `[s2]` |
+| `[s1]`, `[s2]` | `[s1]` or `[s2]`, by tie-break | `[]` |
+
+Call strings are outermost-first, so a shared suffix is a shared claim about the innermost
+frames, and it is the strongest claim both derivations support. This is a genuine semilattice —
+idempotent, commutative, associative — with `[]` as top; the result is a suffix of both
+operands, so string length is non-increasing and the fixpoint terminates on the same argument
+it uses today. The suffix-pair row of that table is why the change is small in practice: the
+common merge is already a suffix pair, and it already behaves.
+
+**Why this makes the obligation check sound.** The recorded string becomes a common suffix of
+*every* context the resolution holds under. So `refine` (`search.rs:126`) failing means no
+recorded context is compatible, and `Flow(Return(site))`'s pop (`search.rs:617`) tests a frame
+every recorded context shares. Where the index genuinely saw two incompatible contexts the
+string shortens toward `[]` and no obligation is imposed at all — the query stops pruning
+exactly where, and only where, the index has nothing to prune with. Where a resolution really
+does hold under one context, today's precision survives untouched. This is the "complete
+context sets" fix earlier drafts deferred to upstream, in the one form that costs no rows: an LCS is the
+abstraction of the set, and the abstraction is what the check needed.
+
+**Shape of the diff.** `CallString::longest_common_suffix`, beside `drop_outermost`
+(`facts.rs:334`), and `SmallestCallString::join_mut`. ~15 lines. No schema change, no new
+relation, no query-engine change, and no growth in row count — the relations stay keyed
+exactly as they are. `Ord` stays the total order it is (`Bottom` handling, row sorting); only
+`join_mut` stops being `max`. `ascent` merges lattice columns through `join_mut` alone, which
+is the same latitude `Consistent`'s doc comment already takes (`lattice.rs`).
+
+**Measured on the §2.4 reproducer, prototyped:**
+
+| | `resolved_call` rows | `tainted-path` |
+| --- | ---: | ---: |
+| tip | 1, `cs=[main:12]` | 1 (line 16 only) |
+| LCS join | 1, `cs=[]` | **2 (lines 16, 18)** |
+
+`cargo xtask regression --frontend c`: 26 passed, 0 failed, 2 xfail — all four `funcptr*`
+cases pass. `--frontend lua`: 28 passed, 0 failed, including all three `resolved-callee-*`.
+
+**Cost, and it is not one-directional.** Context-bearing search states can only fall: the join
+shortens strings, so a key carries no more distinct contexts than it does today. But a pair
+that merges to `[]` stops seeding `context_assign` and instead instantiates the callee's
+summary into plain `assign_like` (`index_engine/mod.rs:1403`, and `:1345` for the pop-up
+chain), so the *context-free* graph grows and precision drops there. Net direction is
+unmeasured. Gate it on `fw_pppd` (peak, per §4) and `fakedaum` (findings, per §6.8) before
+§3.2 starts moving numbers of its own.
+
+**Residue this does not fix.** `CallString::push` (`facts.rs:340`) returns `None` when the call
+site's function is already in the string, and rules 2.1 (`index_engine/mod.rs:1276`) and 2.2
+(`:1296`) gate on it, so a derivation needing a recursive context is dropped rather than
+widened. A resolution derivable both acyclically and through recursion therefore still records
+the acyclic context alone, and the recursive flow is still pruned at the return. The fix is the
+same shape — join `SmallestCallString::top()` on a failed push instead of dropping the
+derivation — but it *adds* resolutions rather than relabelling them, so it is a separate diff
+with its own corpus differential. **Unverified.** Until it lands, §3.4 stays on the shelf
+rather than being deleted.
+
+**Rejected alternative: bare relations.** Storing the contexts as a plain relation instead of a
+lattice enumerates them completely and needs no query change, and it is what the pre-`ef13d498`
+comment on `resolved_call` argued for. Against it:
+
+- There is no `k`. `push` bounds only cycles, so a bare `resolvent` holds one row per distinct
+  acyclic call path to the formal — path count in a DAG, not node count.
+- The multiplier compounds. Rule 3.1 (`:1325`) joins `resolved_call × summary(callee)`; rules
+  3.3a/3.3b (`:1360`–`:1382`) take the `context_locals` transitive closure *per context* — a
+  per-context copy of `locals`; rule 3.4 lifts to `context_summary` and 3.2 (`:1335`) pops each
+  one into a caller, spawning a per-context chain up the stack.
+- The query pays it worse. §7.1: 8,227 `context_assign` rows over **2 functions with 2 call
+  strings** took the `argv_input` search from 6.19 M states / 1.48 GB to 14.03 M / 4.10 GB. And
+  subsumption cannot reclaim it — `generalization` collapses a contextual state against a
+  *context-free* one at the same node, never two sibling contexts against each other, so
+  `[main:12]` and `[main:14]` stay two states.
+- It does not fix the bug. The cycle-drop residue above is unaffected by enumeration: a bare
+  relation enumerates more contexts but still only *acyclic* ones.
+- It loses the `is_empty()` feedback (`:1316`, `:1345`, `:1403`), so a pair also derivable
+  unconditionally keeps the unconditional row *and* N conditional copies of the same edge.
+
+The one point in its favour is unmeasured: §7.2 saw `resolved_call` at 1734/1735 rows across
+imports while it was already bare, so bare did not buy determinism there either.
+
+### 3.2 Witness passes: one search per source start vertex
 
 Replace "one search per label" with "one search per label **plus** one search per source
 start vertex". The per-source search is what makes a per-pair witness *exist*: a single-start
@@ -176,7 +317,7 @@ search's forest has exactly one root, so every target state's `path_to` is a pat
 source, and `targets` gives one per reached sink vertex in BFS-within-class order.
 
 ```rust
-// Per label, canonically ordered (§3.4) and deduped by start node: several endpoints can
+// Per label, canonically ordered (§3.5) and deduped by start node: several endpoints can
 // name one vertex, and they share its search.
 struct Start { node: TaintNode, endpoints: Vec<usize> }   // indices into this label's endpoints
 
@@ -203,7 +344,7 @@ The `starts.len() == 1` and `reachable.is_empty()` guards are what keep this aff
 (§4): a label with one source pays exactly today's cost, and a label that reaches no sink
 pays exactly today's cost — which is the `fw_pppd` case, where zero targets are reached.
 
-### 3.2 Emission: one witness per (source, sink vertex)
+### 3.3 Emission: one witness per (source, sink vertex)
 
 `emit_witnesses` replaces the `reported` loop (`search.rs:837`–`:880`). Per witness it emits
 three things instead of two — the forward tag is the new one:
@@ -241,7 +382,13 @@ findings) the witness rows are noise. Contrast the alternative of emitting every
 edge to make the union graph complete: that is 14 M rows on `fw_pppd` and reinstates exactly
 the `taint_edge` blowup the demand-driven regime exists to avoid.
 
-### 3.3 Obligations stop pruning
+### 3.4 Contingency (not part of the plan): obligations stop pruning
+
+Held in reserve, not scheduled. With §3.1 landed the obligation check tests a suffix every
+recorded context shares, so the two mismatch arms prune only flows no recorded context admits,
+and clearing them would buy nothing but false positives. This section exists because §3.1 has
+one acknowledged hole — the cycle-drop residue it names — and because the corpus may find
+another.
 
 Both mismatch arms of `PathState::expand` traverse with the obligation **cleared** instead of
 returning `None`:
@@ -251,23 +398,17 @@ returning `None`:
 | `Flow(Return(site))`, `top(ctx) != site` | `None` | `Some({Free, ∅})` |
 | `Step::Ctx(row, e)`, `refine(ctx, row) == None` | `None` | `Some({state per e, ∅})` |
 
-Reading: an obligation we cannot discharge is an obligation we cannot *trust* — the witness
-may name a different caller than the one we came through — so we stop tracking rather than
-conclude "impossible". `∅` is the bottom of the generalization order, so a cleared state is
-immediately a candidate for subsumption against the context-free region; this makes the
-search **cheaper**, not more expensive, and it is already the mitigation the impl's doc
-comment proposes.
+`∅` is the bottom of the generalization order, so a cleared state is immediately a candidate
+for subsumption against the context-free region; this makes the search **cheaper**, not more
+expensive. Applying the first arm alone is what isolated Cause 3 in §2.4, so it is also the
+diagnostic to reach for if a flow goes missing after §3.1: if clearing recovers it, the
+obligation data is still incomplete somewhere.
 
-Precision cost is real and one-directional: flows the contexts were pruning come back as
-findings. Gate it — `CTADL_QUERY_CONTEXT_STRICT=1` keeps today's pruning — and default to the
-property, since the default is what SARIF consumers get. Note in the release notes that
-`fw_pppd`-class targets may gain findings here.
+If it is ever needed as more than a diagnostic, gate it the permissive way round —
+`CTADL_QUERY_CONTEXT_LOOSE=1` selects it — since §3.1 makes the pruning default the sound one.
+Precision cost is one-directional: flows the contexts were pruning come back as findings.
 
-The deep fix is upstream and out of scope: the index should record the *set* of contexts a
-resolution holds under (or an explicit "unknown/⊤"), so an obligation check has something
-complete to test against. Until then no obligation check can both prune and be complete.
-
-### 3.4 Determinism of what gets reported
+### 3.5 Determinism of what gets reported
 
 Two orderings currently inherit the index's row order (§7.2), and both become observable
 choices once pairs are reported per source:
@@ -281,15 +422,15 @@ choices once pairs are reported per source:
 
 This is the second prize in this change: §7.2's ±4 finding spread on `cajino_baidu` was
 *caused* by first-reach attribution and one-path-per-vertex reporting. Removing both should
-remove the spread; §6.4 makes that a gate.
+remove the spread; §6.5 makes that a gate.
 
-### 3.5 Optional: early exit for the witness passes
+### 3.6 Optional: early exit for the witness passes
 
 A witness pass has nothing left to do once it has a path to every vertex in `reachable`.
 `find_annotated_paths_from_set` always explores everything, so this needs a knob in
 `ctadl-ir/src/graph/mod.rs` — cheapest form is letting `is_target` return a
 `std::ops::ControlFlow` (or a separate `stop: impl Fn(&AnnotatedSetSearch) -> bool` checked
-when a target is recorded). Land §3.1–§3.4 first and measure; this is a constant-factor
+when a target is recorded). Land §3.2–§3.5 first and measure; this is a constant-factor
 optimization, not part of the property.
 
 ## 4. Cost
@@ -307,13 +448,13 @@ prints it — **measure `E` per label on the corpus before landing**, because it
 cost story.
 
 Peak memory does not grow: witness passes run one at a time and the gate's `states` +
-`visited` are dropped first (`drop(gate)` in §3.1 is load-bearing — that is 2.2 GB on
+`visited` are dropped first (`drop(gate)` in §3.2 is load-bearing — that is 2.2 GB on
 `fw_pppd`). A single-start pass is *usually* smaller than the shared one, though not strictly
 a subset: the shared pass can subsume a contextual state via a *different* source's more
 general state, which a single-start pass will not have.
 
 Witness passes are independent, so `E` is recoverable in wall time with rayon at a memory
-cost of `concurrency × one pass`. Do it only if §6.1 shows the multiplier hurting.
+cost of `concurrency × one pass`. Do it only if §6.7 shows the multiplier hurting.
 
 ## 5. What has to change outside `search.rs`
 
@@ -350,21 +491,32 @@ Emit both as `invocations[0]` notifications the way `dropped_no_location` alread
 
 ## 6. Validation
 
-1. **Unit tests in `search.rs`'s `mod tests`** (no frontend needed, the existing tests build
+1. **Longest-common-suffix join (§3.1), on its own, before anything else.** Unit tests on
+   `CallString::longest_common_suffix` (suffix pair keeps the shorter; incomparable pair goes
+   to `[]`; empty is absorbing) and on `SmallestCallString::join_mut` (idempotent, commutative,
+   and length non-increasing, which is the termination argument). Then `twosite.c` as a
+   regression case — `nightly/tests/c/funcptrcalleetwosite.c`, `expected_lines: [16, 18]`,
+   which fails today. **Run and recorded on the prototype:** `cargo xtask regression
+   --frontend c` → 26 passed / 0 failed / 2 xfail, all four `funcptr*` cases; `--frontend lua`
+   → 28 passed / 0 failed, all three `resolved-callee-*`. Still owed: §6.7's peak on `fw_pppd`
+   and §6.8's oracle differential on `fakedaum`, both taken *before* §3.2 lands so the two
+   changes' effects on finding counts stay separable.
+2. **Unit tests in `search.rs`'s `mod tests`** (no frontend needed, the existing tests build
    `QueryFacts` by hand): (a) two sources → one sink vertex yields two witnessed pairs, with
    `taint_edge` containing an edge out of *both* start vertices; (b) a source whose only route
    to the sink is longer than another source's still gets its own witness; (c) a
-   `Flow(Return)` frame mismatch no longer drops the flow (§3.3), and does drop it under
-   `CTADL_QUERY_CONTEXT_STRICT`.
-2. **The reproducer as a regression case.** `nightly/tests/c/twosource.c` + query json;
+   `Flow(Return)` frame mismatch on a resolution recorded under *two* contexts no longer drops
+   the flow — the join records their common suffix (§3.1) — and still does drop it when the
+   resolution has a single recorded context.
+3. **The reproducer as a regression case.** `nightly/tests/c/twosource.c` + query json;
    both the `pcode` and tree-sitter `c` frontends pick it up automatically. The harness
    asserts lines, not pair counts, so add an optional `expected_path_count` key
    (`xtask/src/assertions.rs`, alongside `read_expected_lines`) and assert `2`. Without a
    count assertion this case passes today.
-3. **Flowy `requires`.** `check_human_profile_paths` (`codegen/flowy.rs:229`) already asserts
+4. **Flowy `requires`.** `check_human_profile_paths` (`codegen/flowy.rs:229`) already asserts
    per-endpoint path existence through `find_endpoint_paths`, which has no detail-node gate —
    a multi-source flowy case is the cheapest end-to-end property harness in the tree. Add one.
-4. **Corpus differential**, 17 benchmarks (12 TaintBench APKs, 4 Operation Mango cmdi
+5. **Corpus differential**, 17 benchmarks (12 TaintBench APKs, 4 Operation Mango cmdi
    binaries, 3 `large_dataset` firmware), **one store per benchmark, queried by both
    binaries** (§7.2 — per-side imports are not a valid differential; the same unmodified
    binary swung 353 vs 357 across two imports of `cajino_baidu`). Expectations, and they are
@@ -374,15 +526,16 @@ Emit both as `invocations[0]` notifications the way `dropped_no_location` alread
    - `cajino_baidu` must still include the 3 findings D4 bought (≥ 353 on the import that
      produces 353);
    - repeat the 11-import spread from §7.2 and check the count is now **stable across
-     imports**. That is §3.4's claim, and the sharpest available signal that the fix is
+     imports**. That is §3.5's claim, and the sharpest available signal that the fix is
      structural rather than incidental.
-5. **Contextual-dispatch tests**: `nightly/tests/c/funcptrcallee{source,sink,frame}`,
-   `nightly/tests/lua/resolved-callee-*`. §3.3 loosens the obligation checks, so these are
-   the tests that say whether the loosening went too far (they should still pass; a *new*
-   flow appearing in one is the signal to look at).
-6. **Cost gate on `fw_pppd`**: wall and peak must be unchanged (zero sinks reached ⇒ one
+6. **Contextual-dispatch tests**: `nightly/tests/c/funcptrcallee{source,sink,frame}`,
+   `nightly/tests/lua/resolved-callee-*`. §3.1 relabels contexts rather than loosening the
+   check, so these are the precision gate: they should still pass, and a *new* flow appearing
+   in one means a pair merged to `[]` that should have kept a context. Both suites pass on the
+   prototype.
+7. **Cost gate on `fw_pppd`**: wall and peak must be unchanged (zero sinks reached ⇒ one
    search, per §4). If they move, the `reachable.is_empty()` guard is not doing its job.
-7. **Datalog oracle** (`CTADL_QUERY_DATALOG=1`) on a target with a real contextual region —
+8. **Datalog oracle** (`CTADL_QUERY_DATALOG=1`) on a target with a real contextual region —
    `fakedaum` (43% of states carry a call string, runs in seconds), not `fw_pppd` (whose
    closure run does not finish in 10 minutes). Compare **finding sets only**: the oracle's own
    `codeFlow` step counts vary run to run (104 findings both runs, 34 vs 20 steps). The
@@ -400,7 +553,7 @@ Do not chase these as property violations; do expect them in the oracle differen
    (`mod.rs:576`–`:600`), so it will report pairs the search will not.
 2. **The materialized-paths gate.** Both engines drop a step whose result path is not in
    `paths`; shared semantics, no differential.
-3. **Context obligations at all.** Even after §3.3, `refine` still restricts where it
+3. **Context obligations at all.** Even after §3.1, `refine` still restricts where it
    *succeeds* consistently. The oracle collapses contexts entirely (`mod.rs:429`) and so finds
    strictly more. That direction is intentional and documented there.
 
@@ -408,13 +561,15 @@ Do not chase these as property violations; do expect them in the oracle differen
 
 | risk | signal | mitigation |
 | --- | --- | --- |
-| `E×` wall time on a label with many source call sites | §6.1/§6.4 timings; the per-label debug line's endpoint count | the two guards in §3.1 (single source, no reachable sink) cover the common cases; then §3.5 early exit, then rayon across witness passes |
-| §3.3 loosening adds false positives | new findings in `funcptrcallee*` / `resolved-callee-*`, or a jump on `fakedaum` | `CTADL_QUERY_CONTEXT_STRICT=1` restores today's pruning; the real fix is complete context sets in the index |
+| `E×` wall time on a label with many source call sites | §6.7/§6.5 timings; the per-label debug line's endpoint count | the two guards in §3.2 (single source, no reachable sink) cover the common cases; then §3.6 early exit, then rayon across witness passes |
+| §3.1 merges a pair to `[]` that should have kept a context | new findings in `funcptrcallee*` / `resolved-callee-*`, or a jump on `fakedaum` | precision-only, never completeness; both suites pass on the prototype, and §6.6 is the gate |
+| §3.1 grows the context-free graph (merged pairs feed `assign_like`, not `context_assign`) | `fw_pppd` peak and state count, `assign_like` row counts | §6.7 before §3.2 lands, so the two changes stay separable; if it bites, keep merged pairs in `context_assign` under `[]` rather than routing them to the unconditional head |
+| §3.1's cycle-drop residue leaves a recursive context unrecorded | a flow missing on a recursive dispatch that returns under §3.4's first arm | widen `push` failures to `top()` (its own diff, §3.1); §3.4 stays on the shelf until that lands |
 | Witness rows inflate `taint` | row counts per benchmark | growth is `pairs × path length`, findings-proportional; if it bites, tag only call-arg and sink nodes on the path instead of every node |
 | Union-graph splicing reports a path that is not this pair's | `codeFlow` diffs on a multi-source case | pair completeness is unaffected; §5.2 is the fix, as its own diff |
 | A witnessed pair still unreported (detail-node gate) | `pairs_no_location` > 0 (§5.3) | §5.1 |
 | Read as "no change, counts moved" in review | count *increases* are the point this time | state the expected direction up front: findings ⊇ tip, and the per-import spread → 0 |
-| Index row order read as a regression | a count diff that does not reproduce when both sides query one store | §6.4: one store per benchmark, both binaries; mechanism in §7.2 |
+| Index row order read as a regression | a count diff that does not reproduce when both sides query one store | §6.5: one store per benchmark, both binaries; mechanism in §7.2 |
 
 ---
 
@@ -487,7 +642,7 @@ are precisely Causes 1 and 2 of §2:
 
 The formatter reads both (`formatter.rs:2630`–`:2710`), so a pair whose route was not the one
 emitted, or whose node was attributed to a sibling source, is never tested: 15 findings unique
-to one order, 19 to the other. **This is why §3.4 predicts the spread disappears** — the fix
+to one order, 19 to the other. **This is why §3.5 predicts the spread disappears** — the fix
 removes both mechanisms.
 
 Where the row order comes from (upstream of the fixpoint, not `ascent_par!` — reverting it and
