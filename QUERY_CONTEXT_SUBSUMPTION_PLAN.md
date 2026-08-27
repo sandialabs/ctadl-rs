@@ -1,16 +1,25 @@
 # Query engine search plan: witness completeness for source→sink pairs -- DO-NOT-MERGE
 
-Scope: `ctadl-ascent/src/query_engine/search.rs` and the generic search it drives in
-`ctadl-ir/src/graph/mod.rs`.
+Scope: `ctadl-ascent/src/query_engine/search.rs`, the generic search it drives in
+`ctadl-ir/src/graph/mod.rs`, and `ctadl-ascent/src/query_engine/formatter.rs`.
 
 This document had one subject — the state-space blowup from context obligations
 (`cf558108`) and its subsumption fix. That fix **landed** (`c666df16`); the appendix keeps its
 measurements because they are the memory budget every change below has to live inside.
-The live subject is now a **correctness property the search does not have**, stated in §0
-and violated three independent ways (§2). §3 is the change, and it is ordered: **§3.1 lands
+The live subject is now a **correctness property the pipeline does not have**, stated in §0
+and violated four independent ways (§2). §3 is the change, and it is ordered: **§3.1 lands
 first and alone** — it is ~15 lines in `facts.rs`, it is the only part that changes what the
 index records, and it is the one with a prototype and a measurement behind it (§2.4, §6.1).
-§3.2–§3.6 are the query-side reporting work, unchanged in substance from the previous draft.
+§3.2–§3.6 are the query-side reporting work; §5 is the formatter side.
+
+**What changed in this draft.** The search already derives every path it reports — it keeps the
+whole first-reach forest, so `search.path_to` hands back the ordered walk with the calling
+context that made each step legal. Four lines later `taint_edge.insert` shreds that path into a
+global edge set, and the formatter re-derives *a* path by searching the union of every reported
+path's edges. This draft stops doing that: §3.3 carries the witness, §5.1 has the formatter
+report it, and Cause 4 is deleted in both halves rather than half-patched and half-deferred. It
+also *removes* work the previous draft proposed — the per-node forward tagging in §3.3 existed
+only so the re-derivation could find pairs, and with the pairs carried it is dead weight.
 
 ## 0. The property
 
@@ -21,9 +30,11 @@ index records, and it is the one with a prototype and a measurement behind it (�
 Two clauses, and they fail separately:
 
 - **Pair completeness** — every connected pair is *reported*. This is what breaks today.
-- **Witness** — the reported `codeFlow` is a real path, not an existence claim. The
-  formatter already re-walks a graph to produce one, so a reported pair always comes with
-  *some* path; §5.2 is about that path being *this pair's* path.
+- **Witness** — the reported `codeFlow` is *this pair's* path: the walk the search actually
+  took, edge for edge. Today the formatter re-derives a path instead (§2.5), so a reported pair
+  comes with *some* path — possibly spliced out of other pairs' edges, possibly one the search's
+  own context obligations rejected. §3.3 and §5.1 make the search hand over the path it found
+  and retire the re-derivation to the datalog fallback.
 
 "A data-flow path" means the edges `TaintSearchGraph::labeled_successors` generates, walked
 under the **one-bit call/return discipline** — `TaintState::Free`/`Restricted`, the same
@@ -32,8 +43,13 @@ the definition: they are a precision filter layered over it, and §2.4 is the cl
 filter as built removes paths the definition admits. (Defining the relation as "whatever
 `PathState::expand` accepts" would make that claim unfalsifiable, which is what an earlier
 draft of this section did.) It is also deliberately **not** "any path the datalog oracle would
-find" — §7 lists the three places those two semantics differ on purpose, so a differential
+find" — §7 lists the four places those two regimes differ on purpose, so a differential
 against `CTADL_QUERY_DATALOG=1` must not read those as violations.
+
+Note the asymmetry the two clauses then have, once §3.3 lands: the one-bit definition governs
+which *pairs* must be reported, while the reported *path* is the search's own and therefore
+always context-consistent as well. Carrying the witness can only strengthen clause two — it
+cannot report a walk the obligations rejected, which today's re-derivation can.
 
 Contrapositive worth stating, because it is the acceptance bar: **no reachable pair may be
 silently dropped.** A pair the engine cannot witness must show up in a counter (§5.3), not
@@ -115,11 +131,14 @@ edges only from those paths (`search.rs:846`–`:860`). So the graph the formatt
 contains one route per reached sink vertex per label search — one edge, in the reproducer,
 against the oracle's 32.
 
-This makes Cause 1 unfixable on its own: tag the sink node with *both* sources and the
-pairing loop would ask for a walk from `call-arg(2,-1)`, whose vertex appears in no
-`taint_edge` row at all. `find_annotated_path_to_set` (`formatter.rs:2702`) returns `None`
-and the pair is dropped with no diagnostic. **Both causes have to be fixed together, and
-neither is fixed by tagging alone.**
+This makes Cause 1 unfixable on its own, and it is worth walking through why, because the
+dead end is what points at §3.3. Tag the sink node with *both* sources and the pairing loop
+asks the formatter for a walk from `call-arg(2,-1)` — whose vertex appears in no `taint_edge`
+row at all. `find_annotated_path_to_set` (`formatter.rs:2702`) returns `None` and the pair is
+dropped with no diagnostic. Emitting more tags does not help; emitting more *edges* means
+emitting the whole traversed graph, which is the blowup the demand-driven regime exists to
+avoid. **Neither cause is fixable by tagging, and both stop mattering once the pair and its
+path are carried instead of reconstructed** (Cause 4, §2.5).
 
 Same for the sink-tag side: only nodes on that one path get the backward tag
 (`search.rs:866`), so a second source's route has no meeting node even when its edges exist.
@@ -183,23 +202,68 @@ the merge happens there regardless. And it is not a policy choice — the earlie
 section, that pruning trades completeness for precision, was wrong. Pruning against a *common
 suffix* keeps both; only pruning against a *witness* has to choose.
 
-### 2.5 Cause 4 — the formatter's pairing gate (outside search.rs)
+### 2.5 Cause 4 — the path is derived twice (outside `search.rs`)
 
-Even with 1–3 fixed, two formatter-side facts bound the property:
+The search knows the path at the moment it proves reachability. `find_annotated_paths_from_set`
+keeps the entire first-reach forest — every state carries `parent` and the edge it was reached
+by — so `search.path_to(t)` (`search.rs:846`) returns the ordered walk, each state holding its
+`PathState`: the `TaintState` **and** the `CallString` obligation that made the step legal. That
+is derivation 1, and being able to produce it inline is the whole reason this regime exists
+instead of a closure plus a path-finding pass.
 
-- **Pairing only happens at a "detail" node** — `details_by_span` is built from
-  `tainted_insn`, which keeps only call-arg vertices with `formal >= 0`, non-globals, *and* a
-  resolvable source span (`formatter.rs:2667`). A witnessed pair whose whole path misses such
-  a node is never tested. Usually harmless (the sink is an argument at a call), but
-  function-anchored endpoints — the `anchored_at_callsites` fallback for a callerless function
-  or the globals pseudo-formal (`mod.rs:104`–`:133`) — land outside it.
-- **The reported path is re-derived, not carried.** The formatter searches the union of all
-  emitted edges (`formatter.rs:2702`), so it can answer a pair with a walk spliced out of two
-  other pairs' witnesses. Pair completeness survives that; clause two of §0 does not.
+Four lines later it is destroyed. `taint_edge.insert` (`search.rs:850`) shreds the path into its
+edges and drops them into one global `BTreeSet` shared by every reported path of every label.
+Order goes — a set of edges is not a path. Pair identity goes — no column says which pair an
+edge served. The context goes, explicitly: `.flow_edge()` is documented as a downgrade ("a
+contextual step reports as the plain edge of the same kind"). The taint level goes with it.
 
-`find_endpoint_paths` (`formatter.rs:1767`, used by the flowy checker) has no detail-node
-gate — it pairs every source with every sink present in `taint` — so it is a *stricter* client
-of the same emission, and Cause 2 hits it too.
+The formatter then performs derivation 2. `build_taint_flow_graph` (`formatter.rs:1682`) interns
+the union edge set into a `LabeledTaintGraph`, and `formatter.rs:2702` runs a second search per
+candidate pair:
+
+| | derivation 1 (`search.rs`) | derivation 2 (`formatter.rs`) |
+| --- | --- | --- |
+| graph | live `TaintSearchGraph`, edges generated from the index | union of every emitted `taint_edge` row |
+| annotation | `PathState` = `TaintState` + `CallString` | bare `TaintState` — **no contexts** |
+| order | BFS within annotation class (`VecDeque::pop_front`) | **DFS** (`Vec::pop`, `graph/mod.rs:196`) |
+| scope | this search's edges | every pair's edges, every label |
+
+Two bounds on the property follow, and they are one defect seen from two sides:
+
+- **4a. Pairing only happens at a "detail" node.** Having been given no pairs, the formatter has
+  to *find* them, by looking for a node carrying both a forward and a backward tag — and it looks
+  only at `details_by_span`, built from `tainted_insn`, which keeps only call-arg vertices with
+  `formal >= 0`, non-globals, *and* a resolvable source span (`formatter.rs:2667`). A witnessed
+  pair whose whole path misses such a node is never tested. Usually harmless (the sink is an
+  argument at a call), but function-anchored endpoints — the `anchored_at_callsites` fallback for
+  a callerless function, or the globals pseudo-formal (`mod.rs:104`–`:133`) — land outside it.
+- **4b. The reported path is re-derived, not carried.** The DFS answers with the first walk it
+  finds in the union graph, which need not be the walk whose edges put it there. Today Causes 1
+  and 2 mask this by keeping the pool tiny and few pairs tested; fix those two by tagging — the
+  previous draft's route — and it goes live. If the search emitted `S1 → m → K1` and
+  `S2 → m → K2`, the pool holds four edges, `m` carries every tag, and the pair `(S1, K2)` is
+  answered `S1 → m → K2`: spliced out of two other pairs' witnesses. Every edge is real, so pair
+  completeness survives and §0's first clause is unharmed; but the reported `codeFlow` is not a
+  walk this search ever took, and since the re-walk carries no `CallString` it may be one the
+  obligation check pruned at `search.rs:627`. Clause two fails. Carrying the witness is the only
+  route that fixes 1 and 2 *without* opening this.
+
+Derivation 2 also *filters*, which is where Cause 2 turns silent: when the pair's own edges are
+not in the pool, `find_annotated_path_to_set` returns `None` and the pair is dropped with no
+diagnostic. And it is the last word — a pair the search witnessed but the re-walk cannot
+reproduce is not reported, however sound the search was.
+
+`find_endpoint_paths` (`formatter.rs:1767`, used by the flowy checker) is the same derivation
+without the detail-node gate — it pairs every source with every sink present in `taint` — so it
+is a *stricter* client of the same emission, and Cause 2 hits it too.
+
+**None of this is forced by persistence.** `schema::taint` and `schema::taint_edge`
+(`facts/schema.rs:167`, `:175`) are declared but written by nothing outside the schema
+round-trip test (`:405`); the query→formatter boundary is in-process, `QueryResult` handed
+straight to `FormatFactsBuilder` (`cli/mod.rs:663`). The relational hand-off is inherited from
+the datalog engine, which had no paths to hand over. Carrying the witness costs a struct field,
+not a stored schema — so the previous draft's §5.2, which priced it as a persisted schema
+addition and marked it optional, was wrong on both counts.
 
 ### 2.6 Summary
 
@@ -208,8 +272,13 @@ of the same emission, and Cause 2 hits it too.
 | 1. one origin per state | `search.rs:777`, `:799`, `:826` | §3.2 + §3.3 |
 | 2. one path per sink vertex | `search.rs:837`, `:846`, `:866` | §3.2 + §3.3 |
 | 3. context join keeps a witness, not a lub | `facts.rs:445` (read at `search.rs:612`, `:630`) | §3.1 |
-| 4a. pairing needs a detail node | `formatter.rs:2667` | §5.1 (formatter) |
-| 4b. path re-derived from a union graph | `formatter.rs:2702` | §5.2 (optional) |
+| 4a. pairing needs a detail node | `formatter.rs:2667` | §5.1 — there is no pairing step left |
+| 4b. path re-derived from a union graph | `formatter.rs:2702` | §3.3 + §5.1 |
+
+Causes 1 and 2 are what make the *set of reported pairs* wrong; Cause 3 is what makes it wrong
+in the contextual region; Cause 4 is what makes the reported *path* wrong and Cause 2 silent.
+Fixing 4 changes the standing of 1: once the formatter is handed the pairs, first-reach
+attribution on the bulk `taint` rows stops deciding which findings exist (§3.3).
 
 ## 3. The change
 
@@ -344,43 +413,72 @@ The `starts.len() == 1` and `reachable.is_empty()` guards are what keep this aff
 (§4): a label with one source pays exactly today's cost, and a label that reaches no sink
 pays exactly today's cost — which is the `fw_pppd` case, where zero targets are reached.
 
-### 3.3 Emission: one witness per (source, sink vertex)
+### 3.3 Emission: carry the witness
 
-`emit_witnesses` replaces the `reported` loop (`search.rs:837`–`:880`). Per witness it emits
-three things instead of two — the forward tag is the new one:
+`emit_witnesses` replaces the `reported` loop (`search.rs:837`–`:880`). Per (source, sink
+vertex) it records the path *as a path* — the ordered vertices and the edge walked between each
+consecutive pair — instead of shredding it into the edge pool:
 
 ```rust
+/// One witnessed source -> sink flow: the walk the search actually took.
+pub struct TaintWitness {
+    pub source: QueryEndpoint,
+    pub sink: QueryEndpoint,
+    /// Vertices from source to sink. Level-agnostic, for the same reason the `taint` rows
+    /// are: `TaintLevel` is a search-local concern.
+    pub nodes: Vec<(FunctionId, FlowVariable, Path)>,
+    /// `steps[i]` is the edge walked from `nodes[i]` to `nodes[i+1]`; `nodes.len() - 1` long.
+    pub steps: Vec<FlowEdge>,
+}
+
 let mut seen: HashSet<TaintVertex> = HashSet::default();
 for &t in &search.targets {
     let vertex = vertex(&search, t);
     if !seen.insert(vertex) { continue }                   // first target per vertex: shortest-in-class
     let path = search.path_to(t);
-    for w in path.windows(2) { taint_edge.insert(...) }    // as today: this pair's route is in the graph
-    for &i in &path {
-        let st = &search.states[i as usize];
-        for &e in &start.endpoints {                       // NEW: forward tag naming *this* source
-            witness_rows.insert((st.node.0, st.annot.state, st.node.1, st.node.2, endpoints[e].clone()));
-        }
-        for sink in &sink_nodes[&vertex] {                 // as today: backward tag
-            witness_rows.insert((st.node.0, st.annot.state, st.node.1, st.node.2, sink.clone()));
+    for w in path.windows(2) { taint_edge.insert(...) }    // unchanged: `--dump-taint-graph` reads this
+    let nodes: Vec<_> = path.iter().map(|&i| vertex_of(&search, i)).collect();
+    let steps: Vec<_> = path[1..].iter()
+        .map(|&i| search.states[i as usize].edge.unwrap().flow_edge())
+        .collect();
+    for &e in &start.endpoints {                           // several endpoints may name one start vertex
+        for sink in &sink_nodes[&vertex] {                 // and several sinks one sink vertex
+            witnesses.push(TaintWitness {
+                source: endpoints[e].clone(), sink: sink.clone(),
+                nodes: nodes.clone(), steps: steps.clone(),
+            });
         }
     }
 }
 ```
 
-`witness_rows` is a `BTreeSet` (paths share prefixes, and now across sources too), merged
-into `taint` where `sink_tags` is merged today (`search.rs:894`).
+Carried on `QueryResult` (`query_engine/mod.rs:226`) beside `taint_edge`, and through
+`TaintAnalysisResults` (`formatter.rs:1523`) to the formatter. No parquet, no schema change,
+no new relation — see §2.5's last paragraph. `steps` reads `SearchState::edge`, which the
+appendix's open item 2 (moving `edge` out of `SearchState`) explicitly preserves for ancestors
+of target states; the two changes do not conflict.
 
-Why this is sufficient for pairing: every node on the witness path now carries both the
-source tag and the sink tag, so the formatter's meeting-node test succeeds at *any* node of
-the path — and the path's own edges are in `taint_edge`, so the re-walk has a route to find.
-Cause 1 and Cause 2 are fixed by the same two lines.
+**What this deletes.** The previous draft emitted a third thing — a forward `taint` tag on every
+node of every witness path, so the formatter's meeting-node test would succeed there. That
+existed solely to help derivation 2 find pairs. With the pairs carried there *is* no
+meeting-node test, so the tags are not emitted. Sink tags (`search.rs:866`) stay as they are:
+they colour the backward cone in `--dump-taint-graph`, which is unrelated to pairing.
 
-Emission size is proportional to **findings**, not to the state space: `Σ_pairs (path
-length × (1 + sinks at that vertex))`. On `cajino_baidu` (890,002 `taint` rows, ~350
-findings) the witness rows are noise. Contrast the alternative of emitting every traversed
-edge to make the union graph complete: that is 14 M rows on `fw_pppd` and reinstates exactly
-the `taint_edge` blowup the demand-driven regime exists to avoid.
+**What this demotes.** Cause 1 stops costing findings. First-reach attribution still stamps one
+arbitrary (though valid) origin on the bulk `taint` rows, and those still feed the graph dump's
+colouring and the Debug profile's per-vertex listing — but no longer anything that decides
+*which pairs are reported*, because that set is now the witness list. Cause 1 goes from silent
+finding loss to reporting-fidelity residue, and §3.5's determinism argument no longer rests on
+it.
+
+Emission size is proportional to **findings**, not to the state space: `Σ_pairs (path length ×
+sinks at that vertex)` vertices and the same count of edges, once each. That is strictly less
+than the tagging it replaces (`path length × (1 + sinks)` interned `taint` rows into a
+`BTreeSet`). On `cajino_baidu` (890,002 `taint` rows, ~350 findings) it is noise. If the
+per-endpoint clone ever matters, intern the path once per sink vertex and have the pairs index
+it. Contrast the alternative of emitting every traversed edge to make the union graph complete:
+14 M rows on `fw_pppd`, reinstating exactly the `taint_edge` blowup the demand-driven regime
+exists to avoid.
 
 ### 3.4 Contingency (not part of the plan): obligations stop pruning
 
@@ -417,12 +515,16 @@ choices once pairs are reported per source:
    before building `starts`, and sort `sink_nodes`' per-vertex endpoint vectors the same way.
    The *set* of witnessed pairs is then order-invariant by construction (it no longer depends
    on which source reached a node first).
-2. **Path shape** still follows successor order, which follows row order. That is `codeFlow`
-   churn, not finding churn, and it is pre-existing (§7.2).
+2. **Path shape.** Two order-dependent inputs feed it today: which edges reach the union pool
+   (search order), and which walk the formatter's DFS finds once they are there (row order,
+   §7.2). §3.3 removes the second outright — the reported path *is* the search's own
+   BFS-in-class path — leaving the first. That is `codeFlow` churn, not finding churn, and it
+   is pre-existing.
 
 This is the second prize in this change: §7.2's ±4 finding spread on `cajino_baidu` was
-*caused* by first-reach attribution and one-path-per-vertex reporting. Removing both should
-remove the spread; §6.5 makes that a gate.
+*caused* by first-reach attribution and one-path-per-vertex reporting, read through a formatter
+that had to guess pairs from them. §3.2 and §3.3 remove both mechanisms and §5.1 removes the
+reading, so the spread should go to zero rather than merely shrink; §6.5 makes that a gate.
 
 ### 3.6 Optional: early exit for the witness passes
 
@@ -453,39 +555,74 @@ Peak memory does not grow: witness passes run one at a time and the gate's `stat
 a subset: the shared pass can subsume a contextual state via a *different* source's more
 general state, which a single-start pass will not have.
 
+The carried witnesses are the one thing that must outlive each pass, so they are worth naming
+in this argument: they are `Σ_pairs path length`, findings-proportional and independent of the
+state space (§3.3), against a per-pass peak measured in gigabytes. They do not disturb it.
+
 Witness passes are independent, so `E` is recoverable in wall time with rayon at a memory
 cost of `concurrency × one pass`. Do it only if §6.7 shows the multiplier hurting.
 
 ## 5. What has to change outside `search.rs`
 
-The search change is necessary and not sufficient; these are small and named so the PR can
-say which it took.
+§3.3 makes the witness available; this is what consumes it. Both halves of Cause 4 are deleted
+here rather than patched — there is no pairing step to gate, and no re-derivation to splice.
 
-### 5.1 Pair outside the detail-node gate (needed for the general case)
+### 5.1 The formatter reports the carried witness
 
-`formatter.rs:2667` pairs only at detail nodes. Add the fallback `find_endpoint_paths`
-already uses (`formatter.rs:1767`): for any (source, sink) pair whose tags meet on *no*
-detail node, pair directly at the sink's endpoint vertex and resolve the reporting location
-from the sink's own `call_site`/`infunc`. Without this, a witnessed pair on a
-function-anchored endpoint stays unreported (and, with §5.3, at least becomes visible).
+- **Delete the pairing loop** (`formatter.rs:2661`–`:2717`), including its
+  `find_annotated_path_to_set` call. `results_by_path` is built by interning each witness's
+  `nodes` through the same `node_to_id` / `id_to_node` the graph already builds, so everything
+  downstream is untouched: `endpoint_node_ids`, `call_arg_site`, the step messages, the
+  `path_sites` pre-load. Keep the grouping — key on `(nodes, steps)` so two pairs sharing a
+  path still collapse into one result carrying several details, exactly as today.
+- **Take each step's label from the witness, not from a map.** `site_by_edge` and
+  `edge_by_edge` (`formatter.rs:1728`, `:1736`) are keyed on `(src_id, dst_id)` across the whole
+  pool and are last-write-wins. `taint_edge` is keyed on `(edge, src, dst)`, so one vertex pair
+  can hold both an `Intra` and a `Call` row — and then whichever was inserted last decides how
+  *every* path through that pair is narrated. Indexing `steps[i]` by position removes that; the
+  step loop (`formatter.rs:2945`) is otherwise unchanged. This is a latent bug the change fixes
+  for free, not a new requirement.
+- **Resolve the reporting location per pair.** `span_key` comes from `details_by_span` today
+  only because that is what the pairing loop happened to be standing on (Cause 4a). Replace it
+  with the sink endpoint's `call_site` span, falling back to the last node on the path with a
+  resolvable span. The `dropped_no_location` path (`formatter.rs:3155`) then becomes the sole
+  remaining way a witnessed pair fails to be reported, and §5.3 counts it.
+- **`find_endpoint_paths` becomes a projection.** With witnesses present it is a `map` into
+  `EndpointPath`, no search (`formatter.rs:1767`). The flowy checker and the SARIF results then
+  draw on the *same* set by construction — strictly stronger than today's "stricter client of
+  the same emission", and it makes §6.4 a real end-to-end property harness rather than a
+  correlated one.
 
-### 5.2 Optional: carry the witness instead of re-deriving it (clause two of §0)
+`taint_edge` keeps being emitted unchanged: `--dump-taint-graph` (`cli/mod.rs:845`) reads it,
+and `codegen/tests.rs:206` asserts a forward walk over it.
 
-Emit the witness path itself — a `(pair id, step index, vertex)` relation alongside
-`taint_edge`, or a `taint_edge` variant keyed by pair — and have the formatter report that
-path when it has one, falling back to the re-walk otherwise. This is the only way to
-guarantee the reported `codeFlow` is *this pair's* path rather than a splice, and it also
-removes the last order-dependent input to the reported path shape. It costs a persisted
-schema addition, so it is a separate diff from §3.
+### 5.2 The re-walk stays, for the datalog regime only
+
+`taint_analysis_datalog` (`query_engine/mod.rs:436`) computes a closure and has no paths to hand
+over — there, `taint_edge` *is* the whole closure. So `build_taint_flow_graph` and
+`find_annotated_path_to_set` stay in the tree, reached when the witness list is empty. That is
+what keeps `CTADL_QUERY_DATALOG=1` working, which §6.8's differential depends on. "Do away with
+the second derivation" means it stops being how the default regime reports — not that the code
+is deleted.
+
+Keeping it also keeps the fallback honest: the two regimes then differ in *how they report* the
+same way they already differ in how they search, and §7 stays the whole list of deliberate
+divergences.
 
 ### 5.3 Counters, so a violation cannot be silent
 
-`PathStats` (`formatter.rs:329`) counts `reported` and `dropped_no_location`. Add:
+`PathStats` (`formatter.rs:329`) counts `reported` and `dropped_no_location`. The previous
+draft's `pairs_unwitnessed` — a pair whose tags met but whose re-walk found nothing — is now
+*structurally impossible*: there is no re-derivation left to fail. What remains:
 
-- `pairs_considered` / `pairs_unwitnessed` — a pair whose tags met but whose re-walk found no
-  path. **After §3 this must be 0**; it is the direct machine-checkable form of §0.
+- `pairs_witnessed` — witnesses handed over, i.e. §0's pair count as the search sees it.
 - `pairs_no_location` — witnessed but unreportable (the §5.1 residue).
 
+`pairs_witnessed - pairs_no_location` must equal the number of `(source, sink)` details across
+the emitted results — *not* `reported`, which counts results, and results group every pair that
+shares a path (§5.1). That identity is the machine-checkable form of §0, and it is an equality
+rather than the previous draft's "must be 0" because the location residue is real and is
+allowed to be non-zero as long as it is counted rather than silent.
 Emit both as `invocations[0]` notifications the way `dropped_no_location` already is
 (`formatter.rs:831`).
 
@@ -502,27 +639,39 @@ Emit both as `invocations[0]` notifications the way `dropped_no_location` alread
    and §6.8's oracle differential on `fakedaum`, both taken *before* §3.2 lands so the two
    changes' effects on finding counts stay separable.
 2. **Unit tests in `search.rs`'s `mod tests`** (no frontend needed, the existing tests build
-   `QueryFacts` by hand): (a) two sources → one sink vertex yields two witnessed pairs, with
-   `taint_edge` containing an edge out of *both* start vertices; (b) a source whose only route
-   to the sink is longer than another source's still gets its own witness; (c) a
-   `Flow(Return)` frame mismatch on a resolution recorded under *two* contexts no longer drops
-   the flow — the join records their common suffix (§3.1) — and still does drop it when the
-   resolution has a single recorded context.
+   `QueryFacts` by hand): (a) two sources → one sink vertex yields two `TaintWitness`es whose
+   `nodes` begin at *different* start vertices, and `taint_edge` an edge out of both; (b) a
+   source whose only route to the sink is longer than another source's still gets its own
+   witness; (c) a `Flow(Return)` frame mismatch on a resolution recorded under *two* contexts
+   no longer drops the flow — the join records their common suffix (§3.1) — and still does drop
+   it when the resolution has a single recorded context; (d) **witness integrity**, for every
+   carried witness: `nodes[0]` is the source endpoint's vertex, `nodes.last()` is the sink's,
+   `steps.len() == nodes.len() - 1`, each `steps[i]` is an edge the graph actually offers
+   between `nodes[i]` and `nodes[i+1]`, and the `TaintState` discipline balances end to end.
+   This is not bookkeeping: the re-walk being deleted was *also*, incidentally, a validity
+   filter — it could only ever report a path it could itself walk. A `debug_assert` in
+   `emit_witnesses` plus this test are what replace it deliberately.
 3. **The reproducer as a regression case.** `nightly/tests/c/twosource.c` + query json;
    both the `pcode` and tree-sitter `c` frontends pick it up automatically. The harness
    asserts lines, not pair counts, so add an optional `expected_path_count` key
    (`xtask/src/assertions.rs`, alongside `read_expected_lines`) and assert `2`. Without a
    count assertion this case passes today.
 4. **Flowy `requires`.** `check_human_profile_paths` (`codegen/flowy.rs:229`) already asserts
-   per-endpoint path existence through `find_endpoint_paths`, which has no detail-node gate —
-   a multi-source flowy case is the cheapest end-to-end property harness in the tree. Add one.
+   per-endpoint path existence through `find_endpoint_paths`, which §5.1 turns into a
+   projection of the witness list — so the checker and the SARIF results assert against one
+   set instead of two correlated ones. A multi-source flowy case is then the cheapest
+   end-to-end property harness in the tree. Add one.
 5. **Corpus differential**, 17 benchmarks (12 TaintBench APKs, 4 Operation Mango cmdi
    binaries, 3 `large_dataset` firmware), **one store per benchmark, queried by both
    binaries** (§7.2 — per-side imports are not a valid differential; the same unmodified
    binary swung 353 vs 357 across two imports of `cajino_baidu`). Expectations, and they are
    *not* "identical counts" this time:
    - findings must be a **superset** of `c666df16`'s — every new one is a pair that was
-     connected and unreported;
+     connected and unreported, either because it was never paired (Causes 1, 2, 4a) or because
+     the re-walk could not reproduce it (Cause 4b's filter, now gone);
+   - `codeFlow` diffs are expected even where the finding set is unchanged: a reported path is
+     now the search's own walk rather than a DFS over the union pool, so steps may differ on
+     any multi-source or contextual case. Diff finding *sets* first, paths second;
    - `cajino_baidu` must still include the 3 findings D4 bought (≥ 353 on the import that
      produces 353);
    - repeat the 11-import spread from §7.2 and check the count is now **stable across
@@ -542,7 +691,7 @@ Emit both as `invocations[0]` notifications the way `dropped_no_location` alread
    question is comparative — the pruned-and-witnessing search should disagree with the oracle
    *less* than the tip does, and every remaining disagreement should land in §7.
 
-## 7. Semantic boundaries — where "a data-flow path" is deliberately narrower
+## 7. Deliberate divergences — where the search is narrower, and where it reports differently
 
 Do not chase these as property violations; do expect them in the oracle differential.
 
@@ -556,6 +705,11 @@ Do not chase these as property violations; do expect them in the oracle differen
 3. **Context obligations at all.** Even after §3.1, `refine` still restricts where it
    *succeeds* consistently. The oracle collapses contexts entirely (`mod.rs:429`) and so finds
    strictly more. That direction is intentional and documented there.
+4. **The two regimes now build `codeFlow` differently.** The default reports the search's own
+   walk (§3.3); the oracle still re-derives one by DFS over its closure (§5.2). Step counts and
+   step *order* are therefore incomparable between them by construction — a differential must
+   compare finding sets, never flow shapes. This is new with this change and is the reason
+   §6.8 says so explicitly.
 
 ## 8. Risks
 
@@ -565,9 +719,11 @@ Do not chase these as property violations; do expect them in the oracle differen
 | §3.1 merges a pair to `[]` that should have kept a context | new findings in `funcptrcallee*` / `resolved-callee-*`, or a jump on `fakedaum` | precision-only, never completeness; both suites pass on the prototype, and §6.6 is the gate |
 | §3.1 grows the context-free graph (merged pairs feed `assign_like`, not `context_assign`) | `fw_pppd` peak and state count, `assign_like` row counts | §6.7 before §3.2 lands, so the two changes stay separable; if it bites, keep merged pairs in `context_assign` under `[]` rather than routing them to the unconditional head |
 | §3.1's cycle-drop residue leaves a recursive context unrecorded | a flow missing on a recursive dispatch that returns under §3.4's first arm | widen `push` failures to `top()` (its own diff, §3.1); §3.4 stays on the shelf until that lands |
-| Witness rows inflate `taint` | row counts per benchmark | growth is `pairs × path length`, findings-proportional; if it bites, tag only call-arg and sink nodes on the path instead of every node |
-| Union-graph splicing reports a path that is not this pair's | `codeFlow` diffs on a multi-source case | pair completeness is unaffected; §5.2 is the fix, as its own diff |
-| A witnessed pair still unreported (detail-node gate) | `pairs_no_location` > 0 (§5.3) | §5.1 |
+| Carried witnesses grow `QueryResult` | witness count × path length per benchmark | findings-proportional, and strictly less than the `taint` tagging it replaces (§3.3); if it bites, intern the path once per sink vertex and have the pairs index it |
+| A carried path is not a real walk, and nothing catches it | witness-integrity assertions (§6.2d) | the deleted re-walk was incidentally a validity filter — replace it deliberately with a `debug_assert` in `emit_witnesses` and the unit test, not with trust |
+| A witnessed pair still unreported (no resolvable location) | `pairs_no_location` > 0 (§5.3) | §5.1's per-pair resolution: sink `call_site`, then the last locatable node on the path |
+| Deleting the pairing loop breaks the datalog regime | `CTADL_QUERY_DATALOG=1` on `fakedaum` reports nothing | §5.2 keeps the re-walk as the empty-witness fallback; §6.8 exercises it every run |
+| `codeFlow` steps churn on cases whose finding set is unchanged | step counts in the corpus differential | expected and intended (§6.5): the path is now the search's, not a DFS over the pool. Compare finding sets first |
 | Read as "no change, counts moved" in review | count *increases* are the point this time | state the expected direction up front: findings ⊇ tip, and the per-import spread → 0 |
 | Index row order read as a regression | a count diff that does not reproduce when both sides query one store | §6.5: one store per benchmark, both binaries; mechanism in §7.2 |
 
@@ -642,8 +798,10 @@ are precisely Causes 1 and 2 of §2:
 
 The formatter reads both (`formatter.rs:2630`–`:2710`), so a pair whose route was not the one
 emitted, or whose node was attributed to a sibling source, is never tested: 15 findings unique
-to one order, 19 to the other. **This is why §3.5 predicts the spread disappears** — the fix
-removes both mechanisms.
+to one order, 19 to the other. **This is why §3.5 predicts the spread disappears** — §3.2 and
+§3.3 remove both mechanisms, and §5.1 removes the formatter's dependence on either: handed the
+pairs and their paths, it no longer consults `origin[]` or the edge pool to decide what is
+reported.
 
 Where the row order comes from (upstream of the fixpoint, not `ascent_par!` — reverting it and
 `RAYON_NUM_THREADS=1` are both still nondeterministic):
