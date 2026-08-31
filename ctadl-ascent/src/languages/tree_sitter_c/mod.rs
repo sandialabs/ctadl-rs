@@ -4491,7 +4491,6 @@ impl<'a> Context<'a> {
                 continue;
             };
             let func_name_node = head.name;
-            let param_list = head.params;
             //debug_print_tree(body_node, 0, None, Some(50));
             // A definition another translation unit already contributed, character for
             // character: one function, lowered once, at the first copy.
@@ -4503,103 +4502,133 @@ impl<'a> Context<'a> {
                 continue;
             }
             let func_name = plan.name_of(def_node.id(), to_str(&func_name_node, source));
-            self.allocator.reset();
-            let fidx = match self.functions.get(func_name) {
-                Some(fidx) => *fidx,
-                None => {
-                    let fidx = program.new_function();
-                    self.functions.insert(func_name.to_string(), fidx);
-                    fidx
-                }
-            };
-
-            let fdat = &mut program.functions[fidx];
-            fdat.name = func_name.to_string();
-
-            //return type, remember C can have an implicit int return type. boo
-            // A pointer return is a return: `void *xmalloc(size_t)` has `type: void` and an
-            // arity of 1, because the `void` describes the pointee, not the function.
-            let ret_ct = if head.returns_pointer {
-                1
-            } else if let Some(rt) = return_type
-                && to_str(&rt, source).eq_ignore_ascii_case("void")
-            {
-                0
-            } else {
-                1
-            };
-
-            fdat.set_return_type(ReturnType { arity: ret_ct });
-            let scope_name = format!("{}.params", func_name);
-            let blidx = fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
-            let param_sidx = self.scope_tree.add_scope(scope_name, Some(global_sidx));
-            let para_scope_view = ScopeView {
-                func_name: func_name.to_string(),
-                fidx,
-                blidx,
-                sidx: param_sidx,
-                continuation_blidx: None,
-                break_target: None,
-                continue_target: None,
-                explainer: "params".to_string(),
-            };
-
-            let body_name = format!("{}.body", func_name);
-            self.collect_params(source, &param_list, fdat, func_name, &para_scope_view)?;
-
-            //we have to build this one by hand, becuase we want the initial scope without the extra block
-            let block_scope = self.scope_tree.add_scope(body_name, Some(param_sidx));
-            let block_scope_view = ScopeView {
-                func_name: func_name.to_string(),
-                fidx,
-                blidx,
-                sidx: block_scope,
-                continuation_blidx: None,
-                break_target: None,
-                continue_target: None,
-                explainer: "initial_block".to_string(),
-            };
-            self.scope_tree.blocks.push(block_scope_view.clone());
-            let cp = CompoundProxy::from_node(body_node);
-
-            // Pre-create a block for every `goto` label in this function so forward
-            // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
-            self.label_blocks.clear();
-            self.walked_label_blocks.clear();
-            // Address-of aliases are function-local and confined to a straight-line block.
-            self.addr_alias.clear();
-            // Union-typed locals are function-scoped.
-            self.union_vars.clear();
-            let mut labels = Vec::new();
-            collect_labels(body_node, source, &mut labels);
-            for label in labels {
-                let label_block = add_block(
-                    program,
-                    &block_scope_view,
-                    &mut self.scope_tree,
-                    false,
-                    &format!("label:{label}"),
-                )?;
-                self.label_blocks.insert(label, label_block.blidx);
-            }
-
-            self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
-
-            // Label blocks the walk never entered. In a damaged body they are the parse
-            // recovery's labels, not this function's: say so once, as a source problem, and
-            // let `finalize_terminators` patch them without blaming the frontend.
-            let stranded: HashSet<BasicBlockIdx> = self
-                .label_blocks
-                .values()
-                .copied()
-                .filter(|blidx| !self.walked_label_blocks.contains(blidx))
-                .collect();
-            let body_holds_recovery = body_node.has_error();
-            if body_holds_recovery && !stranded.is_empty() {
-                self.report_unanalyzed_recovery(func_name)?;
-            }
-            finalize_terminators(program, fidx, func_name, &stranded, body_holds_recovery)?;
+            self.lower_function(
+                source,
+                program,
+                global_sidx,
+                func_name,
+                &head,
+                return_type,
+                body_node,
+            )?;
         }
+        Ok(())
+    }
+
+    /// Lower one `function_definition` into its IR function: register the name, set the return
+    /// arity, build the parameter and body scopes, pre-create a block per `goto` label, walk the
+    /// body, flag the label blocks the walk never reached, and finalize terminators.
+    ///
+    /// Split out of [`Context::collect_functions`] so the per-function lowering is one named unit
+    /// rather than an 80-line loop body. That keeps the query/dispatch loop readable, and it is
+    /// what lets a change in here be reviewed (and merged) as a diff against a function instead of
+    /// against an anonymous block.
+    fn lower_function(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        global_sidx: usize,
+        func_name: &str,
+        head: &FunctionHead<'_>,
+        return_type: Option<Node<'_>>,
+        body_node: Node<'_>,
+    ) -> anyhow::Result<(), Error> {
+        self.allocator.reset();
+        let fidx = match self.functions.get(func_name) {
+            Some(fidx) => *fidx,
+            None => {
+                let fidx = program.new_function();
+                self.functions.insert(func_name.to_string(), fidx);
+                fidx
+            }
+        };
+
+        let fdat = &mut program.functions[fidx];
+        fdat.name = func_name.to_string();
+
+        //return type, remember C can have an implicit int return type. boo
+        // A pointer return is a return: `void *xmalloc(size_t)` has `type: void` and an
+        // arity of 1, because the `void` describes the pointee, not the function.
+        let ret_ct = if head.returns_pointer {
+            1
+        } else if let Some(rt) = return_type
+            && to_str(&rt, source).eq_ignore_ascii_case("void")
+        {
+            0
+        } else {
+            1
+        };
+
+        fdat.set_return_type(ReturnType { arity: ret_ct });
+        let scope_name = format!("{}.params", func_name);
+        let blidx = fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
+        let param_sidx = self.scope_tree.add_scope(scope_name, Some(global_sidx));
+        let para_scope_view = ScopeView {
+            func_name: func_name.to_string(),
+            fidx,
+            blidx,
+            sidx: param_sidx,
+            continuation_blidx: None,
+            break_target: None,
+            continue_target: None,
+            explainer: "params".to_string(),
+        };
+
+        let body_name = format!("{}.body", func_name);
+        self.collect_params(source, &head.params, fdat, func_name, &para_scope_view)?;
+
+        //we have to build this one by hand, becuase we want the initial scope without the extra block
+        let block_scope = self.scope_tree.add_scope(body_name, Some(param_sidx));
+        let block_scope_view = ScopeView {
+            func_name: func_name.to_string(),
+            fidx,
+            blidx,
+            sidx: block_scope,
+            continuation_blidx: None,
+            break_target: None,
+            continue_target: None,
+            explainer: "initial_block".to_string(),
+        };
+        self.scope_tree.blocks.push(block_scope_view.clone());
+        let cp = CompoundProxy::from_node(body_node);
+
+        // Pre-create a block for every `goto` label in this function so forward
+        // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
+        self.label_blocks.clear();
+        self.walked_label_blocks.clear();
+        // Address-of aliases are function-local and confined to a straight-line block.
+        self.addr_alias.clear();
+        // Union-typed locals are function-scoped.
+        self.union_vars.clear();
+        let mut labels = Vec::new();
+        collect_labels(body_node, source, &mut labels);
+        for label in labels {
+            let label_block = add_block(
+                program,
+                &block_scope_view,
+                &mut self.scope_tree,
+                false,
+                &format!("label:{label}"),
+            )?;
+            self.label_blocks.insert(label, label_block.blidx);
+        }
+
+        self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
+
+        // Label blocks the walk never entered. In a damaged body they are the parse
+        // recovery's labels, not this function's: say so once, as a source problem, and
+        // let `finalize_terminators` patch them without blaming the frontend.
+        let stranded: HashSet<BasicBlockIdx> = self
+            .label_blocks
+            .values()
+            .copied()
+            .filter(|blidx| !self.walked_label_blocks.contains(blidx))
+            .collect();
+        let body_holds_recovery = body_node.has_error();
+        if body_holds_recovery && !stranded.is_empty() {
+            self.report_unanalyzed_recovery(func_name)?;
+        }
+        finalize_terminators(program, fidx, func_name, &stranded, body_holds_recovery)?;
         Ok(())
     }
 
