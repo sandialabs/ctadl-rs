@@ -1518,6 +1518,153 @@ fn error_on_ast_promotes_source_problem() {
 }
 
 #[test_log::test]
+fn bare_block_then_statement_recovers() {
+    // Regression for the CFG-wiring bug that aborted dropbear's `svr_dropbear_exit`
+    // import. A bare compound block `{ ... }` written as a statement makes the
+    // end-of-compound link install an *implicit `return`* on the enclosing block
+    // when that block's continuation is the fall-off-the-end sentinel (`None`).
+    // The next statement in the same body then tries to add a fall-through edge
+    // out of a block that already returns -- which used to be a hard ingestion
+    // error. It now drops the redundant edge and recovers, so the function still
+    // lowers. This is the minimal trigger: a bare block followed by any further
+    // statement (an `if` here, matching dropbear). Skips under CTADL_ERROR_ON_AST,
+    // which restores the hard error (see `error_on_ast_promotes_bare_block_edge`).
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void f(void) {
+            { h(); }
+            if (c) { k(); }
+        }";
+    // program_from_string asserts the recovered CFG is well-formed -- no block is
+    // left without a terminator -- and that tree-sitter saw no syntax error.
+    let prog = program_from_string(src).0;
+    assert!(
+        function_named(&prog, "f").is_some(),
+        "recovered program should still define f\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn svr_dropbear_exit_shape_recovers() {
+    // The reduced shape of dropbear's `svr_dropbear_exit`, the function this bug
+    // was found on: an if / else-if / else chain, then a bare `{ }` block (the
+    // remnant of a compiled-out `#if DROPBEAR_VFORK` that had guarded a lone
+    // `{ session_cleanup(); }`), then a trailing `if` (`if (svr_opts.hostkey)`).
+    // The bare-block-then-if pair is what actually triggers the wiring bug -- not,
+    // despite first appearances, the returning arms of the chain. Must recover and
+    // still lower the function.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void svr_dropbear_exit(int exitcode) {
+            int add_delay = 0;
+            if (early) { log(1); }
+            else if (authed) { log(2); }
+            else { log(3); add_delay = 1; }
+            { session_cleanup(); }
+            if (hostkey) { free_key(hostkey); }
+        }";
+    let prog = program_from_string(src).0;
+    assert!(
+        function_named(&prog, "svr_dropbear_exit").is_some(),
+        "recovered program should still define svr_dropbear_exit\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_bare_block_edge() {
+    // Strict side of the switch: under CTADL_ERROR_ON_AST the recovered
+    // continuation edge out of an already-returning block is a hard ingestion
+    // error again, exactly as before the demotion to a warning.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        void f(void) {
+            { h(); }
+            if (c) { k(); }
+        }";
+    let err = super::parse_c_program(src)
+        .expect_err("strict mode must reject the continuation-into-return edge");
+    assert!(
+        err.to_string()
+            .contains("continuation edge into a block that already returns"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
+fn goto_label_after_return_lowers() {
+    // A goto label that sits after a diverging statement: `walk_compound_statement`
+    // stops at the `return`, so the pre-created `out:` block is never walked (its
+    // statements are dropped) yet stays reachable through the `goto` edge. The
+    // frontend must give it an implicit empty `return` (`finalize_terminators`)
+    // because the IR does not tolerate a terminator-less block anywhere. This is
+    // the shape that aborted real dropbear imports. Skips under
+    // CTADL_ERROR_ON_AST, where the sweep's report is a hard error instead (see
+    // `error_on_ast_promotes_unterminated_block`).
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void f(void) {
+            if (c) goto out;
+            return;
+        out:
+            cleanup();
+        }";
+    // program_from_string asserts no `<no terminator>` block survives.
+    let prog = program_from_string(src).0;
+    assert!(
+        function_named(&prog, "f").is_some(),
+        "patched program should still define f\n{prog}"
+    );
+    // End-to-end through verify() + SSA + codegen: the patched CFG satisfies the
+    // basic-block contract with no tolerance on the ctadl-ir side.
+    get_summary(prog).expect("patched CFG must verify and index");
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_unterminated_block() {
+    // Strict side of the sweep: under CTADL_ERROR_ON_AST a block the walk never
+    // terminated (its statements were dropped) is a hard ingestion error.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        void f(void) {
+            if (c) goto out;
+            return;
+        out:
+            cleanup();
+        }";
+    let err =
+        super::parse_c_program(src).expect_err("strict mode must reject the dropped label body");
+    assert!(
+        err.to_string().contains("without a terminator"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
+fn duplicate_label_orphan_block_terminated() {
+    // Duplicate label names: `collect_labels` pre-creates two blocks, `label_blocks`
+    // keeps only the second, and the first is orphaned -- unreachable AND
+    // unterminated. `is_connected` never visits it, but `verify()` rejects any
+    // block without a terminator regardless of reachability, so the sweep must
+    // patch orphans too.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void f(void) {
+            goto l;
+        l:  a();
+        l:  b();
+        }";
+    get_summary(program_from_string(src).0).expect("orphaned label block must get a terminator");
+}
+
+#[test_log::test]
 fn compound_assign_accumulates() {
     // Compound assignment (`y += b`) is an accumulate, not an overwrite: it lowers to `y = b + y`,
     // keeping the prior value of `y` *and* mixing in the new one. With `y` seeded from param 0 and
@@ -2306,9 +2453,9 @@ fn vararg_call_carries_argument() {
     check_has_direct_call(&prog, "f", "printf");
     // `@p0` is a parameter reference, so it resolves without consulting any local-name table.
     let src_exp = exp_from_str("@p0", &ctadl_ir::Locals::default());
-    let carries_src = direct_calls_in(&prog, "f").iter().any(|(callees, args)| {
-        callees.iter().any(|c| c == "printf") && args.iter().any(|a| *a == src_exp)
-    });
+    let carries_src = direct_calls_in(&prog, "f")
+        .iter()
+        .any(|(callees, args)| callees.iter().any(|c| c == "printf") && args.contains(&src_exp));
     assert!(
         carries_src,
         "expected @p0 to appear as an argument of the printf call\n{prog}"
