@@ -1,8 +1,39 @@
-//! This module handles the Tree-sitter AST extraction for C files.
+//! Tree-sitter AST extraction and IR lowering for the **C family**.
 //!
-//! It is responsible for parsing C source code (POST PREPROCESSOR)
+//! This module is the lowering core. It parses source (POST PREPROCESSOR) and lowers it to the
+//! IR, and it is *grammar-parameterized* rather than C-only: both frontends run this same code.
+//! There are two entry points.
+//!
+//! - [`parse_c_program`] (here) drives it with the C grammar. This is the production frontend.
+//! - `cpp::parse_cpp_program` drives it with the C++ grammar. This is **experimental** and may
+//!   not survive; nothing in the C path should be complicated to accommodate it.
+//!
+//! # How the two share this code
+//!
+//! The core contains **no language branches**. Where the two grammars genuinely diverge, the
+//! difference is reached through `GrammarHooks` — a table of plain `fn` pointers installed on
+//! the `Context`. `GrammarHooks::C` is the default and defines the C behavior; `cpp.rs`
+//! overrides it with `cpp::CPP_HOOKS`. Two kinds of hook live there:
+//!
+//! - **Node-shape adapters** for the same construct spelled differently (`condition_expr` for
+//!   C++'s `condition_clause` wrapper, `subscript_index` for its `subscript_argument_list`,
+//!   `param_query` for the C++-only `reference_declarator`).
+//! - **Emission hooks** for constructs C does not have at all (`construct`, `delete_expr`,
+//!   `scope_exit`, `ctor_prologue`, `collect_aux`, `collect_overloads`). Every one of these is a
+//!   **no-op** in `GrammarHooks::C`, and the C++ implementations live in `cpp.rs` — so reading
+//!   the C path means reading this file plus a set of no-ops.
+//!
+//! The core does carry some state that only C++ populates (`Context::classes`,
+//! `subclasses`, `dtor_frames`, `overloads`, `local_types`, `reference_aliases`). Those maps are
+//! empty on the C path, so every lookup simply misses and the C lowering is unchanged. That is
+//! the one place the experiment is visible here; it is data, never a branch.
+//!
+//! Note the directory name is historical: `tree_sitter_c/` hosts both grammars, not just C.
 //!
 //! # Known Limitations
+//!
+//! These are limitations of the C lowering. For the C++ frontend's own gaps (templates,
+//! multiple inheritance, exception-path destructors, and more), see `cpp.rs`.
 //!
 //!
 //! ## Initialialization in `if(int x = 0; x > 7)`
@@ -789,6 +820,20 @@ struct GrammarHooks {
     /// with the object itself as the arg-0 (`ByRef`) receiver. The frame is empty for C, so this is
     /// inert on the C path. No language branch: driven by the neutral `classes`/`dtor_frames` state.
     scope_exit: for<'a> fn(&mut Context<'a>, &mut Program, &ScopeView) -> anyhow::Result<(), Error>,
+    /// Emit whatever a function's *prologue* contributes before its body is walked. C has
+    /// nothing there, so its hook is a **no-op**. C++ uses it for a constructor's
+    /// member-initializer list (`Box(int x) : v(x)`), lowering each `member(expr)` to a
+    /// `this.<member> = <expr>` store in initialization order. The pairs are gathered by the
+    /// C++ discovery hook and handed straight back here, so the shared core neither builds nor
+    /// interprets them — it only decides *when* the prologue runs. Always empty for a free
+    /// function and for C, so nothing is emitted on the C path.
+    ctor_prologue: for<'a, 't> fn(
+        &mut Context<'a>,
+        &mut Program,
+        &ScopeView,
+        &str,
+        &[(String, Node<'t>)],
+    ) -> anyhow::Result<(), Error>,
 }
 
 impl GrammarHooks {
@@ -813,6 +858,9 @@ impl GrammarHooks {
         // C constructs no class objects, so every destructor frame is empty and no scope exits ever
         // emit a destructor — a no-op, exactly as before spec 017.
         scope_exit: |_ctx, _program, _scope_view| Ok(()),
+        // C has no constructors, so no function has a prologue to emit — a no-op, and the
+        // slice handed to it is always empty on the C path anyway.
+        ctor_prologue: |_ctx, _program, _scope_view, _source, _inits| Ok(()),
         // The historical C parameter query, verbatim: plain, pointer (`@is_ref`), array
         // (`@is_ref`), and function-pointer declarators. C has no `reference_declarator`.
         param_query: r#"
@@ -4217,12 +4265,11 @@ impl<'a> Context<'a> {
     /// `func_name` is the IR name and the resolution key — a free function's bare name, a method's
     /// qualified `Class::method`, or a static method's likewise-qualified `Class::method`.
     ///
-    /// `member_inits` carries a C++ constructor's member-initializer list (`Box(int x) : v(x)`)
-    /// as neutral `(member-name, init-expression-node)` pairs gathered by the C++ discovery
-    /// hook; each is emitted as `this.<member> = <init-expr>` *before* the body (matching C++
-    /// initialization order), reusing the same `this`-by-ref write that a body assignment
-    /// `v = x` produces. It is always empty for a free function and for C, so nothing is
-    /// emitted there.
+    /// `member_inits` is opaque prologue data: `(name, expression-node)` pairs that the caller
+    /// gathered and that this function only forwards to the `ctor_prologue` hook, which decides
+    /// what they mean and what to emit. Empty for every free function and for all of C, whose
+    /// hook is a no-op. (C++ passes a constructor's member-initializer list; see
+    /// `cpp::cpp_emit_member_inits`.)
     #[allow(clippy::too_many_arguments)]
     fn lower_function(
         &mut self,
@@ -4339,22 +4386,11 @@ impl<'a> Context<'a> {
             self.label_blocks.insert(label, label_block.blidx);
         }
 
-        // A C++ constructor's member-initializer list runs before the body. Each
-        // `member(expr)` becomes `this.<member> = <expr>`: the target is `@p0.<member>`
-        // (built directly so a parameter that shadows the member — `Box(int v) : v(v)` —
-        // does not redirect the *left* side away from `this`), and the init expression is
-        // flattened with the shared expression lowering (so a param reference resolves to
-        // its `@pN`). Empty for every free function and for C, so nothing is emitted there.
-        for (member, init_expr) in member_inits {
-            // `this.<member>`: a symbolic field on parameter 0, which the offset-only IR
-            // expresses as a store, so it is threaded as a `RawPath`.
-            let target = RawPath::new(
-                VariableRef::new_parameter(0u32.into()),
-                ctadl_ir::thin_vec![PathSegment::symbol(member.as_str())],
-            );
-            let val = self.flatten_expr(program, *init_expr, source, &block_scope_view)?;
-            self.add_assign_to_program(program, &block_scope_view, &target, &val, None);
-        }
+        // Whatever the language puts in a function's prologue, emitted before the body. C has
+        // nothing; C++ has a constructor's member-initializer list. What that means is the
+        // hook's business — the core only fixes the point at which it runs.
+        let ctor_prologue = self.hooks.ctor_prologue;
+        ctor_prologue(self, program, &block_scope_view, source, member_inits)?;
 
         self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
         // Every block must carry a terminator; the walk can leave one without (an orphaned

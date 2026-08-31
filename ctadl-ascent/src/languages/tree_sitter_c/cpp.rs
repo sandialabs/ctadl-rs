@@ -22,13 +22,13 @@
 //! templates, …) are later milestones and may still error.
 
 use ctadl_ir::mir::{CallEdges, CallStyle, Exp, Program, Statement, StatementKind, VariableRef};
-use ctadl_ir::{ThinVec, thin_vec};
+use ctadl_ir::{PathSegment, ThinVec, thin_vec};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, QueryCursor};
 
 use super::{
-    ClassInfo, Context, GrammarHooks, MatchExtractor, ScopeView, VarKind, declarator_leaf_ident,
-    is_class_member_definition, markup, param_arity, to_str,
+    ClassInfo, Context, GrammarHooks, MatchExtractor, RawPath, ScopeView, VarKind,
+    declarator_leaf_ident, is_class_member_definition, markup, param_arity, to_str,
 };
 use crate::error::Error;
 
@@ -1496,6 +1496,37 @@ fn cpp_scope_exit<'a>(
     Ok(())
 }
 
+/// The C++ `ctor_prologue` hook: lower a constructor's **member-initializer list** into the
+/// stores it stands for, before the body runs (C++ initialization order).
+///
+/// Each `member(expr)` becomes `this.<member> = <expr>`. The target is built directly as
+/// `@p0.<member>` rather than resolved by name, so a parameter that shadows the member
+/// (`Box(int v) : v(v)`) cannot redirect the *left* side away from `this` — only the right side
+/// goes through the shared expression lowering, where `v` correctly resolves to the parameter
+/// `@pN`. `this` is parameter 0, installed by `lower_function` for every instance method and
+/// constructor, and the symbolic `<member>` field makes this a store in the offset-only IR,
+/// hence the `RawPath`.
+///
+/// The pairs come from `ctor_member_inits`, which reads them off the constructor definition
+/// during method discovery; a non-constructor gets an empty slice and emits nothing.
+fn cpp_emit_member_inits(
+    ctx: &mut Context<'_>,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    source: &str,
+    member_inits: &[(String, Node<'_>)],
+) -> anyhow::Result<(), Error> {
+    for (member, init_expr) in member_inits {
+        let target = RawPath::new(
+            VariableRef::new_parameter(0u32.into()),
+            thin_vec![PathSegment::symbol(member.as_str())],
+        );
+        let val = ctx.flatten_expr(program, *init_expr, source, scope_view)?;
+        ctx.add_assign_to_program(program, scope_view, &target, &val, None);
+    }
+    Ok(())
+}
+
 /// The C++ grammar-shape adapters installed on the lowering [`Context`]. The first two
 /// bridge the only C-subset node-shape divergences between the two grammars (per the
 /// spec-002 triage); [`cpp_collect_methods`] adds C++ instance-method/constructor discovery,
@@ -1522,6 +1553,10 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     // exact-type `DirectCall`, reverse construction order). Driven by the neutral `dtor_frames`
     // stack (empty for C), so no scope ever emits a destructor on the C path.
     scope_exit: cpp_scope_exit,
+    // Emit a constructor's member-initializer list (`Box(int x) : v(x)`) as `this.<member> =
+    // <expr>` stores, before the body. Empty for every non-constructor, so the hook is inert
+    // outside constructors and never fires on the C path.
+    ctor_prologue: cpp_emit_member_inits,
     // The C declarator shapes plus the C++-only `reference_declarator` (`T& r`), captured
     // `@is_ref_cpp`. The shared classifier maps a non-const reference to `ByRef` (write-back)
     // and a `const T&` to `ByVal` (inbound only), reading the grammar-neutral `const`
