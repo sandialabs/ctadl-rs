@@ -3493,80 +3493,110 @@ impl<'a> Context<'a> {
             let body_node = extract.get("body")?;
             //debug_print_tree(body_node, 0, None, Some(50));
             let func_name = to_str(&func_name_node, source);
-            self.allocator.reset();
-            let fidx = *self
-                .functions
-                .entry(FunctionName(func_name))
-                .or_insert_with(|| program.new_function());
-
-            let fdat = &mut program.functions[fidx];
-            fdat.name = func_name.to_string();
-
-            //return type, remember C can have an implicit int return type. boo
-            let ret_ct = if let Some(rt) = return_type
-                && to_str(&rt, source).eq_ignore_ascii_case("void")
-            {
-                0
-            } else {
-                1
-            };
-
-            fdat.set_return_type(ReturnType { arity: ret_ct });
-            let scope_name = format!("{}.params", func_name);
-            let blidx = fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
-            let param_sidx = self.scope_tree.add_scope(scope_name, Some(global_sidx));
-            let para_scope_view = ScopeView {
-                func_name: func_name.to_string(),
-                fidx,
-                blidx,
-                sidx: param_sidx,
-                continuation_blidx: None,
-                break_target: None,
-                continue_target: None,
-                explainer: "params".to_string(),
-            };
-
-            let body_name = format!("{}.body", func_name);
-            self.collect_params(source, &param_list, fdat, func_name, &para_scope_view)?;
-
-            //we have to build this one by hand, becuase we want the initial scope without the extra block
-            let block_scope = self.scope_tree.add_scope(body_name, Some(param_sidx));
-            let block_scope_view = ScopeView {
-                func_name: func_name.to_string(),
-                fidx,
-                blidx,
-                sidx: block_scope,
-                continuation_blidx: None,
-                break_target: None,
-                continue_target: None,
-                explainer: "initial_block".to_string(),
-            };
-            self.scope_tree.blocks.push(block_scope_view.clone());
-            let cp = CompoundProxy::from_node(body_node);
-
-            // Pre-create a block for every `goto` label in this function so forward
-            // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
-            self.label_blocks.clear();
-            // Address-of aliases are function-local and confined to a straight-line block.
-            self.addr_alias.clear();
-            // Union-typed locals are function-scoped.
-            self.union_vars.clear();
-            let mut labels = Vec::new();
-            collect_labels(body_node, source, &mut labels);
-            for label in labels {
-                let label_block = add_block(
-                    program,
-                    &block_scope_view,
-                    &mut self.scope_tree,
-                    false,
-                    &format!("label:{label}"),
-                )?;
-                self.label_blocks.insert(label, label_block.blidx);
-            }
-
-            self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
-            finalize_terminators(program, fidx, func_name)?;
+            self.lower_function(
+                source,
+                program,
+                global_sidx,
+                func_name,
+                return_type,
+                param_list,
+                body_node,
+            )?;
         }
+        Ok(())
+    }
+
+    /// Lower one `function_definition` into its IR function: register the name, set the return
+    /// arity, build the parameter and body scopes, pre-create a block per `goto` label, walk the
+    /// body, and finalize terminators.
+    ///
+    /// Split out of [`Context::collect_functions`] so the per-function lowering is one named unit
+    /// rather than an 80-line loop body. That keeps the query/dispatch loop readable, and it is
+    /// what lets a change in here be reviewed (and merged) as a diff against a function instead of
+    /// against an anonymous block.
+    fn lower_function(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        global_sidx: usize,
+        func_name: &'a str,
+        return_type: Option<Node<'_>>,
+        param_list: Node<'_>,
+        body_node: Node<'_>,
+    ) -> anyhow::Result<(), Error> {
+        self.allocator.reset();
+        let fidx = *self
+            .functions
+            .entry(FunctionName(func_name))
+            .or_insert_with(|| program.new_function());
+
+        let fdat = &mut program.functions[fidx];
+        fdat.name = func_name.to_string();
+
+        //return type, remember C can have an implicit int return type. boo
+        let ret_ct = if let Some(rt) = return_type
+            && to_str(&rt, source).eq_ignore_ascii_case("void")
+        {
+            0
+        } else {
+            1
+        };
+
+        fdat.set_return_type(ReturnType { arity: ret_ct });
+        let scope_name = format!("{}.params", func_name);
+        let blidx = fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
+        let param_sidx = self.scope_tree.add_scope(scope_name, Some(global_sidx));
+        let para_scope_view = ScopeView {
+            func_name: func_name.to_string(),
+            fidx,
+            blidx,
+            sidx: param_sidx,
+            continuation_blidx: None,
+            break_target: None,
+            continue_target: None,
+            explainer: "params".to_string(),
+        };
+
+        let body_name = format!("{}.body", func_name);
+        self.collect_params(source, &param_list, fdat, func_name, &para_scope_view)?;
+
+        //we have to build this one by hand, becuase we want the initial scope without the extra block
+        let block_scope = self.scope_tree.add_scope(body_name, Some(param_sidx));
+        let block_scope_view = ScopeView {
+            func_name: func_name.to_string(),
+            fidx,
+            blidx,
+            sidx: block_scope,
+            continuation_blidx: None,
+            break_target: None,
+            continue_target: None,
+            explainer: "initial_block".to_string(),
+        };
+        self.scope_tree.blocks.push(block_scope_view.clone());
+        let cp = CompoundProxy::from_node(body_node);
+
+        // Pre-create a block for every `goto` label in this function so forward
+        // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
+        self.label_blocks.clear();
+        // Address-of aliases are function-local and confined to a straight-line block.
+        self.addr_alias.clear();
+        // Union-typed locals are function-scoped.
+        self.union_vars.clear();
+        let mut labels = Vec::new();
+        collect_labels(body_node, source, &mut labels);
+        for label in labels {
+            let label_block = add_block(
+                program,
+                &block_scope_view,
+                &mut self.scope_tree,
+                false,
+                &format!("label:{label}"),
+            )?;
+            self.label_blocks.insert(label, label_block.blidx);
+        }
+
+        self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
+        finalize_terminators(program, fidx, func_name)?;
         Ok(())
     }
 
