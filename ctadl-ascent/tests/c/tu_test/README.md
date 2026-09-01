@@ -1,14 +1,18 @@
 # tu_test -- does importing one translation unit at a time lose taint?
 
-`read_c_source` imports a directory as **one buffer**: every `.h` and `.c` under it,
+`import_c` used to import a directory as **one buffer**: every `.h` and `.c` under it,
 concatenated, parsed once. The justification was whole-program linking for free -- a call
 in `a.c` to `g` defined in `b.c` resolves to `g`'s body because one parse holds both. This
-directory tests whether that is actually needed, by importing the same two translation
+directory tested whether that was actually needed, by importing the same two translation
 units two ways and querying the same source/sink model against each:
 
-* **big**: `ctadl import -l c tu_test/` -- `a.c` and `b.c` concatenated.
+* **big**: `ctadl import -l c tu_test/` -- the directory as one import.
 * **per-TU**: `ctadl import -l c a.c`, `ctadl import -l c b.c` -- two imports, then
   `ctadl index tu tu_a tu_b` co-indexes them as one project.
+
+It was not needed (below), and the concatenation is gone: a directory import now parses
+each file as a translation unit of its own and lowers them all into one program
+(`lower_units`). `run.sh` stays as the regression check that the two ways agree.
 
 Each `.c` is written as its *preprocessed* form would be: the prototypes a header would
 have supplied are inlined at the top, so each file is a complete translation unit and
@@ -27,7 +31,7 @@ One sink name per case, so a SARIF result's `sinkFunctions` names the case it ca
 | `sink_global` | a **store to a file-scope object**, `shared`, written in a.c and read in b.c |
 | `sink_reverse` | an argument in the other direction: b.c calls `k`, defined in a.c |
 
-## Result
+## Result (as first measured, on the concatenating importer)
 
 ```
 case          big buffer    per-TU

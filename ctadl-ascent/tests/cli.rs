@@ -122,7 +122,7 @@ fn test_cli_import_c_file() {
 }
 
 /// Importing a directory of C sources and headers parses every `.c`/`.h` file
-/// underneath it as one translation unit.
+/// underneath it as a translation unit of its own and lowers them into one program.
 #[test]
 fn test_cli_import_c_directory() {
     run_store_test(|| {

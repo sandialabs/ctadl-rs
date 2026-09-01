@@ -1323,7 +1323,7 @@ fn taint_flows_through_indirect_call_separate_assign() {
 #[test_log::test]
 fn taint_flows_through_indirect_call_forward_decl() {
     // The referenced function is defined AFTER its use as a function pointer. Relies on
-    // the function-name pre-pass in collect_functions so `later` is already known when
+    // the function-name pre-pass in `lower_units` so `later` is already known when
     // `wrap`'s body is lowered.
     let src = r"
         int wrap(int a, int b) {
@@ -1855,7 +1855,7 @@ fn duplicate_label_orphan_block_terminated() {
 }
 
 // ---------------------------------------------------------------------------------------
-// Labels the walk cannot reach (spec 066). `collect_functions` pre-creates a basic block for
+// Labels the walk cannot reach (spec 066). `lower_function` pre-creates a basic block for
 // every label `collect_labels` finds anywhere under the body, so that a forward `goto L`
 // resolves. A block pre-created for a label the walk never enters is an empty orphan, and
 // `finalize_terminators` used to patch it and report `N block(s) left without a terminator` --
@@ -1897,7 +1897,7 @@ fn label_in_an_unevaluated_sizeof_operand_strands_no_block() {
 
 #[test_log::test]
 fn a_nested_functions_label_is_not_the_enclosing_functions() {
-    // A label's scope in C is the function containing it, and `collect_functions` queries the
+    // A label's scope in C is the function containing it, and `lower_definitions` queries the
     // whole tree -- so the nested definition is lowered as a function of its own, with its own
     // label block, walked there. Pre-creating a second block for it in the *enclosing*
     // function left an orphan and reported `f` as having dropped statements it never had.
@@ -3893,7 +3893,7 @@ fn declarations_after_a_parse_error_are_not_reported_as_expressions() {
 
 #[test_log::test]
 fn declarations_after_a_parse_error_still_import() {
-    // Suppressing the *warning* must not suppress the *code*. `collect_functions` queries the
+    // Suppressing the *warning* must not suppress the *code*. `lower_definitions` queries the
     // whole tree, so a function the recovery re-parented into another function's body is
     // still collected and lowered -- which is why the kernel corpus imports 12k functions
     // despite a parse error in every TU. Pinned so a future "skip the region" optimisation
@@ -4275,7 +4275,7 @@ fn a_named_global_still_lowers_to_a_symbolic_field() {
 // ---------------------------------------------------------------------------------------
 // Implicit returns and the return-arity contract (spec 090).
 //
-// `collect_functions` gives every function whose declared return type is not `void` a
+// `lower_function` gives every function whose declared return type is not `void` a
 // `ReturnType` of arity 1, and `verify()` rejects a `Return` carrying a different number of
 // arguments, so the *empty* return the frontend synthesizes is only well-formed in a `void`
 // function. Three call sites emitted it regardless -- `link_blocks` (falling off the end of
@@ -4349,8 +4349,8 @@ fn implicit_return_in_a_void_function_is_still_empty() {
 // ---------------------------------------------------------------------------------------
 // One name, several definitions (spec 120).
 //
-// `import_c` concatenates a directory into ONE buffer, so definitions C keeps apart meet in a
-// single namespace: a `static` helper is scoped to its own file, and a header's `static
+// `import_c` lowers every translation unit under a directory into ONE program, whose function
+// table is a single namespace, so definitions C keeps apart meet in it: a `static` helper is scoped to its own file, and a header's `static
 // inline` becomes one definition per translation unit that included it. Keying the function
 // table on the name alone lowered all of them into ONE `FunctionData` -- 137,596 of the Linux
 // corpus's 148,001 definitions are repeats of this kind, 1,294 of nginx's 2,308, and openssh
@@ -4741,7 +4741,7 @@ fn a_null_pointer_constant_is_still_a_constant_value() {
 // ---------------------------------------------------------------------------------------
 // A definition that returns a pointer (spec 130).
 //
-// `collect_functions` matched `function_definition > declarator: (function_declarator ...)`,
+// The definition query matched `function_definition > declarator: (function_declarator ...)`,
 // and tree-sitter-c wraps that `function_declarator` in one `pointer_declarator` per `*`. So
 // no definition returning a pointer ever matched: its body was never walked, its parameters
 // were never bound, and its return arity stayed 0 -- with no warning of any attribution, which

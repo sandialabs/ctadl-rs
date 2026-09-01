@@ -61,10 +61,10 @@ pub(crate) fn program_from_string(src: &str) -> (Program, String) {
     (result.0, result.2)
 }
 
-/* Compile several named files as ONE translation unit -- what `import_c` does with a
-directory, and the only way to write a test whose answer depends on which FILE a
-construct came from (`program_from_string` parses a buffer with no files in it). This
-goes through the import path, so the program also carries the extern stubs
+/* Lower several named files, each a translation unit of its own, into ONE program -- what
+`import_c` does with a directory, and the only way to write a test whose answer depends on
+which FILE a construct came from (`program_from_string` parses one unit with no file to
+name). This goes through the import path, so the program also carries the extern stubs
 `define_extern_functions` creates. */
 pub(crate) fn program_from_files(files: &[(&str, &str)]) -> (Program, String) {
     let owned: Vec<(String, String)> = files

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Import the same two translation units two ways and compare the taint results.
 #
-#   big:  `ctadl import -l c <dir>`  -- one buffer, a.c and b.c concatenated (read_c_source)
+#   big:  `ctadl import -l c <dir>`  -- the directory as one import (once one concatenated
+#         buffer; now one program lowered from each file as its own translation unit)
 #   tu:   `ctadl import -l c a.c` and `... b.c` as two imports, co-indexed as one project
 #
 # usage: tests/c/tu_test/run.sh [path/to/ctadl]
