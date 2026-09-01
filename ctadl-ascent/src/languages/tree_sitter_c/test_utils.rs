@@ -1,9 +1,3 @@
-// `test_utils` is included as an unconditional `mod` (not `#[cfg(test)]`), so in non-test builds
-// these helpers have no callers and trip `dead_code` under `-D warnings`. Allowing it here keeps
-// `cargo clippy -- -D warnings` green. Cleaner fix when someone can touch mod.rs: make the
-// declaration `#[cfg(test)] mod test_utils;` and drop this allow.
-#![allow(dead_code)]
-
 use crate::error::Error;
 use crate::facts as fx;
 
@@ -13,7 +7,7 @@ use crate::{
     codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program},
     languages::tree_sitter_c,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 // `DirectedGraph`/`Successors` are trait imports: they provide `num_nodes()` (used by
 // `check_block_count`) and `successors()` (used by `check_successors`). They look unused but
 // removing them breaks method resolution.
@@ -32,16 +26,6 @@ pub(crate) fn init_test_logging() {
         .filter_level(log::LevelFilter::Debug) // This forces it to Debug
         .is_test(true)
         .try_init();
-}
-
-pub(crate) fn get_full_path(filename: &str) -> Result<std::path::PathBuf> {
-    let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
-    // Now just append the folders from the crate root
-    path.push("tests");
-    path.push("c");
-    path.push(filename);
-    Ok(path)
 }
 
 /* Compile a program from a string. */
@@ -79,17 +63,6 @@ pub(crate) fn program_from_files(files: &[(&str, &str)]) -> (Program, String) {
         "Parsed IR contains a block with no terminator:\n{dump}"
     );
     (program, dump)
-}
-
-/* Compile a program from a file. */
-pub(crate) fn program_from_file<P: AsRef<std::path::Path>>(filename: P) -> Result<Program> {
-    let path = filename.as_ref();
-
-    // Read the file, and if it fails, attach a helpful message before returning
-    let contents = source_info::read_source(path)
-        .with_context(|| format!("Failed to load source file: {}", path.display()))?;
-    let program = tree_sitter_c::parse_c_program(&contents)?;
-    Ok(program.0)
 }
 
 /* Common output for when tests fail. */
@@ -321,25 +294,6 @@ pub(crate) fn check_successors(prog: &Program, block: usize, expected: &[usize])
 }
 
 // A debugging aid for inspecting parsed blocks.
-/* Diagnostic helper: logs all basic blocks of the first function in `prog` at INFO level. Not a
-test assertion -- use it temporarily when debugging a failing CFG test to inspect the block
-structure the lowering actually produced. Typical usage:
-
-    debug_output_blocks(&prog);  // add to the failing test body
-    // then run:  RUST_LOG=info cargo test -p ctadl-ascent <test_name> -- --nocapture
-
-Only covers the first function; for multi-function programs extend this or use
-`function_named` + iterate `fun.blocks` directly. Remove the call before committing. */
-pub(crate) fn debug_output_blocks(prog: &Program) {
-    let Some(fun) = prog.functions.functions.raw.first() else {
-        log::warn!("No functions in program");
-        return;
-    };
-    for (idx, block) in fun.blocks.iter().enumerate() {
-        log::debug!("BLOCK {}: {}", idx, block);
-    }
-}
-
 /// Parses the access-path tail of a DSL string with the one canonical grammar
 /// ([`ctadl_ir::mir::path_syntax`]), so a fixture means exactly what the same text means in a
 /// model port, a `.flowy` file, or a fact column.
@@ -699,17 +653,6 @@ pub(crate) fn index_program(
     (facts, source_info, result.assign_like)
 }
 
-/* Predicate: returns `true` iff the summary slice contains exactly `count` flow records. This is
-the raw predicate underlying `check_summary_count` (which panics with a diff on mismatch); prefer
-that for standalone assertions. Use `summary_count` for composition -- e.g. asserting an exact
-edge count alongside other conditions in a single expression, or building a custom assertion that
-needs the boolean value rather than a panic. Example future use: a precision test that asserts a
-specific lowering produces *exactly* N edges (no more), guarding against over-approximation that
-inflates the summary. */
-pub(crate) fn summary_count(summary: &[FunctionSummary], count: usize) -> bool {
-    summary.len() == count
-}
-
 /* Searches a summary slice for a specific flow edge, scanning records across ALL functions in the
 summary (matches if *any* function has the edge). Several tests rely on this: they build a
 multi-function fixture and disambiguate by choosing a (param-index, path) endpoint only one
@@ -737,14 +680,6 @@ pub(crate) fn summary_search(
             && r.3 == fx::FormalIndex::new(from_index)
             && r.4 == from_path
     })
-}
-
-pub(crate) fn summary_returns_param(
-    summary: &[FunctionSummary],
-    param_num: i16,
-    param_path: &str,
-) -> bool {
-    summary_search(summary, param_num, param_path, RETURN_INDEX, "")
 }
 
 // Renders a summary endpoint for failure messages, e.g. `@p0.f1` or `return`.

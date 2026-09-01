@@ -22,6 +22,7 @@
 //! int bar(){
 //! return 1;
 //! }
+//! ```
 //!
 //! ## Non constant subscript indices
 //!
@@ -61,6 +62,7 @@
 //! int *baz(int *x){
 //! return x;
 //! }
+//! ```
 //!
 //! ## `asm goto`
 //!
@@ -90,7 +92,9 @@ use internment::ArcIntern;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor, QueryMatch, Tree};
 
+#[cfg(test)]
 mod test_utils;
+#[cfg(test)]
 mod testing_block_flow_ascii;
 
 #[cfg(test)]
@@ -100,7 +104,7 @@ mod tests;
 mod experimental_tests;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VarKind {
+enum VarKind {
     Global,
     Local,     // Standard local variable
     Parameter, // Function argument
@@ -134,31 +138,29 @@ enum BlockTypeRequest {
 
 // TODO_JDB: implement var type thing to accomodate parameters have extra *stuff*
 #[derive(Debug, Clone)]
-pub struct VarDecl {
+struct VarDecl {
     pub name: String,
     pub kind: VarKind,
-    pub param_idx: Option<usize>,
-    pub param_kind: Option<ParameterType>,
     pub shadows: bool, // this is set at creation time, because at the time of the declaration is when the shadowing occurs,
     // so assigns that have already happened will never ask about the variable again.  you will never add a VarDecl that doesn't shadow, and then later "upgrade it to shadow"
     pub sidx: usize,
 }
 
 #[derive(Debug)]
-pub struct ScopeBox {
+struct ScopeBox {
     pub scope_name: String,
     pub parent_idx: Option<usize>,
     pub variables: Vec<VarDecl>,
 }
 
 #[derive(Debug, Default)]
-pub struct ScopeTree {
+struct ScopeTree {
     pub scopes: Vec<ScopeBox>,
     pub blocks: Vec<ScopeView>,
 }
 
 impl ScopeTree {
-    pub fn add_scope(&mut self, name: String, parent: Option<usize>) -> usize {
+    fn add_scope(&mut self, name: String, parent: Option<usize>) -> usize {
         let new_scope = ScopeBox {
             scope_name: name,
             parent_idx: parent,
@@ -170,11 +172,11 @@ impl ScopeTree {
         index
     }
 
-    pub fn add_block(&mut self, scope_view: &ScopeView) {
+    fn add_block(&mut self, scope_view: &ScopeView) {
         self.blocks.push(scope_view.clone());
     }
 
-    pub fn get_explainers(blocks: &[ScopeView], target_func: &str, target_blidx: u32) -> String {
+    fn get_explainers(blocks: &[ScopeView], target_func: &str, target_blidx: u32) -> String {
         blocks
             .iter()
             // 1. Keep only the ones that match your criteria
@@ -187,7 +189,7 @@ impl ScopeTree {
     }
 
     // this returns just 'symbol' //name, or scope_name.sidx.var
-    pub fn to_string(&self, var: &VarDecl) -> String {
+    fn to_string(&self, var: &VarDecl) -> String {
         if var.shadows {
             if let Some(scope) = self.scopes.get(var.sidx) {
                 return format!("{}.{}.{}", scope.scope_name, var.sidx, var.name);
@@ -198,26 +200,12 @@ impl ScopeTree {
         var.name.to_string()
     }
 
-    pub fn add_variable(
-        &mut self,
-        sidx: usize,
-        symbol: String,
-        kind: VarKind,
-        param_idx: Option<usize>,
-        param_kind: Option<ParameterType>,
-    ) {
+    fn add_variable(&mut self, sidx: usize, symbol: String, kind: VarKind) {
         let shadows = self.find_variable(sidx, symbol.as_str()).is_some();
-        if kind == VarKind::Parameter {
-            //these optionals have gotten out of hand, i'll refactor this once scoping settles down
-            assert!(param_idx.is_some());
-            assert!(param_kind.is_some())
-        }
         if let Some(scope) = self.scopes.get_mut(sidx) {
             scope.variables.push(VarDecl {
                 name: symbol,
                 kind,
-                param_idx,
-                param_kind,
                 shadows,
                 sidx,
             });
@@ -226,7 +214,7 @@ impl ScopeTree {
         }
     }
 
-    pub fn find_variable(&self, start_idx: usize, target_name: &str) -> Option<&VarDecl> {
+    fn find_variable(&self, start_idx: usize, target_name: &str) -> Option<&VarDecl> {
         let mut current_idx = Some(start_idx);
 
         while let Some(idx) = current_idx {
@@ -246,13 +234,13 @@ impl ScopeTree {
 }
 
 // In order to unify logic around consequents and unbraced body nodes.
-pub struct CompoundProxy<'a> {
+struct CompoundProxy<'a> {
     pub nodes: Vec<Node<'a>>,
     pub was_compound: bool,
 }
 
 impl<'a> CompoundProxy<'a> {
-    pub fn from_node(body_node: Node<'a>) -> Self {
+    fn from_node(body_node: Node<'a>) -> Self {
         match body_node.kind() {
             // If it's a block, collect all the children inside the braces
             "compound_statement" => {
@@ -344,16 +332,6 @@ fn link_blocks(
     to_sv: &ScopeView,
     continuation: bool,
 ) -> Result<(), Error> {
-    /*
-        //from_sv.explainer == "2.if_continuation(of)::4" {
-        log::debug!(
-            "linking (continuation={},\n{:?} -> \n{:?}",
-            continuation,
-            from_sv,
-            to_sv
-        );
-    */
-
     let target_val = if continuation {
         match to_sv.continuation_blidx {
             Some(idx) => idx,
@@ -861,17 +839,17 @@ impl TranslationUnit {
     }
 }
 
-pub struct MatchExtractor<'q, 'cursor, 'tree> {
+struct MatchExtractor<'q, 'cursor, 'tree> {
     query: &'q Query,
     m: &'cursor QueryMatch<'cursor, 'tree>,
 }
 
 impl<'query, 'cursor, 'tree> MatchExtractor<'query, 'cursor, 'tree> {
-    pub fn new(query: &'query Query, m: &'cursor QueryMatch<'cursor, 'tree>) -> Self {
+    fn new(query: &'query Query, m: &'cursor QueryMatch<'cursor, 'tree>) -> Self {
         Self { query, m }
     }
 
-    pub fn get(&self, name: &str) -> Result<Node<'tree>, Error> {
+    fn get(&self, name: &str) -> Result<Node<'tree>, Error> {
         let r = self.get_opt(name);
         if let Some(result) = r {
             Ok(result)
@@ -882,7 +860,7 @@ impl<'query, 'cursor, 'tree> MatchExtractor<'query, 'cursor, 'tree> {
         }
     }
 
-    pub fn get_opt(&self, name: &str) -> Option<Node<'tree>> {
+    fn get_opt(&self, name: &str) -> Option<Node<'tree>> {
         self.m
             .captures
             .iter()
@@ -890,7 +868,7 @@ impl<'query, 'cursor, 'tree> MatchExtractor<'query, 'cursor, 'tree> {
             .map(|c| c.node)
     }
 }
-pub fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
+fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
     let mut result = String::with_capacity(ir_text.len() + 500); // Pre-allocate some space
     let mut current_func = String::new();
 
@@ -951,7 +929,7 @@ pub fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
 /// unit-test path, and a test that needs the stubs goes through [`parse_c_files`].
 pub fn parse_c_program(source: &str) -> anyhow::Result<(Program, bool, String), Error> {
     let units = [TranslationUnit::new(None, source.to_string())];
-    let lowered = lower_units(&units, false, false)?;
+    let lowered = lower_units(&units, false, false, true)?;
     Ok((lowered.program, lowered.has_error, lowered.marked_up))
 }
 
@@ -967,7 +945,7 @@ pub fn parse_c_files(files: &[(String, String)]) -> Result<(Program, String), Er
         .iter()
         .map(|(path, contents)| TranslationUnit::new(Some(path.clone()), contents.clone()))
         .collect();
-    let lowered = lower_units(&units, true, true)?;
+    let lowered = lower_units(&units, true, true, true)?;
     Ok((lowered.program, lowered.marked_up))
 }
 
@@ -984,7 +962,7 @@ pub fn parse_c_files(files: &[(String, String)]) -> Result<(Program, String), Er
 /// the `.c` files -- their preprocessed forms already contain it.
 pub fn import_c(path: &std::path::Path) -> Result<ProgramInfo, Error> {
     let units = read_c_units(path)?;
-    let lowered = lower_units(&units, true, true)?;
+    let lowered = lower_units(&units, true, true, false)?;
     if lowered.has_error {
         log::warn!(
             "tree-sitter reported syntax errors while parsing C source at '{}'; \
@@ -1008,7 +986,8 @@ struct Lowered {
     source_info: Option<source_info::SourceInfo>,
     /// Whether tree-sitter reported a syntax error in any unit.
     has_error: bool,
-    /// The IR dump with each block's scope explainer, for tests and the debug dump.
+    /// The IR dump with each block's scope explainer, when `dump` asked for it -- tests read
+    /// it; the import path does not, and a full render of a corpus is not free.
     marked_up: String,
 }
 
@@ -1027,10 +1006,12 @@ struct Lowered {
 /// With `record_spans`, every IR statement carries a span into its unit's file; with
 /// `extern_stubs`, called-but-undefined functions get an empty definition at the end so taint
 /// models can match them by name. The import path wants both; the unit-test path neither.
+/// With `dump`, the marked-up IR text is rendered too (tests read it; imports skip it).
 fn lower_units(
     units: &[TranslationUnit],
     record_spans: bool,
     extern_stubs: bool,
+    dump: bool,
 ) -> Result<Lowered, Error> {
     let mut parser = Parser::new();
     parser
@@ -1100,12 +1081,18 @@ fn lower_units(
         };
         ctx.toplevel(&unit.source, tree, &mut program, &query)?;
         builder = ctx.source_info.take();
-        views.append(&mut ctx.scope_tree.blocks);
+        if dump {
+            views.append(&mut ctx.scope_tree.blocks);
+        }
     }
     if extern_stubs {
         define_extern_functions(&mut program);
     }
-    let marked_up = inject_explainers_into_ir(&program.to_string(), &views);
+    let marked_up = if dump {
+        inject_explainers_into_ir(&program.to_string(), &views)
+    } else {
+        String::new()
+    };
     Ok(Lowered {
         program,
         source_info: builder.map(SourceInfoBuilder::finish),
@@ -1354,7 +1341,7 @@ fn collect_c_files(
     Ok(())
 }
 
-pub fn compile_query(query_src: &str) -> Query {
+fn compile_query(query_src: &str) -> Query {
     Query::new(&tree_sitter_c::LANGUAGE.into(), query_src).unwrap_or_else(|e| {
         let header = "--- Query Syntax Error ---";
         let snippet = query_src
@@ -1453,15 +1440,7 @@ fn record_member_slots(node: Node<'_>, source: &str) -> Option<Vec<MemberSlot>> 
         // is not an inline record, and recursing into a brace at its position with `Q`'s
         // layout would write a wrong path. A self-referential record is excluded for free,
         // since the recursive member is always a pointer.
-        let ty_tag = field_decl
-            .child_by_field_name("type")
-            .and_then(|ty| match ty.kind() {
-                "struct_specifier" | "union_specifier" | "class_specifier" => {
-                    ty.child_by_field_name("name").map(|n| to_str(&n, source))
-                }
-                "type_identifier" => Some(to_str(&ty, source)),
-                _ => None,
-            });
+        let ty_tag = declaration_type_tag(field_decl, source);
         let mut dcursor = field_decl.walk();
         for declarator in field_decl.children_by_field_name("declarator", &mut dcursor) {
             // `void set(int);` -- a method, not storage.
@@ -1645,10 +1624,7 @@ fn function_head(declarator: Node<'_>) -> Option<FunctionHead<'_>> {
 fn unparenthesize(node: Node<'_>) -> Option<Node<'_>> {
     let mut node = node;
     while node.kind() == "parenthesized_declarator" {
-        let mut cursor = node.walk();
-        node = node
-            .named_children(&mut cursor)
-            .find(|child| child.kind() != "comment")?;
+        node = first_named_child(node)?;
     }
     Some(node)
 }
@@ -1885,7 +1861,7 @@ fn define_extern_functions(program: &mut Program) {
 
 // This struct temporarily holds the specific book keeping needs of a function parse
 #[derive(Debug, Clone)]
-pub struct ScopeView {
+struct ScopeView {
     pub func_name: String,
     pub fidx: FunctionIdx,
     pub blidx: BasicBlockIdx,
@@ -2202,7 +2178,6 @@ impl<'a> Context<'a> {
     fn setup_compound<'b>(
         &mut self,
         program: &mut Program,
-        // scope_tree: &mut ScopeTree,
         scope_view: &mut ScopeView,
         node: Node<'b>,
         block_type: BlockTypeRequest, // is this a new execution block? or just scope?
@@ -2329,11 +2304,6 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
-    /// Lower a single statement, threading `scope_view` (so control-flow statements can
-    /// move the "current block" for following statements). Returns `true` if the
-    /// statement *diverged* — i.e. it terminated the current block with no fall-through
-    /// (`return`/`break`/`continue`, or a `labeled_statement` whose body diverges) — so
-    /// the enclosing compound should stop and skip its end-of-compound link.
     /// Intern a span for `node`'s byte range in this unit's file and return the [`SourceInfo`]
     /// pointing at it -- the default (no-span) `SourceInfo` when spans are not being recorded.
     fn span_for_node(&mut self, node: Node<'_>) -> SourceInfo {
@@ -2349,6 +2319,11 @@ impl<'a> Context<'a> {
         SourceInfo::new(builder.span_for(key.clone(), start as u32, SpanLen::ByteLen(len)))
     }
 
+    /// Lower a single statement, threading `scope_view` (so control-flow statements can
+    /// move the "current block" for following statements). Returns `true` if the
+    /// statement *diverged* — i.e. it terminated the current block with no fall-through
+    /// (`return`/`break`/`continue`, or a `labeled_statement` whose body diverges) — so
+    /// the enclosing compound should stop and skip its end-of-compound link.
     fn walk_statement(
         &mut self,
         source: &'a str,
@@ -2630,13 +2605,8 @@ impl<'a> Context<'a> {
                 }
             };
             let var_name = to_str(&decl_ident, source);
-            self.scope_tree.add_variable(
-                scope_view.sidx,
-                var_name.to_string(),
-                VarKind::Local,
-                None,
-                None,
-            );
+            self.scope_tree
+                .add_variable(scope_view.sidx, var_name.to_string(), VarKind::Local);
             // Mark a plainly-declared union variable so its member accesses collapse. Only a
             // bare identifier declarator is handled (pointer/array union declarators take the
             // `continue` path above and are left to the value-copy model).
@@ -2785,8 +2755,6 @@ impl<'a> Context<'a> {
         self.walk_compound_statement(source, program, &condition_scope, &condition_cp)?;
         //add 'sad edge'
         link_blocks(program, &condition_scope, &continuation, false)?;
-        //what is the difference between walk_compound_statemnet and walk_compound_statement?
-        body_scope.continuation_blidx = Some(update_scope.blidx);
         // `break` leaves the loop; `continue` jumps to the update expression (which
         // then re-tests the condition). Set on the body view so they ride into every
         // nested non-loop block and are restored after the loop.
@@ -3310,7 +3278,6 @@ impl<'a> Context<'a> {
         // formals as this function's, and a declarator shape it did not enumerate (`char **v`,
         // via `param_head`) took every later parameter down a slot with it.
         let mut cursor = param_list.walk();
-        let mut ctr = 0;
         for decl in param_list.named_children(&mut cursor) {
             // `...` is a `variadic_parameter`, not a formal (clang does not count it either);
             // an old-style `f(a, b)` list holds bare `identifier`s, whose types live in the
@@ -3341,8 +3308,6 @@ impl<'a> Context<'a> {
                         scope_view.sidx,
                         pn.to_string(),
                         VarKind::Parameter,
-                        Some(ctr),
-                        Some(param_type),
                     );
                 }
                 // An abstract declarator names nothing, so nothing in the body can read this
@@ -3352,7 +3317,6 @@ impl<'a> Context<'a> {
                     param_names.push(UNNAMED_PARAM);
                 }
             }
-            ctr += 1;
         }
         Ok(())
     }
@@ -3475,9 +3439,6 @@ impl<'a> Context<'a> {
                 scope_view,
                 node.child_by_field_name("left").expect("always a left"),
                 node.child_by_field_name("right").expect("always a right"),
-                /*Some(
-                node.child_by_field_name("operator")
-                    .expect("always has operator"),*/
                 node.child_by_field_name("operator"),
             ),
             // Both dereference (`*p`) and address-of (`&x`) parse as `pointer_expression`;
@@ -3999,18 +3960,13 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
         //how come only this declarator came up in expr? see pointer_decl way?
-        // ... well function_declarators come up too.  see the logic there //TODO: why does this not worry about parenthesized_declarators?
+        // ... well function_declarators come up too.  see the logic there
         if let Some(iden) = node.child_by_field_name("declarator") {
             //oh noes.. look whats under that! a pointer declarator!
             if iden.kind() == "identifier" {
                 let symbol = to_str(&iden, source);
-                self.scope_tree.add_variable(
-                    scope_view.sidx,
-                    symbol.to_string(),
-                    VarKind::Local,
-                    None,
-                    None,
-                );
+                self.scope_tree
+                    .add_variable(scope_view.sidx, symbol.to_string(), VarKind::Local);
                 let ap = self.build_access_path(
                     symbol,
                     Default::default(),
@@ -4482,14 +4438,10 @@ impl<'a> Context<'a> {
         body_node: Node<'_>,
     ) -> anyhow::Result<(), Error> {
         self.allocator.reset();
-        let fidx = match self.functions.get(func_name) {
-            Some(fidx) => *fidx,
-            None => {
-                let fidx = program.new_function();
-                self.functions.insert(func_name.to_string(), fidx);
-                fidx
-            }
-        };
+        let fidx = *self
+            .functions
+            .get(func_name)
+            .expect("every definition is registered by lower_units before any is lowered");
 
         let fdat = &mut program.functions[fidx];
         fdat.name = func_name.to_string();
@@ -4537,7 +4489,7 @@ impl<'a> Context<'a> {
             continue_target: None,
             explainer: "initial_block".to_string(),
         };
-        self.scope_tree.blocks.push(block_scope_view.clone());
+        self.scope_tree.add_block(&block_scope_view);
         let cp = CompoundProxy::from_node(body_node);
 
         // Pre-create a block for every `goto` label in this function so forward
@@ -4806,15 +4758,7 @@ impl<'a> Context<'a> {
                     .lower_statement_expression_effects(program, node, source, scope_view)?
                 {
                     Some(inner) => self.flatten_lvalue(program, inner, source, scope_view)?,
-                    None => {
-                        let temp_name = self.allocator.next_temp();
-                        RawPath::new(
-                            VariableRef::new_local_idx(
-                                program[scope_view.fidx].locals.get_or_intern(&temp_name),
-                            ),
-                            ThinVec::new(),
-                        )
-                    }
+                    None => self.dead_temp_path(program, scope_view),
                 };
                 scope_view.sidx = outer_sidx;
                 self.cur_span = outer_span;
@@ -4831,14 +4775,9 @@ impl<'a> Context<'a> {
             // and the read lowers to a load that yields nothing. Falling through to the
             // catch-all reported `not an lvalue: string_literal` and burned an anonymous
             // temp -- the identical recovery, minus the false accusation.
-            "string_literal" | "concatenated_string" => Ok(RawPath::new(
-                VariableRef::new_local_idx(
-                    program[scope_view.fidx]
-                        .locals
-                        .get_or_intern(&self.allocator.next_temp()),
-                ),
-                ThinVec::new(),
-            )),
+            "string_literal" | "concatenated_string" => {
+                Ok(self.dead_temp_path(program, scope_view))
+            }
             "parenthesized_expression" | "parenthesized_declarator" => {
                 let inner = node.child(1).expect("missing inner expr");
                 self.flatten_lvalue(program, inner, source, scope_view)
@@ -4965,17 +4904,17 @@ use tree_sitter::Node;
 
 // A simple counter to generate unique temp names (t0, t1, t2...)
 #[derive(Debug, Default)]
-pub struct TempAllocator {
+struct TempAllocator {
     counter: usize,
 }
 
 impl TempAllocator {
-    pub fn next_temp(&mut self) -> String {
+    fn next_temp(&mut self) -> String {
         let name = format!("<t{}>", self.counter);
         self.counter += 1;
         name
     }
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.counter = 0;
     }
 }
@@ -5197,7 +5136,7 @@ fn gnu_asm_operand_is_readwrite(operand: Node<'_>, source: &str) -> bool {
 /// * `node` - The current Tree-sitter node to print.
 /// * `depth` - The current recursion depth (start with 0).
 /// * `field_name` - The field name of the current node, if any (start with None).
-pub fn debug_print_tree(
+fn debug_print_tree(
     node: Node<'_>,
     depth: usize,
     field_name: Option<&str>,
