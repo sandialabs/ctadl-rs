@@ -809,6 +809,14 @@ struct Context<'a> {
     /// consumer. A record TAG is deliberately not recorded: `struct stat` is a type but `stat`
     /// alone is not one, and it is the name of a function.
     type_names: HashSet<String>,
+    /// Names the translation unit declares as functions without defining them -- prototypes,
+    /// `int zzz(int);` -- collected in the same pre-pass as `type_names`. The positive
+    /// evidence that `(zzz)(x)` is a call, symmetric to the type-use evidence `type_names`
+    /// holds for a cast. Read by [`Context::cast_shaped_call`] only: it keeps the report made
+    /// on a name with no evidence either way quiet for the one idiom that legitimately lands
+    /// there, `(free)(p)` -- parentheses to suppress a function-like macro -- with libc's
+    /// prototype in scope.
+    declared_functions: HashSet<String>,
     /// `ERROR` nodes already reported as unparsable constructs, by `Node::id`, so one
     /// syntax error draws one warning. See [`Context::report_unparsable_construct`].
     reported_parse_errors: HashSet<usize>,
@@ -1794,6 +1802,17 @@ impl<'a> Context<'a> {
     fn collect_type_registry(&mut self, source: &'a str, node: Node<'_>) {
         if is_type_name(node) {
             self.type_names.insert(to_str(&node, source).to_string());
+        }
+        if node.kind() == "declaration" {
+            // A prototype, `int zzz(int);`. Only function-shaped declarators count:
+            // `void (*fp)(int);` declares a variable, and `function_head` says no to it.
+            let mut dcursor = node.walk();
+            for declarator in node.children_by_field_name("declarator", &mut dcursor) {
+                if let Some(head) = function_head(declarator) {
+                    self.declared_functions
+                        .insert(to_str(&head.name, source).to_string());
+                }
+            }
         }
         if let Some(slots) = record_member_slots(node, source) {
             // `struct P { ... }` -- nameable by its own tag.
@@ -3408,7 +3427,7 @@ impl<'a> Context<'a> {
             // `(__be16)(x)` is a cast that tree-sitter could only read as a call; when it is
             // one, it lowers exactly like the `cast_expression` arm below. See
             // `cast_shaped_call` for how the two are told apart.
-            "call_expression" => match self.cast_shaped_call(node, source, scope_view) {
+            "call_expression" => match self.cast_shaped_call(node, source, scope_view)? {
                 Some(operands) => self.flatten_cast_operands(program, operands, source, scope_view),
                 None => {
                     let x = self.allocator.next_temp();
@@ -4010,14 +4029,12 @@ impl<'a> Context<'a> {
         Ok(result)
     }
 
-    /// The operand list of a **cast** that tree-sitter parsed as a call, or `None` when the
-    /// `call_expression` really is a call.
+    /// The cast tree-sitter cannot see -- its operand list, to lower as one -- or `None` for
+    /// a call.
     ///
-    /// `(A)(B)` is a cast iff `A` names a type, and C cannot be parsed without knowing which
-    /// names those are: tree-sitter-c has a fixed list of primitive types, so `(unsigned
-    /// long)(x)` and `(struct sock *)(x)` do come out as `cast_expression`s, but a name that
-    /// is a type only because something said `typedef` cannot. `(__be16)(x)` therefore parses
-    /// as a `call_expression` whose callee is a `parenthesized_expression` -- character for
+    /// tree-sitter-c knows a fixed list of primitive type names and has no symbol table, so a
+    /// cast to a typedef written with the operand parenthesized, `(__be16)(x)`, parses as a
+    /// `call_expression` whose callee is a `parenthesized_expression` -- character for
     /// character the shape of a genuine call through a parenthesized function pointer,
     /// `(fp)(x)`.
     ///
@@ -4026,44 +4043,79 @@ impl<'a> Context<'a> {
     /// kernel corpus, 605 in openssh, 229 in nginx), and an empty body returns nothing, so the
     /// taint that went into the cast did not come out.
     ///
-    /// The evidence used is the translation unit's own [`Context::type_names`], and three
-    /// things override it, in the order they are checked -- each one is a name that is a type
-    /// SOMEWHERE in the buffer but is not one *here*:
+    /// The unit's own evidence decides, and only *positive* evidence -- a name known to be one
+    /// thing here, not merely absent from the other list:
     ///
-    /// * a variable in scope. C lets a block-scope declaration shadow a typedef, and `(fp)(x)`
-    ///   with a local `fp` is a call however `fp` is spelled elsewhere.
-    /// * a function this parse defines. A directory imports as one buffer (see
-    ///   [`read_c_source`]), so a name one file typedefs and another defines as a function
-    ///   meets itself here; the definition wins, because a call to it has somewhere to go.
-    /// * an empty operand list. `(T)()` casts nothing and is not valid C; leaving it a call
-    ///   keeps the recovery that already reports it.
+    /// * for a call: a variable in scope (C lets a block-scope declaration shadow a typedef,
+    ///   and `(fp)(x)` with a local `fp` is a call however `fp` is spelled elsewhere); a
+    ///   function this parse defines (a directory imports as one buffer, see
+    ///   [`read_c_source`], so a name one file typedefs and another defines as a function
+    ///   meets itself here, and the definition wins because a call to it has somewhere to
+    ///   go); or a prototype ([`Context::declared_functions`] -- `(free)(p)` with libc's
+    ///   prototype in scope is the macro-suppression idiom, a call);
+    /// * for a cast: a use of the name as a type anywhere in the unit
+    ///   ([`Context::type_names`]), and at least one operand.
+    ///
+    /// Two shapes carry neither, and each draws a report instead of a silent guess. The
+    /// lowering is what it always was -- a call, to a function `define_extern_functions` will
+    /// invent -- but the census now sees it. `(T)()` with `T` a type casts nothing, which is
+    /// not C: a source problem. A name the unit neither defines, declares, nor uses as a type
+    /// is a frontend gap: the frontend cannot know, and if the name IS a type, the invented
+    /// callee's empty body is where the operand's taint stops. Neither shape occurs in the
+    /// dropbear, openssh, nginx, or linux corpora; the report is for the corpus that changes
+    /// that.
     fn cast_shaped_call<'t>(
         &self,
         node: Node<'t>,
         source: &'a str,
         scope_view: &ScopeView,
-    ) -> Option<Node<'t>> {
-        let callee = node.child_by_field_name("function")?;
+    ) -> Result<Option<Node<'t>>, Error> {
+        let Some(callee) = node.child_by_field_name("function") else {
+            return Ok(None);
+        };
         if callee.kind() != "parenthesized_expression" {
-            return None;
+            return Ok(None);
         }
-        let inner = first_named_child(callee)?;
+        let Some(inner) = first_named_child(callee) else {
+            return Ok(None);
+        };
         if !matches!(inner.kind(), "identifier" | "type_identifier") {
-            return None;
+            return Ok(None);
         }
         let name = to_str(&inner, source);
-        if !self.type_names.contains(name)
-            || self
-                .scope_tree
-                .find_variable(scope_view.sidx, name)
-                .is_some()
+        if self
+            .scope_tree
+            .find_variable(scope_view.sidx, name)
+            .is_some()
             || self.functions.contains_key(name)
+            || self.declared_functions.contains(name)
         {
-            return None;
+            return Ok(None);
         }
-        let operands = node.child_by_field_name("arguments")?;
-        first_named_child(operands)?;
-        Some(operands)
+        let operands = node.child_by_field_name("arguments");
+        let has_operand = operands.is_some_and(|list| first_named_child(list).is_some());
+        let is_type = self.type_names.contains(name);
+        if !has_operand {
+            // Zero operands can only be a call: a cast needs something to cast.
+            if is_type {
+                let (quote, _) = quote_construct(to_str(&node, source));
+                malformed_source(format!(
+                    "`{quote}` casts nothing: `{name}` is a type here and a cast needs an \
+                     operand; lowered as a call to `{name}`"
+                ))?;
+            }
+            return Ok(None);
+        }
+        if !is_type {
+            let (quote, _) = quote_construct(to_str(&node, source));
+            unexpected_ast(format!(
+                "cast-shaped call `{quote}`: this unit neither defines, declares, nor uses \
+                 `{name}` as a type, so it cannot be told from a cast; lowered as a call -- \
+                 if `{name}` is a type, the operand's taint stops here"
+            ))?;
+            return Ok(None);
+        }
+        Ok(operands)
     }
 
     /// Lower the operands of a cast [`Context::cast_shaped_call`] recognised, and yield its

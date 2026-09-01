@@ -5484,6 +5484,109 @@ fn a_statement_expression_callee_is_an_indirect_call() {
 }
 
 // ---------------------------------------------------------------------------------------
+// The cell `cast_shaped_call` cannot decide.
+//
+// `(name)(x)` is a cast if `name` is a type and a call if it is not, and only the unit's own
+// evidence can say which. Two shapes carry none: `(T)()`, a cast of nothing, which is not C;
+// and `(zzz)(x)` where the unit neither defines, declares, nor uses `zzz` as a type. Both were
+// lowered as calls to an invented `zzz`, silently -- and if `zzz` was a type, the invented
+// body's arity-0 return is where the operand's taint stopped: spec 150's defect, for a name
+// spec 150's registry cannot see. The lowering is unchanged; each shape now draws one report,
+// so it is in the census instead of being a guess. A prototype is positive evidence for a
+// call -- `(free)(p)` with libc's prototype in scope is the macro-suppression idiom -- and
+// draws nothing. Neither shape occurs in the dropbear, openssh, nginx, or linux corpora.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn a_cast_shaped_call_with_no_evidence_is_reported_and_stays_a_call() {
+    let src = r"
+        int g(int x) { return (zzz)(x); }";
+    // Non-strict: one frontend-gap report naming the construct, and the call is still made.
+    let reports = reports_for(src);
+    assert_eq!(
+        reports.len(),
+        1,
+        "one report for one undecidable callee, got {reports:?}"
+    );
+    let (attribution, msg) = &reports[0];
+    assert_eq!(*attribution, "frontend gap", "wrong attribution: {msg}");
+    assert!(
+        msg.contains("(zzz)(x)") && msg.contains("cast"),
+        "unexpected message: {msg}"
+    );
+    let (prog, dump) = program_from_string(src);
+    let calls = direct_calls_in(&prog, "g");
+    assert_eq!(
+        calls.len(),
+        1,
+        "the shape is lowered as a call, as before\n{dump}"
+    );
+    assert_eq!(calls[0].0, vec!["zzz".to_string()], "{dump}");
+    // Strict: the same report is a hard error.
+    let _strict = super::force_error_on_ast();
+    assert!(
+        super::parse_c_program(src).is_err(),
+        "strict mode must refuse a callee it cannot tell from a cast"
+    );
+}
+
+#[test_log::test]
+fn a_cast_of_nothing_is_a_source_problem_and_stays_a_call() {
+    let src = r"
+        typedef unsigned short T;
+        int f(void) { return (T)(); }";
+    // Non-strict: one source-problem report -- `T` is a type here, and a cast needs an
+    // operand -- and the lowering is the call it always was.
+    let reports = reports_for(src);
+    assert_eq!(
+        reports.len(),
+        1,
+        "one report for one cast of nothing, got {reports:?}"
+    );
+    let (attribution, msg) = &reports[0];
+    assert_eq!(*attribution, "source problem", "wrong attribution: {msg}");
+    assert!(
+        msg.contains("(T)()") && msg.contains("casts nothing"),
+        "unexpected message: {msg}"
+    );
+    let (prog, dump) = program_from_string(src);
+    let calls = direct_calls_in(&prog, "f");
+    assert_eq!(calls.len(), 1, "still a call\n{dump}");
+    assert_eq!(calls[0].0, vec!["T".to_string()], "{dump}");
+    // Strict: a hard error.
+    let _strict = super::force_error_on_ast();
+    assert!(
+        super::parse_c_program(src).is_err(),
+        "strict mode must refuse a cast of nothing"
+    );
+}
+
+#[test_log::test]
+fn a_prototype_makes_a_parenthesized_call_a_call() {
+    // The one legitimate occupant of the no-evidence cell, and why a prototype counts as
+    // evidence: `(free)(p)` is how C code calls a function whose name is also a function-like
+    // macro. The unit defines neither, but it declares both -- one of them pointer-returning,
+    // so `function_head`'s unwrapping is exercised too -- and that is enough: no report even
+    // in strict mode, and both are direct calls to the declared names.
+    let src = r"
+        void free(void *p);
+        void *xmalloc(int n);
+        void *f(void *p, int n) { (free)(p); return (xmalloc)(n); }";
+    let _strict = super::force_error_on_ast();
+    let (prog, _, dump) =
+        super::parse_c_program(src).expect("a prototype is evidence enough: no report");
+    let callees: Vec<String> = direct_calls_in(&prog, "f")
+        .into_iter()
+        .flat_map(|(edges, _)| edges)
+        .collect();
+    assert_eq!(
+        callees,
+        vec!["free".to_string(), "xmalloc".to_string()],
+        "{dump}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
 // Spec 160: a function pointer in a field of a file-scope object.
 //
 // `ses.remoteclosed()` is a call THROUGH a pointer the object `ses` holds, and the frontend
