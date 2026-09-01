@@ -33,9 +33,12 @@ impl JarFileParser {
             if !name.ends_with(".class") {
                 continue;
             }
+            let name = name.to_string();
             let mut data = Vec::new();
             std::io::copy(&mut entry, &mut data).map_err(ClassFileError::Io)?;
-            let parser = ClassFileParser::parse(&data)?;
+            // Name the entry: without it a whole-JAR failure says only what went
+            // wrong, not which of the thousands of classes it went wrong in.
+            let parser = ClassFileParser::parse(&data).map_err(|e| e.in_entry(&name))?;
             parsers.push(parser);
         }
         Ok(Self { parsers })
@@ -54,9 +57,12 @@ impl JarFileParser {
             if !name.ends_with(".class") {
                 continue;
             }
+            let name = name.to_string();
             let mut data = Vec::new();
             std::io::copy(&mut entry, &mut data).map_err(ClassFileError::Io)?;
-            let parser = ClassFileParser::parse(&data)?;
+            // Name the entry: without it a whole-JAR failure says only what went
+            // wrong, not which of the thousands of classes it went wrong in.
+            let parser = ClassFileParser::parse(&data).map_err(|e| e.in_entry(&name))?;
             parsers.push(parser);
         }
         Ok(Self { parsers })

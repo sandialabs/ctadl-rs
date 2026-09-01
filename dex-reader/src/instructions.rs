@@ -2,7 +2,7 @@ use std::fmt::Formatter;
 
 use streaming_iterator::{DoubleEndedStreamingIterator, StreamingIterator};
 
-use crate::types::{DexConstantPool, MethodId};
+use crate::types::{DexConstantPool, DexString, MethodId};
 
 macro_rules! index_type {
     ($($nm: ident),*) => {
@@ -69,6 +69,25 @@ impl DisplayInstr for TypeIdx {
     }
 }
 
+/// Quote a string constant for disassembly output.
+///
+/// Scalar values are escaped as `char::escape_debug` does. An unpaired
+/// surrogate has no `char` to escape -- and a DEX string constant may legally
+/// hold one, since generated lexers use constants as packed UTF-16 tables --
+/// so it is written the way baksmali writes every non-ASCII code unit,
+/// `\uXXXX`.
+fn quote_string_constant(s: &DexString) -> String {
+    let mut out = String::from('"');
+    for unit in char::decode_utf16(s.code_units()) {
+        match unit {
+            Ok(c) => out.extend(c.escape_debug()),
+            Err(e) => out.push_str(&format!("\\u{:04x}", e.unpaired_surrogate())),
+        }
+    }
+    out.push('"');
+    out
+}
+
 impl DisplayInstr for StringIdx {
     fn display_raw(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(f, "{}", self.0)
@@ -77,9 +96,9 @@ impl DisplayInstr for StringIdx {
     fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
         let s = cp
             .strings
-            .get(self.0 as usize)
-            .and_then(|s: String| Ok(format!("\"{}\"", s.escape_debug())))
-            .unwrap_or("<invalid_type>".into());
+            .get_dex_string(self.0 as usize)
+            .map(|s| quote_string_constant(&s))
+            .unwrap_or("<invalid_string>".into());
         write!(f, "{s}")
     }
 }

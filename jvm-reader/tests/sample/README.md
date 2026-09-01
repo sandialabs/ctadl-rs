@@ -1,20 +1,29 @@
 # jvm-reader sample sources
 
 These `.java` files are the **only** committed test inputs for jvm-reader — no
-`.class` or `.jar` files are checked in. They are compiled from source at test
-time:
+`.class` or `.jar` files are checked in. **The nightly regression suite**
+(`cargo xtask regression`, run in CI via
+`nix build .#checks.<system>.regression`) compiles each sample with `javac`,
+exercises jvm-reader on the resulting `.class` files (disassembly compared
+against `javap`, plus line-map / basic-block / stack-slot analyses, and the
+`jvm:switch-shapes` / `jvm:utf8-constants` checks), then bundles them with `jar`
+and re-checks the `.jar` (parsed classes compared against `jar tf`). See
+`xtask/src/jvm.rs`. `xtask/src/dex.rs` compiles the same sources down to `.dex`
+(`javac --release 8` then `dx`) and runs the `dex:*` checks over them, so every
+source here is read by both frontends.
 
-- **The nightly regression suite** (`cargo xtask regression`, run in CI via
-  `nix build .#checks.<system>.regression`) compiles each sample with `javac`,
-  exercises jvm-reader on the resulting `.class` files (disassembly compared
-  against `javap`, plus line-map / basic-block / stack-slot analyses), then
-  bundles them with `jar` and re-checks the `.jar` (parsed classes compared
-  against `jar tf`). See `xtask/src/jvm.rs`.
+Nothing else compiles them. `jvm-reader`'s own unit tests are hermetic — they
+build the two-entry constant pool they need in Rust — so a plain `cargo test`
+covers them and needs no JDK.
 
-- **jvm-reader's own `flow.rs` unit tests** load compiled classes
-  (`HelloWorld.class`, `ArrayFlow.class`, `LoopFlow.class`) at runtime from the directory named by
-  `JVM_READER_TEST_FIXTURES`. The `jvm-reader-tests` check (flake.nix) compiles
-  them from these sources and points the env var at them.
+**These are reader-level fixtures, not taint cases.** They exist to give the
+parser, disassembler and CFG builder bytecode shapes to chew on. Whether taint
+*flows* correctly through those shapes is asserted end to end by the regression
+cases in `nightly/tests/java` — `SwitchFlow`, `StringSwitchFlow`,
+`WideParamFlow` and `ShiftFlow` cover the same constructs in both the JVM and
+DEX frontends. Add a taint case there when the question is "does the analysis
+get the right answer"; add a sample here when the question is "does the reader
+survive this bytecode and describe it faithfully".
 
 ## The samples
 
@@ -34,6 +43,47 @@ time:
   InnerClasses attribute, and object construction (`new`/`dup`/`invokespecial`,
   `putfield`/`getfield`).
 
+### Decoder regression fixtures
+
+One per root cause from the JVM-frontend defect report. Each reproduces a
+decoder bug on ordinary, verifiable major-version-52 bytecode straight out of
+`javac`, so a failure is never a question of malformed input.
+
+- **SparseSwitch.java** – sparse integer switch → `lookupswitch`, with the
+  default arm as a back edge to the loop header. The selector must be consumed;
+  otherwise it survives as a phantom slot and the join sees height 1 where the
+  StackMapTable says 0.
+- **DenseSwitch.java** – the same shape with dense case values, so `javac`
+  emits `tableswitch`.
+- **StringSwitch.java** – a Java 8 string switch, which lowers to *both*
+  instructions (`lookupswitch` on `hashCode`, then `tableswitch`), joining at
+  the default arm with two phantom slots.
+- **GuardedStringSwitch.java** – the same, wrapped in `try`/`catch`, so the join
+  is also an exception-handler edge: the handler pops its exception object and
+  arrives with height 0 against the normal path's 2.
+- **IushrLength.java** – `iushr` followed by meaningful one-byte instructions,
+  plus the full `ishl`/`lshl`/`ishr`/`lshr`/`iushr`/`lushr` set. Covers both a
+  wrong instruction length (which desynchronizes the rest of the method) and
+  the shift stack effects, which alternate int/long and so cannot be assigned
+  by opcode range.
+- **WideParams.java** – `long` and `double` parameters in leading, middle and
+  trailing positions, on static and instance methods. Wide parameters take two
+  local slots but one ordinal, so a decoder that reports the slot as
+  `Location::Parameter` names parameters that do not exist.
+- **PairedOnly.java** – a single emoji and nothing else. The class file encodes
+  it as a CESU-8 surrogate pair, so this is the *common* modified-UTF-8 case:
+  every class with a supplementary character in a literal, not just deliberately
+  packed data.
+- **SurrogateConstants.java** – a well-formed pair, a lone high surrogate, a
+  lone low surrogate, and a packed table mixing them, in the style of the
+  generated `smaliFlexLexer` table that first surfaced this. Unpaired
+  surrogates are legal in a class file and are used on purpose as UTF-16 data;
+  Rust's `String` cannot hold them, so they survive as code units in
+  `JvmString::Utf16` / `DexString::Utf16` and are only rendered lossily. These
+  two are what `jvm:utf8-constants` and `dex:utf8-constants` read; there is no
+  taint case for them, and there cannot be — an unpaired surrogate in a constant
+  is inert data, so mangling it changes no flow.
+
 > These samples also feed the **dex-reader** checks (`xtask/src/dex.rs`): each is
 > compiled down to `.dex` and parsed, line-mapped, and diffed against baksmali.
 >
@@ -45,11 +95,6 @@ time:
 > `javap -c` comparison already skipped these, and `javap -c` doesn't render
 > annotations anyway).
 
-To run jvm-reader's `flow.rs` tests locally outside Nix, compile the samples and
-point the env var at them:
-
-```bash
-javac -d /tmp/fixtures jvm-reader/tests/sample/HelloWorld.java jvm-reader/tests/sample/ArrayFlow.java jvm-reader/tests/sample/LoopFlow.java
-JVM_READER_TEST_FIXTURES=/tmp/fixtures \
-  cargo test --manifest-path jvm-reader/Cargo.toml -- --include-ignored
-```
+Both `xtask/src/jvm.rs` and `xtask/src/dex.rs` glob this directory rather than
+naming files, so a new `.java` dropped in here is picked up by both with nothing
+to keep in step. Adding a fixture only needs a line in the list above.

@@ -140,22 +140,6 @@
           cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" "--lib" "--examples" ];
         };
 
-        # The two classes jvm-reader's `flow.rs` unit tests load at runtime,
-        # compiled from the committed sample sources (no `.class` is committed).
-        # Passed to the `jvm-reader-tests` check via JVM_READER_TEST_FIXTURES.
-        jvmTestFixtures =
-          pkgs.runCommand "jvm-reader-test-fixtures"
-            {
-              nativeBuildInputs = [ jdk ];
-              # Import the dir (not the files) so the sources keep their real
-              # names; javac requires a public class's file to match its name.
-              src = ./jvm-reader/tests/sample;
-            }
-            ''
-              mkdir -p "$out"
-              javac -encoding UTF-8 -d "$out" "$src/HelloWorld.java" "$src/ArrayFlow.java" "$src/LoopFlow.java"
-            '';
-
         # The external toolchain the regression scripts expect on PATH
         # (dex-reader, jvm-reader, javac, dx, gcc/addr2line, ghidra, jq,
         # python3). Deliberately excludes this repo's own package so that
@@ -282,6 +266,12 @@
                   # the same samples down to .dex (via `dx`) and also parse a
                   # real-world APK owned by xtask. javac/javap/jar/dx come from
                   # the JDK and Android SDK in testEnv / PATH.
+                  # `--dex-apk` feeds a second family too: the `apk:*` checks,
+                  # which drive ctadl itself over that same app -- import it,
+                  # read the store back, model-check it unindexed. They were
+                  # `#[test]`s in ctadl-ascent until the ~13 s import made them
+                  # most of `cargo test`'s wall clock. They need no toolchain,
+                  # only the CTADL_BIN below.
                   # xtask normally rebuilds ctadl from source to guard against a
                   # stale binary, but the Nix sandbox has no source tree or cargo.
                   # Point it at the ctadl that ships in packages.default instead.
@@ -323,20 +313,18 @@
               cargoTestOptions = opts: opts ++ [ "--package" "dex-reader" ];
             };
 
-            # jvm-reader's unit tests, same arrangement. `cargo test --workspace`
-            # does *not* subsume this one: the `flow.rs` tests are `#[ignore]`d
-            # and load two classes at runtime from JVM_READER_TEST_FIXTURES
-            # (compiled from source by jvmTestFixtures, below), so only a run
-            # with both the fixtures and `--include-ignored` exercises them.
-            # The integration-style checks were moved to `xtask regression`.
+            # jvm-reader's unit tests, same arrangement -- and, like dex-reader's,
+            # now entirely hermetic: no `#[ignore]`, no JDK, no fixture directory.
+            # Everything that needed a compiled class moved out, to the `jvm:*`
+            # checks in `xtask regression` and to the `SwitchFlow` /
+            # `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint cases.
             jvm-reader-tests = naersk-lib.buildPackage {
               src = ./.;
               version = workspaceVersion;
               name = "jvm-reader-tests";
               mode = "test";
-              JVM_READER_TEST_FIXTURES = "${jvmTestFixtures}";
               cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" ];
-              cargoTestOptions = opts: opts ++ [ "--package" "jvm-reader" "--" "--include-ignored" ];
+              cargoTestOptions = opts: opts ++ [ "--package" "jvm-reader" ];
             };
           in
           {

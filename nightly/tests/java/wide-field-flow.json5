@@ -1,0 +1,18 @@
+{
+  // The flow reaches the sink through each wide-field method in turn. Under the
+  // one-word field decode none of them decode at all, so the class fails to
+  // import and no flow is reported.
+  "expected_lines": [20, 53, 54, 55],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LWideFieldFlow;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LWideFieldFlow;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

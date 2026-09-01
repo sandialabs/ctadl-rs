@@ -1,3 +1,7 @@
+use std::borrow::Cow;
+
+use crate::error::{DexError, DexResult};
+
 // Header (header_item)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DexHeader {
@@ -46,6 +50,152 @@ pub struct MapItem {
     pub type_code: u16,
     pub size: u32,
     pub offset: u32,
+}
+
+// --- string_data_item contents (DEX §string_data_item) ---
+
+/// The contents of a `string_data_item`.
+///
+/// A DEX file stores strings as UTF-16 code units in modified UTF-8, so an
+/// entry may legally hold surrogates that no Rust `str` can represent:
+/// generated lexers abuse string constants as packed UTF-16 tables, and
+/// `smaliFlexLexer` has 25 deliberately unpaired ones. Well-formed *pairs* are
+/// the far more common case -- every emoji, CJK extension and supplementary
+/// symbol in a literal is one -- and those recombine into ordinary scalar
+/// values.
+///
+/// So the two cases get two representations: the overwhelmingly common one
+/// stays a plain `String`, and only an entry that actually needs code units
+/// pays to keep them.
+///
+/// This is the DEX twin of `jvm_reader::JvmString`; the two formats share the
+/// encoding and therefore the problem.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DexString {
+    /// Every code unit is a Unicode scalar value (surrogates, if any, paired).
+    Utf8(String),
+    /// Holds unpaired surrogates; kept as raw UTF-16 code units.
+    Utf16(Box<[u16]>),
+}
+
+impl DexString {
+    /// Build from the UTF-16 code units of a `string_data_item`.
+    pub fn from_code_units(units: Vec<u16>) -> Self {
+        match String::from_utf16(&units) {
+            Ok(s) => DexString::Utf8(s),
+            Err(_) => DexString::Utf16(units.into_boxed_slice()),
+        }
+    }
+
+    /// The string, when it is a Unicode scalar sequence; `None` when it holds
+    /// unpaired surrogates.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            DexString::Utf8(s) => Some(s.as_str()),
+            DexString::Utf16(_) => None,
+        }
+    }
+
+    /// The string with each unpaired surrogate replaced by `U+FFFD`.
+    ///
+    /// For names, display and diagnostics. Borrows in the common case.
+    pub fn to_string_lossy(&self) -> Cow<'_, str> {
+        self.to_string_replacing('\u{FFFD}')
+    }
+
+    /// The string with each unpaired surrogate replaced by `replacement`.
+    pub fn to_string_replacing(&self, replacement: char) -> Cow<'_, str> {
+        match self {
+            DexString::Utf8(s) => Cow::Borrowed(s.as_str()),
+            DexString::Utf16(units) => Cow::Owned(
+                char::decode_utf16(units.iter().copied())
+                    .map(|r| r.unwrap_or(replacement))
+                    .collect(),
+            ),
+        }
+    }
+
+    /// The exact UTF-16 code units, for callers that need the data rather than
+    /// text. The smali printer is one: baksmali renders every non-ASCII code
+    /// unit as `\uXXXX`, unpaired surrogates included, so matching it means
+    /// working in code units rather than `char`s.
+    pub fn code_units(&self) -> Box<dyn Iterator<Item = u16> + '_> {
+        match self {
+            DexString::Utf8(s) => Box::new(s.encode_utf16()),
+            DexString::Utf16(units) => Box::new(units.iter().copied()),
+        }
+    }
+
+    /// Number of UTF-16 code units, i.e. what `String.length()` reports in Java
+    /// and what a `string_data_item`'s ULEB128 prefix counts.
+    pub fn len_utf16(&self) -> usize {
+        match self {
+            DexString::Utf8(s) => s.encode_utf16().count(),
+            DexString::Utf16(units) => units.len(),
+        }
+    }
+
+    /// The string for a call site that requires a `str` (a type descriptor, a
+    /// method or field name, none of which may legally contain an unpaired
+    /// surrogate).
+    pub fn as_str_or_err(&self) -> DexResult<&str> {
+        match self {
+            DexString::Utf8(s) => Ok(s.as_str()),
+            DexString::Utf16(units) => Err(unpaired_surrogate_error(units)),
+        }
+    }
+
+    /// Same, consuming the value: the string table decodes on every lookup, so
+    /// its callers own what they get back and should not have to clone it.
+    pub fn into_string(self) -> DexResult<String> {
+        match self {
+            DexString::Utf8(s) => Ok(s),
+            DexString::Utf16(units) => Err(unpaired_surrogate_error(&units)),
+        }
+    }
+}
+
+/// Position and value of the first unpaired surrogate in `units`, if any.
+fn first_unpaired_surrogate(units: &[u16]) -> Option<(usize, u16)> {
+    let mut i = 0;
+    while i < units.len() {
+        let u = units[i];
+        if (0xD800..0xDC00).contains(&u) {
+            match units.get(i + 1) {
+                Some(low) if (0xDC00..0xE000).contains(low) => i += 2,
+                _ => return Some((i, u)),
+            }
+        } else if (0xDC00..0xE000).contains(&u) {
+            return Some((i, u));
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// The first unpaired surrogate in `units`, as an error.
+///
+/// Only called on a `DexString::Utf16`, which by construction has at least one.
+fn unpaired_surrogate_error(units: &[u16]) -> DexError {
+    let (index, code_unit) = first_unpaired_surrogate(units).unwrap_or((0, 0));
+    DexError::UnpairedSurrogate {
+        string_index: None,
+        index,
+        code_unit,
+    }
+}
+
+impl From<&str> for DexString {
+    fn from(s: &str) -> Self {
+        DexString::Utf8(s.to_string())
+    }
+}
+
+impl From<String> for DexString {
+    fn from(s: String) -> Self {
+        DexString::Utf8(s)
+    }
 }
 
 // ID sections
