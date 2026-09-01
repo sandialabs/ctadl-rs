@@ -3270,7 +3270,7 @@ impl<'a> Context<'a> {
                     .scope_tree
                     .find_variable(scope_view.sidx, text)
                     .is_none()
-                    && self.functions.contains_key(text)
+                    && (self.functions.contains_key(text) || self.declared_functions.contains(text))
                 {
                     // Which definition of `text` this file means, when more than one file
                     // defines one (see `Context::resolve_reference`).

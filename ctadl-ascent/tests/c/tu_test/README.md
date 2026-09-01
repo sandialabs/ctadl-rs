@@ -59,3 +59,23 @@ per-TU:  %<t0> = load $globals.h        -- a variable read; there is nothing to 
 so `h` is read as a global variable and the binding is lost. The prototype is evidence
 enough that `h` is a function -- the same evidence `cast_shaped_call` already uses via
 `Context::declared_functions` -- so the candidate fix is to consult that set here too.
+
+## With the candidate fix
+
+`flatten_expr` now also accepts a name in `Context::declared_functions` as a function
+reference (one line, the commit after the one that added this directory):
+
+```
+case          big buffer    per-TU
+sink_intra    found         found
+sink_forward  found         found
+sink_return   found         found
+sink_fp       found         found
+sink_global   found         found
+sink_reverse  found         found
+SAME
+```
+
+So, for these shapes, the concatenated buffer is not what makes cross-TU taint work. A
+per-TU import model needs the frontend to know one thing a preprocessed TU always tells
+it -- which names are functions -- and the back end does the rest.
