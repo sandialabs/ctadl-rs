@@ -87,8 +87,8 @@ use ctadl_ir::mir::*;
 use source_info::{ArtifactEncoding, ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 
 use internment::ArcIntern;
-use streaming_iterator::{IntoStreamingIterator, StreamingIterator};
-use tree_sitter::{Parser, Query, QueryCapture, QueryCursor, QueryMatch, Tree};
+use streaming_iterator::StreamingIterator;
+use tree_sitter::{Parser, Query, QueryCursor, QueryMatch, Tree};
 
 mod test_utils;
 mod testing_block_flow_ascii;
@@ -158,13 +158,6 @@ pub struct ScopeTree {
 }
 
 impl ScopeTree {
-    pub fn new() -> Self {
-        ScopeTree {
-            scopes: Vec::new(),
-            blocks: Vec::new(),
-        }
-    }
-
     pub fn add_scope(&mut self, name: String, parent: Option<usize>) -> usize {
         let new_scope = ScopeBox {
             scope_name: name,
@@ -182,7 +175,6 @@ impl ScopeTree {
     }
 
     pub fn get_explainers(blocks: &[ScopeView], target_func: &str, target_blidx: u32) -> String {
-        //self.blocks
         blocks
             .iter()
             // 1. Keep only the ones that match your criteria
@@ -948,68 +940,6 @@ pub fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
         // 3. Keep all other lines exactly as they are
         result.push_str(line);
         result.push('\n');
-    }
-
-    result
-}
-
-pub fn _inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
-    let mut result = String::with_capacity(ir_text.len() + 500); // Pre-allocate some space
-    let mut current_func = String::new();
-
-    for line in ir_text.lines() {
-        let trimmed = line.trim_start();
-
-        // 1. Track the current function name
-        if trimmed.starts_with("define ") {
-            // Extracts "simple_elif" from "define simple_elif(@p0..."
-            if let Some(name_part) = trimmed.split(' ').nth(1)
-                && let Some(name) = name_part.split('(').next()
-            {
-                current_func = name.to_string();
-            }
-            result.push_str(line);
-            result.push('\n');
-            continue;
-        }
-
-        // 2. Find the blocks and inject the explainer
-        if trimmed.starts_with("begin block_") {
-            // Keep the original 'begin block_X' line (Remove this push if you want to strictly overwrite it)
-            result.push_str(line);
-            result.push('\n');
-
-            // Extract just the number (e.g., from "block_0 [start]:" -> "0")
-            if let Some(after_block) = trimmed.split("block_").nth(1) {
-                // Take only the digits before the space or colon
-                let num_str: String = after_block
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .collect();
-
-                if let Ok(blidx_val) = num_str.parse::<u32>() {
-                    // Fetch the explainer using our previous iterator logic
-                    let explainer = ScopeTree::get_explainers(views, &current_func, blidx_val);
-
-                    if !explainer.is_empty() {
-                        result.push_str(format!("{}//{}", line, explainer).as_str());
-                    } else {
-                        result.push_str(format!("{}// **MISSING**", line).as_str());
-                    }
-                    /*                    if !explainer.is_empty() {
-                        // Inject the explainer (formatted as comments so the IR remains readable)
-                        for exp_line in explainer.lines() {
-                            result.push_str(&format!("    // Explainer: {}\n", exp_line));
-                        }
-                    }*/
-                }
-            }
-            continue;
-        } else {
-            // 3. Keep all other lines exactly as they are
-            result.push_str(line);
-            result.push('\n');
-        }
     }
 
     result
@@ -2769,8 +2699,6 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         child: Node<'_>,
     ) -> Result<(), Error> {
-        //  debug_print_tree(child, 0, Some("do"), Some(20));
-
         // `for (;;)` legally omits any of the three clauses, and tree-sitter then
         // has no field for the missing one(s). Fall back to one of the for's own
         // `;`/`(` tokens: its CompoundProxy is empty, so the clause lowers to an
@@ -2853,7 +2781,6 @@ impl<'a> Context<'a> {
         init_scope.continuation_blidx = Some(condition_scope.blidx);
         body_scope.continuation_blidx = Some(update_scope.blidx);
         update_scope.continuation_blidx = Some(condition_scope.blidx);
-        //        self.flatten_expr(program, condition, source, &condition_sv)?; // gather field accesses and what not but we don't care about the condition result,etc.
         self.walk_compound_statement(source, program, &init_scope, &init_cp)?;
         self.walk_compound_statement(source, program, &condition_scope, &condition_cp)?;
         //add 'sad edge'
@@ -2878,8 +2805,6 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         child: Node<'_>,
     ) -> Result<(), Error> {
-        //debug_print_tree(child, 0, Some("do"), Some(20));
-
         let body_node = child.child_by_field_name("body").expect("always has body");
 
         let (mut body_scope, body_cp) = self.setup_compound(
@@ -2913,7 +2838,6 @@ impl<'a> Context<'a> {
         )?;
 
         condition_sv.continuation_blidx = Some(continuation.blidx);
-        //        self.flatten_expr(program, condition, source, &condition_sv)?; // gather field accesses and what not but we don't care about the condition result,etc.
         self.walk_compound_statement(source, program, &condition_sv, &cp)?;
         // A do-while tests *after* the body, then loops back into it: add the
         // back-edge from the condition to the body. The exit edge to the
@@ -2937,7 +2861,6 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         child: Node<'_>,
     ) -> Result<(), Error> {
-        //debug_print_tree(child, 0, Some("while"), Some(20));
         let condition = child
             .child_by_field_name("condition")
             .expect("always has condition");
@@ -2960,7 +2883,6 @@ impl<'a> Context<'a> {
         )?;
 
         condition_sv.continuation_blidx = Some(continuation.blidx);
-        //        self.flatten_expr(program, condition, source, &condition_sv)?; // gather field accesses and what not but we don't care about the condition result,etc.
         self.walk_compound_statement(source, program, &condition_sv, &cp)?;
 
         let body_node = child.child_by_field_name("body").expect("always has body");
@@ -3211,7 +3133,6 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         child: Node<'_>,
     ) -> Result<(), Error> {
-        //debug_print_tree(child, 0, Some("if"), Some(20));
         let condition = child
             .child_by_field_name("condition")
             .expect("always has condition");
@@ -3246,8 +3167,6 @@ impl<'a> Context<'a> {
         self.walk_compound_statement(source, program, &consequence_sv, &if_cond_cp)?;
         //the else block
         if let Some(alternative) = child.child_by_field_name("alternative") {
-            //debug_print_tree(alternative, 0, Some("alternative"), Some(20));
-
             let mut cursor = alternative.walk();
             // The else clause's body is its first non-comment child: an `if_statement`
             // for `else if`, a `compound_statement` for a braced else, or a bare
@@ -3447,7 +3366,6 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> Result<Exp, Error> {
-        //debug_print_tree(node, 0, Some("FLATTEN_EXPR"), Some(50));
         let text = to_str(&node, source); //.to_string();
         match node.kind() {
             // A name tree-sitter inserted to repair the parse, quoting to the empty string.
@@ -3538,7 +3456,6 @@ impl<'a> Context<'a> {
             // just pass the inner value up.
             "parenthesized_expression" | "parenthesized_declarator" => {
                 // () is not a valid expression.
-                //debug_print_tree(node, 0, None, Some(50));
                 let inner_node = node.child(1).expect("missing inner expr");
                 self.flatten_expr(program, inner_node, source, scope_view)
             }
@@ -5043,44 +4960,6 @@ impl<'a> Context<'a> {
 }
 
 // A little helper to make grabbing stuff out of the tree-sitter iterator easier
-pub fn collect_matches<'a>(
-    mut matches: impl StreamingIterator<Item = QueryMatch<'a, 'a>>,
-    query: &'a Query,
-    source: &'a str,
-) -> Vec<(usize, Vec<(&'a str, &'a str)>)> {
-    let mut result = Vec::new();
-    while let Some(m) = matches.next() {
-        result.push((
-            m.pattern_index,
-            format_captures(m.captures.iter().into_streaming_iter_ref(), query, source),
-        ));
-    }
-    result
-}
-
-pub fn collect_captures<'a>(
-    captures: impl StreamingIterator<Item = (QueryMatch<'a, 'a>, usize)>,
-    query: &'a Query,
-    source: &'a str,
-) -> Vec<(&'a str, &'a str)> {
-    format_captures(captures.map(|(m, i)| m.captures[*i]), query, source)
-}
-
-fn format_captures<'a>(
-    mut captures: impl StreamingIterator<Item = QueryCapture<'a>>,
-    query: &'a Query,
-    source: &'a str,
-) -> Vec<(&'a str, &'a str)> {
-    let mut result = Vec::new();
-    while let Some(capture) = captures.next() {
-        result.push((
-            query.capture_names()[capture.index as usize],
-            to_str(&capture.node, source),
-        ));
-    }
-    result
-}
-
 use anyhow::Result;
 use tree_sitter::Node;
 
@@ -5091,9 +4970,6 @@ pub struct TempAllocator {
 }
 
 impl TempAllocator {
-    pub fn new() -> Self {
-        Self { counter: 0 }
-    }
     pub fn next_temp(&mut self) -> String {
         let name = format!("<t{}>", self.counter);
         self.counter += 1;
