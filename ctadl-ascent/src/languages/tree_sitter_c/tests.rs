@@ -90,11 +90,10 @@ fn simple_assign_global() {
 }
 
 #[test_log::test]
-#[ignore = "assigning to an undeclared global as a target is WIP; un-ignore once supported and confirmed"]
 fn simple_global_assign() {
-    // Writing to a name with no local declaration (`a = b;`). This should resolve to a global store,
-    // `$globals.a = b` -- but writing an undeclared global as the *target* isn't supported yet, so
-    // the test is ignored (see the attribute).
+    // Writing to a name with no local declaration (`a = b;`) resolves to a global store,
+    // `$globals.a = b`. Ignored for as long as an undeclared global was unsupported as the
+    // *target* of a write; it is supported now, and this pins it.
     let src = r"
             int simple_global_assign() {
                 int b;
@@ -1337,13 +1336,12 @@ fn taint_flows_through_indirect_call_forward_decl() {
 }
 
 #[test_log::test]
-#[ignore = "F1 partial: indirect call through a function-pointer PARAMETER still drops \
-            taint (needs interprocedural func-ptr-value propagation); un-ignore when resolved"]
 fn taint_flows_through_funcptr_param() {
     // F1, harder form: the function pointer is a PARAMETER. `apply`'s `return f(x)`
     // carries @p1 (x) to the return only if the indirect call through formal `f`
     // resolves (interprocedurally, since `f` is bound to `id` at the call site).
-    // The frontend fix alone does NOT resolve this (the local-fp forms above do).
+    // Ignored while the frontend fix alone could not resolve it (the local-fp forms above
+    // could); it resolves now, and this pins it.
     let src = r"
         int id(int p) { return p; }
         int apply(int (*f)(int), int x) { return f(x); }
@@ -1355,12 +1353,11 @@ fn taint_flows_through_funcptr_param() {
 }
 
 #[test_log::test]
-#[ignore = "F1 partial: indirect call through a function-pointer STRUCT FIELD still drops \
-            taint (needs field-sensitive func-ptr-value propagation); un-ignore when resolved"]
 fn taint_flows_through_funcptr_in_struct() {
     // F1, hardest form: the function pointer lives in a STRUCT FIELD. `o.op(b)`
     // resolves only if field-sensitivity carries `o.op = id` to the indirect call.
-    // The frontend fix alone does NOT resolve this (the local-fp forms above do).
+    // Ignored while the frontend fix alone could not resolve it (the local-fp forms above
+    // could); it resolves now, and this pins it.
     let src = r"
         int id(int p) { return p; }
         struct S { int (*op)(int); };
@@ -2123,15 +2120,13 @@ fn funcptr_struct_multistore_flows() {
 }
 
 #[test_log::test]
-#[ignore = "needs the array_declarator frontend fix (auto_test commit d1ccd07): `int (*fps[2])(int)` \
-            fails ingestion here with `ERR 78: Unsupported expression type: array_declarator`. The F2 \
-            resolution itself is covered by funcptr_struct_multistore_flows; un-ignore once array \
-            declarators are supported on this branch."]
 fn funcptr_array_multistore_flows() {
     // F2 (array form): TWO function pointers stored into the same array, then a call
     // through element 0. The `fps[1] = id` store makes a new SSA version of `fps`; the
     // `fps[0] -> id` binding must propagate across it to the call `fps[0](b)`. Same root
     // cause as the struct form -- this is what the broadened DFSan generator first surfaced.
+    // Ignored while `int (*fps[2])(int)` failed ingestion outright (`ERR 78: Unsupported
+    // expression type: array_declarator`); the declarator lowers now, and this pins the flow.
     let src = r"
         int id(int p) { return p; }
         int wrap(int a, int b) {
