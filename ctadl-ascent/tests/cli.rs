@@ -8,6 +8,9 @@ ensure this happens for your store tests, wrap the test body in [`run_store_test
 Also, tests need to be sure their artifact import and project names are distinct. This needs to be
 done manually.
 
+Every test kept here runs in milliseconds. Keep it that way: a case that needs a real artifact
+belongs in `xtask`, and one that needs only a synthetic one belongs here.
+
 */
 use std::path::PathBuf;
 use std::sync::Once;
@@ -25,21 +28,6 @@ pub fn initialize() {
     });
 }
 
-fn test_file() -> PathBuf {
-    // The real-world APK fixture is owned by the xtask regression harness (see
-    // xtask/tests/dex/). Not sure if .. is allowed but seems to work.
-    [
-        env!("CARGO_MANIFEST_DIR"),
-        "..",
-        "xtask",
-        "tests",
-        "dex",
-        "com.noto_54.apk",
-    ]
-    .iter()
-    .collect()
-}
-
 /// Wrap the body of your store tests in this. See the note at the top of the file.
 fn run_store_test<F>(test: F)
 where
@@ -48,55 +36,6 @@ where
     initialize();
     let result = std::panic::catch_unwind(test);
     assert!(result.is_ok())
-}
-
-// TODO fix these by finding some small dex files to test on
-
-#[test]
-fn test_cli_import() {
-    run_store_test(|| {
-        let result = ArtifactImport::try_create("test_import", ArtifactLanguage::Apk, &test_file());
-        assert!(result.is_ok());
-        let import = result.unwrap();
-        let result = cli::import(&import, cli::ImportOptions::default());
-        assert!(result.is_ok());
-
-        assert!(import.name == "test_import");
-        assert!(import.program_path().is_file());
-        assert!(import.config_path().is_file());
-        let data = std::fs::read(import.program_path()).unwrap();
-        assert!(ctadl_ir::encode::decode_program(&data).is_ok());
-        assert!(ArtifactImport::load_by_name("test_import").is_ok());
-    });
-}
-
-#[test]
-fn test_cli_import_skip_existing() {
-    run_store_test(|| {
-        let name = "test_import_skip";
-        // Before any import exists, nothing is up to date.
-        assert!(!ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
-
-        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
-        // Destination not yet written and no hash recorded: still not up to date.
-        assert!(!ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
-
-        cli::import(&import, cli::ImportOptions::default()).unwrap();
-        // Destination exists, but the hash has not been recorded yet.
-        assert!(!ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
-
-        // Recording the hash (as the import command does on success) makes the
-        // import up to date so a `--skip-existing` re-import is skipped.
-        let mut import = ArtifactImport::load_by_name(name).unwrap();
-        import.record_artifact_hash().unwrap();
-        assert!(import.hash.is_some());
-        assert!(ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
-
-        // A reloaded config still reflects the recorded hash and path.
-        let reloaded = ArtifactImport::load_by_name(name).unwrap();
-        assert_eq!(reloaded.hash, import.hash);
-        assert!(ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
-    });
 }
 
 /// Importing a single `.c` file parses it into an IR program and stores it.
@@ -122,7 +61,7 @@ fn test_cli_import_c_file() {
 }
 
 /// Importing a directory of C sources and headers parses every `.c`/`.h` file
-/// underneath it as one translation unit.
+/// underneath it as a translation unit of its own and lowers them into one program.
 #[test]
 fn test_cli_import_c_directory() {
     run_store_test(|| {
@@ -265,27 +204,6 @@ fn test_cli_query_c_sources_and_sinks() {
                  line 12 is the summarized `transfer(&x[1], s)` call: {text}"
             );
         }
-    });
-}
-
-/// The fixture APK ships no `lib/<abi>` entries, so the native-library pass is a no-op
-/// and the import records no sub-imports. This is the path every APK without native
-/// code takes, and the one that must not need Ghidra.
-#[test]
-fn test_cli_import_apk_without_native_libs() {
-    run_store_test(|| {
-        let name = "test_import_no_native";
-        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
-        cli::import(&import, cli::ImportOptions::default()).unwrap();
-
-        let reloaded = ArtifactImport::load_by_name(name).unwrap();
-        assert!(
-            reloaded.sub_imports.is_empty(),
-            "an APK with no native libraries records no sub-imports, got {:?}",
-            reloaded.sub_imports
-        );
-        // Nothing was extracted, so the staging directory was never created.
-        assert!(!import.import_path().join("native").exists());
     });
 }
 
@@ -453,7 +371,7 @@ fn test_hash_artifact_file_and_dir() {
 //    env_logger::init();
 //    run_store_test(|| {
 //        let result =
-//            ArtifactImport::try_create("test_index_artifact", ArtifactLanguage::Dex, &test_file());
+//            ArtifactImport::try_create("test_index_artifact", ArtifactLanguage::Dex, &dex_file);
 //        assert!(result.is_ok());
 //        let import = result.unwrap();
 //        let result = cli::import(&import, cli::ImportOptions::default());
@@ -541,68 +459,6 @@ fn index_version_gate_rejects_a_different_version() {
         assert!(
             msg.contains("ctadl index gate_stale"),
             "message must name the command to run: {msg}"
-        );
-    });
-}
-
-// ---------------------------------------------------------------------------
-// `query` with no index. The rest of the check is covered by `tests/model_check.rs`, which
-// drives `check_programs` with no store at all; what is store-specific is name resolution --
-// and the promise that a query that cannot run writes nothing into the store.
-// ---------------------------------------------------------------------------
-
-#[test]
-fn query_without_an_index_checks_the_models_and_writes_nothing() {
-    run_store_test(|| {
-        let name = "test_model_check";
-        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
-        cli::import(&import, cli::ImportOptions::default()).unwrap();
-        // Reloaded: `cli::import` records the APK's native sub-imports into the config.
-        let import = ArtifactImport::load_by_name(name).unwrap();
-
-        let mut models = tempfile::NamedTempFile::with_suffix(".json").unwrap();
-        {
-            use std::io::Write as _;
-            write!(
-                models,
-                r#"{{"model_generators": [
-                    {{"find": "methods",
-                      "where": [{{"constraint": "signature_match", "name": "toString"}}],
-                      "model": {{"sources": [{{"kind": "k", "port": "Return"}}]}}}}
-                ]}}"#
-            )
-            .unwrap();
-            models.flush().unwrap();
-        }
-
-        // What `ctadl query <an-import-that-was-never-indexed>` builds: the import list, with
-        // no project written to the store.
-        let project = AnalysisProject::ephemeral(name, &[name]);
-        let outcome = cli::check_models(&project, &[models.path().to_path_buf()]).unwrap();
-
-        // Naming the import names everything imported out of it: the APK plus its native
-        // libraries, the same expansion `AnalysisProject::try_create` does.
-        let checked: Vec<&str> = outcome
-            .check
-            .imports
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect();
-        let mut expected = vec![name.to_string()];
-        expected.extend(import.sub_imports.iter().cloned());
-        assert_eq!(
-            checked,
-            expected.iter().map(String::as_str).collect::<Vec<_>>()
-        );
-        assert!(!outcome.has_file_errors());
-        assert!(outcome.check.matched[0].total.unwrap() > 0);
-
-        // A query that only checked model files must leave the store as it found it.
-        let project_dir = StorePaths::projects_path().join(name);
-        assert!(
-            !project_dir.exists(),
-            "the model check wrote a project config: {}",
-            project_dir.display()
         );
     });
 }

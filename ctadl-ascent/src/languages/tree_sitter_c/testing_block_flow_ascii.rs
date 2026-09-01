@@ -1,4 +1,3 @@
-#![allow(unused)] //TODO_JDB REMOVE THIS
 //! Test-only ASCII control-flow-graph rendering.
 //!
 //! Parses a marked-up `ctadl-ir` dump (as produced by the test logging) and renders an

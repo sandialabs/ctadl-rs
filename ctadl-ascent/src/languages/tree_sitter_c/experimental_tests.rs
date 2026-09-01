@@ -9,8 +9,10 @@ fn test_janky_assert() {
     assert!(check_match("return a", "return asdf%a"), "has return a");
 }
 #[test_log::test]
-#[ignore = "aspirational"]
 fn type_def_func_params() {
+    // A typedef'd function-pointer parameter, called through and returned. Once aspirational and
+    // asserting nothing; it lowers now, so pin what it lowers to: the call is an indirect call
+    // through the parameter, and the parameter reaches the return.
     let src = r#"
         typedef void (*HelloCallback)(char*);
 
@@ -21,8 +23,11 @@ fn type_def_func_params() {
             return callback;
         }
             "#;
-    let (_, dump) = program_from_string(src);
+    let (prog, dump) = program_from_string(src);
     dump_ir(&dump);
+    assert!(check_match(&dump, "funcptr-call"), "{dump}");
+    let (summary, _si) = get_summary(prog).unwrap();
+    check_returns_param(&summary, 0, "");
 }
 
 #[test_log::test]

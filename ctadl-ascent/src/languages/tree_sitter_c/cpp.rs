@@ -4,8 +4,8 @@
 //! language-neutral lowering core in the parent module ([`super::Context`] and its
 //! statement/expression walkers, the scope tree, CFG/IR builders, and temp allocator) —
 //! the same code the C frontend runs after parsing. The shared core never branches on the
-//! language: it is handed the C++ grammar via [`Context::new`](super::Context) and uses it
-//! only to compile queries against the grammar that parsed the tree. Any **C++-specific**
+//! language: [`super::lower_units`] hands it the C++ grammar (and [`CPP_HOOKS`]) and it uses
+//! the grammar only to compile queries against the one that parsed the tree. Any **C++-specific**
 //! lowering belongs in this module, never as a language branch in the shared core.
 //!
 //! `parse_c_program` is left byte-for-byte unchanged; this is a *new* entry point, per
@@ -23,12 +23,15 @@
 
 use ctadl_ir::mir::{CallEdges, CallStyle, Exp, Program, Statement, StatementKind, VariableRef};
 use ctadl_ir::{PathSegment, ThinVec, thin_vec};
+use hashbrown::hash_map::HashMap;
+use hashbrown::hash_set::HashSet;
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Node, Parser, QueryCursor};
+use tree_sitter::{Node, QueryCursor};
 
 use super::{
-    ClassInfo, Context, GrammarHooks, MatchExtractor, RawPath, ScopeView, VarKind,
-    declarator_leaf_ident, is_class_member_definition, markup, param_arity, to_str,
+    ClassInfo, Context, GrammarHooks, MatchExtractor, RawPath, ScopeView, TranslationUnit, VarKind,
+    compile_query_for, declarator_leaf_ident, is_class_member_definition, is_namespaced_definition,
+    lower_units, param_arity, to_str,
 };
 use crate::error::Error;
 
@@ -285,10 +288,11 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
 }
 
 /// Discover **arity-overloaded** names — the C++ `GrammarHooks::collect_overloads`
-/// implementation, run once before any function is registered. It scans every
-/// `function_definition` (free, namespaced, inline-method, out-of-line-method), computes each
-/// one's IR base name and explicit-parameter arity via [`overload_base_name`], and records the
-/// arity into the neutral [`Context::overloads`] map. A base name that ends up with **≥2**
+/// implementation, run by `lower_units` over every unit before any function is registered. It
+/// scans every `function_definition` (free, namespaced, inline-method, out-of-line-method),
+/// computes each one's IR base name and explicit-parameter arity via [`overload_base_name`],
+/// and records the arity into `overloads`, which every unit's [`Context::overloads`] then
+/// holds. A base name that ends up with **≥2**
 /// distinct arities is thereby marked overloaded, so [`Context::overload_name`] mangles it
 /// (`id#1`/`id#2`, `Box::f#1`/`Box::f#2`) at every touchpoint; a single-arity name stays bare.
 /// Constructors are **included** (spec 010): a class's ctors are keyed on `Class::Class`, so a
@@ -296,27 +300,60 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
 /// the matching one; a single-ctor class keeps the bare `Class::Class` and is unchanged. Inert
 /// for C: no C tree contains any of the shapes matched here, so nothing is recorded and the map
 /// stays empty.
-fn cpp_discover_overloads<'a>(
-    ctx: &mut Context<'a>,
-    source: &'a str,
+fn cpp_discover_overloads(
+    source: &str,
     root: Node<'_>,
+    overloads: &mut HashMap<String, HashSet<usize>>,
 ) -> anyhow::Result<(), Error> {
-    let query = ctx.compile_query(r#"(function_definition) @def"#);
-    let mut pairs: Vec<(String, usize)> = Vec::new();
-    {
-        let mut cursor = QueryCursor::new();
-        let mut it = cursor.matches(&query, root, source.as_bytes());
-        while let Some(m) = it.next() {
-            let extract = MatchExtractor::new(&query, m);
-            if let Some(pair) = overload_base_name(extract.get("def")?, source) {
-                pairs.push(pair);
-            }
+    let query = compile_query_for(
+        &tree_sitter_cpp::LANGUAGE.into(),
+        r#"(function_definition) @def"#,
+    );
+    let mut cursor = QueryCursor::new();
+    let mut it = cursor.matches(&query, root, source.as_bytes());
+    while let Some(m) = it.next() {
+        let extract = MatchExtractor::new(&query, m);
+        if let Some((base, arity)) = overload_base_name(extract.get("def")?, source) {
+            overloads.entry(base).or_default().insert(arity);
         }
     }
-    for (base, arity) in pairs {
-        ctx.overloads.entry(base).or_default().insert(arity);
-    }
     Ok(())
+}
+
+/// The C++ `GrammarHooks::aux_owns_definition`: whether a `function_definition` the shared
+/// definition query found is one [`cpp_collect_methods`] / [`cpp_collect_namespaced_functions`]
+/// own, rather than a free function of the unit. A class member — an inline method or
+/// constructor ([`is_class_member_definition`]) — and a function in a named namespace
+/// ([`is_namespaced_definition`]) are lowered there under their qualified names; so is an
+/// out-of-line member (`void Box::m() {…}`, a `qualified_identifier`), a destructor (`~Box`),
+/// an operator, and any other definition whose function name is not a plain `identifier` —
+/// none of which the shared `function_head` can name, and none of which is a free function.
+/// Only a definition naming a plain `identifier` at file scope is left to the shared pass,
+/// which then sees (and reports) exactly the declarator shapes it would for C.
+fn cpp_aux_owns_definition(def: Node<'_>) -> bool {
+    if is_class_member_definition(def) || is_namespaced_definition(def) {
+        return true;
+    }
+    // Unwrap what a definition's declarator may wrap around its `function_declarator` (a
+    // pointer or reference return, parentheses) and look at the name it declares.
+    let mut node = def.child_by_field_name("declarator");
+    while let Some(n) = node {
+        match n.kind() {
+            "function_declarator" => {
+                return n
+                    .child_by_field_name("declarator")
+                    .is_none_or(|name| name.kind() != "identifier");
+            }
+            "pointer_declarator" | "parenthesized_declarator" => {
+                node = n
+                    .child_by_field_name("declarator")
+                    .or_else(|| n.named_child(0));
+            }
+            "reference_declarator" => node = n.named_child(0),
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Union each class's **transitive** base-class data members into its own `members`, so an
@@ -376,7 +413,7 @@ fn build_subclasses(ctx: &mut Context<'_>) {
 /// Discover C++ instance methods and constructors — inline *and* out-of-line — and lower
 /// them through the shared core.
 ///
-/// The top-level `function_definition` query in `Context::collect_functions` only matches
+/// The top-level `function_definition` query in `Context::lower_definitions` only matches
 /// definitions whose name is a plain `identifier`; a member function's name is either a
 /// `field_identifier` nested inside a `class_specifier`/`struct_specifier` (inline body) or
 /// a `qualified_identifier` `Class::m` at top level (out-of-line body) — both invisible to
@@ -632,7 +669,7 @@ fn cpp_collect_methods<'a>(
 
     // Phase 1.5: discover out-of-line method definitions — a top-level `function_definition`
     // whose declarator names a `qualified_identifier` (`ret Class::m(params){…}`). The
-    // top-level `function_definition` query in `Context::collect_functions` only matches a
+    // top-level `function_definition` query in `Context::lower_definitions` only matches a
     // plain `identifier` name, so these are invisible to it and must be found here. We gather
     // (class, method, params, body) first — the cursor borrows the tree, not `ctx`, so reading
     // `ctx.classes` to filter to already-declared classes is fine — then register the method
@@ -1106,13 +1143,8 @@ fn emit_construction<'a>(
     ctor_args: ThinVec<Exp>,
 ) {
     let obj_name = to_str(&obj_node, source);
-    ctx.scope_tree.add_variable(
-        scope_view.sidx,
-        obj_name.to_string(),
-        VarKind::Local,
-        None,
-        None,
-    );
+    ctx.scope_tree
+        .add_variable(scope_view.sidx, obj_name.to_string(), VarKind::Local);
     ctx.local_types
         .insert(obj_name.to_string(), class.to_string());
     // Record this constructed stack object in the enclosing scope's destructor frame so its
@@ -1222,7 +1254,7 @@ fn lower_new_expression<'a>(
     // static type for CHA (set by the caller).
     let obj = ctx.allocator.next_temp();
     ctx.scope_tree
-        .add_variable(scope_view.sidx, obj.clone(), VarKind::Local, None, None);
+        .add_variable(scope_view.sidx, obj.clone(), VarKind::Local);
     if ctx.classes.contains_key(alloc_type) {
         ctx.local_types.insert(obj.clone(), alloc_type.to_string());
     }
@@ -1557,24 +1589,10 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     // <expr>` stores, before the body. Empty for every non-constructor, so the hook is inert
     // outside constructors and never fires on the C path.
     ctor_prologue: cpp_emit_member_inits,
-    // The C declarator shapes plus the C++-only `reference_declarator` (`T& r`), captured
-    // `@is_ref_cpp`. The shared classifier maps a non-const reference to `ByRef` (write-back)
-    // and a `const T&` to `ByVal` (inbound only), reading the grammar-neutral `const`
-    // qualifier; the C grammar has no `reference_declarator`, so this query is the reason the
-    // classifier query is carried per-grammar (it could not compile against the C grammar).
-    param_query: r#"
-        (parameter_declaration
-            declarator: [
-                (identifier) @var_name
-                (pointer_declarator declarator: (identifier) @var_name) @is_ref
-                (array_declarator declarator: (identifier) @var_name) @is_ref
-                (function_declarator
-                    declarator: (parenthesized_declarator
-                        (pointer_declarator declarator: (identifier) @var_name)))
-                (reference_declarator (identifier) @var_name) @is_ref_cpp
-            ]
-        )
-    "#,
+    // The definitions the shared definition pass must leave to `cpp_collect_methods` /
+    // `cpp_collect_namespaced_functions`: class members, namespaced functions, and every
+    // definition whose function name is not a plain `identifier` (an out-of-line member).
+    aux_owns_definition: cpp_aux_owns_definition,
 };
 
 /// Parse the C++ source in `source` into a CTADL IR program.
@@ -1582,18 +1600,14 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
 /// Signature-identical to [`super::parse_c_program`]: returns the lowered [`Program`],
 /// whether tree-sitter reported a syntax error, and the marked-up IR dump.
 pub fn parse_cpp_program(source: &str) -> anyhow::Result<(Program, bool, String), Error> {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_cpp::LANGUAGE.into())
-        .expect("error loading C++ grammar");
-
-    let mut ctx = Context::new(tree_sitter_cpp::LANGUAGE.into());
-    ctx.set_hooks(CPP_HOOKS);
-    let mut program = Program::default();
-    let tree = parser
-        .parse(source, None)
-        .expect("tree-sitter failed to parse");
-    ctx.parse(source, &tree, &mut program)?;
-    let marked_up = markup(&program, &ctx);
-    Ok((program, tree.root_node().has_error(), marked_up))
+    let units = [TranslationUnit::new(None, source.to_string())];
+    let lowered = lower_units(
+        &units,
+        tree_sitter_cpp::LANGUAGE.into(),
+        CPP_HOOKS,
+        false,
+        false,
+        true,
+    )?;
+    Ok((lowered.program, lowered.has_error, lowered.marked_up))
 }

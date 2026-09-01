@@ -69,6 +69,10 @@ pub fn run_checks(
             "dex:line-map".to_string(),
             to_outcome(check_line_map(&samples)),
         ));
+        results.push((
+            "dex:utf8-constants".to_string(),
+            to_outcome(check_utf8_constants(&samples)),
+        ));
 
         // Ground-truth disassembly check: compare dex-reader's smali against
         // baksmali. baksmali comes from the Nix environment, so a checkout
@@ -231,6 +235,80 @@ fn check_line_map(samples: &[SampleDex]) -> Result<()> {
     Ok(())
 }
 
+/// Modified-UTF-8 string constants survive the string-table decode.
+///
+/// The twin of `jvm:utf8-constants`, over the same two sources: no taint case
+/// can stand in for either, because an unpaired surrogate in a constant is
+/// inert data and a decoder that mangles it changes no flow. dex-reader has its
+/// own decoder, so covering one frontend says nothing about the other.
+fn check_utf8_constants(samples: &[SampleDex]) -> Result<()> {
+    // A supplementary character arrives as a CESU-8 pair and must recombine.
+    let parser = parser_for(samples, "PairedOnly")?;
+    let emoji = strings(&parser)
+        .filter_map(|(_, s)| s.as_str().map(str::to_string))
+        .find(|s| s.chars().any(|c| c as u32 > 0xFFFF))
+        .context("PairedOnly should hold a supplementary character constant")?;
+    if emoji != "\u{1F600}" {
+        bail!("recombined pair is {emoji:?}, want U+1F600");
+    }
+
+    // Unpaired surrogates are legal, must not stop the parse, and cannot be
+    // handed out as `String`.
+    let parser = parser_for(samples, "SurrogateConstants")?;
+    let mut descriptors = Vec::new();
+    for type_id in &parser.type_ids {
+        descriptors.push(
+            type_id
+                .descriptor(&parser.strings)
+                .map_err(|e| anyhow::anyhow!("type descriptors should be unaffected: {e}"))?,
+        );
+    }
+    if !descriptors.iter().any(|d| d == "LSurrogateConstants;") {
+        bail!("SurrogateConstants' own descriptor is missing from {descriptors:?}");
+    }
+
+    let mut unpaired: Vec<(usize, Vec<u16>)> = Vec::new();
+    for (index, s) in strings(&parser) {
+        if s.as_str().is_none() {
+            if !s.to_string_lossy().contains('\u{FFFD}') {
+                bail!("an unpaired surrogate should read back lossily as U+FFFD");
+            }
+            unpaired.push((index, s.code_units().collect()));
+        }
+    }
+    if unpaired.is_empty() {
+        bail!("SurrogateConstants should hold unpaired surrogates");
+    }
+    for (unit, what) in [(0xD800u16, "high"), (0xDC00u16, "low")] {
+        if !unpaired.iter().any(|(_, u)| u.contains(&unit)) {
+            bail!("the lone {what} surrogate should survive as a code unit");
+        }
+    }
+    // The `String` accessor is the one names and descriptors go through, so it
+    // must refuse what it cannot represent rather than lose a code unit.
+    let (index, _) = &unpaired[0];
+    match parser.strings.get(*index) {
+        Err(dex_reader::error::DexError::UnpairedSurrogate { .. }) => {}
+        other => bail!("strings.get on an unpaired surrogate should error, got {other:?}"),
+    }
+    Ok(())
+}
+
+/// Every string table entry of `parser`, with its index.
+fn strings<'p, 'd>(
+    parser: &'p DexParser<'d>,
+) -> impl Iterator<Item = (usize, dex_reader::DexString)> + use<'p, 'd> {
+    (0..parser.strings.len()).filter_map(|i| parser.strings.get_dex_string(i).ok().map(|s| (i, s)))
+}
+
+fn parser_for<'a>(samples: &'a [SampleDex], name: &str) -> Result<DexParser<'a>> {
+    let sample = samples
+        .iter()
+        .find(|s| s.name == name)
+        .with_context(|| format!("no compiled sample named {name}"))?;
+    DexParser::new(&sample.bytes).map_err(|e| anyhow::anyhow!("DexParser::new for {name}: {e}"))
+}
+
 /// dex-reader's smali disassembly matches baksmali for every compiled sample.
 fn check_baksmali(samples: &[SampleDex], work: &Path) -> Result<()> {
     let mut total = 0usize;
@@ -272,8 +350,18 @@ fn parse_dex_fully(label: &str, buffer: &[u8]) -> Result<()> {
     validate_map_against_header(&map, &header)
         .with_context(|| format!("validating map for {label}"))?;
 
-    let _strings =
+    let strings =
         parse_string_ids(buffer, &header).with_context(|| format!("string ids for {label}"))?;
+    // Decode every entry, not just the offset table: the modified-UTF-8 decoder
+    // is where a DEX carrying a supplementary character or a packed UTF-16
+    // table fails, and nothing else here would touch it. `get_dex_string` keeps
+    // the raw code units, so an unpaired surrogate -- legal, and present in
+    // real-world lexer tables -- is decoded rather than rejected.
+    for index in 0..strings.len() {
+        strings
+            .get_dex_string(index)
+            .with_context(|| format!("string #{index} for {label}"))?;
+    }
     let _type_ids =
         parse_type_ids(buffer, &header).with_context(|| format!("type ids for {label}"))?;
     let _proto_ids =

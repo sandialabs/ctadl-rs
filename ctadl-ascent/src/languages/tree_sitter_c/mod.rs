@@ -53,6 +53,7 @@
 //! int bar(){
 //! return 1;
 //! }
+//! ```
 //!
 //! ## Non constant subscript indices
 //!
@@ -92,16 +93,19 @@
 //! int *baz(int *x){
 //! return x;
 //! }
+//! ```
 //!
 //! ## `asm goto`
 //!
 //! GNU inline assembly is lowered as an operand transfer ([`Context::flatten_gnu_asm`]): every
 //! input operand may reach every output operand, and a `"+"` operand keeps its identity flow.
-//! `asm goto` additionally *jumps* to one of its labels, and those are real CFG edges out of an
-//! expression -- `flatten_expr` yields a value and has no way to add successors -- so the jumps
-//! are not modeled and the construct keeps reporting a frontend gap. Its operands still lower.
-//! Pinned by the `#[ignore]`d `asm_goto_is_a_known_limitation`. No corpus (dropbear, OpenSSH,
-//! nginx) uses it.
+//! `asm goto` additionally *jumps* to one of its labels. Those are real CFG edges, and they are
+//! built from inside the expression walk ([`Context::link_asm_goto_labels`]): the block the asm
+//! sits in gets an edge to each label's pre-created block *plus* the fall-through edge into a
+//! fresh block that the rest of the statement continues in. Unlike `goto`, an `asm goto` does
+//! not diverge -- it may fall through -- so it is not reported as a divergence. Pinned by
+//! `asm_goto_label_is_reachable`, `asm_goto_also_falls_through` and
+//! `asm_goto_multiple_labels_all_link`. Every kernel static key (`arch_static_branch`) is one.
 //!
 
 use hashbrown::hash_map::HashMap;
@@ -116,10 +120,12 @@ use ctadl_ir::mir::*;
 use source_info::{ArtifactEncoding, ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 
 use internment::ArcIntern;
-use streaming_iterator::{IntoStreamingIterator, StreamingIterator};
-use tree_sitter::{Parser, Query, QueryCapture, QueryCursor, QueryMatch, Tree};
+use streaming_iterator::StreamingIterator;
+use tree_sitter::{Parser, Query, QueryCursor, QueryMatch, Tree};
 
+#[cfg(test)]
 mod test_utils;
+#[cfg(test)]
 mod testing_block_flow_ascii;
 
 /// C++ frontend entry point (`parse_cpp_program`). A submodule so it can reach the
@@ -138,7 +144,7 @@ mod cpp_tests;
 mod experimental_tests;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VarKind {
+enum VarKind {
     Global,
     Local,     // Standard local variable
     Parameter, // Function argument
@@ -183,38 +189,29 @@ enum BlockTypeRequest {
 
 // TODO_JDB: implement var type thing to accomodate parameters have extra *stuff*
 #[derive(Debug, Clone)]
-pub struct VarDecl {
+struct VarDecl {
     pub name: String,
     pub kind: VarKind,
-    pub param_idx: Option<usize>,
-    pub param_kind: Option<ParameterType>,
     pub shadows: bool, // this is set at creation time, because at the time of the declaration is when the shadowing occurs,
     // so assigns that have already happened will never ask about the variable again.  you will never add a VarDecl that doesn't shadow, and then later "upgrade it to shadow"
     pub sidx: usize,
 }
 
 #[derive(Debug)]
-pub struct ScopeBox {
+struct ScopeBox {
     pub scope_name: String,
     pub parent_idx: Option<usize>,
     pub variables: Vec<VarDecl>,
 }
 
 #[derive(Debug, Default)]
-pub struct ScopeTree {
+struct ScopeTree {
     pub scopes: Vec<ScopeBox>,
     pub blocks: Vec<ScopeView>,
 }
 
 impl ScopeTree {
-    pub fn new() -> Self {
-        ScopeTree {
-            scopes: Vec::new(),
-            blocks: Vec::new(),
-        }
-    }
-
-    pub fn add_scope(&mut self, name: String, parent: Option<usize>) -> usize {
+    fn add_scope(&mut self, name: String, parent: Option<usize>) -> usize {
         let new_scope = ScopeBox {
             scope_name: name,
             parent_idx: parent,
@@ -226,12 +223,11 @@ impl ScopeTree {
         index
     }
 
-    pub fn add_block(&mut self, scope_view: &ScopeView) {
+    fn add_block(&mut self, scope_view: &ScopeView) {
         self.blocks.push(scope_view.clone());
     }
 
-    pub fn get_explainers(blocks: &[ScopeView], target_func: &str, target_blidx: u32) -> String {
-        //self.blocks
+    fn get_explainers(blocks: &[ScopeView], target_func: &str, target_blidx: u32) -> String {
         blocks
             .iter()
             // 1. Keep only the ones that match your criteria
@@ -244,7 +240,7 @@ impl ScopeTree {
     }
 
     // this returns just 'symbol' //name, or scope_name.sidx.var
-    pub fn to_string(&self, var: &VarDecl) -> String {
+    fn to_string(&self, var: &VarDecl) -> String {
         if var.shadows {
             if let Some(scope) = self.scopes.get(var.sidx) {
                 return format!("{}.{}.{}", scope.scope_name, var.sidx, var.name);
@@ -255,26 +251,12 @@ impl ScopeTree {
         var.name.to_string()
     }
 
-    pub fn add_variable(
-        &mut self,
-        sidx: usize,
-        symbol: String,
-        kind: VarKind,
-        param_idx: Option<usize>,
-        param_kind: Option<ParameterType>,
-    ) {
+    fn add_variable(&mut self, sidx: usize, symbol: String, kind: VarKind) {
         let shadows = self.find_variable(sidx, symbol.as_str()).is_some();
-        if kind == VarKind::Parameter {
-            //these optionals have gotten out of hand, i'll refactor this once scoping settles down
-            assert!(param_idx.is_some());
-            assert!(param_kind.is_some())
-        }
         if let Some(scope) = self.scopes.get_mut(sidx) {
             scope.variables.push(VarDecl {
                 name: symbol,
                 kind,
-                param_idx,
-                param_kind,
                 shadows,
                 sidx,
             });
@@ -283,7 +265,7 @@ impl ScopeTree {
         }
     }
 
-    pub fn find_variable(&self, start_idx: usize, target_name: &str) -> Option<&VarDecl> {
+    fn find_variable(&self, start_idx: usize, target_name: &str) -> Option<&VarDecl> {
         let mut current_idx = Some(start_idx);
 
         while let Some(idx) = current_idx {
@@ -303,13 +285,13 @@ impl ScopeTree {
 }
 
 // In order to unify logic around consequents and unbraced body nodes.
-pub struct CompoundProxy<'a> {
+struct CompoundProxy<'a> {
     pub nodes: Vec<Node<'a>>,
     pub was_compound: bool,
 }
 
 impl<'a> CompoundProxy<'a> {
-    pub fn from_node(body_node: Node<'a>) -> Self {
+    fn from_node(body_node: Node<'a>) -> Self {
         match body_node.kind() {
             // If it's a block, collect all the children inside the braces
             "compound_statement" => {
@@ -358,44 +340,69 @@ fn get_line_num(node: &Node<'_>) -> usize {
     node.start_position().row //hmm our tests always start w/ a lf.
 }
 
+/// The name of the local every synthesized return reads. Angle brackets are not legal in a C
+/// identifier, so this can never collide with a name from the source (the same trick
+/// [`TempAllocator::next_temp`] uses for `<tN>`). One per function is enough: it is never
+/// written, so every read of it is the same absence of a value.
+const IMPLICIT_RETURN_LOCAL: &str = "<implicit-return>";
+
+/// The terminator to close a block with when the frontend, not the source, decides it returns.
+///
+/// `lower_function` gives every function whose declared return type is not `void` a
+/// [`ReturnType`] of arity 1, and `verify()` rejects a `Return` carrying a different number of
+/// arguments ([`ctadl_ir::mir::VerifyError::InconsistentReturns`]), so the empty `return` is
+/// only well-formed in a `void` function. Three places have no expression to return and used to
+/// emit the empty one regardless -- falling off the end of a body (see [`link_blocks`]),
+/// patching a block the walk left unterminated ([`finalize_terminators`]), and a bare `return;`
+/// written inside a non-`void` function, which is legal C and common in `int` error paths. All
+/// three produced IR that did not verify, silently: no warning is logged, and nothing on the
+/// `ctadl import` path checks -- unlike the dex, jvm and pcode front ends, this one never calls
+/// `program.verify()`, and `ssa::transform_program`'s post-SSA check passes because
+/// `complete()` has already rewritten every `Return` into a goto to a single exit block. Only
+/// `get_summary` in this module's tests ever asked, which is why no census saw it.
+///
+/// Satisfy the arity contract with a local that is never assigned. C says the value of such a
+/// return is indeterminate, and an unwritten local is exactly that in this IR: it carries no
+/// taint into the return, so no flow is invented -- the same "value nothing reads" shape
+/// [`Context::flatten_gnu_asm`]'s operand-less blend already yields.
+fn implicit_return(program: &mut Program, fidx: FunctionIdx) -> Terminator {
+    let fdat = &mut program.functions[fidx];
+    let arity = fdat.return_type.arity as usize;
+    let args: Vec<Exp> = if arity == 0 {
+        vec![]
+    } else {
+        let local = VariableRef::new_local_idx(fdat.locals.get_or_intern(IMPLICIT_RETURN_LOCAL));
+        vec![Exp::Variable(local); arity]
+    };
+    Terminator::new_kind(TerminatorKind::Return { args: args.into() })
+}
+
 fn link_blocks(
     program: &mut Program,
     from_sv: &ScopeView,
     to_sv: &ScopeView,
     continuation: bool,
 ) -> Result<(), Error> {
-    /*
-        //from_sv.explainer == "2.if_continuation(of)::4" {
-        log::debug!(
-            "linking (continuation={},\n{:?} -> \n{:?}",
-            continuation,
-            from_sv,
-            to_sv
-        );
-    */
-
     let target_val = if continuation {
         match to_sv.continuation_blidx {
             Some(idx) => idx,
             None => {
-                // Falls off the end of the function body: emit an implicit empty
+                // Falls off the end of the function body: emit an implicit
                 // `return` (SSA `complete()` rewrites it into a goto-to-exit).
-                // Mirrors the empty-return shape produced by `walk_return`.
-                if let Some(block) = program.functions[from_sv.fidx]
-                    .blocks
-                    .get_mut(from_sv.blidx)
-                {
-                    if block.terminator.is_none() {
-                        block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-                            args: vec![].into(),
-                        }));
+                // Mirrors the shape `walk_return` produces for a bare `return;`.
+                match program.functions[from_sv.fidx].blocks.get(from_sv.blidx) {
+                    Some(block) if block.terminator.is_some() => return Ok(()),
+                    Some(_) => {}
+                    None => {
+                        return Err(Error::TreeSitterParse(format!(
+                            "attempt to link a non existing from block: {:?}",
+                            from_sv
+                        )));
                     }
-                    return Ok(());
                 }
-                return Err(Error::TreeSitterParse(format!(
-                    "attempt to link a non existing from block: {:?}",
-                    from_sv
-                )));
+                let term = implicit_return(program, from_sv.fidx);
+                program.functions[from_sv.fidx].blocks[from_sv.blidx].terminator = Some(term);
+                return Ok(());
             }
         }
     } else {
@@ -454,23 +461,41 @@ fn link_blocks(
 /// its statements were dropped, a frontend gap worth surfacing under
 /// CTADL_ERROR_ON_AST. Same pattern as the Lua frontend's
 /// `finalize_terminators`.
+///
+/// `stranded_labels` names the blocks pre-created for labels `walk_labeled_statement` never
+/// entered. In a body the parser did not fully parse (`body_holds_recovery`) those are
+/// patched like any other but **not** reported: the label sits in parse-recovery output,
+/// which this frontend deliberately does not analyze, so the loss is a fact about the
+/// analyzed source and is stated as one -- once per function, by
+/// `Context::report_unanalyzed_recovery` -- rather than a second time as a frontend gap. That
+/// is spec 064's rule applied to the last class that still broke it: all 29 of the kernel
+/// census's remaining `left without a terminator` warnings were label blocks of this kind.
+/// In a body that parsed cleanly a stranded label block is still a gap and still reported --
+/// a duplicate label orphans one (`error_on_ast_promotes_unterminated_block`), and that block
+/// is not in `stranded_labels` at all, since `label_blocks` kept only the later of the two.
 fn finalize_terminators(
     program: &mut Program,
     fidx: FunctionIdx,
     func_name: &str,
+    stranded_labels: &HashSet<BasicBlockIdx>,
+    body_holds_recovery: bool,
 ) -> Result<(), Error> {
-    let mut patched: Vec<BasicBlockIdx> = Vec::new();
-    for (bb, data) in program.functions[fidx]
+    // Collect first, patch second: `implicit_return` needs the whole function (it reads the
+    // return arity and interns a local), which it cannot have while a block is borrowed.
+    let unterminated: Vec<BasicBlockIdx> = program.functions[fidx]
         .blocks
-        .blocks_mut()
-        .iter_enumerated_mut()
-    {
-        if data.terminator.is_none() {
-            data.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-                args: vec![].into(),
-            }));
-            patched.push(bb);
+        .iter_enumerated()
+        .filter(|(_, data)| data.terminator.is_none())
+        .map(|(bb, _)| bb)
+        .collect();
+    let mut patched: Vec<BasicBlockIdx> = Vec::new();
+    for bb in unterminated {
+        let term = implicit_return(program, fidx);
+        program.functions[fidx].blocks[bb].terminator = Some(term);
+        if body_holds_recovery && stranded_labels.contains(&bb) {
+            continue;
         }
+        patched.push(bb);
     }
     if !patched.is_empty() {
         unexpected_ast(format!(
@@ -558,6 +583,63 @@ fn add_scope(
     }
 }
 
+/// The three things [`function_head`] recovers from a definition's declarator.
+struct FunctionHead<'tree> {
+    /// The `identifier` naming the function.
+    name: Node<'tree>,
+    /// Its `parameter_list`.
+    params: Node<'tree>,
+    /// Whether the declarator wraps the `function_declarator` in at least one
+    /// `pointer_declarator`, i.e. the function returns a pointer. `void *f()` returns a
+    /// value even though its `type:` is `void` -- the `void` is the pointee.
+    returns_pointer: bool,
+}
+
+/// One `function_definition` the frontend found, as [`plan_definitions`] sees it: enough to
+/// decide whether it is a function of its own, a character-for-character copy of another
+/// translation unit's, or a second function that merely shares a name.
+#[derive(Debug)]
+struct Definition<'a> {
+    /// Index of the translation unit it came from, among the units lowered together.
+    unit: usize,
+    /// Identity of the `function_definition` node within that unit's tree, so the walk can
+    /// look its plan up again.
+    id: usize,
+    /// The IR name it is registered under: the name as written, arity-mangled when that name
+    /// is overloaded (C++ only, see [`GrammarHooks::collect_overloads`]; the identity for C).
+    name: String,
+    /// The definition's source text. This frontend lowers text, so two definitions that
+    /// quote the same characters lower to the same IR -- which is what makes deduplicating
+    /// them exact rather than a guess.
+    text: &'a str,
+}
+
+/// What [`plan_definitions`] decided about ONE translation unit's definitions. The first two
+/// are keyed by `function_definition` node id; a definition in neither is the ordinary case --
+/// the only definition of its name -- and keeps the name it was written with.
+#[derive(Debug, Default, Clone)]
+struct UnitPlan {
+    /// Definitions that repeat, character for character, one another unit already
+    /// contributes. The same function, included by two translation units; lowered once, there.
+    duplicates: HashSet<usize>,
+    /// IR name of a definition that cannot keep its bare name because another definition of
+    /// that name got there first.
+    effective: HashMap<usize, String>,
+    /// For a name several definitions claim, the IR name a reference from THIS unit means.
+    /// C resolves a call to the definition the caller's own translation unit holds, so that is
+    /// what a reference from here resolves to; a unit that defines none of them is absent
+    /// here and falls back to the bare name. Empty unless some name really is claimed twice.
+    local_names: HashMap<String, String>,
+}
+
+impl UnitPlan {
+    /// The IR name of the definition `id`, which is the name it was written with unless this
+    /// plan gave it one of its own.
+    fn name_of<'n>(&'n self, id: usize, written: &'n str) -> &'n str {
+        self.effective.get(&id).map_or(written, String::as_str)
+    }
+}
+
 /// Synthetic field name that all members of a `union` variable collapse to, so they share a
 /// single access path (union members alias -- they occupy the same storage). The `$` keeps it
 /// out of the C identifier space, so it can never collide with a real source-level field.
@@ -581,6 +663,26 @@ const UNION_FIELD: &str = "$union";
 /// This is the *only* dereference field the frontend emits: a non-constant index lowers to it
 /// with no offset, so `a[n]` and `a[0]` are one path. See [`push_element`].
 const DEREF_FIELD: &str = "deref";
+
+/// The field of the globals object that names the object at a compile-time constant address --
+/// the location `(T *)K` designates, for the constant `K` exactly as it is spelled in the
+/// source. `((struct inet_sock *)0)->sk` becomes `$globals.<address 0>.sk`.
+///
+/// A global rather than a fresh temp per site, because two casts of the same constant designate
+/// the same object in C: a store through `*(volatile u32 *)0xfee00300` must be observed at a
+/// read of it. Keyed on the constant's *text*, so `0` and `0x0` are two names for what is really
+/// one address -- accepted deliberately, since normalizing would mean re-implementing C integer
+/// literal semantics (bases, suffixes, character constants) for a distinction the corpus does not
+/// draw: all 2,177 sites in the kernel corpus spell it `0`.
+///
+/// `<...>` is not C identifier syntax, so this can never collide with a global the program
+/// declares -- the collision-proofing `next_temp` uses for `<tN>` and spec 090 for
+/// `<implicit-return>`.
+fn literal_address_path(constant: &str) -> RawPath {
+    let mut fields = ThinVec::with_capacity(1);
+    fields.push(PathSegment::symbol(format!("<address {constant}>")));
+    RawPath::new(VariableRef::new_global(), fields)
+}
 
 /// True for the synthetic dereference field ([`DEREF_FIELD`]) -- the memory at an address, as
 /// opposed to a struct member. Taking the address of such an access (`&a[i]`) drops this field,
@@ -749,18 +851,16 @@ struct GrammarHooks {
     /// Map a `subscript_expression` node to its index expression. C uses a direct `index`
     /// field; C++ nests it under an `indices` `subscript_argument_list`.
     subscript_index: for<'t> fn(Node<'t>) -> Node<'t>,
-    /// The tree-sitter query [`Context::collect_params`] runs over a `parameter_list` to
-    /// classify each parameter (name + by-ref/by-value mode). C and C++ share the same
-    /// declarator shapes for plain/pointer/array/function-pointer params; C++ additionally
-    /// has the `reference_declarator` (`T& r`) node, which the C grammar lacks — so a query
-    /// mentioning it cannot be compiled against the C grammar. Carrying the query string per
-    /// grammar keeps that C++-only node out of the C path (the C string is byte-for-byte the
-    /// historical one) without an `is_cpp` branch in the shared classifier. A `reference_`
-    /// `declarator` is captured as `@is_ref_cpp`; the classifier then reads the `const`
-    /// qualifier (grammar-neutral) to pick `ByVal` (`const T&`, inbound) vs `ByRef` (`T&`).
-    param_query: &'static str,
+    /// Whether a `function_definition` the shared definition query found belongs to
+    /// [`GrammarHooks::collect_aux`] rather than to the shared pass ([`collect_definitions`]
+    /// and [`Context::lower_definitions`] both skip it). C has no such definitions, so its hook
+    /// is always `false`. C++ answers `true` for a class member (an inline method or
+    /// constructor), a function in a named namespace, and an out-of-line member — all of which
+    /// `collect_aux` registers and lowers under their qualified names, and none of which the
+    /// shared pass could name.
+    aux_owns_definition: for<'t> fn(Node<'t>) -> bool,
     /// Discover and lower any *auxiliary* function definitions that the top-level
-    /// `function_definition` query in [`Context::collect_functions`] does not reach. C has
+    /// `function_definition` query in [`Context::lower_definitions`] does not reach. C has
     /// none, so its hook is a no-op. C++ uses it to discover inline instance methods (which
     /// live inside a `class_specifier`/`struct_specifier`, named by a `field_identifier`),
     /// register their members/methods into [`Context::classes`], and lower each method body
@@ -791,16 +891,21 @@ struct GrammarHooks {
         Node<'t>,
         &'s str,
     ) -> anyhow::Result<bool, Error>,
-    /// Populate [`Context::overloads`] — the neutral arity-overload map — *before* any
-    /// function is registered or lowered. C has no overloading, so its hook is a no-op (the
-    /// map stays empty and [`Context::overload_name`] is the identity). C++ uses it to scan
-    /// every `function_definition` (free, namespaced, and member), grouping by IR base name and
-    /// recording each definition's explicit-parameter arity, so the mangler can tell — at all
-    /// four touchpoints, definition-side and call-side alike — which names are overloaded. It
-    /// runs first (ahead of the top-level pre-pass and `collect_aux`) so the map is complete
-    /// before the first `functions.entry(...)`.
-    collect_overloads:
-        for<'a, 't> fn(&mut Context<'a>, &'a str, Node<'t>) -> anyhow::Result<(), Error>,
+    /// Populate the neutral arity-overload map that becomes every unit's
+    /// [`Context::overloads`] — *before* any function is registered or lowered. C has no
+    /// overloading, so its hook is a no-op (the map stays empty and [`Context::overload_name`]
+    /// is the identity). C++ uses it to scan every `function_definition` (free, namespaced, and
+    /// member), grouping by IR base name and recording each definition's explicit-parameter
+    /// arity, so the mangler can tell — at all four touchpoints, definition-side and call-side
+    /// alike — which names are overloaded. [`lower_units`] runs it over every unit first, ahead
+    /// of [`collect_definitions`] (which registers a definition under its mangled name) and of
+    /// `collect_aux`, so the map is complete before the first name is registered. A plain
+    /// function rather than a `Context` method because no context exists yet at that point.
+    collect_overloads: for<'t> fn(
+        &str,
+        Node<'t>,
+        &mut HashMap<String, HashSet<usize>>,
+    ) -> anyhow::Result<(), Error>,
     /// Lower a C++ `delete p;` — destroying a heap object runs its destructor(s) (spec 016).
     /// The shared `delete_expression` arm calls this and then yields a throwaway temp for the
     /// expression's (void) value. C has no `delete`, so its hook is a **no-op** — `delete` never
@@ -861,7 +966,9 @@ impl GrammarHooks {
         construct: |_ctx, _source, _program, _scope_view, _node, _class| Ok(false),
         // C has no overloading: the `overloads` map stays empty and `overload_name` is the
         // identity, so every C (and every non-overloaded) name is registered/resolved bare.
-        collect_overloads: |_ctx, _source, _root| Ok(()),
+        collect_overloads: |_source, _root, _overloads| Ok(()),
+        // C has no definitions the shared pass cannot own: no methods, no namespaces.
+        aux_owns_definition: |_def| false,
         // C has no `delete_expression` (nor destructors), so this is never invoked on the C path;
         // the no-op keeps `delete` a taint no-op exactly as spec 014 left it.
         delete_expr: |_ctx, _program, _node, _source, _scope_view| Ok(()),
@@ -871,27 +978,22 @@ impl GrammarHooks {
         // C has no constructors, so no function has a prologue to emit — a no-op, and the
         // slice handed to it is always empty on the C path anyway.
         ctor_prologue: |_ctx, _program, _scope_view, _source, _inits| Ok(()),
-        // The historical C parameter query, verbatim: plain, pointer (`@is_ref`), array
-        // (`@is_ref`), and function-pointer declarators. C has no `reference_declarator`.
-        param_query: r#"
-        (parameter_declaration
-            declarator: [
-                (identifier) @var_name
-                (pointer_declarator declarator: (identifier) @var_name) @is_ref
-                (array_declarator declarator: (identifier) @var_name) @is_ref
-                (function_declarator
-                    declarator: (parenthesized_declarator
-                        (pointer_declarator declarator: (identifier) @var_name)))
-            ]
-        )
-    "#,
     };
 }
 
 #[derive(Debug)]
 struct Context<'a> {
+    /// Every function this import knows, by IR name: the definitions of EVERY translation
+    /// unit, registered by [`lower_units`] before any unit is lowered, so a reference to a
+    /// function another unit defines (`fp = later;`) is recognised as one. The name is the one
+    /// written in the source except where [`plan_definitions`] had to mint one, so an extern
+    /// declaration, a call from a unit that defines nothing of that name, and every taint model
+    /// still resolve by the plain name.
     functions: HashMap<String, FunctionIdx>,
     param_names: HashMap<String, IndexVec<ParameterIdx, &'a str>>,
+    /// What [`plan_definitions`] decided about this unit's definitions, and what a colliding
+    /// name means from here. See [`UnitPlan`].
+    unit_plan: UnitPlan,
     scope_tree: ScopeTree,
     allocator: TempAllocator,
     /// Block that each `goto` label maps to, for the function currently being walked.
@@ -908,7 +1010,7 @@ struct Context<'a> {
     grammar: tree_sitter::Language,
     /// Grammar-shape adapters for the handful of node-shape divergences between
     /// tree-sitter-c and tree-sitter-cpp. Defaults to [`GrammarHooks::C`]; the `cpp`
-    /// submodule overrides them via [`Context::set_hooks`]. The shared walker reads
+    /// submodule hands [`lower_units`] its own (`cpp::CPP_HOOKS`). The shared walker reads
     /// conditions and subscript indices through these instead of branching on language.
     hooks: GrammarHooks,
     /// Classes/structs and their members + inline methods, keyed by class name. Populated
@@ -985,25 +1087,59 @@ struct Context<'a> {
     /// access path (the F4 soundness gap). Populated from `union_specifier`-typed local
     /// declarations; reset per function.
     union_vars: HashSet<VariableRef>,
-    /// Builder that interns source spans, or `None` when spans are not being recorded
-    /// (the `parse_c_program` path used by tests and the marked-up dump). `import_c`
-    /// installs a builder so imported IR carries locations back to the C source.
+    /// Builder that interns source spans, or `None` when spans are not being recorded (the
+    /// unit-test path). [`lower_units`] threads one builder through every unit's context, so
+    /// the imported IR carries locations back to each unit's file.
     source_info: Option<SourceInfoBuilder>,
-    /// Maps offsets in the parsed buffer back to the original file(s). Empty (and thus
-    /// span-less) unless `import_c` populated it. See [`read_c_source`].
-    file_map: FileMap,
+    /// The artifact spans in this unit are recorded under, with the unit's length in bytes so
+    /// a span can be clamped to it; `None` when spans are not recorded.
+    unit_key: Option<(ArtifactKey, usize)>,
     /// Span attached to every IR statement emitted while lowering the C statement currently
     /// being walked. Set once per source statement in [`Context::walk_statement`] so that all
     /// the IR it expands into (calls, loads, stores) points back at that statement.
     cur_span: SourceInfo,
     /// **Record layout registry**: a record tag mapped to its data members in declaration
-    /// order. Filled once per translation unit by [`Context::collect_struct_layouts`], before
+    /// order. Filled once per translation unit by [`Context::collect_type_registry`], before
     /// any function is lowered, so a member's own type is available regardless of declaration
     /// order. Consulted only by [`Context::collect_initializer_list`], to map a *positional*
     /// brace initializer onto the members it writes. A tag that is absent (anonymous, declared
     /// in another translation unit) simply takes the positional-element fallback, so an
     /// incomplete registry is always safe.
     struct_layouts: HashMap<String, Vec<MemberSlot>>,
+    /// **Type-name registry**: every name this translation unit uses as a type. Filled by the
+    /// same pre-pass as `struct_layouts` (see [`Context::collect_type_registry`]), from the
+    /// `type_identifier` nodes tree-sitter itself produced -- a `typedef`'s declared name, and
+    /// equally a name used as a type in any declaration, which is the only evidence available
+    /// for a typedef that lives in a system header the corpus did not preprocess (nginx and
+    /// openssh use `u_char` and `uid_t` without ever declaring them).
+    ///
+    /// It exists to tell a cast from a call: tree-sitter cannot know `__be16` is a type, so
+    /// `(__be16)(x)` parses as a `call_expression` through a parenthesized callee -- the exact
+    /// shape of a genuine `(fp)(x)`. See [`Context::cast_shaped_call`], which is the only
+    /// consumer. A record TAG is deliberately not recorded: `struct stat` is a type but `stat`
+    /// alone is not one, and it is the name of a function.
+    type_names: HashSet<String>,
+    /// Names the translation unit declares as functions without defining them -- prototypes,
+    /// `int zzz(int);` -- collected in the same pre-pass as `type_names`. The positive
+    /// evidence that `(zzz)(x)` is a call, symmetric to the type-use evidence `type_names`
+    /// holds for a cast. Read by [`Context::cast_shaped_call`] only: it keeps the report made
+    /// on a name with no evidence either way quiet for the one idiom that legitimately lands
+    /// there, `(free)(p)` -- parentheses to suppress a function-like macro -- with libc's
+    /// prototype in scope.
+    declared_functions: HashSet<String>,
+    /// `ERROR` nodes already reported as unparsable constructs, by `Node::id`, so one
+    /// syntax error draws one warning. See [`Context::report_unparsable_construct`].
+    reported_parse_errors: HashSet<usize>,
+    /// Functions whose body was already reported as holding parse-recovery output, so the
+    /// notice is one per function rather than one per node the recovery left behind (41,751
+    /// of them in the kernel census). See [`Context::report_unanalyzed_recovery`].
+    functions_with_recovery: HashSet<String>,
+    /// The pre-created label blocks [`Context::walk_labeled_statement`] actually entered.
+    /// Reset per function alongside `label_blocks`; its complement within `label_blocks` is
+    /// the set of labels the walk never reached, which [`finalize_terminators`] needs in
+    /// order to tell a label stranded in parse-recovery output from a genuinely dropped
+    /// block.
+    walked_label_blocks: HashSet<BasicBlockIdx>,
 }
 
 /// One data member in a [`Context::struct_layouts`] entry.
@@ -1042,62 +1178,64 @@ impl MemberSlot {
     }
 }
 
-/// One source file's placement inside the combined parse buffer produced by
-/// [`read_c_source`].
+/// One translation unit to lower: what the compiler would see for one `.c` file.
 #[derive(Debug)]
-struct FileSlice {
-    /// Offset in the combined buffer where this file's content begins.
-    combined_start: usize,
-    /// Length in bytes of this file's content within the combined buffer.
-    len: usize,
-    /// Path of the original file (as displayed).
-    path: String,
-    /// SHA-256 of the file's content, matching the store's artifact-hash scheme.
+struct TranslationUnit {
+    /// Display path, or `None` for an in-memory unit (the [`parse_c_program`] path used by
+    /// tests), which has no file to name.
+    path: Option<String>,
+    /// SHA-256 of `source`, matching the store's artifact-hash scheme.
     hash: Vec<u8>,
+    source: String,
 }
 
-/// Maps offsets in the combined parse buffer back to the original source file and the
-/// offset within it, so IR spans reference real files even when a directory is parsed
-/// as one concatenated translation unit. Slices are non-overlapping; the marker lines
-/// inserted between files are gaps that map to no file.
-#[derive(Debug, Default)]
-struct FileMap {
-    slices: Vec<FileSlice>,
-}
+impl TranslationUnit {
+    fn new(path: Option<String>, source: String) -> Self {
+        let hash = source_info::sha256(source.as_bytes());
+        Self { path, hash, source }
+    }
 
-impl FileMap {
-    /// Locate the file containing combined-buffer offset `off`, returning that file's
-    /// artifact key, the offset within the file, and the number of bytes remaining in
-    /// the file from that offset (so a span can be clamped to the file boundary).
-    fn locate(&self, off: usize) -> Option<(ArtifactKey, u32, usize)> {
-        let slice = self
-            .slices
-            .iter()
-            .find(|s| off >= s.combined_start && off < s.combined_start + s.len)?;
-        let local = off - slice.combined_start;
-        let key = ArtifactKey {
-            path: slice.path.clone(),
+    /// The artifact spans in this unit are recorded under; `None` for an in-memory unit.
+    fn artifact_key(&self) -> Option<ArtifactKey> {
+        self.path.as_ref().map(|path| ArtifactKey {
+            path: path.clone(),
             sub_artifact_id: 0,
-            hash: slice.hash.clone(),
+            hash: self.hash.clone(),
             encoding: ArtifactEncoding::Utf8,
-        };
-        Some((key, local as u32, slice.len - local))
+        })
+    }
+}
+
+/// The neutral overload mangler behind [`Context::overload_name`], usable before any context
+/// exists: [`collect_definitions`] registers a definition under the name this yields. If
+/// `base` names an **overloaded** entity — present in `overloads` with **≥2** distinct
+/// arities — the arity-mangled IR name `base#arity`; otherwise `base` unchanged.
+fn mangle_overload(
+    overloads: &HashMap<String, HashSet<usize>>,
+    base: &str,
+    arity: usize,
+) -> String {
+    match overloads.get(base) {
+        Some(arities) if arities.len() >= 2 => format!("{base}#{arity}"),
+        _ => base.to_string(),
     }
 }
 
 impl Context<'_> {
-    /// Create a lowering context driving `grammar`. Both frontend entry points build the
-    /// context this way — `parse_c_program` with the C grammar, `parse_cpp_program` with
-    /// the C++ grammar — so the shared lowering stays language-neutral.
-    fn new(grammar: tree_sitter::Language) -> Self {
+    /// Create a lowering context driving `grammar` through `hooks`. [`lower_units`] builds one
+    /// per translation unit this way — the C grammar with [`GrammarHooks::C`] for
+    /// `parse_c_program`/`import_c`, the C++ grammar with `cpp::CPP_HOOKS` for
+    /// `parse_cpp_program` — so the shared lowering stays language-neutral.
+    fn new(grammar: tree_sitter::Language, hooks: GrammarHooks) -> Self {
         Self {
             functions: HashMap::default(),
             param_names: HashMap::default(),
+            unit_plan: UnitPlan::default(),
             scope_tree: ScopeTree::default(),
             allocator: TempAllocator::default(),
             label_blocks: HashMap::default(),
             grammar,
-            hooks: GrammarHooks::C,
+            hooks,
             classes: HashMap::default(),
             local_types: HashMap::default(),
             current_method_class: None,
@@ -1105,12 +1243,17 @@ impl Context<'_> {
             overloads: HashMap::default(),
             subclasses: HashMap::default(),
             dtor_frames: Vec::new(),
-            struct_layouts: HashMap::default(),
             addr_alias: HashMap::default(),
             union_vars: HashSet::default(),
             source_info: None,
-            file_map: FileMap::default(),
+            unit_key: None,
             cur_span: SourceInfo::default(),
+            struct_layouts: HashMap::default(),
+            type_names: HashSet::default(),
+            declared_functions: HashSet::default(),
+            reported_parse_errors: HashSet::default(),
+            functions_with_recovery: HashSet::default(),
+            walked_label_blocks: HashSet::default(),
         }
     }
 
@@ -1121,39 +1264,29 @@ impl Context<'_> {
     /// Because [`Self::overloads`] is empty for C (and holds a single arity for every
     /// non-overloaded C++ name), this is the **identity** for all of C and for every ordinary
     /// non-overloaded call — so wiring it into a touchpoint changes only genuinely overloaded
-    /// names, and never introduces a language branch.
+    /// names, and never introduces a language branch. See [`mangle_overload`].
     fn overload_name(&self, base: &str, arity: usize) -> String {
-        match self.overloads.get(base) {
-            Some(arities) if arities.len() >= 2 => format!("{base}#{arity}"),
-            _ => base.to_string(),
-        }
+        mangle_overload(&self.overloads, base, arity)
     }
 
-    /// Install grammar-shape adapters for the driving grammar. `parse_c_program` keeps the
-    /// default [`GrammarHooks::C`]; `parse_cpp_program` calls this with `cpp::CPP_HOOKS`.
-    fn set_hooks(&mut self, hooks: GrammarHooks) {
-        self.hooks = hooks;
-    }
-
-    /// Compile a tree-sitter query against this context's grammar. Use this (not the
-    /// free [`compile_query`], which is hard-wired to C) for any query run over a tree
-    /// produced by this context, so the tree is queried with the grammar that parsed it.
+    /// Compile a tree-sitter query against this context's grammar, so a tree produced by
+    /// this context is queried with the grammar that parsed it (see [`compile_query_for`]).
     fn compile_query(&self, query_src: &str) -> Query {
         compile_query_for(&self.grammar, query_src)
     }
 }
 
-pub struct MatchExtractor<'q, 'cursor, 'tree> {
+struct MatchExtractor<'q, 'cursor, 'tree> {
     query: &'q Query,
     m: &'cursor QueryMatch<'cursor, 'tree>,
 }
 
 impl<'query, 'cursor, 'tree> MatchExtractor<'query, 'cursor, 'tree> {
-    pub fn new(query: &'query Query, m: &'cursor QueryMatch<'cursor, 'tree>) -> Self {
+    fn new(query: &'query Query, m: &'cursor QueryMatch<'cursor, 'tree>) -> Self {
         Self { query, m }
     }
 
-    pub fn get(&self, name: &str) -> Result<Node<'tree>, Error> {
+    fn get(&self, name: &str) -> Result<Node<'tree>, Error> {
         let r = self.get_opt(name);
         if let Some(result) = r {
             Ok(result)
@@ -1164,7 +1297,7 @@ impl<'query, 'cursor, 'tree> MatchExtractor<'query, 'cursor, 'tree> {
         }
     }
 
-    pub fn get_opt(&self, name: &str) -> Option<Node<'tree>> {
+    fn get_opt(&self, name: &str) -> Option<Node<'tree>> {
         self.m
             .captures
             .iter()
@@ -1172,7 +1305,7 @@ impl<'query, 'cursor, 'tree> MatchExtractor<'query, 'cursor, 'tree> {
             .map(|c| c.node)
     }
 }
-pub fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
+fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
     let mut result = String::with_capacity(ir_text.len() + 500); // Pre-allocate some space
     let mut current_func = String::new();
 
@@ -1227,108 +1360,68 @@ pub fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
     result
 }
 
-pub fn _inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
-    let mut result = String::with_capacity(ir_text.len() + 500); // Pre-allocate some space
-    let mut current_func = String::new();
-
-    for line in ir_text.lines() {
-        let trimmed = line.trim_start();
-
-        // 1. Track the current function name
-        if trimmed.starts_with("define ") {
-            // Extracts "simple_elif" from "define simple_elif(@p0..."
-            if let Some(name_part) = trimmed.split(' ').nth(1)
-                && let Some(name) = name_part.split('(').next()
-            {
-                current_func = name.to_string();
-            }
-            result.push_str(line);
-            result.push('\n');
-            continue;
-        }
-
-        // 2. Find the blocks and inject the explainer
-        if trimmed.starts_with("begin block_") {
-            // Keep the original 'begin block_X' line (Remove this push if you want to strictly overwrite it)
-            result.push_str(line);
-            result.push('\n');
-
-            // Extract just the number (e.g., from "block_0 [start]:" -> "0")
-            if let Some(after_block) = trimmed.split("block_").nth(1) {
-                // Take only the digits before the space or colon
-                let num_str: String = after_block
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .collect();
-
-                if let Ok(blidx_val) = num_str.parse::<u32>() {
-                    // Fetch the explainer using our previous iterator logic
-                    let explainer = ScopeTree::get_explainers(views, &current_func, blidx_val);
-
-                    if !explainer.is_empty() {
-                        result.push_str(format!("{}//{}", line, explainer).as_str());
-                    } else {
-                        result.push_str(format!("{}// **MISSING**", line).as_str());
-                    }
-                    /*                    if !explainer.is_empty() {
-                        // Inject the explainer (formatted as comments so the IR remains readable)
-                        for exp_line in explainer.lines() {
-                            result.push_str(&format!("    // Explainer: {}\n", exp_line));
-                        }
-                    }*/
-                }
-            }
-            continue;
-        } else {
-            // 3. Keep all other lines exactly as they are
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-
-    result
-}
-
-fn markup(program: &Program, ctx: &Context<'_>) -> String {
-    let dump = program.to_string();
-    inject_explainers_into_ir(&dump, &ctx.scope_tree.blocks)
-}
-
-/// Parse the C source in `source` into a CTADL IR program.
-/// returns the Program and a flag whether it had tree-sitter-syntax-errors
+/// Parse the C source in `source` -- one in-memory translation unit -- into a CTADL IR
+/// program. Returns the program, whether tree-sitter reported syntax errors, and the
+/// marked-up dump. No spans are recorded and no extern stubs are created: this is the
+/// unit-test path, and a test that needs the stubs goes through [`parse_c_files`].
 pub fn parse_c_program(source: &str) -> anyhow::Result<(Program, bool, String), Error> {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_c::LANGUAGE.into())
-        .expect("error loading C grammar");
+    let units = [TranslationUnit::new(None, source.to_string())];
+    let lowered = lower_units(
+        &units,
+        tree_sitter_c::LANGUAGE.into(),
+        GrammarHooks::C,
+        false,
+        false,
+        true,
+    )?;
+    Ok((lowered.program, lowered.has_error, lowered.marked_up))
+}
 
-    let mut ctx = Context::new(tree_sitter_c::LANGUAGE.into());
-    let mut program = Program::default();
-    let tree = parser
-        .parse(source, None)
-        .expect("tree‐sitter failed to parse");
-    ctx.parse(source, &tree, &mut program)?;
-    let marked_up = markup(&program, &ctx);
-    Ok((program, tree.root_node().has_error(), marked_up))
+/// Parse several named C files, each a translation unit of its own, into one program -- the
+/// shape [`import_c`] produces for a directory -- and return it with its marked-up dump.
+///
+/// The import path, not [`parse_c_program`]: it records spans and it creates the extern
+/// stubs. That is what a test needs in order to pin anything about several translation units
+/// meeting in one program, which is where a `static` function's file scope stops being
+/// implicit (spec 120).
+pub fn parse_c_files(files: &[(String, String)]) -> Result<(Program, String), Error> {
+    let units: Vec<TranslationUnit> = files
+        .iter()
+        .map(|(path, contents)| TranslationUnit::new(Some(path.clone()), contents.clone()))
+        .collect();
+    let lowered = lower_units(
+        &units,
+        tree_sitter_c::LANGUAGE.into(),
+        GrammarHooks::C,
+        true,
+        true,
+        true,
+    )?;
+    Ok((lowered.program, lowered.marked_up))
 }
 
 /// Import C source at `path` into a [`ProgramInfo`], ready for [`crate::cli::import`].
 ///
-/// `path` may be a single C source file (`.c`) or header (`.h`), or a directory
-/// tree containing such files. A directory is imported as one translation unit:
-/// every `.h` and `.c` file it contains (recursively) is concatenated -- headers
-/// first, then `.c` files, each group in sorted path order -- and parsed together,
-/// so declarations in the headers are in scope for the definitions that use them
-/// and references resolve across files.
+/// `path` may be a single C source file (`.c`) or header (`.h`), or a directory tree
+/// containing such files. Every file is a translation unit of its own: each is parsed
+/// separately, and all of them lower into one program, where a reference from one unit to a
+/// function another defines resolves to that definition (see [`lower_units`]).
 ///
-/// The frontend expects post-preprocessor C source: `#include` directives are not
-/// expanded here, so a directory should already contain preprocessed translation
-/// units (or self-contained sources).
+/// The frontend expects post-preprocessor C source: `#include` directives are not expanded
+/// here, so each file should already be a complete translation unit. A header found in the
+/// directory is lowered for the definitions it holds (a `static inline`), not prepended to
+/// the `.c` files -- their preprocessed forms already contain it.
 pub fn import_c(path: &std::path::Path) -> Result<ProgramInfo, Error> {
-    let (source, file_map) = read_c_source(path)?;
-    let (program, source_info, has_error, _marked_up) =
-        parse_c_with_source_info(&source, file_map)?;
-    if has_error {
+    let units = read_c_units(path)?;
+    let lowered = lower_units(
+        &units,
+        tree_sitter_c::LANGUAGE.into(),
+        GrammarHooks::C,
+        true,
+        true,
+        false,
+    )?;
+    if lowered.has_error {
         log::warn!(
             "tree-sitter reported syntax errors while parsing C source at '{}'; \
              the imported IR may be incomplete (is the input already preprocessed?)",
@@ -1336,134 +1429,418 @@ pub fn import_c(path: &std::path::Path) -> Result<ProgramInfo, Error> {
         );
     }
     Ok(ProgramInfo {
-        program,
-        source_info,
+        program: lowered.program,
+        source_info: lowered
+            .source_info
+            .expect("spans are recorded on the import path"),
         ..Default::default()
     })
 }
 
-/// Parse `source` into a [`Program`] together with the [`source_info::SourceInfo`] that maps
-/// its IR statements back to the original files described by `file_map`. This is the
-/// span-recording variant of [`parse_c_program`], used by [`import_c`].
-fn parse_c_with_source_info(
-    source: &str,
-    file_map: FileMap,
-) -> Result<(Program, source_info::SourceInfo, bool, String), Error> {
+/// What [`lower_units`] produced.
+struct Lowered {
+    program: Program,
+    /// The recorded spans, when they were asked for.
+    source_info: Option<source_info::SourceInfo>,
+    /// Whether tree-sitter reported a syntax error in any unit.
+    has_error: bool,
+    /// The IR dump with each block's scope explainer, when `dump` asked for it -- tests read
+    /// it; the import path does not, and a full render of a corpus is not free.
+    marked_up: String,
+}
+
+/// Lower `units` into one program: the compiler-and-linker split, in miniature.
+///
+/// Each unit is parsed on its own and lowered by a [`Context`] of its own -- its type names,
+/// prototypes, record layouts and scopes are its own, as C says they are, and a syntax error
+/// in one unit cannot re-parent what follows it in another. What the units share is the
+/// program, whose function table is one namespace. So before any body is lowered every
+/// unit's definitions are collected and [`plan_definitions`] decides what each one is -- a
+/// function of its own, a copy of one another unit already contributes, or a second function
+/// that merely shares a name and needs an IR name of its own -- and every surviving name is
+/// registered up front, so a reference from one unit to a function another defines (a call,
+/// or `fp = later;`) resolves the way a linker would resolve it.
+///
+/// With `record_spans`, every IR statement carries a span into its unit's file; with
+/// `extern_stubs`, called-but-undefined functions get an empty definition at the end so taint
+/// models can match them by name. The import path wants both; the unit-test path neither.
+/// With `dump`, the marked-up IR text is rendered too (tests read it; imports skip it).
+///
+/// `language` is the grammar every unit is parsed with and `hooks` the adapters for its node
+/// shapes ([`GrammarHooks`]): C for [`parse_c_program`]/[`import_c`], C++ for
+/// `cpp::parse_cpp_program`. The lowering itself never branches on which.
+fn lower_units(
+    units: &[TranslationUnit],
+    language: tree_sitter::Language,
+    hooks: GrammarHooks,
+    record_spans: bool,
+    extern_stubs: bool,
+    dump: bool,
+) -> Result<Lowered, Error> {
     let mut parser = Parser::new();
     parser
-        .set_language(&tree_sitter_c::LANGUAGE.into())
-        .expect("error loading C grammar");
+        .set_language(&language)
+        .expect("error loading grammar");
+    let trees: Vec<Tree> = units
+        .iter()
+        .map(|unit| {
+            parser
+                .parse(&unit.source, None)
+                .expect("tree-sitter failed to parse")
+        })
+        .collect();
+    let has_error = trees.iter().any(|tree| tree.root_node().has_error());
 
-    let mut ctx = Context {
-        source_info: Some(SourceInfoBuilder::new(ArtifactMetadata::new())),
-        file_map,
-        ..Context::new(tree_sitter_c::LANGUAGE.into())
-    };
+    // Overloads first (C++ only; C's hook records nothing): an overloaded name's definitions
+    // are registered under their arity-mangled names, so the mangler must know every arity
+    // before `collect_definitions` names anything.
+    let mut overloads: HashMap<String, HashSet<usize>> = HashMap::default();
+    for (unit, tree) in units.iter().zip(&trees) {
+        (hooks.collect_overloads)(&unit.source, tree.root_node(), &mut overloads)?;
+    }
+
+    // The link step: what is defined where, and what each definition is.
+    let query = function_definition_query(&language);
+    let mut defs: Vec<Definition<'_>> = Vec::new();
+    for (index, (unit, tree)) in units.iter().zip(&trees).enumerate() {
+        collect_definitions(
+            index,
+            &unit.source,
+            tree,
+            &query,
+            &overloads,
+            hooks,
+            &mut defs,
+        )?;
+    }
+    let mut plans = plan_definitions(units, &defs)?;
+    // Names first: a positional brace initializer in any body needs the layout of a record
+    // that may be declared anywhere in its unit, and telling a cast from a call needs the
+    // type names and prototypes of every unit (see [`UnitRegistry`]).
+    let mut registries: Vec<UnitRegistry> = Vec::with_capacity(units.len());
+    let mut type_names: HashSet<String> = HashSet::new();
+    let mut declared_functions: HashSet<String> = HashSet::new();
+    for (unit, tree) in units.iter().zip(&trees) {
+        let mut registry = UnitRegistry::default();
+        collect_registry(&unit.source, tree.root_node(), &mut registry);
+        type_names.extend(registry.type_names.iter().cloned());
+        declared_functions.extend(registry.declared_functions.iter().cloned());
+        registries.push(registry);
+    }
     let mut program = Program::default();
-    let tree = parser
-        .parse(source, None)
-        .expect("tree‐sitter failed to parse");
-    ctx.parse(source, &tree, &mut program)?;
-    // Give called-but-undefined functions (external declarations like `int source();`) a
-    // function id so taint models can match them by name. Only the import path needs this;
-    // the in-memory `parse_c_program` used by unit tests deliberately omits these stubs.
-    define_extern_functions(&mut program);
-    let marked_up = markup(&program, &ctx);
-    let has_error = tree.root_node().has_error();
-    let source_info = ctx
-        .source_info
-        .take()
-        .expect("builder is Some in this path")
-        .finish();
-    Ok((program, source_info, has_error, marked_up))
+    let mut functions: HashMap<String, FunctionIdx> = HashMap::new();
+    for def in &defs {
+        let plan = &plans[def.unit];
+        if plan.duplicates.contains(&def.id) {
+            continue;
+        }
+        let name = plan.name_of(def.id, &def.name);
+        if !functions.contains_key(name) {
+            let fidx = program.new_function();
+            functions.insert(name.to_string(), fidx);
+        }
+    }
+
+    // Lowering: one context per unit, all into the one program.
+    let mut builder = record_spans.then(|| SourceInfoBuilder::new(ArtifactMetadata::new()));
+    let mut views: Vec<ScopeView> = Vec::new();
+    for (index, (unit, tree)) in units.iter().zip(&trees).enumerate() {
+        let mut ctx = Context {
+            functions: functions.clone(),
+            unit_plan: std::mem::take(&mut plans[index]),
+            struct_layouts: std::mem::take(&mut registries[index].struct_layouts),
+            type_names: type_names.clone(),
+            declared_functions: declared_functions.clone(),
+            unit_key: if record_spans {
+                unit.artifact_key().map(|key| (key, unit.source.len()))
+            } else {
+                None
+            },
+            source_info: builder.take(),
+            overloads: overloads.clone(),
+            ..Context::new(language.clone(), hooks)
+        };
+        ctx.toplevel(&unit.source, tree, &mut program, &query)?;
+        builder = ctx.source_info.take();
+        if dump {
+            views.append(&mut ctx.scope_tree.blocks);
+        }
+    }
+    if extern_stubs {
+        define_extern_functions(&mut program);
+    }
+    let marked_up = if dump {
+        inject_explainers_into_ir(&program.to_string(), &views)
+    } else {
+        String::new()
+    };
+    Ok(Lowered {
+        program,
+        source_info: builder.map(SourceInfoBuilder::finish),
+        has_error,
+        marked_up,
+    })
 }
 
-/// Read the C source for [`import_c`], returning the buffer to parse and a [`FileMap`]
-/// mapping offsets in that buffer back to the original files. A single file maps to
-/// itself; a directory is concatenated into one translation unit -- every header and
-/// `.c` file underneath it (headers first, then `.c` files, each group in sorted path
-/// order) -- and the map records where each file landed so IR spans still name it.
-fn read_c_source(path: &std::path::Path) -> Result<(String, FileMap), Error> {
-    if !path.is_dir() {
-        let contents = std::fs::read_to_string(path)?;
-        let mut map = FileMap::default();
-        map.slices.push(FileSlice {
-            combined_start: 0,
-            len: contents.len(),
-            path: path.display().to_string(),
-            hash: source_info::sha256(contents.as_bytes()),
-        });
-        return Ok((contents, map));
-    }
-
-    let mut headers = Vec::new();
-    let mut sources = Vec::new();
-    collect_c_files(path, &mut headers, &mut sources)?;
-    if headers.is_empty() && sources.is_empty() {
-        return Err(Error::Path {
-            message: format!("no .c or .h files found under '{}'", path.display()),
-        });
-    }
-    headers.sort();
-    sources.sort();
-
-    let mut combined = String::new();
-    let mut map = FileMap::default();
-    for file in headers.iter().chain(sources.iter()) {
-        let contents = std::fs::read_to_string(file)?;
-        // Mark where each file's contents begin (aids debugging the merged unit)
-        // and separate files with newlines so tokens across a boundary never merge.
-        combined.push_str(&format!("// ==== {} ====\n", file.display()));
-        // The file's content begins *after* the marker line; record that so spans
-        // land at the right offset within the original file.
-        let combined_start = combined.len();
-        let hash = source_info::sha256(contents.as_bytes());
-        combined.push_str(&contents);
-        map.slices.push(FileSlice {
-            combined_start,
-            len: contents.len(),
-            path: file.display().to_string(),
-            hash,
-        });
-        combined.push('\n');
-    }
-    Ok((combined, map))
+/// The query that finds every `function_definition`. The declarator is captured whole, not
+/// pattern-matched: `_declarator` is a CHOICE in the grammar and a pointer return nests a
+/// `pointer_declarator` per `*` around the `function_declarator`, which no single query
+/// pattern can follow. [`function_head`] does the unwrapping and rejects the shapes that name
+/// no single function.
+fn function_definition_query(language: &tree_sitter::Language) -> Query {
+    compile_query_for(
+        language,
+        r#"
+            (function_definition
+                type: (primitive_type)? @return_type
+                declarator: (_) @func.decl
+                body: (compound_statement) @body) @func.def
+            "#,
+    )
 }
 
-/// Recursively collect `.h` files into `headers` and `.c` files into `sources`
-/// under `dir`. Any other file is ignored.
+/// The definitions in unit `unit`, appended to `defs` with their identity: the first half of
+/// [`lower_units`]'s link step. A definition whose declarator names no single function is
+/// reported here -- dropping it is still dropping a body, so it is said out loud rather than
+/// left to be noticed as a bodyless `define`, which is exactly how the whole
+/// pointer-returning class hid for as long as it did -- and not collected.
+fn collect_definitions<'a>(
+    unit: usize,
+    source: &'a str,
+    tree: &Tree,
+    query: &Query,
+    overloads: &HashMap<String, HashSet<usize>>,
+    hooks: GrammarHooks,
+    defs: &mut Vec<Definition<'a>>,
+) -> Result<(), Error> {
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, tree.root_node(), source.as_bytes());
+    while let Some(m) = matches.next() {
+        let extract = MatchExtractor::new(query, m);
+        let (Ok(decl_node), Ok(def_node)) = (extract.get("func.decl"), extract.get("func.def"))
+        else {
+            continue;
+        };
+        // A definition the grammar's auxiliary pass owns -- a C++ class member or a
+        // namespaced function, which `collect_aux` registers and lowers under its qualified
+        // name -- is not one of this unit's free definitions. Never true for C.
+        if (hooks.aux_owns_definition)(def_node) {
+            continue;
+        }
+        let Some(head) = function_head(decl_node) else {
+            let (quote, elided) = quote_construct(to_str(&decl_node, source));
+            let elision = if elided > 0 {
+                format!(" (+{elided} chars elided)")
+            } else {
+                String::new()
+            };
+            unexpected_ast(format!(
+                "unsupported declarator in a function definition{elision}; the function it \
+                 defines has no body in the IR -- declarator: {quote}"
+            ))?;
+            continue;
+        };
+        defs.push(Definition {
+            unit,
+            id: def_node.id(),
+            name: mangle_overload(
+                overloads,
+                to_str(&head.name, source),
+                param_arity(head.params),
+            ),
+            text: to_str(&def_node, source),
+        });
+    }
+    Ok(())
+}
+
+/// Decide what each definition *is*, before any of them is lowered: the second half of
+/// [`lower_units`]'s link step, and the reason it exists.
+///
+/// A name is not an identity here. The program's function table is one namespace, so the
+/// definitions of every translation unit arrive in it together, and two things that C keeps
+/// apart collide in it:
+///
+/// * a header's `static inline` is one definition per translation unit that included it
+///   -- 137,596 of the Linux corpus's 148,001 definitions are repeats of this kind, and
+///   1,294 of nginx's 2,308;
+/// * a `static` helper is scoped to its own file, so two files may each define their own
+///   `parse_dest_constraint`, and a corpus of several programs has one `main` per program
+///   (openssh: 70 names with more than one definition, 21 of them `main`).
+///
+/// Keying the function table on the name alone lowered every one of those into ONE
+/// `FunctionData`: parameter lists concatenated, the return arity of whichever body was
+/// walked last imposed on all of them, and every call site resolving to the chimera --
+/// silently, with no warning of any attribution (spec 120).
+///
+/// So: definitions that quote the same characters are the same function. This frontend
+/// lowers *text*, so N copies of one header's inline produce N identical bodies; keeping
+/// the first and dropping the rest is exact, not an approximation. What is left after
+/// that really is several functions sharing a name, and each gets a name of its own,
+/// `g$ssh-agent.c`, saying which file it came from. The first keeps the bare `g`, so an
+/// extern declaration, a call from a unit that defines none of them, and every taint
+/// model still resolve; a unit's [`UnitPlan::local_names`] sends a reference from a unit
+/// that *does* have its own definition to that one instead.
+fn plan_definitions(
+    units: &[TranslationUnit],
+    defs: &[Definition<'_>],
+) -> Result<Vec<UnitPlan>, Error> {
+    let mut plans: Vec<UnitPlan> = vec![UnitPlan::default(); units.len()];
+    let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, def) in defs.iter().enumerate() {
+        by_name.entry(def.name.as_str()).or_default().push(i);
+    }
+    // Every name as written is spoken for: a minted name must never shadow a real one.
+    let mut used: HashSet<String> = defs.iter().map(|def| def.name.to_string()).collect();
+    let mut planned: HashSet<&str> = HashSet::new();
+
+    for def in defs {
+        if !planned.insert(def.name.as_str()) {
+            continue;
+        }
+        let group = &by_name[def.name.as_str()];
+        if group.len() == 1 {
+            continue; // the ordinary case, and the overwhelming majority of names
+        }
+
+        // Copies first: `owner[k]` is the definition whose body group member `k` shares.
+        let mut owner_of_text: HashMap<&str, usize> = HashMap::new();
+        let mut owner: Vec<usize> = Vec::with_capacity(group.len());
+        let mut distinct: Vec<usize> = Vec::new();
+        for &i in group {
+            if let Some(&first) = owner_of_text.get(defs[i].text) {
+                plans[defs[i].unit].duplicates.insert(defs[i].id);
+                owner.push(first);
+            } else {
+                owner_of_text.insert(defs[i].text, i);
+                distinct.push(i);
+                owner.push(i);
+            }
+        }
+        if distinct.len() == 1 {
+            log::debug!(
+                "`{}` is defined identically in {} translation units; lowering it once",
+                def.name,
+                group.len()
+            );
+            continue;
+        }
+
+        // What is left is genuinely several functions with one name.
+        for (k, &i) in distinct.iter().enumerate().skip(1) {
+            let base = match &units[defs[i].unit].path {
+                // The base name is the readable half of the path and the half that
+                // identifies the translation unit; two files that share one still get
+                // distinct names, from the `#n` below.
+                Some(file) => format!(
+                    "{}${}",
+                    def.name,
+                    std::path::Path::new(file)
+                        .file_name()
+                        .map_or(file.as_str(), |f| f.to_str().unwrap_or(file.as_str()))
+                ),
+                None => format!("{}${}", def.name, k),
+            };
+            let mut minted = base.clone();
+            let mut n = 2;
+            while !used.insert(minted.clone()) {
+                minted = format!("{base}#{n}");
+                n += 1;
+            }
+            log::debug!(
+                "`{}` also names a definition analyzed as `{minted}`",
+                def.name
+            );
+            plans[defs[i].unit].effective.insert(defs[i].id, minted);
+        }
+
+        // Which of them a reference from a given unit means.
+        for (pos, &i) in group.iter().enumerate() {
+            let owner_def = &defs[owner[pos]];
+            let effective = plans[owner_def.unit]
+                .name_of(owner_def.id, &def.name)
+                .to_string();
+            let held = plans[defs[i].unit]
+                .local_names
+                .entry(def.name.to_string())
+                .or_insert_with(|| effective.clone());
+            if *held != effective {
+                // Two DIFFERENT definitions of one name in ONE translation unit is not C
+                // -- and not a concatenation artifact either, since they were written
+                // that way. Lower both (the second under its minted name, so neither
+                // body is thrown away or glued onto the other) and say what a call to
+                // the name means here, which is the first one.
+                let minted = effective;
+                let first = held.clone();
+                let place = match &units[defs[i].unit].path {
+                    Some(file) => format!("`{file}`"),
+                    None => "this translation unit".to_string(),
+                };
+                malformed_source(format!(
+                    "`{}` is defined more than once in {place}; C gives a name one \
+                     definition per translation unit, so this one is analyzed as \
+                     `{minted}` and a call to `{}` here resolves to `{first}`",
+                    def.name, def.name
+                ))?;
+            }
+        }
+    }
+    Ok(plans)
+}
+
+/// The translation units under `path` for [`import_c`]: the file itself, or every `.c` and
+/// `.h` file under a directory, in sorted path order.
+fn read_c_units(path: &std::path::Path) -> Result<Vec<TranslationUnit>, Error> {
+    let mut files = Vec::new();
+    if path.is_dir() {
+        collect_c_files(path, &mut files)?;
+        if files.is_empty() {
+            return Err(Error::Path {
+                message: format!("no .c or .h files found under '{}'", path.display()),
+            });
+        }
+        files.sort();
+    } else {
+        files.push(path.to_path_buf());
+    }
+    files
+        .into_iter()
+        .map(|file| {
+            let contents = std::fs::read_to_string(&file)?;
+            Ok(TranslationUnit::new(
+                Some(file.display().to_string()),
+                contents,
+            ))
+        })
+        .collect()
+}
+
+/// Recursively collect the `.c` and `.h` files under `dir`. Any other file is ignored.
 fn collect_c_files(
     dir: &std::path::Path,
-    headers: &mut Vec<std::path::PathBuf>,
-    sources: &mut Vec<std::path::PathBuf>,
+    files: &mut Vec<std::path::PathBuf>,
 ) -> Result<(), Error> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         let metadata = std::fs::symlink_metadata(&path)?;
         if metadata.is_dir() {
-            collect_c_files(&path, headers, sources)?;
-        } else if metadata.is_file() {
-            match path.extension().and_then(|e| e.to_str()) {
-                Some("h") => headers.push(path),
-                Some("c") => sources.push(path),
-                _ => {}
-            }
+            collect_c_files(&path, files)?;
+        } else if metadata.is_file()
+            && matches!(path.extension().and_then(|e| e.to_str()), Some("c" | "h"))
+        {
+            files.push(path);
         }
     }
     Ok(())
 }
 
-pub fn compile_query(query_src: &str) -> Query {
-    compile_query_for(&tree_sitter_c::LANGUAGE.into(), query_src)
-}
-
-/// Compile a tree-sitter query against an explicit grammar. The C frontend goes through
-/// [`compile_query`] (C); the C++ frontend drives this with the C++ grammar via
-/// [`Context::compile_query`]. A query must be compiled against the same grammar that
-/// parsed the tree it runs over — tree-sitter matches by numeric symbol id, and the C and
-/// C++ grammars assign different ids to the same node kind.
-pub(crate) fn compile_query_for(language: &tree_sitter::Language, query_src: &str) -> Query {
+/// Compile a tree-sitter query against an explicit grammar: the C frontend's for a C tree,
+/// the C++ frontend's for a C++ tree ([`Context::compile_query`] picks the context's own). A
+/// query must be compiled against the same grammar that parsed the tree it runs over —
+/// tree-sitter matches by numeric symbol id, and the C and C++ grammars assign different ids
+/// to the same node kind.
+fn compile_query_for(language: &tree_sitter::Language, query_src: &str) -> Query {
     Query::new(language, query_src).unwrap_or_else(|e| {
         let header = "--- Query Syntax Error ---";
         let snippet = query_src
@@ -1563,13 +1940,7 @@ fn record_member_slots(node: Node<'_>, source: &str) -> Option<Vec<MemberSlot>> 
         // layout would write a wrong path. A self-referential record is excluded for free,
         // since the recursive member is always a pointer.
         let member_ty = field_decl.child_by_field_name("type");
-        let ty_tag = member_ty.and_then(|ty| match ty.kind() {
-            "struct_specifier" | "union_specifier" | "class_specifier" => {
-                ty.child_by_field_name("name").map(|n| to_str(&n, source))
-            }
-            "type_identifier" => Some(to_str(&ty, source)),
-            _ => None,
-        });
+        let ty_tag = declaration_type_tag(field_decl, source);
         // An *anonymous* inline record member (`struct { int a; } q;`) has no tag to record, so
         // its layout is carried on the slot itself. Only when the type is nameless: a tagged
         // definition is already reachable through `ty_tag`.
@@ -1632,6 +2003,296 @@ fn declarator_member_name<'s>(decl: Node<'_>, source: &'s str) -> Option<(&'s st
     }
 }
 
+/// What a translation unit's declarations say about names -- the evidence [`Context`] lowers
+/// with, collected by [`collect_registry`] before any function is.
+///
+/// The record layouts are the unit's own: a tag names whatever struct THIS unit declares
+/// under it. The two name sets are unioned across every unit of an import by [`lower_units`]:
+/// the units of one program share the headers the corpus did not preprocess, so a name one
+/// unit uses as a type (`u_int`, from `<sys/types.h>`) is a type in a unit that only casts to
+/// it, and a prototype in one unit says what the name is in all of them -- the same reasoning
+/// that makes [`Context::functions`] import-wide.
+#[derive(Debug, Default)]
+struct UnitRegistry {
+    struct_layouts: HashMap<String, Vec<MemberSlot>>,
+    type_names: HashSet<String>,
+    declared_functions: HashSet<String>,
+}
+
+/// Fill `registry` from the subtree under `node`: the pre-pass of [`lower_units`] that gives
+/// [`Context`] its evidence about names before any function is lowered.
+///
+/// Fill the two registries a translation unit's *types* provide, in one walk.
+///
+/// [`Context::struct_layouts`]: for every record definition in the translation unit, its
+/// data members in declaration order, keyed by the tag a declaration can name it with. Two
+/// spellings are recorded:
+/// - a **tagged** definition (`struct P { ... };`) under its tag;
+/// - a **typedef** of a definition (`typedef struct { ... } P;`) under the typedef name,
+///   which is how an otherwise-anonymous record becomes nameable.
+///
+/// [`Context::type_names`]: every name used as a type anywhere in the unit, read off the
+/// `type_identifier` nodes tree-sitter produced (see [`is_type_name`] for the one kind of
+/// `type_identifier` that is *not* a type name).
+///
+/// A recursive node walk rather than a tree-sitter query, because the record kinds differ
+/// per grammar (`class_specifier` exists only in C++, and a query naming it would not
+/// compile against the C grammar). Matching on `kind()` is neutral by construction: a kind
+/// a grammar does not have simply never occurs. A layout that could not be read completely
+/// is **not** recorded (see [`record_member_slots`]), so positional mapping is only ever
+/// attempted where every slot is known.
+fn collect_registry(source: &str, node: Node<'_>, registry: &mut UnitRegistry) {
+    if is_type_name(node) {
+        registry
+            .type_names
+            .insert(to_str(&node, source).to_string());
+    }
+    if node.kind() == "declaration" {
+        // A prototype, `int zzz(int);`. Only function-shaped declarators count:
+        // `void (*fp)(int);` declares a variable, and `function_head` says no to it.
+        let mut dcursor = node.walk();
+        for declarator in node.children_by_field_name("declarator", &mut dcursor) {
+            if let Some(head) = function_head(declarator) {
+                registry
+                    .declared_functions
+                    .insert(to_str(&head.name, source).to_string());
+            }
+        }
+    }
+    if let Some(slots) = record_member_slots(node, source) {
+        // `struct P { ... }` -- nameable by its own tag.
+        if let Some(name) = node.child_by_field_name("name") {
+            registry
+                .struct_layouts
+                .insert(to_str(&name, source).to_string(), slots.clone());
+        }
+        // `typedef struct { ... } P;` -- nameable by the typedef's name. The record is the
+        // `type` of the enclosing `type_definition`, whose declarator is that name.
+        if let Some(parent) = node.parent()
+            && parent.kind() == "type_definition"
+        {
+            let mut pcursor = parent.walk();
+            for declarator in parent.children_by_field_name("declarator", &mut pcursor) {
+                if declarator.kind() == "type_identifier" {
+                    registry
+                        .struct_layouts
+                        .insert(to_str(&declarator, source).to_string(), slots.clone());
+                }
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_registry(source, child, registry);
+    }
+}
+
+/// What a `function_definition`'s declarator says about the function it defines: the node
+/// that names it, its parameter list, and whether the value it returns is a pointer.
+///
+/// tree-sitter-c's `function_definition` accepts any `_declarator`, and a pointer return wraps
+/// the `function_declarator` in one `pointer_declarator` per `*`, so `char **argv_of(void) {}`
+/// parses as `function_definition > pointer_declarator > pointer_declarator >
+/// function_declarator`. A query pattern cannot recurse, so [`function_definition_query`]
+/// captures the declarator whole and this unwraps it -- for years the pattern demanded a
+/// `function_declarator` directly, and every pointer-returning definition in every corpus was
+/// dropped without a word (spec 130).
+///
+/// `None` for a declarator that names no single function: a definition made through a
+/// parenthesized declarator (`char *(*f(int))(void)`, a function returning a function
+/// pointer), an array or attributed declarator, or parse-recovery debris.
+fn function_head(declarator: Node<'_>) -> Option<FunctionHead<'_>> {
+    let mut node = unparenthesize(declarator)?;
+    let mut returns_pointer = false;
+    while node.kind() == "pointer_declarator" {
+        returns_pointer = true;
+        node = unparenthesize(node.child_by_field_name("declarator")?)?;
+    }
+    if node.kind() != "function_declarator" {
+        return None;
+    }
+    // `(f)(int)` and `(f(int))` both declare `f`; a macro-shy definition writes one of them.
+    // The parens are NOT redundant when what they hold is a pointer -- `char *(*f(int))(void)`
+    // returns a function pointer -- and that shape is rejected here, by the identifier test.
+    let name = unparenthesize(node.child_by_field_name("declarator")?)?;
+    if name.kind() != "identifier" {
+        return None;
+    }
+    Some(FunctionHead {
+        name,
+        params: node.child_by_field_name("parameters")?,
+        returns_pointer,
+    })
+}
+
+/// The declarator inside any number of layers of parentheses: `(d)` declares exactly what `d`
+/// declares, so a parenthesized declarator is transparent to [`function_head`]. `None` if the
+/// parentheses hold nothing (parse-recovery debris).
+///
+/// openssh spells one this way without meaning to: `openbsd-compat/getrrsetbyname.c` defines
+/// `_getshort` under a `#define _getshort(x) (_ssh_compat_getshort(x))`, so the *definition*
+/// preprocesses to `static u_int16_t (_ssh_compat_getshort(const u_char *msgp)) { ... }`.
+fn unparenthesize(node: Node<'_>) -> Option<Node<'_>> {
+    let mut node = node;
+    while node.kind() == "parenthesized_declarator" {
+        node = first_named_child(node)?;
+    }
+    Some(node)
+}
+
+/// The first named child that is not a comment -- the single expression a
+/// `parenthesized_expression` holds, or the first operand of an `argument_list`. `None` when
+/// there is none: empty parentheses (`f()`, or parse-recovery debris) have no named child.
+fn first_named_child(node: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find(|child| child.kind() != "comment")
+}
+
+/// Is this `type_identifier` a name that is a *type*?
+///
+/// Every `type_identifier` is, except one: the tag of a record or enum. `struct stat { ... }`
+/// puts `stat` in a namespace of its own, where it is only ever reachable through the keyword;
+/// the name `stat` on its own means the FUNCTION. Recording tags would make `(stat)(path, &st)`
+/// -- a call written with redundant parentheses -- read as a cast to `stat`, silently deleting
+/// the call. See [`Context::type_names`].
+fn is_type_name(node: Node<'_>) -> bool {
+    if node.kind() != "type_identifier" {
+        return false;
+    }
+    let is_tag = node.parent().is_some_and(|parent| {
+        matches!(
+            parent.kind(),
+            "struct_specifier" | "union_specifier" | "enum_specifier"
+        ) && parent
+            .child_by_field_name("name")
+            .is_some_and(|name| name.id() == node.id())
+    });
+    !is_tag
+}
+
+/// The callee of a call with its redundant grouping parentheses peeled: `(f)(x)` calls `f` and
+/// `(*fp)(x)` calls through `fp`, exactly as the unparenthesized spellings do.
+///
+/// The parentheses are not cosmetic to a frontend that names a callee by its source text: the
+/// BSD red-black-tree macros openssh compiles in expand to `comp = (blob_cmp)(elm, parent);`,
+/// and lowering that as a direct call to a function literally named `(blob_cmp)` both invented
+/// a function and lost the call edge to the real one.
+///
+/// A GNU statement expression `({ ... })(x)` is NOT peeled. Those parentheses are part of the
+/// construct rather than grouping around an expression, so peeling them would leave a
+/// `compound_statement` that is not the callee's spelling either. There is nothing to peel *to*:
+/// what stands in callee position is the whole construct, and [`is_statement_expression`] is what
+/// [`Context::collect_call`] asks about it.
+fn unparenthesized_callee(node: Node<'_>) -> Node<'_> {
+    let mut node = node;
+    while node.kind() == "parenthesized_expression" {
+        match first_named_child(node) {
+            Some(inner) if inner.kind() != "compound_statement" => node = inner,
+            _ => break,
+        }
+    }
+    node
+}
+
+/// Is `node` a GNU statement expression -- `({ s1; s2; value; })`?
+///
+/// tree-sitter-c 0.24.1 has no node for the construct: it parses as a `parenthesized_expression`
+/// wrapping a `compound_statement`, which is why [`Context::flatten_expr`] and
+/// [`Context::flatten_lvalue`] both key on the inner `compound_statement` and reach it through
+/// their `parenthesized_expression` arms. A caller holding the OUTER node --
+/// [`unparenthesized_callee`] hands one back unpeeled -- asks here instead.
+fn is_statement_expression(node: Node<'_>) -> bool {
+    match node.kind() {
+        "compound_statement" => true,
+        "parenthesized_expression" => {
+            first_named_child(node).is_some_and(|inner| inner.kind() == "compound_statement")
+        }
+        _ => false,
+    }
+}
+
+/// The name a parameter's declarator declares, and whether the parameter is a reference.
+///
+/// A declarator is not a fixed list of spellings, it NESTS: `char **argv` is a
+/// `pointer_declarator` inside a `pointer_declarator`, `char *v[]` an `array_declarator`
+/// inside one, `int (*cb)(int, int)` a `function_declarator` around a parenthesized one, and
+/// any of them can wear parentheses. Walking down to the identifier binds every depth; the
+/// query this replaced enumerated the one-level shapes and dropped the rest in silence
+/// (spec 140), which cost `main` its `argv`.
+///
+/// The name is `None` when the declarator declares none -- an abstract declarator
+/// (`void f(char **)`), or parse debris. That is not the same as "there is no parameter":
+/// see [`Context::collect_params`], which still owns the slot.
+///
+/// A pointer or an array parameter is [`ParameterType::ByRef`] -- it is a handle on storage
+/// the caller can see written -- at every depth. A function pointer is not: what it points at
+/// is code, so `int (*cb)(int, int)` stays `ByVal`, as the query had it.
+///
+/// A C++ lvalue reference (`T& r`, a `reference_declarator`, which the C grammar does not
+/// have) is also storage shared with the caller, but `const T&` is read-only: it is `ByVal`
+/// (the referent's value flows in, nothing flows back) and a non-const `T&` is `ByRef`
+/// (write-back), exactly like a pointer out-param. The `const` probe reads `decl`, the
+/// `parameter_declaration`, and is grammar-neutral (`type_qualifier` exists in both grammars);
+/// it is only reached for a reference, so the C path never asks.
+fn param_head<'t>(
+    decl: Node<'t>,
+    declarator: Node<'t>,
+    source: &str,
+) -> (Option<Node<'t>>, ParameterType) {
+    let mut node = declarator;
+    let (mut is_ref, mut is_reference, mut is_function, mut name) = (false, false, false, None);
+    loop {
+        let Some(current) = unparenthesize(node) else {
+            break;
+        };
+        match current.kind() {
+            "identifier" => {
+                name = Some(current);
+                break;
+            }
+            "pointer_declarator"
+            | "abstract_pointer_declarator"
+            | "array_declarator"
+            | "abstract_array_declarator" => is_ref = true,
+            "reference_declarator" | "abstract_reference_declarator" => is_reference = true,
+            "function_declarator" | "abstract_function_declarator" => is_function = true,
+            // A declarator shape with no name in it to find (an attribute, debris).
+            _ => break,
+        }
+        // `char **` bottoms out at an `abstract_pointer_declarator` with no inner declarator.
+        // A `reference_declarator` has no `declarator` field at all: what it declares is its
+        // one named child.
+        let inner = current.child_by_field_name("declarator").or_else(|| {
+            (current.kind() == "reference_declarator")
+                .then(|| current.named_child(0))
+                .flatten()
+        });
+        match inner {
+            Some(inner) => node = inner,
+            None => break,
+        }
+    }
+    let param_type = if is_function {
+        ParameterType::ByVal
+    } else if is_reference {
+        if node_has_const_qualifier(&decl, source) {
+            ParameterType::ByVal
+        } else {
+            ParameterType::ByRef
+        }
+    } else if is_ref {
+        ParameterType::ByRef
+    } else {
+        ParameterType::ByVal
+    };
+    (name, param_type)
+}
+
+/// The name recorded for a parameter that declares none, so that `param_names` stays indexed
+/// by parameter position. A NUL cannot occur in a C identifier, so no lookup can reach it.
+const UNNAMED_PARAM: &str = "\0<unnamed>";
+
 fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
     n.utf8_text(source.as_bytes()).unwrap().trim()
 }
@@ -1647,9 +2308,30 @@ fn node_has_const_qualifier(node: &Node<'_>, source: &str) -> bool {
         .any(|child| child.kind() == "type_qualifier" && to_str(&child, source) == "const")
 }
 
-/// Collect the names of every `labeled_statement` label reachable under `node`
-/// (recursing through nested blocks/ifs/loops). Used to pre-create a block per label
-/// before the body is walked, so a `goto` to a not-yet-seen label still resolves.
+/// The `goto` labels of the function whose body is `node`, in tree order, so
+/// `lower_function` can pre-create a block for each and a forward `goto L` resolves.
+///
+/// A nested `function_definition` is not descended into. A label's scope in C is the function
+/// that contains it, so a `goto` in this body can never target one, and the same query that
+/// found this body finds the nested one and lowers it as a function of its own -- with its
+/// own label blocks, walked there. Pre-creating them here instead leaves blocks nothing ever
+/// enters and nothing ever terminates, which `finalize_terminators` then patched and charged
+/// to a function whose own code is fine. In the kernel corpus these are rarely GNU nested
+/// functions: they are parse recovery, which resumes by re-parenting the following
+/// definitions into the previous function's `compound_statement` (spec 064) -- which is how
+/// `resource_intersection`, three straight-line statements with no label at all, came to own
+/// a 1 MB body holding 2,208 of them, and two `out:` labels with it.
+///
+/// A `sizeof`/`_Alignof` operand is not descended into either, for the same reason from the
+/// other direction: the operand is *unevaluated*, so `flatten_expr` lowers the whole
+/// construct to the compile-time constant it is (`Exp::Str` of its own source text, spec 063)
+/// and never walks inside it. A label in there names no reachable code -- `goto` into an
+/// unevaluated operand is not C -- so its block, too, would only ever be an empty orphan.
+///
+/// A label the *recovery* holds is a different matter and is deliberately still collected:
+/// plenty of well-formed code lowers out of a damaged body (that is spec 064's whole point),
+/// and dropping its labels would break its `goto`s. Its block simply goes unentered, which
+/// [`finalize_terminators`] knows not to charge to the frontend.
 fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
     if node.kind() == "labeled_statement"
         && let Some(label) = node.child_by_field_name("label")
@@ -1658,6 +2340,12 @@ fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
+        if matches!(
+            child.kind(),
+            "function_definition" | "sizeof_expression" | "alignof_expression"
+        ) {
+            continue;
+        }
         collect_labels(child, source, out);
     }
 }
@@ -1668,12 +2356,12 @@ fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
 /// Taint models identify sources, sinks, and propagators by name (`source`, `sink`,
 /// `malloc`, ...), and both the model engine and query-time endpoint resolution look the
 /// name up among the program's functions. A function that is only *declared* in C (e.g.
-/// `int source();`) never reaches `collect_functions` -- which matches `function_definition`
+/// `int source();`) never reaches `collect_definitions` -- which matches `function_definition`
 /// nodes -- so without this pass its calls have edges pointing at a name that no IR function
 /// carries, and every model targeting it silently matches nothing. Creating an empty-body
 /// function gives the name a function id the model/query can resolve; the empty body also
 /// marks it external during indexing (see codegen's `external_function`). Mirrors the extern
-/// pass in the dex/jvm frontends. Runs on the import path only (see `parse_c_with_source_info`).
+/// pass in the dex/jvm frontends. Runs on the import path only (see [`lower_units`]).
 fn define_extern_functions(program: &mut Program) {
     use std::collections::BTreeMap;
 
@@ -1722,7 +2410,7 @@ fn define_extern_functions(program: &mut Program) {
 
 // This struct temporarily holds the specific book keeping needs of a function parse
 #[derive(Debug, Clone)]
-pub struct ScopeView {
+struct ScopeView {
     pub func_name: String,
     pub fidx: FunctionIdx,
     pub blidx: BasicBlockIdx,
@@ -1744,15 +2432,6 @@ pub struct ScopeView {
 }
 
 impl<'a> Context<'a> {
-    fn parse(
-        &mut self,
-        source: &'a str,
-        tree: &Tree,
-        program: &mut Program,
-    ) -> anyhow::Result<(), Error> {
-        self.toplevel(source, tree, program)
-    }
-
     fn collect_assignment(
         &mut self,
         source: &'a str,
@@ -1824,46 +2503,6 @@ impl<'a> Context<'a> {
             Ok(Exp::Variable(target_ap.base))
         } else {
             Ok(rhs_var)
-        }
-    }
-
-    /// Fill the [`Context::struct_layouts`] registry: for every record definition in the
-    /// translation unit, its data members in declaration order, keyed by the tag a declaration
-    /// can name it with. Two spellings are recorded:
-    /// - a **tagged** definition (`struct P { ... };`) under its tag;
-    /// - a **typedef** of a definition (`typedef struct { ... } P;`) under the typedef name,
-    ///   which is how an otherwise-anonymous record becomes nameable.
-    ///
-    /// A recursive node walk rather than a tree-sitter query, because the record kinds differ
-    /// per grammar (`class_specifier` exists only in C++, and a query naming it would not
-    /// compile against the C grammar). Matching on `kind()` is neutral by construction: a kind
-    /// a grammar does not have simply never occurs. A layout that could not be read completely
-    /// is **not** recorded (see [`record_member_slots`]), so positional mapping is only ever
-    /// attempted where every slot is known.
-    fn collect_struct_layouts(&mut self, source: &'a str, node: Node<'_>) {
-        if let Some(slots) = record_member_slots(node, source) {
-            // `struct P { ... }` -- nameable by its own tag.
-            if let Some(name) = node.child_by_field_name("name") {
-                self.struct_layouts
-                    .insert(to_str(&name, source).to_string(), slots.clone());
-            }
-            // `typedef struct { ... } P;` -- nameable by the typedef's name. The record is the
-            // `type` of the enclosing `type_definition`, whose declarator is that name.
-            if let Some(parent) = node.parent()
-                && parent.kind() == "type_definition"
-            {
-                let mut pcursor = parent.walk();
-                for declarator in parent.children_by_field_name("declarator", &mut pcursor) {
-                    if declarator.kind() == "type_identifier" {
-                        self.struct_layouts
-                            .insert(to_str(&declarator, source).to_string(), slots.clone());
-                    }
-                }
-            }
-        }
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            self.collect_struct_layouts(source, child);
         }
     }
 
@@ -2105,7 +2744,6 @@ impl<'a> Context<'a> {
     fn setup_compound<'b>(
         &mut self,
         program: &mut Program,
-        // scope_tree: &mut ScopeTree,
         scope_view: &mut ScopeView,
         node: Node<'b>,
         block_type: BlockTypeRequest, // is this a new execution block? or just scope?
@@ -2266,30 +2904,26 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
+    /// Intern a span for `node`'s byte range in this unit's file and return the [`SourceInfo`]
+    /// pointing at it -- the default (no-span) `SourceInfo` when spans are not being recorded.
+    fn span_for_node(&mut self, node: Node<'_>) -> SourceInfo {
+        let (Some((key, unit_len)), Some(builder)) = (&self.unit_key, self.source_info.as_mut())
+        else {
+            return SourceInfo::default();
+        };
+        let start = node.start_byte();
+        let len = node
+            .end_byte()
+            .saturating_sub(start)
+            .min(unit_len.saturating_sub(start)) as u32;
+        SourceInfo::new(builder.span_for(key.clone(), start as u32, SpanLen::ByteLen(len)))
+    }
+
     /// Lower a single statement, threading `scope_view` (so control-flow statements can
     /// move the "current block" for following statements). Returns `true` if the
     /// statement *diverged* — i.e. it terminated the current block with no fall-through
     /// (`return`/`break`/`continue`, or a `labeled_statement` whose body diverges) — so
     /// the enclosing compound should stop and skip its end-of-compound link.
-    /// Intern a span for `node`'s byte range (mapped back to the original file via
-    /// [`FileMap`]) and return the [`SourceInfo`] pointing at it. Returns the default
-    /// (no-span) `SourceInfo` when span recording is off or the offset falls outside any
-    /// known file (e.g. the marker lines between concatenated files).
-    fn span_for_node(&mut self, node: Node<'_>) -> SourceInfo {
-        let start = node.start_byte();
-        let end = node.end_byte();
-        let Some((key, local_start, max_len)) = self.file_map.locate(start) else {
-            return SourceInfo::default();
-        };
-        let len = end.saturating_sub(start).min(max_len) as u32;
-        match self.source_info.as_mut() {
-            Some(builder) => {
-                SourceInfo::new(builder.span_for(key, local_start, SpanLen::ByteLen(len)))
-            }
-            None => SourceInfo::default(),
-        }
-    }
-
     fn walk_statement(
         &mut self,
         source: &'a str,
@@ -2403,15 +3037,115 @@ impl<'a> Context<'a> {
             "labeled_statement" => {
                 return self.walk_labeled_statement(source, program, scope_view, child);
             }
+            // A syntax error in statement position: a problem in the analyzed source,
+            // not a gap in this frontend. This is the position in which tree-sitter's
+            // ERROR node still names the construct that defeated it, so it is quoted --
+            // see `Context::report_unparsable_construct`.
             "ERROR" => {
-                let node_str = to_str(&child, source);
-                unexpected_ast(format!("Unknown token(2): {kind}: {node_str}"))?;
+                self.report_unparsable_construct(child, source)?;
             }
             _ => {
                 self.flatten_expr(program, child, source, scope_view)?;
             }
         }
         Ok(false)
+    }
+
+    /// Report an unparsable construct: an `ERROR` node met where a *statement* was
+    /// expected, which is the position in which tree-sitter's ERROR node still names the
+    /// construct that defeated it. Reported once per node, against the analyzed source.
+    ///
+    /// This is the same population the old `frontend gap: Unknown token(2): ERROR: ...`
+    /// warning covered (180 nodes in the kernel census), re-attributed and with the quote
+    /// bounded. `run-linux.sh`'s parse-error triage classifies these by the
+    /// `ERROR: <construct>` tail, so that tail is load-bearing -- do not drop it.
+    fn report_unparsable_construct(
+        &mut self,
+        error_node: Node<'_>,
+        source: &'a str,
+    ) -> Result<(), Error> {
+        if !self.reported_parse_errors.insert(error_node.id()) {
+            return Ok(());
+        }
+        let (quote, elided) = quote_construct(to_str(&error_node, source));
+        let elision = if elided > 0 {
+            format!(" (+{elided} chars elided)")
+        } else {
+            String::new()
+        };
+        malformed_source(format!(
+            "parse error{elision}; construct not parsed -- ERROR: {quote}"
+        ))
+    }
+
+    /// Report that a function's body contains parse-recovery output that is not analyzed,
+    /// once per function.
+    ///
+    /// Everything the recovery produced or re-parented is then skipped silently. Reporting
+    /// each such node as a construct the frontend failed to support is what blamed ctadl
+    /// 41,751 times in the kernel census -- for 180 actual parse errors -- and, worse,
+    /// described the wreckage as if it were the analyzed program: a `int foo(void) {...}`
+    /// tree-sitter re-parented into the previous function's body was logged as
+    /// "Unsupported expression type: function_definition".
+    ///
+    /// Per *function*, not per region, and deliberately without an `ERROR: <text>` tail.
+    /// The nodes on this path are in expression position, where an `ERROR` is a shard of
+    /// the recovery (`long`, `*`, `struct`, `{ return f(x`) rather than the construct that
+    /// failed -- quoting them would flood the triage with 1,600 "constructs" that are not
+    /// constructs. What the body did choke on is reported by
+    /// [`Context::report_unparsable_construct`]; what a reader needs here is which function
+    /// is not trustworthy.
+    fn report_unanalyzed_recovery(&mut self, func_name: &str) -> Result<(), Error> {
+        if self.functions_with_recovery.contains(func_name) {
+            return Ok(());
+        }
+        self.functions_with_recovery.insert(func_name.to_string());
+        malformed_source(format!(
+            "function `{func_name}`: tree-sitter parse-recovery output in this body is not \
+             analyzed (the code it displaced is not in the parse tree)"
+        ))
+    }
+
+    /// Report a name node that quotes to the empty string, and say whose fault it is.
+    ///
+    /// `identifier` and `field_identifier` are *required* by the grammar in the positions this
+    /// frontend reads a name from, so when the parse fails there tree-sitter repairs it by
+    /// INSERTING a zero-width token -- a node with a kind, a position and no text at all. The
+    /// empty string is not a name: handed to [`Context::build_access_path`] it resolves to
+    /// nothing in scope and mints the global `$globals.` with an empty first path segment,
+    /// which serializes to the access path `"."` -- and `facts::Path`'s own parser rejects
+    /// that, so ONE such token anywhere in a corpus makes the whole index unqueryable
+    /// (`ctadl query` panics reading the parquet it just wrote, before printing any result).
+    /// The kernel's x86 percpu headers put 134 of them into two translation units.
+    ///
+    /// A token nobody wrote names nothing, so this is spec 064's rule again: an inserted token
+    /// only exists because the body around it did not parse, so say once that the body holds
+    /// recovery output and let the caller substitute a fresh temp -- the same recovery the
+    /// `flatten_expr`/`flatten_lvalue` catch-alls use. The `else` arm cannot fire on a
+    /// tree-sitter tree (an inserted token sets `has_error` on every ancestor, so
+    /// `recovery_region` always finds one) and is kept so a nameless node arriving any other
+    /// way is still reported rather than silently dropped.
+    fn report_missing_name(&mut self, node: Node<'_>, scope_view: &ScopeView) -> Result<(), Error> {
+        if recovery_region(node).is_some() {
+            let func_name = scope_view.func_name.clone();
+            self.report_unanalyzed_recovery(&func_name)
+        } else {
+            unexpected_ast(format!(
+                "{} with no name (a zero-width node names no object)",
+                node.kind()
+            ))
+        }
+    }
+
+    /// A fresh local nothing else names, as an access path: the standard recovery for a
+    /// location this frontend could not resolve. A store to it is dropped; a read of it is
+    /// opaque. Either way the surrounding function still lowers.
+    fn dead_temp_path(&mut self, program: &mut Program, scope_view: &ScopeView) -> RawPath {
+        let temp_name = self.allocator.next_temp();
+        RawPath::new(
+            VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name)),
+            ThinVec::new(),
+        )
     }
 
     fn walk_declaration(
@@ -2496,6 +3230,21 @@ impl<'a> Context<'a> {
                     self.flatten_expr(program, nest_decl, source, scope_view)?;
                     continue;
                 }
+                // The asm annotation on a declarator, not a declarator: a GCC
+                // explicit-register variable (`register unsigned long sp asm("rsp");`, from
+                // x86's `current_stack_pointer`) or an asm label on an object
+                // (`extern int v asm("othersym");`). The grammar files it under the *same*
+                // `declarator` field as the name it annotates --
+                // `field('declarator', seq(_declaration_declarator, optional(gnu_asm_expression)))`
+                // -- and tree-sitter distributes a field over every element of the sequence,
+                // so `children_by_field_name("declarator")` yields two children for one
+                // declared name: the declarator, handled by the arms above on the previous
+                // iteration, and this. What it names is where the variable is stored (a
+                // machine register) or the symbol it is emitted under; neither is a value and
+                // neither carries dataflow, so there is nothing to lower. Deliberately NOT
+                // routed to `flatten_gnu_asm`: that models an operand transfer, and this asm
+                // has no operands at all -- only a register-name string.
+                "gnu_asm_expression" => continue,
                 _ => {
                     unexpected_ast(format!(
                         "Declaration declarator had an unexpected kind {decl_kind}"
@@ -2504,13 +3253,8 @@ impl<'a> Context<'a> {
                 }
             };
             let var_name = to_str(&decl_ident, source);
-            self.scope_tree.add_variable(
-                scope_view.sidx,
-                var_name.to_string(),
-                VarKind::Local,
-                None,
-                None,
-            );
+            self.scope_tree
+                .add_variable(scope_view.sidx, var_name.to_string(), VarKind::Local);
             if let Some(class) = &class_type {
                 // Key the class-typed local by its leaf identifier so a pointer receiver
                 // (`Box* p = &b`) is recorded as `p`, not `*p` — otherwise a later
@@ -2625,13 +3369,8 @@ impl<'a> Context<'a> {
                 }
             }
             // Fallback: register a plain local and copy whatever initializer there is.
-            self.scope_tree.add_variable(
-                scope_view.sidx,
-                ref_name.to_string(),
-                VarKind::Local,
-                None,
-                None,
-            );
+            self.scope_tree
+                .add_variable(scope_view.sidx, ref_name.to_string(), VarKind::Local);
             if let Some(val) = value {
                 self.collect_assignment(source, program, scope_view, name_node, val, None)?;
             }
@@ -2655,10 +3394,11 @@ impl<'a> Context<'a> {
             });
             program.functions[scope_view.fidx].blocks[scope_view.blidx].terminator = Some(term);
         } else {
-            program.functions[scope_view.fidx].blocks[scope_view.blidx].terminator =
-                Some(Terminator::new_kind(TerminatorKind::Return {
-                    args: vec![].into(),
-                }));
+            // A bare `return;`. Legal in a non-`void` function (and common in `int` error
+            // paths), where the arity contract still demands an argument: `implicit_return`
+            // supplies the indeterminate value C says such a return has.
+            let term = implicit_return(program, scope_view.fidx);
+            program.functions[scope_view.fidx].blocks[scope_view.blidx].terminator = Some(term);
         }
         Ok(())
     }
@@ -2669,8 +3409,6 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         child: Node<'_>,
     ) -> Result<(), Error> {
-        //  debug_print_tree(child, 0, Some("do"), Some(20));
-
         // `for (;;)` legally omits any of the three clauses, and tree-sitter then
         // has no field for the missing one(s). Fall back to one of the for's own
         // `;`/`(` tokens: its CompoundProxy is empty, so the clause lowers to an
@@ -2753,13 +3491,10 @@ impl<'a> Context<'a> {
         init_scope.continuation_blidx = Some(condition_scope.blidx);
         body_scope.continuation_blidx = Some(update_scope.blidx);
         update_scope.continuation_blidx = Some(condition_scope.blidx);
-        //        self.flatten_expr(program, condition, source, &condition_sv)?; // gather field accesses and what not but we don't care about the condition result,etc.
         self.walk_compound_statement(source, program, &init_scope, &init_cp)?;
         self.walk_compound_statement(source, program, &condition_scope, &condition_cp)?;
         //add 'sad edge'
         link_blocks(program, &condition_scope, &continuation, false)?;
-        //what is the difference between walk_compound_statemnet and walk_compound_statement?
-        body_scope.continuation_blidx = Some(update_scope.blidx);
         // `break` leaves the loop; `continue` jumps to the update expression (which
         // then re-tests the condition). Set on the body view so they ride into every
         // nested non-loop block and are restored after the loop.
@@ -2778,8 +3513,6 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         child: Node<'_>,
     ) -> Result<(), Error> {
-        //debug_print_tree(child, 0, Some("do"), Some(20));
-
         let body_node = child.child_by_field_name("body").expect("always has body");
 
         let (mut body_scope, body_cp) = self.setup_compound(
@@ -2813,7 +3546,6 @@ impl<'a> Context<'a> {
         )?;
 
         condition_sv.continuation_blidx = Some(continuation.blidx);
-        //        self.flatten_expr(program, condition, source, &condition_sv)?; // gather field accesses and what not but we don't care about the condition result,etc.
         self.walk_compound_statement(source, program, &condition_sv, &cp)?;
         // A do-while tests *after* the body, then loops back into it: add the
         // back-edge from the condition to the body. The exit edge to the
@@ -2837,7 +3569,6 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         child: Node<'_>,
     ) -> Result<(), Error> {
-        //debug_print_tree(child, 0, Some("while"), Some(20));
         let condition_raw = child
             .child_by_field_name("condition")
             .expect("always has condition");
@@ -2861,7 +3592,6 @@ impl<'a> Context<'a> {
         )?;
 
         condition_sv.continuation_blidx = Some(continuation.blidx);
-        //        self.flatten_expr(program, condition, source, &condition_sv)?; // gather field accesses and what not but we don't care about the condition result,etc.
         self.walk_compound_statement(source, program, &condition_sv, &cp)?;
 
         let body_node = child.child_by_field_name("body").expect("always has body");
@@ -3077,7 +3807,8 @@ impl<'a> Context<'a> {
         let label_blidx = *self
             .label_blocks
             .get(label)
-            .expect("label block pre-created in collect_functions");
+            .expect("label block pre-created in lower_function");
+        self.walked_label_blocks.insert(label_blidx);
 
         // Fall through from the current block into the (pre-created) label block, then
         // make it the current block — the inner statement and any following siblings
@@ -3112,7 +3843,6 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         child: Node<'_>,
     ) -> Result<(), Error> {
-        //debug_print_tree(child, 0, Some("if"), Some(20));
         let condition_raw = child
             .child_by_field_name("condition")
             .expect("always has condition");
@@ -3148,8 +3878,6 @@ impl<'a> Context<'a> {
         self.walk_compound_statement(source, program, &consequence_sv, &if_cond_cp)?;
         //the else block
         if let Some(alternative) = child.child_by_field_name("alternative") {
-            //debug_print_tree(alternative, 0, Some("alternative"), Some(20));
-
             let mut cursor = alternative.walk();
             // The else clause's body is its first non-comment child: an `if_statement`
             // for `else if`, a `compound_statement` for a braced else, or a bare
@@ -3306,12 +4034,16 @@ impl<'a> Context<'a> {
         source: &'a str,
         tree: &Tree,
         program: &mut Program,
+        query: &Query,
     ) -> anyhow::Result<(), Error> {
         let global_sidx = self.scope_tree.add_scope("%GLOBAL".to_string(), None);
-        // Record layouts first: a positional brace initializer in any function body needs the
-        // layout of a record that may be defined anywhere in the translation unit.
-        self.collect_struct_layouts(source, tree.root_node());
-        self.collect_functions(source, tree, program, global_sidx)
+        // The definitions the shared query cannot own (C++ inline and out-of-line methods,
+        // namespaced functions) are discovered, registered and lowered by the grammar's hook
+        // first, so a free function's `recv.method(...)` resolves its callee and the method's
+        // class is registered for member resolution. The C hook is a no-op.
+        let aux = self.hooks.collect_aux;
+        aux(self, source, tree.root_node(), program, global_sidx)?;
+        self.lower_definitions(source, tree, program, global_sidx, query)
     }
 
     fn collect_params(
@@ -3321,70 +4053,58 @@ impl<'a> Context<'a> {
         fdat: &mut FunctionData,
         function_name: &str,
         scope_view: &ScopeView,
-        start_idx: usize,
     ) -> anyhow::Result<(), Error> {
-        // The classifier query comes from the grammar hooks: C and C++ share the plain/
-        // pointer/array/function-pointer declarator shapes; the C++ string additionally
-        // matches the `reference_declarator` (`T& r`) node (captured `@is_ref_cpp`), which
-        // the C grammar lacks. Keeping it per-grammar keeps that C++-only node out of the
-        // query compiled against the C grammar — no `is_cpp` branch in this classifier.
-        let query_src = self.hooks.param_query;
-        //       debug_print_tree(*param_list, 0, None, None); //depth, field_name, depth_limit);
-        // Compile against this context's grammar *before* taking the mutable borrow of
-        // `param_names` below (both touch `self`).
-        let query = self.compile_query(query_src);
-
         let param_names = self
             .param_names
             .entry(function_name.to_string())
             .or_default();
 
-        let mut cursor = QueryCursor::new();
-        let mut matches_iter = cursor.matches(&query, *param_list, source.as_bytes());
-
-        // `start_idx` lets an implicit leading parameter (a method's `this`, installed by
-        // `lower_function`) occupy index 0, so the declared params number from 1.
-        let mut ctr = start_idx;
-        while let Some(m) = matches_iter.next() {
-            let extract = MatchExtractor::new(&query, m);
-            let param_name = extract.get("var_name")?;
-            let is_ref = extract.get_opt("is_ref");
-
-            // Classify the parameter's passing mode. Pointer/array out-params are `ByRef`
-            // (the value can be written back) — the historical C behavior. A C++ lvalue
-            // reference (`@is_ref_cpp`, only ever captured by the C++ query) is also storage
-            // shared with the caller, but `const T&` is read-only: model `const T&` as
-            // `ByVal` (the referent's value flows in, nothing flows back) and a non-const
-            // `T&` as `ByRef` (write-back), exactly like a pointer out-param. The `const`
-            // probe is grammar-neutral (`type_qualifier` exists in both grammars) and only
-            // reached for a reference param, so the C path is unaffected.
-            let param_type = if let Some(ref_decl) = extract.get_opt("is_ref_cpp") {
-                let param_decl = ref_decl
-                    .parent()
-                    .expect("a reference_declarator is a child of its parameter_declaration");
-                if node_has_const_qualifier(&param_decl, source) {
-                    ParameterType::ByVal
-                } else {
-                    ParameterType::ByRef
-                }
-            } else if is_ref.is_some() {
-                ParameterType::ByRef
-            } else {
-                ParameterType::ByVal
+        // The parameters are the parameter list's own children, walked in order, and a
+        // parameter's index is its position among them. The query this replaced matched
+        // `parameter_declaration` ANYWHERE under the list and numbered by match order, which
+        // made position and index two different things: it bound a function pointer's own
+        // formals as this function's, and a declarator shape it did not enumerate (`char **v`,
+        // via `param_head`) took every later parameter down a slot with it.
+        let mut cursor = param_list.walk();
+        for decl in param_list.named_children(&mut cursor) {
+            // `...` is a `variadic_parameter`, not a formal (clang does not count it either);
+            // an old-style `f(a, b)` list holds bare `identifier`s, whose types live in the
+            // declarations between the list and the body, and which this does not bind.
+            if decl.kind() != "parameter_declaration" {
+                continue;
+            }
+            // A `parameter_declaration` with no declarator at all declares no parameter here.
+            // In well-formed C that shape is `f(void)` -- where the `void` IS the empty list
+            // -- or C23's nameless `f(int)`, which no definition in the corpora writes. It is
+            // also what a parameter list tree-sitter could not parse leaves behind: the
+            // kernel's SYSCALL_DEFINE expands to `__typeof(__builtin_choose_expr(...)) fd`,
+            // whose `__typeof` has no grammar rule, and the recovery reads the type as one
+            // parameter and the NAME as a second bare type. Reserving a slot for both would
+            // invent a parameter per formal in 140 kernel definitions. An abstract declarator
+            // (`char **`, below) is a different matter: that one is unambiguous.
+            let Some(declarator) = decl.child_by_field_name("declarator") else {
+                continue;
             };
+            let (param_name, param_type) = param_head(decl, declarator, source);
 
             fdat.params.push(param_type);
-            let pn = to_str(&param_name, source);
-            param_names.push(pn);
-
-            self.scope_tree.add_variable(
-                scope_view.sidx,
-                pn.to_string(),
-                VarKind::Parameter,
-                Some(ctr),
-                Some(param_type),
-            );
-            ctr += 1;
+            match param_name {
+                Some(param_name) => {
+                    let pn = to_str(&param_name, source);
+                    param_names.push(pn);
+                    self.scope_tree.add_variable(
+                        scope_view.sidx,
+                        pn.to_string(),
+                        VarKind::Parameter,
+                    );
+                }
+                // An abstract declarator names nothing, so nothing in the body can read this
+                // parameter -- but it still occupies a position, and a taint model naming
+                // `Argument(1)` means the second one. The slot is held; only the name is not.
+                None => {
+                    param_names.push(UNNAMED_PARAM);
+                }
+            }
         }
         Ok(())
     }
@@ -3398,9 +4118,18 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> Result<Exp, Error> {
-        //debug_print_tree(node, 0, Some("FLATTEN_EXPR"), Some(50));
         let text = to_str(&node, source); //.to_string();
         match node.kind() {
+            // A name tree-sitter inserted to repair the parse, quoting to the empty string.
+            // It cannot become a path segment (see `report_missing_name`), so the read is
+            // opaque: a fresh temp nothing else writes.
+            "identifier" if text.is_empty() => {
+                self.report_missing_name(node, scope_view)?;
+                let temp_name = self.allocator.next_temp();
+                Ok(Exp::Variable(VariableRef::new_local_idx(
+                    program[scope_view.fidx].locals.get_or_intern(&temp_name),
+                )))
+            }
             "identifier" => {
                 // A bare identifier that names a known function (and is not shadowed by
                 // a variable in scope) is a function *reference* used as a value -- the
@@ -3415,9 +4144,12 @@ impl<'a> Context<'a> {
                     .scope_tree
                     .find_variable(scope_view.sidx, text)
                     .is_none()
-                    && self.functions.keys().any(|f| f == text)
+                    && (self.functions.contains_key(text) || self.declared_functions.contains(text))
                 {
-                    Ok(Exp::ObjectRef(CallObject::FunctionPtr(text.into())))
+                    // Which definition of `text` this file means, when more than one file
+                    // defines one (see `Context::resolve_reference`).
+                    let target = self.resolve_reference(text);
+                    Ok(Exp::ObjectRef(CallObject::FunctionPtr(target.into())))
                 } else {
                     // A read of a variable. A global identifier `a` is really `$globals.a` (a
                     // field of the globals object), so this may lower to a load; a local is a
@@ -3476,7 +4208,6 @@ impl<'a> Context<'a> {
             // just pass the inner value up.
             "parenthesized_expression" | "parenthesized_declarator" => {
                 // () is not a valid expression.
-                //debug_print_tree(node, 0, None, Some(50));
                 let inner_node = node.child(1).expect("missing inner expr");
                 self.flatten_expr(program, inner_node, source, scope_view)
             }
@@ -3496,9 +4227,6 @@ impl<'a> Context<'a> {
                 scope_view,
                 node.child_by_field_name("left").expect("always a left"),
                 node.child_by_field_name("right").expect("always a right"),
-                /*Some(
-                node.child_by_field_name("operator")
-                    .expect("always has operator"),*/
                 node.child_by_field_name("operator"),
             ),
             // The C++ `this` receiver — inside a method body, `this` is the implicit param 0
@@ -3553,6 +4281,23 @@ impl<'a> Context<'a> {
                     return Ok(Exp::access_path(addr));
                 }
                 let arg_exp = self.flatten_expr(program, arg, source, scope_view)?;
+                // `*(T *)K` -- a read through a constant address. `flatten_lvalue`'s
+                // `cast_expression` arm gives that address a location, so the read must name the
+                // same one: the pass-through would yield the constant `K` and a store through
+                // `*(volatile u32 *)0xfee00300` would be unobservable at a read of it, which is
+                // the whole reason the store side names a global rather than a fresh temp. Only
+                // a cast, and only when the cast's value is the constant -- `*p` on a variable
+                // keeps the pass-through, which is already symmetric because both sides name
+                // `p`. Re-deriving the path here rather than calling `flatten_lvalue` avoids
+                // lowering the operand twice; it is a literal, so `arg_exp` cost nothing.
+                if is_deref
+                    && arg.kind() == "cast_expression"
+                    && let Exp::Str(constant) = &arg_exp
+                    && !constant.is_empty()
+                {
+                    let ap = literal_address_path(constant);
+                    return Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)));
+                }
                 // A plain local pointer is an `Exp::Variable`; a pathless access path also names
                 // a bare pointer. Either can carry a same-block address-of alias.
                 let ptr_ref = match &arg_exp {
@@ -3579,10 +4324,16 @@ impl<'a> Context<'a> {
                 Ok(arg_exp)
             }
             "subscript_expression" => self.flatten_subscript(program, node, source, scope_view),
-            "call_expression" => {
-                let x = self.allocator.next_temp();
-                self.collect_call(program, node, source, scope_view, x)
-            }
+            // `(__be16)(x)` is a cast that tree-sitter could only read as a call; when it is
+            // one, it lowers exactly like the `cast_expression` arm below. See
+            // `cast_shaped_call` for how the two are told apart.
+            "call_expression" => match self.cast_shaped_call(node, source, scope_view)? {
+                Some(operands) => self.flatten_cast_operands(program, operands, source, scope_view),
+                None => {
+                    let x = self.allocator.next_temp();
+                    self.collect_call(program, node, source, scope_view, x)
+                }
+            },
             // C++ `delete p;` — destroying a heap object runs its destructor(s). The
             // `delete_expr` hook emits the destructor call (a CHA multi-target `DirectCall` for a
             // virtual destructor, the single static-type destructor otherwise, with the referent
@@ -3611,7 +4362,19 @@ impl<'a> Context<'a> {
             // `sizeof` does NOT evaluate its operand -- it yields a compile-time size --
             // so it must not carry taint from the operand. Lower it as a constant (the
             // source text), exactly like a numeric literal; the operand is never visited.
-            "sizeof_expression" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
+            //
+            // `_Alignof` / `__alignof__` / `__alignof` / `_alignof` / `alignof` (all one
+            // `alignof_expression` node) obey the same rule -- unevaluated operand,
+            // compile-time constant result -- so they share this arm. In tree-sitter-c
+            // 0.24.1 an `alignof_expression`'s operand is always a `type_descriptor`, so
+            // even the GNU expression spelling `__alignof__(x)` parses `x` as a type name
+            // and never reaches a value; lowering the whole node as its source text keeps
+            // it that way. (An operand the type grammar cannot swallow, e.g.
+            // `__alignof__(p->f)`, is a parse error before we ever get here -- a
+            // tree-sitter-c grammar limit, not a frontend gap.)
+            "sizeof_expression" | "alignof_expression" => {
+                Ok(Exp::Str(ArcIntern::<str>::from(text)))
+            }
             // A C99 compound literal `(T){ .a = x }` is an unnamed object of type `T`
             // initialized by the brace, and the expression's value is that object. Model it
             // exactly that way: materialize a fresh temp to stand for the object, run the
@@ -3730,11 +4493,26 @@ impl<'a> Context<'a> {
             // `"+r"` in/out operand lost its identity flow (the openssh `crypto_int*` shapes).
             "gnu_asm_expression" => self.flatten_gnu_asm(program, node, source, scope_view),
             _ => {
-                debug_print_tree(node, 0, None, None);
-                unexpected_ast(format!(
-                    "ERR 78: Unsupported expression type: {}",
-                    node.kind()
-                ))?;
+                // Before blaming the frontend, ask whether the parser even reached here
+                // from well-formed source. A node the recovery produced or re-parented is
+                // not a construct this frontend failed to support: say once that this
+                // body holds recovery output, and skip the rest of the wreckage silently.
+                // In the kernel census that is the difference between 41,751 "frontend
+                // gap" warnings and 180 honest parse errors -- the `int foo(void) {...}`
+                // logged as "Unsupported expression type: function_definition" is a
+                // perfectly good function tree-sitter re-parented into the *previous*
+                // function's body, and is imported and lowered normally by
+                // `lower_definitions`, which queries the whole tree.
+                if recovery_region(node).is_some() {
+                    let func_name = scope_view.func_name.clone();
+                    self.report_unanalyzed_recovery(&func_name)?;
+                } else {
+                    debug_print_tree(node, 0, None, None);
+                    unexpected_ast(format!(
+                        "ERR 78: Unsupported expression type: {}",
+                        node.kind()
+                    ))?;
+                }
                 // Recover with a fresh temp nothing else reads or writes: this
                 // expression's value becomes opaque (no flows in or out), but the
                 // surrounding statement still lowers.
@@ -3869,10 +4647,10 @@ impl<'a> Context<'a> {
     /// matching the C semantics. Clobbers name registers, not C locations, so they carry no
     /// dataflow and are ignored.
     ///
-    /// `asm goto` still reports a frontend gap: its jumps to the label list are real CFG edges
-    /// out of an expression, which cannot be built from here. The operands are modeled anyway,
-    /// so only the control edges are missing (see `asm_goto_is_a_known_limitation`). No corpus
-    /// uses it.
+    /// `asm goto` carries a label list on top of that, and those jumps are real CFG edges. They
+    /// are wired by [`Context::link_asm_goto_labels`] *after* all of the operand statements are
+    /// emitted, because linking sets the block's terminator and nothing may be appended to a
+    /// block past its terminator.
     fn flatten_gnu_asm(
         &mut self,
         program: &mut Program,
@@ -3880,17 +4658,6 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> Result<Exp, Error> {
-        if node
-            .child_by_field_name("goto_labels")
-            .is_some_and(|labels| labels.child_by_field_name("label").is_some())
-        {
-            unexpected_ast(
-                "asm goto: jumps to the label list are not modeled as CFG edges (operands still \
-                 lower)"
-                    .to_string(),
-            )?;
-        }
-
         let outputs = gnu_asm_operands(node, "output_operands");
         let inputs = gnu_asm_operands(node, "input_operands");
 
@@ -3940,14 +4707,83 @@ impl<'a> Context<'a> {
 
         // The value of an asm expression is the first output operand's location; with no
         // outputs it is the opaque blend temp. In practice nothing reads it -- every real site
-        // is a statement -- but `flatten_expr` must yield something.
-        match targets.first() {
+        // is a statement -- but `flatten_expr` must yield something. Read it back *before* the
+        // `asm goto` edges are wired: `emit_loads` appends statements, and after
+        // `link_asm_goto_labels` the current block is a different, already-linked one.
+        let value = match targets.first() {
             Some(target) => {
                 let read_back = self.emit_loads(program, scope_view, target.clone());
-                Ok(Exp::access_path(read_back))
+                Exp::access_path(read_back)
             }
-            None => Ok(blended),
+            None => blended,
+        };
+
+        self.link_asm_goto_labels(program, node, source, scope_view)?;
+        Ok(value)
+    }
+
+    /// Turns the label list of a GNU `asm goto` into real CFG edges.
+    ///
+    /// The labels are ordinary `goto` targets, so this drives the very machinery `walk_goto`
+    /// does: the per-function pre-scan in `lower_function` already created a block for every
+    /// `labeled_statement` in the body and recorded it in `label_blocks`, which is what makes a
+    /// forward jump (the usual shape -- `l_yes:` sits *after* the asm) resolve. `link_blocks`
+    /// then appends each target to the current block's `Goto` terminator.
+    ///
+    /// Where `goto` *diverges*, an `asm goto` may or may not jump: control either lands on one
+    /// of the labels or falls out the bottom. So the fall-through is an edge like any other --
+    /// a fresh block, linked from the same terminator, that the rest of the enclosing statement
+    /// and its siblings continue in. Nothing is reported as diverging, so the enclosing compound
+    /// keeps walking normally.
+    ///
+    /// Building the edges from expression context (rather than a `walk_statement` pre-pass) is
+    /// what `scope_view: &mut ScopeView` is for: it names the current function *and* block, and
+    /// threading a new block back out through it is exactly how `lower_statement_expression_effects`
+    /// already moves the walk forward from inside `flatten_expr`. A pre-pass would have to find
+    /// the asm before its operands lower and could not place the split after them.
+    fn link_asm_goto_labels(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<(), Error> {
+        let Some(list) = node.child_by_field_name("goto_labels") else {
+            return Ok(());
+        };
+        let mut cursor = list.walk();
+        let labels: Vec<Node<'_>> = list.children_by_field_name("label", &mut cursor).collect();
+        if labels.is_empty() {
+            return Ok(());
         }
+
+        // A label may legally appear twice in one list; the edge is the same edge, and pushing
+        // it twice would put a duplicate successor in the terminator.
+        let mut linked: Vec<BasicBlockIdx> = Vec::with_capacity(labels.len());
+        for label_node in labels {
+            let label = to_str(&label_node, source);
+            let Some(&target) = self.label_blocks.get(label) else {
+                malformed_source(format!("`asm goto` to undefined label `{label}`"))?;
+                continue;
+            };
+            if linked.contains(&target) {
+                continue;
+            }
+            linked.push(target);
+            let mut to = scope_view.clone();
+            to.blidx = target;
+            link_blocks(program, scope_view, &to, false)?;
+        }
+
+        let after = add_block(
+            program,
+            scope_view,
+            &mut self.scope_tree,
+            true,
+            &format!("after_asm_goto::{}", get_line_num(&node)),
+        )?;
+        *scope_view = after;
+        Ok(())
     }
 
     fn flatten_nested_decl(
@@ -3958,18 +4794,13 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
         //how come only this declarator came up in expr? see pointer_decl way?
-        // ... well function_declarators come up too.  see the logic there //TODO: why does this not worry about parenthesized_declarators?
+        // ... well function_declarators come up too.  see the logic there
         if let Some(iden) = node.child_by_field_name("declarator") {
             //oh noes.. look whats under that! a pointer declarator!
             if iden.kind() == "identifier" {
                 let symbol = to_str(&iden, source);
-                self.scope_tree.add_variable(
-                    scope_view.sidx,
-                    symbol.to_string(),
-                    VarKind::Local,
-                    None,
-                    None,
-                );
+                self.scope_tree
+                    .add_variable(scope_view.sidx, symbol.to_string(), VarKind::Local);
                 let ap = self.build_access_path(
                     symbol,
                     Default::default(),
@@ -4415,6 +5246,121 @@ impl<'a> Context<'a> {
         Ok(Some(DispatchOut { value, aliased }))
     }
 
+    /// The cast tree-sitter cannot see -- its operand list, to lower as one -- or `None` for
+    /// a call.
+    ///
+    /// tree-sitter-c knows a fixed list of primitive type names and has no symbol table, so a
+    /// cast to a typedef written with the operand parenthesized, `(__be16)(x)`, parses as a
+    /// `call_expression` whose callee is a `parenthesized_expression` -- character for
+    /// character the shape of a genuine call through a parenthesized function pointer,
+    /// `(fp)(x)`.
+    ///
+    /// Lowering every one of them as a call was silent and unsound at once: `define_extern_
+    /// functions` invented an empty-bodied function named `( __be16)` (2,931 call sites in the
+    /// kernel corpus, 605 in openssh, 229 in nginx), and an empty body returns nothing, so the
+    /// taint that went into the cast did not come out.
+    ///
+    /// The unit's own evidence decides, and only *positive* evidence -- a name known to be one
+    /// thing here, not merely absent from the other list:
+    ///
+    /// * for a call: a variable in scope (C lets a block-scope declaration shadow a typedef,
+    ///   and `(fp)(x)` with a local `fp` is a call however `fp` is spelled elsewhere); a
+    ///   function any unit of this import defines (`Context::functions` spans the import, so
+    ///   a name one unit typedefs and another defines as a function meets itself here, and
+    ///   the definition wins because a call to it has somewhere to go); or a prototype ([`Context::declared_functions`] -- `(free)(p)` with libc's
+    ///   prototype in scope is the macro-suppression idiom, a call);
+    /// * for a cast: a use of the name as a type anywhere in the unit
+    ///   ([`Context::type_names`]), and at least one operand.
+    ///
+    /// Two shapes carry neither, and each draws a report instead of a silent guess. The
+    /// lowering is what it always was -- a call, to a function `define_extern_functions` will
+    /// invent -- but the census now sees it. `(T)()` with `T` a type casts nothing, which is
+    /// not C: a source problem. A name the unit neither defines, declares, nor uses as a type
+    /// is a frontend gap: the frontend cannot know, and if the name IS a type, the invented
+    /// callee's empty body is where the operand's taint stops. Neither shape occurs in the
+    /// dropbear, openssh, nginx, or linux corpora; the report is for the corpus that changes
+    /// that.
+    fn cast_shaped_call<'t>(
+        &self,
+        node: Node<'t>,
+        source: &'a str,
+        scope_view: &ScopeView,
+    ) -> Result<Option<Node<'t>>, Error> {
+        let Some(callee) = node.child_by_field_name("function") else {
+            return Ok(None);
+        };
+        if callee.kind() != "parenthesized_expression" {
+            return Ok(None);
+        }
+        let Some(inner) = first_named_child(callee) else {
+            return Ok(None);
+        };
+        if !matches!(inner.kind(), "identifier" | "type_identifier") {
+            return Ok(None);
+        }
+        let name = to_str(&inner, source);
+        if self
+            .scope_tree
+            .find_variable(scope_view.sidx, name)
+            .is_some()
+            || self.functions.contains_key(name)
+            || self.declared_functions.contains(name)
+        {
+            return Ok(None);
+        }
+        let operands = node.child_by_field_name("arguments");
+        let has_operand = operands.is_some_and(|list| first_named_child(list).is_some());
+        let is_type = self.type_names.contains(name);
+        if !has_operand {
+            // Zero operands can only be a call: a cast needs something to cast.
+            if is_type {
+                let (quote, _) = quote_construct(to_str(&node, source));
+                malformed_source(format!(
+                    "`{quote}` casts nothing: `{name}` is a type here and a cast needs an \
+                     operand; lowered as a call to `{name}`"
+                ))?;
+            }
+            return Ok(None);
+        }
+        if !is_type {
+            let (quote, _) = quote_construct(to_str(&node, source));
+            unexpected_ast(format!(
+                "cast-shaped call `{quote}`: this unit neither defines, declares, nor uses \
+                 `{name}` as a type, so it cannot be told from a cast; lowered as a call -- \
+                 if `{name}` is a type, the operand's taint stops here"
+            ))?;
+            return Ok(None);
+        }
+        Ok(operands)
+    }
+
+    /// Lower the operands of a cast [`Context::cast_shaped_call`] recognised, and yield its
+    /// value.
+    ///
+    /// A cast is value-preserving for taint -- the target type is irrelevant to dataflow --
+    /// so this is the `cast_expression` arm's pass-through, reached through an `argument_list`
+    /// instead of a `value` field. More than one operand means the cast is over a comma
+    /// expression (`(T)(a, b)`, which tree-sitter cannot tell from a two-argument call
+    /// either): every operand is evaluated for its effects, and the value is the last one's.
+    fn flatten_cast_operands(
+        &mut self,
+        program: &mut Program,
+        operands: Node<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<Exp, Error> {
+        let mut cursor = operands.walk();
+        let nodes: Vec<Node<'_>> = operands
+            .named_children(&mut cursor)
+            .filter(|child| child.kind() != "comment")
+            .collect();
+        let mut value = None;
+        for child in nodes {
+            value = Some(self.flatten_expr(program, child, source, scope_view)?);
+        }
+        Ok(value.expect("cast_shaped_call rejects an empty operand list"))
+    }
+
     /*
     Call expression always 'assign' into a temp variable, that way the collect_assignment can be consistent
      */
@@ -4437,18 +5383,24 @@ impl<'a> Context<'a> {
             return Ok(out.value);
         }
 
-        let func_node = node.child_by_field_name("function").expect("always has");
-        let arg_node = node.child_by_field_name("arguments").expect("always has");
+        // Grouping parentheses around the callee are peeled first: they change nothing about
+        // what is called, but a callee is named by its source text here, so `(f)(x)` without
+        // the peel names a function `(f)` that does not exist. See [`unparenthesized_callee`].
+        let func_node =
+            unparenthesized_callee(node.child_by_field_name("function").expect("always has"));
         let func_name = to_str(&func_node, source);
 
+        let arg_node = node.child_by_field_name("arguments").expect("always has");
         let args = self.collect_arguments(program, arg_node, source, scope_view)?;
 
         // Resolve an overloaded free callee to its arity-matching overload by the number of
         // explicit arguments (`id(a, b)` -> the `id#2` edge); a non-overloaded callee (all of
-        // C, and every C++ name with a single arity) stays bare via the identity mangler. Only
+        // C, and every C++ name with a single arity) stays bare via the identity mangler. Then
+        // a call names the definition the *caller's* file holds when several files define
+        // that name; `resolve_reference` is the identity function for every other name. Only
         // the `DirectCall` (`GlobalHeap`) arm below consults this; a funcptr call ignores it.
         let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec![
-            self.overload_name(func_name, args.len())
+            self.resolve_reference(&self.overload_name(func_name, args.len()))
         ]);
 
         // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
@@ -4476,6 +5428,23 @@ impl<'a> Context<'a> {
                 })
         };
 
+        // A GNU statement expression in callee position produces a VALUE, and calling a value is
+        // calling through it -- the kernel's `static_call(cond_resched)(...)`, which expands to
+        // `({ ...; (&__SCT__cond_resched); })(...)`. The rule below cannot see that from the
+        // access path alone: the value node resolves to the bare global path
+        // `$globals.__SCT__cond_resched`, which is exactly the shape of a global callee that IS a
+        // name (`hook(1)`, see `a_bare_global_callee_is_still_a_name`). What tells them apart is
+        // the construct in callee position -- `({ ... })`, not `__SCT__cond_resched` -- so ask it
+        // here. Left as a name, the callee was named by the braces' own source text, and since
+        // the expansion embeds a `__UNIQUE_ID___...` counter every one of the 220 kernel call
+        // sites invented an empty-bodied function of its own.
+        let callee_is_a_value = is_statement_expression(func_node);
+
+        // Direct call or indirect call, decided by what the callee *resolved to* rather than by
+        // how it was spelled: a callee that is a name is a direct call to that name, and a
+        // callee that is a location holding a function pointer is a call through what that
+        // location holds. Every arm below reads the resolved access path, so the three storage
+        // classes only differ in how a location is spelled, not in what counts as one.
         let var = access_path.base.variable.clone();
         let style = match &*var {
             Variable::Local(name) => {
@@ -4494,6 +5463,26 @@ impl<'a> Context<'a> {
             }
             Variable::Param(idx) => {
                 log::debug!("This is an Indirect PARAMETER call: {}", idx.get());
+                let callee = self.emit_loads(program, scope_view, access_path);
+                CallStyle::FuncPtrCall {
+                    callee,
+                    signature: (Some("indirect-call".to_string())),
+                }
+            }
+            // A global's access path is `$globals.<name>.<fields>`, so the base variable being
+            // the globals object says nothing about whether the callee is a name -- what says
+            // it is the path. `$globals.hook` IS the object `hook`, and a bare global name is
+            // still resolved by name (see `a_bare_global_callee_is_still_a_name` for why it has
+            // to be). Anything past that leading segment is a location *inside* the object,
+            // reached by a load: `ses.remoteclosed`, `ngx_os_io.send`, `ses.packettypes[i]
+            // .handler` are function pointers a file-scope object holds, not functions, and
+            // naming a call edge after the expression's source text both invented an empty
+            // function to receive it and lost the indirect call the program actually makes.
+            //
+            // The second disjunct is that same conclusion reached from the construct instead of
+            // from the path, for the one shape whose path cannot say it: see `callee_is_a_value`.
+            Variable::GlobalHeap if access_path.fields.len() > 1 || callee_is_a_value => {
+                log::debug!("This is an Indirect GLOBAL call: {func_name}");
                 let callee = self.emit_loads(program, scope_view, access_path);
                 CallStyle::FuncPtrCall {
                     callee,
@@ -4525,110 +5514,75 @@ impl<'a> Context<'a> {
         ))
     }
 
-    /// parses and creates new functions and parameters
-    fn collect_functions(
+    /// The IR name a reference to the function `name` from this unit resolves to.
+    ///
+    /// Almost always `name` itself. It differs only for a name several definitions claim,
+    /// where C resolves the reference within the referring translation unit first: a call to
+    /// `g` in `ssh-agent.c` means *that* file's `static g`, not the one `ssh-add.c` happens
+    /// to define under the same name. A unit that defines no `g` falls back to the bare name,
+    /// which is both what C does (the external definition) and what keeps an undefined `g`
+    /// resolvable -- [`define_extern_functions`], and every taint model, matches by name.
+    fn resolve_reference(&self, name: &str) -> String {
+        self.unit_plan
+            .local_names
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    }
+
+    /// Lower this unit's definitions, each through [`Context::lower_function`]: skipping the
+    /// copies [`plan_definitions`] said another unit already contributes, and using the IR
+    /// name it gave the ones that could not keep their own.
+    fn lower_definitions(
         &mut self,
         source: &'a str,
         tree: &Tree,
         program: &mut Program,
         global_sidx: usize,
+        query: &Query,
     ) -> anyhow::Result<(), Error> {
-        let query_src = r#"
-            (function_definition
-                type: (primitive_type)? @return_type            	
-                declarator: (function_declarator
-                    declarator: (identifier) @func.name
-                    parameters: (parameter_list) @param_list                                        
-                ) @func.dev
-                body: (compound_statement) @body)
-            "#;
-
-        let query = self.compile_query(query_src);
-
-        // Overload discovery FIRST — before any `functions.entry(...)` below or in the
-        // `collect_aux` hook — so the neutral `overloads` map is complete and the mangler can
-        // tell which names are overloaded at registration time. No-op for C (map stays empty).
-        let discover = self.hooks.collect_overloads;
-        discover(self, source, tree.root_node())?;
-
-        // Pre-pass: register every function name up front so a function-pointer
-        // reference to a function defined LATER in the file (`fp = later;`) is already
-        // known when its using function is lowered. Without this, `flatten_expr` would
-        // not recognise `later` as a function and would drop the indirect-call taint.
-        let mut name_cursor = QueryCursor::new();
-        let mut name_matches = name_cursor.matches(&query, tree.root_node(), source.as_bytes());
-        while let Some(m) = name_matches.next() {
-            let extract = MatchExtractor::new(&query, m);
-            if let Ok(name_node) = extract.get("func.name") {
-                // The `function_definition` query matches at any depth. A C++ inline
-                // constructor (`Box(int){…}`) is a `function_definition` whose name is a
-                // plain `identifier` *inside a class body*, and a namespaced free function
-                // (`namespace ns { int f(){…} }`) is one whose name is a plain `identifier`
-                // *inside a namespace* — both match too, but each is owned by the `collect_aux`
-                // hook (lowered as `Class::Class` / `ns::f`). Skip them here so they are not
-                // also registered/lowered bare. Inert for C (no class/namespace bodies).
-                if is_class_member_definition(name_node) || is_namespaced_definition(name_node) {
-                    continue;
-                }
-                let func_name = to_str(&name_node, source);
-                // Register under the (possibly arity-mangled) overload name so an overloaded
-                // free function reserves a *distinct* `FunctionIdx` per arity (`id#1`, `id#2`)
-                // instead of colliding on the bare `id`; a non-overloaded name stays bare.
-                let arity = extract
-                    .get("param_list")
-                    .map(param_arity)
-                    .unwrap_or_default();
-                let registered = self.overload_name(func_name, arity);
-                self.functions
-                    .entry(registered)
-                    .or_insert_with(|| program.new_function());
-            }
-        }
-
-        // Discover and lower any functions the top-level query above can't see (C++ inline
-        // methods, named by a `field_identifier` inside a class). The C hook is a no-op.
-        // This runs first so a top-level body's `recv.method(…)` call resolves its callee,
-        // and so the method's class is registered for member resolution. No language branch
-        // here — the shared core just calls through the installed hook.
-        let aux = self.hooks.collect_aux;
-        aux(self, source, tree.root_node(), program, global_sidx)?;
-
-        // Each match binds *all* captures. Lower every top-level function via the shared
-        // `lower_function`, which methods also funnel through (with an implicit `this`).
         let mut cursor = QueryCursor::new();
-        let mut matches_iter = cursor.matches(&query, tree.root_node(), source.as_bytes());
+        let mut matches_iter = cursor.matches(query, tree.root_node(), source.as_bytes());
         while let Some(m) = matches_iter.next() {
-            let extract = MatchExtractor::new(&query, m);
+            let extract = MatchExtractor::new(query, m);
             //boo, so TREE_SITTER doesn't add a node for an implicit int function type
             let return_type = extract.get_opt("return_type");
-            let func_name_node = extract.get("func.name")?;
-            // A C++ inline constructor or a namespaced free function matches this query but is
-            // owned by the `collect_aux` hook (lowered as `Class::Class` / `ns::f`); skip it so
-            // it is not double-lowered (inert for C).
-            if is_class_member_definition(func_name_node)
-                || is_namespaced_definition(func_name_node)
-            {
+            let body_node = extract.get("body")?;
+            let def_node = extract.get("func.def")?;
+            // A definition the grammar's auxiliary pass owns (a C++ class member or namespaced
+            // function, lowered under its qualified name by `collect_aux`) is not one of this
+            // loop's; `collect_definitions` skipped it the same way. Never true for C.
+            if (self.hooks.aux_owns_definition)(def_node) {
                 continue;
             }
-            let param_list = extract.get("param_list")?;
-            let body_node = extract.get("body")?;
-            //debug_print_tree(body_node, 0, None, Some(50));
-            let func_name = to_str(&func_name_node, source);
-            // C allows an implicit `int` return type (no `type` node); only an explicit
-            // `void` is arity 0.
-            let return_is_void =
-                return_type.is_some_and(|rt| to_str(&rt, source).eq_ignore_ascii_case("void"));
-            // Lower under the (possibly arity-mangled) overload name, matching the pre-pass
-            // registration and the call-site edge so `id#1`/`id#2` are two distinct functions
-            // (neither clobbers the other); a non-overloaded name stays bare.
-            let lowered_name = self.overload_name(func_name, param_arity(param_list));
+            // Already reported by `collect_definitions`, which saw the same matches.
+            let Some(head) = function_head(extract.get("func.decl")?) else {
+                continue;
+            };
+            let written = to_str(&head.name, source);
+            // A definition another translation unit already contributed, character for
+            // character: one function, lowered once, at the first copy.
+            if self.unit_plan.duplicates.contains(&def_node.id()) {
+                log::debug!("skipping a repeated definition of `{written}`");
+                continue;
+            }
+            // The name it was registered under: arity-mangled when the name is overloaded
+            // (C++ only; the identity for C), then whatever `plan_definitions` decided for a
+            // name several definitions claim.
+            let mangled = self.overload_name(written, param_arity(head.params));
+            let func_name = self.unit_plan.name_of(def_node.id(), &mangled).to_string();
+            // C allows an implicit `int` return type (no `type` node); only an explicit `void`
+            // is arity 0. A pointer return is a return: `void *xmalloc(size_t)` has `type: void`
+            // and an arity of 1, because the `void` describes the pointee, not the function.
+            let return_is_void = !head.returns_pointer
+                && return_type.is_some_and(|rt| to_str(&rt, source).eq_ignore_ascii_case("void"));
             self.lower_function(
                 source,
                 program,
                 global_sidx,
-                &lowered_name,
+                &func_name,
                 return_is_void,
-                param_list,
+                head.params,
                 body_node,
                 None,
                 false,
@@ -4638,12 +5592,11 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
-    /// Lower one `function_definition` into its IR function: allocate (or reuse) its
-    /// `FunctionIdx`, set its name and return arity, build its parameter and body scopes,
-    /// collect parameters, pre-create `goto`-label blocks, walk the body, and finalize
-    /// terminators.
+    /// Lower one `function_definition` into its IR function: register the name, set the return
+    /// arity, build the parameter and body scopes, pre-create a block per `goto` label, walk the
+    /// body, flag the label blocks the walk never reached, and finalize terminators.
     ///
-    /// Split out of [`Context::collect_functions`] so the per-function lowering is one named unit
+    /// Split out of [`Context::lower_definitions`] so the per-function lowering is one named unit
     /// rather than an 80-line loop body. That keeps the query/dispatch loop readable, and it is
     /// what lets a change in here be reviewed (and merged) as a diff against a function instead of
     /// against an anonymous block.
@@ -4694,8 +5647,8 @@ impl<'a> Context<'a> {
 
         let fidx = *self
             .functions
-            .entry(func_name.to_string())
-            .or_insert_with(|| program.new_function());
+            .get(func_name)
+            .expect("every definition is registered by lower_units before any is lowered");
 
         let fdat = &mut program.functions[fidx];
         fdat.name = func_name.to_string();
@@ -4722,33 +5675,18 @@ impl<'a> Context<'a> {
         // declared params follow, numbered from 1. A **static** method has a class context (for
         // static-member resolution) but *no* `this`, so its declared params number from 0 — like
         // a free function (spec 015).
-        let start_idx = if has_implicit_this {
+        if has_implicit_this {
             fdat.params.push(ParameterType::ByRef);
             self.param_names
                 .entry(func_name.to_string())
                 .or_default()
                 .push("this");
-            self.scope_tree.add_variable(
-                param_sidx,
-                "this".to_string(),
-                VarKind::Parameter,
-                Some(0),
-                Some(ParameterType::ByRef),
-            );
-            1
-        } else {
-            0
-        };
+            self.scope_tree
+                .add_variable(param_sidx, "this".to_string(), VarKind::Parameter);
+        }
 
         let body_name = format!("{}.body", func_name);
-        self.collect_params(
-            source,
-            &param_list,
-            fdat,
-            func_name,
-            &para_scope_view,
-            start_idx,
-        )?;
+        self.collect_params(source, &param_list, fdat, func_name, &para_scope_view)?;
 
         //we have to build this one by hand, becuase we want the initial scope without the extra block
         let block_scope = self.scope_tree.add_scope(body_name, Some(param_sidx));
@@ -4762,12 +5700,13 @@ impl<'a> Context<'a> {
             continue_target: None,
             explainer: "initial_block".to_string(),
         };
-        self.scope_tree.blocks.push(block_scope_view.clone());
+        self.scope_tree.add_block(&block_scope_view);
         let cp = CompoundProxy::from_node(body_node);
 
         // Pre-create a block for every `goto` label in this function so forward
         // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
         self.label_blocks.clear();
+        self.walked_label_blocks.clear();
         let mut labels = Vec::new();
         collect_labels(body_node, source, &mut labels);
         for label in labels {
@@ -4788,10 +5727,21 @@ impl<'a> Context<'a> {
         ctor_prologue(self, program, &mut block_scope_view, source, member_inits)?;
 
         self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
-        // Every block must carry a terminator; the walk can leave one without (an orphaned
-        // label block, a body ending after a `return`). Runs once per function, after the
-        // whole body is lowered.
-        finalize_terminators(program, fidx, func_name)?;
+
+        // Label blocks the walk never entered. In a damaged body they are the parse
+        // recovery's labels, not this function's: say so once, as a source problem, and
+        // let `finalize_terminators` patch them without blaming the frontend.
+        let stranded: HashSet<BasicBlockIdx> = self
+            .label_blocks
+            .values()
+            .copied()
+            .filter(|blidx| !self.walked_label_blocks.contains(blidx))
+            .collect();
+        let body_holds_recovery = body_node.has_error();
+        if body_holds_recovery && !stranded.is_empty() {
+            self.report_unanalyzed_recovery(func_name)?;
+        }
+        finalize_terminators(program, fidx, func_name, &stranded, body_holds_recovery)?;
         Ok(())
     }
 
@@ -4939,6 +5889,12 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
     ) -> Result<RawPath, Error> {
         match node.kind() {
+            // The store side of the same repair: a name tree-sitter inserted quotes to the
+            // empty string and names no location, so the store lands on a dead temp.
+            "identifier" if to_str(&node, source).is_empty() => {
+                self.report_missing_name(node, scope_view)?;
+                Ok(self.dead_temp_path(program, scope_view))
+            }
             "identifier" => Ok(self.build_access_path(
                 to_str(&node, source),
                 Default::default(),
@@ -4970,6 +5926,14 @@ impl<'a> Context<'a> {
                     .child_by_field_name("field")
                     .expect("field_expression always has a field");
                 let mut base = self.flatten_lvalue(program, argument, source, scope_view)?;
+                // `p->` with the member name missing: tree-sitter inserted the
+                // `field_identifier`, so it quotes to the empty string and cannot be a path
+                // segment. Appending nothing would silently alias the whole access to `p`, so
+                // the object's effects stay lowered and the access itself names a dead temp.
+                if to_str(&field, source).is_empty() {
+                    self.report_missing_name(field, scope_view)?;
+                    return Ok(self.dead_temp_path(program, scope_view));
+                }
                 // Collapse a union member access to the shared `$union` field so a write to one
                 // member is observed at a read of another (union members alias; F4). Only the
                 // access *on the union variable itself* collapses -- detected by the resolved
@@ -5020,19 +5984,25 @@ impl<'a> Context<'a> {
                     .lower_statement_expression_effects(program, node, source, scope_view)?
                 {
                     Some(inner) => self.flatten_lvalue(program, inner, source, scope_view)?,
-                    None => {
-                        let temp_name = self.allocator.next_temp();
-                        RawPath::new(
-                            VariableRef::new_local_idx(
-                                program[scope_view.fidx].locals.get_or_intern(&temp_name),
-                            ),
-                            ThinVec::new(),
-                        )
-                    }
+                    None => self.dead_temp_path(program, scope_view),
                 };
                 scope_view.sidx = outer_sidx;
                 self.cur_span = outer_span;
                 Ok(path)
+            }
+            // A string literal as a location: `"\004\002\006\006"[(flags) & 3]`, the
+            // kernel's `ACC_MODE()`. C makes a string literal an object -- an unnamed array
+            // of char with static storage -- so it is a legitimate subscript base and a
+            // legitimate operand of `&`, and `flatten_lvalue` is reached for the *base* of a
+            // subscript even when the whole expression is a pure read. It is also a
+            // compile-time constant: there is nothing to store into it and nothing in it to
+            // taint, the same reason `flatten_expr` lowers `sizeof`/`_Alignof` operands to a
+            // constant rather than walking them. So give it a location nothing else names,
+            // and the read lowers to a load that yields nothing. Falling through to the
+            // catch-all reported `not an lvalue: string_literal` and burned an anonymous
+            // temp -- the identical recovery, minus the false accusation.
+            "string_literal" | "concatenated_string" => {
+                Ok(self.dead_temp_path(program, scope_view))
             }
             "parenthesized_expression" | "parenthesized_declarator" => {
                 let inner = node.child(1).expect("missing inner expr");
@@ -5061,22 +6031,73 @@ impl<'a> Context<'a> {
                 }
                 Ok(ptr)
             }
+            // A cast in lvalue position. The cast itself is value-preserving (`flatten_expr`'s
+            // `cast_expression` arm passes the operand straight through), so the location a
+            // cast names is the location its operand names -- which is why `((struct S *)p)->f
+            // = v` and `*(int *)(t->q) = v` already resolved through the catch-all below, where
+            // the operand happens to lower to a variable.
+            //
+            // What did not resolve is the one thing C has a cast FOR in this position: naming
+            // an address that is not any declared object. `(T *)<constant>` is an address
+            // constant, and the operand lowers to an `Exp::Str`, not a variable, so the
+            // catch-all charged the frontend with `not an lvalue: cast_expression` and dropped
+            // the access onto a dead temp. That is the whole of spec 100's class -- 2,177
+            // occurrences across the kernel corpus, every single one of them `(T *)0`, from
+            // `container_of()`'s type check (`__same_type(*(ptr), ((type *)0)->member)`, which
+            // names a member's TYPE and evaluates nothing) -- and a driver's
+            // `*(volatile u32 *)0xfee00300` is the same construct with a store behind it.
+            //
+            // A constant address is an lvalue in C: `*(T *)K` designates the object at `K`, and
+            // two such designations with the same `K` designate the SAME object. So give it a
+            // location that says exactly that -- a field of the globals object named after the
+            // constant -- rather than a fresh temp per occurrence, which would silently make
+            // every reference to one hardware register a distinct location. The name cannot
+            // collide with anything the program declares because `<...>` is not C identifier
+            // syntax (the trick `next_temp` uses for `<tN>` and spec 090 for
+            // `<implicit-return>`), and it is never empty, which is the invariant spec 070's
+            // `"."` access path broke.
+            //
+            // Only a *cast* gets this reading. A bare constant in location position (`3[a] = b`
+            // -- legal C, the commuted subscript) is not an address and still says so through
+            // the catch-all: the rule keys on the construct that turns a constant into an
+            // address, not on "the value came out constant".
+            "cast_expression" => match self.flatten_expr(program, node, source, scope_view)? {
+                Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
+                Exp::Str(constant) if !constant.is_empty() => Ok(literal_address_path(&constant)),
+                _ => self.not_a_location(program, node, scope_view),
+            },
             _ => match self.flatten_expr(program, node, source, scope_view)? {
                 Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
-                _ => {
-                    unexpected_ast(format!("not an lvalue: {}", node.kind()))?;
-                    // Recover by targeting a dead temp: this one store is dropped,
-                    // the rest of the function still lowers.
-                    let temp_name = self.allocator.next_temp();
-                    Ok(RawPath::new(
-                        VariableRef::new_local_idx(
-                            program[scope_view.fidx].locals.get_or_intern(&temp_name),
-                        ),
-                        ThinVec::new(),
-                    ))
-                }
+                _ => self.not_a_location(program, node, scope_view),
             },
         }
+    }
+
+    /// The recovery for a node in location position that names no location: say whose fault
+    /// that is, then target a dead temp so the one access is dropped and the rest of the
+    /// function still lowers.
+    ///
+    /// Spec 064's rule, applied to the store side: before blaming the frontend, ask whether the
+    /// parser reached here from well-formed source. A node the recovery produced or re-parented
+    /// names no location because it is not the program -- the kernel's `min()` over a `typeof`
+    /// of a cast (a tree-sitter-c 0.24.1 grammar limit) leaves whole statements re-parented into
+    /// a chain of `assignment_expression`s that never appeared in the source, and charging the
+    /// frontend with "not an lvalue: assignment_expression" asserts ctadl failed to support a
+    /// construct nobody wrote. Say once that this body holds recovery output, and drop the store
+    /// silently like every other node in the region.
+    fn not_a_location(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        scope_view: &ScopeView,
+    ) -> Result<RawPath, Error> {
+        if recovery_region(node).is_some() {
+            let func_name = scope_view.func_name.clone();
+            self.report_unanalyzed_recovery(&func_name)?;
+        } else {
+            unexpected_ast(format!("not an lvalue: {}", node.kind()))?;
+        }
+        Ok(self.dead_temp_path(program, scope_view))
     }
 
     /// Lowers the symbolic-field reads of `ap` into a sequence of loads (see
@@ -5104,63 +6125,22 @@ impl<'a> Context<'a> {
 }
 
 // A little helper to make grabbing stuff out of the tree-sitter iterator easier
-pub fn collect_matches<'a>(
-    mut matches: impl StreamingIterator<Item = QueryMatch<'a, 'a>>,
-    query: &'a Query,
-    source: &'a str,
-) -> Vec<(usize, Vec<(&'a str, &'a str)>)> {
-    let mut result = Vec::new();
-    while let Some(m) = matches.next() {
-        result.push((
-            m.pattern_index,
-            format_captures(m.captures.iter().into_streaming_iter_ref(), query, source),
-        ));
-    }
-    result
-}
-
-pub fn collect_captures<'a>(
-    captures: impl StreamingIterator<Item = (QueryMatch<'a, 'a>, usize)>,
-    query: &'a Query,
-    source: &'a str,
-) -> Vec<(&'a str, &'a str)> {
-    format_captures(captures.map(|(m, i)| m.captures[*i]), query, source)
-}
-
-fn format_captures<'a>(
-    mut captures: impl StreamingIterator<Item = QueryCapture<'a>>,
-    query: &'a Query,
-    source: &'a str,
-) -> Vec<(&'a str, &'a str)> {
-    let mut result = Vec::new();
-    while let Some(capture) = captures.next() {
-        result.push((
-            query.capture_names()[capture.index as usize],
-            to_str(&capture.node, source),
-        ));
-    }
-    result
-}
-
 use anyhow::Result;
 use tree_sitter::Node;
 
 // A simple counter to generate unique temp names (t0, t1, t2...)
 #[derive(Debug, Default)]
-pub struct TempAllocator {
+struct TempAllocator {
     counter: usize,
 }
 
 impl TempAllocator {
-    pub fn new() -> Self {
-        Self { counter: 0 }
-    }
-    pub fn next_temp(&mut self) -> String {
+    fn next_temp(&mut self) -> String {
         let name = format!("<t{}>", self.counter);
         self.counter += 1;
         name
     }
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.counter = 0;
     }
 }
@@ -5170,13 +6150,33 @@ impl TempAllocator {
 /// recover and the user still gets useful results from the rest of the program. Set
 /// `CTADL_ERROR_ON_AST` (to any value) to promote every such report to a hard
 /// ingestion error, which is what you want when hunting frontend gaps.
-fn recoverable_report(attribution: &str, msg: String) -> Result<(), Error> {
+fn recoverable_report(attribution: &'static str, msg: String) -> Result<(), Error> {
+    #[cfg(test)]
+    REPORTS.with(|r| r.borrow_mut().push((attribution, msg.clone())));
     if error_on_ast() {
         Err(Error::TreeSitterParse(msg))
     } else {
         log::warn!("{attribution}: {msg} (recovering; set CTADL_ERROR_ON_AST to fail instead)");
         Ok(())
     }
+}
+
+// Test-only: every `recoverable_report` made on this thread, newest last. Lets a test assert
+// not just that ingestion survived but *what* was reported and who was blamed -- the
+// distinction spec 064 turns on, since a suppressed warning and a re-attributed one are both
+// invisible to a test that only checks the program came out. (A plain comment, not a doc
+// comment: rustdoc does not document items produced by a macro invocation.)
+#[cfg(test)]
+thread_local! {
+    static REPORTS: std::cell::RefCell<Vec<(&'static str, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Test-only: drain and return this thread's reports. Each `#[test]` runs on its own
+/// thread, so the log starts empty per test and needs no explicit reset.
+#[cfg(test)]
+fn take_reports() -> Vec<(&'static str, String)> {
+    REPORTS.with(|r| std::mem::take(&mut *r.borrow_mut()))
 }
 
 /// Whether AST/source problems are hard errors: `CTADL_ERROR_ON_AST` in the
@@ -5210,19 +6210,94 @@ fn force_error_on_ast() -> impl Drop {
     Reset
 }
 
+/// Attribution prefix of an [`unexpected_ast`] warning: this frontend is at fault.
+const FRONTEND_GAP: &str = "frontend gap";
+
+/// Attribution prefix of a [`malformed_source`] warning: the analyzed code is at fault.
+const SOURCE_PROBLEM: &str = "source problem";
+
+/// How much of an unparsable construct a parse-error warning quotes, in characters.
+/// Preprocessed kernel source puts a whole macro expansion on one line, so an `ERROR`
+/// node there is routinely kilobytes long -- the longest in the kernel census is 23,268
+/// characters -- and the old message embedded all of it.
+///
+/// 200 rather than something tighter because the quote has to stay *diagnostic*:
+/// `run-linux.sh`'s triage identifies the grammar limit behind each parse error by finding
+/// the `typeof(`/`...` marker in this text, and in the corpus's worst case (a
+/// `WRITE_ONCE(x, min_t(...))` expansion) that marker sits at character 142. A 120-char
+/// quote was tried first and left 9 of the census's 180 constructs unclassifiable.
+const PARSE_ERROR_QUOTE_CHARS: usize = 200;
+
+/// The parse-recovery region `node` belongs to, or `None` if the parser produced it
+/// from source it parsed cleanly.
+///
+/// tree-sitter signals a syntax error in two ways and only the first is a node kind:
+/// an `ERROR` node covering text it could not parse, and -- once it resumes -- an
+/// ordinary, perfectly well-formed subtree re-parented somewhere it does not belong.
+/// The kernel corpus is dominated by the second. An unparsable
+/// `__typeof(__builtin_choose_expr(...))` in a top-level declarator (`SYSCALL_DEFINE`)
+/// leaves the ~87 function definitions that follow it re-parented into the *previous*
+/// function's `compound_statement`, where each looks exactly like a GNU nested
+/// function. Not one of them is inside an `ERROR` node, so an ancestry-only test finds
+/// nothing; what marks them is that the body holding them did not parse.
+///
+/// So: the innermost enclosing `ERROR` node if there is one, else the innermost enclosing
+/// `compound_statement` whose own subtree failed to parse.
+///
+/// The `compound_statement` fallback deliberately stops at the *first* enclosing body
+/// rather than walking to the root. It has to: in `fs__read_write.c` the parse fails so
+/// badly that the **root node itself is an `ERROR`**, and in `net__ipv4__route.c` one
+/// top-level `ERROR` spans 2.1 MB of the 3.2 MB file. A rule that looked for damage
+/// anywhere above would excuse every gap in those translation units. Stopping at the first
+/// enclosing body keeps a construct inside a cleanly parsed body reported as the frontend
+/// gap it is, even when the function next to it is wreckage.
+fn recovery_region(node: Node<'_>) -> Option<Node<'_>> {
+    if node.is_error() {
+        return Some(node);
+    }
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        if n.is_error() {
+            return Some(n);
+        }
+        if n.kind() == "compound_statement" {
+            return n.has_error().then_some(n);
+        }
+        cur = n.parent();
+    }
+    None
+}
+
+/// The text of an unparsable construct, normalized for a one-line warning: runs of
+/// whitespace collapse to a single space (so one warning is one log line, and
+/// `grep -c` counts warnings rather than source lines) and the result is cut at
+/// [`PARSE_ERROR_QUOTE_CHARS`]. Returns the quote and how many characters were elided.
+fn quote_construct(text: &str) -> (String, usize) {
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let len = one_line.chars().count();
+    if len <= PARSE_ERROR_QUOTE_CHARS {
+        (one_line, 0)
+    } else {
+        (
+            one_line.chars().take(PARSE_ERROR_QUOTE_CHARS).collect(),
+            len - PARSE_ERROR_QUOTE_CHARS,
+        )
+    }
+}
+
 /// An AST shape the frontend does not lower (unknown statement kinds, unsupported
 /// expressions, declarators we don't recognize) — a gap in the frontend, not a
 /// problem in the analyzed source. Call sites recover by skipping the construct or
 /// substituting a fresh opaque temp.
 fn unexpected_ast(msg: String) -> Result<(), Error> {
-    recoverable_report("frontend gap", msg)
+    recoverable_report(FRONTEND_GAP, msg)
 }
 
 /// A construct the analyzed source itself misuses (`break` outside a loop, `goto` to
 /// an undefined label) — a problem in that code, not a frontend gap. Same switch as
 /// [`unexpected_ast`]; the warning attributes the fault to the source.
 fn malformed_source(msg: String) -> Result<(), Error> {
-    recoverable_report("source problem", msg)
+    recoverable_report(SOURCE_PROBLEM, msg)
 }
 
 /// Splits a `generic_expression` into its controlling expression and the *values* of its
@@ -5287,7 +6362,7 @@ fn gnu_asm_operand_is_readwrite(operand: Node<'_>, source: &str) -> bool {
 /// * `node` - The current Tree-sitter node to print.
 /// * `depth` - The current recursion depth (start with 0).
 /// * `field_name` - The field name of the current node, if any (start with None).
-pub fn debug_print_tree(
+fn debug_print_tree(
     node: Node<'_>,
     depth: usize,
     field_name: Option<&str>,
@@ -5329,7 +6404,7 @@ pub fn debug_print_tree(
 /// would otherwise yield `*p`, which never matches the receiver identifier. Returns `None`
 /// for shapes that name no single identifier (e.g. a function declarator).
 /// Whether `node` sits inside a class/struct body (a `field_declaration_list`). The
-/// top-level `function_definition` query in [`Context::collect_functions`] matches at any
+/// top-level `function_definition` query in [`Context::lower_definitions`] matches at any
 /// depth, so a C++ inline constructor — a `function_definition` whose name is a plain
 /// `identifier` *inside a class* — matches it just like a free function. Such members are
 /// discovered and lowered by the C++ `collect_aux` hook, so the shared loop uses this to
@@ -5363,7 +6438,7 @@ fn is_class_member_definition(node: Node<'_>) -> bool {
 /// Whether `node` sits inside a `namespace_definition`. A C++ free function defined in a
 /// named namespace (`namespace ns { int f(){…} }`) is a `function_definition` with a plain
 /// `identifier` name — indistinguishable to the top-level `function_definition` query in
-/// [`Context::collect_functions`] from a global free function — but it must be lowered under
+/// [`Context::lower_definitions`] from a global free function — but it must be lowered under
 /// its *qualified* name (`ns::f`) by the C++ `collect_aux` hook, not registered bare here.
 /// The shared loop uses this neutral structural ancestor check (mirroring
 /// [`is_class_member_definition`]) to skip it. C trees contain no `namespace_definition`, so

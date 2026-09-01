@@ -90,11 +90,10 @@ fn simple_assign_global() {
 }
 
 #[test_log::test]
-#[ignore = "assigning to an undeclared global as a target is WIP; un-ignore once supported and confirmed"]
 fn simple_global_assign() {
-    // Writing to a name with no local declaration (`a = b;`). This should resolve to a global store,
-    // `$globals.a = b` -- but writing an undeclared global as the *target* isn't supported yet, so
-    // the test is ignored (see the attribute).
+    // Writing to a name with no local declaration (`a = b;`) resolves to a global store,
+    // `$globals.a = b`. Ignored for as long as an undeclared global was unsupported as the
+    // *target* of a write; it is supported now, and this pins it.
     let src = r"
             int simple_global_assign() {
                 int b;
@@ -915,26 +914,25 @@ fn returned_blend_operands_flow() {
     check_returns_param(&s, 1, "");
 }
 
-/*
-
 #[test_log::test]
-#[ignore = "Issue 54: Implicit return"]
 fn implicit_return() {
+    // Issue 54, closed by spec 090. `foo` declares `int` and never returns, so `link_blocks`
+    // closes its body with a synthesized return -- which was the *empty* one regardless of the
+    // declared arity, and `verify()` rejected it with
+    // `InconsistentReturns { expected_arity: 1, actual_arity: 0 }`. This test predates the fix
+    // and sat commented out (against a `get_summary` signature that no longer exists); it is
+    // revived here at its original name because it is the oldest statement of the class. The
+    // rest of it -- the other two synthesis sites, and the precision pin on the value returned
+    // -- is in the implicit-return section at the end of this file.
     let src = r"
             int foo() {
             //no explicit_return
             }
         ";
-    let (program, _dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    let (_, _) = get_summary(program_info).expect("Verify probably bonked");
+    get_summary(program_from_string(src).0).expect("Verify probably bonked");
 }
-//TODO_JDB:  I don't think i handled *(p+1) = f; or (p+1)->f()
 
- */
+//TODO_JDB:  I don't think i handled *(p+1) = f; or (p+1)->f()
 
 #[test_log::test]
 fn simple_else() {
@@ -1325,7 +1323,7 @@ fn taint_flows_through_indirect_call_separate_assign() {
 #[test_log::test]
 fn taint_flows_through_indirect_call_forward_decl() {
     // The referenced function is defined AFTER its use as a function pointer. Relies on
-    // the function-name pre-pass in collect_functions so `later` is already known when
+    // the function-name pre-pass in `lower_units` so `later` is already known when
     // `wrap`'s body is lowered.
     let src = r"
         int wrap(int a, int b) {
@@ -1338,13 +1336,12 @@ fn taint_flows_through_indirect_call_forward_decl() {
 }
 
 #[test_log::test]
-#[ignore = "F1 partial: indirect call through a function-pointer PARAMETER still drops \
-            taint (needs interprocedural func-ptr-value propagation); un-ignore when resolved"]
 fn taint_flows_through_funcptr_param() {
     // F1, harder form: the function pointer is a PARAMETER. `apply`'s `return f(x)`
     // carries @p1 (x) to the return only if the indirect call through formal `f`
     // resolves (interprocedurally, since `f` is bound to `id` at the call site).
-    // The frontend fix alone does NOT resolve this (the local-fp forms above do).
+    // Ignored while the frontend fix alone could not resolve it (the local-fp forms above
+    // could); it resolves now, and this pins it.
     let src = r"
         int id(int p) { return p; }
         int apply(int (*f)(int), int x) { return f(x); }
@@ -1356,12 +1353,11 @@ fn taint_flows_through_funcptr_param() {
 }
 
 #[test_log::test]
-#[ignore = "F1 partial: indirect call through a function-pointer STRUCT FIELD still drops \
-            taint (needs field-sensitive func-ptr-value propagation); un-ignore when resolved"]
 fn taint_flows_through_funcptr_in_struct() {
     // F1, hardest form: the function pointer lives in a STRUCT FIELD. `o.op(b)`
     // resolves only if field-sensitivity carries `o.op = id` to the indirect call.
-    // The frontend fix alone does NOT resolve this (the local-fp forms above do).
+    // Ignored while the frontend fix alone could not resolve it (the local-fp forms above
+    // could); it resolves now, and this pins it.
     let src = r"
         int id(int p) { return p; }
         struct S { int (*op)(int); };
@@ -1841,16 +1837,177 @@ fn duplicate_label_orphan_block_terminated() {
     // unterminated. `is_connected` never visits it, but `verify()` rejects any
     // block without a terminator regardless of reachability, so the sweep must
     // patch orphans too.
+    //
+    // `f` returns `int` deliberately: that makes this the pin on `finalize_terminators`'
+    // half of spec 090 as well. The terminator the sweep invents has to satisfy the
+    // function's return arity like any other, and `verify()` rejects it either way --
+    // for the missing terminator before the sweep, for the wrong arity after it.
     if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
         return;
     }
     let src = r"
-        void f(void) {
+        int f(void) {
             goto l;
         l:  a();
         l:  b();
         }";
     get_summary(program_from_string(src).0).expect("orphaned label block must get a terminator");
+}
+
+// ---------------------------------------------------------------------------------------
+// Labels the walk cannot reach (spec 066). `lower_function` pre-creates a basic block for
+// every label `collect_labels` finds anywhere under the body, so that a forward `goto L`
+// resolves. A block pre-created for a label the walk never enters is an empty orphan, and
+// `finalize_terminators` used to patch it and report `N block(s) left without a terminator` --
+// "their statements were dropped" -- against a function whose own code lowered perfectly.
+// Those were the last 29 warnings of that class in the kernel census.
+//
+// Three ways a label ends up unreachable, and each is answered where it belongs: two by not
+// collecting the label at all (it is not this function's), one by not blaming the frontend for
+// the parser's wreckage.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn label_in_an_unevaluated_sizeof_operand_strands_no_block() {
+    // `sizeof`'s operand is not evaluated, so `flatten_expr` lowers the whole construct to a
+    // compile-time constant without walking inside it (spec 063). A label in there names no
+    // reachable code -- there is no `goto` into an unevaluated operand -- so pre-creating a
+    // block for it only ever produced an orphan, and the "their statements were dropped"
+    // report was doubly wrong: nothing was dropped, because nothing runs there.
+    //
+    // Strict mode, so this is a pin and not a wish: the shape reports nothing at all now,
+    // where it used to be a hard error. It is also the only member of this class that can be
+    // pinned strictly -- the other two carry an independent report of their own by design (a
+    // nested function is still a gap, a parse error is still a source problem).
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int g;
+        int f(int a) {
+            g = a;
+            int n = sizeof(({ int t = a; lbl: t; }));
+            return n;
+        }";
+    let prog = super::parse_c_program(src)
+        .expect("an unevaluated operand's label must not gap")
+        .0;
+    // The real statements around it still lower: `a` reaches the global.
+    let (summary, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&summary, &si, "f", 0, ".g");
+}
+
+#[test_log::test]
+fn a_nested_functions_label_is_not_the_enclosing_functions() {
+    // A label's scope in C is the function containing it, and `lower_definitions` queries the
+    // whole tree -- so the nested definition is lowered as a function of its own, with its own
+    // label block, walked there. Pre-creating a second block for it in the *enclosing*
+    // function left an orphan and reported `f` as having dropped statements it never had.
+    //
+    // This is the kernel corpus's shape, where the "nested" definitions are not GNU nested
+    // functions at all but parse recovery re-parenting the following definitions into the
+    // previous function's body (spec 064): `fastopen_queue_tune`, three statements long,
+    // acquired a 113 KB body holding 206 of them and both of their `out:` labels.
+    let src = r"
+        int outer(int a) {
+            int inner(int b) {
+                if (b) goto out;
+                return 0;
+            out:
+                return b;
+            }
+            return a;
+        }";
+    let reports = reports_for(src);
+    assert!(
+        !reports
+            .iter()
+            .any(|(_, m)| m.contains("without a terminator")),
+        "the enclosing function must not be charged for the nested one's label: {reports:?}"
+    );
+    // Exactly the one report this shape is *supposed* to draw: a GNU nested function is a
+    // construct this frontend does not model (`nested_function_definition_is_still_a_frontend_gap`).
+    assert_eq!(
+        reports.len(),
+        1,
+        "expected only the nested-function gap: {reports:?}"
+    );
+    assert!(
+        reports[0]
+            .1
+            .contains("Unsupported expression type: function_definition"),
+        "unexpected report: {reports:?}"
+    );
+
+    // And the label's own statements really do lower -- in `inner`, the function they belong
+    // to. `out: return b;` is the only path that returns the parameter.
+    let prog = super::parse_c_program(src).expect("ingestion recovers").0;
+    let (summary, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&summary, &si, "inner", 0, "");
+}
+
+#[test_log::test]
+fn a_label_stranded_in_recovery_output_is_not_a_frontend_gap() {
+    // The third way: the label is real, but it sits in output tree-sitter's error recovery
+    // produced, which `walk_statement`'s `ERROR` arm and `flatten_expr`'s recovery-region arm
+    // both skip by design (spec 064). Its block is never entered.
+    //
+    // Here the label *is* still collected -- a damaged body still lowers plenty of good code,
+    // and dropping its labels would break that code's `goto`s (see
+    // `a_goto_still_resolves_in_a_damaged_body`). What changes is the attribution: an unentered
+    // label block in a body the parser did not finish is the source's problem, said once per
+    // function, not a second helping of blame for the frontend.
+    let src = r"
+        int g;
+        void f(int a) {
+            g = a;
+            case 1 ... 3:
+        out:
+            g = a;
+        }";
+    let reports = reports_for(src);
+    for (attribution, msg) in &reports {
+        assert_ne!(
+            *attribution, "frontend gap",
+            "a label the recovery swallowed is not a frontend gap: {msg}"
+        );
+    }
+    assert!(
+        reports.iter().any(|(_, m)| m.contains("not analyzed")),
+        "the loss must still be stated once, against the source: {reports:?}"
+    );
+
+    // Suppressing the blame must not suppress the analysis: the code that did parse still
+    // lowers, so `a` still reaches the global.
+    let prog = super::parse_c_program(src).expect("ingestion recovers").0;
+    let (summary, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&summary, &si, "f", 0, ".g");
+}
+
+#[test_log::test]
+fn a_goto_still_resolves_in_a_damaged_body() {
+    // The guard on the decision above. It would have been easy to stop collecting labels in
+    // any damaged body and drive the warning to zero that way -- and it would have thrown away
+    // real dataflow, because a parse error in one statement does not stop the rest of the
+    // function from lowering. The `goto`/label pair here shares a body with an unparsable
+    // construct and must still work: `a` reaches the global only through `out:`.
+    let src = r"
+        int g;
+        void f(int a) {
+            switch (a) { case 1 ... 3: break; }
+            if (a) goto out;
+            return;
+        out:
+            g = a;
+        }";
+    let reports = reports_for(src);
+    for (attribution, msg) in &reports {
+        assert_ne!(
+            *attribution, "frontend gap",
+            "nothing here is the frontend's fault: {msg}"
+        );
+    }
+    let prog = super::parse_c_program(src).expect("ingestion recovers").0;
+    let (summary, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&summary, &si, "f", 0, ".g");
 }
 
 #[test_log::test]
@@ -1984,15 +2141,13 @@ fn funcptr_struct_multistore_flows() {
 }
 
 #[test_log::test]
-#[ignore = "needs the array_declarator frontend fix (auto_test commit d1ccd07): `int (*fps[2])(int)` \
-            fails ingestion here with `ERR 78: Unsupported expression type: array_declarator`. The F2 \
-            resolution itself is covered by funcptr_struct_multistore_flows; un-ignore once array \
-            declarators are supported on this branch."]
 fn funcptr_array_multistore_flows() {
     // F2 (array form): TWO function pointers stored into the same array, then a call
     // through element 0. The `fps[1] = id` store makes a new SSA version of `fps`; the
     // `fps[0] -> id` binding must propagate across it to the call `fps[0](b)`. Same root
     // cause as the struct form -- this is what the broadened DFSan generator first surfaced.
+    // Ignored while `int (*fps[2])(int)` failed ingestion outright (`ERR 78: Unsupported
+    // expression type: array_declarator`); the declarator lowers now, and this pins the flow.
     let src = r"
         int id(int p) { return p; }
         int wrap(int a, int b) {
@@ -2164,6 +2319,103 @@ fn sizeof_does_not_evaluate() {
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_does_not_return_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn alignof_type_is_a_constant() {
+    // `_Alignof`/`__alignof__` yields a compile-time alignment, so it lowers to the same thing a
+    // numeric literal does: an `Exp::Str` of the node's own source text. It shares
+    // `sizeof_expression`'s `flatten_expr` arm because the rule is identical (unevaluated operand,
+    // constant result); before that arm it fell through to the catch-all and reported
+    // "ERR 78: Unsupported expression type: alignof_expression" 280x in the kernel corpus.
+    let src = r"
+        int f(void) {
+            return __alignof__(long);
+        }";
+    let prog = program_from_string(src).0;
+    check_returns_const(&prog, "f", "__alignof__(long)");
+}
+
+#[test_log::test]
+fn alignof_does_not_carry_operand_taint() {
+    // The GNU expression spelling `__alignof__(a)` still does not *evaluate* `a`, so the parameter
+    // must NOT reach the return -- the alignof twin of `sizeof_does_not_evaluate`. It holds for two
+    // reinforcing reasons: tree-sitter-c 0.24.1's `alignof_expression` only accepts a
+    // `type_descriptor`, so `a` parses as a `type_identifier` and is never an expression node, and
+    // the arm lowers the whole node as constant text without visiting any child. Unlike the other
+    // two alignof tests this one also passed BEFORE the fix -- the catch-all's opaque temp had no
+    // inflow either -- so it is a regression guard on the arm, not a pre-fix failure.
+    let src = r"
+        int f(int a) {
+            return __alignof__(a);
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_does_not_return_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn alignof_is_no_longer_a_frontend_gap() {
+    // Under `force_error_on_ast` any frontend gap becomes a hard error, so `program_from_string`
+    // succeeding at all is the assertion that `alignof_expression` no longer reports one. Both
+    // spellings the corpus uses are pinned: the C11 keyword `_Alignof(T)` and the GNU
+    // `__alignof__(...)`, which the kernel writes over struct tags and pointer types alike.
+    let _strict = super::force_error_on_ast();
+    for (src, constant) in [
+        (
+            "int f(void) { return _Alignof(unsigned long long); }",
+            "_Alignof(unsigned long long)",
+        ),
+        (
+            "int f(void) { return __alignof__(void *); }",
+            "__alignof__(void *)",
+        ),
+        (
+            "struct mm_cid { int x; }; int f(void) { return __alignof__(struct mm_cid); }",
+            "__alignof__(struct mm_cid)",
+        ),
+    ] {
+        let prog = program_from_string(src).0;
+        check_returns_const(&prog, "f", constant);
+    }
+}
+
+#[test_log::test]
+fn alignof_of_an_expression_operand_is_a_grammar_limit() {
+    // The one price of lowering `alignof_expression` to a constant, pinned so it is not a
+    // surprise. tree-sitter-c 0.24.1's `alignof_expression` accepts ONLY a `type_descriptor`,
+    // so GNU's `__alignof__(<expr>)` over anything the type grammar cannot swallow is a parse
+    // error: `__alignof__(p->f)` recovers as a `field_expression` whose *base* is the alignof
+    // node, plus a stray `)`. `flatten_lvalue`'s catch-all then routes that base through
+    // `flatten_expr`, which now yields `Exp::Str` rather than the old opaque temp, so the base
+    // is reported `not an lvalue: alignof_expression` instead of being silently accepted.
+    //
+    // That is a correct diagnosis of the tree the front end is handed -- the tree is what is
+    // wrong -- and it is root cause (2) in `linux_kernel_gaps.md`. Spec 063 left the report
+    // charged to the frontend and named spec 064's reclassification as its owner; spec 067
+    // collected the debt, extending `recovery_region` to `flatten_lvalue`'s catch-all, so
+    // the one corpus site with this shape (`__alignof__(tfm->__crt_ctx)`, `net__ipv4__tcp.c`)
+    // is now reported against the source that could not be parsed. The construct is still
+    // rejected in strict mode -- `CTADL_ERROR_ON_AST` promotes source problems too -- which
+    // is what this asserts. `program_from_string` cannot be used here: it asserts a clean parse.
+    let src = r"
+        struct crypto_tfm { char __crt_ctx[1]; };
+        unsigned f(struct crypto_tfm *tfm) { return __alignof__(tfm->__crt_ctx); }";
+    let (_prog, has_error, _markup) =
+        super::parse_c_program(src).expect("non-strict ingestion recovers");
+    assert!(
+        has_error,
+        "expected tree-sitter-c to reject an expression operand to __alignof__"
+    );
+
+    let _strict = super::force_error_on_ast();
+    let err = super::parse_c_program(src).expect_err("strict mode must reject the recovered tree");
+    let err = err.to_string();
+    assert!(err.contains("not analyzed"), "unexpected error: {err}");
+    assert!(
+        !err.contains("not an lvalue"),
+        "a store target inside a body that did not parse must not be charged to the \
+         frontend: {err}"
+    );
 }
 
 #[test_log::test]
@@ -3617,21 +3869,82 @@ fn asm_output_into_struct_field_is_stored() {
 }
 
 #[test_log::test]
-#[ignore = "limitation: `asm goto` transfers control to its label list, which needs CFG edges out \
-            of an expression -- `flatten_expr` returns a value and cannot build them. The operands \
-            still lower (the data model above applies unchanged); only the jumps are missing, and \
-            the construct keeps reporting a frontend gap. No corpus (dropbear/openssh/nginx) uses \
-            it. Un-ignore once asm statements can add successors."]
-fn asm_goto_is_a_known_limitation() {
-    // Aspirational: the `err` label is reachable only through the `asm goto`, so with real CFG
-    // edges `a` would reach the return along that path. Today the jump is invisible, the label
-    // block has no predecessor carrying `a`, and the flow is absent.
+fn asm_goto_label_is_reachable() {
+    // `err` is reachable *only* through the `asm goto`: it sits after a `return`, so nothing
+    // falls into it. With the jump modeled (`link_asm_goto_labels`) the label block has a
+    // predecessor and `a` reaches the return along that path; without it the label was dead IR
+    // and this flow was absent. Every kernel static key has this shape (`arch_static_branch`
+    // returns `false` on the fall-through and `true` under the label).
     let src = r#"
         int f(int a) {
             int r = 0;
             __asm__ goto ("jmp %l0" : : "r"(a) : : err);
             return r;
         err:
+            return a;
+        }"#;
+    let (prog, _dump) = program_from_string(src);
+    // 0 = entry (holds the asm), 1 = the pre-created `err` block, 2 = the fall-through.
+    check_successors(&prog, 0, &[1, 2]);
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_goto_also_falls_through() {
+    // The other half of the branch: an `asm goto` may jump, but it may equally fall out the
+    // bottom, so it must not be modeled as diverging the way a plain `goto` is. Here the only
+    // path carrying `a` to the return is the fall-through (`r = a; return r;`) -- the label
+    // returns a constant -- so terminating the block with just the label edges would lose it.
+    let src = r#"
+        int f(int a) {
+            int r = 0;
+            __asm__ goto ("" : : "r"(a) : : hit);
+            r = a;
+            return r;
+        hit:
+            return 0;
+        }"#;
+    let (prog, _dump) = program_from_string(src);
+    // Block 0 holds the asm; 1 is the pre-created `hit` block, 2 the fall-through it opens.
+    check_successors(&prog, 0, &[1, 2]);
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_goto_multiple_labels_all_link() {
+    // The label list is a list: GNU allows any number of targets and the kernel's jump-label
+    // macros do use more than one. Every one of them is an edge, so linking only the first
+    // would leave the rest of the arms dead.
+    let src = r#"
+        int f(int a) {
+            int r = 0;
+            __asm__ goto ("" : : "r"(a) : : one, two);
+            return r;
+        one:
+            return a;
+        two:
+            return a + 1;
+        }"#;
+    let (prog, _dump) = program_from_string(src);
+    // 1 and 2 are the pre-created `one`/`two` blocks (pre-scan order), 3 the fall-through.
+    check_successors(&prog, 0, &[1, 2, 3]);
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_goto_is_no_longer_a_frontend_gap() {
+    // Strict-mode pin: under `force_error_on_ast` a frontend gap is a hard error, so
+    // `program_from_string` succeeding is the assertion that `asm goto` no longer reports one.
+    // Spec 032 deliberately raised that gap and this closes it.
+    let _strict = super::force_error_on_ast();
+    let src = r#"
+        int f(int a) {
+            __asm__ goto ("" : : "r"(a) : : hit);
+            return 0;
+        hit:
             return a;
         }"#;
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
@@ -3823,4 +4136,2180 @@ fn if_arm_return_then_statement_strict() {
             g();
         }";
     super::parse_c_program(src).expect("if-arm return + following statement must not gap");
+}
+
+// ---------------------------------------------------------------------------------------
+// Parse-recovery debris (spec 064). tree-sitter signals a syntax error in two ways, and
+// only one of them is a node kind: an `ERROR` node over text it could not parse, and --
+// once it resumes -- an ordinary well-formed subtree re-parented somewhere it does not
+// belong. Both are facts about the analyzed source, so both belong to `malformed_source`,
+// reported once per region; neither is a gap in this frontend.
+// ---------------------------------------------------------------------------------------
+
+/// The reports `parse_c_program` made while ingesting `src`, as `(attribution, message)`.
+/// Uses `parse_c_program` directly because `program_from_string` asserts a clean parse and
+/// every input here is deliberately unparsable.
+fn reports_for(src: &str) -> Vec<(&'static str, String)> {
+    let _ = super::take_reports();
+    super::parse_c_program(src).expect("non-strict ingestion must recover");
+    super::take_reports()
+}
+
+#[test_log::test]
+fn parse_error_is_a_source_problem_not_a_frontend_gap() {
+    // `case A ... B:` is a GNU case range, which tree-sitter-c 0.24.1 has no rule for (it is
+    // in every kernel TU, via linux/printk.h's printk_get_level). The parse error is a fact
+    // about the analyzed source, so the one report it draws is attributed to the source --
+    // it used to be logged as "frontend gap: Unknown token(2): ERROR: ... 3", which asserts
+    // ctadl is at fault for a construct no frontend change can make parse.
+    let src = r"
+        int f(int c) { switch (c) { case 1 ... 3: return 1; default: return 0; } }
+        struct S { int x; };
+        int g(int a) { return a; }";
+    let reports = reports_for(src);
+    assert_eq!(
+        reports.len(),
+        1,
+        "expected exactly one report for one parse error, got {reports:?}"
+    );
+    let (attribution, msg) = &reports[0];
+    assert_eq!(*attribution, "source problem", "wrong attribution: {msg}");
+    assert!(msg.contains("parse error"), "unexpected message: {msg}");
+    assert!(
+        msg.contains("ERROR: ... 3"),
+        "the message must still quote the unparsable construct (run-linux.sh's parse-error \
+         triage classifies it from this tail): {msg}"
+    );
+
+    // The strict switch still fires -- `CTADL_ERROR_ON_AST` promotes source problems too
+    // (`error_on_ast_promotes_source_problem`) -- but on the source, not on a frontend gap.
+    let _strict = super::force_error_on_ast();
+    let err = super::parse_c_program(src).expect_err("strict mode rejects the parse error");
+    let err = err.to_string();
+    assert!(err.contains("parse error"), "unexpected error: {err}");
+    assert!(
+        !err.contains("Unknown token") && !err.contains("Unsupported expression type"),
+        "nothing on this path may call unexpected_ast any more: {err}"
+    );
+}
+
+#[test_log::test]
+fn declarations_after_a_parse_error_are_not_reported_as_expressions() {
+    // The shape that dominates the kernel census, and it is NOT an `ERROR` node's children:
+    // tree-sitter recovers from the unparsable construct by re-parenting the declarations
+    // that follow into the enclosing `compound_statement`, where they look exactly like
+    // block-scope declarations. `walk_statement`'s catch-all handed each to `flatten_expr`,
+    // which reported the *declaration's* node kind as an unsupported expression -- 23,268
+    // "function_definition" and 8,373 "struct_specifier" warnings for 180 parse errors.
+    //
+    // Now the one parse error is reported once and the wreckage around it is skipped.
+    let src = r"
+        int f(int c) {
+            switch (c) { case 1 ... 3: return 1; default: return 0; }
+            struct S { int x; };
+            int g(int a) { return a; }
+        }";
+    let reports = reports_for(src);
+    for (attribution, msg) in &reports {
+        assert_ne!(
+            *attribution, "frontend gap",
+            "parse-recovery debris must not be charged to the frontend: {msg}"
+        );
+        assert!(
+            !msg.contains("Unsupported expression type"),
+            "unexpected gap report: {msg}"
+        );
+    }
+    // Exactly the two tiers, once each -- not once per re-parented node. The construct that
+    // could not be parsed, named; and the body that therefore holds recovery output, named.
+    assert_eq!(reports.len(), 2, "expected the two tiers, got {reports:?}");
+    assert!(
+        reports[0].1.contains("ERROR: ... 3"),
+        "first report must name the unparsable construct: {reports:?}"
+    );
+    assert!(
+        reports[1].1.contains("function `f`") && reports[1].1.contains("not analyzed"),
+        "second report must name the body that is not analyzed: {reports:?}"
+    );
+
+    // Strict mode is the second, independent pin: any surviving `unexpected_ast` call on
+    // this path would be a hard error naming the node kind.
+    let _strict = super::force_error_on_ast();
+    let err = super::parse_c_program(src)
+        .expect_err("strict mode still rejects the parse error itself")
+        .to_string();
+    assert!(
+        !err.contains("function_definition") && !err.contains("struct_specifier"),
+        "a re-parented declaration is still being reported as an expression: {err}"
+    );
+}
+
+#[test_log::test]
+fn declarations_after_a_parse_error_still_import() {
+    // Suppressing the *warning* must not suppress the *code*. `lower_definitions` queries the
+    // whole tree, so a function the recovery re-parented into another function's body is
+    // still collected and lowered -- which is why the kernel corpus imports 12k functions
+    // despite a parse error in every TU. Pinned so a future "skip the region" optimisation
+    // cannot quietly drop them.
+    let src = r"
+        void f(int c) {
+            switch (c) { case 1 ... 3: return; default: return; }
+            int g(int a) { return a; }
+        }";
+    let (prog, has_error, _markup) = super::parse_c_program(src).expect("ingestion recovers");
+    assert!(has_error, "the input is deliberately unparsable");
+    assert!(
+        function_named(&prog, "g").is_some(),
+        "the re-parented definition of `g` must still be collected:\n{prog}"
+    );
+    let (summary, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&summary, &si, "g", 0, "");
+}
+
+#[test_log::test]
+fn nested_function_definition_is_still_a_frontend_gap() {
+    // The scoping pin: the suppression keys on the parse-recovery region, never on the node
+    // kind. A GNU nested function in a body that parsed *cleanly* is a real construct this
+    // frontend does not model (its body is lowered as a separate top-level function, so it
+    // does not see `f`'s locals), and it must keep saying so. Without this, spec 064's fix
+    // would read as "function_definition in statement position is fine", which it is not.
+    let src = r"
+        int f(int a) { int g(int x) { return x; } return g(a); }";
+    let (_prog, has_error, _markup) = super::parse_c_program(src).expect("ingestion recovers");
+    assert!(!has_error, "this input must parse cleanly");
+
+    let _strict = super::force_error_on_ast();
+    let err = super::parse_c_program(src)
+        .expect_err("a nested function in clean source is still a gap")
+        .to_string();
+    assert!(
+        err.contains("Unsupported expression type: function_definition"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
+fn parse_error_message_is_truncated() {
+    // The old message embedded the whole `ERROR` node. Preprocessed kernel source puts a
+    // macro expansion on one line, so a single warning ran to kilobytes -- the longest in
+    // the census was 23,268 characters -- and an embedded newline split one warning across
+    // log lines, so `grep -c` counted lines rather than warnings. The quote is now
+    // whitespace-collapsed and cut, with the elided count reported.
+    //
+    // The bound is 280 rather than the 200 the spec suggested, because the quote must stay
+    // long enough for `run-linux.sh`'s triage to find the grammar-limit marker in it; see
+    // `PARSE_ERROR_QUOTE_CHARS`. Either way the point of the criterion holds: the message
+    // is a constant length, not a slice of source.
+    // The x86 `get_user()` ladder, as `clang -E` leaves it: one line, and the `ERROR` node
+    // tree-sitter recovers it with is over 200 characters.
+    let src = r#"
+        int f(int *p) {
+            int r;
+            register __typeof__( __builtin_choose_expr(sizeof(*(p))<=sizeof(char),(unsigned char)0,__builtin_choose_expr(sizeof(*(p))<=sizeof(short),(unsigned short)0,__builtin_choose_expr(sizeof(*(p))<=sizeof(int),(unsigned int)0,__builtin_choose_expr(sizeof(*(p))<=sizeof(long),(unsigned long)0,(unsigned long long)0))))) v asm("ax");
+            r = v;
+            return r;
+        }"#;
+    let reports = reports_for(src);
+    assert_eq!(reports.len(), 1, "expected one report, got {reports:?}");
+    let (_attribution, msg) = &reports[0];
+    assert!(
+        msg.chars().count() <= 280,
+        "parse-error message is {} chars, must stay bounded: {msg}",
+        msg.chars().count()
+    );
+    assert!(
+        !msg.contains('\n'),
+        "a warning must stay on one line: {msg}"
+    );
+    assert!(
+        msg.contains("chars elided"),
+        "a cut quote must say how much was cut: {msg}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// The three rarest kernel gap classes (spec 067). Two are constructs -- GCC's
+// explicit-register variable and a string literal used as an array -- and the third turned
+// out not to be a construct at all.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn register_asm_variable_declares_an_ordinary_local() {
+    // GCC's explicit-register variable: `asm("eax")` says where `r` lives, not what it is.
+    // The declaration is otherwise ordinary, so the variable must be usable -- assigned
+    // from a parameter and returned, with the flow intact.
+    //
+    // The grammar is why this ever gapped: `declaration`'s `declarator` field covers a
+    // *sequence* (`_declaration_declarator` then an optional `gnu_asm_expression`), and
+    // tree-sitter distributes a field over every element, so one declared name yields two
+    // `declarator` children. The second is the annotation, and `walk_declaration` reported
+    // it as a declarator of an unexpected kind -- 25 times in the kernel census.
+    let src = r#"
+        int f(int a) {
+            register int r asm("eax");
+            r = a;
+            return r;
+        }"#;
+    let _ = super::take_reports();
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    // The flow above held before the fix too -- the *real* declarator is the loop's first
+    // child and lowered normally; it was the second child that drew the warning. So the
+    // report log is what actually pins this, and it is checked here rather than in a
+    // strict-mode twin because every corpus site sits in a body that also failed to parse
+    // (see `register_asm_variable_at_file_scope_is_not_a_gap`), where strict mode would
+    // stop on the parse error first.
+    assert_eq!(
+        super::take_reports(),
+        vec![],
+        "an explicit-register declaration must draw no report at all"
+    );
+
+    // The corpus's own spelling: x86's `__put_user` ladder, whose register variable takes
+    // its type from a `__typeof__` and its register from a concatenated string.
+    let corpus = r#"
+        int g(int *ufd, int v) {
+            register __typeof__(*(ufd)) __val_pu asm("%""rax");
+            __val_pu = v;
+            *ufd = __val_pu;
+            return 0;
+        }"#;
+    let _ = super::take_reports();
+    let _ = super::parse_c_program(corpus).expect("non-strict ingestion recovers");
+    for (attribution, msg) in super::take_reports() {
+        assert_ne!(
+            attribution, "frontend gap",
+            "the corpus spelling must not be charged to the frontend: {msg}"
+        );
+    }
+}
+
+#[test_log::test]
+fn register_asm_variable_at_file_scope_is_not_a_gap() {
+    // The spec named this shape -- `arch/x86/include/asm/current.h` via `thread_info.h`,
+    // one per translation unit -- as the exemplar, and the census disagrees: measured on
+    // the parse tree, all 30 corpus occurrences of it are at *file* scope, which
+    // `walk_declaration` never walks, and every warning the class produced came instead
+    // from the 23 function-local `register __typeof__(*(p)) __val_pu asm("%""rax");`
+    // declarations x86's `__put_user` expands to. So this is a boundary pin, not the pin:
+    // it holds that a file-scope explicit-register variable stays silent, which it did
+    // before the fix as well. `register_asm_variable_declares_an_ordinary_local` is where
+    // the class is actually pinned.
+    let _strict = super::force_error_on_ast();
+    let src = r#"
+        register unsigned long current_stack_pointer asm("rsp");
+        int f(int a) { return a; }"#;
+    super::parse_c_program(src)
+        .expect("a GCC explicit-register variable must not be reported as a frontend gap");
+}
+
+#[test_log::test]
+fn asm_label_on_a_declarator_carries_no_dataflow() {
+    // The other shape the same syntax spells: an asm label, renaming the symbol an object
+    // or function is emitted under. On a function the grammar puts the asm *inside* the
+    // `function_declarator` (so it never reaches `walk_declaration`'s declarator loop at
+    // all); on an object it is a second `declarator` child, exactly like the register case.
+    // Neither is a value: `g` must still be an ordinary call whose argument reaches the
+    // return, and the annotation must contribute no flow of its own.
+    let src = r#"
+        extern int g(int x) asm("real_g");
+        int f(int a) {
+            extern int myvar asm("othervar");
+            myvar = a;
+            return g(myvar);
+        }"#;
+    let _ = super::take_reports();
+    let (prog, has_error, _markup) =
+        super::parse_c_program(src).expect("an asm label must not be reported as a frontend gap");
+    assert!(!has_error, "this input must parse cleanly");
+    assert_eq!(
+        super::take_reports(),
+        vec![],
+        "an asm label must draw no report at all"
+    );
+    check_has_direct_call(&prog, "f", "g");
+}
+
+#[test_log::test]
+fn string_literal_subscript_is_a_constant() {
+    // The kernel's `ACC_MODE()` (`include/linux/fs.h`), reached by `build_open_flags` in
+    // `fs/open.c`: a constant lookup table spelled as a subscript on a string literal.
+    //
+    // A string literal is an object in C, so it is a legitimate subscript base, and
+    // `flatten_lvalue` resolves the base of every subscript -- read or write. There is
+    // nothing to store into it and nothing in it to taint, so the read lowers silently to a
+    // load of a location nothing else names. Strict mode pins that no gap is reported, and
+    // the summary pins the other half: indexing a constant table with a tainted index must
+    // not carry the index's taint into the result.
+    let _strict = super::force_error_on_ast();
+    let src = r#"
+        int f(int i) { return "\004\002\006\006"[i & 3]; }"#;
+    let (prog, has_error, _markup) =
+        super::parse_c_program(src).expect("a string-literal subscript must not be a frontend gap");
+    assert!(!has_error, "this input must parse cleanly");
+    let (s, _si) = get_summary(prog).unwrap();
+    check_does_not_return_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn a_store_target_in_a_damaged_body_is_a_source_problem() {
+    // The third class was never a construct. `min()` over a `typeof` of a cast --
+    // `__typecheck(x, y)` from `include/linux/minmax.h` -- is a tree-sitter-c 0.24.1
+    // grammar limit (spec 050's Findings), and the recovery from it re-parents the rest of
+    // the statement into a chain of `assignment_expression`s that appear nowhere in the
+    // source. `flatten_lvalue`'s catch-all then charged the frontend with "not an lvalue:
+    // assignment_expression" for a store position nobody wrote.
+    //
+    // `flatten_expr`'s catch-all has asked `recovery_region` this question since spec 064;
+    // this pins the store side asking it too. What must survive is the attribution, not the
+    // silence: the body is still named once as holding unanalyzed recovery output.
+    // `3[a]` is the construct, because it is the *smallest* store target that reaches
+    // `flatten_lvalue`'s catch-all from source that parses (see the clean-source twin
+    // below). What makes this case different is only the `case 1 ... 3` above it: the
+    // enclosing body no longer parsed, so nothing inside it is evidence about the frontend.
+    let src = r"
+        void f(int a, int b) {
+            switch (a) { case 1 ... 3: break; }
+            3[a] = b;
+        }";
+    let reports = reports_for(src);
+    for (attribution, msg) in &reports {
+        assert_ne!(
+            *attribution, "frontend gap",
+            "parse-recovery debris must not be charged to the frontend: {msg}"
+        );
+        assert!(
+            !msg.contains("not an lvalue"),
+            "unexpected gap report: {msg}"
+        );
+    }
+    assert!(
+        reports
+            .iter()
+            .any(|(_, msg)| msg.contains("function `f`") && msg.contains("not analyzed")),
+        "the damaged body must still be named once: {reports:?}"
+    );
+}
+
+#[test_log::test]
+fn a_non_lvalue_store_in_clean_source_is_still_a_frontend_gap() {
+    // The scoping pin for the re-attribution above, in the shape spec 064's
+    // `nested_function_definition_is_still_a_frontend_gap` takes: the suppression keys on
+    // the parse-recovery region, never on the node kind. A store whose target is not a
+    // location, in a body that parsed *cleanly*, is still something this frontend cannot
+    // place and must keep saying so -- otherwise the fix would read as "an
+    // `assignment_expression` in store position is fine", which it is not.
+    // The same store as the damaged-body test, with the parse error removed. `3[a] = b`
+    // is legal C -- a subscript is commutative, so this is `a[3] = b` -- and this frontend
+    // does not model a literal in base position, so it keeps saying so.
+    let src = r"
+        void f(int *a, int b) {
+            3[a] = b;
+        }";
+    let (_prog, has_error, _markup) = super::parse_c_program(src).expect("ingestion recovers");
+    assert!(!has_error, "this input must parse cleanly");
+
+    let _strict = super::force_error_on_ast();
+    let err = super::parse_c_program(src)
+        .expect_err("a non-location store target in clean source is still a gap")
+        .to_string();
+    assert!(
+        err.contains("not an lvalue: number_literal"),
+        "unexpected error: {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// Names tree-sitter inserted (spec 070). Where the grammar requires a name and the parse
+// fails there, tree-sitter repairs the tree by INSERTING a zero-width `identifier` /
+// `field_identifier`: a node with a kind, a position, and no text at all. The empty string
+// is not a name -- lowering it as one mints the global `$globals.` with an empty first path
+// segment, and `facts::Path`'s parser rejects an empty segment, so a single such token
+// anywhere in a corpus makes the whole index unqueryable (`ctadl query` panics reading the
+// parquet it just wrote, before printing a result). A token nobody wrote names nothing, so
+// it gets spec 064's treatment: the body is named once as holding recovery output and the
+// name lowers to a fresh temp instead.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn inserted_identifier_does_not_become_an_empty_path_segment() {
+    // The corpus shape, from x86's percpu accessors (`arch/x86/include/asm/percpu.h`,
+    // reached by every kernel TU through `cpu_kernelmode_gs_base`): `typeof` of a
+    // dereference is a tree-sitter-c 0.24.1 grammar limit, and recovering from it leaves
+    // the cast's `*` parsed as a multiplication whose right operand the parser has to
+    // invent. Two translation units of the kernel corpus held 134 of them.
+    let src = r"
+        struct S { unsigned long f; };
+        struct S fixed;
+        unsigned long g(void) {
+            return (unsigned long)((typeof(*(&(fixed.f))) *)((&(fixed.f))));
+        }";
+    let _ = super::take_reports();
+    let (prog, has_error, _markup) =
+        super::parse_c_program(src).expect("non-strict ingestion must recover");
+    assert!(has_error, "this input is the parse error under test");
+
+    let symbols = field_symbols(&prog);
+    assert!(
+        !symbols.iter().any(|s| s.is_empty()),
+        "an inserted name must not become a path segment; symbols: {symbols:?}\n{prog}"
+    );
+    // The real global next to it still resolves, so the guard keys on the *name* being
+    // empty and not on the body being damaged.
+    assert!(
+        symbols.contains(&"fixed"),
+        "the named global in the same expression must still resolve: {symbols:?}\n{prog}"
+    );
+
+    let reports = super::take_reports();
+    assert!(
+        reports
+            .iter()
+            .all(|(attribution, _)| *attribution == "source problem"),
+        "an inserted token is the source's parse error, not a frontend gap: {reports:?}"
+    );
+    assert!(
+        reports
+            .iter()
+            .any(|(_, msg)| msg.contains("function `g`") && msg.contains("not analyzed")),
+        "the damaged body must be named once: {reports:?}"
+    );
+}
+
+#[test_log::test]
+fn inserted_field_name_does_not_become_an_empty_path_segment() {
+    // The other position the grammar requires a name in: the member of a `field_expression`.
+    // Appending an empty segment here would be worse than useless -- the access would
+    // silently alias the whole object -- so the object's effects stay lowered and the access
+    // itself names a dead temp.
+    let src = r"
+        struct S { int f; };
+        int h(struct S *p, int v) {
+            p-> = v;
+            return p->;
+        }";
+    let _ = super::take_reports();
+    let (prog, has_error, _markup) =
+        super::parse_c_program(src).expect("non-strict ingestion must recover");
+    assert!(has_error, "this input is the parse error under test");
+
+    let symbols = field_symbols(&prog);
+    assert!(
+        !symbols.iter().any(|s| s.is_empty()),
+        "a missing member name must not become a path segment; symbols: {symbols:?}\n{prog}"
+    );
+    let reports = super::take_reports();
+    assert!(
+        reports
+            .iter()
+            .all(|(attribution, _)| *attribution == "source problem"),
+        "a missing member name is the source's parse error, not a frontend gap: {reports:?}"
+    );
+}
+
+#[test_log::test]
+fn a_named_global_still_lowers_to_a_symbolic_field() {
+    // The scoping pin, in the shape spec 064's
+    // `nested_function_definition_is_still_a_frontend_gap` takes: the guard keys on the name
+    // being empty, never on "identifier in a body that did not parse". A global read in a
+    // cleanly parsed body must keep the field that names it -- a fix that dropped every
+    // identifier in a damaged body, or that renamed globals to temps, would pass the two
+    // tests above and delete the analysis.
+    let src = r"
+        unsigned long named;
+        unsigned long f(void) { return named; }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        field_symbols(&prog).contains(&"named"),
+        "a global read must still load `$globals.named`\n{dump}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// Implicit returns and the return-arity contract (spec 090).
+//
+// `lower_function` gives every function whose declared return type is not `void` a
+// `ReturnType` of arity 1, and `verify()` rejects a `Return` carrying a different number of
+// arguments, so the *empty* return the frontend synthesizes is only well-formed in a `void`
+// function. Three call sites emitted it regardless -- `link_blocks` (falling off the end of
+// the body), `finalize_terminators` (patching a block the walk orphaned, pinned by
+// `duplicate_label_orphan_block_terminated`), and `walk_return` (a bare `return;`).
+//
+// The failure was silent, which is why no census in this campaign surfaced it. No warning of
+// any attribution is logged; the C import path never calls `program.verify()` (the dex, jvm and
+// pcode front ends all do); and the post-SSA check inside `ssa::transform_program` passes
+// because `complete()` has already rewritten every return into a goto to a single exit block,
+// zipping zero arguments against one retvar without complaint. `get_summary` below is the only
+// thing in the tree that asks the question -- and one bad function fails the whole program's
+// `verify()`, so the answer costs every other function in the import too.
+//
+// `implicit_return` closes such a block with a local that is never written. That is what C
+// says the value of such a return is (indeterminate), and an unwritten local is exactly that
+// here: it satisfies the arity contract without becoming a conduit.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn fall_off_end_of_nonvoid_verifies() {
+    // The reproducer, and the `link_blocks` call site: no `goto`, no unreachable code, no
+    // parse damage -- just a non-`void` function that runs off the end of its body, which is
+    // `to_sv.continuation_blidx == None`. Before the fix this returned
+    // `InconsistentReturns { expected_arity: 1, actual_arity: 0 }`.
+    let src = r"int f(int a) { int b = a; }";
+    get_summary(program_from_string(src).0)
+        .expect("a non-void function that falls off the end of its body must verify");
+}
+
+#[test_log::test]
+fn bare_return_in_nonvoid_verifies() {
+    // The `walk_return` call site. `return;` in a function declared `int` is legal C and is
+    // the shape of half the error paths in any such function, so it has to produce a return
+    // of the declared arity too -- while the value-carrying `return a;` on the other path
+    // keeps the flow it always had.
+    let src = r"int f(int a) { if (a) return; return a; }";
+    let (summary, _) = get_summary(program_from_string(src).0)
+        .expect("a bare `return;` in a non-void function must verify");
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn implicit_return_carries_no_taint() {
+    // The precision pin. The local the synthesized return reads is never assigned, so the
+    // parameter reaches `b` and stops: nothing flows out of the function. A fix that
+    // satisfied the arity contract by returning something that *does* have a value -- the
+    // last temp computed, or the parameter -- would pass the two tests above and invent a
+    // return flow in every function that falls off the end -- 77 of them in the openssh
+    // corpus, 27 in nginx, 17 in dropbear.
+    let src = r"int f(int a) { int b = a; }";
+    let (summary, _) = get_summary(program_from_string(src).0).expect("must verify");
+    check_does_not_return_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn implicit_return_in_a_void_function_is_still_empty() {
+    // The boundary pin: arity 0 means the empty return is the *correct* shape, and inventing
+    // an argument there would break `verify()` in the opposite direction. `void` functions
+    // that fall off the end are the overwhelming majority of implicit returns in every
+    // corpus, so this is the case the fix must not touch.
+    let src = r"void f(int a) { int b = a; }";
+    let (prog, dump) = program_from_string(src);
+    get_summary(prog).expect("a void function that falls off the end must still verify");
+    assert!(
+        check_no_match(&dump, "<implicit-return>"),
+        "a void function needs no return value\n{dump}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// One name, several definitions (spec 120).
+//
+// `import_c` lowers every translation unit under a directory into ONE program, whose function
+// table is a single namespace, so definitions C keeps apart meet in it: a `static` helper is scoped to its own file, and a header's `static
+// inline` becomes one definition per translation unit that included it. Keying the function
+// table on the name alone lowered all of them into ONE `FunctionData` -- 137,596 of the Linux
+// corpus's 148,001 definitions are repeats of this kind, 1,294 of nginx's 2,308, and openssh
+// has 70 names carrying more than one definition (21 of them `main`). The merge concatenated
+// the parameter lists, imposed the return arity of whichever body was walked last on all of
+// them, and pointed every call site at the chimera -- silently, no warning of any
+// attribution, `ctadl import` exit 0.
+//
+// `plan_definitions` gives each definition an identity instead. Definitions that quote the
+// same characters ARE one function -- this frontend lowers text, so N copies of a header's
+// inline produce N identical bodies -- and are lowered once. What is left really is several
+// functions with one name: the first keeps the bare name, so an extern declaration, a call
+// from a file that defines none of them, and every taint model still resolve by it, and the
+// rest are named for the file they came from (`g$ssh-agent.c`). A call resolves within its
+// own file first, which is what C does.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn colliding_definitions_of_one_name_verify() {
+    // The 3 empty returns (2 functions) spec 090 left in the openssh corpus, and the only
+    // ones in any of the four. They were NOT an implicit return: `parse_dest_constraint` and
+    // `parse_dest_constraint_hop` are each defined `static void` in ssh-add.c and `static int`
+    // in ssh-agent.c, and the merge gave the `void` body the `int` definition's arity, so its
+    // returns -- correctly empty when they were built -- became wrong retroactively.
+    //
+    // Both definitions here are in ONE translation unit, which is not C: a name gets one
+    // definition per unit. So this fixture draws a source problem (asserted below) as well as
+    // being split -- but it is split, which is what makes the arity right for each body and
+    // the IR verifiable.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        static void g(int a) { h(a); }
+        static int g(int a) { return a; }";
+    let (prog, _dump) = program_from_string(src);
+    check_return_arity(&prog, "g", 0);
+    check_return_arity(&prog, "g$1", 1);
+    assert_eq!(
+        function_named(&prog, "g")
+            .expect("first definition keeps the name")
+            .params
+            .len(),
+        1,
+        "each definition keeps its OWN parameter list; the merge concatenated them"
+    );
+    get_summary(prog)
+        .expect("two definitions sharing a name must not produce IR that fails to verify");
+}
+
+#[test_log::test]
+fn two_definitions_in_one_translation_unit_are_a_source_problem() {
+    // Whose fault it is. Two files that each define their own `static g` are ordinary C and
+    // draw nothing (see the next test); two definitions in one unit are the analyzed code's
+    // problem, so they are reported as one -- and the report says which name the second body
+    // was given and which one a call in that unit reaches, because the answer to the second
+    // question is not "both".
+    let reports = reports_for(
+        r"
+        static void g(int a) { h(a); }
+        static int g(int a) { return a; }",
+    );
+    assert_eq!(reports.len(), 1, "expected exactly one report: {reports:?}");
+    assert_eq!(reports[0].0, "source problem", "reports: {reports:?}");
+    assert!(
+        reports[0].1.contains("`g` is defined more than once") && reports[0].1.contains("`g$1`"),
+        "report must name the second definition's identity: {reports:?}"
+    );
+}
+
+#[test_log::test]
+fn two_files_each_keep_their_own_static_helper() {
+    // The openssh shape, as it actually arrives: two translation units, each with its own
+    // file-local `g`. Two functions, each with its own parameter list and its own return
+    // arity, and each file's call reaching its own -- `cb`'s call used to land on the merged
+    // `g(@p0, @p1)`, where the argument it passed belonged to ssh-add.c's body.
+    let (prog, _dump) = program_from_files(&[
+        (
+            "ssh-add.c",
+            r"static void g(int a) { sink(a); }
+              void ca(int x) { g(x); }",
+        ),
+        (
+            "ssh-agent.c",
+            r"static int g(int a) { return a; }
+              int cb(int x) { return g(x); }",
+        ),
+    ]);
+    check_has_direct_call(&prog, "ca", "g");
+    check_has_direct_call(&prog, "cb", "g$ssh-agent.c");
+    check_return_arity(&prog, "g", 0);
+    check_return_arity(&prog, "g$ssh-agent.c", 1);
+    for name in ["g", "g$ssh-agent.c"] {
+        assert_eq!(
+            function_named(&prog, name).expect(name).params.len(),
+            1,
+            "`{name}` takes one parameter; the merge concatenated both lists"
+        );
+    }
+}
+
+#[test_log::test]
+fn taint_follows_the_definition_the_calling_file_holds() {
+    // The dataflow the split buys, stated as a flow rather than a shape. Only ssh-agent.c's
+    // `g` returns what it was passed, so `cb` returns its parameter and `ca` does not. Under
+    // the merge there was one `g` and one summary for both call sites, and the argument
+    // `cb` passed went to the parameter of the OTHER file's body.
+    let (prog, _dump) = program_from_files(&[
+        (
+            "ssh-add.c",
+            r"static int g(int a) { return 0; }
+              int ca(int x) { return g(x); }",
+        ),
+        (
+            "ssh-agent.c",
+            r"static int g(int a) { return a; }
+              int cb(int x) { return g(x); }",
+        ),
+    ]);
+    let (summary, source_info) = get_summary(prog).expect("must verify");
+    check_returns_param_in(&summary, &source_info, "cb", 0, "");
+    check_does_not_return_param_in(&summary, &source_info, "ca", 0, "");
+}
+
+#[test_log::test]
+fn a_header_inline_included_twice_is_one_function() {
+    // The 137,596-definition case. Both files quote the same characters because both included
+    // the same header, so they are not two functions -- they are one, seen twice, and lowering
+    // it once is exact rather than an approximation: this frontend lowers text. What used to
+    // happen instead is the assertion on the parameter list, which held `h`'s parameter twice.
+    let inline = r"static inline int h(int a) { return a; }";
+    let (prog, dump) = program_from_files(&[
+        (
+            "a.c",
+            &format!(
+                "{inline}
+int ua(int x) {{ return h(x); }}"
+            ),
+        ),
+        (
+            "b.c",
+            &format!(
+                "{inline}
+int ub(int x) {{ return h(x); }}"
+            ),
+        ),
+    ]);
+    assert_eq!(
+        function_named(&prog, "h")
+            .expect("the one `h`")
+            .params
+            .len(),
+        1,
+        "one function, one parameter list\n{dump}"
+    );
+    assert!(
+        function_named(&prog, "h$b.c").is_none(),
+        "the second copy is the same function, not a second one\n{dump}"
+    );
+    check_has_direct_call(&prog, "ua", "h");
+    check_has_direct_call(&prog, "ub", "h");
+    let (summary, source_info) = get_summary(prog).expect("must verify");
+    check_returns_param_in(&summary, &source_info, "ua", 0, "");
+    check_returns_param_in(&summary, &source_info, "ub", 0, "");
+}
+
+#[test_log::test]
+fn one_definition_and_an_undefined_callee_are_left_alone() {
+    // The pin that the fix does not disturb the ordinary case: one definition of a name still
+    // owns it, a call from another file still resolves to it directly, and a name with no
+    // definition anywhere still gets its `define_extern_functions` stub -- which is what every
+    // taint model matches on, so a change to function identity that lost it would silently
+    // unhook every model in the corpus.
+    let (prog, _dump) = program_from_files(&[
+        ("a.c", r"int g(int a) { return a; }"),
+        ("b.c", r"int c(int x) { return g(x) + undefined_sink(x); }"),
+    ]);
+    check_has_direct_call(&prog, "c", "g");
+    assert!(
+        function_named(&prog, "g$b.c").is_none(),
+        "a name only one file defines is not qualified"
+    );
+    let stub = function_named(&prog, "undefined_sink").expect("extern stub");
+    assert!(stub.blocks.is_empty(), "an extern stub has no body");
+    assert_eq!(stub.params.len(), 1, "sized from the call site");
+}
+
+#[test_log::test]
+fn a_call_from_a_file_defining_no_such_name_takes_the_first_definition() {
+    // What C would do with this corpus is refuse to link it: `c.c` calls a `g` that only
+    // exists as two file-local definitions in two other files, so there is no right answer --
+    // and the front end has to pick one, because the alternative is an unresolved call and a
+    // dropped flow. It picks the first definition, which is also the one an `extern int g();`
+    // declaration and every taint model naming `g` resolve to. Recorded here because it is a
+    // choice, not a consequence.
+    let (prog, _dump) = program_from_files(&[
+        ("a.c", r"static int g(int a) { return a; }"),
+        ("b.c", r"static int g(int a) { return 0; }"),
+        ("c.c", r"int cc(int x) { return g(x); }"),
+    ]);
+    check_has_direct_call(&prog, "cc", "g");
+}
+
+#[test_log::test]
+fn files_that_share_a_base_name_still_get_distinct_identities() {
+    // The minted name is built from the base name because that is the readable half of a
+    // path, but a name is resolved against the FULL path -- an import tree may hold any
+    // number of `util.c`s, and a call in one of them means its own `g`. Three do here, so
+    // the second and third also exercise the `#n` that keeps two minted names apart.
+    let (prog, _dump) = program_from_files(&[
+        (
+            "a/util.c",
+            r"static int g(int a) { return a; }
+              int ca(int x) { return g(x); }",
+        ),
+        (
+            "b/util.c",
+            r"static int g(int a) { return 0; }
+              int cb(int x) { return g(x); }",
+        ),
+        (
+            "c/util.c",
+            r"static int g(int a) { return 1; }
+              int cc(int x) { return g(x); }",
+        ),
+    ]);
+    check_has_direct_call(&prog, "ca", "g");
+    check_has_direct_call(&prog, "cb", "g$util.c");
+    check_has_direct_call(&prog, "cc", "g$util.c#2");
+    let (summary, source_info) = get_summary(prog).expect("must verify");
+    check_returns_param_in(&summary, &source_info, "ca", 0, "");
+    check_does_not_return_param_in(&summary, &source_info, "cb", 0, "");
+    check_does_not_return_param_in(&summary, &source_info, "cc", 0, "");
+}
+
+#[test_log::test]
+fn a_function_pointer_reference_resolves_within_its_own_file() {
+    // A name used as a VALUE resolves the same way a call does. `take(g)` in b.c binds b.c's
+    // `g`, so indirect-call resolution follows the function pointer to the body that file
+    // actually passed -- the same question `collect_call` answers, asked at the other place
+    // a function name can appear.
+    let (_prog, dump) = program_from_files(&[
+        ("a.c", r"static void g(int a) { }"),
+        (
+            "b.c",
+            r"static void g(int a) { sink(a); }
+              void take(void (*fp)(int));
+              void b(void) { take(g); }",
+        ),
+    ]);
+    assert!(
+        dump.contains("ptr<g$b.c>"),
+        "the reference must name b.c's own `g`\n{dump}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// A cast in location position (spec 100).
+//
+// A cast is value-preserving for dataflow, so the location `(T *)e` names is the location `e`
+// names -- and when `e` is an object that already worked, through `flatten_lvalue`'s catch-all,
+// which accepts whatever `flatten_expr` hands back as long as it is a variable.
+//
+// It is not a variable for the one thing a cast exists for in this position: naming an address
+// that is not any declared object. `(T *)K` for a constant `K` lowers to an `Exp::Str`, so the
+// catch-all charged the frontend with `not an lvalue: cast_expression` and dropped the access
+// onto a dead temp. That was 2,177 of the kernel census's 2,194 remaining frontend gaps -- the
+// only shape left -- and every single one is `(T *)0`, from `container_of()`'s type check
+// (`__same_type(*(ptr), ((type *)0)->member)`, which names a member's TYPE and evaluates
+// nothing). A driver's `*(volatile u32 *)0xfee00300` is the same construct with a live store
+// behind it.
+//
+// A constant address IS an lvalue in C -- `*(T *)K` designates the object at `K`, and two such
+// designations with the same `K` designate the SAME object -- so it gets a location that says
+// so: `$globals.<address K>`. A fresh temp per site would have silenced the warning just as
+// well and made every reference to one hardware register a distinct object.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn store_through_cast_of_a_constant_writes_through() {
+    // The store lands on a location the rest of the program can name, instead of on a dead
+    // temp. `<t0>` is the address `$globals.<address 0x1000>` loaded out of the globals object
+    // -- the same two-statement shape `((struct S *)t->q)->f = x` lowers to, which is the point:
+    // a constant address is just another way of spelling the pointer.
+    let src = r"
+        struct S { int f; };
+        void e(int x) { ((struct S *)0x1000)->f = x; }";
+    let (prog, _dump) = program_from_string(src);
+    check_loads(&prog, "$globals.<address 0x1000>");
+    check_assign_or_update(&prog, "<t0>.f", ["@p0"], None);
+}
+
+#[test_log::test]
+fn a_store_through_a_literal_address_is_observed_at_a_read() {
+    // Why the location is a global keyed on the constant and not a fresh temp: the two
+    // occurrences of `0xfee00300` below are the same object, so the value written through the
+    // first reaches the read in the second. A per-site temp silences the warning and loses this
+    // flow -- and so does the pass-through on the read side, which is why `flatten_expr`'s
+    // `pointer_expression` arm resolves a dereference of a constant address the same way
+    // `flatten_lvalue` does rather than yielding the constant `0xfee00300`.
+    let src = r"int roundtrip(int x) {
+                    *(volatile int *)0xfee00300 = x;
+                    return *(volatile int *)0xfee00300;
+                }";
+    let (summary, _) = get_summary(program_from_string(src).0).expect("must verify");
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn cast_in_lvalue_position_is_no_longer_a_frontend_gap() {
+    // The corpus spelling, in strict mode. `((struct inet_sock *)0)->sk` inside
+    // `__builtin_types_compatible_p(typeof(...), typeof(...))` is `container_of()`'s
+    // `__same_type` check as the kernel headers expand it; `typeof` is not a keyword the
+    // grammar admits in expression position, so tree-sitter parses each one as a call, which
+    // is what walks the argument and reaches the cast. 1,070 of the corpus's occurrences are
+    // this exact type.
+    let src = r#"
+        struct inet_sock { int sk; };
+        int f(struct inet_sock *p) {
+            return __builtin_types_compatible_p(typeof(*(p)),
+                                                typeof(((struct inet_sock *)0)->sk));
+        }"#;
+    let (_prog, has_error, _dump) = super::parse_c_program(src).expect("ingestion recovers");
+    assert!(!has_error, "this input must parse cleanly");
+
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src)
+        .expect("a cast of a constant in location position is not a frontend gap");
+}
+
+#[test_log::test]
+fn a_cast_of_an_object_in_lvalue_position_is_unchanged() {
+    // The scoping pin. The fix must not read as "a cast in location position resolves to
+    // whatever is convenient": every shape whose cast operand is an OBJECT keeps the lowering
+    // it already had, because those never went through the constant path at all. Pinning them
+    // here is what makes the new arm a strictly additional case rather than a rewrite of the
+    // catch-all it replaced for this node kind.
+    let thru_param = r"
+        struct S { int f; };
+        void a(char *p, int x) { ((struct S *)p)->f = x; }";
+    let (prog, _) = program_from_string(thru_param);
+    check_assign_or_update(&prog, "@p0.f", ["@p1"], None);
+
+    let thru_field = r"
+        struct S { int f; };  struct T { char *q; };
+        void b(struct T *t, int x) { ((struct S *)t->q)->f = x; }";
+    let (prog, _) = program_from_string(thru_field);
+    check_loads(&prog, "@p0.q");
+    check_assign_or_update(&prog, "<t0>.f", ["@p1"], None);
+
+    let deref_of_field = r"
+        struct T { char *q; };
+        void c(struct T *t, int x) { *(int *)(t->q) = x; }";
+    let (prog, _) = program_from_string(deref_of_field);
+    check_loads(&prog, "@p0.q");
+    check_assign_or_update(&prog, "<t0>", ["@p1"], None);
+
+    let thru_arithmetic = r"
+        struct S { int f; };
+        void d(char *p, int x) { ((struct S *)(p - 8))->f = x; }";
+    let (prog, _) = program_from_string(thru_arithmetic);
+    check_assign_or_update(&prog, "<t0>", ["@p0", "#8"], None);
+    check_writes_to(&prog, "<t0>.f", 1);
+
+    // and none of the four says anything about the frontend.
+    let reports = reports_for(&format!(
+        "{thru_param}\n{thru_field}\n{deref_of_field}\n{thru_arithmetic}"
+    ));
+    assert!(reports.is_empty(), "unexpected reports: {reports:?}");
+}
+
+#[test_log::test]
+fn a_null_pointer_constant_is_still_a_constant_value() {
+    // The other boundary, and the reason the new reading lives in `flatten_lvalue` and in one
+    // guarded case of `flatten_expr`'s dereference, never in `flatten_expr`'s `cast_expression`
+    // arm: `(struct S *)0` in VALUE position is the null pointer constant, a value. Giving it
+    // the location it would name if dereferenced would make every `p = NULL` in a corpus a
+    // reference to one shared object, aliasing every null-valued pointer with every other.
+    let src = r"void n(void) { int *p; p = (int *)0; }";
+    let (prog, dump) = program_from_string(src);
+    check_assign_or_update(&prog, "p", ["#0"], None);
+    assert!(
+        check_no_match(&dump, "<address"),
+        "a null pointer constant names no location\n{dump}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// A definition that returns a pointer (spec 130).
+//
+// The definition query matched `function_definition > declarator: (function_declarator ...)`,
+// and tree-sitter-c wraps that `function_declarator` in one `pointer_declarator` per `*`. So
+// no definition returning a pointer ever matched: its body was never walked, its parameters
+// were never bound, and its return arity stayed 0 -- with no warning of any attribution, which
+// is why the class survived every census that read the warning log rather than the IR.
+//
+// It is a soundness hole and not merely missing coverage, because the NAME still reaches the
+// function table -- from a prototype, or from `define_extern_functions` at a call site -- so a
+// call lowered to a `direct-call` of an arity-0 stub, and taint entering it could not come back
+// out. `scripts/definition_census.py` sized it against clang's own AST: 298 of the 30 curated
+// kernel sources' 2,292 definitions, 308 of openssh's 2,215, 354 of nginx's 1,356, 80 of
+// dropbear's 747 -- and, after spec 110, the only coverage hole any of the four had left.
+//
+// The fix captures the declarator whole and unwraps it in `function_head`, so pointer depth
+// stops being something the query has to spell out.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn pointer_returning_definition_is_collected() {
+    // The minimal case. Before the fix `dup` was not in the program at all -- `function_named`
+    // returned None -- so this fails on the very first assertion rather than on the arity.
+    let src = r"char *dup(char *s) { return s; }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        function_named(&prog, "dup").is_some(),
+        "a `char *` definition must be collected\n{dump}"
+    );
+    check_return_arity(&prog, "dup", 1);
+    check_params(&prog, &[ByRef]);
+    check_block_count(&prog, 1);
+}
+
+#[test_log::test]
+fn taint_flows_through_a_pointer_returning_function() {
+    // What the dropped body cost: the summary of `dup` says nothing, so a caller's taint dies
+    // at the call. With the body walked, parameter 0 reaches the return.
+    let src = r"char *dup(char *s) { return s; }";
+    let (summary, _) = get_summary(program_from_string(src).0).expect("must verify");
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn taint_returns_through_a_call_to_a_pointer_returning_function() {
+    // The soundness statement in full, across a call: `use` passes its parameter to `dup` and
+    // stores what comes back, so `use` returns its own parameter. Before the fix `dup` was an
+    // arity-0 stub that `define_extern_functions` had invented from the call site, and this
+    // flow did not exist.
+    let src = r"
+        char *dup(char *s) { return s; }
+        char *use(char *p) { return dup(p); }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "use", "dup");
+    check_return_arity(&prog, "dup", 1);
+    assert!(
+        check_no_match(&dump, "define dup(@p0[byref]) -> 0"),
+        "`dup` must not be an arity-0 stub\n{dump}"
+    );
+    let (summary, info) = get_summary(prog).expect("must verify");
+    check_returns_param_in(&summary, &info, "use", 0, "");
+}
+
+#[test_log::test]
+fn double_pointer_returning_definition_is_collected() {
+    // Pointer depth is not something the query enumerates: `char **` and `char ***` are two and
+    // three nested `pointer_declarator`s, and `function_head` walks all of them.
+    let two = r"char **argv_of(char **v) { return v; }";
+    let (prog, dump) = program_from_string(two);
+    assert!(
+        function_named(&prog, "argv_of").is_some(),
+        "a `char **` definition must be collected\n{dump}"
+    );
+    check_return_arity(&prog, "argv_of", 1);
+    check_block_count(&prog, 1);
+
+    let three = r"char ***deep(char ***v) { return v; }";
+    let (prog, dump) = program_from_string(three);
+    assert!(
+        function_named(&prog, "deep").is_some(),
+        "a `char ***` definition must be collected\n{dump}"
+    );
+    check_return_arity(&prog, "deep", 1);
+}
+
+#[test_log::test]
+fn taint_returns_through_a_double_pointer_return() {
+    // The flow through a `char **` return. The parameter here is a *single* pointer on
+    // purpose: `collect_params` does not bind a `char **` PARAMETER at all (its query wants a
+    // `pointer_declarator` whose own declarator is an identifier, and a double pointer nests
+    // two), which silently drops it and shifts every later parameter's index down. That is a
+    // different defect in a different query -- spec 140 -- and pinning it here would tie this
+    // test to it.
+    let src = r"
+        struct env { char **argv; };
+        char **argv_of(struct env *e) { return e->argv; }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        function_named(&prog, "argv_of").is_some(),
+        "a `char **` definition must be collected\n{dump}"
+    );
+    check_return_arity(&prog, "argv_of", 1);
+    let (summary, _) = get_summary(prog).expect("must verify");
+    check_returns_param(&summary, 0, ".argv");
+}
+
+#[test_log::test]
+fn every_spelling_of_a_pointer_return_is_collected() {
+    // The spec's reproducer, verbatim. `one` and `two` bracket it because they were always
+    // collected: the five in between were the whole of the loss, and nothing was said about
+    // any of them. `void *` is the one that also needs the arity rule -- its `type:` capture
+    // IS `void`, but the `void` describes the pointee, so the function returns a value.
+    let src = r"
+        struct S { int f; };
+        int one(int a) { return a; }
+        char *d1(char *s) { return s; }
+        static char *d2(char *s) { return s; }
+        char * d3(char *s) { return s; }
+        struct S *d4(struct S *s) { return s; }
+        void *d5(void *s) { return s; }
+        int two(int a) { return a; }";
+    let (prog, dump) = program_from_string(src);
+    for name in ["one", "d1", "d2", "d3", "d4", "d5", "two"] {
+        assert!(
+            function_named(&prog, name).is_some(),
+            "`{name}` must be collected\n{dump}"
+        );
+        check_return_arity(&prog, name, 1);
+    }
+    let (summary, info) = get_summary(prog).expect("must verify");
+    for name in ["d1", "d2", "d3", "d4", "d5"] {
+        check_returns_param_in(&summary, &info, name, 0, "");
+    }
+}
+
+#[test_log::test]
+fn a_void_definition_still_returns_nothing() {
+    // The arity rule cuts both ways: `void f()` is still arity 0. Reading `returns_pointer`
+    // before the `void` check must not turn every `void` function into one that returns.
+    let src = r"void f(int a) { int b; b = a; }";
+    let (prog, _dump) = program_from_string(src);
+    check_return_arity(&prog, "f", 0);
+}
+
+#[test_log::test]
+fn a_pointer_returning_prototype_is_still_not_a_definition() {
+    // The boundary. A declaration is a `declaration` node, not a `function_definition`, so
+    // widening the definition query must not start inventing bodies for prototypes: `strdup`
+    // is known (a call resolves to it, via `define_extern_functions`) and empty.
+    // (Through `program_from_files`, because it is the import path that runs
+    // `define_extern_functions` and so the only one where a prototype gets a function at all.)
+    let (prog, dump) = program_from_files(&[(
+        "s.c",
+        r"char *strdup(const char *);
+          char *caller(char *p) { return strdup(p); }",
+    )]);
+    check_has_direct_call(&prog, "caller", "strdup");
+    let stub = function_named(&prog, "strdup").expect("the extern pass names it");
+    assert!(
+        stub.blocks.is_empty(),
+        "a prototype has no body to collect\n{dump}"
+    );
+    // and `caller`, which IS a definition, does have one.
+    let defined = function_named(&prog, "caller").expect("a definition is collected");
+    assert!(!defined.blocks.is_empty(), "caller has a body\n{dump}");
+}
+
+#[test_log::test]
+fn a_parenthesized_declarator_declares_what_it_wraps() {
+    // The other wrapper the query could not follow, and the corpus finds it too: openssh's
+    // `openbsd-compat/getrrsetbyname.c` defines `_getshort` under
+    // `#define _getshort(x) (_ssh_compat_getshort(x))`, so the DEFINITION preprocesses to
+    // `static u_int16_t (_ssh_compat_getshort(const u_char *msgp)) { ... }` -- parentheses
+    // around the whole function declarator. `(f)(int)`, parentheses around just the name, is
+    // the same idiom written on purpose. Both declare `f`, so both are collected. These two
+    // definitions are the entire residue of openssh's coverage hole once the pointer class is
+    // closed; §4.16 had recorded them as clang artifacts rather than losses, and they are not.
+    let whole = r"static unsigned (_ssh_compat_getshort(unsigned char *msgp)) { return *msgp; }";
+    let (prog, dump) = program_from_string(whole);
+    assert!(
+        function_named(&prog, "_ssh_compat_getshort").is_some(),
+        "parens around the declarator do not change what it declares\n{dump}"
+    );
+    check_return_arity(&prog, "_ssh_compat_getshort", 1);
+
+    let name_only = r"char *(strdup2)(char *s) { return s; }";
+    let (prog, dump) = program_from_string(name_only);
+    assert!(
+        function_named(&prog, "strdup2").is_some(),
+        "parens around the name do not change it either\n{dump}"
+    );
+    check_return_arity(&prog, "strdup2", 1);
+    let (summary, _) = get_summary(prog).expect("must verify");
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn a_declarator_that_names_no_function_is_reported() {
+    // The residual, said out loud. A function returning a function pointer
+    // (`char *(*signal_handler(int))(int)`) parses as a `function_declarator` wrapping a
+    // `parenthesized_declarator`, which names no single function this IR can give a return
+    // type -- so it is still dropped, but as a `frontend gap` naming the declarator, not in
+    // silence. Silence is exactly how the pointer-returning class survived this long.
+    let src = r"
+        char *(*signal_handler(int sig))(int) { return 0; }
+        int ok(int a) { return a; }";
+    let reports = reports_for(src);
+    assert!(
+        reports.iter().any(|(who, msg)| *who == "frontend gap"
+            && msg.contains("unsupported declarator in a function definition")),
+        "the dropped definition must be reported: {reports:?}"
+    );
+    // Recovery is per definition: the next one is still collected.
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        function_named(&prog, "ok").is_some(),
+        "recovery must not lose the rest of the file\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn pointer_returning_definitions_of_one_name_keep_their_own_bodies() {
+    // The class joins spec 120's identity machinery for free, because `function_head` feeds
+    // the same pre-pass: two files with their own `static char *fmt` are two functions, not
+    // one, and the second is named for its file.
+    let (prog, dump) = program_from_files(&[
+        ("a.c", "static char *fmt(char *s) { return s; }"),
+        (
+            "b.c",
+            "static char *fmt(char *s) { char *t; t = s; return t; }",
+        ),
+    ]);
+    assert!(
+        function_named(&prog, "fmt").is_some() && function_named(&prog, "fmt$b.c").is_some(),
+        "two pointer-returning definitions of one name are two functions\n{dump}"
+    );
+    check_return_arity(&prog, "fmt", 1);
+    check_return_arity(&prog, "fmt$b.c", 1);
+}
+
+#[test_log::test]
+fn a_pointer_returning_definition_is_not_a_frontend_gap() {
+    // Strict mode: the whole reproducer must import with `CTADL_ERROR_ON_AST` set. It always
+    // did -- that is the point, the class was invisible -- so this pins that the fix did not
+    // *introduce* a gap while walking bodies nobody had walked before.
+    let src = r"
+        struct S { int f; };
+        char *d1(char *s) { return s; }
+        char **d2(char **s) { return s; }
+        void *d3(void *s) { return s; }
+        struct S *d4(struct S *s) { return s; }";
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("a pointer-returning definition is not a frontend gap");
+}
+
+/* Spec 140: a parameter's declarator nests, and its index is its position.
+
+`collect_params` used a query that enumerated one-level declarator spellings, so `char **v`
+matched nothing and was dropped -- and because the loop numbered parameters by MATCH order,
+the drop took every later parameter down a slot with it. The same "matches anywhere in the
+subtree" property bound a function-pointer parameter's OWN parameters as the enclosing
+function's. Both are index bugs, not just coverage bugs: a taint model names `Argument(1)`. */
+
+#[test_log::test]
+fn a_double_pointer_parameter_is_bound() {
+    // The reproducer, verbatim: `v` used to be gone and `w` used to be `@p0`.
+    let src = r"void f(char **v, char *w) { char **a; char *b; a = v; b = w; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByRef, ByRef]);
+    let (a, b) = (local_render(&prog, "f", "a"), local_render(&prog, "f", "b"));
+    assert!(
+        check_match(&dump, &format!("assign {a} = @p0")),
+        "the double pointer is the FIRST parameter\n{dump}"
+    );
+    assert!(
+        check_match(&dump, &format!("assign {b} = @p1")),
+        "and the one after it keeps its own index\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn main_binds_argc_and_argv_in_that_order() {
+    // The headline. `main(int argc, char **argv)` imported as `define main(@p0)`, and the one
+    // parameter it did bind was the right one only by luck -- `argv` is last, so nothing
+    // shifted. Depth 3 is here too, because depth is not a list of cases.
+    let src = r"int main(int argc, char **argv) { int n; char **a; n = argc; a = argv; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByVal, ByRef]);
+    let (n, a) = (
+        local_render(&prog, "main", "n"),
+        local_render(&prog, "main", "a"),
+    );
+    assert!(
+        check_match(&dump, &format!("assign {n} = @p0"))
+            && check_match(&dump, &format!("assign {a} = @p1")),
+        "argc is @p0 and argv is @p1\n{dump}"
+    );
+
+    let deep = r"void g(char ***v, int n) { char ***a; int b; a = v; b = n; }";
+    let (prog, dump) = program_from_string(deep);
+    check_params(&prog, &[ByRef, ByVal]);
+    let (a, b) = (local_render(&prog, "g", "a"), local_render(&prog, "g", "b"));
+    assert!(
+        check_match(&dump, &format!("assign {a} = @p0"))
+            && check_match(&dump, &format!("assign {b} = @p1")),
+        "`char ***` is one parameter at index 0\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn taint_flows_through_a_double_pointer_parameter() {
+    // The soundness statement spec 130 left unpinned on purpose, with the comment naming this
+    // spec: with `v` unbound, `return v` read an implicit GLOBAL of that name and the summary
+    // was empty. The parameter is a `char **` on both sides now.
+    let src = r"char **argv_of(char **v) { return v; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByRef]);
+    check_return_arity(&prog, "argv_of", 1);
+    assert!(
+        check_match(&dump, "return @p0"),
+        "the return reads the parameter, not a global\n{dump}"
+    );
+    let (summary, _) = get_summary(prog).expect("must verify");
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn a_parameter_is_by_reference_at_every_depth() {
+    // `ParameterType` is a property of the declarator's shape, not of how many layers the
+    // query happened to spell: anything that dereferences to storage the caller can see is
+    // `ByRef`, at any depth, and a plain value is `ByVal`.
+    for (src, want) in [
+        (r"void f(int a) { int x; x = a; }", ByVal),
+        (r"void f(char *a) { char *x; x = a; }", ByRef),
+        (r"void f(char **a) { char **x; x = a; }", ByRef),
+        (r"void f(char ***a) { char ***x; x = a; }", ByRef),
+        (r"void f(char *a[]) { char **x; x = a; }", ByRef),
+        (r"void f(char a[10][20]) { char *x; x = a[0]; }", ByRef),
+        (r"void f(struct S **a) { struct S **x; x = a; }", ByRef),
+    ] {
+        let (prog, dump) = program_from_string(src);
+        let got = get_only_function(&prog)
+            .expect("one function")
+            .params
+            .parameters
+            .raw
+            .as_slice();
+        assert_eq!(got, &[want], "wrong parameter type for `{src}`\n{dump}");
+    }
+}
+
+#[test_log::test]
+fn a_function_pointer_parameter_is_one_parameter() {
+    // The boundary the old query crossed in the other direction. `int (*cb)(int a, int b)`
+    // declares ONE parameter, `cb`; `a` and `b` belong to the type, not to `g`. The query
+    // matched `(parameter_declaration declarator: (identifier))` anywhere under the parameter
+    // list, so `g` came out with four parameters and `s` -- the real second one -- at index 3.
+    // A function pointer stays `ByVal`: what it points at is code, not storage.
+    let src = r"void g(int (*cb)(int a, int b), char *s) { char *t; t = s; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByVal, ByRef]);
+    let t = local_render(&prog, "g", "t");
+    assert!(
+        check_match(&dump, &format!("assign {t} = @p1")),
+        "`s` is the second parameter, not the fourth\n{dump}"
+    );
+
+    // A function-TYPED parameter (`int cb(int)`, which adjusts to a pointer) is the same one
+    // parameter, and so is a pointer to a function returning a pointer.
+    let typed = r"void h(int cb(int a), char *s) { char *t; t = s; }";
+    let (prog, dump) = program_from_string(typed);
+    check_params(&prog, &[ByVal, ByRef]);
+    let t = local_render(&prog, "h", "t");
+    assert!(
+        check_match(&dump, &format!("assign {t} = @p1")),
+        "a function-typed parameter is one parameter\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_nameless_parameter_holds_its_slot_without_binding_a_name() {
+    // The other half of "the index is the position": an abstract declarator names nothing, so
+    // nothing in the body can read it -- but it still occupies a place in the C parameter
+    // list, and `Argument(1)` means the second one. The slot is reserved; no name is bound.
+    let src = r"void k(char **, int n) { int x; x = n; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByRef, ByVal]);
+    let x = local_render(&prog, "k", "x");
+    assert!(
+        check_match(&dump, &format!("assign {x} = @p1")),
+        "`n` is the second parameter\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_void_parameter_list_is_still_empty() {
+    // The boundary that a "reserve a slot for a parameter that declares no name" rule would
+    // otherwise break, and it is in every second function in the corpora: the `void` in
+    // `f(void)` IS the empty list, not a parameter. It is a `parameter_declaration` with a
+    // type and NO declarator, which is why that shape reserves nothing -- an abstract
+    // declarator (`f(char **)`) is the one that does.
+    let (prog, _dump) = program_from_string(r"void f(void) { int x; x = 1; }");
+    check_params(&prog, &[]);
+    let (prog, _dump) = program_from_string(r"void f() { int x; x = 1; }");
+    check_params(&prog, &[]);
+}
+
+#[test_log::test]
+#[ignore = "aspirational: C23's nameless `f(int)` is a parameter, and no definition in the corpora writes one"]
+fn a_nameless_value_parameter_would_hold_its_slot_too() {
+    // What "a parameter declaration with no declarator declares no parameter" gives up. C23
+    // lets a DEFINITION leave a parameter unnamed, so `void f(int, int n)` has two -- but that
+    // shape is spelled exactly like the `void` in `f(void)` and exactly like what tree-sitter
+    // leaves when a parameter list does not parse (the kernel's `__typeof(...)` syscall
+    // wrappers, 140 definitions). Between inventing a parameter for every one of those and
+    // dropping this one, the corpora decide: no definition in any of the four writes it.
+    let (prog, _dump) = program_from_string(r"void f(int, int n) { int x; x = n; }");
+    check_params(&prog, &[ByVal, ByVal]);
+}
+
+#[test_log::test]
+fn a_variadic_marker_is_not_a_parameter() {
+    // `...` is a `variadic_parameter` node, not a `parameter_declaration`; clang does not
+    // count it as a formal either, so neither does the census this spec is measured by.
+    let src = r"void logmsg(const char *fmt, int level, ...) { int x; x = level; }";
+    let (prog, dump) = program_from_string(src);
+    check_params(&prog, &[ByRef, ByVal]);
+    let x = local_render(&prog, "logmsg", "x");
+    assert!(
+        check_match(&dump, &format!("assign {x} = @p1")),
+        "`level` is the second parameter and `...` is not a third\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_prototype_declares_no_parameters() {
+    // The boundary pin the spec asks for. `collect_params` runs over a DEFINITION's parameter
+    // list only -- a prototype is a `declaration` node -- so widening it must not start
+    // reading prototypes. `takes` is known only because a call resolves to it, and its arity
+    // comes from that call site (one argument), not from the three formals it was declared
+    // with.
+    let (prog, dump) = program_from_files(&[(
+        "s.c",
+        r"void takes(char **, int, int);
+          void caller(char **p) { takes(p); }",
+    )]);
+    check_has_direct_call(&prog, "caller", "takes");
+    let stub = function_named(&prog, "takes").expect("the extern pass names it");
+    assert!(
+        stub.blocks.is_empty() && stub.params.parameters.raw.len() == 1,
+        "a prototype's parameter list is not collected\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_double_pointer_parameter_is_not_a_frontend_gap() {
+    // Strict mode: the whole reproducer imports with `CTADL_ERROR_ON_AST` set. It always did
+    // -- the class was silent, which is why it survived spec 130 -- so this pins that binding
+    // parameters nobody had bound before does not introduce a gap.
+    let src = r"
+        struct env { char **argv; };
+        int main(int argc, char **argv) { char **a; a = argv; return argc; }
+        void each(struct env *e, char ***out, int (*cb)(int a, int b), ...) { *out = e->argv; }";
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("a double-pointer parameter is not a frontend gap");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Spec 150 -- `(T)(x)` is a cast, and tree-sitter can only read it as a call.
+// ---------------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn a_typedef_cast_is_a_value_conversion_not_a_call() {
+    // The class. `(( __be16)(x))` is a cast written with the operand parenthesized, which is
+    // how the kernel's byteorder helpers spell every one of them. tree-sitter has no symbol
+    // table, so it reads `(A)(B)` as a call through a parenthesized callee; lowering that as a
+    // call to a function named `( __be16)` gave the taint an empty-bodied, nothing-returning
+    // stub to disappear into. As a conversion it is value-preserving: `x` reaches the result.
+    let src = r"
+        typedef unsigned short __be16;
+        int convert(int x) {
+            int v;
+            v = (( __be16)(x));
+            return v;
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "convert").is_empty(),
+        "a cast is not a call\n{dump}"
+    );
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn a_cast_shaped_call_invents_no_function() {
+    // The other half of the same defect, and the one the corpus census counts: a call to a
+    // name nothing defines makes `define_extern_functions` invent it, so the IR carried 259
+    // functions in the kernel corpus whose names are not C identifiers (`( __be16)`,
+    // `( gfp_t)`, `( __le32)`). Goes through `program_from_files` because that is the path
+    // that creates the stubs.
+    let (prog, dump) = program_from_files(&[(
+        "byteorder.c",
+        r"typedef unsigned short __be16;
+          void store(int *v, int x) { *v = (( __be16)(x)); }",
+    )]);
+    assert!(
+        function_named(&prog, "( __be16)").is_none(),
+        "no function is invented for the cast\n{dump}"
+    );
+    let odd: Vec<&str> = prog
+        .functions
+        .functions
+        .raw
+        .iter()
+        .map(|f| f.name.as_str())
+        .filter(|name| !name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_'))
+        .collect();
+    assert!(
+        odd.is_empty(),
+        "invented non-identifier names: {odd:?}\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_type_name_from_a_system_header_still_reads_as_a_cast() {
+    // `type_names` is filled from every `type_identifier` in the unit, not from `typedef`
+    // declarations alone, and that is not a convenience: the corpora preprocess project
+    // headers but not system ones, so nginx and openssh cast to `u_char` and `uid_t` without
+    // the buffer ever declaring them. What the buffer does hold is uses -- `u_char *p` in a
+    // parameter list -- which tree-sitter itself parses as a `type_identifier`.
+    let src = r"
+        int convert(u_char *p, int x) {
+            int v;
+            v = (u_char)(x);
+            return v;
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "convert").is_empty(),
+        "a cast to a type the unit only uses is still a cast\n{dump}"
+    );
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn a_cast_over_a_comma_expression_yields_its_last_operand() {
+    // What `(T)(a, b)` means, and the reason the operand list is walked rather than required
+    // to hold exactly one node: tree-sitter cannot tell a cast over a comma expression from a
+    // two-argument call any more than it can tell the one-operand case. C evaluates both and
+    // the value is the last, so `b` reaches the return and `a` does not.
+    let src = r"
+        typedef int T;
+        int pick(int a, int b) {
+            int r;
+            r = (T)(a, b);
+            return r;
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "pick").is_empty(),
+        "a cast over a comma expression is not a call\n{dump}"
+    );
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 1, "");
+    check_does_not_return_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn a_parenthesized_function_name_is_still_a_direct_call() {
+    // The boundary, from the side that costs a call edge rather than a conversion. openssh
+    // compiles the BSD red-black-tree macros, whose comparison expands to
+    // `comp = (blob_cmp)(elm, parent);` -- redundant parentheses around a plain function name.
+    // The callee was named by its source text, so this was a direct call to `(blob_cmp)`: a
+    // function invented on the spot, and the edge to the real `blob_cmp` lost.
+    let src = r"
+        int blob_cmp(int a, int b) { return a; }
+        int find(int a, int b) {
+            int c;
+            c = (blob_cmp)(a, b);
+            return c;
+        }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "find", "blob_cmp");
+    assert!(
+        function_named(&prog, "(blob_cmp)").is_none(),
+        "the parentheses are not part of the name\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_call_through_a_parenthesized_function_pointer_stays_indirect() {
+    // The boundary the disambiguation exists for: `(fp)(1)` is spelled exactly like a cast and
+    // is not one. Both legacy spellings -- with and without the dereference -- stay indirect,
+    // because `fp` is a variable in scope and a variable in scope is never a type name here.
+    let src = r"
+        void call_both(void) {
+            void (*fp)(int);
+            (*fp)(1);
+            (fp)(1);
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "call_both").is_empty(),
+        "neither spelling is a direct call\n{dump}"
+    );
+    assert_eq!(
+        dump.matches("funcptr-call").count(),
+        2,
+        "both spellings are indirect calls\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_plain_direct_call_is_unchanged() {
+    // The third boundary the spec names: peeling parentheses off a callee must not disturb the
+    // callee that never had any.
+    let src = r"
+        void g(int x);
+        void caller(int a) { g(a); }";
+    let (prog, dump) = program_from_string(src);
+    check_direct_call(&prog, "caller", "g", ["@p0"]);
+    assert!(
+        check_no_match(&dump, "funcptr-call"),
+        "still direct\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_local_that_shadows_a_type_name_is_called_not_cast() {
+    // `(A)(B)` where `A` is a *variable*, spelled so that the type-name evidence points the
+    // wrong way: C lets a block-scope declaration shadow a typedef, so `fp_t` is a type at
+    // file scope and a function pointer inside `dispatch`. The scope wins -- the answer is a
+    // call -- and it wins by construction, because the shadowing declaration is the one the
+    // scope tree resolves.
+    let src = r"
+        typedef int fp_t;
+        void dispatch(int x) {
+            void (*fp_t)(int);
+            (fp_t)(x);
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "dispatch").is_empty(),
+        "the local shadows the typedef\n{dump}"
+    );
+    assert!(
+        check_match(&dump, "funcptr-call"),
+        "a shadowed type name is a call through the variable\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_record_tag_is_not_a_type_name() {
+    // Why `type_names` records every `type_identifier` EXCEPT a record tag. `struct stat` is a
+    // type; the bare name `stat` is not one, it is the function. Recording the tag would make
+    // `(stat)(path, buf)` -- the same redundant-parentheses spelling as `(blob_cmp)` -- read as
+    // a cast to `stat`, which silently deletes the call and yields its last argument instead.
+    let src = r"
+        struct stat { int mode; };
+        int stat(char *path, struct stat *buf);
+        int probe(char *path, struct stat *buf) { return (stat)(path, buf); }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "probe", "stat");
+    assert!(
+        function_named(&prog, "(stat)").is_none(),
+        "the parentheses are not part of the name\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_global_function_pointer_callee_is_not_a_cast() {
+    // The other half of "`A` is a variable, not a type": a file-scope function pointer is not
+    // in the scope tree at all (globals are resolved by the fallback in `build_access_path`),
+    // so the guard that catches the local shadow above cannot be what saves this one. What
+    // saves it is that `hook` is not a type name anywhere in the unit.
+    //
+    // Where it lands is a direct call to `hook` -- a name, at least, and the same name the
+    // unparenthesized spelling produces. Spec 160 kept it that way deliberately; see
+    // `a_bare_global_callee_is_still_a_name`.
+    let src = r"
+        void (*hook)(int);
+        void fire(int x) { (hook)(x); }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "fire", "hook");
+    assert!(
+        function_named(&prog, "(hook)").is_none(),
+        "the parentheses are not part of the name\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_cast_shaped_call_is_not_a_frontend_gap() {
+    // Strict mode: the whole reproducer imports with `CTADL_ERROR_ON_AST` set. It always did --
+    // the class was entirely silent, which is why it survived every census up to spec 140 --
+    // so this pins that reading a cast as a cast introduces no gap of its own.
+    let src = r"
+        typedef unsigned short __be16;
+        int blob_cmp(int a, int b) { return a; }
+        int convert(int x, int y) {
+            void (*fp)(int);
+            (fp)(1);
+            (*fp)(2);
+            return (( __be16)(x)) + (blob_cmp)(x, y);
+        }";
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("a cast written as a call is not a frontend gap");
+}
+
+#[test_log::test]
+fn a_statement_expression_callee_is_an_indirect_call() {
+    // Spec 170's class, in miniature. The kernel's `static_call(f)(args)` expands to a GNU
+    // statement expression in callee position, `({ ...; (&__SCT__f); })(args)`, which is a
+    // `parenthesized_expression` wrapping a `compound_statement` -- the cast shape's grammar,
+    // and not a cast. Those parentheses are part of the construct, so `unparenthesized_callee`
+    // does not peel them, and the callee used to be named by its own source text: 220 of the
+    // kernel corpus's invented functions were one of these. The value it yields is a function
+    // pointer, so the answer is an indirect call through it.
+    let src = r"
+        void target(int x);
+        void fire(int x) { ({ target; })(x); }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "fire").is_empty(),
+        "a statement expression names no function\n{dump}"
+    );
+    assert!(
+        function_named(&prog, "({ target; })").is_none(),
+        "no function is invented for the braces' source text\n{dump}"
+    );
+    check_loads(&prog, "$globals.target");
+    let callee = local_render(&prog, "fire", "<t1>");
+    assert!(
+        check_match(&dump, &format!("funcptr-call {callee} ")),
+        "the callee is the statement expression's loaded value\n{dump}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// The cell `cast_shaped_call` cannot decide.
+//
+// `(name)(x)` is a cast if `name` is a type and a call if it is not, and only the unit's own
+// evidence can say which. Two shapes carry none: `(T)()`, a cast of nothing, which is not C;
+// and `(zzz)(x)` where the unit neither defines, declares, nor uses `zzz` as a type. Both were
+// lowered as calls to an invented `zzz`, silently -- and if `zzz` was a type, the invented
+// body's arity-0 return is where the operand's taint stopped: spec 150's defect, for a name
+// spec 150's registry cannot see. The lowering is unchanged; each shape now draws one report,
+// so it is in the census instead of being a guess. A prototype is positive evidence for a
+// call -- `(free)(p)` with libc's prototype in scope is the macro-suppression idiom -- and
+// draws nothing. Neither shape occurs in the dropbear, openssh, nginx, or linux corpora.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn a_cast_shaped_call_with_no_evidence_is_reported_and_stays_a_call() {
+    let src = r"
+        int g(int x) { return (zzz)(x); }";
+    // Non-strict: one frontend-gap report naming the construct, and the call is still made.
+    let reports = reports_for(src);
+    assert_eq!(
+        reports.len(),
+        1,
+        "one report for one undecidable callee, got {reports:?}"
+    );
+    let (attribution, msg) = &reports[0];
+    assert_eq!(*attribution, "frontend gap", "wrong attribution: {msg}");
+    assert!(
+        msg.contains("(zzz)(x)") && msg.contains("cast"),
+        "unexpected message: {msg}"
+    );
+    let (prog, dump) = program_from_string(src);
+    let calls = direct_calls_in(&prog, "g");
+    assert_eq!(
+        calls.len(),
+        1,
+        "the shape is lowered as a call, as before\n{dump}"
+    );
+    assert_eq!(calls[0].0, vec!["zzz".to_string()], "{dump}");
+    // Strict: the same report is a hard error.
+    let _strict = super::force_error_on_ast();
+    assert!(
+        super::parse_c_program(src).is_err(),
+        "strict mode must refuse a callee it cannot tell from a cast"
+    );
+}
+
+#[test_log::test]
+fn a_cast_of_nothing_is_a_source_problem_and_stays_a_call() {
+    let src = r"
+        typedef unsigned short T;
+        int f(void) { return (T)(); }";
+    // Non-strict: one source-problem report -- `T` is a type here, and a cast needs an
+    // operand -- and the lowering is the call it always was.
+    let reports = reports_for(src);
+    assert_eq!(
+        reports.len(),
+        1,
+        "one report for one cast of nothing, got {reports:?}"
+    );
+    let (attribution, msg) = &reports[0];
+    assert_eq!(*attribution, "source problem", "wrong attribution: {msg}");
+    assert!(
+        msg.contains("(T)()") && msg.contains("casts nothing"),
+        "unexpected message: {msg}"
+    );
+    let (prog, dump) = program_from_string(src);
+    let calls = direct_calls_in(&prog, "f");
+    assert_eq!(calls.len(), 1, "still a call\n{dump}");
+    assert_eq!(calls[0].0, vec!["T".to_string()], "{dump}");
+    // Strict: a hard error.
+    let _strict = super::force_error_on_ast();
+    assert!(
+        super::parse_c_program(src).is_err(),
+        "strict mode must refuse a cast of nothing"
+    );
+}
+
+#[test_log::test]
+fn a_prototype_makes_a_parenthesized_call_a_call() {
+    // The one legitimate occupant of the no-evidence cell, and why a prototype counts as
+    // evidence: `(free)(p)` is how C code calls a function whose name is also a function-like
+    // macro. The unit defines neither, but it declares both -- one of them pointer-returning,
+    // so `function_head`'s unwrapping is exercised too -- and that is enough: no report even
+    // in strict mode, and both are direct calls to the declared names.
+    let src = r"
+        void free(void *p);
+        void *xmalloc(int n);
+        void *f(void *p, int n) { (free)(p); return (xmalloc)(n); }";
+    let _strict = super::force_error_on_ast();
+    let (prog, _, dump) =
+        super::parse_c_program(src).expect("a prototype is evidence enough: no report");
+    let callees: Vec<String> = direct_calls_in(&prog, "f")
+        .into_iter()
+        .flat_map(|(edges, _)| edges)
+        .collect();
+    assert_eq!(
+        callees,
+        vec!["free".to_string(), "xmalloc".to_string()],
+        "{dump}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// Spec 160: a function pointer in a field of a file-scope object.
+//
+// `ses.remoteclosed()` is a call THROUGH a pointer the object `ses` holds, and the frontend
+// lowered it as a direct call to a function literally named `ses.remoteclosed` -- the callee
+// expression's source text -- which `define_extern_functions` then invented an empty body for.
+// Two failures in one: the call edge pointed at a function that does not exist (no taint model
+// can name it, and one that matched the invented name would be matching a string), and the
+// indirect call the program actually makes was not in the IR at all.
+//
+// The trigger was the BASE, not the field. `collect_call` chose the call style from the
+// *storage class* of the resolved callee location's base variable: a local or a parameter took
+// the `FuncPtrCall` arm, and everything else -- which is to say every global -- took
+// `DirectCall`. But a global's access path is `$globals.<name>.<fields>`, so "the base is the
+// globals object" says nothing about whether the callee is a name. What says it is the PATH:
+// `$globals.hook` is the object `hook` itself and names it, while `$globals.ses.remoteclosed`
+// is a location *inside* `ses`, reached by a load, exactly like the local `s.f` that always
+// lowered correctly.
+
+#[test_log::test]
+fn a_call_through_a_field_of_a_global_is_indirect() {
+    // `.field` on a file-scope object -- dropbear's `ses.remoteclosed()`, nginx's
+    // `ngx_os_io.send(...)`. The field is loaded out of the global and called through.
+    let src = r"
+        struct ops { void (*f)(int); };
+        struct ops g;
+        void fire(int x) { g.f(x); }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "fire").is_empty(),
+        "a field is not a name\n{dump}"
+    );
+    assert!(
+        function_named(&prog, "g.f").is_none(),
+        "no function is invented for the callee's source text\n{dump}"
+    );
+    check_loads(&prog, "$globals.g");
+    check_loads(&prog, "<t1>.f");
+    let callee = local_render(&prog, "fire", "<t2>");
+    assert!(
+        check_match(&dump, &format!("funcptr-call {callee} ")),
+        "the callee is the loaded field\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_call_through_a_field_of_a_global_pointer_is_indirect() {
+    // `->field` on a file-scope pointer -- the kernel's `ipv6_stub->udpv6_encap_enable()` and
+    // `udp_tunnel_nic_ops->add_port(...)`. Same two loads: `->` is a field access here.
+    let src = r"
+        struct ops { void (*f)(int); };
+        struct ops *gp;
+        void fire(int x) { gp->f(x); }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "fire").is_empty(),
+        "a field is not a name\n{dump}"
+    );
+    assert!(
+        function_named(&prog, "gp->f").is_none(),
+        "no function is invented for the callee's source text\n{dump}"
+    );
+    check_loads(&prog, "$globals.gp");
+    check_loads(&prog, "<t1>.f");
+    let callee = local_render(&prog, "fire", "<t2>");
+    assert!(
+        check_match(&dump, &format!("funcptr-call {callee} ")),
+        "the callee is the loaded field\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_call_through_a_field_of_a_global_array_element_is_indirect() {
+    // `array[i].field` -- dropbear's dispatch table `ses.packettypes[i].handler(...)` and
+    // openssh's `handlers[i].handler(...)`. A non-constant index carries no offset segment
+    // (see the module header), so the element is the `deref` performed at the array's address
+    // and the field is loaded from what that yields.
+    let src = r"
+        struct ops { void (*f)(int); };
+        struct ops ga[4];
+        void fire(int i, int x) { ga[i].f(x); }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "fire").is_empty(),
+        "an element's field is not a name\n{dump}"
+    );
+    assert!(
+        function_named(&prog, "ga[i].f").is_none(),
+        "no function is invented for the callee's source text\n{dump}"
+    );
+    check_loads(&prog, "$globals.ga");
+    check_loads(&prog, "<t1>.deref");
+    check_loads(&prog, "<t2>.f");
+    let callee = local_render(&prog, "fire", "<t3>");
+    assert!(
+        check_match(&dump, &format!("funcptr-call {callee} ")),
+        "the callee is the loaded field\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_call_through_a_field_of_a_local_or_parameter_is_unchanged() {
+    // The boundary that says what the fix must not change: the same three shapes with a LOCAL
+    // or PARAMETER base already lowered as indirect calls (spec 140 moved openssh's
+    // `thread_start(arg)` onto this path by binding the parameter). They still do, and by the
+    // same rule -- the callee is a location, not a name -- rather than by the storage class the
+    // old code keyed on.
+    let src = r"
+        struct ops { void (*f)(int); };
+        void via_local(int x) { struct ops s; s.f(x); }
+        void via_param(struct ops *p, int x) { p->f(x); }
+        void via_param_elem(struct ops *a, int i, int x) { a[i].f(x); }";
+    let (prog, dump) = program_from_string(src);
+    for f in ["via_local", "via_param", "via_param_elem"] {
+        assert!(
+            direct_calls_in(&prog, f).is_empty(),
+            "{f}: still indirect\n{dump}"
+        );
+    }
+    assert_eq!(
+        dump.matches("funcptr-call").count(),
+        3,
+        "one indirect call each\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_bare_global_callee_is_still_a_name() {
+    // The other side of the same boundary, and the reason the rule is the PATH rather than the
+    // base: a plain `f(1)` and a call through a global function POINTER are both spelled as a
+    // bare identifier, and the frontend cannot tell them apart -- `plain` is only declared, so
+    // it is not in the function table either. Both keep resolving by name (`hook`'s value is a
+    // location the analysis reaches through `$globals.hook`, and a taint model naming `hook`
+    // still matches), which is what `a_global_function_pointer_callee_is_not_a_cast` pinned for
+    // the parenthesized spelling.
+    let src = r"
+        void (*hook)(int);
+        void plain(int x);
+        void fire(int x) { hook(x); plain(x); }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "fire", "hook");
+    check_has_direct_call(&prog, "fire", "plain");
+    assert!(
+        check_no_match(&dump, "funcptr-call"),
+        "a bare global name is still a direct call\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn a_call_through_a_field_of_a_global_is_not_a_frontend_gap() {
+    // Strict mode. The class was entirely silent -- an invented function is not a warning --
+    // which is why every census up to spec 140 walked past it; this pins that reading the
+    // callee as a location introduces no gap of its own.
+    let src = r"
+        struct ops { void (*f)(int); };
+        struct ops g;
+        struct ops *gp;
+        struct ops ga[4];
+        void fire(int i, int x) { g.f(x); gp->f(x); ga[i].f(x); }";
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("a call through a global's field is not a frontend gap");
+}
+
+#[test_log::test]
+fn taint_crosses_a_call_through_a_field_of_a_global() {
+    // What the fix buys, end to end: `sink`'s argument reaches `id`'s parameter and comes back,
+    // through the binding `g.f = id` -- the dispatch-table shape nginx's `ngx_os_io` and
+    // dropbear's `ses.packettypes[i].handler` are built out of. Before the fix there was no
+    // indirect call to resolve at all: the call went to an invented, empty-bodied `g.f`, and an
+    // empty body returns nothing, so the taint that went in did not come out.
+    let src = r"
+        int id(int p) { return p; }
+        struct Ops { int (*f)(int); };
+        struct Ops g;
+        int wrap(int a, int b) {
+            g.f = id;
+            return g.f(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn an_argument_of_a_call_through_a_global_field_reaches_the_callee_parameter() {
+    // The same crossing seen from the argument side, and the shape a real query walks: `b` is
+    // passed to `g.f(b)`, the dispatch table binds `g.f = store_it`, and `store_it` deposits its
+    // parameter in the global `taken` -- so `wrap` summarizes @p1 -> `$globals.taken` only if the
+    // indirect call resolves to `store_it`. The `check_no_flow_in` is what makes it a
+    // measurement rather than a coincidence: @p0 is never passed anywhere, so an
+    // over-approximation that let any argument reach any callee would show up here.
+    let src = r"
+        int taken;
+        void store_it(int p) { taken = p; }
+        struct Ops { void (*f)(int); };
+        struct Ops g;
+        void wrap(int a, int b) {
+            g.f = store_it;
+            g.f(b);
+        }";
+    let (summary, si) = get_summary(program_from_string(src).0).unwrap();
+    check_param_into_global_in(&summary, &si, "wrap", 1, ".taken");
+    check_no_flow_in(
+        &summary,
+        &si,
+        "wrap",
+        0,
+        "",
+        crate::codegen::GLOBALS_INDEX,
+        ".taken",
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// Spec 170: a GNU statement expression in callee position.
+//
+// The kernel's `static_call(cond_resched)(...)` expands to `({ ...; (&__SCT__cond_resched); })(...)`
+// -- a statement expression whose value is the address of a trampoline, immediately called.
+// tree-sitter parses that as a `call_expression` whose `function` is a `parenthesized_expression`
+// wrapping a `compound_statement`, and `collect_call` named the callee by its own source text: a
+// direct call to a function literally spelled `({ ...; (&__SCT__cond_resched); })`, which
+// `define_extern_functions` then invented an empty body for. Because the expansion embeds a
+// `__UNIQUE_ID___...` counter, every one of the kernel corpus's 220 call sites invented a function
+// of its own, and the indirect call the program actually makes was in the IR nowhere.
+//
+// Spec 160 made the call style a question about the resolved access path, and this shape is the
+// one place that question cannot answer on its own: the value node resolves to a bare global path
+// (`$globals.__SCT__cond_resched`), which is exactly what a global callee that IS a name resolves
+// to. The construct in callee position is what tells them apart -- see `is_statement_expression`.
+
+#[test_log::test]
+fn the_kernels_static_call_expansion_is_an_indirect_call() {
+    // The real expansion, spelled out: a `static` addressable alias declared for its side effect,
+    // an empty statement from the `;;`, and the trampoline's address as the value. Nothing here
+    // is a name in callee position, so nothing may be invented from the braces' text.
+    let src = r"
+        void __SCK__cond_resched(void);
+        void __SCT__cond_resched(void);
+        void fire(void) {
+            ({ static void *__UNIQUE_ID___addressable___SCK__cond_resched134 =
+                   (void *)&__SCK__cond_resched;; (&__SCT__cond_resched); })();
+        }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        direct_calls_in(&prog, "fire").is_empty(),
+        "the braces name no function\n{dump}"
+    );
+    assert!(
+        prog.functions
+            .functions
+            .raw
+            .iter()
+            .all(|f| !f.name.starts_with("({")),
+        "no function is invented for the braces' source text\n{dump}"
+    );
+    check_loads(&prog, "$globals.__SCT__cond_resched");
+    assert!(check_match(&dump, "funcptr-call"), "{dump}");
+}
+
+#[test_log::test]
+fn a_statement_expression_callee_lowers_the_braces_effects() {
+    // The statements before the value are not scenery -- the whole construct exists for them.
+    // They run whether or not the call resolves, so the write to `o` inside the braces must be
+    // real IR: only it can carry the parameter to the return here.
+    let src = r"
+        void (*hook)(int);
+        int f(int a) { int o = 0; ({ o = a; hook; })(1); return o; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn taint_crosses_a_statement_expression_callee() {
+    // What the fix buys, end to end: the statement expression yields `g`, `g` is bound to `id`,
+    // so the argument reaches `id`'s parameter and comes back. Before the fix the call went to an
+    // invented, empty-bodied function named `({ g; })`, and an empty body returns nothing.
+    let src = r"
+        int id(int p) { return p; }
+        int (*g)(int);
+        int wrap(int b) {
+            g = id;
+            return ({ g; })(b);
+        }";
+    let (summary, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&summary, &si, "wrap", 0, "");
+}
+
+#[test_log::test]
+fn an_argument_of_a_statement_expression_callee_reaches_the_callee_parameter() {
+    // The same crossing from the argument side, with the `check_no_flow_in` control that makes it
+    // a measurement: `a` is passed to nothing, so an over-approximation letting any argument reach
+    // any callee would show up as a second flow into `$globals.taken`.
+    let src = r"
+        int taken;
+        void store_it(int p) { taken = p; }
+        void (*g)(int);
+        void wrap(int a, int b) {
+            g = store_it;
+            ({ g; })(b);
+        }";
+    let (summary, si) = get_summary(program_from_string(src).0).unwrap();
+    check_param_into_global_in(&summary, &si, "wrap", 1, ".taken");
+    check_no_flow_in(
+        &summary,
+        &si,
+        "wrap",
+        0,
+        "",
+        crate::codegen::GLOBALS_INDEX,
+        ".taken",
+    );
+}
+
+#[test_log::test]
+fn a_static_call_trampoline_carries_no_flow_within_one_unit() {
+    // What the analysis can NOT do here, stated rather than implied. The two tests above resolve
+    // the indirect call because the unit binds the pointer; the kernel's `__SCT__cond_resched` is
+    // a trampoline patched in by assembly, so no translation unit assigns it and there is nothing
+    // to resolve. The call is in the IR as an indirect call through `$globals.__SCT__f` -- which
+    // is what a whole-program run needs in order to resolve it at all, and strictly more than the
+    // edge to an invented empty function it replaced -- but within the unit no taint crosses it.
+    let src = r"
+        int taken;
+        void __SCT__f(int);
+        void fire(int x) { ({ (&__SCT__f); })(x); }";
+    let (summary, si) = get_summary(program_from_string(src).0).unwrap();
+    check_no_flow_in(
+        &summary,
+        &si,
+        "fire",
+        0,
+        "",
+        crate::codegen::GLOBALS_INDEX,
+        ".taken",
+    );
+}
+
+#[test_log::test]
+fn a_statement_expression_callee_is_not_a_frontend_gap() {
+    // Strict mode. The class was entirely silent -- an invented function is not a warning -- so
+    // this pins that reading the callee as a value introduces no gap of its own, including for
+    // the `void`-valued braces that yield no callee at all.
+    let src = r"
+        void (*hook)(int);
+        void fire(int x) { ({ hook; })(x); ({ do { } while (0); })(x); }";
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("a statement-expression callee is not a frontend gap");
+}
+
+#[test_log::test]
+fn the_other_statement_expression_positions_and_the_call_shapes_are_unchanged() {
+    // The boundary, in one fixture. A statement expression in VALUE position (spec 061) and in
+    // LVALUE position (spec 062) both already worked and must not move; a genuine direct call and
+    // a cast written with parentheses (spec 150) must not be dragged onto the indirect path by a
+    // rule that keys on the callee's construct. Exactly one call here is indirect.
+    let src = r"
+        typedef unsigned short __be16;
+        struct S { int f; };
+        void (*hook)(int);
+        int plain(int x);
+        int f(struct S *a, int x) {
+            int v = ({ int t = x; t; });     // value position: unchanged
+            ({ int t = 0; &a[1]; })->f = v;  // lvalue position: unchanged
+            ({ hook; })(v);                  // callee position: this spec
+            return plain((__be16)(x));       // a direct call and a cast: unchanged
+        }";
+    let (prog, dump) = program_from_string(src);
+    let direct: Vec<String> = direct_calls_in(&prog, "f")
+        .into_iter()
+        .flat_map(|(names, _)| names)
+        .collect();
+    assert_eq!(direct, vec!["plain".to_string()], "{dump}");
+    assert_eq!(
+        dump.matches("funcptr-call").count(),
+        1,
+        "only the callee-position statement expression is indirect\n{dump}"
+    );
+    let (s, si) = get_summary(prog).unwrap();
+    check_flow_in(&s, &si, "f", 1, "", 0, ".[1].deref.f");
 }
