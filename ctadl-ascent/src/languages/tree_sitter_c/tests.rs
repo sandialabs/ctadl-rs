@@ -1441,19 +1441,25 @@ fn labeled_empty_statement_parses() {
 
 #[test_log::test]
 fn unsupported_expression_warns_and_recovers() {
-    // An AST shape the frontend does not lower (here `asm("nop")`, which reaches
+    // An AST shape the frontend does not lower (here `offsetof`, which reaches
     // `flatten_expr`'s catch-all, ERR 78) is a warning by default, not an ingestion
     // error: the expression becomes an opaque temp via `unexpected_ast` and the rest
     // of the function still lowers, so `f`'s param->return flow survives. Setting
     // CTADL_ERROR_ON_AST restores the hard error; that side isn't exercised here
     // because the env var is process-global and tests run in parallel -- instead the
     // test skips when the var is set, so a strict-mode environment doesn't fail it.
+    //
+    // `offsetof` is only a stand-in for "some expression kind with no arm"; if a later
+    // spec lowers it, swap in another unhandled kind rather than deleting the test.
+    // (It used to be `asm("nop")` and then `_Generic`, both of which now lower -- see
+    // `flatten_gnu_asm` and `flatten_expr`'s `generic_expression` arm.)
     if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
         return;
     }
     let src = r#"
+        struct S { int m; };
         int f(int a) {
-            asm("nop");
+            offsetof(struct S, m);
             return a;
         }"#;
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
@@ -1486,11 +1492,13 @@ fn error_on_ast_promotes_frontend_gap() {
     // The strict side of the switch: under CTADL_ERROR_ON_AST an unsupported
     // expression is a hard ingestion error again, exactly as before the warning
     // demotion. Strictness comes from the per-thread test override, not the env var,
-    // which is process-global and would race the parallel test harness.
+    // which is process-global and would race the parallel test harness. Same stand-in
+    // caveat as `unsupported_expression_warns_and_recovers`.
     let _strict = super::force_error_on_ast();
     let src = r#"
+        struct S { int m; };
         int f(int a) {
-            asm("nop");
+            offsetof(struct S, m);
             return a;
         }"#;
     let err = super::parse_c_program(src).expect_err("strict mode must reject the frontend gap");
@@ -1519,45 +1527,58 @@ fn error_on_ast_promotes_source_problem() {
 
 #[test_log::test]
 fn bare_block_then_statement_recovers() {
-    // Regression for the CFG-wiring bug that aborted dropbear's `svr_dropbear_exit`
-    // import. A bare compound block `{ ... }` written as a statement makes the
-    // end-of-compound link install an *implicit `return`* on the enclosing block
-    // when that block's continuation is the fall-off-the-end sentinel (`None`).
-    // The next statement in the same body then tries to add a fall-through edge
-    // out of a block that already returns -- which used to be a hard ingestion
-    // error. It now drops the redundant edge and recovers, so the function still
-    // lowers. This is the minimal trigger: a bare block followed by any further
-    // statement (an `if` here, matching dropbear). Skips under CTADL_ERROR_ON_AST,
-    // which restores the hard error (see `error_on_ast_promotes_bare_block_edge`).
-    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
-        return;
-    }
+    // Scope-semantics invariant, NOT a regression pin for the bare-block wiring bug: a
+    // bare compound block `{ ... }` written as a statement is pure scope, so the whole
+    // body is one straight line -- the braces must neither terminate the enclosing basic
+    // block nor start a new one, and nothing written after them may be dropped. Runs
+    // under `force_error_on_ast`, so any recoverable report fails the test.
+    //
+    // What review of the spec-033 rewrite established empirically: this shape, with
+    // *plain-statement* followers, never triggered the historic wiring bug -- this exact
+    // test also passes on the pre-fix front end. The old comment's "followed by any
+    // further statement" was wrong: the bug fired only when the follower was a
+    // compound-BEARING statement (an `if`, as in dropbear), because only those asked for
+    // the end-of-compound link that installed the bogus implicit `return`. The
+    // behavioral pin that fails pre-fix and passes post-fix is
+    // `svr_dropbear_exit_shape_recovers` below. (The `_recovers` in this test's name is
+    // historical; nothing is recovered from any more.)
+    let _strict = super::force_error_on_ast();
     let src = r"
+        void h(void); void k(void); void m(void);
         void f(void) {
             { h(); }
-            if (c) { k(); }
+            k();
+            { m(); }
         }";
-    // program_from_string asserts the recovered CFG is well-formed -- no block is
-    // left without a terminator -- and that tree-sitter saw no syntax error.
-    let prog = program_from_string(src).0;
-    assert!(
-        function_named(&prog, "f").is_some(),
-        "recovered program should still define f\n{prog}"
-    );
+    let prog = super::parse_c_program(src)
+        .expect("a bare block followed by statements must not gap in strict mode")
+        .0;
+    check_block_count(&prog, 1);
+    check_successors(&prog, 0, &[]);
+    // Nothing was dropped on the floor: every call is still in the (single, reachable)
+    // block, in particular the ones written after the bare block.
+    check_has_direct_call(&prog, "f", "h");
+    check_has_direct_call(&prog, "f", "k");
+    check_has_direct_call(&prog, "f", "m");
 }
 
 #[test_log::test]
 fn svr_dropbear_exit_shape_recovers() {
-    // The reduced shape of dropbear's `svr_dropbear_exit`, the function this bug
-    // was found on: an if / else-if / else chain, then a bare `{ }` block (the
-    // remnant of a compiled-out `#if DROPBEAR_VFORK` that had guarded a lone
-    // `{ session_cleanup(); }`), then a trailing `if` (`if (svr_opts.hostkey)`).
-    // The bare-block-then-if pair is what actually triggers the wiring bug -- not,
-    // despite first appearances, the returning arms of the chain. Must recover and
-    // still lower the function.
-    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
-        return;
-    }
+    // THE regression pin for the bare-block wiring bug (spec 033): on the pre-fix front
+    // end this fails in strict mode with `continuation edge into a block that already
+    // returns, dropped: BasicBlockIdx(2) -> BasicBlockIdx(7)`; post-fix it lowers with
+    // no gap at all, which is what `force_error_on_ast` asserts here.
+    //
+    // The reduced shape of dropbear's `svr_dropbear_exit`, the function this bug was
+    // found on: an if / else-if / else chain, then a bare `{ }` block (the remnant of a
+    // compiled-out `#if DROPBEAR_VFORK` that had guarded a lone `{ session_cleanup(); }`),
+    // then a trailing `if` (`if (svr_opts.hostkey)`). The bare-block-then-IF pair is the
+    // trigger -- not, despite first appearances, the returning arms of the chain, and not
+    // bare-block-then-plain-statement either (see `bare_block_then_statement_recovers`):
+    // only a compound-bearing follower asked for the end-of-compound link that installed
+    // the bogus implicit `return`. With the compound arm no longer asking for that link,
+    // the shape lowers cleanly.
+    let _strict = super::force_error_on_ast();
     let src = r"
         void svr_dropbear_exit(int exitcode) {
             int add_delay = 0;
@@ -1567,46 +1588,153 @@ fn svr_dropbear_exit_shape_recovers() {
             { session_cleanup(); }
             if (hostkey) { free_key(hostkey); }
         }";
-    let prog = program_from_string(src).0;
+    let prog = super::parse_c_program(src)
+        .expect("the svr_dropbear_exit shape must not gap in strict mode")
+        .0;
     assert!(
         function_named(&prog, "svr_dropbear_exit").is_some(),
-        "recovered program should still define svr_dropbear_exit\n{prog}"
+        "program should still define svr_dropbear_exit\n{prog}"
     );
+    // The load-bearing half: the statements on either side of the bare block are still
+    // reachable. Before the fix `session_cleanup()`'s block carried an implicit `return`
+    // and the trailing `if` was an unreachable island, so `free_key` was dead code.
+    check_has_direct_call(&prog, "svr_dropbear_exit", "session_cleanup");
+    check_has_direct_call(&prog, "svr_dropbear_exit", "free_key");
+    get_summary(prog).expect("CFG must verify and index");
 }
 
 #[test_log::test]
 fn error_on_ast_promotes_bare_block_edge() {
-    // Strict side of the switch: under CTADL_ERROR_ON_AST the recovered
-    // continuation edge out of an already-returning block is a hard ingestion
-    // error again, exactly as before the demotion to a warning.
+    // Historical name, inverted assertion: this used to pin that CTADL_ERROR_ON_AST
+    // *promoted* the recovered `continuation edge into a block that already returns` back
+    // to a hard ingestion error. There is no longer an edge to drop -- the bare block does
+    // not close the block it shares -- so the strict mode this test guards is now the
+    // strongest available statement that the gap is gone: strict ingestion of the very
+    // source that used to fail must succeed. Kept under its original name so the fix's
+    // before/after is traceable to the report it came from.
     let _strict = super::force_error_on_ast();
     let src = r"
         void f(void) {
             { h(); }
             if (c) { k(); }
         }";
-    let err = super::parse_c_program(src)
-        .expect_err("strict mode must reject the continuation-into-return edge");
-    assert!(
-        err.to_string()
-            .contains("continuation edge into a block that already returns"),
-        "unexpected error: {err}"
-    );
+    // `program_from_string` panics if ingestion errors, which under `force_error_on_ast`
+    // is exactly "some frontend gap was reported".
+    let prog = program_from_string(src).0;
+    check_successors(&prog, 0, &[1, 2]);
+}
+
+#[test_log::test]
+fn bare_block_then_if_keeps_branch_edge() {
+    // The wiring fix, stated as a CFG assertion: a bare `{ ... }` shares the enclosing
+    // basic block, so when the walk leaves it the enclosing block must still be open and
+    // must branch into the following `if` -- not carry an implicit `return` that orphans
+    // everything after the braces.
+    let src = r"
+        void h(void); void k(int); int c;
+        void f(int a) {
+            { h(); }
+            if (c) { k(a); }
+        }";
+    let prog = program_from_string(src).0;
+    check_successors(&prog, 0, &[1, 2]);
+    // ...and the then-arm is genuinely on the graph, not a dead island.
+    check_has_direct_call(&prog, "f", "k");
+}
+
+#[test_log::test]
+fn bare_block_then_if_preserves_flow() {
+    // The dataflow half: the CFG damage cost real taint. `r = a` sits behind the `if`
+    // that followed the bare block, so before the fix the assignment lived in an
+    // unreachable block and @p0 never reached the return.
+    let src = r"
+        int f(int a) {
+            int r = 0;
+            { r = 0; }
+            if (a) { r = a; }
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn bare_block_then_while_keeps_branch_edge() {
+    // Same shape with a `while` instead of an `if` -- the other block-creating statement
+    // that triggered the dropped continuation edge in the corpora.
+    let src = r"
+        void h(void); void k(int); int c;
+        void f(int a) {
+            { h(); }
+            while (c) { k(a); }
+        }";
+    let prog = program_from_string(src).0;
+    // The entry block falls through into the loop condition (block 1) rather than
+    // returning; the condition then branches to the continuation (2) and the body (3).
+    check_successors(&prog, 0, &[1]);
+    check_successors(&prog, 1, &[2, 3]);
+    check_has_direct_call(&prog, "f", "k");
+}
+
+#[test_log::test]
+fn bare_block_shadow_does_not_leak() {
+    // The bare-block arm threads the *block* the inner walk ended in back to the caller
+    // but deliberately restores the caller's *scope*: a bare `{ ... }` is a lexical scope,
+    // so a name declared inside it must not be visible after the closing brace. `r` is
+    // shadowed inside the braces and assigned `a` there; the `return r` afterwards must
+    // resolve to the outer `r` (= `b`), so `b` reaches the return and `a` does not.
+    // (`block_shadow_does_not_leak` covers the same rule for an `if` body, which takes a
+    // different path -- `walk_if`, not the compound arm.)
+    let src = r"
+        int f(int a, int b) {
+            int r = b;
+            { int r = a; }
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 1, ""); // outer r = b reaches the return
+    check_does_not_return_param(&s, 0, ""); // the block-scoped shadow (a) must not leak
+}
+
+#[test_log::test]
+fn bare_block_with_return_diverges() {
+    // The secondary defect: the bare block's *divergence* has to reach the enclosing
+    // compound too. `{ return; }` terminates the shared block, so `h()` after it is
+    // unreachable and must lower into its own dead block -- not get appended after the
+    // `return` in the block that already terminated. Strict mode pins that neither the
+    // dropped-edge gap nor an unterminated-block gap is reported.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        void h(void);
+        void f(void) {
+            { return; }
+            h();
+        }";
+    let prog = super::parse_c_program(src)
+        .expect("a diverging bare block must not gap in strict mode")
+        .0;
+    check_successors(&prog, 0, &[]);
+    // Two blocks, not one: `h()` must land in its own unreachable block. Without the
+    // divergence signal the enclosing compound kept filling the block the `return`
+    // already terminated, so `h()` sat *after* the terminator in the entry block.
+    check_block_count(&prog, 2);
+    check_successors(&prog, 1, &[]);
+    check_has_direct_call(&prog, "f", "h");
+    get_summary(prog).expect("CFG must verify and index");
 }
 
 #[test_log::test]
 fn goto_label_after_return_lowers() {
-    // A goto label that sits after a diverging statement: `walk_compound_statement`
-    // stops at the `return`, so the pre-created `out:` block is never walked (its
-    // statements are dropped) yet stays reachable through the `goto` edge. The
-    // frontend must give it an implicit empty `return` (`finalize_terminators`)
-    // because the IR does not tolerate a terminator-less block anywhere. This is
-    // the shape that aborted real dropbear imports. Skips under
-    // CTADL_ERROR_ON_AST, where the sweep's report is a hard error instead (see
-    // `error_on_ast_promotes_unterminated_block`).
-    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
-        return;
-    }
+    // The goto-cleanup idiom: a label sitting *after* a diverging statement, reached
+    // only through its `goto` edge. `walk_compound_statement` stops falling through at
+    // the `return`, but the trailing siblings still have to be walked -- otherwise the
+    // pre-created `out:` block is never visited, `finalize_terminators` patches it with
+    // an implicit empty `return`, and `cleanup()` is silently dropped from the IR. The
+    // walk continues in a fresh unreachable block (as it already did after a `goto`),
+    // so the label lowers normally. No CTADL_ERROR_ON_AST guard: this shape no longer
+    // reports a gap in either mode.
     let src = r"
         void f(void) {
             if (c) goto out;
@@ -1618,27 +1746,88 @@ fn goto_label_after_return_lowers() {
     let prog = program_from_string(src).0;
     assert!(
         function_named(&prog, "f").is_some(),
-        "patched program should still define f\n{prog}"
+        "program should define f\n{prog}"
     );
-    // End-to-end through verify() + SSA + codegen: the patched CFG satisfies the
-    // basic-block contract with no tolerance on the ctadl-ir side.
-    get_summary(prog).expect("patched CFG must verify and index");
+    // The load-bearing assertion: the label body is actually in the IR. Under the old
+    // drop-and-patch behavior `out:`'s block was empty and this call was absent.
+    check_has_direct_call(&prog, "f", "cleanup");
+    // End-to-end through verify() + SSA + codegen: the CFG satisfies the basic-block
+    // contract with no tolerance on the ctadl-ir side.
+    get_summary(prog).expect("CFG must verify and index");
+}
+
+#[test_log::test]
+fn label_after_return_dataflow() {
+    // The dataflow half of `goto_label_after_return_lowers`: lowering the label body is
+    // only worth anything if taint actually flows through it. `out:` writes parameter
+    // `a` into global `g`, so the summary must carry @p0 -> $globals.g. Runs under
+    // `force_error_on_ast`, which turns any residual recoverable report into a hard
+    // error -- so this also pins that the goto-cleanup shape reports NO frontend gap in
+    // strict mode.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int g;
+        void f(int a) {
+            if (c) goto out;
+            return;
+        out:
+            g = a;
+        }";
+    let prog = super::parse_c_program(src)
+        .expect("goto-cleanup must not gap in strict mode")
+        .0;
+    let (s, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&s, &si, "f", 0, ".g");
+}
+
+#[test_log::test]
+fn statements_after_return_still_import() {
+    // The degenerate case of the same continuation: plain unreachable statements after a
+    // `return`, with no label to jump back in. They lower into a dead block that nothing
+    // branches to, which must still be terminated (`verify()` rejects a terminator-less
+    // block regardless of reachability) and must not disturb the reachable part of the
+    // function. Strict mode, so an unterminated leftover would be a hard error rather
+    // than a warning.
+    //
+    // `f` is `void` on purpose. The implicit return that closes an unreachable trailing
+    // block is the empty one (`return;`), and in a *non-void* function that trips
+    // `verify()`'s `InconsistentReturns` (arity 1 vs 0) -- but that is the pre-existing
+    // fall-off-the-end-of-a-non-void-function gap, reproducible on plain
+    // `int f(int a) { int b = a; }` with or without this change, and out of scope here.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int g;
+        void f(int a) {
+            g = a;
+            return;
+            cleanup();
+        }";
+    let prog = super::parse_c_program(src)
+        .expect("unreachable trailing code must not gap")
+        .0;
+    // The reachable write survives untouched, and the dead `cleanup()` block is
+    // terminated well enough for verify()/SSA/codegen to run end to end.
+    let (s, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&s, &si, "f", 0, ".g");
 }
 
 #[test_log::test]
 fn error_on_ast_promotes_unterminated_block() {
-    // Strict side of the sweep: under CTADL_ERROR_ON_AST a block the walk never
-    // terminated (its statements were dropped) is a hard ingestion error.
+    // Strict side of the `finalize_terminators` sweep: under CTADL_ERROR_ON_AST a block
+    // the walk never terminated (its statements were dropped) is a hard ingestion error.
+    // The goto-after-return shape no longer reaches the sweep now that trailing siblings
+    // are walked, so this points at the shape that still orphans a block: a duplicate
+    // label, whose first pre-created block `label_blocks` drops on the floor (see
+    // `duplicate_label_orphan_block_terminated` for the non-strict side).
     let _strict = super::force_error_on_ast();
     let src = r"
         void f(void) {
-            if (c) goto out;
-            return;
-        out:
-            cleanup();
+            goto l;
+        l:  a();
+        l:  b();
         }";
     let err =
-        super::parse_c_program(src).expect_err("strict mode must reject the dropped label body");
+        super::parse_c_program(src).expect_err("strict mode must reject the orphaned label block");
     assert!(
         err.to_string().contains("without a terminator"),
         "unexpected error: {err}"
@@ -1878,6 +2067,53 @@ fn ternary_both_arms_flow() {
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&s, 1, ""); // b (consequent arm)
     check_returns_param(&s, 2, ""); // c (alternative arm)
+}
+
+#[test_log::test]
+fn elvis_ternary_both_arms_flow() {
+    // GNU's `a ?: c` omits the consequence: the value is `a` itself when `a` is truthy,
+    // otherwise `c`. tree-sitter parses this as a `conditional_expression` with NO
+    // `consequence` field -- the shape that used to panic `flatten_expr` with
+    // "conditional_expression always has a consequence" (the Linux kernel uses `?:`
+    // heavily, e.g. `sk->sk_bound_dev_if ?: dev->ifindex`). Both the condition and the
+    // alternative must reach the result.
+    let src = r"
+        int f(int a, int c) {
+            return a ?: c;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, ""); // a is the value when truthy -- a data source here
+    check_returns_param(&s, 1, ""); // c (alternative arm)
+}
+
+#[test_log::test]
+fn elvis_ternary_is_not_a_frontend_gap() {
+    // Strict-mode pin: `a ?: c` must lower cleanly, not merely recover. Under
+    // CTADL_ERROR_ON_AST any `unexpected_ast` report becomes a hard error, so this
+    // failing would mean the elvis shape had regressed to the catch-all.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int f(int a, int c) {
+            return a ?: c;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn elvis_ternary_propagates_struct_field() {
+    // The kernel's `container ?: fallback` idiom usually blends a field read with a
+    // fallback. Reusing the condition's already-lowered value (rather than re-lowering
+    // it) keeps the field path intact, so `p->x` still reaches the result.
+    let src = r"
+        typedef struct Field { int x; } Field;
+        int f(Field *p, int c) {
+            return p->x ?: c;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, ".x");
+    check_returns_param(&s, 1, "");
 }
 
 #[test_log::test]
@@ -2383,6 +2619,64 @@ fn for_init_clause_flows() {
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn for_update_prefix_increment_lowers() {
+    // A prefix `++i` in the for-update clause used to reach `walk_statement`'s
+    // `update_expression` arm, which lowered `child.child(0)` -- for a *prefix* update that
+    // child is the `++` operator token, so it fell into `flatten_expr`'s catch-all and logged
+    // `frontend gap: ERR 78: Unsupported expression type: ++`. Routing the whole
+    // `update_expression` node through `flatten_expr` reaches `flatten_update_expression`,
+    // which reads the `argument` field and so handles prefix and postfix alike.
+    // Structural contract: `i` is written twice -- once by the init clause, once by `++i`.
+    let src = r"
+        int f(int n) {
+            int x = 0;
+            for (int i = 0; i < n; ++i) {
+                x = n;
+            }
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_writes_to(&prog, "i", 2);
+}
+
+#[test_log::test]
+fn for_update_postfix_increment_lowers() {
+    // The postfix twin of `for_update_prefix_increment_lowers`. Postfix never warned -- it was
+    // worse than that: `child.child(0)` of `i++` is the bare identifier `i`, so lowering it
+    // produced a read and the increment was *silently dropped*. Counting writes to `i`
+    // (init + increment = 2) is what catches that; a dump-string or warning check would not.
+    let src = r"
+        int f(int n) {
+            int x = 0;
+            for (int i = 0; i < n; i++) {
+                x = n;
+            }
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_writes_to(&prog, "i", 2);
+}
+
+#[test_log::test]
+fn for_update_prefix_decrement_lowers() {
+    // `--i` is the same gap as `++i` (the operator token differs, the AST shape does not), and it
+    // is the form the openssh corpus hits alongside `++`. Under `force_error_on_ast` any frontend
+    // gap becomes a hard error, so `program_from_string` succeeding at all is the assertion that
+    // the construct no longer reports one; the write count then pins the increment itself.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int f(int n) {
+            int x = 0;
+            for (int i = n; i > 0; --i) {
+                x = n;
+            }
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_writes_to(&prog, "i", 2);
 }
 
 #[test_log::test]
@@ -3110,4 +3404,423 @@ fn anonymous_nested_record_initializer_distinct_member() {
     let prog = program_from_string(src).0;
     let summary = get_summary(prog).unwrap().0;
     check_does_not_return_param(&summary, 0, "");
+}
+
+// --- C99 compound literals ------------------------------------------------------------
+//
+// `(T){ ... }` is an unnamed object of type `T` initialized by the brace, and the expression's
+// value is that object. The frontend materializes a temp for the object and runs the *same*
+// brace lowering a declaration's initializer gets, so designators land on `T`'s members and
+// array forms take element numbering. Before this the literal hit `flatten_expr`'s catch-all
+// (ERR 78) and every value inside the braces was dropped -- the largest gap class in the
+// openssh/dropbear corpora (497 + 308 sites).
+
+#[test_log::test]
+fn compound_literal_designated_member_flows() {
+    // `(struct pair){ .start = src }` must write the *member* `start` of the object it
+    // materializes, so the later `p.start` read resolves to it and the param reaches the return.
+    let src = r"
+        struct pair { int start; int end; };
+        int f(int src) {
+            struct pair p = (struct pair){ .start = src, .end = 0 };
+            return p.start;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn compound_literal_argument_carries_value() {
+    // A literal in argument position is the corpus shape (`f(blocks, ((Range){ .start = s }))`).
+    // The call must receive *the object the literal was materialized into*, not the unrelated
+    // opaque temp the catch-all recovery used to substitute -- so find the store that put the
+    // param at `.start` and require the argument to be that same base variable.
+    let src = r"
+        struct pair { int start; int end; };
+        int use(struct pair p);
+        int f(int a) { return use((struct pair){ .start = a, .end = 0 }); }";
+    let prog = program_from_string(src).0;
+    check_has_direct_call(&prog, "f", "use");
+
+    let param = exp_from_str("@p0", &ctadl_ir::Locals::default());
+    let object = statements_of(&prog)
+        .find_map(|stmt| match &stmt.kind {
+            StatementKind::Store { dest, field, value }
+                if field.as_str() == "start" && *value == param =>
+            {
+                Some(dest.variable_ref.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected a store of @p0 at `.start`\n{prog}"));
+    let args = direct_calls_in(&prog, "f")
+        .into_iter()
+        .find(|(callees, _)| callees.iter().any(|c| c == "use"))
+        .map(|(_, args)| args)
+        .expect("checked above that the call exists");
+    assert_eq!(
+        args.as_slice(),
+        [Exp::Variable(object)],
+        "expected the call's argument to be the literal's own object\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn compound_literal_is_no_longer_a_frontend_gap() {
+    // Under `force_error_on_ast` any frontend gap becomes a hard error, so `program_from_string`
+    // succeeding at all is the assertion that `compound_literal_expression` no longer reports
+    // one (ERR 78: Unsupported expression type). This is the spec's minimal reproducer.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        struct pair { int start; int end; };
+        int use(struct pair p);
+        int f(int a, int b) { return use((struct pair){ .start = a, .end = b }); }";
+    let prog = program_from_string(src).0;
+    check_has_direct_call(&prog, "f", "use");
+}
+
+#[test_log::test]
+fn compound_literal_array_elements_flow() {
+    // The array form `(int[]){ a, 0 }` has no members to name, so its elements take the element
+    // numbering an array initializer gets: element 0 at `.deref`, element 1 at `.[1].deref`. The
+    // rank comes from the type descriptor's *abstract* array declarator -- the unnamed spelling
+    // of `int a[]` -- which is why `array_declarator_rank` counts the `abstract_*` kinds too.
+    let src = r"
+        int use(int *p);
+        int f(int a) { return use((int[]){ a, 0 }); }";
+    let prog = program_from_string(src).0;
+    let object = match call_args(&prog, "f", "use").as_slice() {
+        [Exp::Variable(v)] => v.clone(),
+        args => panic!("expected `use` to take just the literal's object, got {args:?}\n{prog}"),
+    };
+    // Recover the object's name so the element stores can be spelled in the path DSL. It is the
+    // frontend's temp for the unnamed literal, and which `<tN>` that is depends on how many temps
+    // the surrounding expression allocated first -- so ask the program, don't assume a number.
+    let idx = object
+        .variable
+        .local()
+        .unwrap_or_else(|| panic!("the literal's object must be a local\n{prog}"));
+    let obj = function_named(&prog, "f")
+        .expect("checked above that the call exists")
+        .locals
+        .iter_enumerated()
+        .find_map(|(i, decl)| (i == idx).then(|| decl.name.as_str().to_owned()))
+        .unwrap_or_else(|| panic!("the argument's local is not in the locals table\n{prog}"));
+    check_assign_or_update(&prog, &format!("{obj}.deref"), ["@p0"], None);
+    check_assign_or_update(&prog, &format!("{obj}.[1].deref"), ["#0"], None);
+}
+
+#[test_log::test]
+fn asm_input_flows_to_output() {
+    // Inline assembly is a black box, so it is modeled as an operand transfer: any input operand
+    // may reach any output operand. Here `a` is the only input and `y` the only output, so the
+    // parameter must reach the return through the asm. Before this, `gnu_asm_expression` hit
+    // `flatten_expr`'s catch-all and the whole transfer was dropped -- taint laundered through
+    // any `__asm__` vanished.
+    let src = r#"
+        int f(int a) {
+            int y = 0;
+            __asm__ ("nop" : "=r"(y) : "r"(a) : "cc");
+            return y;
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_readwrite_operand_keeps_identity_flow() {
+    // A `"+"` constraint is one operand that is both read and written (openssh's
+    // `crypto_int16_negative_mask` and its 77 siblings). The old value must be read *before* the
+    // write, so `x -> x` survives; treating `"+r"` as write-only would kill the taint on `x`
+    // instead of passing it through.
+    let src = r#"
+        int f(int a) {
+            int x = a;
+            __asm__ ("sarw $15,%0" : "+r"(x) : : "cc");
+            return x;
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_multiple_outputs_all_written() {
+    // nginx's `ngx_cpuid`: four outputs fed by one input. Every output operand is a write (the
+    // asm defines it), and each receives the blended inputs, so `i` reaches all four. Pins both
+    // halves: one write apiece, and the transfer from the single input.
+    let src = r#"
+        int f(int i) {
+            int eax, ebx, ecx, edx;
+            __asm__ ( "cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(i) );
+            return eax + ebx + ecx + edx;
+        }"#;
+    let (prog, _dump) = program_from_string(src);
+    for out in ["eax", "ebx", "ecx", "edx"] {
+        check_writes_to(&prog, out, 1);
+    }
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_without_operands_lowers() {
+    // nginx's `ngx_cpu_pause()`: assembly with no operand lists at all. There is nothing to
+    // transfer, so the only requirement is that it is not a gap and does not disturb the
+    // surrounding function -- the flow across it still lowers.
+    let src = r#"
+        int f(int a) {
+            int x = a;
+            __asm__ ("pause");
+            return x;
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn asm_is_no_longer_a_frontend_gap() {
+    // Strict-mode pin for the whole class: under `force_error_on_ast` any frontend gap is a hard
+    // error, so `program_from_string` succeeding at all is the assertion that none of these asm
+    // shapes reports one. Covers the corpus forms -- `"+r"` read-modify-write, two outputs with
+    // two inputs, a `__volatile__` qualifier with only clobbers, and the bare no-operand form.
+    let _strict = super::force_error_on_ast();
+    let src = r#"
+        int f(int a, int b) {
+            int x = a;
+            int y = 0;
+            int z = 0, q = 0;
+            __asm__ ("nop" : "=r"(y) : "r"(a) : "cc");
+            __asm__ ("sarw $15,%0" : "+r"(x) : : "cc");
+            __asm__ ("xorw %0,%0\n cmovew %1,%0" : "=&r"(z), "=&r"(q) : "r"(a), "r"(b) : "cc");
+            __asm__ __volatile__ ("mfence" ::: "memory");
+            __asm__ ("pause");
+            return x + y + z + q;
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn asm_output_into_struct_field_is_stored() {
+    // An output operand need not be a bare local: `"=m"(p->f)` is a *store* into a field path.
+    // That is the case the single-operand blend temp exists for -- a store lowers exactly one
+    // value (`add_assign_to_program`), so handing the write two operands would silently drop
+    // the second and lose half the transfer.
+    let src = r#"
+        struct S { int f; int g; };
+        void f(int a, struct S *p) {
+            __asm__ ("nop" : "=m"(p->f) : "r"(a) : "memory");
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 0, "", 1, ".f");
+}
+
+#[test_log::test]
+#[ignore = "limitation: `asm goto` transfers control to its label list, which needs CFG edges out \
+            of an expression -- `flatten_expr` returns a value and cannot build them. The operands \
+            still lower (the data model above applies unchanged); only the jumps are missing, and \
+            the construct keeps reporting a frontend gap. No corpus (dropbear/openssh/nginx) uses \
+            it. Un-ignore once asm statements can add successors."]
+fn asm_goto_is_a_known_limitation() {
+    // Aspirational: the `err` label is reachable only through the `asm goto`, so with real CFG
+    // edges `a` would reach the return along that path. Today the jump is invisible, the label
+    // block has no predecessor carrying `a`, and the flow is absent.
+    let src = r#"
+        int f(int a) {
+            int r = 0;
+            __asm__ goto ("jmp %l0" : : "r"(a) : : err);
+            return r;
+        err:
+            return a;
+        }"#;
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn statement_expression_value_flows() {
+    // A GNU statement expression `({ ...; e; })` has the value of its last statement. The
+    // catch-all recovery used to substitute a temp nothing wrote, so `r` was born opaque and
+    // the parameter never reached the return.
+    let src = r"
+        int f(int a) { int r = ({ int t = a; t; }); return r; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn statement_expression_side_effect_is_observed() {
+    // The statements *before* the value are the whole point of the construct -- the kernel's
+    // `READ_ONCE`/`container_of` do their work there. Here the write to the enclosing local `o`
+    // happens inside the braces and the value (`1`) is discarded, so only the side effect can
+    // carry the parameter to the return.
+    let src = r"
+        int f(int a) { int o = 0; int r = ({ o = a; 1; }); return o; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn nested_statement_expression_flows() {
+    // Statement expressions nest -- the kernel's RCU accessors put one inside another (see the
+    // `expand_files` shape in spec 061). The value expression is lowered by an ordinary
+    // `flatten_expr` call, so the arm must be re-entrant.
+    let src = r"
+        int f(int a) { return ({ int t = ({ int u = a; u; }); t; }); }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn statement_expression_body_block_threads_continuation() {
+    // `do { } while (0)` inside the braces opens basic blocks of its own, so the body does not
+    // end in the block it started in. That end block has to be threaded back to the caller:
+    // lowering the rest of the enclosing statement -- and every statement after it -- into the
+    // stale block would strand them behind the loop's terminator, exactly the breakage spec 033
+    // fixed for bare blocks. This is the `READ_ONCE` shape the kernel uses everywhere.
+    let src = r"
+        int f(int a) { int r = ({ do { } while (0); a; }); int o = r; return o; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn void_statement_expression_is_not_a_gap() {
+    // `({ do { } while (0); })` -- a statement expression whose last statement is not an
+    // expression statement, so it has no value. That is well-defined C, not a gap: it must lower
+    // silently, which under `force_error_on_ast` is what `program_from_string` succeeding proves.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int f(int a) { ({ do { } while (0); }); return a; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn statement_expression_is_no_longer_a_frontend_gap() {
+    // Strict-mode pin for the class: under `force_error_on_ast` any frontend gap is a hard error,
+    // so `program_from_string` succeeding at all is the assertion that `compound_statement` no
+    // longer reaches `flatten_expr`'s catch-all (ERR 78: Unsupported expression type). This is
+    // spec 061's minimal reproducer -- 27,062 occurrences in the kernel census.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int f(int a) { int r = ({ int t = a; t; }); return r; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn statement_expression_in_store_position_writes_through() {
+    // The kernel's list/RCU accessors put a statement expression in *store* position --
+    // `container_of(entry, struct T, member)->field = v`, whose value is an interior address
+    // computed from the entry pointer. So the braces have to resolve as an *lvalue*, not merely
+    // as a value: an address carrying an offset segment is not a bare variable, and the
+    // `flatten_lvalue` catch-all (which accepts only one) reported `not an lvalue:
+    // compound_statement` and dropped the store onto a dead temp. The write must land exactly
+    // where the direct `(&a[1])->f = x` spelling puts it.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        struct S { int f; };
+        void f(struct S *a, int x) { ({ int t = 0; &a[1]; })->f = x; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 1, "", 0, ".[1].deref.f");
+}
+
+#[test_log::test]
+fn generic_selection_blends_every_arm() {
+    // `_Generic` selects on the *type* of its controlling expression, which this frontend has
+    // no way to compute -- so, exactly like a ternary, every association's value is lowered and
+    // blended into one temp and any of them may be the result. Two shapes pin that: an arm that
+    // is the parameter (the parameter reaches the return through it), and two arms naming
+    // *different* parameters, where BOTH have to reach the return -- picking one arm would drop
+    // the other's flow. Before this the whole selection was an opaque temp and neither flowed.
+    let src = r"
+        int f(int a) { return _Generic(a, int: a, default: 0); }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+
+    let src = r"
+        int f(int a, int b) { return _Generic(a, char: a, default: b); }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn generic_selection_arm_calls_are_in_the_call_graph() {
+    // The kernel's type-polymorphic macros put the real work *inside* the arms -- the
+    // `__seqprop_*` family, `container_of`, `min`/`max` all dispatch this way -- so collapsing
+    // the selection into a temp erased those calls from the call graph entirely. Every arm is
+    // lowered, so every arm's callee is a direct call of `f`.
+    let src = r"
+        int pick_int(int);
+        long pick_long(long);
+        int f(int a) { return _Generic(a, int: pick_int(a), default: pick_long(a)); }";
+    let prog = program_from_string(src).0;
+    check_has_direct_call(&prog, "f", "pick_int");
+    check_has_direct_call(&prog, "f", "pick_long");
+}
+
+#[test_log::test]
+fn generic_selection_controlling_expression_is_not_the_value() {
+    // C does not evaluate the controlling expression -- `_Generic` inspects its type -- so it is
+    // a selection dependence, not a data source, and must not join the blend. That is the
+    // ternary condition's treatment, and it is what keeps `a` out of the return here. It is
+    // still *lowered*, for its side effects and because the kernel's
+    // `_Generic(*(&sl->seqcount), ...)` mentions the object nowhere else.
+    let src = r"
+        int f(int a, int b) { return _Generic(a, default: b); }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, "");
+    check_does_not_return_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn generic_selection_is_no_longer_a_frontend_gap() {
+    // The strict-mode pin: `_Generic` used to reach `flatten_expr`'s catch-all (ERR 78), the
+    // 4th-largest gap class in the kernel census at 1,589 occurrences across all 30 TUs. With an
+    // arm of its own it is not a gap at all, so ingestion succeeds even under CTADL_ERROR_ON_AST.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int pick_int(int);
+        long pick_long(long);
+        int f(int a) { return _Generic(a, int: pick_int(a), default: pick_long(a)); }";
+    let prog = program_from_string(src).0;
+    check_has_direct_call(&prog, "f", "pick_int");
+}
+
+#[test_log::test]
+fn generic_selection_in_store_position_writes_through() {
+    // `_Generic` also appears on the LEFT of an assignment: the kernel's `INET_ECN_xmit` writes
+    // `_Generic(sk, const typeof(*sk) *: container_of(...), default: container_of(...))->tos |=
+    // ...`. There is no `flatten_lvalue` arm for it -- the catch-all there routes through
+    // `flatten_expr`, and the blend temp this arm yields IS an `Exp::Variable`, so it is accepted
+    // without a warning and the store composes back through the copy onto the arm's own base.
+    // Pinned here because the alternative -- an lvalue arm -- would have to pick ONE arm's
+    // location and silently drop the stores to the others.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        struct S { int f; };
+        void g(struct S *p, int x) { _Generic(p, struct S *: p, default: p)->f = x; }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 1, "", 0, ".f");
+}
+
+#[test_log::test]
+fn if_arm_return_then_statement_strict() {
+    // An if-arm that returns, followed by reachable code. The arm's compound diverges,
+    // so `walk_compound_statement` must skip the end-of-compound link; linking anyway
+    // would push a continuation edge into the Return-terminated arm block and raise the
+    // recoverable report, which strict mode promotes to a hard error. This is the only
+    // unit-level pin of the skip-link-on-divergence half of the `diverged` logic -- the
+    // fresh-block half is pinned by `label_after_return_dataflow`.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        void g(void);
+        void f(int a) {
+            if (a) { return; }
+            g();
+        }";
+    super::parse_c_program(src).expect("if-arm return + following statement must not gap");
 }

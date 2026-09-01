@@ -915,7 +915,7 @@ fn cpp_try_construct<'a>(
     ctx: &mut Context<'a>,
     source: &'a str,
     program: &mut Program,
-    scope_view: &ScopeView,
+    scope_view: &mut ScopeView,
     decl_node: Node<'_>,
     class: &str,
 ) -> anyhow::Result<bool, Error> {
@@ -1184,7 +1184,7 @@ fn lower_new_expression<'a>(
     ctx: &mut Context<'a>,
     source: &'a str,
     program: &mut Program,
-    scope_view: &ScopeView,
+    scope_view: &mut ScopeView,
     new_expr: Node<'_>,
 ) -> anyhow::Result<Option<super::RawPath>, Error> {
     // Array-new / placement-new are out of scope; leave them unrecognized.
@@ -1261,7 +1261,7 @@ fn cpp_try_new<'a>(
     ctx: &mut Context<'a>,
     source: &'a str,
     program: &mut Program,
-    scope_view: &ScopeView,
+    scope_view: &mut ScopeView,
     decl_node: Node<'_>,
     declared_class: &str,
 ) -> anyhow::Result<bool, Error> {
@@ -1401,8 +1401,8 @@ fn cpp_lower_delete<'a>(
     ctx: &mut Context<'a>,
     program: &mut Program,
     node: Node<'_>,
-    source: &str,
-    scope_view: &ScopeView,
+    source: &'a str,
+    scope_view: &mut ScopeView,
 ) -> anyhow::Result<(), Error> {
     // The operand of `delete <expr>` is its single named child (`p`).
     let Some(operand) = node.named_child(0) else {
@@ -1509,11 +1509,11 @@ fn cpp_scope_exit<'a>(
 ///
 /// The pairs come from `ctor_member_inits`, which reads them off the constructor definition
 /// during method discovery; a non-constructor gets an empty slice and emits nothing.
-fn cpp_emit_member_inits(
-    ctx: &mut Context<'_>,
+fn cpp_emit_member_inits<'a>(
+    ctx: &mut Context<'a>,
     program: &mut Program,
-    scope_view: &ScopeView,
-    source: &str,
+    scope_view: &mut ScopeView,
+    source: &'a str,
     member_inits: &[(String, Node<'_>)],
 ) -> anyhow::Result<(), Error> {
     for (member, init_expr) in member_inits {

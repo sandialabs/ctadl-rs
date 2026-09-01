@@ -93,6 +93,16 @@
 //! return x;
 //! }
 //!
+//! ## `asm goto`
+//!
+//! GNU inline assembly is lowered as an operand transfer ([`Context::flatten_gnu_asm`]): every
+//! input operand may reach every output operand, and a `"+"` operand keeps its identity flow.
+//! `asm goto` additionally *jumps* to one of its labels, and those are real CFG edges out of an
+//! expression -- `flatten_expr` yields a value and has no way to add successors -- so the jumps
+//! are not modeled and the construct keeps reporting a frontend gap. Its operands still lower.
+//! Pinned by the `#[ignore]`d `asm_goto_is_a_known_limitation`. No corpus (dropbear, OpenSSH,
+//! nginx) uses it.
+//!
 
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
@@ -777,7 +787,7 @@ struct GrammarHooks {
         &mut Context<'a>,
         &'a str,
         &mut Program,
-        &'s ScopeView,
+        &'s mut ScopeView,
         Node<'t>,
         &'s str,
     ) -> anyhow::Result<bool, Error>,
@@ -805,8 +815,8 @@ struct GrammarHooks {
         &mut Context<'a>,
         &mut Program,
         Node<'t>,
-        &str,
-        &ScopeView,
+        &'a str,
+        &mut ScopeView,
     ) -> anyhow::Result<(), Error>,
     /// Emit the destructors of the class-typed **stack** (automatic) objects constructed in a
     /// scope, at that scope's **normal fall-through exit** — a stack object's destructor runs at
@@ -830,8 +840,8 @@ struct GrammarHooks {
     ctor_prologue: for<'a, 't> fn(
         &mut Context<'a>,
         &mut Program,
-        &ScopeView,
-        &str,
+        &mut ScopeView,
+        &'a str,
         &[(String, Node<'t>)],
     ) -> anyhow::Result<(), Error>,
 }
@@ -1491,16 +1501,22 @@ fn declaration_type_tag<'s>(decl_node: Node<'_>, source: &'s str) -> Option<&'s 
 /// identifier 0. The declared type describes the innermost element, so this is how many brace
 /// levels an initializer must descend before that type's layout applies. Descends through
 /// parenthesized and pointer declarators, which do not add a dimension.
+///
+/// The `abstract_*` spellings are the same declarators written without a name, which is how a
+/// `type_descriptor` spells them: `(int[]){ .. }`'s type carries an `abstract_array_declarator`
+/// and must count as rank 1 exactly like `int a[]` does.
 fn array_declarator_rank(decl: Node<'_>) -> usize {
     match decl.kind() {
-        "array_declarator" => {
+        "array_declarator" | "abstract_array_declarator" => {
             1 + decl
                 .child_by_field_name("declarator")
                 .map(array_declarator_rank)
                 .unwrap_or(0)
         }
-        "parenthesized_declarator" => decl.named_child(0).map(array_declarator_rank).unwrap_or(0),
-        "pointer_declarator" | "init_declarator" => decl
+        "parenthesized_declarator" | "abstract_parenthesized_declarator" => {
+            decl.named_child(0).map(array_declarator_rank).unwrap_or(0)
+        }
+        "pointer_declarator" | "abstract_pointer_declarator" | "init_declarator" => decl
             .child_by_field_name("declarator")
             .map(array_declarator_rank)
             .unwrap_or(0),
@@ -1739,9 +1755,9 @@ impl<'a> Context<'a> {
 
     fn collect_assignment(
         &mut self,
-        source: &str,
+        source: &'a str,
         program: &mut Program,
-        scope_view: &ScopeView,
+        scope_view: &mut ScopeView,
         target_node: Node<'_>,
         expr_node: Node<'_>,
         operator_node: Option<Node<'_>>,
@@ -1865,9 +1881,9 @@ impl<'a> Context<'a> {
     /// carry the element type's layout down so an array **of** records maps its members too.
     fn collect_initializer_list(
         &mut self,
-        source: &str,
+        source: &'a str,
         program: &mut Program,
-        scope_view: &ScopeView,
+        scope_view: &mut ScopeView,
         decl_node: Node<'_>,
         decl_ident: Node<'_>,
         init_list: Node<'_>,
@@ -1882,6 +1898,25 @@ impl<'a> Context<'a> {
 
         let base_ap = self.flatten_lvalue(program, decl_ident, source, scope_view)?;
 
+        self.lower_braced_value(source, program, scope_view, &base_ap, init_list, own, rank)
+    }
+
+    /// Store a brace-enclosed value into `base_ap`, given the record layout its type names
+    /// (`own`) and that type's array `rank`. Shared by the two places a brace can appear: a
+    /// declaration's initializer ([`Context::collect_initializer_list`]) and a C99 compound
+    /// literal in expression position (`(T){ ... }`, lowered in [`Context::flatten_expr`]).
+    /// The two differ only in where the base path comes from -- a declarator versus a fresh
+    /// temp -- so everything downstream of that is here.
+    fn lower_braced_value(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        base_ap: &RawPath,
+        init_list: Node<'_>,
+        own: Option<Vec<MemberSlot>>,
+        rank: usize,
+    ) -> Result<(), Error> {
         // A braced **scalar** (`int x = { v };`) is not an aggregate: it has no elements to
         // place and its single value initializes the variable itself, exactly as `int x = v;`
         // does. Numbering it as element 0 would write the synthetic `deref` field of a scalar.
@@ -1895,7 +1930,7 @@ impl<'a> Context<'a> {
                 && !matches!(elem.kind(), "initializer_list" | "initializer_pair")
             {
                 let rhs = self.flatten_expr(program, elem, source, scope_view)?;
-                self.add_assign_to_program(program, scope_view, &base_ap, &rhs, None);
+                self.add_assign_to_program(program, scope_view, base_ap, &rhs, None);
                 return Ok(());
             }
         }
@@ -1918,7 +1953,7 @@ impl<'a> Context<'a> {
             source,
             program,
             scope_view,
-            &base_ap,
+            base_ap,
             init_list,
             members.as_deref(),
             elem_layout.as_deref(),
@@ -1960,9 +1995,9 @@ impl<'a> Context<'a> {
     #[allow(clippy::too_many_arguments)]
     fn lower_initializer_list(
         &mut self,
-        source: &str,
+        source: &'a str,
         program: &mut Program,
-        scope_view: &ScopeView,
+        scope_view: &mut ScopeView,
         base_ap: &RawPath,
         init_list: Node<'_>,
         members: Option<&[MemberSlot]>,
@@ -2128,6 +2163,85 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// Walk the statements of `compound`, starting in `scope_view_meowsers`, and return the
+    /// scope view the walk ended in together with whether the last statement *diverged*.
+    /// Performs no end-of-compound link: that is the caller's call, because it depends on
+    /// whether the compound was given a basic block of its own.
+    fn walk_compound_body(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view_meowsers: &ScopeView,
+        compound: &CompoundProxy<'_>,
+    ) -> Result<(ScopeView, bool), Error> {
+        let mut scope_view = scope_view_meowsers.clone();
+        // Set when the statement just walked diverged (return/break/continue, or a label
+        // whose body diverges): the current block is terminated and has no fall-through.
+        let mut diverged = false;
+
+        // Open a destructor frame for this lexical scope: each class-typed stack object
+        // constructed here is recorded into it (by `walk_declaration`'s value declarator /
+        // `cpp::emit_construction`), and at the scope's normal fall-through exit its destructor is
+        // emitted by the `scope_exit` hook (spec 017). The frame lives here rather than in
+        // `walk_compound_statement` because a bare `{ ... }` walks its body through *this*
+        // function directly, and it has stack objects to destroy just the same. C constructs no
+        // class objects, so every frame is empty and this is inert on the C path.
+        self.dtor_frames.push(Vec::new());
+        let mut result: Result<(), Error> = Ok(());
+
+        for &child in &compound.nodes {
+            if !child.is_named() || child.kind() == "comment" {
+                continue; // we skip , ( comments, stuff like that...
+            }
+            if diverged {
+                // The previous statement diverged yet siblings remain. They are
+                // unreachable by fall-through, but a `goto` label among them -- the
+                // ubiquitous `out:` cleanup idiom -- is still reachable through its jump
+                // edge, and its body has to lower or the cleanup code is dropped from the
+                // IR entirely (`finalize_terminators` would then patch the orphaned label
+                // block with an implicit empty `return` and report a frontend gap).
+                // Keep walking in a fresh unlinked block, exactly as `walk_goto` does for
+                // the statements that follow a `goto`.
+                scope_view = match add_block(
+                    program,
+                    &scope_view,
+                    &mut self.scope_tree,
+                    false,
+                    &format!("after_diverge::{}", get_line_num(&child)),
+                ) {
+                    Ok(sv) => sv,
+                    Err(e) => {
+                        result = Err(e);
+                        break;
+                    }
+                };
+            }
+            match self.walk_statement(source, program, &mut scope_view, child) {
+                Ok(d) => diverged = d,
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                }
+            }
+        }
+
+        // Emit this scope's stack objects' destructors (reverse construction order) at the closing
+        // `}`, before the frame is popped -- the hook drains the top frame -- and only on the
+        // fall-through path: a compound that diverged took an early exit, whose scope-exit
+        // destructors are out of spec 017's scope. Nothing propagates with `?` until after the
+        // pop, or a failure would leave the frame stack unbalanced.
+        if result.is_ok() && !diverged {
+            let scope_exit = self.hooks.scope_exit;
+            result = scope_exit(self, program, &scope_view);
+        }
+        self.dtor_frames.pop();
+        result?;
+
+        Ok((scope_view, diverged))
+    }
+
+    /// Walk a compound that owns a basic block (an `if`/`while`/`for`/`switch` arm, a
+    /// function body, ...) and link its fall-through to the enclosing continuation.
     fn walk_compound_statement(
         &mut self,
         source: &'a str,
@@ -2135,61 +2249,19 @@ impl<'a> Context<'a> {
         scope_view_meowsers: &ScopeView,
         compound: &CompoundProxy<'_>,
     ) -> Result<(), Error> {
-        let mut scope_view = scope_view_meowsers.clone();
+        let (scope_view, diverged) =
+            self.walk_compound_body(source, program, scope_view_meowsers, compound)?;
 
-        // Open a destructor frame for this scope: each class-typed stack object constructed here is
-        // recorded into it (by `walk_declaration`'s value declarator / `cpp::emit_construction`),
-        // and at the scope's normal fall-through exit its destructor is emitted by the `scope_exit`
-        // hook (spec 017). Pop it on **every** exit path (fall-through and the divergence early-out)
-        // so the frame stack stays balanced; the `walk_compound_body` split lets the pop run
-        // regardless of which path the body took. C constructs no class objects, so every frame is
-        // empty and this is inert on the C path.
-        self.dtor_frames.push(Vec::new());
-        let result = self.walk_compound_body(
-            source,
-            program,
-            &mut scope_view,
-            scope_view_meowsers,
-            compound,
-        );
-        self.dtor_frames.pop();
-        result
-    }
-
-    /// The body of [`Self::walk_compound_statement`], run inside an already-pushed destructor frame.
-    /// Walk each statement; on normal fall-through emit this scope's stack objects' destructors (via
-    /// the `scope_exit` hook) and link out of the compound. Split out so the caller can pop the
-    /// destructor frame on every return path — keeping [`Context::dtor_frames`] balanced across the
-    /// divergence early-out (a `return`/`break`/`continue` that ends the compound early, whose
-    /// scope-exit destructors are intentionally *not* emitted: that early-exit case is out of spec
-    /// 017's scope).
-    fn walk_compound_body(
-        &mut self,
-        source: &'a str,
-        program: &mut Program,
-        scope_view: &mut ScopeView,
-        scope_view_meowsers: &ScopeView,
-        compound: &CompoundProxy<'_>,
-    ) -> Result<(), Error> {
-        for &child in &compound.nodes {
-            if !child.is_named() {
-                continue; // we skip , ( stuff like that...
-            }
-            // A statement that diverges (return/break/continue, or a label whose body
-            // diverges) ends the compound; the trailing fall-through link is skipped.
-            if self.walk_statement(source, program, scope_view, child)? {
-                return Ok(());
-            }
+        // A compound whose last statement diverged has no fall-through, so the
+        // end-of-compound link is skipped (it would push a continuation edge into a
+        // block that already returns).
+        if diverged {
+            return Ok(());
         }
-
-        // Normal fall-through: run this scope's stack objects' destructors (reverse construction
-        // order) at the closing `}`, then link out of the compound. The hook is a no-op for C.
-        let scope_exit = self.hooks.scope_exit;
-        scope_exit(self, program, scope_view)?;
 
         //walked off a compound_statement
         log::debug!("EOCS linking blocks: ");
-        link_blocks(program, scope_view, scope_view_meowsers, true)?;
+        link_blocks(program, &scope_view, scope_view_meowsers, true)?;
 
         Ok(())
     }
@@ -2239,7 +2311,27 @@ impl<'a> Context<'a> {
                     true,
                     "compound_statement",
                 )?;
-                self.walk_compound_statement(source, program, &inner_view, &cp)?;
+                // A bare `{ ... }` in statement position gets a `JustScope` view: a fresh
+                // lexical scope that deliberately *shares* the enclosing basic block. So it
+                // has no end-of-compound edge to link, and asking `walk_compound_statement`
+                // for one is what broke the CFG: with the function body's fall-off-the-end
+                // sentinel (`continuation_blidx == None`) inherited, `link_blocks` stamped
+                // an implicit `return` onto the block we are still filling, and every
+                // following statement was then either orphaned (its incoming edge dropped
+                // with a `continuation edge into a block that already returns` gap) or
+                // appended behind that terminator.
+                //
+                // Walk the body directly instead, then thread the block it ended in back to
+                // the caller -- keeping the caller's scope, since names declared inside the
+                // braces must not outlive them -- and propagate its divergence, so
+                // `{ return; }` still ends the enclosing compound's fall-through.
+                let (end_view, diverged) =
+                    self.walk_compound_body(source, program, &inner_view, &cp)?;
+                *scope_view = ScopeView {
+                    sidx: scope_view.sidx,
+                    ..end_view
+                };
+                return Ok(diverged);
             }
             "declaration" => {
                 self.walk_declaration(source, program, scope_view, child)?;
@@ -2247,23 +2339,28 @@ impl<'a> Context<'a> {
             "assignment_expression" => {
                 self.flatten_expr(program, child, source, scope_view)?;
             }
-            // The **null statement** (a bare `;`) parses as an `expression_statement` whose
-            // only child is the anonymous `;` token — no named child. It executes nothing, so
-            // it lowers to a no-op: emit nothing and fall through unchanged. Reading the
-            // *named* child keeps every non-empty expression statement byte-identical (its
-            // first child is always the expression) while keeping the `;` away from
-            // `flatten_expr`'s catch-all, which would error `Unsupported expression type: ;`.
-            // Both tree-sitter-c and tree-sitter-cpp produce this exact shape, so this is a
-            // node-shape check, not a language branch.
             "expression_statement" => {
-                if let Some(inner_child) = child.named_child(0) {
+                // An empty statement (`;`) -- e.g. the body of a label, `done: ;` --
+                // parses as an `expression_statement` whose only child is the `;` token.
+                // There is no expression to lower, so skip it; otherwise the bare `;`
+                // falls through to `flatten_expr`'s catch-all and fails ingestion (ERR 78).
+                if let Some(inner_child) = child.child(0)
+                    && !_is_empty(&inner_child)
+                {
                     self.flatten_expr(program, inner_child, source, scope_view)?;
                 }
             }
             "update_expression" => {
-                if let Some(inner_child) = child.child(0) {
-                    self.flatten_expr(program, inner_child, source, scope_view)?;
-                }
+                // A bare `++i` / `i++` in statement position -- in practice a `for`'s update
+                // clause, which arrives here directly rather than wrapped in an
+                // `expression_statement`. Lower the whole node: `flatten_expr` dispatches to
+                // `flatten_update_expression`, which reads the `argument` field and so handles
+                // prefix and postfix alike. Descending to `child(0)` instead (as the shared
+                // `expression_statement` arm does) is wrong for both spellings: for prefix that
+                // child is the `++` operator token, which reaches `flatten_expr`'s catch-all
+                // ("ERR 78: Unsupported expression type: ++"), and for postfix it is the bare
+                // identifier, which lowers to a read and silently drops the increment.
+                self.flatten_expr(program, child, source, scope_view)?;
             }
             "parenthesized_expression" => {
                 if let Some(inner_child) = child.child(1) {
@@ -2321,7 +2418,7 @@ impl<'a> Context<'a> {
         &mut self,
         source: &'a str,
         program: &mut Program,
-        scope_view: &ScopeView,
+        scope_view: &mut ScopeView,
         node: Node<'_>,
     ) -> Result<(), Error> {
         // If this declaration's type names a known class (only ever true under C++, where
@@ -2485,7 +2582,7 @@ impl<'a> Context<'a> {
         &mut self,
         source: &'a str,
         program: &mut Program,
-        scope_view: &ScopeView,
+        scope_view: &mut ScopeView,
         ref_decl: Node<'_>,
         init: Node<'_>,
     ) -> Result<(), Error> {
@@ -2552,7 +2649,7 @@ impl<'a> Context<'a> {
         if let Some(ret_val_node) = child.child(1)
             && ret_val_node.kind() != ";"
         {
-            let ret_exp = self.flatten_expr(program, ret_val_node, source, &*scope_view)?;
+            let ret_exp = self.flatten_expr(program, ret_val_node, source, scope_view)?;
             let term = Terminator::new_kind(TerminatorKind::Return {
                 args: vec![ret_exp].into(),
             });
@@ -2803,7 +2900,7 @@ impl<'a> Context<'a> {
             .child_by_field_name("condition")
             .expect("switch always has a condition");
         let condition = (self.hooks.condition_expr)(condition_raw);
-        self.flatten_expr(program, condition, source, &*scope_view)?;
+        self.flatten_expr(program, condition, source, scope_view)?;
 
         let body = child
             .child_by_field_name("body")
@@ -2932,7 +3029,7 @@ impl<'a> Context<'a> {
     /// (unlinked) block.
     fn walk_goto(
         &mut self,
-        source: &str,
+        source: &'a str,
         program: &mut Program,
         scope_view: &mut ScopeView,
         child: Node<'_>,
@@ -3020,7 +3117,7 @@ impl<'a> Context<'a> {
             .child_by_field_name("condition")
             .expect("always has condition");
         let condition = (self.hooks.condition_expr)(condition_raw);
-        self.flatten_expr(program, condition, source, &*scope_view)?; // gather field accesses and what not but we don't care about the condition result,etc.
+        self.flatten_expr(program, condition, source, scope_view)?; // gather field accesses and what not but we don't care about the condition result,etc.
         let consequence = child
             .child_by_field_name("consequence")
             .expect("always has consequence");
@@ -3298,8 +3395,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> Result<Exp, Error> {
         //debug_print_tree(node, 0, Some("FLATTEN_EXPR"), Some(50));
         let text = to_str(&node, source); //.to_string();
@@ -3515,35 +3612,123 @@ impl<'a> Context<'a> {
             // so it must not carry taint from the operand. Lower it as a constant (the
             // source text), exactly like a numeric literal; the operand is never visited.
             "sizeof_expression" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
-            // A ternary `c ? a : b` is path-insensitive here: either arm may be the
-            // value, so blend both into a temp (like `flatten_binary`). The condition is
-            // a control dependence, not a data source -- evaluate it for side effects but
-            // don't blend it into the result.
-            "conditional_expression" => {
-                let cond = node
-                    .child_by_field_name("condition")
-                    .expect("conditional_expression always has a condition");
-                let cons = node
-                    .child_by_field_name("consequence")
-                    .expect("conditional_expression always has a consequence");
-                let alt = node
-                    .child_by_field_name("alternative")
-                    .expect("conditional_expression always has an alternative");
-                self.flatten_expr(program, cond, source, scope_view)?;
-                let cons_val = self.flatten_expr(program, cons, source, scope_view)?;
-                let alt_val = self.flatten_expr(program, alt, source, scope_view)?;
+            // A C99 compound literal `(T){ .a = x }` is an unnamed object of type `T`
+            // initialized by the brace, and the expression's value is that object. Model it
+            // exactly that way: materialize a fresh temp to stand for the object, run the
+            // *same* brace lowering a declaration's initializer gets (so designators and
+            // positions land on `T`'s members, unknown tags fall back to element numbering),
+            // and yield the temp. Without this the literal hit the catch-all below and every
+            // value inside the braces was dropped -- the largest gap class in the corpus.
+            //
+            // The `type_descriptor` node has the same `type` field a declaration does, so
+            // `declaration_type_tag` reads its record tag unchanged; its optional `declarator`
+            // is the abstract spelling of an array declarator, and carries the rank.
+            "compound_literal_expression" => {
+                let ty = node
+                    .child_by_field_name("type")
+                    .expect("compound_literal_expression always has a type");
+                let value = node
+                    .child_by_field_name("value")
+                    .expect("compound_literal_expression always has a value");
+                let own = declaration_type_tag(ty, source)
+                    .and_then(|tag| self.struct_layouts.get(tag).cloned());
+                let rank = ty
+                    .child_by_field_name("declarator")
+                    .map(array_declarator_rank)
+                    .unwrap_or(0);
                 let temp_name = self.allocator.next_temp();
-                let target = self.build_access_path(
+                let base_ap = self.build_access_path(
                     temp_name.as_str(),
                     Default::default(),
                     scope_view,
                     &mut program[scope_view.fidx].locals,
                 );
-                self.add_assign_to_program(program, scope_view, &target, &cons_val, Some(&alt_val));
+                self.lower_braced_value(source, program, scope_view, &base_ap, value, own, rank)?;
                 Ok(Exp::Variable(VariableRef::new_local_idx(
                     program[scope_view.fidx].locals.get_or_intern(&temp_name),
                 )))
             }
+            // A GNU statement expression `({ s1; s2; value; })`. tree-sitter-c 0.24.1 has no
+            // node for the construct: it parses as a `parenthesized_expression` wrapping a
+            // `compound_statement`, so it lands here with `node.kind() == "compound_statement"`.
+            // See `lower_statement_expression_effects`.
+            "compound_statement" => {
+                let outer_sidx = scope_view.sidx;
+                let outer_span = self.cur_span;
+                let value = match self
+                    .lower_statement_expression_effects(program, node, source, scope_view)?
+                {
+                    Some(inner) => self.flatten_expr(program, inner, source, scope_view)?,
+                    // A `void`-valued statement expression has no value to yield; hand back a
+                    // temp nothing reads, exactly as the recovery path would.
+                    None => {
+                        let temp_name = self.allocator.next_temp();
+                        Exp::Variable(VariableRef::new_local_idx(
+                            program[scope_view.fidx].locals.get_or_intern(&temp_name),
+                        ))
+                    }
+                };
+                scope_view.sidx = outer_sidx;
+                self.cur_span = outer_span;
+                Ok(value)
+            }
+            // A ternary `c ? a : b` is path-insensitive here: either arm may be the
+            // value, so blend both into a temp (like `flatten_binary`). The condition is
+            // a control dependence, not a data source -- evaluate it for side effects but
+            // don't blend it into the result.
+            //
+            // GNU's `c ?: b` omits the consequence, and there the condition IS the value
+            // when it is truthy (evaluated once). tree-sitter leaves the `consequence`
+            // field absent for that shape, so reuse the condition's already-computed
+            // value as the consequent arm rather than assuming the field is present.
+            "conditional_expression" => {
+                let cond = node
+                    .child_by_field_name("condition")
+                    .expect("conditional_expression always has a condition");
+                let alt = node
+                    .child_by_field_name("alternative")
+                    .expect("conditional_expression always has an alternative");
+                let cond_val = self.flatten_expr(program, cond, source, scope_view)?;
+                let cons_val = match node.child_by_field_name("consequence") {
+                    Some(cons) => self.flatten_expr(program, cons, source, scope_view)?,
+                    None => cond_val,
+                };
+                let alt_val = self.flatten_expr(program, alt, source, scope_view)?;
+                Ok(self.blend_into_temp(program, scope_view, &[cons_val, alt_val]))
+            }
+            // A C11 generic selection `_Generic(ctrl, T1: e1, ..., default: eN)`. Only the arm
+            // whose type matches the controlling expression is evaluated, and picking it needs
+            // the static type of `ctrl` -- which this frontend does not have and must not start
+            // computing. So the selection is treated exactly like the ternary above, just with
+            // N arms instead of two: any of them may be the value, so all of them lower and all
+            // of them blend into one temp.
+            //
+            // The controlling expression is NOT evaluated in C (`_Generic` selects on its
+            // *type*), so it must not join the blend -- but it cannot simply be skipped either,
+            // because the kernel's `_Generic(*(&sl->seqcount), ...)` mentions the object nowhere
+            // else. It gets the ternary condition's treatment: lowered for its effects, its
+            // value dropped.
+            //
+            // Without this arm every `_Generic` became an opaque temp, which in the kernel meant
+            // the whole `__seqprop_*`/`container_of`/`min`/`max` dispatch family -- the calls in
+            // the arms included -- was invisible.
+            "generic_expression" => {
+                let (ctrl, arms) = generic_selection_parts(node);
+                if let Some(ctrl) = ctrl {
+                    self.flatten_expr(program, ctrl, source, scope_view)?;
+                }
+                let mut values = Vec::with_capacity(arms.len());
+                for arm in arms {
+                    values.push(self.flatten_expr(program, arm, source, scope_view)?);
+                }
+                Ok(self.blend_into_temp(program, scope_view, &values))
+            }
+            // GNU inline assembly (`__asm__ ("..." : outs : ins : clobbers)`). The assembly text
+            // is opaque to this frontend, so it is modeled as the operand transfer it is rather
+            // than dropped -- see `flatten_gnu_asm`. Without this arm every `__asm__` hit the
+            // catch-all below, so a value laundered through inline asm lost its taint and an
+            // `"+r"` in/out operand lost its identity flow (the openssh `crypto_int*` shapes).
+            "gnu_asm_expression" => self.flatten_gnu_asm(program, node, source, scope_view),
             _ => {
                 debug_print_tree(node, 0, None, None);
                 unexpected_ast(format!(
@@ -3561,12 +3746,216 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// Lowers the *effects* of a GNU statement expression `({ s1; s2; value; })` -- everything
+    /// between the braces except the value -- and hands back the expression node that produces
+    /// the value, if there is one.
+    ///
+    /// The construct is by a wide margin the kernel's most pervasive idiom (`container_of`,
+    /// `READ_ONCE`/`WRITE_ONCE`, `min`/`max`, `smp_load_acquire`, every locked bit-op and every
+    /// instrumented atomic expands to one) and, at 27k occurrences, was the largest gap class the
+    /// kernel census found. Before this it reached `flatten_expr`'s catch-all, which substituted
+    /// a temp nothing reads or writes: both the statements inside the braces and the value they
+    /// produce were dropped, so taint entering a statement expression never left it.
+    ///
+    /// Its value is the value of the **last** statement, which C requires to be an expression
+    /// statement. So the leading statements go through the ordinary statement walker -- making
+    /// the declarations, calls and assignments inside the braces real IR -- and the trailing
+    /// expression is left to the caller: `flatten_expr` wants its `Exp`, while `flatten_lvalue`
+    /// wants its access path, because `container_of(p, T, m)->f = v` puts a statement expression
+    /// in store position.
+    ///
+    /// Like a bare block (`walk_statement`'s `compound_statement` arm) the braces get a fresh
+    /// lexical scope but deliberately *share* the enclosing basic block -- a statement expression
+    /// continues the enclosing block, it does not close it -- so there is no end-of-compound link
+    /// to make. On return `scope_view` names that inner scope and the block the body ended in, so
+    /// the caller can lower the value node there; the caller then restores its own `sidx` (names
+    /// declared between the braces must not outlive them) and `cur_span` (walking the body
+    /// retargets the span at every statement inside).
+    ///
+    /// The block has to be threaded back out because statements inside may open blocks of their
+    /// own -- `do { } while (0)` sits in every `READ_ONCE` -- and everything lowered afterwards
+    /// has to land in the block control actually reaches. Statement expressions nest, too (the
+    /// kernel's RCU accessors put one inside another), and this is re-entrant: the nested one is
+    /// just another `flatten_expr` call on the value node.
+    fn lower_statement_expression_effects<'t>(
+        &mut self,
+        program: &mut Program,
+        node: Node<'t>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<Option<Node<'t>>, Error> {
+        let (inner_view, cp) = self.setup_compound(
+            program,
+            scope_view,
+            node,
+            BlockTypeRequest::JustScope,
+            true,
+            "statement_expression",
+        )?;
+
+        // Split off the trailing statement: it produces the value, everything before it runs
+        // only for its effects. `cp.nodes` still holds the braces and any comments.
+        let mut stmts = cp.nodes;
+        stmts.retain(|child| child.is_named() && child.kind() != "comment");
+        let value_node = stmts.pop();
+        let prefix = CompoundProxy {
+            nodes: stmts,
+            was_compound: true,
+        };
+
+        let (mut end_view, mut diverged) =
+            self.walk_compound_body(source, program, &inner_view, &prefix)?;
+        if diverged {
+            end_view = self.block_after_stmt_expr_diverge(program, &end_view, node)?;
+        }
+
+        let value = match value_node {
+            // `({ ...; e; })` -- the ordinary shape. `e` is the value of the construct.
+            Some(last) if last.kind() == "expression_statement" => {
+                self.cur_span = self.span_for_node(last);
+                // `({ ...; ; })` -- a trailing empty statement carries no expression.
+                last.child(0).filter(|inner| !_is_empty(inner))
+            }
+            // A `void`-valued statement expression, e.g. the kernel's ubiquitous
+            // `({ do { } while (0); })`. Well-defined C, not a gap: lower the statement here
+            // and leave the caller to invent a value nothing reads.
+            Some(last) => {
+                diverged = self.walk_statement(source, program, &mut end_view, last)?;
+                if diverged {
+                    end_view = self.block_after_stmt_expr_diverge(program, &end_view, node)?;
+                }
+                None
+            }
+            // `({ })`, or braces holding nothing but comments.
+            None => None,
+        };
+
+        *scope_view = end_view;
+        Ok(value)
+    }
+
+    /// Opens a fresh *unlinked* block to keep lowering a statement expression into after its
+    /// body diverged (a `return`/`break`/`continue` between the braces). The value expression
+    /// and everything after the construct are unreachable, but they still have to lower
+    /// somewhere: appending them to the block the divergence terminated would strand IR behind
+    /// a terminator. Same recovery `walk_compound_body` uses for statements after a divergence.
+    fn block_after_stmt_expr_diverge(
+        &mut self,
+        program: &mut Program,
+        view: &ScopeView,
+        node: Node<'_>,
+    ) -> Result<ScopeView, Error> {
+        add_block(
+            program,
+            view,
+            &mut self.scope_tree,
+            false,
+            &format!("after_stmt_expr_diverge::{}", get_line_num(&node)),
+        )
+    }
+
+    /// Lowers a GNU inline-assembly expression as an opaque **operand transfer**.
+    ///
+    /// The assembly body is never analyzed, so the only sound model is that the black box
+    /// relates all of its operands: every input operand may reach every output operand. That is
+    /// emitted as one blend temp holding all the inputs, assigned into each output. Funnelling
+    /// through a single temp -- rather than handing each write two operands -- is what lets an
+    /// output that is a *field* path carry the value at all: a store lowers exactly one value
+    /// (see [`Context::add_assign_to_program`]), so a second operand would be silently dropped.
+    ///
+    /// An output constrained with `+` is read-modify-write, so its old value is also a source:
+    /// that is what keeps the `x -> x` identity flow in openssh's
+    /// `__asm__ ("sarw $15,%0" : "+r"(x) : : "cc")`. Every read is emitted before every write,
+    /// matching the C semantics. Clobbers name registers, not C locations, so they carry no
+    /// dataflow and are ignored.
+    ///
+    /// `asm goto` still reports a frontend gap: its jumps to the label list are real CFG edges
+    /// out of an expression, which cannot be built from here. The operands are modeled anyway,
+    /// so only the control edges are missing (see `asm_goto_is_a_known_limitation`). No corpus
+    /// uses it.
+    fn flatten_gnu_asm(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<Exp, Error> {
+        if node
+            .child_by_field_name("goto_labels")
+            .is_some_and(|labels| labels.child_by_field_name("label").is_some())
+        {
+            unexpected_ast(
+                "asm goto: jumps to the label list are not modeled as CFG edges (operands still \
+                 lower)"
+                    .to_string(),
+            )?;
+        }
+
+        let outputs = gnu_asm_operands(node, "output_operands");
+        let inputs = gnu_asm_operands(node, "input_operands");
+
+        // Reads first, writes after: the asm consumes every input before producing any output,
+        // so a `"+r"` operand that is both must be read while it still holds the old value.
+        let mut sources = Vec::with_capacity(inputs.len() + outputs.len());
+        for operand in &inputs {
+            let value = gnu_asm_operand_value(*operand);
+            sources.push(self.flatten_expr(program, value, source, scope_view)?);
+        }
+        let mut targets = Vec::with_capacity(outputs.len());
+        for operand in &outputs {
+            let value = gnu_asm_operand_value(*operand);
+            let target = self.flatten_lvalue(program, value, source, scope_view)?;
+            if gnu_asm_operand_is_readwrite(*operand, source) {
+                let old = self.emit_loads(program, scope_view, target.clone());
+                sources.push(Exp::access_path(old));
+            }
+            targets.push(target);
+        }
+
+        // Blend the sources into one temp, folding in one operand at a time -- the same
+        // `t = src op t` shape a compound assignment (`y += x`) lowers to, so the running value
+        // is read before this statement redefines it. A temp with no sources at all is never
+        // written, which is exactly the opaque value an operand-less `__asm__ ("pause")` yields.
+        let blend_name = self.allocator.next_temp();
+        let blend = self.build_access_path(
+            blend_name.as_str(),
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
+        for (i, src) in sources.iter().enumerate() {
+            let running = if i == 0 {
+                None
+            } else {
+                let so_far = self.emit_loads(program, scope_view, blend.clone());
+                Some(Exp::access_path(so_far))
+            };
+            self.add_assign_to_program(program, scope_view, &blend, src, running.as_ref());
+        }
+
+        let blended = Exp::access_path(self.emit_loads(program, scope_view, blend));
+        for target in &targets {
+            self.add_assign_to_program(program, scope_view, target, &blended, None);
+        }
+
+        // The value of an asm expression is the first output operand's location; with no
+        // outputs it is the opaque blend temp. In practice nothing reads it -- every real site
+        // is a statement -- but `flatten_expr` must yield something.
+        match targets.first() {
+            Some(target) => {
+                let read_back = self.emit_loads(program, scope_view, target.clone());
+                Ok(Exp::access_path(read_back))
+            }
+            None => Ok(blended),
+        }
+    }
+
     fn flatten_nested_decl(
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
         //how come only this declarator came up in expr? see pointer_decl way?
         // ... well function_declarators come up too.  see the logic there //TODO: why does this not worry about parenthesized_declarators?
@@ -3610,8 +3999,8 @@ impl<'a> Context<'a> {
         program: &mut Program,
         node: Node<'_>,
         operator: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
         // 1. Extract the children
         let left_node = node.child_by_field_name("left").expect("missing left");
@@ -3653,8 +4042,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
         // The location being updated (`x`, `p->f`, `a[i]`, ...).
         let argument = node.child_by_field_name("argument").expect("missing left");
@@ -3682,8 +4071,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
         // A subscript read on the RHS: resolve the location (base path + index field) and lower
         // it to loads. (As an lvalue it is handled by `flatten_lvalue` instead.)
@@ -3695,8 +4084,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         arg_list: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> Result<ctadl_ir::ThinVec<Exp>, Error> {
         let mut result = ctadl_ir::ThinVec::new();
 
@@ -3849,8 +4238,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         recv_node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> Result<Option<RecvObj>, Error> {
         match recv_node.kind() {
             "identifier" => {
@@ -3924,8 +4313,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         call_node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
         temp_name: String,
     ) -> Result<Option<DispatchOut>, Error> {
         let func_node = call_node
@@ -4034,8 +4423,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
         temp_name: String,
     ) -> Result<Exp, Error> {
         // C++ instance-method / chained call: `recv.method(args)` (including a chained
@@ -4249,9 +4638,15 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
-    /// Lower a single function body with the shared lowering core: allocate (or reuse) its
+    /// Lower one `function_definition` into its IR function: allocate (or reuse) its
     /// `FunctionIdx`, set its name and return arity, build its parameter and body scopes,
-    /// collect parameters, pre-create `goto`-label blocks, and walk the body.
+    /// collect parameters, pre-create `goto`-label blocks, walk the body, and finalize
+    /// terminators.
+    ///
+    /// Split out of [`Context::collect_functions`] so the per-function lowering is one named unit
+    /// rather than an 80-line loop body. That keeps the query/dispatch loop readable, and it is
+    /// what lets a change in here be reviewed (and merged) as a diff against a function instead of
+    /// against an anonymous block.
     ///
     /// Both frontend entry points funnel through here. A free function passes
     /// `class_context = None, has_implicit_this = false`. A C++ **instance** method / constructor
@@ -4357,7 +4752,7 @@ impl<'a> Context<'a> {
 
         //we have to build this one by hand, becuase we want the initial scope without the extra block
         let block_scope = self.scope_tree.add_scope(body_name, Some(param_sidx));
-        let block_scope_view = ScopeView {
+        let mut block_scope_view = ScopeView {
             func_name: func_name.to_string(),
             fidx,
             blidx,
@@ -4390,7 +4785,7 @@ impl<'a> Context<'a> {
         // nothing; C++ has a constructor's member-initializer list. What that means is the
         // hook's business — the core only fixes the point at which it runs.
         let ctor_prologue = self.hooks.ctor_prologue;
-        ctor_prologue(self, program, &block_scope_view, source, member_inits)?;
+        ctor_prologue(self, program, &mut block_scope_view, source, member_inits)?;
 
         self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
         // Every block must carry a terminator; the walk can leave one without (an orphaned
@@ -4398,6 +4793,42 @@ impl<'a> Context<'a> {
         // whole body is lowered.
         finalize_terminators(program, fidx, func_name)?;
         Ok(())
+    }
+
+    /// Blends every expression in `values` into one fresh temp and yields it -- the value of a
+    /// construct where the frontend cannot tell which of several expressions is the result, so
+    /// all of them may be (a ternary's two arms, a generic selection's N).
+    ///
+    /// Two values fit in a single `assign`, which is the statement a ternary has always lowered
+    /// to; any further value folds in with the running temp as the second operand -- the
+    /// `t = src, t` shape [`Context::flatten_gnu_asm`] uses -- because an `assign` carries at
+    /// most two. A blend of nothing is a temp that is never written, i.e. an opaque value.
+    fn blend_into_temp(
+        &mut self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        values: &[Exp],
+    ) -> Exp {
+        let temp_name = self.allocator.next_temp();
+        let target = self.build_access_path(
+            temp_name.as_str(),
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
+        let mut rest = values.iter();
+        if let Some(first) = rest.next() {
+            let second = rest.next();
+            self.add_assign_to_program(program, scope_view, &target, first, second);
+            for extra in rest {
+                let so_far = self.emit_loads(program, scope_view, target.clone());
+                let running = Exp::access_path(so_far);
+                self.add_assign_to_program(program, scope_view, &target, extra, Some(&running));
+            }
+        }
+        Exp::Variable(VariableRef::new_local_idx(
+            program[scope_view.fidx].locals.get_or_intern(&temp_name),
+        ))
     }
 
     //this is a helper function to take the SSA list and shove them all into the block
@@ -4471,8 +4902,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> Result<Option<AccessPath>, Error> {
         match node.kind() {
             "parenthesized_expression" => {
@@ -4504,8 +4935,8 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
+        source: &'a str,
+        scope_view: &mut ScopeView,
     ) -> Result<RawPath, Error> {
         match node.kind() {
             "identifier" => Ok(self.build_access_path(
@@ -4574,6 +5005,34 @@ impl<'a> Context<'a> {
                 let mut ap = base;
                 push_element(&mut ap.fields, constant_index(&index));
                 Ok(ap)
+            }
+            // A GNU statement expression in lvalue position -- `container_of(p, T, m)->f = v`
+            // and the rest of the kernel's list/RCU accessors. The location it names is the
+            // location its value expression names, so run the braces for their effects and
+            // resolve that value node as the lvalue. Falling through to the catch-all below
+            // instead only worked when the value happened to lower to a bare variable; anything
+            // else (a field path, a cast) reported `not an lvalue: compound_statement` and the
+            // store was dropped onto a dead temp.
+            "compound_statement" => {
+                let outer_sidx = scope_view.sidx;
+                let outer_span = self.cur_span;
+                let path = match self
+                    .lower_statement_expression_effects(program, node, source, scope_view)?
+                {
+                    Some(inner) => self.flatten_lvalue(program, inner, source, scope_view)?,
+                    None => {
+                        let temp_name = self.allocator.next_temp();
+                        RawPath::new(
+                            VariableRef::new_local_idx(
+                                program[scope_view.fidx].locals.get_or_intern(&temp_name),
+                            ),
+                            ThinVec::new(),
+                        )
+                    }
+                };
+                scope_view.sidx = outer_sidx;
+                self.cur_span = outer_span;
+                Ok(path)
             }
             "parenthesized_expression" | "parenthesized_declarator" => {
                 let inner = node.child(1).expect("missing inner expr");
@@ -4764,6 +5223,62 @@ fn unexpected_ast(msg: String) -> Result<(), Error> {
 /// [`unexpected_ast`]; the warning attributes the fault to the source.
 fn malformed_source(msg: String) -> Result<(), Error> {
     recoverable_report("source problem", msg)
+}
+
+/// Splits a `generic_expression` into its controlling expression and the *values* of its
+/// associations (`_Generic(ctrl, T1: e1, ..., default: eN)` -> `ctrl`, `[e1, ..., eN]`).
+///
+/// tree-sitter-c 0.24.1 gives the construct no field names and no per-association node: the
+/// named children are the controlling expression followed by a flat `type_descriptor`, value,
+/// `type_descriptor`, value, ... sequence, and `default:` is spelled as a `type_descriptor`
+/// whose type is the identifier `default`. So the values are exactly the named children after
+/// the first that are not `type_descriptor`s -- reading them positionally instead would break
+/// on `comment`, which is an `extra` and may appear anywhere.
+///
+/// An `ERROR` child counts as a value, so it is lowered (and reported) like any other. The
+/// kernel produces one per `container_of`: `_Generic(sk, const typeof(*(sk)) *: ...)` has an
+/// association type tree-sitter-c cannot parse, and the stray `*` it recovers with lands here.
+/// Charging that to the ERROR-debris class is deliberate -- it is the same parse debris every
+/// other dispatch point reports, and reclassifying all of it at once is its own spec.
+fn generic_selection_parts<'t>(node: Node<'t>) -> (Option<Node<'t>>, Vec<Node<'t>>) {
+    let mut cursor = node.walk();
+    let mut named = node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() != "comment");
+    let controlling = named.next();
+    let values = named
+        .filter(|child| child.kind() != "type_descriptor")
+        .collect();
+    (controlling, values)
+}
+
+/// The `operand` children of a `gnu_asm_expression`'s `output_operands` / `input_operands` list.
+/// Both fields are optional AND a present list may still be empty -- `__asm__ ("pause")` has no
+/// lists at all, while `__asm__ ("mfence" ::: "memory")` parses as two empty ones -- so this
+/// yields nothing in either case.
+fn gnu_asm_operands<'t>(node: Node<'t>, field: &str) -> Vec<Node<'t>> {
+    let Some(list) = node.child_by_field_name(field) else {
+        return Vec::new();
+    };
+    let mut cursor = list.walk();
+    list.children_by_field_name("operand", &mut cursor)
+        .collect()
+}
+
+/// The C expression an asm operand names: the lvalue written for an output, the value read for
+/// an input. Required by the grammar for both operand kinds.
+fn gnu_asm_operand_value<'t>(operand: Node<'t>) -> Node<'t> {
+    operand
+        .child_by_field_name("value")
+        .expect("a gnu asm operand always has a value")
+}
+
+/// Whether an asm output operand is read-modify-write. GNU spells that with a `+` in the
+/// constraint (`"+r"`, `"+&r"`, the multi-alternative `"+r,m"`), as against write-only `"="`.
+fn gnu_asm_operand_is_readwrite(operand: Node<'_>, source: &str) -> bool {
+    operand
+        .child_by_field_name("constraint")
+        .is_some_and(|c| to_str(&c, source).contains('+'))
 }
 
 /// Recursively prints a Tree-sitter node and all its descendants.
