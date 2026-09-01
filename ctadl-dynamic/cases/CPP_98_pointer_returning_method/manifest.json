@@ -1,0 +1,6 @@
+{
+  "name": "CPP_98_pointer_returning_method",
+  "description": "C++ pointer-returning method (spec 130 parity), POSITIVE: `int *pick(int *p)` nests its function_declarator in a pointer_declarator, which method discovery used to skip, dropping the body and stubbing the call. With the body lowered, pick returns its pointer parameter, so sink(q[0]) reads the tainted arr[0] through the returned pointer. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

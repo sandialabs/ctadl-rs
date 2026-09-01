@@ -30,8 +30,8 @@ use tree_sitter::{Node, QueryCursor};
 
 use super::{
     ClassInfo, Context, GrammarHooks, MatchExtractor, RawPath, ScopeView, TranslationUnit, VarKind,
-    compile_query_for, declarator_leaf_ident, is_class_member_definition, is_namespaced_definition,
-    lower_units, param_arity, to_str,
+    compile_query_for, declarator_leaf_ident, function_declarator_of, is_class_member_definition,
+    is_namespaced_definition, lower_units, param_arity, returns_void, to_str, unparenthesize,
 };
 use crate::error::Error;
 
@@ -109,22 +109,6 @@ fn base_class_names(specifier: Node<'_>, source: &str) -> Vec<String> {
         }
     }
     bases
-}
-
-/// Unwrap a `reference_declarator` (`Class& m(…)`, `int& get(…)`) to the `function_`
-/// `declarator` it wraps; pass any other declarator through unchanged. A reference return
-/// type nests the function declarator inside a `reference_declarator`, which the
-/// method-discovery and top-level function queries key on the bare `function_declarator` and
-/// would otherwise skip. Inert for C (no `reference_declarator`).
-fn unwrap_reference_declarator(decl: Node<'_>) -> Node<'_> {
-    if decl.kind() == "reference_declarator" {
-        let mut c = decl.walk();
-        decl.children(&mut c)
-            .find(|n| n.kind() == "function_declarator")
-            .unwrap_or(decl)
-    } else {
-        decl
-    }
 }
 
 /// Whether a method body returns the receiver object itself (`return *this;`), so its
@@ -234,15 +218,12 @@ fn enclosing_class_qualified_name(node: Node<'_>, source: &str) -> Option<String
 ///
 /// Constructors are **included** (spec 010): a class's ctors form an overload set keyed on
 /// `Class::Class`, so ctors of ≥2 distinct arities each get an arity-mangled name and a
-/// construction resolves to the matching one. A reference-returning definition (`Box& setV(…)`)
-/// is unwrapped first, exactly as discovery does elsewhere. Every shape matched here is
-/// C++-only, so this yields `None` for all of C.
+/// construction resolves to the matching one. A pointer- or reference-returning definition
+/// (`Box *make(…)`, `Box& setV(…)`) is unwrapped first, exactly as discovery does elsewhere.
+/// Every shape matched here is C++-only, so this yields `None` for all of C.
 fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
     let declr = fdef.child_by_field_name("declarator")?;
-    let func_declr = unwrap_reference_declarator(declr);
-    if func_declr.kind() != "function_declarator" {
-        return None;
-    }
+    let (func_declr, _) = function_declarator_of(declr)?;
     let params = func_declr.child_by_field_name("parameters")?;
     let arity = param_arity(params);
     let name_node = func_declr.child_by_field_name("declarator")?;
@@ -336,24 +317,17 @@ fn cpp_aux_owns_definition(def: Node<'_>) -> bool {
     }
     // Unwrap what a definition's declarator may wrap around its `function_declarator` (a
     // pointer or reference return, parentheses) and look at the name it declares.
-    let mut node = def.child_by_field_name("declarator");
-    while let Some(n) = node {
-        match n.kind() {
-            "function_declarator" => {
-                return n
-                    .child_by_field_name("declarator")
-                    .is_none_or(|name| name.kind() != "identifier");
-            }
-            "pointer_declarator" | "parenthesized_declarator" => {
-                node = n
-                    .child_by_field_name("declarator")
-                    .or_else(|| n.named_child(0));
-            }
-            "reference_declarator" => node = n.named_child(0),
-            _ => return false,
-        }
+    match def
+        .child_by_field_name("declarator")
+        .and_then(function_declarator_of)
+    {
+        Some((func_declr, _)) => func_declr
+            .child_by_field_name("declarator")
+            .and_then(unparenthesize)
+            .is_none_or(|name| name.kind() != "identifier"),
+        // Not function-shaped at all: left to the shared pass, which reports it as for C.
+        None => false,
     }
-    false
 }
 
 /// Union each class's **transitive** base-class data members into its own `members`, so an
@@ -531,14 +505,16 @@ fn cpp_collect_methods<'a>(
                     let Some(declr) = child.child_by_field_name("declarator") else {
                         continue;
                     };
-                    // A reference return type (`Class& m(…)`, `int& get(…)`) nests the
-                    // `function_declarator` inside a `reference_declarator`; unwrap it so the
-                    // method is discovered (otherwise it is silently skipped).
+                    // A pointer or reference return type (`int *get(…)`, `Class& m(…)`) nests
+                    // the `function_declarator` inside `pointer_declarator`s / a
+                    // `reference_declarator`; unwrap them so the method is discovered (this
+                    // used to demand the bare `function_declarator` and silently dropped every
+                    // pointer-returning method body -- spec 130, on the C++ side) and so a
+                    // `void *` return counts as the value it is.
                     let is_reference_return = declr.kind() == "reference_declarator";
-                    let func_declr = unwrap_reference_declarator(declr);
-                    if func_declr.kind() != "function_declarator" {
+                    let Some((func_declr, returns_pointer)) = function_declarator_of(declr) else {
                         continue;
-                    }
+                    };
                     let (Some(name_node), Some(params), Some(method_body)) = (
                         func_declr.child_by_field_name("declarator"),
                         func_declr.child_by_field_name("parameters"),
@@ -568,9 +544,8 @@ fn cpp_collect_methods<'a>(
                     } else {
                         to_str(&name_node, source).to_string()
                     };
-                    let void = child
-                        .child_by_field_name("type")
-                        .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
+                    let void =
+                        returns_void(child.child_by_field_name("type"), returns_pointer, source);
                     if is_dtor {
                         // A destructor returns nothing and writes/reads the object via `this`;
                         // model it as a void niladic `Class::~Class` method (an implicit `this`
@@ -674,24 +649,14 @@ fn cpp_collect_methods<'a>(
     // (class, method, params, body) first — the cursor borrows the tree, not `ctx`, so reading
     // `ctx.classes` to filter to already-declared classes is fine — then register the method
     // names and queue the bodies after the cursor drops.
-    // Match both a plain out-of-line declarator and a reference-returning one
-    // (`Box& Box::setV(…)`), whose `function_declarator` is wrapped in a `reference_declarator`.
+    // The declarator is captured whole and unwrapped by `function_declarator_of`: a pointer
+    // return (`int *Box::get(…)`) nests the `function_declarator` in a `pointer_declarator`
+    // per `*`, a reference return (`Box& Box::setV(…)`) in a `reference_declarator`, and a
+    // query pattern cannot follow either to arbitrary depth.
     let ool_query = ctx.compile_query(
         r#"
         (function_definition
-            declarator: [
-                (function_declarator
-                    declarator: (qualified_identifier
-                        scope: (namespace_identifier) @class
-                        name: (identifier) @method)
-                    parameters: (parameter_list) @params)
-                (reference_declarator
-                    (function_declarator
-                        declarator: (qualified_identifier
-                            scope: (namespace_identifier) @class
-                            name: (identifier) @method)
-                        parameters: (parameter_list) @params))
-            ]
+            declarator: (_) @decl
             body: (compound_statement) @body) @def
         "#,
     );
@@ -701,33 +666,49 @@ fn cpp_collect_methods<'a>(
         let mut ool_it = ool_cursor.matches(&ool_query, root, source.as_bytes());
         while let Some(m) = ool_it.next() {
             let extract = MatchExtractor::new(&ool_query, m);
-            let class = to_str(&extract.get("class")?, source).to_string();
+            let decl = extract.get("decl")?;
+            // An out-of-line member is named by a `qualified_identifier` whose scope is the
+            // class (`Box::m`); anything else the shared pass or the inline walk above owns.
+            let Some((func_declr, returns_pointer)) = function_declarator_of(decl) else {
+                continue;
+            };
+            let Some(name_node) = func_declr.child_by_field_name("declarator") else {
+                continue;
+            };
+            if name_node.kind() != "qualified_identifier" {
+                continue;
+            }
+            let (Some(scope), Some(method_node), Some(params)) = (
+                name_node.child_by_field_name("scope"),
+                name_node.child_by_field_name("name"),
+                func_declr.child_by_field_name("parameters"),
+            ) else {
+                continue;
+            };
+            if scope.kind() != "namespace_identifier" || method_node.kind() != "identifier" {
+                continue;
+            }
+            let class = to_str(&scope, source).to_string();
             // Only lower out-of-line bodies for a class known from its declaration (this
             // slice's scope). An unknown qualifier (e.g. a namespaced free function) is left
             // alone — it is not an instance method we can model here.
             if !ctx.classes.contains_key(&class) {
                 continue;
             }
-            let name = to_str(&extract.get("method")?, source).to_string();
+            let name = to_str(&method_node, source).to_string();
             let def = extract.get("def")?;
-            let params = extract.get("params")?;
             let body = extract.get("body")?;
             // `Box::Box(…)` (name == class) is an out-of-line **constructor**: model it as a
             // void `Class::Class` and carry its member-initializer list. An ordinary
             // out-of-line method keeps its declared return arity and has no init list.
             let is_ctor = name == class;
-            let void = is_ctor
-                || def
-                    .child_by_field_name("type")
-                    .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
+            let void =
+                is_ctor || returns_void(def.child_by_field_name("type"), returns_pointer, source);
             // A reference-returning out-of-line definition (`Box& Box::setV(…)`) has its
             // `function_declarator` wrapped in a `reference_declarator`; if its body returns
             // `*this` the result aliases the receiver object (a fluent setter).
-            let returns_self = !is_ctor
-                && def
-                    .child_by_field_name("declarator")
-                    .is_some_and(|d| d.kind() == "reference_declarator")
-                && body_returns_deref_this(body);
+            let returns_self =
+                !is_ctor && decl.kind() == "reference_declarator" && body_returns_deref_this(body);
             let member_inits = if is_ctor {
                 ctor_member_inits(def, source)
             } else {
@@ -831,9 +812,7 @@ fn cpp_collect_namespaced_functions<'a>(
         (namespace_definition
             body: (declaration_list
                 (function_definition
-                    declarator: (function_declarator
-                        declarator: (identifier) @func.name
-                        parameters: (parameter_list) @params)
+                    declarator: (_) @decl
                     body: (compound_statement) @body) @def))
         "#,
     );
@@ -851,17 +830,29 @@ fn cpp_collect_namespaced_functions<'a>(
         while let Some(m) = it.next() {
             let extract = MatchExtractor::new(&query, m);
             let def = extract.get("def")?;
-            let fname = to_str(&extract.get("func.name")?, source);
-            let params = extract.get("params")?;
+            // The declarator is captured whole so a pointer return (`char *ns::dup(…)`) is
+            // found through its `pointer_declarator`s, like everywhere else.
+            let Some((func_declr, returns_pointer)) = function_declarator_of(extract.get("decl")?)
+            else {
+                continue;
+            };
+            let (Some(name_node), Some(params)) = (
+                func_declr.child_by_field_name("declarator"),
+                func_declr.child_by_field_name("parameters"),
+            ) else {
+                continue;
+            };
+            if name_node.kind() != "identifier" {
+                continue;
+            }
+            let fname = to_str(&name_node, source);
             // Qualified name (`ns::f`), then arity-mangled if this namespaced free function is
             // itself overloaded (`ns::f#1`/`ns::f#2`) — matching the call-site edge. A
             // non-overloaded namespaced function stays bare-qualified (identity mangler), so
             // the existing namespace cases are unchanged.
             let base = format!("{}{}", enclosing_namespace_prefix(def, source), fname);
             let qualified = ctx.overload_name(&base, param_arity(params));
-            let void = def
-                .child_by_field_name("type")
-                .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
+            let void = returns_void(def.child_by_field_name("type"), returns_pointer, source);
             ns_fns.push(NsFn {
                 qualified,
                 params,

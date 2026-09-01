@@ -2087,6 +2087,44 @@ fn collect_registry(source: &str, node: Node<'_>, registry: &mut UnitRegistry) {
     }
 }
 
+/// The `function_declarator` a definition's declarator wraps, and whether the wrapping makes
+/// the function return a pointer: the unwrapping half of [`function_head`], shared with the
+/// C++ frontend's method discovery, which names its functions differently but wraps them the
+/// same way.
+///
+/// A pointer return wraps the `function_declarator` in one `pointer_declarator` per `*`
+/// (`char **argv_of(void)` is `pointer_declarator > pointer_declarator > function_declarator`),
+/// and any layer may wear parentheses. A C++ reference return (`Box &setV(int)`) wraps it in a
+/// `reference_declarator`, a node the C grammar does not have; it is unwrapped the same way
+/// and is not a pointer (a reference to `void` is not a type, so the `void` test still
+/// decides that arity). `None` for a declarator that is not a function's: an array or
+/// attributed declarator, a variable, parse-recovery debris.
+fn function_declarator_of(declarator: Node<'_>) -> Option<(Node<'_>, bool)> {
+    let mut node = unparenthesize(declarator)?;
+    let mut returns_pointer = false;
+    loop {
+        match node.kind() {
+            "pointer_declarator" => {
+                returns_pointer = true;
+                node = unparenthesize(node.child_by_field_name("declarator")?)?;
+            }
+            // What a `reference_declarator` wraps is its one named child (no field name).
+            "reference_declarator" => node = unparenthesize(node.named_child(0)?)?,
+            "function_declarator" => return Some((node, returns_pointer)),
+            _ => return None,
+        }
+    }
+}
+
+/// Whether a definition returns nothing, given its `type:` field and whether its declarator
+/// makes it return a pointer. Only an explicit `void` that is not a pointee is arity 0: `void
+/// *xmalloc(size_t)` has `type: void` and returns a value, because the `void` describes the
+/// pointee, not the function. C allows an implicit `int` (no `type` node), which returns one.
+fn returns_void(return_type: Option<Node<'_>>, returns_pointer: bool, source: &str) -> bool {
+    !returns_pointer
+        && return_type.is_some_and(|rt| to_str(&rt, source).eq_ignore_ascii_case("void"))
+}
+
 /// What a `function_definition`'s declarator says about the function it defines: the node
 /// that names it, its parameter list, and whether the value it returns is a pointer.
 ///
@@ -2102,15 +2140,7 @@ fn collect_registry(source: &str, node: Node<'_>, registry: &mut UnitRegistry) {
 /// parenthesized declarator (`char *(*f(int))(void)`, a function returning a function
 /// pointer), an array or attributed declarator, or parse-recovery debris.
 fn function_head(declarator: Node<'_>) -> Option<FunctionHead<'_>> {
-    let mut node = unparenthesize(declarator)?;
-    let mut returns_pointer = false;
-    while node.kind() == "pointer_declarator" {
-        returns_pointer = true;
-        node = unparenthesize(node.child_by_field_name("declarator")?)?;
-    }
-    if node.kind() != "function_declarator" {
-        return None;
-    }
+    let (node, returns_pointer) = function_declarator_of(declarator)?;
     // `(f)(int)` and `(f(int))` both declare `f`; a macro-shy definition writes one of them.
     // The parens are NOT redundant when what they hold is a pointer -- `char *(*f(int))(void)`
     // returns a function pointer -- and that shape is rejected here, by the identifier test.
@@ -5571,11 +5601,7 @@ impl<'a> Context<'a> {
             // name several definitions claim.
             let mangled = self.overload_name(written, param_arity(head.params));
             let func_name = self.unit_plan.name_of(def_node.id(), &mangled).to_string();
-            // C allows an implicit `int` return type (no `type` node); only an explicit `void`
-            // is arity 0. A pointer return is a return: `void *xmalloc(size_t)` has `type: void`
-            // and an arity of 1, because the `void` describes the pointee, not the function.
-            let return_is_void = !head.returns_pointer
-                && return_type.is_some_and(|rt| to_str(&rt, source).eq_ignore_ascii_case("void"));
+            let return_is_void = returns_void(return_type, head.returns_pointer, source);
             self.lower_function(
                 source,
                 program,

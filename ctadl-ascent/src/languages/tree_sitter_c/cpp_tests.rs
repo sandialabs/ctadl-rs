@@ -2579,3 +2579,117 @@ fn cpp_class_brace_init_is_not_an_aggregate() {
         "a class brace-init must stay construction, not become an aggregate\nbrace:\n{brace_prog}\nparen:\n{paren_prog}"
     );
 }
+
+// ---- Pointer-returning definitions: spec 130 parity for the C++ discovery paths -------------
+
+#[test_log::test]
+fn cpp_pointer_returning_inline_method_is_discovered() {
+    // An inline method whose return type is a pointer (`int *pick(int *p)`) wraps its
+    // `function_declarator` in a `pointer_declarator`. Discovery used to demand the bare
+    // `function_declarator` (or a `reference_declarator` around it) and silently dropped the
+    // body -- spec 130's bug on the C++ side. It is now discovered, lowered with the implicit
+    // `this`, and returns its (by-ref) pointer parameter.
+    let src = r"
+        struct Box {
+            int *pick(int *p) { return p; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::pick",
+        &[ParameterType::ByRef, ParameterType::ByRef],
+    );
+    check_return_arity(&prog, "Box::pick", 1);
+    check_func_returns_path(&prog, "Box::pick", "@p1");
+}
+
+#[test_log::test]
+fn cpp_void_pointer_returning_method_returns_a_value() {
+    // `void *raw(...)` returns a value: the `void` is the pointee, not the function. The arity
+    // used to be read off the `type:` field alone, which makes this a void method whose
+    // `return p` does not verify (`InconsistentReturns`).
+    let src = r"
+        struct Box {
+            void *raw(void *p) { return p; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_return_arity(&prog, "Box::raw", 1);
+    check_func_returns_path(&prog, "Box::raw", "@p1");
+}
+
+#[test_log::test]
+fn cpp_pointer_returning_out_of_line_method_is_discovered() {
+    // The out-of-line query used to enumerate the bare and the reference-wrapped shapes; a
+    // `pointer_declarator` per `*` around the `function_declarator` matched neither, so the
+    // body was dropped. The declarator is now captured whole and unwrapped.
+    let src = r"
+        struct Box {
+            int v;
+            int **pick(int **p);
+        };
+        int **Box::pick(int **p) { return p; }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::pick",
+        &[ParameterType::ByRef, ParameterType::ByRef],
+    );
+    check_return_arity(&prog, "Box::pick", 1);
+    check_func_returns_path(&prog, "Box::pick", "@p1");
+}
+
+#[test_log::test]
+fn cpp_pointer_returning_namespaced_function_is_discovered() {
+    // Same drop, third path: a namespaced free function returning a pointer.
+    let src = r"
+        namespace ns {
+            char *dup(char *s) { return s; }
+        }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(&prog, "ns::dup", &[ParameterType::ByRef]);
+    check_return_arity(&prog, "ns::dup", 1);
+    check_func_returns_path(&prog, "ns::dup", "@p0");
+}
+
+#[test_log::test]
+fn cpp_pointer_returning_methods_are_still_an_overload_set() {
+    // `overload_base_name` unwraps the same way, so pointer-returning definitions count toward
+    // an overload set and are lowered under their arity-mangled names.
+    let src = r"
+        struct Box {
+            int *pick(int *p) { return p; }
+            int *pick(int *p, int) { return p; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_return_arity(&prog, "Box::pick#1", 1);
+    check_return_arity(&prog, "Box::pick#2", 1);
+    check_func_returns_path(&prog, "Box::pick#2", "@p1");
+}
+
+#[test_log::test]
+fn cpp_call_to_a_pointer_returning_method_reaches_its_body() {
+    // The shape corpus case CPP_98 pins end to end: a call to a pointer-returning method is a
+    // direct call to the lowered body (not to an arity-0 stub `define_extern_functions` would
+    // invent), so the pointer it returns carries the caller's taint back.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box {
+            int *pick(int *p) { return p; }
+        };
+        int main() {
+            Box b;
+            int arr[2] = {0, 0};
+            arr[0] = source();
+            int *q = b.pick(arr);
+            sink(q[0]);
+            return 0;
+        }"#;
+    let (prog, dump) = program_from_cpp_string(src);
+    check_has_direct_call(&prog, "main", "Box::pick");
+    check_return_arity(&prog, "Box::pick", 1);
+    assert!(
+        check_no_match(&dump, "define Box::pick(@p0[byref]) -> 0"),
+        "`Box::pick` must not be an arity-0 stub\n{dump}"
+    );
+}
