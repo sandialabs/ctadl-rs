@@ -1,80 +1,37 @@
-//! This module handles the Tree-sitter AST extraction for C files.
+//! Tree-sitter C front end: lowers preprocessed C source to CTADL IR.
 //!
-//! It is responsible for parsing C source code (POST PREPROCESSOR)
+//! # Known limitations
 //!
-//! # Known Limitations
+//! ## Initializer in `if (int x = 0; x > 7)`
 //!
+//! Not standard C. Tree-sitter wraps it in an Error node; the error is dropped.
 //!
-//! ## Initialialization in `if(int x = 0; x > 7)`
+//! ## Implicit `int` return type
 //!
-//! This is *legal* C in C23 (according to Gemini), but illegal before C23.
-//! Tree-sitter builds an Error node around this, we just drop the error.
+//! Old C allows a definition without an explicit return type; `foo() { return 1; }` lowers the
+//! same as `int foo() { return 1; }`.
 //!
-//! ## Implicit int return type
-//!    
-//! Old C allowed a function declaration without an explicit return type.
-//! This is quasi-legal C  (and foo is equivalent in type to bar):
-//! ```c
-//! foo(){
-//! return 1;
-//! }
+//! ## Non-constant subscript indices
 //!
-//! int bar(){
-//! return 1;
-//! }
-//! ```
-//!
-//! ## Non constant subscript indices
-//!
-//! A subscript is lowered as the pointer arithmetic it is: `a[3]` is the address `a.[3]` plus
-//! the dereference performed there, `deref` (see [`DEREF_FIELD`]). A non-constant index has no
-//! offset to name, so `a[n]` becomes a bare dereference of the base address -- literally the
-//! path `a[0]` produces. A write through `a[n]` is therefore observed at a read of `a[0]`, but
-//! *not* at a nonzero constant index: `a[n] = v` does not reach `a[2]`. That is the remaining
-//! half of the F5 gap. Closing it means over-approximating the index here -- for instance,
-//! lowering *every* subscript on a base the function also indexes non-constantly to the bare
-//! dereference -- and not asking the path matcher to alias two spellings, which it does not do.
+//! `a[n]` lowers to the bare dereference `a[0]` also produces (see [`DEREF_FIELD`]), so a
+//! write through `a[n]` is observed at `a[0]` but not at a nonzero constant index like
+//! `a[2]`.
 //!
 //! ## Addresses of struct members
 //!
-//! [`Context::flatten_address_of`] can form the address of an array element (`&a[1]`), because
-//! an address in the IR is a base variable plus numeric offsets. A member address (`&s.f`) has
-//! no such spelling -- it would need `f`'s byte offset, which this frontend, having no type
-//! information, cannot compute -- so `&s.f` falls back to the value-copy model and a callee's
-//! write through that pointer is dropped.
+//! An address in the IR is a base variable plus numeric offsets, so `&a[1]` is expressible
+//! but `&s.f` is not (no type information, no byte offsets): `&s.f` falls back to the
+//! value-copy model and a callee's write through that pointer is dropped.
 //!
+//! ## Pointers and values look the same
 //!
-//! ## Pointer references feel the same a values
-//!
-//! Currently there is no differene between
-//!
-//! ```c
-//!
-//! int foo(int *x){
-//! return *x
-//! }
-//!
-//! and
-//! int bar(int x){
-//! return x;
-//! }
-//! and
-//! int *baz(int *x){
-//! return x;
-//! }
-//! ```
+//! Returning `*x`, a value `x`, and a pointer `x` all lower identically.
 //!
 //! ## `asm goto`
 //!
-//! GNU inline assembly is lowered as an operand transfer ([`Context::flatten_gnu_asm`]): every
-//! input operand may reach every output operand, and a `"+"` operand keeps its identity flow.
-//! `asm goto` additionally *jumps* to one of its labels. Those are real CFG edges, and they are
-//! built from inside the expression walk ([`Context::link_asm_goto_labels`]): the block the asm
-//! sits in gets an edge to each label's pre-created block *plus* the fall-through edge into a
-//! fresh block that the rest of the statement continues in. Unlike `goto`, an `asm goto` does
-//! not diverge -- it may fall through -- so it is not reported as a divergence. Pinned by
-//! `asm_goto_label_is_reachable`, `asm_goto_also_falls_through` and
-//! `asm_goto_multiple_labels_all_link`. Every kernel static key (`arch_static_branch`) is one.
+//! Inline assembly is an operand transfer ([`Context::flatten_gnu_asm`]); `asm goto`
+//! additionally gets a real CFG edge to each label plus the fall-through
+//! ([`Context::link_asm_goto_labels`]), and is not reported as a divergence.
 //!
 
 use hashbrown::hash_map::HashMap;
@@ -295,25 +252,15 @@ fn get_line_num(node: &Node<'_>) -> usize {
 /// written, so every read of it is the same absence of a value.
 const IMPLICIT_RETURN_LOCAL: &str = "<implicit-return>";
 
-/// The terminator to close a block with when the frontend, not the source, decides it returns.
+/// The terminator to close a block with when the frontend, not the source, decides it
+/// returns -- emitted by [`link_blocks`] (falling off the end of a body),
+/// [`finalize_terminators`] (patching an unterminated block), and `walk_return` (a bare
+/// `return;` in a non-`void` function).
 ///
-/// `lower_function` gives every function whose declared return type is not `void` a
-/// [`ReturnType`] of arity 1, and `verify()` rejects a `Return` carrying a different number of
-/// arguments ([`ctadl_ir::mir::VerifyError::InconsistentReturns`]), so the empty `return` is
-/// only well-formed in a `void` function. Three places have no expression to return and used to
-/// emit the empty one regardless -- falling off the end of a body (see [`link_blocks`]),
-/// patching a block the walk left unterminated ([`finalize_terminators`]), and a bare `return;`
-/// written inside a non-`void` function, which is legal C and common in `int` error paths. All
-/// three produced IR that did not verify, silently: no warning is logged, and nothing on the
-/// `ctadl import` path checks -- unlike the dex, jvm and pcode front ends, this one never calls
-/// `program.verify()`, and `ssa::transform_program`'s post-SSA check passes because
-/// `complete()` has already rewritten every `Return` into a goto to a single exit block. Only
-/// `get_summary` in this module's tests ever asked, which is why no census saw it.
-///
-/// Satisfy the arity contract with a local that is never assigned. C says the value of such a
-/// return is indeterminate, and an unwritten local is exactly that in this IR: it carries no
-/// taint into the return, so no flow is invented -- the same "value nothing reads" shape
-/// [`Context::flatten_gnu_asm`]'s operand-less blend already yields.
+/// A non-`void` function has return arity 1 and `verify()` rejects a `Return` of any other
+/// arity ([`ctadl_ir::mir::VerifyError::InconsistentReturns`]), so the synthesized return
+/// reads a local that is never assigned: C says the value is indeterminate, and an unwritten
+/// local carries no taint, so no flow is invented.
 fn implicit_return(program: &mut Program, fidx: FunctionIdx) -> Terminator {
     let fdat = &mut program.functions[fidx];
     let arity = fdat.return_type.arity as usize;
@@ -368,11 +315,9 @@ fn link_blocks(
                     Ok(())
                 }
                 // The block already ends in a `return`, so it has no fall-through
-                // and this continuation edge is redundant: a block cannot both
-                // return and goto. This arises from over-eager continuation
-                // wiring around an if/else chain whose arms all diverge (e.g.
-                // dropbear's `svr_dropbear_exit`). Keep the `return` and drop the
-                // spurious edge rather than aborting the whole import.
+                // and this continuation edge is redundant (an if/else chain whose
+                // arms all diverge). Keep the `return` and drop the spurious edge
+                // rather than aborting the whole import.
                 TerminatorKind::Return { .. } => recoverable_report(
                     "frontend gap",
                     format!(
@@ -397,31 +342,17 @@ fn link_blocks(
     }
 }
 
-/// The basic-block contract is a sequence of statements ending in a terminator,
-/// and every function graph must satisfy it by the time it leaves the frontend.
-/// The walk can leave a pre-created block unterminated when a diverging
-/// statement cut the compound short before the block was reached: a `goto`
-/// label after a `return` (`walk_compound_statement` stops at the `return`, so
-/// `walk_labeled_statement` never runs for the label), a recovered/skipped
-/// subtree that contained a label, or a duplicate label name (the first
-/// pre-created block is orphaned). Give every such block the same implicit
-/// empty `return` that falling off the end of the body gets (see
-/// `link_blocks`), then report once per function: an unterminated block means
-/// its statements were dropped, a frontend gap worth surfacing under
-/// CTADL_ERROR_ON_AST. Same pattern as the Lua frontend's
-/// `finalize_terminators`.
+/// Give every block the walk left unterminated (a `goto` label after a `return`, a skipped
+/// subtree that held a label, a duplicate label's orphaned first block) the same implicit
+/// empty `return` that falling off the end gets, then report once per function: an
+/// unterminated block means its statements were dropped -- a frontend gap. Same pattern as
+/// the Lua frontend's `finalize_terminators`.
 ///
-/// `stranded_labels` names the blocks pre-created for labels `walk_labeled_statement` never
-/// entered. In a body the parser did not fully parse (`body_holds_recovery`) those are
-/// patched like any other but **not** reported: the label sits in parse-recovery output,
-/// which this frontend deliberately does not analyze, so the loss is a fact about the
-/// analyzed source and is stated as one -- once per function, by
-/// `Context::report_unanalyzed_recovery` -- rather than a second time as a frontend gap. That
-/// is spec 064's rule applied to the last class that still broke it: all 29 of the kernel
-/// census's remaining `left without a terminator` warnings were label blocks of this kind.
-/// In a body that parsed cleanly a stranded label block is still a gap and still reported --
-/// a duplicate label orphans one (`error_on_ast_promotes_unterminated_block`), and that block
-/// is not in `stranded_labels` at all, since `label_blocks` kept only the later of the two.
+/// `stranded_labels` names the label blocks the walk never entered. In a body that did not
+/// fully parse (`body_holds_recovery`) those are patched but NOT reported: the loss belongs
+/// to the parse-recovery output, already reported once by
+/// `Context::report_unanalyzed_recovery`. In a cleanly parsed body a stranded label block is
+/// still a gap and still reported.
 fn finalize_terminators(
     program: &mut Program,
     fidx: FunctionIdx,
@@ -556,9 +487,8 @@ struct Definition<'a> {
     id: usize,
     /// The name as written.
     name: &'a str,
-    /// The definition's source text. This frontend lowers text, so two definitions that
-    /// quote the same characters lower to the same IR -- which is what makes deduplicating
-    /// them exact rather than a guess.
+    /// The definition's source text: two definitions that quote the same characters lower to
+    /// the same IR, which makes deduplication exact rather than a guess.
     text: &'a str,
 }
 
@@ -593,39 +523,24 @@ impl UnitPlan {
 /// out of the C identifier space, so it can never collide with a real source-level field.
 const UNION_FIELD: &str = "$union";
 
-/// Field name for the *memory* an address names -- the dereference itself. An `Offset(N)` in a
-/// path is pointer arithmetic and nothing else: it moves an address, it never reads. Every
-/// access that actually touches memory ends in this symbol, so `a[3]`, which is `*(a + 3)`,
-/// lowers to two segments: `Offset(3)` on the address, then `deref` for the read or write
-/// performed there -- the path `a.[3].deref`.
+/// Field name for the *memory* an address names -- the dereference itself. An `Offset(N)`
+/// in a path only moves an address; every access that touches memory ends in this symbol,
+/// so `a[3]` is the path `a.[3].deref`.
 ///
-/// Splitting the two is what makes element addresses composable. Offsets are summed when paths
-/// meet (`facts::Path::from_accesses`), so an address formed by `&a[1]` (`a.[1]`) that a callee
-/// writes at `.[1].deref` lands on `a.[2].deref` -- the same path a caller's `a[2]` reads. A
-/// single symbolic `[N]` field, which is what this frontend used to emit, cannot compose that
-/// way: no arithmetic relates `Symbol("[1]")` to `Symbol("[2]")`. The name and the
-/// `base.[off].deref` shape are the pcode frontend's, so the two C frontends spell a memory
-/// access the same way. (The dex and jvm frontends spell their element field `[]`; those are
-/// typed array loads, not pointer arithmetic, so they have no offset to keep separate.)
-///
-/// This is the *only* dereference field the frontend emits: a non-constant index lowers to it
-/// with no offset, so `a[n]` and `a[0]` are one path. See [`push_element`].
+/// Splitting the offset from the dereference is what makes element addresses composable:
+/// offsets are summed when paths meet (`facts::Path::from_accesses`), so a callee's write at
+/// `.[1].deref` through `&a[1]` (the address `a.[1]`) lands on `a.[2].deref`, where a
+/// caller's `a[2]` reads. The name and shape are the pcode frontend's. This is the only
+/// dereference field the frontend emits: a non-constant index lowers to it with no offset,
+/// so `a[n]` and `a[0]` are one path (see [`push_element`]).
 const DEREF_FIELD: &str = "deref";
 
-/// The field of the globals object that names the object at a compile-time constant address --
-/// the location `(T *)K` designates, for the constant `K` exactly as it is spelled in the
-/// source. `((struct inet_sock *)0)->sk` becomes `$globals.<address 0>.sk`.
-///
-/// A global rather than a fresh temp per site, because two casts of the same constant designate
-/// the same object in C: a store through `*(volatile u32 *)0xfee00300` must be observed at a
-/// read of it. Keyed on the constant's *text*, so `0` and `0x0` are two names for what is really
-/// one address -- accepted deliberately, since normalizing would mean re-implementing C integer
-/// literal semantics (bases, suffixes, character constants) for a distinction the corpus does not
-/// draw: all 2,177 sites in the kernel corpus spell it `0`.
-///
-/// `<...>` is not C identifier syntax, so this can never collide with a global the program
-/// declares -- the collision-proofing `next_temp` uses for `<tN>` and spec 090 for
-/// `<implicit-return>`.
+/// The field of the globals object naming the object at a compile-time constant address:
+/// `((struct s *)0)->f` becomes `$globals.<address 0>.f`. A global rather than a fresh temp
+/// per site because two casts of the same constant designate the same object in C. Keyed on
+/// the constant's *text* (`0` and `0x0` are two names for one address -- normalizing would
+/// mean re-implementing C integer-literal semantics for a distinction real code rarely
+/// draws). `<...>` is not C identifier syntax, so no collision with declared globals.
 fn literal_address_path(constant: &str) -> RawPath {
     let mut fields = ThinVec::with_capacity(1);
     fields.push(PathSegment::symbol(format!("<address {constant}>")));
@@ -682,16 +597,11 @@ fn deref_of_pointee(pointee: &AccessPath) -> Option<RawPath> {
     Some(RawPath::new(pointee.variable_ref.clone(), fields))
 }
 
-/// Appends the path segments a subscript contributes: a pointer-arithmetic offset for a constant
-/// index (elided when it is zero -- `a[0]` *is* `*a`, and the analysis drops `Offset(0)` anyway)
-/// followed by the dereference the subscript performs. See [`DEREF_FIELD`].
-///
-/// An index that is not a compile-time constant has no offset to name, so it lowers to the bare
-/// dereference -- the same path `a[0]` produces. That is deliberate: the two *are* the same path,
-/// so a write through `a[n]` is observed at a read of `a[0]` and vice versa, with no help from the
-/// path matcher, which treats every symbol as an opaque name. Approximating the unknown index by
-/// the base address is the frontend's own choice of over-approximation; see the module-level
-/// "Non constant subscript indices" note for what it still misses.
+/// Appends the path segments a subscript contributes: a pointer-arithmetic offset for a
+/// constant index (elided at zero -- `a[0]` *is* `*a`) followed by the dereference performed
+/// there. See [`DEREF_FIELD`]. A non-constant index has no offset to name and lowers to the
+/// bare dereference -- deliberately the same path `a[0]` produces, so the two may-alias with
+/// no help from the path matcher; see the module-level note for what that still misses.
 fn push_element(fields: &mut ThinVec<PathSegment>, index: Option<i64>) {
     match index {
         Some(n) if n != 0 => {
@@ -722,24 +632,16 @@ struct Context<'a> {
     /// (unlike `break`/`continue` targets, which ride on `ScopeView`) the blocks are
     /// created in a pre-scan over the whole body and looked up here. Reset per function.
     label_blocks: HashMap<String, BasicBlockIdx>,
-    /// Intraprocedural must-points-to for address-taken locals: maps a pointer variable
-    /// `p` to the access path it was taken to (`x` after `p = &x`) together with the basic
-    /// block in which that binding was established. Used to resolve a dereference `*p` --
-    /// as a store LHS (`*p = v`) or a load RHS (`y = *p`) -- to the pointee `x`, so a write
-    /// through the alias taints `x` (the F3 soundness gap: CTADL models pointers as value
-    /// copies, which is sound for reads but drops the write-back). The block key confines
-    /// each binding to the straight-line region it was recorded in: a lookup only trusts an
-    /// entry whose block matches the current `blidx`, so once control flow moves to another
-    /// block the alias is dropped and we fall back to the value-copy model. That keeps the
-    /// must-points-to exact (no cross-branch may-alias reasoning) and never less sound than
-    /// before. Reset per function.
+    /// Intraprocedural must-points-to for address-taken locals: pointer variable -> (pointee
+    /// path, block the binding was recorded in). Resolves a dereference `*p` -- store LHS or
+    /// load RHS -- to the pointee, so a write through the alias taints it (the value-copy
+    /// model is sound for reads but drops the write-back). A lookup only trusts an entry
+    /// whose block matches the current `blidx`, so the alias never crosses control flow.
+    /// Reset per function.
     addr_alias: HashMap<VariableRef, (AccessPath, BasicBlockIdx)>,
-    /// Variables declared with a `union` type. A union's members share storage, so every
-    /// member access aliases the others (`u.a = v` is observable at a read of `u.b`). CTADL
-    /// is otherwise field-sensitive -- correct for structs, whose members are disjoint --
-    /// so union members are collapsed to a single synthetic field (see `UNION_FIELD`) when a
-    /// `field_expression` is lowered off one of these variables, making all members the same
-    /// access path (the F4 soundness gap). Populated from `union_specifier`-typed local
+    /// Variables declared with a `union` type. Union members share storage, so member
+    /// accesses on these variables collapse to the single synthetic field `UNION_FIELD`,
+    /// making all members one access path. Populated from `union_specifier`-typed local
     /// declarations; reset per function.
     union_vars: HashSet<VariableRef>,
     /// Builder that interns source spans, or `None` when spans are not being recorded (the
@@ -753,47 +655,34 @@ struct Context<'a> {
     /// being walked. Set once per source statement in [`Context::walk_statement`] so that all
     /// the IR it expands into (calls, loads, stores) points back at that statement.
     cur_span: SourceInfo,
-    /// **Record layout registry**: a record tag mapped to its data members in declaration
-    /// order. Filled once per translation unit by [`Context::collect_type_registry`], before
-    /// any function is lowered, so a member's own type is available regardless of declaration
-    /// order. Consulted only by [`Context::collect_initializer_list`], to map a *positional*
-    /// brace initializer onto the members it writes. A tag that is absent (anonymous, declared
-    /// in another translation unit) simply takes the positional-element fallback, so an
-    /// incomplete registry is always safe.
+    /// Record layouts: tag -> data members in declaration order, filled per unit by
+    /// [`collect_registry`]. Consulted only by [`Context::collect_initializer_list`] to map
+    /// a *positional* brace initializer onto members; an absent tag takes the
+    /// positional-element fallback, so an incomplete registry is always safe.
     struct_layouts: HashMap<String, Vec<MemberSlot>>,
-    /// **Type-name registry**: every name this translation unit uses as a type. Filled by the
-    /// same pre-pass as `struct_layouts` (see [`Context::collect_type_registry`]), from the
-    /// `type_identifier` nodes tree-sitter itself produced -- a `typedef`'s declared name, and
-    /// equally a name used as a type in any declaration, which is the only evidence available
-    /// for a typedef that lives in a system header the corpus did not preprocess (nginx and
-    /// openssh use `u_char` and `uid_t` without ever declaring them).
-    ///
-    /// It exists to tell a cast from a call: tree-sitter cannot know `__be16` is a type, so
-    /// `(__be16)(x)` parses as a `call_expression` through a parenthesized callee -- the exact
-    /// shape of a genuine `(fp)(x)`. See [`Context::cast_shaped_call`], which is the only
-    /// consumer. A record TAG is deliberately not recorded: `struct stat` is a type but `stat`
-    /// alone is not one, and it is the name of a function.
+    /// Every name this translation unit uses as a type, read off the `type_identifier` nodes
+    /// tree-sitter produced -- a use in any declaration counts, which is the only evidence
+    /// for a typedef living in an unexpanded system header (`u_char`, `uid_t`). Exists to
+    /// tell a cast from a call: `(width_t)(x)` parses as a `call_expression` through a
+    /// parenthesized callee, the exact shape of a genuine `(fp)(x)`. Read only by
+    /// [`Context::cast_shaped_call`]. A record TAG is deliberately not recorded:
+    /// `struct stat` is a type, but bare `stat` is the function.
     type_names: HashSet<String>,
-    /// Names the translation unit declares as functions without defining them -- prototypes,
-    /// `int zzz(int);` -- collected in the same pre-pass as `type_names`. The positive
-    /// evidence that `(zzz)(x)` is a call, symmetric to the type-use evidence `type_names`
-    /// holds for a cast. Read by [`Context::cast_shaped_call`] only: it keeps the report made
-    /// on a name with no evidence either way quiet for the one idiom that legitimately lands
-    /// there, `(free)(p)` -- parentheses to suppress a function-like macro -- with libc's
-    /// prototype in scope.
+    /// Names the unit declares as functions without defining them (prototypes). The positive
+    /// evidence that `(zzz)(x)` is a call, symmetric to `type_names`' cast evidence; it keeps
+    /// the macro-suppression idiom `(free)(p)` quiet. Read only by
+    /// [`Context::cast_shaped_call`].
     declared_functions: HashSet<String>,
     /// `ERROR` nodes already reported as unparsable constructs, by `Node::id`, so one
     /// syntax error draws one warning. See [`Context::report_unparsable_construct`].
     reported_parse_errors: HashSet<usize>,
     /// Functions whose body was already reported as holding parse-recovery output, so the
-    /// notice is one per function rather than one per node the recovery left behind (41,751
-    /// of them in the kernel census). See [`Context::report_unanalyzed_recovery`].
+    /// notice is one per function rather than one per node the recovery left behind.
+    /// See [`Context::report_unanalyzed_recovery`].
     functions_with_recovery: HashSet<String>,
-    /// The pre-created label blocks [`Context::walk_labeled_statement`] actually entered.
-    /// Reset per function alongside `label_blocks`; its complement within `label_blocks` is
-    /// the set of labels the walk never reached, which [`finalize_terminators`] needs in
-    /// order to tell a label stranded in parse-recovery output from a genuinely dropped
-    /// block.
+    /// The pre-created label blocks the walk actually entered; the complement within
+    /// `label_blocks` is what [`finalize_terminators`] needs to tell a label stranded in
+    /// parse-recovery output from a genuinely dropped block. Reset per function.
     walked_label_blocks: HashSet<BasicBlockIdx>,
 }
 
@@ -802,12 +691,10 @@ struct Context<'a> {
 struct MemberSlot {
     /// The member's name -- the `Symbol` a `.name` access lowers to.
     name: String,
-    /// The record tag of this member's *own* type, when it has one: `struct Q q;` records
-    /// `Q`, so a brace nested at this member's position can recurse with `Q`'s layout.
-    /// `None` for scalars and, deliberately, for **pointer** and **array** members: those are
-    /// not inline records, and treating a brace at their position as one would write a wrong
-    /// path rather than fix one. Resolved against the registry lazily at use, so a member
-    /// whose type is defined later in the file still works.
+    /// The record tag of this member's *own* type (`struct Q q;` records `Q`), so a nested
+    /// brace can recurse with `Q`'s layout. `None` for scalars and, deliberately, for pointer
+    /// and array members -- those are not inline records. Resolved lazily at use, so a type
+    /// defined later in the file still works.
     type_tag: Option<String>,
 }
 
@@ -934,12 +821,9 @@ pub fn parse_c_program(source: &str) -> anyhow::Result<(Program, bool, String), 
 }
 
 /// Parse several named C files, each a translation unit of its own, into one program -- the
-/// shape [`import_c`] produces for a directory -- and return it with its marked-up dump.
-///
-/// The import path, not [`parse_c_program`]: it records spans and it creates the extern
-/// stubs. That is what a test needs in order to pin anything about several translation units
-/// meeting in one program, which is where a `static` function's file scope stops being
-/// implicit (spec 120).
+/// shape [`import_c`] produces for a directory. Unlike [`parse_c_program`] it records spans
+/// and creates the extern stubs, which is what a test about several units meeting in one
+/// program needs.
 pub fn parse_c_files(files: &[(String, String)]) -> Result<(Program, String), Error> {
     let units: Vec<TranslationUnit> = files
         .iter()
@@ -951,15 +835,11 @@ pub fn parse_c_files(files: &[(String, String)]) -> Result<(Program, String), Er
 
 /// Import C source at `path` into a [`ProgramInfo`], ready for [`crate::cli::import`].
 ///
-/// `path` may be a single C source file (`.c`) or header (`.h`), or a directory tree
-/// containing such files. Every file is a translation unit of its own: each is parsed
-/// separately, and all of them lower into one program, where a reference from one unit to a
-/// function another defines resolves to that definition (see [`lower_units`]).
-///
-/// The frontend expects post-preprocessor C source: `#include` directives are not expanded
-/// here, so each file should already be a complete translation unit. A header found in the
-/// directory is lowered for the definitions it holds (a `static inline`), not prepended to
-/// the `.c` files -- their preprocessed forms already contain it.
+/// `path` may be a single `.c`/`.h` file or a directory tree of them. Every file is a
+/// translation unit of its own, all lowered into one program where cross-unit references
+/// resolve (see [`lower_units`]). The frontend expects post-preprocessor source: `#include`
+/// is not expanded here, and a header found in a directory is lowered for the definitions
+/// it holds (a `static inline`), not prepended to the `.c` files.
 pub fn import_c(path: &std::path::Path) -> Result<ProgramInfo, Error> {
     let units = read_c_units(path)?;
     let lowered = lower_units(&units, true, true, false)?;
@@ -987,26 +867,22 @@ struct Lowered {
     /// Whether tree-sitter reported a syntax error in any unit.
     has_error: bool,
     /// The IR dump with each block's scope explainer, when `dump` asked for it -- tests read
-    /// it; the import path does not, and a full render of a corpus is not free.
+    /// it; the import path does not, and a full render of a large import is not free.
     marked_up: String,
 }
 
 /// Lower `units` into one program: the compiler-and-linker split, in miniature.
 ///
-/// Each unit is parsed on its own and lowered by a [`Context`] of its own -- its type names,
-/// prototypes, record layouts and scopes are its own, as C says they are, and a syntax error
-/// in one unit cannot re-parent what follows it in another. What the units share is the
-/// program, whose function table is one namespace. So before any body is lowered every
-/// unit's definitions are collected and [`plan_definitions`] decides what each one is -- a
-/// function of its own, a copy of one another unit already contributes, or a second function
-/// that merely shares a name and needs an IR name of its own -- and every surviving name is
-/// registered up front, so a reference from one unit to a function another defines (a call,
-/// or `fp = later;`) resolves the way a linker would resolve it.
+/// Each unit is parsed and lowered by a [`Context`] of its own -- type names, prototypes,
+/// layouts and scopes are per unit, and a syntax error in one unit cannot re-parent what
+/// follows in another. The units share the program, whose function table is one namespace:
+/// [`plan_definitions`] decides what each definition is and every surviving name is
+/// registered before any body is lowered, so a cross-unit reference (a call, or
+/// `fp = later;`) resolves the way a linker would resolve it.
 ///
-/// With `record_spans`, every IR statement carries a span into its unit's file; with
-/// `extern_stubs`, called-but-undefined functions get an empty definition at the end so taint
-/// models can match them by name. The import path wants both; the unit-test path neither.
-/// With `dump`, the marked-up IR text is rendered too (tests read it; imports skip it).
+/// `record_spans` attaches spans; `extern_stubs` gives called-but-undefined functions an
+/// empty definition so taint models can match them by name; `dump` renders the marked-up
+/// IR. The import path wants the first two, the unit-test path only the last.
 fn lower_units(
     units: &[TranslationUnit],
     record_spans: bool,
@@ -1120,8 +996,7 @@ fn function_definition_query() -> Query {
 /// The definitions in unit `unit`, appended to `defs` with their identity: the first half of
 /// [`lower_units`]'s link step. A definition whose declarator names no single function is
 /// reported here -- dropping it is still dropping a body, so it is said out loud rather than
-/// left to be noticed as a bodyless `define`, which is exactly how the whole
-/// pointer-returning class hid for as long as it did -- and not collected.
+/// left to be noticed as a bodyless `define` -- and not collected.
 fn collect_definitions<'a>(
     unit: usize,
     source: &'a str,
@@ -1161,32 +1036,20 @@ fn collect_definitions<'a>(
 }
 
 /// Decide what each definition *is*, before any of them is lowered: the second half of
-/// [`lower_units`]'s link step, and the reason it exists.
+/// [`lower_units`]'s link step.
 ///
-/// A name is not an identity here. The program's function table is one namespace, so the
-/// definitions of every translation unit arrive in it together, and two things that C keeps
-/// apart collide in it:
+/// The function table is one namespace, so things C keeps apart collide in it: a header's
+/// `static inline` arrives once per unit that included it, and a `static` helper (or a
+/// second `main`) may be defined per file. Keyed on the name alone, all of those would
+/// lower into ONE `FunctionData` -- parameter lists concatenated, the last body's return
+/// arity imposed on all, every call site resolving to the chimera.
 ///
-/// * a header's `static inline` is one definition per translation unit that included it
-///   -- 137,596 of the Linux corpus's 148,001 definitions are repeats of this kind, and
-///   1,294 of nginx's 2,308;
-/// * a `static` helper is scoped to its own file, so two files may each define their own
-///   `parse_dest_constraint`, and a corpus of several programs has one `main` per program
-///   (openssh: 70 names with more than one definition, 21 of them `main`).
-///
-/// Keying the function table on the name alone lowered every one of those into ONE
-/// `FunctionData`: parameter lists concatenated, the return arity of whichever body was
-/// walked last imposed on all of them, and every call site resolving to the chimera --
-/// silently, with no warning of any attribution (spec 120).
-///
-/// So: definitions that quote the same characters are the same function. This frontend
-/// lowers *text*, so N copies of one header's inline produce N identical bodies; keeping
-/// the first and dropping the rest is exact, not an approximation. What is left after
-/// that really is several functions sharing a name, and each gets a name of its own,
-/// `g$ssh-agent.c`, saying which file it came from. The first keeps the bare `g`, so an
-/// extern declaration, a call from a unit that defines none of them, and every taint
-/// model still resolve; a unit's [`UnitPlan::local_names`] sends a reference from a unit
-/// that *does* have its own definition to that one instead.
+/// So: definitions that quote the same characters are the same function and are lowered
+/// once (this frontend lowers text, so the dedup is exact). What is left really is several
+/// functions sharing a name: the first keeps the bare name -- extern declarations, calls
+/// from other units, and taint models still resolve by it -- and the rest are named for
+/// their file (`g$util.c`); [`UnitPlan::local_names`] sends a reference from a unit with
+/// its own definition to that one instead.
 fn plan_definitions(
     units: &[TranslationUnit],
     defs: &[Definition<'_>],
@@ -1402,17 +1265,12 @@ fn array_declarator_rank(decl: Node<'_>) -> usize {
     }
 }
 
-/// The data members of a record definition, in declaration order, each with the tag of its own
-/// record type when it has one. `None` for a node that is not a record definition, or for a
-/// body this cannot read *completely* -- a partial layout would silently mis-map every element
-/// after the gap, which is worse than no layout, so it is dropped and the caller falls back to
-/// element numbering.
-///
-/// Not counted as members, and not treated as gaps: a C++ **method** declaration (also a
-/// `field_declaration`, but its `function_declarator` names the method directly) and a
-/// **`static`** data member (class-scoped storage, not part of the object). A function-pointer
-/// *member* (`int (*a)(int);`, likewise a `function_declarator`, but wrapping a parenthesized
-/// pointer) **is** a member.
+/// The data members of a record definition, in declaration order, each with the tag of its
+/// own record type when it has one. `None` for a node that is not a record definition, or
+/// for a body this cannot read *completely* -- a partial layout would silently mis-map every
+/// element after the gap, so it is dropped and the caller falls back to element numbering.
+/// A C++ method declaration and a `static` data member are not members (and not gaps); a
+/// function-pointer member (`int (*a)(int);`) is.
 fn record_member_slots(node: Node<'_>, source: &str) -> Option<Vec<MemberSlot>> {
     if !matches!(
         node.kind(),
@@ -1435,11 +1293,9 @@ fn record_member_slots(node: Node<'_>, source: &str) -> Option<Vec<MemberSlot>> 
         {
             continue;
         }
-        // The member's own record type, if its type names one. Only a **bare identifier**
-        // declarator keeps it: a pointer (`struct Q *q;`) or array (`struct Q qs[2];`) member
-        // is not an inline record, and recursing into a brace at its position with `Q`'s
-        // layout would write a wrong path. A self-referential record is excluded for free,
-        // since the recursive member is always a pointer.
+        // The member's own record type, kept only for a bare-identifier declarator: a
+        // pointer or array member is not an inline record. (This also excludes
+        // self-referential records for free -- the recursive member is always a pointer.)
         let ty_tag = declaration_type_tag(field_decl, source);
         let mut dcursor = field_decl.walk();
         for declarator in field_decl.children_by_field_name("declarator", &mut dcursor) {
@@ -1492,15 +1348,12 @@ fn declarator_member_name<'s>(decl: Node<'_>, source: &'s str) -> Option<(&'s st
     }
 }
 
-/// What a translation unit's declarations say about names -- the evidence [`Context`] lowers
-/// with, collected by [`collect_registry`] before any function is.
-///
-/// The record layouts are the unit's own: a tag names whatever struct THIS unit declares
-/// under it. The two name sets are unioned across every unit of an import by [`lower_units`]:
-/// the units of one program share the headers the corpus did not preprocess, so a name one
-/// unit uses as a type (`u_int`, from `<sys/types.h>`) is a type in a unit that only casts to
-/// it, and a prototype in one unit says what the name is in all of them -- the same reasoning
-/// that makes [`Context::functions`] import-wide.
+/// What a translation unit's declarations say about names, collected by
+/// [`collect_registry`] before any function is lowered. The record layouts stay per unit;
+/// the two name sets are unioned across the import by [`lower_units`], because units share
+/// the headers the input did not expand: a name one unit uses as a type (`u_int`) is a type
+/// in a unit that only casts to it, and a prototype in one unit says what the name is in
+/// all of them.
 #[derive(Debug, Default)]
 struct UnitRegistry {
     struct_layouts: HashMap<String, Vec<MemberSlot>>,
@@ -1508,28 +1361,15 @@ struct UnitRegistry {
     declared_functions: HashSet<String>,
 }
 
-/// Fill `registry` from the subtree under `node`: the pre-pass of [`lower_units`] that gives
-/// [`Context`] its evidence about names before any function is lowered.
-///
-/// Fill the two registries a translation unit's *types* provide, in one walk.
-///
-/// [`Context::struct_layouts`]: for every record definition in the translation unit, its
-/// data members in declaration order, keyed by the tag a declaration can name it with. Two
-/// spellings are recorded:
-/// - a **tagged** definition (`struct P { ... };`) under its tag;
-/// - a **typedef** of a definition (`typedef struct { ... } P;`) under the typedef name,
-///   which is how an otherwise-anonymous record becomes nameable.
-///
-/// [`Context::type_names`]: every name used as a type anywhere in the unit, read off the
-/// `type_identifier` nodes tree-sitter produced (see [`is_type_name`] for the one kind of
-/// `type_identifier` that is *not* a type name).
+/// Fill `registry` from the subtree under `node`, in one walk: record layouts (a tagged
+/// definition under its tag, a `typedef struct { ... } P;` under the typedef name), type
+/// names (every `type_identifier`; see [`is_type_name`] for the one exception), and
+/// prototypes.
 ///
 /// A recursive node walk rather than a tree-sitter query, because the record kinds differ
 /// per grammar (`class_specifier` exists only in C++, and a query naming it would not
-/// compile against the C grammar). Matching on `kind()` is neutral by construction: a kind
-/// a grammar does not have simply never occurs. A layout that could not be read completely
-/// is **not** recorded (see [`record_member_slots`]), so positional mapping is only ever
-/// attempted where every slot is known.
+/// compile against the C grammar); a kind a grammar lacks simply never occurs. A layout
+/// that could not be read completely is NOT recorded (see [`record_member_slots`]).
 fn collect_registry(source: &str, node: Node<'_>, registry: &mut UnitRegistry) {
     if is_type_name(node) {
         registry
@@ -1583,9 +1423,7 @@ fn collect_registry(source: &str, node: Node<'_>, registry: &mut UnitRegistry) {
 /// the `function_declarator` in one `pointer_declarator` per `*`, so `char **argv_of(void) {}`
 /// parses as `function_definition > pointer_declarator > pointer_declarator >
 /// function_declarator`. A query pattern cannot recurse, so [`function_definition_query`]
-/// captures the declarator whole and this unwraps it -- for years the pattern demanded a
-/// `function_declarator` directly, and every pointer-returning definition in every corpus was
-/// dropped without a word (spec 130).
+/// captures the declarator whole and this unwraps it.
 ///
 /// `None` for a declarator that names no single function: a definition made through a
 /// parenthesized declarator (`char *(*f(int))(void)`, a function returning a function
@@ -1618,9 +1456,8 @@ fn function_head(declarator: Node<'_>) -> Option<FunctionHead<'_>> {
 /// declares, so a parenthesized declarator is transparent to [`function_head`]. `None` if the
 /// parentheses hold nothing (parse-recovery debris).
 ///
-/// openssh spells one this way without meaning to: `openbsd-compat/getrrsetbyname.c` defines
-/// `_getshort` under a `#define _getshort(x) (_ssh_compat_getshort(x))`, so the *definition*
-/// preprocesses to `static u_int16_t (_ssh_compat_getshort(const u_char *msgp)) { ... }`.
+/// Real code spells one this way without meaning to: `#define f(x) (impl_f(x))` makes a
+/// definition of `impl_f` preprocess to `static short (impl_f(const char *p)) { ... }`.
 fn unparenthesize(node: Node<'_>) -> Option<Node<'_>> {
     let mut node = node;
     while node.kind() == "parenthesized_declarator" {
@@ -1660,19 +1497,13 @@ fn is_type_name(node: Node<'_>) -> bool {
     !is_tag
 }
 
-/// The callee of a call with its redundant grouping parentheses peeled: `(f)(x)` calls `f` and
-/// `(*fp)(x)` calls through `fp`, exactly as the unparenthesized spellings do.
+/// The callee of a call with its redundant grouping parentheses peeled: `(f)(x)` calls `f`
+/// and `(*fp)(x)` calls through `fp`. Not cosmetic to a frontend that names a callee by its
+/// source text: macro libraries expand hooks to `(cmp_fn)(elm, parent)`, and a function
+/// literally named `(cmp_fn)` would be invented while the edge to the real one is lost.
 ///
-/// The parentheses are not cosmetic to a frontend that names a callee by its source text: the
-/// BSD red-black-tree macros openssh compiles in expand to `comp = (blob_cmp)(elm, parent);`,
-/// and lowering that as a direct call to a function literally named `(blob_cmp)` both invented
-/// a function and lost the call edge to the real one.
-///
-/// A GNU statement expression `({ ... })(x)` is NOT peeled. Those parentheses are part of the
-/// construct rather than grouping around an expression, so peeling them would leave a
-/// `compound_statement` that is not the callee's spelling either. There is nothing to peel *to*:
-/// what stands in callee position is the whole construct, and [`is_statement_expression`] is what
-/// [`Context::collect_call`] asks about it.
+/// A GNU statement expression `({ ... })(x)` is NOT peeled: those parentheses are part of
+/// the construct, and [`is_statement_expression`] is what `collect_call` asks about it.
 fn unparenthesized_callee(node: Node<'_>) -> Node<'_> {
     let mut node = node;
     while node.kind() == "parenthesized_expression" {
@@ -1706,9 +1537,7 @@ fn is_statement_expression(node: Node<'_>) -> bool {
 /// A declarator is not a fixed list of spellings, it NESTS: `char **argv` is a
 /// `pointer_declarator` inside a `pointer_declarator`, `char *v[]` an `array_declarator`
 /// inside one, `int (*cb)(int, int)` a `function_declarator` around a parenthesized one, and
-/// any of them can wear parentheses. Walking down to the identifier binds every depth; the
-/// query this replaced enumerated the one-level shapes and dropped the rest in silence
-/// (spec 140), which cost `main` its `argv`.
+/// any of them can wear parentheses. Walking down to the identifier binds every depth.
 ///
 /// The name is `None` when the declarator declares none -- an abstract declarator
 /// (`void f(char **)`), or parse debris. That is not the same as "there is no parameter":
@@ -1716,7 +1545,7 @@ fn is_statement_expression(node: Node<'_>) -> bool {
 ///
 /// A pointer or an array parameter is [`ParameterType::ByRef`] -- it is a handle on storage
 /// the caller can see written -- at every depth. A function pointer is not: what it points at
-/// is code, so `int (*cb)(int, int)` stays `ByVal`, as the query had it.
+/// is code, so `int (*cb)(int, int)` stays `ByVal`.
 fn param_head(declarator: Node<'_>) -> (Option<Node<'_>>, ParameterType) {
     let mut node = declarator;
     let (mut is_ref, mut is_function, mut name) = (false, false, None);
@@ -1762,27 +1591,15 @@ fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
 /// The `goto` labels of the function whose body is `node`, in tree order, so
 /// `lower_function` can pre-create a block for each and a forward `goto L` resolves.
 ///
-/// A nested `function_definition` is not descended into. A label's scope in C is the function
-/// that contains it, so a `goto` in this body can never target one, and the same query that
-/// found this body finds the nested one and lowers it as a function of its own -- with its
-/// own label blocks, walked there. Pre-creating them here instead leaves blocks nothing ever
-/// enters and nothing ever terminates, which `finalize_terminators` then patched and charged
-/// to a function whose own code is fine. In the kernel corpus these are rarely GNU nested
-/// functions: they are parse recovery, which resumes by re-parenting the following
-/// definitions into the previous function's `compound_statement` (spec 064) -- which is how
-/// `resource_intersection`, three straight-line statements with no label at all, came to own
-/// a 1 MB body holding 2,208 of them, and two `out:` labels with it.
+/// A nested `function_definition` is not descended into -- a label's scope is the function
+/// containing it, and the definition query lowers the nested one as a function of its own,
+/// with its own label blocks. A `sizeof`/`_Alignof` operand is not descended into either:
+/// it is unevaluated, `flatten_expr` never walks inside it, and `goto` into an unevaluated
+/// operand is not C. Either block would only ever be an empty orphan.
 ///
-/// A `sizeof`/`_Alignof` operand is not descended into either, for the same reason from the
-/// other direction: the operand is *unevaluated*, so `flatten_expr` lowers the whole
-/// construct to the compile-time constant it is (`Exp::Str` of its own source text, spec 063)
-/// and never walks inside it. A label in there names no reachable code -- `goto` into an
-/// unevaluated operand is not C -- so its block, too, would only ever be an empty orphan.
-///
-/// A label the *recovery* holds is a different matter and is deliberately still collected:
-/// plenty of well-formed code lowers out of a damaged body (that is spec 064's whole point),
-/// and dropping its labels would break its `goto`s. Its block simply goes unentered, which
-/// [`finalize_terminators`] knows not to charge to the frontend.
+/// A label the parse *recovery* holds IS still collected: plenty of well-formed code lowers
+/// out of a damaged body, and dropping its labels would break its `goto`s. Its block goes
+/// unentered, which [`finalize_terminators`] knows not to charge to the frontend.
 fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
     if node.kind() == "labeled_statement"
         && let Some(label) = node.child_by_field_name("label")
@@ -1804,15 +1621,11 @@ fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
 /// Register every directly-called function that has no definition in this translation unit
 /// as an empty-body (external) function.
 ///
-/// Taint models identify sources, sinks, and propagators by name (`source`, `sink`,
-/// `malloc`, ...), and both the model engine and query-time endpoint resolution look the
-/// name up among the program's functions. A function that is only *declared* in C (e.g.
-/// `int source();`) never reaches `collect_definitions` -- which matches `function_definition`
-/// nodes -- so without this pass its calls have edges pointing at a name that no IR function
-/// carries, and every model targeting it silently matches nothing. Creating an empty-body
-/// function gives the name a function id the model/query can resolve; the empty body also
-/// marks it external during indexing (see codegen's `external_function`). Mirrors the extern
-/// pass in the dex/jvm frontends. Runs on the import path only (see [`lower_units`]).
+/// Taint models and query endpoints resolve names among the program's functions, and a
+/// function that is only *declared* never reaches `collect_definitions` -- without this
+/// pass every model targeting it would silently match nothing. The empty body also marks it
+/// external during indexing (codegen's `external_function`). Mirrors the dex/jvm extern
+/// pass; runs on the import path only (see [`lower_units`]).
 fn define_extern_functions(program: &mut Program) {
     use std::collections::BTreeMap;
 
@@ -1957,18 +1770,13 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// Lower an aggregate brace initializer (`int a[2] = { s, 0 }`,
-    /// `struct P p = { s, 0 }`) into per-element stores. `decl_node` is the whole declaration
-    /// (it carries the type, and so the record tag); `decl_ident` is the declarator being
-    /// initialized (an `array_declarator` for arrays, an `identifier` for structs / scalars),
-    /// whose flattening yields -- and registers -- the base access path.
-    ///
-    /// A *record*'s positional elements map onto the members those positions name, from the
-    /// [`Context::struct_layouts`] registry: `struct P p = { s, 0 }` writes `p.x` and `p.y`,
-    /// which is what a later `p.x` read resolves to. Numbering them as array elements instead
-    /// would write `p.deref` and silently drop the taint, since a write at one path is not
-    /// observed at a read of another. An *array*'s elements keep the element numbering, and
-    /// carry the element type's layout down so an array **of** records maps its members too.
+    /// Lower an aggregate brace initializer (`int a[2] = { s, 0 }`, `struct P p = { s, 0 }`)
+    /// into per-element stores. `decl_node` carries the type (and so the record tag);
+    /// `decl_ident` is the declarator being initialized, whose flattening yields the base
+    /// access path. A record's positional elements map onto the members those positions name
+    /// -- numbering them as array elements would write `p.deref` and silently drop the taint
+    /// -- while an array's elements keep element numbering and carry the element type's
+    /// layout down, so an array OF records maps its members too.
     fn collect_initializer_list(
         &mut self,
         source: &'a str,
@@ -2044,19 +1852,13 @@ impl<'a> Context<'a> {
         )
     }
 
-    /// Walk the elements of an `initializer_list`, storing each into the sub-path of `base_ap`
-    /// that its position names.
-    ///
-    /// With a `members` layout this level is a **record**: element *i* writes the member named
-    /// at position *i*, the same `Symbol` a `.name` read resolves to. Without one it is an
-    /// **array**: element *i* gets the offset + `deref` shape a constant-index subscript read
-    /// (`a[i]`) resolves to (see `push_element` and `flatten_subscript`), so taint deposited
-    /// here is observed at the read.
-    ///
-    /// Nested braces recurse with the layout of whatever the inner level *is*: a record
-    /// member's own record type (from its [`MemberSlot::type_tag`]), or -- once `depth` array
-    /// levels have been entered -- the array's element layout in `elem_layout`. Anything not
-    /// resolvable falls back to element numbering, which is the pre-existing behavior.
+    /// Walk the elements of an `initializer_list`, storing each into the sub-path of
+    /// `base_ap` its position names: with a `members` layout element *i* writes the member
+    /// at position *i*; without one it gets the offset + `deref` shape a constant-index
+    /// subscript read resolves to (see `push_element`). Nested braces recurse with the
+    /// layout of whatever the inner level *is* -- a member's own record type, or the array's
+    /// element layout once `depth` levels are entered; anything unresolvable falls back to
+    /// element numbering.
     #[allow(clippy::too_many_arguments)]
     fn lower_initializer_list(
         &mut self,
@@ -2256,14 +2058,10 @@ impl<'a> Context<'a> {
                 continue; // we skip , ( comments, stuff like that...
             }
             if diverged {
-                // The previous statement diverged yet siblings remain. They are
-                // unreachable by fall-through, but a `goto` label among them -- the
-                // ubiquitous `out:` cleanup idiom -- is still reachable through its jump
-                // edge, and its body has to lower or the cleanup code is dropped from the
-                // IR entirely (`finalize_terminators` would then patch the orphaned label
-                // block with an implicit empty `return` and report a frontend gap).
-                // Keep walking in a fresh unlinked block, exactly as `walk_goto` does for
-                // the statements that follow a `goto`.
+                // The previous statement diverged yet siblings remain: unreachable by
+                // fall-through, but a `goto` label among them (the `out:` cleanup idiom) is
+                // still reachable through its jump edge and must lower. Keep walking in a
+                // fresh unlinked block, exactly as `walk_goto` does.
                 scope_view = add_block(
                     program,
                     &scope_view,
@@ -2345,20 +2143,12 @@ impl<'a> Context<'a> {
                     true,
                     "compound_statement",
                 )?;
-                // A bare `{ ... }` in statement position gets a `JustScope` view: a fresh
-                // lexical scope that deliberately *shares* the enclosing basic block. So it
-                // has no end-of-compound edge to link, and asking `walk_compound_statement`
-                // for one is what broke the CFG: with the function body's fall-off-the-end
-                // sentinel (`continuation_blidx == None`) inherited, `link_blocks` stamped
-                // an implicit `return` onto the block we are still filling, and every
-                // following statement was then either orphaned (its incoming edge dropped
-                // with a `continuation edge into a block that already returns` gap) or
-                // appended behind that terminator.
-                //
-                // Walk the body directly instead, then thread the block it ended in back to
-                // the caller -- keeping the caller's scope, since names declared inside the
-                // braces must not outlive them -- and propagate its divergence, so
-                // `{ return; }` still ends the enclosing compound's fall-through.
+                // A bare `{ ... }` is a fresh lexical scope that *shares* the enclosing
+                // basic block; it has no end-of-compound edge (linking one would stamp an
+                // implicit `return` onto the block being filled, orphaning what follows).
+                // Walk the body directly, thread the end block back while keeping the
+                // caller's scope (names inside the braces must not outlive them), and
+                // propagate divergence so `{ return; }` still ends the fall-through.
                 let (end_view, diverged) =
                     self.walk_compound_body(source, program, &inner_view, &cp)?;
                 *scope_view = ScopeView {
@@ -2374,10 +2164,9 @@ impl<'a> Context<'a> {
                 self.flatten_expr(program, child, source, scope_view)?;
             }
             "expression_statement" => {
-                // An empty statement (`;`) -- e.g. the body of a label, `done: ;` --
-                // parses as an `expression_statement` whose only child is the `;` token.
-                // There is no expression to lower, so skip it; otherwise the bare `;`
-                // falls through to `flatten_expr`'s catch-all and fails ingestion (ERR 78).
+                // An empty statement (`;`, e.g. a label body `done: ;`) parses as an
+                // `expression_statement` holding only the `;` token: nothing to lower, and
+                // the bare token must not reach `flatten_expr`'s catch-all.
                 if let Some(inner_child) = child.child(0)
                     && !_is_empty(&inner_child)
                 {
@@ -2385,15 +2174,12 @@ impl<'a> Context<'a> {
                 }
             }
             "update_expression" => {
-                // A bare `++i` / `i++` in statement position -- in practice a `for`'s update
-                // clause, which arrives here directly rather than wrapped in an
-                // `expression_statement`. Lower the whole node: `flatten_expr` dispatches to
-                // `flatten_update_expression`, which reads the `argument` field and so handles
-                // prefix and postfix alike. Descending to `child(0)` instead (as the shared
-                // `expression_statement` arm does) is wrong for both spellings: for prefix that
-                // child is the `++` operator token, which reaches `flatten_expr`'s catch-all
-                // ("ERR 78: Unsupported expression type: ++"), and for postfix it is the bare
-                // identifier, which lowers to a read and silently drops the increment.
+                // A bare `++i` / `i++` in statement position (in practice a `for` update
+                // clause, which arrives unwrapped). Lower the whole node:
+                // `flatten_update_expression` reads the `argument` field and handles prefix
+                // and postfix alike; descending to `child(0)` would find the `++` token for
+                // prefix and the bare identifier for postfix, silently dropping the
+                // increment.
                 self.flatten_expr(program, child, source, scope_view)?;
             }
             "parenthesized_expression" => {
@@ -2454,11 +2240,8 @@ impl<'a> Context<'a> {
     /// Report an unparsable construct: an `ERROR` node met where a *statement* was
     /// expected, which is the position in which tree-sitter's ERROR node still names the
     /// construct that defeated it. Reported once per node, against the analyzed source.
-    ///
-    /// This is the same population the old `frontend gap: Unknown token(2): ERROR: ...`
-    /// warning covered (180 nodes in the kernel census), re-attributed and with the quote
-    /// bounded. `run-linux.sh`'s parse-error triage classifies these by the
-    /// `ERROR: <construct>` tail, so that tail is load-bearing -- do not drop it.
+    /// Downstream triage classifies these reports by the `ERROR: <construct>` tail, so
+    /// that tail is load-bearing -- do not drop it.
     fn report_unparsable_construct(
         &mut self,
         error_node: Node<'_>,
@@ -2479,20 +2262,11 @@ impl<'a> Context<'a> {
     }
 
     /// Report that a function's body contains parse-recovery output that is not analyzed,
-    /// once per function.
-    ///
-    /// Everything the recovery produced or re-parented is then skipped silently. Reporting
-    /// each such node as a construct the frontend failed to support is what blamed ctadl
-    /// 41,751 times in the kernel census -- for 180 actual parse errors -- and, worse,
-    /// described the wreckage as if it were the analyzed program: a `int foo(void) {...}`
-    /// tree-sitter re-parented into the previous function's body was logged as
-    /// "Unsupported expression type: function_definition".
-    ///
-    /// Per *function*, not per region, and deliberately without an `ERROR: <text>` tail.
-    /// The nodes on this path are in expression position, where an `ERROR` is a shard of
-    /// the recovery (`long`, `*`, `struct`, `{ return f(x`) rather than the construct that
-    /// failed -- quoting them would flood the triage with 1,600 "constructs" that are not
-    /// constructs. What the body did choke on is reported by
+    /// once per function; everything the recovery produced or re-parented is then skipped
+    /// silently. Reporting each node individually would blame the frontend thousands of
+    /// times for a handful of parse errors, describing wreckage as if it were the program.
+    /// Deliberately without an `ERROR: <text>` tail: on this path an `ERROR` is a shard of
+    /// the recovery, not the construct that failed -- that one is reported by
     /// [`Context::report_unparsable_construct`]; what a reader needs here is which function
     /// is not trustworthy.
     fn report_unanalyzed_recovery(&mut self, func_name: &str) -> Result<(), Error> {
@@ -2508,23 +2282,13 @@ impl<'a> Context<'a> {
 
     /// Report a name node that quotes to the empty string, and say whose fault it is.
     ///
-    /// `identifier` and `field_identifier` are *required* by the grammar in the positions this
-    /// frontend reads a name from, so when the parse fails there tree-sitter repairs it by
-    /// INSERTING a zero-width token -- a node with a kind, a position and no text at all. The
-    /// empty string is not a name: handed to [`Context::build_access_path`] it resolves to
-    /// nothing in scope and mints the global `$globals.` with an empty first path segment,
-    /// which serializes to the access path `"."` -- and `facts::Path`'s own parser rejects
-    /// that, so ONE such token anywhere in a corpus makes the whole index unqueryable
-    /// (`ctadl query` panics reading the parquet it just wrote, before printing any result).
-    /// The kernel's x86 percpu headers put 134 of them into two translation units.
-    ///
-    /// A token nobody wrote names nothing, so this is spec 064's rule again: an inserted token
-    /// only exists because the body around it did not parse, so say once that the body holds
-    /// recovery output and let the caller substitute a fresh temp -- the same recovery the
-    /// `flatten_expr`/`flatten_lvalue` catch-alls use. The `else` arm cannot fire on a
-    /// tree-sitter tree (an inserted token sets `has_error` on every ancestor, so
-    /// `recovery_region` always finds one) and is kept so a nameless node arriving any other
-    /// way is still reported rather than silently dropped.
+    /// Where the grammar requires a name and the parse fails, tree-sitter INSERTS a
+    /// zero-width token. The empty string is not a name: it would mint `$globals.` with an
+    /// empty first path segment, which `facts::Path`'s parser rejects -- one such token
+    /// makes the whole index unqueryable. An inserted token only exists because the body
+    /// did not parse, so say once that the body holds recovery output and let the caller
+    /// substitute a fresh temp. The `else` arm cannot fire on a tree-sitter tree (an
+    /// inserted token sets `has_error` on every ancestor) and is kept as a safety net.
     fn report_missing_name(&mut self, node: Node<'_>, scope_view: &ScopeView) -> Result<(), Error> {
         if recovery_region(node).is_some() {
             let func_name = scope_view.func_name.clone();
@@ -2582,20 +2346,13 @@ impl<'a> Context<'a> {
                     self.flatten_expr(program, nest_decl, source, scope_view)?;
                     continue;
                 }
-                // The asm annotation on a declarator, not a declarator: a GCC
-                // explicit-register variable (`register unsigned long sp asm("rsp");`, from
-                // x86's `current_stack_pointer`) or an asm label on an object
-                // (`extern int v asm("othersym");`). The grammar files it under the *same*
-                // `declarator` field as the name it annotates --
-                // `field('declarator', seq(_declaration_declarator, optional(gnu_asm_expression)))`
-                // -- and tree-sitter distributes a field over every element of the sequence,
-                // so `children_by_field_name("declarator")` yields two children for one
-                // declared name: the declarator, handled by the arms above on the previous
-                // iteration, and this. What it names is where the variable is stored (a
-                // machine register) or the symbol it is emitted under; neither is a value and
-                // neither carries dataflow, so there is nothing to lower. Deliberately NOT
-                // routed to `flatten_gnu_asm`: that models an operand transfer, and this asm
-                // has no operands at all -- only a register-name string.
+                // The asm annotation on a declarator, not a declarator: an
+                // explicit-register variable (`register unsigned long sp asm("rsp");`) or
+                // an asm label (`extern int v asm("othersym");`). The grammar puts it under
+                // the same `declarator` field as the name it annotates, so one declared
+                // name yields two children -- the declarator (handled above) and this. It
+                // names storage or a symbol, carries no dataflow, and has no operands, so
+                // it is neither lowered nor routed to `flatten_gnu_asm`.
                 "gnu_asm_expression" => continue,
                 _ => {
                     unexpected_ast(format!(
@@ -2623,10 +2380,8 @@ impl<'a> Context<'a> {
             }
             if let Some(vc) = nest_decl.child_by_field_name("value") {
                 if vc.kind() == "initializer_list" {
-                    // Aggregate brace initializer, e.g. `int a[2] = { s, 0 }`. Lower it
-                    // to per-element stores `a[i] = elem_i` so taint flows into the
-                    // indexed access paths a later `a[0]` read resolves to. (Without this
-                    // the `initializer_list` reaches `flatten_expr`'s catch-all -> ERR 78.)
+                    // Aggregate brace initializer: lower to per-element stores so taint
+                    // flows into the indexed paths a later read resolves to.
                     self.collect_initializer_list(
                         source, program, scope_view, node, decl_ident, vc,
                     )?;
@@ -3272,11 +3027,8 @@ impl<'a> Context<'a> {
             .or_default();
 
         // The parameters are the parameter list's own children, walked in order, and a
-        // parameter's index is its position among them. The query this replaced matched
-        // `parameter_declaration` ANYWHERE under the list and numbered by match order, which
-        // made position and index two different things: it bound a function pointer's own
-        // formals as this function's, and a declarator shape it did not enumerate (`char **v`,
-        // via `param_head`) took every later parameter down a slot with it.
+        // parameter's index is its position among them -- never match order over the whole
+        // subtree, which would bind a function pointer's own formals as this function's.
         let mut cursor = param_list.walk();
         for decl in param_list.named_children(&mut cursor) {
             // `...` is a `variadic_parameter`, not a formal (clang does not count it either);
@@ -3285,15 +3037,11 @@ impl<'a> Context<'a> {
             if decl.kind() != "parameter_declaration" {
                 continue;
             }
-            // A `parameter_declaration` with no declarator at all declares no parameter here.
-            // In well-formed C that shape is `f(void)` -- where the `void` IS the empty list
-            // -- or C23's nameless `f(int)`, which no definition in the corpora writes. It is
-            // also what a parameter list tree-sitter could not parse leaves behind: the
-            // kernel's SYSCALL_DEFINE expands to `__typeof(__builtin_choose_expr(...)) fd`,
-            // whose `__typeof` has no grammar rule, and the recovery reads the type as one
-            // parameter and the NAME as a second bare type. Reserving a slot for both would
-            // invent a parameter per formal in 140 kernel definitions. An abstract declarator
-            // (`char **`, below) is a different matter: that one is unambiguous.
+            // A `parameter_declaration` with no declarator declares no parameter here: in
+            // well-formed C that shape is `f(void)` (the `void` IS the empty list) or C23's
+            // nameless `f(int)`, which real definitions do not write -- and it is also what
+            // an unparsable macro-built formal leaves behind, where reserving a slot would
+            // invent a parameter per formal. An abstract declarator (below) is unambiguous.
             let Some(declarator) = decl.child_by_field_name("declarator") else {
                 continue;
             };
@@ -3343,15 +3091,12 @@ impl<'a> Context<'a> {
                 )))
             }
             "identifier" => {
-                // A bare identifier that names a known function (and is not shadowed by
-                // a variable in scope) is a function *reference* used as a value -- the
-                // RHS of `fp = id`, an initializer `int (*fp)(int) = id`, a call argument
-                // `apply(id, x)`, or a field/array store `o.op = id` / `fps[0] = id`. Lower
-                // it as a function-pointer object (as the pcode backend does) so codegen
-                // emits the `call_target_assign` fact that indirect-call taint resolution
-                // needs; otherwise `id` is treated as a plain global and the taint is
-                // dropped (F1/F2). Direct calls are unaffected: `collect_call` resolves an
-                // identifier callee via `build_access_path`, not through here.
+                // A bare identifier naming a known function (and not shadowed) is a
+                // function *reference* used as a value (`fp = id`, `apply(id, x)`,
+                // `o.op = id`). Lower it as a function-pointer object so codegen emits the
+                // `call_target_assign` fact indirect-call resolution needs; a plain-global
+                // read would drop the taint. Direct calls resolve in `collect_call`, not
+                // here.
                 if self
                     .scope_tree
                     .find_variable(scope_view.sidx, text)
@@ -3385,9 +3130,7 @@ impl<'a> Context<'a> {
                 self.flatten_nested_decl(program, node, source, scope_view)
             }
             // A character literal (`'a'`, `'\n'`) is a compile-time constant, exactly like a
-            // numeric literal, so lower it to an `Exp::Str` constant (carries no taint). Without
-            // this arm any program containing a char literal hit `flatten_expr`'s catch-all and
-            // failed ingestion (ERR 78) -- a broad gap, since char literals are everyday C.
+            // numeric literal, so lower it to an `Exp::Str` constant (carries no taint).
             // `concatenated_string` is adjacent literals ("a" "b") -- one string
             // constant. `true`/`false`/`null` (NULL/nullptr) are keyword tokens the
             // grammar special-cases; they only survive to the AST when the source
@@ -3424,12 +3167,10 @@ impl<'a> Context<'a> {
                 self.flatten_expr(program, inner_node, source, scope_view)
             }
             "field_expression" => {
-                // A field read on the RHS. Resolve the location as an lvalue -- which composes
-                // this field onto any base (variable, array element, deref) and applies the
-                // union-member collapse -- then lower it to loads and yield the loaded value,
-                // exactly as `flatten_subscript` does for `a[i]`. Keeping the read and lvalue
-                // paths on the same resolver is what lets `a[i].f` (a field of an array element)
-                // work on both sides of an assignment.
+                // A field read on the RHS: resolve the location as an lvalue (composing the
+                // field onto any base and applying the union collapse), then lower to
+                // loads. Keeping read and lvalue on one resolver is what lets `a[i].f` work
+                // on both sides of an assignment.
                 let ap = self.flatten_lvalue(program, node, source, scope_view)?;
                 Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
             }
@@ -3441,15 +3182,12 @@ impl<'a> Context<'a> {
                 node.child_by_field_name("right").expect("always a right"),
                 node.child_by_field_name("operator"),
             ),
-            // Both dereference (`*p`) and address-of (`&x`) parse as `pointer_expression`;
-            // the operator child distinguishes them. Historically CTADL passed the operand
-            // straight through for both (`*p` -> `p`, `&x` -> `x`), a value-copy model that
-            // is sound for reads but drops writes through a pointer (F3). For a dereference
-            // whose operand is a plain variable with a known same-block address-of alias
-            // (`p = &x`), resolve `*p` to the pointee `x` so a store `*p = v` becomes a real
-            // write to `x` (and a load `y = *p` reads the current `x`). `&a[i]` forms the
-            // element's address (see `flatten_address_of`). Everything else -- `&x`, `&s.f`,
-            // a dereference of a non-aliased/compound operand -- keeps the pass-through.
+            // Dereference (`*p`) and address-of (`&x`) both parse as `pointer_expression`.
+            // The default passes the operand through (value-copy: sound for reads, drops
+            // writes through a pointer). A dereference of a variable with a same-block
+            // address-of alias resolves to the pointee, so `*p = v` really writes `x`;
+            // `&a[i]` forms the element's address (`flatten_address_of`); everything else
+            // keeps the pass-through.
             "pointer_expression" => {
                 let arg = node
                     .child_by_field_name("argument")
@@ -3463,15 +3201,11 @@ impl<'a> Context<'a> {
                     return Ok(Exp::access_path(addr));
                 }
                 let arg_exp = self.flatten_expr(program, arg, source, scope_view)?;
-                // `*(T *)K` -- a read through a constant address. `flatten_lvalue`'s
-                // `cast_expression` arm gives that address a location, so the read must name the
-                // same one: the pass-through would yield the constant `K` and a store through
-                // `*(volatile u32 *)0xfee00300` would be unobservable at a read of it, which is
-                // the whole reason the store side names a global rather than a fresh temp. Only
-                // a cast, and only when the cast's value is the constant -- `*p` on a variable
-                // keeps the pass-through, which is already symmetric because both sides name
-                // `p`. Re-deriving the path here rather than calling `flatten_lvalue` avoids
-                // lowering the operand twice; it is a literal, so `arg_exp` cost nothing.
+                // `*(T *)K` -- a read through a constant address must name the same
+                // location the store side names (`flatten_lvalue`'s `cast_expression`
+                // arm); the pass-through would yield the bare constant. Only a cast whose
+                // value is the constant takes this path; re-deriving the path here avoids
+                // lowering the operand twice (it is a literal, so `arg_exp` cost nothing).
                 if is_deref
                     && arg.kind() == "cast_expression"
                     && let Exp::Str(constant) = &arg_exp
@@ -3506,7 +3240,7 @@ impl<'a> Context<'a> {
                 Ok(arg_exp)
             }
             "subscript_expression" => self.flatten_subscript(program, node, source, scope_view),
-            // `(__be16)(x)` is a cast that tree-sitter could only read as a call; when it is
+            // `(width_t)(x)` is a cast that tree-sitter could only read as a call; when it is
             // one, it lowers exactly like the `cast_expression` arm below. See
             // `cast_shaped_call` for how the two are told apart.
             "call_expression" => match self.cast_shaped_call(node, source, scope_view)? {
@@ -3525,33 +3259,20 @@ impl<'a> Context<'a> {
                     .expect("cast_expression always has a value");
                 self.flatten_expr(program, value, source, scope_view)
             }
-            // `sizeof` does NOT evaluate its operand -- it yields a compile-time size --
-            // so it must not carry taint from the operand. Lower it as a constant (the
-            // source text), exactly like a numeric literal; the operand is never visited.
-            //
-            // `_Alignof` / `__alignof__` / `__alignof` / `_alignof` / `alignof` (all one
-            // `alignof_expression` node) obey the same rule -- unevaluated operand,
-            // compile-time constant result -- so they share this arm. In tree-sitter-c
-            // 0.24.1 an `alignof_expression`'s operand is always a `type_descriptor`, so
-            // even the GNU expression spelling `__alignof__(x)` parses `x` as a type name
-            // and never reaches a value; lowering the whole node as its source text keeps
-            // it that way. (An operand the type grammar cannot swallow, e.g.
-            // `__alignof__(p->f)`, is a parse error before we ever get here -- a
-            // tree-sitter-c grammar limit, not a frontend gap.)
+            // `sizeof` and `_Alignof` (all its spellings are one `alignof_expression` node)
+            // do NOT evaluate their operand: they yield a compile-time constant, so lower
+            // the node as its source text and never visit the operand. In tree-sitter-c
+            // 0.24.1 an alignof operand is always a `type_descriptor`; one the type grammar
+            // cannot swallow (`__alignof__(p->f)`) is a parse error before we get here -- a
+            // grammar limit, not a frontend gap.
             "sizeof_expression" | "alignof_expression" => {
                 Ok(Exp::Str(ArcIntern::<str>::from(text)))
             }
-            // A C99 compound literal `(T){ .a = x }` is an unnamed object of type `T`
-            // initialized by the brace, and the expression's value is that object. Model it
-            // exactly that way: materialize a fresh temp to stand for the object, run the
-            // *same* brace lowering a declaration's initializer gets (so designators and
-            // positions land on `T`'s members, unknown tags fall back to element numbering),
-            // and yield the temp. Without this the literal hit the catch-all below and every
-            // value inside the braces was dropped -- the largest gap class in the corpus.
-            //
-            // The `type_descriptor` node has the same `type` field a declaration does, so
-            // `declaration_type_tag` reads its record tag unchanged; its optional `declarator`
-            // is the abstract spelling of an array declarator, and carries the rank.
+            // A C99 compound literal `(T){ .a = x }` is an unnamed object whose value is
+            // the object: materialize a fresh temp and run the *same* brace lowering a
+            // declaration's initializer gets, then yield the temp. The `type_descriptor`
+            // has the same `type` field a declaration does, so `declaration_type_tag` reads
+            // its tag unchanged; its optional abstract array declarator carries the rank.
             "compound_literal_expression" => {
                 let ty = node
                     .child_by_field_name("type")
@@ -3601,15 +3322,11 @@ impl<'a> Context<'a> {
                 self.cur_span = outer_span;
                 Ok(value)
             }
-            // A ternary `c ? a : b` is path-insensitive here: either arm may be the
-            // value, so blend both into a temp (like `flatten_binary`). The condition is
-            // a control dependence, not a data source -- evaluate it for side effects but
-            // don't blend it into the result.
-            //
-            // GNU's `c ?: b` omits the consequence, and there the condition IS the value
-            // when it is truthy (evaluated once). tree-sitter leaves the `consequence`
-            // field absent for that shape, so reuse the condition's already-computed
-            // value as the consequent arm rather than assuming the field is present.
+            // A ternary is path-insensitive here: either arm may be the value, so blend
+            // both into a temp; the condition is a control dependence, lowered for effects
+            // only. GNU's `c ?: b` omits the consequence (the condition IS the value when
+            // truthy), and tree-sitter leaves the field absent, so the condition's
+            // already-computed value stands in as the consequent arm.
             "conditional_expression" => {
                 let cond = node
                     .child_by_field_name("condition")
@@ -3625,22 +3342,12 @@ impl<'a> Context<'a> {
                 let alt_val = self.flatten_expr(program, alt, source, scope_view)?;
                 Ok(self.blend_into_temp(program, scope_view, &[cons_val, alt_val]))
             }
-            // A C11 generic selection `_Generic(ctrl, T1: e1, ..., default: eN)`. Only the arm
-            // whose type matches the controlling expression is evaluated, and picking it needs
-            // the static type of `ctrl` -- which this frontend does not have and must not start
-            // computing. So the selection is treated exactly like the ternary above, just with
-            // N arms instead of two: any of them may be the value, so all of them lower and all
-            // of them blend into one temp.
-            //
-            // The controlling expression is NOT evaluated in C (`_Generic` selects on its
-            // *type*), so it must not join the blend -- but it cannot simply be skipped either,
-            // because the kernel's `_Generic(*(&sl->seqcount), ...)` mentions the object nowhere
-            // else. It gets the ternary condition's treatment: lowered for its effects, its
-            // value dropped.
-            //
-            // Without this arm every `_Generic` became an opaque temp, which in the kernel meant
-            // the whole `__seqprop_*`/`container_of`/`min`/`max` dispatch family -- the calls in
-            // the arms included -- was invisible.
+            // A C11 generic selection evaluates only the arm whose type matches -- a type
+            // this frontend does not have. Treated like the ternary with N arms: all arms
+            // lower and blend into one temp. The controlling expression is NOT evaluated in
+            // C (`_Generic` selects on its *type*), so it must not join the blend -- but
+            // real code often mentions the object nowhere else, so it is lowered for its
+            // effects and its value dropped.
             "generic_expression" => {
                 let (ctrl, arms) = generic_selection_parts(node);
                 if let Some(ctrl) = ctrl {
@@ -3654,21 +3361,13 @@ impl<'a> Context<'a> {
             }
             // GNU inline assembly (`__asm__ ("..." : outs : ins : clobbers)`). The assembly text
             // is opaque to this frontend, so it is modeled as the operand transfer it is rather
-            // than dropped -- see `flatten_gnu_asm`. Without this arm every `__asm__` hit the
-            // catch-all below, so a value laundered through inline asm lost its taint and an
-            // `"+r"` in/out operand lost its identity flow (the openssh `crypto_int*` shapes).
+            // than dropped -- see `flatten_gnu_asm`.
             "gnu_asm_expression" => self.flatten_gnu_asm(program, node, source, scope_view),
             _ => {
-                // Before blaming the frontend, ask whether the parser even reached here
-                // from well-formed source. A node the recovery produced or re-parented is
-                // not a construct this frontend failed to support: say once that this
-                // body holds recovery output, and skip the rest of the wreckage silently.
-                // In the kernel census that is the difference between 41,751 "frontend
-                // gap" warnings and 180 honest parse errors -- the `int foo(void) {...}`
-                // logged as "Unsupported expression type: function_definition" is a
-                // perfectly good function tree-sitter re-parented into the *previous*
-                // function's body, and is imported and lowered normally by
-                // `lower_definitions`, which queries the whole tree.
+                // Before blaming the frontend, ask whether the parser reached here from
+                // well-formed source: a node the recovery produced or re-parented is not a
+                // construct this frontend failed to support -- say once that the body holds
+                // recovery output and skip the wreckage silently.
                 if recovery_region(node).is_some() {
                     let func_name = scope_view.func_name.clone();
                     self.report_unanalyzed_recovery(&func_name)?;
@@ -3690,37 +3389,18 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// Lowers the *effects* of a GNU statement expression `({ s1; s2; value; })` -- everything
-    /// between the braces except the value -- and hands back the expression node that produces
-    /// the value, if there is one.
+    /// Lowers the *effects* of a GNU statement expression `({ s1; s2; value; })` --
+    /// everything between the braces except the value -- and hands back the node that
+    /// produces the value, if there is one. The leading statements go through the ordinary
+    /// statement walker; the trailing expression is left to the caller, because
+    /// `flatten_expr` wants its `Exp` while `flatten_lvalue` wants its access path
+    /// (`({ ... })->f = v`).
     ///
-    /// The construct is by a wide margin the kernel's most pervasive idiom (`container_of`,
-    /// `READ_ONCE`/`WRITE_ONCE`, `min`/`max`, `smp_load_acquire`, every locked bit-op and every
-    /// instrumented atomic expands to one) and, at 27k occurrences, was the largest gap class the
-    /// kernel census found. Before this it reached `flatten_expr`'s catch-all, which substituted
-    /// a temp nothing reads or writes: both the statements inside the braces and the value they
-    /// produce were dropped, so taint entering a statement expression never left it.
-    ///
-    /// Its value is the value of the **last** statement, which C requires to be an expression
-    /// statement. So the leading statements go through the ordinary statement walker -- making
-    /// the declarations, calls and assignments inside the braces real IR -- and the trailing
-    /// expression is left to the caller: `flatten_expr` wants its `Exp`, while `flatten_lvalue`
-    /// wants its access path, because `container_of(p, T, m)->f = v` puts a statement expression
-    /// in store position.
-    ///
-    /// Like a bare block (`walk_statement`'s `compound_statement` arm) the braces get a fresh
-    /// lexical scope but deliberately *share* the enclosing basic block -- a statement expression
-    /// continues the enclosing block, it does not close it -- so there is no end-of-compound link
-    /// to make. On return `scope_view` names that inner scope and the block the body ended in, so
-    /// the caller can lower the value node there; the caller then restores its own `sidx` (names
-    /// declared between the braces must not outlive them) and `cur_span` (walking the body
-    /// retargets the span at every statement inside).
-    ///
-    /// The block has to be threaded back out because statements inside may open blocks of their
-    /// own -- `do { } while (0)` sits in every `READ_ONCE` -- and everything lowered afterwards
-    /// has to land in the block control actually reaches. Statement expressions nest, too (the
-    /// kernel's RCU accessors put one inside another), and this is re-entrant: the nested one is
-    /// just another `flatten_expr` call on the value node.
+    /// Like a bare block, the braces get a fresh lexical scope but *share* the enclosing
+    /// basic block -- no end-of-compound link. On return `scope_view` names the inner scope
+    /// and the block the body ended in (statements inside may open blocks of their own, and
+    /// what follows must land where control actually reaches); the caller restores its own
+    /// `sidx` and `cur_span`. Re-entrant, since statement expressions nest.
     fn lower_statement_expression_effects<'t>(
         &mut self,
         program: &mut Program,
@@ -3760,7 +3440,7 @@ impl<'a> Context<'a> {
                 // `({ ...; ; })` -- a trailing empty statement carries no expression.
                 last.child(0).filter(|inner| !_is_empty(inner))
             }
-            // A `void`-valued statement expression, e.g. the kernel's ubiquitous
+            // A `void`-valued statement expression, e.g.
             // `({ do { } while (0); })`. Well-defined C, not a gap: lower the statement here
             // and leave the caller to invent a value nothing reads.
             Some(last) => {
@@ -3798,25 +3478,16 @@ impl<'a> Context<'a> {
         )
     }
 
-    /// Lowers a GNU inline-assembly expression as an opaque **operand transfer**.
-    ///
-    /// The assembly body is never analyzed, so the only sound model is that the black box
-    /// relates all of its operands: every input operand may reach every output operand. That is
-    /// emitted as one blend temp holding all the inputs, assigned into each output. Funnelling
-    /// through a single temp -- rather than handing each write two operands -- is what lets an
-    /// output that is a *field* path carry the value at all: a store lowers exactly one value
-    /// (see [`Context::add_assign_to_program`]), so a second operand would be silently dropped.
-    ///
-    /// An output constrained with `+` is read-modify-write, so its old value is also a source:
-    /// that is what keeps the `x -> x` identity flow in openssh's
-    /// `__asm__ ("sarw $15,%0" : "+r"(x) : : "cc")`. Every read is emitted before every write,
-    /// matching the C semantics. Clobbers name registers, not C locations, so they carry no
-    /// dataflow and are ignored.
-    ///
-    /// `asm goto` carries a label list on top of that, and those jumps are real CFG edges. They
-    /// are wired by [`Context::link_asm_goto_labels`] *after* all of the operand statements are
-    /// emitted, because linking sets the block's terminator and nothing may be appended to a
-    /// block past its terminator.
+    /// Lowers a GNU inline-assembly expression as an opaque **operand transfer**: the
+    /// assembly body is never analyzed, so every input operand may reach every output
+    /// operand, emitted as one blend temp holding all inputs, assigned into each output.
+    /// Funnelling through a single temp is what lets an output that is a *field* path carry
+    /// the value at all: a store lowers exactly one value. A `+`-constrained output is
+    /// read-modify-write, so its old value is also a source (the `x -> x` identity flow);
+    /// every read is emitted before every write. Clobbers name registers, carry no
+    /// dataflow, and are ignored. `asm goto` label edges are wired by
+    /// [`Context::link_asm_goto_labels`] *after* the operand statements, because linking
+    /// sets the block's terminator.
     fn flatten_gnu_asm(
         &mut self,
         program: &mut Program,
@@ -3888,25 +3559,15 @@ impl<'a> Context<'a> {
         Ok(value)
     }
 
-    /// Turns the label list of a GNU `asm goto` into real CFG edges.
+    /// Turns the label list of a GNU `asm goto` into real CFG edges, driving the same
+    /// machinery `walk_goto` uses: `lower_function`'s pre-scan already created a block per
+    /// label, so forward jumps resolve, and `link_blocks` appends each target to the
+    /// current block's `Goto` terminator.
     ///
-    /// The labels are ordinary `goto` targets, so this drives the very machinery `walk_goto`
-    /// does: the per-function pre-scan in `lower_function` already created a block for every
-    /// `labeled_statement` in the body and recorded it in `label_blocks`, which is what makes a
-    /// forward jump (the usual shape -- `l_yes:` sits *after* the asm) resolve. `link_blocks`
-    /// then appends each target to the current block's `Goto` terminator.
-    ///
-    /// Where `goto` *diverges*, an `asm goto` may or may not jump: control either lands on one
-    /// of the labels or falls out the bottom. So the fall-through is an edge like any other --
-    /// a fresh block, linked from the same terminator, that the rest of the enclosing statement
-    /// and its siblings continue in. Nothing is reported as diverging, so the enclosing compound
-    /// keeps walking normally.
-    ///
-    /// Building the edges from expression context (rather than a `walk_statement` pre-pass) is
-    /// what `scope_view: &mut ScopeView` is for: it names the current function *and* block, and
-    /// threading a new block back out through it is exactly how `lower_statement_expression_effects`
-    /// already moves the walk forward from inside `flatten_expr`. A pre-pass would have to find
-    /// the asm before its operands lower and could not place the split after them.
+    /// Unlike `goto`, an `asm goto` may fall out the bottom, so the fall-through is an edge
+    /// like any other -- a fresh block the rest of the statement continues in, and nothing
+    /// is reported as diverging. Built from expression context because the split must land
+    /// *after* the operands lower; the new block threads back out through `scope_view`.
     fn link_asm_goto_labels(
         &mut self,
         program: &mut Program,
@@ -4106,40 +3767,25 @@ impl<'a> Context<'a> {
         Ok(result)
     }
 
-    /// The cast tree-sitter cannot see -- its operand list, to lower as one -- or `None` for
-    /// a call.
+    /// The cast tree-sitter cannot see -- its operand list, to lower as one -- or `None`
+    /// for a call.
     ///
-    /// tree-sitter-c knows a fixed list of primitive type names and has no symbol table, so a
-    /// cast to a typedef written with the operand parenthesized, `(__be16)(x)`, parses as a
-    /// `call_expression` whose callee is a `parenthesized_expression` -- character for
-    /// character the shape of a genuine call through a parenthesized function pointer,
-    /// `(fp)(x)`.
+    /// tree-sitter-c has no symbol table, so a cast to a typedef with the operand
+    /// parenthesized, `(width_t)(x)`, parses as a `call_expression` -- character for
+    /// character the shape of a genuine `(fp)(x)`. Lowering every one as a call would be
+    /// silent and unsound: `define_extern_functions` would invent an empty-bodied
+    /// `(width_t)`, and an empty body returns nothing, so the cast's taint would stop
+    /// there.
     ///
-    /// Lowering every one of them as a call was silent and unsound at once: `define_extern_
-    /// functions` invented an empty-bodied function named `( __be16)` (2,931 call sites in the
-    /// kernel corpus, 605 in openssh, 229 in nginx), and an empty body returns nothing, so the
-    /// taint that went into the cast did not come out.
+    /// The unit's own *positive* evidence decides. For a call: a variable in scope (a
+    /// block-scope declaration may shadow a typedef), a function any unit of the import
+    /// defines, or a prototype (`(free)(p)`, the macro-suppression idiom). For a cast: a
+    /// use of the name as a type anywhere in the unit, and at least one operand.
     ///
-    /// The unit's own evidence decides, and only *positive* evidence -- a name known to be one
-    /// thing here, not merely absent from the other list:
-    ///
-    /// * for a call: a variable in scope (C lets a block-scope declaration shadow a typedef,
-    ///   and `(fp)(x)` with a local `fp` is a call however `fp` is spelled elsewhere); a
-    ///   function any unit of this import defines (`Context::functions` spans the import, so
-    ///   a name one unit typedefs and another defines as a function meets itself here, and
-    ///   the definition wins because a call to it has somewhere to go); or a prototype ([`Context::declared_functions`] -- `(free)(p)` with libc's
-    ///   prototype in scope is the macro-suppression idiom, a call);
-    /// * for a cast: a use of the name as a type anywhere in the unit
-    ///   ([`Context::type_names`]), and at least one operand.
-    ///
-    /// Two shapes carry neither, and each draws a report instead of a silent guess. The
-    /// lowering is what it always was -- a call, to a function `define_extern_functions` will
-    /// invent -- but the census now sees it. `(T)()` with `T` a type casts nothing, which is
-    /// not C: a source problem. A name the unit neither defines, declares, nor uses as a type
-    /// is a frontend gap: the frontend cannot know, and if the name IS a type, the invented
-    /// callee's empty body is where the operand's taint stops. Neither shape occurs in the
-    /// dropbear, openssh, nginx, or linux corpora; the report is for the corpus that changes
-    /// that.
+    /// Two shapes carry neither, and each draws a report instead of a silent guess while
+    /// the lowering stays a call: `(T)()` casts nothing (a source problem), and a name with
+    /// no evidence either way is a frontend gap -- if it IS a type, the invented callee's
+    /// empty body is where the operand's taint stops.
     fn cast_shaped_call<'t>(
         &self,
         node: Node<'t>,
@@ -4273,23 +3919,16 @@ impl<'a> Context<'a> {
                 })
         };
 
-        // A GNU statement expression in callee position produces a VALUE, and calling a value is
-        // calling through it -- the kernel's `static_call(cond_resched)(...)`, which expands to
-        // `({ ...; (&__SCT__cond_resched); })(...)`. The rule below cannot see that from the
-        // access path alone: the value node resolves to the bare global path
-        // `$globals.__SCT__cond_resched`, which is exactly the shape of a global callee that IS a
-        // name (`hook(1)`, see `a_bare_global_callee_is_still_a_name`). What tells them apart is
-        // the construct in callee position -- `({ ... })`, not `__SCT__cond_resched` -- so ask it
-        // here. Left as a name, the callee was named by the braces' own source text, and since
-        // the expansion embeds a `__UNIQUE_ID___...` counter every one of the 220 kernel call
-        // sites invented an empty-bodied function of its own.
+        // A GNU statement expression in callee position produces a VALUE, and calling a
+        // value is calling through it. The access path cannot say so -- the value node may
+        // resolve to a bare global path, exactly the shape of a global callee that IS a
+        // name (see `a_bare_global_callee_is_still_a_name`) -- so ask the construct itself;
+        // left as a name, an empty-bodied function would be invented per call site.
         let callee_is_a_value = is_statement_expression(func_node);
 
-        // Direct call or indirect call, decided by what the callee *resolved to* rather than by
-        // how it was spelled: a callee that is a name is a direct call to that name, and a
-        // callee that is a location holding a function pointer is a call through what that
-        // location holds. Every arm below reads the resolved access path, so the three storage
-        // classes only differ in how a location is spelled, not in what counts as one.
+        // Direct or indirect, decided by what the callee *resolved to*, not how it was
+        // spelled: a name is a direct call; a location holding a function pointer is a call
+        // through what it holds. Every arm below reads the resolved access path.
         let var = access_path.base.variable.clone();
         let style = match &*var {
             Variable::Local(name) => {
@@ -4314,18 +3953,14 @@ impl<'a> Context<'a> {
                     signature: (Some("indirect-call".to_string())),
                 }
             }
-            // A global's access path is `$globals.<name>.<fields>`, so the base variable being
-            // the globals object says nothing about whether the callee is a name -- what says
-            // it is the path. `$globals.hook` IS the object `hook`, and a bare global name is
-            // still resolved by name (see `a_bare_global_callee_is_still_a_name` for why it has
-            // to be). Anything past that leading segment is a location *inside* the object,
-            // reached by a load: `ses.remoteclosed`, `ngx_os_io.send`, `ses.packettypes[i]
-            // .handler` are function pointers a file-scope object holds, not functions, and
-            // naming a call edge after the expression's source text both invented an empty
-            // function to receive it and lost the indirect call the program actually makes.
-            //
-            // The second disjunct is that same conclusion reached from the construct instead of
-            // from the path, for the one shape whose path cannot say it: see `callee_is_a_value`.
+            // A global's access path is `$globals.<name>.<fields>`, so the base being the
+            // globals object says nothing about whether the callee is a name -- the PATH
+            // does. `$globals.hook` IS the object `hook` and stays name-resolved (see
+            // `a_bare_global_callee_is_still_a_name`); anything past that leading segment
+            // is a location *inside* the object, reached by a load -- a function pointer a
+            // file-scope object holds, not a function. The second disjunct reaches the
+            // same conclusion from the construct, for the one shape whose path cannot say
+            // it: see `callee_is_a_value`.
             Variable::GlobalHeap if access_path.fields.len() > 1 || callee_is_a_value => {
                 log::debug!("This is an Indirect GLOBAL call: {func_name}");
                 let callee = self.emit_loads(program, scope_view, access_path);
@@ -4359,14 +3994,11 @@ impl<'a> Context<'a> {
         ))
     }
 
-    /// The IR name a reference to the function `name` from this unit resolves to.
-    ///
-    /// Almost always `name` itself. It differs only for a name several definitions claim,
-    /// where C resolves the reference within the referring translation unit first: a call to
-    /// `g` in `ssh-agent.c` means *that* file's `static g`, not the one `ssh-add.c` happens
-    /// to define under the same name. A unit that defines no `g` falls back to the bare name,
-    /// which is both what C does (the external definition) and what keeps an undefined `g`
-    /// resolvable -- [`define_extern_functions`], and every taint model, matches by name.
+    /// The IR name a reference to the function `name` from this unit resolves to. Almost
+    /// always `name` itself; for a name several definitions claim, C resolves within the
+    /// referring unit first (a call to `g` in `a.c` means that file's `static g`). A unit
+    /// defining no `g` falls back to the bare name -- what C does, and what keeps an
+    /// undefined `g` resolvable by [`define_extern_functions`] and every taint model.
     fn resolve_reference(&self, name: &str) -> String {
         self.unit_plan
             .local_names
@@ -4422,11 +4054,6 @@ impl<'a> Context<'a> {
     /// Lower one `function_definition` into its IR function: register the name, set the return
     /// arity, build the parameter and body scopes, pre-create a block per `goto` label, walk the
     /// body, flag the label blocks the walk never reached, and finalize terminators.
-    ///
-    /// Split out of [`Context::lower_definitions`] so the per-function lowering is one named unit
-    /// rather than an 80-line loop body. That keeps the query/dispatch loop readable, and it is
-    /// what lets a change in here be reviewed (and merged) as a diff against a function instead of
-    /// against an anonymous block.
     fn lower_function(
         &mut self,
         source: &'a str,
@@ -4532,14 +4159,11 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
-    /// Blends every expression in `values` into one fresh temp and yields it -- the value of a
-    /// construct where the frontend cannot tell which of several expressions is the result, so
-    /// all of them may be (a ternary's two arms, a generic selection's N).
-    ///
-    /// Two values fit in a single `assign`, which is the statement a ternary has always lowered
-    /// to; any further value folds in with the running temp as the second operand -- the
-    /// `t = src, t` shape [`Context::flatten_gnu_asm`] uses -- because an `assign` carries at
-    /// most two. A blend of nothing is a temp that is never written, i.e. an opaque value.
+    /// Blends every expression in `values` into one fresh temp and yields it -- the value
+    /// of a construct where any of several expressions may be the result (a ternary's arms,
+    /// a generic selection's N). Two values fit one `assign`; further values fold in with
+    /// the running temp as second operand, since an `assign` carries at most two. A blend
+    /// of nothing is a temp never written: an opaque value.
     fn blend_into_temp(
         &mut self,
         program: &mut Program,
@@ -4588,16 +4212,12 @@ impl<'a> Context<'a> {
                 self.cur_span,
             ));
         } else {
-            // A store writes a single value into the field path; the field read is not
-            // expressible as an operand, so a compound op's second operand is dropped here
-            // (matching the prior behavior for field stores). Any intermediate dereferences are
-            // materialized as loads by `store_access_path`.
-            //
-            // A store must end in a symbolic field: a target that is a pure *address*
-            // (offsets only, e.g. the pointee of `p = &x[1]` reached through `*p = v`) names
-            // memory, so terminate it with the dereference field, exactly as the pcode frontend
-            // terminates an offset-only address with `.deref`. Without this the write would
-            // trip `assign_or_store`'s "storing to an offset address with no field" assertion.
+            // A store writes a single value into the field path (the field read is not
+            // expressible as an operand, so a compound op's second operand is dropped for
+            // field stores); intermediate dereferences are materialized by
+            // `store_access_path`. A store must end in a symbolic field: an offsets-only
+            // target names memory, so it is terminated with the dereference field, as the
+            // pcode frontend does.
             let mut fields = target.fields.clone();
             if fields.iter().all(PathSegment::is_offset) {
                 fields.push(PathSegment::symbol(DEREF_FIELD));
@@ -4619,22 +4239,15 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// Lowers `&e` to the *address* of the location `e` names, or `None` when this frontend has
-    /// no way to name that address (the caller then falls back to the historical value-copy
-    /// model, which lowers `&e` to a read of `e`).
+    /// Lowers `&e` to the *address* of the location `e` names, or `None` when this frontend
+    /// cannot name that address (the caller falls back to the value-copy model).
     ///
-    /// An address in the IR is a base variable plus pointer-arithmetic offsets, so the addresses
-    /// that *are* nameable are exactly the element accesses: `&a[1]` is `a.[1]`, the same address
-    /// a subscript computes before dereferencing it. Forming it -- rather than loading the
-    /// element -- is what preserves pointer identity across a call: a callee that stores at
-    /// `.[1].deref` through the parameter writes `a.[2].deref`, which is where the caller's `a[2]`
-    /// reads (offsets are summed when the paths meet). Loading the element instead hands the
-    /// callee a *copy*, and the write is lost.
-    ///
-    /// Not nameable, and so left to the value model: `&x` (a whole variable, which is already its
-    /// own address in this IR -- the pass-through in `flatten_expr` handles it), and `&s.f`, whose
-    /// address would need the byte offset of a struct member that this frontend, having no type
-    /// information, cannot compute; it names members symbolically instead.
+    /// An address in the IR is a base plus pointer-arithmetic offsets, so the nameable
+    /// addresses are exactly the element accesses: `&a[1]` is `a.[1]`. Forming the address
+    /// -- rather than loading the element -- preserves pointer identity across a call:
+    /// offsets are summed where paths meet, while a loaded copy loses the callee's write.
+    /// Not nameable: `&x` (a whole variable is its own address here) and `&s.f` (a member's
+    /// byte offset needs type information this frontend does not have).
     fn flatten_address_of(
         &mut self,
         program: &mut Program,
@@ -4649,12 +4262,10 @@ impl<'a> Context<'a> {
             }
             "subscript_expression" => {
                 let mut ap = self.flatten_lvalue(program, node, source, scope_view)?;
-                // Drop the dereference field: the address is everything up to the dereference the
-                // subscript performs. Whatever symbolic fields remain in the prefix (`&s.a[1]`,
-                // `&a[1][2]`) are still real dereferences, so `emit_loads` materializes them and
-                // returns the residual base + offsets -- the address. (`flatten_lvalue` of a
-                // subscript always ends in a dereference, so the pop only fails if that ever
-                // stops holding.)
+                // Drop the dereference the subscript performs; what remains is the address.
+                // Symbolic fields left in the prefix (`&s.a[1]`) are real dereferences that
+                // `emit_loads` materializes, returning the residual base + offsets.
+                // (`flatten_lvalue` of a subscript always ends in a dereference.)
                 match ap.fields.pop() {
                     Some(seg) if is_deref_field(&seg) => {}
                     _ => return Ok(None),
@@ -4689,13 +4300,9 @@ impl<'a> Context<'a> {
                 &mut program[scope_view.fidx].locals,
             )),
             "field_expression" => {
-                // Resolve the object being accessed as an lvalue *first*, then append this
-                // field. Recursing through `flatten_lvalue` (rather than walking an
-                // identifier-rooted chain of `field_expression`s) lets a field be composed on
-                // top of ANY location -- a plain variable (`s.f`), an array element
-                // (`a[i].f`), a pointer deref (`p->f` / `(*p).f`) -- so the base's own path
-                // (e.g. the `[i]` index segment a subscript contributes) is preserved and the
-                // field is layered onto it.
+                // Resolve the object as an lvalue *first*, then append this field:
+                // recursing lets a field compose onto ANY base (variable, array element,
+                // pointer deref) with the base's own path preserved.
                 let argument = node
                     .child_by_field_name("argument")
                     .expect("field_expression always has an argument");
@@ -4712,11 +4319,10 @@ impl<'a> Context<'a> {
                     return Ok(self.dead_temp_path(program, scope_view));
                 }
                 // Collapse a union member access to the shared `$union` field so a write to one
-                // member is observed at a read of another (union members alias; F4). Only the
+                // member is observed at a read of another (union members alias). Only the
                 // access *on the union variable itself* collapses -- detected by the resolved
                 // base being the bare union variable -- so a struct field nested inside a union
-                // member (`u.a.b`) keeps its own name. This matches the prior behavior of
-                // rewriting only the first path segment.
+                // member (`u.a.b`) keeps its own name.
                 let seg = if base.is_pathless() && self.union_vars.contains(&base.base) {
                     PathSegment::symbol(UNION_FIELD)
                 } else {
@@ -4744,13 +4350,10 @@ impl<'a> Context<'a> {
                 push_element(&mut ap.fields, constant_index(&index));
                 Ok(ap)
             }
-            // A GNU statement expression in lvalue position -- `container_of(p, T, m)->f = v`
-            // and the rest of the kernel's list/RCU accessors. The location it names is the
-            // location its value expression names, so run the braces for their effects and
-            // resolve that value node as the lvalue. Falling through to the catch-all below
-            // instead only worked when the value happened to lower to a bare variable; anything
-            // else (a field path, a cast) reported `not an lvalue: compound_statement` and the
-            // store was dropped onto a dead temp.
+            // A GNU statement expression in lvalue position -- a macro expansion like
+            // `({ ... })->f = v`. The location it names is the location its value expression
+            // names, so run the braces for their effects and resolve that value node as the
+            // lvalue.
             "compound_statement" => {
                 let outer_sidx = scope_view.sidx;
                 let outer_span = self.cur_span;
@@ -4764,17 +4367,11 @@ impl<'a> Context<'a> {
                 self.cur_span = outer_span;
                 Ok(path)
             }
-            // A string literal as a location: `"\004\002\006\006"[(flags) & 3]`, the
-            // kernel's `ACC_MODE()`. C makes a string literal an object -- an unnamed array
-            // of char with static storage -- so it is a legitimate subscript base and a
-            // legitimate operand of `&`, and `flatten_lvalue` is reached for the *base* of a
-            // subscript even when the whole expression is a pure read. It is also a
-            // compile-time constant: there is nothing to store into it and nothing in it to
-            // taint, the same reason `flatten_expr` lowers `sizeof`/`_Alignof` operands to a
-            // constant rather than walking them. So give it a location nothing else names,
-            // and the read lowers to a load that yields nothing. Falling through to the
-            // catch-all reported `not an lvalue: string_literal` and burned an anonymous
-            // temp -- the identical recovery, minus the false accusation.
+            // A string literal as a location (`"\004\002\006\006"[i & 3]` is real C): it is
+            // an object, so a legitimate subscript base and operand of `&` -- but also a
+            // compile-time constant with nothing to store into and nothing to taint. Give
+            // it a location nothing else names; the read lowers to a load that yields
+            // nothing.
             "string_literal" | "concatenated_string" => {
                 Ok(self.dead_temp_path(program, scope_view))
             }
@@ -4791,7 +4388,7 @@ impl<'a> Context<'a> {
                     .is_some_and(|op| to_str(&op, source) == "*");
                 let ptr = self.flatten_lvalue(program, arg, source, scope_view)?;
                 // A store through `*p` where `p` has a known same-block address-of alias
-                // (`p = &x`) targets the pointee `x` directly (F3), so the write is observed at
+                // (`p = &x`) targets the pointee `x` directly, so the write is observed at
                 // reads of `x`. Mirrors the read path in `flatten_expr`, including the `deref`
                 // field an interior pointee (`p = &x[1]`) needs to name its memory.
                 if is_deref
@@ -4805,36 +4402,19 @@ impl<'a> Context<'a> {
                 }
                 Ok(ptr)
             }
-            // A cast in lvalue position. The cast itself is value-preserving (`flatten_expr`'s
-            // `cast_expression` arm passes the operand straight through), so the location a
-            // cast names is the location its operand names -- which is why `((struct S *)p)->f
-            // = v` and `*(int *)(t->q) = v` already resolved through the catch-all below, where
-            // the operand happens to lower to a variable.
+            // A cast in lvalue position. The cast is value-preserving, so the location it
+            // names is the location its operand names -- `((struct S *)p)->f = v` resolves
+            // through the catch-all below, where the operand lowers to a variable.
             //
-            // What did not resolve is the one thing C has a cast FOR in this position: naming
-            // an address that is not any declared object. `(T *)<constant>` is an address
-            // constant, and the operand lowers to an `Exp::Str`, not a variable, so the
-            // catch-all charged the frontend with `not an lvalue: cast_expression` and dropped
-            // the access onto a dead temp. That is the whole of spec 100's class -- 2,177
-            // occurrences across the kernel corpus, every single one of them `(T *)0`, from
-            // `container_of()`'s type check (`__same_type(*(ptr), ((type *)0)->member)`, which
-            // names a member's TYPE and evaluates nothing) -- and a driver's
-            // `*(volatile u32 *)0xfee00300` is the same construct with a store behind it.
-            //
-            // A constant address is an lvalue in C: `*(T *)K` designates the object at `K`, and
-            // two such designations with the same `K` designate the SAME object. So give it a
-            // location that says exactly that -- a field of the globals object named after the
-            // constant -- rather than a fresh temp per occurrence, which would silently make
-            // every reference to one hardware register a distinct location. The name cannot
-            // collide with anything the program declares because `<...>` is not C identifier
-            // syntax (the trick `next_temp` uses for `<tN>` and spec 090 for
-            // `<implicit-return>`), and it is never empty, which is the invariant spec 070's
-            // `"."` access path broke.
-            //
-            // Only a *cast* gets this reading. A bare constant in location position (`3[a] = b`
-            // -- legal C, the commuted subscript) is not an address and still says so through
-            // the catch-all: the rule keys on the construct that turns a constant into an
-            // address, not on "the value came out constant".
+            // The special case is the one thing C has a cast FOR here: naming an address
+            // that is no declared object. `(T *)<constant>` lowers its operand to an
+            // `Exp::Str`, and a constant address IS an lvalue in C -- two designations with
+            // the same `K` designate the SAME object -- so it gets a globals field named
+            // after the constant (`literal_address_path`) rather than a fresh temp per
+            // occurrence, which would make every reference to one hardware register a
+            // distinct location. Only a *cast* gets this reading: a bare constant in
+            // location position (`3[a] = b`, the commuted subscript) still goes through
+            // the catch-all.
             "cast_expression" => match self.flatten_expr(program, node, source, scope_view)? {
                 Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
                 Exp::Str(constant) if !constant.is_empty() => Ok(literal_address_path(&constant)),
@@ -4847,18 +4427,12 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// The recovery for a node in location position that names no location: say whose fault
-    /// that is, then target a dead temp so the one access is dropped and the rest of the
-    /// function still lowers.
-    ///
-    /// Spec 064's rule, applied to the store side: before blaming the frontend, ask whether the
-    /// parser reached here from well-formed source. A node the recovery produced or re-parented
-    /// names no location because it is not the program -- the kernel's `min()` over a `typeof`
-    /// of a cast (a tree-sitter-c 0.24.1 grammar limit) leaves whole statements re-parented into
-    /// a chain of `assignment_expression`s that never appeared in the source, and charging the
-    /// frontend with "not an lvalue: assignment_expression" asserts ctadl failed to support a
-    /// construct nobody wrote. Say once that this body holds recovery output, and drop the store
-    /// silently like every other node in the region.
+    /// The recovery for a node in location position that names no location: say whose
+    /// fault that is, then target a dead temp so the one access is dropped and the rest of
+    /// the function still lowers. A node the parse recovery produced or re-parented is not
+    /// the program -- charging the frontend with "not an lvalue" there would blame it for
+    /// a construct nobody wrote -- so the body is reported once as holding recovery output
+    /// and the store dropped silently.
     fn not_a_location(
         &mut self,
         program: &mut Program,
@@ -4936,10 +4510,10 @@ fn recoverable_report(attribution: &'static str, msg: String) -> Result<(), Erro
 }
 
 // Test-only: every `recoverable_report` made on this thread, newest last. Lets a test assert
-// not just that ingestion survived but *what* was reported and who was blamed -- the
-// distinction spec 064 turns on, since a suppressed warning and a re-attributed one are both
-// invisible to a test that only checks the program came out. (A plain comment, not a doc
-// comment: rustdoc does not document items produced by a macro invocation.)
+// not just that ingestion survived but *what* was reported and who was blamed -- a
+// suppressed warning and a re-attributed one are both invisible to a test that only checks
+// the program came out. (A plain comment, not a doc comment: rustdoc does not document items
+// produced by a macro invocation.)
 #[cfg(test)]
 thread_local! {
     static REPORTS: std::cell::RefCell<Vec<(&'static str, String)>> =
@@ -4991,40 +4565,24 @@ const FRONTEND_GAP: &str = "frontend gap";
 const SOURCE_PROBLEM: &str = "source problem";
 
 /// How much of an unparsable construct a parse-error warning quotes, in characters.
-/// Preprocessed kernel source puts a whole macro expansion on one line, so an `ERROR`
-/// node there is routinely kilobytes long -- the longest in the kernel census is 23,268
-/// characters -- and the old message embedded all of it.
-///
-/// 200 rather than something tighter because the quote has to stay *diagnostic*:
-/// `run-linux.sh`'s triage identifies the grammar limit behind each parse error by finding
-/// the `typeof(`/`...` marker in this text, and in the corpus's worst case (a
-/// `WRITE_ONCE(x, min_t(...))` expansion) that marker sits at character 142. A 120-char
-/// quote was tried first and left 9 of the census's 180 constructs unclassifiable.
+/// Preprocessed source puts a whole macro expansion on one line, so an `ERROR` node there
+/// can run to kilobytes. 200 rather than something tighter because the quote has to stay
+/// *diagnostic*: the marker that identifies the grammar limit behind a parse error (a
+/// `typeof(` deep inside a nested expansion, say) can sit well past character 100.
 const PARSE_ERROR_QUOTE_CHARS: usize = 200;
 
 /// The parse-recovery region `node` belongs to, or `None` if the parser produced it
 /// from source it parsed cleanly.
 ///
-/// tree-sitter signals a syntax error in two ways and only the first is a node kind:
-/// an `ERROR` node covering text it could not parse, and -- once it resumes -- an
-/// ordinary, perfectly well-formed subtree re-parented somewhere it does not belong.
-/// The kernel corpus is dominated by the second. An unparsable
-/// `__typeof(__builtin_choose_expr(...))` in a top-level declarator (`SYSCALL_DEFINE`)
-/// leaves the ~87 function definitions that follow it re-parented into the *previous*
-/// function's `compound_statement`, where each looks exactly like a GNU nested
-/// function. Not one of them is inside an `ERROR` node, so an ancestry-only test finds
-/// nothing; what marks them is that the body holding them did not parse.
-///
-/// So: the innermost enclosing `ERROR` node if there is one, else the innermost enclosing
-/// `compound_statement` whose own subtree failed to parse.
-///
-/// The `compound_statement` fallback deliberately stops at the *first* enclosing body
-/// rather than walking to the root. It has to: in `fs__read_write.c` the parse fails so
-/// badly that the **root node itself is an `ERROR`**, and in `net__ipv4__route.c` one
-/// top-level `ERROR` spans 2.1 MB of the 3.2 MB file. A rule that looked for damage
-/// anywhere above would excuse every gap in those translation units. Stopping at the first
-/// enclosing body keeps a construct inside a cleanly parsed body reported as the frontend
-/// gap it is, even when the function next to it is wreckage.
+/// tree-sitter signals a syntax error in two ways and only the first is a node kind: an
+/// `ERROR` node over text it could not parse, and -- once it resumes -- an ordinary,
+/// well-formed subtree re-parented somewhere it does not belong (a following function
+/// definition re-parented into the previous body, say), with no `ERROR` ancestor. So: the
+/// innermost enclosing `ERROR` node, else the innermost enclosing `compound_statement`
+/// whose own subtree failed to parse. The fallback deliberately stops at the *first*
+/// enclosing body: a parse can fail so badly the root itself is an `ERROR`, and a
+/// look-anywhere-above rule would excuse every gap in the unit -- stopping keeps a
+/// construct inside a cleanly parsed body reported as the frontend gap it is.
 fn recovery_region(node: Node<'_>) -> Option<Node<'_>> {
     if node.is_error() {
         return Some(node);
@@ -5075,20 +4633,13 @@ fn malformed_source(msg: String) -> Result<(), Error> {
 }
 
 /// Splits a `generic_expression` into its controlling expression and the *values* of its
-/// associations (`_Generic(ctrl, T1: e1, ..., default: eN)` -> `ctrl`, `[e1, ..., eN]`).
-///
-/// tree-sitter-c 0.24.1 gives the construct no field names and no per-association node: the
-/// named children are the controlling expression followed by a flat `type_descriptor`, value,
-/// `type_descriptor`, value, ... sequence, and `default:` is spelled as a `type_descriptor`
-/// whose type is the identifier `default`. So the values are exactly the named children after
-/// the first that are not `type_descriptor`s -- reading them positionally instead would break
-/// on `comment`, which is an `extra` and may appear anywhere.
-///
-/// An `ERROR` child counts as a value, so it is lowered (and reported) like any other. The
-/// kernel produces one per `container_of`: `_Generic(sk, const typeof(*(sk)) *: ...)` has an
-/// association type tree-sitter-c cannot parse, and the stray `*` it recovers with lands here.
-/// Charging that to the ERROR-debris class is deliberate -- it is the same parse debris every
-/// other dispatch point reports, and reclassifying all of it at once is its own spec.
+/// associations. tree-sitter-c 0.24.1 gives the construct no field names: the named
+/// children are the controlling expression followed by a flat type/value sequence
+/// (`default:` is a `type_descriptor` whose type is `default`), so the values are the
+/// named children after the first that are not `type_descriptor`s -- positional reading
+/// would break on `comment`, an `extra` that may appear anywhere. An `ERROR` child counts
+/// as a value, so an unparsable association type's recovery debris is lowered (and
+/// reported) like any other parse debris.
 fn generic_selection_parts<'t>(node: Node<'t>) -> (Option<Node<'t>>, Vec<Node<'t>>) {
     let mut cursor = node.walk();
     let mut named = node

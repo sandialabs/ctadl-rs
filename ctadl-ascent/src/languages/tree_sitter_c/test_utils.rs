@@ -545,7 +545,7 @@ functions.
 
 The invariant it exists for is [`StatementKind::Load`]'s own -- "the loaded field must be
 non-empty". `facts::Path` serializes an access path as its segments joined by `.` and its parser
-rejects an empty segment, so ONE empty field name anywhere in a corpus makes the whole index
+rejects an empty segment, so ONE empty field name anywhere in an import makes the whole index
 unreadable: `ctadl query` panics on the parquet it just wrote, before printing a single result.
 Whole-program rather than one function because only tree-sitter's parse recovery can produce an
 empty name, and an input that provokes the recovery is never a tidy one-function program. */
@@ -983,7 +983,7 @@ mod ap_tests {
     #[test]
     #[should_panic(expected = "empty access-path segment")]
     fn parse_fields_rejects_empty_segments() {
-        // These used to be silently dropped, so `.a..b.` and `.a.b` were the same fixture.
+        // Silently dropping empties would make `.a..b.` and `.a.b` the same fixture.
         parse_fields(".a..b.");
     }
 
