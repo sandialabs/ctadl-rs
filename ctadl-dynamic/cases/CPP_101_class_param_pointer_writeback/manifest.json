@@ -1,0 +1,6 @@
+{
+  "name": "CPP_101_class_param_pointer_writeback",
+  "description": "C++ class-typed parameter as a method receiver (spec 020), POSITIVE, pointer with write-back: `void fill(Box* p) { p->set(source()); }` then `fill(&a); sink(a.get());`. The pointer identifier is the receiver (spec 014's convention) and a pointer parameter is ByRef, so the member write reaches the caller's object. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

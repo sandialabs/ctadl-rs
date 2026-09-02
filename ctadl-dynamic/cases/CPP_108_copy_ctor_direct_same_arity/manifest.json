@@ -1,0 +1,6 @@
+{
+  "name": "CPP_108_copy_ctor_direct_same_arity",
+  "description": "C++ copy constructors (spec 022), POSITIVE: a class with a same-arity pair `Box(int)` + `Box(const Box&)`. Arity-only overload resolution keyed both under `Box::Box`, merged their bodies into one FunctionIdx, and resolved `Box b(a)` to the chimera, losing the flow (s=none d=flow). The copy constructor is now registered and lowered as `Box::Box#copy` and `Box b(a)` calls it, so `v(o.v)` carries the taint into `b`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

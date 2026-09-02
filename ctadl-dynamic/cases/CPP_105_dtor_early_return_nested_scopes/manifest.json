@@ -1,0 +1,6 @@
+{
+  "name": "CPP_105_dtor_early_return_nested_scopes",
+  "description": "C++ early-exit destructors (spec 021), POSITIVE, nested scopes: a `return` inside a nested block destroys the objects of EVERY enclosing scope, innermost first — the inner `Widget x` and then the tainted outer `Widget w`. Spec 017 emitted nothing on the diverging path, losing the outer object's destructor entirely (s=none d=flow). The `return` now unwinds all of the function's open destructor frames, innermost frame first, so `Widget::~Widget(x)` precedes `Widget::~Widget(w)` before the terminator. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

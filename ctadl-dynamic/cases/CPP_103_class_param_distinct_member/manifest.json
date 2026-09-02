@@ -1,0 +1,6 @@
+{
+  "name": "CPP_103_class_param_distinct_member",
+  "description": "C++ class-typed parameter as a method receiver (spec 020), NEGATIVE: field sensitivity through a parameter receiver. `void fill(Box& b) { b.setV(source()); }` writes back into the caller's object (as CPP_100 shows), but `main` sinks the DISTINCT member `w` via `a.getW()`. Dispatching on a parameter keeps `@p0.v` and `@p0.w` apart exactly as dispatching on a local does, so the taint never crosses. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

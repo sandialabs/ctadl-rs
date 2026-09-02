@@ -490,6 +490,38 @@ fn if_return_in_consequent_cfg() {
 }
 
 #[test_log::test]
+fn early_exits_emit_nothing_on_the_c_path() {
+    // Spec 021 added a `scope_unwind` hook that runs a scope's destructors before a
+    // `return`/`break`/`continue`. C has no destructors and its destructor frames are always
+    // empty, so its hook is a no-op: an early exit must still lower to nothing but the control
+    // transfer. Pinned by statement count -- a C function with all three diverging statements
+    // emits no call at all, and the same CFG shape as before.
+    let src = r"
+        int f(int x, int y) {
+            for (int i = 0; i < x; i++) {
+                if (i == y) { break; }
+                if (i == 0) { continue; }
+                if (i == 3) { return i; }
+            }
+            return y;
+        }";
+    let prog = program_from_string(src).0;
+    let calls: Vec<&StatementKind> = function_named(&prog, "f")
+        .expect("f is lowered")
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .map(|s| &s.kind)
+        .filter(|k| matches!(k, StatementKind::CallAssign { .. }))
+        .collect();
+    assert!(
+        calls.is_empty(),
+        "a C early exit emits no call -- `scope_unwind` is inert on the C path; \
+         got {calls:?}\n{prog}"
+    );
+}
+
+#[test_log::test]
 fn if_both_branches_can_return_params() {
     // The dataflow view of the same shape (`if(x) return x; return y;`): there are two possible
     // return paths, so the summary reports *both* params 0 and 1 reaching the return.

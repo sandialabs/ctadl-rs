@@ -246,6 +246,46 @@ pub(crate) fn direct_calls_in(prog: &Program, name: &str) -> Vec<(Vec<String>, V
         .collect()
 }
 
+/* The *destructor* calls of function `name`, grouped by basic block: one entry per block, in block
+order, holding the callee names of that block's `Class::~Class` direct calls in statement order.
+`direct_calls_in` flattens the whole function, which cannot tell "one call on each of two paths"
+from "two calls on one path" -- exactly the distinction early-exit unwinding (spec 021) turns on --
+so this keeps the per-block grouping. Blocks with no destructor call come back as empty Vecs;
+`.filter(|b| !b.is_empty())` is the usual next step. */
+pub(crate) fn dtor_calls_per_block(prog: &Program, name: &str) -> Vec<Vec<String>> {
+    let Some(fun) = function_named(prog, name) else {
+        return Vec::new();
+    };
+    fun.blocks
+        .iter()
+        .map(|b| {
+            b.statements
+                .iter()
+                .filter_map(|stmt| match &stmt.kind {
+                    StatementKind::CallAssign {
+                        style: CallStyle::DirectCall { call_edges },
+                        ..
+                    } => {
+                        let CallEdges::Explicit(edges) = call_edges;
+                        Some(edges.iter().filter(|e| e.contains("::~")).cloned())
+                    }
+                    _ => None,
+                })
+                .flatten()
+                .collect()
+        })
+        .collect()
+}
+
+/* Like `dtor_calls_per_block`, but only the blocks that actually destroy something -- the shape a
+test wants to pin ("one path emits `x` then `w`, the other emits `w`"). */
+pub(crate) fn nonempty_dtor_blocks(prog: &Program, name: &str) -> Vec<Vec<String>> {
+    dtor_calls_per_block(prog, name)
+        .into_iter()
+        .filter(|b| !b.is_empty())
+        .collect()
+}
+
 /* Asserts function `name` contains a direct call to `callee` with exactly the given argument access
 paths (DSL strings, same as `check_assign_or_update`'s sources -- e.g. `["@p0"]`). Prefer this over
 asserting the dump's `direct-call` text. On failure prints the direct calls actually found. Panics

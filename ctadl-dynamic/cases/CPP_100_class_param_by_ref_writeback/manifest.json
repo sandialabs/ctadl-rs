@@ -1,0 +1,6 @@
+{
+  "name": "CPP_100_class_param_by_ref_writeback",
+  "description": "C++ class-typed parameter as a method receiver (spec 020), POSITIVE, by reference with write-back: `void fill(Box& b) { b.set(source()); }` then `fill(a); sink(a.get());`. A non-const `Box&` is ByRef, so the member write through the parameter reaches the caller's object. Needs the parameter to carry its class, or `b.set` is a free call to an empty stub that writes nothing. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

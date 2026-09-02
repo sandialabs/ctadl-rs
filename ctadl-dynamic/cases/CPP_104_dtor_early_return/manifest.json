@@ -1,0 +1,6 @@
+{
+  "name": "CPP_104_dtor_early_return",
+  "description": "C++ early-exit destructors (spec 021), POSITIVE, `return`: a tainted stack `Widget w` is destroyed by a `return` taken from inside an `if` arm, not by falling off the end. Spec 017 emitted a scope's destructors only on its fall-through path, so the `return 1` block ran none of them and the taint that `~Widget(){ sink(v); }` moves was lost (s=none d=flow soundness-disagree). The `scope_unwind` hook now emits every open frame's destructors immediately before the `Return` terminator, so both the early and the fall-through path carry `Widget::~Widget(w)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

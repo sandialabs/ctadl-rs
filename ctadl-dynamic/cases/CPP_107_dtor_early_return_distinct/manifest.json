@@ -1,0 +1,6 @@
+{
+  "name": "CPP_107_dtor_early_return_distinct",
+  "description": "C++ early-exit destructors (spec 021), NEGATIVE: same early-`return` shape as CPP_104, but `~Widget(){ sink(u); }` sinks a DIFFERENT member than the tainted one (`w.set()` writes `v`). The destructor runs on the early path, yet no tainted value reaches the sink — the unwinding must stay field-sensitive and not report a flow just because a destructor was emitted. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

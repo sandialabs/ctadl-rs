@@ -1,0 +1,6 @@
+{
+  "name": "CPP_115_operator_call",
+  "description": "C++ operator overloading (spec 023), POSITIVE: `sink(f(1))` where `f` is an object of a class declaring `int operator()(int)`. The call used to resolve to an invented extern function `f` whose empty body returns nothing, dropping the taint held in `f.k` (s=none d=flow). A callee identifier that names a known class object now dispatches to `Fn::operator()` with `f` as the by-ref receiver. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

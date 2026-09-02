@@ -1,0 +1,6 @@
+{
+  "name": "CPP_106_dtor_break_last_statement",
+  "description": "C++ early-exit destructors (spec 021), POSITIVE, `break`: a tainted stack `Widget w` lives in a `for` body whose LAST statement is `break`, so the body never falls through and spec 017 emitted no destructor at all (s=none d=flow soundness-disagree). A `break` destroys the objects of every scope up to and including the loop body, so the destructors are now emitted in the `break`'s own block, before the jump, driven by the destructor-frame depth recorded when the loop body was entered. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

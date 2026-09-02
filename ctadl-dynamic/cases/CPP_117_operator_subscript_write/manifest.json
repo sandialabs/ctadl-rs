@@ -1,0 +1,6 @@
+{
+  "name": "CPP_117_operator_subscript_write",
+  "description": "C++ operator overloading (spec 023, FR-4 stretch), POSITIVE: `a[0] = source()` through an `int& operator[](int)` that returns a reference to the member `v`. The write used to land on the built-in element path `a.[0].deref`, which nothing reads, losing the flow (s=none d=flow). The reference-to-member return is now recorded at discovery, so the assignment emits the operator call and stores into `a.v` — the storage the returned reference denotes. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

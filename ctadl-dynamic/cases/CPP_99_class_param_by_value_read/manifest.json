@@ -1,0 +1,6 @@
+{
+  "name": "CPP_99_class_param_by_value_read",
+  "description": "C++ class-typed parameter as a method receiver (spec 020), POSITIVE, by value: `void take(Box b) { sink(b.get()); }`. A parameter's class was never recorded, so `b.get()` lowered as a free call to an empty extern stub and the taint died. Registering the parameter's class where it is bound makes it a receiver like a local, so `Box::get(@p0)` returns the caller's tainted member. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

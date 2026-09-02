@@ -30,8 +30,9 @@ use tree_sitter::{Node, QueryCursor};
 
 use super::{
     ClassInfo, Context, GrammarHooks, MatchExtractor, RawPath, ScopeView, TranslationUnit, VarKind,
-    compile_query_for, declarator_leaf_ident, function_declarator_of, is_class_member_definition,
-    is_namespaced_definition, lower_units, param_arity, returns_void, to_str, unparenthesize,
+    compile_query_for, declarator_leaf_ident, declared_class, function_declarator_of,
+    is_class_member_definition, is_namespaced_definition, lower_units, param_arity, returns_void,
+    to_str, unparenthesize,
 };
 use crate::error::Error;
 
@@ -135,6 +136,71 @@ fn body_returns_deref_this(body: Node<'_>) -> bool {
     false
 }
 
+/// The IR method name of an `operator_name` declarator, normalized.
+///
+/// tree-sitter hands back the operator's source spelling, and C++ allows whitespace inside it:
+/// `operator=`, `operator []` and `operator ()` are all legal and all name the same method. The
+/// punctuation forms are squeezed to a canonical `operator=` / `operator[]` / `operator()` so a
+/// definition and the expression that dispatches to it agree on one string. The **word** forms
+/// (`operator new`, `operator delete`, a conversion operator `operator int`) need their
+/// separator, so they keep a single space; none of them is dispatched to in this slice, but they
+/// still get a well-formed name. The IR never parses a function name and the taint models match
+/// `source`/`sink` by regex, so the punctuation is inert downstream.
+fn operator_method_name(text: &str) -> String {
+    let rest = text.strip_prefix("operator").unwrap_or(text).trim();
+    if rest.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+        format!(
+            "operator {}",
+            rest.split_whitespace().collect::<Vec<_>>().join(" ")
+        )
+    } else {
+        format!("operator{}", rest.split_whitespace().collect::<String>())
+    }
+}
+
+/// The **data member** a reference-returning method returns a reference to — `int& operator[]
+/// (int i) { return v; }` yields `Some("v")` — or `None` for any other body.
+///
+/// A method returning `T&` denotes a *location*, so a write through its result (`a[0] = x`) must
+/// land on that location. This recovers the only shape this slice models: a `return` of a bare
+/// member name, written unqualified (`return v;`) or through `this` (`return this->v;` /
+/// `return (*this).v;`). Whether the name really is a member of the class is checked by the
+/// caller against [`ClassInfo::members`] (which is not yet complete while a class body is being
+/// walked). Anything else — an element, a computed reference, a call — is out of scope and left
+/// to the ordinary lowering. Only ever asked about a C++ definition; C has no reference returns.
+fn body_returns_member<'a>(body: Node<'_>, source: &'a str) -> Option<&'a str> {
+    let mut stack = vec![body];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "return_statement"
+            && let Some(val) = n.named_child(0)
+        {
+            match val.kind() {
+                "identifier" => return Some(to_str(&val, source)),
+                // `return this->v;` / `return (*this).v;` — the same member, spelled explicitly.
+                "field_expression" => {
+                    let arg = val.child_by_field_name("argument")?;
+                    let is_this = arg.kind() == "this"
+                        || (arg.kind() == "pointer_expression"
+                            && arg
+                                .child_by_field_name("argument")
+                                .is_some_and(|a| a.kind() == "this"))
+                        || unparenthesize(arg).is_some_and(|a| a.kind() == "this");
+                    if is_this {
+                        return Some(to_str(&val.child_by_field_name("field")?, source));
+                    }
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+        let mut c = n.walk();
+        for ch in n.children(&mut c) {
+            stack.push(ch);
+        }
+    }
+    None
+}
+
 /// Whether an inline member `function_definition` declares a **virtual** method: either the
 /// `virtual` keyword — a `virtual` node that is a direct child of the definition
 /// (`virtual int get(){…}`) — or a trailing `override`/`final` — a `virtual_specifier` node under
@@ -221,6 +287,64 @@ fn enclosing_class_qualified_name(node: Node<'_>, source: &str) -> Option<String
 /// construction resolves to the matching one. A pointer- or reference-returning definition
 /// (`Box *make(…)`, `Box& setV(…)`) is unwrapped first, exactly as discovery does elsewhere.
 /// Every shape matched here is C++-only, so this yields `None` for all of C.
+/// The suffix that keys a class's **copy constructor** apart from its same-arity siblings.
+///
+/// Overload resolution in this frontend is by **arity** (spec 009/010), and a copy constructor
+/// has the same arity — one — as any other one-argument constructor: `Box(int)` and
+/// `Box(const Box&)` would key the single name `Box::Box`, be counted as *one* arity, and have
+/// both bodies lowered into one `FunctionIdx` (the second appending its parameters to the
+/// first's). The copy constructor is therefore registered, lowered and called under
+/// `Class::Class#copy` instead, which is neither counted in `Class::Class`'s arity set nor
+/// mangled by it. `#` cannot occur in a C++ identifier, so the key collides with nothing —
+/// the same reason the arity mangler spells itself `#1`/`#2`.
+const COPY_CTOR_SUFFIX: &str = "#copy";
+
+/// The IR name of `class`'s copy constructor — the key [`cpp_collect_methods`] registers it
+/// under and [`emit_ctor_call`] calls. `class` is the class's **qualified** name, exactly as
+/// the ordinary ctor key `Class::Class` uses it (`ns::Box` → `ns::Box::ns::Box#copy`).
+fn copy_ctor_name(class: &str) -> String {
+    format!("{class}::{class}{COPY_CTOR_SUFFIX}")
+}
+
+/// Whether a constructor's `parameters` are the **copy constructor's** signature: exactly one
+/// parameter whose declared type is the class itself, taken by reference (`const Box&`, `Box&`)
+/// or by value (`Box`).
+///
+/// A pointer parameter (`Box(Box* p)`) is *not* a copy constructor — it is an ordinary
+/// one-argument constructor that happens to take its own class — so its `pointer_declarator`
+/// is rejected. The type is compared on its **simple** name so an in-class `Box(const Box&)`
+/// and an out-of-line `ns::Box::Box(const ns::Box&)` both match. Move constructors
+/// (`Box(Box&&)`, an `rvalue_reference_declarator`) are out of this slice's scope and do not
+/// match. Inert for C: no C definition is ever a constructor, so this is never asked.
+fn is_copy_ctor_params(params: Node<'_>, simple_class: &str, source: &str) -> bool {
+    let mut cursor = params.walk();
+    let mut pds = params
+        .children(&mut cursor)
+        .filter(|c| c.kind() == "parameter_declaration");
+    let (Some(pd), None) = (pds.next(), pds.next()) else {
+        return false;
+    };
+    let Some(ty) = pd
+        .child_by_field_name("type")
+        .filter(|t| matches!(t.kind(), "type_identifier" | "qualified_identifier"))
+    else {
+        return false;
+    };
+    let ty = to_str(&ty, source);
+    if ty.rsplit("::").next().unwrap_or(ty) != simple_class {
+        return false;
+    }
+    match pd.child_by_field_name("declarator") {
+        // `Box(const Box& o)` / `Box(const Box&)` — the ordinary spelling.
+        Some(d) => matches!(
+            d.kind(),
+            "reference_declarator" | "abstract_reference_declarator" | "identifier"
+        ),
+        // `Box(Box)` — a nameless by-value parameter.
+        None => true,
+    }
+}
+
 fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
     let declr = fdef.child_by_field_name("declarator")?;
     let (func_declr, _) = function_declarator_of(declr)?;
@@ -239,6 +363,14 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
                 let class = enclosing_class_qualified_name(fdef, source)?;
                 let simple = class.rsplit("::").next().unwrap_or(class.as_str());
                 if to_str(&name_node, source) == simple {
+                    // The **copy** constructor is keyed apart from its same-arity siblings, so
+                    // its arity is recorded against `Class::Class#copy` and never joins
+                    // `Class::Class`'s set — `Box(int)` + `Box(const Box&)` are then two
+                    // single-arity names, each lowered under its own `FunctionIdx`, instead of
+                    // one name with one arity holding two bodies (spec 022 FR-1).
+                    if is_copy_ctor_params(params, simple, source) {
+                        return Some((copy_ctor_name(&class), arity));
+                    }
                     return Some((format!("{class}::{class}"), arity));
                 }
                 return None;
@@ -255,13 +387,40 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
             let class = enclosing_class_qualified_name(fdef, source)?;
             Some((format!("{class}::{}", to_str(&name_node, source)), arity))
         }
+        // An inline **operator** method (`Acc& operator=(int){…}`): a method whose name is the
+        // normalized operator spelling, keyed `Class::operator=` exactly as discovery keys it
+        // (spec 023). Its arity joins the class's overload set like any other method's, so two
+        // `operator()`s of different arity mangle to `Class::operator()#1`/`#2`.
+        "operator_name" => {
+            let class = enclosing_class_qualified_name(fdef, source)?;
+            Some((
+                format!(
+                    "{class}::{}",
+                    operator_method_name(to_str(&name_node, source))
+                ),
+                arity,
+            ))
+        }
         // An out-of-line method `Class::m`, or an out-of-line constructor `Box::Box` (name ==
         // scope) — both keyed on `scope::name`, exactly as registration builds them.
         "qualified_identifier" => {
             let scope = name_node.child_by_field_name("scope")?;
             let name = name_node.child_by_field_name("name")?;
             let scope_s = to_str(&scope, source);
-            let name_s = to_str(&name, source);
+            // An out-of-line **operator** (`Acc& Acc::operator+=(int)`) names an `operator_name`
+            // here; normalize it to the same string the inline form and the dispatch site build.
+            let name_s = &if name.kind() == "operator_name" {
+                operator_method_name(to_str(&name, source))
+            } else {
+                to_str(&name, source).to_string()
+            };
+            let name_s = name_s.as_str();
+            // An out-of-line **copy** constructor `Box::Box(const Box& o)` (name == scope) takes
+            // the same distinct key its inline form does, so either spelling lowers to the one
+            // `Class::Class#copy` a construction calls.
+            if scope_s == name_s && is_copy_ctor_params(params, scope_s, source) {
+                return Some((copy_ctor_name(scope_s), arity));
+            }
             Some((format!("{scope_s}::{name_s}"), arity))
         }
         _ => None,
@@ -433,6 +592,11 @@ fn cpp_collect_methods<'a>(
         /// (`Class& m()`) whose body does `return *this`. Recorded in `ClassInfo.returns_self`
         /// so a chained `recv.m(…).n(…)` dispatches `n` on the same object.
         returns_self: bool,
+        /// The data member the method returns a reference to (`int& operator[](int){ return v; }`
+        /// → `Some("v")`), recorded in `ClassInfo.returns_member` so a write *through* the result
+        /// (`a[0] = x`) becomes a store to `<receiver>.<member>`. `None` for every method that
+        /// returns by value or returns anything but a bare member.
+        returns_member: Option<String>,
         /// Whether this is a **`static`** member function — lowered *without* the implicit `this`
         /// (its parameters are exactly the declared ones), like a receiver-less free function
         /// keyed `Class::method` (spec 015). A static method is not an instance method, so it is
@@ -528,7 +692,17 @@ fn cpp_collect_methods<'a>(
                     // lowered as the niladic `this`-method `Class::~Class` (spec 016). It is
                     // neither a `field_identifier` method nor the class-named ctor `identifier`.
                     let is_dtor = name_node.kind() == "destructor_name";
-                    if name_node.kind() != "field_identifier" && !is_ctor && !is_dtor {
+                    // An **operator** method (`Acc& operator=(int x){…}`) names an `operator_name`
+                    // declarator, which is neither a `field_identifier` nor a class-named
+                    // `identifier`, so discovery used to drop it and every `a = x` on the object
+                    // lowered as the built-in store (spec 023). It is an ordinary instance method
+                    // under a punctuation name: `Acc::operator=`, with the implicit `this`.
+                    let is_operator = name_node.kind() == "operator_name";
+                    if name_node.kind() != "field_identifier"
+                        && !is_ctor
+                        && !is_dtor
+                        && !is_operator
+                    {
                         continue;
                     }
                     // A constructor's method name is the class's **qualified** name, so its IR
@@ -541,6 +715,8 @@ fn cpp_collect_methods<'a>(
                         qualified_name.clone()
                     } else if is_dtor {
                         format!("~{simple_name}")
+                    } else if is_operator {
+                        operator_method_name(to_str(&name_node, source))
                     } else {
                         to_str(&name_node, source).to_string()
                     };
@@ -565,6 +741,7 @@ fn cpp_collect_methods<'a>(
                             body: method_body,
                             void: true,
                             returns_self: false,
+                            returns_member: None,
                             is_static: false,
                             member_inits: Vec::new(),
                         });
@@ -573,6 +750,18 @@ fn cpp_collect_methods<'a>(
                         // model it as a void `Class::Class` method and record the member-
                         // initializer list (`: v(x)`) so construction can lower it.
                         info.has_ctor = true;
+                        // A constructor whose single parameter is a same-class object is the
+                        // class's **copy** constructor: it is lowered under the distinct key
+                        // `Class::Class#copy` (which `overload_base_name` also recorded, so the
+                        // mangler leaves both it and its same-arity siblings bare), and the class
+                        // is marked so a construction from an object — and a by-value class
+                        // argument — runs it instead of taking the implicit value copy.
+                        let name = if is_copy_ctor_params(params, simple_name, source) {
+                            info.has_copy_ctor = true;
+                            format!("{name}{COPY_CTOR_SUFFIX}")
+                        } else {
+                            name
+                        };
                         methods.push(MethodDef {
                             class: qualified_name.clone(),
                             name,
@@ -580,6 +769,7 @@ fn cpp_collect_methods<'a>(
                             body: method_body,
                             void: true,
                             returns_self: false,
+                            returns_member: None,
                             is_static: false,
                             member_inits: ctor_member_inits(child, source),
                         });
@@ -596,10 +786,22 @@ fn cpp_collect_methods<'a>(
                         let returns_self = !is_static
                             && is_reference_return
                             && body_returns_deref_this(method_body);
+                        // A reference-returning method whose body returns a bare **member**
+                        // (`int& operator[](int){ return v; }`) yields a reference to that
+                        // member's storage, so a write through the result must land there
+                        // (spec 023 FR-4). Never a static method, and never one that already
+                        // returns `*this`.
+                        let returns_member = (!is_static && is_reference_return && !returns_self)
+                            .then(|| body_returns_member(method_body, source))
+                            .flatten()
+                            .map(str::to_string);
                         if !is_static {
                             info.methods.insert(name.clone());
                             if returns_self {
                                 info.returns_self.insert(name.clone());
+                            }
+                            if let Some(member) = &returns_member {
+                                info.returns_member.insert(name.clone(), member.to_string());
                             }
                             // A `virtual`/`override` method is recorded for CHA dispatch: a call to
                             // it through a base pointer/reference resolves to every override in the
@@ -615,6 +817,7 @@ fn cpp_collect_methods<'a>(
                             body: method_body,
                             void,
                             returns_self,
+                            returns_member,
                             is_static,
                             member_inits: Vec::new(),
                         });
@@ -660,7 +863,7 @@ fn cpp_collect_methods<'a>(
             body: (compound_statement) @body) @def
         "#,
     );
-    let mut out_of_line: Vec<(bool, MethodDef<'_>)> = Vec::new();
+    let mut out_of_line: Vec<(bool, bool, MethodDef<'_>)> = Vec::new();
     {
         let mut ool_cursor = QueryCursor::new();
         let mut ool_it = ool_cursor.matches(&ool_query, root, source.as_bytes());
@@ -685,7 +888,12 @@ fn cpp_collect_methods<'a>(
             ) else {
                 continue;
             };
-            if scope.kind() != "namespace_identifier" || method_node.kind() != "identifier" {
+            // An out-of-line **operator** (`Acc& Acc::operator+=(int x){…}`) names its method
+            // with an `operator_name` rather than an `identifier`; accept it and normalize the
+            // spelling to the same string the inline form and the dispatch site build (spec 023).
+            if scope.kind() != "namespace_identifier"
+                || !matches!(method_node.kind(), "identifier" | "operator_name")
+            {
                 continue;
             }
             let class = to_str(&scope, source).to_string();
@@ -695,13 +903,21 @@ fn cpp_collect_methods<'a>(
             if !ctx.classes.contains_key(&class) {
                 continue;
             }
-            let name = to_str(&method_node, source).to_string();
+            let name = if method_node.kind() == "operator_name" {
+                operator_method_name(to_str(&method_node, source))
+            } else {
+                to_str(&method_node, source).to_string()
+            };
             let def = extract.get("def")?;
             let body = extract.get("body")?;
             // `Box::Box(…)` (name == class) is an out-of-line **constructor**: model it as a
             // void `Class::Class` and carry its member-initializer list. An ordinary
             // out-of-line method keeps its declared return arity and has no init list.
             let is_ctor = name == class;
+            // An out-of-line copy constructor `Box::Box(const Box& o) : v(o.v) {}` takes the same
+            // distinct key the inline form does, so either spelling is the one function a copy
+            // construction calls.
+            let is_copy_ctor = is_ctor && is_copy_ctor_params(params, &class, source);
             let void =
                 is_ctor || returns_void(def.child_by_field_name("type"), returns_pointer, source);
             // A reference-returning out-of-line definition (`Box& Box::setV(…)`) has its
@@ -709,6 +925,12 @@ fn cpp_collect_methods<'a>(
             // `*this` the result aliases the receiver object (a fluent setter).
             let returns_self =
                 !is_ctor && decl.kind() == "reference_declarator" && body_returns_deref_this(body);
+            // Same reference-to-member record the inline path builds (spec 023 FR-4).
+            let returns_member =
+                (!is_ctor && decl.kind() == "reference_declarator" && !returns_self)
+                    .then(|| body_returns_member(body, source))
+                    .flatten()
+                    .map(str::to_string);
             let member_inits = if is_ctor {
                 ctor_member_inits(def, source)
             } else {
@@ -716,13 +938,19 @@ fn cpp_collect_methods<'a>(
             };
             out_of_line.push((
                 is_ctor,
+                is_copy_ctor,
                 MethodDef {
                     class,
-                    name,
+                    name: if is_copy_ctor {
+                        format!("{name}{COPY_CTOR_SUFFIX}")
+                    } else {
+                        name
+                    },
                     params,
                     body,
                     void,
                     returns_self,
+                    returns_member,
                     // Out-of-line static methods are out of this slice's scope (the `static`
                     // keyword appears only on the in-class declaration, not the out-of-line
                     // definition); an out-of-line definition here is always an instance method.
@@ -735,19 +963,29 @@ fn cpp_collect_methods<'a>(
     // Register each out-of-line method's name on its class (so `recv.m(…)` dispatches even
     // though the body lives outside the class body), or mark the class as having a
     // constructor; then queue it for lowering alongside the inline methods.
-    for (is_ctor, md) in out_of_line {
+    for (is_ctor, is_copy_ctor, md) in out_of_line {
         if let Some(info) = ctx.classes.get_mut(&md.class) {
             if is_ctor {
                 info.has_ctor = true;
+                info.has_copy_ctor |= is_copy_ctor;
             } else {
                 info.methods.insert(md.name.clone());
                 if md.returns_self {
                     info.returns_self.insert(md.name.clone());
                 }
+                if let Some(member) = &md.returns_member {
+                    info.returns_member.insert(md.name.clone(), member.clone());
+                }
             }
         }
         methods.push(md);
     }
+
+    // Phase 1.75: record which parameters of every function this unit defines are class objects
+    // taken **by value** (`void take(Box b)`). Runs after every class is known (phase 1) and
+    // before any body is lowered (phase 2b, and `lower_definitions` after it), so a call site
+    // anywhere in the unit finds the record regardless of definition order.
+    cpp_discover_byval_class_params(ctx, source, root)?;
 
     // Phase 2a: register a function index for every method, so a method calling another
     // method (or a top-level body calling one) resolves it regardless of definition order.
@@ -886,6 +1124,136 @@ fn cpp_collect_namespaced_functions<'a>(
     Ok(())
 }
 
+/// Record, per function this unit defines, which of its **explicit** parameters are class
+/// objects taken **by value** — the neutral [`Context::byval_class_params`] map
+/// [`cpp_copy_args`] consults at every call site (spec 022 FR-3).
+///
+/// C++ copy-constructs a by-value parameter from the argument, so `void take(Box b)` called as
+/// `take(a)` runs `Box`'s copy constructor on the way in; the callee's `b` is the *copy* that
+/// constructor built, not `a`. Nothing in the IR expresses that, so the call site has to emit it
+/// — and to do that it must know the callee's parameter modes, which live at the callee's
+/// definition, possibly further down the file. Hence a discovery pass: it scans every
+/// `function_definition` (free, namespaced, inline-method, out-of-line-method) exactly as
+/// [`cpp_discover_overloads`] does, keys each by the same IR name a call site resolves to
+/// ([`overload_base_name`] + the arity mangler), and records one slot per explicit parameter.
+///
+/// A parameter counts as by value iff its declarator is the bare parameter **name**: a pointer
+/// (`Box* p`) or a reference (`Box& b`, `const Box& b`) declarator names the caller's object, and
+/// no copy runs for it. The type must name a class this unit declared ([`declared_class`], the
+/// same resolver that binds a class-typed local or parameter), so an `int` parameter records
+/// nothing. Only functions with at least one such parameter are recorded, so the map stays empty
+/// for C — where `classes` is empty and no parameter can ever resolve to a class.
+fn cpp_discover_byval_class_params(
+    ctx: &mut Context<'_>,
+    source: &str,
+    root: Node<'_>,
+) -> anyhow::Result<(), Error> {
+    let query = ctx.compile_query(r#"(function_definition) @def"#);
+    let mut cursor = QueryCursor::new();
+    let mut it = cursor.matches(&query, root, source.as_bytes());
+    let mut found: Vec<(String, Vec<Option<String>>)> = Vec::new();
+    while let Some(m) = it.next() {
+        let extract = MatchExtractor::new(&query, m);
+        let def = extract.get("def")?;
+        let Some((base, arity)) = overload_base_name(def, source) else {
+            continue;
+        };
+        let Some(params) = def
+            .child_by_field_name("declarator")
+            .and_then(function_declarator_of)
+            .and_then(|(func_declr, _)| func_declr.child_by_field_name("parameters"))
+        else {
+            continue;
+        };
+        let mut pcursor = params.walk();
+        let byval: Vec<Option<String>> = params
+            .children(&mut pcursor)
+            .filter(|pd| pd.kind() == "parameter_declaration")
+            .map(|pd| {
+                pd.child_by_field_name("declarator")
+                    .filter(|d| d.kind() == "identifier")
+                    .and_then(|_| declared_class(&ctx.classes, pd, source))
+            })
+            .collect();
+        if byval.iter().any(Option::is_some) {
+            found.push((ctx.overload_name(&base, arity), byval));
+        }
+    }
+    drop(it);
+    drop(cursor);
+    ctx.byval_class_params.extend(found);
+    Ok(())
+}
+
+/// Copy-construct a call's **by-value class** arguments — the C++ `GrammarHooks::copy_args`
+/// implementation (spec 022 FR-3).
+///
+/// For each explicit argument whose callee parameter [`cpp_discover_byval_class_params`] recorded
+/// as a by-value object of a class that declares a **user** copy constructor, and whose argument
+/// expression names a known object of exactly that class, this emits
+/// `Class::Class#copy(&<temp>, arg)` into a fresh object and substitutes that object for the
+/// argument — so the callee's parameter holds what the copy constructor built, exactly as it does
+/// at `Box b(a)`. The copy is emitted before the call statement, which is where C++ runs it.
+///
+/// Everything else is left alone: a class **without** a user copy constructor keeps the existing
+/// value copy (its implicit member-wise copy *is* that copy), a by-reference or pointer parameter
+/// records nothing so never copies, and an argument that is not a named object of the parameter's
+/// class (a temporary, a literal, a derived object) is out of this slice's scope. `callee` is the
+/// already-resolved IR name, so a call whose target this unit did not define finds no record.
+/// Inert for C: `byval_class_params` is empty there, so the first lookup misses.
+fn cpp_copy_args<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    scope_view: &mut ScopeView,
+    source: &'a str,
+    callee: &str,
+    arg_list: Node<'_>,
+    args: &mut ThinVec<Exp>,
+) -> anyhow::Result<(), Error> {
+    let Some(byval) = ctx.byval_class_params.get(callee).cloned() else {
+        return Ok(());
+    };
+    let mut cursor = arg_list.walk();
+    let arg_nodes: Vec<Node<'_>> = arg_list
+        .children(&mut cursor)
+        .filter(|c| c.is_named())
+        .collect();
+    for (i, arg) in args.iter_mut().enumerate() {
+        let (Some(Some(class)), Some(node)) = (byval.get(i), arg_nodes.get(i)) else {
+            continue;
+        };
+        if !ctx
+            .classes
+            .get(class)
+            .is_some_and(|info| info.has_copy_ctor)
+            || !names_class_object(ctx, source, *node, class)
+        {
+            continue;
+        }
+        // The parameter's own object. A `<t…>` temp is a local by name alone (no scope entry
+        // needed), and it is deliberately *not* recorded in a destructor frame: it is the
+        // callee's parameter, destroyed at the end of the call, not an object of this scope.
+        let obj = ctx.allocator.next_temp();
+        emit_ctor_call(
+            ctx,
+            program,
+            scope_view,
+            class,
+            &obj,
+            thin_vec![arg.clone()],
+            true,
+        );
+        let ap = ctx.build_access_path(
+            &obj,
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
+        *arg = Exp::access_path(ctx.emit_loads(program, scope_view, ap));
+    }
+    Ok(())
+}
+
 /// Extract a constructor's member-initializer list from its `function_definition` node as
 /// `(member, init-expression)` pairs. The list (`: v(x), w(y)`) appears as an unnamed
 /// `field_initializer_list` child between the declarator and the body; each
@@ -960,8 +1328,17 @@ fn cpp_try_construct<'a>(
         return Ok(false);
     };
 
-    // Recover the object's name and the constructor argument nodes, by form.
-    let (obj_node, args): (Node<'_>, ThinVec<Exp>) = match declr.kind() {
+    // Whether this class runs a **user** copy constructor on a copy. A class without one keeps
+    // the value-copy lowering below byte-for-byte: its implicit member-wise copy *is* that copy.
+    let has_copy_ctor = ctx
+        .classes
+        .get(class)
+        .is_some_and(|info| info.has_copy_ctor);
+
+    // Recover the object's name and the constructor argument nodes, by form. `copy` says the
+    // construction is a **copy construction** from a same-class object, which calls the class's
+    // copy constructor `Class::Class#copy` rather than the arity-resolved `Class::Class`.
+    let (obj_node, args, copy): (Node<'_>, ThinVec<Exp>, bool) = match declr.kind() {
         // Most-vexing-parse direct init: `Box b(args)`.
         "function_declarator" => {
             let Some(obj_node) = declr
@@ -983,11 +1360,17 @@ fn cpp_try_construct<'a>(
                 // call in this slice); let the normal declarator handling deal with it.
                 return Ok(false);
             }
+            // `Box b(a)` — one bare type-like argument naming a known object of this very
+            // class — is a **copy construction**. `reconstruct_mvp_arg` already turns that
+            // `parameter_declaration` back into a read of `a`, so only the callee changes.
+            let copy = has_copy_ctor
+                && pds.len() == 1
+                && mvp_arg_names_class_object(ctx, source, pds[0], class);
             let mut args: ThinVec<Exp> = ThinVec::new();
             for pd in pds {
                 args.push(reconstruct_mvp_arg(ctx, source, program, scope_view, pd)?);
             }
-            (obj_node, args)
+            (obj_node, args, copy)
         }
         // Copy/brace init: `Box b = Box(args)` / `Box b{args}`.
         "init_declarator" => {
@@ -1014,17 +1397,33 @@ fn cpp_try_construct<'a>(
                         .child_by_field_name("arguments")
                         .expect("call_expression always has arguments");
                     let args = ctx.collect_arguments(program, arg_list, source, scope_view)?;
-                    (obj_node, args)
+                    (obj_node, args, false)
+                }
+                // Copy initialization from an object: `Box b = a`. The value is the bare
+                // identifier `a`; when it names an object of this class and the class declares a
+                // copy constructor, C++ *runs* that constructor, so lower the construction edge
+                // instead of falling through to the shared value copy. Without a user copy
+                // constructor this arm does not fire and `Box b = a` keeps the value copy, which
+                // is exactly the implicit member-wise copy (spec 022 FR-2).
+                "identifier" if has_copy_ctor && names_class_object(ctx, source, value, class) => {
+                    let arg = ctx.flatten_expr(program, value, source, scope_view)?;
+                    (obj_node, thin_vec![arg], true)
                 }
                 "initializer_list" => {
                     let mut lcursor = value.walk();
+                    let elems: Vec<Node<'_>> = value
+                        .children(&mut lcursor)
+                        .filter(|e| e.is_named())
+                        .collect();
+                    // `Box b{a}` is the brace spelling of the same copy construction.
+                    let copy = has_copy_ctor
+                        && elems.len() == 1
+                        && names_class_object(ctx, source, elems[0], class);
                     let mut args: ThinVec<Exp> = ThinVec::new();
-                    for elem in value.children(&mut lcursor) {
-                        if elem.is_named() {
-                            args.push(ctx.flatten_expr(program, elem, source, scope_view)?);
-                        }
+                    for elem in elems {
+                        args.push(ctx.flatten_expr(program, elem, source, scope_view)?);
                     }
-                    (obj_node, args)
+                    (obj_node, args, copy)
                 }
                 // Direct init `Box b(a, b)` whose arguments are **not** all type-like — e.g.
                 // one is a literal (`Box b(0, source())`). Because a literal cannot be a
@@ -1035,7 +1434,7 @@ fn cpp_try_construct<'a>(
                 // the arguments exactly as a call's argument list.
                 "argument_list" => {
                     let args = ctx.collect_arguments(program, value, source, scope_view)?;
-                    (obj_node, args)
+                    (obj_node, args, false)
                 }
                 _ => return Ok(false),
             }
@@ -1043,8 +1442,41 @@ fn cpp_try_construct<'a>(
         _ => return Ok(false),
     };
 
-    emit_construction(ctx, source, program, scope_view, class, obj_node, args);
+    emit_construction(
+        ctx, source, program, scope_view, class, obj_node, args, copy,
+    );
     Ok(true)
+}
+
+/// Whether `node` is an expression naming a **known object of exactly `class`** — a local, a
+/// class-typed parameter (spec 020) or a reference bound to one, all of which the neutral
+/// `local_types` map holds for the function being lowered. This is the whole of the
+/// "same-class object" test a copy construction needs: derived-to-base copies are out of scope,
+/// so the classes must be equal, and anything that is not a plain identifier (a literal, a call,
+/// a temporary) is not an object this slice can name. `local_types` is empty for C.
+fn names_class_object(ctx: &Context<'_>, source: &str, node: Node<'_>, class: &str) -> bool {
+    node.kind() == "identifier"
+        && ctx
+            .local_types
+            .get(to_str(&node, source))
+            .is_some_and(|c| c == class)
+}
+
+/// [`names_class_object`] for the most-vexing-parse spelling of the same argument. `Box b(a)`
+/// parses `a` as a `parameter_declaration` of type `a` with **no** declarator (see
+/// [`reconstruct_mvp_arg`]), so the object's name is the parameter's *type* text. A
+/// `parameter_declaration` that does carry a declarator spells something else — `Box b(int x)`
+/// is a function declaration, not a construction — and is not an object.
+fn mvp_arg_names_class_object(ctx: &Context<'_>, source: &str, pd: Node<'_>, class: &str) -> bool {
+    pd.child_by_field_name("declarator").is_none()
+        && pd
+            .child_by_field_name("type")
+            .filter(|t| t.kind() == "type_identifier")
+            .is_some_and(|t| {
+                ctx.local_types
+                    .get(to_str(&t, source))
+                    .is_some_and(|c| c == class)
+            })
 }
 
 /// Reconstruct one most-vexing-parse constructor argument from the `parameter_declaration`
@@ -1132,6 +1564,7 @@ fn emit_construction<'a>(
     class: &str,
     obj_node: Node<'_>,
     ctor_args: ThinVec<Exp>,
+    copy: bool,
 ) {
     let obj_name = to_str(&obj_node, source);
     ctx.scope_tree
@@ -1145,7 +1578,7 @@ fn emit_construction<'a>(
     if let Some(frame) = ctx.dtor_frames.last_mut() {
         frame.push((obj_name.to_string(), class.to_string()));
     }
-    emit_ctor_call(ctx, program, scope_view, class, obj_name, ctor_args);
+    emit_ctor_call(ctx, program, scope_view, class, obj_name, ctor_args, copy);
 }
 
 /// Emit the constructor `DirectCall Class::Class#<arity>(&obj, args…)` for an **already-
@@ -1162,6 +1595,7 @@ fn emit_ctor_call(
     class: &str,
     obj_name: &str,
     ctor_args: ThinVec<Exp>,
+    copy: bool,
 ) {
     // The object under construction is the by-ref arg 0, so resolve it to its location. A
     // plain local object is pathless (no load emitted); a global one must be loaded, which is
@@ -1177,7 +1611,14 @@ fn emit_ctor_call(
     let mut args: ThinVec<Exp> = thin_vec![recv];
     args.extend(ctor_args);
 
-    let qualified = ctx.overload_name(&format!("{class}::{class}"), arity);
+    // A **copy** construction calls the copy constructor's own key, which no arity can name;
+    // every other construction resolves by arity as before (spec 010). `copy` is only ever
+    // `true` for a class that declares a copy constructor, so a class without one is unchanged.
+    let qualified = if copy {
+        copy_ctor_name(class)
+    } else {
+        ctx.overload_name(&format!("{class}::{class}"), arity)
+    };
     let temp = ctx.allocator.next_temp();
     let ret = VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
     program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
@@ -1256,7 +1697,9 @@ fn lower_new_expression<'a>(
         .get(alloc_type)
         .is_some_and(|info| info.has_ctor)
     {
-        emit_ctor_call(ctx, program, scope_view, alloc_type, &obj, ctor_args);
+        // Heap `new Type(args)` resolves by arity as it always has: copy-constructing from an
+        // object (`new Box(a)`) is a form this slice does not cover, so `copy` is `false`.
+        emit_ctor_call(ctx, program, scope_view, alloc_type, &obj, ctor_args, false);
     }
     // Returned as a `RawPath` (not lowered to loads): the caller binds the pointer local to
     // this object as an *alias*, so it must keep naming the object's storage.
@@ -1494,11 +1937,49 @@ fn cpp_scope_exit<'a>(
     program: &mut Program,
     scope_view: &ScopeView,
 ) -> anyhow::Result<(), Error> {
-    // Clone the current scope's frame so we can emit while mutating `ctx` (allocator/program); the
-    // frame itself is popped by `walk_compound_statement`.
-    let Some(frame) = ctx.dtor_frames.last().cloned() else {
+    let Some(top) = ctx.dtor_frames.len().checked_sub(1) else {
         return Ok(());
     };
+    drain_dtor_frame(ctx, program, scope_view, top);
+    Ok(())
+}
+
+/// The C++ `scope_unwind` hook (spec 021): a `return`/`break`/`continue` leaves the top `frames`
+/// scopes at once, so it runs the destructors of all of them — **innermost frame first**, reverse
+/// construction order within each, exactly as C++ unwinds. Each object's call is spec 017's
+/// (the single-target exact-type destructor with the object as the arg-0 `ByRef` receiver), so this
+/// is [`cpp_scope_exit`] repeated over a range of frames instead of just the top one.
+///
+/// The frames are **read, not popped**: the compound walk that pushed them still pops them on its
+/// way out, and its fall-through `scope_exit` emission lands in a different block — the diverging
+/// statement's block is terminated here — so no object is destroyed twice on any single path. The
+/// frames are empty for C, so nothing is emitted on the C path.
+fn cpp_scope_unwind<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    frames: usize,
+) -> anyhow::Result<(), Error> {
+    let depth = ctx.dtor_frames.len();
+    for idx in (depth.saturating_sub(frames)..depth).rev() {
+        drain_dtor_frame(ctx, program, scope_view, idx);
+    }
+    Ok(())
+}
+
+/// Emit the destructor of every object recorded in destructor frame `idx`, in **reverse**
+/// construction order (LIFO, matching C++). Shared by the two triggers that differ only in which
+/// frames they cover: a scope's fall-through exit ([`cpp_scope_exit`], the top frame) and an early
+/// exit ([`cpp_scope_unwind`], every frame the control transfer leaves). The frame is left in place.
+fn drain_dtor_frame(
+    ctx: &mut Context<'_>,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    idx: usize,
+) {
+    // Clone the frame so we can emit while mutating `ctx` (allocator/program); the frames
+    // themselves are pushed and popped by `walk_compound_body`.
+    let frame = ctx.dtor_frames[idx].clone();
     for (obj_name, class) in frame.into_iter().rev() {
         // Only a class whose hierarchy declares a destructor produces a call; a destructor-less
         // stack object emits nothing (unchanged from spec 014).
@@ -1516,7 +1997,6 @@ fn cpp_scope_exit<'a>(
         let recv = Exp::access_path(ctx.emit_loads(program, scope_view, recv_ap));
         emit_dtor_call(ctx, program, scope_view, targets, recv);
     }
-    Ok(())
 }
 
 /// The C++ `ctor_prologue` hook: lower a constructor's **member-initializer list** into the
@@ -1555,6 +2035,223 @@ fn cpp_emit_member_inits<'a>(
 /// spec-002 triage); [`cpp_collect_methods`] adds C++ instance-method/constructor discovery,
 /// which the top-level function query cannot see, and [`cpp_try_construct`] lowers object
 /// construction at a declaration. The shared core is otherwise grammar-neutral.
+/// The class of the object an expression names, when it is one — the neutral question every
+/// operator dispatch below starts from.
+///
+/// An operator is only a method call if its left operand (or, for `f(args)`, its callee) is an
+/// **object**: a local or parameter whose declared type is a class this unit knows. That is
+/// exactly what [`Context::local_types`] records, so this is one map lookup — and the map is
+/// empty for C, which is why no C assignment, subscript or call is ever rewritten.
+fn operand_class(ctx: &Context<'_>, node: Node<'_>, source: &str) -> Option<String> {
+    (node.kind() == "identifier")
+        .then(|| ctx.local_types.get(to_str(&node, source)).cloned())
+        .flatten()
+}
+
+/// Lower an expression whose operator is a user-defined **method** — the C++
+/// `GrammarHooks::operator_call` implementation (spec 023).
+///
+/// An overloaded operator is a method with a punctuation name, and the expression that applies
+/// it is a call on the left operand: `a = x` is `a.operator=(x)`, `a += x` is
+/// `a.operator+=(x)`, `a[i]` is `a.operator[](i)`, `f(args)` is `f.operator()(args)`. Each is
+/// lowered through [`Context::emit_method_call`] — the very builder `recv.m(args)` uses — with
+/// the object as the arg-0 (`ByRef`) receiver, so the member writes the operator body performs
+/// flow back into the object and a member it returns flows out.
+///
+/// It answers `None`, leaving the shared arm's built-in lowering untouched, whenever the operand
+/// is not a known class object or its class (and base chain) declares no such operator — which
+/// covers every C assignment/subscript/call and every C++ one on a scalar, array, pointer or
+/// operator-less class. It never partially lowers: the decision is made from the neutral
+/// `local_types`/`classes` maps *before* any operand is evaluated, so an operand is flattened
+/// exactly once on either path.
+fn cpp_operator_call<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    node: Node<'_>,
+    source: &'a str,
+    scope_view: &mut ScopeView,
+) -> anyhow::Result<Option<Exp>, Error> {
+    match node.kind() {
+        "assignment_expression" => cpp_operator_assign(ctx, program, node, source, scope_view),
+        "subscript_expression" => {
+            // `a[i]` as a value. The index is read through the grammar hook, so this is the same
+            // node the built-in lowering would have used as the subscript.
+            let obj = node
+                .child_by_field_name("argument")
+                .expect("subscript_expression always has an argument");
+            let Some(class) = operand_class(ctx, obj, source) else {
+                return Ok(None);
+            };
+            if ctx.resolve_method_class(&class, SUBSCRIPT_OP).is_none() {
+                return Ok(None);
+            }
+            let Some(recv) = ctx.resolve_recv_obj(program, obj, source, scope_view)? else {
+                return Ok(None);
+            };
+            let index_node = (ctx.hooks.subscript_index)(node);
+            let index = ctx.flatten_expr(program, index_node, source, scope_view)?;
+            let temp = ctx.allocator.next_temp();
+            let out = ctx.emit_method_call(
+                program,
+                scope_view,
+                source,
+                &recv,
+                SUBSCRIPT_OP,
+                thin_vec![index],
+                node.child_by_field_name("indices"),
+                temp,
+            )?;
+            Ok(out.map(|o| o.value))
+        }
+        "call_expression" => {
+            // `f(args)` where `f` names an object, not a function: the call operator. A callee
+            // that is anything else — every function call, in C and C++ alike — misses in
+            // `local_types` and is left to the ordinary call lowering.
+            let callee = node
+                .child_by_field_name("function")
+                .expect("call_expression always has a function");
+            let Some(class) = operand_class(ctx, callee, source) else {
+                return Ok(None);
+            };
+            if ctx.resolve_method_class(&class, CALL_OP).is_none() {
+                return Ok(None);
+            }
+            let Some(recv) = ctx.resolve_recv_obj(program, callee, source, scope_view)? else {
+                return Ok(None);
+            };
+            let arg_node = node
+                .child_by_field_name("arguments")
+                .expect("call_expression always has arguments");
+            let args = ctx.collect_arguments(program, arg_node, source, scope_view)?;
+            let temp = ctx.allocator.next_temp();
+            let out = ctx.emit_method_call(
+                program,
+                scope_view,
+                source,
+                &recv,
+                CALL_OP,
+                args,
+                Some(arg_node),
+                temp,
+            )?;
+            Ok(out.map(|o| o.value))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// The method name of the subscript operator, `a[i]`.
+const SUBSCRIPT_OP: &str = "operator[]";
+/// The method name of the call operator, `f(args)`.
+const CALL_OP: &str = "operator()";
+
+/// The assignment half of [`cpp_operator_call`]: `a = x` / `a += x` on an object whose class
+/// declares that operator, and the write-through `a[i] = x` of a reference-returning
+/// `operator[]`.
+///
+/// A **plain or compound assignment to an object** is a call taking only the right-hand side:
+/// `Acc& operator+=(int x){ v = v + x; … }` reads the old value itself, through `this`, so the
+/// built-in compound lowering's second operand has no place here.
+///
+/// A **write through a subscript** (`a[0] = x`, FR-4) is two steps: `operator[]` runs, and the
+/// store lands on the location the reference it returned denotes. Only the shape this slice
+/// models is recognized — an `operator[]` whose body returns a bare data member
+/// ([`ClassInfo::returns_member`]) — and the store then goes to `<object>.<member>`, which is
+/// where a later `a.get()` reads. Any other reference-returning body declines *before* anything
+/// is emitted, so the expression keeps exactly the built-in lowering it has today.
+fn cpp_operator_assign<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    node: Node<'_>,
+    source: &'a str,
+    scope_view: &mut ScopeView,
+) -> anyhow::Result<Option<Exp>, Error> {
+    let left = node
+        .child_by_field_name("left")
+        .expect("assignment_expression always has a left");
+    let right = node
+        .child_by_field_name("right")
+        .expect("assignment_expression always has a right");
+    let op = node
+        .child_by_field_name("operator")
+        .map_or("=", |o| to_str(&o, source));
+
+    if let Some(class) = operand_class(ctx, left, source) {
+        // `a = x` / `a += x`: the operator named by the assignment's own spelling.
+        let method = format!("operator{op}");
+        if ctx.resolve_method_class(&class, &method).is_none() {
+            return Ok(None);
+        }
+        let Some(recv) = ctx.resolve_recv_obj(program, left, source, scope_view)? else {
+            return Ok(None);
+        };
+        let rhs = ctx.flatten_expr(program, right, source, scope_view)?;
+        let temp = ctx.allocator.next_temp();
+        let out = ctx.emit_method_call(
+            program,
+            scope_view,
+            source,
+            &recv,
+            &method,
+            thin_vec![rhs],
+            None,
+            temp,
+        )?;
+        return Ok(out.map(|o| o.value));
+    }
+
+    // `a[i] = x` — a plain assignment through a reference-returning `operator[]`.
+    if op != "=" || left.kind() != "subscript_expression" {
+        return Ok(None);
+    }
+    let obj = left
+        .child_by_field_name("argument")
+        .expect("subscript_expression always has an argument");
+    let Some(class) = operand_class(ctx, obj, source) else {
+        return Ok(None);
+    };
+    let Some((defining, _)) = ctx.resolve_method_class(&class, SUBSCRIPT_OP) else {
+        return Ok(None);
+    };
+    // The member the returned reference denotes. Without it the location written is unknown, so
+    // decline and let the built-in store lowering stand rather than invent a target.
+    let Some(member) = ctx
+        .classes
+        .get(&defining)
+        .and_then(|info| info.returns_member.get(SUBSCRIPT_OP))
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    let Some(recv) = ctx.resolve_recv_obj(program, obj, source, scope_view)? else {
+        return Ok(None);
+    };
+    let index_node = (ctx.hooks.subscript_index)(left);
+    let index = ctx.flatten_expr(program, index_node, source, scope_view)?;
+    let temp = ctx.allocator.next_temp();
+    ctx.emit_method_call(
+        program,
+        scope_view,
+        source,
+        &recv,
+        SUBSCRIPT_OP,
+        thin_vec![index],
+        left.child_by_field_name("indices"),
+        temp,
+    )?;
+    let rhs = ctx.flatten_expr(program, right, source, scope_view)?;
+    // The store goes to the member of *this* object — the storage the returned reference names.
+    let mut target = ctx.build_access_path(
+        to_str(&obj, source),
+        Default::default(),
+        scope_view,
+        &mut program[scope_view.fidx].locals,
+    );
+    target.fields.push(PathSegment::symbol(&member));
+    ctx.add_assign_to_program(program, scope_view, &target, &rhs, None);
+    Ok(Some(rhs))
+}
+
 pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     condition_expr: cpp_condition_expr,
     subscript_index: cpp_subscript_index,
@@ -1563,6 +2260,11 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     // to a constructor `DirectCall`. Only invoked by the shared walker for a declaration
     // whose type is a known class, so it is inert on the C path.
     construct: cpp_try_construct,
+    // Copy-construct a by-value class argument at the call site: passing an object to a
+    // `void take(Box b)` parameter runs `Box`'s copy constructor in C++, so the callee receives
+    // the copy that constructor built. Driven by the neutral per-function by-value record (empty
+    // for C), so no C call is rewritten.
+    copy_args: cpp_copy_args,
     // Discover arity-overloaded free functions and methods, populating the neutral
     // `overloads` map before any function is registered so the mangler can distinguish
     // overloaded names (`id#1`/`id#2`, `Box::f#1`/`Box::f#2`) at every touchpoint.
@@ -1576,6 +2278,11 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     // exact-type `DirectCall`, reverse construction order). Driven by the neutral `dtor_frames`
     // stack (empty for C), so no scope ever emits a destructor on the C path.
     scope_exit: cpp_scope_exit,
+    // Emit the same destructors on the paths that leave a scope *early*: a `return` unwinds every
+    // frame of the function, a `break`/`continue` every frame back to the loop body, innermost
+    // first, immediately before the control transfer. Same neutral `dtor_frames` stack, so the C
+    // path emits nothing.
+    scope_unwind: cpp_scope_unwind,
     // Emit a constructor's member-initializer list (`Box(int x) : v(x)`) as `this.<member> =
     // <expr>` stores, before the body. Empty for every non-constructor, so the hook is inert
     // outside constructors and never fires on the C path.
@@ -1584,6 +2291,11 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     // `cpp_collect_namespaced_functions`: class members, namespaced functions, and every
     // definition whose function name is not a plain `identifier` (an out-of-line member).
     aux_owns_definition: cpp_aux_owns_definition,
+    // Lower an overloaded operator as the method it is: `a = x` / `a += x` / `a[i]` / `f(args)`
+    // on an object whose class declares that operator becomes a `DirectCall Class::operator…`
+    // with the object as the arg-0 receiver. Declines for every operand that is not a known class
+    // object, so the built-in lowering stands for all of C and for every scalar/array/pointer.
+    operator_call: cpp_operator_call,
 };
 
 /// Parse the C++ source in `source` into a CTADL IR program.

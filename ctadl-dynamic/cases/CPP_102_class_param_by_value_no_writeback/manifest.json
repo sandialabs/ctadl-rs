@@ -1,0 +1,7 @@
+{
+  "name": "CPP_102_class_param_by_value_no_writeback",
+  "description": "C++ class-typed parameter as a method receiver (spec 020), NEGATIVE at runtime, EXPECTED PRECISION GAP: `void fill(Box b) { b.set(source()); }` then `fill(a); sink(a.get());`. C++ writes the callee's own copy, so DFSan sees no flow (d=none). CTADL reports one (s=flow) through its aggregate value-copy/alias model, which is not C++-specific -- plain C `struct Box c = a; c.v = source(); sink(a.v)` reports it too -- and which `facts::isout` (`ByVal => !ap.is_empty()`) carries across the call boundary. A member-wise copy would fix the precision but drop taint under a nested aggregate member, so the sound over-approximation stands. s=flow d=none precision-disagree.",
+  "label": "Test",
+  "expect_flow": false,
+  "precision_gap": "aggregate-copy-aliases"
+}

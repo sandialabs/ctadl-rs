@@ -2392,6 +2392,230 @@ fn cpp_heap_pointer_gets_no_scope_exit_destructor() {
     );
 }
 
+// ---- Spec 021: early-exit destructors --------------------------------------
+// A scope's destructors run on EVERY exit, not just the fall-through `}`: a `return` unwinds every
+// frame of the function (innermost first), a `break`/`continue` every frame back to the loop body.
+// The `scope_unwind` hook emits them into the diverging statement's own block, before the control
+// transfer, so each CFG path carries exactly the destructors it runs. These assert the per-block
+// call shape (`dtor_calls_per_block` keeps the grouping `direct_calls_in` flattens away); the
+// end-to-end source→sink flow is in `ctadl-dynamic`'s `CPP_104..CPP_107`.
+
+#[test_log::test]
+fn cpp_early_return_unwinds_the_enclosing_scope() {
+    // FR-1 (`CPP_104`): a `return` inside an `if` arm destroys the enclosing function scope's
+    // `Widget w`. Both paths out of `use` — the early `return 1` and the trailing `return 0` — get
+    // their own `Widget::~Widget(w)`, one call each, because emission is per CFG path.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Widget { int v; void set(int x) { v = x; } ~Widget() { sink(v); } };
+        int use(int c) {
+            Widget w;
+            w.set(source());
+            if (c) { return 1; }
+            return 0;
+        }
+        int main() { return use(1); }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    assert_eq!(
+        nonempty_dtor_blocks(&prog, "use"),
+        vec![
+            vec!["Widget::~Widget".to_string()],
+            vec!["Widget::~Widget".to_string()]
+        ],
+        "each of the two paths out of `use` destroys `w` exactly once\n{prog}"
+    );
+    check_direct_call_arg0(&prog, "use", "Widget::~Widget", "w");
+}
+
+#[test_log::test]
+fn cpp_early_return_unwinds_nested_scopes_innermost_first() {
+    // FR-1 (`CPP_105`): a `return` two scopes deep unwinds BOTH frames in one block, innermost
+    // first — `Inner::~Inner(x)` then `Outer::~Outer(w)`. Distinct classes so the order is visible
+    // in the callee names alone. Neither compound here falls through (the inner block ends in
+    // `return 2`, and so does the function body), so spec 017's scope-exit emission contributes
+    // nothing at all: every call below comes from unwinding, one full pair per path.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Outer { int v; void set(int x) { v = x; } ~Outer() { sink(v); } };
+        struct Inner { int v; ~Inner() { sink(v); } };
+        int use(int c) {
+            Outer w;
+            w.set(source());
+            {
+                Inner x;
+                if (c) { return 1; }
+                return 2;
+            }
+        }
+        int main() { return use(1); }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    assert_eq!(
+        nonempty_dtor_blocks(&prog, "use"),
+        vec![
+            vec!["Inner::~Inner".to_string(), "Outer::~Outer".to_string()],
+            vec!["Inner::~Inner".to_string(), "Outer::~Outer".to_string()],
+        ],
+        "each `return` unwinds the inner frame then the outer one, in that order, in its own \
+         block\n{prog}"
+    );
+    check_direct_call_arg0(&prog, "use", "Inner::~Inner", "x");
+    check_direct_call_arg0(&prog, "use", "Outer::~Outer", "w");
+}
+
+#[test_log::test]
+fn cpp_bare_return_in_void_function_unwinds() {
+    // FR-1: a valueless `return;` unwinds exactly like a value-returning one — the arity-filling
+    // `implicit_return` terminator is still preceded by the scope's destructors.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Widget { int v; void set(int x) { v = x; } ~Widget() { sink(v); } };
+        void use(int c) {
+            Widget w;
+            w.set(source());
+            if (c) { return; }
+            w.set(0);
+        }
+        int main() { use(1); return 0; }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    assert_eq!(
+        nonempty_dtor_blocks(&prog, "use"),
+        vec![
+            vec!["Widget::~Widget".to_string()],
+            vec!["Widget::~Widget".to_string()]
+        ],
+        "a bare `return;` unwinds the function scope just like `return <value>;`\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_break_unwinds_the_loop_body_frame() {
+    // FR-2 (`CPP_106`): `break` as the LAST statement of a loop body — the body never falls
+    // through, so spec 017's scope-exit emission produced nothing at all. The `break`'s own block
+    // now carries exactly one `Widget::~Widget(w)`, and it is the only one in the function.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Widget { int v; void set(int x) { v = x; } ~Widget() { sink(v); } };
+        int main() {
+            for (int i = 0; i < 2; i++) {
+                Widget w;
+                w.set(source());
+                break;
+            }
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    assert_eq!(
+        nonempty_dtor_blocks(&prog, "main"),
+        vec![vec!["Widget::~Widget".to_string()]],
+        "the `break` block destroys the loop body's `w` exactly once\n{prog}"
+    );
+    check_direct_call_arg0(&prog, "main", "Widget::~Widget", "w");
+}
+
+#[test_log::test]
+fn cpp_continue_unwinds_only_the_loop_body_frame() {
+    // FR-2: a `continue` in an `if` arm destroys the loop body's object on its own path (it used
+    // to agree only by luck, through the body's fall-through emission two blocks later). One call
+    // in the `continue` block, one on the body's own fall-through — never two on one path.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Widget { int v; void set(int x) { v = x; } ~Widget() { sink(v); } };
+        int main() {
+            for (int i = 0; i < 2; i++) {
+                Widget w;
+                w.set(source());
+                if (i == 0) { continue; }
+                w.set(0);
+            }
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    assert_eq!(
+        nonempty_dtor_blocks(&prog, "main"),
+        vec![
+            vec!["Widget::~Widget".to_string()],
+            vec!["Widget::~Widget".to_string()]
+        ],
+        "the `continue` path and the body's fall-through each destroy `w` once\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_break_does_not_unwind_frames_outside_the_loop() {
+    // FR-2 (the bound): a `break` leaves the frames back to the loop body and NO further — the
+    // `Outer o` declared outside the loop is still live afterwards, so the `break` block must not
+    // destroy it. `o` is destroyed only by the function's own `return`.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Outer { int v; void set(int x) { v = x; } ~Outer() { sink(v); } };
+        struct Inner { int v; ~Inner() { sink(v); } };
+        int main() {
+            Outer o;
+            o.set(source());
+            for (int i = 0; i < 2; i++) {
+                Inner w;
+                break;
+            }
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let blocks = nonempty_dtor_blocks(&prog, "main");
+    assert!(
+        blocks.contains(&vec!["Inner::~Inner".to_string()]),
+        "the `break` block destroys only the loop body's `w`; got {blocks:?}\n{prog}"
+    );
+    assert!(
+        !blocks
+            .iter()
+            .any(|b| b.len() > 1 || (b.contains(&"Outer::~Outer".to_string()) && b.len() != 1)),
+        "no path destroys `o` alongside `w` — a `break` does not unwind past the loop; \
+         got {blocks:?}\n{prog}"
+    );
+    assert_eq!(
+        blocks
+            .iter()
+            .filter(|b| b.contains(&"Outer::~Outer".to_string()))
+            .count(),
+        1,
+        "`o` is destroyed once, by the function's `return`; got {blocks:?}\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_fall_through_scope_exit_is_not_double_unwound() {
+    // FR-4: spec 017's shape is unchanged. The inner block falls through, so its frame is emitted
+    // and popped there; the following `return 0` finds it gone and adds nothing — exactly one
+    // destructor call in the whole function, in the inner block, not two.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Widget { int v; void set(int x) { v = x; } ~Widget() { sink(v); } };
+        int main() {
+            { Widget w; w.set(source()); }
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    assert_eq!(
+        nonempty_dtor_blocks(&prog, "main"),
+        vec![vec!["Widget::~Widget".to_string()]],
+        "a fall-through scope exit still emits exactly one destructor — the `return` after it \
+         must not emit a second\n{prog}"
+    );
+}
+
 #[test_log::test]
 fn cpp_labeled_null_statement_goto_target() {
     // The `CPP_32_label_empty_statement` shape: `goto done;` jumps over a kill into a label whose
@@ -2692,4 +2916,685 @@ fn cpp_call_to_a_pointer_returning_method_reaches_its_body() {
         check_no_match(&dump, "define Box::pick(@p0[byref]) -> 0"),
         "`Box::pick` must not be an arity-0 stub\n{dump}"
     );
+}
+
+// ---------------------------------------------------------------------------------------
+// Milestone 12 (spec 020): a class-typed *parameter* is a method-call receiver, exactly as a
+// class-typed local is. The class is recorded where the parameter is bound (`collect_params`),
+// through the same type-to-class resolution a local's declaration uses (`declared_class`), so
+// every dispatch site treats a parameter and a local alike.
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_by_value_class_parameter_is_a_receiver() {
+    // FR-1: `b.get()` on a by-value `Box` parameter is a direct call to `Box::get` with the
+    // parameter's own access path (`@p0`) as the arg-0 receiver -- not a free call `get(b)` to
+    // a stub `define_extern_functions` would invent.
+    let src = r#"
+        extern "C" void sink(int);
+        struct Box { int v; int get() { return v; } };
+        void take(Box b) { sink(b.get()); }"#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "take", "Box::get", ["@p0"]);
+}
+
+#[test_log::test]
+fn cpp_reference_class_parameter_is_a_receiver() {
+    // FR-1: a `Box&` parameter dispatches the same way, on the same `@p0`.
+    let src = r#"
+        extern "C" void sink(int);
+        struct Box { int v; int get() { return v; } };
+        void take(Box& b) { sink(b.get()); }"#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "take", "Box::get", ["@p0"]);
+}
+
+#[test_log::test]
+fn cpp_pointer_class_parameter_is_a_receiver() {
+    // FR-1: a `Box*` parameter dispatches through `p->get()`. The receiver is the *pointer*
+    // identifier itself (spec 014's convention: the pointer stands for the object it aliases),
+    // so `param_head`'s descent to the leaf identifier is what keys it -- `*p` would never
+    // match the receiver name.
+    let src = r#"
+        extern "C" void sink(int);
+        struct Box { int v; int get() { return v; } };
+        void take(Box* p) { sink(p->get()); }"#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "take", "Box::get", ["@p0"]);
+}
+
+#[test_log::test]
+fn cpp_method_object_parameter_dispatches_on_p1() {
+    // FR-1: inside a *method*, the implicit `this` is `@p0`, so a class-typed parameter of that
+    // method is `@p1` -- and `o.get()` must dispatch on the parameter, not on the receiver.
+    let src = r"
+        struct Box {
+            int v;
+            int get() { return v; }
+            int diff(Box& o) { return v - o.get(); }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "Box::diff", "Box::get", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_class_parameter_modes_are_unchanged() {
+    // FR-2 (the frontend's half): registering a parameter's class must not disturb its passing
+    // mode. `Box b` stays `ByVal`, `Box& b` and `Box* p` are `ByRef` (spec 003's out-param
+    // model), which is what makes a member write through a reference/pointer parameter reach
+    // the caller's object and a by-value one only the callee's copy. What the analysis *below*
+    // the frontend does with a by-value aggregate is its own model (see the CPP_102 case).
+    let src = r"
+        struct Box { int v; void set(int x) { v = x; } };
+        void by_value(Box b) { b.set(1); }
+        void by_ref(Box& b) { b.set(1); }
+        void by_const_ref(const Box& b) { b.set(1); }
+        void by_ptr(Box* p) { p->set(1); }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(&prog, "by_value", &[ParameterType::ByVal]);
+    check_func_params(&prog, "by_ref", &[ParameterType::ByRef]);
+    check_func_params(&prog, "by_const_ref", &[ParameterType::ByVal]);
+    check_func_params(&prog, "by_ptr", &[ParameterType::ByRef]);
+}
+
+#[test_log::test]
+fn cpp_class_parameter_receiver_keeps_members_apart() {
+    // The CPP_103 negative, at the IR level: a write through the parameter receiver lands on
+    // one member's access path only. `setV` updates `@p0.v`; `getW` reads `@p0.w`. Registering
+    // the parameter's class makes it a receiver -- it does not smear taint over the object.
+    let src = r"
+        struct Box {
+            int v;
+            int w;
+            void setV(int x) { v = x; }
+            int getW() { return w; }
+        };
+        void fill(Box& b, int x) { b.setV(x); }";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "fill", "Box::setV", ["@p0", "@p1"]);
+    check_func_assign_or_update(&prog, "Box::setV", "@p0.v", ["@p1"]);
+    check_func_loads(&prog, "Box::getW", "@p0.w");
+}
+
+#[test_log::test]
+fn cpp_unknown_type_parameter_is_not_a_receiver() {
+    // The registration is gated on the neutral `classes` map: a parameter whose type names no
+    // known class (here `Opaque`, declared nowhere in the unit) records nothing, so `o.get()`
+    // falls back to ordinary call lowering rather than inventing a dispatch.
+    let src = r#"
+        extern "C" void sink(int);
+        struct Box { int v; int get() { return v; } };
+        void take(Opaque o) { sink(o.get()); }"#;
+    let prog = program_from_cpp_string(src).0;
+    assert!(
+        !direct_calls_in(&prog, "take")
+            .iter()
+            .any(|(callees, _)| callees.iter().any(|c| c == "Box::get")),
+        "a parameter of an unknown type must not dispatch to a class method\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn c_struct_parameter_is_untouched() {
+    // Principle II / the neutrality guard: for C the `classes` map is empty, so no parameter is
+    // ever registered and a `struct`-typed parameter lowers exactly as before -- a plain
+    // by-value formal whose member read is a load off `@p0`, with no dispatch anywhere.
+    let src = r"
+        struct Box { int v; };
+        int get(struct Box b) { return b.v; }";
+    let prog = program_from_string(src).0;
+    check_func_params(&prog, "get", &[ParameterType::ByVal]);
+    check_func_loads(&prog, "get", "@p0.v");
+    assert!(
+        direct_calls_in(&prog, "get").is_empty(),
+        "a C struct parameter must not dispatch anything\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_copy_ctor_is_lowered_as_a_function_of_its_own() {
+    // Spec 022 FR-1: `Box(int)` and `Box(const Box&)` are both arity 1. Keyed by arity alone
+    // they shared the single name `Box::Box` -- one arity, so never mangled -- and the second
+    // `lower_function` ran against the first's `FunctionIdx`, appending its parameters to it.
+    // The copy constructor is now keyed `Box::Box#copy`, which is neither counted in
+    // `Box::Box`'s arity set nor mangled by it, so each is a function with exactly its own
+    // parameters and its own body.
+    let src = r#"
+        struct Box {
+            int v;
+            int w;
+            Box(int x) : v(x), w(0) {}
+            Box(const Box& o) : v(0), w(o.v) {}
+        };"#;
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::Box",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_params(
+        &prog,
+        "Box::Box#copy",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    // Each body writes its own members from its own parameter: the int constructor takes the
+    // value, the copy constructor reads the source object's member.
+    check_func_assign_or_update(&prog, "Box::Box", "@p0.v", ["@p1"]);
+    check_func_loads(&prog, "Box::Box#copy", "@p1.v");
+    // Neither name is arity-mangled: the copy constructor's arity never joined `Box::Box`'s set,
+    // so both remain single-arity names.
+    assert!(
+        function_named(&prog, "Box::Box#1").is_none(),
+        "the copy constructor's arity must not make `Box::Box` an overload set\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_copy_ctor_parameter_mode_follows_the_reference_kind() {
+    // Spec 022 FR-1: recognizing the copy constructor changes only its *key*; its parameter
+    // mode is the ordinary one `param_head` computes, so `const Box&` is `ByVal` (read-only)
+    // and a non-const `Box&` is `ByRef` (writes reach the source object).
+    let src = r"
+        struct ConstRef { int v; ConstRef(int x) : v(x) {} ConstRef(const ConstRef& o) : v(o.v) {} };
+        struct MutRef { int v; MutRef(int x) : v(x) {} MutRef(MutRef& o) : v(o.v) {} };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "ConstRef::ConstRef#copy",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_params(
+        &prog,
+        "MutRef::MutRef#copy",
+        &[ParameterType::ByRef, ParameterType::ByRef],
+    );
+}
+
+#[test_log::test]
+fn cpp_out_of_line_copy_ctor_is_discovered() {
+    // Spec 022 FR-1: an out-of-line `Box::Box(const Box& o) : v(o.v) {}` takes the same distinct
+    // key its inline spelling does, so a copy construction reaches its body -- and its
+    // same-arity sibling `Box::Box(int)` keeps its own.
+    let src = r#"
+        extern "C" int source();
+        struct Box {
+            int v;
+            int w;
+            Box(int x);
+            Box(const Box& o);
+        };
+        Box::Box(int x) : v(x), w(0) {}
+        Box::Box(const Box& o) : v(0), w(o.v) {}
+        int main() { Box a(source()); Box b(a); return 0; }"#;
+    let prog = program_from_cpp_string(src).0;
+    check_func_assign_or_update(&prog, "Box::Box", "@p0.v", ["@p1"]);
+    check_func_loads(&prog, "Box::Box#copy", "@p1.v");
+    check_direct_call_arg0(&prog, "main", "Box::Box#copy", "b");
+}
+
+#[test_log::test]
+fn cpp_copy_construction_forms_call_the_copy_ctor() {
+    // Spec 022 FR-2: all three spellings of a construction from a same-class object -- direct
+    // `Box b(a)` (the most-vexing-parse `function_declarator`), copy `Box c = a` (an
+    // `init_declarator` whose value is the bare identifier) and brace `Box d{a}` -- lower to
+    // `DirectCall Box::Box#copy(&obj, a)`, the spec-006 construction edge with the copy key.
+    let src = r#"
+        extern "C" int source();
+        struct Box {
+            int v;
+            int w;
+            Box(int x) : v(x), w(0) {}
+            Box(const Box& o) : v(0), w(o.v) {}
+        };
+        int main() {
+            Box a(source());
+            Box b(a);
+            Box c = a;
+            Box d{a};
+            return 0;
+        }"#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "main", "Box::Box#copy", ["b", "a"]);
+    check_direct_call(&prog, "main", "Box::Box#copy", ["c", "a"]);
+    check_direct_call(&prog, "main", "Box::Box#copy", ["d", "a"]);
+    // The non-copy construction still resolves by arity to the other constructor.
+    check_direct_call_arg0(&prog, "main", "Box::Box", "a");
+}
+
+#[test_log::test]
+fn cpp_construction_without_a_user_copy_ctor_is_still_a_value_copy() {
+    // Spec 022 FR-2: the copy edge is gated on the class declaring a copy constructor. Without
+    // one, `Box b = a` keeps the value-copy lowering byte-for-byte -- which is exactly the
+    // implicit member-wise copy -- and emits no constructor call at all (the CPP_95/`p1d`
+    // model this must not disturb).
+    let src = r#"
+        extern "C" int source();
+        struct Box { int v; void set(int x) { v = x; } };
+        int main() {
+            Box a;
+            a.set(source());
+            Box b = a;
+            return 0;
+        }"#;
+    let prog = program_from_cpp_string(src).0;
+    assert!(
+        !direct_calls_in(&prog, "main")
+            .iter()
+            .any(|(callees, _)| callees.iter().any(|c| c.starts_with("Box::Box"))),
+        "a class with no user copy constructor must emit no constructor call for `Box b = a`\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_byvalue_class_argument_is_copy_constructed() {
+    // Spec 022 FR-3: `take(Box b)` copy-constructs its parameter from the argument, so the call
+    // site emits `Box::Box#copy(&<temp>, a)` and passes that fresh object -- what the callee
+    // receives is the copy the constructor built, not `a`.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box {
+            int v;
+            int w;
+            Box(int x) : v(x), w(0) {}
+            Box(const Box& o) : v(0), w(o.v) {}
+            int getw() { return w; }
+        };
+        void take(Box b) { sink(b.getw()); }
+        int main() { Box a(source()); take(a); return 0; }"#;
+    let prog = program_from_cpp_string(src).0;
+    let calls = direct_calls_in(&prog, "main");
+    let take_arg0 = calls
+        .iter()
+        .find(|(callees, _)| callees.iter().any(|c| c == "take"))
+        .and_then(|(_, args)| args.first().cloned())
+        .unwrap_or_else(|| panic!("no call to `take` in `main`\n{prog}"));
+    let locals = &function_named(&prog, "main").expect("main").locals;
+    let a = exp_from_str("a", locals);
+    assert_ne!(
+        take_arg0, a,
+        "a by-value class parameter must receive the copy, not the source object\n{prog}"
+    );
+    assert!(
+        calls.iter().any(
+            |(callees, args)| callees.iter().any(|c| c == "Box::Box#copy")
+                && args.as_slice() == [take_arg0.clone(), a.clone()]
+        ),
+        "expected `Box::Box#copy(<take's argument>, a)` before the call\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_reference_class_parameter_argument_is_not_copied() {
+    // Spec 022 FR-3: only a **by-value** class parameter copy-constructs. A `Box&` parameter
+    // names the caller's object, so the argument is passed through untouched and no copy
+    // constructor runs -- the record is keyed on the declarator shape, not the type.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box {
+            int v;
+            int w;
+            Box(int x) : v(x), w(0) {}
+            Box(const Box& o) : v(0), w(o.v) {}
+            int getw() { return w; }
+        };
+        void take(Box& b) { sink(b.getw()); }
+        int main() { Box a(source()); take(a); return 0; }"#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "main", "take", ["a"]);
+    assert!(
+        !direct_calls_in(&prog, "main")
+            .iter()
+            .any(|(callees, _)| callees.iter().any(|c| c == "Box::Box#copy")),
+        "a by-reference class parameter must not copy-construct its argument\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_byvalue_class_argument_without_a_copy_ctor_is_untouched() {
+    // Spec 022 FR-3: with no user copy constructor the call is unchanged -- the argument is the
+    // caller's object and the existing value-copy model stands (the CPP_99/CPP_102 behavior).
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box { int v; void set(int x) { v = x; } int get() { return v; } };
+        void take(Box b) { sink(b.get()); }
+        int main() { Box a; a.set(source()); take(a); return 0; }"#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "main", "take", ["a"]);
+}
+
+#[test_log::test]
+fn c_by_value_struct_argument_is_untouched() {
+    // Principle II / the neutrality guard: for C the `classes` map is empty, so no parameter is
+    // ever recorded as a by-value class object and the `copy_args` hook is a no-op -- a
+    // by-value `struct` argument is passed exactly as before, with no constructor call anywhere.
+    let src = r"
+        struct Box { int v; };
+        void take(struct Box b) { }
+        int main() { struct Box a; take(a); return 0; }";
+    let prog = program_from_string(src).0;
+    check_direct_call(&prog, "main", "take", ["a"]);
+    assert_eq!(
+        direct_calls_in(&prog, "main").len(),
+        1,
+        "a C by-value struct argument must emit nothing but the call itself\n{prog}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// Spec 023 — operator overloading: an operator applied to a class object is a method call
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_operator_assign_is_discovered_with_this() {
+    // FR-1: `Acc& operator=(int x)` is an ordinary instance method under a punctuation name.
+    // Discovery used to require a `field_identifier` declarator and dropped the `operator_name`
+    // one, so the body was never lowered at all. It now lowers as `Acc::operator=` with the
+    // implicit `this` first (`[ByRef, ByVal]`, arity 1) and, since it is a reference-returning
+    // `return *this`, returns `@p0`.
+    let src = r#"
+        struct Acc { int v; Acc& operator=(int x) { v = x; return *this; } };
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Acc::operator=",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_returns_path(&prog, "Acc::operator=", "@p0");
+    check_func_assign_or_update(&prog, "Acc::operator=", "@p0.v", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_operator_subscript_and_call_are_discovered() {
+    // FR-1: the subscript and call operators are discovered under the same rule, each with the
+    // implicit `this` — `Acc::operator[]` and `Acc::operator()`. The punctuation in an IR
+    // function name is inert (nothing downstream parses it), which is what these names pin.
+    let src = r#"
+        struct Acc {
+            int v;
+            int operator[](int i) { return v + i; }
+            int operator()(int y) { return v + y; }
+        };
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    for name in ["Acc::operator[]", "Acc::operator()"] {
+        check_func_params(&prog, name, &[ParameterType::ByRef, ParameterType::ByVal]);
+        check_func_loads(&prog, name, "@p0.v");
+    }
+    // The punctuation survives into the IR dump intact: nothing downstream parses a function
+    // name, so `Class::operator[]` is as good a name as `Class::at`.
+    let dump = format!("{prog}");
+    assert!(
+        dump.contains("define Acc::operator[](") && dump.contains("define Acc::operator()("),
+        "an operator method's name must round-trip through the IR dump\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn cpp_out_of_line_operator_is_discovered() {
+    // FR-1: an out-of-line `Acc& Acc::operator+=(int x) { … }` is named by a
+    // `qualified_identifier` whose *name* is an `operator_name`; phase 1.5 used to accept only a
+    // plain `identifier` there and skipped it. It now lowers under the same `Acc::operator+=`
+    // string the in-class spelling would produce, so the call site below reaches it.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Acc { int v; Acc& operator+=(int x); int get() { return v; } };
+        Acc& Acc::operator+=(int x) { v = v + x; return *this; }
+        int main() { Acc a; a += source(); sink(a.get()); return 0; }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Acc::operator+=",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_direct_call_arg0(&prog, "main", "Acc::operator+=", "a");
+}
+
+#[test_log::test]
+fn cpp_assignment_to_object_dispatches_to_operator() {
+    // FR-2: `a = source()` on an object whose class declares `operator=` is a method call with
+    // `a` as the arg-0 (by-ref) receiver — not the built-in value copy into `a`. The by-ref
+    // receiver is what carries the body's `v = x` back into the caller's object.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Acc {
+            int v;
+            Acc() : v(0) {}
+            Acc& operator=(int x) { v = x; return *this; }
+            int get() { return v; }
+        };
+        int main() { Acc a; a = source(); sink(a.get()); return 0; }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call_arg0(&prog, "main", "Acc::operator=", "a");
+    // The operator call *replaces* the store: nothing in `main` writes `a` any more — the object
+    // is only ever written by the callee, through the by-ref `@p0`.
+    let a = local_render(&prog, "main", "a");
+    let dump = format!("{prog}");
+    assert!(
+        !dump.contains(&format!("assign {a} =")) && !dump.contains(&format!("store {a}")),
+        "`a = source()` must dispatch to the operator instead of storing into `a`\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn cpp_compound_assignment_to_object_takes_only_the_rhs() {
+    // FR-2: `a += source()` dispatches by the assignment's own spelling, and the call takes
+    // exactly ONE explicit argument. The built-in compound lowering reads the target's old value
+    // as a second operand; `operator+=` reads it itself through `this`, so passing it again would
+    // be a second argument the one-parameter method has no formal for.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Acc {
+            int v;
+            Acc() : v(0) {}
+            Acc& operator+=(int x) { v = v + x; return *this; }
+            int get() { return v; }
+        };
+        int main() { Acc a; a += source(); sink(a.get()); return 0; }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call_arg0(&prog, "main", "Acc::operator+=", "a");
+    let args = call_args(&prog, "main", "Acc::operator+=");
+    assert_eq!(
+        args.len(),
+        2,
+        "`a += x` is `Acc::operator+=(&a, x)` — receiver plus one argument\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_assignment_without_an_operator_keeps_the_value_copy() {
+    // FR-2 (the negative that keeps the rest of the corpus still): a class that declares NO
+    // `operator=` keeps the exact value-copy lowering — `a = b` writes `a` and emits no call.
+    // The implicit copy assignment *is* that value copy.
+    let src = r#"
+        struct Acc { int v; };
+        int main() { Acc a; Acc b; a = b; return 0; }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    assert!(
+        direct_calls_in(&prog, "main").is_empty(),
+        "a class with no user `operator=` must emit no call for `a = b`\n{prog}"
+    );
+    check_writes_to(&prog, "a", 1);
+}
+
+#[test_log::test]
+fn cpp_operator_assign_keeps_members_apart() {
+    // FR-2: field sensitivity across the operator call (the CPP_116 negative). `operator=`
+    // writes only `v`; a read of the distinct member `w` observes nothing, because the by-ref
+    // receiver carries the body's store to `a.v` and to no other path.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Acc {
+            int v;
+            int w;
+            Acc() : v(0), w(0) {}
+            Acc& operator=(int x) { v = x; return *this; }
+            int getw() { return w; }
+        };
+        int main() { Acc a; a = source(); sink(a.getw()); return 0; }
+    "#;
+    let (summary, si) = get_summary(program_from_cpp_string(src).0).unwrap();
+    // The argument reaches `v` and only `v`: the receiver is by-ref, so the body's store lands
+    // at `@p0.v`. A flow to `@p0.w` here would mean the call conflated the whole object.
+    check_flow_in(&summary, &si, "Acc::operator=", 1, "", 0, ".v");
+    check_no_flow_in(&summary, &si, "Acc::operator=", 1, "", 0, ".w");
+}
+
+#[test_log::test]
+fn cpp_subscript_on_object_dispatches_to_operator() {
+    // FR-3: `a[0]` on an object whose class declares `operator[]` is `a.operator[](0)`, with `a`
+    // as the receiver — not a read of the synthetic element path `a.[0].deref`, which nothing
+    // ever wrote.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Vec {
+            int v;
+            Vec() : v(0) {}
+            void set(int x) { v = x; }
+            int operator[](int i) { return v + i; }
+        };
+        int main() { Vec a; a.set(source()); sink(a[0]); return 0; }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call_arg0(&prog, "main", "Vec::operator[]", "a");
+}
+
+#[test_log::test]
+fn cpp_call_on_object_dispatches_to_call_operator() {
+    // FR-3: `f(1)` where `f` names an OBJECT is `f.operator()(1)`. Before this slice it resolved
+    // to a function named `f` that no unit defines, so `define_extern_functions` invented an
+    // empty body for it — assert that stub is gone as well as that the method call is there.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Fn {
+            int k;
+            Fn() : k(0) {}
+            void set(int x) { k = x; }
+            int operator()(int y) { return k + y; }
+        };
+        int main() { Fn f; f.set(source()); sink(f(1)); return 0; }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call_arg0(&prog, "main", "Fn::operator()", "f");
+    assert!(
+        !direct_calls_in(&prog, "main")
+            .iter()
+            .any(|(callees, _)| callees.iter().any(|c| c == "f")),
+        "`f(1)` on an object must not lower as a call to an extern stub named `f`\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_call_to_a_real_function_is_unchanged() {
+    // FR-3: the other side of the same question — a callee that is a function, not an object,
+    // misses in `local_types` and keeps the ordinary call lowering. A local of a class that
+    // *does* declare `operator()` is in scope here, so this pins that the hook keys on the
+    // callee identifier and not merely on the presence of a call operator somewhere.
+    let src = r#"
+        struct Fn { int k; int operator()(int y) { return k + y; } };
+        int g(int x) { return x; }
+        int main() { Fn f; int r = g(1); return r; }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "main", "g", ["#1"]);
+}
+
+#[test_log::test]
+fn cpp_write_through_reference_returning_subscript() {
+    // FR-4: `a[0] = source()` with `int& operator[](int)` runs the operator AND stores through
+    // the reference it returned. Discovery records that the body returns a reference to the
+    // member `v`, so the store lands on `a.v` — where `a.get()` reads it — instead of on the
+    // built-in element path `a.[0].deref`, which nothing reads.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Vec {
+            int v;
+            Vec() : v(0) {}
+            int& operator[](int i) { return v; }
+            int get() { return v; }
+        };
+        int main() { Vec a; a[0] = source(); sink(a.get()); return 0; }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call_arg0(&prog, "main", "Vec::operator[]", "a");
+    // The store lands on the member the returned reference denotes, `a.v`, which is exactly the
+    // path `Vec::get` loads — not on the built-in element path `a.[0].deref`.
+    check_func_loads(&prog, "Vec::get", "@p0.v");
+    let a = local_render(&prog, "main", "a");
+    let dump = format!("{prog}");
+    assert!(
+        dump.contains(&format!("store {a}.v")),
+        "the write through `a[0]` must land on the member the reference denotes\n{dump}"
+    );
+}
+
+#[test_log::test]
+fn cpp_subscript_on_an_array_is_unchanged() {
+    // FR-3 / FR-6: an array base is not a class object, so the hook declines and the built-in
+    // element lowering stands — exactly the C behavior, which the C++ frontend has matched since
+    // Milestone 2. Asserted against the C frontend's own lowering of the same program.
+    let src = r"
+        int source();
+        void sink(int);
+        int main() {
+            int a[3];
+            a[0] = source();
+            sink(a[0]);
+            return 0;
+        }";
+    let (cpp_prog, cpp_dump) = program_from_cpp_string(src);
+    let (_, c_dump) = program_from_string(src);
+    assert_eq!(
+        cpp_dump, c_dump,
+        "an array subscript must lower identically under both frontends"
+    );
+    assert_eq!(
+        direct_calls_in(&cpp_prog, "main").len(),
+        2,
+        "an array subscript emits no call of its own — only source and sink\n{cpp_prog}"
+    );
+}
+
+#[test_log::test]
+fn c_assignment_subscript_and_call_are_untouched() {
+    // Principle II / FR-6: for C the `classes`/`local_types` maps are empty, so the
+    // `operator_call` hook is the no-op returning `None` at every shape — a C assignment,
+    // subscript and call are lowered exactly as they always were, with no method call anywhere.
+    let src = r"
+        struct S { int v; };
+        int g(int x) { return x; }
+        int main() {
+            struct S s;
+            int a[2];
+            s.v = 1;
+            a[0] = 2;
+            int r = g(a[0]);
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    let calls = direct_calls_in(&prog, "main");
+    assert_eq!(
+        calls.len(),
+        1,
+        "the only call in a C program with no operators is `g`\n{prog}"
+    );
+    assert_eq!(calls[0].0, vec!["g".to_string()], "{prog}");
+    // The subscript keeps the built-in element lowering: `a[0]` is a load of `a.deref`, not a
+    // call, and the store to `s.v` is a store, not a dispatch.
+    check_func_loads(&prog, "main", "a.deref");
+    check_func_assign_or_update(&prog, "main", "s.v", ["#1"]);
 }

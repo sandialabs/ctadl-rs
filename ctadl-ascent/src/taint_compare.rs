@@ -1794,4 +1794,139 @@ mod tests {
             "expected no cross-member flow among distinct statics (field sensitivity), got: {flows:?}"
         );
     }
+    /// M14 (spec 022, FR-1/FR-2) acceptance, end to end: a class with the same-arity pair
+    /// `Box(int)` + `Box(const Box&)`. Arity-only overload resolution keyed both under
+    /// `Box::Box`, lowered both bodies into one `FunctionIdx` and resolved every one-argument
+    /// construction to that chimera, so `Box b(a)` lost the flow. The copy constructor now has
+    /// its own key `Box::Box#copy` and `Box b(a)` calls it — mirrors the CPP_108 dynamic case.
+    #[test_log::test]
+    fn cpp_copy_ctor_same_arity_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                Box(int x) : v(x) {}
+                Box(const Box& o) : v(o.v) {}
+                int get() { return v; }
+            };
+            int main() {
+                Box a(source());
+                Box b(a);
+                sink(b.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp same-arity copy-ctor flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a source->sink flow through a copy constructor that shares its arity \
+             with another constructor, got: {flows:?}"
+        );
+    }
+
+    /// M14 (spec 022, FR-2) acceptance, end to end: a user copy constructor that MOVES taint
+    /// between members (`v(0), w(o.v)`), invoked by copy initialization `Box b = a`. The
+    /// whole-object value copy the declaration used to lower to models the *implicit*
+    /// member-wise copy, not this one, so the flow was lost — mirrors the CPP_109 dynamic case.
+    #[test_log::test]
+    fn cpp_copy_ctor_moves_taint_between_members_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                int w;
+                Box(int x) : v(x), w(0) {}
+                Box(const Box& o) : v(0), w(o.v) {}
+                int getw() { return w; }
+            };
+            int main() {
+                Box a(source());
+                Box b = a;
+                sink(b.getw());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp copy-ctor member-moving flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a source->sink flow through the copy constructor's `w(o.v)`, got: {flows:?}"
+        );
+    }
+
+    /// M14 (spec 022, FR-3) acceptance, end to end: the copy a BY-VALUE class parameter makes.
+    /// `take(Box b)` copy-constructs `b` from the argument at the call, and this copy constructor
+    /// moves `o.v` into `w`, so `b.getw()` is tainted although the caller's `a.w` is clean.
+    /// Mirrors the CPP_110 dynamic case.
+    #[test_log::test]
+    fn cpp_copy_ctor_byvalue_parameter_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                int w;
+                Box(int x) : v(x), w(0) {}
+                Box(const Box& o) : v(0), w(o.v) {}
+                int getw() { return w; }
+            };
+            void take(Box b) { sink(b.getw()); }
+            int main() {
+                Box a(source());
+                take(a);
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp by-value-parameter copy flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a source->sink flow through the copy a by-value class parameter makes, \
+             got: {flows:?}"
+        );
+    }
+
+    /// Negative control for copy constructors (field sensitivity): the copy constructor copies
+    /// member-wise (`v(o.v), w(o.w)`), `a.v` is tainted and `a.w` is clean, and the sink reads
+    /// the copy's DISTINCT member `w`. Running the copy constructor keeps the members apart, so
+    /// nothing crosses — this is what goes flow if the copy edge conflates the object or the
+    /// copy constructor is merged with the same-arity `Box(int)`. Mirrors the CPP_111 case.
+    #[test_log::test]
+    fn cpp_copy_ctor_distinct_member_no_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                int w;
+                Box(int x) : v(x), w(0) {}
+                Box(const Box& o) : v(o.v), w(o.w) {}
+                int getw() { return w; }
+            };
+            int main() {
+                Box a(source());
+                Box b(a);
+                sink(b.getw());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp copy-ctor distinct-member flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "a member-wise copy must not carry `v`'s taint into the distinct member `w`, \
+             got: {flows:?}"
+        );
+    }
 }

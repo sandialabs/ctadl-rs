@@ -1,0 +1,6 @@
+{
+  "name": "CPP_114_operator_subscript_read",
+  "description": "C++ operator overloading (spec 023), POSITIVE: `sink(a[0])` on an object whose class declares `int operator[](int)`. The subscript used to lower as a built-in element read of `a.[0].deref`, a path nothing writes, so the taint sitting in the member `v` was never observed (s=none d=flow). It now dispatches to `Vec::operator[]` with `a` as the by-ref receiver and the body's member read carries it out. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_109_copy_ctor_eq_moves_taint",
+  "description": "C++ copy constructors (spec 022), POSITIVE: a user copy constructor that moves taint between members (`v(0), w(o.v)`), invoked by copy initialization `Box b = a`. The whole-object value copy the declaration used to lower to models the IMPLICIT member-wise copy, not this one, so `b.w` came from the clean `a.w` (s=none d=flow). The declaration now lowers to `DirectCall Box::Box#copy(&b, a)` and the constructor body runs, so `b.w` gets `a.v`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

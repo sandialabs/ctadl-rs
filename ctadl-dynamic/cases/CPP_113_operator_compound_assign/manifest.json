@@ -1,0 +1,6 @@
+{
+  "name": "CPP_113_operator_compound_assign",
+  "description": "C++ operator overloading (spec 023), POSITIVE: `a += source()` on an object whose class declares `Acc& operator+=(int)`. A compound assignment to an object dispatches to the operator method by the assignment's own spelling, with only the right-hand side as an argument (the body reads the old value itself through `this`). Previously lowered as the built-in read-modify-write, losing the flow (s=none d=flow). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

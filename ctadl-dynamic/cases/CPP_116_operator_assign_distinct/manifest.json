@@ -1,0 +1,6 @@
+{
+  "name": "CPP_116_operator_assign_distinct",
+  "description": "C++ operator overloading (spec 023), NEGATIVE: field sensitivity across an operator call. `Acc::operator=` writes only `v` and the sink reads the distinct member `w`. The by-ref receiver carries the body's `store @p0.v` back to `a.v` and nowhere else, so nothing crosses; this case goes s=flow if the operator dispatch conflates the whole receiver object. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

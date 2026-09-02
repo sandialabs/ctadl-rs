@@ -1,0 +1,6 @@
+{
+  "name": "CPP_110_copy_ctor_byvalue_param_moves_taint",
+  "description": "C++ copy constructors (spec 022), POSITIVE: the copy a by-value class parameter makes. `void take(Box b)` copy-constructs `b` from the argument, and this class's copy constructor moves `o.v` into `w`, so `b.getw()` is tainted although the caller's `a.w` is clean (s=none d=flow before). A per-function record of the by-value class parameters lets every call site emit `Box::Box#copy(&<t>, a)` and pass that fresh object, so the constructor runs where C++ runs it. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

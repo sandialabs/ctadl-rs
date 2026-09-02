@@ -1,0 +1,6 @@
+{
+  "name": "CPP_111_copy_ctor_distinct_member",
+  "description": "C++ copy constructors (spec 022), NEGATIVE: field sensitivity through the copy edge. The copy constructor copies member-wise (`v(o.v), w(o.w)`), `a.v` is tainted and `a.w` is clean, and the sink reads the copy's distinct member `w`. Running `Box::Box#copy(&b, a)` keeps `v` and `w` apart, so nothing crosses; this case goes s=flow if the copy conflates the whole object or if the copy constructor is merged with the same-arity `Box(int)`. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

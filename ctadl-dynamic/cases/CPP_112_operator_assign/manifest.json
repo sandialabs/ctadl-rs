@@ -1,0 +1,6 @@
+{
+  "name": "CPP_112_operator_assign",
+  "description": "C++ operator overloading (spec 023), POSITIVE: `a = source()` on an object whose class declares `Acc& operator=(int)`. Discovery skipped the `operator_name` declarator and the shared assignment arm lowered a built-in store, so the operator body's `v = x` was never run and the flow was lost (s=none d=flow). The operator is now discovered as `Acc::operator=` and the assignment dispatches to it with `a` as the by-ref receiver. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

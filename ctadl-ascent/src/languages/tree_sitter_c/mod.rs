@@ -527,6 +527,8 @@ fn add_scoped_block(
         continuation_blidx: scope_view.continuation_blidx,
         break_target: scope_view.break_target,
         continue_target: scope_view.continue_target,
+        break_frame_depth: scope_view.break_frame_depth,
+        continue_frame_depth: scope_view.continue_frame_depth,
         explainer: format!("{}.{}", blidx.get(), debug_explainer),
     };
     if link_the_blocks {
@@ -554,6 +556,8 @@ fn add_block(
         continuation_blidx: scope_view.continuation_blidx,
         break_target: scope_view.break_target,
         continue_target: scope_view.continue_target,
+        break_frame_depth: scope_view.break_frame_depth,
+        continue_frame_depth: scope_view.continue_frame_depth,
         explainer: format!("{}.{}", blidx.get(), debug_explainer),
     };
     if link_the_blocks {
@@ -579,6 +583,8 @@ fn add_scope(
         continuation_blidx: scope_view.continuation_blidx,
         break_target: scope_view.break_target,
         continue_target: scope_view.continue_target,
+        break_frame_depth: scope_view.break_frame_depth,
+        continue_frame_depth: scope_view.continue_frame_depth,
         explainer: format!("{}.{}", scope_view.blidx.get(), debug_explainer),
     }
 }
@@ -770,12 +776,29 @@ struct ClassInfo {
     /// A chained `recv.m(…).n(…)` then dispatches `n` on the same object, and `Class& r =
     /// recv.m(…)` binds `r` to it. A subset of [`Self::methods`]; empty for C.
     returns_self: HashSet<String>,
+    /// Method names whose call result is a reference to one of the receiver's **data members**,
+    /// because the method has a reference return type and its body returns that member
+    /// (`int& operator[](int){ return v; }`). The recorded value is the member's name, so a
+    /// write *through* the returned reference (`a[0] = x`) can be lowered as a store to
+    /// `<receiver>.<member>` -- the location the reference denotes -- instead of landing on the
+    /// call's result temp, where nothing would ever read it. Disjoint from [`Self::returns_self`]
+    /// (a `return *this`). Empty for C and for every method that returns by value.
+    returns_member: HashMap<String, String>,
     /// Whether the class declares a (user-defined) constructor, modeled as the function
     /// `Class::Class` with an implicit `this` (`ByRef`) param 0. Set by the C++ method
     /// discovery hook; consulted by the `construct` hook so a class-typed declaration with
     /// arguments (`Box b(args)` etc.) lowers to a `DirectCall Class::Class(&b, args…)`.
     /// Always `false` for C (the `classes` map is empty), so construction never fires there.
     has_ctor: bool,
+    /// Whether the class declares a **copy constructor** — a constructor whose single parameter
+    /// is a same-class object (`Box(const Box&)`, `Box(Box&)`, `Box(Box)`). It is registered and
+    /// lowered under a key of its own, `Class::Class#copy`, so it never shares a `FunctionIdx`
+    /// with a same-arity sibling (`Box(int)`), and this flag says a construction from a
+    /// same-class object (`Box b(a)`, `Box b = a`, `Box b{a}`) — and a by-value class argument —
+    /// must *run* it rather than take the implicit member-wise value copy (spec 022). A class
+    /// without one keeps the exact value-copy model, which **is** the implicit copy constructor.
+    /// Always `false` for C, so no C declaration or argument is ever rewritten.
+    has_copy_ctor: bool,
     /// The class's **direct** base classes (`struct Derived : Base` → `["Base"]`), recorded
     /// from the `base_class_clause` by the C++ discovery hook. A derived class's [`Self::members`]
     /// already include its bases' (flattened transitively at discovery); this list additionally
@@ -891,6 +914,30 @@ struct GrammarHooks {
         Node<'t>,
         &'s str,
     ) -> anyhow::Result<bool, Error>,
+    /// Rewrite a call's already-collected arguments for whatever the language does to an
+    /// argument on the way in. C copies a value into the parameter and nothing else happens, so
+    /// its hook is a **no-op**. C++ uses it for the one place a *user function runs* at an
+    /// argument: passing a class object to a **by-value class parameter** copy-constructs the
+    /// parameter's object, so when that class declares a copy constructor the hook emits
+    /// `Class::Class#copy(&tmp, arg)` into a fresh object and substitutes `tmp` for the argument
+    /// — what the callee receives is the copy the constructor built, not the source object
+    /// (spec 022 FR-3). A class with no user copy constructor is left alone: its implicit
+    /// member-wise copy *is* the value copy the existing lowering already performs.
+    ///
+    /// Called from both call paths ([`Context::collect_call`] and [`Context::dispatch_call`])
+    /// with the **resolved callee name** and the call's `argument_list`, so the hook can index
+    /// the neutral [`Context::byval_class_params`] record by explicit-argument position. Driven
+    /// entirely by that map plus [`Context::classes`]/[`Context::local_types`], all empty for C —
+    /// so no language branch, and no C call is ever touched.
+    copy_args: for<'a, 't> fn(
+        &mut Context<'a>,
+        &mut Program,
+        &mut ScopeView,
+        &'a str,
+        &str,
+        Node<'t>,
+        &mut ThinVec<Exp>,
+    ) -> anyhow::Result<(), Error>,
     /// Populate the neutral arity-overload map that becomes every unit's
     /// [`Context::overloads`] — *before* any function is registered or lowered. C has no
     /// overloading, so its hook is a no-op (the map stays empty and [`Context::overload_name`]
@@ -926,8 +973,9 @@ struct GrammarHooks {
     /// Emit the destructors of the class-typed **stack** (automatic) objects constructed in a
     /// scope, at that scope's **normal fall-through exit** — a stack object's destructor runs at
     /// the closing `}` (spec 017). The shared [`Context::walk_compound_statement`] calls this after
-    /// the statement loop (before the end-of-compound link) when the compound did **not** diverge
-    /// (a `return`/`break`/`continue` in the middle is this slice's out-of-scope early-exit case).
+    /// the statement loop (before the end-of-compound link) when the compound did **not** diverge;
+    /// a path that leaves the scope early instead gets its destructors from
+    /// [`GrammarHooks::scope_unwind`] at the diverging statement, so each path emits exactly once.
     /// C has no destructors, so its hook is a **no-op**. C++ drains the current scope's destructor
     /// frame ([`Context::dtor_frames`]) in **reverse** construction order (LIFO) and, for each
     /// object whose class (or a base) declares a destructor, emits a single-target exact-type
@@ -935,6 +983,19 @@ struct GrammarHooks {
     /// with the object itself as the arg-0 (`ByRef`) receiver. The frame is empty for C, so this is
     /// inert on the C path. No language branch: driven by the neutral `classes`/`dtor_frames` state.
     scope_exit: for<'a> fn(&mut Context<'a>, &mut Program, &ScopeView) -> anyhow::Result<(), Error>,
+    /// Emit the destructors of the objects a statement leaving one or more scopes **early**
+    /// destroys — the `return`/`break`/`continue` counterpart of [`GrammarHooks::scope_exit`]
+    /// (spec 021). The shared core decides only *how many* frames the control transfer leaves and
+    /// calls this immediately before the terminator: [`Context::walk_return`] passes every open
+    /// frame (a `return` destroys the whole function's locals), `walk_break`/`walk_continue` pass
+    /// the frames opened since the loop body was entered. The hook drains the top `frames` frames
+    /// of [`Context::dtor_frames`] **innermost first**, reverse construction order within each, and
+    /// **without popping** them: the compound walk still owns push/pop, and the sibling
+    /// fall-through path (a different block) keeps its own `scope_exit` emission, so no object is
+    /// destroyed twice on one path. C has no destructors and its frames are always empty, so its
+    /// hook is a **no-op**. No language branch: driven by the neutral `dtor_frames` state.
+    scope_unwind:
+        for<'a> fn(&mut Context<'a>, &mut Program, &ScopeView, usize) -> anyhow::Result<(), Error>,
     /// Emit whatever a function's *prologue* contributes before its body is walked. C has
     /// nothing there, so its hook is a **no-op**. C++ uses it for a constructor's
     /// member-initializer list (`Box(int x) : v(x)`), lowering each `member(expr)` to a
@@ -949,6 +1010,34 @@ struct GrammarHooks {
         &'a str,
         &[(String, Node<'t>)],
     ) -> anyhow::Result<(), Error>,
+    /// Lower an expression whose *operator* is a user-defined **method** of the operand's class
+    /// -- C++ operator overloading (spec 023). `a = x` is `a.operator=(x)`, `a += x` is
+    /// `a.operator+=(x)`, `a[i]` is `a.operator[](i)` and `f(args)` is `f.operator()(args)`
+    /// whenever the operand is an object of a class that declares that operator; the taint such
+    /// a body moves is only observed if the call is emitted.
+    ///
+    /// The three shared arms that lower those shapes -- the `assignment_expression` and
+    /// `call_expression` arms of [`Context::flatten_expr`], and [`Context::flatten_subscript`] --
+    /// consult this **first** and, when it answers `Some(value)`, use that value and lower
+    /// nothing else (the hook has already evaluated every operand exactly once). `None` means
+    /// "not an overloaded operator": the arm proceeds with the built-in lowering it always had,
+    /// byte-for-byte. C has no operator overloading, so its hook is a **no-op** returning `None`
+    /// at every shape, and every C assignment, subscript and call is lowered exactly as before.
+    ///
+    /// The C++ implementation decides purely from the neutral
+    /// [`Context::local_types`]/[`Context::classes`] maps -- is the left operand / callee a known
+    /// object whose class (or a base) declares `operator<op>`? -- and, when it is, lowers through
+    /// the same receiver + `DirectCall` builder ([`Context::emit_method_call`]) that
+    /// [`Context::dispatch_call`] uses for `recv.m(args)`, with the object as the arg-0 (`ByRef`)
+    /// receiver. Both maps are empty for C, so the hook could not fire there even if it were
+    /// installed. No language branch.
+    operator_call: for<'a, 't> fn(
+        &mut Context<'a>,
+        &mut Program,
+        Node<'t>,
+        &'a str,
+        &mut ScopeView,
+    ) -> anyhow::Result<Option<Exp>, Error>,
 }
 
 impl GrammarHooks {
@@ -964,6 +1053,9 @@ impl GrammarHooks {
         collect_aux: |_ctx, _source, _root, _program, _global_sidx| Ok(()),
         // C has no classes/constructors, so no declaration is ever a construction.
         construct: |_ctx, _source, _program, _scope_view, _node, _class| Ok(false),
+        // C passes an argument by copying its value, which is exactly what the collected
+        // argument expression already is: nothing runs at a C argument, so this is a no-op.
+        copy_args: |_ctx, _program, _scope_view, _source, _callee, _args_node, _args| Ok(()),
         // C has no overloading: the `overloads` map stays empty and `overload_name` is the
         // identity, so every C (and every non-overloaded) name is registered/resolved bare.
         collect_overloads: |_source, _root, _overloads| Ok(()),
@@ -975,9 +1067,16 @@ impl GrammarHooks {
         // C constructs no class objects, so every destructor frame is empty and no scope exits ever
         // emit a destructor — a no-op, exactly as before spec 017.
         scope_exit: |_ctx, _program, _scope_view| Ok(()),
+        // Same for an early exit: a C `return`/`break`/`continue` leaves scopes whose destructor
+        // frames are all empty, so unwinding them emits nothing — a no-op, exactly as before
+        // spec 021.
+        scope_unwind: |_ctx, _program, _scope_view, _frames| Ok(()),
         // C has no constructors, so no function has a prologue to emit — a no-op, and the
         // slice handed to it is always empty on the C path anyway.
         ctor_prologue: |_ctx, _program, _scope_view, _source, _inits| Ok(()),
+        // C has no operator overloading: every assignment, subscript and call is the built-in
+        // operator, so this always declines and the three arms lower exactly as they always did.
+        operator_call: |_ctx, _program, _node, _source, _scope_view| Ok(None),
     };
 }
 
@@ -1046,6 +1145,17 @@ struct Context<'a> {
     /// identity there and the C path — and every non-overloaded C++ name — is unchanged. Never
     /// branched on: the four touchpoints just consult it through the neutral mangler.
     overloads: HashMap<String, HashSet<usize>>,
+    /// Which of a defined function's **explicit** parameters are class objects passed **by
+    /// value** — `byval_class_params[<IR name>][i]` is `Some(class)` when explicit parameter `i`
+    /// of that function is declared `Class p` (no pointer, no reference), and `None` otherwise.
+    /// Populated **only** by the C++ `collect_aux` hook, which scans every definition in the
+    /// unit before any body is lowered, so a call reaching a definition further down the file
+    /// still finds it. [`GrammarHooks::copy_args`] consults it at every call site: passing a
+    /// same-class object to such a parameter is a **copy construction** in C++, so when the class
+    /// declares a copy constructor the argument is copy-constructed into a fresh object and that
+    /// object is what the callee receives (spec 022 FR-3). **Empty for C** (no classes), so no C
+    /// call is ever rewritten and the C path is unchanged. Never branched on.
+    byval_class_params: HashMap<String, Vec<Option<String>>>,
     /// The class-hierarchy in the **subclass** direction — a class mapped to its **direct**
     /// subclasses (the reverse of each [`ClassInfo::bases`] edge). Built once by the C++
     /// discovery hook after every class is known, it lets a virtual call over-approximate by
@@ -1241,6 +1351,7 @@ impl Context<'_> {
             current_method_class: None,
             reference_aliases: HashMap::default(),
             overloads: HashMap::default(),
+            byval_class_params: HashMap::default(),
             subclasses: HashMap::default(),
             dtor_frames: Vec::new(),
             addr_alias: HashMap::default(),
@@ -2458,6 +2569,16 @@ struct ScopeView {
     // A `switch` deliberately leaves this untouched, so a `continue` inside a switch
     // arm still targets the enclosing loop (matching C semantics).
     pub continue_target: Option<BasicBlockIdx>,
+    // How deep the destructor-frame stack (`Context::dtor_frames`) was when the construct
+    // `break_target` points out of was entered: a `break` here leaves every frame opened
+    // since, and its `scope_unwind` destroys exactly those objects (spec 021). Rides along
+    // by value beside `break_target`, and is `None` for the same reason it is.
+    pub break_frame_depth: Option<usize>,
+    // The same depth for `continue_target`. Tracked separately from `break_frame_depth`
+    // because a `switch` overrides only the break side: a `continue` inside a switch arm
+    // jumps out of the enclosing *loop*, so it must unwind the frames opened since the loop
+    // body — including the switch's own — not just since the switch.
+    pub continue_frame_depth: Option<usize>,
     pub explainer: String,
 }
 
@@ -2895,9 +3016,10 @@ impl<'a> Context<'a> {
 
         // Emit this scope's stack objects' destructors (reverse construction order) at the closing
         // `}`, before the frame is popped -- the hook drains the top frame -- and only on the
-        // fall-through path: a compound that diverged took an early exit, whose scope-exit
-        // destructors are out of spec 017's scope. Nothing propagates with `?` until after the
-        // pop, or a failure would leave the frame stack unbalanced.
+        // fall-through path: a compound that diverged left through a `return`/`break`/`continue`,
+        // which already unwound this frame into *its* block via `scope_unwind` (spec 021), and the
+        // two paths never share a block, so nothing is destroyed twice. Nothing propagates with `?`
+        // until after the pop, or a failure would leave the frame stack unbalanced.
         if result.is_ok() && !diverged {
             let scope_exit = self.hooks.scope_exit;
             result = scope_exit(self, program, &scope_view);
@@ -3188,17 +3310,9 @@ impl<'a> Context<'a> {
         // If this declaration's type names a known class (only ever true under C++, where
         // the `collect_aux` hook has populated `self.classes`), remember the class of each
         // local it declares so a later `recv.method(…)` call can dispatch on it. For C the
-        // `classes` map is empty, so this is always `None` and records nothing. A namespaced
-        // class type is a `qualified_identifier` (`ns::Box`) rather than a plain
-        // `type_identifier`; its full text (`ns::Box`) is the qualified key the C++ hook
-        // registered the class under. `qualified_identifier` never occurs under the C grammar,
-        // so accepting it is a neutral node-shape check, not a language branch.
-        let class_type: Option<String> = node
-            .child_by_field_name("type")
-            .filter(|t| matches!(t.kind(), "type_identifier" | "qualified_identifier"))
-            .map(|t| to_str(&t, source))
-            .filter(|name| self.classes.contains_key(*name))
-            .map(str::to_string);
+        // `classes` map is empty, so this is always `None` and records nothing. The same
+        // resolution binds a class-typed *parameter* in `collect_params`; see [`declared_class`].
+        let class_type: Option<String> = declared_class(&self.classes, node, source);
 
         // A class-typed declaration may be an object *construction* (`Box b(args)` and the
         // copy/brace variants). Delegate that recognition + lowering to the C++ `construct`
@@ -3415,21 +3529,29 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         child: Node<'_>,
     ) -> Result<(), Error> {
-        if let Some(ret_val_node) = child.child(1)
-            && ret_val_node.kind() != ";"
-        {
-            let ret_exp = self.flatten_expr(program, ret_val_node, source, scope_view)?;
-            let term = Terminator::new_kind(TerminatorKind::Return {
+        let ret_val_node = child.child(1).filter(|n| n.kind() != ";");
+        // The returned value is evaluated *first*: C++ initializes the result before it destroys
+        // the function's locals, so a `return w.v` reads the member before `~Widget` can touch it.
+        let ret_exp = match ret_val_node {
+            Some(node) => Some(self.flatten_expr(program, node, source, scope_view)?),
+            None => None,
+        };
+        // ...then every scope this `return` leaves runs its destructors, innermost first — the
+        // whole function, so every open frame (functions are lowered one at a time, never nested,
+        // so every frame on the stack belongs to this one). Emitted into the returning block,
+        // before its terminator. Inert for C, whose frames are always empty.
+        let scope_unwind = self.hooks.scope_unwind;
+        scope_unwind(self, program, scope_view, self.dtor_frames.len())?;
+        let term = match ret_exp {
+            Some(ret_exp) => Terminator::new_kind(TerminatorKind::Return {
                 args: vec![ret_exp].into(),
-            });
-            program.functions[scope_view.fidx].blocks[scope_view.blidx].terminator = Some(term);
-        } else {
+            }),
             // A bare `return;`. Legal in a non-`void` function (and common in `int` error
             // paths), where the arity contract still demands an argument: `implicit_return`
             // supplies the indeterminate value C says such a return has.
-            let term = implicit_return(program, scope_view.fidx);
-            program.functions[scope_view.fidx].blocks[scope_view.blidx].terminator = Some(term);
-        }
+            None => implicit_return(program, scope_view.fidx),
+        };
+        program.functions[scope_view.fidx].blocks[scope_view.blidx].terminator = Some(term);
         Ok(())
     }
     fn walk_for(
@@ -3471,6 +3593,8 @@ impl<'a> Context<'a> {
             continuation_blidx: scope_view.continuation_blidx,
             break_target: scope_view.break_target,
             continue_target: scope_view.continue_target,
+            break_frame_depth: scope_view.break_frame_depth,
+            continue_frame_depth: scope_view.continue_frame_depth,
             explainer: "for_loop".to_string(),
         };
 
@@ -3530,6 +3654,10 @@ impl<'a> Context<'a> {
         // nested non-loop block and are restored after the loop.
         body_scope.break_target = Some(continuation.blidx);
         body_scope.continue_target = Some(update_scope.blidx);
+        // The destructor-frame depth outside the body: a `break`/`continue` unwinds exactly
+        // the scopes it leaves, which is every frame opened since here (spec 021).
+        body_scope.break_frame_depth = Some(self.dtor_frames.len());
+        body_scope.continue_frame_depth = body_scope.break_frame_depth;
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
         self.walk_compound_statement(source, program, &update_scope, &update_cp)?;
         *scope_view = continuation;
@@ -3585,6 +3713,10 @@ impl<'a> Context<'a> {
         // `break` leaves the loop; `continue` jumps to the post-body condition test.
         body_scope.break_target = Some(continuation.blidx);
         body_scope.continue_target = Some(condition_sv.blidx);
+        // The destructor-frame depth outside the body: a `break`/`continue` unwinds exactly
+        // the scopes it leaves, which is every frame opened since here (spec 021).
+        body_scope.break_frame_depth = Some(self.dtor_frames.len());
+        body_scope.continue_frame_depth = body_scope.break_frame_depth;
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
         *scope_view = continuation;
         Ok(())
@@ -3639,6 +3771,10 @@ impl<'a> Context<'a> {
         // `break` leaves the loop; `continue` jumps back to the condition re-test.
         body_scope.break_target = Some(continuation.blidx);
         body_scope.continue_target = Some(condition_sv.blidx);
+        // The destructor-frame depth outside the body: a `break`/`continue` unwinds exactly
+        // the scopes it leaves, which is every frame opened since here (spec 021).
+        body_scope.break_frame_depth = Some(self.dtor_frames.len());
+        body_scope.continue_frame_depth = body_scope.break_frame_depth;
         self.walk_compound_statement(source, program, &body_scope, &cp)?;
         *scope_view = continuation;
         Ok(())
@@ -3724,6 +3860,11 @@ impl<'a> Context<'a> {
             // `break` in any arm jumps to the continuation. `continue_target` is left
             // inherited so a `continue` here still targets the enclosing loop.
             arm_sv.break_target = Some(continuation.blidx);
+            // A `break` in an arm leaves the scopes opened inside the arm, so it unwinds from
+            // the depth outside it. `continue_frame_depth` is left inherited alongside
+            // `continue_target`: a `continue` here jumps out of the enclosing *loop*, so it
+            // must unwind back to the loop body, through this switch (spec 021).
+            arm_sv.break_frame_depth = Some(self.dtor_frames.len());
 
             // Arm body = the case_statement's statement children (everything except
             // the `case` value expression).
@@ -3749,9 +3890,10 @@ impl<'a> Context<'a> {
     /// `scope_view.break_target` — no stack to consult. Returns whether the block was
     /// terminated: a stray `break` outside any switch/loop (a source problem) recovers
     /// as a no-op, so following statements keep lowering into the same block.
-    fn walk_break(&self, program: &mut Program, scope_view: &ScopeView) -> Result<bool, Error> {
+    fn walk_break(&mut self, program: &mut Program, scope_view: &ScopeView) -> Result<bool, Error> {
         match scope_view.break_target {
             Some(target) => {
+                self.unwind_to_frame_depth(program, scope_view, scope_view.break_frame_depth)?;
                 let mut to = scope_view.clone();
                 to.blidx = target;
                 link_blocks(program, scope_view, &to, false)?;
@@ -3767,9 +3909,14 @@ impl<'a> Context<'a> {
     /// `continue`: terminate the current block with a goto to the innermost enclosing
     /// loop's re-test/update block (`scope_view.continue_target`). Termination and
     /// stray-`continue` recovery mirror [`Self::walk_break`].
-    fn walk_continue(&self, program: &mut Program, scope_view: &ScopeView) -> Result<bool, Error> {
+    fn walk_continue(
+        &mut self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+    ) -> Result<bool, Error> {
         match scope_view.continue_target {
             Some(target) => {
+                self.unwind_to_frame_depth(program, scope_view, scope_view.continue_frame_depth)?;
                 let mut to = scope_view.clone();
                 to.blidx = target;
                 link_blocks(program, scope_view, &to, false)?;
@@ -3780,6 +3927,22 @@ impl<'a> Context<'a> {
                 Ok(false)
             }
         }
+    }
+
+    /// Run the `scope_unwind` hook over every destructor frame opened *since* `depth` — the
+    /// frames a `break`/`continue` leaves behind, given the depth recorded on the scope view
+    /// when the loop (or `switch`) body was entered. `None` (no recorded depth) and a stale
+    /// depth deeper than the stack both unwind nothing. The frames are read, not popped: the
+    /// compound walk still pops them on its own way out.
+    fn unwind_to_frame_depth(
+        &mut self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        depth: Option<usize>,
+    ) -> Result<(), Error> {
+        let frames = depth.map_or(0, |d| self.dtor_frames.len().saturating_sub(d));
+        let scope_unwind = self.hooks.scope_unwind;
+        scope_unwind(self, program, scope_view, frames)
     }
 
     /// `goto L`: terminate the current block with a jump to label `L`'s block (created
@@ -4127,6 +4290,24 @@ impl<'a> Context<'a> {
                         pn.to_string(),
                         VarKind::Parameter,
                     );
+                    // A parameter whose declared type names a known class is a receiver, exactly
+                    // like a local of that class: record it so a later `b.m(…)` / `p->m(…)` in
+                    // the body dispatches to `Class::m` with this parameter's own access path
+                    // (`@pN`) as the arg-0 receiver. `param_head` already descended through the
+                    // pointer/reference wrappers to the leaf `identifier`, so `Box* p` and
+                    // `Box& b` key on `p` / `b` — the name the receiver is spelled with.
+                    //
+                    // The passing mode pushed just above is untouched, and it is what supplies
+                    // C++'s copy-vs-alias semantics for free: `Box b` is `ByVal`, so the callee's
+                    // member writes stay in its own copy, while `Box&`/`Box*` are `ByRef`, so
+                    // they flow back to the caller's object (spec 020).
+                    //
+                    // Neutral: `classes` is empty for C, so no C parameter is ever registered.
+                    // `lower_function` clears `local_types` before calling us, so these entries
+                    // belong to the function about to be walked.
+                    if let Some(class) = declared_class(&self.classes, decl, source) {
+                        self.local_types.insert(pn.to_string(), class);
+                    }
                 }
                 // An abstract declarator names nothing, so nothing in the body can read this
                 // parameter -- but it still occupies a position, and a taint model naming
@@ -4251,14 +4432,25 @@ impl<'a> Context<'a> {
                 let ap = self.flatten_lvalue(program, node, source, scope_view)?;
                 Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
             }
-            "assignment_expression" => self.collect_assignment(
-                source,
-                program,
-                scope_view,
-                node.child_by_field_name("left").expect("always a left"),
-                node.child_by_field_name("right").expect("always a right"),
-                node.child_by_field_name("operator"),
-            ),
+            "assignment_expression" => {
+                // C++ operator overloading: `a = x` / `a += x` on an object whose class declares
+                // that operator is a **method call**, not a store (spec 023). Ask the hook first;
+                // it answers `None` for every built-in assignment (and for all of C, whose hook
+                // always declines), leaving the store lowering below untouched. When it answers,
+                // it has already evaluated both operands, so nothing else is lowered here.
+                let operator_call = self.hooks.operator_call;
+                match operator_call(self, program, node, source, scope_view)? {
+                    Some(value) => Ok(value),
+                    None => self.collect_assignment(
+                        source,
+                        program,
+                        scope_view,
+                        node.child_by_field_name("left").expect("always a left"),
+                        node.child_by_field_name("right").expect("always a right"),
+                        node.child_by_field_name("operator"),
+                    ),
+                }
+            }
             // The C++ `this` receiver — inside a method body, `this` is the implicit param 0
             // installed by `lower_function`, so it resolves to `@p0`. `*this` reaches here via
             // the `pointer_expression` arm below (its argument is this node). A `this` node
@@ -4357,13 +4549,26 @@ impl<'a> Context<'a> {
             // `(__be16)(x)` is a cast that tree-sitter could only read as a call; when it is
             // one, it lowers exactly like the `cast_expression` arm below. See
             // `cast_shaped_call` for how the two are told apart.
-            "call_expression" => match self.cast_shaped_call(node, source, scope_view)? {
-                Some(operands) => self.flatten_cast_operands(program, operands, source, scope_view),
-                None => {
-                    let x = self.allocator.next_temp();
-                    self.collect_call(program, node, source, scope_view, x)
+            "call_expression" => {
+                // C++ operator overloading: `f(args)` where `f` names an **object** whose class
+                // declares `operator()` is a method call on that object, not a call to a function
+                // named `f` (spec 023). The hook declines for every callee that is not a known
+                // class object -- every C call, and every C++ call to a real function -- so the
+                // lowering below is unchanged for them.
+                let operator_call = self.hooks.operator_call;
+                if let Some(value) = operator_call(self, program, node, source, scope_view)? {
+                    return Ok(value);
                 }
-            },
+                match self.cast_shaped_call(node, source, scope_view)? {
+                    Some(operands) => {
+                        self.flatten_cast_operands(program, operands, source, scope_view)
+                    }
+                    None => {
+                        let x = self.allocator.next_temp();
+                        self.collect_call(program, node, source, scope_view, x)
+                    }
+                }
+            }
             // C++ `delete p;` — destroying a heap object runs its destructor(s). The
             // `delete_expr` hook emits the destructor call (a CHA multi-target `DirectCall` for a
             // virtual destructor, the single static-type destructor otherwise, with the referent
@@ -4935,6 +5140,14 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
+        // C++ operator overloading: `a[i]` on an object whose class declares `operator[]` is a
+        // method call whose result is the subscript's value, not a read of `a.[i].deref` (spec
+        // 023). The hook declines for an array or pointer base -- every C subscript -- so the
+        // built-in lowering below is unchanged for them.
+        let operator_call = self.hooks.operator_call;
+        if let Some(value) = operator_call(self, program, node, source, scope_view)? {
+            return Ok(value);
+        }
         // A subscript read on the RHS: resolve the location (base path + index field) and lower
         // it to loads. (As an lvalue it is handled by `flatten_lvalue` instead.)
         let ap = self.flatten_lvalue(program, node, source, scope_view)?;
@@ -5202,14 +5415,57 @@ impl<'a> Context<'a> {
         // `s.fp(x)` on a plain struct). Checking the receiver's own class first makes a
         // non-virtual override (a derived redefinition) win by static type. The base chain is
         // empty for C and base-less classes, so this is a plain own-class lookup there.
-        let (defining_class, returns_self) = match self.resolve_method_class(&recv.class, method) {
-            Some(found) => found,
-            None => return Ok(None),
-        };
+        if self.resolve_method_class(&recv.class, method).is_none() {
+            return Ok(None);
+        }
         let arg_node = call_node
             .child_by_field_name("arguments")
             .expect("call_expression always has arguments");
         let explicit_args = self.collect_arguments(program, arg_node, source, scope_view)?;
+        self.emit_method_call(
+            program,
+            scope_view,
+            source,
+            &recv,
+            method,
+            explicit_args,
+            Some(arg_node),
+            temp_name,
+        )
+    }
+
+    /// Emit `DirectCall <Class>::<method>(recv, args…)` for an already-resolved receiver, and
+    /// yield its result.
+    ///
+    /// The tail of [`Self::dispatch_call`], factored out so the two places a C++ method call is
+    /// built share one body: an explicit `recv.method(args)` and an **overloaded operator**
+    /// applied to an object (`a = x`, `a[i]`, `f(args)` — [`GrammarHooks::operator_call`], spec
+    /// 023), which reaches the same method by a different spelling. Everything from here is
+    /// spelling-independent: resolve the method against the receiver's class (and its base
+    /// chain), build the target edge(s), run the by-value-argument copies, prepend the receiver
+    /// and record what the result aliases.
+    ///
+    /// `arg_list` is the syntax node holding the explicit arguments, used only to key the
+    /// by-value-class-argument copies by position; `None` for a shape that has no such node (an
+    /// assignment operator's right-hand side), which then takes no copies. Returns `None` when no
+    /// class in the receiver's base chain defines `method` — the caller then falls back to its
+    /// ordinary lowering.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_method_call(
+        &mut self,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        source: &'a str,
+        recv: &RecvObj,
+        method: &str,
+        mut explicit_args: ThinVec<Exp>,
+        arg_list: Option<Node<'_>>,
+        temp_name: String,
+    ) -> Result<Option<DispatchOut>, Error> {
+        let (defining_class, returns_self) = match self.resolve_method_class(&recv.class, method) {
+            Some(found) => found,
+            None => return Ok(None),
+        };
         // Build the call's target edge(s). A **non-virtual** method is a single static-type
         // target: the class that *defines* the method (`DefiningClass::method`), so an inherited
         // method reaches the base's lowered body (spec 011). A method that is **virtual** on the
@@ -5230,6 +5486,24 @@ impl<'a> Context<'a> {
             .iter()
             .map(|b| self.overload_name(b, explicit_args.len()))
             .collect();
+        // The by-value-class-argument copy (spec 022 FR-3), keyed on the **static** resolution —
+        // the signature every CHA target overrides, so which override runs cannot change whether
+        // a parameter is by value. C never reaches here (its `dispatch_call` returns `None`
+        // before this), and the hook is a no-op for it regardless.
+        let static_target =
+            self.overload_name(&format!("{defining_class}::{method}"), explicit_args.len());
+        if let Some(arg_node) = arg_list {
+            let copy_args = self.hooks.copy_args;
+            copy_args(
+                self,
+                program,
+                scope_view,
+                source,
+                &static_target,
+                arg_node,
+                &mut explicit_args,
+            )?;
+        }
         let mut method_args: ThinVec<Exp> = ctadl_ir::thin_vec![recv.exp.clone()];
         method_args.extend(explicit_args);
         let ret =
@@ -5421,7 +5695,7 @@ impl<'a> Context<'a> {
         let func_name = to_str(&func_node, source);
 
         let arg_node = node.child_by_field_name("arguments").expect("always has");
-        let args = self.collect_arguments(program, arg_node, source, scope_view)?;
+        let mut args = self.collect_arguments(program, arg_node, source, scope_view)?;
 
         // Resolve an overloaded free callee to its arity-matching overload by the number of
         // explicit arguments (`id(a, b)` -> the `id#2` edge); a non-overloaded callee (all of
@@ -5429,9 +5703,19 @@ impl<'a> Context<'a> {
         // a call names the definition the *caller's* file holds when several files define
         // that name; `resolve_reference` is the identity function for every other name. Only
         // the `DirectCall` (`GlobalHeap`) arm below consults this; a funcptr call ignores it.
-        let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec![
-            self.resolve_reference(&self.overload_name(func_name, args.len()))
-        ]);
+        let callee = self.resolve_reference(&self.overload_name(func_name, args.len()));
+
+        // Whatever the language runs at an argument on the way in — for C++, the copy
+        // constructor a **by-value class parameter** invokes on the object passed to it. The
+        // hook is keyed on the resolved callee, so it can only fire for a definition this unit
+        // recorded a by-value class parameter for; C's hook is a no-op, so the arguments below
+        // are exactly the ones collected above on the C path.
+        let copy_args = self.hooks.copy_args;
+        copy_args(
+            self, program, scope_view, source, &callee, arg_node, &mut args,
+        )?;
+
+        let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec![callee]);
 
         // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
         // dereference form `(*op_func)(...)` wraps the pointer in a
@@ -5693,6 +5977,8 @@ impl<'a> Context<'a> {
             continuation_blidx: None,
             break_target: None,
             continue_target: None,
+            break_frame_depth: None,
+            continue_frame_depth: None,
             explainer: "params".to_string(),
         };
 
@@ -5724,6 +6010,8 @@ impl<'a> Context<'a> {
             continuation_blidx: None,
             break_target: None,
             continue_target: None,
+            break_frame_depth: None,
+            continue_frame_depth: None,
             explainer: "initial_block".to_string(),
         };
         self.scope_tree.add_block(&block_scope_view);
@@ -6479,6 +6767,34 @@ fn is_namespaced_definition(node: Node<'_>) -> bool {
         }
     }
     false
+}
+
+/// The **known class** that `node`'s `type:` field names, or `None`.
+///
+/// The single type-to-class resolution shared by the two places a variable is bound to a class:
+/// a local's `declaration` in [`Context::walk_declaration`] and a `parameter_declaration` in
+/// [`Context::collect_params`]. Both record their result in [`Context::local_types`], which is
+/// what makes an identifier a method-call receiver, so both must agree on what a class type
+/// looks like.
+///
+/// A namespaced class type is a `qualified_identifier` (`ns::Box`) rather than a plain
+/// `type_identifier`; its full text (`ns::Box`) is the qualified key the C++ discovery hook
+/// registered the class under. `qualified_identifier` never occurs under the C grammar, so
+/// accepting it is a neutral node-shape check, not a language branch — and `classes` is empty
+/// for C, so this is always `None` there and no C declaration or parameter is ever registered.
+///
+/// Takes the map rather than `&Context` so a caller already holding a mutable borrow of a
+/// *different* `Context` field can still ask (`collect_params` holds one on `param_names`).
+fn declared_class(
+    classes: &HashMap<String, ClassInfo>,
+    node: Node<'_>,
+    source: &str,
+) -> Option<String> {
+    node.child_by_field_name("type")
+        .filter(|t| matches!(t.kind(), "type_identifier" | "qualified_identifier"))
+        .map(|t| to_str(&t, source))
+        .filter(|name| classes.contains_key(*name))
+        .map(str::to_string)
 }
 
 fn declarator_leaf_ident<'s>(decl: Node<'_>, source: &'s str) -> Option<&'s str> {
