@@ -983,7 +983,7 @@ mod ap_tests {
     #[test]
     #[should_panic(expected = "empty access-path segment")]
     fn parse_fields_rejects_empty_segments() {
-        // These used to be silently dropped, so `.a..b.` and `.a.b` were the same fixture.
+        // Silently dropping empties would make `.a..b.` and `.a.b` the same fixture.
         parse_fields(".a..b.");
     }
 

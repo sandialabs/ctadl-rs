@@ -188,12 +188,9 @@ fn return_from_pointer_through_local() {
 
 #[test_log::test]
 fn unique_temps() {
-    // Several binary expressions in one function. Each operator that needs flattening gets its own
-    // temporary; this checks the allocator hands out distinct, gap-free names <t0>..<t4> across the
-    // whole function (no reuse, no extras). That's a property of how temporaries are numbered, so we
-    // read the names off the IR rather than substring-matching the dump.
-    // Operands are parameters (read as bare variables, no load temps) so the only temporaries
-    // are the ones each binary operation allocates.
+    // Each operator that needs flattening gets its own temporary; check the allocator hands
+    // out distinct, gap-free names <t0>..<t4> across the whole function, read off the IR.
+    // Operands are parameters, so the only temps are the binary operations' own.
     let src = r"
         void fun(int n, int p, int r, int q, int a, int b, int m, int x){
             int z = n + p + r + q;   // <t0>, <t1>, <t2>
@@ -254,12 +251,9 @@ fn scopes_arent_blocks() {
 
 #[test_log::test]
 fn block_shadow_does_not_leak() {
-    // A nested block re-declares `x` (`if(...) { int x = false_return; }`), shadowing the outer `x`.
-    // That inner `x` is a distinct, block-scoped variable, so `return x` refers to the OUTER `x`
-    // (= ac_return, param 1). The shadow must not escape its block: param 1 reaches the return, and
-    // param 0 (false_return, assigned only to the inner shadow) does NOT. The param-0 absence is the
-    // load-bearing assertion -- if the inner `x` were conflated with the outer one, false_return
-    // would leak to the return.
+    // A nested block re-declares `x`, shadowing the outer one; the shadow must not escape
+    // its block. Load-bearing: param 0 (assigned only to the inner shadow) must NOT reach
+    // the return -- conflating the two would leak it.
     let src = r"
         int bar(int false_return, int ac_return) {
             int x = ac_return;
@@ -375,12 +369,10 @@ fn unbraced_if_returns_param_field() {
 
 #[test_log::test]
 fn field_write_flows() {
-    // Writing to struct fields, with right-hand sides ranging from a plain param to a deep
-    // pointer-load to a sum (params: v=@p0, b=@p1, x=@p2, y=@p3). CTADL summarizes each as a flow
-    // into the formal's field, with no temporaries leaking out: x -> v.f2, the deep load
-    // b->f2.f3->f4 -> v.f2.nf1.y, and each operand of b->fa + b->fb -> v.f5. Returning a just-written
-    // field (`return v.f1`) shows up twice: as @p0.f1 -> return and as its resolved original source
-    // b.xyz -> return.
+    // Struct-field writes with plain, deep-load, and blended right-hand sides
+    // (params: v=@p0, b=@p1, x=@p2, y=@p3); each summarizes as a flow into the formal's
+    // field with no temporaries leaking out, and a just-written field returned shows both
+    // the formal path and its resolved source.
     let src = r"
         int field_access(Donkey v, Burro* b, int x, int y) {
             v.f2 = x;
@@ -532,11 +524,9 @@ fn while_loop_cfg() {
 
 #[test_log::test]
 fn do_while_cfg() {
-    // A `do { ... } while(...)` loop. The defining difference from `while` is that the body runs
-    // *before* the condition: block 0 sets up and falls into the body (1); the body (1) falls into
-    // the condition (2); the condition (2) either back-edges to the body (1) or exits to the
-    // continuation (3); block 3 runs the post-loop code and returns. (Contrast while_loop_cfg, where
-    // block 0 enters the condition first.) The body assignment lands in block 1.
+    // A `do { ... } while(...)`: unlike `while`, the body runs *before* the condition, so
+    // setup falls into the body, the body into the condition, and the condition back-edges
+    // or exits.
     let src = r"
         int f() {
             int b = 2;
@@ -581,11 +571,8 @@ fn do_while_body_flows() {
 
 #[test_log::test]
 fn while_with_nested_if_cfg() {
-    // A `while` whose body contains an `if` and a trailing statement. CFG: setup (0) enters the
-    // condition (1); the condition exits to the continuation (2, which returns) or the body (3); the
-    // body branches on the inner if to its consequence (4) or straight to the if-join (5); the
-    // consequence (4) falls into the join (5); the join (5) back-edges to the condition (1). The
-    // back-edge targets the condition, never the entry block.
+    // A `while` whose body holds an `if` and a trailing statement: the if-join back-edges
+    // to the loop condition, never the entry block.
     let src = r"
         int f(int y, int z) {
             int x = 5;
@@ -609,11 +596,8 @@ fn while_with_nested_if_cfg() {
 
 #[test_log::test]
 fn sequential_ifs_cfg() {
-    // Two `if`s back-to-back with no return in between (the function falls off the end). CFG: two
-    // diamonds chained -- the first if's condition (0) branches to its consequence (1) or its
-    // continuation (2); that continuation doubles as the second if's condition, branching to the
-    // second consequence (3) or the final continuation (4, terminal). Neither diamond branches back
-    // to the entry.
+    // Two `if`s back-to-back, function falls off the end: two chained diamonds, the first
+    // continuation doubling as the second condition, and no edge back to the entry.
     let src = r"
         int f(int y, int z) {
             int x = 5;
@@ -633,11 +617,8 @@ fn sequential_ifs_cfg() {
 
 #[test_log::test]
 fn if_then_while_cfg() {
-    // An unbraced `if` immediately followed by an unbraced `while`. CFG: the if's condition (0)
-    // branches to its consequence (1) or continuation (2); the continuation (2) flows into the while
-    // condition (3); the while condition exits to the continuation (4, which returns) or the body
-    // (5); the body (5) back-edges to the while condition (3). The two constructs chain in sequence
-    // with no edge back to the entry.
+    // An unbraced `if` immediately followed by an unbraced `while`: the two constructs
+    // chain in sequence with no edge back to the entry.
     let src = r"
         int f(int y, int z) {
             int x = 5;
@@ -676,12 +657,10 @@ fn subscript_access_paths() {
 
 #[test_log::test]
 fn address_of_element_forms_an_address() {
-    // `&x[1]` is the *address* of an element, so it lowers to the access path `x.[1]` -- a base
-    // variable plus pointer arithmetic -- and is passed as such. It must NOT lower to a load of
-    // `x.[1].deref`: that hands the callee a copy of the element's value, and any write the callee
-    // makes through the pointer is lost (the pointer identity is gone before access paths are
-    // involved at all). The load-bearing assertions are that the argument carries the offset and
-    // that the element is never read.
+    // `&x[1]` is the *address* of an element -- the path `x.[1]` -- and must NOT lower to a
+    // load of `x.[1].deref`: that would hand the callee a copy, and any write through the
+    // pointer would be lost. Load-bearing: the argument carries the offset, and the element
+    // is never read.
     let src = r"
         void transfer(int *a, int b);
         void f(int s) {
@@ -728,11 +707,10 @@ fn address_of_element_zero_is_the_base_address() {
 
 #[test_log::test]
 fn address_of_element_composes_with_callee_index() {
-    // The point of forming the address: element offsets compose across a call. `transfer` writes
-    // its parameter's element 1 (`a[1] = b`, a store at `.[1].deref`); the caller passes `&x[1]`
-    // (the address `x.[1]`), so the write lands on `x.[2].deref` -- offsets are summed where the
-    // paths meet -- which is exactly where a `x[2]` read resolves. This is the shape
-    // `test_cli_query_c_sources_and_sinks` runs end to end.
+    // The point of forming the address: element offsets compose across a call. The callee
+    // stores at `.[1].deref` through `&x[1]` (the address `x.[1]`), so the write lands on
+    // `x.[2].deref` -- exactly where `x[2]` reads. (`test_cli_query_c_sources_and_sinks`
+    // runs this shape end to end.)
     let flows = r"
         void transfer(int *a, int b) { a[1] = b; }
         int f(int s) {
@@ -776,11 +754,9 @@ fn store_through_element_address_alias_flows() {
 
 #[test_log::test]
 fn address_of_struct_member_keeps_value_model() {
-    // `&s.f` has no address in this IR: naming it would need `f`'s byte offset, which the
-    // frontend cannot compute without type information (it names members symbolically instead).
-    // So address-of falls back to the value model and passes the member's *value*.
-    // Pinned as the documented limitation next to `address_of_element_forms_an_address`: the
-    // argument is a plain (pathless) value, and a callee's write through that pointer is lost.
+    // `&s.f` has no address in this IR (a member's byte offset needs type information), so
+    // address-of falls back to the value model and passes the member's *value*: a plain
+    // pathless argument, and a callee's write through the pointer is lost.
     let src = r"
         void take(int *p);
         void f(Thing s) {
@@ -823,13 +799,10 @@ fn array_declaration_element_flows_to_return() {
 
 #[test_log::test]
 fn array_of_struct_field_is_index_and_field_sensitive() {
-    // A field access whose object is itself an array element (`a[i].f`) composes the
-    // subscript's `.[i]` segment with the field, so `a[1].y` is the access path `a.[1].y` on
-    // both sides of an assignment -- a single slot named by an index *and* a field offset.
-    //
-    // The three fixtures pin that the composed path is precise in both dimensions: taint written
-    // to `a[1].y` is observed at a read of `a[1].y`, but not at a read that shares only the field
-    // (`a[0].y`) or only the element (`a[1].x`).
+    // `a[i].f` composes the subscript's `.[i]` segment with the field: one slot named by an
+    // index *and* a field. The three fixtures pin precision in both dimensions: taint at
+    // `a[1].y` is observed there but not at `a[0].y` (same field) or `a[1].x` (same
+    // element).
     let same = r"
         struct pt { int x; int y; };
         int f(int b) {
@@ -910,10 +883,8 @@ fn returned_blend_operands_flow() {
 #[test_log::test]
 fn implicit_return() {
     // `foo` declares `int` and never returns, so `link_blocks` closes its body with a
-    // synthesized return that must satisfy the declared arity -- `verify()` rejects an empty
-    // return in a non-`void` function (`InconsistentReturns`). The other two synthesis sites,
-    // and the precision pin on the value returned, are in the implicit-return section at the
-    // end of this file.
+    // synthesized return that must satisfy the declared arity. The other synthesis sites
+    // and the precision pin live in the implicit-return section at the end of this file.
     let src = r"
             int foo() {
             //no explicit_return
@@ -956,11 +927,8 @@ fn simple_else() {
 }
 #[test_log::test]
 fn unbraced_if_else_cfg() {
-    // An `if/else` whose arms are *unbraced* single statements (`if(...) x = y; else x = z;`). The
-    // unbraced else body must not be dropped. Structurally that means the consequence
-    // assignment lands in block 1 and the else assignment in block 3. The CFG is the same diamond as
-    // simple_else (which covers the braced form): the condition (0) branches only to the two arms
-    // [1,3], never straight to the join, and both arms rejoin at the terminal block 2.
+    // An `if/else` with *unbraced* single-statement arms: the else body must not be
+    // dropped, and the CFG is the same diamond as `simple_else` (the braced form).
     let src = r"
         int f(int y, int z) {
             int x = 1;
@@ -999,11 +967,8 @@ fn unbraced_if_else_branches_flow() {
 
 #[test_log::test]
 fn simple_elif() {
-    // C `if / else if / else`. Tree-sitter has no "elif", so `else if` desugars to a nested `if` in
-    // the outer else. In the IR that is two condition blocks, each branching to exactly its two arms:
-    // block 0 -> [1,3] (if-body / else-branch) and block 3 -> [4,6] (elif-body / final else); all
-    // arms reconverge at the terminal return block (2). What this pins down: each condition branches
-    // only to its own two arms, with no stray edge jumping straight to the join.
+    // `else if` desugars to a nested `if` in the outer else: two condition blocks, each
+    // branching to exactly its own two arms, with no stray edge straight to the join.
     let src = r"
              int simple_elif() {
                 int x = 5;
@@ -1356,11 +1321,9 @@ fn taint_flows_through_funcptr_in_struct() {
 
 #[test_log::test]
 fn aggregate_initializer_list_lowers_to_element_stores() {
-    // An aggregate brace initializer (`int a[2] = { s, 0 }`) lowers to per-element stores at
-    // successive element addresses -- the same offset + `deref` shape a constant-index
-    // subscript resolves to (see `subscript_access_paths`), so taint deposited in the
-    // initializer is observed at a later `a[0]` read. Element 0 carries no offset segment
-    // (`a[0]` is `*a`), element 1 carries `.[1]`.
+    // An aggregate brace initializer lowers to per-element stores at successive element
+    // addresses -- the same offset + `deref` shape a subscript read resolves to -- so
+    // taint deposited in the initializer is observed at a later `a[0]` read.
     let src = r"
         int f() {
             int s = source();
@@ -1374,12 +1337,10 @@ fn aggregate_initializer_list_lowers_to_element_stores() {
 
 #[test_log::test]
 fn nested_aggregate_initializer_lowers_recursively() {
-    // A nested aggregate (`int m[2][2] = {{s,0},{0,0}}`) recurses, extending the base path by
-    // the outer index so the tainted element lands at `m[0][0]`. A load/store field is a single
-    // symbol, so a two-element write (`m.deref.deref`) decomposes through an intermediate load:
-    // the outer element is loaded (`t = load m.deref`) and the inner tainted element is stored
-    // into it (`store t.deref := s`). Both halves are asserted below; index 0 contributes no
-    // offset segment.
+    // A nested aggregate recurses, extending the base path by the outer index. A load/store
+    // field is a single symbol, so a two-element write decomposes through an intermediate
+    // load (`t = load m.deref`, then `store t.deref := s`); both halves are asserted, and
+    // index 0 contributes no offset segment.
     let src = r"
         int f() {
             int s = source();
@@ -1419,13 +1380,10 @@ fn labeled_empty_statement_parses() {
 
 #[test_log::test]
 fn unsupported_expression_warns_and_recovers() {
-    // An AST shape the frontend does not lower (here `offsetof`, which reaches
-    // `flatten_expr`'s catch-all, ERR 78) is a warning by default, not an ingestion
-    // error: the expression becomes an opaque temp via `unexpected_ast` and the rest
-    // of the function still lowers, so `f`'s param->return flow survives. Setting
-    // CTADL_ERROR_ON_AST restores the hard error; that side isn't exercised here
-    // because the env var is process-global and tests run in parallel -- instead the
-    // test skips when the var is set, so a strict-mode environment doesn't fail it.
+    // An AST shape the frontend does not lower (here `offsetof`) is a warning by default:
+    // the expression becomes an opaque temp and the rest of the function still lowers, so
+    // the param->return flow survives. Skips under CTADL_ERROR_ON_AST (the env var is
+    // process-global and tests run in parallel).
     //
     // `offsetof` is only a stand-in for "some expression kind with no arm"; if it is
     // ever lowered, swap in another unhandled kind rather than deleting the test.
@@ -1444,11 +1402,9 @@ fn unsupported_expression_warns_and_recovers() {
 
 #[test_log::test]
 fn stray_break_continue_goto_warn_and_recover() {
-    // `break`/`continue` outside any loop/switch and `goto` to an undefined label are
-    // problems in the analyzed source ("source problem" warnings), not frontend gaps.
-    // Each recovers as a no-op -- none terminates the block -- so the statements after
-    // them still lower and `f`'s param->return flow survives. Skips under
-    // CTADL_ERROR_ON_AST, which restores the hard error for all three.
+    // Stray `break`/`continue`/`goto`-to-nowhere are source problems, not frontend gaps.
+    // Each recovers as a no-op that does not terminate the block, so following statements
+    // still lower and the param->return flow survives. Skips under CTADL_ERROR_ON_AST.
     if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
         return;
     }
@@ -1465,11 +1421,9 @@ fn stray_break_continue_goto_warn_and_recover() {
 
 #[test_log::test]
 fn error_on_ast_promotes_frontend_gap() {
-    // The strict side of the switch: under CTADL_ERROR_ON_AST an unsupported
-    // expression is a hard ingestion error.
-    // Strictness comes from the per-thread test override, not the env var,
-    // which is process-global and would race the parallel test harness. Same stand-in
-    // caveat as `unsupported_expression_warns_and_recovers`.
+    // The strict side: under CTADL_ERROR_ON_AST an unsupported expression is a hard error.
+    // Strictness comes from the per-thread override (the env var is process-global and
+    // would race the parallel harness). Same stand-in caveat as above.
     let _strict = super::force_error_on_ast();
     let src = r#"
         struct S { int m; };
@@ -1503,12 +1457,10 @@ fn error_on_ast_promotes_source_problem() {
 
 #[test_log::test]
 fn bare_block_then_statement_recovers() {
-    // Scope-semantics invariant: a bare compound block `{ ... }` written as a statement is
-    // pure scope, so the whole body is one straight line -- the braces must neither
-    // terminate the enclosing basic block nor start a new one, and nothing written after
-    // them may be dropped. Runs under `force_error_on_ast`, so any recoverable report
-    // fails the test. (A compound-bearing follower -- an `if` -- is the harder case,
-    // pinned by `if_chain_then_bare_block_then_if_recovers` below.)
+    // Scope-semantics invariant: a bare `{ ... }` in statement position is pure scope --
+    // it must neither terminate the enclosing block nor start a new one, and nothing after
+    // it may be dropped. Strict mode, so any report fails the test. (The compound-bearing
+    // follower is the harder case: `if_chain_then_bare_block_then_if_recovers`.)
     let _strict = super::force_error_on_ast();
     let src = r"
         void h(void); void k(void); void m(void);
@@ -1531,14 +1483,11 @@ fn bare_block_then_statement_recovers() {
 
 #[test_log::test]
 fn if_chain_then_bare_block_then_if_recovers() {
-    // THE regression pin for the bare-block wiring bug, a shape real code writes: an
-    // if / else-if / else chain, then a bare `{ }` block (the remnant of a compiled-out
-    // `#if` that had guarded it), then a trailing `if`. The bare-block-then-IF pair is
-    // the trigger -- not the arms of the chain, and not bare-block-then-plain-statement
-    // (see `bare_block_then_statement_recovers`): only a compound-bearing follower asks
-    // for the end-of-compound link that would install a bogus implicit `return` and
-    // orphan everything after the braces. Strict mode pins that the shape lowers with no
-    // gap at all.
+    // THE regression pin for the bare-block wiring bug: an if/else-if/else chain, a bare
+    // `{ }` block (the remnant of a compiled-out `#if`), then a trailing `if`. The
+    // bare-block-then-IF pair is the trigger: only a compound-bearing follower asks for
+    // the end-of-compound link that would install a bogus implicit `return` and orphan
+    // what follows. Strict mode pins that the shape lowers with no gap at all.
     let _strict = super::force_error_on_ast();
     let src = r"
         void teardown(int exitcode) {
@@ -1636,13 +1585,10 @@ fn bare_block_then_while_keeps_branch_edge() {
 
 #[test_log::test]
 fn bare_block_shadow_does_not_leak() {
-    // The bare-block arm threads the *block* the inner walk ended in back to the caller
-    // but deliberately restores the caller's *scope*: a bare `{ ... }` is a lexical scope,
-    // so a name declared inside it must not be visible after the closing brace. `r` is
-    // shadowed inside the braces and assigned `a` there; the `return r` afterwards must
-    // resolve to the outer `r` (= `b`), so `b` reaches the return and `a` does not.
-    // (`block_shadow_does_not_leak` covers the same rule for an `if` body, which takes a
-    // different path -- `walk_if`, not the compound arm.)
+    // The bare-block arm threads the end *block* back but restores the caller's *scope*:
+    // a name declared inside the braces must not be visible after them. `r` is shadowed
+    // and assigned `a` inside; the later `return r` must resolve to the outer `r`, so `b`
+    // reaches the return and `a` does not.
     let src = r"
         int f(int a, int b) {
             int r = b;
@@ -1684,14 +1630,11 @@ fn bare_block_with_return_diverges() {
 
 #[test_log::test]
 fn goto_label_after_return_lowers() {
-    // The goto-cleanup idiom: a label sitting *after* a diverging statement, reached
-    // only through its `goto` edge. `walk_compound_statement` stops falling through at
-    // the `return`, but the trailing siblings still have to be walked -- otherwise the
-    // pre-created `out:` block is never visited, `finalize_terminators` patches it with
-    // an implicit empty `return`, and `cleanup()` is silently dropped from the IR. The
-    // walk continues in a fresh unreachable block (as it does after a `goto`),
-    // so the label lowers normally. No CTADL_ERROR_ON_AST guard: this shape reports no
-    // gap in either mode.
+    // The goto-cleanup idiom: a label after a diverging statement, reached only through
+    // its `goto` edge. The trailing siblings must still be walked -- otherwise the
+    // pre-created `out:` block is never visited and `cleanup()` silently drops from the
+    // IR. The walk continues in a fresh unreachable block, as after a `goto`; the shape
+    // reports no gap in either mode.
     let src = r"
         void f(void) {
             if (c) goto out;
@@ -1715,12 +1658,9 @@ fn goto_label_after_return_lowers() {
 
 #[test_log::test]
 fn label_after_return_dataflow() {
-    // The dataflow half of `goto_label_after_return_lowers`: lowering the label body is
-    // only worth anything if taint actually flows through it. `out:` writes parameter
-    // `a` into global `g`, so the summary must carry @p0 -> $globals.g. Runs under
-    // `force_error_on_ast`, which turns any residual recoverable report into a hard
-    // error -- so this also pins that the goto-cleanup shape reports NO frontend gap in
-    // strict mode.
+    // The dataflow half: lowering the label body is only worth anything if taint flows
+    // through it. `out:` writes `a` into global `g`, so the summary must carry
+    // @p0 -> $globals.g; strict mode also pins that the shape reports NO frontend gap.
     let _strict = super::force_error_on_ast();
     let src = r"
         int g;
@@ -1739,12 +1679,10 @@ fn label_after_return_dataflow() {
 
 #[test_log::test]
 fn statements_after_return_still_import() {
-    // The degenerate case of the same continuation: plain unreachable statements after a
-    // `return`, with no label to jump back in. They lower into a dead block that nothing
-    // branches to, which must still be terminated (`verify()` rejects a terminator-less
-    // block regardless of reachability) and must not disturb the reachable part of the
-    // function. Strict mode, so an unterminated leftover would be a hard error rather
-    // than a warning.
+    // The degenerate case: plain unreachable statements after a `return`, no label. They
+    // lower into a dead block that must still be terminated (`verify()` rejects a
+    // terminator-less block regardless of reachability) without disturbing the reachable
+    // part. Strict mode.
     //
     // `f` is `void` on purpose: the return-arity interplay of the synthesized terminator
     // is pinned by `duplicate_label_orphan_block_terminated` and the implicit-return
@@ -1791,15 +1729,12 @@ fn error_on_ast_promotes_unterminated_block() {
 
 #[test_log::test]
 fn duplicate_label_orphan_block_terminated() {
-    // Duplicate label names: `collect_labels` pre-creates two blocks, `label_blocks`
-    // keeps only the second, and the first is orphaned -- unreachable AND
-    // unterminated. `is_connected` never visits it, but `verify()` rejects any
-    // block without a terminator regardless of reachability, so the sweep must
-    // patch orphans too.
-    //
-    // `f` returns `int` deliberately: the terminator the sweep invents has to satisfy the
-    // function's return arity like any other, and `verify()` rejects it either way --
-    // for the missing terminator before the sweep, for the wrong arity after it.
+    // Duplicate label names: two blocks are pre-created, `label_blocks` keeps only the
+    // second, and the first is orphaned -- unreachable AND unterminated, which `verify()`
+    // rejects regardless of reachability, so the sweep must patch orphans too. `f`
+    // returns `int` deliberately: the invented terminator has to satisfy the return arity
+    // like any other, and `verify()` rejects it either way -- missing terminator before
+    // the sweep, wrong arity after it.
     if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
         return;
     }
@@ -1813,28 +1748,21 @@ fn duplicate_label_orphan_block_terminated() {
 }
 
 // ---------------------------------------------------------------------------------------
-// Labels the walk cannot reach. `lower_function` pre-creates a basic block for every label
-// `collect_labels` finds anywhere under the body, so that a forward `goto L` resolves. A
-// block pre-created for a label the walk never enters is an empty orphan, which would
-// otherwise be patched and reported against a function whose own code lowered perfectly.
-//
-// Three ways a label ends up unreachable, and each is answered where it belongs: two by not
-// collecting the label at all (it is not this function's), one by not blaming the frontend
-// for the parser's wreckage.
+// Labels the walk cannot reach. `lower_function` pre-creates a block for every label
+// `collect_labels` finds, so a forward `goto L` resolves; a block for a label the walk
+// never enters is an empty orphan. Three ways that happens, each answered where it
+// belongs: two by not collecting the label at all, one by not blaming the frontend for
+// the parser's wreckage.
 // ---------------------------------------------------------------------------------------
 
 #[test_log::test]
 fn label_in_an_unevaluated_sizeof_operand_strands_no_block() {
-    // `sizeof`'s operand is not evaluated, so `flatten_expr` lowers the whole construct to a
-    // compile-time constant without walking inside it. A label in there names no
-    // reachable code -- there is no `goto` into an unevaluated operand -- so pre-creating a
-    // block for it would only ever produce an orphan, and a "their statements were dropped"
-    // report would be doubly wrong: nothing is dropped, because nothing runs there.
-    //
-    // Strict mode, so this is a pin and not a wish: the shape reports nothing at all. It is
-    // also the only member of this class that can be
-    // pinned strictly -- the other two carry an independent report of their own by design (a
-    // nested function is still a gap, a parse error is still a source problem).
+    // `sizeof`'s operand is unevaluated -- `flatten_expr` never walks inside it, and there
+    // is no `goto` into an unevaluated operand -- so a pre-created block for a label there
+    // would only ever be an orphan, and a "statements dropped" report doubly wrong:
+    // nothing runs there. Strict mode: the shape reports nothing at all, and it is the
+    // only member of the class that can be pinned strictly (the other two carry an
+    // independent report by design).
     let _strict = super::force_error_on_ast();
     let src = r"
         int g;
@@ -1853,13 +1781,10 @@ fn label_in_an_unevaluated_sizeof_operand_strands_no_block() {
 
 #[test_log::test]
 fn a_nested_functions_label_is_not_the_enclosing_functions() {
-    // A label's scope in C is the function containing it, and `lower_definitions` queries the
-    // whole tree -- so the nested definition is lowered as a function of its own, with its own
-    // label block, walked there. Pre-creating a second block for it in the *enclosing*
-    // function would leave an orphan and report `f` as having dropped statements it never
-    // had. (In real preprocessed input such "nested" definitions are usually not GNU nested
-    // functions at all but parse recovery re-parenting the following definitions into the
-    // previous function's body.)
+    // A label's scope is the function containing it, and the definition query lowers a
+    // nested definition as its own function with its own label block -- a second block in
+    // the *enclosing* function would be an orphan reported against code that lowered fine.
+    // (Real "nested" definitions are usually parse recovery re-parenting what follows.)
     let src = r"
         int outer(int a) {
             int inner(int b) {
@@ -1900,15 +1825,11 @@ fn a_nested_functions_label_is_not_the_enclosing_functions() {
 
 #[test_log::test]
 fn a_label_stranded_in_recovery_output_is_not_a_frontend_gap() {
-    // The third way: the label is real, but it sits in output tree-sitter's error recovery
-    // produced, which `walk_statement`'s `ERROR` arm and `flatten_expr`'s recovery-region arm
-    // both skip by design. Its block is never entered.
-    //
-    // Here the label *is* still collected -- a damaged body still lowers plenty of good code,
-    // and dropping its labels would break that code's `goto`s (see
-    // `a_goto_still_resolves_in_a_damaged_body`). What changes is the attribution: an unentered
-    // label block in a body the parser did not finish is the source's problem, said once per
-    // function, not a second helping of blame for the frontend.
+    // The third way: a real label stranded in recovery output the walk skips by design. It
+    // IS still collected -- a damaged body lowers plenty of good code whose `goto`s need
+    // it (see `a_goto_still_resolves_in_a_damaged_body`) -- so what changes is
+    // attribution: an unentered label block in a body the parser did not finish is the
+    // source's problem, said once per function.
     let src = r"
         int g;
         void f(int a) {
@@ -1938,11 +1859,10 @@ fn a_label_stranded_in_recovery_output_is_not_a_frontend_gap() {
 
 #[test_log::test]
 fn a_goto_still_resolves_in_a_damaged_body() {
-    // The guard on the decision above. It would have been easy to stop collecting labels in
-    // any damaged body and drive the warning to zero that way -- and it would have thrown away
-    // real dataflow, because a parse error in one statement does not stop the rest of the
-    // function from lowering. The `goto`/label pair here shares a body with an unparsable
-    // construct and must still work: `a` reaches the global only through `out:`.
+    // The guard on the decision above: stop collecting labels in any damaged body and the
+    // warning goes to zero -- by throwing away real dataflow. The `goto`/label pair shares
+    // a body with an unparsable construct and must still work: `a` reaches `g` only
+    // through `out:`.
     let src = r"
         int g;
         void f(int a) {
@@ -1983,11 +1903,9 @@ fn compound_assign_accumulates() {
 
 #[test_log::test]
 fn increment_decrement_reassign_local() {
-    // `x++` and `--x` on a local each lower to a writeback assignment to `x` (`x = x +/- 1`). The
-    // `+/- 1` is a constant, so there is no dataflow to assert -- the contract is purely structural:
-    // each increment/decrement re-assigns the variable. Counting the assignments whose destination
-    // is `x` (init + two updates = 3) guards that neither was dropped, without pinning the flatten
-    // temp names. (`++` and `--` lower identically; the operator distinction is not preserved.)
+    // `x++` and `--x` each lower to a writeback assignment to `x`; the `+/- 1` is a
+    // constant, so the contract is structural: counting writes to `x` (init + two updates
+    // = 3) guards that neither was dropped. (`++` and `--` lower identically.)
     let src = r"
         int f(int a) {
             int x = a;
@@ -2018,19 +1936,14 @@ fn field_increment_is_update() {
 
 // --- taint through MULTIPLE function-pointer stores into one aggregate ---------------
 //
-// A single function-pointer store into an aggregate already resolves at the call site.
-// The gap these tests guard: a *second* store into the same aggregate (struct or array)
-// creates a new SSA version of the receiver, and the stored target must propagate across
-// that version to reach the indirect call. The taint-index transitive rule that performs
-// the hop (`call_target_assign_like` over `assign_like`) gates on `paths(p_new)`, so an
-// indirect/virtual call's *receiver* path must be registered as a program path
-// (ctadl-ascent/src/index_engine/mod.rs):
+// A second store into the same aggregate creates a new SSA version of the receiver, and
+// the stored target must propagate across it to reach the indirect call: the transitive
+// rule gates on `paths(p_new)`, so a call's *receiver* path must be registered as a
+// program path (ctadl-ascent/src/index_engine/mod.rs):
 //     program_paths(p) <-- callee_info(_, _, _, p, _);
 //
-// Each test routes param 1 (`b`) through `id` and back to the return; a `return <- @p1`
-// summary can only come from `wrap` (the callee `id`'s own summary is `return <- @p0`),
-// so these assert that `wrap` carries @p1 through the indirect call. Remove the rule
-// above and the two `*_multistore_flows` tests fail (taint dropped) while
+// Each test routes param 1 through `id` and back; a `return <- @p1` summary can only come
+// from `wrap`. Remove the rule above and the two `*_multistore_flows` tests fail while
 // `funcptr_single_store_flows` still passes -- that contrast IS the bug guarded.
 
 #[test_log::test]
@@ -2235,11 +2148,9 @@ fn alignof_type_is_a_constant() {
 
 #[test_log::test]
 fn alignof_does_not_carry_operand_taint() {
-    // The GNU expression spelling `__alignof__(a)` still does not *evaluate* `a`, so the parameter
-    // must NOT reach the return -- the alignof twin of `sizeof_does_not_evaluate`. It holds for two
-    // reinforcing reasons: tree-sitter-c 0.24.1's `alignof_expression` only accepts a
-    // `type_descriptor`, so `a` parses as a `type_identifier` and is never an expression node, and
-    // the arm lowers the whole node as constant text without visiting any child.
+    // `__alignof__(a)` still does not *evaluate* `a`, so the parameter must NOT reach the
+    // return -- the alignof twin of `sizeof_does_not_evaluate`. (`a` parses as a
+    // `type_identifier`, and the arm never visits any child.)
     let src = r"
         int f(int a) {
             return __alignof__(a);
@@ -2276,17 +2187,12 @@ fn alignof_is_not_a_frontend_gap() {
 
 #[test_log::test]
 fn alignof_of_an_expression_operand_is_a_grammar_limit() {
-    // The one price of lowering `alignof_expression` to a constant, pinned so it is not a
-    // surprise. tree-sitter-c 0.24.1's `alignof_expression` accepts ONLY a `type_descriptor`,
-    // so GNU's `__alignof__(<expr>)` over anything the type grammar cannot swallow is a parse
-    // error: `__alignof__(p->f)` recovers as a `field_expression` whose *base* is the alignof
-    // node, plus a stray `)`.
-    //
-    // The recovered tree, not the frontend, is what is wrong, so the report is charged to
-    // the source that could not be parsed (`recovery_region` covers `flatten_lvalue`'s
-    // catch-all). The construct is still rejected in strict mode -- `CTADL_ERROR_ON_AST`
-    // promotes source problems too -- which is what this asserts. `program_from_string`
-    // cannot be used here: it asserts a clean parse.
+    // The one price of lowering `alignof_expression` to a constant: the grammar accepts
+    // ONLY a `type_descriptor`, so `__alignof__(<expr>)` over anything it cannot swallow
+    // is a parse error (`__alignof__(p->f)` recovers as a `field_expression` based on the
+    // alignof node plus a stray `)`). The recovered tree is what is wrong, so the report
+    // is charged to the source; strict mode still rejects it, which is what this asserts.
+    // `program_from_string` cannot be used here: it asserts a clean parse.
     let src = r"
         struct holder { char ctx[1]; };
         unsigned f(struct holder *h) { return __alignof__(h->ctx); }";
@@ -2363,11 +2269,10 @@ fn out_param_write_propagates() {
 
 #[test_log::test]
 fn address_of_local_aliases() {
-    // Taking a local's address and writing through it (`int *p = &x; *p = src;`) taints x, so a
-    // later `return x` carries src. Exercises address-of plus write-through-alias -- here `x` is a
-    // by-ref-able parameter, complementing the local-variable cases in
-    // `addr_of_local_write_through_taints_pointee`. The frontend records `p = &x` and
-    // resolves the same-block `*p` to its pointee, so the store lands on x.
+    // Taking a local's address and writing through it taints `x`, so `return x` carries
+    // src -- here on a by-ref-able parameter, complementing
+    // `addr_of_local_write_through_taints_pointee`. The same-block alias resolves `*p` to
+    // its pointee, so the store lands on `x`.
     let src = r"
         int f(int x, int src) {
             int *p = &x;
@@ -2442,15 +2347,10 @@ fn unary_ops_blend_through() {
 
 #[test_log::test]
 fn constant_index_field_precision() {
-    // Constant subscripts are distinct field paths: writing `src` into `v.a[0]` must NOT leak to a read
-    // of `v.a[1]`. A subscript lowers to a numeric `Offset(N)` on the address plus the `deref` it
-    // performs there, so `[0]` and `[1]` differ in that offset -- the array-index analogue of
-    // `field_non_interference`. The load-bearing assertion is that src (p1) does not reach the return
-    // through the distinct index.
-    //
-    // NB `.[1]` in the path strings is an *offset* (pointer arithmetic); `.deref` is the symbolic
-    // field naming the memory at that address. Index 0 contributes no offset segment at all --
-    // `a[0]` is `*a`, and `Offset(0)` is the identity on addresses.
+    // Constant subscripts are distinct field paths: `src` into `v.a[0]` must NOT leak to a
+    // read of `v.a[1]` -- the array-index analogue of `field_non_interference`. (`.[1]` in
+    // the path strings is an *offset*; `.deref` names the memory at that address; index 0
+    // contributes no offset segment at all.)
     let src = r"
         int f(Thing v, int src) {
             v.a[0] = src;
@@ -2464,16 +2364,12 @@ fn constant_index_field_precision() {
 
 #[test_log::test]
 fn mutual_recursion_returns_param() {
-    // Mutual recursion across a summary fixpoint: `f` calls `g`, `g` calls `f`, and EACH has a base
-    // case returning its parameter directly (`return x` / `return y`). The base cases seed the fixpoint
-    // with param->return for both functions; the recursive-call edges then propagate those summaries
-    // around the f<->g cycle without losing them. Pinned per-function so the two aren't conflated.
-    //
-    // The base cases are load-bearing. Without them -- `int f(int x){ return g(x); } int g(int y){
-    // return f(y); }` -- the program is non-terminating recursion that never returns, and the only
-    // sound summary is the EMPTY one: there is no param->return path that doesn't pass through another
-    // non-terminating call, so the least fixpoint is empty. That empty result is *correct*, not a
-    // dropped flow; a meaningful mutual-recursion test must supply a terminating base case.
+    // Mutual recursion across a summary fixpoint: `f` calls `g`, `g` calls `f`, EACH with
+    // a base case returning its parameter, which seeds the fixpoint. The base cases are
+    // load-bearing: without them the program never returns and the only sound summary is
+    // the EMPTY one (correct, not a dropped flow) -- a meaningful mutual-recursion test
+    // must supply a terminating base case. Pinned per-function so the two are not
+    // conflated.
     let src = r"
         int g(int y);
         int f(int x) { if (x > 0) return g(x); return x; }
@@ -2519,12 +2415,10 @@ fn for_init_clause_flows() {
 
 #[test_log::test]
 fn for_update_prefix_increment_lowers() {
-    // A prefix `++i` in the for-update clause reaches `walk_statement`'s `update_expression`
-    // arm directly (not wrapped in an `expression_statement`). The whole node routes through
-    // `flatten_expr` to `flatten_update_expression`, which reads the `argument` field and so
-    // handles prefix and postfix alike -- descending to `child(0)` instead would find the
-    // `++` operator token itself.
-    // Structural contract: `i` is written twice -- once by the init clause, once by `++i`.
+    // A prefix `++i` in the for-update clause reaches the `update_expression` arm directly
+    // (unwrapped); the whole node routes to `flatten_update_expression`, which handles
+    // prefix and postfix alike -- `child(0)` would be the `++` token itself. Structural
+    // contract: `i` is written twice (init clause + `++i`).
     let src = r"
         int f(int n) {
             int x = 0;
@@ -2590,13 +2484,11 @@ fn post_increment_value_is_operand() {
 
 #[test_log::test]
 fn nonconstant_subscript_may_alias_constant() {
-    // A non-constant subscript is sound only if it may-alias every concrete index: writing `a[n]` and
-    // reading `a[0]` carries taint, because `n` could be 0. The frontend gets that by lowering both to
-    // the same path -- the bare dereference `a.deref`, since neither has an offset to name -- rather
-    // than by asking the path matcher to relate two spellings. Only index 0 is covered: `a[n] = src`
-    // is still not observed at `a[2]` (see the module doc's non-constant-subscript note). Contrast
-    // `constant_index_field_precision`, where keeping two *constant* indices distinct is the correct,
-    // precise answer.
+    // A non-constant subscript is sound only if it may-alias every concrete index: `a[n]`
+    // and `a[0]` lower to the same bare-dereference path, so the write carries. Only index
+    // 0 is covered -- `a[n] = src` is still not observed at `a[2]` (module doc). Contrast
+    // `constant_index_field_precision`, where keeping two *constant* indices distinct is
+    // the correct answer.
     let src = r"
         int f(int *a, int src, int n) {
             a[n] = src;
@@ -2612,11 +2504,10 @@ fn nonconstant_subscript_may_alias_constant() {
             `U u;` whose type is a `type_identifier` (typedef/undeclared union), which the collapse \
             does not recognize, so `.a`/`.b` stay disjoint. Un-ignore once typedef-union tracking lands."]
 fn union_write_overlaps_other_field() {
-    // A union aliases its fields: writing `u.a` and reading `u.b` should carry taint (shared storage).
-    // The overlap model collapses union members to one field -- but only for a variable declared
-    // with an explicit `union { .. }` type. Here `U` is a bare type name (typedef/undeclared), so the
-    // frontend can't tell `u` is a union and keeps `.a`/`.b` disjoint; the flow is still dropped. This
-    // documents the remaining typedef-union gap; the supported form is covered live elsewhere.
+    // A union aliases its fields, but the collapse only recognizes a variable declared
+    // with an explicit `union { .. }` type. Here `U` is a bare type name, so `.a`/`.b`
+    // stay disjoint and the flow is dropped -- documenting the typedef-union gap; the
+    // supported form is covered live elsewhere.
     let src = r"
         int f(int src) {
             U u;
@@ -2753,12 +2644,10 @@ fn static_local_flows() {
 
 #[test_log::test]
 fn addr_of_local_write_through_taints_pointee() {
-    // Soundness: writing through a local's address must write the *pointee*, not just
-    // the pointer. CTADL models pointers as value copies (`int *p = &x` -> `assign p = x`,
-    // `*p = src` -> `assign p = src`), which is sound for reads but drops the write-back, so
-    // `x` would never become tainted. Resolving `*p` to its same-block address-of pointee
-    // makes the store `*p = src` lower to `assign x = src` -- a real def of `x` -- so a later
-    // `sink(x)` observes the taint.
+    // Soundness: writing through a local's address must write the *pointee*. The
+    // value-copy model (`*p = src` -> `assign p = src`) is sound for reads but drops the
+    // write-back; resolving `*p` to its same-block pointee lowers the store to
+    // `assign x = src` -- a real def of `x` -- so a later `sink(x)` observes the taint.
     let src = r"
         int f() {
             int x = 0;
@@ -2789,11 +2678,10 @@ fn addr_of_local_read_through_resolves_pointee() {
 
 #[test_log::test]
 fn addr_of_alias_does_not_cross_basic_blocks() {
-    // The must-points-to is confined to the straight-line block the `p = &x` binding was
-    // recorded in. Once control flow intervenes, a later `*p` falls back to the value-copy
-    // model (writing `p`, not the pointee) rather than unsoundly resolving a possibly-stale
-    // alias across a branch. Here the store lands after an `if`, so it writes `p`, and the
-    // only write to `x` is its initializer.
+    // The must-points-to is confined to the block the binding was recorded in: once
+    // control flow intervenes, `*p` falls back to the value-copy model rather than
+    // unsoundly resolving a possibly-stale alias across a branch. The post-if store writes
+    // `p`, and the only write to `x` is its initializer.
     let src = r"
         int f(int c) {
             int x = 0;
@@ -2814,11 +2702,9 @@ fn addr_of_alias_does_not_cross_basic_blocks() {
 
 #[test_log::test]
 fn union_member_write_aliases_other_member() {
-    // Soundness: a union's members share storage, so writing `u.a` is observable at a
-    // read of `u.b`. CTADL is field-sensitive (correct for structs, whose members are
-    // disjoint), so union members are collapsed to a single synthetic field
-    // (`$union`) and `u.a` / `u.b` share an access path: the write to `.a` lands on
-    // `u.$union` and the read of `.b` resolves there too, carrying the taint.
+    // Soundness: a union's members share storage, so a write to `u.a` is observable at a
+    // read of `u.b`. Union members collapse to the single synthetic field `$union`, so
+    // both accesses share one path and the taint carries.
     let src = r"
         union U { int a; int b; };
         int f(int src) {
@@ -3125,12 +3011,10 @@ fn variable_port_resolves_per_matched_function() {
 
 // --- Positional record initializers ------------------------------------------------------
 //
-// A brace initializer's elements must land on the paths a later read resolves to. For a record
-// that means the *members* those positions name, not array element slots: a write at `p.deref`
-// is not observed at a read of `p.x`, so numbering a record's elements silently drops the taint
-// rather than over-approximating it. The layout comes from the `struct_layouts` registry, and
-// nested braces recurse with the layout of whatever the inner level is (a member's own record
-// type, or an array's element type).
+// A brace initializer's elements must land on the paths a later read resolves to: for a
+// record, the *members* those positions name -- a write at `p.deref` is not observed at a
+// read of `p.x`, so element numbering would silently drop the taint. Layouts come from the
+// `struct_layouts` registry; nested braces recurse with the inner level's layout.
 
 #[test_log::test]
 fn struct_positional_initializer_maps_onto_members() {
@@ -3555,11 +3439,9 @@ fn nested_statement_expression_flows() {
 
 #[test_log::test]
 fn statement_expression_body_block_threads_continuation() {
-    // `do { } while (0)` inside the braces opens basic blocks of its own, so the body does not
-    // end in the block it started in. That end block has to be threaded back to the caller:
-    // lowering the rest of the enclosing statement -- and every statement after it -- into the
-    // stale block would strand them behind the loop's terminator, the same hazard the
-    // bare-block arm avoids.
+    // `do { } while (0)` inside the braces opens blocks of its own, so the body does not
+    // end where it started; the end block must thread back to the caller or everything
+    // after would strand behind the loop's terminator (the bare-block hazard).
     let src = r"
         int f(int a) { int r = ({ do { } while (0); a; }); int o = r; return o; }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
@@ -3607,12 +3489,10 @@ fn statement_expression_in_store_position_writes_through() {
 
 #[test_log::test]
 fn generic_selection_blends_every_arm() {
-    // `_Generic` selects on the *type* of its controlling expression, which this frontend has
-    // no way to compute -- so, exactly like a ternary, every association's value is lowered and
-    // blended into one temp and any of them may be the result. Two shapes pin that: an arm that
-    // is the parameter (the parameter reaches the return through it), and two arms naming
-    // *different* parameters, where BOTH have to reach the return -- picking one arm would drop
-    // the other's flow.
+    // `_Generic` selects on a type this frontend cannot compute, so every association's
+    // value lowers and blends into one temp, like a ternary. Two shapes pin that: an arm
+    // that is the parameter, and two arms naming *different* parameters where BOTH must
+    // reach the return -- picking one arm would drop the other's flow.
     let src = r"
         int f(int a) { return _Generic(a, int: a, default: 0); }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
@@ -3641,11 +3521,9 @@ fn generic_selection_arm_calls_are_in_the_call_graph() {
 
 #[test_log::test]
 fn generic_selection_controlling_expression_is_not_the_value() {
-    // C does not evaluate the controlling expression -- `_Generic` inspects its type -- so it is
-    // a selection dependence, not a data source, and must not join the blend. That is the
-    // ternary condition's treatment, and it is what keeps `a` out of the return here. It is
-    // still *lowered*, for its side effects and because real code often mentions the object
-    // nowhere else.
+    // The controlling expression is a selection dependence, not a data source, and must
+    // not join the blend -- that keeps `a` out of the return -- but it is still *lowered*
+    // for its side effects, since real code often mentions the object nowhere else.
     let src = r"
         int f(int a, int b) { return _Generic(a, default: b); }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
@@ -3668,13 +3546,11 @@ fn generic_selection_is_not_a_frontend_gap() {
 
 #[test_log::test]
 fn generic_selection_in_store_position_writes_through() {
-    // `_Generic` also appears on the LEFT of an assignment: macro-heavy code writes
-    // `_Generic(p, ...)->f |= v`. There is no `flatten_lvalue` arm for it -- the catch-all
-    // there routes through
-    // `flatten_expr`, and the blend temp this arm yields IS an `Exp::Variable`, so it is accepted
-    // without a warning and the store composes back through the copy onto the arm's own base.
-    // Pinned here because the alternative -- an lvalue arm -- would have to pick ONE arm's
-    // location and silently drop the stores to the others.
+    // `_Generic` also appears on the LEFT of an assignment (`_Generic(p, ...)->f |= v`).
+    // There is no `flatten_lvalue` arm: the catch-all routes through `flatten_expr`, whose
+    // blend temp IS an `Exp::Variable`, so the store composes back through the copy onto
+    // the arm's own base. An lvalue arm would have to pick ONE arm's location and silently
+    // drop the stores to the others.
     let _strict = super::force_error_on_ast();
     let src = r"
         struct S { int f; };
@@ -3685,12 +3561,10 @@ fn generic_selection_in_store_position_writes_through() {
 
 #[test_log::test]
 fn if_arm_return_then_statement_strict() {
-    // An if-arm that returns, followed by reachable code. The arm's compound diverges,
-    // so `walk_compound_statement` must skip the end-of-compound link; linking anyway
-    // would push a continuation edge into the Return-terminated arm block and raise the
-    // recoverable report, which strict mode promotes to a hard error. This is the only
-    // unit-level pin of the skip-link-on-divergence half of the `diverged` logic -- the
-    // fresh-block half is pinned by `label_after_return_dataflow`.
+    // An if-arm that returns, followed by reachable code: the arm diverges, so the
+    // end-of-compound link must be skipped (linking would push a continuation edge into
+    // the Return-terminated block, a report strict mode promotes). The only unit pin of
+    // the skip-link half; the fresh-block half is `label_after_return_dataflow`.
     let _strict = super::force_error_on_ast();
     let src = r"
         void g(void);
@@ -3827,12 +3701,10 @@ fn declarations_after_a_parse_error_still_import() {
 
 #[test_log::test]
 fn nested_function_definition_is_still_a_frontend_gap() {
-    // The scoping pin: the suppression keys on the parse-recovery region, never on the node
-    // kind. A GNU nested function in a body that parsed *cleanly* is a real construct this
-    // frontend does not model (its body is lowered as a separate top-level function, so it
-    // does not see `f`'s locals), and it must keep saying so. Without this, the
-    // recovery-region suppression would read as "function_definition in statement position
-    // is fine", which it is not.
+    // The scoping pin: the suppression keys on the parse-recovery region, never on the
+    // node kind. A GNU nested function in a body that parsed *cleanly* is a real construct
+    // this frontend does not model, and it must keep saying so -- otherwise the
+    // suppression would read as "function_definition in statement position is fine".
     let src = r"
         int f(int a) { int g(int x) { return x; } return g(a); }";
     let (_prog, has_error, _markup) = super::parse_c_program(src).expect("ingestion recovers");
@@ -3850,14 +3722,12 @@ fn nested_function_definition_is_still_a_frontend_gap() {
 
 #[test_log::test]
 fn parse_error_message_is_truncated() {
-    // Preprocessed source puts a macro expansion on one line, so a raw `ERROR` node can run
-    // to kilobytes, and an embedded newline would split one warning across log lines
-    // (`grep -c` would count lines rather than warnings). The quote is whitespace-collapsed
-    // and cut at `PARSE_ERROR_QUOTE_CHARS`, with the elided count reported; the bound
-    // asserted below leaves headroom for the message around the quote. Either way the point
-    // holds: the message is a constant length, not a slice of source. The fixture is a
-    // macro-built register-variable ladder as `clang -E` leaves it: one line, and the
-    // `ERROR` node tree-sitter recovers it with is over 200 characters.
+    // Preprocessed source puts a macro expansion on one line, so a raw `ERROR` node can
+    // run to kilobytes, and an embedded newline would split one warning across log lines.
+    // The quote is whitespace-collapsed and cut at `PARSE_ERROR_QUOTE_CHARS`, with the
+    // elided count reported; the asserted bound leaves headroom for the message around the
+    // quote. The fixture is a macro-built register-variable ladder: one line, over 200
+    // characters.
     let src = r#"
         int f(int *p) {
             int r;
@@ -3891,14 +3761,11 @@ fn parse_error_message_is_truncated() {
 #[test_log::test]
 fn register_asm_variable_declares_an_ordinary_local() {
     // GCC's explicit-register variable: `asm("eax")` says where `r` lives, not what it is.
-    // The declaration is otherwise ordinary, so the variable must be usable -- assigned
-    // from a parameter and returned, with the flow intact.
-    //
-    // The grammar is the subtlety: `declaration`'s `declarator` field covers a
-    // *sequence* (`_declaration_declarator` then an optional `gnu_asm_expression`), and
-    // tree-sitter distributes a field over every element, so one declared name yields two
-    // `declarator` children. The second is the annotation, which `walk_declaration` must
-    // not report as a declarator of an unexpected kind.
+    // The declaration is otherwise ordinary, so the variable must be usable. The grammar
+    // is the subtlety: the `declarator` field covers a sequence, and tree-sitter
+    // distributes a field over every element, so one declared name yields two `declarator`
+    // children -- the second is the annotation, which must not be reported as a declarator
+    // of an unexpected kind.
     let src = r#"
         int f(int a) {
             register int r asm("eax");
@@ -3953,12 +3820,10 @@ fn register_asm_variable_at_file_scope_is_not_a_gap() {
 
 #[test_log::test]
 fn asm_label_on_a_declarator_carries_no_dataflow() {
-    // The other shape the same syntax spells: an asm label, renaming the symbol an object
-    // or function is emitted under. On a function the grammar puts the asm *inside* the
-    // `function_declarator` (so it never reaches `walk_declaration`'s declarator loop at
-    // all); on an object it is a second `declarator` child, exactly like the register case.
-    // Neither is a value: `g` must still be an ordinary call whose argument reaches the
-    // return, and the annotation must contribute no flow of its own.
+    // The other shape the same syntax spells: an asm label renaming the emitted symbol. On
+    // a function the asm sits *inside* the `function_declarator`; on an object it is a
+    // second `declarator` child, like the register case. Neither is a value: `g` stays an
+    // ordinary call and the annotation contributes no flow.
     let src = r#"
         extern int g(int x) asm("real_g");
         int f(int a) {
@@ -3980,14 +3845,10 @@ fn asm_label_on_a_declarator_carries_no_dataflow() {
 
 #[test_log::test]
 fn string_literal_subscript_is_a_constant() {
-    // A constant lookup table spelled as a subscript on a string literal.
-    //
-    // A string literal is an object in C, so it is a legitimate subscript base, and
-    // `flatten_lvalue` resolves the base of every subscript -- read or write. There is
-    // nothing to store into it and nothing in it to taint, so the read lowers silently to a
-    // load of a location nothing else names. Strict mode pins that no gap is reported, and
-    // the summary pins the other half: indexing a constant table with a tainted index must
-    // not carry the index's taint into the result.
+    // A constant lookup table spelled as a subscript on a string literal: an object, so a
+    // legitimate subscript base, but also a constant -- nothing to store into, nothing to
+    // taint -- so the read lowers to a load of a location nothing else names. Strict mode
+    // pins no gap; the summary pins that a tainted index does not taint the result.
     let _strict = super::force_error_on_ast();
     let src = r#"
         int f(int i) { return "\004\002\006\006"[i & 3]; }"#;
@@ -4000,19 +3861,12 @@ fn string_literal_subscript_is_a_constant() {
 
 #[test_log::test]
 fn a_store_target_in_a_damaged_body_is_a_source_problem() {
-    // A `typeof` of a cast is a tree-sitter-c 0.24.1
-    // grammar limit, and the recovery from it re-parents the rest of
-    // the statement into a chain of `assignment_expression`s that appear nowhere in the
-    // source. Charging the frontend with "not an lvalue:
-    // assignment_expression" would blame it for a store position nobody wrote.
-    //
-    // `flatten_expr`'s catch-all asks `recovery_region` this question;
-    // this pins the store side asking it too. What must survive is the attribution, not the
-    // silence: the body is still named once as holding unanalyzed recovery output.
-    // `3[a]` is the construct, because it is the *smallest* store target that reaches
-    // `flatten_lvalue`'s catch-all from source that parses (see the clean-source twin
-    // below). What makes this case different is only the `case 1 ... 3` above it: the
-    // enclosing body no longer parsed, so nothing inside it is evidence about the frontend.
+    // A `typeof` of a cast is a grammar limit, and the recovery re-parents the rest of the
+    // statement into `assignment_expression`s that appear nowhere in the source; charging
+    // the frontend with "not an lvalue" would blame it for a store position nobody wrote.
+    // This pins the store side asking `recovery_region` too. What survives is attribution,
+    // not silence: the body is still named once. `3[a]` is the smallest store target that
+    // reaches the catch-all from source that parses (see the clean-source twin below).
     let src = r"
         void f(int a, int b) {
             switch (a) { case 1 ... 3: break; }
@@ -4039,15 +3893,10 @@ fn a_store_target_in_a_damaged_body_is_a_source_problem() {
 
 #[test_log::test]
 fn a_non_lvalue_store_in_clean_source_is_still_a_frontend_gap() {
-    // The scoping pin for the re-attribution above, in the shape
-    // `nested_function_definition_is_still_a_frontend_gap` takes: the suppression keys on
-    // the parse-recovery region, never on the node kind. A store whose target is not a
-    // location, in a body that parsed *cleanly*, is still something this frontend cannot
-    // place and must keep saying so -- otherwise the fix would read as "an
-    // `assignment_expression` in store position is fine", which it is not.
-    // The same store as the damaged-body test, with the parse error removed. `3[a] = b`
-    // is legal C -- a subscript is commutative, so this is `a[3] = b` -- and this frontend
-    // does not model a literal in base position, so it keeps saying so.
+    // The scoping pin: the suppression keys on the parse-recovery region, never on the
+    // node kind. The same store with the parse error removed -- `3[a] = b` is legal C (a
+    // commuted subscript), the frontend does not model a literal in base position, and in
+    // a cleanly parsed body it must keep saying so.
     let src = r"
         void f(int *a, int b) {
             3[a] = b;
@@ -4066,15 +3915,12 @@ fn a_non_lvalue_store_in_clean_source_is_still_a_frontend_gap() {
 }
 
 // ---------------------------------------------------------------------------------------
-// Names tree-sitter inserted. Where the grammar requires a name and the parse
-// fails there, tree-sitter repairs the tree by INSERTING a zero-width `identifier` /
-// `field_identifier`: a node with a kind, a position, and no text at all. The empty string
-// is not a name -- lowering it as one mints the global `$globals.` with an empty first path
-// segment, and `facts::Path`'s parser rejects an empty segment, so a single such token
-// anywhere in an import makes the whole index unqueryable (`ctadl query` panics reading the
-// parquet it just wrote, before printing a result). A token nobody wrote names nothing, so
-// the body is named once as holding recovery output and the
-// name lowers to a fresh temp instead.
+// Names tree-sitter inserted. Where the grammar requires a name and the parse fails,
+// tree-sitter INSERTS a zero-width `identifier`/`field_identifier`. The empty string is
+// not a name -- it would mint `$globals.` with an empty first path segment, which
+// `facts::Path` rejects, making the whole index unqueryable. A token nobody wrote names
+// nothing: the body is named once as holding recovery output and the name lowers to a
+// fresh temp.
 // ---------------------------------------------------------------------------------------
 
 #[test_log::test]
@@ -4154,12 +4000,10 @@ fn inserted_field_name_does_not_become_an_empty_path_segment() {
 
 #[test_log::test]
 fn a_named_global_still_lowers_to_a_symbolic_field() {
-    // The scoping pin, in the shape
-    // `nested_function_definition_is_still_a_frontend_gap` takes: the guard keys on the name
-    // being empty, never on "identifier in a body that did not parse". A global read in a
-    // cleanly parsed body must keep the field that names it -- a fix that dropped every
-    // identifier in a damaged body, or that renamed globals to temps, would pass the two
-    // tests above and delete the analysis.
+    // The scoping pin: the guard keys on the name being empty, never on "identifier in a
+    // damaged body". A global read in a cleanly parsed body must keep the field that names
+    // it -- dropping every identifier in a damaged body, or renaming globals to temps,
+    // would pass the two tests above and delete the analysis.
     let src = r"
         unsigned long named;
         unsigned long f(void) { return named; }";
@@ -4173,24 +4017,17 @@ fn a_named_global_still_lowers_to_a_symbolic_field() {
 // ---------------------------------------------------------------------------------------
 // Implicit returns and the return-arity contract.
 //
-// `lower_function` gives every function whose declared return type is not `void` a
-// `ReturnType` of arity 1, and `verify()` rejects a `Return` carrying a different number of
-// arguments, so the *empty* return the frontend synthesizes is only well-formed in a `void`
-// function. Three call sites synthesize one -- `link_blocks` (falling off the end of
-// the body), `finalize_terminators` (patching a block the walk orphaned, pinned by
-// `duplicate_label_orphan_block_terminated`), and `walk_return` (a bare `return;`).
+// A non-`void` function has return arity 1 and `verify()` rejects a `Return` of any other
+// arity, so the *empty* return is only well-formed in a `void` function. Three call sites
+// synthesize one: `link_blocks` (falling off the end), `finalize_terminators` (patching an
+// orphaned block), `walk_return` (a bare `return;`).
 //
-// Getting this wrong is silent. No warning of
-// any attribution is logged; the C import path never calls `program.verify()` (the dex, jvm and
-// pcode front ends all do); and the post-SSA check inside `ssa::transform_program` passes
-// because `complete()` has already rewritten every return into a goto to a single exit block,
-// zipping zero arguments against one retvar without complaint. `get_summary` below is the only
-// thing in the tree that asks the question -- and one bad function fails the whole program's
-// `verify()`, so the answer costs every other function in the import too.
-//
-// `implicit_return` closes such a block with a local that is never written. That is what C
-// says the value of such a return is (indeterminate), and an unwritten local is exactly that
-// here: it satisfies the arity contract without becoming a conduit.
+// Getting this wrong is silent: the C import path never calls `program.verify()`, and the
+// post-SSA check passes because `complete()` has rewritten every return into a goto to one
+// exit block. `get_summary` below is the only thing that asks -- and one bad function
+// fails the whole program's `verify()`. `implicit_return` closes such a block with a local
+// that is never written: the indeterminate value C specifies, satisfying the arity
+// contract without becoming a conduit.
 // ---------------------------------------------------------------------------------------
 
 #[test_log::test]
@@ -4218,11 +4055,10 @@ fn bare_return_in_nonvoid_verifies() {
 
 #[test_log::test]
 fn implicit_return_carries_no_taint() {
-    // The precision pin. The local the synthesized return reads is never assigned, so the
-    // parameter reaches `b` and stops: nothing flows out of the function. Satisfying the
-    // arity contract by returning something that *does* have a value -- the
-    // last temp computed, or the parameter -- would pass the two tests above and invent a
-    // return flow in every function that falls off the end.
+    // The precision pin: the local the synthesized return reads is never assigned, so the
+    // parameter reaches `b` and stops. Returning something that *does* have a value (the
+    // last temp, or the parameter) would pass the two tests above and invent a return flow
+    // in every function that falls off the end.
     let src = r"int f(int a) { int b = a; }";
     let (summary, _) = get_summary(program_from_string(src).0).expect("must verify");
     check_does_not_return_param(&summary, 0, "");
@@ -4246,33 +4082,25 @@ fn implicit_return_in_a_void_function_is_still_empty() {
 // ---------------------------------------------------------------------------------------
 // One name, several definitions.
 //
-// `import_c` lowers every translation unit under a directory into ONE program, whose
-// function table is a single namespace, so definitions C keeps apart meet in it: a `static`
-// helper is scoped to its own file, and a header's `static inline` becomes one definition
-// per translation unit that included it. Keyed on the name alone, all of them would lower
-// into ONE `FunctionData` -- parameter lists concatenated, the return arity of whichever
-// body was walked last imposed on all of them, every call site pointed at the chimera --
-// silently, no warning of any attribution, `ctadl import` exit 0.
+// `import_c` lowers every unit into ONE program whose function table is one namespace, so
+// definitions C keeps apart meet in it (a file's `static` helper, a header's `static
+// inline` included many times). Keyed on the name alone they would merge into one chimera
+// -- parameter lists concatenated, the last body's arity imposed on all -- silently.
 //
-// `plan_definitions` gives each definition an identity instead. Definitions that quote the
-// same characters ARE one function -- this frontend lowers text, so N copies of a header's
-// inline produce N identical bodies -- and are lowered once. What is left really is several
-// functions with one name: the first keeps the bare name, so an extern declaration, a call
-// from a file that defines none of them, and every taint model still resolve by it, and the
-// rest are named for the file they came from (`g$util.c`). A call resolves within its
-// own file first, which is what C does.
+// `plan_definitions` gives each definition an identity: textually identical copies are one
+// function, lowered once; genuinely distinct ones keep the bare name for the first (extern
+// declarations, cross-file calls, and taint models still resolve by it) and are named for
+// their file (`g$util.c`) after that. A call resolves within its own file first, as C
+// does.
 // ---------------------------------------------------------------------------------------
 
 #[test_log::test]
 fn colliding_definitions_of_one_name_verify() {
-    // A name defined `static void` in one place and `static int` in another must not merge:
-    // the merge would give the `void` body the `int` definition's arity, so its returns --
-    // correctly empty when they were built -- would become wrong retroactively.
-    //
-    // Both definitions here are in ONE translation unit, which is not C: a name gets one
-    // definition per unit. So this fixture draws a source problem (asserted below) as well as
-    // being split -- but it is split, which is what makes the arity right for each body and
-    // the IR verifiable.
+    // A name defined `static void` in one place and `static int` in another must not
+    // merge: the merge would impose the `int` arity on the `void` body's returns
+    // retroactively. Both definitions in ONE unit is not C, so the fixture draws a source
+    // problem (asserted below) as well as being split -- and the split is what makes each
+    // body's arity right and the IR verifiable.
     if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
         return;
     }
@@ -4296,11 +4124,10 @@ fn colliding_definitions_of_one_name_verify() {
 
 #[test_log::test]
 fn two_definitions_in_one_translation_unit_are_a_source_problem() {
-    // Whose fault it is. Two files that each define their own `static g` are ordinary C and
-    // draw nothing (see the next test); two definitions in one unit are the analyzed code's
-    // problem, so they are reported as one -- and the report says which name the second body
-    // was given and which one a call in that unit reaches, because the answer to the second
-    // question is not "both".
+    // Whose fault it is: two files each defining their own `static g` are ordinary C and
+    // draw nothing (next test); two definitions in one unit are the analyzed code's
+    // problem, reported once -- naming the second body's identity and what a call here
+    // reaches, because the answer is not "both".
     let reports = reports_for(
         r"
         static void g(int a) { h(a); }
@@ -4411,11 +4238,10 @@ int ub(int x) {{ return h(x); }}"
 
 #[test_log::test]
 fn one_definition_and_an_undefined_callee_are_left_alone() {
-    // The pin that the fix does not disturb the ordinary case: one definition of a name still
-    // owns it, a call from another file still resolves to it directly, and a name with no
-    // definition anywhere still gets its `define_extern_functions` stub -- which is what every
-    // taint model matches on, so a change to function identity that lost it would silently
-    // unhook every model in the import.
+    // The ordinary case must not move: one definition still owns its name, a cross-file
+    // call still resolves directly, and an undefined name still gets its extern stub --
+    // what every taint model matches on, so losing it would silently unhook every model in
+    // the import.
     let (prog, _dump) = program_from_files(&[
         ("a.c", r"int g(int a) { return a; }"),
         ("b.c", r"int c(int x) { return g(x) + undefined_sink(x); }"),
@@ -4432,12 +4258,11 @@ fn one_definition_and_an_undefined_callee_are_left_alone() {
 
 #[test_log::test]
 fn a_call_from_a_file_defining_no_such_name_takes_the_first_definition() {
-    // What C would do with this input is refuse to link it: `c.c` calls a `g` that only
-    // exists as two file-local definitions in two other files, so there is no right answer --
-    // and the front end has to pick one, because the alternative is an unresolved call and a
-    // dropped flow. It picks the first definition, which is also the one an `extern int g();`
-    // declaration and every taint model naming `g` resolve to. Recorded here because it is a
-    // choice, not a consequence.
+    // C would refuse to link this: `c.c` calls a `g` that exists only as two file-local
+    // definitions elsewhere, so there is no right answer -- and the front end must pick
+    // one or drop the flow. It picks the first definition, the one an `extern` declaration
+    // and every taint model resolve to. Recorded because it is a choice, not a
+    // consequence.
     let (prog, _dump) = program_from_files(&[
         ("a.c", r"static int g(int a) { return a; }"),
         ("b.c", r"static int g(int a) { return 0; }"),
@@ -4502,20 +4327,13 @@ fn a_function_pointer_reference_resolves_within_its_own_file() {
 // ---------------------------------------------------------------------------------------
 // A cast in location position.
 //
-// A cast is value-preserving for dataflow, so the location `(T *)e` names is the location `e`
-// names -- and when `e` is an object, that resolves through `flatten_lvalue`'s catch-all,
-// which accepts whatever `flatten_expr` hands back as long as it is a variable.
-//
-// It is not a variable for the one thing a cast exists for in this position: naming an
-// address that is not any declared object. `(T *)K` for a constant `K` lowers to an
-// `Exp::Str`. Real code is full of the shape: a macro-generated null-pointer type check
-// names `((type *)0)->member` and evaluates nothing, and a driver's
-// `*(volatile unsigned *)0x1000` is the same construct with a live store behind it.
-//
-// A constant address IS an lvalue in C -- `*(T *)K` designates the object at `K`, and two such
-// designations with the same `K` designate the SAME object -- so it gets a location that says
-// so: `$globals.<address K>`. A fresh temp per site would silence the problem just as
-// well and make every reference to one hardware register a distinct object.
+// A cast is value-preserving, so the location `(T *)e` names is the location `e` names --
+// resolved through `flatten_lvalue`'s catch-all when `e` is an object. It is not a
+// variable for the one thing a cast exists for here: naming an address that is no
+// declared object. `(T *)K` lowers to an `Exp::Str`, and a constant address IS an lvalue
+// -- two designations with the same `K` designate the SAME object -- so it gets
+// `$globals.<address K>`; a fresh temp per site would make every reference to one
+// hardware register a distinct object.
 // ---------------------------------------------------------------------------------------
 
 #[test_log::test]
@@ -4534,12 +4352,10 @@ fn store_through_cast_of_a_constant_writes_through() {
 
 #[test_log::test]
 fn a_store_through_a_literal_address_is_observed_at_a_read() {
-    // Why the location is a global keyed on the constant and not a fresh temp: the two
-    // occurrences of `0x2000` below are the same object, so the value written through the
-    // first reaches the read in the second. A per-site temp would lose this
-    // flow -- and so would the pass-through on the read side, which is why `flatten_expr`'s
-    // `pointer_expression` arm resolves a dereference of a constant address the same way
-    // `flatten_lvalue` does rather than yielding the constant `0x2000`.
+    // Why the location is a global keyed on the constant: the two `0x2000` occurrences are
+    // the same object, so the write reaches the read. A per-site temp would lose the flow
+    // -- and so would the read-side pass-through, which is why the dereference of a
+    // constant address resolves the same way on both sides.
     let src = r"int roundtrip(int x) {
                     *(volatile int *)0x2000 = x;
                     return *(volatile int *)0x2000;
@@ -4551,9 +4367,7 @@ fn a_store_through_a_literal_address_is_observed_at_a_read() {
 #[test_log::test]
 fn cast_in_lvalue_position_is_not_a_frontend_gap() {
     // The macro-expanded spelling, in strict mode: `((struct box *)0)->v` inside
-    // `__builtin_types_compatible_p(typeof(...), typeof(...))` is how a null-pointer type
-    // check expands. `typeof` is not a keyword the
-    // grammar admits in expression position, so tree-sitter parses each one as a call, which
+    // `__builtin_types_compatible_p(typeof(...), ...)`. `typeof` parses as a call, which
     // is what walks the argument and reaches the cast.
     let src = r#"
         struct box { int v; };
@@ -4571,11 +4385,9 @@ fn cast_in_lvalue_position_is_not_a_frontend_gap() {
 
 #[test_log::test]
 fn a_cast_of_an_object_in_lvalue_position_is_unchanged() {
-    // The scoping pin. The rule must not read as "a cast in location position resolves to
-    // whatever is convenient": every shape whose cast operand is an OBJECT keeps the
-    // ordinary lowering, because those never go through the constant path at all. Pinning
-    // them here is what keeps the constant-address arm a strictly additional case rather
-    // than a rewrite of the catch-all.
+    // The scoping pin: every shape whose cast operand is an OBJECT keeps the ordinary
+    // lowering (those never go through the constant path), keeping the constant-address
+    // arm strictly additional rather than a rewrite of the catch-all.
     let thru_param = r"
         struct S { int f; };
         void a(char *p, int x) { ((struct S *)p)->f = x; }";
@@ -4612,12 +4424,10 @@ fn a_cast_of_an_object_in_lvalue_position_is_unchanged() {
 
 #[test_log::test]
 fn a_null_pointer_constant_is_still_a_constant_value() {
-    // The other boundary, and the reason the constant-address reading lives in
-    // `flatten_lvalue` and in one guarded case of `flatten_expr`'s dereference, never in
-    // `flatten_expr`'s `cast_expression`
-    // arm: `(struct S *)0` in VALUE position is the null pointer constant, a value. Giving it
-    // the location it would name if dereferenced would make every `p = NULL` in a program a
-    // reference to one shared object, aliasing every null-valued pointer with every other.
+    // The other boundary, and why the constant-address reading never lives in
+    // `flatten_expr`'s `cast_expression` arm: `(struct S *)0` in VALUE position is the
+    // null pointer constant. Giving it a location would make every `p = NULL` a reference
+    // to one shared object, aliasing every null-valued pointer with every other.
     let src = r"void n(void) { int *p; p = (int *)0; }";
     let (prog, dump) = program_from_string(src);
     check_assign_or_update(&prog, "p", ["#0"], None);
@@ -4630,18 +4440,12 @@ fn a_null_pointer_constant_is_still_a_constant_value() {
 // ---------------------------------------------------------------------------------------
 // A definition that returns a pointer.
 //
-// tree-sitter-c wraps a pointer-returning definition's `function_declarator` in one
-// `pointer_declarator` per `*`, so a definition query that demanded a `function_declarator`
-// directly would never match one: its body never walked, its parameters never bound, its
-// return arity left 0 -- with no warning of any attribution.
-//
-// That would be a soundness hole and not merely missing coverage, because the NAME still
-// reaches the function table -- from a prototype, or from `define_extern_functions` at a
-// call site -- so a call would lower to a `direct-call` of an arity-0 stub, and taint
-// entering it could not come back out.
-//
-// `function_definition_query` captures the declarator whole and `function_head` unwraps it,
-// so pointer depth is not something the query has to spell out.
+// tree-sitter-c wraps the `function_declarator` in one `pointer_declarator` per `*`, so a
+// query demanding a `function_declarator` directly would never match one: body never
+// walked, parameters never bound, arity 0, no warning. A soundness hole, not just missing
+// coverage: the NAME still reaches the function table (prototype, or extern stub at a
+// call site), so a call would lower to an arity-0 stub and taint could not come back out.
+// `function_definition_query` captures the declarator whole; `function_head` unwraps it.
 // ---------------------------------------------------------------------------------------
 
 #[test_log::test]
@@ -4969,11 +4773,10 @@ fn a_parameter_is_by_reference_at_every_depth() {
 
 #[test_log::test]
 fn a_function_pointer_parameter_is_one_parameter() {
-    // The boundary in the other direction. `int (*cb)(int a, int b)`
-    // declares ONE parameter, `cb`; `a` and `b` belong to the type, not to `g`. The query
-    // matched `(parameter_declaration declarator: (identifier))` anywhere under the parameter
-    // list, so `g` came out with four parameters and `s` -- the real second one -- at index 3.
-    // A function pointer stays `ByVal`: what it points at is code, not storage.
+    // The boundary in the other direction: `int (*cb)(int a, int b)` declares ONE
+    // parameter, `cb` -- `a` and `b` belong to the type. Matching anywhere under the list
+    // would give `g` four parameters and put `s` at index 3. A function pointer stays
+    // `ByVal`: what it points at is code, not storage.
     let src = r"void g(int (*cb)(int a, int b), char *s) { char *t; t = s; }";
     let (prog, dump) = program_from_string(src);
     check_params(&prog, &[ByVal, ByRef]);
@@ -5012,11 +4815,10 @@ fn a_nameless_parameter_holds_its_slot_without_binding_a_name() {
 
 #[test_log::test]
 fn a_void_parameter_list_is_still_empty() {
-    // The boundary that a "reserve a slot for a parameter that declares no name" rule would
-    // otherwise break, and it is everywhere in real code: the `void` in
-    // `f(void)` IS the empty list, not a parameter. It is a `parameter_declaration` with a
-    // type and NO declarator, which is why that shape reserves nothing -- an abstract
-    // declarator (`f(char **)`) is the one that does.
+    // The boundary a "reserve a slot for a nameless parameter" rule would break, and it is
+    // everywhere: the `void` in `f(void)` IS the empty list -- a `parameter_declaration`
+    // with a type and NO declarator, which reserves nothing. An abstract declarator
+    // (`f(char **)`) is the one that does.
     let (prog, _dump) = program_from_string(r"void f(void) { int x; x = 1; }");
     check_params(&prog, &[]);
     let (prog, _dump) = program_from_string(r"void f() { int x; x = 1; }");
@@ -5026,12 +4828,11 @@ fn a_void_parameter_list_is_still_empty() {
 #[test_log::test]
 #[ignore = "aspirational: C23's nameless `f(int)` is a parameter, and real definitions do not write one"]
 fn a_nameless_value_parameter_would_hold_its_slot_too() {
-    // What "a parameter declaration with no declarator declares no parameter" gives up. C23
-    // lets a DEFINITION leave a parameter unnamed, so `void f(int, int n)` has two -- but that
-    // shape is spelled exactly like the `void` in `f(void)` and exactly like what tree-sitter
-    // leaves when a parameter list does not parse (a macro-built formal whose type has no
-    // grammar rule). Between inventing a parameter for every one of those and
-    // dropping this one, practice decides: real definitions do not write it.
+    // What the no-declarator rule gives up. C23 lets a definition leave a parameter
+    // unnamed, so `void f(int, int n)` has two -- but that shape is spelled exactly like
+    // `f(void)` and like an unparsable macro-built formal's leavings. Between inventing a
+    // parameter for every one of those and dropping this one, practice decides: real
+    // definitions do not write it.
     let (prog, _dump) = program_from_string(r"void f(int, int n) { int x; x = n; }");
     check_params(&prog, &[ByVal, ByVal]);
 }
@@ -5052,11 +4853,9 @@ fn a_variadic_marker_is_not_a_parameter() {
 
 #[test_log::test]
 fn a_prototype_declares_no_parameters() {
-    // The boundary pin. `collect_params` runs over a DEFINITION's parameter
-    // list only -- a prototype is a `declaration` node -- so widening it must not start
-    // reading prototypes. `takes` is known only because a call resolves to it, and its arity
-    // comes from that call site (one argument), not from the three formals it was declared
-    // with.
+    // The boundary pin: `collect_params` runs over a DEFINITION's parameter list only (a
+    // prototype is a `declaration` node). `takes` is known only because a call resolves to
+    // it, and its arity comes from the call site, not from the three declared formals.
     let (prog, dump) = program_from_files(&[(
         "s.c",
         r"void takes(char **, int, int);
@@ -5088,12 +4887,10 @@ fn a_double_pointer_parameter_is_not_a_frontend_gap() {
 
 #[test_log::test]
 fn a_typedef_cast_is_a_value_conversion_not_a_call() {
-    // The class. `(( width_t)(x))` is a cast written with the operand parenthesized, which is
-    // how macro-generated conversion helpers spell every one of them. tree-sitter has no
-    // symbol table, so it reads `(A)(B)` as a call through a parenthesized callee; lowering
-    // that as a call to a function named `( width_t)` would give the taint an empty-bodied,
-    // nothing-returning stub to disappear into. As a conversion it is value-preserving: `x`
-    // reaches the result.
+    // The class: `(( width_t)(x))` is a cast with the operand parenthesized, as
+    // macro-generated conversion helpers spell them. tree-sitter reads `(A)(B)` as a call;
+    // a call to `( width_t)` would give the taint an empty-bodied stub to disappear into.
+    // As a conversion it is value-preserving: `x` reaches the result.
     let src = r"
         typedef unsigned short width_t;
         int convert(int x) {
@@ -5112,11 +4909,9 @@ fn a_typedef_cast_is_a_value_conversion_not_a_call() {
 
 #[test_log::test]
 fn a_cast_shaped_call_invents_no_function() {
-    // The other half of the same hazard: a call to a
-    // name nothing defines makes `define_extern_functions` invent it, so the IR would carry
-    // functions whose names are not C identifiers (`( width_t)`).
-    // Goes through `program_from_files` because that is the path
-    // that creates the stubs.
+    // The other half of the hazard: a call to a name nothing defines makes
+    // `define_extern_functions` invent it, so the IR would carry non-identifier names
+    // (`( width_t)`). Through `program_from_files`, the path that creates the stubs.
     let (prog, dump) = program_from_files(&[(
         "convert.c",
         r"typedef unsigned short width_t;
@@ -5142,11 +4937,10 @@ fn a_cast_shaped_call_invents_no_function() {
 
 #[test_log::test]
 fn a_type_name_from_a_system_header_still_reads_as_a_cast() {
-    // `type_names` is filled from every `type_identifier` in the unit, not from `typedef`
-    // declarations alone, and that is not a convenience: preprocessed input often leaves
-    // system headers unexpanded, so real code casts to `u_char` and `uid_t` without
-    // the unit ever declaring them. What the unit does hold is uses -- `u_char *p` in a
-    // parameter list -- which tree-sitter itself parses as a `type_identifier`.
+    // `type_names` is filled from every `type_identifier`, not from `typedef` declarations
+    // alone: preprocessed input often leaves system headers unexpanded, so real code casts
+    // to `u_char` without the unit declaring it. What the unit does hold is uses --
+    // `u_char *p` in a parameter list -- which parse as `type_identifier`s.
     let src = r"
         int convert(u_char *p, int x) {
             int v;
@@ -5187,11 +4981,10 @@ fn a_cast_over_a_comma_expression_yields_its_last_operand() {
 
 #[test_log::test]
 fn a_parenthesized_function_name_is_still_a_direct_call() {
-    // The boundary, from the side that costs a call edge rather than a conversion. Common
-    // macro libraries expand comparison hooks to `comp = (cmp_fn)(elm, parent);` --
-    // redundant parentheses around a plain function name. A callee named by its source text
-    // would make this a direct call to `(cmp_fn)`: a function invented on the spot, and the
-    // edge to the real `cmp_fn` lost.
+    // The boundary that costs a call edge rather than a conversion: macro libraries expand
+    // comparison hooks to `comp = (cmp_fn)(elm, parent);`. A callee named by its source
+    // text would be a direct call to `(cmp_fn)` -- a function invented on the spot, the
+    // edge to the real one lost.
     let src = r"
         int cmp_fn(int a, int b) { return a; }
         int find(int a, int b) {
@@ -5289,13 +5082,10 @@ fn a_record_tag_is_not_a_type_name() {
 
 #[test_log::test]
 fn a_global_function_pointer_callee_is_not_a_cast() {
-    // The other half of "`A` is a variable, not a type": a file-scope function pointer is not
-    // in the scope tree at all (globals are resolved by the fallback in `build_access_path`),
-    // so the guard that catches the local shadow above cannot be what saves this one. What
-    // saves it is that `hook` is not a type name anywhere in the unit.
-    //
-    // Where it lands is a direct call to `hook` -- a name, at least, and the same name the
-    // unparenthesized spelling produces. That is deliberate; see
+    // The other half of "`A` is a variable, not a type": a file-scope function pointer is
+    // not in the scope tree, so what saves this one is that `hook` is not a type name
+    // anywhere in the unit. It lands as a direct call to `hook` -- a name, the same one
+    // the unparenthesized spelling produces; that is deliberate, see
     // `a_bare_global_callee_is_still_a_name`.
     let src = r"
         void (*hook)(int);
@@ -5357,14 +5147,11 @@ fn a_statement_expression_callee_is_an_indirect_call() {
 // ---------------------------------------------------------------------------------------
 // The cell `cast_shaped_call` cannot decide.
 //
-// `(name)(x)` is a cast if `name` is a type and a call if it is not, and only the unit's own
-// evidence can say which. Two shapes carry none: `(T)()`, a cast of nothing, which is not C;
-// and `(zzz)(x)` where the unit neither defines, declares, nor uses `zzz` as a type. Both
-// lower as calls to an invented `zzz` -- and if `zzz` IS a type, the invented body's arity-0
-// return is where the operand's taint stops. The lowering is unchanged; each shape draws one
-// report, so the guess is said out loud instead of made in silence. A prototype is positive
-// evidence for a call -- `(free)(p)` with libc's prototype in scope is the macro-suppression
-// idiom -- and draws nothing.
+// `(name)(x)` is a cast if `name` is a type and a call if not, and only the unit's own
+// evidence can say which. Two shapes carry none -- `(T)()`, a cast of nothing, and
+// `(zzz)(x)` with no evidence either way -- and each draws one report while the lowering
+// stays a call. A prototype is positive evidence for a call (`(free)(p)`, the
+// macro-suppression idiom) and draws nothing.
 // ---------------------------------------------------------------------------------------
 
 #[test_log::test]
@@ -5459,18 +5246,11 @@ fn a_prototype_makes_a_parenthesized_call_a_call() {
 // ---------------------------------------------------------------------------------------
 // A function pointer in a field of a file-scope object.
 //
-// `cfg.handler()` is a call THROUGH a pointer the object `cfg` holds. Lowering it as a
-// direct call to a function literally named `cfg.handler` -- the callee expression's source
-// text -- would fail twice in one: the call edge would point at a function that does not
-// exist (no taint model can name it, and one that matched the invented name would be
-// matching a string), and the indirect call the program actually makes would not be in the
-// IR at all.
-//
-// The subtlety is the BASE, not the field. The call style cannot be chosen from the
-// *storage class* of the resolved callee location's base variable: a global's access path
-// is `$globals.<name>.<fields>`, so "the base is the globals object" says nothing about
-// whether the callee is a name. What says it is the PATH: `$globals.hook` is the object
-// `hook` itself and names it, while `$globals.cfg.handler` is a location *inside* `cfg`,
+// `cfg.handler()` is a call THROUGH a pointer `cfg` holds. A direct call to a function
+// literally named `cfg.handler` would fail twice: the edge would point at a function that
+// does not exist, and the indirect call the program makes would not be in the IR. The
+// subtlety is the BASE: storage class says nothing -- the PATH does. `$globals.hook` IS
+// the object `hook` and names it; `$globals.cfg.handler` is a location *inside* `cfg`,
 // reached by a load, exactly like the local `s.f`.
 
 #[test_log::test]
@@ -5580,13 +5360,10 @@ fn a_call_through_a_field_of_a_local_or_parameter_is_unchanged() {
 
 #[test_log::test]
 fn a_bare_global_callee_is_still_a_name() {
-    // The other side of the same boundary, and the reason the rule is the PATH rather than the
-    // base: a plain `f(1)` and a call through a global function POINTER are both spelled as a
-    // bare identifier, and the frontend cannot tell them apart -- `plain` is only declared, so
-    // it is not in the function table either. Both keep resolving by name (`hook`'s value is a
-    // location the analysis reaches through `$globals.hook`, and a taint model naming `hook`
-    // still matches), which is what `a_global_function_pointer_callee_is_not_a_cast` pinned for
-    // the parenthesized spelling.
+    // The other side, and why the rule is the PATH: a plain `f(1)` and a call through a
+    // global function POINTER are both spelled as a bare identifier, and the frontend
+    // cannot tell them apart (`plain` is only declared). Both keep resolving by name, so a
+    // taint model naming `hook` still matches.
     let src = r"
         void (*hook)(int);
         void plain(int x);
@@ -5634,12 +5411,10 @@ fn taint_crosses_a_call_through_a_field_of_a_global() {
 
 #[test_log::test]
 fn an_argument_of_a_call_through_a_global_field_reaches_the_callee_parameter() {
-    // The same crossing seen from the argument side, and the shape a real query walks: `b` is
-    // passed to `g.f(b)`, the dispatch table binds `g.f = store_it`, and `store_it` deposits its
-    // parameter in the global `taken` -- so `wrap` summarizes @p1 -> `$globals.taken` only if the
-    // indirect call resolves to `store_it`. The `check_no_flow_in` is what makes it a
-    // measurement rather than a coincidence: @p0 is never passed anywhere, so an
-    // over-approximation that let any argument reach any callee would show up here.
+    // The same crossing from the argument side: `wrap` summarizes @p1 -> `$globals.taken`
+    // only if the indirect call resolves to `store_it`. The `check_no_flow_in` makes it a
+    // measurement: @p0 is never passed anywhere, so an over-approximation letting any
+    // argument reach any callee would show up here.
     let src = r"
         int taken;
         void store_it(int p) { taken = p; }
@@ -5665,18 +5440,12 @@ fn an_argument_of_a_call_through_a_global_field_reaches_the_callee_parameter() {
 // ---------------------------------------------------------------------------------------
 // A GNU statement expression in callee position.
 //
-// Patchable-call macros expand to `({ ...; (&trampoline_fp); })(...)` -- a statement
-// expression whose value is the address of a trampoline, immediately called. tree-sitter
-// parses that as a `call_expression` whose `function` is a `parenthesized_expression`
-// wrapping a `compound_statement`. Naming the callee by its own source text would make it a
-// direct call to a function literally spelled `({ ... })`, invented per call site (the
-// expansion embeds a unique counter), and the indirect call the program actually makes
-// would be in the IR nowhere.
-//
-// The call style is a question about the resolved access path, and this shape is the one
-// place that question cannot answer on its own: the value node resolves to a bare global
-// path, which is exactly what a global callee that IS a name resolves to. The construct in
-// callee position is what tells them apart -- see `is_statement_expression`.
+// Patchable-call macros expand to `({ ...; (&trampoline_fp); })(...)`: a statement
+// expression whose value is a trampoline's address, immediately called. Naming the callee
+// by its source text would invent a function per call site (the expansion embeds a unique
+// counter) and lose the indirect call. The resolved access path cannot decide this shape
+// -- the value node resolves to a bare global path, exactly what a name resolves to -- so
+// the construct in callee position tells them apart: `is_statement_expression`.
 
 #[test_log::test]
 fn a_static_call_style_expansion_is_an_indirect_call() {
@@ -5763,12 +5532,11 @@ fn an_argument_of_a_statement_expression_callee_reaches_the_callee_parameter() {
 
 #[test_log::test]
 fn a_static_call_trampoline_carries_no_flow_within_one_unit() {
-    // What the analysis can NOT do here, stated rather than implied. The two tests above resolve
-    // the indirect call because the unit binds the pointer; a real trampoline is
-    // patched in by assembly, so no translation unit assigns it and there is nothing
-    // to resolve. The call is in the IR as an indirect call through `$globals.__tramp_f` --
-    // which is what a whole-program run needs in order to resolve it at all, and strictly more
-    // than an edge to an invented empty function -- but within the unit no taint crosses it.
+    // What the analysis can NOT do, stated rather than implied: a real trampoline is
+    // patched in by assembly, so no unit assigns the pointer and there is nothing to
+    // resolve. The call is still in the IR as an indirect call through
+    // `$globals.__tramp_f` -- what a whole-program run needs, and strictly more than an
+    // edge to an invented empty function -- but within the unit no taint crosses it.
     let src = r"
         int taken;
         void __tramp_f(int);
