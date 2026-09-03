@@ -15,7 +15,10 @@ targets of control flow. Terminator instructions are returns and gotos with mult
   such as `a, b = b, a` are expressed in vec form as `[(a,b),(b,a)]` and implement a swap.
 
 - Setting of fields is done through the [`StatementKind::Store`] instruction; reading fields can
-  additionally be done through the [`StatementKind::Load`] instruction.
+  additionally be done through the [`StatementKind::Load`] instruction. A frontend that models a
+  field write as a *functional* update — producing a fresh version of the whole aggregate — may
+  instead use the [`StatementKind::Update`] instruction, which is a `Store` that additionally names
+  the `source` aggregate separately from the (defined) destination.
 
 - Calls come in two flavors: direct and indirect. Direct calls are tagged with call edges. Indirect
   calls are tagged with an indirect call style. Calls can be internal or external to a program. Call
@@ -294,16 +297,39 @@ pub enum StatementKind {
     /// ```text
     /// store dest.field := value;
     /// ```
-    ///
-    /// Unlike the old functional `Update` instruction, a store defines NO variable: the
-    /// destination `dest` is an *address* [`AccessPath`] (offset-only, e.g. `x.[50]`), read only
-    /// as a location, so SSA conversion does not create a new version of the aggregate on every
-    /// write. `field` is the symbolic [`FieldPath`] (a single symbol, e.g. `.deref`) written at
-    /// that address; it is `None` for a pure offset-address store (`store x.[50] := value`,
-    /// pointer arithmetic with no memory field). At least one of `dest.path` / `field` must be
-    /// non-empty (an otherwise-pathless store is just an assign).
     Store {
         dest: AccessPath,
+        field: FieldPath,
+        /// Value to store
+        value: Exp,
+    },
+
+    /// Functionally update one field of a structure, producing a new version of the destination
+    /// aggregate:
+    ///
+    /// ```text
+    /// dest = update (source, dest.field := value);
+    /// ```
+    ///
+    /// An `Update` is exactly a [`StatementKind::Store`] — it writes a single symbolic `field` at
+    /// the offset-only `dest` address — except that it names the `source` aggregate *separately*
+    /// from the destination. The result `dest` is `source` with `dest.path ++ field` set to
+    /// `value`.
+    ///
+    /// Unlike `Store`, which defines no variable and reads its `dest` only as a location, an
+    /// `Update` DEFINES `dest.variable_ref`: the new version of the aggregate. Specifying the
+    /// `source` and destination separately is what lets SSA conversion rename `dest` to a fresh
+    /// version while still reading the previous `source` (e.g. `s = update (s, .foo := new_value)`
+    /// becomes `s_2 = update (s_1, .foo := new_value)`). This is the functional-update counterpart
+    /// of `Store`; a frontend may emit whichever fits its memory model.
+    Update {
+        /// Destination aggregate address (offset-only path, like `Store`). This instruction
+        /// defines `dest.variable_ref`.
+        dest: AccessPath,
+        /// Source aggregate copied into `dest` before the field write, named separately so SSA can
+        /// version `dest` and `source` independently.
+        source: VariableRef,
+        /// Symbolic field written at `dest` (a single symbol, like `Store`).
         field: FieldPath,
         /// Value to store
         value: Exp,
@@ -1248,6 +1274,26 @@ impl StatementKind {
         StatementKind::Store { dest, field, value }
     }
 
+    /// Constructs a functional update `dest = update (source, dest.field := value)`: `dest` becomes
+    /// `source` with the single symbolic `field` at the offset-only `dest` address set to `value`.
+    /// Unlike [`Self::store`], the resulting `dest` variable is defined (a new version of the
+    /// aggregate), so the `source` and destination are given separately (see
+    /// [`StatementKind::Update`]).
+    pub fn update(
+        dest: AccessPath,
+        source: VariableRef,
+        field: impl Into<FieldPath>,
+        value: Exp,
+    ) -> Self {
+        let field = field.into();
+        StatementKind::Update {
+            dest,
+            source,
+            field,
+            value,
+        }
+    }
+
     /// Emits an [`StatementKind::Assign`] when `field` is `None` (a write with no symbolic field),
     /// or a [`Self::store`] of `field` into `dest` otherwise. When `field` is `None` the `dest` must
     /// be a bare variable: storing to an offset address with no field is an error, since a store
@@ -1313,6 +1359,19 @@ impl StatementKind {
                 };
                 Box::new(a.chain(b))
             }
+            Update {
+                dest: _,
+                source,
+                field: _,
+                value,
+            } => {
+                let a: VarIter<'s> = Box::new(std::iter::once(source));
+                let b: VarIter<'s> = match Exp::base_variable(value) {
+                    Some(v) => Box::new(std::iter::once(v)),
+                    None => Box::new(std::iter::empty()),
+                };
+                Box::new(a.chain(b))
+            }
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1355,6 +1414,20 @@ impl StatementKind {
                 };
                 Box::new(a.chain(b))
             }
+            Update {
+                dest: _,
+                source,
+                field: _,
+                value,
+            } => {
+                let a: VarIterMut<'s> = Box::new(std::iter::once(source));
+                let b: VarIterMut<'s> = if let Some(v) = Exp::base_variable_mut(value) {
+                    Box::new(std::iter::once(v))
+                } else {
+                    Box::new(std::iter::empty())
+                };
+                Box::new(a.chain(b))
+            }
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1369,6 +1442,7 @@ impl StatementKind {
             Phi { dest, .. } => Box::new(std::iter::once(dest)),
             ParamFlow { .. } => Box::new(std::iter::empty()),
             Store { .. } => Box::new(std::iter::empty()),
+            Update { dest, .. } => Box::new(std::iter::once(&dest.variable_ref)),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1383,6 +1457,7 @@ impl StatementKind {
             Phi { dest: out, .. } => Box::new(std::iter::once(out)),
             ParamFlow { .. } => Box::new(std::iter::empty()),
             Store { .. } => Box::new(std::iter::empty()),
+            Update { dest, .. } => Box::new(std::iter::once(&mut dest.variable_ref)),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1860,6 +1935,21 @@ impl Display for StatementKind {
             } => write!(f, "{dest} = load {source}{field}"),
             Store { dest, field, value } => {
                 write!(f, "store {dest}{field} := {value}")
+            }
+            Update {
+                dest,
+                source,
+                field,
+                value,
+            } => {
+                // `dest_var = update (source<offsets><field> := value)`, e.g. `x = update (y.f :=
+                // v)`. The offsets live on the destination address; the result is the destination
+                // variable.
+                write!(
+                    f,
+                    "{} = update ({}{}{} := {})",
+                    dest.variable_ref, source, dest.path, field, value
+                )
             }
             Nop => write!(f, "nop"),
         }

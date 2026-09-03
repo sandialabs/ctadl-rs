@@ -1,0 +1,72 @@
+// The functional update `x = [y.f := v]`: `x` becomes `y` with field `.f` set to `v`.
+//
+// The difference from the assignment `x.f = v`, which writes through `x`, is the whole-aggregate
+// copy: an update names its source aggregate separately from the destination it defines, so
+// everything in the source that the update did not overwrite comes along too.
+
+// Both flows an update produces: the field write, and the copy of the rest of the aggregate. The
+// second requirement is what distinguishes an update from a store -- `q.field = p1` alone would
+// not carry `p0` into the result.
+def Update(p0, p1): 1
+where summaries [return.field <- p1, return <- p0]
+{
+start:
+  q = [p0.field := p1];
+  return q;
+}
+
+// Naming the source separately is what lets SSA version the destination apart from the source it
+// reads: `@p0_1 = update (@p0_0.field := @p1_0)`.
+def UpdateInPlace(p0, p1): 1
+where summaries [return.field <- p1, return <- p0]
+{
+start:
+  p0 = [p0.field := p1];
+  return p0;
+}
+
+// Offsets in the path are address arithmetic and ride along on the updated location, as they do
+// for a store.
+def UpdateOffset(p0, p1): 1
+where summaries [return.[8].field <- p1, return <- p0]
+{
+start:
+  q = [p0.[8].field := p1];
+  return q;
+}
+
+// The updated value may be a field read, which loads before the update.
+def UpdateFromField(p0, p1): 1
+where summaries [return.field <- p1.other]
+{
+start:
+  q = [p0.field := p1.other];
+  return q;
+}
+
+// An update is a field write like any other, so taint flows through it.
+def UpdateTaint(a) {
+start:
+  t = source(Data);
+  b = [a.field := t];
+  c = b.field;
+  sink(c, Data);
+  // Nothing was written to `.safe`, so no flow reaches it.
+  d = b.safe;
+  errsink(d, Data);
+  return;
+}
+
+def Callee(a): 1 {
+start:
+  return a;
+}
+
+// A function pointer stored by an update is still resolvable at an indirect call site.
+def UpdateFuncPtr(p0, p1): 1 {
+start:
+  q = [p0.op := ptr<Callee>];
+  f = q.op;
+  r = f(p1);
+  return r;
+}

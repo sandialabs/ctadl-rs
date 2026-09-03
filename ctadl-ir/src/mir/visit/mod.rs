@@ -187,6 +187,11 @@ macro_rules! make_ast_visitor {
                         self.visit_access_path(dest);
                         self.visit_exp(value);
                     }
+                    Update { dest, source, field: _, value } => {
+                        self.visit_access_path(dest);
+                        self.visit_variable_ref(source);
+                        self.visit_exp(value);
+                    }
                     Nop => (),
                 }
             }

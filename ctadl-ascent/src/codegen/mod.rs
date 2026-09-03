@@ -799,6 +799,59 @@ impl Visitor for CodegenVisitor<'_> {
                     self.facts.assign.push((site, dest, value));
                 }
             }
+            Update {
+                dest,
+                source,
+                field,
+                value,
+            } => {
+                // A functional update `dest = update(source, dest.field := value)` lowers to two
+                // flows: the whole-aggregate copy `dest <- source`, then the field write
+                // `dest.field <- value`.
+                let dest_var = self.trans_variable_ref(&dest.variable_ref);
+                let source_var = self.trans_variable_ref(source);
+                // The written path is the dest's (offset) address arithmetic, then the field.
+                let path = fx::Path::from_accesses(
+                    dest.path
+                        .iter()
+                        .cloned()
+                        .map(PathSegment::from)
+                        .chain(std::iter::once(PathSegment::Symbol(
+                            field.symbol_ref().clone(),
+                        ))),
+                );
+                self.paths_dedup.insert((path,));
+                let dest_vertex = FlowVertex(dest_var, path);
+                // A function pointer / Java object stored INTO A FIELD (`o.op = id`); mirrors the
+                // `Store` arm.
+                if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = value {
+                    let target = fx::Function(name.clone().into());
+                    let target = self.source_info.sites.get_or_add_function(target);
+                    self.facts.call_target_assign.push((
+                        site,
+                        dest_vertex.clone(),
+                        fx::CallTargetObject::FunctionId(target),
+                    ));
+                    self.funcptr_targets.insert(target);
+                }
+                if let Exp::ObjectRef(CallObject::JavaObject(cls)) = value {
+                    self.facts.call_target_assign.push((
+                        site,
+                        dest_vertex.clone(),
+                        fx::CallTargetObject::Symbol(cls.0.clone()),
+                    ));
+                }
+                // whole-aggregate copy: dest <- source
+                self.facts.assign.push((
+                    site,
+                    FlowVertex(dest_var, fx::Path::empty()),
+                    FlowVertex(source_var, fx::Path::empty()),
+                ));
+                // field write: dest.field <- value
+                if let Some(value) = self.trans_exp(value) {
+                    self.facts.assign.push((site, dest_vertex, value));
+                }
+            }
             Nop => (),
         }
     }

@@ -1589,7 +1589,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.target_set_mut(n).intersect_with(matches);
     }
 
-    /// Matches functions that read or write any of the named fields (via `Load`/`Store`).
+    /// Matches functions that read or write any of the named fields (via `Load`/`Store`/`Update`).
     /// On-demand scan of every function body; frontends without symbolic loads/stores yield
     /// no match.
     fn visit_uses_field_constraint(&mut self, n: usize, value: &serde_json::Value) {
@@ -1624,7 +1624,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             .filter(|(_, func)| {
                 func.blocks.iter().any(|block| {
                     block.statements.iter().any(|stmt| match &stmt.kind {
-                        StatementKind::Load { field, .. } | StatementKind::Store { field, .. } => {
+                        StatementKind::Load { field, .. }
+                        | StatementKind::Store { field, .. }
+                        | StatementKind::Update { field, .. } => {
                             wanted.iter().any(|w| &*field.field == *w)
                         }
                         _ => false,

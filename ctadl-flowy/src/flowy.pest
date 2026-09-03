@@ -19,8 +19,11 @@ where_clause = { "where" ~ "summaries" ~ summaries }
 block = { ident ~ ":" ~ stmt* ~ terminator }
 
 terminator = { goto_stmt | return_stmt }
-stmt = { assign_stmt | assign_call_stmt | call_stmt }
+stmt = { update_stmt | assign_stmt | assign_call_stmt | call_stmt }
 
+// Functional update: `x2 = [x1.foo := val];` reads "x2 is x1, but with .foo set to val". The
+// brackets are what distinguish it from the assignment `x2.foo = val`, which writes through x1.
+update_stmt = { ap ~ "=" ~ "[" ~ ap ~ ":=" ~ ap ~ "]" ~ ";" }
 assign_stmt = { ap ~ "=" ~ ap_comma_list ~ ";" }
 ap_comma_list = { ap ~ ("," ~ ap)* }
 assign_call_stmt = { ap ~ "=" ~ ap ~ actuals ~ ";" }

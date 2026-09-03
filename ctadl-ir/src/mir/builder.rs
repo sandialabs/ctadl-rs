@@ -189,6 +189,33 @@ impl<'a> BasicBlockBuilder<'a> {
         StatementIdx::from(current_pos as u32)
     }
 
+    /// Create and insert a functional update `dest = update (source, dest.field := value)` (see
+    /// [`StatementKind::Update`]). Unlike [`Self::create_store`], the `dest` variable is defined (a
+    /// new version of the aggregate), so the `source` aggregate is named separately.
+    ///
+    /// # Arguments
+    /// * `dest` - Destination address (offset-only access path); its variable is (re)defined
+    /// * `source` - Source aggregate copied into `dest` before the field write
+    /// * `field` - Symbolic field written
+    /// * `value` - Source expression stored into the field
+    pub fn create_update(
+        &mut self,
+        dest: impl Into<AccessPath>,
+        source: VariableRef,
+        field: impl Into<FieldPath>,
+        value: impl Into<Exp>,
+    ) -> StatementIdx {
+        let statement = Statement::new_kind(StatementKind::update(
+            dest.into(),
+            source,
+            field,
+            value.into(),
+        ));
+        let current_pos = self.insertion_point;
+        self.insert_statement(statement);
+        StatementIdx::from(current_pos as u32)
+    }
+
     /// Create and insert a call statement
     ///
     /// # Arguments
