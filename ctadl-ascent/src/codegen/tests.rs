@@ -643,7 +643,7 @@ fn function_with_real_update() -> FunctionData {
     ))));
 
     let body = blocks.push(BasicBlockData::new(None));
-    let mut builder = BasicBlockBuilder::new(&mut f[body]);
+    let mut builder = BasicBlockBuilder::new(&mut f.blocks[body], &mut f.locals);
 
     let p0 = builder.new_param_var(ParameterIdx::new(0));
     let p1 = builder.new_param_var(ParameterIdx::new(1));

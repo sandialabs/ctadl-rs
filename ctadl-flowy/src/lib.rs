@@ -754,8 +754,10 @@ impl FlowyCtx {
                         col,
                     });
                 }
-                let (dst_base, dst_segments) = parse_ap(locals, dst_pair, defined_functions)?;
-                let (src_base, mut src_segments) = parse_ap(locals, src_pair, defined_functions)?;
+                let (dst_base, dst_segments) =
+                    parse_ap(locals, local_table, dst_pair, defined_functions)?;
+                let (src_base, mut src_segments) =
+                    parse_ap(locals, local_table, src_pair, defined_functions)?;
                 // The destination is the variable the update *defines* — the fresh version of the
                 // aggregate — so it is a bare name. The path being written belongs to the source,
                 // which is where it reads.
@@ -791,8 +793,8 @@ impl FlowyCtx {
                     unreachable!()
                 };
                 let value = {
-                    let r = parse_ref(locals, inner.next().unwrap(), defined_functions);
-                    lower_ref(&mut self.counter, data, source_info, r)
+                    let r = parse_ref(locals, local_table, inner.next().unwrap(), defined_functions);
+                    lower_ref(&mut self.counter, data, local_table, source_info, r)
                 };
                 // What is left of the source path is pure offsets: address arithmetic, which lives
                 // on the update's destination address exactly as it lives on a store's. Lowering
@@ -801,7 +803,9 @@ impl FlowyCtx {
                 let counter = &mut self.counter;
                 let addr =
                     ctadl_ir::mir::load_access_path(src_base, src_segments, &mut offsets, || {
-                        VariableRef::new_local(format!("t{}?", counter.next()))
+                        VariableRef::new_local_idx(
+                            local_table.get_or_intern(&format!("t{}?", counter.next())),
+                        )
                     });
                 debug_assert!(offsets.is_empty(), "an offset-only path emits no loads");
                 data.push_back(Statement::new(
