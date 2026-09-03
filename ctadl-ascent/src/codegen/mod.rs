@@ -807,9 +807,7 @@ impl Visitor for CodegenVisitor<'_> {
             } => {
                 // A functional update `dest = update(source, dest.field := value)` lowers to two
                 // flows: the whole-aggregate copy `dest <- source`, then the field write
-                // `dest.field <- value`. Unlike `Store`, `dest` names a freshly-defined aggregate
-                // (not a load-chain temporary), so it is used directly with no cap_path
-                // re-anchoring.
+                // `dest.field <- value`.
                 let dest_var = self.trans_variable_ref(&dest.variable_ref);
                 let source_var = self.trans_variable_ref(source);
                 // The written path is the dest's (offset) address arithmetic, then the field.
@@ -825,8 +823,7 @@ impl Visitor for CodegenVisitor<'_> {
                 self.paths_dedup.insert((path,));
                 let dest_vertex = FlowVertex(dest_var, path);
                 // A function pointer / Java object stored INTO A FIELD (`o.op = id`); mirrors the
-                // `Store` arm. Must run before `value` is lowered, since trans_exp() returns None
-                // for an ObjectRef and would otherwise drop the binding.
+                // `Store` arm.
                 if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = value {
                     let target = fx::Function(name.clone().into());
                     let target = self.source_info.sites.get_or_add_function(target);
