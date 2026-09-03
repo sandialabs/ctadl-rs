@@ -793,7 +793,12 @@ impl FlowyCtx {
                     unreachable!()
                 };
                 let value = {
-                    let r = parse_ref(locals, local_table, inner.next().unwrap(), defined_functions);
+                    let r = parse_ref(
+                        locals,
+                        local_table,
+                        inner.next().unwrap(),
+                        defined_functions,
+                    );
                     lower_ref(&mut self.counter, data, local_table, source_info, r)
                 };
                 // What is left of the source path is pure offsets: address arithmetic, which lives

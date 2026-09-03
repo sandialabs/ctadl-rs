@@ -321,7 +321,10 @@ fn test_ssa_function_h_update() {
         dest.variable_ref.variable, source.variable,
         "same aggregate variable"
     );
-    assert!(dest.variable_ref.version.is_some(), "destination is versioned");
+    assert!(
+        dest.variable_ref.version.is_some(),
+        "destination is versioned"
+    );
     assert!(source.version.is_some(), "source is versioned");
     assert_ne!(
         dest.variable_ref.version, source.version,

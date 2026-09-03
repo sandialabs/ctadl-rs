@@ -291,9 +291,12 @@ fn test_real_update_instruction() {
         .unwrap();
 
     // The field write p1 -> q.field, returned in q: (ret, .field) <- (formal 1, empty).
-    let has_field_flow = result.summary.iter().any(|(fid, dst_i, dst_p, src_i, src_p)| {
-        *fid == f_id && **dst_i == -1 && !dst_p.is_empty() && **src_i == 1 && src_p.is_empty()
-    });
+    let has_field_flow = result
+        .summary
+        .iter()
+        .any(|(fid, dst_i, dst_p, src_i, src_p)| {
+            *fid == f_id && **dst_i == -1 && !dst_p.is_empty() && **src_i == 1 && src_p.is_empty()
+        });
     assert!(
         has_field_flow,
         "expected p1 to flow to the returned aggregate's field"
@@ -301,9 +304,12 @@ fn test_real_update_instruction() {
 
     // The whole-aggregate copy p0 -> q, returned in q: (ret, empty) <- (formal 0, empty). This flow
     // exists only because `Update` copies the entire source aggregate; a `Store` would not.
-    let has_whole_copy = result.summary.iter().any(|(fid, dst_i, dst_p, src_i, src_p)| {
-        *fid == f_id && **dst_i == -1 && dst_p.is_empty() && **src_i == 0 && src_p.is_empty()
-    });
+    let has_whole_copy = result
+        .summary
+        .iter()
+        .any(|(fid, dst_i, dst_p, src_i, src_p)| {
+            *fid == f_id && **dst_i == -1 && dst_p.is_empty() && **src_i == 0 && src_p.is_empty()
+        });
     assert!(
         has_whole_copy,
         "expected the whole source aggregate p0 to flow to the returned aggregate (Update-specific)"
