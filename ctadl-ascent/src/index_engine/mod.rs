@@ -37,10 +37,13 @@ to 0.f.
 
 */
 
+use std::num::NonZeroUsize;
 use std::path;
 
 use ascent::ascent;
+use ascent::ascent_par;
 use ascent::ascent_run;
+use ascent::ascent_source;
 use derive_builder::Builder;
 use hashbrown::hash_map::HashMap;
 use packed_struct::prelude::*;
@@ -286,12 +289,55 @@ impl IndexFacts {
 
 #[derive(Debug, Clone, Builder, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct IndexConfig {
+    /// Enables the aliasing summary rule.
     pub alias_rule: bool,
+    /// Which engine computes the flow relation, and on how many threads. Serial by default; see
+    /// [`Parallelism::from_jobs`] for the `-j N` convention.
+    pub parallelism: Parallelism,
 }
 
 impl Default for IndexConfig {
     fn default() -> Self {
-        IndexConfig { alias_rule: true }
+        IndexConfig {
+            alias_rule: true,
+            parallelism: Parallelism::Serial,
+        }
+    }
+}
+
+/// Number of threads for the index engine
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum Parallelism {
+    #[default]
+    Serial,
+    Threads(NonZeroUsize),
+}
+
+impl Parallelism {
+    /// The `-j N` convention: `1` is the serial engine, `0` means every core the OS reports, and
+    /// anything else is the parallel engine on that many threads.
+    ///
+    /// A one-core machine asked for `0` gets the serial engine, since the parallel one buys
+    /// nothing there but its overhead.
+    pub fn from_jobs(jobs: usize) -> Self {
+        let jobs = if jobs == 0 {
+            std::thread::available_parallelism().map_or(1, NonZeroUsize::get)
+        } else {
+            jobs
+        };
+        match NonZeroUsize::new(jobs) {
+            Some(n) if n.get() > 1 => Parallelism::Threads(n),
+            _ => Parallelism::Serial,
+        }
+    }
+}
+
+impl std::fmt::Display for Parallelism {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Parallelism::Serial => write!(f, "serial"),
+            Parallelism::Threads(n) => write!(f, "parallel on {n} threads"),
+        }
     }
 }
 
@@ -902,6 +948,353 @@ fn compute_alias_of_formal(
     pre.alias_of_formal
 }
 
+ascent_source! {
+    /// The index datalog: every relation and rule of the index engine, written exactly once.
+    index_rules:
+    // Facts:
+
+    relation formal_param(FunctionId, FlowVariable, FormalType);
+    relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex);
+    relation call(FunctionId, InsnId, FunctionId);
+    // A call target stored at a vertex: a function pointer (`v = ptr<function_id>`,
+    // `CallTargetObject::FunctionId`) or a Java object (`x = new Foo()`,
+    // `CallTargetObject::Symbol`).
+    relation call_target_assign(FunctionId, FlowVertex, CallTargetObject);
+    relation callee_info(FunctionId, InsnId, FlowVariable, Path, CallDispatchKey);
+    relation callee_resolvents(CallTargetObject, CallDispatchKey, FunctionId);
+
+    // Analysis drivers:
+
+    // Set of syntactic access paths
+    relation paths(Path);
+    relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path);
+    relation config(IndexConfig);
+
+    // Derived:
+
+    // Local reachability. The core, most expensive relation.
+    #[ds($crate::index_engine::locals_trie)]
+    relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
+    #[ds($crate::index_engine::assign_like_trie)]
+    relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
+    // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
+    relation prog_store(FunctionId, FlowVariable, Path);
+    // A variable that whole-aliases a formal purely through original program copies. This is
+    // the copy-closure of `locals(v, empty, formal, empty)` restricted to original assigns:
+    // it finds strictly fewer aliases (drops inter-procedural / summary-derived copies) but
+    // ALL aliases established by original program assignments. Feeds the aliasing summary rule.
+    // Precomputed above in its own fixpoint (see the `alias_of_formal` let-binding).
+    relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
+    // Call targets (function pointers and Java objects) propagated across `assign_like`
+    // to the receiver vertices of critical calls; the union of what were the separate
+    // `func_ptr_assign_like` and `java_obj_assign_like` relations.
+    relation call_target_assign_like(FunctionId, FlowVariable, Path, CallTargetObject);
+    relation model_paths(Path);
+    relation program_paths(Path);
+
+    // Hybrid Inlining relations: critical_summary(f, n, p). f(n.p = obj) invokes obj at some
+    // critical call site. The critical site itself is not tracked here; it can be recovered by
+    // the Contextual Assignment rule.
+    relation critical_summary(FunctionId, FormalIndex, Path);
+    // Critical call occurs inside this function
+    relation critical_call(FunctionId);
+    // Resolvent reaches the formals of Function. The call string is a lattice value so the
+    // remaining columns functionally determine at most one call string: (func_id, formal_index,
+    // path, object) -> call-string. This way we don't get the same object resolved through
+    // multiple stack configuration paths. Invariant: the call string is non-empty.
+    lattice resolvent(FunctionId, FormalIndex, Path, CallTargetObject, SmallestCallString);
+    // Assignment due to instantiating a summary from a resolvent. Invariant: call string is
+    // non-empty.
+    lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, SmallestCallString);
+    // Context-carrying field-sensitive reachability. Seeded from `context_assign` and
+    // propagated by its own forward-field rules below. Rare on C targets (0 rows when there is
+    // no resolvable indirect/virtual dispatch); the lattice column keeps the smallest call
+    // string per (func,var,path,formal,fpath). Invariant: call string is non-empty.
+    lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
+    // Invariant: call string is non-empty.
+    lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, SmallestCallString);
+
+    // Sets up paths from input program with static info. Paths must remain finite so we
+    // shouldn't add paths from constructed summaries directly.
+    program_paths(p) <-- actual_param(_, _, vx), let FlowVertex(_, p) = vx;
+    // The receiver access path of an indirect / virtual call is also a syntactic
+    // program path. Register it so that `call_target_assign_like`
+    // can propagate a stored target across an SSA version of the receiver (the
+    // transitive rules gate on `paths(p_new)`). Without this, a second store into the
+    // same aggregate (`o.a = id; o.b = id; o.a(s)` or `fps[0]=id; fps[1]=id; fps[0](s)`)
+    // creates a new receiver version whose call path was never an `actual_param`, so the
+    // binding fails to reach the call and taint is dropped (F2).
+    program_paths(p) <-- callee_info(_, _, _, p, _);
+    paths(p) <-- program_paths(p);
+    paths(p) <-- model_paths(p);
+
+    // Combine model paths with program paths (one level only to ensure termination)
+    paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
+    paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
+
+    // Initialize locals with formals (context-free)
+    locals(infunc, v1, p1.clone(), i, p1.clone()) <--
+        formal_param(infunc, v1, _),
+        if let Some(i) = v1.as_formal(),
+        let p1 = Path::empty();
+
+    // Forward field propagation (context-free).
+    locals(infunc, v1, p13.clone(), a, p4) <--
+        locals(infunc, v2, p23, a, p4),
+        assign_like(infunc, v1, p1, v2, p2),
+        if let Some(p13) = p23.substitute_prefix(p2, p1),
+        paths(&p13);
+    locals(infunc, v1, p1, a, p43.clone()) <--
+        locals(infunc, v2, p2, a, p4),
+        assign_like(infunc, v1, p1, v2, p23),
+        if let Some(p43) = p23.substitute_prefix(p2, p4),
+        paths(&p43);
+
+    // Compute assignments from call sites
+    assign_like(func_id, v.clone(), p, cv.clone(), Path::empty()),
+    assign_like(func_id, cv.clone(), Path::empty(), v.clone(), p) <--
+        actual_param(call_site_slice, n, vx),
+        let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**call_site_slice).unwrap(),
+        let cv = call_arg!(insn_id, *n),
+        let FlowVertex(v, p) = vx;
+
+    // Compute assignments from summaries
+    assign_like(func_id, v1, p1, v2, p2) <--
+        summary(tgt, n1, dst_path, n2, src_path),
+        call(func_id, insn_id, tgt),
+        let v1 = call_arg!(*insn_id, *n1),
+        let p1 = dst_path,
+        let v2 = call_arg!(*insn_id, *n2),
+        let p2 = src_path;
+
+    // Compute context-free summaries from local reachability.
+    summary(infunc, n1, p1, n2, p2) <--
+        locals(infunc, dst_var, p1, n2, p2),
+        // join with formal_param here instead of using if so that we don't have to traverse all of
+        // locals
+        formal_param(infunc, dst_var, formal_ty),
+        if let Some(n1) = dst_var.as_formal(),
+        if isout(&n1, *formal_ty, p1),
+        if n1 != *n2 || p1 != p2;
+
+    // aliasing summary rule (context-free flows only).
+    // Clause order matters: `locals` FIRST so Ascent drives the join by the `locals` DELTA and
+    // probes `alias_of_formal` via its `0_1` index. Writing `alias_of_formal` first instead
+    // makes Ascent full-scan all of `alias_of_formal` every fixpoint iteration (a scan whose
+    // per-iteration cost is |alias_of_formal|, catastrophic on binaries with many SSA copies).
+    summary(infunc, n1, p1.clone(), n2, bp) <--
+        // v1.p1 <- n2.bp  (delta driver)
+        locals(infunc, v1, p1, n2, bp),
+        if !p1.is_empty(),
+        // v1.p1 is actually stored through in the program (not just reachable): membership
+        // probe by (func,var,path). Restricts summaries to genuine aliased writes.
+        prog_store(infunc, v1, p1),
+        // this is the alias: v1 <- n1, established by original program copies only
+        alias_of_formal(infunc, v1, n1),
+        config(c),
+        if c.alias_rule,
+        if n1 != n2 || *p1 != *bp;
+
+    // Hybrid Inlining Rules:
+    // Phase 1: propagate up the stack from indirect calls
+    // Phase 2: propagate resolvents back down (this requires call strings)
+    // Phase 3: propagate conditional summaries up till they're unconditional
+
+    // 1.1: Base Critical Summary. An indirect / virtual call site found. (context-free)
+    critical_summary(func_id, n, p_n) <--
+        callee_info(func_id, _, v, p_call, _),
+        locals(func_id, v, p_call, n, p_n);
+
+    // 1.2: Propagate Critical Summary (context-free) up the stack.
+    critical_summary(caller_func_id, n, p_n) <--
+        call(caller_func_id, caller_insn_id, tgt),
+        critical_summary(tgt, n_tgt, p_tgt),
+        let arg = call_arg!(*caller_insn_id, *n_tgt),
+        locals(caller_func_id, arg, p_tgt, n, p_n);
+
+    // 2.1: Base Resolvent. A stored call target locally reaches a critical summary, so
+    // instantiate the resolvent in the parameters of the summary. The target is carried
+    // opaquely as a `CallTargetObject`; its variant is only tested later at call resolution.
+    resolvent(f, n, p.clone(), cto.clone(), cs_lat) <--
+        critical_summary(f, n, p),
+        call(caller, call_insn, f),
+        let arg = call_arg!(*call_insn, *n),
+        call_target_assign_like(caller, arg, p, cto),
+        let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
+        if let Some(new_cs) = CallString::new().push(call_site_id),
+        let cs_lat = SmallestCallString::Value(new_cs);
+
+    // Tracks resolvent to the call arg. Invariant: `call_arg_resolvent` call string is
+    // non-empty.
+    relation call_arg_resolvent(PackedCallArg, Path, CallTargetObject, SmallestCallString);
+    call_arg_resolvent(arg_p, p, obj, cs_lat) <--
+        resolvent(f, n2, p2, obj, cs_lat),
+        locals(f, v, p, n2, p2),
+        if let Some(arg_p) = v.as_call_arg();
+
+    // 2.2: Propagate Resolvent down the critical summaries, pushing call site
+    resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
+        call_arg_resolvent(arg_p, p, resolvent_obj, cs_lat),
+        let arg = CallArgId::unpack_from_slice(&**arg_p).unwrap(),
+        call(caller, arg.insn_id, f),
+        let n = FormalIndex::new(arg.formal),
+        critical_summary(f, n, p),
+        if let SmallestCallString::Value(cs) = cs_lat,
+        let call_site_id = PackedInsnSiteId::try_from_parts(*caller, arg.insn_id).unwrap(),
+        if let Some(new_cs) = cs.push(call_site_id);
+
+    // 3.1: Contextual Assignment (seed). Given a resolvent that reaches a call site,
+    // instantiate a contextual assignment doing normal summary instantiation. The resolvent
+    // object itself and the dispatch key from the call site are used to determine the resolvent
+    // function. The context of the resolvent is associated with the assign.
+    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), cs_lat.clone()) <--
+        callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
+        locals(caller, v_rec, p_rec, n, p),
+        resolvent(caller, n, p, resolvent_obj, cs_lat),
+        callee_resolvents(resolvent_obj, dispatch_key, resolvent_func),
+        summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
+        let v2 = call_arg!(*call_insn, *n2_sum),
+        let v1 = call_arg!(*call_insn, *n1_sum);
+
+    // 3.2: Contextual assignment (chain). Instantiate contextual summaries and pop call string,
+    // either creating a new contextual assign or a bare, uncontextual assign
+    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), new_cs_lat) <--
+        context_summary(f, n1, p1_sum, n2, p2_sum, cs_lat),
+        if let SmallestCallString::Value(cs) = cs_lat,
+        if let (new_cs, Some(call_site_id)) = cs.pop(),
+        if !new_cs.is_empty(), // keep call string invariant
+        let InsnSiteId {func_id: caller, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
+        call(caller, insn_id, f),
+        let v1 = call_arg!(insn_id, *n1),
+        let v2 = call_arg!(insn_id, *n2),
+        let new_cs_lat = SmallestCallString::Value(new_cs);
+
+    assign_like(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
+        context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
+        if let SmallestCallString::Value(cs) = cs_lat,
+        if let (new_cs, Some(call_site_id)) = cs.pop(),
+        if new_cs.is_empty(),
+        let InsnSiteId {func_id: caller, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
+        call(caller, insn_id, tgt),
+        let v1 = call_arg!(insn_id, *n1),
+        let v2 = call_arg!(insn_id, *n2);
+
+    // 3.3a: We have to reason about contextual local reachability. This involves reasoning
+    // about flows composed of hops, some of which are non-contextual and some of which are
+    // contextual. The following two rules extend contextual flows with built-in assigns using
+    // the same shape as forward/backward propagation.
+    context_locals(infunc, v1, p13.clone(), a, p4, cs_lat.clone()) <--
+        context_locals(infunc, v2, p23, a, p4, cs_lat),
+        assign_like(infunc, v1, p1, v2, p2),
+        if let Some(p13) = p23.substitute_prefix(p2, p1),
+        paths(&p13);
+    context_locals(infunc, v1, p1, a, p43.clone(), cs_lat.clone()) <--
+        context_locals(infunc, v2, p2, a, p4, cs_lat),
+        assign_like(infunc, v1, p1, v2, p23),
+        if let Some(p43) = p23.substitute_prefix(p2, p4),
+        paths(&p43);
+
+    // 3.3b: The following two rules extend non-contextual flows with contextual assigns.
+    context_locals(func_id, v1.clone(), p13.clone(), a.clone(), p4.clone(), cs_lat.clone()) <--
+        context_assign(func_id, v1, p1, v2, p2, cs_lat),
+        locals(func_id, v2, p23, a, p4),
+        if let Some(p13) = p23.substitute_prefix(p2, p1),
+        paths(&p13);
+    context_locals(func_id, v1.clone(), p1.clone(), a.clone(), p43.clone(), cs_lat.clone()) <--
+        context_assign(func_id, v1, p1, v2, p23, cs_lat),
+        locals(func_id, v2, p2, a, p4),
+        if let Some(p43) = p23.substitute_prefix(p2, p4),
+        paths(&p43);
+
+    // 3.4: a context-specific flow that reaches an out-formal becomes a conditional summary
+    // tagged with its call string; contextual assignment (chain) pops it back to the caller.
+    context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), cs_lat.clone()) <--
+        context_locals(func_id, dst_var, p1, n2, p2, cs_lat),
+        formal_param(func_id, dst_var, formal_ty),
+        if let Some(n1) = dst_var.as_formal(),
+        if isout(&n1, *formal_ty, p1),
+        if n1 != *n2 || p1 != p2;
+
+    // Local virtual / indirect call and resolvent, bypassing the resolvent / summary machinery
+    assign_like(func_id, v1.into(), p1, v2.into(), p2) <--
+        callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
+        call_target_assign_like(func_id, arg, arg_p, cto),
+        callee_resolvents(cto, dispatch_key, resolve_tgt),
+        let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+        summary(resolve_tgt, n1, p1, n2, p2),
+        let n2_id = PackedCallArg::try_from_parts(*insn_id, *n2).unwrap(),
+        let n1_id = PackedCallArg::try_from_parts(*insn_id, *n1).unwrap(),
+        let v2 = FlowVariableKind::CallArg(n2_id),
+        let v1 = FlowVariableKind::CallArg(n1_id);
+
+    // Functions whose tag closure we bother to compute. `critical_call` alone is too narrow:
+    // a pure factory (`h = lookup()`, `Account.new`) contains no indirect call and calls
+    // nothing with a critical summary, so its closure would be empty and the tag would never
+    // reach its own out-formal for the return-direction rule below to pick up. A called
+    // function that holds a call-target fact is exactly the shape that can export a tag.
+    // `critical_call` itself keeps its narrower meaning for its other consumers.
+    relation tag_closure_func(FunctionId);
+    tag_closure_func(f) <-- critical_call(f);
+    tag_closure_func(f) <-- call_target_assign(f, _, _), call(_, _, f);
+
+    // Call Target Propagation (function pointers and Java objects alike). The stored
+    // target is carried opaquely as a `CallTargetObject`; the variant is only tested
+    // downstream, where the call is actually resolved.
+    call_target_assign_like(func_id, v.clone(), p.clone(), tgt) <--
+        call_target_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
+        tag_closure_func(func_id);
+
+    call_target_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
+        // This results in large reduction on some test cases
+        tag_closure_func(func_id),
+        call_target_assign_like(func_id, v2, p_context, tgt),
+        assign_like(func_id, v1, p1, v2, p2),
+        if let Some(p_new) = p_context.substitute_prefix(p2, p1),
+        paths(&p_new);
+
+    // Return-direction call-target propagation. Rule 2.1 pushes a caller's tag DOWN onto a
+    // callee's formal; this is its missing twin, carrying a tag a callee holds on an
+    // out-formal UP to the corresponding call-arg vertex in each caller. Without it a target
+    // manufactured inside a callee (a returned function pointer, a returned object whose
+    // concrete type drives dispatch) dies at the return boundary, and the tag only ever
+    // crosses a return when the returned value is reachable from an in-formal (pass-through,
+    // via `summary`).
+    //
+    // Clause order is load-bearing, same reason as the comment at the aliasing summary rule:
+    // drive on the `call_target_assign_like` delta and probe `formal_param` by (func, var)
+    // second, so we prune to tagged out-formals before fanning out over callers. Both probes
+    // reuse indices existing rules already require -- `formal_param` by (func, var), `call` by
+    // its target column -- so no new indices are built.
+    //
+    // No call string is needed: the head names the specific `insn`, so each call site of a
+    // factory gets its own tagged vertex; context sensitivity is inherent to this direction.
+    // `p` rides through unchanged (no `substitute_prefix`), so no path growth and no `paths`
+    // gate. `isout` holds for every negative formal index, so RETURN_INDEX and the multi-return
+    // slots all qualify, and by-ref out-params (a callee installing a target into a
+    // caller-owned object) fall out for free.
+    //
+    // Deliberately NOT seeding `resolvent` here: that is a callee-frame relation keyed on the
+    // callee's formals, so a tuple for a frame whose receiver is a local has no consumer, and
+    // it would bypass the `CallString::new().push(..)` construction. Downstream needs no
+    // change -- the transitive rule above walks this tuple from `call_arg(insn, -1)` to the
+    // receiver over the symmetric call-site `assign_like` edges, the local-dispatch bypass
+    // resolves the indirect call exactly, and if the receiver is passed onward rule 2.1
+    // derives the resolvent with a properly constructed call string.
+    call_target_assign_like(caller, cv, p.clone(), tgt) <--
+        call_target_assign_like(callee, v, p, tgt),
+        formal_param(callee, v, formal_ty),
+        if let Some(n) = v.as_formal(),
+        if isout(&n, *formal_ty, p),
+        call(caller, insn, callee),
+        critical_call(caller),
+        let cv = call_arg!(*insn, n);
+
+    critical_call(func_id) <-- callee_info(func_id, _, _, _, _);
+    critical_call(func_id) <--
+        critical_summary(tgt, _, _),
+        call(func_id, _, tgt);
+}
+
 // The `ascent!` datalog block below expands to code that trips several style lints
 // (`.clone()` on Copy types, auto-borrows, unit-valued lets, and Default field
 // reassignment). These are artifacts of the macro's generated code, not the
@@ -917,6 +1310,7 @@ pub fn taint_index_with_config(
     config: IndexConfig,
     id_map: Option<&IdMap>,
 ) -> IndexResult {
+    let parallelism = config.parallelism;
     use hashbrown::hash_set::HashSet;
     let num_functions = facts
         .formal_param
@@ -1030,7 +1424,7 @@ pub fn taint_index_with_config(
         summary_paths.len(),
         phys_footprint_mb()
     );
-    let call = facts
+    let call: Vec<_> = facts
         .call
         .iter()
         .map(|(site, target)| {
@@ -1048,394 +1442,20 @@ pub fn taint_index_with_config(
         alias_of_formal.len(),
         phys_footprint_mb()
     );
+    log::info!("index engine: {parallelism}");
 
     ascent! {
         #![measure_rule_times]
         #![generate_run_timeout]
         struct IndexProg;
-        // Facts:
-
-        relation formal_param(FunctionId, FlowVariable, FormalType);
-        relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex);
-        relation call(FunctionId, InsnId, FunctionId);
-        // A call target stored at a vertex: a function pointer (`v = ptr<function_id>`,
-        // `CallTargetObject::FunctionId`) or a Java object (`x = new Foo()`,
-        // `CallTargetObject::Symbol`).
-        relation call_target_assign(FunctionId, FlowVertex, CallTargetObject);
-        relation callee_info(FunctionId, InsnId, FlowVariable, Path, CallDispatchKey);
-        relation callee_resolvents(CallTargetObject, CallDispatchKey, FunctionId);
-
-        // Analysis drivers:
-
-        // Set of syntactic access paths
-        relation paths(Path);
-        relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path);
-        relation config(IndexConfig);
-
-        // Derived:
-
-        // Local reachability. The core, most expensive relation.
-        #[ds(crate::index_engine::locals_trie)]
-        relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
-        #[ds(crate::index_engine::assign_like_trie)]
-        relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
-        // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
-        relation prog_store(FunctionId, FlowVariable, Path);
-        // A variable that whole-aliases a formal purely through original program copies. This is
-        // the copy-closure of `locals(v, empty, formal, empty)` restricted to original assigns:
-        // it finds strictly fewer aliases (drops inter-procedural / summary-derived copies) but
-        // ALL aliases established by original program assignments. Feeds the aliasing summary rule.
-        // Precomputed above in its own fixpoint (see the `alias_of_formal` let-binding).
-        relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
-        // Call targets (function pointers and Java objects) propagated across `assign_like`
-        // to the receiver vertices of critical calls; the union of what were the separate
-        // `func_ptr_assign_like` and `java_obj_assign_like` relations.
-        relation call_target_assign_like(FunctionId, FlowVariable, Path, CallTargetObject);
-        relation model_paths(Path);
-        relation program_paths(Path);
-
-        // Hybrid Inlining relations: critical_summary(f, n, p). f(n.p = obj) invokes obj at some
-        // critical call site. The critical site itself is not tracked here; it can be recovered by
-        // the Contextual Assignment rule.
-        relation critical_summary(FunctionId, FormalIndex, Path);
-        // Critical call occurs inside this function
-        relation critical_call(FunctionId);
-        // Resolvent reaches the formals of Function. The call string is a lattice value so the
-        // remaining columns functionally determine at most one call string: (func_id, formal_index,
-        // path, object) -> call-string. This way we don't get the same object resolved through
-        // multiple stack configuration paths. Invariant: the call string is non-empty.
-        lattice resolvent(FunctionId, FormalIndex, Path, CallTargetObject, SmallestCallString);
-        // Assignment due to instantiating a summary from a resolvent. Invariant: call string is
-        // non-empty.
-        lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, SmallestCallString);
-        // Context-carrying field-sensitive reachability. Seeded from `context_assign` and
-        // propagated by its own forward-field rules below. Rare on C targets (0 rows when there is
-        // no resolvable indirect/virtual dispatch); the lattice column keeps the smallest call
-        // string per (func,var,path,formal,fpath). Invariant: call string is non-empty.
-        lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
-        // Invariant: call string is non-empty.
-        lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, SmallestCallString);
-
-        // Sets up paths from input program with static info. Paths must remain finite so we
-        // shouldn't add paths from constructed summaries directly.
-        program_paths(p) <-- actual_param(_, _, vx), let FlowVertex(_, p) = vx;
-        // The receiver access path of an indirect / virtual call is also a syntactic
-        // program path. Register it so that `call_target_assign_like`
-        // can propagate a stored target across an SSA version of the receiver (the
-        // transitive rules gate on `paths(p_new)`). Without this, a second store into the
-        // same aggregate (`o.a = id; o.b = id; o.a(s)` or `fps[0]=id; fps[1]=id; fps[0](s)`)
-        // creates a new receiver version whose call path was never an `actual_param`, so the
-        // binding fails to reach the call and taint is dropped (F2).
-        program_paths(p) <-- callee_info(_, _, _, p, _);
-        paths(p) <-- program_paths(p);
-        paths(p) <-- model_paths(p);
-
-        // Combine model paths with program paths (one level only to ensure termination)
-        paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
-        paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
-
-        // Initialize locals with formals (context-free)
-        locals(infunc, v1, p1.clone(), i, p1.clone()) <--
-            formal_param(infunc, v1, _),
-            if let Some(i) = v1.as_formal(),
-            let p1 = Path::empty();
-
-        // Forward field propagation (context-free).
-        locals(infunc, v1, p13.clone(), a, p4) <--
-            locals(infunc, v2, p23, a, p4),
-            assign_like(infunc, v1, p1, v2, p2),
-            if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(&p13);
-        locals(infunc, v1, p1, a, p43.clone()) <--
-            locals(infunc, v2, p2, a, p4),
-            assign_like(infunc, v1, p1, v2, p23),
-            if let Some(p43) = p23.substitute_prefix(p2, p4),
-            paths(&p43);
-
-        // Compute assignments from call sites
-        assign_like(func_id, v.clone(), p, cv.clone(), Path::empty()),
-        assign_like(func_id, cv.clone(), Path::empty(), v.clone(), p) <--
-            actual_param(call_site_slice, n, vx),
-            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**call_site_slice).unwrap(),
-            let cv = call_arg!(insn_id, *n),
-            let FlowVertex(v, p) = vx;
-
-        // Compute assignments from summaries
-        assign_like(func_id, v1, p1, v2, p2) <--
-            summary(tgt, n1, dst_path, n2, src_path),
-            call(func_id, insn_id, tgt),
-            let v1 = call_arg!(*insn_id, *n1),
-            let p1 = dst_path,
-            let v2 = call_arg!(*insn_id, *n2),
-            let p2 = src_path;
-
-        // Compute context-free summaries from local reachability.
-        summary(infunc, n1, p1, n2, p2) <--
-            locals(infunc, dst_var, p1, n2, p2),
-            // join with formal_param here instead of using if so that we don't have to traverse all of
-            // locals
-            formal_param(infunc, dst_var, formal_ty),
-            if let Some(n1) = dst_var.as_formal(),
-            if isout(&n1, *formal_ty, p1),
-            if n1 != *n2 || p1 != p2;
-
-        // aliasing summary rule (context-free flows only).
-        // Clause order matters: `locals` FIRST so Ascent drives the join by the `locals` DELTA and
-        // probes `alias_of_formal` via its `0_1` index. Writing `alias_of_formal` first instead
-        // makes Ascent full-scan all of `alias_of_formal` every fixpoint iteration (a scan whose
-        // per-iteration cost is |alias_of_formal|, catastrophic on binaries with many SSA copies).
-        summary(infunc, n1, p1.clone(), n2, bp) <--
-            // v1.p1 <- n2.bp  (delta driver)
-            locals(infunc, v1, p1, n2, bp),
-            if !p1.is_empty(),
-            // v1.p1 is actually stored through in the program (not just reachable): membership
-            // probe by (func,var,path). Restricts summaries to genuine aliased writes.
-            prog_store(infunc, v1, p1),
-            // this is the alias: v1 <- n1, established by original program copies only
-            alias_of_formal(infunc, v1, n1),
-            config(c),
-            if c.alias_rule,
-            if n1 != n2 || *p1 != *bp;
-
-        // Hybrid Inlining Rules:
-        // Phase 1: propagate up the stack from indirect calls
-        // Phase 2: propagate resolvents back down (this requires call strings)
-        // Phase 3: propagate conditional summaries up till they're unconditional
-
-        // 1.1: Base Critical Summary. An indirect / virtual call site found. (context-free)
-        critical_summary(func_id, n, p_n) <--
-            callee_info(func_id, _, v, p_call, _),
-            locals(func_id, v, p_call, n, p_n);
-
-        // 1.2: Propagate Critical Summary (context-free) up the stack.
-        critical_summary(caller_func_id, n, p_n) <--
-            call(caller_func_id, caller_insn_id, tgt),
-            critical_summary(tgt, n_tgt, p_tgt),
-            let arg = call_arg!(*caller_insn_id, *n_tgt),
-            locals(caller_func_id, arg, p_tgt, n, p_n);
-
-        // 2.1: Base Resolvent. A stored call target locally reaches a critical summary, so
-        // instantiate the resolvent in the parameters of the summary. The target is carried
-        // opaquely as a `CallTargetObject`; its variant is only tested later at call resolution.
-        resolvent(f, n, p.clone(), cto.clone(), cs_lat) <--
-            critical_summary(f, n, p),
-            call(caller, call_insn, f),
-            let arg = call_arg!(*call_insn, *n),
-            call_target_assign_like(caller, arg, p, cto),
-            let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
-            if let Some(new_cs) = CallString::new().push(call_site_id),
-            let cs_lat = SmallestCallString::Value(new_cs);
-
-        // Tracks resolvent to the call arg. Invariant: `call_arg_resolvent` call string is
-        // non-empty.
-        relation call_arg_resolvent(PackedCallArg, Path, CallTargetObject, SmallestCallString);
-        call_arg_resolvent(arg_p, p, obj, cs_lat) <--
-            resolvent(f, n2, p2, obj, cs_lat),
-            locals(f, v, p, n2, p2),
-            if let Some(arg_p) = v.as_call_arg();
-
-        // 2.2: Propagate Resolvent down the critical summaries, pushing call site
-        resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
-            call_arg_resolvent(arg_p, p, resolvent_obj, cs_lat),
-            let arg = CallArgId::unpack_from_slice(&**arg_p).unwrap(),
-            call(caller, arg.insn_id, f),
-            let n = FormalIndex::new(arg.formal),
-            critical_summary(f, n, p),
-            if let SmallestCallString::Value(cs) = cs_lat,
-            let call_site_id = PackedInsnSiteId::try_from_parts(*caller, arg.insn_id).unwrap(),
-            if let Some(new_cs) = cs.push(call_site_id);
-
-        // 3.1: Contextual Assignment (seed). Given a resolvent that reaches a call site,
-        // instantiate a contextual assignment doing normal summary instantiation. The resolvent
-        // object itself and the dispatch key from the call site are used to determine the resolvent
-        // function. The context of the resolvent is associated with the assign.
-        context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), cs_lat.clone()) <--
-            callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
-            locals(caller, v_rec, p_rec, n, p),
-            resolvent(caller, n, p, resolvent_obj, cs_lat),
-            callee_resolvents(resolvent_obj, dispatch_key, resolvent_func),
-            summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
-            let v2 = call_arg!(*call_insn, *n2_sum),
-            let v1 = call_arg!(*call_insn, *n1_sum);
-
-        // 3.2: Contextual assignment (chain). Instantiate contextual summaries and pop call string,
-        // either creating a new contextual assign or a bare, uncontextual assign
-        context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), new_cs_lat) <--
-            context_summary(f, n1, p1_sum, n2, p2_sum, cs_lat),
-            if let SmallestCallString::Value(cs) = cs_lat,
-            if let (new_cs, Some(call_site_id)) = cs.pop(),
-            if !new_cs.is_empty(), // keep call string invariant
-            let InsnSiteId {func_id: caller, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
-            call(caller, insn_id, f),
-            let v1 = call_arg!(insn_id, *n1),
-            let v2 = call_arg!(insn_id, *n2),
-            let new_cs_lat = SmallestCallString::Value(new_cs);
-
-        assign_like(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
-            context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
-            if let SmallestCallString::Value(cs) = cs_lat,
-            if let (new_cs, Some(call_site_id)) = cs.pop(),
-            if new_cs.is_empty(),
-            let InsnSiteId {func_id: caller, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
-            call(caller, insn_id, tgt),
-            let v1 = call_arg!(insn_id, *n1),
-            let v2 = call_arg!(insn_id, *n2);
-
-        // 3.3a: We have to reason about contextual local reachability. This involves reasoning
-        // about flows composed of hops, some of which are non-contextual and some of which are
-        // contextual. The following two rules extend contextual flows with built-in assigns using
-        // the same shape as forward/backward propagation.
-        context_locals(infunc, v1, p13.clone(), a, p4, cs_lat.clone()) <--
-            context_locals(infunc, v2, p23, a, p4, cs_lat),
-            assign_like(infunc, v1, p1, v2, p2),
-            if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(&p13);
-        context_locals(infunc, v1, p1, a, p43.clone(), cs_lat.clone()) <--
-            context_locals(infunc, v2, p2, a, p4, cs_lat),
-            assign_like(infunc, v1, p1, v2, p23),
-            if let Some(p43) = p23.substitute_prefix(p2, p4),
-            paths(&p43);
-
-        // 3.3b: The following two rules extend non-contextual flows with contextual assigns.
-        context_locals(func_id, v1.clone(), p13.clone(), a.clone(), p4.clone(), cs_lat.clone()) <--
-            context_assign(func_id, v1, p1, v2, p2, cs_lat),
-            locals(func_id, v2, p23, a, p4),
-            if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(&p13);
-        context_locals(func_id, v1.clone(), p1.clone(), a.clone(), p43.clone(), cs_lat.clone()) <--
-            context_assign(func_id, v1, p1, v2, p23, cs_lat),
-            locals(func_id, v2, p2, a, p4),
-            if let Some(p43) = p23.substitute_prefix(p2, p4),
-            paths(&p43);
-
-        // 3.4: a context-specific flow that reaches an out-formal becomes a conditional summary
-        // tagged with its call string; contextual assignment (chain) pops it back to the caller.
-        context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), cs_lat.clone()) <--
-            context_locals(func_id, dst_var, p1, n2, p2, cs_lat),
-            formal_param(func_id, dst_var, formal_ty),
-            if let Some(n1) = dst_var.as_formal(),
-            if isout(&n1, *formal_ty, p1),
-            if n1 != *n2 || p1 != p2;
-
-        // Local virtual / indirect call and resolvent, bypassing the resolvent / summary machinery
-        assign_like(func_id, v1.into(), p1, v2.into(), p2) <--
-            callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
-            call_target_assign_like(func_id, arg, arg_p, cto),
-            callee_resolvents(cto, dispatch_key, resolve_tgt),
-            let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
-            summary(resolve_tgt, n1, p1, n2, p2),
-            let n2_id = PackedCallArg::try_from_parts(*insn_id, *n2).unwrap(),
-            let n1_id = PackedCallArg::try_from_parts(*insn_id, *n1).unwrap(),
-            let v2 = FlowVariableKind::CallArg(n2_id),
-            let v1 = FlowVariableKind::CallArg(n1_id);
-
-        // Functions whose tag closure we bother to compute. `critical_call` alone is too narrow:
-        // a pure factory (`h = lookup()`, `Account.new`) contains no indirect call and calls
-        // nothing with a critical summary, so its closure would be empty and the tag would never
-        // reach its own out-formal for the return-direction rule below to pick up. A called
-        // function that holds a call-target fact is exactly the shape that can export a tag.
-        // `critical_call` itself keeps its narrower meaning for its other consumers.
-        relation tag_closure_func(FunctionId);
-        tag_closure_func(f) <-- critical_call(f);
-        tag_closure_func(f) <-- call_target_assign(f, _, _), call(_, _, f);
-
-        // Call Target Propagation (function pointers and Java objects alike). The stored
-        // target is carried opaquely as a `CallTargetObject`; the variant is only tested
-        // downstream, where the call is actually resolved.
-        call_target_assign_like(func_id, v.clone(), p.clone(), tgt) <--
-            call_target_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
-            tag_closure_func(func_id);
-
-        call_target_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
-            // This results in large reduction on some test cases
-            tag_closure_func(func_id),
-            call_target_assign_like(func_id, v2, p_context, tgt),
-            assign_like(func_id, v1, p1, v2, p2),
-            if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-            paths(&p_new);
-
-        // Return-direction call-target propagation. Rule 2.1 pushes a caller's tag DOWN onto a
-        // callee's formal; this is its missing twin, carrying a tag a callee holds on an
-        // out-formal UP to the corresponding call-arg vertex in each caller. Without it a target
-        // manufactured inside a callee (a returned function pointer, a returned object whose
-        // concrete type drives dispatch) dies at the return boundary, and the tag only ever
-        // crosses a return when the returned value is reachable from an in-formal (pass-through,
-        // via `summary`).
-        //
-        // Clause order is load-bearing, same reason as the comment at the aliasing summary rule:
-        // drive on the `call_target_assign_like` delta and probe `formal_param` by (func, var)
-        // second, so we prune to tagged out-formals before fanning out over callers. Both probes
-        // reuse indices existing rules already require -- `formal_param` by (func, var), `call` by
-        // its target column -- so no new indices are built.
-        //
-        // No call string is needed: the head names the specific `insn`, so each call site of a
-        // factory gets its own tagged vertex; context sensitivity is inherent to this direction.
-        // `p` rides through unchanged (no `substitute_prefix`), so no path growth and no `paths`
-        // gate. `isout` holds for every negative formal index, so RETURN_INDEX and the multi-return
-        // slots all qualify, and by-ref out-params (a callee installing a target into a
-        // caller-owned object) fall out for free.
-        //
-        // Deliberately NOT seeding `resolvent` here: that is a callee-frame relation keyed on the
-        // callee's formals, so a tuple for a frame whose receiver is a local has no consumer, and
-        // it would bypass the `CallString::new().push(..)` construction. Downstream needs no
-        // change -- the transitive rule above walks this tuple from `call_arg(insn, -1)` to the
-        // receiver over the symmetric call-site `assign_like` edges, the local-dispatch bypass
-        // resolves the indirect call exactly, and if the receiver is passed onward rule 2.1
-        // derives the resolvent with a properly constructed call string.
-        call_target_assign_like(caller, cv, p.clone(), tgt) <--
-            call_target_assign_like(callee, v, p, tgt),
-            formal_param(callee, v, formal_ty),
-            if let Some(n) = v.as_formal(),
-            if isout(&n, *formal_ty, p),
-            call(caller, insn, callee),
-            critical_call(caller),
-            let cv = call_arg!(*insn, n);
-
-        critical_call(func_id) <-- callee_info(func_id, _, _, _, _);
-        critical_call(func_id) <--
-            critical_summary(tgt, _, _),
-            call(func_id, _, tgt);
+        include_source!(index_rules);
     }
-
-    // Declared-struct form (was `ascent_run!`) so we get `run_timeout`. Relation inputs that
-    // used to be inline `= <init>` initializers are set here instead, because the declared-struct
-    // `Default::default()` where ascent would otherwise place them has no access to these locals.
-    //
-    // The inputs are `collect`ed rather than assigned, which costs nothing here (`Vec` to `Vec`
-    // reuses the allocation) and is what `ascent_par!` needs, where a plain relation's physical
-    // store is a `boxcar::Vec` (a lock-free append-only vector) instead of a `std::vec::Vec`. So
-    // these lines hold for either macro.
-    let mut prog = IndexProg::default();
-    prog.formal_param = facts.formal_param.into_iter().collect();
-    prog.actual_param = facts.actual_param.into_iter().collect();
-    prog.call = call;
-    prog.call_target_assign = facts
-        .call_target_assign
-        .into_iter()
-        .map(|(site_id, vx, obj)| {
-            let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-            (func_id, vx, obj)
-        })
-        .collect();
-    prog.callee_info = facts
-        .callee_info
-        .into_iter()
-        .map(|(site_id, vx, dispatch_key)| {
-            let InsnSiteId { func_id, insn_id } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-            (func_id, insn_id, vx.0, vx.1, dispatch_key)
-        })
-        .collect();
-    prog.callee_resolvents = facts.callee_resolvents.into_iter().collect();
-    prog.summary = facts.summary.into_iter().collect();
-    prog.config = config_val.into_iter().collect();
-    // Seeding goes through the `FromRows` trait rather than naming a store type, so this line is
-    // the same under `ascent!` and `ascent_par!`: the field's type selects the serial `AssignTrie`
-    // or the concurrent `CAssignTrie` impl.
-    prog.__assign_like_ind_common = FromRows::from_rows(assign_like);
-    prog.prog_store = prog_store.into_iter().collect();
-    prog.alias_of_formal = alias_of_formal.into_iter().collect();
-    prog.model_paths = summary_paths.into_iter().collect();
-    prog.program_paths = program_paths.into_iter().collect();
+    ascent_par! {
+        #![measure_rule_times]
+        #![generate_run_timeout]
+        struct ParIndexProg;
+        include_source!(index_rules);
+    }
 
     // Optional wall-clock cap on the fixpoint, gated by env var so normal runs are unaffected
     // (default `Duration::MAX` == run to fixpoint, identical to the old `ascent_run!`). Setting
@@ -1448,77 +1468,143 @@ pub fn taint_index_with_config(
         .and_then(|s| s.parse::<u64>().ok())
         .map(std::time::Duration::from_secs)
         .unwrap_or(std::time::Duration::MAX);
-    let reached_fixpoint = prog.run_timeout(index_timeout);
-    if !reached_fixpoint {
-        log::warn!(
-            "index run TIMED OUT after {:?} without reaching fixpoint; results and stats below are PARTIAL",
-            index_timeout
-        );
-    }
-    log::debug!(
-        "[mem cp] ascent_run returned (transient input buffers dropped): {:.1} MB",
-        phys_footprint_mb()
-    );
-    log::debug!("index scc times: {}", prog.scc_times_summary());
-    // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
-    log::debug!("{}", prog.__locals_ind_common.heap_report());
-    log::debug!("{}", prog.__assign_like_ind_common.heap_report());
-    // The formatter reads these through the `Rows` trait, so this call is the same under `ascent!`
-    // (plain `Vec`s) and `ascent_par!` (`boxcar::Vec`s, with lattices as
-    // `boxcar::Vec<RwLock<..>>`): each field's own type selects the impl, and nothing is copied in
-    // either case.
-    log::trace!(
-        "hybrid inlining relations:\n{}",
-        HybridInliningRelations {
-            critical_summary: &prog.critical_summary,
-            resolvent: &prog.resolvent,
-            call_target_assign_like: &prog.call_target_assign_like,
-            context_assign: &prog.context_assign,
-            context_locals: &prog.context_locals,
-            context_summary: &prog.context_summary,
-            id_map,
+
+    // Everything from seeding the inputs to extracting the result is written once, here, and
+    // expanded once per engine. The two program types spell their fields identically, but each
+    // field's type differs by engine (`Vec` vs `boxcar::Vec`, `AssignTrie` vs `CAssignTrie`), so
+    // no one function signature covers both and a trait would only restate every field. The body
+    // captures this function's locals directly; the program type is its only parameter.
+    //
+    // Relation inputs that used to be inline `= <init>` initializers are set here instead,
+    // because the declared-struct `Default::default()` where ascent would otherwise place them
+    // has no access to these locals. They are `collect`ed rather than assigned, which costs
+    // nothing under `ascent!` (`Vec` to `Vec` reuses the allocation) and is what `ascent_par!`
+    // needs, where a plain relation's physical store is a `boxcar::Vec` (a lock-free append-only
+    // vector) instead of a `std::vec::Vec`.
+    macro_rules! run_engine {
+        ($prog_ty:ty) => {{
+            let mut prog = <$prog_ty>::default();
+        prog.formal_param = facts.formal_param.into_iter().collect();
+        prog.actual_param = facts.actual_param.into_iter().collect();
+        prog.call = call.into_iter().collect();
+        prog.call_target_assign = facts
+            .call_target_assign
+            .into_iter()
+            .map(|(site_id, vx, obj)| {
+                let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+                (func_id, vx, obj)
+            })
+            .collect();
+        prog.callee_info = facts
+            .callee_info
+            .into_iter()
+            .map(|(site_id, vx, dispatch_key)| {
+                let InsnSiteId { func_id, insn_id } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+                (func_id, insn_id, vx.0, vx.1, dispatch_key)
+            })
+            .collect();
+        prog.callee_resolvents = facts.callee_resolvents.into_iter().collect();
+        prog.summary = facts.summary.into_iter().collect();
+        prog.config = config_val.into_iter().collect();
+        // Seeding goes through the `FromRows` trait rather than naming a store type, so this line is
+        // the same under `ascent!` and `ascent_par!`: the field's type selects the serial `AssignTrie`
+        // or the concurrent `CAssignTrie` impl.
+        prog.__assign_like_ind_common = FromRows::from_rows(assign_like);
+        prog.prog_store = prog_store.into_iter().collect();
+        prog.alias_of_formal = alias_of_formal.into_iter().collect();
+        prog.model_paths = summary_paths.into_iter().collect();
+        prog.program_paths = program_paths.into_iter().collect();
+
+        let reached_fixpoint = prog.run_timeout(index_timeout);
+        if !reached_fixpoint {
+            log::warn!(
+                "index run TIMED OUT after {:?} without reaching fixpoint; results and stats below are PARTIAL",
+                index_timeout
+            );
         }
-    );
+        log::debug!(
+            "[mem cp] ascent_run returned (transient input buffers dropped): {:.1} MB",
+            phys_footprint_mb()
+        );
+        log::debug!("index scc times: {}", prog.scc_times_summary());
+        // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
+        log::debug!("{}", prog.__locals_ind_common.heap_report());
+        log::debug!("{}", prog.__assign_like_ind_common.heap_report());
+        // The formatter reads these through the `Rows` trait, so this call is the same under `ascent!`
+        // (plain `Vec`s) and `ascent_par!` (`boxcar::Vec`s, with lattices as
+        // `boxcar::Vec<RwLock<..>>`): each field's own type selects the impl, and nothing is copied in
+        // either case.
+        log::trace!(
+            "hybrid inlining relations:\n{}",
+            HybridInliningRelations {
+                critical_summary: &prog.critical_summary,
+                resolvent: &prog.resolvent,
+                call_target_assign_like: &prog.call_target_assign_like,
+                context_assign: &prog.context_assign,
+                context_locals: &prog.context_locals,
+                context_summary: &prog.context_summary,
+                id_map,
+            }
+        );
 
-    // `assign_like` is stored in the BYODS trie (`__assign_like_ind_common`); its physical
-    // relation is a `SeedVec` holding no tuples. Reconstruct the saved output Vec from the store,
-    // and take the row count from the store rather than the (empty) physical relation. Take the
-    // store by value so it drains (frees) as the output Vec fills — this reconstruction is the
-    // run's peak, so a draining rebuild keeps the transient to ~1×.
-    let assign_like_out = std::mem::take(&mut prog.__assign_like_ind_common).into_vec();
+        // `assign_like` is stored in the BYODS trie (`__assign_like_ind_common`); its physical
+        // relation is a `SeedVec` holding no tuples. Reconstruct the saved output Vec from the store,
+        // and take the row count from the store rather than the (empty) physical relation. Take the
+        // store by value so it drains (frees) as the output Vec fills — this reconstruction is the
+        // run's peak, so a draining rebuild keeps the transient to ~1×.
+        let assign_like_out = std::mem::take(&mut prog.__assign_like_ind_common).into_vec();
 
-    // `locals` lives in the trie (`__locals_ind_common`); its physical relation holds no
-    // tuples, so the distinct subjects come from the store's `(F, V)` outer keys — the same
-    // (func, var) key `num_variables` counts, so the two are directly comparable.
-    let reached_variables = prog.__locals_ind_common.num_reached_variables();
+        // `locals` lives in the trie (`__locals_ind_common`); its physical relation holds no
+        // tuples, so the distinct subjects come from the store's `(F, V)` outer keys — the same
+        // (func, var) key `num_variables` counts, so the two are directly comparable.
+        let reached_variables = prog.__locals_ind_common.num_reached_variables();
 
-    let stats = IndexStats {
-        initial_assign,
-        final_assign_like: assign_like_out.len(),
-        initial_formals,
-        final_locals: prog.locals.len(),
-        initial_call_target_assign,
-        final_call_target_assign_like: prog.call_target_assign_like.len(),
-        initial_summary,
-        final_summary: prog.summary.len(),
-        num_functions,
-        num_variables,
-        reached_variables,
-        hybrid_critical_summary: prog.critical_summary.len(),
-        hybrid_resolvent: prog.resolvent.len(),
-        hybrid_context_assign: prog.context_assign.len(),
-        hybrid_context_locals: prog.context_locals.len(),
-        hybrid_context_summary: prog.context_summary.len(),
-    };
-    stats.log();
+        let stats = IndexStats {
+            initial_assign,
+            final_assign_like: assign_like_out.len(),
+            initial_formals,
+            final_locals: prog.locals.len(),
+            initial_call_target_assign,
+            final_call_target_assign_like: prog.call_target_assign_like.len(),
+            initial_summary,
+            final_summary: prog.summary.len(),
+            num_functions,
+            num_variables,
+            reached_variables,
+            hybrid_critical_summary: prog.critical_summary.len(),
+            hybrid_resolvent: prog.resolvent.len(),
+            hybrid_context_assign: prog.context_assign.len(),
+            hybrid_context_locals: prog.context_locals.len(),
+            hybrid_context_summary: prog.context_summary.len(),
+        };
+        stats.log();
 
-    let result = IndexResult {
-        summary: prog.summary.into_iter().collect(),
-        assign_like: assign_like_out,
-        call_target_assign_like: prog.call_target_assign_like.into_iter().collect(),
-        paths: prog.paths.into_iter().collect(),
-        external_function: facts.external_function,
-        stats,
+        let result = IndexResult {
+            summary: prog.summary.into_iter().collect(),
+            assign_like: assign_like_out,
+            call_target_assign_like: prog.call_target_assign_like.into_iter().collect(),
+            paths: prog.paths.into_iter().collect(),
+            external_function: facts.external_function,
+            stats,
+        };
+            result
+        }};
+    }
+
+    let result = match parallelism {
+        Parallelism::Serial => run_engine!(IndexProg),
+        Parallelism::Threads(threads) => {
+            // A dedicated pool rather than rayon's global one, so `-j N` means exactly N index
+            // threads no matter what else in the process has touched rayon. The parallel program
+            // runs its rules with `rayon::scope` / `par_iter`, which pick up the pool they are
+            // `install`ed in.
+            let pool = ascent::rayon::ThreadPoolBuilder::new()
+                .num_threads(threads.get())
+                .thread_name(|i| format!("ctadl-index-{i}"))
+                .build()
+                .expect("spawning the index thread pool");
+            pool.install(move || run_engine!(ParIndexProg))
+        }
     };
     log::trace!("index result: {}", result.display(id_map));
     log::debug!(
@@ -1526,4 +1612,133 @@ pub fn taint_index_with_config(
         std::mem::size_of::<FlowVariable>()
     );
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::languages::tree_sitter_c::test_utils::{index_program, program_from_string};
+
+    /// A program that touches every part of the rules: direct calls, summaries, field-sensitive
+    /// flows, and enough indirect calls (function-pointer parameter, function pointer in a
+    /// struct field, one target reaching two critical sites) that the hybrid-inlining relations
+    /// and their call-string lattices all get rows.
+    const SRC: &str = r"
+        struct ops { int (*f)(int); int tag; };
+        int id(int p) { return p; }
+        int twice(int p) { return p + p; }
+        int apply(int (*f)(int), int x) { return f(x); }
+        int through(struct ops *o, int x) { return o->f(x); }
+        int wrap(int a, int b) {
+            struct ops o;
+            o.f = id;
+            o.tag = a;
+            int r = apply(twice, b);
+            int s = through(&o, r);
+            return s + apply(id, a) + o.tag;
+        }";
+
+    /// The output relations of one run, each sorted, so two runs compare as sets.
+    #[allow(clippy::type_complexity)]
+    fn canonical(
+        result: IndexResult,
+    ) -> (
+        Vec<FunctionSummary>,
+        Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
+        Vec<(FunctionId, FlowVariable, Path, CallTargetObject)>,
+        Vec<(Path,)>,
+        Vec<(FunctionId,)>,
+    ) {
+        let IndexResult {
+            mut summary,
+            mut assign_like,
+            mut call_target_assign_like,
+            mut paths,
+            mut external_function,
+            stats: _,
+        } = result;
+        summary.sort();
+        assign_like.sort();
+        call_target_assign_like.sort();
+        paths.sort();
+        external_function.sort();
+        (
+            summary,
+            assign_like,
+            call_target_assign_like,
+            paths,
+            external_function,
+        )
+    }
+
+    /// The two engines are one rule text under two macros, so they must agree on every
+    /// relation they return, and on the sizes of the internal ones they do not. Run the parallel
+    /// engine on more threads than the program has functions so the rules actually interleave.
+    #[test_log::test]
+    fn parallel_engine_matches_serial() {
+        let (program, _) = program_from_string(SRC);
+        let (facts, source_info, _) = index_program(program);
+        let id_map = Some(&source_info.sites);
+
+        let serial = taint_index_with_config(facts.clone(), IndexConfig::default(), id_map);
+        let parallel = taint_index_with_config(
+            facts,
+            IndexConfig {
+                parallelism: Parallelism::Threads(NonZeroUsize::new(8).unwrap()),
+                ..IndexConfig::default()
+            },
+            id_map,
+        );
+
+        // The internal relations first: a count that differs points straight at the rule group
+        // that diverged, which the output diff below would only show as a symptom.
+        let (s, p) = (&serial.stats, &parallel.stats);
+        assert_eq!(s.final_locals, p.final_locals, "locals");
+        assert_eq!(
+            s.reached_variables, p.reached_variables,
+            "reached variables"
+        );
+        assert_eq!(
+            s.hybrid_critical_summary, p.hybrid_critical_summary,
+            "critical_summary"
+        );
+        assert_eq!(s.hybrid_resolvent, p.hybrid_resolvent, "resolvent");
+        assert_eq!(
+            s.hybrid_context_assign, p.hybrid_context_assign,
+            "context_assign"
+        );
+        assert_eq!(
+            s.hybrid_context_locals, p.hybrid_context_locals,
+            "context_locals"
+        );
+        assert_eq!(
+            s.hybrid_context_summary, p.hybrid_context_summary,
+            "context_summary"
+        );
+        // The fixture only proves anything if the hybrid machinery actually ran.
+        assert!(s.hybrid_resolvent > 0, "fixture derived no resolvents");
+        assert!(
+            s.hybrid_context_assign > 0,
+            "fixture derived no context_assign rows"
+        );
+
+        assert_eq!(canonical(serial), canonical(parallel));
+    }
+
+    #[test]
+    fn jobs_convention() {
+        assert_eq!(Parallelism::from_jobs(1), Parallelism::Serial);
+        assert_eq!(
+            Parallelism::from_jobs(3),
+            Parallelism::Threads(NonZeroUsize::new(3).unwrap())
+        );
+        // `0` is "all cores": serial on a single core, parallel on that many otherwise.
+        let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        let expected = if cores > 1 {
+            Parallelism::Threads(NonZeroUsize::new(cores).unwrap())
+        } else {
+            Parallelism::Serial
+        };
+        assert_eq!(Parallelism::from_jobs(0), expected);
+    }
 }
