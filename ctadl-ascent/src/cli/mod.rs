@@ -22,7 +22,7 @@ use crate::error::{Error, ErrorContext};
 use crate::facts;
 use crate::facts::FlowVariable;
 use crate::index_engine::{
-    IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
+    IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo, taint_index_with_config,
 };
 use crate::languages::{apk_native, dex, jni, jvm, lua, pcode, tree_sitter_c, xapk};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
@@ -178,6 +178,9 @@ pub struct IndexOptions<'a> {
     pub prune_unreachable_cfg_nodes: bool,
     pub alias_rule: bool,
     pub dump_index_graph: Option<&'a Path>,
+    /// Which engine computes the flow relation, and on how many threads. Serial by default; see
+    /// [`Parallelism::from_jobs`] for the `-j N` convention.
+    pub parallelism: Parallelism,
 }
 
 impl Default for IndexOptions<'_> {
@@ -189,6 +192,7 @@ impl Default for IndexOptions<'_> {
             prune_unreachable_cfg_nodes: true,
             alias_rule: true,
             dump_index_graph: None,
+            parallelism: Parallelism::Serial,
         }
     }
 }
@@ -211,6 +215,7 @@ pub fn index(
         prune_unreachable_cfg_nodes,
         alias_rule,
         dump_index_graph,
+        parallelism,
     } = opts;
     use crate::index_engine::phys_footprint_mb;
     log::info!(
@@ -399,7 +404,10 @@ pub fn index(
         "[mem cp] after facts.try_save: {:.1} MB",
         phys_footprint_mb()
     );
-    let config = crate::index_engine::IndexConfig { alias_rule };
+    let config = crate::index_engine::IndexConfig {
+        alias_rule,
+        parallelism,
+    };
     log::info!("indexing (computing the flow relation)");
     let result = taint_index_with_config(facts, config, Some(&sites));
 

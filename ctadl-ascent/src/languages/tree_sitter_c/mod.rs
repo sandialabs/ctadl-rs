@@ -50,7 +50,7 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor, QueryMatch, Tree};
 
 #[cfg(test)]
-mod test_utils;
+pub(crate) mod test_utils;
 #[cfg(test)]
 mod testing_block_flow_ascii;
 

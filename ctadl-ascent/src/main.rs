@@ -6,6 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ctadl_ascent::cli;
 use ctadl_ascent::codegen::CallResolutionStrategy;
+use ctadl_ascent::index_engine::Parallelism;
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 
@@ -293,6 +294,14 @@ pub struct IndexArgs {
     /// Dump the index graph to a dot file
     #[arg(long)]
     pub dump_index_graph: Option<PathBuf>,
+
+    /// Number of threads to compute the flow relation with.
+    ///
+    /// `1`, the default, runs the serial index engine. Any larger value runs the parallel
+    /// engine on exactly that many threads. `0`, or `-j` with no value, uses every core the OS
+    /// reports. Both engines evaluate the same rules and derive the same relations.
+    #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
+    pub jobs: Option<usize>,
 }
 
 #[derive(Debug, Args)]
@@ -478,6 +487,7 @@ fn main() -> anyhow::Result<()> {
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 dump_index_graph: args.dump_index_graph.clone(),
+                jobs: None,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -622,6 +632,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 dump_index_graph: None,
+                jobs: None,
             };
             index_artifacts_to_store(&index_args)?;
         }
@@ -743,6 +754,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
             prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
             alias_rule: args.alias_rule.unwrap_or(true),
             dump_index_graph: args.dump_index_graph.as_deref(),
+            parallelism: Parallelism::from_jobs(args.jobs.unwrap_or(1)),
         },
     )?;
     Ok(())
