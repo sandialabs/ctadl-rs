@@ -188,7 +188,11 @@ use std::collections::BTreeMap;
 use ctadl_ir::ProgramInfo;
 use ctadl_ir::mir::call::VirtualMethodTable;
 
-pub mod registry;
+/// The ELF `RegisterNatives` scan, which ships in [`ctadl_pcode`] because it and the pcode
+/// import are one cycle: the scan needs Ghidra's image base and entry-point map, which only
+/// exist mid-`import_pcode`. This module reads the *file* that scan wrote, not the scanner, so
+/// the dependency here is only on its types. Re-exported so `jni::registry::…` still names it.
+pub use ctadl_pcode::jni_registry as registry;
 
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
 use crate::error::Error;
@@ -290,41 +294,12 @@ pub fn internal_class_name(class: &str) -> &str {
         .unwrap_or(class)
 }
 
-/// Splits a method descriptor's parameter list into individual type descriptors:
-/// `(Ljava/lang/String;[IJ)V` yields `["Ljava/lang/String;", "[I", "J"]`. Returns `None` if the
-/// descriptor is malformed.
+/// The JVM parameter descriptors in a method descriptor, in order.
 ///
-/// The scan stops at the `)` that terminates the parameter list rather than at the first `)` in the
-/// string, because the JVM's unqualified-name grammar forbids only `.;[/` inside a class name.
-pub fn descriptor_params(descriptor: &str) -> Option<Vec<&str>> {
-    let inner = descriptor.strip_prefix('(')?;
-    let bytes = inner.as_bytes();
-    let mut params = Vec::new();
-    let mut i = 0;
-    loop {
-        if *bytes.get(i)? == b')' {
-            return Some(params);
-        }
-        let start = i;
-        while *bytes.get(i)? == b'[' {
-            i += 1;
-        }
-        match *bytes.get(i)? {
-            b'L' => {
-                i += 1;
-                // A multi-byte UTF-8 sequence never contains a byte equal to `;`, so this both
-                // terminates correctly and leaves `i` on a char boundary.
-                while *bytes.get(i)? != b';' {
-                    i += 1;
-                }
-                i += 1;
-            }
-            b'Z' | b'B' | b'C' | b'S' | b'I' | b'J' | b'F' | b'D' => i += 1,
-            _ => return None,
-        }
-        params.push(&inner[start..i]);
-    }
-}
+/// Lives in [`ctadl_pcode::jni_registry`] rather than here because the registry scanner needs it
+/// to tell a `JNINativeMethod`'s descriptor slot from a pointer into arbitrary data, and the
+/// scanner sits a crate below this one. Re-exported so `jni::descriptor_params` still names it.
+pub use ctadl_pcode::jni_registry::descriptor_params;
 
 /// The parameter descriptor the long name mangles: the method descriptor with its parentheses and
 /// return type stripped.

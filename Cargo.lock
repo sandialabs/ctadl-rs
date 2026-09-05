@@ -1305,6 +1305,7 @@ dependencies = [
  "ctadl-import",
  "ctadl-ir",
  "ctadl-jvm",
+ "ctadl-pcode",
  "datafusion",
  "derive_builder",
  "dex-reader",
@@ -1436,6 +1437,28 @@ dependencies = [
  "log",
  "smallvec",
  "source-info",
+]
+
+[[package]]
+name = "ctadl-pcode"
+version = "0.1.2"
+dependencies = [
+ "ctadl-import",
+ "ctadl-ir",
+ "flate2",
+ "hashbrown 0.16.1",
+ "log",
+ "log-once",
+ "object",
+ "pcode-reader",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "source-info",
+ "tempfile",
+ "test-log",
+ "which",
 ]
 
 [[package]]

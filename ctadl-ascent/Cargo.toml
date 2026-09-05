@@ -24,6 +24,7 @@ ctadl-dex = { path = "../ctadl-dex" }
 ctadl-import = { path = "../ctadl-import", features = ["dex", "jvm", "pcode", "ts", "flowy"] }
 ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
 ctadl-jvm = { path = "../ctadl-jvm" }
+ctadl-pcode = { path = "../ctadl-pcode" }
 datafusion = "53"
 derive_builder = "0.20"
 dex-reader = { path = "../dex-reader" }

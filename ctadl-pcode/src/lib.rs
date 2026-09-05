@@ -1,6 +1,18 @@
-//! Ghidra Pcode language frontend
-//!
-//! Converts Ghidra pcode facts into CTADL IR.
+/*! Ghidra Pcode language front end.
+
+Converts Ghidra pcode facts into CTADL IR, and -- because the two are one cycle -- carries the
+`RegisterNatives` scanner with it.
+
+# Why the JNI registry lives here
+
+[`import_pcode`] calls [`jni_registry::scan_import`], and [`jni_registry`] calls
+[`ghidra::GhidraSource::detect`]. That is not incidental: the scan needs Ghidra's image base and
+entry-point map, which only exist mid-`import_pcode`. Splitting them would mean hoisting the
+`detect` guard into `import_pcode` and passing an `is_binary: bool` down, so the registry became
+a standalone ELF scanner -- about twenty lines, worth doing the day something wants to read the
+registry without pcode. Nothing does: `ctadl_ascent::languages::jni` reads the *file* the scan
+wrote, not the scanner.
+*/
 
 use std::ops::Deref;
 use std::path::Path;
@@ -19,7 +31,10 @@ use pcode_reader::PcodeFactsReader;
 
 // `pub(crate)` for `GhidraSource::detect`, which the JNI registry scan uses to tell an artifact
 // that is a binary on disk from a `ghidra://` URL or a `.gpr` project.
-pub(crate) mod ghidra;
+pub mod ghidra;
+
+/// The `RegisterNatives` scanner. See the module docs above for why it ships in this crate.
+pub mod jni_registry;
 
 /// This is hardcoded for now, but should be read from the facts
 const WORD_SIZE: i64 = 8;
@@ -30,7 +45,7 @@ pub fn ghidra_available() -> bool {
 }
 
 /// Import pcode facts from an artifact by running Ghidra and then converting the facts
-pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramInfo, Error> {
+pub fn import_pcode(import: &ctadl_import::project::ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.artifact_path;
     let import_path = import.import_path();
 
@@ -76,7 +91,7 @@ pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramIn
     // `ctx.process` has just populated the entry-point map every recovered `fnPtr` is looked up
     // in. Scanning is unconditional and costs milliseconds; `--no-jni-registry` ignores the
     // result at index time, which is what makes a clean A/B possible without re-importing.
-    crate::languages::jni::registry::scan_import(import, image_base, &ctx.entry_points)?;
+    jni_registry::scan_import(import, image_base, &ctx.entry_points)?;
 
     ctx.finish(builders)
 }

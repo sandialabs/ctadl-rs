@@ -1,0 +1,27 @@
+[package]
+name = "ctadl-pcode"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+ctadl-import = { path = "../ctadl-import", features = ["pcode"] }
+ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
+flate2 = "1"
+hashbrown = "0.16"
+log = "0.4"
+log-once = "0.4"
+object = { version = "0.37", default-features = false, features = ["read_core", "elf", "std"] }
+pcode-reader = { path = "../pcode-reader" }
+rayon = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+smallvec = "1"
+source-info = { path = "../source-info", features = ["serde"] }
+tempfile = "3"
+which = "6"
+
+[dev-dependencies]
+test-log = "0.2.19"
+
+[lints]
+workspace = true

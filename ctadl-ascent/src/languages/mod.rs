@@ -2,7 +2,6 @@ pub mod apk_native;
 pub mod flowy;
 pub mod jni;
 pub mod lua;
-pub mod pcode;
 pub mod tree_sitter_c;
 pub mod xapk;
 
@@ -14,3 +13,8 @@ pub use ctadl_jvm as jvm;
 /// The Dex front end, extracted to its own crate: `dex-reader` and nothing else. Re-exported
 /// here so `crate::languages::dex::…` still names it.
 pub use ctadl_dex as dex;
+
+/// The pcode front end, extracted to its own crate along with the `RegisterNatives` scanner it
+/// is one cycle with (`ctadl_pcode::jni_registry`; see that module for why they ship together).
+/// Re-exported here so `crate::languages::pcode::…` still names it.
+pub use ctadl_pcode as pcode;

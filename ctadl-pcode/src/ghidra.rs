@@ -167,7 +167,7 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
     let export_script_path = script_temp_dir.path().join("ExportPcode.java");
     fs::write(
         &export_script_path,
-        include_str!("../../../../pcode-reader/ExportPcode.java"),
+        include_str!("../../pcode-reader/ExportPcode.java"),
     )
     .err_context(|| format!("writing export script: {}", export_script_path.display()))?;
     let script_path = export_script_path.parent().unwrap().to_path_buf();
