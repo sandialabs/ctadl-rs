@@ -1,8 +1,8 @@
-/*! The reader half, end to end, with no front end in the process.
+/*! Tests the reading side from end to end, with no front end in the process.
 
-That is the point of the test as much as of the crate: everything below runs against a store
-written and read by `ctadl-import` alone -- no parser, no engine -- which is all a downstream
-consumer's dependency on CTADL has to be.
+That is the point of these tests, and of the crate. Everything below runs against a store that
+`ctadl-import` alone wrote and read, with no parser and no engine. That is all another program
+needs to depend on in order to read CTADL imports.
 */
 
 use std::sync::Once;
@@ -12,7 +12,8 @@ use ctadl_import::{SourceInfoMode, load_import, open_import, save_program_info};
 use ctadl_ir::ProgramInfo;
 use ctadl_ir::ssa;
 
-/// The store root is process-wide and settable once, so every test in this binary shares one.
+/// The store root belongs to the whole process and can be set only once, so every test in this
+/// binary shares a single store.
 static INIT: Once = Once::new();
 
 fn store() {
@@ -22,7 +23,7 @@ fn store() {
     });
 }
 
-/// Writes an empty import named `name`, whose "artifact" is a file in `dir`.
+/// Writes an empty import called `name`. Its artifact is a file in `dir`.
 fn write_import(name: &str, dir: &std::path::Path) -> ArtifactImport {
     let artifact = dir.join(format!("{name}.dex"));
     std::fs::write(&artifact, b"not really a dex").unwrap();
@@ -31,8 +32,8 @@ fn write_import(name: &str, dir: &std::path::Path) -> ArtifactImport {
     import
 }
 
-/// `save_program_info` then `open_import`: the round trip a consumer gets without naming the
-/// store layout or the bitcode filenames itself.
+/// Calls `save_program_info` and then `open_import`. This is the round trip another program
+/// gets without having to know the store layout or the bitcode filenames.
 #[test]
 fn a_saved_import_opens_by_name() {
     store();
@@ -41,12 +42,12 @@ fn a_saved_import_opens_by_name() {
 
     let opened = open_import("round_trip", ssa::Pipeline::index_default()).unwrap();
     assert!(opened.program.functions.is_empty());
-    // Source info is skipped by `open_import`; `load_import` is where a caller asks for it.
+    // `open_import` does not read source info. A caller who wants it calls `load_import`.
     assert_eq!(opened.source_info.spans.len(), 0);
 }
 
-/// The same import, addressed by its directory rather than its name. This is what lets a
-/// consumer read a store it did not create.
+/// Opens the same import by its directory instead of by its name. This is what lets a program
+/// read a store it did not create.
 #[test]
 fn a_saved_import_opens_by_directory() {
     store();
@@ -58,8 +59,9 @@ fn a_saved_import_opens_by_directory() {
     assert!(opened.program.functions.is_empty());
 }
 
-/// A name that is neither a directory nor an import in this store fails saying where it looked.
-/// The store root is nearly always the answer -- it is the wrong `--store`.
+/// A name that is neither a directory nor an import in this store fails with an error that
+/// says where it looked. Naming the store root is usually enough, because the real problem is
+/// almost always a wrong `--store`.
 #[test]
 fn an_unknown_name_names_the_store_it_searched() {
     store();
@@ -69,9 +71,9 @@ fn an_unknown_name_names_the_store_it_searched() {
     assert!(message.contains("imports"), "{message}");
 }
 
-/// [`load_import`] hands back the IR as the front end wrote it; [`open_import`] is that plus the
-/// pipeline. Both must agree on an empty program, which is the cheapest way to say that
-/// `open_import` is not doing anything else on the way through.
+/// [`load_import`] returns the IR as the front end wrote it. [`open_import`] does the same and
+/// then runs the pipeline. On an empty program the two have to agree, which is a cheap way to
+/// check that `open_import` does nothing else along the way.
 #[test]
 fn load_and_open_agree_before_any_pass_has_work_to_do() {
     store();

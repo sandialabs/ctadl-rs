@@ -8,8 +8,9 @@ ctadl-import = { path = "../ctadl-import" }
 ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
 log = "0.4"
 
-# The languages. Each is optional and each carries the matching `ctadl-import` error variants,
-# so a consumer that reads only Dex builds no tree-sitter grammar and no Ghidra plumbing.
+# The languages. Each one is optional, and each one brings in the matching `ctadl-import` error
+# variants. A program that reads only Dex therefore builds no tree-sitter grammar and no Ghidra
+# support.
 ctadl-c = { path = "../ctadl-c", optional = true }
 ctadl-dex = { path = "../ctadl-dex", optional = true }
 ctadl-flowy = { path = "../ctadl-flowy", features = ["serde"], optional = true }
@@ -17,21 +18,23 @@ ctadl-jvm = { path = "../ctadl-jvm", optional = true }
 ctadl-lua = { path = "../ctadl-lua", optional = true }
 ctadl-pcode = { path = "../ctadl-pcode", optional = true }
 
-# The container formats read the APK/bundle central directory directly. `dex-reader::apk` is
-# already where that lives, so `apk` gets it whether or not the Dex lowering is wanted.
+# The container formats read the ZIP directory of an APK or a bundle themselves. That code is
+# already in `dex-reader::apk`, so the `apk` feature pulls it in whether or not the Dex lowering
+# is wanted.
 bitcode = { version = "0.6", features = ["serde"], optional = true }
 dex-reader = { path = "../dex-reader", optional = true }
 
 [features]
-# `xapk` is in the default set where the plan left it out: a bundle is a zip of APKs and
-# `dex_reader::apk` already reads it, so enabling it costs no dependency -- and leaving it off
-# by default would mean its unit tests never ran under `cargo test`.
+# `xapk` is on by default, even though the plan left it off. A bundle is a ZIP file of APKs,
+# and `dex_reader::apk` already reads that, so turning it on adds no dependency. Leaving it off
+# would also mean its unit tests never ran under `cargo test`.
 default = ["dex", "jvm", "apk", "xapk"]
 dex = ["dep:ctadl-dex", "ctadl-import/dex"]
 jvm = ["dep:ctadl-jvm", "ctadl-import/jvm"]
-# The Dex half of an APK, plus the native-library extraction. Lowering those libraries needs
-# `pcode` as well; without it the extraction reports that this build has no native front end and
-# imports the Java half alone, which is exactly what it already does on a machine with no Ghidra.
+# Reads the Dex half of an APK and extracts its native libraries. Turning those libraries into
+# IR needs `pcode` as well. Without `pcode`, the extraction step reports that this build has no
+# native front end and imports the Java half on its own. That is what already happens on a
+# machine with no Ghidra.
 apk = ["dex", "dep:dex-reader"]
 xapk = ["apk"]
 pcode = ["dep:ctadl-pcode", "ctadl-import/pcode"]

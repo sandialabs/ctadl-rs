@@ -833,7 +833,8 @@ pub fn parse_c_files(files: &[(String, String)]) -> Result<(Program, String), Er
     Ok((lowered.program, lowered.marked_up))
 }
 
-/// Import C source at `path` into a [`ProgramInfo`], ready for `ctadl_frontends::import_artifact`.
+/// Imports the C source at `path` into a [`ProgramInfo`], ready for
+/// `ctadl_frontends::import_artifact` to use.
 ///
 /// `path` may be a single `.c`/`.h` file or a directory tree of them. Every file is a
 /// translation unit of its own, all lowered into one program where cross-unit references

@@ -1,18 +1,20 @@
-//! The error type shared by the store and by every front end.
+//! The error type that the store and every front end share.
 //!
-//! See the crate-level docs for the rule that keeps this type and
-//! `ctadl_ascent::error::Error` from colliding: a file imports one [`ErrorContext`] or the
-//! other, never both, and the `#[from]` on `ctadl_ascent::Error::Import` bridges them at the `?`.
+//! There is a second error type, `ctadl_ascent::error::Error`. The crate-level docs explain the
+//! rule that keeps the two apart: a file imports one [`ErrorContext`] trait or the other, never
+//! both, and the `#[from]` on `ctadl_ascent::Error::Import` converts between the two error types
+//! wherever `?` is used.
 
 use std::path::PathBuf;
 use thiserror::Error;
 
-/// Errors raised while reading an artifact, or while reading and writing the CTADL store.
+/// Errors raised while reading an artifact, or while reading or writing the CTADL store.
 ///
-/// One enum rather than one per language, because the variants are already shared vocabulary:
-/// the container formats in `ctadl-frontends` construct [`Error::Dex`] without being the Dex
-/// front end, and [`ErrorContext`] is hardwired to *this* type, so every `.err_context(…)` in
-/// every front end keeps compiling with no per-language wrapping.
+/// This is one enum for all languages, rather than one per language, for two reasons. The
+/// variants are already shared: the container formats in `ctadl-frontends` build an
+/// [`Error::Dex`] even though they are not the Dex front end. And [`ErrorContext`] is tied to
+/// this one type, so every `.err_context(…)` call in every front end works without wrapping the
+/// error in a per-language type first.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("i/o error")]
@@ -55,9 +57,10 @@ pub enum Error {
     #[error("tree-sitter parse error: {0}")]
     TreeSitterParse(String),
 
-    /// The artifact was read fine and simply held no code -- a split APK carrying only
-    /// resources, say. Distinct from a decoding error: nothing is malformed, there is
-    /// just nothing here to analyze, and the message says where to look instead.
+    /// The artifact was read without trouble and simply contained no code. A split APK that
+    /// holds only resources is one example. This is not a decoding error: nothing is
+    /// malformed, there is just nothing here to analyze. The message says where to look
+    /// instead.
     #[error("nothing to import: {message}")]
     NothingToImport { message: String },
     #[error(
@@ -71,10 +74,10 @@ pub enum Error {
         expected: String,
         artifact_path: PathBuf,
     },
-    /// No index has been written for the project yet. Distinct from
-    /// [`Error::IncompatibleIndex`], which is about an index that exists and cannot be read.
-    /// With model files in hand `ctadl query` does not raise this at all: it checks them
-    /// against the imports instead (see `ctadl_ascent::cli::query`).
+    /// No index has been written for the project yet. This is different from
+    /// [`Error::IncompatibleIndex`], which means an index exists but cannot be read. `ctadl
+    /// query` never raises this error when it is given model files, because it checks those
+    /// files against the imports instead. See `ctadl_ascent::cli::query`.
     #[error(
         "project '{project}' has no index; run `ctadl index {project}` first. \
          With `--models` given, `ctadl query {project}` reports what those files match in the \
@@ -98,8 +101,8 @@ pub enum Error {
     },
 }
 
-/// Inspired by `anyhow`'s `Context`, this trait provides a method to attach context to a CTADL
-/// error. Unlike anyhow, it just uses our error types to do so.
+/// Adds context to a CTADL error. The idea comes from `anyhow`'s `Context` trait, but this one
+/// works with our own error types instead of `anyhow`'s.
 ///
 /// ```
 /// use ctadl_import::error::{Error, ErrorContext};

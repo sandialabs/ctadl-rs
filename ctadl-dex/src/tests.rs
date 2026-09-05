@@ -131,7 +131,8 @@ fn const_wide32_assign() {
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 5 + i);
         assert_eq!(local_name(&locals, var), expected_reg);
-        // Sign-extended, not zero-extended: 0xdeadbeef as an i32 is negative.
+        // The value is sign-extended, not zero-extended, so 0xdeadbeef read as an i32 is
+        // negative.
         assert_eq!(exp, &Exp::new_int(0xdeadbeefu32 as i32 as i64));
     }
 }
@@ -180,8 +181,9 @@ fn const_high16_assign() {
     assert_eq!(exp, &Exp::new_int(-2147483648));
 }
 
-/// The point of `Exp::Int`: one value, one representation, whichever opcode produced it. Under
-/// the byte encoding these were `[0x01]` and `[0x00, 0x01]` -- two distinct constants.
+/// This is what `Exp::Int` is for: one value has one representation, no matter which opcode
+/// produced it. Under the old byte encoding these two were `[0x01]` and `[0x00, 0x01]`, which
+/// counted as two different constants.
 #[test]
 fn same_value_from_different_opcodes_is_one_constant() {
     let (four, _) = assign_from(Instruction::Const4(Format11n { a: Reg(0), lit: 1 }));

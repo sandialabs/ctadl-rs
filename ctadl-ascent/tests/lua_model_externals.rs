@@ -1,21 +1,21 @@
-//! A model file can name a Lua external.
+//! Checks that a model file can name a Lua external.
 //!
-//! The one Lua test that needs the engine -- the model layer's match index and its JSON ingest
-//! -- so it lives here rather than in [`ctadl_lua`], which would need `ctadl-ascent` as a
-//! dev-dependency to hold it. The rest of the Lua suite is pure IR-shape checks, and sits in the
-//! front end beside what it tests.
+//! This is the only Lua test that needs the engine, because it uses the model layer's match
+//! index and its JSON reader. That is why it lives here instead of in [`ctadl_lua`], which
+//! would have to take `ctadl-ascent` as a dev-dependency to hold it. The rest of the Lua tests
+//! only check the shape of the IR, and they live in the front end next to the code they test.
 //!
-//! It imports from a real file rather than calling the crate's in-memory `lower_lua_units`,
-//! because that helper is private and there is no reason to widen it for one test: a file named
-//! `m.lua` is the module `m` the in-memory version would construct by hand.
+//! The test imports a real file instead of calling the crate's in-memory `lower_lua_units`.
+//! That helper is private, and there is no reason to make it public for one test: a file named
+//! `m.lua` gives the same module `m` that the in-memory version would build by hand.
 
 use ctadl_ascent::models::{
     ImportScope, ProgramMatchIndex, ProgramModelMatches, json::ModelGeneratorIngest,
 };
 
-/// The externals column is what makes a Lua propagation model file do anything: before it,
-/// every match index was built from the lowered definitions only, so a model naming a stdlib
-/// function matched nothing.
+/// The externals column is what lets a Lua propagation model file have any effect. Before it
+/// existed, a match index was built only from the functions defined in the file, so a model
+/// that named a standard-library function matched nothing.
 #[test]
 fn a_model_can_name_a_lua_external() {
     let dir = tempfile::tempdir().expect("tempdir");

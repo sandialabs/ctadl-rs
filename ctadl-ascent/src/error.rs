@@ -169,17 +169,18 @@ impl std::fmt::Display for JsonModelErrors {
     }
 }
 
-/// CTADL's engine-side error.
+/// The error type for the CTADL engine.
 ///
-/// Its import-side counterpart is [`ctadl_import::Error`] -- everything a front end or the
-/// store can raise -- which arrives here through [`Error::Import`]. Two enums rather than one is
-/// what lets a consumer read an import without building datafusion, ascent and tree-sitter; see
-/// `ctadl_import`'s module docs for the rule that keeps the two [`ErrorContext`] traits from
-/// colliding.
+/// The matching type on the import side is [`ctadl_import::Error`], which covers everything a
+/// front end or the store can raise. Those errors reach this type through [`Error::Import`].
+/// Having two enums rather than one is what lets a program read an import without building
+/// datafusion, ascent and tree-sitter. The module docs for `ctadl_import` give the rule that
+/// keeps the two [`ErrorContext`] traits out of each other's way.
 #[derive(Debug, Error)]
 pub enum Error {
-    /// Anything raised while reading an artifact or the store. `transparent` so a caller
-    /// renders the import-side chain itself, with no wrapper layer in the message.
+    /// Any error raised while reading an artifact or the store. It is marked `transparent`, so
+    /// a caller prints the underlying import error directly, with no extra wrapper text in the
+    /// message.
     #[error(transparent)]
     Import(#[from] ctadl_import::Error),
     #[error("parquet error")]
@@ -207,12 +208,12 @@ pub enum Error {
     },
 }
 
-/// Routes a leaf error type through [`Error::Import`].
+/// Converts an underlying error type into an [`Error`] by way of [`Error::Import`].
 ///
-/// These are the types `ctadl_import::Error` takes a `#[from]` on. Without the bridge, every
-/// `?` and every `.err_context(...)` in the engine half that starts from one of them would have
-/// to name `ctadl_import::Error` explicitly -- which is churn that says nothing, since there is
-/// exactly one way for such an error to become an [`Error`].
+/// These are the types that `ctadl_import::Error` declares `#[from]` on. Without this macro,
+/// every `?` and every `.err_context(...)` in the engine that starts from one of these types
+/// would have to name `ctadl_import::Error` in the code. That would add noise and say nothing,
+/// because there is only one way such an error can become an [`Error`].
 macro_rules! from_import {
     ($($t:ty),* $(,)?) => {
         $(impl From<$t> for Error {

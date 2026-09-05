@@ -1621,10 +1621,11 @@ mod tests {
     use crate::index_engine::source_info::IndexSourceInfo;
     use ctadl_ir::ProgramInfo;
 
-    /// Lowers one C translation unit. This and [`index_program`] are the engine's own test
-    /// support. `ctadl-c` has near-identical helpers, but the engine keeps its own thirty lines
-    /// rather than reaching into a front end's private internals: the crate graph points the
-    /// other way, and only a dev-dependency cycle in *both* directions would let it.
+    /// Lowers one C translation unit. This function and [`index_program`] are test helpers
+    /// that belong to the engine. `ctadl-c` has almost the same helpers, but the engine keeps
+    /// its own thirty lines instead of reaching into a front end's private code. The crates
+    /// depend on each other in the other direction, and sharing them would need a
+    /// dev-dependency cycle in both directions.
     fn program_from_string(src: &str) -> (ctadl_ir::Program, String) {
         let (program, failed, dump) =
             ctadl_c::parse_c_program(src).expect("Failed to parse C program.");
@@ -1636,7 +1637,8 @@ mod tests {
         (program, dump)
     }
 
-    /// SSA -> codegen -> taint index, keeping the facts the caller needs for a second run.
+    /// Runs SSA, then code generation, then the taint index. Returns the facts the caller
+    /// needs in order to run it again.
     fn index_program(program: ctadl_ir::Program) -> (IndexFacts, IndexSourceInfo) {
         let mut program_info = ProgramInfo {
             program,

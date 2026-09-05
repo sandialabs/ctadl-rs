@@ -30,15 +30,17 @@ use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
 use ctadl_ir::ssa;
 
-/// The store writer, re-exported where the CLI calls it from. Its reader sibling
-/// [`ctadl_import::load_import`] is public beside it, so a downstream consumer of an import goes
-/// through the version check instead of hand-rolling the store layout.
+/// Writes an import to the store. Re-exported here, where the command-line code calls it. The
+/// matching reader, [`ctadl_import::load_import`], is public next to it, so other code can read
+/// an import through the format-version check instead of working out the store layout for
+/// itself.
 pub use ctadl_import::save_program_info;
 use ctadl_import::{SourceInfoMode, load_import};
 
-/// The import dispatch, re-exported where the CLI calls it from. It lives in
-/// [`ctadl_frontends`]: the `match import.language` is not the engine's business, and keeping it
-/// below the engine is what lets a consumer that reads only Dex build neither.
+/// Picks a front end for an artifact and imports it. Re-exported here, where the command-line
+/// code calls it. The code itself lives in [`ctadl_frontends`], because choosing a front end by
+/// language is not the engine's job. Keeping it in a crate below the engine is what lets a
+/// program that reads only Dex build neither the engine nor the other front ends.
 pub use ctadl_frontends::{ImportOptions, import_and_save as import, import_artifact};
 
 /// How to perform one index, beyond the project and the model files.

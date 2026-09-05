@@ -259,9 +259,10 @@ pub fn import_native_libs(
     Ok(names)
 }
 
-/// Whether this build can lower a native library at all: it needs the pcode front end compiled
-/// in *and* Ghidra on the machine. Both failures degrade the same way -- the Java half is
-/// imported and the libraries are skipped with one clear line -- so they are one predicate.
+/// Says whether this build can turn a native library into IR at all. That needs two things: the
+/// pcode front end compiled in, and Ghidra installed on the machine. Missing either one leads
+/// to the same outcome, which is that the Java half is imported and the libraries are skipped
+/// with one line of explanation. So both are checked here together.
 #[inline]
 fn native_frontend_available() -> bool {
     #[cfg(feature = "pcode")]
@@ -274,7 +275,7 @@ fn native_frontend_available() -> bool {
     }
 }
 
-/// Why [`native_frontend_available`] said no, for the one line the user sees.
+/// The reason [`native_frontend_available`] returned false, written for the user to read.
 #[cfg(feature = "pcode")]
 const NO_NATIVE_FRONTEND: &str =
     "Ghidra was not found (set GHIDRA_HOME or put `ghidra` on PATH to analyze them)";
@@ -282,10 +283,11 @@ const NO_NATIVE_FRONTEND: &str =
 const NO_NATIVE_FRONTEND: &str =
     "this build was compiled without ctadl-frontends' `pcode` feature";
 
-/// Disassembles one extracted library into the store.
+/// Disassembles one extracted library and writes it to the store.
 ///
-/// Split out so the `pcode` feature gates exactly one function rather than the extraction loop
-/// around it. Without the feature, [`import_native_libs`] returns before any caller gets here.
+/// This is a separate function so that the `pcode` feature has to switch out only this one
+/// function, and not the extraction loop around it. When the feature is off,
+/// [`import_native_libs`] returns before anything calls this.
 #[cfg(feature = "pcode")]
 fn lower_native(child: &ArtifactImport) -> Result<(), Error> {
     let program_info = ctadl_pcode::import_pcode(child)?;

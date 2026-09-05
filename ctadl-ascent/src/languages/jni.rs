@@ -188,10 +188,11 @@ use std::collections::BTreeMap;
 use ctadl_ir::ProgramInfo;
 use ctadl_ir::mir::call::VirtualMethodTable;
 
-/// The ELF `RegisterNatives` scan, which ships in [`ctadl_pcode`] because it and the pcode
-/// import are one cycle: the scan needs Ghidra's image base and entry-point map, which only
-/// exist mid-`import_pcode`. This module reads the *file* that scan wrote, not the scanner, so
-/// the dependency here is only on its types. Re-exported so `jni::registry::…` names it.
+/// Scans an ELF file for `RegisterNatives` calls. The code lives in [`ctadl_pcode`] because it
+/// needs Ghidra's image base and its map of entry points, and those exist only while
+/// `import_pcode` is running. This module uses the file that the scan wrote, not the scanner
+/// itself, so all it needs from that crate is the types. Re-exported so the name
+/// `jni::registry::…` works here.
 pub use ctadl_pcode::jni_registry as registry;
 
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
@@ -294,11 +295,12 @@ pub fn internal_class_name(class: &str) -> &str {
         .unwrap_or(class)
 }
 
-/// The JVM parameter descriptors in a method descriptor, in order.
+/// Returns the JVM parameter descriptors in a method descriptor, in order.
 ///
-/// Lives in [`ctadl_pcode::jni_registry`] rather than here because the registry scanner needs it
-/// to tell a `JNINativeMethod`'s descriptor slot from a pointer into arbitrary data, and the
-/// scanner sits a crate below this one. Re-exported so `jni::descriptor_params` names it.
+/// The code lives in [`ctadl_pcode::jni_registry`] rather than here, because the registry
+/// scanner uses it to tell a `JNINativeMethod`'s descriptor field from a pointer into unrelated
+/// data, and that scanner is in a crate below this one. Re-exported so the name
+/// `jni::descriptor_params` works here.
 pub use ctadl_pcode::jni_registry::descriptor_params;
 
 /// The parameter descriptor the long name mangles: the method descriptor with its parentheses and

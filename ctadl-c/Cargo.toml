@@ -15,13 +15,15 @@ streaming-iterator = { version = "0.1", features = ["alloc"] }
 tree-sitter = "0.26"
 tree-sitter-c = "0.24"
 
-# The engine, for tests only. Cargo permits a cycle through dev-dependencies, and this is what
-# it is for: 143 of the 264 tests in `tests.rs` call `index_program`/`get_summary`/`check_flow`,
-# i.e. the datalog engine, and they are the regression suite for the C front end's *lowering* --
-# splitting them out would mean `pub`-ing whatever they reach through `super::` and moving 5,000
-# lines to say the same thing. The cost is that `cargo test -p ctadl-c` builds the engine, and
-# that the cycle must be broken before either crate could be published with a path-less version.
-# Both are acceptable today; see `ctadl-lib-update.md` §1.2 for the two alternatives.
+# The engine, used by the tests only. This makes a dependency cycle, which Cargo allows for
+# dev-dependencies. It is needed because 143 of the 264 tests in `tests.rs` call
+# `index_program`, `get_summary` or `check_flow`, all of which run the datalog engine. Those
+# tests check the C front end's lowering, so moving them into another crate would mean making
+# whatever they reach through `super::` public, and moving 5,000 lines of test code away from
+# the code it tests. The cost of the cycle is that `cargo test -p ctadl-c` builds the engine,
+# and that the cycle has to be broken before either crate can be published with a version
+# instead of a path. Both are fine for now. See `ctadl-lib-update.md` section 1.2 for the two
+# alternatives.
 [dev-dependencies]
 ctadl-ascent = { path = "../ctadl-ascent" }
 env_logger = "0.11"

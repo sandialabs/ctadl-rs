@@ -678,14 +678,15 @@ impl Visitor for SsaCheck {
 //    log::trace!("irreducible df: {:#?}", df);
 //}
 
-/// The cleanup passes are documented as no-ops on already-preprocessed input -- it is what lets
-/// `ctadl index` run them over a flowy import, which arrives in SSA form already. Pin that here
-/// so the claim is checked rather than believed.
+/// The cleanup passes are documented as doing nothing to a program that has already been
+/// through them. That is what lets `ctadl index` run them over a flowy import, which is already
+/// in SSA form. This test checks the claim instead of taking it on trust.
 ///
-/// Note what is *not* asserted: [`transform`] states a precondition that the function is not
-/// already in SSA form, and it means it -- `complete` forwards returns into a fresh exit block
-/// on every run, so re-running the full [`Pipeline::index_default`] grows the CFG. The
-/// pipeline is idempotent in exactly the sense the passes claim to be, and no further.
+/// Note what this does not check. [`transform`] requires that the function is not already in
+/// SSA form, and it means it: `complete` moves returns into a new exit block every time it
+/// runs, so running the whole [`Pipeline::index_default`] a second time makes the control-flow
+/// graph bigger. Running the pipeline twice is safe only for the passes that say they are safe
+/// to repeat.
 #[test]
 fn test_pipeline_cleanups_are_noops_after_index_default() {
     let cleanups = Pipeline {
@@ -694,8 +695,8 @@ fn test_pipeline_cleanups_are_noops_after_index_default() {
     };
     for mut program in [program_f(), program_h()] {
         run_pipeline(&mut program, Pipeline::index_default());
-        // `Program` is not `PartialEq`; its `Display` is the full IR dump, which is what an
-        // "unchanged" claim about a pass pipeline means anyway.
+        // `Program` does not implement `PartialEq`. Printing it gives the full IR dump, and
+        // comparing dumps is what "the passes changed nothing" means here anyway.
         let once = program.to_string();
         run_pipeline(&mut program, cleanups);
         assert_eq!(
@@ -711,7 +712,8 @@ fn test_pipeline_cleanups_are_noops_after_index_default() {
     }
 }
 
-/// `tag()` is provenance, so it has to distinguish the pipelines a report might compare.
+/// `tag()` records which passes ran, so it has to give different names to pipelines that a
+/// report might compare.
 #[test]
 fn test_pipeline_tag() {
     assert_eq!(Pipeline::index_default().tag(), "dt+co+ssa(prune)+cp");
@@ -721,11 +723,12 @@ fn test_pipeline_tag() {
     );
     assert_eq!(Pipeline::ssa_only().tag(), "ssa(prune)");
     assert_eq!(Pipeline::none().tag(), "none");
-    // Pruning without SSA does nothing, and the tag says so rather than implying a pass ran.
+    // Pruning does nothing without SSA, and the tag says so instead of suggesting that a pass
+    // ran.
     assert_eq!(Pipeline::none().prune(true).tag(), "none");
 }
 
-/// `Pipeline::none()` really runs nothing.
+/// Checks that `Pipeline::none()` really runs no passes.
 #[test]
 fn test_pipeline_none_is_identity() {
     let mut program = program_f();

@@ -1,9 +1,10 @@
 /*! Dex language front end.
 
-Converts dex/apk into CTADL IR: artifact to [`ctadl_ir::ProgramInfo`], and nothing else. No
-store, no dispatch, no engine. The APK's zip and `classes*.dex` entry handling is
-`dex_reader::apk`'s; an APK's *native* libraries are a different front end's problem and are
-handled a level up, in `ctadl-frontends`.
+Turns a dex file or an APK into CTADL IR. It takes an artifact and returns a
+[`ctadl_ir::ProgramInfo`], and does nothing else: it does not touch the store, choose a front
+end, or run the engine. Reading the APK's ZIP structure and its `classes*.dex` entries is
+`dex_reader::apk`'s job. An APK's native libraries belong to a different front end, and are
+handled one level up, in `ctadl-frontends`.
 */
 
 use std::fs::File;

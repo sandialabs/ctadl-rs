@@ -1,7 +1,8 @@
 /*! JVM (.jar and .class) language front end.
 
-Artifact to [`ctadl_ir::ProgramInfo`], and nothing else: no store, no dispatch, no engine. The
-`.class`/`.jar` container handling is `jvm-reader`'s; what is here is the lowering to MIR.
+Takes an artifact and returns a [`ctadl_ir::ProgramInfo`], and does nothing else: it does not
+touch the store, choose a front end, or run the engine. Reading `.class` and `.jar` files is
+`jvm-reader`'s job. What lives here is the lowering to MIR.
 */
 // Mostly copied from the dex language frontend
 

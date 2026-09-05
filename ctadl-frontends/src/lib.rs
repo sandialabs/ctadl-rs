@@ -1,30 +1,33 @@
-/*! The dispatch: an artifact, whatever its language, to CTADL IR.
+/*! Picks a front end for an artifact and turns it into CTADL IR.
 
-Below this crate sit the language front ends, one crate each, none of which knows about any
-other. Above it sits `ctadl-ascent`, the engine. What lives here is the part that is neither: the
-`match import.language` that chooses a front end, and the two *container* formats that are
-dispatch rather than a language --
+The language front ends sit below this crate, one crate per language. None of them knows about
+the others. The engine, `ctadl-ascent`, sits above. This crate holds the part in between: the
+`match import.language` that picks a front end, plus the two container formats, which are ways
+of packaging other artifacts rather than languages of their own:
 
-* an APK, whose Java half is Dex and whose native half is a set of `.so` files each imported
-  through the pcode front end ([`apk_native`]);
-* an app bundle (`.xapk`), which is a ZIP of split APKs, each imported recursively ([`xapk`]).
+* an APK. Its Java half is Dex. Its native half is a set of `.so` files, each imported through
+  the pcode front end ([`apk_native`]).
+* an app bundle (`.xapk`), which is a ZIP file of split APKs. Each one is imported recursively
+  ([`xapk`]).
 
-Neither could live in `ctadl-dex` without dragging Ghidra into a crate whose whole point is not
-having it.
+Neither one can live in `ctadl-dex`, because that would pull Ghidra into a crate that exists in
+order to avoid it.
 
 # Features
 
-A consumer states what it reads. `default = ["dex", "jvm", "apk"]`; `pcode`, `lua`, `c`,
-`xapk` and `flowy` are opt-in, and each pulls in exactly one front-end crate plus the matching
-`ctadl-import` error variants. [`ArtifactLanguage`] stays whole
-whatever is enabled -- it is an enum, it costs nothing, and `--help` should keep naming every
-language the tool knows about. What the features gate is the *dispatch arms*: a disabled
-language reports [`Error::NothingToImport`] naming the
-feature that would enable it, rather than failing to parse the flag.
+A program that uses this crate says which languages it reads. The default set is `dex`, `jvm`
+and `apk`. `pcode`, `lua`, `c`, `xapk` and `flowy` are off unless asked for. Each one adds a
+single front-end crate and the matching `ctadl-import` error variants.
 
-`apk` implies `dex` but not `pcode`. An APK imported without `pcode` keeps its Java half and
-reports that this build has no native front end -- the same shape as an APK imported on a
-machine with no Ghidra, which is already a supported and common case.
+[`ArtifactLanguage`] always lists every language, whatever is enabled. It is an enum, so the
+unused names cost nothing, and `--help` should keep naming every language the tool knows about.
+The features control the match arms instead. Ask for a language that was left out and the import
+fails with [`Error::NothingToImport`], which names the feature that would turn it on. The
+command-line flag itself still parses.
+
+Turning on `apk` turns on `dex`, but not `pcode`. An APK imported without `pcode` still gets its
+Java half, and the import reports that this build has no native front end. That is the same
+outcome as importing an APK on a machine that has no Ghidra, which is common and supported.
 */
 
 #[cfg(feature = "apk")]
@@ -38,21 +41,21 @@ use ctadl_import::error::{Error, ErrorContext};
 use ctadl_import::project::{ArtifactImport, ArtifactLanguage};
 use ctadl_ir::{ProgramInfo, ssa};
 
-/// How to perform one import, beyond the artifact and its language.
+/// Settings for one import, beyond the artifact itself and its language.
 ///
-/// Every field only matters to an APK, which is the one artifact that imports *other*
-/// artifacts out of itself (its native libraries; see [`apk_native`]).
-/// [`Default`] is the plain behavior: import everything, reuse nothing.
+/// Every field here matters only for an APK. An APK is the one artifact that imports other
+/// artifacts out of itself: its native libraries. See [`apk_native`]. [`Default`] gives the
+/// simple behavior, which is to import everything and reuse nothing.
 #[derive(Debug, Clone, Copy)]
 pub struct ImportOptions<'a> {
-    /// Reuse an existing sub-import whose stored artifact hash still matches instead of
-    /// redoing it. The parent artifact's own skip check lives in `main`; this is what
-    /// carries the flag down to the sub-imports, where the saving (a disassembly run
-    /// each) is much larger.
+    /// Reuse a sub-import that was already done, when the artifact hash stored with it still
+    /// matches, instead of importing it again. `main` does the same check for the parent
+    /// artifact. This field carries the flag down to the sub-imports, where skipping the work
+    /// saves much more time, because each one is a full disassembly run.
     pub skip_existing: bool,
     /// Import the native libraries packaged inside an APK. On by default.
     pub native_libs: bool,
-    /// Import this ABI's libraries rather than the preferred one. See
+    /// Import the libraries for this ABI instead of the preferred one. See
     /// `dex_reader::apk::ABI_PREFERENCE`.
     pub native_abi: Option<&'a str>,
 }
@@ -67,14 +70,14 @@ impl Default for ImportOptions<'_> {
     }
 }
 
-/// The error a dispatch arm reports when its language was compiled out.
+/// Builds the error a match arm returns when its language was left out of the build.
 ///
-/// Deliberately [`Error::NothingToImport`] rather than a new variant: from the caller's side
-/// this build genuinely has nothing to import out of that artifact, and the message says which
-/// feature would change that.
-// Dead when every language is enabled, which is how `ctadl-ascent` builds; live in every
-// narrower configuration. Both are correct, so neither is worth a `cfg_attr` enumerating the
-// feature set.
+/// This reuses [`Error::NothingToImport`] on purpose instead of adding a new variant. From the
+/// caller's point of view, this build really does have nothing it can import out of that
+/// artifact. The message names the feature that would change that.
+// This function is unused when every language is enabled, which is how `ctadl-ascent` builds
+// it, and used in every smaller build. Both are fine, and listing the whole feature set in a
+// `cfg_attr` to say so is not worth it.
 #[allow(dead_code)]
 fn unsupported(language: ArtifactLanguage, feature: &str) -> Error {
     Error::NothingToImport {
@@ -85,14 +88,14 @@ fn unsupported(language: ArtifactLanguage, feature: &str) -> Error {
     }
 }
 
-/// Imports one artifact into [`ProgramInfo`], dispatching on its language.
+/// Imports one artifact into a [`ProgramInfo`], picking the front end from its language.
 ///
-/// The store is written only where an artifact produces *other* imports -- an APK's native
-/// libraries, a bundle's splits -- which have to be complete before this returns. The returned
-/// program is the caller's to save; see [`ctadl_import::save_program_info`], and
-/// [`open_or_import`] for the whole round trip.
-// `opts` is read only by the container-format arms, and the trailing log line is unreachable in
-// a build with no language at all. Both are properties of the feature set, not of the code.
+/// This writes to the store only when an artifact produces other imports, such as an APK's
+/// native libraries or a bundle's split APKs. Those have to be finished before this function
+/// returns. Saving the returned program is up to the caller. See
+/// [`ctadl_import::save_program_info`], or [`open_or_import`] for the whole round trip.
+// Only the container-format arms read `opts`, and the log line at the end cannot be reached in
+// a build with no language enabled at all. Both depend on the feature set, not on the code.
 #[cfg_attr(not(feature = "apk"), allow(unused_variables))]
 #[cfg_attr(
     not(any(
@@ -118,7 +121,8 @@ pub fn import_artifact(
         import.name,
         import.artifact_path.display()
     );
-    // Annotated because a build with *no* language enabled has only diverging arms.
+    // The type is written out because in a build with no language enabled, every arm returns
+    // early and there is nothing for the compiler to infer from.
     let program_info: ProgramInfo = match &import.language {
         #[cfg(feature = "dex")]
         Dex => ctadl_dex::import_dex(&import.artifact_path)?,
@@ -176,11 +180,12 @@ pub fn import_artifact(
     Ok(program_info)
 }
 
-/// The APK arm: the Java half out of `classes*.dex`, then the native half out of `lib/<abi>/`.
+/// Imports an APK: first the Java half from `classes*.dex`, then the native half from
+/// `lib/<abi>/`.
 #[cfg(feature = "apk")]
 fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<ProgramInfo, Error> {
-    // Dex first: it is cheap and it is what fails fast on an APK that is not one,
-    // before any native library is extracted or handed to Ghidra.
+    // Do the Dex half first. It is cheap, and it is what fails quickly on a file that is not
+    // really an APK, before any native library is extracted or handed to Ghidra.
     let ctadl_dex::ApkImport {
         program_info,
         dex_count,
@@ -193,11 +198,11 @@ fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<Progra
             if dex_count == 1 { "y" } else { "ies" },
         );
     }
-    // A split APK out of an app bundle has no Dex of its own; its libraries are
-    // the whole import. Decided before extracting anything so an APK that has
-    // neither half fails immediately, and so the reason is the APK's contents
-    // rather than whatever `import_native_libs` happened to be able to do with
-    // them (it returns no sub-imports when Ghidra is missing, too).
+    // A split APK from an app bundle has no Dex of its own, so its libraries are the whole
+    // import. Check this before extracting anything, for two reasons. An APK with neither half
+    // then fails right away. And the reported reason describes what is in the APK, rather than
+    // how far `import_native_libs` got with it, since that function also returns no
+    // sub-imports when Ghidra is missing.
     if dex_count == 0 {
         apk_native::require_native_libs(&import.artifact_path)?;
         if opts.native_libs {
@@ -206,8 +211,8 @@ fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<Progra
                 import.artifact_path.display(),
             );
         } else {
-            // Not an error -- the user asked for this -- but the result is an
-            // import with nothing in it, which is worth saying out loud.
+            // This is not an error, because the user asked for it. But the import will be
+            // empty, and that is worth saying out loud.
             log::warn!(
                 "{}: no classes*.dex entries and --no-native-libs was passed, so this \
                  import will be empty",
@@ -219,18 +224,20 @@ fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<Progra
     Ok(program_info)
 }
 
-/// [`import_artifact`] followed by the store write: what `ctadl import` does for one artifact,
-/// and what a container format does for each thing it unpacks.
+/// Runs [`import_artifact`] and then writes the result to the store. This is what `ctadl
+/// import` does for one artifact, and what a container format does for each artifact it
+/// unpacks.
 pub fn import_and_save(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Error> {
     let program_info = import_artifact(import, opts)?;
     log::debug!("encoding");
     ctadl_import::save_program_info(program_info, import)
 }
 
-/// Records what an artifact imported out of itself onto its own config.
+/// Records, in an artifact's own config, the imports it produced out of itself.
 ///
-/// Reloads rather than saving the caller's copy back: a sub-import may have rewritten the
-/// parent's config in the meantime, and the caller reloads after this to pick these names up.
+/// This reloads the config instead of saving the caller's copy back, because a sub-import may
+/// have changed the parent's config in the meantime. The caller reloads after this call to see
+/// the names written here.
 #[cfg(feature = "apk")]
 fn record_sub_imports(import: &ArtifactImport, sub_imports: Vec<String>) -> Result<(), Error> {
     if sub_imports.is_empty() {
@@ -247,13 +254,14 @@ fn record_sub_imports(import: &ArtifactImport, sub_imports: Vec<String>) -> Resu
     updated.save()
 }
 
-/// Import if absent or stale, then open: what a downstream tool wants when it has an artifact
-/// and does not care whether the store is warm.
+/// Imports the artifact if it is missing or out of date, then opens it. This is what another
+/// tool wants when it has an artifact in hand and does not care whether the store already holds
+/// an import of it.
 ///
-/// `artifact` is the thing on disk; `name` is what the import is called in the store. The
-/// import is redone when there is none under that name, or when its recorded content hash no
-/// longer matches `artifact`. Then the IR comes back through
-/// [`ctadl_import::open_import`], so the version check and the preprocessing pipeline are the
+/// `artifact` is the file on disk. `name` is what the import is called in the store. The import
+/// is redone when the store holds nothing under that name, or when the content hash recorded
+/// for it no longer matches `artifact`. The IR then comes back through
+/// [`ctadl_import::open_import`], so the version check and the preprocessing passes are the
 /// same ones `ctadl index` uses.
 pub fn open_or_import(
     name: &str,
@@ -266,8 +274,9 @@ pub fn open_or_import(
         let import = ArtifactImport::try_create(name, language, artifact)?;
         let program_info = import_artifact(&import, opts)?;
         ctadl_import::save_program_info(program_info, &import)?;
-        // `import_artifact` may have rewritten the config (sub-imports, a Ghidra image base),
-        // so hash the artifact onto the current copy rather than the one created above.
+        // `import_artifact` may have rewritten the config, adding sub-imports or a Ghidra
+        // image base. So record the hash on a freshly loaded copy, not on the one created
+        // above.
         let mut import = ArtifactImport::load_by_name(name)?;
         import
             .record_artifact_hash()

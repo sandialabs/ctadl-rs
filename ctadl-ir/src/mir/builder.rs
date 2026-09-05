@@ -364,10 +364,10 @@ impl<'a> BasicBlockBuilder<'a> {
         Exp::new_bytes(bytes)
     }
 
-    /// Create an integer expression
+    /// Creates an integer expression.
     ///
     /// # Arguments
-    /// * `value` - The constant's value, sign-extended to `i64`
+    /// * `value` - the value of the constant, sign-extended to `i64`
     pub fn new_int_exp(&self, value: i64) -> Exp {
         Exp::new_int(value)
     }

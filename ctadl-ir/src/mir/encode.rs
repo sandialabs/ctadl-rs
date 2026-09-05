@@ -17,13 +17,14 @@ pub fn decode_program(bytes: &[u8]) -> Result<Program, Error> {
     bitcode::deserialize(bytes)
 }
 
-/// Encodes a [`VirtualMethodTable`] for the `ir-vmt.bitcode` artifact beside the program.
+/// Encodes a [`VirtualMethodTable`] into the `ir-vmt.bitcode` file that sits next to the
+/// program.
 ///
-/// The VMT used to be written with a bare `bitcode::serialize` at the one call site that wrote
-/// it, which left the store's second artifact with no helper to mirror [`encode_program`] --
-/// so anything reading an import had to know that detail and restate it. Both halves live here
-/// now, and the encoding is the same one that call site used, so existing artifacts read back
-/// unchanged.
+/// The one place that wrote the table used to call `bitcode::serialize` directly. That left the
+/// store's second file without a helper to match [`encode_program`], so anything that read an
+/// import had to know how the table was written and repeat it. Both the encoder and the decoder
+/// now live here. The encoding is the same one that call site used, so files written earlier
+/// still read back correctly.
 #[cfg(feature = "serde")]
 #[inline]
 pub fn encode_vmt(vmt: &VirtualMethodTable) -> Result<Vec<u8>, Error> {
@@ -42,9 +43,9 @@ mod tests {
     use super::*;
     use crate::mir::call::VirtualMethodTable;
 
-    /// The two store artifacts round-trip through the helpers that name them. The VMT half is
-    /// the new one: it exists so a reader does not have to know that the writer reached for
-    /// `bitcode::serialize` directly.
+    /// Checks that both store files survive a trip through their own encode and decode
+    /// helpers. The table helpers are the new ones. They exist so that a reader does not have
+    /// to know the writer called `bitcode::serialize` directly.
     #[test]
     fn vmt_round_trips() {
         for vmt in [
@@ -59,7 +60,7 @@ mod tests {
         }
     }
 
-    /// Every `Exp` variant survives the wire format
+    /// Checks that every `Exp` variant survives being encoded and decoded.
     #[test]
     fn exp_variants_round_trip() {
         let exps = [
@@ -76,11 +77,12 @@ mod tests {
             let back: Exp = bitcode::deserialize(&bytes).expect("decode");
             assert_eq!(exp, &back);
         }
-        // `1i64` big-endian is the same eight octets as the blob above, and they still differ.
+        // Written big-endian, `1i64` is the same eight bytes as the blob above, and the two
+        // are still not equal.
         assert_ne!(exps[1], exps[6]);
     }
 
-    /// `Int` prints its value in decimal, so one constant has one spelling in an IR dump no
+    /// `Int` prints its value in decimal, so a given constant looks the same in an IR dump no
     /// matter which opcode produced it.
     #[test]
     fn int_displays_in_decimal() {
@@ -90,7 +92,8 @@ mod tests {
         );
         assert_eq!(Exp::new_int(1).to_string(), "<const: 1>");
         assert_eq!(Exp::new_int(1).as_int(), Some(1));
-        // A byte blob has no numeric identity to recover; `as_int` says so rather than guessing.
+        // A byte blob has no number to recover, so `as_int` returns `None` rather than
+        // guessing one.
         assert_eq!(Exp::new_bytes(vec![1]).as_int(), None);
     }
 

@@ -324,7 +324,7 @@ pub enum StatementKind {
     /// of `Store`; a frontend may emit whichever fits its memory model.
     Update {
         dest: AccessPath,
-        /// Source aggregate copied into `dest` before the field write.
+        /// The aggregate copied into `dest` before the field is written.
         source: VariableRef,
         /// Symbolic field written at `dest` (a single symbol, like `Store`).
         field: FieldRef,
@@ -448,10 +448,10 @@ pub enum Exp {
     /// [`StatementKind::Load`].
     AccessPath(AccessPath),
     Str(ArcIntern<str>),
-    /// An opaque byte blob with no numeric identity
+    /// A block of bytes. It has no value as a number.
     Bytes(Vec<u8>),
     ObjectRef(CallObject),
-    /// An integer constant, sign-extended to `i64`
+    /// An integer constant, sign-extended to `i64`.
     Int(i64),
 }
 
@@ -881,7 +881,7 @@ impl OffsetAccesses {
         }
     }
 
-    /// Create a new OffsetAccesses with a single offset
+    /// Creates an `OffsetAccesses` holding one offset.
     #[inline]
     pub fn with_offset(offset: i64) -> Self {
         Self {
@@ -889,7 +889,7 @@ impl OffsetAccesses {
         }
     }
 
-    /// Create a new OffsetAccesses from a sequence of offsets.
+    /// Creates an `OffsetAccesses` from a sequence of offsets.
     #[inline]
     pub fn with_offsets(offsets: impl IntoIterator<Item = i64>) -> Self {
         Self {
@@ -1060,16 +1060,16 @@ impl Exp {
         Self::Bytes(bytes)
     }
 
-    /// An integer constant. Callers pass the value a front end computed, sign-extended to
-    /// `i64` -- not the opcode's encoding of it (see [`Exp::Int`]).
+    /// Makes an integer constant. Pass the value the front end worked out, sign-extended to
+    /// `i64`. Do not pass the bytes the opcode encoded it in. See [`Exp::Int`].
     #[inline]
     pub fn new_int(value: i64) -> Self {
         Self::Int(value)
     }
 
-    /// The value of an integer constant, or `None` for anything else. Deliberately does *not*
-    /// decode [`Exp::Bytes`]: a byte blob has no width or signedness to recover, which is the
-    /// reason [`Exp::Int`] exists.
+    /// Returns the value of an integer constant, or `None` for anything else. It does not
+    /// decode an [`Exp::Bytes`], on purpose. A block of bytes does not say how wide the number
+    /// is or whether it is signed, which is why [`Exp::Int`] exists.
     #[inline]
     pub fn as_int(&self) -> Option<i64> {
         match self {

@@ -1,12 +1,12 @@
-/*! `ProgramInfo` in and out of an import directory.
+/*! Reads and writes a [`ProgramInfo`] in an import directory.
 
-The writer ([`save_program_info`]) and the reader ([`load_import`], [`open_import`]) are both
-public, so nothing downstream has to reconstruct the store layout and the bitcode filenames by
-hand. That matters because a hand-rolled reader cannot see an
-[`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION) bump: it decodes garbage, or
-fails with a `bitcode::Error` that names no cause. [`open_import`] goes through
-[`ArtifactImport::load`], never around it, so a stale store fails as
-[`Error::IncompatibleImport`] naming the artifact to re-import.
+The writer ([`save_program_info`]) and the readers ([`load_import`], [`open_import`]) are all
+public, so no other crate has to work out the store layout and the bitcode filenames for itself.
+This matters because code that reads the files directly cannot tell when
+[`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION) has changed. It either decodes
+nonsense or fails with a `bitcode::Error` that explains nothing. [`open_import`] always goes
+through [`ArtifactImport::load`], so an out-of-date store fails with
+[`Error::IncompatibleImport`], which names the artifact to import again.
 */
 
 use ctadl_ir::graph::is_connected;
@@ -15,22 +15,24 @@ use ctadl_ir::{ProgramInfo, encode, ssa};
 use crate::error::{Error, ErrorContext};
 use crate::project::{ArtifactImport, IMPORT_CONFIG_FILE, StorePaths};
 
-/// Whether [`load_import`] reads an import's source-info database.
+/// Says whether [`load_import`] should read an import's source-info database.
 ///
-/// It is parquet on disk and by far the largest thing in an import directory, and a consumer
-/// that only wants the IR -- a fact generator, a pass, a downstream analysis -- never touches
-/// it. `ctadl index` reads it separately, per import, at the point it needs spans.
+/// That database is stored as parquet, and it is by far the largest part of an import
+/// directory. Code that only wants the IR, such as a fact generator, a pass, or another
+/// analysis, never looks at it. `ctadl index` reads it on its own, one import at a time, at the
+/// point where it needs source spans.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SourceInfoMode {
     /// Leave [`ProgramInfo::source_info`] empty.
     #[default]
     Skip,
-    /// Read `source-info/` beside the IR.
+    /// Also read the `source-info/` directory next to the IR.
     Read,
 }
 
-/// Writes a [`ProgramInfo`] into `import`'s directory: the program, the VMT, and the source
-/// info, in the layout [`crate::project`] documents.
+/// Writes a [`ProgramInfo`] into the directory for `import`. That means three things: the
+/// program, the virtual method table, and the source info. [`crate::project`] describes the
+/// layout they are written in.
 pub fn save_program_info(
     mut program_info: ProgramInfo,
     import: &ArtifactImport,
@@ -41,11 +43,11 @@ pub fn save_program_info(
         if f.blocks.is_empty() {
             continue;
         }
-        // Real disassembled binaries routinely contain functions with blocks
-        // that are unreachable from entry (Ghidra CFG recovery artifacts). This
-        // is not an import error: indexing prunes unreachable blocks before the
-        // SSA/dominator pass (see `--prune-unreachable-cfg-nodes`, on by
-        // default), so record but don't reject them here.
+        // Disassembled binaries often have functions with blocks that cannot be reached from
+        // the entry block. Ghidra leaves these behind when it recovers the control-flow graph.
+        // This is not an import error. Indexing drops unreachable blocks before the SSA and
+        // dominator pass; see `--prune-unreachable-cfg-nodes`, which is on by default. So log
+        // it here, but do not reject the function.
         if !is_connected(&f.blocks) {
             log::debug!("function has blocks unreachable from entry: {}", f.name);
         }
@@ -73,10 +75,10 @@ pub fn save_program_info(
     Ok(())
 }
 
-/// Reads the [`ProgramInfo`] out of an already-imported artifact's directory.
+/// Reads the [`ProgramInfo`] out of the directory of an artifact that was already imported.
 ///
-/// The IR is returned exactly as the front end produced it: no pass has run. Callers that go on
-/// to generate facts want [`open_import`], which is this plus
+/// The IR comes back exactly as the front end wrote it, with no pass run over it. A caller that
+/// is going to generate facts wants [`open_import`] instead, which is this function plus
 /// [`ssa::run_pipeline`].
 pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<ProgramInfo, Error> {
     let path = &import.program_path();
@@ -109,23 +111,21 @@ pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<Progr
     })
 }
 
-/// The one-liner: an import in the store, named or pointed at, to preprocessed IR.
+/// Turns an import in the store into preprocessed IR, in one call.
 ///
-/// `name_or_dir` is either an import name (resolved under the store's `imports/`) or a path to
-/// an import directory, which is what makes this usable against a store the caller did not
-/// create. `pipeline` is the IR-to-IR preprocessing to run;
-/// [`Pipeline::index_default`](ctadl_ir::ssa::Pipeline::index_default) is what `ctadl index`
-/// runs, and passing anything else is a deliberate choice rather than an accident of which
-/// four calls the caller happened to copy.
+/// `name_or_dir` is either the name of an import, looked up under the store's `imports/`
+/// directory, or a path to an import directory. Accepting a path is what lets a caller read a
+/// store it did not create. `pipeline` says which IR-to-IR passes to run.
+/// [`Pipeline::index_default`](ctadl_ir::ssa::Pipeline::index_default) is the set `ctadl index`
+/// runs, so asking for anything else is a deliberate choice.
 ///
-/// Source info is skipped; use [`load_import`] with [`SourceInfoMode::Read`] to get it.
+/// Source info is not read. To get it, call [`load_import`] with [`SourceInfoMode::Read`].
 ///
 /// # Errors
 ///
-/// [`Error::IncompatibleImport`] if the import was written by a build with a different
-/// [`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION) -- the check that a
-/// hand-rolled reader of `ir-program.bitcode` cannot perform, and the reason this function
-/// exists.
+/// Returns [`Error::IncompatibleImport`] if the import was written by a build with a different
+/// [`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION). Code that reads
+/// `ir-program.bitcode` directly cannot make that check, which is why this function exists.
 pub fn open_import(
     name_or_dir: &str,
     pipeline: ssa::Pipeline,
@@ -136,11 +136,11 @@ pub fn open_import(
     Ok(program_info)
 }
 
-/// An import name, or a path to an import directory (or to its `import_config.json`), to the
-/// loaded, version-checked config.
+/// Loads and version-checks an import config, given either the name of an import or a path. The
+/// path may point at an import directory or straight at its `import_config.json`.
 ///
-/// A path wins over a name when both would resolve, because a caller that typed a path meant
-/// that store and not this process's.
+/// If the argument works as both a path and a name, the path wins. A caller who typed a path
+/// meant the store that path is in, not the one this process is using.
 pub fn resolve_import(name_or_dir: &str) -> Result<ArtifactImport, Error> {
     let as_path = std::path::Path::new(name_or_dir);
     if as_path.is_file() {
@@ -152,8 +152,9 @@ pub fn resolve_import(name_or_dir: &str) -> Result<ArtifactImport, Error> {
         return ArtifactImport::load(&config)
             .err_context(|| format!("reading import at '{name_or_dir}'"));
     }
-    // Not a directory we can read: treat it as a name in this process's store. Report the
-    // store root, because "no such import" is nearly always the wrong `--store`.
+    // It is not a directory we can read, so treat it as the name of an import in this
+    // process's store. Name the store root in the error, because an import that is not found is
+    // almost always a sign that `--store` is wrong.
     if !StorePaths::import_path().join(name_or_dir).is_dir() {
         return Err(Error::Path {
             message: format!(

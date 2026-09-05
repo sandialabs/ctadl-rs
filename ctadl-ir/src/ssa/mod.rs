@@ -47,34 +47,37 @@ struct SsaRename {
     c: HashMap<ArcIntern<Variable>, usize>,
 }
 
-/// The IR-to-IR passes that must run between reading an import and generating facts.
+/// The IR-to-IR passes that have to run after an import is read and before facts are
+/// generated.
 ///
-/// Order is a property of the pipeline, not of the caller. Before this type existed the order
-/// lived as four adjacent lines inside `ctadl index`, so every other consumer of an import --
-/// this crate's own tools included -- had to re-derive it by reading a CLI function and hope it
-/// had not drifted. [`Pipeline::index_default`] is now the single definition of what `ctadl
-/// index` runs, and [`run_pipeline`] the single place that runs it.
+/// The order of the passes belongs to the pipeline, not to the caller. Before this type
+/// existed, the order was four lines inside `ctadl index`, so anything else that read an import
+/// had to copy the order out of a command-line function and hope it was still current.
+/// [`Pipeline::index_default`] is now the one place that says what `ctadl index` runs, and
+/// [`run_pipeline`] is the one place that runs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pipeline {
-    /// [`eliminate_dead_temps`]: drop assigned-but-never-read temporaries.
+    /// Run [`eliminate_dead_temps`], which drops temporaries that are assigned but never read.
     pub dead_temps: bool,
-    /// [`coalesce_copies`]: fuse single-use copy temporaries.
+    /// Run [`coalesce_copies`], which merges away copy temporaries that have a single use.
     pub coalesce: bool,
-    /// [`transform_program`]: Cytron phi placement and SSA renaming.
+    /// Run [`transform_program`], which places phi nodes using Cytron's algorithm and renames
+    /// variables into SSA form.
     pub ssa: bool,
-    /// [`propagate_copies`]: forward copies through the SSA graph.
+    /// Run [`propagate_copies`], which forwards copies through the SSA graph.
     pub copy_prop: bool,
-    /// Passed to [`transform_program`]; ignored unless `ssa`.
+    /// Passed on to [`transform_program`]. Has no effect unless `ssa` is set.
     pub prune_unreachable: bool,
 }
 
 impl Pipeline {
-    /// Exactly what `ctadl index` runs, and the only definition of that.
+    /// The passes `ctadl index` runs. This function is the only definition of that set.
     ///
-    /// Dead-temp elimination runs first: it removes defs that coalescing cannot (a dead temp has
-    /// no use to fuse into) and shrinks the input coalescing scans. Both are no-ops on programs
-    /// already in SSA form (e.g. flowy imports), which is what makes the whole pipeline
-    /// idempotent.
+    /// Dead-temp elimination runs first for two reasons. It removes definitions that coalescing
+    /// cannot remove, because a dead temporary has no use to merge it into. And it makes the
+    /// program smaller before coalescing scans it. Both passes do nothing to a program that is
+    /// already in SSA form, such as a flowy import, which is why running the whole pipeline
+    /// twice gives the same result as running it once.
     #[inline]
     pub fn index_default() -> Self {
         Pipeline {
@@ -86,7 +89,7 @@ impl Pipeline {
         }
     }
 
-    /// Run nothing: the IR as the frontend produced it.
+    /// Run no passes at all, leaving the IR as the front end produced it.
     #[inline]
     pub fn none() -> Self {
         Pipeline {
@@ -98,7 +101,7 @@ impl Pipeline {
         }
     }
 
-    /// SSA renaming alone, with unreachable-block pruning, and none of the cleanups around it.
+    /// Run SSA renaming and unreachable-block pruning, and none of the cleanup passes.
     #[inline]
     pub fn ssa_only() -> Self {
         Pipeline {
@@ -108,8 +111,8 @@ impl Pipeline {
         }
     }
 
-    /// Sets [`Pipeline::prune_unreachable`], for wiring an index option through without
-    /// restating the rest of the pipeline.
+    /// Sets [`Pipeline::prune_unreachable`]. This lets a caller pass an index option through
+    /// without writing out the rest of the pipeline again.
     #[inline]
     #[must_use]
     pub fn prune(mut self, prune_unreachable: bool) -> Self {
@@ -117,11 +120,11 @@ impl Pipeline {
         self
     }
 
-    /// A stable string naming this pipeline, for provenance in a log line or a report: e.g.
-    /// `dt+co+ssa(prune)+cp`, or `none`.
+    /// A short name for this pipeline, to record in a log line or a report which passes ran.
+    /// For example, `dt+co+ssa(prune)+cp`, or `none`.
     ///
-    /// Stable in the sense that matters for provenance: a given `Pipeline` value always prints
-    /// the same string, and two pipelines print the same string only if they are equal.
+    /// The same `Pipeline` value always produces the same string, and two pipelines produce the
+    /// same string only when they are equal.
     pub fn tag(&self) -> String {
         let mut parts: Vec<&'static str> = Vec::with_capacity(4);
         if self.dead_temps {
@@ -141,8 +144,8 @@ impl Pipeline {
             parts.push("cp");
         }
         if parts.is_empty() {
-            // `prune_unreachable` without `ssa` is inert, and printing "none" for it is honest:
-            // the pipeline does nothing.
+            // `prune_unreachable` does nothing on its own, without `ssa`. So "none" is the
+            // right answer here: this pipeline runs no passes.
             return "none".to_string();
         }
         parts.join("+")
@@ -156,10 +159,10 @@ impl Default for Pipeline {
     }
 }
 
-/// Runs the passes `p` selects, in the one order they are valid in.
+/// Runs the passes that `p` selects, in the only order that is valid for them.
 ///
-/// This is the body `ctadl index` used to spell out inline; anything that reads an import and
-/// then generates facts must go through here rather than list the calls again.
+/// `ctadl index` used to contain this code directly. Anything that reads an import and then
+/// generates facts should call this rather than list the passes again.
 pub fn run_pipeline(program: &mut Program, p: Pipeline) {
     if p.dead_temps {
         eliminate_dead_temps(program);

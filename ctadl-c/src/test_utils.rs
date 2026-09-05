@@ -613,10 +613,12 @@ pub(crate) fn get_summary(
     Ok((result.summary, source_info))
 }
 
-/// Indexes `program` end-to-end (SSA → codegen → taint index) and returns the pieces
-/// [`ctadl_ascent::query_engine::build_query_endpoints`] consumes: the [`IndexFacts`], the
-/// [`IndexSourceInfo`] (whose `.sites` is the [`fx::IdMap`]), and the `assign_like` relation.
-/// Unlike [`get_summary`], nothing is discarded, so a test can drive Stage 2 against a real index.
+/// Indexes `program` all the way through, running SSA, then code generation, then the taint
+/// index. It returns the three things that
+/// [`ctadl_ascent::query_engine::build_query_endpoints`] needs: the [`IndexFacts`], the
+/// [`IndexSourceInfo`] (whose `.sites` field is the [`fx::IdMap`]), and the `assign_like`
+/// relation. Unlike [`get_summary`], this throws nothing away, so a test can run stage 2
+/// against a real index.
 #[allow(clippy::type_complexity)]
 pub(crate) fn index_program(
     program: Program,

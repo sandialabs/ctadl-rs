@@ -1438,8 +1438,9 @@ fn parse_ref(
     let first = iter.next().unwrap();
     match first.as_rule() {
         Rule::int => {
-            // The grammar admits a sign (`int = { ("+" | "-")? ~ ASCII_DIGIT+ }`), which the
-            // old `u32` parse could not represent and would panic on.
+            // The grammar allows a leading sign: `int = { ("+" | "-")? ~ ASCII_DIGIT+ }`. The
+            // old code parsed this as a `u32`, which cannot hold a negative number, so a signed
+            // literal made it panic.
             let i: i64 = <str>::parse(first.as_str()).unwrap();
             ParsedRef::Value(Exp::new_int(i))
         }
@@ -1499,9 +1500,9 @@ fn parse_actuals(
         .collect()
 }
 
-/// Decodes a trailing integer actual (e.g. the `2` in `sink(x, Label, 2)`) into
-/// a path count. Anything that is not a non-negative integer literal yields `None`
-/// -- including a negative one, which is a count of nothing.
+/// Reads a trailing integer argument, such as the `2` in `sink(x, Label, 2)`, as a path count.
+/// Returns `None` for anything that is not a whole number of zero or more. A negative number
+/// counts nothing, so it returns `None` too.
 fn exp_to_count(e: &Exp) -> Option<usize> {
     usize::try_from(e.as_int()?).ok()
 }

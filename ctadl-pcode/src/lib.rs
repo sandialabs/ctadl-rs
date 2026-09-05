@@ -1,17 +1,18 @@
 /*! Ghidra Pcode language front end.
 
-Converts Ghidra pcode facts into CTADL IR, and -- because the two are one cycle -- carries the
-`RegisterNatives` scanner with it.
+Turns Ghidra pcode facts into CTADL IR. It also holds the `RegisterNatives` scanner, because the
+two need each other.
 
 # Why the JNI registry lives here
 
 [`import_pcode`] calls [`jni_registry::scan_import`], and [`jni_registry`] calls
-[`ghidra::GhidraSource::detect`]. That is not incidental: the scan needs Ghidra's image base and
-entry-point map, which only exist mid-`import_pcode`. Splitting them would mean hoisting the
-`detect` guard into `import_pcode` and passing an `is_binary: bool` down, so the registry became
-a standalone ELF scanner -- about twenty lines, worth doing the day something wants to read the
-registry without pcode. Nothing does: `ctadl_ascent::languages::jni` reads the *file* the scan
-wrote, not the scanner.
+[`ghidra::GhidraSource::detect`]. That is not an accident. The scan needs Ghidra's image base
+and its map of entry points, and those exist only while `import_pcode` is running. To separate
+them, the `detect` check would move up into `import_pcode`, which would pass an `is_binary:
+bool` down, and the registry would become an ELF scanner that stands on its own. That is about
+twenty lines of work, worth doing when something wants to read the registry without pcode.
+Nothing does today: `ctadl_ascent::languages::jni` reads the file the scan wrote, not the
+scanner itself.
 */
 
 use std::ops::Deref;
@@ -33,11 +34,11 @@ use pcode_reader::PcodeFactsReader;
 // that is a binary on disk from a `ghidra://` URL or a `.gpr` project.
 pub mod ghidra;
 
-// The `RegisterNatives` scanner. See the module docs above for why it ships in this crate,
-// and `jni_registry`'s own module doc for what it does. Kept as a `//` comment rather than a
-// `///` one: an outer doc on a module that already has an inner `/*! ... */` makes rustdoc
-// resolve the whole merged doc in *this* scope, which breaks every link the module wrote about
-// its own items.
+// The `RegisterNatives` scanner. The module docs above say why it lives in this crate, and
+// `jni_registry`'s own module docs say what it does. This is a plain `//` comment, not a `///`
+// doc comment, on purpose. Adding a doc comment here to a module that already has its own
+// `/*! ... */` docs makes rustdoc resolve the combined text in this file's scope, which breaks
+// every link the module wrote to its own items.
 pub mod jni_registry;
 
 /// This is hardcoded for now, but should be read from the facts

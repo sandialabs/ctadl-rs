@@ -92,10 +92,10 @@ fn absolutize(path: &Path) -> PathBuf {
 ///   bodyless and so were invisible to the dex frontend's `methods` column. It is what the JNI
 ///   bridge (`languages::jni`) joins against. Again a `bitcode` wire-format change to
 ///   `ir-vmt.bitcode`.
-/// - `6`: `Exp` gained an `Int` variant, so integer constants carry their value rather than an
-///   opcode-dependent byte encoding. `bitcode` encodes an enum discriminant in
-///   `ceil(log2(variants))` bits, so a sixth variant changes the wire format of every
-///   `ir-program.bitcode` -- not just of programs that contain a constant.
+/// - `6`: `Exp` gained an `Int` variant, so an integer constant now stores its value instead of
+///   a byte encoding that depended on the opcode. `bitcode` writes an enum's tag in
+///   `ceil(log2(variants))` bits, so adding a sixth variant changes the format of every
+///   `ir-program.bitcode` file, not only of programs that contain a constant.
 pub const IMPORT_FORMAT_VERSION: &str = "6";
 
 /// Filename of the serialized IR program inside an import directory.

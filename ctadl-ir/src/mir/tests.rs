@@ -188,7 +188,7 @@ fn test_empty_goto_error() {
 
 #[test]
 fn test_field_accesses_with_offsets() {
-    // Test creating OffsetAccesses with offsets
+    // Build an OffsetAccesses from offsets.
     let offset_path = OffsetAccesses::with_offset(42);
     assert_eq!(offset_path.len(), 1);
 
@@ -221,7 +221,8 @@ fn test_offset_newtype() {
     assert_eq!(offset.0, 123);
     assert_eq!(format!("{}", offset), "123");
 
-    // Test OffsetAccess (offset-only) and PathSegment (mixed) display
+    // Check how an OffsetAccess, which holds only offsets, and a PathSegment, which can hold
+    // either, are printed.
     let symbol_access = PathSegment::symbol("test");
     let offset_access = OffsetAccess::Offset(Offset(456));
 

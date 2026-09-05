@@ -1,26 +1,26 @@
-/*! Reading and writing the CTADL store, with no front end attached.
+/*! Reads and writes the CTADL store, without any front end.
 
-This crate is everything a consumer needs in order to *read* an import that `ctadl import`
-already wrote, and nothing more: the store layout ([`project`]), the shared error type
-([`error`]), and the `ProgramInfo` I/O that pairs with them ([`store`]).
+This crate holds everything needed to read an import that `ctadl import` has already written,
+and nothing else: the store layout ([`project`]), the shared error type ([`error`]), and the
+`ProgramInfo` reading and writing that goes with them ([`store`]).
 
-The entry point most consumers want is [`open_import`]: name-or-directory in the store to
-preprocessed IR, version-checked on the way through.
+Most callers want [`open_import`]. Give it the name of an import in the store, or a path to an
+import directory, and it returns preprocessed IR, checking the format version along the way.
 
 # The error rule
 
-There are two `Error` types in the workspace and two [`ErrorContext`]
-traits, one pair here and one in `ctadl-ascent`. They never collide because **a file imports one
-or the other, never both**:
+The workspace has two `Error` types and two [`ErrorContext`] traits, one pair here and one in
+`ctadl-ascent`. They stay out of each other's way because **a file imports one pair or the
+other, never both**:
 
-- a file that reads artifacts or the store imports [`crate::error`]'s;
-- a file that runs the engine imports `ctadl_ascent::error`'s;
-- `ctadl_ascent::Error::Import` is `#[from] ctadl_import::Error`, so a `?` crossing the boundary
-  bridges the two on its own.
+- a file that reads artifacts or the store imports the ones in [`crate::error`];
+- a file that runs the engine imports the ones in `ctadl_ascent::error`;
+- `ctadl_ascent::Error::Import` is declared `#[from] ctadl_import::Error`, so a `?` that crosses
+  from one half to the other converts the error by itself.
 
-Worth stating out loud because the failure mode does not name itself: importing both traits
-into one file makes every `.err_context(…)` in it ambiguous, and the fix is always to drop one
-import rather than to qualify the calls.
+This is worth writing down because the error message does not point at the cause. If one file
+imports both traits, every `.err_context(…)` call in it becomes ambiguous. The fix is always to
+remove one of the two imports, not to spell out the call.
 */
 
 pub mod error;
