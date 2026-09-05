@@ -19,7 +19,7 @@ const GHIDRA_LOG_NAME: &str = "ghidra.log";
 /// actionable without the user having to go open the log.
 const GHIDRA_LOG_TAIL_LINES: usize = 20;
 
-/// The Ghidra program source that [`ExportPcode.java`](../../../../pcode-reader/ExportPcode.java)
+/// The Ghidra program source that [`ExportPcode.java`](../../../../readers/pcode-reader/ExportPcode.java)
 /// runs against.
 ///
 /// Ghidra's `analyzeHeadless` can either *import* a fresh binary into a throwaway
@@ -167,7 +167,7 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
     let export_script_path = script_temp_dir.path().join("ExportPcode.java");
     fs::write(
         &export_script_path,
-        include_str!("../../pcode-reader/ExportPcode.java"),
+        include_str!("../../../readers/pcode-reader/ExportPcode.java"),
     )
     .err_context(|| format!("writing export script: {}", export_script_path.display()))?;
     let script_path = export_script_path.parent().unwrap().to_path_buf();

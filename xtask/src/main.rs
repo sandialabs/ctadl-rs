@@ -150,7 +150,7 @@ Tasks:
                              `nightly/tests` or `tests` relative to the cwd).
     --jvm-samples <dir>      Directory of jvm-reader sample .java sources to
                              compile and check (default: auto-detect
-                             `jvm-reader/tests/sample`). Also drive the
+                             `readers/jvm-reader/tests/sample`). Also drive the
                              dex-reader checks (compiled down to .dex).
     --dex-apk <path>         Real-world APK for the dex-reader smoke test and
                              the `apk:*` end-to-end checks (default: auto-detect

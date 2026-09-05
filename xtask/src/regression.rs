@@ -487,13 +487,16 @@ fn resolve_jvm_samples(override_dir: Option<&Path>) -> Result<Option<PathBuf>> {
             format!("failed to canonicalize {}", dir.display())
         })?));
     }
-    ["jvm-reader/tests/sample", "../jvm-reader/tests/sample"]
-        .into_iter()
-        .map(PathBuf::from)
-        .find(|p| p.is_dir())
-        .map(|p| std::fs::canonicalize(&p))
-        .transpose()
-        .with_context(|| "failed to canonicalize jvm sample directory")
+    [
+        "readers/jvm-reader/tests/sample",
+        "../readers/jvm-reader/tests/sample",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|p| p.is_dir())
+    .map(|p| std::fs::canonicalize(&p))
+    .transpose()
+    .with_context(|| "failed to canonicalize jvm sample directory")
 }
 
 /// Locate the real-world APK xtask owns for the dex-reader smoke test. With no

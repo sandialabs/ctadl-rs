@@ -25,11 +25,11 @@ boon = "0.6"
 # Used by the jvm-reader regression checks (compile .java -> exercise the
 # library on the resulting .class / .jar). jvm-reader is workspace-excluded, so
 # this is a plain path-dependency library; it does not re-add jvm-reader's bin.
-jvm-reader = { path = "../jvm-reader" }
+jvm-reader = { path = "../readers/jvm-reader" }
 # Likewise for the dex-reader checks (compile .java -> .dex, parse it, plus a
 # real-world APK). dex-reader is workspace-excluded too, so its bin stays out of
 # the distro; only its library is pulled in here.
-dex-reader = { path = "../dex-reader" }
+dex-reader = { path = "../readers/dex-reader" }
 # The JNI `+apk` cases package a DEX and a shared library into an APK so the
 # importer can be made to find `lib/<abi>` for itself. Not a new dependency in
 # practice: dex-reader already builds `zip` to read APKs.

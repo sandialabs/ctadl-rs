@@ -2,7 +2,7 @@
 //!
 //! Two kinds of input feed these checks:
 //!
-//!  - The same `jvm-reader/tests/sample/*.java` sources used by the jvm-reader
+//!  - The same `readers/jvm-reader/tests/sample/*.java` sources used by the jvm-reader
 //!    checks, compiled here `javac --release 8` -> `dx` into a `.dex` and parsed
 //!    in full by dex-reader. Nothing compiled is committed; the `.dex` is built
 //!    fresh from source on every run.
