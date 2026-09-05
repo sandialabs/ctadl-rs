@@ -1303,6 +1303,7 @@ dependencies = [
  "ctadl-flowy",
  "ctadl-import",
  "ctadl-ir",
+ "ctadl-jvm",
  "datafusion",
  "derive_builder",
  "dex-reader",
@@ -1406,6 +1407,19 @@ dependencies = [
  "thin-vec",
  "thiserror",
  "u64_dyn",
+]
+
+[[package]]
+name = "ctadl-jvm"
+version = "0.1.2"
+dependencies = [
+ "ctadl-import",
+ "ctadl-ir",
+ "hashbrown 0.16.1",
+ "jvm-reader",
+ "log",
+ "smallvec",
+ "source-info",
 ]
 
 [[package]]

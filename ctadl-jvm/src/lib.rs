@@ -1,4 +1,8 @@
-//! JVM (.jar and .class) language frontend
+/*! JVM (.jar and .class) language front end.
+
+Artifact to [`ctadl_ir::ProgramInfo`], and nothing else: no store, no dispatch, no engine. The
+`.class`/`.jar` container handling is `jvm-reader`'s; what is here is the lowering to MIR.
+*/
 // Mostly copied from the dex language frontend
 
 use std::fs::File;
