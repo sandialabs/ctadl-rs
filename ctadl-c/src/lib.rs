@@ -2038,7 +2038,7 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// Walk the statements of `compound`, starting in `scope_view_meowsers`, and return the
+    /// Walk the statements of `compound`, starting in `entry_scope_view`, and return the
     /// scope view the walk ended in together with whether the last statement *diverged*.
     /// Performs no end-of-compound link: that is the caller's call, because it depends on
     /// whether the compound was given a basic block of its own.
@@ -2046,10 +2046,10 @@ impl<'a> Context<'a> {
         &mut self,
         source: &'a str,
         program: &mut Program,
-        scope_view_meowsers: &ScopeView,
+        entry_scope_view: &ScopeView,
         compound: &CompoundProxy<'_>,
     ) -> Result<(ScopeView, bool), Error> {
-        let mut scope_view = scope_view_meowsers.clone();
+        let mut scope_view = entry_scope_view.clone();
         // Set when the statement just walked diverged (return/break/continue, or a label
         // whose body diverges): the current block is terminated and has no fall-through.
         let mut diverged = false;
@@ -2083,11 +2083,11 @@ impl<'a> Context<'a> {
         &mut self,
         source: &'a str,
         program: &mut Program,
-        scope_view_meowsers: &ScopeView,
+        entry_scope_view: &ScopeView,
         compound: &CompoundProxy<'_>,
     ) -> Result<(), Error> {
         let (scope_view, diverged) =
-            self.walk_compound_body(source, program, scope_view_meowsers, compound)?;
+            self.walk_compound_body(source, program, entry_scope_view, compound)?;
 
         // A compound whose last statement diverged has no fall-through, so the
         // end-of-compound link is skipped (it would push a continuation edge into a
@@ -2098,7 +2098,7 @@ impl<'a> Context<'a> {
 
         //walked off a compound_statement
         log::debug!("EOCS linking blocks: ");
-        link_blocks(program, &scope_view, scope_view_meowsers, true)?;
+        link_blocks(program, &scope_view, entry_scope_view, true)?;
 
         Ok(())
     }
