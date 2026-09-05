@@ -898,8 +898,10 @@ impl CodegenVisitor<'_> {
             Exp::Variable(v) => Some(FlowVertex(self.trans_variable_ref(v), fx::Path::empty())),
             // An address expression `x.[k]` flows structurally from x's offset field.
             Exp::AccessPath(ap) => Some(self.trans_access_path(ap)),
-            Exp::ObjectRef(_) => None,
-            _ => None,
+            // Constants are not vertices: a taint index tracks flow between storage locations,
+            // and a literal is not one. Spelled out rather than left to a `_` arm so that a new
+            // `Exp` variant is a compile error here and someone has to decide.
+            Exp::ObjectRef(_) | Exp::Str(_) | Exp::Bytes(_) | Exp::Int(_) => None,
         }
     }
 

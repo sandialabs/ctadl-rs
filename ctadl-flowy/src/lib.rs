@@ -1438,8 +1438,10 @@ fn parse_ref(
     let first = iter.next().unwrap();
     match first.as_rule() {
         Rule::int => {
-            let i: u32 = <str>::parse(first.as_str()).unwrap();
-            ParsedRef::Value(Exp::Bytes(i.to_be_bytes().to_vec()))
+            // The grammar admits a sign (`int = { ("+" | "-")? ~ ASCII_DIGIT+ }`), which the
+            // old `u32` parse could not represent and would panic on.
+            let i: i64 = <str>::parse(first.as_str()).unwrap();
+            ParsedRef::Value(Exp::new_int(i))
         }
         Rule::string => {
             ParsedRef::Value(Exp::Str(first.into_inner().next().unwrap().as_str().into()))
@@ -1498,15 +1500,10 @@ fn parse_actuals(
 }
 
 /// Decodes a trailing integer actual (e.g. the `2` in `sink(x, Label, 2)`) into
-/// a path count. Integer literals are stored as big-endian `u32` bytes (see
-/// `parse_exp`), so anything else yields `None`.
+/// a path count. Anything that is not a non-negative integer literal yields `None`
+/// -- including a negative one, which is a count of nothing.
 fn exp_to_count(e: &Exp) -> Option<usize> {
-    match e {
-        Exp::Bytes(b) if b.len() == 4 => {
-            Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize)
-        }
-        _ => None,
-    }
+    usize::try_from(e.as_int()?).ok()
 }
 
 /// Visits the source/sink/errsource/errsink instructions and collect specs

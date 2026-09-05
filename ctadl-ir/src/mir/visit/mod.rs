@@ -240,6 +240,7 @@ macro_rules! make_ast_visitor {
                         self.visit_access_path(access_path);
                     }
                     Exp::Bytes(_) => {}
+                    Exp::Int(_) => {}
                     Exp::Str(_) => {}
                     Exp::ObjectRef(_) => {}
                 }

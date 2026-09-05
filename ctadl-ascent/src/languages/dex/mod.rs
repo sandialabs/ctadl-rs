@@ -596,46 +596,22 @@ impl Context {
         let dest: SmallVec<[Reg; 4]> = dest.owned().collect();
 
         if let Some(const_exp) = match inst {
-            // 8‑bit signed constant
-            Instruction::Const4(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // 16‑bit signed constant
-            Instruction::Const16(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // 32‑bit signed constant
-            Instruction::Const(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // high 16 bits of a 32‑bit constant
-            Instruction::ConstHigh16(f) => {
-                let value = ((f.lit as i64) << 16) & 0xFFFF_FFFF;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // 16‑bit wide constant (lower half)
-            Instruction::ConstWide16(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // 32‑bit wide constant (lower half)
-            Instruction::ConstWide32(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // full 64‑bit constant
-            Instruction::ConstWide(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // high 16 bits of a 64‑bit constant
-            Instruction::ConstWideHigh16(f) => {
-                let value = (f.lit as i64) << 48;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
+            // 8-bit signed constant
+            Instruction::Const4(f) => Some(Exp::new_int(f.lit as i64)),
+            // 16-bit signed constant
+            Instruction::Const16(f) => Some(Exp::new_int(f.lit as i64)),
+            // 32-bit signed constant
+            Instruction::Const(f) => Some(Exp::new_int(f.lit as i64)),
+            // high 16 bits of a 32-bit constant
+            Instruction::ConstHigh16(f) => Some(Exp::new_int(((f.lit as i32) << 16) as i64)),
+            // 16-bit wide constant, sign-extended to 64 bits
+            Instruction::ConstWide16(f) => Some(Exp::new_int(f.lit as i64)),
+            // 32-bit wide constant, sign-extended to 64 bits
+            Instruction::ConstWide32(f) => Some(Exp::new_int(f.lit as i64)),
+            // full 64-bit constant
+            Instruction::ConstWide(f) => Some(Exp::new_int(f.lit)),
+            // high 16 bits of a 64-bit constant
+            Instruction::ConstWideHigh16(f) => Some(Exp::new_int((f.lit as i64) << 48)),
             // String constant (regular). Lossy on purpose: a DEX string
             // constant may legally hold unpaired UTF-16 surrogates -- packed
             // lexer tables do -- and no `str` can.

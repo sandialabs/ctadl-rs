@@ -76,7 +76,7 @@ fn const4_assign() {
     assert_eq!(assigns.len(), 1);
     let (var, exp) = &assigns[0];
     assert_eq!(local_name(&locals, var), "v0");
-    assert_eq!(exp, &Exp::new_bytes(5i8.to_be_bytes().to_vec()));
+    assert_eq!(exp, &Exp::new_int(5));
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn const16_assign() {
     assert_eq!(assigns.len(), 1);
     let (var, exp) = &assigns[0];
     assert_eq!(local_name(&locals, var), "v1");
-    assert_eq!(exp, &Exp::new_bytes(0x1234i16.to_be_bytes().to_vec()));
+    assert_eq!(exp, &Exp::new_int(0x1234));
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn const_assign() {
     assert_eq!(assigns.len(), 1);
     let (var, exp) = &assigns[0];
     assert_eq!(local_name(&locals, var), "v2");
-    assert_eq!(exp, &Exp::new_bytes(0x7fffffffi32.to_be_bytes().to_vec()));
+    assert_eq!(exp, &Exp::new_int(0x7fffffff));
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn const_wide16_assign() {
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 3 + i);
         assert_eq!(local_name(&locals, var), expected_reg);
-        assert_eq!(exp, &Exp::new_bytes((0x1234i16).to_be_bytes().to_vec()));
+        assert_eq!(exp, &Exp::new_int(0x1234));
     }
 }
 
@@ -131,10 +131,8 @@ fn const_wide32_assign() {
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 5 + i);
         assert_eq!(local_name(&locals, var), expected_reg);
-        assert_eq!(
-            exp,
-            &Exp::new_bytes((0xdeadbeefu32 as i32).to_be_bytes().to_vec())
-        );
+        // Sign-extended, not zero-extended: 0xdeadbeef as an i32 is negative.
+        assert_eq!(exp, &Exp::new_int(0xdeadbeefu32 as i32 as i64));
     }
 }
 
@@ -149,10 +147,7 @@ fn const_wide_assign() {
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 7 + i);
         assert_eq!(local_name(&locals, var), expected_reg);
-        assert_eq!(
-            exp,
-            &Exp::new_bytes(0x1122334455667788i64.to_be_bytes().to_vec())
-        );
+        assert_eq!(exp, &Exp::new_int(0x1122334455667788));
     }
 }
 
@@ -168,8 +163,33 @@ fn const_wide_high16_assign() {
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 10 + i);
         assert_eq!(local_name(&locals, var), expected_reg);
-        assert_eq!(exp, &Exp::new_bytes(shifted.to_be_bytes().to_vec()));
+        assert_eq!(exp, &Exp::new_int(shifted));
     }
+}
+
+#[test]
+fn const_high16_assign() {
+    let inst = Instruction::ConstHigh16(Format21h {
+        a: Reg(4),
+        lit: 0x8000u16 as i16,
+    });
+    let (assigns, locals) = assign_from(inst);
+    assert_eq!(assigns.len(), 1);
+    let (var, exp) = &assigns[0];
+    assert_eq!(local_name(&locals, var), "v4");
+    assert_eq!(exp, &Exp::new_int(-2147483648));
+}
+
+/// The point of `Exp::Int`: one value, one representation, whichever opcode produced it. Under
+/// the byte encoding these were `[0x01]` and `[0x00, 0x01]` -- two distinct constants.
+#[test]
+fn same_value_from_different_opcodes_is_one_constant() {
+    let (four, _) = assign_from(Instruction::Const4(Format11n { a: Reg(0), lit: 1 }));
+    let (sixteen, _) = assign_from(Instruction::Const16(Format21s { a: Reg(0), lit: 1 }));
+    let (wide, _) = assign_from(Instruction::Const(Format31i { a: Reg(0), lit: 1 }));
+    assert_eq!(four[0].1, sixteen[0].1);
+    assert_eq!(four[0].1, wide[0].1);
+    assert_eq!(four[0].1.as_int(), Some(1));
 }
 
 #[test]

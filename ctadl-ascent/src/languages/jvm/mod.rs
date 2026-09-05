@@ -1115,9 +1115,8 @@ impl Context {
             Location::StackSlot(_) | Location::StackInput(_) => Exp::from(
                 AccessPath::without_fields(self.convert_location_to_var_ref(loc, locals)),
             ),
-            Location::Constant(ConstantValue::Integer(n)) => {
-                Exp::new_bytes(n.to_be_bytes().to_vec())
-            }
+            Location::Constant(ConstantValue::Integer(n)) => Exp::new_int(*n as i64),
+            Location::Constant(ConstantValue::Long(n)) => Exp::new_int(*n),
             Location::Constant(ConstantValue::String(s)) => Exp::new_str(s),
             Location::Allocation(class_name) => Self::allocation_exp(class_name),
             // A field read is not expressible as an Exp; genuine field reads are lowered to

@@ -363,4 +363,12 @@ impl<'a> BasicBlockBuilder<'a> {
     pub fn new_bytes_exp(&self, bytes: Vec<u8>) -> Exp {
         Exp::new_bytes(bytes)
     }
+
+    /// Create an integer expression
+    ///
+    /// # Arguments
+    /// * `value` - The constant's value, sign-extended to `i64`
+    pub fn new_int_exp(&self, value: i64) -> Exp {
+        Exp::new_int(value)
+    }
 }

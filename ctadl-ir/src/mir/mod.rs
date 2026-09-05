@@ -440,21 +440,19 @@ impl From<Vec<&str>> for FieldAccesses {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Exp {
-    /// A bare variable reference. Reading a field is NOT expressible as an expression: use a
-    /// [`StatementKind::Load`] to load a field path into a variable, then reference that
-    /// variable here. This makes loads explicit in the IR (there is exactly one way to read a
-    /// field).
+    /// A bare variable reference.
     Variable(VariableRef),
     /// An [`AccessPath`] with a non-empty (offset-only) path, such as `x.[50]` — pointer
     /// arithmetic. Because an [`AccessPath`] holds only offsets (never symbolic fields), this is
     /// address computation, not a memory read, so it is expressible directly as an [`Exp`] with no
-    /// [`StatementKind::Load`]. To read the value AT this address, use a `Load` whose `source` is
-    /// this access path (e.g. `Load(dest, x.[50], .deref)`). A pathless access path is an
-    /// [`Exp::Variable`] instead.
+    /// [`StatementKind::Load`].
     AccessPath(AccessPath),
     Str(ArcIntern<str>),
+    /// An opaque byte blob with no numeric identity
     Bytes(Vec<u8>),
     ObjectRef(CallObject),
+    /// An integer constant, sign-extended to `i64`
+    Int(i64),
 }
 
 /// A sequence of statements ending with a terminator.
@@ -1060,6 +1058,24 @@ impl Exp {
     #[inline]
     pub fn new_bytes(bytes: Vec<u8>) -> Self {
         Self::Bytes(bytes)
+    }
+
+    /// An integer constant. Callers pass the value a front end computed, sign-extended to
+    /// `i64` -- not the opcode's encoding of it (see [`Exp::Int`]).
+    #[inline]
+    pub fn new_int(value: i64) -> Self {
+        Self::Int(value)
+    }
+
+    /// The value of an integer constant, or `None` for anything else. Deliberately does *not*
+    /// decode [`Exp::Bytes`]: a byte blob has no width or signedness to recover, which is the
+    /// reason [`Exp::Int`] exists.
+    #[inline]
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            Exp::Int(value) => Some(*value),
+            _ => None,
+        }
     }
 
     #[inline]
@@ -1829,6 +1845,7 @@ impl Display for Exp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Exp::Bytes(bytes) => write!(f, "<const: {:?}>", bytes),
+            Exp::Int(value) => write!(f, "<const: {value}>"),
             Exp::Str(s) => write!(f, "<const: {s:#?}>"),
             Exp::Variable(v) => write!(f, "{}", v),
             Exp::AccessPath(ap) => write!(f, "{}", ap),

@@ -59,6 +59,41 @@ mod tests {
         }
     }
 
+    /// Every `Exp` variant survives the wire format
+    #[test]
+    fn exp_variants_round_trip() {
+        let exps = [
+            Exp::new_int(0),
+            Exp::new_int(1),
+            Exp::new_int(-1),
+            Exp::new_int(i64::MIN),
+            Exp::new_int(i64::MAX),
+            Exp::new_str("s"),
+            Exp::new_bytes(vec![0, 0, 0, 0, 0, 0, 0, 1]),
+        ];
+        for exp in &exps {
+            let bytes = bitcode::serialize(exp).expect("encode");
+            let back: Exp = bitcode::deserialize(&bytes).expect("decode");
+            assert_eq!(exp, &back);
+        }
+        // `1i64` big-endian is the same eight octets as the blob above, and they still differ.
+        assert_ne!(exps[1], exps[6]);
+    }
+
+    /// `Int` prints its value in decimal, so one constant has one spelling in an IR dump no
+    /// matter which opcode produced it.
+    #[test]
+    fn int_displays_in_decimal() {
+        assert_eq!(
+            Exp::new_int(-2147483648).to_string(),
+            "<const: -2147483648>"
+        );
+        assert_eq!(Exp::new_int(1).to_string(), "<const: 1>");
+        assert_eq!(Exp::new_int(1).as_int(), Some(1));
+        // A byte blob has no numeric identity to recover; `as_int` says so rather than guessing.
+        assert_eq!(Exp::new_bytes(vec![1]).as_int(), None);
+    }
+
     #[test]
     fn program_round_trips() {
         let program = Program::default();
