@@ -47,6 +47,134 @@ struct SsaRename {
     c: HashMap<ArcIntern<Variable>, usize>,
 }
 
+/// The IR-to-IR passes that must run between reading an import and generating facts.
+///
+/// Order is a property of the pipeline, not of the caller. Before this type existed the order
+/// lived as four adjacent lines inside `ctadl index`, so every other consumer of an import --
+/// this crate's own tools included -- had to re-derive it by reading a CLI function and hope it
+/// had not drifted. [`Pipeline::index_default`] is now the single definition of what `ctadl
+/// index` runs, and [`run_pipeline`] the single place that runs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pipeline {
+    /// [`eliminate_dead_temps`]: drop assigned-but-never-read temporaries.
+    pub dead_temps: bool,
+    /// [`coalesce_copies`]: fuse single-use copy temporaries.
+    pub coalesce: bool,
+    /// [`transform_program`]: Cytron phi placement and SSA renaming.
+    pub ssa: bool,
+    /// [`propagate_copies`]: forward copies through the SSA graph.
+    pub copy_prop: bool,
+    /// Passed to [`transform_program`]; ignored unless `ssa`.
+    pub prune_unreachable: bool,
+}
+
+impl Pipeline {
+    /// Exactly what `ctadl index` runs, and the only definition of that.
+    ///
+    /// Dead-temp elimination runs first: it removes defs that coalescing cannot (a dead temp has
+    /// no use to fuse into) and shrinks the input coalescing scans. Both are no-ops on programs
+    /// already in SSA form (e.g. flowy imports), which is what makes the whole pipeline
+    /// idempotent.
+    #[inline]
+    pub fn index_default() -> Self {
+        Pipeline {
+            dead_temps: true,
+            coalesce: true,
+            ssa: true,
+            copy_prop: true,
+            prune_unreachable: true,
+        }
+    }
+
+    /// Run nothing: the IR as the frontend produced it.
+    #[inline]
+    pub fn none() -> Self {
+        Pipeline {
+            dead_temps: false,
+            coalesce: false,
+            ssa: false,
+            copy_prop: false,
+            prune_unreachable: false,
+        }
+    }
+
+    /// SSA renaming alone, with unreachable-block pruning, and none of the cleanups around it.
+    #[inline]
+    pub fn ssa_only() -> Self {
+        Pipeline {
+            ssa: true,
+            prune_unreachable: true,
+            ..Pipeline::none()
+        }
+    }
+
+    /// Sets [`Pipeline::prune_unreachable`], for wiring an index option through without
+    /// restating the rest of the pipeline.
+    #[inline]
+    #[must_use]
+    pub fn prune(mut self, prune_unreachable: bool) -> Self {
+        self.prune_unreachable = prune_unreachable;
+        self
+    }
+
+    /// A stable string naming this pipeline, for provenance in a log line or a report: e.g.
+    /// `dt+co+ssa(prune)+cp`, or `none`.
+    ///
+    /// Stable in the sense that matters for provenance: a given `Pipeline` value always prints
+    /// the same string, and two pipelines print the same string only if they are equal.
+    pub fn tag(&self) -> String {
+        let mut parts: Vec<&'static str> = Vec::with_capacity(4);
+        if self.dead_temps {
+            parts.push("dt");
+        }
+        if self.coalesce {
+            parts.push("co");
+        }
+        if self.ssa {
+            parts.push(if self.prune_unreachable {
+                "ssa(prune)"
+            } else {
+                "ssa"
+            });
+        }
+        if self.copy_prop {
+            parts.push("cp");
+        }
+        if parts.is_empty() {
+            // `prune_unreachable` without `ssa` is inert, and printing "none" for it is honest:
+            // the pipeline does nothing.
+            return "none".to_string();
+        }
+        parts.join("+")
+    }
+}
+
+impl Default for Pipeline {
+    #[inline]
+    fn default() -> Self {
+        Pipeline::index_default()
+    }
+}
+
+/// Runs the passes `p` selects, in the one order they are valid in.
+///
+/// This is the body `ctadl index` used to spell out inline; anything that reads an import and
+/// then generates facts must go through here rather than list the calls again.
+pub fn run_pipeline(program: &mut Program, p: Pipeline) {
+    if p.dead_temps {
+        eliminate_dead_temps(program);
+    }
+    if p.coalesce {
+        coalesce_copies(program);
+    }
+    if p.ssa {
+        transform_program(program, p.prune_unreachable);
+    }
+    if p.copy_prop {
+        propagate_copies(program);
+    }
+}
+
 pub fn transform_program(program: &mut Program, prune: bool) {
     for (_, f) in program.functions.iter_enumerated_mut() {
         log::debug!("f: {f}");

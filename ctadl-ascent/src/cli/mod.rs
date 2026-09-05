@@ -303,10 +303,10 @@ pub fn index(
             import.name,
             program_info.program.functions.len()
         );
-        ssa::eliminate_dead_temps(&mut program_info.program);
-        ssa::coalesce_copies(&mut program_info.program);
-        ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
-        ssa::propagate_copies(&mut program_info.program);
+        ssa::run_pipeline(
+            &mut program_info.program,
+            ssa::Pipeline::index_default().prune(prune_unreachable_cfg_nodes),
+        );
         log::debug!(
             "[mem cp] after SSA transform: {:.1} MB",
             phys_footprint_mb()
@@ -974,7 +974,7 @@ pub fn save_program_info(
 
     let path = &import.vmt_path();
     let obj = std::mem::take(&mut program_info.vmt);
-    let data = bitcode::serialize(&obj).map_err(Error::Bitcode)?;
+    let data = encode::encode_vmt(&obj).map_err(Error::Bitcode)?;
     std::fs::write(path, data)
         .map_err(Error::Io)
         .err_context(|| format!("writing vmt: {}", path.display()))?;
@@ -1001,8 +1001,8 @@ fn load_program_info_without_source_info(import: &ArtifactImport) -> Result<Prog
     let path = &import.vmt_path();
     log::debug!("reading {}", path.display());
     let data = std::fs::read(path).err_context(|| format!("reading vmt: {}", path.display()))?;
-    let vmt =
-        bitcode::deserialize(&data).err_context(|| format!("decoding vmt: {}", path.display()))?;
+    let vmt = ctadl_ir::encode::decode_vmt(&data)
+        .err_context(|| format!("decoding vmt: {}", path.display()))?;
 
     Ok(ProgramInfo {
         program,
