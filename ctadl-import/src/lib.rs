@@ -1,10 +1,8 @@
 /*! Reading and writing the CTADL store, with no front end attached.
 
-This crate is the half of `ctadl-ascent` that a consumer needs in order to *read* an import
-that `ctadl import` already wrote: the store layout ([`project`]), the shared error type
-([`error`]), and the `ProgramInfo` I/O that pairs with them ([`store`]). It knows no language
-and holds no parser, so reading a warm store costs a bitcode decode and nothing else -- no
-datalog engine, no datafusion, no tree-sitter, no Ghidra.
+This crate is everything a consumer needs in order to *read* an import that `ctadl import`
+already wrote, and nothing more: the store layout ([`project`]), the shared error type
+([`error`]), and the `ProgramInfo` I/O that pairs with them ([`store`]).
 
 The entry point most consumers want is [`open_import`]: name-or-directory in the store to
 preprocessed IR, version-checked on the way through.
@@ -20,9 +18,9 @@ or the other, never both**:
 - `ctadl_ascent::Error::Import` is `#[from] ctadl_import::Error`, so a `?` crossing the boundary
   bridges the two on its own.
 
-Worth stating out loud because it is the one thing about this refactor that a reader would
-otherwise have to rediscover: importing both traits into one file makes every `.err_context(…)`
-in it ambiguous, and the fix is always to drop one import rather than to qualify the calls.
+Worth stating out loud because the failure mode does not name itself: importing both traits
+into one file makes every `.err_context(…)` in it ambiguous, and the fix is always to drop one
+import rather than to qualify the calls.
 */
 
 pub mod error;

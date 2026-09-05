@@ -1,8 +1,8 @@
 /*! The reader half, end to end, with no front end in the process.
 
 That is the point of the test as much as of the crate: everything below runs against a store
-written and read by `ctadl-import` alone -- no parser, no engine -- which is what a downstream
-consumer's dependency on CTADL is now allowed to be.
+written and read by `ctadl-import` alone -- no parser, no engine -- which is all a downstream
+consumer's dependency on CTADL has to be.
 */
 
 use std::sync::Once;
@@ -31,8 +31,8 @@ fn write_import(name: &str, dir: &std::path::Path) -> ArtifactImport {
     import
 }
 
-/// `save_program_info` then `open_import`: the round trip that every consumer used to hand-roll
-/// out of the store layout and the bitcode filenames.
+/// `save_program_info` then `open_import`: the round trip a consumer gets without naming the
+/// store layout or the bitcode filenames itself.
 #[test]
 fn a_saved_import_opens_by_name() {
     store();

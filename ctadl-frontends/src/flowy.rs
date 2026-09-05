@@ -1,10 +1,10 @@
 /*! Importing a flowy artifact.
 
-Flowy's *import* half, split from its *check* half (`ctadl_ascent::codegen::flowy`), because the two
-sit on opposite sides of the front-end boundary: importing needs only
+Flowy's *import* half; its *check* half is `ctadl_ascent::codegen::flowy`. The two sit on
+opposite sides of the front-end boundary: importing needs only
 [`ctadl_flowy::compile_program`] and a `bitcode` write, while checking needs the index engine,
-the query engine and the formatter. Keeping them in one module made flowy the one language
-whose dispatch arm could not be described without the engine.
+the query engine and the formatter. In one module they would make flowy the one language whose
+dispatch arm could not be described without the engine.
 */
 
 use ctadl_import::error::{Error, ErrorContext};

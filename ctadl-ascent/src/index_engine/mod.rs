@@ -1621,11 +1621,10 @@ mod tests {
     use crate::index_engine::source_info::IndexSourceInfo;
     use ctadl_ir::ProgramInfo;
 
-    /// Lowers one C translation unit. This and [`index_program`] used to be the C front end's
-    /// private test helpers, borrowed through `crate::languages::tree_sitter_c::test_utils`.
-    /// That was the one arrow pointing *back* from a front end into the engine's own tests, and
-    /// it is why extracting `ctadl-c` looked like it needed a dev-dependency cycle in both
-    /// directions. It does not: the engine half is thirty lines, and it belongs here.
+    /// Lowers one C translation unit. This and [`index_program`] are the engine's own test
+    /// support. `ctadl-c` has near-identical helpers, but the engine keeps its own thirty lines
+    /// rather than reaching into a front end's private internals: the crate graph points the
+    /// other way, and only a dev-dependency cycle in *both* directions would let it.
     fn program_from_string(src: &str) -> (ctadl_ir::Program, String) {
         let (program, failed, dump) =
             ctadl_c::parse_c_program(src).expect("Failed to parse C program.");

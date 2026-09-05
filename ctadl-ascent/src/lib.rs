@@ -10,8 +10,8 @@ pub mod index_engine;
 pub mod languages;
 pub mod lattice;
 pub mod models;
-/// The CTADL store, extracted to [`ctadl_import`] so that reading an import costs no engine.
-/// Re-exported under its old path: `crate::project::…` resolves exactly as it did.
+/// The CTADL store, which lives in [`ctadl_import`] so that reading an import costs no engine.
+/// Re-exported here so `crate::project::…` names it.
 pub use ctadl_import::project;
 pub mod query_engine;
 pub mod stats;

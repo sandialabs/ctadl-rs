@@ -191,7 +191,7 @@ use ctadl_ir::mir::call::VirtualMethodTable;
 /// The ELF `RegisterNatives` scan, which ships in [`ctadl_pcode`] because it and the pcode
 /// import are one cycle: the scan needs Ghidra's image base and entry-point map, which only
 /// exist mid-`import_pcode`. This module reads the *file* that scan wrote, not the scanner, so
-/// the dependency here is only on its types. Re-exported so `jni::registry::…` still names it.
+/// the dependency here is only on its types. Re-exported so `jni::registry::…` names it.
 pub use ctadl_pcode::jni_registry as registry;
 
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
@@ -298,7 +298,7 @@ pub fn internal_class_name(class: &str) -> &str {
 ///
 /// Lives in [`ctadl_pcode::jni_registry`] rather than here because the registry scanner needs it
 /// to tell a `JNINativeMethod`'s descriptor slot from a pointer into arbitrary data, and the
-/// scanner sits a crate below this one. Re-exported so `jni::descriptor_params` still names it.
+/// scanner sits a crate below this one. Re-exported so `jni::descriptor_params` names it.
 pub use ctadl_pcode::jni_registry::descriptor_params;
 
 /// The parameter descriptor the long name mangles: the method descriptor with its parentheses and

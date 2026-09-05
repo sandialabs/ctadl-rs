@@ -1,11 +1,11 @@
 /*! `ProgramInfo` in and out of an import directory.
 
-The asymmetry this module exists to close: `ctadl` has always exported the writer
-([`save_program_info`]) and hidden the reader, so every downstream consumer of an import
-re-implemented the store layout and the bitcode filenames by hand -- and therefore never noticed
-an [`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION) bump, decoding garbage or
-failing with a `bitcode::Error` that named no cause. [`open_import`] is the reader, and it goes
-through [`ArtifactImport::load`], never around it, so a stale store fails as
+The writer ([`save_program_info`]) and the reader ([`load_import`], [`open_import`]) are both
+public, so nothing downstream has to reconstruct the store layout and the bitcode filenames by
+hand. That matters because a hand-rolled reader cannot see an
+[`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION) bump: it decodes garbage, or
+fails with a `bitcode::Error` that names no cause. [`open_import`] goes through
+[`ArtifactImport::load`], never around it, so a stale store fails as
 [`Error::IncompatibleImport`] naming the artifact to re-import.
 */
 

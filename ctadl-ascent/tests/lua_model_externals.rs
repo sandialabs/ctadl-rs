@@ -1,13 +1,13 @@
 //! A model file can name a Lua external.
 //!
-//! This lived in the Lua front end's own `mod tests` until the front end became
-//! [`ctadl_lua`]. It is the one Lua test that needs the engine -- the model layer's match index
-//! and its JSON ingest -- so it moves here rather than dragging `ctadl-ascent` back into
-//! `ctadl-lua` as a dev-dependency. The other fourteen are pure IR-shape checks and stayed.
+//! The one Lua test that needs the engine -- the model layer's match index and its JSON ingest
+//! -- so it lives here rather than in [`ctadl_lua`], which would need `ctadl-ascent` as a
+//! dev-dependency to hold it. The rest of the Lua suite is pure IR-shape checks, and sits in the
+//! front end beside what it tests.
 //!
 //! It imports from a real file rather than calling the crate's in-memory `lower_lua_units`,
 //! because that helper is private and there is no reason to widen it for one test: a file named
-//! `m.lua` is the module `m` the in-memory version constructed by hand.
+//! `m.lua` is the module `m` the in-memory version would construct by hand.
 
 use ctadl_ascent::models::{
     ImportScope, ProgramMatchIndex, ProgramModelMatches, json::ModelGeneratorIngest,

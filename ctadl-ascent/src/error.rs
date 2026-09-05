@@ -171,15 +171,15 @@ impl std::fmt::Display for JsonModelErrors {
 
 /// CTADL's engine-side error.
 ///
-/// The import-side half of what used to be one enum now lives in [`ctadl_import::Error`] --
-/// everything a front end or the store can raise -- and arrives here through
-/// [`Error::Import`]. The split is what lets a consumer read an import without building
-/// datafusion, ascent and tree-sitter; see `ctadl_import`'s module docs for the rule that keeps
-/// the two [`ErrorContext`] traits from colliding.
+/// Its import-side counterpart is [`ctadl_import::Error`] -- everything a front end or the
+/// store can raise -- which arrives here through [`Error::Import`]. Two enums rather than one is
+/// what lets a consumer read an import without building datafusion, ascent and tree-sitter; see
+/// `ctadl_import`'s module docs for the rule that keeps the two [`ErrorContext`] traits from
+/// colliding.
 #[derive(Debug, Error)]
 pub enum Error {
-    /// Anything raised while reading an artifact or the store. `transparent` so the chain a
-    /// caller renders is the same one it saw before the split.
+    /// Anything raised while reading an artifact or the store. `transparent` so a caller
+    /// renders the import-side chain itself, with no wrapper layer in the message.
     #[error(transparent)]
     Import(#[from] ctadl_import::Error),
     #[error("parquet error")]
