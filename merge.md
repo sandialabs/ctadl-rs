@@ -1,8 +1,137 @@
 # Rebase of `taintbench` onto `origin/main` - DO-NOT-MERGE
 
-Rebased `taintbench` onto `origin/main` (`0852b052`, "updates to sarif
-formatting (#96)") and re-ran the TaintBench suite (see
-`taintbench/README.md`).
+Rebased `taintbench` onto `origin/main` and re-ran the TaintBench suite (see
+`taintbench/README.md`). Newest rebase first; the earlier sections are kept as
+the record of where each conflict came from.
+
+# Rebase onto `5fcb2c89` (#101 - #120)
+
+Previous base was `0038c0b8` ("Indexing tweaks (#100)"); twelve main commits
+came in:
+
+```
+5fcb2c89 Extract language frontends into per-language crates, clean up IR (#119)  <- new base
+6ad1e2e1 Add -j flag to index (#120)
+5858c731 Restore Update instruction in IR (#118)
+53a0d6d1 Bugfixes to tree-sitter C parsing (#116)
+c0509263 Move all expensive tests into nightly runner (#115)
+6a58056a Java dex fixes (#114)
+6ecbfb45 Environment Variables and nested brackets in initializers (#110)
+92d6a996 Fix > 127 param issue (#108)
+7dd6c901 Implement modes: ["skip-analysis"] (#107)
+b2a1ea5b bump version to 0.1.2 (#105)
+de09eec8 Update release workflow (#106)
+e41fdc6a Tree-sitter C alpha support (#101)
+0038c0b8 Indexing tweaks (#100)                                                   <- old base
+```
+
+## Result
+
+All twenty branch commits replayed. Two conflicted; the runner
+(`xtask/src/taintbench.rs`) needed no changes, and the suite reproduces every
+committed baseline.
+
+```
+38 passed, 0 skipped, 0 failed of 38 app(s)
+```
+
+Every per-finding verdict is byte-identical to the pre-rebase run recorded in
+`taintbench-run-8baae049.log` — same MATCH / `-` / `FALSE-POSITIVE` on all 38
+apps, `remote_control_smack` included:
+
+```sh
+diff <(grep -E '^    #[0-9]' taintbench-run-8baae049.log) \
+     <(grep -E '^    #[0-9]' <new run>)     # empty
+```
+
+`remote_control_smack` still indexes in well under a minute and still detects
+`[1, 2, 5, 6, 9, 16]`, so the unwinder modelling survives the change of
+mechanism described below.
+
+## Conflicts resolved
+
+### `8e2326ae` "Fix index_engine comments" — reapplied by hand
+
+`#119`/`#120` restructured the index engine: the rule bodies moved into an
+`ascent_source!`-style `include_source!(index_rules)` block shared by the serial
+`ascent!` and the parallel `ascent_par!` program, so git could not align the old
+ascent block with the new one and threw the whole region up as one conflict.
+
+Took main's file and reapplied this commit's content onto main's rule text: the
+`counters` import, the six trailing `let _d = counters::bump(..)` clauses on the
+`locals` / `context_locals` forward-propagation and seeding rules, and the
+`log::debug!("index counters: ..")` line beside `scc_times_summary()`. The rules
+themselves are unchanged by main, only re-indented and relocated, so each clause
+went back on the rule it came from. `facts.rs` (the `counters` module and the two
+`join_mut` bumps) auto-merged.
+
+Placing the counters last still holds under the new layout: they are trailing
+clauses, so the first-two-clause adjacency the SIMPLE JOIN plan keys on is
+untouched, and being shared source they now count both the serial and the
+parallel program.
+
+### `8baae049` "Use modeling to address problem" — main's side, wholesale
+
+**Main's `7dd6c901` "Implement modes: [\"skip-analysis\"] (#107)" is the
+upstreamed form of this very commit** (branch commit dated Aug 9, main's Aug 12).
+Ten files conflicted, all of them the same feature written twice.
+
+Resolved by taking main's side in every conflicted file and reverting
+`ctadl-ascent/src/codegen/model_matches.rs` (which auto-merged to the branch's
+version) to main's. What survives from the branch commit is only what main did
+not take: `hybrid-inlining-plateau.md`, `taintbench/README.md`, and
+`remote_control_smack`'s `app.json` (the `excluded` key removed) and
+`expected.json` (baseline `[1, 2, 5, 6, 9, 16]`).
+
+**The two implementations differ, and main's is now the one in the tree.**
+
+| | branch's `8baae049` | main's `#107` (kept) |
+| --- | --- | --- |
+| mechanism | `facts.skip_analysis` input relation; one `!skip_analysis(infunc)` guard on the rule seeding `locals` from formals | codegen lowers the signature and drops the body, so the blocks never become facts |
+| the body's own calls | still in the call graph | **gone from the call graph** |
+| cost | one relation for the solver to test | none — the fact base is smaller |
+
+Main's is the stronger suppression, and it is a superset for the case the branch
+cares about: with no body facts there is no `callee_info` for hybrid inlining's
+rule 1.1 to read, which is the multiplication the ARM unwinder models exist to
+stop. The suite confirms it empirically — `remote_control_smack` keeps its
+baseline and its runtime.
+
+Two smaller consequences of taking main's side:
+
+- The CLI line is main's wording: `"... {} function body(ies) not analyzed"`
+  reading a local `skipped_bodies`, not the branch's `model_report.skipped`.
+- `models/json.rs`'s `uses_field` constraint keeps main's
+  `StatementKind::Update` arm — `#118` restored that instruction, and the branch
+  commit predates it.
+
+The three fixtures (`model_adds_to_summary.tnt`, `skip_analysis.tnt`,
+`skip_analysis_hybrid.tnt`), `models/tests.rs`, and
+`defaults/native-index.jsonl`'s unwinder entry are the same on both sides bar
+comment wording, so nothing about the feature's coverage changed.
+
+## Verification
+
+- `cargo check --workspace --all-targets` — clean
+- `cargo fmt --all --check` — clean
+- `cargo clippy --workspace --all-targets` — two warnings, both pre-existing and
+  in files this branch does not touch (`items_after_test_module` in
+  `jvm-reader/src/flow.rs`, `wrong_self_convention` in the vendored
+  `rustc_graphviz`)
+- `cargo test --workspace` — 0 failed
+- `nix eval .#checks.aarch64-darwin.taintbench.drvPath` — evaluates; all 38 APK
+  fetches resolve now that no app carries `excluded`
+- `xtask taintbench` over all 38 apps with the APKs supplied from the Nix store —
+  38 passed, 0 skipped, 0 failed, verdicts identical to the committed log
+- `CTADL_QUERY_DATALOG=1 xtask taintbench --filter cajino_baidu` — still fails on
+  the same `#8` regression documented under the `0852b052` rebase below, so that
+  gap (`saturating` is a search-engine-only feature) is unchanged by `#101`–`#120`.
+  Measured only: the datalog query took about twelve minutes of CPU and 8.8 GB
+  resident on this one app, against roughly fifteen seconds end-to-end under the
+  default search regime. No pre-rebase datalog timing was recorded, so this is an
+  absolute figure, not a comparison.
+
+# Rebase onto `0852b052` (#93 - #96)
 
 ## Result
 
