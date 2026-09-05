@@ -652,13 +652,15 @@ and the split found exactly two places where they had not.
 
 ### 1.3 Make the version check reachable
 
-> **Partly landed.** 1.2a put `ArtifactImport::load` on a reachable path:
-> `ctadl_import::open_import` resolves a name *or* a directory through it and
-> never around it, so a stale store fails as `IncompatibleImport` naming the
-> artifact to re-import. What is left is the regression test that proves it
-> (item 5 under *Validating*) and the `arrow`/`parquet` cleanup at the end of
-> this section. `import_format_version_beside` was already there and did not
-> need changing.
+> **Landed**, apart from one optional dependency cleanup. 1.2a put
+> `ArtifactImport::load` on a reachable path: `ctadl_import::open_import` resolves
+> a name *or* a directory through it and never around it, so a stale store fails
+> as `IncompatibleImport` naming the artifact to re-import. Two tests in
+> `ctadl-import/tests/open_import.rs` now pin that, one per spelling of the
+> argument (item 5 under *Validating*), and `ctadl-ir`'s unused `arrow`/`parquet`
+> are gone. What is left is optional and is not about correctness:
+> feature-gating `source-info`'s `parquet_io`. `import_format_version_beside` was
+> already there and did not need changing.
 
 Today this crate reads `ir-program.bitcode` directly, so an import written by a
 newer CTADL decodes as garbage or as a `bitcode::Error`. `ArtifactImport::load`
@@ -679,6 +681,15 @@ dropping the direct deps removes a duplicate `arrow` major from the build
 graph. Feature-gating `source-info`'s `parquet_io` would remove them from a
 `ProgramInfo`-only consumer entirely, which is the last thing standing between
 this crate and a genuinely light dependency tree.
+
+> **Done for the direct deps**, and the duplicate was real: `arrow` 57 and its
+> thirteen sibling crates leave `Cargo.lock` entirely, because `source-info` is
+> on 58 and nothing else asked for 57. Fourteen packages out, none in, and
+> nothing else needed changing, since `ctadl-ir` never named either one.
+> `ctadl-ir`'s own graph is 118 crates. `source-info`'s `parquet_io` is still
+> unconditional (`source-info/src/lib.rs:21`), so `arrow` and `parquet` still
+> reach a `ProgramInfo`-only consumer through it — one major of each now instead
+> of two.
 
 ---
 
@@ -836,7 +847,7 @@ naming them keeps them off the CTADL work list:
 | 1.2b-e | `ctadl-jvm`, `-dex`, `-pcode`, `-lua` | new crates | 2-3 days | per-language dep trees | no | **done** (`7c2fd5fb`, `8a058db1`, `2cfc99af`, `426856ac`) |
 | 1.2f | `ctadl-c` | new crate | 1-3 days | nothing here; optional, last | no | **done** (`c1617fb7`), dev-dep cycle |
 | 1.2g | `ctadl-frontends` | new crate | 1 day | the dispatch, `import_artifact`, `open_or_import` | no | **done** (`62d9e04d`) |
-| 1.3b | version-checked `open_import` | `ctadl-import` | hours | correct failure on a stale store | no | |
+| 1.3b | version-checked `open_import`, its regression test, `ctadl-ir` dep cleanup | `ctadl-import`, `ctadl-ir` | hours | correct failure on a stale store | no | **done**; `source-info`'s `parquet_io` gate left open |
 | 2.1 | `Exp::Int` + dex/JVM lowering | `ctadl-ir`, front ends | 1-2 days | meaningful `PtVal::Const` | **yes → "6"** | **done** (`51bc36b3`) |
 | 2.2A | `VarOffset` per the existing design doc | `ctadl-ir`, `+flowy`, guards | ~1 week | the IR construct | **yes** (same bump) | |
 | 2.2B | `ArrayIndexMode::Indexed` for dex/JVM | front ends | 1 day | `load/store_index_var` here | no | |
@@ -874,12 +885,22 @@ untouched. *(§1.2, The error split.)*
 Note for 2.2A, which shares the format bump: 2.1 already spent it, so `"6"`
 is taken. If 2.2A lands separately it needs `"7"`, not a second `"6"`.
 
-What is left, in the order it makes sense to do it: **1.3b** (the stale-store
-regression test, plus dropping `ctadl-ir`'s unused `arrow`/`parquet` and
-feature-gating `source-info`'s `parquet_io`) is hours and finishes Part 1.
-Then **2.2A**, which is the week; 2.1 already spent the format bump it shares.
-**2.2B** is the payoff commit — it is small, and everything before it exists to
-make it safe.
+What is left. **Part 1 is finished**: 1.3b landed with the rest, so every row of
+the table through 2.1 is done, and *The measurement* below says so with numbers
+rather than with an argument. The only piece of 1.3 not taken is feature-gating
+`source-info`'s `parquet_io`, which is a dependency-tree improvement and not a
+correctness one.
+
+**2.2A and 2.2B are out of scope for this branch, deliberately.** An
+implementation of 2.2A exists and was reverted: it is on `varoffset-backup`
+(`86647013`, plus a WIP follow-on), together with `ctadl-varoffset-review.md`,
+which argues that a π emitted by a front end is the wrong object — π is the
+residue of resolution, so the index variable should travel *beside* the path as
+a side relation and the widening should be a pass over the fact base, not a
+lowering rule. Read that review before picking 2.2 up again. Note also that the
+design doc §2.2 cites throughout, `../ct-unknown-offset/variable-offset-ir.md`,
+was never committed and the worktree holding it is gone; that review and
+`86647013`'s commit message are what survive of it.
 
 ## Validating that none of this moves `ctadl index`
 
@@ -893,6 +914,14 @@ that a fact rather than an intention:
    already collects). 1.1, 1.2 and 1.3 must be exact; 2.1 and 2.2A must be
    exact because nothing emits the new variants; 2.2B is exact only in
    `Collapsed`, and in `Indexed` should differ in *no* relation but `paths`.
+
+   > **Run, for 1.1 through 2.1 together, and it holds** — see *The measurement*
+   > below. One correction to the wording: the bar is *content*-identical, not
+   > byte-identical, and that is not a concession this branch needs. Re-running
+   > the **same binary** on the same APK writes byte-different
+   > `assign`/`paths`/`summary`/`index_source_map` files, because row order
+   > inside a parquet table is not deterministic. Compare each table as the
+   > sorted multiset of its rows.
 2. **The EDB diff here.** `examples/ctadl_import.rs` prints per-relation
    counts. After 2.2B in `Indexed` mode, `load_field`/`store_field` on the
    `[]` field should fall by exactly the number of new
@@ -908,6 +937,25 @@ that a fact rather than an intention:
 5. **A stale-store test:** write an import with version `"5"`, open it with a
    build expecting `"6"`, assert `Error::IncompatibleImport` names the artifact
    path. This is the regression that motivates 1.3.
+
+   > **Landed**, as `an_import_from_an_older_build_is_refused_by_name` and
+   > `…_by_directory` in `ctadl-import/tests/open_import.rs`. The import is
+   > written by this build and only its config's `version` field is edited, so
+   > the bitcode is perfectly readable and the version is the one thing wrong —
+   > which is the point: the check fires on the config, before the decode. Both
+   > spellings of `open_import`'s argument are covered because both resolve
+   > through `ArtifactImport::load` and the test is what says neither goes
+   > around it.
+   >
+   > Writing it turned up something worth knowing about the errors themselves:
+   > `resolve_import` wraps the diagnostic in an `Error::Context`, and
+   > `Error::Context`'s `Display` prints only its own context line. So
+   > `err.to_string()` on a stale store says "reading import 'x'" and nothing
+   > about the version. Nothing is lost — the variant carries `source`, `main`
+   > returns `anyhow::Result`, and the CLI prints the whole chain as
+   > `Caused by:` — but a caller that formats the error without walking
+   > `source()` will drop the useful half. The tests walk the chain, and
+   > `full_message` in that file is the two lines it takes.
 
 ### What 1.2 was actually checked against
 
@@ -936,10 +984,62 @@ diff. What ran, after every one of the seven commits:
   against a fresh store, which exercises the dispatch, the store write, and the
   now-public reader on one path.
 
-Item 1 above — the byte-identical `backflash.apk` fact-base diff — has **not**
-been run for 1.2. It is cheap to argue that it must hold (no logic moved, and
-the passes and codegen are untouched) and cheap to run, so it is still worth
-doing before this branch merges.
+### The measurement
+
+Item 1 above has now been run, and against the whole branch rather than
+step by step — which is the stronger statement and the cheaper one, since what a
+reviewer wants to know is whether `ir-refactor` moves `ctadl index` at all.
+
+`backflash.apk` (3,898 functions), imported and indexed under `--strategy hi`,
+`mixed` and `cha`, by a release build of `main` (`6ad1e2e1`) and by a release
+build of this branch. Both stores written from scratch; the branch's import is
+format `"6"` and `main`'s is `"5"`, so the `ir-program.bitcode` files differ by
+construction and only the index is comparable — which is the thing the claim is
+about.
+
+**Every one of the 13 tables is identical, in all three strategies:**
+
+| relation | hi | mixed | cha |
+|---|---|---|---|
+| `actual_param` | 38,684 | 38,684 | 38,684 |
+| `assign` | 137,315 | 139,387 | 139,588 |
+| `call` | 2,477 | 7,521 | 8,586 |
+| `call_target_assign` | 912 | 912 | 912 |
+| `callee_info` | 5,526 | 453 | 0 |
+| `callee_resolvents` | 11,168 | 11,168 | 11,168 |
+| `external_function` | 1,523 | 1,523 | 1,523 |
+| `formal_param` | 13,990 | 13,998 | 13,999 |
+| `function_id` | 3,898 | 3,898 | 3,898 |
+| `import_id` | 1 | 1 | 1 |
+| `index_source_map` | 43,283 | 43,283 | 43,283 |
+| `paths` | 2,266 | 2,266 | 2,266 |
+| `summary` | 973 | 1,363 | 1,452 |
+| **total** | **262,016** | **264,457** | **265,360** |
+
+Not only the counts: each table matches row for row as a sorted multiset,
+columns included. `index_config.json` matches too. And the relations that never
+reach parquet are covered by the `index_engine` debug lines, which are identical
+line for line in all three runs — including the `locals` closure, which is the
+one most sensitive to a change in the IR reaching it (`hi`: 54,880 rows, 3.92
+reached per formal, 81.5% of variables reached).
+
+So 1.1, 1.2 and 2.1 together move nothing that `ctadl index` computes, measured
+rather than argued.
+
+**The one thing that is not exact, and never was.** Four tables — `assign`,
+`paths`, `summary`, `index_source_map` — are byte-different between the two
+builds. They are also byte-different between `main` and *itself*, re-run on the
+same APK into a fresh store, which is how we know it is row order inside the
+parquet file and not a change in what was computed. Anyone repeating this should
+compare content, not bytes; a `cmp` loop reports four false differences per
+strategy. The comparison used here is `scripts/compare-index.py`, which reads
+each table with `pyarrow`, sorts the rows, and hashes them:
+
+```
+ctadl --store A index bf_hi backflash.apk --strategy hi
+ctadl --store B index bf_hi backflash.apk --strategy hi
+scripts/compare-index.py A/projects/bf_hi/index B/projects/bf_hi/index
+```
 
 ## What changes on this side
 
