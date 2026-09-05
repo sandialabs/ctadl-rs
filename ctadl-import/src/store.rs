@@ -77,7 +77,7 @@ pub fn save_program_info(
 ///
 /// The IR is returned exactly as the front end produced it: no pass has run. Callers that go on
 /// to generate facts want [`open_import`], which is this plus
-/// [`ssa::run_pipeline`](ctadl_ir::ssa::run_pipeline).
+/// [`ssa::run_pipeline`].
 pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<ProgramInfo, Error> {
     let path = &import.program_path();
     log::debug!("reading {}", path.display());

@@ -16,10 +16,10 @@ having it.
 
 A consumer states what it reads. `default = ["dex", "jvm", "apk"]`; `pcode`, `lua`, `c`,
 `xapk` and `flowy` are opt-in, and each pulls in exactly one front-end crate plus the matching
-`ctadl-import` error variants. [`ArtifactLanguage`](ctadl_import::ArtifactLanguage) stays whole
+`ctadl-import` error variants. [`ArtifactLanguage`] stays whole
 whatever is enabled -- it is an enum, it costs nothing, and `--help` should keep naming every
 language the tool knows about. What the features gate is the *dispatch arms*: a disabled
-language reports [`Error::NothingToImport`](ctadl_import::Error::NothingToImport) naming the
+language reports [`Error::NothingToImport`] naming the
 feature that would enable it, rather than failing to parse the flag.
 
 `apk` implies `dex` but not `pcode`. An APK imported without `pcode` keeps its Java half and

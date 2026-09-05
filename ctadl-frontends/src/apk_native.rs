@@ -8,7 +8,7 @@ already joins the two, but only if the native half was imported -- and it resolv
 
 So importing an APK also imports its native libraries, each as its own **sub-import**
 lowered through the [pcode front end][ctadl_pcode]. It has to be a separate
-import rather than more IR inside the APK's own: [`ProgramInfo::vmt`] is an enum, and
+import rather than more IR inside the APK's own: [`ProgramInfo::vmt`](ctadl_ir::ProgramInfo::vmt) is an enum, and
 `ctadl_ascent::languages::jni::JniObserver::observe` reads its variant to decide which half
 of the boundary an import contributes. One `ProgramInfo` is either the Java side or the
 native side, never both.

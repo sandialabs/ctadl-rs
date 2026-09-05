@@ -1,7 +1,7 @@
 /*! Check flowy programs
 
 This module provides a function, [`check`], to check the assertions in a Flowy program. The
-*import* half lives in [`crate::languages::flowy`], which needs no engine; see there for why.
+*import* half lives in [`ctadl_frontends::flowy`], which needs no engine; see there for why.
 */
 use std::path::Path;
 

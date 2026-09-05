@@ -11,7 +11,7 @@ preprocessed IR, version-checked on the way through.
 
 # The error rule
 
-There are two `Error` types in the workspace and two [`ErrorContext`](error::ErrorContext)
+There are two `Error` types in the workspace and two [`ErrorContext`]
 traits, one pair here and one in `ctadl-ascent`. They never collide because **a file imports one
 or the other, never both**:
 

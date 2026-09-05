@@ -16,7 +16,7 @@ and record the result on the parent.
   → library without flattening drops every `.so` at index time, which looks exactly like the JNI
   bug this all exists to fix.
 * **A resource-only split is skipped, not fatal.** They are the majority: one real bundle has 23
-  of 30. [`apk_native::require_native_libs`] raises [`Error::NothingToImport`] for a split with
+  of 30. [`crate::apk_native::require_native_libs`] raises [`Error::NothingToImport`] for a split with
   neither Dex nor `lib/`; that one error is caught here and logged at debug. Anything else
   propagates.
 */

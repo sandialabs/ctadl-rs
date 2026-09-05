@@ -1,7 +1,7 @@
 //! The error type shared by the store and by every front end.
 //!
 //! See the crate-level docs for the rule that keeps this type and
-//! [`ctadl_ascent::error::Error`] from colliding: a file imports one [`ErrorContext`] or the
+//! `ctadl_ascent::error::Error` from colliding: a file imports one [`ErrorContext`] or the
 //! other, never both, and the `#[from]` on `ctadl_ascent::Error::Import` bridges them at the `?`.
 
 use std::path::PathBuf;

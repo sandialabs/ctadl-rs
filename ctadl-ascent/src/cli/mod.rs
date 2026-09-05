@@ -217,7 +217,7 @@ pub fn index(
     //
     // Still unquantified: the APK + `.so` pair. It is no longer an exotic shape -- importing
     // an APK now imports its native libraries as pcode sub-imports (see
-    // [`crate::languages::apk_native`]), so a project naming one APK routinely walks several
+    // [`ctadl_frontends::apk_native`]), so a project naming one APK routinely walks several
     // programs here -- but the loop drops each import's IR before loading the next, so the
     // posture is per-import peak rather than the sum.
     log::debug!(

@@ -33,7 +33,11 @@ use pcode_reader::PcodeFactsReader;
 // that is a binary on disk from a `ghidra://` URL or a `.gpr` project.
 pub mod ghidra;
 
-/// The `RegisterNatives` scanner. See the module docs above for why it ships in this crate.
+// The `RegisterNatives` scanner. See the module docs above for why it ships in this crate,
+// and `jni_registry`'s own module doc for what it does. Kept as a `//` comment rather than a
+// `///` one: an outer doc on a module that already has an inner `/*! ... */` makes rustdoc
+// resolve the whole merged doc in *this* scope, which breaks every link the module wrote about
+// its own items.
 pub mod jni_registry;
 
 /// This is hardcoded for now, but should be read from the facts

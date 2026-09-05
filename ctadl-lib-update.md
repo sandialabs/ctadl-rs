@@ -636,9 +636,10 @@ naming them keeps them off the CTADL work list:
 |---|---|---|---|---|---|---|
 | 1.1 | `ssa::Pipeline` + `run_pipeline` | `ctadl-ir` | hours | drift-free `Preprocess` here, today | no | **done** (`9487842a`) |
 | 1.3a | `encode_vmt` / `decode_vmt` | `ctadl-ir` | hours | symmetric reader | no | **done** (`9487842a`) |
-| 1.2a | extract `ctadl-import` | new crate + `ctadl-ascent` | 1 day | `open_import`, light dep tree, and 1.3b | no | |
-| 1.2b-e | `ctadl-jvm`, `-dex`, `-pcode`, `-lua` + `ctadl-frontends` | new crates | 2-3 days | per-language dep trees | no | |
-| 1.2f | `ctadl-c` | new crate | 1-3 days | nothing here; optional, last | no | |
+| 1.2a | extract `ctadl-import` | new crate + `ctadl-ascent` | 1 day | `open_import`, light dep tree, and 1.3b | no | **done** (`b64af28c`) |
+| 1.2b-e | `ctadl-jvm`, `-dex`, `-pcode`, `-lua` | new crates | 2-3 days | per-language dep trees | no | **done** (`7c2fd5fb`, `8a058db1`, `2cfc99af`, `426856ac`) |
+| 1.2f | `ctadl-c` | new crate | 1-3 days | nothing here; optional, last | no | **done** (`c1617fb7`), dev-dep cycle |
+| 1.2g | `ctadl-frontends` | new crate | 1 day | the dispatch, `import_artifact`, `open_or_import` | no | **done** (`62d9e04d`) |
 | 1.3b | version-checked `open_import` | `ctadl-import` | hours | correct failure on a stale store | no | |
 | 2.1 | `Exp::Int` + dex/JVM lowering | `ctadl-ir`, front ends | 1-2 days | meaningful `PtVal::Const` | **yes → "6"** | **done** (`51bc36b3`) |
 | 2.2A | `VarOffset` per the existing design doc | `ctadl-ir`, `+flowy`, guards | ~1 week | the IR construct | **yes** (same bump) | |
@@ -648,6 +649,44 @@ Landed on `ir-refactor`. 2.1 also moved flowy's integer literals off the byte
 encoding (`parse_ref`/`exp_to_count`), which the plan did not call out: flowy
 is a front end with the same problem, and its `int` rule admits a sign its
 `u32` parse would have panicked on.
+
+### What 1.2 actually took, against what this document predicted
+
+Five things came out differently. None changes the end state; all five are the
+kind of thing only the compiler finds.
+
+1. **`ctadl-frontends` cannot land with `ctadl-dex`.** `apk_native.rs` calls
+   `pcode::import_pcode`, so the dispatch crate depends on `ctadl-pcode` -- and
+   while pcode is a module of `ctadl-ascent`, that is a cycle. Frontends is
+   therefore *last*, after 1.2f, not paired with 1.2c. Same arrows, different
+   order.
+2. **`project.rs` moves whole, not in halves.** It has one crate-internal `use`
+   (`error`) and no engine dependency anywhere, so there is no seam; `MissingIndex`
+   and `IncompatibleIndex` travel with `AnalysisProject` because they describe
+   the store's layout, which is what `ctadl-import` owns.
+3. **Flowy's import half had to split in 1.2a, not 1.2c.** It is what let
+   `cli::import` become import-side end to end, which is what let `xapk`'s
+   recursion into it typecheck against `ctadl_import::Error`.
+4. **Two couplings this document did not list.** `jni/registry.rs` called
+   `super::descriptor_params`, the JVM descriptor parser in `jni.rs` -- it moves
+   down with the scanner. And `index_engine`'s own `parallel_engine_matches_serial`
+   borrowed `index_program`/`program_from_string` out of the C front end's private
+   `test_utils`; that is the arrow pointing *back*, and rather than doubling the
+   dev-dependency cycle it was deleted -- the engine half of those helpers is
+   thirty lines and belongs in the engine's test module.
+5. **`apk` needs no `zip`, and `xapk` belongs in the default set.** The APK's zip
+   handling was already `dex_reader::apk`'s. `apk` implies `dex` but *not*
+   `pcode`: an APK imported without the pcode front end keeps its Java half and
+   reports it has no native front end, which is the same degradation as an APK
+   imported on a machine with no Ghidra.
+
+Measured payoff: a `dex, apk` consumer builds 169 crates against `ctadl-ascent`'s
+384, with tree-sitter, datafusion, ascent, tokio, serde-sarif and the Ghidra
+plumbing gone. `arrow`/`parquet` remain, arriving through `source-info`'s
+`parquet_io` -- exactly what 1.3 names as the last thing standing between a
+consumer and a light tree. Test counts are conserved exactly: 513 passing +4
+ignored before, 512 +4 spread across seven crates plus one relocated integration
+test after.
 
 Note for 2.2A, which shares the format bump: 2.1 already spent it, so `"6"`
 is taken. If 2.2A lands separately it needs `"7"`, not a second `"6"`.

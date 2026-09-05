@@ -716,7 +716,7 @@ pub struct ClassIndex<'a> {
 
 impl<'a> ClassIndex<'a> {
     /// Builds the index from `(class, simple name, descriptor)` triples -- the deduplicated
-    /// `native` list [`super::link`] already has in hand.
+    /// `native` list `ctadl_ascent::languages::jni::link` already has in hand.
     pub fn build(natives: impl Iterator<Item = (&'a str, &'a str, &'a str)>) -> Self {
         let mut index = Self::default();
         for (class, name, descriptor) in natives {

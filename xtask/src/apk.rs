@@ -49,7 +49,7 @@ pub const CHECKS: &[&str] = &[
     "apk:skip-existing",
 ];
 
-// The store layout `ctadl` writes. Duplicated from `ctadl_ascent::project` rather than imported:
+// The store layout `ctadl` writes. Duplicated from `ctadl_import::project` rather than imported:
 // xtask deliberately does not depend on the analyzer crate (see `xtask/Cargo.toml`), and these
 // checks are *about* the on-disk contract anyway -- a path that moves should fail them loudly
 // here rather than follow the analyzer silently.
