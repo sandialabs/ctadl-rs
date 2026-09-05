@@ -116,12 +116,8 @@ where `${system}` is your platform (e.g. `aarch64-darwin`, `x86_64-linux`).
 Running the regression suite outside Nix is not reliable because results depend
 on the exact compiler/disassembler versions Nix provides.
 
-For iterating on tests, the `regression` dev shell provides that same pinned
-toolchain while letting you run the harness against your local working tree:
-
-```bash
-nix develop .#regression -c cargo xtask regression
-```
+For iterating on tests, `cargo xtask regression` runs the same harness against
+your local working tree; the dev shell already carries the pinned toolchain.
 
 # History
 

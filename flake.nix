@@ -142,10 +142,10 @@
 
         # The external toolchain the regression scripts expect on PATH
         # (dex-reader, jvm-reader, javac, dx, gcc/addr2line, ghidra, jq,
-        # python3). Deliberately excludes this repo's own package so that
-        # `devShells.regression` can be used to run parts of the suite against a
-        # locally built ctadl/xtask; the `regression` check adds the Nix-built
-        # package on top.
+        # python3). Deliberately excludes this repo's own package so that the
+        # dev shell can be used to run parts of the suite against a locally
+        # built ctadl/xtask; the `regression` check adds the Nix-built package
+        # on top.
         testEnv = pkgs.buildEnv {
           name = "ctadl-nightly-test-env";
           # The cc-wrapper and binutils-wrapper both ship a few overlapping
@@ -332,6 +332,10 @@
           };
 
         formatter = pkgs.nixfmt;
+        # One shell for everything: the day-to-day Rust/Nix tooling plus the
+        # external toolchain the regression suite needs (ghidra, the Android
+        # SDK, a JDK, dex-reader/jvm-reader, ...). `cargo xtask regression`
+        # runs straight from here.
         devShells.default =
           with pkgs;
           mkShell {
@@ -357,20 +361,11 @@
               bzip2
               ghidra-bin
             ];
-            RUST_SRC_PATH = rustPlatform.rustLibSrc;
-          };
-
-          # nix develop .#regression
-          devShells.regression = pkgs.mkShell {
-            buildInputs = with pkgs; [
-              nil
-              nixd
-            ];
             packages = [ testEnv ];
 
+            RUST_SRC_PATH = rustPlatform.rustLibSrc;
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
             ANDROID_SDK_ROOT = "${androidSdk.androidsdk}/libexec/android-sdk";
-            RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
 
             shellHook = ''
               export PATH="${androidSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"

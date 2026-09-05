@@ -19,11 +19,10 @@ nix build .#checks.x86_64-linux.regression       # Linux / CI
 
 This is the supported way to run the suite, and it is what the nightly GitHub
 workflow runs on a schedule. Add expensive tests here, not in YAML.
-If you are iterating on individual cases, the flake also provides a local dev
-shell with the full regression toolchain on `PATH`:
+For iterating on individual cases, run the harness directly — the dev shell
+already carries the full regression toolchain on `PATH`:
 
 ```sh
-nix develop .#regression
 cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
@@ -287,6 +286,6 @@ warning and skips the validation rather than failing every case.
   and the final line reports `N passed, M skipped, K failed`.
 - The runner expects its tools (`ctadl`, `dex-reader`, `javac`, `dx`, `gcc`,
   `addr2line`, Ghidra, `checksarif`) on `PATH`. The flake check in [Running](#running) builds
-  and supplies all of them and `nix develop .#regression` provides an
-  interactive shell with the same toolchain for local iteration.
+  and supplies all of them; the dev shell carries the same toolchain for local
+  iteration.
 - `scripts/*.py` are unused by the current suite and kept only for reference.
