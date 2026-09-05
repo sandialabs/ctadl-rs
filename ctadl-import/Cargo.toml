@@ -1,0 +1,34 @@
+[package]
+name = "ctadl-import"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+bitcode = { version = "0.6", features = ["serde"] }
+ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
+hashbrown = "0.16"
+json5 = "1.3"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+source-info = { path = "../source-info", features = ["serde"] }
+thiserror = "2"
+
+# Per-language error variants. Each is a `#[from]` on one reader's error type, gated so a
+# consumer that reads only Dex does not build a JVM reader or a tree-sitter grammar. See the
+# module doc in `src/lib.rs` for why the variants live in one enum rather than one per language.
+ctadl-flowy = { path = "../ctadl-flowy", features = ["serde"], optional = true }
+dex-reader = { path = "../dex-reader", optional = true }
+jvm-reader = { path = "../jvm-reader", optional = true }
+tree-sitter = { version = "0.26", optional = true }
+
+[features]
+default = []
+dex = ["dep:dex-reader"]
+jvm = ["dep:jvm-reader"]
+pcode = []
+ts = ["dep:tree-sitter"]
+flowy = ["dep:ctadl-flowy"]
+
+[lints]
+workspace = true

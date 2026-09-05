@@ -37,7 +37,7 @@
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
 
-use crate::error::Error;
+use ctadl_import::error::Error;
 
 use ctadl_ir::ThinVec;
 use ctadl_ir::index::index_vec::IndexVec;

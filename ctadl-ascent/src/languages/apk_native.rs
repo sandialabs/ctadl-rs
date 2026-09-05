@@ -46,7 +46,7 @@ use dex_reader::apk::{
 };
 
 use crate::cli::ImportOptions;
-use crate::error::{Error, ErrorContext};
+use ctadl_import::error::{Error, ErrorContext};
 use crate::languages::pcode;
 use crate::project::{ArtifactImport, ArtifactLanguage};
 
@@ -290,7 +290,7 @@ fn import_one(
 
     let child = ArtifactImport::try_create(name, ArtifactLanguage::Pcode, dest)?;
     let program_info = pcode::import_pcode(&child)?;
-    crate::cli::save_program_info(program_info, &child)?;
+    ctadl_import::save_program_info(program_info, &child)?;
 
     // `import_pcode` records Ghidra's image base on the config and re-saves it, so
     // reload rather than writing the stale in-memory copy back over it.

@@ -89,7 +89,7 @@ use smallvec::SmallVec;
 use source_info::{ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 use tree_sitter::{Node, Parser, Tree};
 
-use crate::error::{Error, ErrorContext};
+use ctadl_import::error::{Error, ErrorContext};
 
 /// One Lua source file in an import: where it came from, the `require` name it answers to, and
 /// its text.

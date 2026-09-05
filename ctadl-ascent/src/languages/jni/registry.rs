@@ -57,7 +57,7 @@ use object::read::elf::{FileHeader, ProgramHeader, Rela, SectionHeader, Sym};
 use object::{Endian, Endianness};
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, ErrorContext};
+use ctadl_import::error::{Error, ErrorContext};
 use crate::project::ArtifactImport;
 
 /// One recovered `JNINativeMethod`.

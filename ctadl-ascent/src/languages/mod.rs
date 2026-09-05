@@ -1,5 +1,6 @@
 pub mod apk_native;
 pub mod dex;
+pub mod flowy;
 pub mod jni;
 pub mod jvm;
 pub mod lua;

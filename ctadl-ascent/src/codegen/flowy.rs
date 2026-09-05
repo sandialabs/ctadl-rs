@@ -1,6 +1,7 @@
 /*! Check flowy programs
 
-This module provides a function, [`check`], to check the assertions in a Flowy program.
+This module provides a function, [`check`], to check the assertions in a Flowy program. The
+*import* half lives in [`crate::languages::flowy`], which needs no engine; see there for why.
 */
 use std::path::Path;
 
@@ -15,33 +16,8 @@ use crate::query_engine::formatter;
 use crate::query_engine::{QueryEndpoint, QueryFacts, QueryResult, taint_analysis};
 use ctadl_flowy as flowy;
 use ctadl_flowy::{EndpointRequires, FlowSpec, Port, PortBase, SummaryRequires, SummarySpec};
-use ctadl_ir::ProgramInfo;
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::Variable;
-
-/// Imports a flowy artifact into the store. This also saves the requirements so that they can be
-/// checked at query time.
-pub fn import(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
-    let program = flowy::compile_program(&import.artifact_path).err_context(|| {
-        format!(
-            "compiling flowy program: {}",
-            import.artifact_path.display()
-        )
-    })?;
-
-    // Save requirements
-    let data = bitcode::serialize(&program.requirements).map_err(Error::Bitcode)?;
-    std::fs::write(import.requirements_path(), data)
-        .map_err(Error::Io)
-        .err_context(|| {
-            format!(
-                "writing requirements: {}",
-                import.requirements_path().display()
-            )
-        })?;
-
-    Ok(program.program_info)
-}
 
 /// Loads flowy requirements for an import.
 fn load_requirements(

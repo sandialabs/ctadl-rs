@@ -24,13 +24,18 @@ use crate::facts::FlowVariable;
 use crate::index_engine::{
     IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo, taint_index_with_config,
 };
-use crate::languages::{apk_native, dex, jni, jvm, lua, pcode, tree_sitter_c, xapk};
+use crate::languages::{apk_native, dex, flowy, jni, jvm, lua, pcode, tree_sitter_c, xapk};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
-use ctadl_ir::graph::is_connected;
 use ctadl_ir::ssa;
-use ctadl_ir::{ProgramInfo, encode};
+use ctadl_ir::ProgramInfo;
+
+/// The store writer, re-exported where it has always been called from. Its private sibling the
+/// *reader* is now public too, as [`ctadl_import::load_import`] -- the asymmetry that made every
+/// downstream consumer of an import hand-roll the store layout and miss the version check.
+pub use ctadl_import::save_program_info;
+use ctadl_import::{SourceInfoMode, load_import};
 
 /// How to perform one import, beyond the artifact and its language.
 ///
@@ -62,7 +67,10 @@ impl Default for ImportOptions<'_> {
 }
 
 // Imports a program for an artifact into the store
-pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Error> {
+pub fn import(
+    import: &ArtifactImport,
+    opts: ImportOptions<'_>,
+) -> Result<(), ctadl_import::Error> {
     use ArtifactLanguage::*;
     log::info!(
         "importing {} artifact '{}' from {}",
@@ -147,7 +155,7 @@ pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Er
         Jvm => jvm::import_class(&import.artifact_path)?,
         Pcode => pcode::import_pcode(import)?,
         Lua => lua::import_lua(&import.artifact_path)?,
-        Flowy => crate::codegen::flowy::import(import)?,
+        Flowy => flowy::import(import)?,
         C => tree_sitter_c::import_c(&import.artifact_path)?,
     };
     log::info!(
@@ -254,7 +262,7 @@ pub fn index(
         // spans are per-import indices, so this is what keeps them resolvable afterwards.
         source_info.begin_import(&import.name);
         log::info!("'{}': loading IR", import.name);
-        let mut program_info = load_program_info_without_source_info(&import)?;
+        let mut program_info = load_import(&import, SourceInfoMode::Skip)?;
         log::debug!(
             "[mem cp] loaded IR program (before SSA/codegen): {:.1} MB",
             phys_footprint_mb()
@@ -472,9 +480,9 @@ pub fn query(
     log::info!("querying project '{}'", project.name);
     if !project.has_index() {
         if models.is_empty() {
-            return Err(Error::MissingIndex {
+            return Err(Error::from(ctadl_import::Error::MissingIndex {
                 project: project.name.clone(),
-            });
+            }));
         }
         return query_model_check(project, models, output, profile, start_time_utc);
     }
@@ -519,7 +527,7 @@ pub fn query(
         if !models.is_empty() {
             for import in project.iter_imports() {
                 let import = import?;
-                let program_info = load_program_info_without_source_info(&import)?;
+                let program_info = load_import(&import, SourceInfoMode::Skip)?;
                 let match_index = crate::models::ProgramMatchIndex::new(
                     &program_info,
                     crate::models::ImportScope::new(import.language, &import.name),
@@ -947,70 +955,6 @@ fn dump_taint_graph_dot(
     Ok(())
 }
 
-pub fn save_program_info(
-    mut program_info: ProgramInfo,
-    import: &ArtifactImport,
-) -> Result<(), Error> {
-    let path = &import.program_path();
-    let obj = std::mem::take(&mut program_info.program);
-    for f in obj.functions.iter() {
-        if f.blocks.is_empty() {
-            continue;
-        }
-        // Real disassembled binaries routinely contain functions with blocks
-        // that are unreachable from entry (Ghidra CFG recovery artifacts). This
-        // is not an import error: indexing prunes unreachable blocks before the
-        // SSA/dominator pass (see `--prune-unreachable-cfg-nodes`, on by
-        // default), so record but don't reject them here.
-        if !is_connected(&f.blocks) {
-            log::debug!("function has blocks unreachable from entry: {}", f.name);
-        }
-    }
-    let data = encode::encode_program(&obj).map_err(Error::Bitcode)?;
-    std::fs::write(path, data)
-        .map_err(Error::Io)
-        .err_context(|| format!("writing program: {}", path.display()))?;
-    log::debug!("wrote {}", path.display());
-
-    let path = &import.vmt_path();
-    let obj = std::mem::take(&mut program_info.vmt);
-    let data = encode::encode_vmt(&obj).map_err(Error::Bitcode)?;
-    std::fs::write(path, data)
-        .map_err(Error::Io)
-        .err_context(|| format!("writing vmt: {}", path.display()))?;
-    log::debug!("wrote {}", path.display());
-
-    let path = import.source_info_dir();
-    let obj = std::mem::take(&mut program_info.source_info);
-    std::fs::create_dir_all(&path)
-        .err_context(|| format!("creating source info dir: {}", path.display()))?;
-    source_info::write_parquet_source_info(&path, &obj)
-        .err_context(|| format!("writing source info: {}", path.display()))?;
-    Ok(())
-}
-
-/// Load a serialized [`ProgramInfo`] from the import directory. The source info is elided.
-fn load_program_info_without_source_info(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
-    let path = &import.program_path();
-    log::debug!("reading {}", path.display());
-    let data =
-        std::fs::read(path).err_context(|| format!("reading program: {}", path.display()))?;
-    let program = ctadl_ir::encode::decode_program(&data)
-        .err_context(|| format!("decoding program: {}", path.display()))?;
-
-    let path = &import.vmt_path();
-    log::debug!("reading {}", path.display());
-    let data = std::fs::read(path).err_context(|| format!("reading vmt: {}", path.display()))?;
-    let vmt = ctadl_ir::encode::decode_vmt(&data)
-        .err_context(|| format!("decoding vmt: {}", path.display()))?;
-
-    Ok(ProgramInfo {
-        program,
-        vmt,
-        source_info: Default::default(),
-    })
-}
-
 /// Load summaries from a previously indexed project and map them into the current project.
 /// This function handles the FunctionId mapping between the source and target projects.
 fn load_and_map_summaries(
@@ -1096,7 +1040,7 @@ fn load_and_map_summaries(
 /// locals are resolved to their source names through each function's `Locals` table
 /// (`WithLocalNames`), since `%L7` on its own tells a reader nothing.
 pub fn dump_ir(import: &ArtifactImport, filter: Option<&str>) -> Result<(), Error> {
-    let program_info = load_program_info_without_source_info(import)?;
+    let program_info = load_import(import, SourceInfoMode::Skip)?;
     let mut matched = 0usize;
     for func in program_info.program.functions.iter() {
         if filter.is_none_or(|pat| func.name.contains(pat)) {
@@ -1113,7 +1057,7 @@ pub fn dump_ir(import: &ArtifactImport, filter: Option<&str>) -> Result<(), Erro
 }
 
 pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
-    let program_info = load_program_info_without_source_info(import)?;
+    let program_info = load_import(import, SourceInfoMode::Skip)?;
     let program = &program_info.program;
 
     let mut total_assignments = 0;
@@ -1257,7 +1201,7 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
     let filename = path
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| Error::Path {
+        .ok_or_else(|| ctadl_import::Error::Path {
             message: "invalid filename".to_string(),
         })?;
 
@@ -1272,7 +1216,7 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
                         println!("{:?}", record);
                     }
                 })*
-                _ => return Err(Error::Path { message: format!("unrecognized parquet file: {}", filename) }),
+                _ => return Err(Error::from(ctadl_import::Error::Path { message: format!("unrecognized parquet file: {}", filename) })),
             }
         }
     }
@@ -1304,7 +1248,7 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
 ///
 /// If the file cannot be read or parsed.
 pub fn inspect_jni_registry<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> {
-    jni::registry::JniRegistry::print(path.as_ref())
+    Ok(jni::registry::JniRegistry::print(path.as_ref())?)
 }
 
 pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> {
@@ -1312,7 +1256,7 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
     let filename = path
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| Error::Path {
+        .ok_or_else(|| ctadl_import::Error::Path {
             message: "invalid filename".to_string(),
         })?;
 
@@ -1355,9 +1299,9 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
             bitcode::deserialize(&data).err_context(|| decode_failed("vmt"))?;
         println!("{}", vmt);
     } else {
-        return Err(Error::Path {
+        return Err(Error::from(ctadl_import::Error::Path {
             message: format!("unrecognized bitcode file: {}", filename),
-        });
+        }));
     }
 
     Ok(())
@@ -1367,7 +1311,7 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
 //     // Get the original programs to
 //     for import in project.iter_imports() {
 //         let import = import?;
-//         let program_info = load_program_info_without_source_info(&import)?;
+//         let program_info = load_import(&import, SourceInfoMode::Skip)?;
 //     }
 //     let path = &project.index_path()?;
 //     let index = IndexResult::try_load(path)?;

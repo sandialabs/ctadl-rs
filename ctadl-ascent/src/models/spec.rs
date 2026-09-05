@@ -491,7 +491,7 @@ where
             let generators = match root.get("model_generators").and_then(|v| v.as_array()) {
                 Some(arr) => arr,
                 None => {
-                    return Err(Error::Io(std::io::Error::new(
+                    return Err(Error::from(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "missing or invalid 'model_generators' array",
                     )));

@@ -1301,6 +1301,7 @@ dependencies = [
  "clap",
  "csv",
  "ctadl-flowy",
+ "ctadl-import",
  "ctadl-ir",
  "datafusion",
  "derive_builder",
@@ -1365,6 +1366,25 @@ dependencies = [
  "smallvec",
  "source-info",
  "thiserror",
+]
+
+[[package]]
+name = "ctadl-import"
+version = "0.1.2"
+dependencies = [
+ "bitcode",
+ "ctadl-flowy",
+ "ctadl-ir",
+ "dex-reader",
+ "hashbrown 0.16.1",
+ "json5",
+ "jvm-reader",
+ "log",
+ "serde",
+ "serde_json",
+ "source-info",
+ "thiserror",
+ "tree-sitter",
 ]
 
 [[package]]

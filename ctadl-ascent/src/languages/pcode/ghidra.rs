@@ -1,4 +1,4 @@
-use crate::error::{Error, ErrorContext};
+use ctadl_import::error::{Error, ErrorContext};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use rayon::prelude::*;

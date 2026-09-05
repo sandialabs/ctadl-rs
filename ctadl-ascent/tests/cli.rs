@@ -284,7 +284,7 @@ fn test_cli_import_resource_only_split_apk_is_rejected() {
                 .unwrap();
         let err = cli::import(&import, cli::ImportOptions::default()).unwrap_err();
         assert!(
-            matches!(err, ctadl_ascent::error::Error::NothingToImport { .. }),
+            matches!(err, ctadl_import::Error::NothingToImport { .. }),
             "expected NothingToImport, got {err:?}"
         );
         // The message has to name both halves it looked for; that is what tells the user
@@ -429,7 +429,7 @@ fn index_version_gate_rejects_an_index_from_before_the_gate() {
         // stale-encoding case, since those builds wrote unescaped `.[]` / `.[_elem_]`.
         std::fs::create_dir_all(project.index_path().unwrap()).unwrap();
         match project.check_index_config() {
-            Err(ctadl_ascent::error::Error::IncompatibleIndex {
+            Err(ctadl_import::Error::IncompatibleIndex {
                 project: p,
                 expected,
                 ..
@@ -449,7 +449,7 @@ fn index_version_gate_rejects_a_different_version() {
         let path = project.index_path().unwrap().join(INDEX_CONFIG_FILE);
         std::fs::write(&path, r#"{"version":"1"}"#).unwrap();
         match project.check_index_config() {
-            Err(ctadl_ascent::error::Error::IncompatibleIndex { found, .. }) => {
+            Err(ctadl_import::Error::IncompatibleIndex { found, .. }) => {
                 assert_eq!(found, "1");
             }
             other => panic!("expected IncompatibleIndex, got: {other:?}"),

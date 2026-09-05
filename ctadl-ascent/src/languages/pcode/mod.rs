@@ -9,7 +9,7 @@ use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SourceInfoBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::error::{Error, ErrorContext};
+use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
     NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
 };

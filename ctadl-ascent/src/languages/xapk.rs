@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use dex_reader::apk::{has_dex_entries_of_file, read_bundle_entry, split_apk_entries_of_file};
 
 use crate::cli::ImportOptions;
-use crate::error::{Error, ErrorContext};
+use ctadl_import::error::{Error, ErrorContext};
 use crate::project::{ArtifactImport, ArtifactLanguage};
 
 /// Imports every split APK out of an app bundle, returning the *flattened* sub-import names for

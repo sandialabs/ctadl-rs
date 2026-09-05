@@ -1,5 +1,4 @@
 use regex::Error as RegexError;
-use std::path::PathBuf;
 use thiserror::Error;
 
 /// CTADL error. This is used for interface functions in this crate.
@@ -170,46 +169,29 @@ impl std::fmt::Display for JsonModelErrors {
     }
 }
 
+/// CTADL's engine-side error.
+///
+/// The import-side half of what used to be one enum now lives in [`ctadl_import::Error`] --
+/// everything a front end or the store can raise -- and arrives here through
+/// [`Error::Import`]. The split is what lets a consumer read an import without building
+/// datafusion, ascent and tree-sitter; see `ctadl_import`'s module docs for the rule that keeps
+/// the two [`ErrorContext`] traits from colliding.
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("i/o error")]
-    Io(#[from] std::io::Error),
+    /// Anything raised while reading an artifact or the store. `transparent` so the chain a
+    /// caller renders is the same one it saw before the split.
+    #[error(transparent)]
+    Import(#[from] ctadl_import::Error),
     #[error("parquet error")]
     Parquet(#[from] parquet::errors::ParquetError),
     #[error("arrow error")]
     Arrow(#[from] arrow::error::ArrowError),
-    #[error("path error: {message}")]
-    Path { message: String },
-    #[error("json serialization error")]
-    Json(#[from] serde_json::Error),
-    #[error("json5 serialization error")]
-    Json5(#[from] json5::Error),
-    #[error("bitcode error")]
-    Bitcode(#[from] bitcode::Error),
-    #[error("dex decoding error")]
-    Dex(#[from] dex_reader::error::DexError),
-    #[error("jvm decoding error")]
-    Jvm(#[from] jvm_reader::error::ClassFileError),
     #[error("flowy error")]
     Flowy(#[from] ctadl_flowy::FlowyError),
-    #[error("IR verify error")]
-    Verify(#[from] ctadl_ir::mir::VerifyErrors),
-    #[error("source-info serialization error")]
-    SourceInfoParquet(#[from] source_info::parquet_io::ParquetError),
     #[error("datafusion error")]
     DataFusion(#[from] datafusion::error::DataFusionError),
     #[error("error converting facts: {0}")]
     FactsConvert(String),
-    #[error("pcode fact reading error: {0}")]
-    PcodeFactRead(String),
-    #[error("pcode conversion error: {0}")]
-    PcodeConversion(String),
-    #[error("error loading tree-sitter language")]
-    TreeSitterLanguage(tree_sitter::LanguageError),
-    #[error("error running tree-sitter query")]
-    TreeSitterQuery(tree_sitter::QueryError),
-    #[error("tree-sitter parse error: {0}")]
-    TreeSitterParse(String),
     #[error("JSON model parsing error")]
     JsonModel(#[from] JsonModelErrors),
     /// A model was well-formed but could not be applied: a bridge side that matched nothing
@@ -218,48 +200,40 @@ pub enum Error {
     /// program to detect.
     #[error("model error: {message}")]
     Model { message: String },
-    /// The artifact was read fine and simply held no code -- a split APK carrying only
-    /// resources, say. Distinct from a decoding error: nothing is malformed, there is
-    /// just nothing here to analyze, and the message says where to look instead.
-    #[error("nothing to import: {message}")]
-    NothingToImport { message: String },
-    #[error(
-        "import '{name}' was created by an incompatible version of ctadl \
-         (import format {found}, this build expects {expected}); the original \
-         artifact was imported from '{}'; re-import it", .artifact_path.display()
-    )]
-    IncompatibleImport {
-        name: String,
-        found: String,
-        expected: String,
-        artifact_path: PathBuf,
-    },
-    /// No index has been written for the project yet. Distinct from
-    /// [`Error::IncompatibleIndex`], which is about an index that exists and cannot be read.
-    /// With model files in hand `ctadl query` does not raise this at all: it checks them
-    /// against the imports instead (see `cli::query`).
-    #[error(
-        "project '{project}' has no index; run `ctadl index {project}` first. \
-         With `--models` given, `ctadl query {project}` reports what those files match in the \
-         imported programs without one."
-    )]
-    MissingIndex { project: String },
-    #[error(
-        "the index for project '{project}' was created by an incompatible version of ctadl \
-         (index format {found}, this build expects {expected}); \
-         re-run `ctadl index {project}`"
-    )]
-    IncompatibleIndex {
-        project: String,
-        found: String,
-        expected: String,
-    },
     #[error("{context}")]
     Context {
         context: String,
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 }
+
+/// Routes a leaf error type through [`Error::Import`].
+///
+/// These are the types `ctadl_import::Error` takes a `#[from]` on. Without the bridge, every
+/// `?` and every `.err_context(...)` in the engine half that starts from one of them would have
+/// to name `ctadl_import::Error` explicitly -- which is churn that says nothing, since there is
+/// exactly one way for such an error to become an [`Error`].
+macro_rules! from_import {
+    ($($t:ty),* $(,)?) => {
+        $(impl From<$t> for Error {
+            #[inline]
+            fn from(e: $t) -> Self {
+                Error::Import(ctadl_import::Error::from(e))
+            }
+        })*
+    };
+}
+
+from_import!(
+    std::io::Error,
+    serde_json::Error,
+    json5::Error,
+    bitcode::Error,
+    ctadl_ir::mir::VerifyErrors,
+    source_info::parquet_io::ParquetError,
+    dex_reader::error::DexError,
+    jvm_reader::error::ClassFileError,
+);
 
 /// Inspired by `anyhow`'s `Context`, this trait provides a method to attach context to a CTADL
 /// error. Unlike anyhow, it just uses our error types to do so.
