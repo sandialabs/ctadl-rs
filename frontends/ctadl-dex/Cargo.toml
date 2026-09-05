@@ -4,13 +4,13 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-ctadl-import = { path = "../ctadl-import", features = ["dex"] }
-ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
-dex-reader = { path = "../dex-reader" }
+ctadl-import = { path = "../../ctadl-import", features = ["dex"] }
+ctadl-ir = { path = "../../ctadl-ir", features = ["serde"] }
+dex-reader = { path = "../../readers/dex-reader" }
 hashbrown = "0.16"
 log = "0.4"
 smallvec = "1"
-source-info = { path = "../source-info", features = ["serde"] }
+source-info = { path = "../../source-info", features = ["serde"] }
 streaming-iterator = { version = "0.1", features = ["alloc"] }
 
 [dev-dependencies]

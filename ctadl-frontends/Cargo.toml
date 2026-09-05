@@ -11,18 +11,18 @@ log = "0.4"
 # The languages. Each one is optional, and each one brings in the matching `ctadl-import` error
 # variants. A program that reads only Dex therefore builds no tree-sitter grammar and no Ghidra
 # support.
-ctadl-c = { path = "../ctadl-c", optional = true }
-ctadl-dex = { path = "../ctadl-dex", optional = true }
-ctadl-flowy = { path = "../ctadl-flowy", features = ["serde"], optional = true }
-ctadl-jvm = { path = "../ctadl-jvm", optional = true }
-ctadl-lua = { path = "../ctadl-lua", optional = true }
-ctadl-pcode = { path = "../ctadl-pcode", optional = true }
+ctadl-c = { path = "../frontends/ctadl-c", optional = true }
+ctadl-dex = { path = "../frontends/ctadl-dex", optional = true }
+ctadl-flowy = { path = "../frontends/ctadl-flowy", features = ["serde"], optional = true }
+ctadl-jvm = { path = "../frontends/ctadl-jvm", optional = true }
+ctadl-lua = { path = "../frontends/ctadl-lua", optional = true }
+ctadl-pcode = { path = "../frontends/ctadl-pcode", optional = true }
 
 # The container formats read the ZIP directory of an APK or a bundle themselves. That code is
 # already in `dex-reader::apk`, so the `apk` feature pulls it in whether or not the Dex lowering
 # is wanted.
 bitcode = { version = "0.6", features = ["serde"], optional = true }
-dex-reader = { path = "../dex-reader", optional = true }
+dex-reader = { path = "../readers/dex-reader", optional = true }
 
 [features]
 # `xapk` is on by default, even though the plan left it off. A bundle is a ZIP file of APKs,

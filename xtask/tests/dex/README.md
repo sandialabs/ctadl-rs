@@ -12,7 +12,7 @@ compiled at test time — no committed `.class`/`.jar`/`.dex`. This APK is the
 deliberate exception: it is third-party input we cannot rebuild from any source
 we hold, so it can only exist as a binary. The *source-based* DEX coverage comes
 from the `dex:samples` / `dex:line-map` cases, which compile
-`jvm-reader/tests/sample/*.java` down to `.dex` (`javac --release 8` → `dx`) and
+`readers/jvm-reader/tests/sample/*.java` down to `.dex` (`javac --release 8` → `dx`) and
 parse the result — see `xtask/src/dex.rs`.
 
 ## Ownership

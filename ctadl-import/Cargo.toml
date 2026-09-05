@@ -18,9 +18,9 @@ thiserror = "2"
 # behind a feature, so a program that reads only Dex does not build a JVM reader or a
 # tree-sitter grammar. The module docs in `src/lib.rs` explain why all the variants live in one
 # enum instead of one enum per language.
-ctadl-flowy = { path = "../ctadl-flowy", features = ["serde"], optional = true }
-dex-reader = { path = "../dex-reader", optional = true }
-jvm-reader = { path = "../jvm-reader", optional = true }
+ctadl-flowy = { path = "../frontends/ctadl-flowy", features = ["serde"], optional = true }
+dex-reader = { path = "../readers/dex-reader", optional = true }
+jvm-reader = { path = "../readers/jvm-reader", optional = true }
 tree-sitter = { version = "0.26", optional = true }
 
 [dev-dependencies]

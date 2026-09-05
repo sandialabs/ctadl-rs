@@ -1,6 +1,24 @@
 [workspace]
 resolver = "3"
-members = ["ctadl-ascent", "ctadl-c", "ctadl-dex", "ctadl-flowy", "ctadl-frontends", "ctadl-import", "ctadl-ir", "ctadl-jvm", "ctadl-lua", "ctadl-pcode", "pcode-reader", "trie", "tailshare", "immortal", "xtask", "dex-reader", "jvm-reader"]
+members = [
+    "ctadl-ascent",
+    "ctadl-frontends",
+    "ctadl-import",
+    "ctadl-ir",
+    "frontends/ctadl-c",
+    "frontends/ctadl-dex",
+    "frontends/ctadl-flowy",
+    "frontends/ctadl-jvm",
+    "frontends/ctadl-lua",
+    "frontends/ctadl-pcode",
+    "readers/dex-reader",
+    "readers/jvm-reader",
+    "readers/pcode-reader",
+    "immortal",
+    "tailshare",
+    "trie",
+    "xtask",
+]
 
 # One version for the whole tree. Every member takes it with
 # `version.workspace = true`, so a release tag names exactly one thing: this
