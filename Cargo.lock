@@ -1300,6 +1300,7 @@ dependencies = [
  "chrono",
  "clap",
  "csv",
+ "ctadl-c",
  "ctadl-dex",
  "ctadl-flowy",
  "ctadl-import",
@@ -1354,6 +1355,27 @@ dependencies = [
  "url",
  "which",
  "zip 0.6.6",
+]
+
+[[package]]
+name = "ctadl-c"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "ctadl-ascent",
+ "ctadl-import",
+ "ctadl-ir",
+ "env_logger",
+ "hashbrown 0.16.1",
+ "internment",
+ "log",
+ "serde_json",
+ "source-info",
+ "streaming-iterator",
+ "tempfile",
+ "test-log",
+ "tree-sitter",
+ "tree-sitter-c",
 ]
 
 [[package]]

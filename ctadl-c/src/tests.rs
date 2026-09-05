@@ -27,7 +27,7 @@ to an offset address too, which it does not yet.
 use ctadl_ir::ParameterType::{ByRef, ByVal};
 use ctadl_ir::{Exp, StatementKind, Variable};
 
-use crate::languages::tree_sitter_c::test_utils::*;
+use crate::test_utils::*;
 
 #[test_log::test]
 fn simple_function() {
@@ -2819,11 +2819,11 @@ fn import_c_registers_externs_and_spans() {
 /// it has multiple SSA versions; the test pins that we seed one (the lowest), not one per version.
 #[test_log::test]
 fn variable_port_selects_lowest_ssa_version() {
-    use crate::facts::{Function, TaintDirection};
-    use crate::models::ProgramModelMatches;
-    use crate::models::json::ModelGeneratorIngest;
-    use crate::models::{ImportScope, ProgramMatchIndex};
-    use crate::query_engine::build_query_endpoints;
+    use ctadl_ascent::facts::{Function, TaintDirection};
+    use ctadl_ascent::models::ProgramModelMatches;
+    use ctadl_ascent::models::json::ModelGeneratorIngest;
+    use ctadl_ascent::models::{ImportScope, ProgramMatchIndex};
+    use ctadl_ascent::query_engine::build_query_endpoints;
     use ctadl_ir::ProgramInfo;
     use serde_json::json;
 
@@ -2864,7 +2864,7 @@ fn variable_port_selects_lowest_ssa_version() {
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].selector_ty,
-        crate::models::FormalIndexTypeTag::Local
+        ctadl_ascent::models::FormalIndexTypeTag::Local
     );
     assert_eq!(rows[0].local_index, Some(idx));
 
@@ -2910,7 +2910,7 @@ fn variable_port_selects_lowest_ssa_version() {
         "fixture should give buf multiple SSA versions, got {distinct_versions:?}"
     );
 
-    let crate::query_engine::BuiltEndpoints {
+    let ctadl_ascent::query_engine::BuiltEndpoints {
         endpoints: eps,
         formals,
         ..
@@ -2936,9 +2936,9 @@ fn variable_port_selects_lowest_ssa_version() {
 /// (the other matches still emit) rather than failing the whole model.
 #[test_log::test]
 fn variable_port_resolves_per_matched_function() {
-    use crate::models::ProgramModelMatches;
-    use crate::models::json::ModelGeneratorIngest;
-    use crate::models::{ImportScope, ProgramMatchIndex};
+    use ctadl_ascent::models::ProgramModelMatches;
+    use ctadl_ascent::models::json::ModelGeneratorIngest;
+    use ctadl_ascent::models::{ImportScope, ProgramMatchIndex};
     use ctadl_ir::ProgramInfo;
     use serde_json::json;
 
@@ -2998,7 +2998,7 @@ fn variable_port_resolves_per_matched_function() {
         .endpoints
         .iter()
         .map(|r| {
-            assert_eq!(r.selector_ty, crate::models::FormalIndexTypeTag::Local);
+            assert_eq!(r.selector_ty, ctadl_ascent::models::FormalIndexTypeTag::Local);
             (r.function.as_str(), r.local_index)
         })
         .collect();
@@ -5432,7 +5432,7 @@ fn an_argument_of_a_call_through_a_global_field_reaches_the_callee_parameter() {
         "wrap",
         0,
         "",
-        crate::codegen::GLOBALS_INDEX,
+        ctadl_ascent::codegen::GLOBALS_INDEX,
         ".taken",
     );
 }
@@ -5525,7 +5525,7 @@ fn an_argument_of_a_statement_expression_callee_reaches_the_callee_parameter() {
         "wrap",
         0,
         "",
-        crate::codegen::GLOBALS_INDEX,
+        ctadl_ascent::codegen::GLOBALS_INDEX,
         ".taken",
     );
 }
@@ -5548,7 +5548,7 @@ fn a_static_call_trampoline_carries_no_flow_within_one_unit() {
         "fire",
         0,
         "",
-        crate::codegen::GLOBALS_INDEX,
+        ctadl_ascent::codegen::GLOBALS_INDEX,
         ".taken",
     );
 }

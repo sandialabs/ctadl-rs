@@ -1,17 +1,15 @@
-use crate::error::Error;
-use crate::facts as fx;
+use ctadl_import::error::Error;
+use ctadl_ascent::facts as fx;
 
-use crate::index_engine::source_info::IndexSourceInfo;
-use crate::index_engine::{FunctionSummary, IndexFacts, taint_index};
-use crate::{
-    codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program},
-    languages::tree_sitter_c,
-};
+use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
+use ctadl_ascent::index_engine::{FunctionSummary, IndexFacts, taint_index};
+use crate as tree_sitter_c;
+use ctadl_ascent::codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program};
 use anyhow::Result;
 // `DirectedGraph`/`Successors` are trait imports: they provide `num_nodes()` (used by
 // `check_block_count`) and `successors()` (used by `check_successors`). They look unused but
 // removing them breaks method resolution.
-use crate::facts::Path;
+use ctadl_ascent::facts::Path;
 use ctadl_ir::graph::{DirectedGraph, Successors};
 use ctadl_ir::mir::TerminatorKind;
 use ctadl_ir::mir::call::{CallEdges, CallStyle};
@@ -616,7 +614,7 @@ pub(crate) fn get_summary(
 }
 
 /// Indexes `program` end-to-end (SSA → codegen → taint index) and returns the pieces
-/// [`crate::query_engine::build_query_endpoints`] consumes: the [`IndexFacts`], the
+/// [`ctadl_ascent::query_engine::build_query_endpoints`] consumes: the [`IndexFacts`], the
 /// [`IndexSourceInfo`] (whose `.sites` is the [`fx::IdMap`]), and the `assign_like` relation.
 /// Unlike [`get_summary`], nothing is discarded, so a test can drive Stage 2 against a real index.
 #[allow(clippy::type_complexity)]

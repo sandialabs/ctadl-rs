@@ -1,7 +1,6 @@
 pub mod apk_native;
 pub mod flowy;
 pub mod jni;
-pub mod tree_sitter_c;
 pub mod xapk;
 
 /// The JVM front end, extracted to its own crate: `jvm-reader` and nothing else, with no
@@ -21,3 +20,9 @@ pub use ctadl_pcode as pcode;
 /// The Lua front end, extracted to its own crate: tree-sitter and its Lua grammar, and no C
 /// grammar behind them. Re-exported here so `crate::languages::lua::…` still names it.
 pub use ctadl_lua as lua;
+
+/// The C front end, extracted to its own crate. Its tests are the exception in this split: they
+/// are the engine's regression suite as much as the front end's, so `ctadl-c` takes
+/// `ctadl-ascent` as a *dev*-dependency -- a cycle Cargo permits -- rather than relocating 5,000
+/// lines. Re-exported here so `crate::languages::tree_sitter_c::…` still names it.
+pub use ctadl_c as tree_sitter_c;

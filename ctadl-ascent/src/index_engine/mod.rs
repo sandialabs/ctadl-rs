@@ -1617,7 +1617,45 @@ pub fn taint_index_with_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::languages::tree_sitter_c::test_utils::{index_program, program_from_string};
+    use crate::codegen::{CallResolutionStrategy, codegen_program};
+    use crate::index_engine::source_info::IndexSourceInfo;
+    use ctadl_ir::ProgramInfo;
+
+    /// Lowers one C translation unit. This and [`index_program`] used to be the C front end's
+    /// private test helpers, borrowed through `crate::languages::tree_sitter_c::test_utils`.
+    /// That was the one arrow pointing *back* from a front end into the engine's own tests, and
+    /// it is why extracting `ctadl-c` looked like it needed a dev-dependency cycle in both
+    /// directions. It does not: the engine half is thirty lines, and it belongs here.
+    fn program_from_string(src: &str) -> (ctadl_ir::Program, String) {
+        let (program, failed, dump) =
+            ctadl_c::parse_c_program(src).expect("Failed to parse C program.");
+        assert!(!failed, "Input Program failed to parse without error");
+        assert!(
+            !dump.contains("<no terminator>"),
+            "Parsed IR contains a block with no terminator:\n{dump}"
+        );
+        (program, dump)
+    }
+
+    /// SSA -> codegen -> taint index, keeping the facts the caller needs for a second run.
+    fn index_program(program: ctadl_ir::Program) -> (IndexFacts, IndexSourceInfo) {
+        let mut program_info = ProgramInfo {
+            program,
+            ..Default::default()
+        };
+        program_info.program.verify().unwrap();
+        ctadl_ir::ssa::transform_program(&mut program_info.program, true);
+        let mut facts = IndexFacts::default();
+        let mut source_info = IndexSourceInfo::default();
+        codegen_program(
+            program_info,
+            &mut facts,
+            &mut source_info,
+            CallResolutionStrategy::Mixed,
+            &Default::default(),
+        );
+        (facts, source_info)
+    }
 
     /// A program that touches every part of the rules: direct calls, summaries, field-sensitive
     /// flows, and enough indirect calls (function-pointer parameter, function pointer in a
@@ -1677,7 +1715,7 @@ mod tests {
     #[test_log::test]
     fn parallel_engine_matches_serial() {
         let (program, _) = program_from_string(SRC);
-        let (facts, source_info, _) = index_program(program);
+        let (facts, source_info) = index_program(program);
         let id_map = Some(&source_info.sites);
 
         let serial = taint_index_with_config(facts.clone(), IndexConfig::default(), id_map);
