@@ -98,26 +98,14 @@ existed has none, and `ctadl import --skip-existing` will not create one — re-
 
 # Testing
 
-Unit and integration tests run with Cargo:
+We provide unit and integration tests, as well as regression tests:
 
 ```bash
 cargo test
+cargo xtask regression
 ```
 
-The regression tests, however, are only reliable when run through Nix, which
-pins the full toolchain (compilers, Ghidra, etc.) the fixtures are built and
-checked against. To run the whole suite as a sealed check:
-
-```bash
-nix build .#checks.${system}.regression
-```
-
-where `${system}` is your platform (e.g. `aarch64-darwin`, `x86_64-linux`).
-Running the regression suite outside Nix is not reliable because results depend
-on the exact compiler/disassembler versions Nix provides.
-
-For iterating on tests, `cargo xtask regression` runs the same harness against
-your local working tree; the dev shell already carries the pinned toolchain.
+The regression tests require some complex toolchains; the Nix dev shell provides those dependencies.
 
 # History
 
