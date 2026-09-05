@@ -11,6 +11,12 @@ pub use crate::mir::{BasicBlockData, BasicBlockIdx};
 /// Set of basic blocks.
 ///
 /// The entry block is always 0.
+///
+/// This type is also the control-flow graph: the [`Successors`], [`Predecessors`], and
+/// [`StartNode`] implementations read the edges out of the blocks' terminators. So asking this
+/// type any question about the graph, which includes anything that computes dominators, means
+/// every block has to have a terminator by then. A block without one is a block still being
+/// built; see [`BasicBlockData`].
 #[derive(Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BasicBlocks {

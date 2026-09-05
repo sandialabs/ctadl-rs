@@ -456,10 +456,23 @@ pub enum Exp {
 }
 
 /// A sequence of statements ending with a terminator.
+///
+/// The terminator says where control goes when the block finishes, so a block that does not
+/// have one is not a block anybody can run. It is optional here only to make blocks easier to
+/// build: a front end usually knows the statements of a block before it knows the successors,
+/// and this lets it fill the terminator in later.
+///
+/// A missing terminator is therefore a block that is still under construction, not a block in
+/// its finished form. Anything that walks the control-flow graph expects the finished form.
+/// [`FunctionData::verify`] reports a block without a terminator as
+/// [`VerifyError::NoTerminator`], and [`crate::ssa::transform`] is the point where the
+/// unfinished form stops being allowed at all.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BasicBlockData {
     pub statements: IndexVecDeque<StatementIdx, Statement>,
+    /// Where control goes when the block finishes. `None` means the block is still being
+    /// built. See the note on [`BasicBlockData`].
     pub terminator: Option<Terminator>,
 }
 
@@ -1132,6 +1145,12 @@ impl BasicBlockData {
         }
     }
 
+    /// Returns the terminator of a finished block.
+    ///
+    /// Use this when the block is supposed to be finished already, which is the case anywhere
+    /// the control-flow graph is being read. Use [`BasicBlockData::terminator_opt`] when the
+    /// block may still be under construction.
+    ///
     /// # Panics
     ///
     /// If there is no terminator.
@@ -1140,12 +1159,18 @@ impl BasicBlockData {
         self.terminator.as_ref().expect("no terminator")
     }
 
+    /// Returns the terminator of a finished block, for modification.
+    ///
+    /// # Panics
+    ///
+    /// If there is no terminator.
     #[inline]
     pub fn terminator_mut(&mut self) -> &mut Terminator {
         self.terminator.as_mut().expect("no terminator")
     }
 
-    /// Returns terminator as an option
+    /// Returns the terminator, or `None` if the block does not have one yet. This is the
+    /// accessor to use while a block is still being built.
     #[inline]
     pub fn terminator_opt(&self) -> Option<&Terminator> {
         self.terminator.as_ref()
