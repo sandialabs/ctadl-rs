@@ -44,6 +44,11 @@ which is why this crate could adopt them at all. What is *not* public is the
 fact that this is the pipeline, in this order, with `prune` wired to an index
 option. That knowledge exists only as four adjacent lines in a CLI function.
 
+> **Since fixed by 1.1** (`9487842a`). The four lines are one
+> `ssa::run_pipeline(&mut p, ssa::Pipeline::index_default().prune(…))`, and
+> `Pipeline::index_default()` is now the only definition of what `ctadl index`
+> runs. The paragraph above is kept because it is why the type exists.
+
 ### The reader
 
 `load_program_info_without_source_info` (`ctadl-ascent/src/cli/mod.rs:985`) is
@@ -57,6 +62,13 @@ The store layout it reads is public (`project.rs:102` `PROGRAM_BITCODE_FILE`,
 whose dependency list is datafusion, arrow, parquet, ascent, tree-sitter,
 tokio and Ghidra plumbing. Depending on it to read a 6 MB bitcode file is not
 a trade this crate can make; hence the hand copy.
+
+> **Since fixed by 1.2a** (`b64af28c`). The reader is
+> `ctadl_import::load_import`, public, beside a `save_program_info` that moved to
+> sit next to it; `ctadl_import::open_import` is the version-checked one-liner.
+> Neither is in `ctadl-ascent` any more — `ctadl-import`'s build graph is 140
+> crates against `ctadl-ascent`'s 384, and holds no parser and no engine. The
+> paragraph above is kept because it is the asymmetry the crate exists to close.
 
 ### What the dex front end drops
 
@@ -133,7 +145,15 @@ Three steps, smallest first. Step 1.1 alone removes the drift risk on the
 passes and costs nothing; 1.2 is the real work; 1.3 is a small correctness fix
 that 1.2 makes possible.
 
+**Status: 1.1 and 1.2 have landed on `ir-refactor`; 1.3 is partly done.** The
+sections below are kept as the design record — the reasoning is what a reviewer
+needs and none of it turned out wrong — with an *As built* note wherever the
+result differs from what was proposed. See *Where 1.2 came out
+differently* under [Ordering](#ordering) for those, collected.
+
 ### 1.1 `ctadl_ir::ssa::Pipeline` — name the pipeline where the passes live
+
+> **Landed** (`9487842a`), as written below.
 
 New in `ctadl-ir/src/ssa/mod.rs`:
 
@@ -186,6 +206,10 @@ input; flowy imports rely on that already).
 
 ### 1.2 One crate per front end: `ctadl-dex`, `ctadl-jvm`, `ctadl-lua`, `ctadl-c`, `ctadl-pcode`
 
+> **Landed**: seven new crates in seven commits (`b64af28c` … `62d9e04d`), and
+> the workspace went from 10 members to 17. Nothing `ctadl index` computes
+> changed, and test counts are conserved exactly.
+
 The blocker is that `languages/` is stuck in a crate that also contains the
 Datalog engine. A single `ctadl-frontend` crate would move the boundary but keep
 the lump: a consumer that reads Dex would still build tree-sitter, Ghidra
@@ -219,6 +243,12 @@ makes the split worth having rather than merely tidy.
 The coupling that is real lives in three places, and each one decides a
 boundary rather than blocking it (see *Three couplings*, below).
 
+> **As built:** the survey above is accurate and its conclusion held, but a
+> `use`-line survey is the wrong instrument for finding *calls* through a path,
+> and two of those turned up: `jni/registry.rs` → `jni::descriptor_params`, and
+> `index_engine`'s own test → `ctadl-c`'s `test_utils`. Both are in *Three
+> couplings*. Next time, grep for `crate::` rather than for `use crate::`.
+
 #### The shape
 
 ```
@@ -243,24 +273,54 @@ tiny and deliberately language-blind: it is `error.rs`'s import-reachable half
 plus `project.rs`'s import-reachable half, and it is the only new crate that
 this analysis is obliged to depend on (see *The API*).
 
+> **As built:** this shape, exactly, with two amendments. `ctadl-import` took
+> `project.rs` whole rather than a half, so it is 1.4 kLOC rather than 1.2, and
+> it also holds the `ProgramInfo` I/O that used to live in `cli`. And there is
+> one arrow the diagram cannot draw: `ctadl-c` takes `ctadl-ascent` as a
+> **dev**-dependency, a cycle Cargo permits, so that its 285 tests — which are
+> the engine's regression suite as much as the front end's — could move unedited.
+> Nothing in a non-test build follows it.
+
 #### Crate by crate
 
-| Crate | Moves | Code / test LOC | Non-`ctadl-ir` deps | Blocker |
-|---|---|---|---|---|
-| `ctadl-import` | `error.rs` (import half), `project.rs` (import half) | ~500 / — | serde, serde_json, json5, bitcode, thiserror, hashbrown, log, source-info | none |
-| `ctadl-jvm` | `languages/jvm/` | 1,164 / 0 | jvm-reader, smallvec, hashbrown | none |
-| `ctadl-dex` | `languages/dex/` | 946 / 258 | dex-reader, smallvec, hashbrown, streaming-iterator | none |
-| `ctadl-pcode` | `languages/pcode/`, `languages/jni/registry*` | 4,021 / 893 | pcode-reader, flate2, rayon, which, tempfile, object | owns the registry (below) |
-| `ctadl-lua` | `languages/lua/` | 2,585 / 532 | tree-sitter, tree-sitter-lua, smallvec, tempfile | 1 test uses `crate::models` |
-| `ctadl-c` | `languages/tree_sitter_c/` | 4,723 / 7,340 | tree-sitter, tree-sitter-c, internment, streaming-iterator | **the tests** (below) |
-| `ctadl-frontends` | `languages/apk_native.rs`, `languages/xapk.rs`, `cli::import`'s `match` | ~700 / — | zip (dev), the five above, all optional | none |
+As built. "LOC" counts everything under `src/` and `tests/`, tests included.
+"Graph" is `cargo tree -e normal` deduplicated — the crates a consumer of that
+crate *alone* compiles, against `ctadl-ascent`'s **384**. "Tests" is what
+`cargo test -p` runs.
+
+| Crate | Moved | LOC | Graph | Tests | Deps beyond `ctadl-ir`/`ctadl-import` |
+|---|---|---|---|---|---|
+| `ctadl-import` | `error.rs` (import half), `project.rs` (whole), the `ProgramInfo` I/O out of `cli` | 1,361 | **140** | 5 | serde, serde_json, json5, bitcode, thiserror, hashbrown, log, source-info |
+| `ctadl-jvm` | `languages/jvm/` | 1,167 | 169 | 0 | jvm-reader, smallvec, hashbrown, log, source-info |
+| `ctadl-dex` | `languages/dex/` | 1,203 | 168 | 11 | dex-reader, smallvec, hashbrown, streaming-iterator, log, source-info |
+| `ctadl-pcode` | `languages/pcode/`, `languages/jni/registry*` | 4,076 | 296 | 31 | pcode-reader, object, flate2, rayon, which, tempfile, serde, serde_json, log-once |
+| `ctadl-lua` | `languages/lua/` | 3,083 | 145 | 14 | tree-sitter, tree-sitter-lua, smallvec, hashbrown, log, source-info |
+| `ctadl-c` | `languages/tree_sitter_c/` | 12,060 | 146 | 285 | tree-sitter, tree-sitter-c, internment, streaming-iterator, anyhow, hashbrown |
+| `ctadl-frontends` | `languages/{apk_native,xapk,flowy}.rs`, `cli::import`'s `match` and `ImportOptions` | 979 | 185 | 7 | the six above (all optional), dex-reader, bitcode, log |
 
 `languages/jni.rs` (900 lines) does **not** move: it is JNI *linking*, it emits
 facts, and it reaches `crate::codegen`, `crate::facts` and `crate::index_engine`
 by design. It stays in `ctadl-ascent` and reads `JniRegistry` back out of
 `ctadl-pcode`.
 
+**As built.** Three notes on the table:
+
+* `ctadl-import` is larger than the ~500 lines projected, because `project.rs`
+  moved whole rather than in halves — it has exactly one crate-internal `use`
+  (`error`) and no engine dependency anywhere, so there was no seam to cut.
+  `MissingIndex`/`IncompatibleIndex` travelled with `AnalysisProject`: they
+  describe the store's layout, which is what this crate now owns.
+* `ctadl-frontends` also took flowy's *import* half, which the plan put in
+  `codegen`'s split (see *Features*). It had to move in 1.2a rather than here —
+  see the ordering notes.
+* No crate needs `zip`. The APK's zip handling was already `dex_reader::apk`'s,
+  so `apk` takes `dex-reader` directly and `zip` stays a `ctadl-ascent`
+  dev-dependency for building test fixtures.
+
 #### Three couplings that decide the boundaries
+
+> **As built:** all three held, and a fourth and fifth turned up that the `use`
+> lines did not show — see the end of this subsection.
 
 **1. The container formats are dispatch, not a language.** `apk_native.rs` calls
 `pcode::import_pcode` (`:50`) and `cli::save_program_info` (`:293`); `xapk.rs`
@@ -314,6 +374,36 @@ Three ways out, in order of preference:
 `a_model_can_name_a_lua_external` (`lua/mod.rs:2816`), uses `crate::models`.
 Move that one test to `ctadl-ascent/tests/`; the other fourteen are pure IR.
 
+**As built — which way each went.**
+
+1. *Container formats.* As described. They are `ctadl-frontends`, and `xapk`'s
+   recursion is `ctadl_frontends::import_and_save`.
+2. *pcode + registry.* Shipped together as planned, as `ctadl_pcode::jni_registry`,
+   with the twenty-line hoist that would break the cycle written into the module
+   doc for whoever needs it. The `pub(super)` items the attribution pass exposed
+   to `jni.rs` widened to `pub`, since `super` is now a crate boundary.
+3. *`ctadl-c`.* Took the **dev-dependency cycle**, the first option. All 285
+   tests moved byte for byte, `super::` kept working, and the engine helpers in
+   `test_utils` became `ctadl_ascent::…`. `ctadl-lua`'s one test relocated to
+   `ctadl-ascent/tests/lua_model_externals.rs`, but imports from a real `m.lua`
+   in a tempdir rather than the crate's private in-memory `lower_lua_units`, so
+   nothing had to become `pub` for one test.
+
+**Two couplings the `use` lines did not show**, both found by the compiler:
+
+4. `jni/registry.rs` called `super::descriptor_params` — the JVM method-descriptor
+   parser in `jni.rs`. It is self-contained, and the registry needs it to tell a
+   `JNINativeMethod`'s descriptor slot from a pointer into arbitrary data, so it
+   moved *down* with the scanner and `jni.rs` re-exports it. A call, not a `use`,
+   which is why the survey missed it.
+5. The arrow really does point back, and not only through `test_utils`'s
+   declaration: `index_engine/mod.rs`'s own `parallel_engine_matches_serial`
+   *calls* `index_program`/`program_from_string` out of the C front end's private
+   test helpers. Rather than making the dev-dependency cycle bidirectional, that
+   arrow was deleted — the engine half of those two helpers is thirty lines and
+   belongs in the engine's test module. `ctadl-ascent` no longer reaches into
+   `ctadl-c` at all.
+
 #### The error split
 
 `ctadl-import::Error` gets the import-reachable variants — `Io`, `Path`, `Json`,
@@ -348,6 +438,19 @@ one or the other: moved files import `ctadl_import`'s, files that stayed import
 writing down in `ctadl-import`'s module doc, because it is the one thing a
 reviewer of this refactor will otherwise have to rediscover.
 
+**As built.** Exactly this, and the rule is in `ctadl-import`'s module doc. One
+addition the plan did not anticipate: `#[from] ctadl_import::Error` alone is not
+enough on the engine side, because a `?` or an `.err_context(…)` there commonly
+starts from a *leaf* type — `std::io::Error`, `serde_json::Error`, `bitcode::Error`,
+`VerifyErrors`, `source_info`'s `ParquetError`, and the two reader errors. Without
+a bridge, all 161 `err_context` sites in `ctadl-ascent` would have had to name
+`ctadl_import::Error` explicitly. A `from_import!` macro emits
+`impl From<$leaf> for Error { … Error::Import(ctadl_import::Error::from(e)) }` for
+each, so every one of them compiles untouched. Only the ~15 sites that *construct*
+an import-side variant by name (`Error::Path { … }`, `Error::MissingIndex { … }`)
+had to change, and they now say `ctadl_import::Error::…` — which is the right
+thing for them to say.
+
 #### Features
 
 `ctadl-frontends` is where a consumer states what it reads:
@@ -378,6 +481,47 @@ half is `import()` at `:25` (~55 lines, needing only `flowy::compile_program`
 and a `bitcode` write) and the rest is `check`, which is the engine. Split it,
 put the import half behind `ctadl-frontends`' `flowy` feature, leave `check` in
 `ctadl-ascent`. Small, and it keeps the dispatch `match` complete.
+
+**As built.** The feature table shipped with three changes:
+
+```toml
+[features]
+default = ["dex", "jvm", "apk", "xapk"]             # xapk added
+dex   = ["dep:ctadl-dex",   "ctadl-import/dex"]
+jvm   = ["dep:ctadl-jvm",   "ctadl-import/jvm"]
+apk   = ["dex", "dep:dex-reader"]                   # not `zip`
+xapk  = ["apk"]
+pcode = ["dep:ctadl-pcode", "ctadl-import/pcode"]
+lua   = ["dep:ctadl-lua",   "ctadl-import/ts"]
+c     = ["dep:ctadl-c",     "ctadl-import/ts"]
+flowy = ["dep:ctadl-flowy", "dep:bitcode", "ctadl-import/flowy"]
+```
+
+* **`apk` takes `dex-reader`, not `zip`.** The APK and bundle central-directory
+  reading is `dex_reader::apk`'s already, so nothing in the workspace needs `zip`
+  outside test fixtures.
+* **`apk` implies `dex` but not `pcode`,** which the plan left implicit and which
+  is the whole point of the feature: an APK imported without the pcode front end
+  keeps its Java half and reports that this build has no native front end. That
+  is the same degradation as an APK imported on a machine with no Ghidra, which
+  is already supported and common, so the two collapse into one predicate
+  (`apk_native::native_frontend_available`) and one `#[cfg]`-gated function —
+  not a gated extraction loop.
+* **`xapk` is in the default set.** A bundle costs no dependency beyond `apk`,
+  and leaving it out by default would mean its three unit tests never ran under
+  `cargo test`.
+
+Every combination compiles warning-free: `--no-default-features`, each language
+alone, `dex`, `dex,apk`, `dex,apk,xapk`, `lua,c`, `pcode`, `flowy`, and
+`--all-features`. Flowy split as described, except that its import half had to
+move in 1.2a rather than here (see the ordering notes).
+
+The measured payoff, which is the claim this section makes: a `dex, apk`
+consumer's build graph is **169 crates against `ctadl-ascent`'s 384**, with
+tree-sitter, datafusion, ascent, tokio, serde-sarif and the Ghidra plumbing all
+absent. `arrow` and `parquet` are still in it, arriving transitively through
+`source-info`'s `parquet_io` — which is exactly what §1.3 names as the last thing
+standing between a consumer and a genuinely light tree.
 
 #### The API
 
@@ -435,34 +579,86 @@ crate currently juggles two files. The `bitcode::deserialize` hand-roll for the
 VMT is already gone: `encode::{encode_vmt, decode_vmt}` landed with 1.1
 (`ctadl-ir/src/mir/encode.rs:29,36`).
 
+> **As built**, with the signatures that shipped:
+>
+> ```rust
+> // ctadl-import — no language, no engine
+> pub fn load_import(&ArtifactImport, SourceInfoMode) -> Result<ProgramInfo, Error>;
+> pub fn open_import(name_or_dir: &str, ssa::Pipeline) -> Result<ProgramInfo, Error>;
+> pub fn save_program_info(ProgramInfo, &ArtifactImport) -> Result<(), Error>;
+> pub fn resolve_import(name_or_dir: &str) -> Result<ArtifactImport, Error>;
+>
+> // ctadl-frontends — the dispatch
+> pub fn import_artifact(&ArtifactImport, ImportOptions<'_>) -> Result<ProgramInfo, Error>;
+> pub fn import_and_save(&ArtifactImport, ImportOptions<'_>) -> Result<(), Error>;
+> pub fn open_or_import(name: &str, artifact: &Path, ArtifactLanguage,
+>                       ImportOptions<'_>, ssa::Pipeline) -> Result<ProgramInfo, Error>;
+> ```
+>
+> Three differences from the sketch above. The switch is spelled `SourceInfoMode`
+> (`Skip` | `Read`), not `SourceInfo`, so it does not collide with
+> `source_info::SourceInfo`. `open_or_import` takes an `ArtifactLanguage`, because
+> creating an `ArtifactImport` needs one and a path alone does not determine it.
+> And `import_and_save` exists as a named function rather than as prose about
+> "plus the existing `save_program_info` call", because `xapk` recurses into it.
+>
+> `ctadl-import` also ships `tests/open_import.rs`: the round trip exercised in a
+> process with no front end linked in, which is as much the point of the test as
+> of the crate.
+
 #### Order of landing
 
 One crate per PR; `cargo test --workspace` is the check each time, and each step
 is independently revertible.
 
-| Step | Crate | Why here | Effort |
+**As landed**, one commit each, `cargo test --workspace` green after every one:
+
+| Step | Crate | Commit | Note |
 |---|---|---|---|
-| 1.2a | `ctadl-import` | Nothing leaves `languages/` yet. `ctadl-ascent` re-exports (`pub use ctadl_import::{error, project};`) so every existing path still resolves. This is the step that unblocks 1.3 *and* this analysis. | 1 day |
-| 1.2b | `ctadl-jvm` | The pilot: 1,164 lines, one `use crate::` line, zero tests to relocate. If the error split is wrong, it is wrong here, cheaply. | 2 hours |
-| 1.2c | `ctadl-dex` + `ctadl-frontends` | Dex is the twin of JVM; the dispatch crate has to exist before the container formats can move out of `cli`. | 1 day |
-| 1.2d | `ctadl-pcode` | Carries `jni/registry` with it; `jni.rs` stays and switches to `ctadl_pcode::jni_registry::JniRegistry`. | 1 day |
-| 1.2e | `ctadl-lua` | One test relocates. | 3 hours |
-| 1.2f | `ctadl-c` | Gated on the test decision above. Optional, and last. | 1 day (cycle) / 2-3 days (split) |
+| 1.2a | `ctadl-import` | `b64af28c` | `ctadl-ascent` re-exports `ctadl_import::project`, so every `crate::project::…` path resolves unchanged. Nothing left `languages/` — but its files switched to `ctadl_import::error`, which is the only preparation the rest needed. |
+| 1.2b | `ctadl-jvm` | `7c2fd5fb` | The pilot. The error split from 1.2a was right; the move was `git mv`, a manifest, and a `log` dependency the old crate had supplied ambiently. |
+| 1.2c | `ctadl-dex` | `8a058db1` | Its 258 lines of tests are pure IR-shape checks and moved with it. |
+| 1.2d | `ctadl-pcode` | `2cfc99af` | Carries `jni/registry` and its 31 tests; `jni.rs` stays and re-exports the module. |
+| 1.2e | `ctadl-lua` | `426856ac` | One test relocated. |
+| 1.2f | `ctadl-c` | `c1617fb7` | Dev-dependency cycle; 285 tests moved unedited. |
+| 1.2g | `ctadl-frontends` | `62d9e04d` | The dispatch, the container formats, `import_artifact`, `open_or_import`. |
+| — | doc links | `a4ed1237` | Every intra-doc link that crossed a new boundary. |
 
-**Effort:** three to four days for 1.2a–1.2e, most of it mechanical
-`crate::` → `ctadl_import::`; plus 1.2f, whose cost is a choice rather than a
-number. **Risk:** low and bounded per step — no logic moves, and the first step
-is a pure re-export.
+**The one ordering change: `ctadl-frontends` cannot land with `ctadl-dex`.**
+`apk_native.rs` calls `pcode::import_pcode`, so the dispatch crate depends on
+`ctadl-pcode` — and while pcode is still a module of `ctadl-ascent`, that
+dependency is a cycle. So the container formats wait for 1.2d and the dispatch
+crate lands last, as its own step. Same arrows, same end state, one step later.
 
-**If the extraction is not wanted at all:** make
-`load_program_info_without_source_info` public, add `cli::open_import` next to
-it, and gate `ctadl-ascent`'s heavy halves behind a default-on `engine` feature
-(`datafusion`, `ascent`, `query_engine`, `index_engine`, `codegen`). Same API,
-one crate. But note what the numbers above say: a feature graph inside a
-19 kLOC crate has to be kept honest by hand, whereas the front ends' `use` lines
-have *already* kept the crate boundaries honest without anyone trying.
+A knock-on: with `cli::import` still returning `ctadl_ascent::Error` in 1.2a,
+`xapk`'s recursion into it could not typecheck against `ctadl_import::Error`.
+Making `cli::import` import-side end to end needed flowy's import half split out
+*then*, in 1.2a, rather than with the rest of `ctadl-frontends`. It lived in
+`ctadl-ascent/src/languages/flowy.rs` for five commits and moved with the others
+in 1.2g.
+
+**Effort:** as estimated for the mechanical part — most of 1.2a–1.2e really is
+`crate::` → `ctadl_import::`. What the estimate missed is that the interesting
+work is not the moving; it is the two invisible couplings (a call, not a `use`)
+and the error bridge, and those are found by compiling, not by reading.
+
+**The alternative, not taken:** gating `ctadl-ascent`'s heavy halves behind a
+default-on `engine` feature would have given the same API in one crate. Recorded
+here because it stays the fallback if the seven-crate workspace ever proves worse
+to live with than it looks — but the numbers argue against it: a feature graph
+inside a 19 kLOC crate has to be kept honest by hand, whereas the front ends'
+`use` lines had *already* kept these boundaries honest without anyone trying,
+and the split found exactly two places where they had not.
 
 ### 1.3 Make the version check reachable
+
+> **Partly landed.** 1.2a put `ArtifactImport::load` on a reachable path:
+> `ctadl_import::open_import` resolves a name *or* a directory through it and
+> never around it, so a stale store fails as `IncompatibleImport` naming the
+> artifact to re-import. What is left is the regression test that proves it
+> (item 5 under *Validating*) and the `arrow`/`parquet` cleanup at the end of
+> this section. `import_format_version_beside` was already there and did not
+> need changing.
 
 Today this crate reads `ir-program.bitcode` directly, so an import written by a
 newer CTADL decodes as garbage or as a `bitcode::Error`. `ArtifactImport::load`
@@ -650,51 +846,40 @@ encoding (`parse_ref`/`exp_to_count`), which the plan did not call out: flowy
 is a front end with the same problem, and its `int` rule admits a sign its
 `u32` parse would have panicked on.
 
-### What 1.2 actually took, against what this document predicted
+### Where 1.2 came out differently
 
-Five things came out differently. None changes the end state; all five are the
-kind of thing only the compiler finds.
+Five things, none of which changes the end state, and all five of the kind only
+a compiler finds. Each is written up where it belongs in §1.2; this is the index.
 
-1. **`ctadl-frontends` cannot land with `ctadl-dex`.** `apk_native.rs` calls
-   `pcode::import_pcode`, so the dispatch crate depends on `ctadl-pcode` -- and
-   while pcode is a module of `ctadl-ascent`, that is a cycle. Frontends is
-   therefore *last*, after 1.2f, not paired with 1.2c. Same arrows, different
-   order.
-2. **`project.rs` moves whole, not in halves.** It has one crate-internal `use`
-   (`error`) and no engine dependency anywhere, so there is no seam; `MissingIndex`
-   and `IncompatibleIndex` travel with `AnalysisProject` because they describe
-   the store's layout, which is what `ctadl-import` owns.
-3. **Flowy's import half had to split in 1.2a, not 1.2c.** It is what let
-   `cli::import` become import-side end to end, which is what let `xapk`'s
-   recursion into it typecheck against `ctadl_import::Error`.
-4. **Two couplings this document did not list.** `jni/registry.rs` called
-   `super::descriptor_params`, the JVM descriptor parser in `jni.rs` -- it moves
-   down with the scanner. And `index_engine`'s own `parallel_engine_matches_serial`
-   borrowed `index_program`/`program_from_string` out of the C front end's private
-   `test_utils`; that is the arrow pointing *back*, and rather than doubling the
-   dev-dependency cycle it was deleted -- the engine half of those helpers is
-   thirty lines and belongs in the engine's test module.
-5. **`apk` needs no `zip`, and `xapk` belongs in the default set.** The APK's zip
-   handling was already `dex_reader::apk`'s. `apk` implies `dex` but *not*
-   `pcode`: an APK imported without the pcode front end keeps its Java half and
-   reports it has no native front end, which is the same degradation as an APK
-   imported on a machine with no Ghidra.
+1. **`ctadl-frontends` cannot land with `ctadl-dex`** — `apk_native` calls
+   `pcode::import_pcode`, and while pcode is a module of `ctadl-ascent` that is a
+   cycle. It lands last instead. *(§1.2, Order of landing.)*
+2. **`project.rs` moved whole, not in halves** — no seam to cut, so
+   `MissingIndex`/`IncompatibleIndex` travelled with it. *(§1.2, Crate by crate.)*
+3. **Flowy's import half had to split in 1.2a**, not with the rest of
+   `ctadl-frontends`. *(§1.2, Order of landing.)*
+4. **Two couplings the `use`-line survey could not see**, because both are calls:
+   `registry.rs` → `jni::descriptor_params`, and `index_engine`'s own test →
+   `ctadl-c`'s private `test_utils`. *(§1.2, Three couplings.)*
+5. **The feature table shipped with three changes**: `dex-reader` instead of
+   `zip`, `apk` not implying `pcode`, and `xapk` in the default set. *(§1.2,
+   Features.)*
 
-Measured payoff: a `dex, apk` consumer builds 169 crates against `ctadl-ascent`'s
-384, with tree-sitter, datafusion, ascent, tokio, serde-sarif and the Ghidra
-plumbing gone. `arrow`/`parquet` remain, arriving through `source-info`'s
-`parquet_io` -- exactly what 1.3 names as the last thing standing between a
-consumer and a light tree. Test counts are conserved exactly: 513 passing +4
-ignored before, 512 +4 spread across seven crates plus one relocated integration
-test after.
+And one thing the plan did not mention at all: `#[from] ctadl_import::Error` is
+not sufficient on the engine side, because most `?`s there start from a leaf
+error type rather than from an import error. A `from_import!` macro bridges the
+seven leaves, which is what kept all 161 `err_context` call sites compiling
+untouched. *(§1.2, The error split.)*
 
 Note for 2.2A, which shares the format bump: 2.1 already spent it, so `"6"`
 is taken. If 2.2A lands separately it needs `"7"`, not a second `"6"`.
 
-1.1 is worth landing on its own this week: it is the one change that pays off
-without any of the others. 2.1 and 2.2A share a format bump and should be one
-release. 2.2B is the payoff commit — it is small, and everything before it
-exists to make it safe.
+What is left, in the order it makes sense to do it: **1.3b** (the stale-store
+regression test, plus dropping `ctadl-ir`'s unused `arrow`/`parquet` and
+feature-gating `source-info`'s `parquet_io`) is hours and finishes Part 1.
+Then **2.2A**, which is the week; 2.1 already spent the format bump it shares.
+**2.2B** is the payoff commit — it is small, and everything before it exists to
+make it safe.
 
 ## Validating that none of this moves `ctadl index`
 
@@ -724,7 +909,44 @@ that a fact rather than an intention:
    build expecting `"6"`, assert `Error::IncompatibleImport` names the artifact
    path. This is the regression that motivates 1.3.
 
+### What 1.2 was actually checked against
+
+1.2 moves no logic, so the bar for it is *conservation* rather than a fact-base
+diff. What ran, after every one of the seven commits:
+
+* **`cargo test --workspace` green**, and **test counts conserved exactly**:
+  513 passing + 4 ignored before 1.2a; 512 + 4 spread across seven crates
+  afterwards, plus the one Lua test that became an integration test. Per crate:
+  `ctadl-ascent` 168 lib (291 with its integration tests), `ctadl-c` 281 + 4
+  ignored, `ctadl-pcode` 31, `ctadl-lua` 14, `ctadl-dex` 11, `ctadl-frontends` 7,
+  `ctadl-import` 5. No test was rewritten to keep passing. One moved
+  (`a_model_can_name_a_lua_external`, now an integration test) and one kept its
+  body while its two helpers were reimplemented in the engine
+  (`parallel_engine_matches_serial`); both are documented where they landed.
+* **`cargo clippy --workspace --all-targets` clean**, apart from two warnings
+  that predate this work in `jvm-reader` and `rustc_graphviz`.
+* **`cargo doc --workspace --no-deps`** back to its pre-1.2a warning set — none
+  in any of the seven new crates. Worth knowing for next time: an outer `///` on a
+  `pub mod` whose file already carries an inner `/*! … */` makes rustdoc resolve
+  the *merged* doc in the parent's scope, silently breaking every link the module
+  wrote about its own items.
+* **Every feature combination** of `ctadl-frontends` compiles warning-free
+  (listed under *Features*).
+* **The CLI end to end**: `ctadl import -l c`, `ctadl index`, `ctadl inspect`
+  against a fresh store, which exercises the dispatch, the store write, and the
+  now-public reader on one path.
+
+Item 1 above — the byte-identical `backflash.apk` fact-base diff — has **not**
+been run for 1.2. It is cheap to argue that it must hold (no logic moved, and
+the passes and codegen are untouched) and cheap to run, so it is still worth
+doing before this branch merges.
+
 ## What changes on this side
+
+None of this has been done yet — it is the downstream half, in the analysis
+crate, not in `../ctadl-rs`. **Everything the first two bullets need now exists**
+on `ir-refactor`: `ctadl_import::open_import`, `ctadl_ir::ssa::Pipeline`, and a
+`ctadl-import` whose build graph is 140 crates with no parser and no engine in it.
 
 - `src/ctadl.rs:143-165` — `read_import`/`import_edb` become calls to
   `ctadl_import::open_import`; the store-path helpers (`store_root`,
@@ -740,9 +962,11 @@ that a fact rather than an intention:
   gets rewritten — it is the sentence this whole plan exists to falsify.
 - `Cargo.toml` — the `ctadl` feature becomes `ctadl-import` plus `ctadl-ir`,
   and nothing else: reading a warm store needs no front end (§1.2, *The API*).
-  `ctadl-frontends = { features = ["dex", "apk"] }` is needed only if this crate
-  ever imports an APK itself rather than reading one `ctadl import` wrote. The
-  comment about arrow/parquet build cost can go either way.
+  `ctadl-frontends = { default-features = false, features = ["dex", "apk"] }` is
+  needed only if this crate ever imports an APK itself rather than reading one
+  `ctadl import` wrote — measured at 169 crates against `ctadl-ascent`'s 384.
+  The comment about arrow/parquet build cost can go either way; the residue is
+  `source-info`'s `parquet_io`, and §1.3's last paragraph is how it goes away.
 - `ctadl-comparison.md` gets a re-measurement: the `--ctadl-pre` column is
   unchanged by any of this, but the "coverage" verdict table's array row moves
   from *never exercised* to a number.
