@@ -126,10 +126,7 @@ pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<Progr
 /// Returns [`Error::IncompatibleImport`] if the import was written by a build with a different
 /// [`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION). Code that reads
 /// `ir-program.bitcode` directly cannot make that check, which is why this function exists.
-pub fn open_import(
-    name_or_dir: &str,
-    pipeline: ssa::Pipeline,
-) -> Result<ProgramInfo, Error> {
+pub fn open_import(name_or_dir: &str, pipeline: ssa::Pipeline) -> Result<ProgramInfo, Error> {
     let import = resolve_import(name_or_dir)?;
     let mut program_info = load_import(&import, SourceInfoMode::Skip)?;
     ssa::run_pipeline(&mut program_info.program, pipeline);

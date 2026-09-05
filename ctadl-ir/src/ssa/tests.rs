@@ -717,10 +717,7 @@ fn test_pipeline_cleanups_are_noops_after_index_default() {
 #[test]
 fn test_pipeline_tag() {
     assert_eq!(Pipeline::index_default().tag(), "dt+co+ssa(prune)+cp");
-    assert_eq!(
-        Pipeline::index_default().prune(false).tag(),
-        "dt+co+ssa+cp"
-    );
+    assert_eq!(Pipeline::index_default().prune(false).tag(), "dt+co+ssa+cp");
     assert_eq!(Pipeline::ssa_only().tag(), "ssa(prune)");
     assert_eq!(Pipeline::none().tag(), "none");
     // Pruning does nothing without SSA, and the tag says so instead of suggesting that a pass

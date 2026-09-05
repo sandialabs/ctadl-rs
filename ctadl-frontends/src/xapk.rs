@@ -177,8 +177,9 @@ fn import_split(name: &str, dest: &Path, opts: ImportOptions<'_>) -> Result<Vec<
 /// Best-effort: a store that cannot be tidied is not a reason to fail an import that otherwise
 /// succeeded.
 fn discard_import(name: &str) {
-    let dir =
-        ctadl_import::project::StorePaths::resolve(ctadl_import::project::StorePaths::relative_import_dir(name));
+    let dir = ctadl_import::project::StorePaths::resolve(
+        ctadl_import::project::StorePaths::relative_import_dir(name),
+    );
     if let Err(e) = std::fs::remove_dir_all(&dir) {
         log::debug!("could not remove '{}': {e}", dir.display());
     }

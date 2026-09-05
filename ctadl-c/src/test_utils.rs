@@ -1,11 +1,11 @@
-use ctadl_import::error::Error;
 use ctadl_ascent::facts as fx;
+use ctadl_import::error::Error;
 
+use crate as tree_sitter_c;
+use anyhow::Result;
+use ctadl_ascent::codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program};
 use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
 use ctadl_ascent::index_engine::{FunctionSummary, IndexFacts, taint_index};
-use crate as tree_sitter_c;
-use ctadl_ascent::codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program};
-use anyhow::Result;
 // `DirectedGraph`/`Successors` are trait imports: they provide `num_nodes()` (used by
 // `check_block_count`) and `successors()` (used by `check_successors`). They look unused but
 // removing them breaks method resolution.

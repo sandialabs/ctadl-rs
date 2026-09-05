@@ -20,8 +20,11 @@ use ctadl_ascent::models::{
 fn a_model_can_name_a_lua_external() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("m.lua");
-    std::fs::write(&path, r#"local function h(x) return os.getenv(x) end return h"#)
-        .expect("writing the module");
+    std::fs::write(
+        &path,
+        r#"local function h(x) return os.getenv(x) end return h"#,
+    )
+    .expect("writing the module");
     let info = ctadl_lua::import_lua(&path).expect("lua lowering failed");
 
     for port in ["getenv", "os.getenv"] {

@@ -280,8 +280,7 @@ fn native_frontend_available() -> bool {
 const NO_NATIVE_FRONTEND: &str =
     "Ghidra was not found (set GHIDRA_HOME or put `ghidra` on PATH to analyze them)";
 #[cfg(not(feature = "pcode"))]
-const NO_NATIVE_FRONTEND: &str =
-    "this build was compiled without ctadl-frontends' `pcode` feature";
+const NO_NATIVE_FRONTEND: &str = "this build was compiled without ctadl-frontends' `pcode` feature";
 
 /// Disassembles one extracted library and writes it to the store.
 ///

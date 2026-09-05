@@ -2998,7 +2998,10 @@ fn variable_port_resolves_per_matched_function() {
         .endpoints
         .iter()
         .map(|r| {
-            assert_eq!(r.selector_ty, ctadl_ascent::models::FormalIndexTypeTag::Local);
+            assert_eq!(
+                r.selector_ty,
+                ctadl_ascent::models::FormalIndexTypeTag::Local
+            );
             (r.function.as_str(), r.local_index)
         })
         .collect();

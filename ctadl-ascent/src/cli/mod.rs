@@ -1073,12 +1073,12 @@ pub fn list_store_contents() -> Result<(), Error> {
 pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> {
     use crate::facts::schema::*;
     let path = path.as_ref();
-    let filename = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| ctadl_import::Error::Path {
-            message: "invalid filename".to_string(),
-        })?;
+    let filename =
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| ctadl_import::Error::Path {
+                message: "invalid filename".to_string(),
+            })?;
 
     let parent = path.parent().unwrap_or(std::path::Path::new("."));
 
@@ -1128,12 +1128,12 @@ pub fn inspect_jni_registry<P: AsRef<std::path::Path>>(path: P) -> Result<(), Er
 
 pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> {
     let path = path.as_ref();
-    let filename = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| ctadl_import::Error::Path {
-            message: "invalid filename".to_string(),
-        })?;
+    let filename =
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| ctadl_import::Error::Path {
+                message: "invalid filename".to_string(),
+            })?;
 
     // Unlike every other reader of these files, this one is handed a raw path rather than an
     // `ArtifactImport` — deliberately, so a store can still be inspected when its import is
