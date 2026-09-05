@@ -1300,6 +1300,7 @@ dependencies = [
  "chrono",
  "clap",
  "csv",
+ "ctadl-dex",
  "ctadl-flowy",
  "ctadl-import",
  "ctadl-ir",
@@ -1351,6 +1352,21 @@ dependencies = [
  "url",
  "which",
  "zip 0.6.6",
+]
+
+[[package]]
+name = "ctadl-dex"
+version = "0.1.2"
+dependencies = [
+ "ctadl-import",
+ "ctadl-ir",
+ "dex-reader",
+ "hashbrown 0.16.1",
+ "log",
+ "smallvec",
+ "source-info",
+ "streaming-iterator",
+ "test-log",
 ]
 
 [[package]]

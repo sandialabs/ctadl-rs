@@ -20,6 +20,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 clap = { version = "4.5", features = ["cargo", "derive", "wrap_help", "env"] }
 csv = "1.3.*"
 ctadl-flowy = { path = "../ctadl-flowy", features = ["serde"] }
+ctadl-dex = { path = "../ctadl-dex" }
 ctadl-import = { path = "../ctadl-import", features = ["dex", "jvm", "pcode", "ts", "flowy"] }
 ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
 ctadl-jvm = { path = "../ctadl-jvm" }

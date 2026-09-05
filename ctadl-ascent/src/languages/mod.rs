@@ -1,5 +1,4 @@
 pub mod apk_native;
-pub mod dex;
 pub mod flowy;
 pub mod jni;
 pub mod lua;
@@ -11,3 +10,7 @@ pub mod xapk;
 /// datalog engine and no tree-sitter behind it. Re-exported here so `crate::languages::jvm::…`
 /// still names it.
 pub use ctadl_jvm as jvm;
+
+/// The Dex front end, extracted to its own crate: `dex-reader` and nothing else. Re-exported
+/// here so `crate::languages::dex::…` still names it.
+pub use ctadl_dex as dex;
