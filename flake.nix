@@ -128,7 +128,15 @@
           version = workspaceVersion;
           name = "dex-reader";
           release = false;
-          cargoBuildOptions = x: x ++ [ "--package" "dex-reader" "--lib" "--examples" ];
+          cargoBuildOptions =
+            x:
+            x
+            ++ [
+              "--package"
+              "dex-reader"
+              "--lib"
+              "--examples"
+            ];
         };
 
         # `jvm-reader` is the same arrangement for the JVM E2E linemap step.
@@ -137,7 +145,15 @@
           version = workspaceVersion;
           name = "jvm-reader";
           release = false;
-          cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" "--lib" "--examples" ];
+          cargoBuildOptions =
+            x:
+            x
+            ++ [
+              "--package"
+              "jvm-reader"
+              "--lib"
+              "--examples"
+            ];
         };
 
         # The external toolchain the regression scripts expect on PATH
@@ -309,8 +325,20 @@
               version = workspaceVersion;
               name = "dex-reader-tests";
               mode = "test";
-              cargoBuildOptions = x: x ++ [ "--package" "dex-reader" ];
-              cargoTestOptions = opts: opts ++ [ "--package" "dex-reader" ];
+              cargoBuildOptions =
+                x:
+                x
+                ++ [
+                  "--package"
+                  "dex-reader"
+                ];
+              cargoTestOptions =
+                opts:
+                opts
+                ++ [
+                  "--package"
+                  "dex-reader"
+                ];
             };
 
             # jvm-reader's unit tests, same arrangement -- and, like dex-reader's,
@@ -323,8 +351,20 @@
               version = workspaceVersion;
               name = "jvm-reader-tests";
               mode = "test";
-              cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" ];
-              cargoTestOptions = opts: opts ++ [ "--package" "jvm-reader" ];
+              cargoBuildOptions =
+                x:
+                x
+                ++ [
+                  "--package"
+                  "jvm-reader"
+                ];
+              cargoTestOptions =
+                opts:
+                opts
+                ++ [
+                  "--package"
+                  "jvm-reader"
+                ];
             };
           in
           {
