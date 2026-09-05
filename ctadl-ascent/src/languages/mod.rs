@@ -1,7 +1,6 @@
 pub mod apk_native;
 pub mod flowy;
 pub mod jni;
-pub mod lua;
 pub mod tree_sitter_c;
 pub mod xapk;
 
@@ -18,3 +17,7 @@ pub use ctadl_dex as dex;
 /// is one cycle with (`ctadl_pcode::jni_registry`; see that module for why they ship together).
 /// Re-exported here so `crate::languages::pcode::…` still names it.
 pub use ctadl_pcode as pcode;
+
+/// The Lua front end, extracted to its own crate: tree-sitter and its Lua grammar, and no C
+/// grammar behind them. Re-exported here so `crate::languages::lua::…` still names it.
+pub use ctadl_lua as lua;

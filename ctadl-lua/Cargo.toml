@@ -1,0 +1,21 @@
+[package]
+name = "ctadl-lua"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+ctadl-import = { path = "../ctadl-import", features = ["ts"] }
+ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
+hashbrown = "0.16"
+log = "0.4"
+smallvec = "1"
+source-info = { path = "../source-info", features = ["serde"] }
+tree-sitter = "0.26"
+tree-sitter-lua = "0.5"
+
+[dev-dependencies]
+tempfile = "3"
+test-log = "0.2.19"
+
+[lints]
+workspace = true

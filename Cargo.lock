@@ -1305,6 +1305,7 @@ dependencies = [
  "ctadl-import",
  "ctadl-ir",
  "ctadl-jvm",
+ "ctadl-lua",
  "ctadl-pcode",
  "datafusion",
  "derive_builder",
@@ -1437,6 +1438,22 @@ dependencies = [
  "log",
  "smallvec",
  "source-info",
+]
+
+[[package]]
+name = "ctadl-lua"
+version = "0.1.2"
+dependencies = [
+ "ctadl-import",
+ "ctadl-ir",
+ "hashbrown 0.16.1",
+ "log",
+ "smallvec",
+ "source-info",
+ "tempfile",
+ "test-log",
+ "tree-sitter",
+ "tree-sitter-lua",
 ]
 
 [[package]]
