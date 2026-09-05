@@ -24,12 +24,11 @@ use crate::facts::FlowVariable;
 use crate::index_engine::{
     IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo, taint_index_with_config,
 };
-use crate::languages::{apk_native, dex, flowy, jni, jvm, lua, pcode, tree_sitter_c, xapk};
+use crate::languages::jni;
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
 use ctadl_ir::ssa;
-use ctadl_ir::ProgramInfo;
 
 /// The store writer, re-exported where it has always been called from. Its private sibling the
 /// *reader* is now public too, as [`ctadl_import::load_import`] -- the asymmetry that made every
@@ -37,136 +36,10 @@ use ctadl_ir::ProgramInfo;
 pub use ctadl_import::save_program_info;
 use ctadl_import::{SourceInfoMode, load_import};
 
-/// How to perform one import, beyond the artifact and its language.
-///
-/// Every field only matters to an APK, which is the one artifact that imports *other*
-/// artifacts out of itself (its native libraries; see [`apk_native`]).
-/// [`Default`] is the plain behavior: import everything, reuse nothing.
-#[derive(Debug, Clone, Copy)]
-pub struct ImportOptions<'a> {
-    /// Reuse an existing sub-import whose stored artifact hash still matches instead of
-    /// redoing it. The parent artifact's own skip check lives in `main`; this is what
-    /// carries the flag down to the sub-imports, where the saving (a disassembly run
-    /// each) is much larger.
-    pub skip_existing: bool,
-    /// Import the native libraries packaged inside an APK. On by default.
-    pub native_libs: bool,
-    /// Import this ABI's libraries rather than the preferred one. See
-    /// [`dex_reader::apk::ABI_PREFERENCE`].
-    pub native_abi: Option<&'a str>,
-}
-
-impl Default for ImportOptions<'_> {
-    fn default() -> Self {
-        Self {
-            skip_existing: false,
-            native_libs: true,
-            native_abi: None,
-        }
-    }
-}
-
-// Imports a program for an artifact into the store
-pub fn import(
-    import: &ArtifactImport,
-    opts: ImportOptions<'_>,
-) -> Result<(), ctadl_import::Error> {
-    use ArtifactLanguage::*;
-    log::info!(
-        "importing {} artifact '{}' from {}",
-        import.language,
-        import.name,
-        import.artifact_path.display()
-    );
-    let program_info = match &import.language {
-        Dex => dex::import_dex(&import.artifact_path)?,
-        Apk => {
-            // Dex first: it is cheap and it is what fails fast on an APK that is not one,
-            // before any native library is extracted or handed to Ghidra.
-            let dex::ApkImport {
-                program_info,
-                dex_count,
-            } = dex::import_apk(&import.artifact_path)?;
-            if dex_count > 0 {
-                log::info!(
-                    "{}: {} classes*.dex entr{}",
-                    import.artifact_path.display(),
-                    dex_count,
-                    if dex_count == 1 { "y" } else { "ies" },
-                );
-            }
-            // A split APK out of an app bundle has no Dex of its own; its libraries are
-            // the whole import. Decided before extracting anything so an APK that has
-            // neither half fails immediately, and so the reason is the APK's contents
-            // rather than whatever `import_native_libs` happened to be able to do with
-            // them (it returns no sub-imports when Ghidra is missing, too).
-            if dex_count == 0 {
-                apk_native::require_native_libs(&import.artifact_path)?;
-                if opts.native_libs {
-                    log::info!(
-                        "{}: no classes*.dex entries; importing as a native-only split APK",
-                        import.artifact_path.display(),
-                    );
-                } else {
-                    // Not an error -- the user asked for this -- but the result is an
-                    // import with nothing in it, which is worth saying out loud.
-                    log::warn!(
-                        "{}: no classes*.dex entries and --no-native-libs was passed, so this \
-                         import will be empty",
-                        import.artifact_path.display(),
-                    );
-                }
-            }
-            let sub_imports = apk_native::import_native_libs(import, opts)?;
-            if !sub_imports.is_empty() {
-                log::info!(
-                    "'{}': {} sub-import(s) indexed alongside it: {}",
-                    import.name,
-                    sub_imports.len(),
-                    sub_imports.join(", ")
-                );
-                // Reload rather than saving `import` back: a sub-import may have rewritten
-                // the parent's config in the meantime, and the caller reloads after this
-                // to pick these names up.
-                let mut updated = ArtifactImport::load_by_name(&import.name)?;
-                updated.sub_imports = sub_imports;
-                updated.save()?;
-            }
-            program_info
-        }
-        Xapk => {
-            let sub_imports = xapk::import_bundle(import, opts)?;
-            if !sub_imports.is_empty() {
-                log::info!(
-                    "'{}': {} sub-import(s) indexed alongside it: {}",
-                    import.name,
-                    sub_imports.len(),
-                    sub_imports.join(", ")
-                );
-                // Reload rather than saving `import` back: each split rewrote its own config in
-                // the meantime, and the caller reloads after this to pick these names up.
-                let mut updated = ArtifactImport::load_by_name(&import.name)?;
-                updated.sub_imports = sub_imports;
-                updated.save()?;
-            }
-            ProgramInfo::default()
-        }
-        Jar => jvm::import_jar(&import.artifact_path)?,
-        Jvm => jvm::import_class(&import.artifact_path)?,
-        Pcode => pcode::import_pcode(import)?,
-        Lua => lua::import_lua(&import.artifact_path)?,
-        Flowy => flowy::import(import)?,
-        C => tree_sitter_c::import_c(&import.artifact_path)?,
-    };
-    log::info!(
-        "'{}': imported {} function(s)",
-        import.name,
-        program_info.program.functions.len()
-    );
-    log::debug!("encoding");
-    save_program_info(program_info, import)?;
-    Ok(())
-}
+/// The import dispatch, re-exported where it has always been called from. It lives in
+/// [`ctadl_frontends`] now: the `match import.language` is not the engine's business, and
+/// putting it below the engine is what lets a consumer that reads only Dex build neither.
+pub use ctadl_frontends::{ImportOptions, import_and_save as import, import_artifact};
 
 /// How to perform one index, beyond the project and the model files.
 ///

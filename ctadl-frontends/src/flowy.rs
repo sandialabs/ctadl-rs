@@ -1,6 +1,6 @@
 /*! Importing a flowy artifact.
 
-Flowy's *import* half, split from its *check* half (`crate::codegen::flowy`), because the two
+Flowy's *import* half, split from its *check* half (`ctadl_ascent::codegen::flowy`), because the two
 sit on opposite sides of the front-end boundary: importing needs only
 [`ctadl_flowy::compile_program`] and a `bitcode` write, while checking needs the index engine,
 the query engine and the formatter. Keeping them in one module made flowy the one language

@@ -2,19 +2,19 @@
 
 An Android app's `native` methods are bodyless stubs in the Dex; the code that runs
 lives in the `.so` files under `lib/<abi>/` inside the same APK. The
-[JNI bridge][crate::languages::jni]
+JNI bridge (`ctadl_ascent::languages::jni`)
 already joins the two, but only if the native half was imported -- and it resolves
 *across imports*, after the whole import loop has interned both programs' functions.
 
 So importing an APK also imports its native libraries, each as its own **sub-import**
-lowered through the [pcode frontend][crate::languages::pcode]. It has to be a separate
+lowered through the [pcode front end][ctadl_pcode]. It has to be a separate
 import rather than more IR inside the APK's own: [`ProgramInfo::vmt`] is an enum, and
-[`crate::languages::jni::JniObserver::observe`] reads its variant to decide which half
+`ctadl_ascent::languages::jni::JniObserver::observe` reads its variant to decide which half
 of the boundary an import contributes. One `ProgramInfo` is either the Java side or the
 native side, never both.
 
 The sub-import names are recorded on the parent's [`ArtifactImport::sub_imports`], and
-[`crate::project::AnalysisProject::try_create`] expands them, so naming the APK in
+[`AnalysisProject::try_create`](ctadl_import::project::AnalysisProject::try_create) expands them, so naming the APK in
 `ctadl index` co-indexes everything that came out of it.
 
 # What this deliberately does not do
@@ -45,10 +45,9 @@ use dex_reader::apk::{
     read_native_libs,
 };
 
-use crate::cli::ImportOptions;
+use crate::ImportOptions;
 use ctadl_import::error::{Error, ErrorContext};
-use crate::languages::pcode;
-use crate::project::{ArtifactImport, ArtifactLanguage};
+use ctadl_import::project::{ArtifactImport, ArtifactLanguage};
 
 /// Fails unless the APK at `apk_path` has at least one `lib/<abi>/*.so` entry. Only the ZIP central
 /// directory is read.
@@ -147,15 +146,15 @@ pub fn import_native_libs(
 
     // Ask before extracting anything: on a machine with no Ghidra the whole exercise is
     // wasted, and the user deserves one clear line rather than a per-library failure.
-    if !pcode::ghidra_available() {
+    if !native_frontend_available() {
         log::warn!(
-            "{}: skipping {} {} native librar{} -- Ghidra was not found, so they cannot be \
-             disassembled. Set GHIDRA_HOME or put `ghidra` on PATH to analyze them; the \
+            "{}: skipping {} {} native librar{} -- {}, so they cannot be disassembled; the \
              Dex half of this APK is imported either way.",
             apk_path.display(),
             selected,
             abi,
             if selected == 1 { "y" } else { "ies" },
+            NO_NATIVE_FRONTEND,
         );
         return Ok(Vec::new());
     }
@@ -260,6 +259,44 @@ pub fn import_native_libs(
     Ok(names)
 }
 
+/// Whether this build can lower a native library at all: it needs the pcode front end compiled
+/// in *and* Ghidra on the machine. Both failures degrade the same way -- the Java half is
+/// imported and the libraries are skipped with one clear line -- so they are one predicate.
+#[inline]
+fn native_frontend_available() -> bool {
+    #[cfg(feature = "pcode")]
+    {
+        ctadl_pcode::ghidra_available()
+    }
+    #[cfg(not(feature = "pcode"))]
+    {
+        false
+    }
+}
+
+/// Why [`native_frontend_available`] said no, for the one line the user sees.
+#[cfg(feature = "pcode")]
+const NO_NATIVE_FRONTEND: &str =
+    "Ghidra was not found (set GHIDRA_HOME or put `ghidra` on PATH to analyze them)";
+#[cfg(not(feature = "pcode"))]
+const NO_NATIVE_FRONTEND: &str =
+    "this build was compiled without ctadl-frontends' `pcode` feature";
+
+/// Disassembles one extracted library into the store.
+///
+/// Split out so the `pcode` feature gates exactly one function rather than the extraction loop
+/// around it. Without the feature, [`import_native_libs`] returns before any caller gets here.
+#[cfg(feature = "pcode")]
+fn lower_native(child: &ArtifactImport) -> Result<(), Error> {
+    let program_info = ctadl_pcode::import_pcode(child)?;
+    ctadl_import::save_program_info(program_info, child)
+}
+
+#[cfg(not(feature = "pcode"))]
+fn lower_native(_child: &ArtifactImport) -> Result<(), Error> {
+    unreachable!("import_native_libs returns early when the `pcode` feature is off")
+}
+
 /// What [`import_one`] did, so the caller can report reuse separately from work.
 enum Outcome {
     Imported,
@@ -289,8 +326,7 @@ fn import_one(
     }
 
     let child = ArtifactImport::try_create(name, ArtifactLanguage::Pcode, dest)?;
-    let program_info = pcode::import_pcode(&child)?;
-    ctadl_import::save_program_info(program_info, &child)?;
+    lower_native(&child)?;
 
     // `import_pcode` records Ghidra's image base on the config and re-saves it, so
     // reload rather than writing the stale in-memory copy back over it.

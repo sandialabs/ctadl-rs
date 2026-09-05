@@ -1303,6 +1303,7 @@ dependencies = [
  "ctadl-c",
  "ctadl-dex",
  "ctadl-flowy",
+ "ctadl-frontends",
  "ctadl-import",
  "ctadl-ir",
  "ctadl-jvm",
@@ -1410,6 +1411,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctadl-frontends"
+version = "0.1.2"
+dependencies = [
+ "bitcode",
+ "ctadl-c",
+ "ctadl-dex",
+ "ctadl-flowy",
+ "ctadl-import",
+ "ctadl-ir",
+ "ctadl-jvm",
+ "ctadl-lua",
+ "ctadl-pcode",
+ "dex-reader",
+ "log",
+]
+
+[[package]]
 name = "ctadl-import"
 version = "0.1.2"
 dependencies = [
@@ -1424,6 +1442,7 @@ dependencies = [
  "serde",
  "serde_json",
  "source-info",
+ "tempfile",
  "thiserror",
  "tree-sitter",
 ]
