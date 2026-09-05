@@ -44,7 +44,7 @@ impl CallStyle {
         match self {
             CallStyle::JavaCall { receiver, .. } => Some(receiver),
             CallStyle::LuaCall { receiver, .. } => Some(receiver),
-            CallStyle::FuncPtrCall { callee, .. } => Some(&callee.variable_ref),
+            CallStyle::FuncPtrCall { callee, .. } => Some(&callee.base),
             _ => None,
         }
     }
@@ -53,7 +53,7 @@ impl CallStyle {
         match self {
             CallStyle::JavaCall { receiver, .. } => Some(receiver),
             CallStyle::LuaCall { receiver, .. } => Some(receiver),
-            CallStyle::FuncPtrCall { callee, .. } => Some(&mut callee.variable_ref),
+            CallStyle::FuncPtrCall { callee, .. } => Some(&mut callee.base),
             _ => None,
         }
     }

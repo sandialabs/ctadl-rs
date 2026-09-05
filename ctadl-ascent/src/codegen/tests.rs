@@ -612,7 +612,7 @@ fn function_with_update() -> FunctionData {
     // Create update statement using builder API: s.field = new_value
     builder.create_store(
         s_var.clone(),
-        ctadl_ir::mir::FieldPath::symbol("field"),
+        ctadl_ir::mir::FieldRef::symbol("field"),
         Exp::Variable(new_value.clone()),
     );
 
@@ -659,7 +659,7 @@ fn function_with_real_update() -> FunctionData {
     builder.create_update(
         q.clone(),
         p0,
-        ctadl_ir::mir::FieldPath::symbol("field"),
+        ctadl_ir::mir::FieldRef::symbol("field"),
         Exp::Variable(p1),
     );
     builder.create_ret(vec![Exp::Variable(q)]);
@@ -698,7 +698,7 @@ fn function_with_param_to_global_field() -> FunctionData {
     // This is the key assignment: globals.field = local_var
     builder.create_store(
         globals_var.clone(),
-        ctadl_ir::mir::FieldPath::symbol("field"),
+        ctadl_ir::mir::FieldRef::symbol("field"),
         Exp::Variable(local_var.clone()),
     );
 

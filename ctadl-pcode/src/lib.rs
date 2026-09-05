@@ -1,6 +1,19 @@
-//! Ghidra Pcode language frontend
-//!
-//! Converts Ghidra pcode facts into CTADL IR.
+/*! Ghidra Pcode language front end.
+
+Turns Ghidra pcode facts into CTADL IR. It also holds the `RegisterNatives` scanner, because the
+two need each other.
+
+# Why the JNI registry lives here
+
+[`import_pcode`] calls [`jni_registry::scan_import`], and [`jni_registry`] calls
+[`ghidra::GhidraSource::detect`]. That is not an accident. The scan needs Ghidra's image base
+and its map of entry points, and those exist only while `import_pcode` is running. To separate
+them, the `detect` check would move up into `import_pcode`, which would pass an `is_binary:
+bool` down, and the registry would become an ELF scanner that stands on its own. That is about
+twenty lines of work, worth doing when something wants to read the registry without pcode.
+Nothing does today: `ctadl_ascent::languages::jni` reads the file the scan wrote, not the
+scanner itself.
+*/
 
 use std::ops::Deref;
 use std::path::Path;
@@ -9,7 +22,7 @@ use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SourceInfoBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::error::{Error, ErrorContext};
+use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
     NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
 };
@@ -19,7 +32,14 @@ use pcode_reader::PcodeFactsReader;
 
 // `pub(crate)` for `GhidraSource::detect`, which the JNI registry scan uses to tell an artifact
 // that is a binary on disk from a `ghidra://` URL or a `.gpr` project.
-pub(crate) mod ghidra;
+pub mod ghidra;
+
+// The `RegisterNatives` scanner. The module docs above say why it lives in this crate, and
+// `jni_registry`'s own module docs say what it does. This is a plain `//` comment, not a `///`
+// doc comment, on purpose. Adding a doc comment here to a module that already has its own
+// `/*! ... */` docs makes rustdoc resolve the combined text in this file's scope, which breaks
+// every link the module wrote to its own items.
+pub mod jni_registry;
 
 /// This is hardcoded for now, but should be read from the facts
 const WORD_SIZE: i64 = 8;
@@ -30,7 +50,7 @@ pub fn ghidra_available() -> bool {
 }
 
 /// Import pcode facts from an artifact by running Ghidra and then converting the facts
-pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramInfo, Error> {
+pub fn import_pcode(import: &ctadl_import::project::ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.artifact_path;
     let import_path = import.import_path();
 
@@ -76,7 +96,7 @@ pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramIn
     // `ctx.process` has just populated the entry-point map every recovered `fnPtr` is looked up
     // in. Scanning is unconditional and costs milliseconds; `--no-jni-registry` ignores the
     // result at index time, which is what makes a clean A/B possible without re-importing.
-    crate::languages::jni::registry::scan_import(import, image_base, &ctx.entry_points)?;
+    jni_registry::scan_import(import, image_base, &ctx.entry_points)?;
 
     ctx.finish(builders)
 }
@@ -1221,7 +1241,7 @@ impl Context {
             stmts.push(Statement::new_kind(StatementKind::load(
                 dest.clone(),
                 addr,
-                FieldPath::symbol("deref"),
+                FieldRef::symbol("deref"),
             )));
             if !output_var.is_pathless() {
                 self.push_assign_or_store(&mut stmts, output_var, Exp::Variable(dest), locals);

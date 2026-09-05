@@ -1,6 +1,6 @@
 /*! Natives bound through `RegisterNatives`, recovered from the library's data sections.
 
-The [JNI bridge][super] links a Java `native` method to its implementation by *name*: it mangles
+The JNI bridge (`ctadl_ascent::languages::jni`) links a Java `native` method to its implementation by *name*: it mangles
 `Java_com_example_Foo_bar` and looks that symbol up. Real Android apps mostly do not use that
 convention. They call `env->RegisterNatives(clazz, table, n)` from `JNI_OnLoad`, passing an array of
 
@@ -57,8 +57,8 @@ use object::read::elf::{FileHeader, ProgramHeader, Rela, SectionHeader, Sym};
 use object::{Endian, Endianness};
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, ErrorContext};
-use crate::project::ArtifactImport;
+use ctadl_import::error::{Error, ErrorContext};
+use ctadl_import::project::ArtifactImport;
 
 /// One recovered `JNINativeMethod`.
 ///
@@ -151,7 +151,7 @@ impl JniRegistry {
     /// Pretty-prints the registry at `path`, for `ctadl inspect`.
     ///
     /// It takes a raw path rather than an [`ArtifactImport`] for the same reason
-    /// [`crate::cli::inspect_bitcode`] does: a store should stay inspectable when its import
+    /// `ctadl_ascent::cli::inspect_bitcode` does: a store should stay inspectable when its import
     /// config is too old to load.
     ///
     /// # Errors
@@ -199,7 +199,7 @@ impl JniRegistry {
 /// ELF file on disk, or when it holds no tables.
 ///
 /// `entry_points` maps a function's *Ghidra* entry address to its fully-qualified IR name; see
-/// [`crate::languages::pcode`]. `image_base` is what Ghidra loaded the library at, so an ELF
+/// [`crate`]. `image_base` is what Ghidra loaded the library at, so an ELF
 /// virtual address `v` is the Ghidra address `image_base + v` once the first `PT_LOAD`'s own
 /// `p_vaddr` is subtracted (it is 0 for every Android shared library, but it is read rather than
 /// assumed).
@@ -216,8 +216,8 @@ pub fn scan_import(
     // `artifact_path` is not always a file: a `ghidra://` server URL or a `.gpr` project has no
     // ELF to scan.
     let path = &import.artifact_path;
-    match crate::languages::pcode::ghidra::GhidraSource::detect(path) {
-        Ok(crate::languages::pcode::ghidra::GhidraSource::Binary(_)) => {}
+    match crate::ghidra::GhidraSource::detect(path) {
+        Ok(crate::ghidra::GhidraSource::Binary(_)) => {}
         Ok(_) => {
             log::debug!(
                 "jni registry: '{}' is not a binary file, so it has no RegisterNatives tables \
@@ -663,12 +663,12 @@ fn is_java_method_name(s: &str) -> bool {
 
 /// True for a well-formed method descriptor, *including* its return type.
 ///
-/// [`super::descriptor_params`] stops at the `)` and never looks at what follows, so `"(I)garbage"`
+/// [`descriptor_params`] stops at the `)` and never looks at what follows, so `"(I)garbage"`
 /// passes it. Checking the tail here is cheap defence; measured across the reference corpus the
 /// strict and lax rules admit identical candidate sets, because the executable-section and
 /// method-name tests already do the real filtering.
 fn is_method_descriptor(s: &str) -> bool {
-    let Some(params) = super::descriptor_params(s) else {
+    let Some(params) = descriptor_params(s) else {
         return false;
     };
     // `params` are slices of `s` after the opening `(`, so their total length locates the `)`.
@@ -706,7 +706,7 @@ fn is_type_descriptor(s: &str) -> bool {
 /// this side is project-global, and that asymmetry is what makes split APKs work at all -- in an
 /// app bundle the `.so` and the `classes.dex` live in *different* imports.
 #[derive(Debug, Default)]
-pub(super) struct ClassIndex<'a> {
+pub struct ClassIndex<'a> {
     /// (simple name, descriptor) -> the classes declaring a `native` with that exact signature.
     signatures: HashMap<(&'a str, &'a str), Vec<&'a str>>,
     /// class -> how many `native` methods it declares. A run longer than this cannot be that
@@ -716,8 +716,8 @@ pub(super) struct ClassIndex<'a> {
 
 impl<'a> ClassIndex<'a> {
     /// Builds the index from `(class, simple name, descriptor)` triples -- the deduplicated
-    /// `native` list [`super::link`] already has in hand.
-    pub(super) fn build(natives: impl Iterator<Item = (&'a str, &'a str, &'a str)>) -> Self {
+    /// `native` list `ctadl_ascent::languages::jni::link` already has in hand.
+    pub fn build(natives: impl Iterator<Item = (&'a str, &'a str, &'a str)>) -> Self {
         let mut index = Self::default();
         for (class, name, descriptor) in natives {
             index
@@ -743,14 +743,14 @@ impl<'a> ClassIndex<'a> {
 
 /// One entry tier 1 attributed, and the class it went to.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct Attributed<'a> {
+pub struct Attributed<'a> {
     pub class: &'a str,
     pub entry: &'a RegistryEntry,
 }
 
 /// What [`attribute`] made of one import's entries.
 #[derive(Debug, Default)]
-pub(super) struct Attribution<'a> {
+pub struct Attribution<'a> {
     /// How many runs the entries segmented into -- the recovered table count.
     pub tables: usize,
     pub attributed: Vec<Attributed<'a>>,
@@ -791,7 +791,7 @@ pub(super) struct Attribution<'a> {
 /// Attributing nothing is the right answer when the Java half is absent -- libbluray's BD-J
 /// bindings inside VLC, a feature-split dex in TikTok. There the candidate set empties on every
 /// entry, each entry closes its own run, and nothing is misattributed.
-pub(super) fn attribute<'a>(registry: &'a JniRegistry, index: &ClassIndex<'a>) -> Attribution<'a> {
+pub fn attribute<'a>(registry: &'a JniRegistry, index: &ClassIndex<'a>) -> Attribution<'a> {
     let mut out = Attribution::default();
     let entries = &registry.entries;
     if entries.is_empty() {
@@ -888,6 +888,42 @@ fn close_run<'a>(
             );
             out.unattributed += end - start;
         }
+    }
+}
+
+/// Splits a method descriptor's parameter list into individual type descriptors:
+/// `(Ljava/lang/String;[IJ)V` yields `["Ljava/lang/String;", "[I", "J"]`. Returns `None` if the
+/// descriptor is malformed.
+///
+/// The scan stops at the `)` that terminates the parameter list rather than at the first `)` in the
+/// string, because the JVM's unqualified-name grammar forbids only `.;[/` inside a class name.
+pub fn descriptor_params(descriptor: &str) -> Option<Vec<&str>> {
+    let inner = descriptor.strip_prefix('(')?;
+    let bytes = inner.as_bytes();
+    let mut params = Vec::new();
+    let mut i = 0;
+    loop {
+        if *bytes.get(i)? == b')' {
+            return Some(params);
+        }
+        let start = i;
+        while *bytes.get(i)? == b'[' {
+            i += 1;
+        }
+        match *bytes.get(i)? {
+            b'L' => {
+                i += 1;
+                // A multi-byte UTF-8 sequence never contains a byte equal to `;`, so this both
+                // terminates correctly and leaves `i` on a char boundary.
+                while *bytes.get(i)? != b';' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'Z' | b'B' | b'C' | b'S' | b'I' | b'J' | b'F' | b'D' => i += 1,
+            _ => return None,
+        }
+        params.push(&inner[start..i]);
     }
 }
 

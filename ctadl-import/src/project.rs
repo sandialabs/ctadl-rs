@@ -92,7 +92,11 @@ fn absolutize(path: &Path) -> PathBuf {
 ///   bodyless and so were invisible to the dex frontend's `methods` column. It is what the JNI
 ///   bridge (`languages::jni`) joins against. Again a `bitcode` wire-format change to
 ///   `ir-vmt.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "5";
+/// - `6`: `Exp` gained an `Int` variant, so an integer constant now stores its value instead of
+///   a byte encoding that depended on the opcode. `bitcode` writes an enum's tag in
+///   `ceil(log2(variants))` bits, so adding a sixth variant changes the format of every
+///   `ir-program.bitcode` file, not only of programs that contain a constant.
+pub const IMPORT_FORMAT_VERSION: &str = "6";
 
 /// Filename of the serialized IR program inside an import directory.
 ///
@@ -106,7 +110,7 @@ pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 pub const VMT_BITCODE_FILE: &str = "ir-vmt.bitcode";
 
 /// Filename of the `RegisterNatives` tables recovered from an ELF import, beside the artifacts
-/// above. See [`crate::languages::jni::registry`]. An import without the file simply contributes no
+/// above. See `ctadl_pcode::jni_registry`. An import without the file simply contributes no
 /// registered natives.
 pub const JNI_REGISTRY_FILE: &str = "jni-registry.json";
 
@@ -199,7 +203,7 @@ pub struct ArtifactImport {
     pub hash: Option<String>,
     /// Names of imports derived from this one: the native libraries extracted out of
     /// an APK and lowered through the pcode frontend (see
-    /// [`crate::languages::apk_native`]). A project naming this import co-indexes
+    /// `ctadl_frontends::apk_native`). A project naming this import co-indexes
     /// these too, which is what lets the JNI bridge see both halves of the boundary
     /// from a single `ctadl import app.apk`. Empty for every other language.
     #[serde(default)]
@@ -503,7 +507,7 @@ pub struct AnalysisProject {
 
 impl AnalysisProject {
     /// Creates analysis project in the store under `name`. The `import_names` must refer to
-    /// previously imported artifacts. See [`crate::cli::import`].
+    /// previously imported artifacts. See `ctadl_frontends::import_artifact`.
     ///
     /// # Errors
     ///

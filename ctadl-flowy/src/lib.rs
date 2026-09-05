@@ -281,7 +281,7 @@ impl Display for EndpointRequires {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Endpoint {
     pub infunc: ArcIntern<str>,
-    pub port: (VariableRef, FieldAccesses),
+    pub port: (VariableRef, OffsetAccesses),
     /// The taint label
     pub label: String,
     pub direction: EndpointDirection,
@@ -816,10 +816,10 @@ impl FlowyCtx {
                 data.push_back(Statement::new(
                     StatementKind::update(
                         AccessPath {
-                            variable_ref: dst_base,
-                            path: addr.path,
+                            base: dst_base,
+                            accesses: addr.accesses,
                         },
-                        addr.variable_ref,
+                        addr.base,
                         field,
                         value,
                     ),
@@ -1438,8 +1438,11 @@ fn parse_ref(
     let first = iter.next().unwrap();
     match first.as_rule() {
         Rule::int => {
-            let i: u32 = <str>::parse(first.as_str()).unwrap();
-            ParsedRef::Value(Exp::Bytes(i.to_be_bytes().to_vec()))
+            // The grammar allows a leading sign: `int = { ("+" | "-")? ~ ASCII_DIGIT+ }`. The
+            // old code parsed this as a `u32`, which cannot hold a negative number, so a signed
+            // literal made it panic.
+            let i: i64 = <str>::parse(first.as_str()).unwrap();
+            ParsedRef::Value(Exp::new_int(i))
         }
         Rule::string => {
             ParsedRef::Value(Exp::Str(first.into_inner().next().unwrap().as_str().into()))
@@ -1497,16 +1500,11 @@ fn parse_actuals(
         .collect()
 }
 
-/// Decodes a trailing integer actual (e.g. the `2` in `sink(x, Label, 2)`) into
-/// a path count. Integer literals are stored as big-endian `u32` bytes (see
-/// `parse_exp`), so anything else yields `None`.
+/// Reads a trailing integer argument, such as the `2` in `sink(x, Label, 2)`, as a path count.
+/// Returns `None` for anything that is not a whole number of zero or more. A negative number
+/// counts nothing, so it returns `None` too.
 fn exp_to_count(e: &Exp) -> Option<usize> {
-    match e {
-        Exp::Bytes(b) if b.len() == 4 => {
-            Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize)
-        }
-        _ => None,
-    }
+    usize::try_from(e.as_int()?).ok()
 }
 
 /// Visits the source/sink/errsource/errsink instructions and collect specs
@@ -1566,7 +1564,7 @@ impl MutVisitor for ExtractSpec {
             match endpoint_name {
                 "source" | "errsource" => {
                     let infunc = &self.function;
-                    let port = (rets[0].clone(), FieldAccesses::empty());
+                    let port = (rets[0].clone(), OffsetAccesses::empty());
                     let endpoint = Endpoint {
                         infunc: infunc.clone(),
                         port,
@@ -1595,7 +1593,7 @@ impl MutVisitor for ExtractSpec {
                     let infunc = &self.function;
                     let port = (
                         args[0].variable_ref().unwrap().clone(),
-                        FieldAccesses::empty(),
+                        OffsetAccesses::empty(),
                     );
                     // The port is the `t? = x` temp the front-end sinks; recover the
                     // parameter index it copies so the endpoint anchors at call sites.

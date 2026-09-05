@@ -1,4 +1,9 @@
-//! JVM (.jar and .class) language frontend
+/*! JVM (.jar and .class) language front end.
+
+Takes an artifact and returns a [`ctadl_ir::ProgramInfo`], and does nothing else: it does not
+touch the store, choose a front end, or run the engine. Reading `.class` and `.jar` files is
+`jvm-reader`'s job. What lives here is the lowering to MIR.
+*/
 // Mostly copied from the dex language frontend
 
 use std::fs::File;
@@ -10,7 +15,7 @@ use hashbrown::hash_map::HashMap;
 use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
 
-use crate::error::{Error, ErrorContext};
+use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
     CallObject, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
@@ -653,9 +658,9 @@ impl Context {
         Exp::new_object_ref(CallObject::JavaObject(JavaClass(jclass.into())))
     }
 
-    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::FieldPath {
+    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::FieldRef {
         let class = format!("L{};", f.class_name);
-        mir::FieldPath::symbol(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
+        mir::FieldRef::symbol(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
     }
 
     fn stack_exp(&self, loc: &Location, locals: &mut Locals) -> Exp {
@@ -1069,7 +1074,7 @@ impl Context {
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination, locals),
                     object,
-                    mir::FieldPath::symbol("[]"),
+                    mir::FieldRef::symbol("[]"),
                 ))]
             }
             // *astore
@@ -1093,7 +1098,7 @@ impl Context {
                 );
                 smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(object),
-                    mir::FieldPath::symbol("[]"),
+                    mir::FieldRef::symbol("[]"),
                     value,
                 ))]
             }
@@ -1115,9 +1120,8 @@ impl Context {
             Location::StackSlot(_) | Location::StackInput(_) => Exp::from(
                 AccessPath::without_fields(self.convert_location_to_var_ref(loc, locals)),
             ),
-            Location::Constant(ConstantValue::Integer(n)) => {
-                Exp::new_bytes(n.to_be_bytes().to_vec())
-            }
+            Location::Constant(ConstantValue::Integer(n)) => Exp::new_int(*n as i64),
+            Location::Constant(ConstantValue::Long(n)) => Exp::new_int(*n),
             Location::Constant(ConstantValue::String(s)) => Exp::new_str(s),
             Location::Allocation(class_name) => Self::allocation_exp(class_name),
             // A field read is not expressible as an Exp; genuine field reads are lowered to

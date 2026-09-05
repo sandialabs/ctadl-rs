@@ -256,10 +256,10 @@ fn try_subst_access_path(
     pending: &mut HashMap<ArcIntern<Variable>, Pending>,
     dead: &mut Vec<usize>,
 ) {
-    if ap.variable_ref.version.is_some() {
+    if ap.base.version.is_some() {
         return;
     }
-    let Some(p) = pending.get(&ap.variable_ref.variable) else {
+    let Some(p) = pending.get(&ap.base.variable) else {
         return;
     };
     if p.sources.len() != 1 {
@@ -269,9 +269,9 @@ fn try_subst_access_path(
         return;
     };
     let def_var = def_var.clone();
-    let p = pending.remove(&ap.variable_ref.variable).expect("checked");
+    let p = pending.remove(&ap.base.variable).expect("checked");
     dead.push(p.stmt_pos);
-    ap.variable_ref = def_var;
+    ap.base = def_var;
 }
 
 #[cfg(test)]

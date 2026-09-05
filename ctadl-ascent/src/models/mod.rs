@@ -136,7 +136,7 @@ pub fn try_load_json_models<P: AsRef<std::path::Path>>(
     let generators = match root.get("model_generators").and_then(|v| v.as_array()) {
         Some(arr) => arr,
         None => {
-            return Err(Error::Io(std::io::Error::new(
+            return Err(Error::from(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "missing or invalid 'model_generators' array",
             )));
@@ -166,7 +166,7 @@ pub fn try_load_json5_models<P: AsRef<std::path::Path>>(
     let generators = match root.get("model_generators").and_then(|v| v.as_array()) {
         Some(arr) => arr,
         None => {
-            return Err(Error::Io(std::io::Error::new(
+            return Err(Error::from(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "missing or invalid 'model_generators' array",
             )));
@@ -301,7 +301,7 @@ pub fn try_check_models<P: AsRef<std::path::Path>>(
             Err(e) => (
                 ModelLoadReport::default(),
                 vec![ModelCheckError::Stream(
-                    Err::<(), _>(Error::Io(e))
+                    Err::<(), _>(Error::from(e))
                         .err_context(|| format!("opening model JSONL file: {}", path.display()))
                         .unwrap_err(),
                 )],
@@ -318,7 +318,7 @@ pub fn try_check_models<P: AsRef<std::path::Path>>(
                     .and_then(|v| v.as_array())
                     .cloned()
                     .ok_or_else(|| {
-                        Error::Io(std::io::Error::new(
+                        Error::from(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
                             "missing or invalid 'model_generators' array",
                         ))

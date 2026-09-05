@@ -10,13 +10,13 @@ and record the result on the parent.
 
 # Two things that are easy to get wrong
 
-* **The sub-import list is flat.** [`crate::project::AnalysisProject::ephemeral`] expands exactly
+* **The sub-import list is flat.** [`AnalysisProject::ephemeral`](ctadl_import::project::AnalysisProject::ephemeral) expands exactly
   one level -- `once(name).chain(subs)`, with no recursion. So a bundle's `sub_imports` must
   hold, for each split, *its own name followed by its own `sub_imports`*. Nesting bundle → split
   → library without flattening drops every `.so` at index time, which looks exactly like the JNI
   bug this all exists to fix.
 * **A resource-only split is skipped, not fatal.** They are the majority: one real bundle has 23
-  of 30. [`apk_native::require_native_libs`] raises [`Error::NothingToImport`] for a split with
+  of 30. [`crate::apk_native::require_native_libs`] raises [`Error::NothingToImport`] for a split with
   neither Dex nor `lib/`; that one error is caught here and logged at debug. Anything else
   propagates.
 */
@@ -25,9 +25,9 @@ use std::path::{Path, PathBuf};
 
 use dex_reader::apk::{has_dex_entries_of_file, read_bundle_entry, split_apk_entries_of_file};
 
-use crate::cli::ImportOptions;
-use crate::error::{Error, ErrorContext};
-use crate::project::{ArtifactImport, ArtifactLanguage};
+use crate::ImportOptions;
+use ctadl_import::error::{Error, ErrorContext};
+use ctadl_import::project::{ArtifactImport, ArtifactLanguage};
 
 /// Imports every split APK out of an app bundle, returning the *flattened* sub-import names for
 /// the caller to record on the parent import: each split, followed by that split's own
@@ -144,7 +144,7 @@ struct Split {
     has_dex: bool,
 }
 
-/// Puts the Dex-bearing splits first, so [`crate::cli::index`]'s per-import source-span scoping
+/// Puts the Dex-bearing splits first, so [`ctadl_import::project::AnalysisProject`]'s per-import source-span scoping
 /// stays in import order and the Java half of a JNI boundary is observed before the native half.
 ///
 /// A stable sort, so the entry order -- already sorted by name -- decides within each group.
@@ -164,7 +164,7 @@ fn import_split(name: &str, dest: &Path, opts: ImportOptions<'_>) -> Result<Vec<
     }
 
     let child = ArtifactImport::try_create(name, ArtifactLanguage::Apk, dest)?;
-    crate::cli::import(&child, opts)?;
+    crate::import_and_save(&child, opts)?;
 
     // Reload rather than writing the stale in-memory copy back: the APK import records the
     // native libraries it extracted on the child's own config.
@@ -177,8 +177,9 @@ fn import_split(name: &str, dest: &Path, opts: ImportOptions<'_>) -> Result<Vec<
 /// Best-effort: a store that cannot be tidied is not a reason to fail an import that otherwise
 /// succeeded.
 fn discard_import(name: &str) {
-    let dir =
-        crate::project::StorePaths::resolve(crate::project::StorePaths::relative_import_dir(name));
+    let dir = ctadl_import::project::StorePaths::resolve(
+        ctadl_import::project::StorePaths::relative_import_dir(name),
+    );
     if let Err(e) = std::fs::remove_dir_all(&dir) {
         log::debug!("could not remove '{}': {e}", dir.display());
     }
@@ -203,7 +204,7 @@ pub fn splits_dir(parent: &ArtifactImport) -> PathBuf {
 }
 
 /// The sub-import name for one split: `<parent>__<stem>`, following
-/// [`crate::languages::apk_native`]'s naming. The parent's name is the prefix because a split's
+/// [`crate::apk_native`]'s naming. The parent's name is the prefix because a split's
 /// own name is not unique -- every bundle has a `config.arm64_v8a.apk`.
 fn sub_import_name(parent: &str, stem: &str) -> String {
     sanitize(&format!("{parent}__{stem}"))

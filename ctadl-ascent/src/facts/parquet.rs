@@ -157,7 +157,7 @@ impl Reader {
         DefaultDecoder: DecodeColumns<T>,
     {
         let file = File::open(&self.path)
-            .map_err(Error::Io)
+            .map_err(Error::from)
             .err_context(|| format!("opening parquet file: {}", self.path.display()))?;
         let rdr = ParquetRecordBatchReaderBuilder::try_new(file)
             .and_then(|b| b.build())
@@ -195,7 +195,7 @@ impl Writer {
             .map_err(Error::Arrow)?;
 
         let file = File::create(&self.path)
-            .map_err(Error::Io)
+            .map_err(Error::from)
             .err_context(|| format!("creating parquet file: {}", self.path.display()))?;
         let props = WriterProperties::builder()
             .set_compression(Compression::SNAPPY)
@@ -518,7 +518,7 @@ macro_rules! impl_encode_newtype {
     };
 }
 
-// Custom encoding for Path since it's now VecDeque<mir::FieldAccess> instead of Str
+// Custom encoding for Path since it's now VecDeque<mir::OffsetAccess> instead of Str
 impl EncodeColumn<facts::Path> for DefaultEncoder {
     #[inline]
     fn encode_column(name: &str, col: Vec<facts::Path>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {

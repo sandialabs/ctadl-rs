@@ -1,25 +1,23 @@
-use crate::error::Error;
-use crate::facts as fx;
+use ctadl_ascent::facts as fx;
+use ctadl_import::error::Error;
 
-use crate::index_engine::source_info::IndexSourceInfo;
-use crate::index_engine::{FunctionSummary, IndexFacts, taint_index};
-use crate::{
-    codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program},
-    languages::tree_sitter_c,
-};
+use crate as tree_sitter_c;
 use anyhow::Result;
+use ctadl_ascent::codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program};
+use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
+use ctadl_ascent::index_engine::{FunctionSummary, IndexFacts, taint_index};
 // `DirectedGraph`/`Successors` are trait imports: they provide `num_nodes()` (used by
 // `check_block_count`) and `successors()` (used by `check_successors`). They look unused but
 // removing them breaks method resolution.
-use crate::facts::Path;
+use ctadl_ascent::facts::Path;
 use ctadl_ir::graph::{DirectedGraph, Successors};
 use ctadl_ir::mir::TerminatorKind;
 use ctadl_ir::mir::call::{CallEdges, CallStyle};
-use ctadl_ir::mir::{FieldAccess, LocalIdx, Locals};
+use ctadl_ir::mir::{LocalIdx, Locals, OffsetAccess};
 use ctadl_ir::{
     AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind, VariableRef, ssa,
 };
-use ctadl_ir::{FieldPath, ParameterType, PathSegment, Program, ProgramInfo};
+use ctadl_ir::{FieldRef, ParameterType, PathSegment, Program, ProgramInfo};
 
 pub(crate) fn init_test_logging() {
     let _ = env_logger::builder()
@@ -418,10 +416,10 @@ pub(crate) fn check_assign_or_update<I>(
         let Some(PathSegment::Symbol(sym)) = fields.pop() else {
             panic!("update destination must end in a (symbolic) field: {dst}")
         };
-        let offsets: Vec<FieldAccess> = fields
+        let offsets: Vec<OffsetAccess> = fields
             .into_iter()
             .map(|seg| match seg {
-                PathSegment::Offset(off) => FieldAccess::Offset(off),
+                PathSegment::Offset(off) => OffsetAccess::Offset(off),
                 PathSegment::Symbol(_) => panic!(
                     "update destination may only have offsets before its field (an interior \
                      symbol is a load, not part of one store): {dst}"
@@ -430,7 +428,7 @@ pub(crate) fn check_assign_or_update<I>(
             .collect();
         StatementKind::store(
             AccessPath::new(dst_ap.base, offsets),
-            FieldPath::new(sym),
+            FieldRef::new(sym),
             srcs.into_iter().next().unwrap(),
         )
     };
@@ -468,7 +466,7 @@ pub(crate) fn check_loads(prog: &Program, source_str: &str) {
         };
         // The full read path is the source's offsets then the loaded symbolic field.
         let full: Vec<PathSegment> = source
-            .path
+            .accesses
             .iter()
             .cloned()
             .map(PathSegment::from)
@@ -476,7 +474,7 @@ pub(crate) fn check_loads(prog: &Program, source_str: &str) {
                 field.symbol_ref().clone(),
             )))
             .collect();
-        source.variable_ref == ap.base && full == ap.fields
+        source.base == ap.base && full == ap.fields
     });
     assert!(found, "could not find a load of `{source_str}`\n{prog}");
 }
@@ -500,7 +498,7 @@ fn writes_dest(kind: &StatementKind, dst: &DslPath) -> bool {
         StatementKind::Store { dest, field, .. } => {
             // The full written path is the dest's offsets then the (optional) symbolic field.
             let full: Vec<PathSegment> = dest
-                .path
+                .accesses
                 .iter()
                 .cloned()
                 .map(PathSegment::from)
@@ -508,7 +506,7 @@ fn writes_dest(kind: &StatementKind, dst: &DslPath) -> bool {
                     field.symbol_ref().clone(),
                 )))
                 .collect();
-            !dst.fields.is_empty() && dest.variable_ref == dst.base && full == dst.fields
+            !dst.fields.is_empty() && dest.base == dst.base && full == dst.fields
         }
         _ => false,
     }
@@ -615,10 +613,12 @@ pub(crate) fn get_summary(
     Ok((result.summary, source_info))
 }
 
-/// Indexes `program` end-to-end (SSA → codegen → taint index) and returns the pieces
-/// [`crate::query_engine::build_query_endpoints`] consumes: the [`IndexFacts`], the
-/// [`IndexSourceInfo`] (whose `.sites` is the [`fx::IdMap`]), and the `assign_like` relation.
-/// Unlike [`get_summary`], nothing is discarded, so a test can drive Stage 2 against a real index.
+/// Indexes `program` all the way through, running SSA, then code generation, then the taint
+/// index. It returns the three things that
+/// [`ctadl_ascent::query_engine::build_query_endpoints`] needs: the [`IndexFacts`], the
+/// [`IndexSourceInfo`] (whose `.sites` field is the [`fx::IdMap`]), and the `assign_like`
+/// relation. Unlike [`get_summary`], this throws nothing away, so a test can run stage 2
+/// against a real index.
 #[allow(clippy::type_complexity)]
 pub(crate) fn index_program(
     program: Program,

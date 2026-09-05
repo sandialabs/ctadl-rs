@@ -1,6 +1,10 @@
-/*! Dex language frontend
+/*! Dex language front end.
 
-Converts dex/apk into CTADL IR.
+Turns a dex file or an APK into CTADL IR. It takes an artifact and returns a
+[`ctadl_ir::ProgramInfo`], and does nothing else: it does not touch the store, choose a front
+end, or run the engine. Reading the APK's ZIP structure and its `classes*.dex` entries is
+`dex_reader::apk`'s job. An APK's native libraries belong to a different front end, and are
+handled one level up, in `ctadl-frontends`.
 */
 
 use std::fs::File;
@@ -13,7 +17,7 @@ use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
 use streaming_iterator::StreamingIterator; // needed for DataFlow.dest.owned()
 
-use crate::error::{Error, ErrorContext};
+use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
     CallObject, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
@@ -596,46 +600,22 @@ impl Context {
         let dest: SmallVec<[Reg; 4]> = dest.owned().collect();
 
         if let Some(const_exp) = match inst {
-            // 8‑bit signed constant
-            Instruction::Const4(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // 16‑bit signed constant
-            Instruction::Const16(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // 32‑bit signed constant
-            Instruction::Const(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // high 16 bits of a 32‑bit constant
-            Instruction::ConstHigh16(f) => {
-                let value = ((f.lit as i64) << 16) & 0xFFFF_FFFF;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // 16‑bit wide constant (lower half)
-            Instruction::ConstWide16(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // 32‑bit wide constant (lower half)
-            Instruction::ConstWide32(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // full 64‑bit constant
-            Instruction::ConstWide(f) => {
-                let value = f.lit;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
-            // high 16 bits of a 64‑bit constant
-            Instruction::ConstWideHigh16(f) => {
-                let value = (f.lit as i64) << 48;
-                Some(Exp::new_bytes(value.to_be_bytes().to_vec()))
-            }
+            // 8-bit signed constant
+            Instruction::Const4(f) => Some(Exp::new_int(f.lit as i64)),
+            // 16-bit signed constant
+            Instruction::Const16(f) => Some(Exp::new_int(f.lit as i64)),
+            // 32-bit signed constant
+            Instruction::Const(f) => Some(Exp::new_int(f.lit as i64)),
+            // high 16 bits of a 32-bit constant
+            Instruction::ConstHigh16(f) => Some(Exp::new_int(((f.lit as i32) << 16) as i64)),
+            // 16-bit wide constant, sign-extended to 64 bits
+            Instruction::ConstWide16(f) => Some(Exp::new_int(f.lit as i64)),
+            // 32-bit wide constant, sign-extended to 64 bits
+            Instruction::ConstWide32(f) => Some(Exp::new_int(f.lit as i64)),
+            // full 64-bit constant
+            Instruction::ConstWide(f) => Some(Exp::new_int(f.lit)),
+            // high 16 bits of a 64-bit constant
+            Instruction::ConstWideHigh16(f) => Some(Exp::new_int((f.lit as i64) << 48)),
             // String constant (regular). Lossy on purpose: a DEX string
             // constant may legally hold unpaired UTF-16 surrogates -- packed
             // lexer tables do -- and no `str` can.
@@ -693,7 +673,7 @@ impl Context {
                 stmts.push(Statement::new_kind(StatementKind::load(
                     dest,
                     source,
-                    ctadl_ir::mir::FieldPath::symbol("length"),
+                    ctadl_ir::mir::FieldRef::symbol("length"),
                 )));
                 return Ok(stmts);
             }
@@ -717,7 +697,7 @@ impl Context {
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(VariableRef::new_global()),
-                    ctadl_ir::mir::FieldPath::symbol(name),
+                    ctadl_ir::mir::FieldRef::symbol(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -739,7 +719,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         VariableRef::new_global(),
-                        ctadl_ir::mir::FieldPath::symbol(name.clone()),
+                        ctadl_ir::mir::FieldRef::symbol(name.clone()),
                     )));
                 }
                 return Ok(stmts);
@@ -766,7 +746,7 @@ impl Context {
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(object),
-                    ctadl_ir::mir::FieldPath::symbol(name),
+                    ctadl_ir::mir::FieldRef::symbol(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -789,7 +769,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         object.clone(),
-                        ctadl_ir::mir::FieldPath::symbol(name.clone()),
+                        ctadl_ir::mir::FieldRef::symbol(name.clone()),
                     )));
                 }
                 return Ok(stmts);
@@ -807,7 +787,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest_var,
                         array_var.clone(),
-                        ctadl_ir::mir::FieldPath::symbol("[]"),
+                        ctadl_ir::mir::FieldRef::symbol("[]"),
                     )));
                 }
                 return Ok(stmts);
@@ -830,7 +810,7 @@ impl Context {
                 let array_var = reg_to_var(code_item, f.b, locals);
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(array_var),
-                    ctadl_ir::mir::FieldPath::symbol("[]"),
+                    ctadl_ir::mir::FieldRef::symbol("[]"),
                     temp_var.into(),
                 )));
                 return Ok(stmts);

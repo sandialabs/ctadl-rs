@@ -37,7 +37,7 @@
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
 
-use crate::error::Error;
+use ctadl_import::error::Error;
 
 use ctadl_ir::ThinVec;
 use ctadl_ir::index::index_vec::IndexVec;
@@ -583,18 +583,18 @@ fn constant_index(exp: &Exp) -> Option<i64> {
 /// that is a bare variable (`p = &x`) has no address path: CTADL models it as the variable
 /// itself (the value-copy model), so there is nothing to add and this returns `None`.
 fn deref_of_pointee(pointee: &AccessPath) -> Option<RawPath> {
-    if pointee.path.is_empty() {
+    if pointee.accesses.is_empty() {
         return None;
     }
     let mut fields: ThinVec<PathSegment> = pointee
-        .path
-        .fields
+        .accesses
+        .offsets
         .iter()
         .cloned()
         .map(PathSegment::from)
         .collect();
     fields.push(PathSegment::symbol(DEREF_FIELD));
-    Some(RawPath::new(pointee.variable_ref.clone(), fields))
+    Some(RawPath::new(pointee.base.clone(), fields))
 }
 
 /// Appends the path segments a subscript contributes: a pointer-arithmetic offset for a
@@ -833,7 +833,8 @@ pub fn parse_c_files(files: &[(String, String)]) -> Result<(Program, String), Er
     Ok((lowered.program, lowered.marked_up))
 }
 
-/// Import C source at `path` into a [`ProgramInfo`], ready for [`crate::cli::import`].
+/// Imports the C source at `path` into a [`ProgramInfo`], ready for
+/// `ctadl_frontends::import_artifact` to use.
 ///
 /// `path` may be a single `.c`/`.h` file or a directory tree of them. Every file is a
 /// translation unit of its own, all lowered into one program where cross-unit references
@@ -2037,7 +2038,7 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// Walk the statements of `compound`, starting in `scope_view_meowsers`, and return the
+    /// Walk the statements of `compound`, starting in `entry_scope_view`, and return the
     /// scope view the walk ended in together with whether the last statement *diverged*.
     /// Performs no end-of-compound link: that is the caller's call, because it depends on
     /// whether the compound was given a basic block of its own.
@@ -2045,10 +2046,10 @@ impl<'a> Context<'a> {
         &mut self,
         source: &'a str,
         program: &mut Program,
-        scope_view_meowsers: &ScopeView,
+        entry_scope_view: &ScopeView,
         compound: &CompoundProxy<'_>,
     ) -> Result<(ScopeView, bool), Error> {
-        let mut scope_view = scope_view_meowsers.clone();
+        let mut scope_view = entry_scope_view.clone();
         // Set when the statement just walked diverged (return/break/continue, or a label
         // whose body diverges): the current block is terminated and has no fall-through.
         let mut diverged = false;
@@ -2082,11 +2083,11 @@ impl<'a> Context<'a> {
         &mut self,
         source: &'a str,
         program: &mut Program,
-        scope_view_meowsers: &ScopeView,
+        entry_scope_view: &ScopeView,
         compound: &CompoundProxy<'_>,
     ) -> Result<(), Error> {
         let (scope_view, diverged) =
-            self.walk_compound_body(source, program, scope_view_meowsers, compound)?;
+            self.walk_compound_body(source, program, entry_scope_view, compound)?;
 
         // A compound whose last statement diverged has no fall-through, so the
         // end-of-compound link is skipped (it would push a continuation edge into a
@@ -2097,7 +2098,7 @@ impl<'a> Context<'a> {
 
         //walked off a compound_statement
         log::debug!("EOCS linking blocks: ");
-        link_blocks(program, &scope_view, scope_view_meowsers, true)?;
+        link_blocks(program, &scope_view, entry_scope_view, true)?;
 
         Ok(())
     }
@@ -3218,8 +3219,8 @@ impl<'a> Context<'a> {
                 // a bare pointer. Either can carry a same-block address-of alias.
                 let ptr_ref = match &arg_exp {
                     Exp::Variable(v) => Some(v.clone()),
-                    Exp::AccessPath(ptr_ap) if ptr_ap.path.is_empty() => {
-                        Some(ptr_ap.variable_ref.clone())
+                    Exp::AccessPath(ptr_ap) if ptr_ap.accesses.is_empty() => {
+                        Some(ptr_ap.base.clone())
                     }
                     _ => None,
                 };
@@ -4396,9 +4397,8 @@ impl<'a> Context<'a> {
                     && let Some((pointee, blk)) = self.addr_alias.get(&ptr.base)
                     && *blk == scope_view.blidx
                 {
-                    return Ok(deref_of_pointee(pointee).unwrap_or_else(|| {
-                        RawPath::new(pointee.variable_ref.clone(), ThinVec::new())
-                    }));
+                    return Ok(deref_of_pointee(pointee)
+                        .unwrap_or_else(|| RawPath::new(pointee.base.clone(), ThinVec::new())));
                 }
                 Ok(ptr)
             }

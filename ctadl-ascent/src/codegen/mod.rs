@@ -324,14 +324,14 @@ impl Visitor for CodegenVisitor<'_> {
                         Exp::AccessPath(ap) => {
                             let (root, base_path) = self
                                 .cap_path
-                                .get(&ap.variable_ref)
+                                .get(&ap.base)
                                 .cloned()
-                                .unwrap_or_else(|| (ap.variable_ref.clone(), fx::Path::empty()));
+                                .unwrap_or_else(|| (ap.base.clone(), fx::Path::empty()));
                             let path = fx::Path::from_accesses(
                                 base_path
                                     .iter()
                                     .cloned()
-                                    .chain(ap.path.iter().cloned().map(PathSegment::from)),
+                                    .chain(ap.accesses.iter().cloned().map(PathSegment::from)),
                             );
                             self.paths_dedup.insert((path,));
                             self.cap_path.insert(dest.clone(), (root, path));
@@ -349,14 +349,14 @@ impl Visitor for CodegenVisitor<'_> {
                     // loaded field, all rooted at the source's root variable.
                     let (root, base_path) = self
                         .cap_path
-                        .get(&source.variable_ref)
+                        .get(&source.base)
                         .cloned()
-                        .unwrap_or_else(|| (source.variable_ref.clone(), fx::Path::empty()));
+                        .unwrap_or_else(|| (source.base.clone(), fx::Path::empty()));
                     let path = fx::Path::from_accesses(
                         base_path
                             .iter()
                             .cloned()
-                            .chain(source.path.iter().cloned().map(PathSegment::from))
+                            .chain(source.accesses.iter().cloned().map(PathSegment::from))
                             .chain(std::iter::once(PathSegment::Symbol(
                                 field.symbol_ref().clone(),
                             ))),
@@ -370,14 +370,14 @@ impl Visitor for CodegenVisitor<'_> {
                     // field.
                     let base_path = self
                         .cap_path
-                        .get(&dest.variable_ref)
+                        .get(&dest.base)
                         .map(|(_, p)| *p)
                         .unwrap_or_default();
                     let path = fx::Path::from_accesses(
                         base_path
                             .iter()
                             .cloned()
-                            .chain(dest.path.iter().cloned().map(PathSegment::from))
+                            .chain(dest.accesses.iter().cloned().map(PathSegment::from))
                             .chain(std::iter::once(PathSegment::Symbol(
                                 field.symbol_ref().clone(),
                             ))),
@@ -724,9 +724,9 @@ impl Visitor for CodegenVisitor<'_> {
                 // addresses, the read-side mirror of the `Store` arm.
                 let (root_var, base_path) = self
                     .cap_path
-                    .get(&source.variable_ref)
+                    .get(&source.base)
                     .cloned()
-                    .unwrap_or_else(|| (source.variable_ref.clone(), fx::Path::empty()));
+                    .unwrap_or_else(|| (source.base.clone(), fx::Path::empty()));
                 let source_var = self.trans_variable_ref(&root_var);
                 // The read path is the captured chain path, then the source's own (offset) address
                 // arithmetic, then the loaded field.
@@ -734,7 +734,7 @@ impl Visitor for CodegenVisitor<'_> {
                     base_path
                         .iter()
                         .cloned()
-                        .chain(source.path.iter().cloned().map(PathSegment::from))
+                        .chain(source.accesses.iter().cloned().map(PathSegment::from))
                         .chain(std::iter::once(PathSegment::Symbol(
                             field.symbol_ref().clone(),
                         ))),
@@ -757,9 +757,9 @@ impl Visitor for CodegenVisitor<'_> {
                 // itself and the captured path is empty (an ordinary field/offset store).
                 let (root_var, base_path) = self
                     .cap_path
-                    .get(&dest.variable_ref)
+                    .get(&dest.base)
                     .cloned()
-                    .unwrap_or_else(|| (dest.variable_ref.clone(), fx::Path::empty()));
+                    .unwrap_or_else(|| (dest.base.clone(), fx::Path::empty()));
                 let dest_var = self.trans_variable_ref(&root_var);
                 // The written path is the captured chain path, then the dest's (offset) address
                 // arithmetic, then the field.
@@ -767,7 +767,7 @@ impl Visitor for CodegenVisitor<'_> {
                     base_path
                         .iter()
                         .cloned()
-                        .chain(dest.path.iter().cloned().map(PathSegment::from))
+                        .chain(dest.accesses.iter().cloned().map(PathSegment::from))
                         .chain(std::iter::once(PathSegment::Symbol(
                             field.symbol_ref().clone(),
                         ))),
@@ -808,18 +808,15 @@ impl Visitor for CodegenVisitor<'_> {
                 // A functional update `dest = update(source, dest.field := value)` lowers to two
                 // flows: the whole-aggregate copy `dest <- source`, then the field write
                 // `dest.field <- value`.
-                let dest_var = self.trans_variable_ref(&dest.variable_ref);
+                let dest_var = self.trans_variable_ref(&dest.base);
                 let source_var = self.trans_variable_ref(source);
                 // The written path is the dest's (offset) address arithmetic, then the field.
-                let path = fx::Path::from_accesses(
-                    dest.path
-                        .iter()
-                        .cloned()
-                        .map(PathSegment::from)
-                        .chain(std::iter::once(PathSegment::Symbol(
-                            field.symbol_ref().clone(),
-                        ))),
-                );
+                let path =
+                    fx::Path::from_accesses(
+                        dest.accesses.iter().cloned().map(PathSegment::from).chain(
+                            std::iter::once(PathSegment::Symbol(field.symbol_ref().clone())),
+                        ),
+                    );
                 self.paths_dedup.insert((path,));
                 let dest_vertex = FlowVertex(dest_var, path);
                 // A function pointer / Java object stored INTO A FIELD (`o.op = id`); mirrors the
@@ -881,12 +878,12 @@ impl Visitor for CodegenVisitor<'_> {
 
     // Generates access paths
     #[inline]
-    fn visit_field_accesses(&mut self, fields: &FieldAccesses) {
+    fn visit_field_accesses(&mut self, fields: &OffsetAccesses) {
         self.super_field_accesses(fields);
         self.paths_dedup.insert((fields.into(),));
-        if let Some(FieldAccess::Offset(offset)) = fields.first() {
+        if let Some(OffsetAccess::Offset(offset)) = fields.first() {
             // Insert just the first (offset) field to make sure we catch globals.
-            let first_field = FieldAccesses::with_offset(offset.0);
+            let first_field = OffsetAccesses::with_offset(offset.0);
             self.paths_dedup.insert(((&first_field).into(),));
         }
     }
@@ -901,15 +898,18 @@ impl CodegenVisitor<'_> {
             Exp::Variable(v) => Some(FlowVertex(self.trans_variable_ref(v), fx::Path::empty())),
             // An address expression `x.[k]` flows structurally from x's offset field.
             Exp::AccessPath(ap) => Some(self.trans_access_path(ap)),
-            Exp::ObjectRef(_) => None,
-            _ => None,
+            // A constant is not a vertex. The taint index tracks flow between storage
+            // locations, and a literal value is not one. These variants are listed out instead
+            // of matched with `_`, so that adding an `Exp` variant fails to compile here and
+            // someone has to decide what it should do.
+            Exp::ObjectRef(_) | Exp::Str(_) | Exp::Bytes(_) | Exp::Int(_) => None,
         }
     }
 
     #[inline]
     fn trans_access_path(&mut self, ap: &AccessPath) -> FlowVertex {
-        let v = self.trans_variable_ref(&ap.variable_ref);
-        let fields = &ap.path;
+        let v = self.trans_variable_ref(&ap.base);
+        let fields = &ap.accesses;
         FlowVertex(v, fields.into())
     }
 

@@ -1,9 +1,8 @@
 // Tests for CTADL IR verification errors
 use super::*;
 use crate::mir::{
-    AccessPath, BasicBlockData, BasicBlockIdx, BasicBlocks, Exp, FieldAccess, FieldAccesses,
-    FunctionIdx, Offset, ParameterIdx, Params, ReturnType, StatementKind, TerminatorKind,
-    VariableRef,
+    AccessPath, BasicBlockData, BasicBlockIdx, BasicBlocks, Exp, FunctionIdx, Offset, OffsetAccess,
+    OffsetAccesses, ParameterIdx, Params, ReturnType, StatementKind, TerminatorKind, VariableRef,
 };
 use smallvec::smallvec;
 
@@ -46,7 +45,7 @@ fn test_store_verifies() {
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
     let store = StatementKind::store(
         AccessPath::without_fields(var.clone()),
-        FieldPath::symbol("f"),
+        FieldRef::symbol("f"),
         Exp::new_str("val"),
     );
     block.statements.push_back(Statement::new_kind(store));
@@ -189,30 +188,30 @@ fn test_empty_goto_error() {
 
 #[test]
 fn test_field_accesses_with_offsets() {
-    // Test creating FieldAccesses with offsets
-    let offset_path = FieldAccesses::with_offset(42);
+    // Build an OffsetAccesses from offsets.
+    let offset_path = OffsetAccesses::with_offset(42);
     assert_eq!(offset_path.len(), 1);
 
     // Test display format for offsets
     assert_eq!(format!("{}", offset_path), ".[42]");
 
     // Test multiple offsets (access paths are offset-only)
-    let mixed_path = FieldAccesses::with_offsets([10, 20]);
+    let mixed_path = OffsetAccesses::with_offsets([10, 20]);
     assert_eq!(mixed_path.len(), 2);
     assert_eq!(format!("{}", mixed_path), ".[10].[20]");
 
     // Test creating access path with offsets
     let mut locals = Locals::default();
     let var = VariableRef::new_local_idx(locals.get_or_intern("obj"));
-    let field_accesses = FieldAccesses::with_offset(5);
+    let field_accesses = OffsetAccesses::with_offset(5);
     let access_path = AccessPath {
-        variable_ref: var,
-        path: field_accesses,
+        base: var,
+        accesses: field_accesses,
     };
     // Base is the local `obj`, followed by the single offset.
-    let base = access_path.variable_ref.variable.local().unwrap();
+    let base = access_path.base.variable.local().unwrap();
     assert_eq!(locals.name(base), "obj");
-    assert_eq!(format!("{}", access_path.path), ".[5]");
+    assert_eq!(format!("{}", access_path.accesses), ".[5]");
 }
 
 #[test]
@@ -222,9 +221,10 @@ fn test_offset_newtype() {
     assert_eq!(offset.0, 123);
     assert_eq!(format!("{}", offset), "123");
 
-    // Test FieldAccess (offset-only) and PathSegment (mixed) display
+    // Check how an OffsetAccess, which holds only offsets, and a PathSegment, which can hold
+    // either, are printed.
     let symbol_access = PathSegment::symbol("test");
-    let offset_access = FieldAccess::Offset(Offset(456));
+    let offset_access = OffsetAccess::Offset(Offset(456));
 
     assert_eq!(format!("{}", symbol_access), "test");
     assert_eq!(format!("{}", offset_access), "[456]");
@@ -251,11 +251,11 @@ fn test_display_uses_canonical_grammar() {
     // Dots and backslashes in a field name are escaped.
     assert_eq!(PathSegment::symbol("a.b").to_string(), r"a\.b");
     assert_eq!(PathSegment::symbol(r"a\b").to_string(), r"a\\b");
-    assert_eq!(FieldPath::symbol("a.b").to_string(), r".a\.b");
+    assert_eq!(FieldRef::symbol("a.b").to_string(), r".a\.b");
 
     // Offsets are decimal, negatives included.
     assert_eq!(
-        FieldAccesses::with_offsets([-40, 255]).to_string(),
+        OffsetAccesses::with_offsets([-40, 255]).to_string(),
         ".[-40].[255]"
     );
 

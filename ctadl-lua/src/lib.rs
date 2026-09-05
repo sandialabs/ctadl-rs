@@ -2,12 +2,12 @@
 //!
 //! This module parses Lua source with the tree-sitter Lua grammar and lowers it
 //! into CTADL IR ([`ProgramInfo`]). It is the entry point that
-//! [`crate::cli::import`] dispatches to for `ctadl import -l lua` (and for a bare
+//! `ctadl_frontends::import_artifact` dispatches to for `ctadl import -l lua` (and for a bare
 //! `.lua` file via extension autodetection).
 //!
 //! # What it does
 //!
-//! The lowering mirrors the C tree-sitter frontend ([`crate::languages::tree_sitter_c`]):
+//! The lowering mirrors the C tree-sitter frontend (`ctadl_ascent::languages::tree_sitter_c`):
 //! walk the parse tree, build a [`Program`](ctadl_ir::mir::Program) of functions and
 //! basic blocks, and lower Lua assignments, calls, table constructors, field/index
 //! accesses, and control flow into IR statements with access paths.
@@ -89,7 +89,7 @@ use smallvec::SmallVec;
 use source_info::{ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 use tree_sitter::{Node, Parser, Tree};
 
-use crate::error::{Error, ErrorContext};
+use ctadl_import::error::{Error, ErrorContext};
 
 /// One Lua source file in an import: where it came from, the `require` name it answers to, and
 /// its text.
@@ -461,7 +461,7 @@ impl<'a> Lowerer<'a> {
         // above, which are complete either way.
         self.build_vmt();
         // The parts a Lua import is made of. The function count is reported once, for every
-        // language, by `crate::cli::import`.
+        // language, by `ctadl_frontends::import_artifact`.
         log::info!("lua: parsed {} .lua file(s)", self.units.len());
         if self.opaque_alloc_count > 0 {
             log::warn!(
@@ -2806,40 +2806,6 @@ mod tests {
                 .any(|(_, fq)| fq == "os.execute"),
             "an external must not also appear as a defined function"
         );
-    }
-
-    /// The externals column is what makes a Lua propagation model file do anything: before it,
-    /// every match index was built from the lowered definitions only, so a model naming a stdlib
-    /// function matched nothing.
-    #[test]
-    fn a_model_can_name_a_lua_external() {
-        use crate::models::{
-            ImportScope, ProgramMatchIndex, ProgramModelMatches, json::ModelGeneratorIngest,
-        };
-
-        let info = import_str(r#"local function h(x) return os.getenv(x) end return h"#);
-        for port in ["getenv", "os.getenv"] {
-            let mut matches = ProgramModelMatches::default();
-            let match_index = ProgramMatchIndex::new(&info, ImportScope::unknown());
-            let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
-            ingest
-                .encode_models(vec![serde_json::json!({
-                    "find": "methods",
-                    "where": [{"constraint": "signature_match", "name": port}],
-                    "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]}
-                })])
-                .unwrap_or_else(|e| panic!("loading a model naming {port}: {e}"));
-            drop(ingest);
-            assert_eq!(
-                matches
-                    .propagations
-                    .iter()
-                    .map(|p| p.function.to_string())
-                    .collect::<Vec<_>>(),
-                vec!["os.getenv".to_string()],
-                "a model naming `{port}` must summarize the external"
-            );
-        }
     }
 
     #[test]

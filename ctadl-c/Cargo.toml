@@ -1,0 +1,35 @@
+[package]
+name = "ctadl-c"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+ctadl-import = { path = "../ctadl-import", features = ["ts"] }
+ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
+hashbrown = "0.16"
+internment = { version = "0.8", features = ["arc", "serde"] }
+log = "0.4"
+source-info = { path = "../source-info", features = ["serde"] }
+streaming-iterator = { version = "0.1", features = ["alloc"] }
+tree-sitter = "0.26"
+tree-sitter-c = "0.24"
+
+# The engine, used by the tests only. This makes a dependency cycle, which Cargo allows for
+# dev-dependencies. It is needed because 143 of the 264 tests in `tests.rs` call
+# `index_program`, `get_summary` or `check_flow`, all of which run the datalog engine. Those
+# tests check the C front end's lowering, so moving them into another crate would mean making
+# whatever they reach through `super::` public, and moving 5,000 lines of test code away from
+# the code it tests. The cost of the cycle is that `cargo test -p ctadl-c` builds the engine,
+# and that the cycle has to be broken before either crate can be published with a version
+# instead of a path. Both are fine for now. See `ctadl-lib-update.md` section 1.2 for the two
+# alternatives.
+[dev-dependencies]
+ctadl-ascent = { path = "../ctadl-ascent" }
+env_logger = "0.11"
+serde_json = { version = "1", features = ["preserve_order"] }
+tempfile = "3"
+test-log = "0.2.19"
+
+[lints]
+workspace = true

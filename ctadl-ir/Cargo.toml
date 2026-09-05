@@ -4,14 +4,12 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-arrow = "57"
 bit-set = "0.8"
 bitcode = "0.6"
 env_logger = "0.11"
 hashbrown = "0.16"
 internment = { version = "0.8", features = ["arc"] }
 log = "0.4"
-parquet = { version = "58", features = ["arrow"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
 smallvec = { version = "1" }
 source-info = { path = "../source-info" }

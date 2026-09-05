@@ -220,7 +220,7 @@ use ctadl_ir::mir::call::{
     NativeSignature, NativeSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
-    AccessPath, BasicBlockData, Exp, FieldPath, FunctionData, Functions, ParameterIdx,
+    AccessPath, BasicBlockData, Exp, FieldRef, FunctionData, Functions, ParameterIdx,
     ParameterType, Program, Statement, StatementKind, VariableRef,
 };
 use std::collections::BTreeSet;
@@ -242,7 +242,7 @@ fn make_function(name: &str, num_params: usize, force_body: bool, fields: &[&str
             .map(|field| {
                 Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(p.clone()),
-                    FieldPath::symbol(*field),
+                    FieldRef::symbol(*field),
                     Exp::from(AccessPath::without_fields(p.clone())),
                 ))
             })

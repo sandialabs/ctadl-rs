@@ -611,7 +611,7 @@ fn with_valid_sarif(work: &Path, files: &[&Path], outcome: Outcome) -> Result<Ou
 fn preflight_java() -> Result<()> {
     let java = exec::which("java").context(
         "`java` not found on PATH, but the pcode frontend needs a JDK to run Ghidra.\n\
-         Enter the regression dev shell (`nix develop .#regression`), which supplies one.",
+         Enter the dev shell (`nix develop`), which supplies one.",
     )?;
 
     let mut cmd = Command::new(&java);
@@ -629,7 +629,7 @@ fn preflight_java() -> Result<()> {
          It exited {} with:\n  {}\n\
          On macOS this is usually Apple's `/usr/bin/java` stub with no JDK behind it;\n\
          Ghidra's own JDK probe hangs forever on it rather than failing.\n\
-         Enter the regression dev shell (`nix develop .#regression`), which supplies a JDK.",
+         Enter the dev shell (`nix develop`), which supplies a JDK.",
         java.display(),
         out.status
             .code()

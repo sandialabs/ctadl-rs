@@ -49,7 +49,7 @@ pub const CHECKS: &[&str] = &[
     "apk:skip-existing",
 ];
 
-// The store layout `ctadl` writes. Duplicated from `ctadl_ascent::project` rather than imported:
+// The store layout `ctadl` writes. Duplicated from `ctadl_import::project` rather than imported:
 // xtask deliberately does not depend on the analyzer crate (see `xtask/Cargo.toml`), and these
 // checks are *about* the on-disk contract anyway -- a path that moves should fail them loudly
 // here rather than follow the analyzer silently.
@@ -59,7 +59,7 @@ const IMPORT_CONFIG_FILE: &str = "import_config.json";
 const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// The `version` an import config carries today (`IMPORT_FORMAT_VERSION`). Pinned so a bump
 /// that forgets the store's readers has to come through here.
-const IMPORT_FORMAT_VERSION: &str = "5";
+const IMPORT_FORMAT_VERSION: &str = "6";
 
 /// A model file that selects something in any Java app: every `toString` override. The point is
 /// the *checking*, not the model, so the cheapest generator that cannot match nothing is the
