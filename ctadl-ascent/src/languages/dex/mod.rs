@@ -693,7 +693,7 @@ impl Context {
                 stmts.push(Statement::new_kind(StatementKind::load(
                     dest,
                     source,
-                    ctadl_ir::mir::FieldPath::symbol("length"),
+                    ctadl_ir::mir::FieldRef::symbol("length"),
                 )));
                 return Ok(stmts);
             }
@@ -717,7 +717,7 @@ impl Context {
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(VariableRef::new_global()),
-                    ctadl_ir::mir::FieldPath::symbol(name),
+                    ctadl_ir::mir::FieldRef::symbol(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -739,7 +739,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         VariableRef::new_global(),
-                        ctadl_ir::mir::FieldPath::symbol(name.clone()),
+                        ctadl_ir::mir::FieldRef::symbol(name.clone()),
                     )));
                 }
                 return Ok(stmts);
@@ -766,7 +766,7 @@ impl Context {
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(object),
-                    ctadl_ir::mir::FieldPath::symbol(name),
+                    ctadl_ir::mir::FieldRef::symbol(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -789,7 +789,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         object.clone(),
-                        ctadl_ir::mir::FieldPath::symbol(name.clone()),
+                        ctadl_ir::mir::FieldRef::symbol(name.clone()),
                     )));
                 }
                 return Ok(stmts);
@@ -807,7 +807,7 @@ impl Context {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest_var,
                         array_var.clone(),
-                        ctadl_ir::mir::FieldPath::symbol("[]"),
+                        ctadl_ir::mir::FieldRef::symbol("[]"),
                     )));
                 }
                 return Ok(stmts);
@@ -830,7 +830,7 @@ impl Context {
                 let array_var = reg_to_var(code_item, f.b, locals);
                 stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(array_var),
-                    ctadl_ir::mir::FieldPath::symbol("[]"),
+                    ctadl_ir::mir::FieldRef::symbol("[]"),
                     temp_var.into(),
                 )));
                 return Ok(stmts);

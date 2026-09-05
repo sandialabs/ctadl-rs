@@ -2,8 +2,8 @@ use crate::index::idx::Idx;
 use crate::mir::call::CallStyle;
 use crate::mir::terminator::{Terminator, TerminatorKind};
 use crate::mir::{
-    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldAccesses, FieldPath, FunctionData,
-    LocalIdx, Locals, ParameterIdx, ParameterType, Statement, StatementIdx, StatementKind,
+    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldRef, FunctionData, LocalIdx, Locals,
+    OffsetAccesses, ParameterIdx, ParameterType, Statement, StatementIdx, StatementKind,
     VariableRef,
 };
 
@@ -139,7 +139,7 @@ impl<'a> BasicBlockBuilder<'a> {
         &mut self,
         dest: VariableRef,
         source: impl Into<AccessPath>,
-        field: impl Into<FieldPath>,
+        field: impl Into<FieldRef>,
     ) -> StatementIdx {
         let statement = Statement::new_kind(StatementKind::load(dest, source, field));
         let current_pos = self.insertion_point;
@@ -156,7 +156,7 @@ impl<'a> BasicBlockBuilder<'a> {
     pub fn create_store(
         &mut self,
         dest: impl Into<AccessPath>,
-        field: impl Into<FieldPath>,
+        field: impl Into<FieldRef>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
         let statement =
@@ -176,7 +176,7 @@ impl<'a> BasicBlockBuilder<'a> {
     pub fn create_assign_or_store(
         &mut self,
         dest: impl Into<AccessPath>,
-        field: Option<FieldPath>,
+        field: Option<FieldRef>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
         let statement = Statement::new_kind(StatementKind::assign_or_store(
@@ -202,7 +202,7 @@ impl<'a> BasicBlockBuilder<'a> {
         &mut self,
         dest: impl Into<AccessPath>,
         source: VariableRef,
-        field: impl Into<FieldPath>,
+        field: impl Into<FieldRef>,
         value: impl Into<Exp>,
     ) -> StatementIdx {
         let statement = Statement::new_kind(StatementKind::update(
@@ -335,8 +335,8 @@ impl<'a> BasicBlockBuilder<'a> {
         offsets: impl IntoIterator<Item = i64>,
     ) -> AccessPath {
         AccessPath {
-            variable_ref,
-            path: FieldAccesses::with_offsets(offsets),
+            base: variable_ref,
+            accesses: OffsetAccesses::with_offsets(offsets),
         }
     }
 
@@ -344,8 +344,8 @@ impl<'a> BasicBlockBuilder<'a> {
     ///
     /// # Arguments
     /// * `offset` - Numeric offset
-    pub fn new_offset_path(&self, offset: i64) -> FieldAccesses {
-        FieldAccesses::with_offset(offset)
+    pub fn new_offset_path(&self, offset: i64) -> OffsetAccesses {
+        OffsetAccesses::with_offset(offset)
     }
 
     /// Create a string expression

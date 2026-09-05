@@ -653,9 +653,9 @@ impl Context {
         Exp::new_object_ref(CallObject::JavaObject(JavaClass(jclass.into())))
     }
 
-    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::FieldPath {
+    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::FieldRef {
         let class = format!("L{};", f.class_name);
-        mir::FieldPath::symbol(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
+        mir::FieldRef::symbol(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
     }
 
     fn stack_exp(&self, loc: &Location, locals: &mut Locals) -> Exp {
@@ -1069,7 +1069,7 @@ impl Context {
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination, locals),
                     object,
-                    mir::FieldPath::symbol("[]"),
+                    mir::FieldRef::symbol("[]"),
                 ))]
             }
             // *astore
@@ -1093,7 +1093,7 @@ impl Context {
                 );
                 smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(object),
-                    mir::FieldPath::symbol("[]"),
+                    mir::FieldRef::symbol("[]"),
                     value,
                 ))]
             }

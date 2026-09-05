@@ -675,8 +675,8 @@ fn address_of_element_forms_an_address() {
             args[0]
         )
     };
-    assert_eq!(addr.variable_ref, local_ref(&prog, "f", "x"));
-    let offsets: Vec<i64> = addr.path.iter().map(|f| f.offset().0).collect();
+    assert_eq!(addr.base, local_ref(&prog, "f", "x"));
+    let offsets: Vec<i64> = addr.accesses.iter().map(|f| f.offset().0).collect();
     assert_eq!(offsets, vec![1], "`&x[1]` is `x` at offset 1\n{prog}");
     assert!(
         !statements_of(&prog).any(|s| matches!(s.kind, StatementKind::Load { .. })),
@@ -3158,7 +3158,7 @@ fn compound_literal_argument_carries_value() {
             StatementKind::Store { dest, field, value }
                 if field.as_str() == "start" && *value == param =>
             {
-                Some(dest.variable_ref.clone())
+                Some(dest.base.clone())
             }
             _ => None,
         })

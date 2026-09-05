@@ -583,18 +583,18 @@ fn constant_index(exp: &Exp) -> Option<i64> {
 /// that is a bare variable (`p = &x`) has no address path: CTADL models it as the variable
 /// itself (the value-copy model), so there is nothing to add and this returns `None`.
 fn deref_of_pointee(pointee: &AccessPath) -> Option<RawPath> {
-    if pointee.path.is_empty() {
+    if pointee.accesses.is_empty() {
         return None;
     }
     let mut fields: ThinVec<PathSegment> = pointee
-        .path
-        .fields
+        .accesses
+        .offsets
         .iter()
         .cloned()
         .map(PathSegment::from)
         .collect();
     fields.push(PathSegment::symbol(DEREF_FIELD));
-    Some(RawPath::new(pointee.variable_ref.clone(), fields))
+    Some(RawPath::new(pointee.base.clone(), fields))
 }
 
 /// Appends the path segments a subscript contributes: a pointer-arithmetic offset for a
@@ -3218,8 +3218,8 @@ impl<'a> Context<'a> {
                 // a bare pointer. Either can carry a same-block address-of alias.
                 let ptr_ref = match &arg_exp {
                     Exp::Variable(v) => Some(v.clone()),
-                    Exp::AccessPath(ptr_ap) if ptr_ap.path.is_empty() => {
-                        Some(ptr_ap.variable_ref.clone())
+                    Exp::AccessPath(ptr_ap) if ptr_ap.accesses.is_empty() => {
+                        Some(ptr_ap.base.clone())
                     }
                     _ => None,
                 };
@@ -4396,9 +4396,8 @@ impl<'a> Context<'a> {
                     && let Some((pointee, blk)) = self.addr_alias.get(&ptr.base)
                     && *blk == scope_view.blidx
                 {
-                    return Ok(deref_of_pointee(pointee).unwrap_or_else(|| {
-                        RawPath::new(pointee.variable_ref.clone(), ThinVec::new())
-                    }));
+                    return Ok(deref_of_pointee(pointee)
+                        .unwrap_or_else(|| RawPath::new(pointee.base.clone(), ThinVec::new())));
                 }
                 Ok(ptr)
             }

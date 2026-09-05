@@ -28,24 +28,21 @@ fn function_f() -> FunctionData {
     let body = blocks.push(BasicBlockData::new(None));
     {
         let a = AccessPath {
-            variable_ref: VariableRef::new_local_idx(a_idx),
-            path: Default::default(),
+            base: VariableRef::new_local_idx(a_idx),
+            accesses: Default::default(),
         };
         let p = AccessPath {
-            variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-            path: Default::default(),
+            base: VariableRef::new_parameter(ParameterIdx::new(0)),
+            accesses: Default::default(),
         };
         let q = AccessPath {
-            variable_ref: VariableRef::new_parameter(ParameterIdx::new(1)),
-            path: Default::default(),
+            base: VariableRef::new_parameter(ParameterIdx::new(1)),
+            accesses: Default::default(),
         };
         let stmts: IndexVec<StatementIdx, _> = indexvec![
+            Statement::new_kind(StatementKind::assign(a.base.clone(), [Exp::from(q)])),
             Statement::new_kind(StatementKind::assign(
-                a.variable_ref.clone(),
-                [Exp::from(q)]
-            )),
-            Statement::new_kind(StatementKind::assign(
-                p.variable_ref.clone(),
+                p.base.clone(),
                 [Exp::from(a.clone())]
             )),
         ];
@@ -74,22 +71,22 @@ fn function_g() -> FunctionData {
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let a = AccessPath {
-        variable_ref: VariableRef::new_local_idx(a_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(a_idx),
+        accesses: Default::default(),
     };
     let b = AccessPath {
-        variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-        path: Default::default(),
+        base: VariableRef::new_parameter(ParameterIdx::new(0)),
+        accesses: Default::default(),
     };
     let c = AccessPath {
-        variable_ref: VariableRef::new_local_idx(c_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(c_idx),
+        accesses: Default::default(),
     };
     let call_edges = CallEdges::Explicit(thin_vec::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
         Statement::new_kind(StatementKind::assign(
-            a.variable_ref.clone(),
+            a.base.clone(),
             [Exp::Bytes(1u8.to_be_bytes().to_vec())]
         )),
         Statement::new_kind(StatementKind::CallAssign {
@@ -126,26 +123,26 @@ fn function_g1() -> FunctionData {
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
     let a = AccessPath {
-        variable_ref: VariableRef::new_local_idx(a_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(a_idx),
+        accesses: Default::default(),
     };
     let b = AccessPath {
-        variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-        path: Default::default(),
+        base: VariableRef::new_parameter(ParameterIdx::new(0)),
+        accesses: Default::default(),
     };
     let _c = AccessPath {
-        variable_ref: VariableRef::new_local_idx(c_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(c_idx),
+        accesses: Default::default(),
     };
     let c1 = AccessPath {
-        variable_ref: VariableRef::new_local_idx(c1_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(c1_idx),
+        accesses: Default::default(),
     };
     let call_edges = CallEdges::Explicit(thin_vec::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
         Statement::new_kind(StatementKind::assign(
-            a.variable_ref.clone(),
+            a.base.clone(),
             [Exp::Bytes(1u8.to_be_bytes().to_vec())]
         )),
         Statement::new_kind(StatementKind::CallAssign {
@@ -184,14 +181,14 @@ fn program_h() -> Program {
     let body = blocks.push(BasicBlockData::new(None));
     {
         let p = AccessPath {
-            variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-            path: Default::default(),
+            base: VariableRef::new_parameter(ParameterIdx::new(0)),
+            accesses: Default::default(),
         };
         let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
                 AccessPath::without_fields(global_ref.clone()),
-                FieldPath::symbol("bar"),
+                FieldRef::symbol("bar"),
                 Exp::from(p.clone()),
             )),];
         let body_block = &mut h[body];
@@ -227,15 +224,15 @@ fn program_h_update() -> Program {
     let body = blocks.push(BasicBlockData::new(None));
     {
         let p = AccessPath {
-            variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-            path: Default::default(),
+            base: VariableRef::new_parameter(ParameterIdx::new(0)),
+            accesses: Default::default(),
         };
         let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::update(
                 AccessPath::without_fields(global_ref.clone()),
                 global_ref.clone(),
-                FieldPath::symbol("bar"),
+                FieldRef::symbol("bar"),
                 Exp::from(p.clone()),
             )),];
         let body_block = &mut h[body];
@@ -318,16 +315,13 @@ fn test_ssa_function_h_update() {
         })
         .expect("expected an Update statement");
     assert_eq!(
-        dest.variable_ref.variable, source.variable,
+        dest.base.variable, source.variable,
         "same aggregate variable"
     );
-    assert!(
-        dest.variable_ref.version.is_some(),
-        "destination is versioned"
-    );
+    assert!(dest.base.version.is_some(), "destination is versioned");
     assert!(source.version.is_some(), "source is versioned");
     assert_ne!(
-        dest.variable_ref.version, source.version,
+        dest.base.version, source.version,
         "destination gets a fresh version distinct from the source read"
     );
 }

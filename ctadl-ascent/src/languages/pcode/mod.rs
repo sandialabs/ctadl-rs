@@ -1221,7 +1221,7 @@ impl Context {
             stmts.push(Statement::new_kind(StatementKind::load(
                 dest.clone(),
                 addr,
-                FieldPath::symbol("deref"),
+                FieldRef::symbol("deref"),
             )));
             if !output_var.is_pathless() {
                 self.push_assign_or_store(&mut stmts, output_var, Exp::Variable(dest), locals);

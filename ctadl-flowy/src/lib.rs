@@ -281,7 +281,7 @@ impl Display for EndpointRequires {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Endpoint {
     pub infunc: ArcIntern<str>,
-    pub port: (VariableRef, FieldAccesses),
+    pub port: (VariableRef, OffsetAccesses),
     /// The taint label
     pub label: String,
     pub direction: EndpointDirection,
@@ -816,10 +816,10 @@ impl FlowyCtx {
                 data.push_back(Statement::new(
                     StatementKind::update(
                         AccessPath {
-                            variable_ref: dst_base,
-                            path: addr.path,
+                            base: dst_base,
+                            accesses: addr.accesses,
                         },
-                        addr.variable_ref,
+                        addr.base,
                         field,
                         value,
                     ),
@@ -1566,7 +1566,7 @@ impl MutVisitor for ExtractSpec {
             match endpoint_name {
                 "source" | "errsource" => {
                     let infunc = &self.function;
-                    let port = (rets[0].clone(), FieldAccesses::empty());
+                    let port = (rets[0].clone(), OffsetAccesses::empty());
                     let endpoint = Endpoint {
                         infunc: infunc.clone(),
                         port,
@@ -1595,7 +1595,7 @@ impl MutVisitor for ExtractSpec {
                     let infunc = &self.function;
                     let port = (
                         args[0].variable_ref().unwrap().clone(),
-                        FieldAccesses::empty(),
+                        OffsetAccesses::empty(),
                     );
                     // The port is the `t? = x` temp the front-end sinks; recover the
                     // parameter index it copies so the endpoint anchors at call sites.
