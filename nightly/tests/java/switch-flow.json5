@@ -1,0 +1,16 @@
+{
+  // Source and sink both inside the lookupswitch/tableswitch arm (25, 49).
+  "expected_lines": [25, 49],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LSwitchFlow;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LSwitchFlow;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  // `roundTrip` carries the taint past a `sastore`/`saload` pair. With `sastore`
+  // unmodelled the method leaves three phantom slots and the class fails to
+  // import, taking this flow with it.
+  "expected_lines": [16, 34],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LShortArrayFlow;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LShortArrayFlow;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

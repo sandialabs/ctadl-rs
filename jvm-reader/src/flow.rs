@@ -1,7 +1,7 @@
 // Instruction flow abstraction: iterate every instruction in a JAR with
 // Dataflow/Call/Other kind and source/destination locations.
 
-use crate::error::{ClassFileError, ClassFileResult};
+use crate::error::{ClassFileError, ClassFileResult, MethodContext};
 use crate::parse_utils::{read_i32_be, read_u16_be, read_u8};
 use crate::parser::ClassFileParser;
 use crate::types::{ClassFile, CpEntry, MethodInfo};
@@ -478,6 +478,32 @@ fn descriptor_return_slot_count(descriptor: &str) -> usize {
     }
 }
 
+/// Identify the method being simulated, for the error variants that report
+/// where a failure happened.
+///
+/// Each name falls back to a placeholder rather than failing: a method whose
+/// own name cannot be read is a worse error than the one being reported, and
+/// hiding the latter behind the former is what left these sites bare.
+fn method_context(cfg: &MethodBasicBlocks<'_>) -> Box<MethodContext> {
+    Box::new(MethodContext {
+        class_name: cfg
+            .class_file
+            .this_class_name()
+            .unwrap_or("<class-name-error>")
+            .to_string(),
+        method_name: cfg
+            .class_file
+            .get_utf8(cfg.method.name_index)
+            .unwrap_or("<method-utf8-error>")
+            .to_string(),
+        method_descriptor: cfg
+            .class_file
+            .get_utf8(cfg.method.descriptor_index)
+            .unwrap_or("<descriptor-utf8-error>")
+            .to_string(),
+    })
+}
+
 /// Normalize stack-related locations in a method so that all stack uses and
 /// definitions refer to function-wide stack slots instead of per-instruction
 /// StackInput/StackOutput.
@@ -492,8 +518,6 @@ pub fn normalize_stack_slots_for_method<'a>(
     let mut in_state: Vec<Option<StackState>> = vec![None; blocks_len];
     let mut out_state: Vec<Option<StackState>> = vec![None; blocks_len];
     let mut worklist: Vec<usize> = Vec::new();
-    let mut next_slot_id: StackSlotId = 0;
-    let mut handler_entry_slots: HashMap<usize, StackSlotId> = HashMap::new();
 
     in_state[0] = Some(StackState { slots: Vec::new() });
     worklist.push(0);
@@ -523,13 +547,17 @@ pub fn normalize_stack_slots_for_method<'a>(
             if s >= blocks_len {
                 continue;
             }
-            let propagated = if cfg.exception_edges.contains(&(b, s)) {
-                let slot = *handler_entry_slots.entry(s).or_insert_with(|| {
-                    let id = next_slot_id;
-                    next_slot_id += 1;
-                    id
-                });
-                StackState { slots: vec![slot] }
+            // A handler is entered with a one-deep stack holding the exception
+            // reference. Slot ids are positional everywhere else -- a slot's id
+            // is its depth (`remaining_len + i` in `simulate_block`) -- so the
+            // exception reference, at depth 0, is slot 0. Drawing it from a
+            // separate counter instead would make it the one non-positional id
+            // in the method: it could differ from a normal predecessor's slot
+            // at the same depth, and past 64 handlers it would run off the end
+            // of the id range `xtask`'s `assert_normalized` treats as valid.
+            let exception_edge = cfg.exception_edges.contains(&(b, s));
+            let propagated = if exception_edge {
+                StackState { slots: vec![0] }
             } else {
                 exit.clone()
             };
@@ -540,20 +568,27 @@ pub fn normalize_stack_slots_for_method<'a>(
                 }
                 Some(existing) => {
                     if existing.slots.len() != propagated.slots.len() {
-                        let from_pc = cfg.blocks[b].start_pc;
-                        let to_pc = cfg.blocks[s].start_pc;
-                        return Err(ClassFileError::InvalidClassFileMessage(format!(
-                            "inconsistent operand stack height at basic-block join: \
-                             block {s} (pc {to_pc}) <- block {b} (pc {from_pc}), \
-                             existing_len={}, new_len={}",
-                            existing.slots.len(),
-                            propagated.slots.len()
-                        )));
+                        return Err(ClassFileError::StackHeightMismatch {
+                            method: method_context(cfg),
+                            block: s,
+                            block_pc: cfg.blocks[s].start_pc,
+                            pred_block: b,
+                            pred_pc: cfg.blocks[b].start_pc,
+                            existing_len: existing.slots.len(),
+                            new_len: propagated.slots.len(),
+                        });
                     }
                     if existing.slots != propagated.slots {
-                        return Err(ClassFileError::InvalidClassFile(
-                            "inconsistent operand stack layout at basic-block join",
-                        ));
+                        return Err(ClassFileError::StackLayoutMismatch {
+                            method: method_context(cfg),
+                            block: s,
+                            block_pc: cfg.blocks[s].start_pc,
+                            pred_block: b,
+                            pred_pc: cfg.blocks[b].start_pc,
+                            exception_edge,
+                            existing_slots: existing.slots.clone(),
+                            new_slots: propagated.slots.clone(),
+                        });
                     }
                 }
             }
@@ -770,9 +805,18 @@ fn simulate_block<'a>(
         let produce = stack_outputs.max(call_produce).max(misc_produce);
 
         if state.slots.len() < consume {
-            return Err(ClassFileError::InvalidClassFile(
-                "stack underflow in stack-slot simulation",
-            ));
+            return Err(ClassFileError::StackUnderflow {
+                method: Box::new(MethodContext {
+                    class_name: class_name.to_string(),
+                    method_name: method_name.to_string(),
+                    method_descriptor: method_desc.to_string(),
+                }),
+                pc: inst.pc,
+                opcode: inst.opcode,
+                mnemonic: inst.mnemonic,
+                consumed: consume,
+                stack_len: state.slots.len(),
+            });
         }
 
         // Rewrite StackOutput destinations using the *absolute* stack depth position
@@ -911,6 +955,19 @@ pub fn descriptor_returns_value(descriptor: &str) -> bool {
     }
 }
 
+/// Operand-stack slots a value of this field descriptor occupies.
+///
+/// `long` and `double` are category-2 and take two; every other field type,
+/// reference types included, takes one. The four field opcodes push or pop this
+/// many words, so decoding them without consulting the descriptor leaves the
+/// simulated stack a word short at every `long`/`double` field access.
+pub fn field_slot_width(descriptor: &str) -> u8 {
+    match descriptor.as_bytes().first() {
+        Some(b'J') | Some(b'D') => 2,
+        _ => 1,
+    }
+}
+
 /// Returns the number of local variable slots used by the method parameters (JVM convention:
 /// long/double use 2 slots, rest use 1).
 pub fn descriptor_param_slot_count(descriptor: &str) -> usize {
@@ -920,9 +977,52 @@ pub fn descriptor_param_slot_count(descriptor: &str) -> usize {
         .sum()
 }
 
-/// Returns true if the given local slot index is a parameter (slot < param_slot_count).
-pub fn is_parameter_slot(slot: u16, param_slot_count: usize) -> bool {
-    (slot as usize) < param_slot_count
+/// Translates a JVM local-variable slot into the ordinal of the parameter that
+/// occupies it.
+///
+/// The two index spaces are not the same: `long` and `double` take two local
+/// slots but are one declared parameter, so they diverge from the first wide
+/// parameter onward. [`Location::Parameter`] is an *ordinal* -- it indexes the
+/// parameter list the IR builds from the descriptor -- so a decoder that hands
+/// it a slot index refers to parameters that do not exist.
+#[derive(Debug, Clone, Default)]
+pub struct ParameterSlotMap {
+    /// One entry per parameter slot, holding that slot's parameter ordinal.
+    /// Both halves of a wide parameter map to the same ordinal.
+    slot_to_ordinal: Vec<u16>,
+}
+
+impl ParameterSlotMap {
+    /// Build the map for a method with the given descriptor.
+    ///
+    /// An instance method receives `this` in slot 0, which is parameter ordinal
+    /// 0; the descriptor's parameters follow.
+    pub fn for_method(descriptor: &str, is_instance: bool) -> Self {
+        let mut slot_to_ordinal = Vec::new();
+        let mut ordinal: u16 = 0;
+        if is_instance {
+            slot_to_ordinal.push(ordinal);
+            ordinal += 1;
+        }
+        for p in descriptor_parameter_info(descriptor) {
+            for _ in 0..p.slot_width {
+                slot_to_ordinal.push(ordinal);
+            }
+            ordinal += 1;
+        }
+        Self { slot_to_ordinal }
+    }
+
+    /// Number of local slots the parameters occupy (wide parameters count 2).
+    pub fn slot_count(&self) -> usize {
+        self.slot_to_ordinal.len()
+    }
+
+    /// Parameter ordinal for a local slot, or `None` when the slot is a plain
+    /// local variable rather than a parameter.
+    pub fn ordinal_for_slot(&self, slot: u16) -> Option<u16> {
+        self.slot_to_ordinal.get(slot as usize).copied()
+    }
 }
 
 // ============== Instruction length (for pc advance) ==============
@@ -979,6 +1079,7 @@ fn operand_byte_count(opcode: u8, _code: &[u8], _pc: usize) -> ClassFileResult<u
         0x12 => 1,
         0x13 | 0x14 => 2,
         0x15..=0x19 | 0x36..=0x3a => 1,
+        0xa9 => 1, // ret: local index u8 (the wide form is handled above)
         0x84 => 2, // iinc: index u8, const i8
         0xbc => 1,
         0xbd | 0xc0 | 0xc1 => 2,
@@ -990,7 +1091,6 @@ fn operand_byte_count(opcode: u8, _code: &[u8], _pc: usize) -> ClassFileResult<u
         0x99..=0x9e | 0x9f..=0xa4 | 0xa5..=0xa6 | 0xc6..=0xc7 => 2,
         0xa7 | 0xa8 => 2,
         0xc8 | 0xc9 => 4,
-        0x7c => 2,
         _ => 0,
     })
 }
@@ -1085,7 +1185,7 @@ fn mnemonic(opcode: u8) -> &'static str {
         0x53 => "aastore",
         0x54 => "bastore",
         0x55 => "castore",
-        0x56 => "dup2_x2",
+        0x56 => "sastore",
         0x57 => "pop",
         0x58 => "pop2",
         0x59 => "dup",
@@ -1132,7 +1232,21 @@ fn mnemonic(opcode: u8) -> &'static str {
         0x82 => "ixor",
         0x83 => "lxor",
         0x84 => "iinc",
-        0x85..=0x93 => "conv_or_cmp",
+        0x85 => "i2l",
+        0x86 => "i2f",
+        0x87 => "i2d",
+        0x88 => "l2i",
+        0x89 => "l2f",
+        0x8a => "l2d",
+        0x8b => "f2i",
+        0x8c => "f2l",
+        0x8d => "f2d",
+        0x8e => "d2i",
+        0x8f => "d2l",
+        0x90 => "d2f",
+        0x91 => "i2b",
+        0x92 => "i2c",
+        0x93 => "i2s",
         0x94 => "lcmp",
         0x95 => "fcmpl",
         0x96 => "fcmpg",
@@ -1196,7 +1310,7 @@ fn opcode_kind(opcode: u8) -> InstructionKind {
         0x01..=0x14 => InstructionKind::Dataflow,
         0x15..=0x35 => InstructionKind::Dataflow,
         0x36..=0x4e => InstructionKind::Dataflow,
-        0x4f..=0x55 => InstructionKind::Dataflow,
+        0x4f..=0x56 => InstructionKind::Dataflow,
         0x59..=0x5f => InstructionKind::Dataflow,
         0x60..=0x77 => InstructionKind::Dataflow,
         0x78..=0x83 => InstructionKind::Dataflow,
@@ -1206,15 +1320,15 @@ fn opcode_kind(opcode: u8) -> InstructionKind {
         0xb6..=0xba => InstructionKind::Call,
         0xbb => InstructionKind::Dataflow,
         0xbc | 0xbd => InstructionKind::Dataflow,
+        0xc5 => InstructionKind::Dataflow,
         _ => InstructionKind::Other,
     }
 }
 
-fn local_slot_to_location(slot: u16, param_slot_count: usize) -> Location {
-    if is_parameter_slot(slot, param_slot_count) {
-        Location::Parameter(slot)
-    } else {
-        Location::Register(slot)
+fn local_slot_to_location(slot: u16, params: &ParameterSlotMap) -> Location {
+    match params.ordinal_for_slot(slot) {
+        Some(ordinal) => Location::Parameter(ordinal),
+        None => Location::Register(slot),
     }
 }
 
@@ -1267,7 +1381,9 @@ fn resolve_constant(cf: &ClassFile, cp_index: u16) -> ClassFileResult<ConstantVa
         CpEntry::Float(f) => Ok(ConstantValue::Float(*f)),
         CpEntry::Double(d) => Ok(ConstantValue::Double(*d)),
         CpEntry::String { string_index } => {
-            let s = cf.get_utf8(*string_index)?.to_string();
+            // A string constant may legally hold unpaired surrogates (packed
+            // UTF-16 tables do), so it must not be required to be a `str`.
+            let s = cf.get_utf8_lossy(*string_index)?.into_owned();
             Ok(ConstantValue::String(s))
         }
         CpEntry::Class { name_index } => {
@@ -1286,6 +1402,18 @@ fn split_dataflow_infos(sources: Vec<Location>, destinations: Vec<Location>) -> 
             destination,
         })
         .collect()
+}
+
+/// The parameter slot map for a method, from its descriptor and access flags.
+///
+/// A method whose descriptor cannot be read has no usable parameter list, so
+/// every local slot falls through to `Location::Register`.
+fn method_parameter_slot_map(cf: &ClassFile, method: &MethodInfo) -> ParameterSlotMap {
+    let is_instance = (method.access_flags & 0x0008) == 0;
+    match cf.get_utf8(method.descriptor_index) {
+        Ok(desc) => ParameterSlotMap::for_method(desc, is_instance),
+        Err(_) => ParameterSlotMap::default(),
+    }
 }
 
 /// Decode one instruction at `pc` into `InstructionFlowInfo`. Returns the next `pc`.
@@ -1309,43 +1437,23 @@ pub fn decode_flow_instruction<'a>(
             return Err(ClassFileError::InvalidClassFile("wide truncated"));
         }
         let subop = code[pc + 1];
-        let param_slot_count = cf
-            .get_utf8(method.descriptor_index)
-            .map(descriptor_param_slot_count)
-            .unwrap_or(0);
-        let is_instance = (method.access_flags & 0x0008) == 0;
-        let param_slots = if is_instance {
-            param_slot_count + 1
-        } else {
-            param_slot_count
-        };
+        let params = method_parameter_slot_map(cf, method);
         let kind = opcode_kind(subop);
         let mut dataflow = Vec::new();
         let call = None;
         if kind == InstructionKind::Dataflow {
-            let (sources, destinations) =
-                decode_dataflow(code, pc, cf, subop, param_slots, is_instance, true)?;
+            let (sources, destinations) = decode_dataflow(code, pc, cf, subop, &params, true)?;
             dataflow = split_dataflow_infos(sources, destinations);
         }
         (subop, mnemonic(subop), kind, dataflow, call)
     } else {
         let mnem = mnemonic(opcode);
-        let param_slot_count = cf
-            .get_utf8(method.descriptor_index)
-            .map(descriptor_param_slot_count)
-            .unwrap_or(0);
-        let is_instance = (method.access_flags & 0x0008) == 0;
-        let param_slots = if is_instance {
-            param_slot_count + 1
-        } else {
-            param_slot_count
-        };
+        let params = method_parameter_slot_map(cf, method);
         let kind = opcode_kind(opcode);
         let mut dataflow = Vec::new();
         let mut call = None;
         if kind == InstructionKind::Dataflow {
-            let (sources, destinations) =
-                decode_dataflow(code, pc, cf, opcode, param_slots, is_instance, false)?;
+            let (sources, destinations) = decode_dataflow(code, pc, cf, opcode, &params, false)?;
             dataflow = split_dataflow_infos(sources, destinations);
         } else if kind == InstructionKind::Call {
             call = Some(decode_call(code, pc, cf, opcode)?);
@@ -1394,8 +1502,7 @@ fn decode_dataflow(
     pc: usize,
     cf: &ClassFile,
     opcode: u8,
-    param_slot_count: usize,
-    _is_instance: bool,
+    params: &ParameterSlotMap,
     wide: bool,
 ) -> ClassFileResult<(Vec<Location>, Vec<Location>)> {
     let mut sources = Vec::new();
@@ -1422,7 +1529,7 @@ fn decode_dataflow(
             destinations.push(Location::StackOutput);
         }
         0x11 => {
-            let s = read_i32_be(code, pc + 1)? as i16 as i32;
+            let s = read_u16_be(code, pc + 1)? as i16 as i32;
             sources.push(Location::Constant(ConstantValue::Integer(s)));
             destinations.push(Location::StackOutput);
         }
@@ -1449,7 +1556,7 @@ fn decode_dataflow(
             } else {
                 read_u8(code, operand_start)? as u16
             };
-            sources.push(local_slot_to_location(slot, param_slot_count));
+            sources.push(local_slot_to_location(slot, params));
             destinations.push(Location::StackOutput);
             if matches!(opcode, 0x16 | 0x18) {
                 destinations.push(Location::StackOutput);
@@ -1464,7 +1571,7 @@ fn decode_dataflow(
                 0x2a..=0x2d => (opcode - 0x2a) as u16,
                 _ => 0,
             };
-            sources.push(local_slot_to_location(slot, param_slot_count));
+            sources.push(local_slot_to_location(slot, params));
             destinations.push(Location::StackOutput);
             if matches!(opcode, 0x1e..=0x21 | 0x26..=0x29) {
                 destinations.push(Location::StackOutput);
@@ -1496,7 +1603,7 @@ fn decode_dataflow(
             if matches!(opcode, 0x37 | 0x39) {
                 sources.push(Location::StackInput(1));
             }
-            destinations.push(local_slot_to_location(slot, param_slot_count));
+            destinations.push(local_slot_to_location(slot, params));
         }
         0x3b..=0x4e => {
             let slot = match opcode {
@@ -1511,9 +1618,9 @@ fn decode_dataflow(
             if matches!(opcode, 0x3f..=0x42 | 0x47..=0x4a) {
                 sources.push(Location::StackInput(1));
             }
-            destinations.push(local_slot_to_location(slot, param_slot_count));
+            destinations.push(local_slot_to_location(slot, params));
         }
-        0x4f..=0x55 => {
+        0x4f..=0x56 => {
             match opcode {
                 // lastore, dastore: value is two slots under index/arrayref.
                 0x50 | 0x52 => {
@@ -1603,6 +1710,16 @@ fn decode_dataflow(
             sources.push(Location::Allocation(format!("[L{};", class_name)));
             destinations.push(Location::StackOutput);
         }
+        0xc5 => {
+            let idx = read_u16_be(code, pc + 1)?;
+            let dimensions = read_u8(code, pc + 3)?;
+            let class_name = cf.get_class_name(idx)?.to_string();
+            for i in 0..dimensions {
+                sources.push(Location::StackInput(i));
+            }
+            sources.push(Location::Allocation(class_name));
+            destinations.push(Location::StackOutput);
+        }
         0x60..=0x83 => {
             let (consume, produce) = stack_effect(opcode);
             for i in 0..consume {
@@ -1624,8 +1741,8 @@ fn decode_dataflow(
                     code.get(operand_start + 1).copied().unwrap_or(0) as i8 as i32,
                 )
             };
-            sources.push(local_slot_to_location(idx, param_slot_count));
-            destinations.push(local_slot_to_location(idx, param_slot_count));
+            sources.push(local_slot_to_location(idx, params));
+            destinations.push(local_slot_to_location(idx, params));
         }
         0x85..=0x98 => {
             match opcode {
@@ -1681,27 +1798,38 @@ fn decode_dataflow(
         0xb2 => {
             let idx = read_u16_be(code, pc + 1)?;
             let fr = resolve_field_ref(cf, idx)?;
+            let width = field_slot_width(&fr.descriptor);
             sources.push(Location::FieldRef(fr.clone()));
-            destinations.push(Location::StackOutput);
+            for _ in 0..width {
+                destinations.push(Location::StackOutput);
+            }
         }
         0xb3 => {
             let idx = read_u16_be(code, pc + 1)?;
             let fr = resolve_field_ref(cf, idx)?;
-            sources.push(Location::StackInput(0));
+            let width = field_slot_width(&fr.descriptor);
+            for i in 0..width {
+                sources.push(Location::StackInput(i));
+            }
             destinations.push(Location::FieldRef(fr));
         }
         0xb4 => {
             let idx = read_u16_be(code, pc + 1)?;
             let fr = resolve_field_ref(cf, idx)?;
+            let width = field_slot_width(&fr.descriptor);
             sources.push(Location::StackInput(0));
             sources.push(Location::FieldRef(fr.clone()));
-            destinations.push(Location::StackOutput);
+            for _ in 0..width {
+                destinations.push(Location::StackOutput);
+            }
         }
         0xb5 => {
             let idx = read_u16_be(code, pc + 1)?;
             let fr = resolve_field_ref(cf, idx)?;
-            sources.push(Location::StackInput(0));
-            sources.push(Location::StackInput(1));
+            let width = field_slot_width(&fr.descriptor);
+            for i in 0..=width {
+                sources.push(Location::StackInput(i));
+            }
             destinations.push(Location::FieldRef(fr));
         }
         _ => {}
@@ -1745,9 +1873,10 @@ fn stack_effect(opcode: u8) -> (u8, u8) {
         // neg
         0x74 | 0x76 => (1, 1), // ineg, fneg
         0x75 | 0x77 => (2, 2), // lneg, dneg
-        // shifts
-        0x78..=0x7a => (2, 1), // ishl, ishr, iushr
-        0x7b..=0x7d => (3, 2), // lshl, lshr, lushr
+        // shifts. The int and long forms alternate, so these cannot be ranges:
+        // the shift distance is always an int (1 slot), the value is 1 or 2.
+        0x78 | 0x7a | 0x7c => (2, 1), // ishl, ishr, iushr
+        0x79 | 0x7b | 0x7d => (3, 2), // lshl, lshr, lushr
         // and/or/xor
         0x7e | 0x80 | 0x82 => (2, 1), // iand, ior, ixor
         0x7f | 0x81 | 0x83 => (4, 2), // land, lor, lxor
@@ -1771,9 +1900,21 @@ fn misc_stack_effect(opcode: u8) -> (usize, usize) {
         0x99..=0x9e | 0xc6..=0xc7 => (1, 0), // if<cond>, ifnull, ifnonnull
         0x9f..=0xa6 => (2, 0),               // if_icmp*, if_acmp*
 
-        // Returns
-        0xac..=0xb0 => (1, 0), // i/l/f/d/a return (slot-approx)
-        0xb1 => (0, 0),        // return
+        // Switches consume their int selector. Both decode to no dataflow and
+        // to InstructionKind::Other, so this is where their stack effect lives.
+        0xaa | 0xab => (1, 0), // tableswitch, lookupswitch
+
+        // Returns. `lreturn` and `dreturn` pop two words, like every other
+        // category-2 consumer.
+        0xac | 0xae | 0xb0 => (1, 0), // ireturn, freturn, areturn
+        0xad | 0xaf => (2, 0),        // lreturn, dreturn
+        0xb1 => (0, 0),               // return
+
+        // `jsr`/`ret`. Illegal from class version 51 on, so nothing current
+        // reaches them, but a pre-Java-7 artifact would: `jsr` pushes the
+        // return address it later hands to `ret`, which consumes nothing (it
+        // reads the address out of a local).
+        0xa8 | 0xc9 => (0, 1), // jsr, jsr_w
 
         // Object/array and type ops not covered by decode_dataflow.
         0xbe => (1, 1), // arraylength
@@ -1792,46 +1933,47 @@ fn misc_stack_effect(opcode: u8) -> (usize, usize) {
 mod tests {
     use super::{
         compute_basic_blocks_for_method, decode_dataflow, descriptor_param_slot_count,
-        descriptor_parameter_info, descriptor_returns_value, normalize_stack_slots_for_method,
-        Location, MethodParameterInfo, MethodParameterKind,
+        descriptor_parameter_info, descriptor_returns_value, field_slot_width, instruction_length,
+        misc_stack_effect, normalize_stack_slots_for_method, stack_effect, ClassFileError,
+        ClassFileResult, ConstantValue, Location, MethodParameterInfo, MethodParameterKind,
+        ParameterSlotMap,
     };
-    use crate::parser::ClassFileParser;
-    use crate::types::CpEntry;
+    use crate::types::{ClassFile, CodeAttribute, CpEntry, ExceptionEntry, JvmString, MethodInfo};
 
-    /// Load a compiled test class by file name from the directory named by the
-    /// `JVM_READER_TEST_FIXTURES` environment variable. The fixtures are
-    /// compiled from the committed `tests/sample/*.java` sources at check time
-    /// (see the `jvm-reader-tests` check in flake.nix); no `.class` files are
-    /// committed to the repository.
-    fn fixture(name: &str) -> Vec<u8> {
-        let dir = std::env::var("JVM_READER_TEST_FIXTURES").unwrap_or_else(|_| {
-            panic!(
-                "JVM_READER_TEST_FIXTURES is not set; these tests load classes \
-                 compiled from tests/sample/*.java. Run them via \
-                 `nix build .#checks.<system>.jvm-reader-tests`."
-            )
-        });
-        let path = std::path::Path::new(&dir).join(name);
-        std::fs::read(&path).unwrap_or_else(|e| panic!("reading fixture {}: {e}", path.display()))
+    /// Constant-pool index of the one `CONSTANT_Class` in [`constant_pool_only`].
+    const CONSTANT_POOL_CLASS_INDEX: u16 = 1;
+
+    /// A `ClassFile` that is nothing but a constant pool: index 1 is a
+    /// `CONSTANT_Class` naming `Demo`, index 2 that name.
+    ///
+    /// `decode_dataflow` takes a whole `ClassFile` so it can resolve pool
+    /// references, but the opcodes below either ignore the pool or need one
+    /// `CONSTANT_Class`. Building that by hand keeps these hermetic -- they are
+    /// unit tests of the decoder, and a `javac` run would tell them nothing a
+    /// two-entry pool does not. Assertions that need real compiled bytecode are
+    /// regression cases in `nightly/tests/java` and checks in `xtask/src/jvm.rs`,
+    /// where the sample sources are already compiled.
+    fn constant_pool_only() -> ClassFile {
+        ClassFile {
+            magic: 0xCAFE_BABE,
+            minor_version: 0,
+            major_version: 52,
+            constant_pool: vec![
+                Some(CpEntry::Class { name_index: 2 }),
+                Some(CpEntry::Utf8(JvmString::Utf8("Demo".to_string()))),
+            ],
+            access_flags: 0,
+            this_class: CONSTANT_POOL_CLASS_INDEX,
+            super_class: 0,
+            interfaces: Vec::new(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+            attributes: Vec::new(),
+            source_file: None,
+        }
     }
 
     #[test]
-    #[ignore]
-    fn loop_flow_main_stack_normalizes() {
-        let bytes = &fixture("LoopFlow.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        let method = cf
-            .methods
-            .iter()
-            .find(|m| cf.get_utf8(m.name_index).ok() == Some("main"))
-            .expect("main");
-        let mut cfg = compute_basic_blocks_for_method(cf, method).expect("cfg");
-        normalize_stack_slots_for_method(&mut cfg).expect("normalize");
-    }
-
-    #[test]
-    #[ignore]
     fn test_descriptor_parameter_info_mixed_types() {
         let got = descriptor_parameter_info("(Ljava/lang/String;ID[J)V");
         let want = vec![
@@ -1857,7 +1999,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_descriptor_returns_value() {
         assert!(!descriptor_returns_value("(I)V"));
         assert!(descriptor_returns_value("(I)I"));
@@ -1865,13 +2006,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_array_load_dataflow_iaload() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x2e], 0, cf, 0x2e, 0, false, false).expect("decode");
+            decode_dataflow(&[0x2e], 0, cf, 0x2e, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(sources.len(), 1);
         match &sources[0] {
             Location::ArrayElement { base, offset } => {
@@ -1885,26 +2024,22 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_array_load_dataflow_laload() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (_sources, destinations) =
-            decode_dataflow(&[0x2f], 0, cf, 0x2f, 0, false, false).expect("decode");
+            decode_dataflow(&[0x2f], 0, cf, 0x2f, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(destinations.len(), 2);
         assert!(matches!(destinations[0], Location::StackOutput));
         assert!(matches!(destinations[1], Location::StackOutput));
     }
 
     #[test]
-    #[ignore]
     fn test_array_store_iastore() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x4f], 0, cf, 0x4f, 0, false, false).expect("decode");
+            decode_dataflow(&[0x4f], 0, cf, 0x4f, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(sources, vec![Location::StackInput(0)]);
         match &destinations[0] {
             Location::ArrayElement { base, offset } => {
@@ -1916,13 +2051,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_array_store_lastore() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x50], 0, cf, 0x50, 0, false, false).expect("decode");
+            decode_dataflow(&[0x50], 0, cf, 0x50, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(
             sources,
             vec![Location::StackInput(0), Location::StackInput(1)]
@@ -1937,56 +2070,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn test_normalize_array_element_nested_slots() {
-        let bytes = &fixture("ArrayFlow.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        let method = parser
-            .methods()
-            .find(|m| parser.class_file().get_utf8(m.name_index).ok() == Some("touch"))
-            .expect("touch method");
-        let mut cfg = compute_basic_blocks_for_method(cf, method).expect("cfg");
-        normalize_stack_slots_for_method(&mut cfg).expect("normalize");
-
-        fn assert_no_stack_input(loc: &Location) {
-            match loc {
-                Location::StackInput(_) | Location::StackOutput => {
-                    panic!("unnormalized: {:?}", loc);
-                }
-                Location::ArrayElement { base, offset } => {
-                    assert_no_stack_input(base);
-                    assert_no_stack_input(offset);
-                }
-                _ => {}
-            }
-        }
-
-        let mut saw_array_element = false;
-        for inst in cfg.instructions() {
-            for df in &inst.dataflow {
-                for loc in df.sources.iter().chain(std::iter::once(&df.destination)) {
-                    if matches!(loc, Location::ArrayElement { .. }) {
-                        saw_array_element = true;
-                    }
-                    assert_no_stack_input(loc);
-                }
-            }
-        }
-        assert!(
-            saw_array_element,
-            "expected at least one ArrayElement in touch()"
-        );
-    }
-
-    #[test]
-    #[ignore]
     fn test_dup_dataflow() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x59], 0, cf, 0x59, 0, false, false).expect("decode");
+            decode_dataflow(&[0x59], 0, cf, 0x59, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(sources, vec![Location::StackInput(0)]);
         assert_eq!(destinations.len(), 2);
         assert!(destinations
@@ -1995,13 +2083,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_dup_x1_dataflow() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x5a], 0, cf, 0x5a, 0, false, false).expect("decode");
+            decode_dataflow(&[0x5a], 0, cf, 0x5a, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(sources.len(), 2);
         assert_eq!(destinations.len(), 3);
         assert!(destinations
@@ -2010,13 +2096,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_dup2_dataflow() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x5c], 0, cf, 0x5c, 0, false, false).expect("decode");
+            decode_dataflow(&[0x5c], 0, cf, 0x5c, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(sources.len(), 2);
         assert_eq!(destinations.len(), 4);
         assert!(destinations
@@ -2025,13 +2109,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_swap_dataflow() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x5f], 0, cf, 0x5f, 0, false, false).expect("decode");
+            decode_dataflow(&[0x5f], 0, cf, 0x5f, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(
             sources,
             vec![Location::StackInput(0), Location::StackInput(1)]
@@ -2043,25 +2125,483 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_new_dataflow() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        let mut class_idx = None;
-        for i in 1u16..=(cf.constant_pool.len() as u16) {
-            if matches!(cf.get_cp(i), Ok(CpEntry::Class { .. })) {
-                class_idx = Some(i);
-                break;
-            }
-        }
-        let idx = class_idx.expect("CONSTANT_Class");
-        let code = [0xbb, (idx >> 8) as u8, idx as u8];
+        let cf = &constant_pool_only();
+        let code = [0xbb, 0x00, CONSTANT_POOL_CLASS_INDEX as u8];
         let (sources, destinations) =
-            decode_dataflow(&code, 0, cf, 0xbb, 0, false, false).expect("decode");
-        assert_eq!(sources.len(), 1);
-        assert!(matches!(sources[0], Location::Allocation(_)));
+            decode_dataflow(&code, 0, cf, 0xbb, &ParameterSlotMap::default(), false)
+                .expect("decode");
+        assert_eq!(sources, vec![Location::Allocation("Demo".to_string())]);
         assert_eq!(destinations, vec![Location::StackOutput]);
+    }
+
+    /// Constant-pool indices of the two `CONSTANT_Fieldref`s in
+    /// [`constant_pool_with_fields`]: one `long` field, one `int` field.
+    const WIDE_FIELD_INDEX: u16 = 3;
+    const NARROW_FIELD_INDEX: u16 = 4;
+
+    /// A `ClassFile` whose pool holds a `Demo.wide:J` and a `Demo.narrow:I`
+    /// field reference, so the four field opcodes can be decoded against a real
+    /// descriptor without compiling anything.
+    fn constant_pool_with_fields() -> ClassFile {
+        let mut cf = constant_pool_only();
+        cf.constant_pool.extend([
+            // 3: Demo.wide:J
+            Some(CpEntry::Fieldref {
+                class_index: CONSTANT_POOL_CLASS_INDEX,
+                name_and_type_index: 5,
+            }),
+            // 4: Demo.narrow:I
+            Some(CpEntry::Fieldref {
+                class_index: CONSTANT_POOL_CLASS_INDEX,
+                name_and_type_index: 6,
+            }),
+            // 5: wide:J
+            Some(CpEntry::NameAndType {
+                name_index: 7,
+                descriptor_index: 8,
+            }),
+            // 6: narrow:I
+            Some(CpEntry::NameAndType {
+                name_index: 9,
+                descriptor_index: 10,
+            }),
+            Some(CpEntry::Utf8(JvmString::Utf8("wide".to_string()))),
+            Some(CpEntry::Utf8(JvmString::Utf8("J".to_string()))),
+            Some(CpEntry::Utf8(JvmString::Utf8("narrow".to_string()))),
+            Some(CpEntry::Utf8(JvmString::Utf8("I".to_string()))),
+        ]);
+        cf
+    }
+
+    /// Decode one field opcode against the pool above and report how many stack
+    /// words it consumes and produces.
+    fn field_effect(opcode: u8, field_index: u16) -> (usize, usize) {
+        let cf = &constant_pool_with_fields();
+        let code = [opcode, (field_index >> 8) as u8, field_index as u8];
+        let (sources, destinations) =
+            decode_dataflow(&code, 0, cf, opcode, &ParameterSlotMap::default(), false)
+                .expect("decode");
+        let consumed = sources
+            .iter()
+            .filter(|l| matches!(l, Location::StackInput(_)))
+            .count();
+        let produced = destinations
+            .iter()
+            .filter(|l| matches!(l, Location::StackOutput))
+            .count();
+        (consumed, produced)
+    }
+
+    /// `long` and `double` are category-2: a field of either type occupies two
+    /// operand-stack words. Everything else, references included, occupies one.
+    #[test]
+    fn field_slot_width_follows_the_descriptor() {
+        assert_eq!(field_slot_width("J"), 2, "long");
+        assert_eq!(field_slot_width("D"), 2, "double");
+        for narrow in [
+            "I",
+            "Z",
+            "B",
+            "C",
+            "S",
+            "F",
+            "Ljava/lang/String;",
+            "[J",
+            "[D",
+        ] {
+            assert_eq!(field_slot_width(narrow), 1, "{narrow}");
+        }
+    }
+
+    /// All four field opcodes move a whole field value, so their stack effect is
+    /// the descriptor's width. Decoding them as one word regardless leaves the
+    /// simulated stack short by one at every `long`/`double` field access, which
+    /// then surfaces as an underflow at whatever consumes the value -- `lcmp`,
+    /// an arithmetic opcode, or a call argument several instructions later.
+    #[test]
+    fn field_opcodes_move_the_descriptor_width() {
+        // getstatic: no receiver, pushes the field.
+        assert_eq!(field_effect(0xb2, WIDE_FIELD_INDEX), (0, 2), "getstatic J");
+        assert_eq!(
+            field_effect(0xb2, NARROW_FIELD_INDEX),
+            (0, 1),
+            "getstatic I"
+        );
+        // putstatic: pops the field, no receiver.
+        assert_eq!(field_effect(0xb3, WIDE_FIELD_INDEX), (2, 0), "putstatic J");
+        assert_eq!(
+            field_effect(0xb3, NARROW_FIELD_INDEX),
+            (1, 0),
+            "putstatic I"
+        );
+        // getfield: pops the receiver, pushes the field.
+        assert_eq!(field_effect(0xb4, WIDE_FIELD_INDEX), (1, 2), "getfield J");
+        assert_eq!(field_effect(0xb4, NARROW_FIELD_INDEX), (1, 1), "getfield I");
+        // putfield: pops the field and the receiver under it.
+        assert_eq!(field_effect(0xb5, WIDE_FIELD_INDEX), (3, 0), "putfield J");
+        assert_eq!(field_effect(0xb5, NARROW_FIELD_INDEX), (2, 0), "putfield I");
+    }
+
+    /// `sastore` (0x56) closes the array-store block; it is not a stack-shuffle
+    /// opcode. Naming it `dup2_x2` -- which is 0x5e -- also left it outside the
+    /// `0x4f..=0x55` arm, so it consumed nothing and left its arrayref, index
+    /// and value behind as phantom slots.
+    #[test]
+    fn sastore_is_an_array_store() {
+        assert_eq!(super::mnemonic(0x56), "sastore");
+        assert_eq!(super::mnemonic(0x5e), "dup2_x2");
+        let cf = &constant_pool_only();
+        let (sources, destinations) =
+            decode_dataflow(&[0x56], 0, cf, 0x56, &ParameterSlotMap::default(), false)
+                .expect("decode");
+        assert_eq!(sources, vec![Location::StackInput(0)]);
+        match &destinations[0] {
+            Location::ArrayElement { base, offset } => {
+                assert_eq!(**base, Location::StackInput(2));
+                assert_eq!(**offset, Location::StackInput(1));
+            }
+            _ => panic!("expected ArrayElement destination"),
+        }
+    }
+
+    /// `sipush`'s operand is a two-byte signed short. Reading four bytes and
+    /// narrowing takes the *following* two bytes as the constant, and runs off
+    /// the end of `code` whenever `sipush` is within three bytes of it.
+    #[test]
+    fn sipush_reads_two_operand_bytes() {
+        let cf = &constant_pool_only();
+        // sipush 1024, ireturn -- four bytes, the shape a `return 1024;` compiles to.
+        let code = [0x11, 0x04, 0x00, 0xac];
+        let (sources, _) = decode_dataflow(&code, 0, cf, 0x11, &ParameterSlotMap::default(), false)
+            .expect("decode");
+        assert_eq!(
+            sources,
+            vec![Location::Constant(ConstantValue::Integer(1024))]
+        );
+        // The operand is signed.
+        let code = [0x11, 0xff, 0xff, 0xac];
+        let (sources, _) = decode_dataflow(&code, 0, cf, 0x11, &ParameterSlotMap::default(), false)
+            .expect("decode");
+        assert_eq!(
+            sources,
+            vec![Location::Constant(ConstantValue::Integer(-1))]
+        );
+    }
+
+    /// `multianewarray` pops one int count per dimension and pushes the array.
+    /// It was decoded as neither dataflow nor a modelled stack effect, so every
+    /// `new T[a][b]` left its counts on the simulated stack.
+    #[test]
+    fn multianewarray_consumes_one_slot_per_dimension() {
+        let cf = &constant_pool_with_fields();
+        for dimensions in 1u8..=4 {
+            let code = [0xc5, 0x00, CONSTANT_POOL_CLASS_INDEX as u8, dimensions];
+            let (sources, destinations) =
+                decode_dataflow(&code, 0, cf, 0xc5, &ParameterSlotMap::default(), false)
+                    .expect("decode");
+            let consumed = sources
+                .iter()
+                .filter(|l| matches!(l, Location::StackInput(_)))
+                .count();
+            assert_eq!(consumed, dimensions as usize, "{dimensions} dimensions");
+            assert_eq!(destinations, vec![Location::StackOutput]);
+            assert!(sources.contains(&Location::Allocation("Demo".to_string())));
+        }
+    }
+
+    // ================= Opcode tables =================
+    //
+    // These are pure lookups, so they need no fixture and are not `#[ignore]`d:
+    // a plain `cargo test` catches a regression in them.
+
+    /// Every opcode in the arithmetic/logic block is a single byte with no
+    /// inline operands. `iushr` (0x7c) was listed as having two, which
+    /// desynchronized the linear decoder for the rest of the method.
+    #[test]
+    fn arithmetic_opcodes_are_one_byte() {
+        for opcode in 0x60u8..=0x83 {
+            assert_eq!(
+                instruction_length(&[opcode], 0).expect("length"),
+                1,
+                "opcode 0x{opcode:02x} ({}) should be one byte",
+                super::mnemonic(opcode)
+            );
+        }
+    }
+
+    /// The int and long shifts alternate, so a range-based table gives half of
+    /// them the wrong effect. Both forms pop an int shift distance; they differ
+    /// only in the width of the value.
+    #[test]
+    fn shift_stack_effects_are_assigned_by_opcode() {
+        for opcode in [0x78u8, 0x7a, 0x7c] {
+            assert_eq!(
+                stack_effect(opcode),
+                (2, 1),
+                "0x{opcode:02x} ({}) is an int shift",
+                super::mnemonic(opcode)
+            );
+        }
+        for opcode in [0x79u8, 0x7b, 0x7d] {
+            assert_eq!(
+                stack_effect(opcode),
+                (3, 2),
+                "0x{opcode:02x} ({}) is a long shift",
+                super::mnemonic(opcode)
+            );
+        }
+    }
+
+    /// Both switches pop one int selector. They decode to no dataflow and to
+    /// `InstructionKind::Other`, so `misc_stack_effect` is where that lives.
+    #[test]
+    fn switches_consume_their_selector() {
+        assert_eq!(misc_stack_effect(0xaa), (1, 0), "tableswitch");
+        assert_eq!(misc_stack_effect(0xab), (1, 0), "lookupswitch");
+    }
+
+    // ================= Parameter slots vs parameter ordinals =================
+
+    fn ordinals(descriptor: &str, is_instance: bool) -> Vec<Option<u16>> {
+        let map = ParameterSlotMap::for_method(descriptor, is_instance);
+        // One past the last parameter slot, to pin down where locals begin.
+        (0..=map.slot_count() as u16)
+            .map(|slot| map.ordinal_for_slot(slot))
+            .collect()
+    }
+
+    #[test]
+    fn parameter_slot_map_without_wide_parameters_is_the_identity() {
+        assert_eq!(
+            ordinals("(IIZ)I", false),
+            vec![Some(0), Some(1), Some(2), None]
+        );
+    }
+
+    /// `static long onlyLong(long v, int n, boolean flag)`: `v` owns slots 0-1,
+    /// `n` slot 2 and `flag` slot 3, but the ordinals are only 0, 1, 2.
+    #[test]
+    fn parameter_slot_map_maps_both_halves_of_a_wide_parameter() {
+        assert_eq!(
+            ordinals("(JIZ)J", false),
+            vec![Some(0), Some(0), Some(1), Some(2), None]
+        );
+        assert_eq!(
+            ordinals("(DI)D", false),
+            vec![Some(0), Some(0), Some(1), None]
+        );
+    }
+
+    #[test]
+    fn parameter_slot_map_handles_wide_parameters_in_any_position() {
+        // middle: int, long, boolean
+        assert_eq!(
+            ordinals("(IJZ)J", false),
+            vec![Some(0), Some(1), Some(1), Some(2), None]
+        );
+        // trailing: int, boolean, double
+        assert_eq!(
+            ordinals("(IZD)D", false),
+            vec![Some(0), Some(1), Some(2), Some(2), None]
+        );
+        // two wide parameters: the spaces end up off by two
+        assert_eq!(
+            ordinals("(JDI)D", false),
+            vec![Some(0), Some(0), Some(1), Some(1), Some(2), None]
+        );
+    }
+
+    /// An instance method receives `this` in slot 0, which is ordinal 0; the
+    /// descriptor's parameters follow.
+    #[test]
+    fn parameter_slot_map_accounts_for_the_receiver() {
+        assert_eq!(
+            ordinals("(JI)V", true),
+            vec![Some(0), Some(1), Some(1), Some(2), None]
+        );
+        assert_eq!(
+            ordinals("(II)V", true),
+            vec![Some(0), Some(1), Some(2), None]
+        );
+    }
+
+    /// `lreturn` and `dreturn` pop two words like every other category-2
+    /// consumer. Giving all five value returns `(1, 0)` left a phantom slot,
+    /// which is inert only because a return block has no successors for it to
+    /// reach.
+    #[test]
+    fn wide_returns_pop_two_slots() {
+        assert_eq!(misc_stack_effect(0xac), (1, 0), "ireturn");
+        assert_eq!(misc_stack_effect(0xad), (2, 0), "lreturn");
+        assert_eq!(misc_stack_effect(0xae), (1, 0), "freturn");
+        assert_eq!(misc_stack_effect(0xaf), (2, 0), "dreturn");
+        assert_eq!(misc_stack_effect(0xb0), (1, 0), "areturn");
+        assert_eq!(misc_stack_effect(0xb1), (0, 0), "return");
+    }
+
+    /// `jsr`/`ret` are illegal from class version 51 on, so nothing current
+    /// exercises them -- but a pre-Java-7 artifact would, and a missing operand
+    /// byte desynchronizes the linear decoder for the rest of the method.
+    #[test]
+    fn jsr_and_ret_are_decoded() {
+        // ret takes a one-byte local index; the wide form takes two.
+        assert_eq!(instruction_length(&[0xa9, 0x01], 0).expect("ret"), 2);
+        assert_eq!(
+            instruction_length(&[0xc4, 0xa9, 0x01, 0x02], 0).expect("wide ret"),
+            4
+        );
+        // jsr and jsr_w keep the branch-offset lengths they already had.
+        assert_eq!(instruction_length(&[0xa8, 0x00, 0x03], 0).expect("jsr"), 3);
+        assert_eq!(
+            instruction_length(&[0xc9, 0x00, 0x00, 0x00, 0x05], 0).expect("jsr_w"),
+            5
+        );
+        // jsr pushes the return address it later hands to ret; ret consumes
+        // nothing, reading the address out of a local.
+        assert_eq!(misc_stack_effect(0xa8), (0, 1), "jsr");
+        assert_eq!(misc_stack_effect(0xc9), (0, 1), "jsr_w");
+        assert_eq!(misc_stack_effect(0xa9), (0, 0), "ret");
+    }
+
+    /// The numeric conversions had one shared mnemonic, `"conv_or_cmp"`, which
+    /// named neither the conversion nor the comparisons it swept up. It is what
+    /// the underflow diagnostics print, so a report could not say which
+    /// instruction failed.
+    #[test]
+    fn numeric_conversions_have_their_own_mnemonics() {
+        let expected = [
+            (0x85u8, "i2l"),
+            (0x86, "i2f"),
+            (0x87, "i2d"),
+            (0x88, "l2i"),
+            (0x89, "l2f"),
+            (0x8a, "l2d"),
+            (0x8b, "f2i"),
+            (0x8c, "f2l"),
+            (0x8d, "f2d"),
+            (0x8e, "d2i"),
+            (0x8f, "d2l"),
+            (0x90, "d2f"),
+            (0x91, "i2b"),
+            (0x92, "i2c"),
+            (0x93, "i2s"),
+        ];
+        for (opcode, name) in expected {
+            assert_eq!(super::mnemonic(opcode), name, "0x{opcode:02x}");
+        }
+        // The comparisons that used to share the arm keep their own names.
+        assert_eq!(super::mnemonic(0x94), "lcmp");
+        assert_eq!(super::mnemonic(0x98), "dcmpg");
+    }
+
+    // ================= Stack-slot simulation =================
+
+    /// Build a method whose whole body is `code`, with `handlers` as its
+    /// exception table, and run it through the CFG builder and the stack-slot
+    /// normalizer -- the two passes `basic_blocks_with_stack_slots` chains.
+    fn normalize(code: Vec<u8>, handlers: Vec<ExceptionEntry>) -> ClassFileResult<()> {
+        let cf = ClassFile {
+            magic: 0xCAFE_BABE,
+            minor_version: 0,
+            major_version: 52,
+            constant_pool: vec![
+                Some(CpEntry::Class { name_index: 2 }),
+                Some(CpEntry::Utf8(JvmString::Utf8("Demo".to_string()))),
+                Some(CpEntry::Utf8(JvmString::Utf8("run".to_string()))),
+                Some(CpEntry::Utf8(JvmString::Utf8("()V".to_string()))),
+            ],
+            access_flags: 0,
+            this_class: CONSTANT_POOL_CLASS_INDEX,
+            super_class: 0,
+            interfaces: Vec::new(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+            attributes: Vec::new(),
+            source_file: None,
+        };
+        let method = MethodInfo {
+            access_flags: 0x0008, // static
+            name_index: 3,
+            descriptor_index: 4,
+            attributes: Vec::new(),
+            code: Some(CodeAttribute {
+                max_stack: 4,
+                max_locals: 2,
+                code,
+                exception_table: handlers,
+                attributes: Vec::new(),
+                code_byte_offset_in_classfile: 0,
+            }),
+        };
+        let mut cfg = compute_basic_blocks_for_method(&cf, &method)?;
+        normalize_stack_slots_for_method(&mut cfg)
+    }
+
+    /// A handler is entered with the exception reference at depth 0, so its
+    /// entry slot id is 0 like every other slot at that depth. Drawing it from
+    /// a separate counter made it the one non-positional id in the method, so a
+    /// block reachable from both a handler and a normal edge compared unequal
+    /// layouts at equal heights and failed a join that is in fact consistent.
+    ///
+    /// The second handler is the one that matters: the first would draw id 0
+    /// from the counter too, and the defect would not show.
+    #[test]
+    fn a_handler_entry_slot_is_positional() {
+        // 0: aconst_null      protected by the handler at 4
+        // 1: goto +6 -> 7     leaves one word on the stack
+        // 4: pop              <- handler A, protected by the handler at 7
+        // 5: aconst_null
+        // 6: athrow
+        // 7: athrow           <- handler B: reached as a handler from the block
+        //                        at 4, and by the goto from the block at 0
+        let code = vec![0x01, 0xa7, 0x00, 0x06, 0x57, 0x01, 0xbf, 0xbf];
+        let handlers = vec![
+            ExceptionEntry {
+                start_pc: 0,
+                end_pc: 4,
+                handler_pc: 4,
+                catch_type: 0,
+            },
+            ExceptionEntry {
+                start_pc: 4,
+                end_pc: 7,
+                handler_pc: 7,
+                catch_type: 0,
+            },
+        ];
+        normalize(code, handlers).expect("handler and normal edges agree at the join");
+    }
+
+    /// The aggregate stack-effect check is the last one to fire, and it named
+    /// neither the class, the method nor the instruction. `lreturn` on a
+    /// one-deep stack reaches it: the opcode carries no dataflow, so nothing
+    /// upstream rewrites a `StackInput` and reports first.
+    #[test]
+    fn a_stack_underflow_names_the_instruction() {
+        // 0: iconst_m1   pushes one word
+        // 1: lreturn     consumes two
+        let err = normalize(vec![0x02, 0xad], Vec::new()).expect_err("underflow");
+        match err {
+            ClassFileError::StackUnderflow {
+                method,
+                pc,
+                opcode,
+                mnemonic,
+                consumed,
+                stack_len,
+            } => {
+                assert_eq!(method.class_name, "Demo");
+                assert_eq!(method.method_name, "run");
+                assert_eq!(method.method_descriptor, "()V");
+                assert_eq!(pc, 1);
+                assert_eq!(opcode, 0xad);
+                assert_eq!(mnemonic, "lreturn");
+                assert_eq!(consumed, 2);
+                assert_eq!(stack_len, 1);
+            }
+            other => panic!("expected StackUnderflow, got {other:?}"),
+        }
     }
 }
 

@@ -1,0 +1,18 @@
+{
+  // `throughGrid` carries the taint past a two-dimensional `multianewarray`.
+  // The stores at lines 20 and 22 are pure copies the copy_alias union-find
+  // collapses, so they do not appear as their own code-flow steps.
+  "expected_lines": [14, 28],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LMultiArrayFlow;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LMultiArrayFlow;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

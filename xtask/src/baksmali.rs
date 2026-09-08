@@ -177,103 +177,124 @@ fn normalize_numeric_literals(line: &str) -> String {
     out
 }
 
+/// Canonicalize a `const-string` line so the two disassemblers can be compared.
+///
+/// baksmali writes the literal as UTF-16: every code unit outside printable
+/// ASCII becomes `\uXXXX`, unpaired surrogates included. dex-reader writes
+/// `char::escape_debug`, which leaves printable non-ASCII literal and uses
+/// `\u{XXXX}` for the rest, plus `\uXXXX` for the code units that have no
+/// `char` at all. Neither form is a subset of the other -- a supplementary
+/// character is one `\u{1f600}` on our side and two `😀` units on
+/// baksmali's -- so both sides are decoded back to the code-unit sequence they
+/// denote and re-emitted the same way.
 fn normalize_const_string(line: &str) -> String {
-    // const-string: baksmali uses \uXXXX for non-ASCII; we may print literal
-    // chars. Normalize both to \u form (lowercase hex).
-    if let Some(rest) = line.strip_prefix("const-string ") {
-        if let Some((reg_part, after_comma)) = rest.split_once(',') {
-            let after_comma = after_comma.trim();
-            if let Some(quoted) = after_comma
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-            {
-                // Normalize \t / \\t and \n / \\n so both sides match.
-                let quoted = quoted
-                    .replace("\\t", "\t")
-                    .replace("\\n", "\n")
-                    .replace("\\r", "\r");
-                // Normalize Rust \u{XXXX} to Java \uXXXX (4 hex digits).
-                let quoted = {
-                    let mut result = String::with_capacity(quoted.len());
-                    let mut cur = quoted.as_str();
-                    while let Some(start) = cur.find("\\u{") {
-                        result.push_str(&cur[..start]);
-                        let rest = &cur[start + 3..];
-                        if let Some(end) = rest.find('}') {
-                            let hex = &rest[..end];
-                            if !hex.is_empty()
-                                && hex.len() <= 8
-                                && hex.chars().all(|c| c.is_ascii_hexdigit())
-                            {
-                                let hex_lower = hex.to_lowercase();
-                                let hex_4 = if hex_lower.len() >= 4 {
-                                    hex_lower[..4].to_string()
-                                } else {
-                                    format!("{:0>4}", hex_lower)
-                                };
-                                result.push_str(&format!("\\u{}", hex_4));
-                                cur = &rest[end + 1..];
-                            } else {
-                                result.push_str("\\u{");
-                                cur = rest;
-                            }
-                        } else {
-                            result.push_str("\\u{");
-                            cur = rest;
-                        }
-                    }
-                    result.push_str(cur);
-                    result
-                };
-                // If already \u-escaped (baksmali), just lowercase the hex.
-                if quoted.contains("\\u") {
-                    let mut out = String::from("const-string ");
-                    out.push_str(reg_part.trim());
-                    out.push_str(", \"");
-                    let mut i = 0;
-                    let chars: Vec<char> = quoted.chars().collect();
-                    while i < chars.len() {
-                        if i + 5 <= chars.len()
-                            && chars[i] == '\\'
-                            && chars[i + 1] == 'u'
-                            && chars[i + 2].is_ascii_hexdigit()
-                            && chars[i + 3].is_ascii_hexdigit()
-                            && chars[i + 4].is_ascii_hexdigit()
-                            && chars[i + 5].is_ascii_hexdigit()
-                        {
-                            let hex: String = chars[i + 2..i + 6]
-                                .iter()
-                                .collect::<String>()
-                                .to_lowercase();
-                            out.push_str(&format!("\\u{}", hex));
-                            i += 6;
-                            continue;
-                        }
-                        out.push(chars[i]);
-                        i += 1;
-                    }
-                    out.push('"');
-                    return out;
-                }
-                // Our output: literal Unicode -> \uXXXX.
-                let mut escaped = String::from('"');
-                for c in quoted.chars() {
-                    if c.is_ascii() && c != '\\' && c != '"' {
-                        escaped.push(c);
-                    } else if c == '\\' {
-                        escaped.push_str("\\\\");
-                    } else if c == '"' {
-                        escaped.push_str("\\\"");
-                    } else {
-                        escaped.push_str(&format!("\\u{:04x}", c as u32));
-                    }
-                }
-                escaped.push('"');
-                return format!("const-string {}, {}", reg_part.trim(), escaped);
+    let Some(rest) = line.strip_prefix("const-string ") else {
+        return line.to_string();
+    };
+    let Some((reg_part, after_comma)) = rest.split_once(',') else {
+        return line.to_string();
+    };
+    let Some(quoted) = after_comma
+        .trim()
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+    else {
+        return line.to_string();
+    };
+
+    let mut escaped = String::from('"');
+    for unit in string_literal_code_units(quoted) {
+        match char::from_u32(u32::from(unit)) {
+            // Printable ASCII stays readable, so a diff is still legible; the
+            // quote and backslash would reopen the escaping question, so they
+            // take the numeric form with everything else.
+            Some(c) if c.is_ascii_graphic() && c != '"' && c != '\\' => escaped.push(c),
+            Some(' ') => escaped.push(' '),
+            _ => escaped.push_str(&format!("\\u{unit:04x}")),
+        }
+    }
+    escaped.push('"');
+    format!("const-string {}, {}", reg_part.trim(), escaped)
+}
+
+/// The UTF-16 code units a smali string literal body denotes.
+///
+/// Accepts both dialects' escapes: `\uXXXX` (baksmali, one code unit, possibly
+/// an unpaired surrogate), `\u{XXXXXX}` (Rust `escape_debug`, one scalar value
+/// and so one or two code units), and the single-character ones they share.
+fn string_literal_code_units(body: &str) -> Vec<u16> {
+    let chars: Vec<char> = body.chars().collect();
+    let mut units: Vec<u16> = Vec::with_capacity(chars.len());
+    let mut buf = [0u16; 2];
+    let mut i = 0;
+
+    while i < chars.len() {
+        // Not an escape: the character stands for itself.
+        if chars[i] != '\\' || i + 1 >= chars.len() {
+            units.extend_from_slice(chars[i].encode_utf16(&mut buf));
+            i += 1;
+            continue;
+        }
+
+        // \u{XXXXXX}
+        if chars[i + 1] == 'u' && chars.get(i + 2) == Some(&'{') {
+            let scalar = chars[i + 3..]
+                .iter()
+                .position(|c| *c == '}')
+                .and_then(|len| {
+                    let hex: String = chars[i + 3..i + 3 + len].iter().collect();
+                    u32::from_str_radix(&hex, 16)
+                        .ok()
+                        .and_then(char::from_u32)
+                        .map(|c| (len, c))
+                });
+            if let Some((len, c)) = scalar {
+                units.extend_from_slice(c.encode_utf16(&mut buf));
+                i += 3 + len + 1;
+                continue;
+            }
+        }
+
+        // \uXXXX -- one code unit, which may be an unpaired surrogate. Keeping
+        // it as a code unit rather than a `char` is the whole point.
+        if chars[i + 1] == 'u'
+            && i + 6 <= chars.len()
+            && chars[i + 2..i + 6].iter().all(|c| c.is_ascii_hexdigit())
+        {
+            let hex: String = chars[i + 2..i + 6].iter().collect();
+            if let Ok(unit) = u16::from_str_radix(&hex, 16) {
+                units.push(unit);
+                i += 6;
+                continue;
+            }
+        }
+
+        // The single-character escapes both dialects produce.
+        let simple = match chars[i + 1] {
+            'n' => Some('\n'),
+            'r' => Some('\r'),
+            't' => Some('\t'),
+            '0' => Some('\0'),
+            '\\' => Some('\\'),
+            '"' => Some('"'),
+            '\'' => Some('\''),
+            _ => None,
+        };
+        match simple {
+            Some(c) => {
+                units.extend_from_slice(c.encode_utf16(&mut buf));
+                i += 2;
+            }
+            // An escape neither side produces: keep the backslash verbatim so
+            // a genuine disagreement still shows up as one.
+            None => {
+                units.extend_from_slice('\\'.encode_utf16(&mut buf));
+                i += 1;
             }
         }
     }
-    line.to_string()
+
+    units
 }
 
 fn normalize_wide_literal(line: &str) -> String {
@@ -658,4 +679,72 @@ fn diff_preview(expected: &[String], actual: &[String]) -> String {
         out.push_str(&format!("{j:04}: {line}\n"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_const_string;
+
+    /// The two disassemblers write the same constant three different ways, so
+    /// the comparison only means anything if both sides canonicalize to the
+    /// same code-unit sequence. These are the exact lines the surrogate
+    /// fixtures produce.
+    #[test]
+    fn const_string_dialects_canonicalize_to_the_same_line() {
+        // (dex-reader's rendering, baksmali's rendering)
+        let pairs = [
+            // A supplementary character: literal on our side, a surrogate pair
+            // on baksmali's.
+            (
+                "const-string v0, \"\u{1F600}\"",
+                "const-string v0, \"\\ud83d\\ude00\"",
+            ),
+            // A packed table: literal pair, `\uXXXX` for the unpaired units,
+            // and `\u{XXXXXX}` for a scalar value `escape_debug` will not print.
+            (
+                "const-string v0, \" \u{10000}\\ud801\\u{10ffff}\\udc02\"",
+                "const-string v0, \" \\ud800\\udc00\\ud801\\udbff\\udfff\\udc02\"",
+            ),
+            // A lone surrogate, which neither side can hold as a `char`.
+            (
+                "const-string v1, \"\\ud800\"",
+                "const-string v1, \"\\ud800\"",
+            ),
+            // Plain ASCII must survive untouched, escapes and all.
+            (
+                "const-string v2, \"a\\tb\\\\c\"",
+                "const-string v2, \"a\\tb\\\\c\"",
+            ),
+        ];
+        for (ours, theirs) in pairs {
+            assert_eq!(
+                normalize_const_string(ours),
+                normalize_const_string(theirs),
+                "{ours:?} and {theirs:?} should canonicalize alike"
+            );
+        }
+    }
+
+    /// Canonicalization must not erase a real disagreement: two constants that
+    /// differ by one code unit still differ afterwards.
+    #[test]
+    fn const_string_normalization_keeps_genuine_differences() {
+        assert_ne!(
+            normalize_const_string("const-string v0, \"\\ud800\""),
+            normalize_const_string("const-string v0, \"\\ud801\""),
+        );
+        assert_ne!(
+            normalize_const_string("const-string v0, \"\u{1F600}\""),
+            normalize_const_string("const-string v0, \"\\ud83d\""),
+        );
+    }
+
+    /// Printable ASCII stays readable so a failing diff is legible.
+    #[test]
+    fn ascii_const_strings_stay_readable() {
+        assert_eq!(
+            normalize_const_string("const-string v3, \"hello world\""),
+            "const-string v3, \"hello world\"",
+        );
+    }
 }

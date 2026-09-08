@@ -15,9 +15,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{anyhow, bail, Context, Result};
+use jvm_reader::flow::compute_basic_blocks_for_method;
+use jvm_reader::types::CpEntry;
 use jvm_reader::{
     collect_line_map_entries, disassemble_class_file, disassemble_jar_file, ClassFile,
-    ClassFileError, InstructionKind, JarFileParser, Location, MethodInfo,
+    ClassFileError, ClassFileParser, InstructionKind, JarFileParser, Location, MethodInfo,
 };
 
 use crate::exec;
@@ -50,7 +52,7 @@ pub fn run_checks(samples_dir: &Path, work: &Path) -> Result<Vec<(String, Outcom
         bail!("no .java samples found in {}", samples_dir.display());
     }
 
-    let checks: [(&str, fn(&[Sample]) -> Result<()>); 9] = [
+    let checks: [(&str, fn(&[Sample]) -> Result<()>); 11] = [
         ("jvm:disassemble-class", check_class_disassembly),
         ("jvm:javap", check_javap),
         ("jvm:jar-classes", check_jar_classes),
@@ -60,6 +62,8 @@ pub fn run_checks(samples_dir: &Path, work: &Path) -> Result<Vec<(String, Outcom
         ("jvm:file-offsets", check_file_offsets),
         ("jvm:basic-blocks", check_basic_blocks),
         ("jvm:stack-slots", check_stack_slots),
+        ("jvm:switch-shapes", check_switch_shapes),
+        ("jvm:utf8-constants", check_utf8_constants),
     ];
 
     Ok(checks
@@ -417,8 +421,19 @@ fn check_basic_blocks(samples: &[Sample]) -> Result<()> {
                 if !covered.iter().all(|&v| v) {
                     bail!("not all instructions covered by blocks in {}", sample.name);
                 }
-                if !blocks[0].predecessors.is_empty() {
-                    bail!("entry block has predecessors in {}", sample.name);
+                // The entry block may legitimately have predecessors: when a
+                // method opens with a loop header (`while` at the top of the
+                // body), javac emits a back edge to pc 0. What must not happen
+                // is a *forward* edge into the entry, which would mean a second
+                // way into the method.
+                for &pred in &blocks[0].predecessors {
+                    if blocks[pred].start_pc <= blocks[0].start_pc {
+                        bail!(
+                            "entry block has a non-back-edge predecessor (block {pred}, pc {}) in {}",
+                            blocks[pred].start_pc,
+                            sample.name
+                        );
+                    }
                 }
             }
         }
@@ -456,9 +471,7 @@ fn check_stack_slots(samples: &[Sample]) -> Result<()> {
                     .to_string();
                 let cfg = match class_parser.basic_blocks_with_stack_slots(method) {
                     Ok(cfg) => cfg,
-                    Err(ClassFileError::InvalidClassFile(
-                        "inconsistent operand stack height at basic-block join",
-                    )) => {
+                    Err(ClassFileError::StackHeightMismatch { .. }) => {
                         skipped_join_shape += 1;
                         continue;
                     }
@@ -526,6 +539,130 @@ fn assert_normalized(loc: &Location, saw_stack_slot: &mut bool) -> Result<()> {
             assert_normalized(offset, saw_stack_slot)?;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+// --- fixture-shape checks -------------------------------------------------
+//
+// These two came out of `jvm-reader`'s `flow.rs` unit tests, which used to load
+// compiled classes from a directory someone had to populate first. Everything
+// they asserted about *decoding* those fixtures is now covered end to end by
+// the `SwitchFlow` / `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint
+// cases, in both frontends. What is left is what a taint case cannot say.
+
+/// Read one sample's compiled `.class` by class name.
+fn class_bytes(samples: &[Sample], name: &str) -> Result<Vec<u8>> {
+    let sample = samples
+        .iter()
+        .find(|s| s.name == name)
+        .with_context(|| format!("no sample named {name}"))?;
+    let file = format!("{name}.class");
+    let path = sample
+        .classes
+        .iter()
+        .find(|p| p.file_name().and_then(|f| f.to_str()) == Some(file.as_str()))
+        .with_context(|| format!("{name} produced no {file}"))?;
+    std::fs::read(path).with_context(|| format!("reading {}", path.display()))
+}
+
+/// The mnemonics of one method, in order.
+fn mnemonics(bytes: &[u8], method_name: &str) -> Result<Vec<&'static str>> {
+    let parser = ClassFileParser::parse(bytes).map_err(|e| anyhow!("parse: {e}"))?;
+    let cf = parser.class_file();
+    let method = cf
+        .methods
+        .iter()
+        .find(|m| cf.get_utf8(m.name_index).ok() == Some(method_name))
+        .with_context(|| format!("no method named {method_name}"))?;
+    let cfg = compute_basic_blocks_for_method(cf, method).map_err(|e| anyhow!("cfg: {e}"))?;
+    Ok(cfg.instructions().iter().map(|i| i.mnemonic).collect())
+}
+
+/// The switch fixtures still contain the switch instruction they are named for.
+///
+/// A vacuity guard, and the one thing the taint cases cannot check: if a later
+/// `javac` lowered these shapes some other way -- a chain of `if_icmpeq`, say --
+/// `SwitchFlow` and `StringSwitchFlow` would keep passing while no longer
+/// exercising a switch at all.
+fn check_switch_shapes(samples: &[Sample]) -> Result<()> {
+    for (class, method, mnemonic) in [
+        ("SparseSwitch", "parseTable", "lookupswitch"),
+        ("DenseSwitch", "parseTable", "tableswitch"),
+    ] {
+        let bytes = class_bytes(samples, class)?;
+        let found = mnemonics(&bytes, method)?;
+        if !found.contains(&mnemonic) {
+            bail!("{class}.{method} should contain {mnemonic}");
+        }
+    }
+
+    // A Java 8 string switch lowers to both, in this order.
+    let bytes = class_bytes(samples, "StringSwitch")?;
+    let switches: Vec<&str> = mnemonics(&bytes, "decode")?
+        .into_iter()
+        .filter(|m| *m == "lookupswitch" || *m == "tableswitch")
+        .collect();
+    if switches != ["lookupswitch", "tableswitch"] {
+        bail!(
+            "StringSwitch.decode should lower to lookupswitch then tableswitch, got {switches:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Modified-UTF-8 string constants survive the constant-pool parse.
+///
+/// No taint case can stand in for this: an unpaired surrogate is inert data in
+/// a constant, so a decoder that mangles it changes no flow. These two fixtures
+/// carry nothing else. `dex:utf8-constants` is the same check on the other
+/// frontend, over the same two sources compiled to DEX.
+fn check_utf8_constants(samples: &[Sample]) -> Result<()> {
+    // A supplementary character arrives as a CESU-8 pair and must recombine.
+    let bytes = class_bytes(samples, "PairedOnly")?;
+    let parser = ClassFileParser::parse(&bytes).map_err(|e| anyhow!("parse PairedOnly: {e}"))?;
+    let cf = parser.class_file();
+    let emoji = cf
+        .constant_pool
+        .iter()
+        .flatten()
+        .filter_map(|e| match e {
+            CpEntry::Utf8(s) => s.as_str(),
+            _ => None,
+        })
+        .find(|s| s.chars().any(|c| c as u32 > 0xFFFF))
+        .context("PairedOnly should hold a supplementary character constant")?;
+    if emoji != "\u{1F600}" {
+        bail!("recombined pair is {emoji:?}, want U+1F600");
+    }
+
+    // Unpaired surrogates are legal, must not stop the parse, and cannot be
+    // handed out as `&str`.
+    let bytes = class_bytes(samples, "SurrogateConstants")?;
+    let parser =
+        ClassFileParser::parse(&bytes).map_err(|e| anyhow!("parse SurrogateConstants: {e}"))?;
+    let cf = parser.class_file();
+    if cf.this_class_name().map_err(|e| anyhow!("{e}"))? != "SurrogateConstants" {
+        bail!("names and descriptors should be unaffected by a surrogate constant");
+    }
+    let mut unpaired: Vec<Vec<u16>> = Vec::new();
+    for entry in cf.constant_pool.iter().flatten() {
+        if let CpEntry::Utf8(s) = entry {
+            if s.as_str().is_none() {
+                if !s.to_string_lossy().contains('\u{FFFD}') {
+                    bail!("an unpaired surrogate should read back lossily as U+FFFD");
+                }
+                unpaired.push(s.code_units().collect());
+            }
+        }
+    }
+    if unpaired.is_empty() {
+        bail!("SurrogateConstants should hold unpaired surrogates");
+    }
+    for (unit, what) in [(0xD800u16, "high"), (0xDC00u16, "low")] {
+        if !unpaired.iter().any(|u| u.contains(&unit)) {
+            bail!("the lone {what} surrogate should survive as a code unit");
+        }
     }
     Ok(())
 }

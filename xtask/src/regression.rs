@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
+use crate::apk;
 use crate::assertions;
 use crate::dex;
 use crate::discovery::{self, Frontend, Kind, Packaging, TestCase};
@@ -49,6 +50,11 @@ const LUA_XFAIL: &[&str] = &[];
 
 /// JVM E2E cases whose failures count toward the suite exit code. All other
 /// `Jvm:*` taint cases run for visibility but report as XFAIL when they fail.
+///
+/// The four `*Flow` cases covering switch selectors, wide parameters and the
+/// shift family are enforced because each is a known-answer test for a decoder
+/// defect that has already been fixed once: demoting them to XFAIL would let
+/// the same bug come back silently, which is the opposite of why they exist.
 const JVM_E2E_ENFORCED: &[&str] = &[
     "Jvm:AnotherExample",
     "Jvm:ArrayFlow",
@@ -63,11 +69,19 @@ const JVM_E2E_ENFORCED: &[&str] = &[
     "Jvm:InstanceMethodFlow",
     "Jvm:LoopFlow",
     "Jvm:MethodCallFlow",
+    "Jvm:MultiArrayFlow",
     "Jvm:ObjectSensitivity",
     "Jvm:Reassignment",
+    "Jvm:ShiftFlow",
+    "Jvm:ShortArrayFlow",
+    "Jvm:SmallConstantFlow",
     "Jvm:SourceSinkExample",
     "Jvm:StaticFieldFlow",
     "Jvm:StringBuilderFlow",
+    "Jvm:StringSwitchFlow",
+    "Jvm:SwitchFlow",
+    "Jvm:WideFieldFlow",
+    "Jvm:WideParamFlow",
 ];
 
 /// Tree-sitter C cases known to fail today, quarantined as XFAIL so the suite
@@ -186,8 +200,18 @@ pub fn run(opts: &Options) -> Result<bool> {
             .as_ref()
             .is_none_or(|f| GHIDRA_PROJECT_CASE.contains(f));
 
+    // The `apk:*` checks drive `ctadl`, so preflight has to build it for them as
+    // well -- `--filter apk` selects no taint cases at all, and without this the
+    // binary would never be built and every check would report the internal
+    // error from [`ctadl_bin`].
+    let apk_selected = opts.frontends.contains(&Frontend::Dex)
+        && opts
+            .filter
+            .as_ref()
+            .is_none_or(|f| apk::CHECKS.iter().any(|name| name.contains(f.as_str())));
+
     // ctadl/dex-reader/jvm-reader are only needed for the matching case kinds.
-    if !cases.is_empty() || ghidra_selected {
+    if !cases.is_empty() || ghidra_selected || apk_selected {
         preflight(&cases, ghidra_selected, opts.release)?;
     }
 
@@ -202,7 +226,13 @@ pub fn run(opts: &Options) -> Result<bool> {
     } else {
         None
     };
-    let dex_apk = if samples_dir.is_some() && wants_dex {
+    // The APK is read by two independent families: `dex:apk`, which parses it
+    // with `dex-reader` alongside the compiled samples, and the `apk:*`
+    // end-to-end checks, which only need `ctadl`. So it is resolved for `dex`
+    // alone -- not, as it once was, only when the Java samples resolved too,
+    // which would have made the `apk:*` checks vanish on a machine with no
+    // sample sources for a reason that has nothing to do with them.
+    let dex_apk = if wants_dex {
         resolve_dex_apk(opts.dex_apk.as_deref())?
     } else {
         None
@@ -225,6 +255,9 @@ pub fn run(opts: &Options) -> Result<bool> {
     // *existing* Ghidra project (not a fresh binary). Only meaningful when Ghidra
     // and a target binary are available (guaranteed under the Nix regression env),
     // and self-skips otherwise, so it is cheap to always attempt.
+    if let Some(apk) = dex_apk.as_deref().filter(|_| wants_dex) {
+        tasks.push(Task::ApkChecks { apk });
+    }
     if ghidra_selected {
         tasks.push(Task::GhidraProject);
     }
@@ -299,6 +332,13 @@ enum Task<'a> {
         samples: &'a Path,
         apk: Option<&'a Path>,
     },
+    /// End-to-end checks driving `ctadl` over a real-world Android app; see
+    /// [`crate::apk`]. Separate from [`Task::DexChecks`] even though both read
+    /// the same APK: those parse it with `dex-reader`, these import it with the
+    /// analyzer, and only the former needs the Java toolchain.
+    ApkChecks {
+        apk: &'a Path,
+    },
     /// Hold the shipped model files to the published model generator schema.
     /// `None` means neither `--models-dir` nor the in-tree default was found,
     /// which reports as a Skip rather than vanishing from the report.
@@ -341,6 +381,16 @@ impl Task<'_> {
                     .and_then(|work| dex::run_checks(samples, *apk, &work))
                     .unwrap_or_else(|err| {
                         vec![("dex".to_string(), Outcome::Fail(format!("{err:#}")))]
+                    });
+                retain_filtered(results, opts)
+            }
+            Task::ApkChecks { apk } => {
+                // `ctadl import` of a real app, then what the store and the
+                // model check say about it. One import, shared by every check.
+                let results = scratch_dir("apk")
+                    .and_then(|work| apk::run_checks(apk, &work))
+                    .unwrap_or_else(|err| {
+                        vec![("apk:import".to_string(), Outcome::Fail(format!("{err:#}")))]
                     });
                 retain_filtered(results, opts)
             }
@@ -1005,7 +1055,7 @@ static CTADL_BIN: OnceLock<PathBuf> = OnceLock::new();
 /// test is actually broken. That really happened -- a stale release binary masked
 /// a total taint-flow regression in the PHP frontend. The only path that can be
 /// returned is the one [`build_ctadl`] just built from the current tree.
-fn ctadl_bin() -> Result<PathBuf> {
+pub(crate) fn ctadl_bin() -> Result<PathBuf> {
     CTADL_BIN.get().cloned().context(
         "internal error: ctadl binary requested before it was built; preflight must run first",
     )

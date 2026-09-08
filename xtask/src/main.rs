@@ -9,6 +9,7 @@
 //!     cargo xtask regression --filter <name>
 //!     cargo xtask regression --tests-dir <dir>
 
+mod apk;
 mod assertions;
 mod baksmali;
 mod dex;
@@ -151,9 +152,12 @@ Tasks:
                              compile and check (default: auto-detect
                              `jvm-reader/tests/sample`). Also drive the
                              dex-reader checks (compiled down to .dex).
-    --dex-apk <path>         Real-world APK to parse in the dex-reader smoke
-                             test (default: auto-detect
-                             `xtask/tests/dex/com.noto_54.apk`).
+    --dex-apk <path>         Real-world APK for the dex-reader smoke test and
+                             the `apk:*` end-to-end checks (default: auto-detect
+                             `xtask/tests/dex/com.noto_54.apk`). The `apk:*`
+                             checks drive `ctadl` itself and need no toolchain,
+                             so they run whenever `dex` is selected and this
+                             resolves; both self-skip when it does not.
     --models-dir <dir>       Directory holding the model generator schema and
                              the built-in model files checked against it
                              (default: auto-detect `ctadl-ascent/src/models`).

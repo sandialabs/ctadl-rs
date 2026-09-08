@@ -83,6 +83,44 @@ they are picked up automatically; no list to edit.
   joins the boundary with a declarative model under `--no-jni-bridge` instead of
   the built-in pass.
 
+## Checks that are not taint cases
+
+Not everything the suite reports comes from `tests/`. Four families are written in Rust in the
+`xtask` crate and folded into the same report, because they are expensive, or need a toolchain, or
+both — the same reasons the taint cases are nightly:
+
+- **`dex:*`** — `dex-reader` over the compiled samples (parse, line map, UTF-8 constants) and
+  against `baksmali` as ground truth, plus `dex:apk`, which parses every `classes*.dex` in the
+  real-world APK. Needs `javac`/`dx` for the sample-derived checks; `dex:apk` does not.
+- **`jvm:*`** — `jvm-reader` over the same samples compiled to `.class`/`.jar`. Needs `javac`.
+- **`apk:*`** — `ctadl` itself, end to end, over that same real-world APK
+  (`xtask/tests/dex/com.noto_54.apk`). Needs no toolchain at all: the APK is prebuilt and checked
+  in, so all these need is the `ctadl` binary.
+- **`models:*`** — the model files ctadl ships, validated against the model generator schema it
+  publishes. Reads three small files and runs no tool.
+
+The `apk:*` checks are where the analyzer meets a real app rather than a fixture: 6.4 MB, two
+`classes*.dex`, some 50,000 functions. Importing it costs about 13 seconds, which is why they live
+here — they used to be `#[test]`s in `ctadl-ascent/tests/cli.rs`, where they accounted for ~60 s of
+the ~77 s the workspace's tests spent executing, and moving them out halved `cargo test
+--workspace`. The import is done **once** and the four checks read the store it wrote:
+
+| Check | What it claims |
+| --- | --- |
+| `apk:import` | The app imports, the config records the language, format version, artifact path and content hash, and `ctadl inspect` decodes the stored program and reports functions in it. |
+| `apk:no-native-libs` | This APK carries no `lib/<abi>` entries, so the native-library pass records no sub-imports and stages nothing — the path that must not need Ghidra. |
+| `apk:model-check` | `ctadl query` against an import that was never indexed exits non-zero, reports which imports it checked and what the generator selected, and writes **nothing** into the store. |
+| `apk:skip-existing` | `--skip-existing` skips a re-import of an unchanged artifact, and only of an unchanged one: falsify the recorded hash and the same command re-imports. |
+
+They select with `--frontend dex` (the app is a Dex artifact) and, like `dex:apk`, self-skip when
+no APK resolves. `cargo xtask regression --frontend dex --filter apk:` runs just these, and needs
+nothing on `PATH` beyond a Rust toolchain to build `ctadl`.
+
+Because these drive the shipped binary rather than the library, they cover what a library-level
+test cannot: argument wiring in `main.rs`, exit statuses, and the on-disk shape of the store. The
+store paths they assert on are spelled out in `xtask/src/apk.rs` rather than imported from
+`ctadl-ascent`, deliberately — a layout change should fail them loudly rather than follow along.
+
 ## Adding a Java/DEX test
 
 1. Write `tests/java/Foo.java` with a `source()` and a `sink(...)` (see the

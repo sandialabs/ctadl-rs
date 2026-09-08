@@ -1,0 +1,18 @@
+{
+  // `limit()` is four bytes -- `sipush 1024; ireturn` -- so a four-byte operand
+  // read runs off the end of the code array and fails the class, taking this
+  // flow with it.
+  "expected_lines": [16, 32],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LSmallConstantFlow;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LSmallConstantFlow;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}
