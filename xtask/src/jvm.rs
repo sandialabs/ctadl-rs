@@ -165,7 +165,7 @@ fn check_javap(samples: &[Sample]) -> Result<()> {
     for sample in samples {
         for class in &sample.classes {
             let mut cmd = Command::new("javap");
-            cmd.arg("-c").arg(class);
+            cmd.arg("-J-Dstdout.encoding=UTF-8").arg("-c").arg(class);
             let javap = exec::capture_stdout(cmd, "javap")?;
             let expected = normalize(&javap);
             let actual = normalize(&disassemble_class_file(class));
