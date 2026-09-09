@@ -4,6 +4,69 @@ Rebased `taintbench` onto `origin/main` and re-ran the TaintBench suite (see
 `taintbench/README.md`). Newest rebase first; the earlier sections are kept as
 the record of where each conflict came from.
 
+# Rebase onto `99bbed37` (#121)
+
+Previous base was `5fcb2c89` ("Extract language frontends into per-language
+crates, clean up IR (#119)"); one main commit came in:
+
+```
+99bbed37 Move crate groups into subdirectories (#121)  <- new base
+5fcb2c89 Extract language frontends into per-language crates (#119)  <- old base
+```
+
+## Result
+
+All twenty-one branch commits replayed with **no conflicts**, and the runner
+(`xtask/src/taintbench.rs`) needed no changes.
+
+```
+38 passed, 0 skipped, 0 failed of 38 app(s)
+```
+
+Every per-finding verdict is byte-identical to `taintbench-run-8baae049.log` —
+all 236 finding lines, same MATCH / `-` / `FALSE-POSITIVE` on all 38 apps:
+
+```sh
+diff <(grep -E '^    #[0-9]' taintbench-run-8baae049.log) \
+     <(grep -E '^    #[0-9]' <new run>)     # empty
+```
+
+## Why there were no conflicts
+
+`#121` is a pure relocation: the language frontends moved to
+`frontends/ctadl-{c,dex,flowy,jvm,lua,pcode}` and the binary readers to
+`readers/{dex,jvm,pcode}-reader`, with the only edits being the path strings
+that follow them — the workspace `Cargo.toml` members, each moved crate's
+`path = ` dependencies, `flake.nix`, and `xtask/src/{main,dex,regression}.rs`.
+
+None of that overlaps this branch. The branch's code changes live in
+`ctadl-ascent/src/` (untouched by `#121`, which only rewrote its `Cargo.toml`
+dependency paths) and in files it introduced itself: `xtask/src/taintbench.rs`,
+`nix/taintbench.nix`, and `taintbench/`. Its one edit to a file `#121` also
+touched — `flake.nix`, where it adds the `taintbench` check — landed in a
+different region than `#121`'s `readers/`-path line, so git merged both.
+
+Confirmed mechanically: diffing the branch's own files pre- against
+post-rebase yields exactly `#121`'s changes and nothing else.
+
+```sh
+git diff --stat <old-head> <new-head> -- ctadl-ascent xtask taintbench nix flake.nix merge.md
+# ctadl-ascent/Cargo.toml, flake.nix, xtask/Cargo.toml,
+# xtask/src/{dex,main,regression}.rs, xtask/tests/dex/README.md
+```
+
+## Verification
+
+- `cargo check --workspace --all-targets` — clean, every crate builds at its new
+  path
+- `cargo clippy --workspace --all-targets` — the same two pre-existing warnings
+  as the previous rebase (`items_after_test_module` in
+  `readers/jvm-reader/src/flow.rs`, `wrong_self_convention` in the vendored
+  `rustc_graphviz`); nothing new
+- `cargo test --workspace` — 0 failed
+- `nix build .#checks.aarch64-darwin.taintbench` — 38 passed, 0 skipped, 0
+  failed; verdicts identical to the committed log
+
 # Rebase onto `5fcb2c89` (#101 - #120)
 
 Previous base was `0038c0b8` ("Indexing tweaks (#100)"); twelve main commits
