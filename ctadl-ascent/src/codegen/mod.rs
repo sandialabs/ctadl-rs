@@ -509,6 +509,14 @@ impl Visitor for CodegenVisitor<'_> {
                         cls,
                         simple_name,
                         descriptor,
+                        // Resolution does not read the dispatch kind. An `invoke-super` is
+                        // resolved here exactly as an `invoke-virtual` is, which
+                        // over-approximates it -- a super call's target is fixed at the named
+                        // class -- and `ctadl report` measures what that costs. Narrowing it
+                        // would be a change to what the index resolves to, with its own
+                        // soundness argument, and is deliberately not part of recording the
+                        // distinction.
+                        dispatch: _,
                     } => {
                         let recv_var = self.trans_variable_ref(receiver);
                         // add receiver as actual arg 0
@@ -982,7 +990,10 @@ impl ClassHierarchyAnalysis {
     fn build(vmt: &VirtualMethodTable, instantiated_classes: BTreeSet<Symbol>, rta: bool) -> Self {
         match vmt {
             VirtualMethodTable::Java {
-                methods, hierarchy, ..
+                methods,
+                hierarchy,
+                interfaces,
+                ..
             } => {
                 let method_implemented = methods
                     .iter()
@@ -998,7 +1009,21 @@ impl ClassHierarchyAnalysis {
                     .collect();
                 // Sort for determinism
                 direct_superclass.sort_unstable();
-                let interface_type = Default::default();
+                // Which types are interfaces, now that the frontends record it.
+                //
+                // It does not change a single resolvent, and is passed because the input
+                // should be true rather than because the answer moves: `hierarchy` already
+                // merges a class's super-interfaces into its parent list, so every interface
+                // subtype edge is in `direct_superclass` above and `cha_direct_subtype` has
+                // them all either way. What this adds is `class_or_interface` membership for
+                // an interface that neither declares a method nor appears in any hierarchy,
+                // and such a type derives no `cha_super_method` and therefore no resolvent.
+                //
+                // `super_interface` stays empty for the same reason: feeding it would restate
+                // edges `direct_superclass` already carries. It is the input a CHA that wanted
+                // to treat the two kinds of parent *differently* would need -- resolving an
+                // `invoke-super` statically, say -- and nothing does today.
+                let interface_type = interfaces.iter().map(|c| (c.clone().into(),)).collect();
                 let super_interface = Default::default();
                 let instantiated_classes_vec =
                     instantiated_classes.into_iter().map(|s| (s,)).collect();

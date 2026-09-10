@@ -286,6 +286,29 @@ dead. That is an `ir-vmt.bitcode` wire change: bump `IMPORT_FORMAT_VERSION` to `
 `ctadl-import/tests/open_import.rs:157`, `ctadl-ascent/tests/store_relocation.rs:124`.
 Until then the report prints one combined virtual figure and says interfaces are folded in.
 
+**Done, with four departures from that sketch** (`spec.md` §6.2 records them in full):
+
+1. **Four dispatch kinds, not three.** A JVM `invokedynamic` with a receiver has no dispatch
+   instruction to read; it is `Unknown`, reported as its own row rather than folded into
+   `Virtual`. Always zero on dex.
+2. **Two VMT columns, not one bit.** `interfaces` is the is-interface record as planned;
+   `abstract_methods` was added beside it, because the general functional-interface case
+   (`spec.md` §6.2's tail) needs to know what an interface *declares*, and the CHA resolvent
+   map keyed on an interface holds every method of every implementer instead. Adding it while
+   the wire format was being bumped anyway avoided a second re-import of the corpus.
+3. **Only two of the three pinned copies moved.** `ctadl-import/tests/open_import.rs:157` and
+   `ctadl-ascent/tests/store_relocation.rs:124` both read `IMPORT_FORMAT_VERSION` through the
+   constant, so only `xtask/src/apk.rs` -- which deliberately duplicates the string -- needed
+   editing.
+4. **The dead interface rules stayed nearly dead, on purpose.** `run_cha` is now handed the
+   real `interface_type` set, and it changes not one resolvent: the merged `hierarchy` already
+   carries every interface subtype edge. `super_interface` stays empty for the same reason.
+   Making the rules *matter* would mean resolving the three kinds differently -- an
+   `invoke-super`'s target is fixed at the named class, and CTADL still resolves it as though
+   the receiver's type were unknown -- which is a change to what the index resolves to and
+   belongs with its own soundness argument, not with recording the distinction. The report
+   measures what that over-approximation costs instead.
+
 **Phase 3** (the resolved tier): allocation depth needs `resolvent`'s `SmallestCallString`
 (`index_engine/mod.rs:1001-1005`) promoted to an output relation and a new Parquet table.
 Alongside it: fan-in over the real `call` graph via `IndexFacts::try_load` +

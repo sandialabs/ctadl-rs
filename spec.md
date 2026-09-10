@@ -1,6 +1,6 @@
 # `ctadl report` — requirements and design - DO-NOT-MERGE
 
-Status: **phase 1 implemented**. Derived from `intent.md`; corrected in place against
+Status: **phases 1 and 2 implemented**. Derived from `intent.md`; corrected in place against
 `plan.md` and against what implementing and measuring it actually showed. Corrections are
 marked **Corrected:** and say what was wrong, so the original reasoning stays legible.
 
@@ -58,6 +58,17 @@ does when a model file is checked before indexing.
 name the way `query` does today (`load_or_infer_project`): try the project first, fall
 back to the import of the same name. One name, both tiers, no new naming rules.
 
+**Corrected in phase 2: the fallback reported the wrong error whenever the import existed but
+could not be read.** `load_or_infer_project` tried the project, then the import, and on a
+double failure raised the *project* error -- "no such file: projects/<name>/project_config.json"
+-- discarding the import's. That is right when the name names nothing, and misleading when it
+names a real import that a format bump has made stale: the import's error says which format it
+is and to re-import it, and the project's says a file is missing, which sends the reader
+looking in the wrong directory. Phase 2's `IMPORT_FORMAT_VERSION` bump turns that from a corner
+case into the path *every* stored import takes once, which is how it was found. The fallback
+now surfaces the import's error when an import of that name exists, and the project's only when
+neither does. `ctadl query` shares the helper and gets the same fix.
+
 ## 3. Command surface
 
 ```
@@ -89,7 +100,7 @@ The text form is the same data rendered for a human. The shape is:
   "programs": [ { "import": ..., "language": ..., "functions": ...,
                   "census": {...}, "virtual_targets": {...}, "worst_signatures": {...},
                   "rta": {...}, "hard_cases": [...], "kotlin_lambdas": {...},
-                  "fan_in": {...}, "recursion": {...} } ],
+                  "functional_interfaces": {...}, "fan_in": {...}, "recursion": {...} } ],
   "empty_imports": [ "<imports with no functions>" ] }
 ```
 
@@ -97,6 +108,15 @@ One key per section inside each program, and a section that does not apply to th
 is **absent** rather than zero — a Pcode import has `census` and nothing else. `programs` is
 an array because a name expands to a project's imports and each is measured separately; see
 §5.3.
+
+**Added in phase 2: a `by_dispatch` breakdown inside four of those sections**, and the same
+rule governs it. `census.by_dispatch` is an object with a count per dispatch kind;
+`virtual_targets`, `worst_signatures` and `rta` each carry a `by_dispatch` *array* with one
+entry per kind that occurs, each naming its `dispatch` and repeating that section's numbers
+over that kind's sites alone. A kind with no sites has no entry, a non-Java program has no
+`by_dispatch` at all, and `recursion` carries `without_interface_edges` — the same graph with
+the interface edges removed — rather than a per-kind list, because a graph is not partitioned
+by the kinds of the calls that built it.
 
 ## 4. What gets measured
 
@@ -116,7 +136,8 @@ number is real; anything past "Import" is called out in §6.
 | 9 | Fan-out per site and fan-in per method | Import (CHA graph) | 1 |
 | 10 | Recursion and strongly connected components | Import (CHA graph) | 1 |
 | 11 | Kotlin lambda call sites, and how many reach a single body | Import | 1 (see §6.2) |
-| 12 | Interface calls kept separate from class-virtual calls | **New IR field** | 2 (see §6.2) |
+| 12 | Interface calls kept separate from class-virtual calls | Import (new IR field) | 2, done (see §6.2) |
+| 12b | Functional interfaces in general: one interface, one abstract method | Import (new VMT columns) | 2, done (see §6.2) |
 | 13 | How many call frames away the receiver's allocation is | **New index output** | 3 (see §6.3) |
 | 14 | Analysis time, peak memory, inlined-code growth | Partly available | 3 (see §6.4) |
 
@@ -278,12 +299,26 @@ skips the type-resolution sections. It must not print zeros that look like findi
   one. The allocated set comes from `InstantiationFinder` over the real body rather than
   being written by hand, so a finder that stopped seeing `new` makes RTA look broken
   rather than brilliant.
+- **Phase 2:** one synthetic case in `report/callgraph.rs` covering the whole split at once —
+  an interface with one abstract method and two implementers, a class with a subclass, and one
+  call of each dispatch kind from one caller. It asserts the census split, the per-kind target
+  rows, the per-kind excess rankings, that the one functional interface is found without
+  matching any name, and that the interface-free graph is smaller than the full one. Every
+  number in it is small enough to check by hand, which is why it exists beside the APK checks.
 - Numeric unit tests in `stats.rs`, including a weighted case checked against the same
   sample written out one entry per unit of weight.
 - Two `xtask` cases on the real Dex fixture, sharing the import the `apk:*` family
   already pays for: `apk:report` (it runs, names its tier, carries every section, and
   four aggregate counts are pinned to this APK) and `apk:report-invariants` (the numbers
   add up, and two runs are byte-identical).
+- **Phase 2** adds to both rather than adding a case. `apk:report` pins the site count of each
+  dispatch kind on `com.noto` (76,791 virtual, 21,153 interface, 1,607 super, 0 unknown), which
+  is the only assertion that would fail if a frontend stopped reading the invoke opcode —
+  every other one still passes when all three collapse into one. `apk:report-invariants`
+  checks that the kinds partition the sites and that the per-kind edge, excess and RTA totals
+  sum back to the pooled ones, and that removing interface edges cannot grow the graph. Not
+  the SCC *count*: cutting edges can break one huge component into several smaller ones, so
+  that number is free to rise while every other one falls, which is what the fixture shows.
 
 **Corrected: no case was added to `ctadl-ascent/tests/cli.rs`.** That file's own rule is
 synthetic input, temp store, milliseconds; a report worth asserting on needs a real
@@ -315,12 +350,12 @@ guarded by `if rta`. Two cautions:
   measurement, not a new strategy. If it later looks good, that is a separate change
   with its own soundness argument.
 
-### 6.2 Interface calls cannot be told apart from class-virtual calls
+### 6.2 Interface calls could not be told apart from class-virtual calls
 
-`intent.md` is explicit that these must never be averaged together, and this is the
-one requirement we cannot meet without changing the IR.
+`intent.md` is explicit that these must never be averaged together, and this was the
+one requirement we could not meet without changing the IR.
 
-Two facts are lost at import:
+Two facts were lost at import:
 
 - The Dex frontend maps `invoke-virtual`, `invoke-super`, and `invoke-interface` all
   to `CallStyle::JavaCall`, keeping no record of which one it was
@@ -335,8 +370,42 @@ the VMT. Both are additive; both change the IR encoding, which means a bump of
 `IMPORT_FORMAT_VERSION` and a re-import of anything already in the store. The
 alternative — guessing from the class name — is not worth doing.
 
-Until then the report prints one combined virtual-call figure and states plainly that
-interfaces are folded in.
+**Done, and the fix is what was proposed plus one column.** `CallStyle::JavaCall` carries
+`dispatch: JavaDispatch`, read straight off the invoke opcode in the dex frontend and off
+`CallKind` in the jvm one. The java VMT gained `interfaces` (which types the import declares
+`interface`) and `abstract_methods` (the body-less declarations). `IMPORT_FORMAT_VERSION` is
+`"7"`, so everything in a store has to be re-imported.
+
+Three things the implementation settled that the proposal left open:
+
+**A fourth kind was needed.** `Virtual`/`Interface`/`Super` does not cover a JVM
+`invokedynamic` with a receiver, which has no dispatch instruction to read at all — where it
+goes is decided by a bootstrap method at run time. That is `Unknown`, and it is reported as
+its own row rather than folded into `Virtual`, because it is a gap in what was recorded and
+not a fourth way of dispatching. On dex it is always zero.
+
+**The second VMT column was not in the proposal, and the general functional-interface case
+needs it.** The tail of this section said the general SAM case had to wait on "knowing which
+types are interfaces and which of their methods are abstract". The first half is the
+`interfaces` column; the second is not derivable from anything else, because the CHA resolvent
+map keyed on an interface holds every method of every *implementer* rather than the
+interface's own — on `com.noto`, `Ljava/lang/Object;.toString` is a resolvent key of any
+interface whose implementers override it. Abstract declarations are absent from the VMT's
+`methods` column for the same reason natives were before version `5`: no body, no function to
+name. Adding the column while the wire format was being bumped anyway cost one push per
+frontend and avoided a second re-import of the corpus later.
+
+**Nothing resolves differently.** The dispatch field is not read by `codegen`: an
+`invoke-super` is still resolved as though the receiver's type were unknown, which
+over-approximates it — a super call's target is fixed at the named class. Narrowing it is a
+change to what the index resolves to, with its own soundness argument, and is deliberately not
+part of recording the distinction. The report measures what the over-approximation costs
+instead (§7.5). `run_cha` is now passed the real `interface_type` set, which changes not one
+resolvent: the merged `hierarchy` already carries every interface subtype edge, so the only
+thing the set adds is `class_or_interface` membership for an interface that declares no method
+and appears in no hierarchy, and such a type derives no resolvent. The 153-case regression
+suite passes unchanged, which is the evidence for that argument rather than the argument
+itself.
 
 The same gap limits one part of section 11. Kotlin needs nothing special from CTADL —
 it compiles to the JVM and Dex bytecode the frontends already read — and a Kotlin
@@ -518,6 +587,29 @@ every path must be quoted rather than assumed tidy; and the `.xapk` bundles impo
 several programs at once (Dex plus native libraries), which exercises the sub-import
 and non-Java handling of §5.5 on real input rather than a fixture.
 
+**`~/apps/fdroid` (added in phase 2)** — nine free-software Android apps from the official
+F-Droid repository, 11–176 MB, 11–88 MB of dex apiece: DuckDuckGo, Nextcloud Talk and Files,
+OsmAnd, an Element fork, Session, AntennaPod, Wikipedia and NewPipe.
+
+It exists because the other two corpora cannot answer one question. Every measurement here that
+matches a *name* is defeated by a release APK, and a zero from such a test is indistinguishable
+from a correct zero (§6.2 is the whole argument). These apps are built from source without an
+obfuscator, so `kotlin/jvm/functions/FunctionN` and real class names survive, and a test can be
+checked against apps where it is known to be readable. §7.5 uses it exactly that way, and it
+overturned one of this document's guesses.
+
+It is also the one corpus that is **reproducible by someone else**, which §6.7 says the large
+apps are not. The F-Droid index publishes a sha256 per APK; `~/apps/fdroid/.fdroid-manifest.json`
+records the package, version, URL, hash, licence and dex size of each, and every file was
+verified against it on download. A dotfile because `report_eval::discover` skips dotfiles as
+metadata rather than offering them to `ctadl import`. Nothing here needs to be committed to the
+repo, and a Nix fixed-output derivation like `nix/taintbench.nix` could fetch the whole corpus
+from that manifest -- which would make it the first large-app corpus a check could depend on.
+
+It sits in a subdirectory rather than beside the fourteen, so that `--apks ~/apps` keeps
+denoting exactly the corpus §7.4 and §7.5 report medians over. Sweep it with
+`--apks ~/apps/fdroid`.
+
 ### 7.2 What the evaluation has to answer
 
 1. **Does the static tier hold up at scale?** Time and peak memory for
@@ -638,13 +730,149 @@ is 693,372 functions, 37% of the program), which is what an inlining-based appro
 terminate against. And the zero-target sites — where the graph is silently unsound — are a
 small but non-zero 0.02–0.5% of virtual sites everywhere.
 
+### 7.5 Results, phase 2
+
+All three corpora, release binary, everything re-imported (the format bump left nothing in a
+store readable). **61 of 61 apps reported successfully and none was excluded**, and
+`report-eval`'s double run says all 61 are byte-identical, so §7.2 question 2 still holds with
+the new sections in place.
+
+The third corpus is new in this phase and is described in §7.1: nine unobfuscated F-Droid apps,
+which exist to be a **control group**. Every measurement in this feature that reads a *name* --
+the Kotlin receiver-type list, and by extension anything that would key on a package -- is
+defeated by a release APK, and until now there was no way to tell a test that is wrong from a
+test that is merely blindfolded.
+
+#### Does the split change the picture? Yes, and pooling was hiding it
+
+Interface dispatch is a **minority of the sites and a majority of the problem**. On the 14
+large apps it is 11.4–24.5% of virtual call sites (median 18.2%), and the two populations do
+not resemble each other at all:
+
+| | interface | class-virtual | super |
+| --- | --- | --- | --- |
+| sites resolving to exactly one target | 7.5–39.2% (median **16.0%**) | 76.8–93.5% (median **81.4%**) | 0.6–20.9% (median 4.4%) |
+| p99 targets per site | 12–15,265 (median 1,258) | 4–15,754 (median 308) | — |
+| share of the program's excess edges | 6.8–85.7% (median 31.4%) | 13.4–92.3% (median 67.6%) | 0.2–5.7% (median 1.0%) |
+
+The monomorphic fraction is the one to look at. Phase 1 reported 59–86% of virtual sites
+resolving to a single target and called that "how much work is already done". Split, that
+number belongs almost entirely to `invoke-virtual`: five sixths of class-virtual sites are
+already exact, and five sixths of interface sites are not. Reporting one figure for both
+described neither, which is what `intent.md` said would happen.
+
+`invoke-super` is the surprise. It is 1–2% of sites, and **almost none of them resolve to one
+target** — median 4.4%, against 81.4% for `invoke-virtual`. That is not a property of super
+calls; it is CTADL resolving them as though the receiver's type were unknown when the
+instruction names the class to start from. The excess it produces is small (median 1.0% of the
+program's) because the sites are few, but it is close to pure waste, and it is the cheapest
+precision left on the table. On TaintBench, where there is less other code, it reaches **100%
+of one app's excess**.
+
+The phase-1 finding that ten signatures own the imprecision survives the split and sharpens.
+Ranked *within* a kind, the worst ten own 70–100% of that kind's excess (median 90%) for
+interfaces and 90–100% (median ~100%) for class-virtual. And of the ten pooled worst
+signatures per app, **83 of 140 across the corpus are dominantly interface-dispatched** —
+phase 1 guessed "half of the ten", and measured it is six of ten in the median app.
+
+#### The finding nobody asked for: the giant cycle is interface dispatch
+
+Phase 1 found that 3.5–48% of a large app's functions sit inside one strongly connected
+component of the CHA call graph, and called it what inlining has to terminate against.
+Deleting every interface-dispatched edge and re-running Tarjan says most of it is not really
+there:
+
+| | with interface edges | without |
+| --- | --- | --- |
+| functions inside a cycle | 3.5–48.0% (median 37.6%) | 2.3–23.3% (median **6.4%**) |
+| largest single cycle | — | 1.1–74.6% of its former size (median **26.3%**) |
+| deduplicated edges | — | 24–93% of them left (median 73%) |
+
+Chrome is the extreme: its largest cycle goes from 6,012 functions to **68**. Telegram's from
+80,851 to 2,889. The WhatsApp family barely moves (76,951 of 179,172), so this is not
+universal — but on ten of fourteen apps the giant component is mostly an artifact of
+resolving interface calls to every implementer, rather than a fact about how the program
+calls itself. That makes it a resolution problem, which is fixable, instead of a program
+property, which is not.
+
+#### Functional interfaces, without matching a name
+
+The general SAM test finds 34–8,623 functional interfaces per large app (median 1,539) where
+the Kotlin receiver-type list found **zero** on `com.noto` and 2 on `Facebook Lite`. It works
+on obfuscated apps because it matches no names: Chrome's worst functional-interface signatures
+are `Lye8;.d()Lw6h;` and `Looj;.F0(...)`, which no prefix list could have recognised. Only
+2.3–29.2% of those sites (median 4.3%) resolve to a single body, so treating lambdas specially
+is not a solved case.
+
+It comes with its own honest limit, which the report prints beside it: 27–82% of interface
+call sites (median 49.4%) name a type the import never declares — `java/util/Iterator` in an
+app that does not ship the framework — so the SAM numbers are over the remainder. That is a
+coverage figure, not a failure, and it is the one number a reader would otherwise have to
+guess at.
+
+#### TaintBench, and what small apps do differently
+
+The direction is the same and the magnitude is not, for the reason phase 1 gave: the framework
+classes are not in these dexes. Interface dispatch is 0–26.7% of sites (median 10.6%), and its
+monomorphic fraction is 20.8–100% (median 52.8%) against 82.8–100% (median 96.3%) for
+class-virtual — still a gap, a third the size. Cycles are small either way (median 2.9% of
+functions, 1.7% without interface edges). One app has no interface dispatch at all, which the
+report shows as an absent row rather than a zero.
+
+#### The control group: what changes when the names survive
+
+The nine F-Droid apps say the same thing about dispatch, more strongly, and correct one thing
+this spec had guessed at.
+
+The interface/class-virtual gap is **wider** on clean apps, not narrower: 3.0–20.0% of
+interface sites resolve to one target (median **8.7%**) against 82.2–94.0% for class-virtual
+(median **91.1%**). Interface dispatch is 13.4–28.0% of sites (median 15.5%) and owns 17.3–74.4%
+of the excess (median **41.6%**, against 31.4% on the obfuscated corpus). So none of the
+phase-2 finding is an artifact of obfuscated type names.
+
+The cycle result is stronger too. Functions inside a cycle go from 19.6–31.3% (median 26.1%) to
+2.7–11.9% (median **4.3%**) once interface edges are removed, and the largest cycle falls to
+3.7–41.0% of its former size (median **7.3%**, against 26.3% on the obfuscated corpus).
+DuckDuckGo's largest cycle goes from **115,062 functions to 5,067**.
+
+One number reverses, and it is worth stating rather than burying: on these apps the interface
+p99 (median 606) sits *below* the class-virtual p99 (median 1,144), where on the obfuscated
+corpus it was above. The tail of the worst class-virtual signatures -- `Object.toString` and
+friends, which every class in a large app overrides -- is longer here than the interface tail.
+The monomorphic fraction, not the p99, is what separates the two populations consistently.
+
+**Corrected: the Kotlin receiver-type undercount is not caused by obfuscation.** §6.2 recorded
+that TikTok's type test found 31,622 sites against the name test's 57,383 and reasoned that
+"25,761 real lambda sites carry some other declared type", leaving open why. Measured on apps
+whose names are intact, the type test still finds only 22–75% of what the name test does
+(median **46%**) -- statistically the same shortfall as the obfuscated corpus's median of 50%.
+What obfuscation changes is whether the test finds *anything*: it returned zero on one of
+fourteen release APKs and on none of nine F-Droid ones. The undercount itself is something
+else -- `invokeSuspend` on generated continuation classes, and lambdas that implement a more
+specific interface than `FunctionN` -- and no prefix list will fix it. Matching both
+discriminators and printing the disagreement remains the right design; the reason is now
+measured rather than assumed.
+
+**And the dispatch field cross-checks clean.** A Kotlin lambda call is an interface dispatch by
+construction, so every site the receiver-type test matches must be one. Across both Java
+corpora that is **91,050 of 91,050 sites -- 100%, with no exceptions in 23 apps**. The frontends
+are reading the invoke opcode correctly.
+
+#### Cost
+
+Import is unchanged: TikTok's `.xapk` still takes 89.8 s and 19.3 GB, so carrying a dispatch
+field and two VMT columns costs nothing measurable at import. The report goes from 95 s to
+**113.6 s** at the same 26.9 GB peak. The +19 s is the second Tarjan over the interface-free
+graph; it shares the successor array with the first, which is why the peak did not move. Every
+other app in the corpus reports in under 20 s.
+
 ## 8. Suggested order of work
 
 1. **Phase 1** — the command, the static tier, fan-in and SCCs *over the CHA graph*, RTA
    measurement, Kotlin lambda sites, text and JSON output, tests, and the evaluation
    harness. Sections 1–11. No IR changes. **Done.**
 2. **Phase 2** — the `JavaCall` dispatch field and interface flags in the VMT, which
-   also opens up general functional interfaces (§6.2). Section 12.
+   also opens up general functional interfaces (§6.2). Section 12. **Done.**
 3. **Phase 3** — the resolved tier as a whole: allocation depth from the index (§6.3), cost
    numbers recorded at index time (§6.4), and fan-in over the real `call` graph beside the
    CHA one. Sections 13–14. **Corrected: the resolved tier moved here from phase 1**, for
@@ -671,3 +899,19 @@ the ten signatures that own the imprecision are interface calls — `Iterator.ne
 `Iterator.hasNext`, `Runnable.run`, `FunctionN.invoke` — so the interface-versus-virtual
 split of §6.2 is no longer only a reporting nicety; it is a distinction the thing that would
 be special-cased is drawn along.
+
+**Phase 2 confirmed that reading and added one finding nobody asked for** (§7.5). Interface
+dispatch is a fifth of the call sites and a much larger share of the imprecision, and its
+sites are nothing like the class-virtual ones — where the two are pooled, the pooled number
+describes neither. The unasked-for one is about recursion: deleting every interface-dispatched
+edge takes the functions inside a cycle from a median 37.6% of a large app to 6.4%, and
+DuckDuckGo's largest cycle from 115,062 functions to 5,067. The giant strongly connected
+component phase 1 found is mostly built out of interface calls, which makes it a resolution
+problem rather than a fact about the program.
+
+It also turned up the cheapest precision left in the codebase, which is not what it was
+scoped for. `invoke-super` is 1–2% of call sites and **4.4% of them resolve to one target**,
+against 81.4% for `invoke-virtual` — because CTADL resolves a super call as though the
+receiver's type were unknown when the instruction names the class to start from. Fixing that
+is a resolution change and needs its own soundness argument, so it belongs with phase 3
+rather than here; it is now measured, which is what phase 2 was for.

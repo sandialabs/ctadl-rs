@@ -767,7 +767,9 @@ fn test_cap_algorithm() {
 /// that stopped seeing `new` would otherwise make RTA look brilliant instead of broken.
 #[test]
 fn rta_keeps_only_allocated_implementers() {
-    use ctadl_ir::mir::call::{CallObject, JavaClass, JavaMethod, JavaSignature, JavaSimpleName};
+    use ctadl_ir::mir::call::{
+        CallObject, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
+    };
 
     let iface = Symbol::from("LI;");
     let m = Symbol::from("m");
@@ -797,6 +799,14 @@ fn rta_keeps_only_allocated_implementers() {
     let vmt = VirtualMethodTable::Java {
         methods,
         hierarchy,
+        // `I` is an interface declaring one abstract `m()V`: the shape a functional
+        // interface has, and the shape the report's SAM detection looks for.
+        interfaces: vec![JavaClass(iface.clone())],
+        abstract_methods: vec![(
+            JavaClass(iface.clone()),
+            JavaSimpleName(m.clone()),
+            JavaSignature(desc.clone()),
+        )],
         natives: Default::default(),
     };
 
@@ -821,6 +831,7 @@ fn rta_keeps_only_allocated_implementers() {
             cls: iface.clone(),
             simple_name: m.clone(),
             descriptor: desc.clone(),
+            dispatch: JavaDispatch::Interface,
         },
         Vec::new(),
         Vec::new(),

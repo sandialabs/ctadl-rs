@@ -19,14 +19,15 @@ use streaming_iterator::StreamingIterator; // needed for DataFlow.dest.owned()
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
-    CallObject, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
+    CallObject, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
+    VirtualMethodTable,
 };
 use ctadl_ir::*;
 use dex_reader::basic_blocks::{basic_blocks, block_successors};
 use dex_reader::error::DexError;
 use dex_reader::instructions::{DataFlow, Instruction, Reg};
 use dex_reader::parser::{DecodedCodeItem, decode_code_item};
-use dex_reader::types::{ACC_NATIVE, ACC_STATIC, CodeItem, MethodId};
+use dex_reader::types::{ACC_ABSTRACT, ACC_INTERFACE, ACC_NATIVE, ACC_STATIC, CodeItem, MethodId};
 use dex_reader::{APKParser, DexParser};
 
 #[cfg(test)]
@@ -182,10 +183,24 @@ impl Context {
                     iface_vec.push(JavaClass(desc.into()));
                 }
             }
-            if let VirtualMethodTable::Java { hierarchy, .. } = &mut builders.vmt {
-                let parents = hierarchy.entry(JavaClass(class_name.into())).or_default();
+            if let VirtualMethodTable::Java {
+                hierarchy,
+                interfaces,
+                ..
+            } = &mut builders.vmt
+            {
+                let parents = hierarchy
+                    .entry(JavaClass(class_name.clone().into()))
+                    .or_default();
                 for sup in superclass_opt.into_iter().chain(iface_vec) {
                     parents.push(sup);
+                }
+                // The parent list above cannot say which of those parents are interfaces,
+                // because a superclass and a super-interface are both subtype edges and CHA
+                // wants them merged. This is the separate record of which *types* are
+                // interfaces, and it is only ever about classes this import declares.
+                if ACC_INTERFACE.is_set_in(class_def.access_flags) {
+                    interfaces.push(JavaClass(class_name.into()));
                 }
             }
             let class_data = parser.class_data(class_def)?;
@@ -211,6 +226,26 @@ impl Context {
                     &mut builders.program[fidx]
                 };
                 fdat.name = sig.clone();
+
+                // An `abstract` method is body-less too, but unlike a native one it has no
+                // implementation to name: it is a declaration, and the only thing that can be
+                // said about it is that it exists. Recorded because an interface's own methods
+                // are exactly these rows -- the CHA resolvent map keyed on an interface holds
+                // every method of every implementer instead, so nothing else can say what an
+                // interface actually declares.
+                if ACC_ABSTRACT.is_set_in(enc.access_flags) {
+                    let (class_name, method_name, method_descr) = parser.method_triple(mi)?;
+                    if let VirtualMethodTable::Java {
+                        abstract_methods, ..
+                    } = &mut builders.vmt
+                    {
+                        abstract_methods.push((
+                            JavaClass(class_name.into()),
+                            JavaSimpleName(method_name.into()),
+                            JavaSignature(method_descr.into()),
+                        ));
+                    }
+                }
 
                 // A `native` method is bodyless (`code_off == 0`), so the VMT push in the
                 // `code` branch below never runs for it, and the extern-stub loop at the end
@@ -522,20 +557,25 @@ impl Context {
         // If this instruction is not a call, bail out.
         let args_regs = inst.call_args()?; // returns &[Reg]
 
-        // Resolve the method index from the specific invoke variant.
-        let (method_idx, is_static) = match inst {
-            Instruction::InvokeVirtual(fmt) => (fmt.idx, false),
-            Instruction::InvokeSuper(fmt) => (fmt.idx, false),
-            Instruction::InvokeDirect(fmt) => (fmt.idx, true),
-            Instruction::InvokeStatic(fmt) => (fmt.idx, true),
-            Instruction::InvokeInterface(fmt) => (fmt.idx, false),
-            Instruction::InvokeVirtualRange(fmt) => (fmt.idx, false),
-            Instruction::InvokeSuperRange(fmt) => (fmt.idx, false),
-            Instruction::InvokeDirectRange(fmt) => (fmt.idx, true),
-            Instruction::InvokeStaticRange(fmt) => (fmt.idx, true),
-            Instruction::InvokeInterfaceRange(fmt) => (fmt.idx, false),
+        // Resolve the method index from the specific invoke variant, and with it the
+        // dispatch kind. This is the one place the distinction exists: `invoke-virtual`,
+        // `invoke-super` and `invoke-interface` all lower to a `JavaCall`, and once the
+        // opcode is gone nothing downstream can tell which it was. `None` marks the two
+        // that lower to a `DirectCall` instead and so have no dispatch at all.
+        let (method_idx, dispatch) = match inst {
+            Instruction::InvokeVirtual(fmt) => (fmt.idx, Some(JavaDispatch::Virtual)),
+            Instruction::InvokeSuper(fmt) => (fmt.idx, Some(JavaDispatch::Super)),
+            Instruction::InvokeDirect(fmt) => (fmt.idx, None),
+            Instruction::InvokeStatic(fmt) => (fmt.idx, None),
+            Instruction::InvokeInterface(fmt) => (fmt.idx, Some(JavaDispatch::Interface)),
+            Instruction::InvokeVirtualRange(fmt) => (fmt.idx, Some(JavaDispatch::Virtual)),
+            Instruction::InvokeSuperRange(fmt) => (fmt.idx, Some(JavaDispatch::Super)),
+            Instruction::InvokeDirectRange(fmt) => (fmt.idx, None),
+            Instruction::InvokeStaticRange(fmt) => (fmt.idx, None),
+            Instruction::InvokeInterfaceRange(fmt) => (fmt.idx, Some(JavaDispatch::Interface)),
             _ => return None,
         };
+        let is_static = dispatch.is_none();
 
         // Resolve the callee name (human‑readable signature).
         let (cls, simple_name, descriptor) = {
@@ -553,17 +593,17 @@ impl Context {
             .iter()
             .map(|reg| AccessPath::without_fields(reg_to_var(code, *reg, locals)).into())
             .collect();
-        let style = if is_static {
-            CallStyle::DirectCall {
+        let style = match dispatch {
+            None => CallStyle::DirectCall {
                 call_edges: CallEdges::Explicit([method_id].into_iter().collect()),
-            }
-        } else {
-            CallStyle::JavaCall {
+            },
+            Some(dispatch) => CallStyle::JavaCall {
                 receiver: args[0].variable_ref().unwrap().clone(),
                 cls: cls.into(),
                 simple_name: simple_name.into(),
                 descriptor: descriptor.into(),
-            }
+                dispatch,
+            },
         };
 
         // Dex returns into a special register, so just create a temporary.

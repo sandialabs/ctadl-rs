@@ -305,6 +305,8 @@ fn java_program() -> ProgramInfo {
             )]
             .into_iter()
             .collect(),
+            interfaces: Vec::new(),
+            abstract_methods: Vec::new(),
             natives: Vec::new(),
         },
         ..Default::default()

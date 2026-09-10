@@ -96,7 +96,14 @@ fn absolutize(path: &Path) -> PathBuf {
 ///   a byte encoding that depended on the opcode. `bitcode` writes an enum's tag in
 ///   `ceil(log2(variants))` bits, so adding a sixth variant changes the format of every
 ///   `ir-program.bitcode` file, not only of programs that contain a constant.
-pub const IMPORT_FORMAT_VERSION: &str = "6";
+/// - `7`: `CallStyle::JavaCall` gained a `dispatch` field recording which of `invoke-virtual`,
+///   `invoke-interface` and `invoke-super` a call came from, and the java VMT gained an
+///   `interfaces` column (which types are interfaces) and an `abstract_methods` column (the
+///   body-less declarations, which are what an interface's own methods are). Both files change:
+///   the call style is in every `ir-program.bitcode` and the two columns are in
+///   `ir-vmt.bitcode`. Nothing resolves differently -- the three dispatch kinds are still
+///   resolved alike -- so this is what a *measurement* of the difference needs.
+pub const IMPORT_FORMAT_VERSION: &str = "7";
 
 /// Filename of the serialized IR program inside an import directory.
 ///
@@ -307,10 +314,25 @@ impl ArtifactImport {
     ///
     /// If there are i/o or deserialization errors
     pub fn load_by_name(name: &str) -> Result<Self, Error> {
-        let path = StorePaths::import_path()
+        Self::load(&Self::config_path_by_name(name))
+            .err_context(|| format!("reading import '{name}'"))
+    }
+
+    /// Whether the store holds an import under `name` at all, without reading it.
+    ///
+    /// This is the difference between "there is no such import" and "there is one and it
+    /// cannot be read", which callers that fall back from a project name to an import name
+    /// have to tell apart: a stale import is a real import, and its error -- which says to
+    /// re-import it -- is the one worth showing. Deciding that on the config file's existence
+    /// keeps the store's layout in this module rather than spreading it into `main.rs`.
+    pub fn exists_by_name(name: &str) -> bool {
+        Self::config_path_by_name(name).is_file()
+    }
+
+    fn config_path_by_name(name: &str) -> PathBuf {
+        StorePaths::import_path()
             .join(name)
-            .join(IMPORT_CONFIG_FILE);
-        Self::load(&path).err_context(|| format!("reading import '{name}'"))
+            .join(IMPORT_CONFIG_FILE)
     }
 
     /// Usable path to this import's directory: [`Self::import_dir`] resolved against the store

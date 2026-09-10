@@ -61,6 +61,28 @@ impl Default for Options {
     }
 }
 
+/// The dispatch split, for the second summary table.
+///
+/// Site counts are summed over an artifact's programs the way every other count here is. The
+/// percentile and share columns come from the largest program alone, for the reason
+/// [`summarize`] gives: merging two programs' percentiles would need their full tables.
+#[derive(Default)]
+struct Dispatch {
+    interface_sites: u64,
+    virtual_sites: u64,
+    super_sites: u64,
+    /// Monomorphic share, per kind. The headline comparison.
+    interface_one_target: f64,
+    virtual_one_target: f64,
+    interface_p99: u64,
+    virtual_p99: u64,
+    /// Share of the program's excess edges owed to interface-dispatched sites.
+    interface_excess_share: f64,
+    /// Functions inside a cycle, with every interface edge in place and with none.
+    in_cycles: u64,
+    in_cycles_without_interfaces: Option<u64>,
+}
+
 /// One app's measurements, as the summary table prints them.
 struct Row {
     artifact: String,
@@ -87,6 +109,10 @@ struct Measured {
     /// signature is what you would special-case.
     sig10: f64,
     sig100: f64,
+    /// The interface-versus-class-virtual split, which gets its own table: it is the
+    /// comparison the whole of phase 2 exists to make, and hanging six more columns off the
+    /// table above would bury it.
+    dispatch: Dispatch,
     import_secs: f64,
     report_secs: f64,
     import_peak_mb: Option<f64>,
@@ -139,8 +165,11 @@ pub fn run(opts: &Options) -> Result<bool> {
 
     print_table(&rows);
     let table = opts.out.join("summary.md");
-    std::fs::write(&table, render_table(&rows))
-        .with_context(|| format!("writing {}", table.display()))?;
+    std::fs::write(
+        &table,
+        format!("{}\n{}", render_table(&rows), render_dispatch_table(&rows)),
+    )
+    .with_context(|| format!("writing {}", table.display()))?;
     println!("\nwrote {}", table.display());
     Ok(rows.iter().all(|r| r.outcome.is_ok()))
 }
@@ -276,12 +305,71 @@ fn summarize(
         top100: share(biggest, "top_100_site_share"),
         sig10: share(biggest, "top_10_signature_excess_share"),
         sig100: share(biggest, "top_100_signature_excess_share"),
+        dispatch: dispatch_split(programs, biggest),
         import_secs,
         report_secs,
         import_peak_mb,
         report_peak_mb,
         stable,
     })
+}
+
+/// Pulls the interface-versus-class-virtual comparison out of one report.
+///
+/// Written to survive a report that does not carry the split at all -- a Lua or pcode
+/// artifact, or an older JSON kept for comparison -- by leaving the row at zero rather than
+/// failing the app. The table says which is which by printing a dash for a zero site count.
+fn dispatch_split(programs: &[Value], biggest: &Value) -> Dispatch {
+    let n = |v: &Value| v.as_u64().unwrap_or(0);
+    let sum = |kind: &str| -> u64 {
+        programs
+            .iter()
+            .map(|p| n(&p["census"]["by_dispatch"][kind]))
+            .sum()
+    };
+    let row = |kind: &str| -> Option<&Value> {
+        biggest["virtual_targets"]["by_dispatch"]
+            .as_array()?
+            .iter()
+            .find(|r| r["dispatch"].as_str() == Some(kind))
+    };
+    let one_target = |kind: &str| -> f64 {
+        row(kind).map_or(0.0, |r| {
+            let sites = n(&r["sites"]);
+            if sites == 0 {
+                0.0
+            } else {
+                n(&r["sites_with_one_target"]) as f64 / sites as f64
+            }
+        })
+    };
+    let p99 = |kind: &str| -> u64 { row(kind).map_or(0, |r| n(&r["targets_per_site"]["p99"])) };
+    let excess_total = n(&biggest["worst_signatures"]["excess_edges"]);
+    let interface_excess = biggest["worst_signatures"]["by_dispatch"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|r| r["dispatch"].as_str() == Some("interface"))
+        })
+        .map_or(0, |r| n(&r["excess_edges"]));
+    Dispatch {
+        interface_sites: sum("interface"),
+        virtual_sites: sum("virtual"),
+        super_sites: sum("super"),
+        interface_one_target: one_target("interface"),
+        virtual_one_target: one_target("virtual"),
+        interface_p99: p99("interface"),
+        virtual_p99: p99("virtual"),
+        interface_excess_share: if excess_total == 0 {
+            0.0
+        } else {
+            interface_excess as f64 / excess_total as f64
+        },
+        in_cycles: n(&biggest["recursion"]["functions_in_nontrivial_sccs"]),
+        in_cycles_without_interfaces: biggest["recursion"]["without_interface_edges"]
+            ["functions_in_nontrivial_sccs"]
+            .as_u64(),
+    }
 }
 
 /// Runs `cmd`, appending its output to `log`, and returns `(wall seconds, peak MB)`.
@@ -385,6 +473,57 @@ fn mb(v: Option<f64>) -> String {
 
 fn print_table(rows: &[Row]) {
     println!("\n{}", render_table(rows));
+    println!("{}", render_dispatch_table(rows));
+}
+
+/// The second table: interface dispatch against class-virtual dispatch, app by app.
+///
+/// Separate from the main one because it answers a different question. The first table says
+/// how imprecise a program's call graph is; this one says which half of it the imprecision
+/// lives in, which is what decides whether the thing to improve is interface resolution
+/// specifically or resolution in general.
+fn render_dispatch_table(rows: &[Row]) -> String {
+    let mut out = String::new();
+    out.push_str("### Interface versus class-virtual dispatch\n\n");
+    out.push_str(
+        "Site counts are summed over an artifact's programs; the percentile, share and cycle \
+         columns come from its largest program.\n\n",
+    );
+    out.push_str(
+        "| app | iface sites | virtual sites | super sites | iface 1-target | \
+         virtual 1-target | iface p99 | virtual p99 | iface share of excess | in cycles | \
+         in cycles, no iface edges |\n",
+    );
+    out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for row in rows {
+        let Ok(m) = &row.outcome else { continue };
+        let d = &m.dispatch;
+        if d.interface_sites == 0 && d.virtual_sites == 0 {
+            // No Java dispatch at all: a Lua or pcode artifact has no split to report, and a
+            // row of zeros here would read as a finding about a program that cannot have one.
+            out.push_str(&format!(
+                "| {} | - | - | - | - | - | - | - | - | - | - |\n",
+                row.artifact
+            ));
+            continue;
+        }
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {:.1}% | {:.1}% | {} | {} | {:.1}% | {} | {} |\n",
+            row.artifact,
+            d.interface_sites,
+            d.virtual_sites,
+            d.super_sites,
+            100.0 * d.interface_one_target,
+            100.0 * d.virtual_one_target,
+            d.interface_p99,
+            d.virtual_p99,
+            100.0 * d.interface_excess_share,
+            d.in_cycles,
+            d.in_cycles_without_interfaces
+                .map_or("-".to_string(), |v| v.to_string()),
+        ));
+    }
+    out
 }
 
 fn render_table(rows: &[Row]) -> String {

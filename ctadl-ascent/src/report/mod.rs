@@ -20,6 +20,22 @@ first.
 
 [`CallResolutionStrategy::Mixed`]: crate::codegen::CallResolutionStrategy
 
+# Interface calls are never averaged in with class-virtual ones
+
+Every measurement that counts call sites is reported twice: pooled, and again per dispatch
+kind. `CallStyle::JavaCall` carries which of `invoke-virtual`, `invoke-interface` and
+`invoke-super` it came from, and the three behave nothing alike under CHA -- an interface
+admits every unrelated class that implements it, and a pooled percentile over the two
+populations belongs to neither. Nothing *resolves* differently for it: an `invoke-super` is
+still resolved as though the receiver's type were unknown, and this measures what that costs
+rather than changing it.
+
+The virtual method table carries two matching facts about types rather than calls: which ones
+the import declares `interface`, and which method declarations are abstract. Together they
+identify a functional interface -- one interface, one abstract method -- without matching a
+name or a package, which is what makes that section survive an obfuscated app where the
+Kotlin one cannot.
+
 # One report per program
 
 A name resolves the way `ctadl query` resolves it -- a project, or an import of the same
@@ -73,6 +89,13 @@ pub struct ReportOptions {
     /// It buys wall time, not headroom. The peak is reached earlier, inside `run_cha`, and
     /// the graph fits underneath it -- the same run peaked at 24.9 GiB with this section and
     /// 24.1 GiB without.
+    ///
+    /// It now runs Tarjan twice: once over the whole graph and once with the
+    /// interface-dispatched edges removed, which is what says how much of a program's largest
+    /// cycle is interface resolution rather than the program. That took TikTok's report from
+    /// 95 s to 114 s and did not move the peak, because both passes read one successor array
+    /// -- each caller's class-virtual targets are stored first and the second pass stops
+    /// there.
     pub recursion: bool,
 }
 

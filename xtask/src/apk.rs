@@ -61,7 +61,7 @@ const IMPORT_CONFIG_FILE: &str = "import_config.json";
 const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// The `version` an import config carries today (`IMPORT_FORMAT_VERSION`). Pinned so a bump
 /// that forgets the store's readers has to come through here.
-const IMPORT_FORMAT_VERSION: &str = "6";
+const IMPORT_FORMAT_VERSION: &str = "7";
 
 /// A model file that selects something in any Java app: every `toString` override. The point is
 /// the *checking*, not the model, so the cheapest generator that cannot match nothing is the
@@ -327,8 +327,22 @@ const REPORT_SECTIONS: &[&str] = &[
     "rta",
     "hard_cases",
     "kotlin_lambdas",
+    "functional_interfaces",
     "fan_in",
     "recursion",
+];
+
+/// The dispatch kinds this APK's report must tell apart, with the site count pinned for each.
+///
+/// Pinned for the same reason as the four totals above and re-pinned the same way: these are
+/// the numbers that would silently go to zero if a frontend stopped recording the dispatch
+/// instruction, and every other assertion here would still pass. The three sum to
+/// `REPORT_VIRTUAL_SITES`, which the invariants check independently.
+const REPORT_DISPATCH_SITES: &[(&str, u64)] = &[
+    ("virtual", 76_791),
+    ("interface", 21_153),
+    ("super", 1_607),
+    ("unknown", 0),
 ];
 
 fn check_report(work: &Path, state: &Path, store: &Path) -> Result<()> {
@@ -395,6 +409,23 @@ fn check_report(work: &Path, state: &Path, store: &Path) -> Result<()> {
             got.as_u64() == Some(want),
             "{what}: the report says {got}, this APK has {want}. If a frontend change really \
              moved it, re-pin the constants in xtask/src/apk.rs (see their doc comment)"
+        );
+    }
+
+    // The dispatch split. A frontend that stopped reading the invoke opcode would report
+    // every virtual call under one kind, and nothing above would notice.
+    let by_dispatch = &census["by_dispatch"];
+    ensure!(
+        !by_dispatch.is_null(),
+        "a Java program's census must split its virtual calls by dispatch kind; it has {:?}",
+        census.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
+    for (kind, want) in REPORT_DISPATCH_SITES {
+        let got = &by_dispatch[kind];
+        ensure!(
+            got.as_u64() == Some(*want),
+            "{kind} call sites: the report says {got}, this APK has {want}. Re-pin \
+             REPORT_DISPATCH_SITES in xtask/src/apk.rs if a frontend change really moved it"
         );
     }
     Ok(())
@@ -536,6 +567,119 @@ fn check_report_invariants(work: &Path, state: &Path) -> Result<()> {
         p["worst_signatures"]["excess_edges"],
         cha - resolved_sites
     );
+
+    // The dispatch kinds partition the virtual sites: every `JavaCall` has exactly one, so
+    // they sum to the census's virtual count and to the target section's site count. This is
+    // what catches a site counted twice or dropped when the per-kind tables are built.
+    let by_dispatch = &p["census"]["by_dispatch"];
+    let kinds = ["virtual", "interface", "super", "unknown"];
+    let dispatch_sum = kinds
+        .iter()
+        .map(|k| n(&by_dispatch[k]))
+        .sum::<Result<u64>>()?;
+    ensure!(
+        dispatch_sum == sites,
+        "the dispatch kinds sum to {dispatch_sum} sites, but there are {sites} virtual sites"
+    );
+
+    // Each per-kind row is the whole report recomputed over that kind's sites, so every
+    // invariant that holds for the pooled numbers holds inside it, and the rows sum back.
+    let rows = virt["by_dispatch"]
+        .as_array()
+        .context("the virtual-target section carries no per-dispatch breakdown")?;
+    ensure!(
+        !rows.is_empty(),
+        "a Java program's virtual-target section must break down by dispatch kind"
+    );
+    let mut row_sites = 0;
+    let mut row_edges = 0;
+    for row in rows {
+        let kind = row["dispatch"]
+            .as_str()
+            .with_context(|| format!("a per-dispatch row has no kind: {row}"))?;
+        ensure!(
+            kinds.contains(&kind),
+            "a per-dispatch row names an unknown kind {kind:?}"
+        );
+        let s = n(&row["sites"])?;
+        ensure!(
+            s == n(&by_dispatch[kind])?,
+            "the {kind} row counts {s} sites, the census counts {}",
+            by_dispatch[kind]
+        );
+        ensure!(
+            n(&row["sites_with_zero_targets"])?
+                + n(&row["sites_with_one_target"])?
+                + n(&row["sites_deferred_to_hybrid_inlining"])?
+                == s,
+            "zero + one + many does not account for the {kind} row's sites: {row}"
+        );
+        let d = &row["targets_per_site"];
+        let (p50, p90, p99, max) = (n(&d["p50"])?, n(&d["p90"])?, n(&d["p99"])?, n(&d["max"])?);
+        ensure!(
+            p50 <= p90 && p90 <= p99 && p99 <= max,
+            "the {kind} row's distribution is not monotone: p50 {p50}, p90 {p90}, p99 {p99}, max {max}"
+        );
+        row_sites += s;
+        row_edges += n(&row["total_edges"])?;
+    }
+    ensure!(
+        row_sites == sites && row_edges == cha,
+        "the per-dispatch rows account for {row_sites} sites and {row_edges} edges, \
+         the pooled numbers say {sites} and {cha}"
+    );
+
+    // The same partition again on the two other sections that split: the excess and the RTA
+    // edge totals are each counted once per kind and once pooled.
+    let excess_sum = p["worst_signatures"]["by_dispatch"]
+        .as_array()
+        .context("the worst-signature section carries no per-dispatch breakdown")?
+        .iter()
+        .map(|row| n(&row["excess_edges"]))
+        .sum::<Result<u64>>()?;
+    ensure!(
+        excess_sum == n(&p["worst_signatures"]["excess_edges"])?,
+        "the per-kind excess sums to {excess_sum}, the pooled total says {}",
+        p["worst_signatures"]["excess_edges"]
+    );
+    let rta_rows = p["rta"]["by_dispatch"]
+        .as_array()
+        .context("the RTA section carries no per-dispatch breakdown")?;
+    let (mut rta_cha, mut rta_rta) = (0, 0);
+    for row in rta_rows {
+        ensure!(
+            n(&row["rta_edges"])? <= n(&row["cha_edges"])?,
+            "a per-kind RTA row keeps more edges than CHA found: {row}"
+        );
+        rta_cha += n(&row["cha_edges"])?;
+        rta_rta += n(&row["rta_edges"])?;
+    }
+    ensure!(
+        rta_cha == cha && rta_rta == rta,
+        "the per-kind RTA rows sum to {rta_cha}/{rta_rta} edges, the pooled totals say {cha}/{rta}"
+    );
+
+    // Removing edges can only shrink the graph, never grow it. That is the whole content of
+    // the interface-free counterfactual, and it is checkable without knowing this APK.
+    if let Some(cv) = p["recursion"]["without_interface_edges"].as_object() {
+        let full = &p["recursion"];
+        // Not `nontrivial_sccs`: that one is genuinely free to *rise*. Cutting edges can
+        // break one huge component into several smaller ones, which is more components and
+        // fewer functions inside them -- the shape the fixture actually shows.
+        for key in [
+            "edges",
+            "self_recursive",
+            "functions_in_nontrivial_sccs",
+            "largest_scc",
+        ] {
+            let (part, whole) = (n(&cv[key])?, n(&full[key])?);
+            ensure!(
+                part <= whole,
+                "the graph without interface edges has more `{key}` ({part}) than the whole \
+                 graph ({whole})"
+            );
+        }
+    }
 
     // Reproducible: the tables the report is built from are documented as byte-stable, so
     // two runs over one import must agree exactly. This is the assertion `docs/debugging.md`

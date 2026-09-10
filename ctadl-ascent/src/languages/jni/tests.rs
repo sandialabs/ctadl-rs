@@ -220,6 +220,8 @@ fn java_program(natives: &[(&str, &str, &str, bool)]) -> ProgramInfo {
         vmt: VirtualMethodTable::Java {
             methods: Vec::new(),
             hierarchy: Default::default(),
+            interfaces: Default::default(),
+            abstract_methods: Default::default(),
             natives: natives
                 .iter()
                 .map(|(cls, name, descriptor, is_static)| {

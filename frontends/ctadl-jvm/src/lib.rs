@@ -17,7 +17,8 @@ use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
-    CallObject, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
+    CallObject, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
+    VirtualMethodTable,
 };
 use ctadl_ir::*;
 
@@ -26,6 +27,8 @@ use jvm_reader::{ClassFileParser, JarFileParser};
 
 const JVM_ACC_STATIC: u16 = 0x0008;
 const JVM_ACC_NATIVE: u16 = 0x0100;
+const JVM_ACC_INTERFACE: u16 = 0x0200;
+const JVM_ACC_ABSTRACT: u16 = 0x0400;
 
 /// JVM internal names (`java/lang/Object`, `MyInterface`) and type descriptors
 /// (`LMyInterface;`) to the `L...;` symbol form used in MIR and CHA.
@@ -183,8 +186,19 @@ impl Context {
                 log::trace!("Interface: {}", iface);
             }
 
-            if let VirtualMethodTable::Java { hierarchy, .. } = &mut builders.vmt {
+            if let VirtualMethodTable::Java {
+                hierarchy,
+                interfaces,
+                ..
+            } = &mut builders.vmt
+            {
                 hierarchy.insert(JavaClass(class_name.to_string().into()), iface_vec);
+                // Which of those parents are interfaces is not recoverable from the merged
+                // list; this is the record of which types are. See the dex frontend for the
+                // same push and the same reason.
+                if class_def.access_flags & JVM_ACC_INTERFACE != 0 {
+                    interfaces.push(JavaClass(class_name.to_string().into()));
+                }
             }
             for enc in parser.methods() {
                 let sig = parser.method_signature(enc)?;
@@ -217,6 +231,22 @@ impl Context {
                         JavaSimpleName(method_name.clone().into()),
                         JavaSignature(java_sig.clone().into()),
                         JavaMethod(full_name.clone().into()),
+                    ));
+                }
+                // An `abstract` declaration -- every non-`default`, non-`static` interface
+                // method among them -- has no body to lower. It stays in `methods` above,
+                // which this frontend fills for every declared method, and is listed here as
+                // well so that an interface's own methods can be told from the methods of its
+                // implementers. See the field's doc comment.
+                if enc.access_flags & JVM_ACC_ABSTRACT != 0
+                    && let VirtualMethodTable::Java {
+                        abstract_methods, ..
+                    } = &mut builders.vmt
+                {
+                    abstract_methods.push((
+                        JavaClass(class_name.to_string().into()),
+                        JavaSimpleName(method_name.clone().into()),
+                        JavaSignature(java_sig.clone().into()),
                     ));
                 }
                 // Native methods are additionally listed in `natives`, the column the JNI
@@ -590,6 +620,10 @@ impl Context {
                             cls: class_name.clone().into(),
                             simple_name: method_name.clone().into(),
                             descriptor: descr.clone().into(),
+                            // `invokedynamic` has no dispatch instruction to read: where it
+                            // goes is decided by a bootstrap method at run time. Recorded as
+                            // unknown rather than guessed at.
+                            dispatch: JavaDispatch::Unknown,
                         }
                     }
                     // other calls have a class name, method name, and descriptor
@@ -617,6 +651,18 @@ impl Context {
                             cls: class_name.clone().into(),
                             simple_name: method_name.clone().into(),
                             descriptor: descr.clone().into(),
+                            dispatch: match call.call_kind {
+                                CallKind::Interface => JavaDispatch::Interface,
+                                // `invokespecial` with a receiver: a `super.m()`, a private
+                                // method, or a constructor. All three are fixed at the named
+                                // class rather than found from the receiver.
+                                CallKind::Special => JavaDispatch::Super,
+                                CallKind::Virtual => JavaDispatch::Virtual,
+                                // Unreachable: `Dynamic` is the arm above and `Static` has no
+                                // receiver. Recorded honestly rather than asserted, since a
+                                // new `CallKind` should not make this arm lie.
+                                CallKind::Dynamic | CallKind::Static => JavaDispatch::Unknown,
+                            },
                         }
                     }
                 }

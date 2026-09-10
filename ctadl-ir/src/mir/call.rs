@@ -7,6 +7,83 @@ use thin_vec::ThinVec;
 
 use super::{Symbol, VariableRef};
 
+/// Which Java dispatch instruction a [`CallStyle::JavaCall`] came from.
+///
+/// The three resolve differently and behave very differently under CHA, so the frontends
+/// record which one it was rather than lowering them all to one indistinguishable virtual
+/// call. Nothing downstream can recover this: the declared receiver type does not say it
+/// (an `invoke-virtual` on an abstract class and an `invoke-interface` on an interface look
+/// alike from the call alone, and an obfuscated app's type names say nothing at all).
+///
+/// It does **not** change how anything resolves today. `ctadl index` treats all three the
+/// same way it always has; this is what lets [`crate::mir::call::CallStyle`] carry the
+/// distinction without a soundness argument attached to it. What reads it is measurement --
+/// `ctadl report` keeps interface calls apart from class-virtual ones, because averaging the
+/// two hides that CHA is far worse on interfaces.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum JavaDispatch {
+    /// Dex `invoke-virtual`, JVM `invokevirtual`: dispatch down a class hierarchy.
+    Virtual,
+    /// Dex `invoke-interface`, JVM `invokeinterface`: dispatch through an interface, which
+    /// admits every unrelated class that implements it.
+    Interface,
+    /// Dex `invoke-super`, JVM `invokespecial` with a receiver: the target is fixed at the
+    /// named class rather than found from the receiver. CTADL still resolves it as a virtual
+    /// call, so it is counted separately in order to show what that costs.
+    ///
+    /// The two frontends do not draw this line in the same place, and a cross-frontend
+    /// comparison has to know it. On dex, `invoke-direct` -- constructors and private methods
+    /// -- lowers to a [`CallStyle::DirectCall`] and never reaches here, so `Super` is
+    /// `invoke-super` alone. On the JVM the same three cases are one `invokespecial`, and the
+    /// frontend lowers all of them to a `JavaCall`, so `Super` there also covers constructors
+    /// and private calls. Both are true to what the instruction means; they count different
+    /// instructions.
+    Super,
+    /// The frontend had no dispatch instruction to read: a JVM `invokedynamic` with a
+    /// receiver, or a call built by hand (a test, a model). Not a fourth kind of dispatch --
+    /// a gap in what was recorded, and reported as one rather than folded into `Virtual`.
+    #[default]
+    Unknown,
+}
+
+impl JavaDispatch {
+    /// `"virtual"`, `"interface"`, `"super"`, `"unknown"`. The JSON spelling too.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JavaDispatch::Virtual => "virtual",
+            JavaDispatch::Interface => "interface",
+            JavaDispatch::Super => "super",
+            JavaDispatch::Unknown => "unknown",
+        }
+    }
+
+    /// Every kind, in report order. The array rather than a derive, so a new variant has to
+    /// be added here on purpose and every consumer iterating kinds picks it up at once.
+    pub const ALL: [JavaDispatch; 4] = [
+        JavaDispatch::Virtual,
+        JavaDispatch::Interface,
+        JavaDispatch::Super,
+        JavaDispatch::Unknown,
+    ];
+
+    /// Dense index into a per-kind array, matching [`Self::ALL`].
+    pub fn index(self) -> usize {
+        match self {
+            JavaDispatch::Virtual => 0,
+            JavaDispatch::Interface => 1,
+            JavaDispatch::Super => 2,
+            JavaDispatch::Unknown => 3,
+        }
+    }
+}
+
+impl Display for JavaDispatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CallStyle {
@@ -26,6 +103,9 @@ pub enum CallStyle {
         cls: Symbol,
         simple_name: Symbol,
         descriptor: Symbol,
+        /// Which of `invoke-virtual` / `-interface` / `-super` this was. Resolution ignores
+        /// it; see [`JavaDispatch`].
+        dispatch: JavaDispatch,
     },
     /// Lua `recv:m(...)` (or `recv.m(recv, ...)`); resolved via the metatable
     /// (`__index`) chain. Unlike [`CallStyle::JavaCall`] there is **no static
@@ -93,7 +173,11 @@ impl Display for CallStyle {
                 cls,
                 simple_name,
                 descriptor,
-            } => write!(f, "java-call {receiver}.<{cls}.{simple_name}{descriptor}>"),
+                dispatch,
+            } => write!(
+                f,
+                "java-call {dispatch} {receiver}.<{cls}.{simple_name}{descriptor}>"
+            ),
             LuaCall { receiver, method } => write!(f, "lua-call {receiver}:{method}"),
             FuncPtrCall { callee, signature } => match signature {
                 Some(signature) => write!(f, "funcptr-call {callee} <{signature}>"),
@@ -151,6 +235,32 @@ pub enum VirtualMethodTable {
         /// - Fully qualified method name
         methods: Vec<(JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
         hierarchy: HashMap<JavaClass, SmallVec<[JavaClass; 2]>>,
+        /// Every class the frontend saw declared `interface`.
+        ///
+        /// `hierarchy` above merges a class's superclass with its super-interfaces into one
+        /// parent list, which is what CHA wants -- both are subtype edges -- but it means the
+        /// table alone cannot say which parents are interfaces. This column is that record.
+        ///
+        /// It is a list of the interfaces *this import declares*. An interface belonging to
+        /// code that was not imported (`java/util/Iterator`, in an app that does not ship the
+        /// framework) is absent, so a type missing here means "not known to be an interface",
+        /// never "known not to be". A consumer that needs the dispatch kind of a call should
+        /// read [`JavaDispatch`] off the call site, which is recorded for every call whatever
+        /// the receiver's type is; this column answers the different question of what a *type*
+        /// is.
+        interfaces: Vec<JavaClass>,
+        /// Method declarations carrying `abstract`, including every method of an interface
+        /// that is not `default` or `static`.
+        ///
+        /// These are exactly the declarations that are **absent** from `methods`, which holds
+        /// implementations: a body-less method has no code for the frontend to lower and no
+        /// function to name. Recording them is what makes a single-abstract-method interface
+        /// recognisable -- a functional interface is one interface with one row here -- which
+        /// is otherwise underivable, since the CHA resolvent map keyed on an interface holds
+        /// every method of every implementer rather than the interface's own.
+        ///
+        /// There is no fourth column: an abstract method has no implementation to name.
+        abstract_methods: Vec<(JavaClass, JavaSimpleName, JavaSignature)>,
         /// Methods declared `native`. They also appear in `methods` above, so
         /// that CHA resolves a virtual call to one; this column is what the JNI
         /// bridge joins against, and it is the only one carrying the staticness
@@ -237,6 +347,8 @@ impl VirtualMethodTable {
         VirtualMethodTable::Java {
             methods: Vec::new(),
             hierarchy: HashMap::new(),
+            interfaces: Vec::new(),
+            abstract_methods: Vec::new(),
             natives: Vec::new(),
         }
     }
@@ -263,11 +375,19 @@ impl Display for VirtualMethodTable {
             VirtualMethodTable::Java {
                 methods,
                 hierarchy,
+                interfaces,
+                abstract_methods,
                 natives,
             } => {
                 writeln!(f, "java virtual method table")?;
                 for (cls, name, sig, method) in methods {
                     writeln!(f, "{cls}.{name} has signature {sig}: {method}")?;
+                }
+                for cls in interfaces {
+                    writeln!(f, "{cls} is an interface")?;
+                }
+                for (cls, name, sig) in abstract_methods {
+                    writeln!(f, "{cls}.{name} has signature {sig}: abstract")?;
                 }
                 for (cls, name, sig, method, is_static) in natives {
                     let kind = if *is_static {

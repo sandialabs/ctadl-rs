@@ -861,6 +861,15 @@ fn load_or_infer_project(name: &str) -> anyhow::Result<project::AnalysisProject>
         Ok(project) => Ok(project),
         Err(project_error) => match project::ArtifactImport::load_by_name(name) {
             Ok(_) => Ok(project::AnalysisProject::ephemeral(name, &[name])),
+            // An import of this name exists but could not be read. Its error is the
+            // actionable one -- a stale import says which format it is and to re-import it --
+            // and the project error would say only that a config file is missing, which is
+            // true, unhelpful, and sends the reader looking in the wrong place. This is the
+            // path every stored import takes after an `IMPORT_FORMAT_VERSION` bump, so it is
+            // not a rare corner.
+            Err(import_error) if project::ArtifactImport::exists_by_name(name) => {
+                Err(import_error).with_context(|| format!("loading import '{name}'"))
+            }
             // Neither a project nor an import: report the project error, which is what the
             // command was asked for.
             Err(_) => Err(project_error).with_context(|| format!("loading project: '{name}'")),

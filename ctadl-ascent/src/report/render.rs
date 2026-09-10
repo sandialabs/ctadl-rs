@@ -99,19 +99,46 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
             pct(c.unknown, c.total)
         )?;
     }
-    if c.virtual_ > 0 {
+    if let Some(d) = &c.by_dispatch {
         writeln!(
             w,
-            "  Note: the Dex frontend lowers invoke-virtual, invoke-super and invoke-interface"
+            "      invoke-virtual      {:>12}   {}",
+            d.virtual_,
+            pct(d.virtual_, c.virtual_)
         )?;
         writeln!(
             w,
-            "  alike to one JavaCall, so 'virtual' folds interface and super calls in. Telling"
+            "      invoke-interface    {:>12}   {}",
+            d.interface,
+            pct(d.interface, c.virtual_)
         )?;
         writeln!(
             w,
-            "  them apart needs a dispatch field in the IR, not a change here."
+            "      invoke-super        {:>12}   {}",
+            d.super_,
+            pct(d.super_, c.virtual_)
         )?;
+        if d.unknown > 0 {
+            writeln!(
+                w,
+                "      no dispatch recorded{:>12}   {}   invokedynamic, or a synthesised call",
+                d.unknown,
+                pct(d.unknown, c.virtual_)
+            )?;
+        }
+        writeln!(
+            w,
+            "  All three resolve identically today -- an invoke-super is resolved as though the"
+        )?;
+        writeln!(
+            w,
+            "  receiver's type were unknown, which over-approximates it. They are counted apart"
+        )?;
+        writeln!(
+            w,
+            "  because CHA behaves far worse on an interface, and an average over the two"
+        )?;
+        writeln!(w, "  describes neither.")?;
     }
 
     if r.language == Language::Other {
@@ -166,6 +193,32 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
             w,
             "                                                    library code, native, reflection)"
         )?;
+        if !v.by_dispatch.is_empty() {
+            writeln!(
+                w,
+                "\n  By dispatch kind. The pooled row above is an average over populations that"
+            )?;
+            writeln!(w, "  behave nothing alike, and belongs to neither of them:")?;
+            writeln!(
+                w,
+                "    {:>10} {:>9} {:>13} {:>7} {:>7} {:>7} {:>7}  kind",
+                "sites", "1 target", "edges", "p50", "p90", "p99", "max"
+            )?;
+            for d in &v.by_dispatch {
+                writeln!(
+                    w,
+                    "    {:>10} {:>9} {:>13} {:>7} {:>7} {:>7} {:>7}  {}",
+                    d.sites,
+                    pct(d.sites_with_one_target, d.sites),
+                    d.total_edges,
+                    d.targets_per_site.p50,
+                    d.targets_per_site.p90,
+                    d.targets_per_site.p99,
+                    d.targets_per_site.max,
+                    d.dispatch
+                )?;
+            }
+        }
     }
 
     if let Some(worst) = &r.worst_signatures {
@@ -240,6 +293,26 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
         )?;
         writeln!(w, "  and what there would be to special-case:")?;
         signature_rows(w, &worst.top_by_excess)?;
+        for d in &worst.by_dispatch {
+            writeln!(
+                w,
+                "\n  {} dispatch owns {} of the excess ({} edges); its worst, ranked within",
+                d.dispatch,
+                pct(d.excess_edges, worst.excess_edges),
+                d.excess_edges
+            )?;
+            writeln!(
+                w,
+                "  the kind, with sites and edges counted over that kind's sites alone:"
+            )?;
+            writeln!(
+                w,
+                "    worst 10 own {} of it, worst 100 own {}",
+                pct_f(d.top_10_signature_excess_share),
+                pct_f(d.top_100_signature_excess_share)
+            )?;
+            signature_rows(w, &d.top_by_excess)?;
+        }
     }
 
     if let Some(rta) = &r.rta {
@@ -278,6 +351,20 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
             "  genuinely reachable. This measures how much CHA over-approximates; it is not a"
         )?;
         writeln!(w, "  resolution strategy anything acts on.")?;
+        if !rta.by_dispatch.is_empty() {
+            writeln!(w, "    {:>13} {:>13} {:>13}  kind", "CHA", "RTA", "dropped")?;
+            for d in &rta.by_dispatch {
+                writeln!(
+                    w,
+                    "    {:>13} {:>13} {:>13}  {}   {}",
+                    d.cha_edges,
+                    d.rta_edges,
+                    d.edges_dropped,
+                    d.dispatch,
+                    pct(d.edges_dropped, d.cha_edges)
+                )?;
+            }
+        }
     }
 
     if let Some(cases) = &r.hard_cases {
@@ -291,17 +378,20 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
         )?;
         writeln!(
             w,
-            "    {:>9} {:>9} {:>12} {:>9}  method",
-            "classes", "sites", "edges", "worst"
+            "    {:>9} {:>9} {:>12} {:>9} {:>18}  method",
+            "classes", "sites", "edges", "worst", "of those, iface"
         )?;
         for case in cases {
             writeln!(
                 w,
-                "    {:>9} {:>9} {:>12} {:>9}  {}{}",
+                "    {:>9} {:>9} {:>12} {:>9} {:>18}  {}{}",
                 case.signatures,
                 case.sites,
                 case.total_edges,
                 case.max_targets,
+                case.sites_by_dispatch
+                    .as_ref()
+                    .map_or_else(|| "-".to_string(), |d| d.interface.to_string()),
                 case.name,
                 case.descriptor
             )?;
@@ -343,6 +433,15 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
                 k.sites_by_receiver_type
             )
         )?;
+        if let Some(d) = &k.receiver_type_sites_by_dispatch
+            && d.total() > 0
+        {
+            writeln!(
+                w,
+                "  of the type-matched, by dispatch: {} interface, {} virtual, {} super, {} unrecorded",
+                d.interface, d.virtual_, d.super_, d.unknown
+            )?;
+        }
         if k.matched_receiver_types.is_empty() {
             writeln!(
                 w,
@@ -361,6 +460,57 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
         }
     }
 
+    if let Some(f) = &r.functional_interfaces {
+        writeln!(
+            w,
+            "\n-- functional interfaces (any SAM, not just Kotlin) --------"
+        )?;
+        writeln!(
+            w,
+            "  interfaces declared here  {:>12}",
+            f.interfaces_declared
+        )?;
+        writeln!(
+            w,
+            "  with one abstract method  {:>12}   functional interfaces",
+            f.single_abstract_method
+        )?;
+        writeln!(w, "  call sites on one         {:>12}", f.sites)?;
+        writeln!(
+            w,
+            "  resolving to one body     {:>12}   {}",
+            f.sites_with_one_target,
+            pct(f.sites_with_one_target, f.sites)
+        )?;
+        writeln!(w, "  their call edges          {:>12}", f.total_edges)?;
+        writeln!(w, "  of which excess           {:>12}", f.excess_edges)?;
+        writeln!(
+            w,
+            "  interface calls on a type this import does not declare: {}",
+            f.interface_sites_on_unknown_type
+        )?;
+        writeln!(
+            w,
+            "  That last line is the coverage gap, and on an app that does not ship the"
+        )?;
+        writeln!(
+            w,
+            "  framework it is most of them: `java/util/Iterator` is an interface nothing here"
+        )?;
+        writeln!(
+            w,
+            "  ever saw declared, so every number above is over the remainder. Unlike the"
+        )?;
+        writeln!(
+            w,
+            "  Kotlin section this matches no names, so obfuscation does not hide it."
+        )?;
+        if !f.top.is_empty() {
+            writeln!(w, "  Worst functional-interface signatures, by excess:")?;
+            signature_rows(w, &f.top)?;
+        }
+    }
+
     if let Some(f) = &r.fan_in {
         writeln!(
             w,
@@ -368,9 +518,26 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
         )?;
         writeln!(w, "  methods with a caller     {:>12}", f.methods)?;
         distribution(w, "  callers/method", &f.calls_per_method)?;
-        writeln!(w, "  Most-called methods:")?;
+        if let Some(d) = &f.edges_by_dispatch {
+            writeln!(
+                w,
+                "  incoming edges by kind    {:>12} interface, {} virtual, {} super, {} direct",
+                d.interface, d.virtual_, d.super_, f.direct_edges
+            )?;
+        }
+        writeln!(
+            w,
+            "  Most-called methods (`iface` = callers reaching it through an interface):"
+        )?;
         for row in &f.top {
-            writeln!(w, "    {:>10}  {}", row.callers, row.method)?;
+            writeln!(
+                w,
+                "    {:>10} {:>10} iface  {}",
+                row.callers,
+                row.via_interface
+                    .map_or_else(|| "-".to_string(), |n| n.to_string()),
+                row.method
+            )?;
         }
     }
 
@@ -403,6 +570,41 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
             "  bound inlining faces, which has to terminate against every target the"
         )?;
         writeln!(w, "  resolution admits.")?;
+        if let Some(cv) = &rec.without_interface_edges {
+            writeln!(
+                w,
+                "\n  The same graph with every interface-dispatched edge removed:"
+            )?;
+            writeln!(
+                w,
+                "    deduplicated edges      {:>12}   {} of them",
+                cv.edges,
+                pct(cv.edges, rec.edges)
+            )?;
+            writeln!(w, "    self-recursive          {:>12}", cv.self_recursive)?;
+            writeln!(w, "    cycles (SCCs > 1)       {:>12}", cv.nontrivial_sccs)?;
+            writeln!(
+                w,
+                "    functions inside one    {:>12}   {}",
+                cv.functions_in_nontrivial_sccs,
+                pct(cv.functions_in_nontrivial_sccs, rec.nodes)
+            )?;
+            writeln!(
+                w,
+                "    largest cycle           {:>12}   {} of the full graph's",
+                cv.largest_scc,
+                pct(cv.largest_scc, rec.largest_scc)
+            )?;
+            writeln!(
+                w,
+                "  If the largest cycle survives here, interface dispatch is not what makes"
+            )?;
+            writeln!(
+                w,
+                "  inlining non-terminating; if it collapses, it is, and that is a thing to fix"
+            )?;
+            writeln!(w, "  rather than a thing to inline through.")?;
+        }
     } else {
         writeln!(
             w,
