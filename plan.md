@@ -1,7 +1,8 @@
 # `ctadl report` — implementation plan, phase 1 - DO-NOT-MERGE
 
-Status: approved, ready to implement. Derived from `intent.md` and `spec.md`, and corrected
-against measurements of this tree and of the indexes in `~/.local/state/ctadl`.
+Status: approved, ready to implement. Derived from `intent.md` and `spec.md`, corrected against
+measurements of this tree and of the indexes in `~/.local/state/ctadl`, then simplified after
+review (see "What review changed").
 
 ## Context
 
@@ -11,60 +12,56 @@ terrible call sites explain most of the call-graph imprecision — if so, specia
 if not, the whole analysis has to get better. Nothing in CTADL answers this today. The
 numbers that exist are buried in `log::debug!` inside `cli::inspect_index_facts`.
 
-`spec.md` designs a `ctadl report <name>` subcommand for it, at two tiers (static = needs
-only an import; resolved = needs an index). This plan implements phase 1 of that design
-with four corrections, each measured against this repo and against existing indexes in
-`~/.local/state/ctadl` rather than inferred.
+`spec.md` designs a `ctadl report <name>` subcommand at two tiers (static = needs only an
+import; resolved = needs an index). This plan implements phase 1 as **static tier only**.
 
 ### What measurement changed about the design
 
-**1. `call.parquet` is monomorphic-only, so the resolved tier cannot supply fan-out.**
-Default strategy is `CallResolutionStrategy::Mixed` (`main.rs:274`). Under it, codegen emits
-a `call` edge only when CHA resolves to exactly one target and defers everything else to
-`callee_info`. Measured on the existing `vlc` index:
+**1. `call.parquet` is monomorphic-only, and the resolved tier adds nothing in phase 1.**
+Default strategy is `CallResolutionStrategy::Mixed` (`main.rs:274`). Under it codegen
+(`codegen/mod.rs:535-563`) emits a `call` edge when CHA resolves to exactly one target,
+pushes `callee_info` when it resolves to two or more, and **silently drops** a site with zero
+targets — no edge, no `callee_info`, only a `log::trace!`. Measured on the existing `vlc`
+index: 570,387 sites in `call` (all with exactly one target), 139,695 in `callee_info`,
+overlap 0.
 
-| table | distinct sites | targets/site |
-| --- | --- | --- |
-| `call.parquet` | 570,387 | exactly 1, max 1 |
-| `callee_info.parquet` | 139,695 | deferred to hybrid inlining |
-| overlap | 0 | — |
+So everything the index could tell the report is derivable from the import: the deferred-site
+count is "sites with CHA >= 2", fan-in over `call` is fan-in over the monomorphic subset, and
+SCCs over `call` cannot see recursion through any virtual call. Fan-in and SCCs over the
+**CHA graph** are the numbers hybrid inlining actually has to contend with, and they need no
+index. **Consequence:** the resolved tier moves to phase 3, where the index genuinely adds
+something (allocation depth, `spec.md` §6.3). `IndexConfig` is untouched in phase 1.
 
-So `spec.md` §5.4 ("from `call` we get ... fan-out") is vacuous, and the
-`inspect_index_facts` top-50-busiest-sites logic that §5.2 proposes to promote computes
-"every site has 1 target" on any Java program. Fan-**in** over the same table is fine and
-directly answers an intent requirement: 126,838 methods, mean 4.5, p99 34, max 25,417
-(`Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter`).
+**2. CHA is keyed by signature, not by call site.** `ClassHierarchyAnalysis::resolvents` is
+`BTreeMap<(class, name, descriptor), targets>` (`codegen/mod.rs:942-946`), so every
+`Object.equals` site has the same target count and a per-site top-10 would be ten copies of
+one row. The report therefore aggregates by **signature key** and carries the number of sites
+per key; every per-site distribution is the weighted expansion of the per-key table. This is
+also what makes the report cheap: the walk holds one entry per distinct key, not one per
+site. (`callee_resolvents.parquet` is keyed `(object, context, target_id)` with no call site
+and its top entries are `<init>`/`<clinit>`, which are `DirectCall` on Dex
+(`frontends/ctadl-dex/src/lib.rs:521-566`) — another reason to walk the IR, not the index.)
 
-**Consequence:** the static tier owns every fan-out / CHA / RTA / distribution number. The
-resolved tier contributes fan-in, SCCs, and the deferred-site count only. And because
-`index_config.json` today holds only `{"version":"3"}`, the report cannot tell which
-strategy built the index it reads — so the strategy has to be recorded.
+**3. Kotlin receiver-type matching is unreliable on release APKs.** In three dex string pools:
+`vlc` keeps `kotlin/jvm/functions/FunctionN`; `com.noto_54.apk` repackages to
+`Lkotlin/FunctionN;`; `Facebook+Lite` has zero `kotlin` types (everything is `LX/000;`,
+1,016 types, rest loaded at runtime). But `invoke`/`invokeSuspend` rank 3rd and 5th in
+`vlc`'s worst-signature list by name alone. Decision: match **both** discriminators and
+report their disagreement, so obfuscation shows up as data rather than a silent zero.
 
-**2. `callee_resolvents` is not per-call-site.** Its schema is
-`(object, context, target_id)` (`facts/schema.rs:89-99`) — allocated type × method
-signature, with no call site and no declared receiver type. Per-site CHA counts are
-obtainable only from the import plus `run_cha`. Its top entries on `vlc` are `<init>`
-(10,885 targets for one signature) and `<clinit>` (5,318); the Dex frontend lowers
-`invoke-direct` (constructors) to `CallStyle::DirectCall`
-(`frontends/ctadl-dex/src/lib.rs:521-566`), so those are not virtual call sites at all.
-Reporting them as the worst sites would be an artifact. Walking the IR avoids this by
-construction — `<init>` never appears in the virtual census.
+**4. The real cost is `load_import`, not the index tables.** `IndexFacts::try_load` reads only
+the seven pre-fixpoint tables (`index_engine/mod.rs:174-238`). `vlc` is a 159 MB program
+bitcode plus a 53 MB VMT decoded whole into memory, and TikTok is larger. That is the
+make-or-break number and it is measured **first**, with existing commands.
 
-**3. Kotlin receiver-type matching is unreliable on release APKs.** Measured in three dex
-string pools: `vlc` keeps `kotlin/jvm/functions/FunctionN`; `com.noto_54.apk` repackages to
-`Lkotlin/FunctionN;`; `Facebook+Lite` has zero `kotlin` types at all (everything is
-`LX/000;`, and only 1,016 types — it loads the rest at runtime). But `invoke` and
-`invokeSuspend` rank 3rd and 5th in `vlc`'s worst-signature list by method name alone.
-Decision: match **both** discriminators and report coverage, so obfuscation shows up as
-data rather than as a silent zero.
+### What review changed
 
-**4. Two cost concerns in the spec turn out not to be real.**
-`IndexFacts::try_load` reads only the seven pre-fixpoint tables, never the 190 MB
-`assign.parquet` (`index_engine/mod.rs:174-238`; its doc comment at :172 is stale and says
-three tables). And large apps *have* been indexed here — `vlc` 309 MB, `chrome` 75 MB — so
-§6.7's worry that the resolved tier may only ever run on TaintBench is weaker than written.
-The real cost is the static tier's `load_import`: `vlc` is a 159 MB program bitcode plus a
-53 MB VMT, decoded whole into memory.
+- Resolved tier, `IndexConfig` cost fields, and the index-cost probe: out of phase 1.
+- Top-N and all storage by signature key, not call site.
+- Scale measurement moved from last to first, using `ctadl inspect`, before new code.
+- One synthetic CHA/RTA correctness test added next to `run_cha`.
+- No `codegen/cha.rs` move; RTA computed in the same Datalog run as CHA.
+- xtask checks reduced from five to two; `--section` dropped pending step 0.
 
 ---
 
@@ -72,223 +69,242 @@ The real cost is the static tier's `load_import`: `vlc` is a 159 MB program bitc
 
 Each step leaves the tree building and the existing suite green.
 
-### 1. Extract CHA and add the RTA switch
-`ctadl-ascent/src/codegen/mod.rs` → new `ctadl-ascent/src/codegen/cha.rs`.
+### 0. Measure the static tier's floor with existing commands
+No new code. For the four largest entries in `~/apps` (TikTok 213 MB xapk, Telegram, VLC,
+WhatsApp Business) run `ctadl import --frontend dex` then `ctadl inspect`, each under the
+`memory-guard` skill's `memguard.sh` with a hard cap, timing and peak footprint recorded.
+Per `CLAUDE.md`, capture every run's full output to a file (under `/Volumes/Shampoo` if the
+scratch dir is short on space); quote every path — the filenames carry `+` and
+percent-encoding.
 
-Move `ChaLanguage` (:930), `ClassHierarchyAnalysis` (:942), `run_cha` (:1087),
-`emit_callee_resolvents` (:1060) and `InstantiationFinder` (:150) into `cha.rs` with a
-`pub(crate)` surface. Add an `rta: bool` parameter to `run_cha`, selecting a `cha_resolve`
-rule gated on `instantiated_class(sub)` — the rule is already written and commented out at
-`codegen/mod.rs:1136-1139`; enabling it needs the trailing `;` on the
-`cha_subtype_reflexive` line turned into a `,`. `codegen` keeps calling with `rta: false`,
-so index behaviour is unchanged.
+`inspect` calls `load_import` on the whole program (`cli/mod.rs:935`), so its peak is the
+report's floor. This answers `spec.md` §7.2 question 1 before a line is written, and decides:
+whether `.xapk` import works at all, the RAM budget for step 3's graph, and whether
+`--section` is needed (it is not in this plan; add it only if this step says the import
+is *not* the dominant cost). `Facebook+Lite` is excluded as a scale sample — 1,016 types and
+runtime dex loading.
 
-The `instantiated_classes` set must be collected over **every** function including skipped
-ones, for the reason `codegen_program` documents at `codegen/mod.rs:68-71`.
+*Proves it:* a table in the step's output file: app, import seconds, inspect seconds, peak MB.
 
-*Proves it:* `cargo test -p ctadl-ascent` (the `codegen/tests.rs` fixtures and the
-serial/parallel engine-parity test at `index_engine/mod.rs:1714` both exercise this path)
-and `cargo xtask regression`, both unchanged.
+### 1. RTA inside `run_cha`, in place
+`ctadl-ascent/src/codegen/mod.rs`. No module move. Make `ClassHierarchyAnalysis` (:942),
+`run_cha` (:1087) and `InstantiationFinder` (:150) `pub(crate)`; `report/` is in the same
+crate. Add `rta: bool` to `run_cha` and a second output relation:
+
+```
+rta_resolve(sup, m, d, id) <--
+    cha_super_method(sub, m, d, id),
+    cha_subtype_reflexive(sub, sup),
+    instantiated_class(sub),
+    if rta;
+```
+
+`run_cha` is `ascent_run!` (:1094), which captures locals, so `if rta` costs nothing when
+false. It returns both maps; `ClassHierarchyAnalysis` gains `rta_resolvents` (empty unless
+asked). One Datalog run shares the subtype closure — no second CHA. `codegen` keeps calling
+with `rta: false`, so index output is byte-identical.
+
+`instantiated_classes` must be collected over **every** function including skipped ones, for
+the reason documented at `codegen/mod.rs:68-71`.
+
+*Proves it:* one new test in `codegen/tests.rs`, built like its neighbours with the mir
+builder and an explicit `VirtualMethodTable::Java`: interface `I` with three implementers
+`A`, `B`, `C`, one function that does `new A` and calls `I.m()`. Assert CHA gives 3 targets
+and RTA gives 1. Plus `cargo test -p ctadl-ascent` and `cargo xtask regression`, unchanged
+(the engine-parity test at `index_engine/mod.rs:1714` covers the codegen path).
 
 ### 2. Statistics helpers
-`ctadl-ascent/src/stats.rs`. Add `percentile(sorted: &[usize], q: f64) -> Option<usize>`, a
-`Distribution { count, total, mean, p50, p90, p99, max }` with a constructor taking
-`&mut [usize]`, and `top_n_share(sorted_desc: &[usize], n: usize) -> f64`. Keep the
-module's style: free functions, `usize`, `median`'s sorted-slice precondition documented
-rather than enforced. Note this module currently has **zero callers** anywhere in the
-workspace (`cli::inspect` re-implements median inline at `cli/mod.rs:965-974`); the report
-is its first.
+`ctadl-ascent/src/stats.rs`. Because storage is per key, the helpers are **weighted**:
+`percentile(sorted: &[(usize, usize)], q: f64) -> Option<usize>` over `(value, weight)`
+pairs, `Distribution { count, total, mean, p50, p90, p99, max }` with
+`from_weighted(&mut [(usize, usize)])`, and `top_n_share(sorted_desc: &[usize], n) -> f64`.
+Keep the module's style: free functions, `usize`, sorted-slice precondition documented. This
+module currently has zero callers in the workspace (`cli::inspect` re-implements median
+inline at `cli/mod.rs:965-974`); the report is its first.
 
-*Proves it:* unit tests in-module, numeric only — no program fixtures.
+*Proves it:* unit tests in-module, numeric only. Include a weighted case where the same
+answer is checked against the expanded unweighted vector.
 
-### 3. Static tier measurements
-New `ctadl-ascent/src/report/callgraph.rs`.
+### 3. Static measurements
+New `ctadl-ascent/src/report/callgraph.rs`. One walk over `program.functions` → `blocks` →
+`statements` matching `StatementKind::CallAssign { style, .. }` — the shape `cli::inspect`
+uses at `cli/mod.rs:933-961`. It produces:
 
-One walk over `program.functions` → `blocks` → `statements`, matching
-`StatementKind::CallAssign { style, .. }` — the same shape `cli::inspect` uses at
-`cli/mod.rs:933-961`. Per site store ids only (`FunctionIdx`, `BasicBlockIdx`,
-`StatementIdx`, the `CallStyle` discriminant, and for a `JavaCall` the `(cls, simple_name,
-descriptor)` symbols plus CHA and RTA counts); resolve names only for the top-N lists that
-print. ~710k sites on `vlc`, so the rows are not the cost — `load_import` is.
+- a census by `CallStyle` discriminant (direct / Java virtual / func-ptr / Lua / unknown);
+- `HashMap<(cls, name, descriptor), usize>`: sites per Java signature key;
+- per function, the set of distinct keys it calls (for fan-in and SCCs).
 
-Sections, all static: call census by `CallStyle`; CHA targets per virtual site and the
-top-N; fraction resolving to exactly one; the `Distribution`; top-10 / top-100 edge share;
-zero-target sites; RTA-versus-CHA targets dropped; named hard cases (`equals`, `hashCode`,
-`toString`, matched exactly by name and descriptor, which survives obfuscation); Kotlin
-sites by **both** discriminators (receiver type in `{kotlin/jvm/functions/FunctionN,
-kotlin/FunctionN}` and method name in `{invoke, invokeSuspend}`), reported as two counts
-plus their disagreement; and SCCs over the CHA call graph as the recursion *upper* bound.
+Every other number is a join of that map with `cha.resolvents` and `cha.rta_resolvents`.
+Sections, all static, all `serde::Serialize`:
 
-Every structure derives `serde::Serialize`. RTA counts are labelled a lower bound, per
-`spec.md` §6.1 — the allocated-class set comes from imported code only.
+1. Call census by kind. `invoke-super` is folded into `JavaCall` by the frontend and the
+   report says so.
+2. Targets per virtual site: the weighted `Distribution` (p50/p90/p99/max), fraction with
+   exactly one target, zero-target sites (which codegen drops silently — the unsound spot),
+   and the count with >= 2 targets, labelled "handed to hybrid inlining under `mixed`".
+3. Top-N **signature keys** by CHA target count, each with its site count and RTA count.
+   Edge share of the top-10 and top-100 keys.
+4. RTA versus CHA: total targets dropped, and the distribution of the per-key gap. RTA is
+   labelled a lower bound everywhere it prints (`spec.md` §6.1: allocated-class set comes
+   from imported code only).
+5. Named hard cases: `equals`, `hashCode`, `toString` matched exactly by name and
+   descriptor, which survives obfuscation.
+6. Kotlin lambdas by both discriminators — receiver type in `{kotlin/jvm/functions/FunctionN,
+   kotlin/FunctionN}` and method name in `{invoke, invokeSuspend}` — as two counts plus their
+   disagreement, and how many of those keys resolve to a single body.
+7. Fan-in per method over the CHA graph: for each key, each target gains that key's site
+   count. Distribution plus top-N methods.
+8. Recursion: SCCs over the CHA call graph, edges deduped per (caller function, target),
+   via `ctadl_ir::graph::scc::Sccs` (`ctadl-ir/src/graph/scc/mod.rs:120`) behind a small
+   `DirectedGraph + Successors` adapter over a dense `usize` remap. Do not write a new
+   Tarjan. This is the recursion **upper** bound and the one inlining faces. Print the
+   deduped edge count *before* building the graph; it can reach tens of millions on `vlc`
+   and is the one section whose cost step 6 must record separately.
 
-### 4. Tier selection and the resolved tier
-New `ctadl-ascent/src/report/mod.rs`: `ReportOptions { format, top, sections }` in the style
-of `IndexOptions` (`cli/mod.rs:46-81`), and `report(project, opts) -> Result<Report, Error>`.
+Non-Java programs (Pcode, C) get sections 1 and the func-ptr count only, with the rest
+absent from the output rather than zero (`spec.md` §5.5). Lua gets the same treatment as Java
+through `lua_resolvents_by_method`.
 
-Gate on `project.has_index()` before ever calling `index_path()` — `AnalysisProject::ephemeral`
-documents at `ctadl-import/src/project.rs:528-533` that `index_path` creates the directory
-and must not be called on an ephemeral project, and the import-only path goes through
-`ephemeral`. Resolved tier loads `IndexFacts::try_load` plus `facts::IdMap::try_load` and
-adds: fan-in per method; the deferred-site count from `callee_info` compared against the
-static tier's CHA counts ("how much hybrid inlining had to do"); and SCCs over `call` as
-the recursion *lower* bound, wrapping a dense `FunctionId`→`usize` remap in a small
-`DirectedGraph + Successors` adapter for `ctadl_ir::graph::scc::Sccs<usize, usize>`
-(`Idx` is implemented for `usize` at `ctadl-ir/src/index/idx.rs:30`). Do not write a new
-Tarjan.
+A `debug_assert!(rta.len() <= cha.len())` sits where the two maps are joined; that is the
+per-key invariant, checked on every key, which no output-level test could do.
 
-The report opens with one line naming the tier, the strategy the index used, and what
-indexing would add — `spec.md` §6.6. Under `mixed`, it must state that resolved SCCs see
-only monomorphic edges, so recursion through a virtual call is invisible there.
-
-### 5. Rendering and CLI surface
-New `ctadl-ascent/src/report/render.rs` (text). `ctadl-ascent/src/lib.rs` gains
-`pub mod report;`. `ctadl-ascent/src/cli/mod.rs` gains a thin `pub fn report(...)`, matching
-the module doc's contract at `cli/mod.rs:1-10`. `ctadl-ascent/src/main.rs` gains
+### 4. Command surface
+New `ctadl-ascent/src/report/mod.rs` (`ReportOptions { format, top }` in the style of
+`IndexOptions`, `cli/mod.rs:46-81`; `report(import, opts) -> Result<Report, Error>`) and
+`report/render.rs` (text). `lib.rs` gains `pub mod report;`; `cli/mod.rs` a thin
+`pub fn report(...)` per the module contract at `cli/mod.rs:1-10`; `main.rs`
 `Command::Report(ReportArgs)`, a `ReportFormat` `ValueEnum`, and a `report_project` adapter
 next to `query_project` (:763).
 
-`load_or_infer_project` (`main.rs:792-810`) is private to `main.rs` and is exactly the
-name-resolution `spec.md` §2 asks for; reuse it in place rather than moving it.
+Name resolution reuses `load_or_infer_project` (`main.rs:800-810`) in place. If the name is
+a project, the report takes its first import and ignores the index; the opening line names the
+static tier and says an index is not consulted in this version. Never call `index_path()` —
+on an ephemeral project it creates the directory (`ctadl-import/src/project.rs:528-533`).
 
-Output follows the existing convention, not a new one: `--output` defaults to `-` meaning
-stdout, as `write_sarif` does at `query_engine/formatter.rs:1933-1956`, and the "wrote
-<file>" line is suppressed for `-` so it cannot corrupt a pipe (`cli/mod.rs:564-566`).
-Text and JSON both go to stdout; progress and warnings stay on stderr through `log`. Per
-`docs/debugging.md:36-38`, nothing that scales with call sites may be logged above `debug`.
+No `--section` flag unless step 0 demands it. `--output` defaults to `-` (stdout) as
+`write_sarif` does (`query_engine/formatter.rs:1933-1956`), with the "wrote <file>" line
+suppressed for `-` (`cli/mod.rs:564-566`). Text and JSON both to stdout; progress on stderr
+through `log`. Per `docs/debugging.md:36-38`, nothing that scales with call sites is logged
+above `debug`. JSON is one key per section, absent keys for sections that do not apply.
 
-### 6. Record what the index cost and how it resolved
-`ctadl-import/src/project.rs`: `IndexConfig` (:151) gains `strategy`, `index_seconds` and
-`peak_footprint_mb`, each `Option` with `#[serde(default)]` so an existing index still
-reads and `INDEX_FORMAT_VERSION` does **not** need a bump (`check_index_config` at :683
-compares only `version`). `cli::index` fills them at `cli/mod.rs:315` using the existing
-`phys_footprint_mb` (`index_engine/mod.rs:887`). This is the §6.4 cost block and it is what
-makes the resolved tier able to state its own strategy.
+### 5. Tests — the real APK, two checks
+`xtask/src/apk.rs`, added to `CHECKS` (:45), sharing the one com.noto import the module
+already pays for (~13 s, ~50k functions, two `classes*.dex`):
 
-`IndexStats`' `hybrid_context_*` fields have no on-disk channel at all today and are
-reported under their real names as relation counts, not dressed up as code size.
+- `apk:report` — `ctadl report app` runs, its first line names the static tier, `--format json`
+  parses with one key per applicable section, and a handful of aggregate counts pinned to
+  com.noto (total sites, virtual sites, total CHA edges, total RTA edges) with a comment
+  saying what to do when the frontend legitimately moves them.
+- `apk:report-invariants` — from the JSON: direct + virtual + other == total; sum of per-key
+  `sites × cha` == total edges; RTA edges <= CHA edges; top-10 share <= top-100 share <= 1;
+  p50 <= p90 <= p99 <= max; zero-target + one-target + multi == virtual sites. Then run the
+  JSON form a second time and assert the two outputs are identical
+  (`docs/debugging.md:69-73`).
 
-### 7. Tests — real APKs only
-`xtask/src/apk.rs`. Add to `CHECKS` (:45), reusing the **one shared com.noto import** the
-module already pays for (~13 s, ~50k functions, two `classes*.dex`, no toolchain needed):
+Count-level and set-level only, never a byte-diff of the text rendering
+(`docs/debugging.md:113-117`). No new cases in `ctadl-ascent/tests/cli.rs` (its rule at
+:11-13: milliseconds, synthetic, real artifacts belong in `xtask`).
 
-- `apk:report` — `ctadl report app` runs, names the static tier, and reports a nonzero call
-  census.
-- `apk:report-json` — `--format json` parses, carries one key per section, and the schema is
-  present even for sections that found nothing.
-- `apk:report-invariants` — the assertions that must hold on **any** program: RTA targets ⊆
-  CHA targets per site; the sum of per-site target counts equals the reported total edges;
-  direct + virtual + other equals the total call census; top-10 share ≤ top-100 share ≤ 1;
-  p50 ≤ p90 ≤ p99 ≤ max; zero-target sites ≤ virtual sites.
-- `apk:report-stable` — two reports over the same import are identical, which
-  `docs/debugging.md:69-73` makes an assertion rather than a hope.
-- A small number of aggregate counts pinned to com.noto (total call sites, virtual sites,
-  total CHA edges), so a change in resolution moves them loudly. Set-level and count-level
-  only — never a byte-diff of rendered output (`docs/debugging.md:113-117`).
+Update `nightly/README.md`'s check table; its claim that `tests/cli.rs` reads the APK is
+already stale (`xtask/tests/dex/README.md:23` says the same) — fix it while there.
 
-Resolved-tier coverage needs an indexed real app. com.noto has never been indexed in CI, so
-**step 7a is to measure that cost first**; if it is affordable it becomes one more `apk:*`
-check sharing a single index, and if it is not, the resolved tier is covered by
-`report-eval` on TaintBench instead and that is recorded as the reason.
+### 6. Evaluation harness
+New `xtask/src/report_eval.rs` plus a `report-eval` arm in `xtask/src/main.rs`'s dispatch
+(:47-57). Takes a **directory** of APKs, never a hard-coded path (`spec.md` §6.7). For each
+app: import, `ctadl report --format json --output <app>.json`, record wall time and peak
+footprint per phase, and print a cross-app summary table. Reuses `xtask::exec` (`which`,
+`run_checked`, `capture_stdout`, `run_with_timeout`, `fresh_dir`). All output captured to
+files. Keeping the per-app JSON is the point; the table is secondary.
 
-Update `nightly/README.md`'s check table. Its §"Checks that are not taint cases" claim that
-`ctadl-ascent/tests/cli.rs` reads the APK is already stale (`xtask/tests/dex/README.md:23`
-says the same); fix it while there.
+With step 0 having settled whether the import fits, this step's job is `spec.md` §7.2
+questions 2–4 on both corpora: stability, whether the distributions have the predicted long
+tail, and how concentrated the imprecision is. It also records the SCC section's cost
+separately (live risk 2).
 
-No new cases in `ctadl-ascent/tests/cli.rs` — its stated rule is milliseconds and synthetic,
-and "a case that needs a real artifact belongs in `xtask`" (`tests/cli.rs:11-13`).
+### 7. Correct `spec.md`
+Known wrong or stale after this plan: §4 table (sections 9–10 need only an import; 14 stays
+phase 3), §5.2 (the `inspect_index_facts` logic is vacuous under `mixed`), §5.3 (per-key
+aggregation, one CHA run), §5.4 (the resolved tier is phase 3; `call` gives fan-in on
+monomorphic edges only; `callee_resolvents` is not per site), §5.6 (tests are one synthetic
+`codegen` case plus `xtask`), §6.2 (Kotlin receiver-type matching fails on obfuscated and
+repackaged apps), §8 (phasing).
 
-### 8. Evaluation harness
-New `xtask/src/report_eval.rs`, plus a `report-eval` arm in `xtask/src/main.rs`'s hand-rolled
-dispatch (:47-57) — `regression` is the only subcommand on this branch. Takes a **directory**
-of APKs as an argument, never a hard-coded path (`spec.md` §6.7); quotes every path, since
-`~/apps` filenames carry `+` and percent-encoding. For each app: import, `ctadl report
---format json`, save the per-app JSON, print a cross-app summary table. Reuses `xtask::exec`
-(`which`, `run_checked`, `capture_stdout`, `run_with_timeout`, `fresh_dir`).
+### Deferred
+**Phase 2** (interface-vs-virtual, `spec.md` §6.2): a `dispatch` field on
+`CallStyle::JavaCall` and an is-interface bit in the VMT. Confirmed missing: the Dex frontend
+collapses `invoke-virtual`/`-super`/`-interface` into one `JavaCall`
+(`frontends/ctadl-dex/src/lib.rs:525-537`), and `run_cha` is called with empty
+`interface_type`/`super_interface` (`codegen/mod.rs:969-970`), so its interface rules are
+dead. That is an `ir-vmt.bitcode` wire change: bump `IMPORT_FORMAT_VERSION` to `"7"`
+(`ctadl-import/src/project.rs:99`) **and** the pinned copies at `xtask/src/apk.rs:62`,
+`ctadl-import/tests/open_import.rs:157`, `ctadl-ascent/tests/store_relocation.rs:124`.
+Until then the report prints one combined virtual figure and says interfaces are folded in.
 
-Keeping the per-app JSON is the point; the table is secondary.
-
-Its first job is §7.2 question 1 — does the static tier survive the 213 MB TikTok XAPK.
-Run that under a hard memory cap rather than watching it (the `memory-guard` skill is set up
-for exactly this). Note `Facebook+Lite` is a poor scale sample despite being an APK: 1,016
-types and runtime dex loading mean a static import sees almost nothing.
-
-### 9. Correct `spec.md`
-It is in-tree and now known wrong in three places: §5.2 (the `inspect_index_facts` logic is
-vacuous under `mixed`, not reusable output), §5.4 (`call` gives fan-in, not fan-out; and
-`callee_resolvents` is not keyed by call site), §6.2 (receiver-type matching for Kotlin
-fails on obfuscated and repackaged apps). Also drop §5.6's synthetic-program unit tests in
-favour of step 7.
-
-### Deferred, unchanged from `spec.md` §8
-Phase 2 (interface-vs-virtual, §6.2) needs a `dispatch` field on `CallStyle::JavaCall` and
-an is-interface bit in the VMT. Both are confirmed missing: the Dex frontend collapses
-`invoke-virtual`/`-super`/`-interface` to one `JavaCall` (`frontends/ctadl-dex/src/lib.rs:525-537`),
-and `run_cha` is called with empty `interface_type`/`super_interface`
-(`codegen/mod.rs:969-970`), making its two interface rules dead. That is an `ir-vmt.bitcode`
-wire change: bump `IMPORT_FORMAT_VERSION` to `"7"` (`ctadl-import/src/project.rs:99`) **and**
-the pinned copies at `xtask/src/apk.rs:62`, `ctadl-import/tests/open_import.rs:157`,
-`ctadl-ascent/tests/store_relocation.rs:124`. Until then the report prints one combined
-virtual figure and says interfaces are folded in.
-
-Phase 3 (allocation depth, §6.3) needs `resolvent`'s `SmallestCallString`
+**Phase 3** (the resolved tier): allocation depth needs `resolvent`'s `SmallestCallString`
 (`index_engine/mod.rs:1001-1005`) promoted to an output relation and a new Parquet table.
-It is internal today and only reaches a `log::trace!` and a stats counter.
+Alongside it: fan-in over the real `call` graph via `IndexFacts::try_load` +
+`facts::IdMap::try_load`, gated on `project.has_index()`; `IndexConfig` (:151) gaining
+`strategy`, `index_seconds`, `peak_footprint_mb` as `#[serde(default)]` options (no
+`INDEX_FORMAT_VERSION` bump — `check_index_config` at :683 compares only `version`), filled
+by `cli::index` from `phys_footprint_mb` (`index_engine/mod.rs:887`); and a first
+measurement of what indexing com.noto costs, to decide whether a resolved-tier `apk:` check
+is affordable. `IndexStats`' `hybrid_context_*` counts are reported under their real names,
+not as code size.
 
 ---
 
 ## Files touched
 
-**New:** `ctadl-ascent/src/report/{mod,callgraph,render}.rs`,
-`ctadl-ascent/src/codegen/cha.rs`, `xtask/src/report_eval.rs`.
+**New:** `ctadl-ascent/src/report/{mod,callgraph,render}.rs`, `xtask/src/report_eval.rs`.
 
-**Modified:** `ctadl-ascent/src/codegen/mod.rs`, `ctadl-ascent/src/stats.rs`,
-`ctadl-ascent/src/lib.rs`, `ctadl-ascent/src/cli/mod.rs`, `ctadl-ascent/src/main.rs`,
-`ctadl-import/src/project.rs`, `xtask/src/apk.rs`, `xtask/src/main.rs`,
-`nightly/README.md`, `xtask/tests/dex/README.md`, `spec.md`.
+**Modified:** `ctadl-ascent/src/codegen/mod.rs`, `ctadl-ascent/src/codegen/tests.rs`,
+`ctadl-ascent/src/stats.rs`, `ctadl-ascent/src/lib.rs`, `ctadl-ascent/src/cli/mod.rs`,
+`ctadl-ascent/src/main.rs`, `xtask/src/apk.rs`, `xtask/src/main.rs`, `nightly/README.md`,
+`xtask/tests/dex/README.md`, `spec.md`.
+
+Not touched in phase 1: `ctadl-import/src/project.rs`, anything under `index_engine/`,
+`facts/`.
 
 ---
 
 ## Verification
 
 ```sh
-# unchanged behaviour first
-cargo test --workspace
+# step 0, before any code — output captured to files, run under memguard.sh
+ctadl import --frontend dex tiktok "$HOME/apps/TikTok+-+Videos%2C+Shop+%26+LIVE_46.1.3_APKPure.xapk"
+ctadl inspect tiktok
+
+# unchanged behaviour
+cargo test --workspace            # includes the new codegen CHA=3/RTA=1 case
 cargo xtask regression
 
 # the new checks, on the real APK
 cargo xtask regression --frontend dex --filter apk:
 
-# by hand, static tier, on the committed fixture
+# by hand, on the committed fixture
 ctadl import --frontend dex noto xtask/tests/dex/com.noto_54.apk
-ctadl report noto                  # text, stdout, says "static tier"
+ctadl report noto                          # text; first line names the static tier
 ctadl report noto --format json | jq 'keys'
 ctadl report noto --format json > a.json && ctadl report noto --format json > b.json && diff a.json b.json
 
-# resolved tier, against an index that already exists
-ctadl report vlc | head -40        # expect fan-in max ~25417, and the mixed-strategy caveat
-
-# scale, under a cap
-cargo xtask report-eval --apks ~/apps     # memory-guard the TikTok case
+# the corpus
+cargo xtask report-eval --apks ~/apps      # per-app JSON + table, outputs to files
 ```
 
-What each answers: the first block is "nothing regressed"; `apk:` is the invariant and
-pinned-count suite; the `diff` is reproducibility; `vlc` is the only resolved-tier check
-available before step 7a settles; `report-eval` is §7.2 question 1, the make-or-break
-number.
+What each answers: step 0 is the make-or-break memory number; the first block is "nothing
+regressed" and "RTA is right on a case you can check by hand"; `apk:` is invariants, pinned
+counts and reproducibility; `report-eval` is `spec.md` §7.2 questions 2–4.
 
 ## Live risks
 
-1. **Static tier memory on the largest apps.** `load_import` decodes the whole program;
-   `vlc` is 159 MB of bitcode plus a 53 MB VMT and TikTok is larger. This is measured in
-   step 8, and it is the one result that could force `--section` to become a real cost
-   lever rather than a convenience. Highest-risk step.
-2. **Step 1 touches the shared CHA path.** Moving `run_cha` and adding a parameter is
-   mechanical, but `codegen` is on the index hot path. Mitigated by keeping `rta: false`
-   for codegen and by the existing engine-parity test.
-3. **RTA is a lower bound**, and will drop genuinely reachable targets (library,
-   reflection, deserialization allocations are invisible). It must be labelled everywhere it
-   appears, or it will be read as precision rather than as a measurement.
-4. **Pinned com.noto counts are a maintenance cost.** They are the only thing that catches a
-   silent resolution regression, so they stay — but they need a comment saying what to do
-   when the frontend legitimately changes them.
+1. **`load_import` memory on the largest apps.** Now measured in step 0 before any code, so
+   it shapes the design instead of being discovered at the end.
+2. **CHA graph size for fan-in and SCCs** (section 8). Deduped per (function, target) but still
+   potentially tens of millions of edges on `vlc`. The edge count prints first, and if step 6
+   shows this section dominates, it becomes opt-in.
+3. **Step 1 touches the shared CHA path.** Mitigated by `rta: false` in codegen, the `if rta`
+   guard, the engine-parity test, and byte-identical index output.
+4. **RTA is a lower bound** and must be labelled so everywhere it prints, or it reads as
+   precision rather than measurement.
+5. **Pinned com.noto counts are a maintenance cost.** They are the only thing that catches a
+   silent resolution regression, so they stay, with a comment saying how to re-pin.
