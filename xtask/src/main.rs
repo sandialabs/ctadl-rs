@@ -1,13 +1,16 @@
 //! `cargo xtask` — developer task runner.
 //!
-//! Today the only task is `regression`, which ports the former bash harness
-//! (`nightly/tests.sh` and friends) for the source-sink taint regression tests.
+//! Two tasks. `regression` ports the former bash harness (`nightly/tests.sh` and friends)
+//! for the source-sink taint regression tests, and is what CI runs. `report-eval` sweeps
+//! `ctadl report` across a directory of real apps and keeps the per-app JSON; it is a
+//! measurement tool rather than a check, and nothing depends on it passing.
 //!
 //! Usage:
 //!     cargo xtask regression
 //!     cargo xtask regression --frontend pcode
 //!     cargo xtask regression --filter <name>
 //!     cargo xtask regression --tests-dir <dir>
+//!     cargo xtask report-eval --apks <dir>
 
 mod apk;
 mod assertions;
@@ -18,6 +21,7 @@ mod exec;
 mod jvm;
 mod models;
 mod regression;
+mod report_eval;
 mod sarif;
 
 use std::collections::BTreeSet;
@@ -48,6 +52,10 @@ fn run() -> Result<bool> {
         Some("regression") => {
             let opts = parse_regression_args(args)?;
             regression::run(&opts)
+        }
+        Some("report-eval") => {
+            let opts = parse_report_eval_args(args)?;
+            report_eval::run(&opts)
         }
         Some("-h" | "--help") | None => {
             print_help();
@@ -120,6 +128,47 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
     Ok(opts)
 }
 
+fn parse_report_eval_args(mut args: impl Iterator<Item = String>) -> Result<report_eval::Options> {
+    let mut opts = report_eval::Options::default();
+    let mut apks: Option<PathBuf> = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--apks" => {
+                apks = Some(PathBuf::from(
+                    args.next().context("--apks requires a value")?,
+                ));
+            }
+            "--out" => {
+                opts.out = PathBuf::from(args.next().context("--out requires a value")?);
+            }
+            "--filter" => {
+                opts.filter = Some(args.next().context("--filter requires a value")?);
+            }
+            "--top" => {
+                let value = args.next().context("--top requires a value")?;
+                opts.top = value
+                    .parse()
+                    .with_context(|| format!("--top expects a number, got `{value}`"))?;
+                if opts.top == 0 {
+                    bail!("--top must be at least 1");
+                }
+            }
+            "--debug" => opts.release = false,
+            "--native-libs" => opts.native_libs = true,
+            "--keep-stores" => opts.keep_stores = true,
+            "-h" | "--help" => {
+                print_help();
+                std::process::exit(0);
+            }
+            other => bail!("unknown argument `{other}` (try `xtask --help`)"),
+        }
+    }
+    // Required rather than defaulted: the corpora this sweeps are one machine's local files,
+    // and a hard-coded path would make a result look reproducible when it is not.
+    opts.apks = apks.context("report-eval requires --apks <dir>")?;
+    Ok(opts)
+}
+
 fn print_help() {
     println!(
         "\
@@ -163,6 +212,24 @@ Tasks:
                              (default: auto-detect `ctadl-ascent/src/models`).
                              The `models:*` checks self-skip when neither the
                              flag nor the default directory is present.
+
+  report-eval --apks <dir>   Run `ctadl report` over a directory of artifacts and
+                             print a cross-app summary, keeping each app's JSON.
+    --apks <dir>             Required. Directory of artifacts to sweep. There is
+                             deliberately no default: the corpora this is for are
+                             one machine's local files, and a baked-in path would
+                             make a result look reproducible when it is not.
+    --out <dir>              Where the per-app JSON, text reports, logs and
+                             scratch stores go (default: target/report-eval).
+    --filter <name>          Only sweep artifacts whose filename contains <name>.
+    --top <n>                Rows in each report's worst-signature and fan-in
+                             lists (default: 10).
+    --debug                  Exercise the debug binary (default: release).
+    --native-libs            Also import an APK's native libraries. Off by
+                             default: they go through Ghidra, which is a much
+                             larger measurement than the Dex call graph.
+    --keep-stores            Keep each app's scratch store. A 200 MB app imports
+                             to a couple of gigabytes, so a corpus adds up.
 "
     );
 }

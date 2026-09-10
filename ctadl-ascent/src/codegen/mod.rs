@@ -147,8 +147,19 @@ fn call_target_object(exp: &Exp) -> Option<fx::CallTargetObject> {
     }
 }
 
-struct InstantiationFinder<'a> {
+/// Collects every class the program allocates, which is the input the RTA arm of
+/// [`run_cha`] restricts on. `pub(crate)` so [`crate::report`] can run the same collection
+/// over an import without going through codegen.
+pub(crate) struct InstantiationFinder<'a> {
     instantiated_classes: &'a mut BTreeSet<Symbol>,
+}
+
+impl<'a> InstantiationFinder<'a> {
+    pub(crate) fn new(instantiated_classes: &'a mut BTreeSet<Symbol>) -> Self {
+        Self {
+            instantiated_classes,
+        }
+    }
 }
 
 impl Visitor for InstantiationFinder<'_> {
@@ -932,22 +943,43 @@ impl CodegenVisitor<'_> {
 /// `(CallTargetObject, CallDispatchKey)` pair the resolvents are emitted under, so that a Lua
 /// import and a JVM import sharing one fact base cannot collide in that key space.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum ChaLanguage {
+pub(crate) enum ChaLanguage {
     #[default]
     Java,
     Lua,
 }
 
+/// `(class, method simple name, descriptor) -> targets`. The descriptor is a fixed empty
+/// sentinel for [`ChaLanguage::Lua`], which has no overloading.
+pub(crate) type ChaResolvents = BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>>;
+
 #[derive(Debug, Default)]
-struct ClassHierarchyAnalysis {
+pub(crate) struct ClassHierarchyAnalysis {
     language: ChaLanguage,
-    /// `(class, method simple name, descriptor) -> targets`. The descriptor is a fixed empty
-    /// sentinel for [`ChaLanguage::Lua`], which has no overloading.
-    resolvents: BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>>,
+    resolvents: ChaResolvents,
+    /// The same table under the RTA restriction: a target survives only if some class the
+    /// program actually allocates inherits it. Empty unless built with [`Self::with_rta`],
+    /// because codegen never asks for it and computing it is measurement, not resolution.
+    rta_resolvents: ChaResolvents,
 }
 
 impl ClassHierarchyAnalysis {
+    /// Plain CHA. What codegen uses; [`Self::rta_resolvents`] is left empty.
     fn new(vmt: &VirtualMethodTable, instantiated_classes: BTreeSet<Symbol>) -> Self {
+        Self::build(vmt, instantiated_classes, false)
+    }
+
+    /// CHA *and* RTA, from one Datalog run over one shared subtype closure. Only
+    /// [`crate::report`] wants this: the RTA table is a measurement of how much CHA
+    /// over-approximates, not a resolution strategy anything acts on.
+    pub(crate) fn with_rta(
+        vmt: &VirtualMethodTable,
+        instantiated_classes: BTreeSet<Symbol>,
+    ) -> Self {
+        Self::build(vmt, instantiated_classes, true)
+    }
+
+    fn build(vmt: &VirtualMethodTable, instantiated_classes: BTreeSet<Symbol>, rta: bool) -> Self {
         match vmt {
             VirtualMethodTable::Java {
                 methods, hierarchy, ..
@@ -970,16 +1002,18 @@ impl ClassHierarchyAnalysis {
                 let super_interface = Default::default();
                 let instantiated_classes_vec =
                     instantiated_classes.into_iter().map(|s| (s,)).collect();
-                let resolvents = run_cha(
+                let (resolvents, rta_resolvents) = run_cha(
                     method_implemented,
                     direct_superclass,
                     interface_type,
                     super_interface,
                     instantiated_classes_vec,
+                    rta,
                 );
                 Self {
                     language: ChaLanguage::Java,
                     resolvents,
+                    rta_resolvents,
                 }
             }
             // Lua mirrors the Java arm: a Lua method is a `method_implemented` with a fixed
@@ -1002,16 +1036,18 @@ impl ClassHierarchyAnalysis {
                 direct_superclass.sort_unstable();
                 let instantiated_classes_vec =
                     instantiated_classes.into_iter().map(|s| (s,)).collect();
-                let resolvents = run_cha(
+                let (resolvents, rta_resolvents) = run_cha(
                     method_implemented,
                     direct_superclass,
                     Default::default(),
                     Default::default(),
                     instantiated_classes_vec,
+                    rta,
                 );
                 Self {
                     language: ChaLanguage::Lua,
                     resolvents,
+                    rta_resolvents,
                 }
             }
             _ => {
@@ -1021,13 +1057,37 @@ impl ClassHierarchyAnalysis {
         }
     }
 
-    fn java_resolvents(
+    pub(crate) fn language(&self) -> ChaLanguage {
+        self.language
+    }
+
+    pub(crate) fn java_resolvents(
         &self,
         cls: Symbol,
         name: Symbol,
         descriptor: Symbol,
     ) -> impl ExactSizeIterator<Item = Symbol> + '_ {
-        self.resolvents
+        Self::lookup(&self.resolvents, cls, name, descriptor)
+    }
+
+    /// [`Self::java_resolvents`] under the RTA restriction. Empty unless this analysis was
+    /// built by [`Self::with_rta`].
+    pub(crate) fn java_rta_resolvents(
+        &self,
+        cls: Symbol,
+        name: Symbol,
+        descriptor: Symbol,
+    ) -> impl ExactSizeIterator<Item = Symbol> + '_ {
+        Self::lookup(&self.rta_resolvents, cls, name, descriptor)
+    }
+
+    fn lookup(
+        table: &ChaResolvents,
+        cls: Symbol,
+        name: Symbol,
+        descriptor: Symbol,
+    ) -> impl ExactSizeIterator<Item = Symbol> + '_ {
+        table
             .get(&(cls, name, descriptor))
             .map(|syms| syms.as_slice())
             .unwrap_or(&[])
@@ -1044,8 +1104,18 @@ impl ClassHierarchyAnalysis {
     /// edge. When the name is shared across unrelated classes the union is sound but imprecise,
     /// which is why [`CallResolutionStrategy::Mixed`] defers to `callee_info` instead of
     /// emitting it (see the [`CallStyle::LuaCall`] codegen arm).
-    fn lua_resolvents_by_method(&self, method: &Symbol) -> BTreeSet<Symbol> {
-        self.resolvents
+    pub(crate) fn lua_resolvents_by_method(&self, method: &Symbol) -> BTreeSet<Symbol> {
+        Self::lua_lookup(&self.resolvents, method)
+    }
+
+    /// [`Self::lua_resolvents_by_method`] under the RTA restriction. Empty unless this
+    /// analysis was built by [`Self::with_rta`].
+    pub(crate) fn lua_rta_resolvents_by_method(&self, method: &Symbol) -> BTreeSet<Symbol> {
+        Self::lua_lookup(&self.rta_resolvents, method)
+    }
+
+    fn lua_lookup(table: &ChaResolvents, method: &Symbol) -> BTreeSet<Symbol> {
+        table
             .iter()
             .filter(|((_cls, name, _desc), _)| name == method)
             .flat_map(|(_, targets)| targets.iter().cloned())
@@ -1084,13 +1154,22 @@ fn emit_callee_resolvents(
     }
 }
 
-fn run_cha(
+/// Runs the class hierarchy analysis, and -- when `rta` is set -- the rapid type analysis
+/// beside it. Returns `(cha, rta)`; the second is empty when `rta` is false.
+///
+/// One [`ascent::ascent_run!`] computes both, so they share the subtype closure and the
+/// inherited-method table: asking for RTA does not cost a second CHA. The macro captures
+/// locals, so the `if rta` guard on the RTA rule is an ordinary Rust condition and the rule
+/// derives nothing at all when it is false -- which is how codegen's output stays
+/// byte-identical to what it was before this parameter existed.
+pub(crate) fn run_cha(
     method_implemented: Vec<(Symbol, Symbol, Symbol, Symbol)>,
     direct_superclass: Vec<(Symbol, Symbol)>,
     interface_type: Vec<(Symbol,)>,
     super_interface: Vec<(Symbol, Symbol)>,
     instantiated_classes: Vec<(Symbol,)>,
-) -> BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>> {
+    rta: bool,
+) -> (ChaResolvents, ChaResolvents) {
     let prog = ascent::ascent_run! {
         // input relations
         relation method_implemented(Symbol, Symbol, Symbol, Symbol) = method_implemented;
@@ -1108,6 +1187,8 @@ fn run_cha(
         relation cha_super_method(Symbol, Symbol, Symbol, Symbol);
         // output: static type resolves to possible methods
         relation cha_resolve(Symbol, Symbol, Symbol, Symbol);
+        // output: the same, restricted to methods some *allocated* class inherits
+        relation rta_resolve(Symbol, Symbol, Symbol, Symbol);
 
         cha_direct_subtype(sub, sup) <-- direct_superclass(sup, sub);
         cha_direct_subtype(cls, iface) <-- super_interface(iface, cls), !interface_type(cls);
@@ -1135,13 +1216,26 @@ fn run_cha(
         cha_resolve(sup, m, d, id) <--
             cha_super_method(sub, m, d, id),
             cha_subtype_reflexive(sub, sup);
-            // RTA rule: Only resolve if there is an instantiated subtype
-            //instantiated_class(sub);
+
+        // RTA: the same, but only where the subtype carrying the method is one the program
+        // actually allocates. `instantiated_class` holds only classes named by a `new` in
+        // *imported* code, so an object built by un-imported library code, by reflection or
+        // by deserialization is invisible here and its targets are dropped -- which is why
+        // every caller must present this as a lower bound.
+        rta_resolve(sup, m, d, id) <--
+            if rta,
+            cha_super_method(sub, m, d, id),
+            cha_subtype_reflexive(sub, sup),
+            instantiated_class(sub);
     };
-    let mut rows: Vec<_> = prog.cha_resolve.into_iter().collect();
-    // Sort for determinism
+    (collect(prog.cha_resolve), collect(prog.rta_resolve))
+}
+
+/// Folds a resolve relation into the `(class, name, descriptor) -> targets` map, sorted so
+/// the result does not depend on derivation order.
+fn collect(mut rows: Vec<(Symbol, Symbol, Symbol, Symbol)>) -> ChaResolvents {
     rows.sort_unstable();
-    let mut result: BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>> = BTreeMap::new();
+    let mut result = ChaResolvents::new();
     for (c, n, d, id) in rows {
         log::trace!("Adding entry: {c}, {n}, {d} -> {id}");
         result.entry((c, n, d)).or_default().push(id);

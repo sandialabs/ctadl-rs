@@ -1084,7 +1084,7 @@ pub(crate) fn ctadl_bin() -> Result<PathBuf> {
 ///
 /// Returns `Ok(None)` when the variable is unset (the normal build-from-source
 /// path) and an error only when it is set but does not name a real file.
-fn prebuilt_ctadl() -> Result<Option<PathBuf>> {
+pub(crate) fn prebuilt_ctadl() -> Result<Option<PathBuf>> {
     let Some(raw) = std::env::var_os("CTADL_BIN") else {
         return Ok(None);
     };
@@ -1099,7 +1099,7 @@ fn prebuilt_ctadl() -> Result<Option<PathBuf>> {
     Ok(Some(path))
 }
 
-fn build_ctadl(release: bool) -> Result<PathBuf> {
+pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
     // `cargo` sets `$CARGO` for the subcommands it spawns (`cargo xtask` is one),
     // so prefer it; fall back to the bare name for a direct `xtask` invocation.
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());

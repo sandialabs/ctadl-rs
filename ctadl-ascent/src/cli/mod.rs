@@ -999,6 +999,24 @@ pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
     Ok(())
 }
 
+/// Measures a project's call graph and writes the result to `output` (or stdout for `-`).
+///
+/// A thin wrapper, per this module's contract: the work is in [`crate::report`], which knows
+/// nothing about where the store puts things. Reads no index -- see that module for why an
+/// index would add nothing to these numbers in this version.
+pub fn report(
+    project: &AnalysisProject,
+    output: &Path,
+    opts: crate::report::ReportOptions,
+) -> Result<(), Error> {
+    let report = crate::report::report(project, opts)?;
+    crate::report::write(&report, opts, output)?;
+    if output.to_str() != Some("-") {
+        log::info!("wrote {}", output.display());
+    }
+    Ok(())
+}
+
 pub fn list_store_contents() -> Result<(), Error> {
     use crate::project::StorePaths;
     use std::fs;

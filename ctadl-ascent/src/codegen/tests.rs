@@ -754,3 +754,114 @@ fn test_cap_algorithm() {
     assert!(path_strings.contains(".foo.bar"));
     assert!(path_strings.contains(".foo.bar.baz"));
 }
+
+/// CHA answers "every implementer of this interface", RTA answers "every implementer the
+/// program actually allocates", and one Datalog run computes both.
+///
+/// The shape is the smallest one where the two differ and the answer is checkable by hand:
+/// interface `I` with three implementers `A`, `B` and `C`, and a function that allocates an
+/// `A` and calls `I.m()`. CHA must find three targets and RTA exactly one -- `A`'s.
+///
+/// The allocated set comes from [`InstantiationFinder`] over the real function body rather
+/// than being written out by hand, because the report collects it the same way and a finder
+/// that stopped seeing `new` would otherwise make RTA look brilliant instead of broken.
+#[test]
+fn rta_keeps_only_allocated_implementers() {
+    use ctadl_ir::mir::call::{CallObject, JavaClass, JavaMethod, JavaSignature, JavaSimpleName};
+
+    let iface = Symbol::from("LI;");
+    let m = Symbol::from("m");
+    let desc = Symbol::from("()V");
+
+    let methods = ["LA;", "LB;", "LC;"]
+        .into_iter()
+        .map(|cls| {
+            (
+                JavaClass(cls.into()),
+                JavaSimpleName(m.clone()),
+                JavaSignature(desc.clone()),
+                JavaMethod(format!("{cls}->m()V").into()),
+            )
+        })
+        .collect();
+    // The map is sub -> its supertypes, and the CHA arm flips it into (sup, sub).
+    let hierarchy = ["LA;", "LB;", "LC;"]
+        .into_iter()
+        .map(|cls| {
+            (
+                JavaClass(cls.into()),
+                smallvec::smallvec![JavaClass(iface.clone())],
+            )
+        })
+        .collect();
+    let vmt = VirtualMethodTable::Java {
+        methods,
+        hierarchy,
+        natives: Default::default(),
+    };
+
+    // A function whose body is `x = new A; x.m()`.
+    let mut f = FunctionData {
+        name: "Lmain;->run()V".to_string(),
+        ..Default::default()
+    };
+    let mut fb = FunctionBuilder::new(&mut f);
+    let body = fb.add_block();
+    let mut b = fb.at_block(body);
+    let x = b.new_local_var("x");
+    b.create_assign(
+        x.clone(),
+        vec![Exp::ObjectRef(CallObject::JavaObject(JavaClass(
+            "LA;".into(),
+        )))],
+    );
+    b.create_call(
+        CallStyle::JavaCall {
+            receiver: x,
+            cls: iface.clone(),
+            simple_name: m.clone(),
+            descriptor: desc.clone(),
+        },
+        Vec::new(),
+        Vec::new(),
+    );
+    b.create_ret(Vec::<Exp>::new());
+    f.verify().expect("Function doesn't verify");
+
+    let mut instantiated = BTreeSet::new();
+    InstantiationFinder::new(&mut instantiated).visit_function_data(FunctionIdx::new(0), &f);
+    assert_eq!(
+        instantiated,
+        [Symbol::from("LA;")].into_iter().collect(),
+        "the only allocation in the body is a `new A`"
+    );
+
+    let cha = ClassHierarchyAnalysis::with_rta(&vmt, instantiated);
+    let targets = |it: &mut dyn Iterator<Item = Symbol>| -> BTreeSet<String> {
+        it.map(|s| s.to_string()).collect()
+    };
+    assert_eq!(
+        targets(&mut cha.java_resolvents(iface.clone(), m.clone(), desc.clone())),
+        ["LA;->m()V", "LB;->m()V", "LC;->m()V"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>(),
+        "CHA resolves the interface call to every implementer"
+    );
+    assert_eq!(
+        targets(&mut cha.java_rta_resolvents(iface, m, desc)),
+        ["LA;->m()V"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>(),
+        "RTA keeps only the implementer the program allocates"
+    );
+
+    // And plain CHA leaves the RTA table empty, so codegen -- which builds it this way --
+    // pays nothing for a measurement it never reads.
+    let plain = ClassHierarchyAnalysis::new(&vmt, Default::default());
+    assert_eq!(plain.rta_resolvents.len(), 0);
+    // Four keys, because CHA answers for every declared receiver type that has the method:
+    // the interface and each of the three classes.
+    assert_eq!(plain.resolvents.len(), 4);
+}

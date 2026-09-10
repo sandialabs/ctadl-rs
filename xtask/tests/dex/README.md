@@ -19,6 +19,7 @@ parse the result — see `xtask/src/dex.rs`.
 
 xtask owns this fixture. The regression harness finds it automatically at
 `xtask/tests/dex/com.noto_54.apk`, or via `cargo xtask regression --dex-apk
-<path>`. The Nix `regression` check passes the path explicitly. One other
-consumer, `ctadl-ascent/tests/cli.rs`, reads it by relative path for its import
-smoke test.
+<path>`. The Nix `regression` check passes the path explicitly. Nothing else reads it:
+the `ctadl-ascent/tests/cli.rs` import smoke test that once did has moved here as
+the `apk:*` checks, which is why that file's own rule -- synthetic input, temp
+store, milliseconds -- holds without exception.

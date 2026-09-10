@@ -14,6 +14,7 @@ pub mod models;
 /// building the engine. Re-exported here so the name `crate::project::…` works.
 pub use ctadl_import::project;
 pub mod query_engine;
+pub mod report;
 pub mod stats;
 
 /// Initializes the logger for the shipped `ctadl` binary.

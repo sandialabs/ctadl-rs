@@ -9,6 +9,7 @@ use ctadl_ascent::codegen::CallResolutionStrategy;
 use ctadl_ascent::index_engine::Parallelism;
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
+use ctadl_ascent::report::ReportFormat;
 
 /// ctadl: import artifacts, index programs, and run/query analyses.
 #[derive(Debug, Parser)]
@@ -54,6 +55,13 @@ pub enum Command {
 
     /// Inspect the CTADL store
     Inspect(InspectArgs),
+
+    /// Report on a program's call graph: how many calls there are, how many places each
+    /// virtual call could go, and where the imprecision is concentrated. (See 'import')
+    ///
+    /// Needs only an import. Every number comes from the imported IR and one class-hierarchy
+    /// analysis; no index is read, and none is written.
+    Report(ReportArgs),
 
     /// Legacy Ghidra Pcode CLI: index and query commands for Ghidra integration.
     #[command(name = "legacy-pcode-cli")]
@@ -218,6 +226,36 @@ pub struct InspectArgs {
     /// With `--dump-ir`, only print functions whose name contains this substring.
     #[arg(long, value_name = "SUBSTR")]
     pub function: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ReportArgs {
+    /// Analysis project or imported program name. Naming a project reports on every program
+    /// in it, sub-imports included -- an APK's splits and native libraries each get their own
+    /// section, because the class hierarchy is per program.
+    pub name: String,
+
+    /// Output file path. Defaults to `-`, meaning stdout.
+    #[arg(long, short, default_value = "-")]
+    pub output: PathBuf,
+
+    /// Output format: `text` to read, `json` to track the numbers across runs.
+    #[arg(long, short, value_enum, default_value_t = ReportFormat::Text)]
+    pub format: ReportFormat,
+
+    /// How many rows the worst-signature and most-called-method lists carry.
+    #[arg(long, default_value_t = 10, value_name = "N")]
+    pub top: usize,
+
+    /// Skip the recursion and strongly-connected-component section.
+    ///
+    /// It is the only part of the report that builds the whole CHA call graph, and that
+    /// graph is not the size of the program: a 1.9-million-function app expands to over a
+    /// billion deduplicated edges. Skipping it took one such report from 89 s to 55 s. It
+    /// saves time rather than memory -- the peak is set earlier, by the class-hierarchy
+    /// analysis itself.
+    #[arg(long)]
+    pub no_recursion: bool,
 }
 
 #[derive(Debug, Args)]
@@ -437,6 +475,10 @@ fn main() -> anyhow::Result<()> {
         Command::Inspect(args) => {
             inspect_artifact(args)
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
+        }
+        Command::Report(args) => {
+            report_project(args)
+                .with_context(|| format!("running 'report' project: {:?}", args.name))?;
         }
         Command::Go(args) => {
             // Use the user-provided name or one derived from the first artifact.
@@ -786,6 +828,23 @@ fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
             args.output.display()
         );
     }
+    Ok(())
+}
+
+fn report_project(args: &ReportArgs) -> anyhow::Result<()> {
+    // Same name resolution as `query`: a project, or the project an import of that name
+    // would be indexed into. Nothing here touches the project directory -- notably not
+    // `index_path()`, which would create it for an ephemeral project.
+    let project = load_or_infer_project(&args.name)?;
+    cli::report(
+        &project,
+        &args.output,
+        ctadl_ascent::report::ReportOptions {
+            format: args.format,
+            top: args.top,
+            recursion: !args.no_recursion,
+        },
+    )?;
     Ok(())
 }
 

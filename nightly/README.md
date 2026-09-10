@@ -102,18 +102,26 @@ The `apk:*` checks are where the analyzer meets a real app rather than a fixture
 `classes*.dex`, some 50,000 functions. Importing it costs about 13 seconds, which is why they live
 here — they used to be `#[test]`s in `ctadl-ascent/tests/cli.rs`, where they accounted for ~60 s of
 the ~77 s the workspace's tests spent executing, and moving them out halved `cargo test
---workspace`. The import is done **once** and the four checks read the store it wrote:
+--workspace`. The import is done **once** and the checks below read the store it wrote:
 
 | Check | What it claims |
 | --- | --- |
 | `apk:import` | The app imports, the config records the language, format version, artifact path and content hash, and `ctadl inspect` decodes the stored program and reports functions in it. |
 | `apk:no-native-libs` | This APK carries no `lib/<abi>` entries, so the native-library pass records no sub-imports and stages nothing — the path that must not need Ghidra. |
 | `apk:model-check` | `ctadl query` against an import that was never indexed exits non-zero, reports which imports it checked and what the generator selected, and writes **nothing** into the store. |
+| `apk:report` | `ctadl report` runs on the import, its first line names the static tier, the JSON carries every section a Java program has, four aggregate counts are pinned to this APK, and nothing is written into the store. |
+| `apk:report-invariants` | The report's numbers add up — the census sums to its total, the target split sums to the virtual sites, every distribution is monotone, RTA never exceeds CHA, the edge shares are ordered — and two runs over one import are byte-identical. |
 | `apk:skip-existing` | `--skip-existing` skips a re-import of an unchanged artifact, and only of an unchanged one: falsify the recorded hash and the same command re-imports. |
 
 They select with `--frontend dex` (the app is a Dex artifact) and, like `dex:apk`, self-skip when
 no APK resolves. `cargo xtask regression --frontend dex --filter apk:` runs just these, and needs
 nothing on `PATH` beyond a Rust toolchain to build `ctadl`.
+
+`apk:report` is the only check in the suite that pins concrete analysis numbers rather than
+properties. That is deliberate: it is what catches a silent change in what call resolution
+resolves *to*, which no invariant can see. The constants live beside the check in
+`xtask/src/apk.rs` with instructions for re-pinning them, and a commit that moves them should
+say which frontend change did.
 
 Because these drive the shipped binary rather than the library, they cover what a library-level
 test cannot: argument wiring in `main.rs`, exit statuses, and the on-disk shape of the store. The

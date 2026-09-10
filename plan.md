@@ -63,6 +63,52 @@ make-or-break number and it is measured **first**, with existing commands.
 - No `codegen/cha.rs` move; RTA computed in the same Datalog run as CHA.
 - xtask checks reduced from five to two; `--section` dropped pending step 0.
 
+### What implementing it changed
+
+Five things. The first was found by step 0, before any code, which is what step 0 was for.
+
+1. **"The report takes its first import" is wrong** (step 4). An `.xapk` imports as one
+   program per split APK plus an **empty parent**, and `ephemeral()` puts the parent first.
+   TikTok's parent has 0 functions and its `com.zhiliaoapp.musically` split has 1,868,340.
+   The report measures **every non-empty import** instead, one CHA per program, and names
+   the empty ones rather than dropping them.
+2. **`--section` is out, `--no-recursion` is in** (step 4). Step 0's rule was to add a
+   section selector only if the import is *not* the dominant cost. It is not: the import
+   decodes TikTok in 12 s and 9.7 GiB, and the whole report takes 89 s and 24.9 GiB. But the
+   addition is one section, not many -- recursion materializes the CHA graph, 1.21 *billion*
+   deduplicated edges on that app, and skipping it gives 55 s and 24.1 GiB. So the flag buys
+   38% of the wall time and almost no memory: the peak is set earlier, inside `run_cha`,
+   whose relations are freed before the graph is built. A selector over the cheap sections
+   would have been a menu.
+3. **Fan-in does not need the graph** (step 3, sections 7 and 8). It counts *sites*, so it
+   comes from the weighted signature table directly. Only recursion builds the graph, which
+   is what makes gating exactly that section possible.
+4. **`top_n_share` is weighted too** (step 2). The plan specified `&[usize]`, but the ten
+   worst *sites* in a real program routinely share one signature, so the helper has to be
+   able to take an entry partially. Same `(value, weight)` shape as its neighbours.
+5. **The Kotlin measurement is right but the reasoning behind it was not.** The plan
+   expected `com.noto` to repackage the receiver type *to* `Lkotlin/FunctionN;`. Its type
+   pool does contain those names -- but no call site dispatches on one, because the
+   obfuscator repackaged the interfaces that actually carry `invoke` (its worst signatures,
+   `Lu7/p;.R(...)` and `Lu7/l;.U(...)`, *are* those interfaces) and renamed their methods
+   too. So the type test finds zero there and the name test's 141 sites are a floor. On
+   TikTok, where `kotlin/jvm/functions/FunctionN` does survive, the type test still
+   undercounts: 31,622 against 57,383 by name. Matching both and reporting the disagreement,
+   as planned, is what makes either failure visible; the text output now says so outright.
+
+6. **A share by signature was added beside the share by site, over the excess rather than
+   the total** (step 3, section 3). The intent asks what the top 10 or 100 *sites* own "to
+   justify special-casing them", and measured that is 0.06%-1.6% -- necessarily so, at ten
+   instructions out of millions. But nobody special-cases a call instruction; they
+   special-case `Object.equals`. Counted by signature the answer inverts: ten signatures own
+   **91.3%** of `com.noto`'s excess where ten sites own 0.4%.
+
+   The *excess* part was the second correction, and it came from reading a TaintBench report.
+   Ranking signatures by raw edge count puts `StringBuilder.append` -- one target, hundreds
+   of sites -- at the top of every small app, and nothing about a monomorphic signature can
+   be special-cased. Every resolved site needs one edge; that is the call, not the
+   imprecision. So the ranking and the denominator are both `sites x (targets - 1)`.
+
 ---
 
 ## Work, in order

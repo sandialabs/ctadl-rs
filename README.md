@@ -18,6 +18,7 @@ current set of flags.
 | `go` | One-shot convenience: import, index, and query in a single invocation. |
 | `init-model` | Emit a template JSON5 model file for defining sources, sinks, and external function propagation models. |
 | `inspect` | Inspect the contents of the CTADL store (artifacts, projects). |
+| `report` | Measure an imported program's call graph: how many calls there are, how many places each virtual call could go, and where the imprecision is concentrated. Needs only an import; reads no index. |
 | `legacy-pcode-cli` | Legacy `index`/`query` commands kept for Ghidra pcode integration. |
 
 One-shot APK analysis:
@@ -37,6 +38,25 @@ ctadl query my-app --models sources-and-sinks.json5 --output check.sarif
 ctadl index my-app
 ctadl query my-app --models sources-and-sinks.json5 --output results.sarif
 ```
+
+### Report
+
+`ctadl report <name>` answers a planning question rather than finding bugs: *is it worth making
+call resolution more precise, and where?* It walks the imported IR and runs one class-hierarchy
+analysis, and prints the call census, how many targets each virtual call site has (with the
+distribution, not just the mean), which method signatures own most of the imprecision, what
+restricting to allocated types would buy, fan-in, and recursion.
+
+```bash
+ctadl import /path/to/app.apk --name my-app
+ctadl report my-app                 # for reading
+ctadl report my-app --format json   # for tracking the numbers across runs
+```
+
+It needs no index and writes nothing to the store. Naming a project reports on every program in
+it separately, since the class hierarchy is per program — for an `.xapk` that is one report per
+split APK. `--no-recursion` skips the one section that has to build the whole call graph, which
+on a very large app is most of the running time.
 
 ### Import
 
