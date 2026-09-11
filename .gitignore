@@ -9,3 +9,18 @@ result
 /.local
 /.envrc.local
 .vscode/tasks.json
+
+# Agent instruction/config files. Kept local; scripts/no-scratch.sh rejects
+# them in CI if one is force-added anyway.
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+AGENT.md
+GEMINI.md
+.cursor/
+.cursorrules
+.clinerules
+.windsurf/
+.windsurfrules
+.aider*
+.github/copilot-instructions.md
