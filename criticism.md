@@ -1,301 +1,273 @@
-# Criticism of android-intent-design.md - DO-NOT-MERGE
+# Criticism of Android Intent Design and Implementation Plan - DO-NOT-MERGE
 
-A review of the design against the code it cites, re-run after the revision that took the intent
-API out of the model file: static ports are `summary` rows the linking pass emits, extras edges are
-per-site `assign` rows rooted at the real argument variables, the IR rewrite is gone entirely, and
-one optional in-fixpoint rule mints `.<extras>.<k>` from a key only `const_reaches` recovers. Items
-the revision closed were removed or moved into the section below; everything numbered is open.
+This review covers the current `android-intent-design.md` and `implementation-plan.md` against the
+repository as it stands. The iteration is materially better than a pass that rewrites IR or tries to
+precompute intent pairs outside the index, but several assumptions still need to be made explicit or
+changed before implementation starts.
 
-## What the revision closed
+## 1. Send-site discovery from `facts.call` is not reliable enough
 
-- **The data-file / pass seam** (previously item 1). `.<intent>`, `.<action>`, `.<component>`,
-  `.<extras>` are now written and read by one pass from one constant. The failure modes that
-  motivated the item -- `--no-default-models`, an `in` block scoping the entries to a language that
-  does not match, a user file shadowing the defaults -- cannot silently empty the intent surface
-  any more, because nothing about it depends on a file being loaded.
-- **The IR rewrite, and its whole risk surface.** Checked, and the revision's central claim holds:
-  everything the rewrite read off the statement is in `IndexFacts` by the time a link pass runs.
-  Codegen emits an `actual_param` row per argument and one per return value at a negative index
-  (`codegen/mod.rs:647-707`), so the receiver, the value and the return are all nameable as real IR
-  variables; and a constant argument, which leaves *no* `actual_param` row (`trans_exp` returning
-  `None` skips the push, `:690-692`), is exactly what Phase 2's third `const_str_assign` hook
-  supplies. So the pipeline slot between `ssa::transform_program` and `ssa::propagate_copies`, SSA
-  preservation through `rets = [retval, throwval]`, `store_access_path` / `cap_path` re-anchoring,
-  and the copy-propagation ordering all stop being things that can go wrong. Old open decision 4 --
-  a user model on `getStringExtra` silently ceasing to fire at rewritten sites -- goes with them:
-  no site loses its `call` row.
-- **The `Bundle` level bug**, which the previous revision shipped without noticing. Walked through
-  the documented port semantics (`docs/model-generators.md:567-590`): with bundle entries at `.<k>`,
-  `putExtras: Argument(1) -> Argument(0).<extras>` lands them at the intent's `.<extras>.<k>` and
-  `getExtras: Argument(0).<extras> -> Return` unwraps them back to `Return.<k>`. The old table's
-  `recv.<extras>.<k>` for `Bundle.put*` really would have produced `.<extras>.<extras>.<k>` and
-  never met a reader. Item 7 below is about the convention, not the arithmetic.
-- **Half of the "nothing verified the model entries fire" item.** The *matching* half is now a
-  scan the pass can count, and the design commits to counting it. The *instantiation* half is
-  untouched -- see item 2.
+The design says the intent linker can find send sites after the import loop by scanning `facts.call`
+and resolving each callee through the `IdMap`. That is only safe for call sites that codegen already
+resolved to a concrete callee. For Java calls under the current `Mixed` strategy, codegen emits a
+`call` row only when CHA has exactly one resolvent; ambiguous Java calls go to `callee_info`, and no
+static `call` row is emitted (`ctadl-ascent/src/codegen/mod.rs:535-557`). If an Android framework
+send has zero or multiple resolvents in the VMT, the proposed scan silently misses the send site.
 
-## 1. The scan gives up class pinning for the whole table to solve a two-row problem
+This is not just a theoretical mismatch in wording. The plan also says to skip
+`LocalBroadcastManager.sendBroadcast` by declared receiver type, but `facts.call` does not retain the
+declared receiver class; the `call` row is only `(site, target)`, and `callee_info` retains only a
+Java dispatch key of simple name plus descriptor. The declared class exists in the IR `CallStyle`,
+which the design explicitly avoids retaining.
 
-The design says matching on name plus descriptor rather than on an owning class "is still required,
-and for the unchanged reason". That reason is real for exactly two rows. `getIntent` / `setIntent`
-are called on the app's own subclass, so the dex method id at the call site never says
-`Landroid/app/Activity;`. Every other row in the table is a method *on `Intent` itself*, and a call
-to it names `Landroid/content/Intent;` in the id, because that is the declared type of the
-receiver -- which is why the existing `java-index.jsonl` entries pin `parents` and work.
+The linker needs either an observer during import that records Java call sites before the IR is
+dropped, or a new codegen fact that preserves the declared class, method name, descriptor, site, and
+argument positions for Java calls. Relying on resolved `call` rows makes the feature depend on the
+call-resolution strategy and loses exactly the unresolved framework calls an ICC pass should be
+finding.
 
-Dropping the class for the whole table buys nothing there and costs precision: `getData` with
-descriptor `()Landroid/net/Uri;`, `setAction(Ljava/lang/String;)`, `getExtras`,
-`putExtras` are all plausible names on app classes and on other framework classes, and each
-accidental match gives that class a synthetic `.<action>` / `.<extras>` field and a summary row
-nobody asked for. The fix is not a new mechanism -- pin the class where the declared type is
-`Intent` (or `ComponentName`, or `Bundle`), and fall back to name-plus-descriptor only for the two
-rows where the declared type genuinely varies. Write down which rows are in which bucket, because
-"the scan enumerates every function" is currently doing the work of a decision nobody made
-deliberately.
+## 2. `Intent.createChooser` is incorrectly listed as a send site
 
-## 2. Nothing has verified that a summary on a bodyless framework method instantiates
+`Intent.createChooser(Intent, CharSequence)` is a factory method, not an ICC send. The design also
+correctly models it as `Argument(0) -> Return`, because the real send is normally
+`startActivity(Intent.createChooser(target, title))`. But the Phase 3 send-site table lists
+`Intent.createChooser` as a send site with `Argument(0)` as the intent argument.
 
-Unchanged in substance from the previous round, and it is worth restating precisely because the
-revision's counting *looks* like it addresses it. The chain is: the dex frontend records a VMT
-entry for an externally-referenced method (`dex/mod.rs:119-121`), CHA resolves
-`Landroid/content/Intent;->setAction` to itself, codegen emits a `call` row
-(`codegen/mod.rs:536-545`), and instantiation joins `summary(tgt, ..)` with `call(f, insn, tgt)`
-(`index_engine/mod.rs:1164`) to produce the `assign_like` edge. Each link was read in the source;
-none was observed end to end.
+If implemented literally, this mints bridge sites and attempts manifest pairing at the chooser call
+itself, before any `startActivity` exists. That creates false call edges from a framework factory to
+receivers and double-counts or misclassifies chooser flows. The implementation plan omits
+`createChooser` from the Phase 3 bullet list, which is better, but the design and plan need to agree:
+`createChooser` belongs only in the static Intent API summary table, never in `intent_send`.
 
-What the pass's counts add is visibility into the *first* link only: how many functions the scan
-matched, and how many call sites resolve to them. A row can match a function, that function can
-have call sites, and the summary can still produce zero `assign_like` rows if any later link is
-wrong. So the check that gates this phase is still the two-line one from last round -- index the
-fixture, count `assign_like` rows attributable to those `summary` rows -- and it is now cheaper to
-write, because the pass knows which function ids they are. Do it before writing the emitter, not
-after.
+## 3. The intent-filter relation is too small for Android's matching rules
 
-## 3. The built-in rows can be added to, but not overridden or removed
+`intent_filter(Symbol, IntentKind, FunctionId)` only keys on action and kind. That will over-pair
+real apps because Android intent resolution also considers categories, data URI scheme/host/path,
+MIME type, and default-category rules. The design acknowledges data constraints in Phase 1, but the
+engine relation that drives pairing has no columns for them.
 
-`summary` is a relation and the design's rows are a union with whatever a model file contributes.
-That is stated as a virtue -- "model files keep working alongside the pass" -- and it is, for
-*adding* an app-specific wrapper. It is not a substitute for what a data file gave a user before:
-a coarse built-in row could be edited or deleted. Now it cannot. A user who thinks
-`Intent.<init>(Intent)` as `Argument(1) -> Argument(0)` is too coarse for their app has no gesture
-that removes it; adding a narrower row leaves the coarse one in place, and the union keeps the
-imprecision. `--no-default-models` reaches the JSONL and not the pass.
+The most important missing rule is `CATEGORY_DEFAULT` for activities. A manifest filter that lacks
+`android.intent.category.DEFAULT` is generally not a target for an implicit `startActivity`, even if
+the action matches. Conversely, launcher filters have `MAIN`/`LAUNCHER` and should not become
+generic action matches for app sends. Data constraints matter for common actions such as `VIEW` and
+`SEND`; joining only on action can fan out to every component that has a popular action string.
 
-This is a one-flag problem (`--no-intent-api-rows`, or folding the rows under the existing
-gesture), but the design should decide which, because the answer also decides what a support
-answer looks like when someone's intent modelling is wrong in a way only they can see.
+The implementation plan should not treat action-only implicit pairing as Phase 3 correctness. At
+minimum, it should model and test category-default and MIME/data scheme constraints, or explicitly
+label action-only matching as an early, over-approximating mode with fan-out reporting and a default
+that keeps it off until measured.
 
-## 4. The zero-match error names an artifact the pass cannot see
+## 4. Exported/non-exported semantics are under-specified for internal versus external sends
 
-The design says to treat "zero matched functions in an import whose string pool contains
-`Landroid/content/Intent;`" as an error. By the time the link step runs, the import loop is over
-and every import's IR and dex are dropped -- that is the same constraint the design leans on
-elsewhere to justify finding send sites in `facts.call` rather than in the IR. There is no string
-pool to consult.
+The docs mix two different questions: the app's external attack surface and flows between components
+inside the same app. `android:exported="false"` blocks other apps, but it does not block an explicit
+internal send from the same package. The current `intent_component` and `intent_filter` relations do
+not carry enough context to distinguish an internal sender from an external entry.
 
-The condition is recoverable, and cheaply: the `IdMap` holds a `Function` entry for every
-referenced method, so "the id map contains any `Landroid/content/Intent;->…` function and the table
-matched none of them" is the same test, expressible where the pass actually stands. Restate it that
-way; as written it is a check that cannot be implemented at the point it is specified.
+This matters because Phase 4 asks for a negative case where an external send to a non-exported
+component is not paired, while the pass being designed only scans app code send sites. There is no
+external sender relation in the plan, no package/UID notion, and no exported flag in the pairing
+rules. Either external-entry modelling is out of scope for the initial linker, or the manifest views
+need to emit separate exported entry facts and the tests need to distinguish external attack-surface
+reports from internal ICC flows.
 
-## 5. Deleting the `java-index` lines couples a data file to a pass that may not run
+## 5. Service kinds are conflated
 
-The two android `Intent` lines come out because they conflict with the new rows. That is right when
-the pass runs. The design does not say what happens when it does not: a `--dex` import of a bare
-`classes.dex` with no APK around it, a jvm import of Android code, an APK whose manifest fails to
-decode, or the feature behind a flag while it stabilises. In each of those the deletion is a
-straight recall regression with no diagnostic -- extras and action strings stop propagating at all,
-rather than propagating coarsely as they do today.
+The delivery table bridges services into `onStartCommand`, `onBind`, and IntentService-style handler
+methods. That is not right for every send kind. `startService` and `startForegroundService` deliver
+to started-service entry points; `bindService` delivers to `onBind`; `IntentService`/`JobIntentService`
+handler behavior is framework-specific and should not be treated as a universal service delivery
+target.
 
-The likely answer is that the API scan is manifest-independent and runs for every Java import, in
-which case say so in the design, because it is not currently stated anywhere: Phase 3 introduces
-the scan inside a pass whose other steps all need the manifest. If instead the pass can be off,
-the deletion needs to be conditional, and a conditional data file is worse than either end of it.
+The `IntentKind` relation needs enough structure to separate started-service from bound-service
+delivery. Otherwise a `bindService` call can falsely flow into `onStartCommand`, and a `startService`
+call can falsely flow into `onBind`. The implementation plan currently groups them all under
+"service argument positions" and should split the test matrix by send kind.
 
-## 6. The keyed/lumped counts are not a partition once the in-fixpoint rule runs
+## 6. Derived `call` makes the index SCC larger than the design admits
 
-Phase 4 asserts that the pass's keyed and lumped counts "must partition [total extras call sites]
-exactly". They do for the fact route, where the pass chooses one tier per site. They do not once
-the optional rule ships: the design is explicit that at a site whose key only `const_reaches`
-recovers the keyed edge is *added* to a lumped edge that stratification forbids withdrawing. Such a
-site is in both buckets. Either the assertion needs a third number -- lumped sites the rule later
-keyed -- or the rule ships off and the assertion is scoped to that.
+The design says the cycle through `call` terminates trivially because delivery edges point away from
+the sender's intent and nothing carries constants back to the send-site argument. That argument only
+considers `const_reaches`. In the current engine, `call` also feeds hybrid inlining:
+`critical_summary`, `resolvent`, `context_assign`, contextual summaries, and additional
+`assign_like` rows all depend on `call` (`ctadl-ascent/src/index_engine/mod.rs:1206-1329`). Once
+intent pairings derive `call`, those new calls participate in more than the five intent rules.
 
-There is a second, quieter interaction in the same place: `const_reaches` is gated on
-`intent_frame`, so a `Bundle.put*` site in a function that never touches an `Intent` is outside the
-gate and its key can never be recovered by the rule, however non-literal it is. The fact route has
-no such gate, because a literal key is syntactic. So the two routes cover different site sets, and
-the counts should say which route produced each number rather than being summed.
+This may still be monotone and correct, but it is not a one-step local cycle. A derived lifecycle
+call can instantiate summaries for receiver methods, contribute to hybrid-inlining critical-call
+state, and change `assign_like` beyond the delivery edge. The implementation plan should include a
+small fact-level test where an intent-derived call targets a function with summaries and/or virtual
+calls, then assert both termination and the expected final `call`/`assign_like` shape. It should also
+measure SCC time before and after deriving calls.
 
-## 7. `.<k>` versus `.<extras>.<k>` is a convention with no stated invariant
+## 7. Final-call persistence is a cross-cutting migration, not a Phase 3 subtask
 
-The revision fixed the level arithmetic (see above) by giving `Bundle` bare `.<k>` while `Intent`
-gets `.<extras>.<k>`. That composes, and it is not the only scheme that does: making a bundle carry
-its entries at `.<extras>` too, with `putExtras: Argument(1).<extras> -> Argument(0).<extras>` and
-`getExtras: Argument(0).<extras> -> Return.<extras>`, composes as well and gives every bag of keyed
-values one spelling. The design picks the mixed convention without arguing for it, which matters
-because the next methods anyone adds are the ones that cross the two worlds: `replaceExtras(Bundle)`,
-`Bundle.putAll(Bundle)`, `getBundleExtra(String)` -- a bundle nested inside extras -- and
-`putExtra(String, Bundle)`. Each is a place a level mismatch produces silence.
+Moving `call.parquet` from pre-fixpoint `IndexFacts` to post-fixpoint `IndexResult` touches every
+query and formatting path that currently reads `index_facts.call`. The current query builder uses
+`index_facts.call` both for taint propagation and SARIF formatting (`ctadl-ascent/src/cli/mod.rs:633`
+and `:655`). The design notes this, but the implementation plan buries it inside Phase 3 after the
+pairing rules.
 
-State the invariant ("a `Bundle`'s entries live at the bundle's root; an `Intent`'s live under
-`.<extras>`") next to the table, and check the four methods above against it before the emitter
-lands. This is cheap now and archaeology later.
+This migration should be a standalone precondition with tests before intent pairing is added. A
+half-moved implementation can compile and run while querying a call graph without intent bridges.
+The plan also needs an atomic-write story: `project.write_index_config()` is deliberately last, but
+moving a formerly pre-index table to `IndexResult` creates a period where older consumers or failed
+runs can see missing or stale `call.parquet` unless the version bump and write order are handled as
+one change.
 
-## 8. Reusing the call's own site for emitted `assign` rows is a new fact shape
+## 8. Manifest triples need typed values, namespaces, and resource identity
 
-Every other synthetic emitter in the tree mints a fresh site: `jni::link` (`languages/jni.rs:877`),
-the declarative-bridge emitter (`model_matches.rs:338`), and the design's own bridge sites. The
-extras emission does not -- it pushes `assign` rows at the *existing* call site, which is what
-gives the store a real source span and is a genuine improvement in reporting. But it produces a
-site that carries a `call` row, `actual_param` rows, `callee_info` and now `assign` rows, and
-nothing in the tree produces that shape today: codegen's `CallAssign` binds its return through
-`actual_param`, not through an assign.
+The proposed triple store is a good persistence shape, but the documented schema
+`manifest_node_attr(node_id, key, value)` is too stringly for Android manifests. Attribute names may
+come from resource IDs, namespaces matter, and values can be strings, booleans, integers, enum/flag
+integers, or unresolved resource references. Phase 4 specifically depends on not confusing boolean
+`0xffffffff` with a string and not defaulting unresolved `@0x...` references.
 
-Nothing obviously breaks -- the index derives `func_id` from the site and ignores the rest -- but
-"obviously" is again doing work. Two things to check before committing: whether any consumer maps a
-site to a single statement kind (SARIF step rendering, `tainted_var_at_insn`, the graphviz dump),
-and whether `prog_store` and `copy_edge`, both of which read `facts.assign` unconditionally
-(`index_engine/mod.rs:975-1000`), behave sensibly when the row's site is also a call. The fallback
-is a fresh site and a lost span, which is a small price if the check goes badly.
+If the persisted table only stores normalized strings, the typed view cannot later tell whether
+`android:enabled` was literal `false`, string `"false"`, or `@bool/foo`. The plan should define a
+minimal typed value representation in the persisted facts, or add parallel columns for value kind,
+raw data, namespace URI, and resource ID. Otherwise the triple store is not actually verbatim enough
+to support the future typed views the design wants.
 
-## 9. The `prog_store` advantage is real, narrow, and flag-gated
+## 9. XAPK/base-manifest ownership is not mechanically resolved
 
-The design calls rooting the store at the receiver variable "the one thing the IR rewrite bought
-that a rule cannot", and the mechanism is correct: `prog_store` is built from `facts.assign` before
-the fixpoint (`:992-1000`) and gates the aliasing summary rule (`:1187`), which no in-fixpoint edge
-can reach. Two qualifications the design does not make.
+The design says the base manifest should attach to the bundle as a whole, not whichever split
+carried it. The current XAPK importer extracts and imports each split as its own APK sub-import, and
+the parent bundle import is not itself a code-bearing program (`ctadl-ascent/src/languages/xapk.rs`).
+The index loop observes per-import `program_info`; it is not obvious where a parent-level manifest
+with no program body is loaded, how it is associated with the child DEX functions, or how multiple
+split manifests are rejected or merged.
 
-It is narrower than it sounds. A helper that writes an extra onto its *formal* exports a summary
-through the ordinary rule, because the call-site edges are symmetric and the destination variable
-is the formal itself; the aliasing rule is only needed when the write goes through an alias
-(`Intent j = i; j.putExtra(..)`), and `ssa::propagate_copies` fuses most of those before codegen
-ever runs. And it is configurable: the rule is gated on `config(c), if c.alias_rule`, default true
-but user-flippable (`main.rs:744`). So an argument presented as decisive rests on a narrow case
-under a flag. Keep the design decision -- it costs nothing -- but do not let it carry the weight of
-justifying the fact route on its own; the stratification argument in item 6 is the real one.
+The implementation plan has a test for split selection, but it needs an implementation hook: either
+the parent import owns Android manifest sidecar data and the linker explicitly loads parent metadata
+for all sub-imports, or the base split owns it and the linker knows which split is base. Without that
+mechanical choice, the XAPK requirement is aspirational.
 
-## 10. `paths` is now a cost centre and nobody has measured it
+## 10. Built-in Intent API rows are no longer user-controllable
 
-Carried forward from last round's item 5 and made sharper by the revision. The `intent_frame` gate
-and the constant rules were already asserted-cheap rather than measured-cheap, inside the fixpoint
-that the whole engine's cost is measured against. The revision adds a second, more structural cost:
-minted paths land in `paths`, which is the membership gate probed by the hottest rules in the block
-(`locals` forward and backward, `context_locals`, `call_target_assign_like`). The rule mints one
-path per recovered key plus one composition per `model_paths` entry per key -- a few dozen times the
-key count, which the design correctly avoids being a `|model| x |program|` cross, but which nobody
-has put a number to on a real app.
+Moving Intent API propagation out of `java-index.jsonl` fixes the spelling seam, but it also removes
+the user's current escape hatch. Model-file rows can be omitted with `--no-default-models` or
+replaced by custom models. Built-in Rust-emitted summaries are a union with user rows; users can add
+more precision but cannot remove a coarse built-in row.
 
-`#![measure_rule_times]` is already on the block, and `IndexResult.paths` is already saved, so both
-numbers are one run away: `paths` size with and without the pass, and the per-rule time of the two
-constant rules. Make that the first measurement, not the last. The same run answers item 2.
+That matters for rows such as `Intent.<init>(Intent) -> Argument(0)` or broad builder-self returns.
+If one of these is too imprecise for a user's corpus, adding a narrower model does not retract the
+built-in one. The design should add an explicit control, for example `--no-android-intent-models` or
+folding these rows under `--no-default-models`, and the implementation plan should test that the
+flag actually suppresses the pass-emitted summaries.
 
-## 11. `call` becoming derived is still the change with reach outside this feature
+## 11. Literal-value call arguments still lack `actual_param`, and the workaround is too narrow
 
-Unchanged, with one detail sharper than last round. `call.parquet` stops being what codegen emitted
-and becomes what the fixpoint concluded, which changes the saved call graph for every consumer --
-`ctadl inspect`, the dot dump, `flowy::get_endpoints`, SARIF call-site rendering. At query time the
-table is read from `IndexFacts` in at least two builder paths (`cli/mod.rs:633` and `:655`), and
-both have to move to `IndexResult` together; a half-moved version compiles and silently queries a
-call graph without intent bridges.
+The plan handles `putExtra("k", "literal")` by rooting the value side at `call_arg(insn, n)` when a
+constant value has no `actual_param`. That solves extras, but the same missing `actual_param` shape
+exists for every constant argument. Static API summaries such as `Intent.<init>(String)` and
+`setAction(String)` instantiate over call-arg vertices; they need the constant fact on the
+call-arg vertex, not an `actual_param`, so they are fine for `const_reaches`. But any later feature
+or user model that expects constant arguments to appear as ordinary actuals will still see a hole.
 
-The two checks from last round stand: whether any consumer distinguishes "a call site with no
-source span" from "a span lookup that failed" -- intent bridges will have none, at a rate JNI
-bridges never reached -- and whether writing the table from `IndexResult` leaves a window where a
-crash mid-index yields an index directory with every other fact table and no call table. The
-format-version bump covers the schema; it does not cover a half-written directory.
+The design should document this boundary: `const_str_assign` is not a general replacement for
+`actual_param`, and only the new constant-propagation rules consume it. If the project wants
+constant arguments to be visible to ordinary model summaries, that is a different codegen change.
 
-## 12. Bucket accounting is still an argument, not a finding
+## 12. Component-name matching misses package-relative string APIs
 
-Unchanged. The case for keeping the constant rules intraprocedural rests on the claim that the
-bucket needing a constant to *originate* in a callee is small. That is a reasonable reading of how
-Android code is written, and R8 inlining pushes the same way, but it is a prediction about a corpus
-stated with more confidence than the evidence supports. The unresolved-pairing counter is the right
-instrument and has never been read.
+The design correctly normalizes manifest component names and `const-class` descriptors. It is much
+less clear for explicit string APIs: `setClassName(String packageName, String className)`,
+`ComponentName(String pkg, String cls)`, and class names beginning with `.` require joining two
+arguments and applying package-relative normalization. The current plan only says to treat class-name
+arguments as `.<component>` constants and normalize the manifest side to descriptors and dotted
+spellings.
 
-The revision adds a second prediction of the same kind, and it is load-bearing for the whole
-key-precise tier: that R8 leaves nearly every extras key as a literal at the site. If that is true
-the in-fixpoint rule is optional and item 6 evaporates; if it is not, the rule ships with a
-conflation it cannot remove. The count exists in the design (Phase 4 asks for it) -- read it before
-building the rule, not after.
+That will miss common cases where the component name is split across package and class parameters,
+or where the class parameter is relative. It may also over-match a bare class-name suffix across
+packages if the manifest side is normalized too generously. The implementation plan should call out
+which overloads are supported initially and add explicit tests for `(Context, String)`,
+`(String, String)`, relative class names, and package/class mismatch.
 
-## 13. Lumped write followed by keyed read is still unpinned, and now matters more
+## 13. Action-only constants cannot represent categories or data values without more API rows
 
-The design names the asymmetry and defers it to a nightly case, which is where it belongs, but the
-case still does not exist: `.<extras>` is not an extension of `.<extras>.<key>`, so the forward
-field rule cannot fire and the flow arrives only through the source-path rule, one level deeper
-than the writer put it, reaching a sink only if the sink port materialises over that path.
+Phase 2 models `.<action>`, `.<component>`, `.<data>`, and `.<extras>`, but implicit matching only
+reads `.<action>`. Real filters often require `addCategory`, `setType`, `setData`,
+`setDataAndType`, `Uri.parse`, and `Intent.setPackage`. The design lists some static rows for data
+but never connects them to the `intent_filter` join, and the implementation plan has no tests for
+category/data-constrained implicit intents.
 
-What changed is the stakes. Under the previous revision the tiering was a property of a data file
-plus a rewrite anyone could disable. Now the pass decides per site which tier a site gets, and item
-6's coexistence means some sites get both. Two two-line cases (keyed write / lumped read, and the
-reverse) settle the semantics; write them before the emitter chooses tiers around an assumption
-about them.
+This means the first version will likely report impressive implicit-pair counts while being too
+coarse to trust. If category/data matching is deferred, the reporting should label implicit pairs as
+"action-only" and tests should include a negative case where the action matches but category or MIME
+does not.
 
-## 14. Flow-semantics validation is still thin
+## 14. The lifecycle bridge is intentionally broad but not budgeted
 
-Unchanged from both previous rounds. Phase 4 covers the manifest, the inventory, the fan-out budget
-and now the scan's match table, but flow correctness still rests on one hand-verified flow plus
-synthetic cases that do not exist. DroidBench's ICC suite and ICC-Bench are ready-made ground truth
-for the explicit / implicit / extras / result-back matrix; decide whether they are in or out and
-record why. The `intent:*` cases cannot use `expected_lines` on this fixture (R8 stripped the line
-tables; ~1% of methods retain one), so whatever ground truth is chosen has to be assertable on
-component and method identity.
+Bridging an activity intent into every lifecycle override is a pragmatic answer to compositional
+analysis, but it deliberately over-approximates temporal behavior. `onDestroy` and `onPause` are not
+entry points that receive the launch intent in the same sense as `onCreate`/`onNewIntent`; the design
+uses them to make data available to component methods that the framework calls later.
 
-## What holds up
+That may be acceptable, but it should be reported and tested as an approximation. Otherwise a taint
+path that only exists because the same intent was injected into every lifecycle method will look as
+concrete as a path through `onCreate`. The plan should include a count of bridge entry methods per
+component and a test showing that broad lifecycle delivery does not explode duplicate SARIF paths for
+a simple activity.
 
-The phasing, the triple store over a typed schema, the fresh-site aliasing caution for *bridge*
-sites, the name-normalization warning, the format-version bump, the one-bridge-site-per-send-site
-argument, and the section on what not to port from the previous ctadl all remain correct.
+## 15. Phase 2 is too large for one implementation checkpoint
 
-Confirmations from this round -- the revision's new claims were checked against the code and hold:
+Phase 2 includes new codegen facts, new index-engine relations, an intent-frame gate, built-in API
+summary emission, API diagnostics, removal of default model rows, per-site extras assignment
+emission, path invariant checks, synthetic-call-site consumer audits, and an optional recovered-key
+rule. That is too many interacting changes for a single phase boundary.
 
-- **`summary` is an ordinary relation, and a `model.propagation` entry is only a matcher in front
-  of it.** Declared at `index_engine/mod.rs:1072`, seeded from `facts.summary` at `:1429`, derived
-  in-fixpoint at `:1173` and `:1187`; `codegen_propagations` (`model_matches.rs:106-153`) does
-  nothing but resolve a name, expand ports, and push `formal_param` + `summary` rows. Writing those
-  rows from a pass is the same act minus the matcher.
-- **Pre-fixpoint rows are what reach `model_paths`.** `summary_paths` is collected from
-  `facts.summary` before the run (`:1023`) and seeded into `model_paths` (`:1437`); no rule derives
-  `model_paths`. So the design's insistence that the static rows be *input* rows is not stylistic --
-  a rule deriving the same rows would lose the one-level concat at `:1133-1135` and with it
-  `.<intent>.<extras>.<key>`, silently. The doc comment at `model_matches.rs:103-105` says the same
-  thing from the other side.
-- **A summary cannot be per-site.** Instantiation joins `summary(tgt, ..)` with `call(f, insn, tgt)`
-  (`:1164`), so a key-bearing summary row would apply one site's key at every site. The design's
-  choice of an `assign` / `assign_like` row for the keyed tier is forced, not stylistic.
-- **The minted-path termination argument is airtight.** `const_reaches` carries its symbol column
-  unchanged from `const_str_assign`, a fixed input relation, so the fixpoint adds (vertex, symbol)
-  pairs and never new symbols; minted paths are a subset of `{.<extras>.k}` over that fixed
-  alphabet at a fixed depth, and nothing minted feeds back into the constant set. This is the
-  hazard the comment at `:1119-1120` warns about, and it does not apply here.
-- **Negation really is unavailable.** Confirmed again: the block contains no `!rel(..)`, ascent
-  desugars it to an aggregate, and the MIR builder rejects an aggregated relation in the rule's own
-  SCC (`ascent_mir.rs:288`). So "suppress the lumped edge where a key was recovered" is a compile
-  error, not a design preference -- which is what makes the fact route load-bearing rather than an
-  optimisation.
-- **The derived rows survive to query time.** `IndexResult` saves `assign_like` and `paths`, and
-  the query builder reads exactly those (`cli/mod.rs:634-635`), while `formal_param` and `call`
-  come from `IndexFacts` (`:631`, `:633`). So minted paths and rule-derived edges are visible in
-  reports, and the pass's `formal_param` rows must be pushed before `facts.try_save` (`:393`) --
-  which the proposed link slot, between `jni::link` (`:349`) and `codegen_model_matches` (`:352`),
-  satisfies.
-- **The qualified id parses unambiguously.** A dex method id is `Lcls;->name(params)ret`
-  (`dex-reader/src/parser.rs:796`, with `pretty_signature` contributing `(params)ret` and no second
-  `->`), and the jvm frontend builds the same shape (`jvm/mod.rs:518`). One `->` separates class
-  from member, so the scan's parse is well defined for both Java frontends.
-- **Minting a path from a recovered constant costs nothing.** `PathSegment::Symbol` holds a
-  `ctadl_ir::Symbol = ArcIntern<str>` (`ctadl-ir/src/mir/mod.rs:193-198`, `:155`), the same type
-  `Exp::Str` and `const_str_assign` carry, so the design's "pointer copy" is literal.
-- **The pass's `formal_param` rows do not distort `Argument(*)`.** `compute_arg_arity` takes the
-  max over declared formals *and* actual call-site indices (`index_engine/mod.rs:263-283`), and the
-  indices the intent rows name are all real arguments, so no phantom parameter is introduced --
-  unlike the bridge emitter's cross-function rows, which the code comments already flag.
-- Earlier rounds' confirmations that still stand: `call` is the only thing carrying a flow across a
-  function boundary at query time (`query_engine/mod.rs:442`, `:455`), which is why delivery must
-  derive `call` rows; delivery needs no `actual_param`, and an `assign` keeps it one-directional;
-  the constant-propagation shape already exists as `call_target_assign_like` (`:1342-1356`); the
-  three codegen hooks sit one line from the object-ref handling (`codegen/mod.rs:432`, `:676`,
-  `:793`); a literal cannot cross a procedure boundary through `summary`, so the callee-origin
-  bucket needs the extra rules rather than a better placement; and no access-path length limit
-  exists, so `this.<intent>.<extras>.<key>` at depth three is representable.
+The smallest safer ordering is:
+
+1. Add `const_str_assign` and prove constants reach call-arg vertices inside one function.
+2. Add built-in static Intent API summaries and prove bodyless framework summary instantiation.
+3. Remove the conflicting `java-index.jsonl` rows only after the built-in rows run for bare DEX/JAR
+   as well as APK.
+4. Add literal-key extras fact emission with consumer tests.
+5. Defer non-literal recovered-key paths until after real-app measurements.
+
+The current plan contains those tasks, but it does not enforce the dependency order strongly enough.
+
+## 16. External ICC validation is both required and placed after "Phase 3 complete"
+
+The design says Phase 3 should not be considered complete until the DroidBench ICC / ICC-Bench
+harness exists and the first subset passes or is explicitly xfailed. The implementation plan puts
+that harness in Phase 5, after Phase 4. That creates a milestone contradiction: either Phase 3 is
+not complete until Phase 5 exists, or Phase 5 is follow-up validation.
+
+For a feature this easy to overfit to `com.noto_54.apk`, the stricter interpretation is better.
+Move the initial external ICC harness earlier, or rename the phase gates so the main feature cannot
+be called complete before it has been checked against an independent suite.
+
+## 17. Performance acceptance criteria are missing
+
+The design adds relations that can affect the hottest part of the index: `const_reaches` propagates
+over `assign_like`, recovered extras keys mint new `paths`, and derived `call` can feed the existing
+hybrid-inlining rules. The docs mention counts and `#![measure_rule_times]`, but the implementation
+plan does not define acceptable budgets.
+
+Before this lands, the plan should record baseline and target bounds for at least `com.noto_54.apk`:
+index wall time, peak memory, `paths` count, `assign_like` count, `const_reaches` count, and per-SCC
+rule time. Without those, a correct implementation can still make ordinary APK analysis unusable.
+
+## What Holds Up
+
+Several parts of the iteration are sound and worth keeping:
+
+- Manifest import as a first shippable surface is the right Phase 1 deliverable.
+- The triple-store direction is better than prematurely freezing a typed manifest schema, provided
+  the stored attributes keep value kind and resource identity.
+- Constants as relations over the existing flow graph are better than a local def-chase.
+- Per-site extras facts are the right replacement for a keyed `putExtra` summary; a summary keyed by
+  callee cannot be key-precise.
+- One bridge site per send site is the right freshness granularity; one site per pair is unnecessary
+  and cannot be minted inside the fixpoint.
+- Delivery as one-way `assign` rows avoids the unsound back-flow that symmetric `actual_param` edges
+  would introduce.
+- Persisting the final derived call graph is necessary if query-time taint propagation is expected
+  to see intent bridges.
+
+The main correction is to stop treating the current relation sketches as implementation-ready. The
+feature needs one more tightening pass around call-site observation, Android filter semantics,
+exported/internal distinctions, service kinds, and persistence migration before the checklist becomes
+safe to execute.
