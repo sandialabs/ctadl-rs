@@ -193,9 +193,6 @@ impl Context {
             } = &mut builders.vmt
             {
                 hierarchy.insert(JavaClass(class_name.to_string().into()), iface_vec);
-                // Which of those parents are interfaces is not recoverable from the merged
-                // list; this is the record of which types are. See the dex frontend for the
-                // same push and the same reason.
                 if class_def.access_flags & JVM_ACC_INTERFACE != 0 {
                     interfaces.push(JavaClass(class_name.to_string().into()));
                 }
@@ -233,11 +230,6 @@ impl Context {
                         JavaMethod(full_name.clone().into()),
                     ));
                 }
-                // An `abstract` declaration -- every non-`default`, non-`static` interface
-                // method among them -- has no body to lower. It stays in `methods` above,
-                // which this frontend fills for every declared method, and is listed here as
-                // well so that an interface's own methods can be told from the methods of its
-                // implementers. See the field's doc comment.
                 if enc.access_flags & JVM_ACC_ABSTRACT != 0
                     && let VirtualMethodTable::Java {
                         abstract_methods, ..

@@ -56,8 +56,7 @@ pub enum Command {
     /// Inspect the CTADL store
     Inspect(InspectArgs),
 
-    /// Report on a program's call graph: how many calls there are, how many places each
-    /// virtual call could go, and where the imprecision is concentrated. (See 'import')
+    /// Generate detailed report on taint-analysis relevant program properties. (See 'import')
     ///
     /// Needs only an import. Every number comes from the imported IR and one class-hierarchy
     /// analysis; no index is read, and none is written.
@@ -247,13 +246,7 @@ pub struct ReportArgs {
     #[arg(long, default_value_t = 10, value_name = "N")]
     pub top: usize,
 
-    /// Skip the recursion and strongly-connected-component section.
-    ///
-    /// It is the only part of the report that builds the whole CHA call graph, and that
-    /// graph is not the size of the program: a 1.9-million-function app expands to over a
-    /// billion deduplicated edges. Skipping it took one such report from 89 s to 55 s. It
-    /// saves time rather than memory -- the peak is set earlier, by the class-hierarchy
-    /// analysis itself.
+    /// Skip the expensive recursion and strongly-connected-component section.
     #[arg(long)]
     pub no_recursion: bool,
 }
@@ -832,9 +825,6 @@ fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
 }
 
 fn report_project(args: &ReportArgs) -> anyhow::Result<()> {
-    // Same name resolution as `query`: a project, or the project an import of that name
-    // would be indexed into. Nothing here touches the project directory -- notably not
-    // `index_path()`, which would create it for an ephemeral project.
     let project = load_or_infer_project(&args.name)?;
     cli::report(
         &project,
@@ -861,12 +851,6 @@ fn load_or_infer_project(name: &str) -> anyhow::Result<project::AnalysisProject>
         Ok(project) => Ok(project),
         Err(project_error) => match project::ArtifactImport::load_by_name(name) {
             Ok(_) => Ok(project::AnalysisProject::ephemeral(name, &[name])),
-            // An import of this name exists but could not be read. Its error is the
-            // actionable one -- a stale import says which format it is and to re-import it --
-            // and the project error would say only that a config file is missing, which is
-            // true, unhelpful, and sends the reader looking in the wrong place. This is the
-            // path every stored import takes after an `IMPORT_FORMAT_VERSION` bump, so it is
-            // not a rare corner.
             Err(import_error) if project::ArtifactImport::exists_by_name(name) => {
                 Err(import_error).with_context(|| format!("loading import '{name}'"))
             }

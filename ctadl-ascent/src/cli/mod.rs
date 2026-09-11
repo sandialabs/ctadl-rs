@@ -1000,10 +1000,6 @@ pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
 }
 
 /// Measures a project's call graph and writes the result to `output` (or stdout for `-`).
-///
-/// A thin wrapper, per this module's contract: the work is in [`crate::report`], which knows
-/// nothing about where the store puts things. Reads no index -- see that module for why an
-/// index would add nothing to these numbers in this version.
 pub fn report(
     project: &AnalysisProject,
     output: &Path,

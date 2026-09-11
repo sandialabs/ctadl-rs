@@ -1,9 +1,9 @@
-/*! `ctadl report` -- what the imported program's call graph looks like.
+/*! `ctadl report` -- measuring program-analysis-relevant properties of an imported program.
 
-The question this answers is a planning one, not a bug-finding one: *is it worth making
-call resolution more precise, and where?* Every number below is meant to be traceable to a
-decision -- special-case the worst handful of call sites, push hybrid inlining one frame
-deeper, or leave it alone.
+The emphasis is the call graph and the class hierarchy: how many calls a program makes, how
+precisely CHA resolves them, where the imprecision concentrates, and what shape the resulting
+graph has. Every number is meant to be traceable to a decision -- special-case the worst
+handful of call sites, push hybrid inlining one frame deeper, or leave it alone.
 
 # Tiers
 
@@ -45,9 +45,9 @@ virtual method tables and resolving a call in one against the other's hierarchy 
 making the answer up.
 
 Measuring them separately is also the only thing that works. An `.xapk` splits into one
-program per split APK and **the parent import carries no functions at all** -- TikTok's
-parent has zero and its `com.zhiliaoapp.musically` split has 1,868,340. A report that took
-"the first import" would print zeros for a two-million-function app.
+program per split APK and **the parent import carries no functions at all** -- we have
+observed a parent with zero functions whose single split carried over 1.8 million. A report
+that took "the first import" would print zeros for a two-million-function app.
 */
 
 use std::path::Path;
@@ -83,8 +83,8 @@ pub struct ReportOptions {
     ///
     /// On by default, and the one section worth turning off. It is the only part of the
     /// report that has to materialize the CHA call graph, whose size is not the size of the
-    /// program: TikTok's 5.2 million virtual call sites expand to 1.21 billion deduplicated
-    /// edges. Measured on that app, turning it off took the run from 89 s to 55 s.
+    /// program: we have observed 5.2 million virtual call sites expand to 1.21 billion
+    /// deduplicated edges, and turning this section off took that run from 89 s to 55 s.
     ///
     /// It buys wall time, not headroom. The peak is reached earlier, inside `run_cha`, and
     /// the graph fits underneath it -- the same run peaked at 24.9 GiB with this section and
@@ -92,7 +92,7 @@ pub struct ReportOptions {
     ///
     /// It now runs Tarjan twice: once over the whole graph and once with the
     /// interface-dispatched edges removed, which is what says how much of a program's largest
-    /// cycle is interface resolution rather than the program. That took TikTok's report from
+    /// cycle is interface resolution rather than the program. On the run above that went from
     /// 95 s to 114 s and did not move the peak, because both passes read one successor array
     /// -- each caller's class-virtual targets are stored first and the second pass stops
     /// there.

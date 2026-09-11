@@ -195,10 +195,6 @@ impl Context {
                 for sup in superclass_opt.into_iter().chain(iface_vec) {
                     parents.push(sup);
                 }
-                // The parent list above cannot say which of those parents are interfaces,
-                // because a superclass and a super-interface are both subtype edges and CHA
-                // wants them merged. This is the separate record of which *types* are
-                // interfaces, and it is only ever about classes this import declares.
                 if ACC_INTERFACE.is_set_in(class_def.access_flags) {
                     interfaces.push(JavaClass(class_name.into()));
                 }
@@ -227,12 +223,6 @@ impl Context {
                 };
                 fdat.name = sig.clone();
 
-                // An `abstract` method is body-less too, but unlike a native one it has no
-                // implementation to name: it is a declaration, and the only thing that can be
-                // said about it is that it exists. Recorded because an interface's own methods
-                // are exactly these rows -- the CHA resolvent map keyed on an interface holds
-                // every method of every implementer instead, so nothing else can say what an
-                // interface actually declares.
                 if ACC_ABSTRACT.is_set_in(enc.access_flags) {
                     let (class_name, method_name, method_descr) = parser.method_triple(mi)?;
                     if let VirtualMethodTable::Java {
@@ -558,10 +548,7 @@ impl Context {
         let args_regs = inst.call_args()?; // returns &[Reg]
 
         // Resolve the method index from the specific invoke variant, and with it the
-        // dispatch kind. This is the one place the distinction exists: `invoke-virtual`,
-        // `invoke-super` and `invoke-interface` all lower to a `JavaCall`, and once the
-        // opcode is gone nothing downstream can tell which it was. `None` marks the two
-        // that lower to a `DirectCall` instead and so have no dispatch at all.
+        // dispatch kind.
         let (method_idx, dispatch) = match inst {
             Instruction::InvokeVirtual(fmt) => (fmt.idx, Some(JavaDispatch::Virtual)),
             Instruction::InvokeSuper(fmt) => (fmt.idx, Some(JavaDispatch::Super)),

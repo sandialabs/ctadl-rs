@@ -509,13 +509,6 @@ impl Visitor for CodegenVisitor<'_> {
                         cls,
                         simple_name,
                         descriptor,
-                        // Resolution does not read the dispatch kind. An `invoke-super` is
-                        // resolved here exactly as an `invoke-virtual` is, which
-                        // over-approximates it -- a super call's target is fixed at the named
-                        // class -- and `ctadl report` measures what that costs. Narrowing it
-                        // would be a change to what the index resolves to, with its own
-                        // soundness argument, and is deliberately not part of recording the
-                        // distinction.
                         dispatch: _,
                     } => {
                         let recv_var = self.trans_variable_ref(receiver);
@@ -977,9 +970,7 @@ impl ClassHierarchyAnalysis {
         Self::build(vmt, instantiated_classes, false)
     }
 
-    /// CHA *and* RTA, from one Datalog run over one shared subtype closure. Only
-    /// [`crate::report`] wants this: the RTA table is a measurement of how much CHA
-    /// over-approximates, not a resolution strategy anything acts on.
+    /// CHA *and* RTA, from one Datalog run over one shared subtype closure.
     pub(crate) fn with_rta(
         vmt: &VirtualMethodTable,
         instantiated_classes: BTreeSet<Symbol>,
@@ -1010,19 +1001,6 @@ impl ClassHierarchyAnalysis {
                 // Sort for determinism
                 direct_superclass.sort_unstable();
                 // Which types are interfaces, now that the frontends record it.
-                //
-                // It does not change a single resolvent, and is passed because the input
-                // should be true rather than because the answer moves: `hierarchy` already
-                // merges a class's super-interfaces into its parent list, so every interface
-                // subtype edge is in `direct_superclass` above and `cha_direct_subtype` has
-                // them all either way. What this adds is `class_or_interface` membership for
-                // an interface that neither declares a method nor appears in any hierarchy,
-                // and such a type derives no `cha_super_method` and therefore no resolvent.
-                //
-                // `super_interface` stays empty for the same reason: feeding it would restate
-                // edges `direct_superclass` already carries. It is the input a CHA that wanted
-                // to treat the two kinds of parent *differently* would need -- resolving an
-                // `invoke-super` statically, say -- and nothing does today.
                 let interface_type = interfaces.iter().map(|c| (c.clone().into(),)).collect();
                 let super_interface = Default::default();
                 let instantiated_classes_vec =
@@ -1180,13 +1158,8 @@ fn emit_callee_resolvents(
 }
 
 /// Runs the class hierarchy analysis, and -- when `rta` is set -- the rapid type analysis
-/// beside it. Returns `(cha, rta)`; the second is empty when `rta` is false.
-///
-/// One [`ascent::ascent_run!`] computes both, so they share the subtype closure and the
-/// inherited-method table: asking for RTA does not cost a second CHA. The macro captures
-/// locals, so the `if rta` guard on the RTA rule is an ordinary Rust condition and the rule
-/// derives nothing at all when it is false -- which is how codegen's output stays
-/// byte-identical to what it was before this parameter existed.
+/// beside it. One [`ascent::ascent_run!`] computes both. Returns `(cha, rta)`; the second is
+/// empty when `rta` is false.
 pub(crate) fn run_cha(
     method_implemented: Vec<(Symbol, Symbol, Symbol, Symbol)>,
     direct_superclass: Vec<(Symbol, Symbol)>,
@@ -1243,10 +1216,7 @@ pub(crate) fn run_cha(
             cha_subtype_reflexive(sub, sup);
 
         // RTA: the same, but only where the subtype carrying the method is one the program
-        // actually allocates. `instantiated_class` holds only classes named by a `new` in
-        // *imported* code, so an object built by un-imported library code, by reflection or
-        // by deserialization is invisible here and its targets are dropped -- which is why
-        // every caller must present this as a lower bound.
+        // actually allocates.
         rta_resolve(sup, m, d, id) <--
             if rta,
             cha_super_method(sub, m, d, id),

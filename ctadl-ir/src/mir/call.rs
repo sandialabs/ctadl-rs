@@ -8,18 +8,6 @@ use thin_vec::ThinVec;
 use super::{Symbol, VariableRef};
 
 /// Which Java dispatch instruction a [`CallStyle::JavaCall`] came from.
-///
-/// The three resolve differently and behave very differently under CHA, so the frontends
-/// record which one it was rather than lowering them all to one indistinguishable virtual
-/// call. Nothing downstream can recover this: the declared receiver type does not say it
-/// (an `invoke-virtual` on an abstract class and an `invoke-interface` on an interface look
-/// alike from the call alone, and an obfuscated app's type names say nothing at all).
-///
-/// It does **not** change how anything resolves today. `ctadl index` treats all three the
-/// same way it always has; this is what lets [`crate::mir::call::CallStyle`] carry the
-/// distinction without a soundness argument attached to it. What reads it is measurement --
-/// `ctadl report` keeps interface calls apart from class-virtual ones, because averaging the
-/// two hides that CHA is far worse on interfaces.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum JavaDispatch {
@@ -235,19 +223,11 @@ pub enum VirtualMethodTable {
         /// - Fully qualified method name
         methods: Vec<(JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
         hierarchy: HashMap<JavaClass, SmallVec<[JavaClass; 2]>>,
-        /// Every class the frontend saw declared `interface`.
+        /// The interfaces *this import declares*.
         ///
         /// `hierarchy` above merges a class's superclass with its super-interfaces into one
         /// parent list, which is what CHA wants -- both are subtype edges -- but it means the
         /// table alone cannot say which parents are interfaces. This column is that record.
-        ///
-        /// It is a list of the interfaces *this import declares*. An interface belonging to
-        /// code that was not imported (`java/util/Iterator`, in an app that does not ship the
-        /// framework) is absent, so a type missing here means "not known to be an interface",
-        /// never "known not to be". A consumer that needs the dispatch kind of a call should
-        /// read [`JavaDispatch`] off the call site, which is recorded for every call whatever
-        /// the receiver's type is; this column answers the different question of what a *type*
-        /// is.
         interfaces: Vec<JavaClass>,
         /// Method declarations carrying `abstract`, including every method of an interface
         /// that is not `default` or `static`.
