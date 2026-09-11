@@ -139,16 +139,17 @@ constant rules get the real flow relation instead of a rebuilt subset of it.
 
 ### Phase 1 -- Parse the manifest
 
-**Decoder.** A new `dex-reader/src/axml.rs`. The subset of Android binary XML needed is narrow:
-the header (`0x00080003`), the string pool, the resource-map chunk, and start/end element records
-with their attributes. Attribute names arrive as resource IDs -- `android:name` is `0x01010003` --
-with string-pool names alongside; values are string references, integers, or booleans. Roughly
-300-500 lines.
+**Decoder.** Use a maintained Android binary XML crate rather than vendoring a decoder. Binary XML
+is small compared with the bytecode frontends CTADL owns, and owning another format parser is not
+worth the maintenance cost unless the crate proves inadequate. The subset needed is narrow: the
+header (`0x00080003`), the string pool, the resource-map chunk, and start/end element records with
+their attributes. Attribute names arrive as resource IDs -- `android:name` is `0x01010003` -- with
+string-pool names alongside; values are string references, integers, booleans, and resource
+references. Keep the crate behind a tiny adapter that emits CTADL's own manifest tree, so replacing
+it later does not touch the rest of the feature.
 
-Vendoring it matches the house style, since the tree already vendors its own dex and JVM readers,
-and it avoids taking a dependency for a format that does not change. The cost is owning format
-code. Detect plain-text XML by magic bytes and fall back to a text parser; unbuilt manifests are
-rare but they exist.
+Detect plain-text XML by magic bytes and fall back to a text parser; unbuilt manifests are rare but
+they exist.
 
 **Fact shape.** Keep the previous ctadl's triple store rather than inventing a typed schema:
 
@@ -306,12 +307,12 @@ ordinary input facts and are the subject of the next section:
 
 | relation | rows | from |
 | --- | --- | --- |
-| `intent_frame(FunctionId)` | functions containing an intent-API or send call | `facts.call` + the site `IdMap` |
+| `intent_frame(FunctionId)` | functions containing an intent-API call or an observed send call | the Android call-site observer plus the site `IdMap` |
 | `const_str_assign(FunctionId, FlowVertex, Symbol)` | every string literal in an intent frame | codegen's three hooks |
-| `intent_send(FunctionId, InsnId, InsnId, FormalIndex, IntentKind)` | one per send site: its frame, its fresh bridge site, its own site, which argument is the intent, and what kind of send it is | the send-site scan |
+| `intent_send(FunctionId, InsnId, InsnId, FormalIndex, IntentKind)` | one per observed send site: its frame, its fresh bridge site, its own site, which argument is the intent, and what kind of send it is | the Android call-site observer |
 | `intent_filter(Symbol, IntentKind, FunctionId)` | (action string, kind, receiving entry method) | Phase 1's manifest, after normalization, alias folding, and the hierarchy walk |
 | `intent_component(Symbol, IntentKind, FunctionId)` | (component type descriptor, kind, receiving entry method) | the same |
-| `extras_site(FunctionId, InsnId, ExtrasOp, FormalIndex, FormalIndex)` | one per `putExtra` / `get*Extra` / `Bundle` accessor site: which argument is the key, which carries the value | the same scan |
+| `extras_site(FunctionId, InsnId, ExtrasOp, FormalIndex, FormalIndex)` | one per `putExtra` / `get*Extra` / `Bundle` accessor site: which argument is the key, which carries the value | the Android call-site observer |
 
 `intent_filter` and `intent_component` are the whole of "the manifest goes into the engine": a few
 hundred rows on a real app, and the only thing Phase 1 has to hand Phase 3. `extras_site` exists
@@ -379,22 +380,29 @@ lowered to a symmetric pair of `assign_like` rows (`index_engine/mod.rs:1155-116
 carry the receiving component's writes back into the sender's intent. Intents cross a process
 boundary as parcels; that back-edge would be unsound in the world as well as in the engine.
 
-**The cycle through `call` terminates trivially.** `call` now depends on `const_reaches`, which
-depends on `assign_like`, which depends on `call` (summary instantiation). Monotone, so it
-converges -- but it converges in one step, because the constant rules propagate along edge
-direction only and the delivery edge points from the sender's intent into the bridge site's call
-args. Nothing carries a constant back out to the send-site argument the pairing rules read. Worth
-stating because "the call graph is now part of the fixpoint" is the kind of sentence that invites a
-worry the shape of the rules already answers.
+**The cycle through `call` is monotone, but it is not only the intent rules.** `call` now depends on
+`const_reaches`, which depends on `assign_like`, which depends on `call` (summary instantiation).
+The intent-specific part of that cycle does not feed constants back to the send-site argument: the
+delivery edge points from the sender's intent into the bridge site's call args, and the pairing
+rules read the original send site's call arg. But `call` is also an input to the existing hybrid
+inlining rules (`critical_summary`, `resolvent`, `context_assign`, contextual summaries, and the
+local virtual-call bypass). Deriving intent calls therefore enlarges the engine's SCC, not just the
+five rules above. The rules remain monotone, so the least fixpoint is still well defined, but Phase
+0 makes this a measured migration: add a fact-level test where a derived call targets a summarized
+function and a virtual-call-bearing function, and record the SCC timing before intent pairings are
+enabled.
 
 **The plumbing this costs, which is the real price of the design.** `call` stops being purely an
 input, so the saved `call.parquet` has to be the *final* relation rather than the pre-fixpoint one.
-Today `IndexFacts::try_save` writes it before the index runs (`cli/mod.rs:393`) and
-`IndexFacts::try_load` reads it back at query time. The change is to move that one table:
-`IndexResult` gains a `call` column, `IndexResult::try_save` writes it, and `IndexFacts::try_save`
-stops. The schema is already the right shape -- `facts/schema.rs:56-62` is
-`(FunctionId, InsnId, FunctionId)`, exactly the relation -- and `IMPORT_FORMAT_VERSION` is being
-bumped for the manifest tables anyway. Everything else about the query path is unchanged.
+Today `IndexFacts::try_save` writes it before the index runs (`cli/mod.rs:393`) and query/SARIF
+formatting load it through `IndexFacts` (`cli/mod.rs:633`, `:655`). This is not an intent-linking
+subtask to do after the rules exist; it is a Phase 0 migration. `IndexResult` gains a `call` column,
+`IndexResult::try_save` writes it, every query/inspect/formatter path reads the final table, and
+`IndexFacts::try_save` stops writing it. The schema is already the right shape --
+`facts/schema.rs:56-62` is `(FunctionId, InsnId, FunctionId)`, exactly the relation -- and
+`IMPORT_FORMAT_VERSION` is being bumped for the manifest tables anyway. Move the table in one
+change, with the version bump and write ordering together, so a failed index cannot leave a stamped
+complete project with a missing final call graph.
 
 **What the intraprocedural restriction still means, now that ordering is not the reason for it.**
 The two constant rules stay keyed on a single `FunctionId`: no push-down onto a callee's formals,
@@ -417,14 +425,18 @@ free. Three buckets, and the middle one has changed sides since the previous rev
   decision 5.
 
 **Scope.** The `intent_frame` premise on the seeding rule is what keeps this from being a
-program-wide string analysis. Gate on functions that contain at least one call to a method in the
-intent-API table or the send-site table, recovered by scanning `facts.call` and resolving each
-callee through the site `IdMap`. Every intent construction goes through `Intent.<init>`, so the
-gate loses nothing the restriction was going to serve, and it takes the working set from "every
-`const-string` in 42,000 methods" to a few hundred frames. Seed *every* string constant inside a
-gated frame, not only ones the manifest names: keeping "no constant recovered" distinguishable from
-"a constant was recovered and matched nothing" is what makes the unresolved count in Phase 4 mean
-anything. The manifest's string alphabet is a reporting aid, not a filter.
+program-wide string analysis. Gate on functions that contain at least one observed call to a method
+in the intent-API table or the send-site table. Do not recover this set from `facts.call`: under the
+current Java `Mixed` strategy, ambiguous calls are represented as `callee_info`, and `facts.call`
+also lacks the declared receiver class needed to exclude `LocalBroadcastManager`. The observer records
+the call site's declared class, name, descriptor, site id, and argument count while the IR is still in
+hand; link-time code only resolves the recorded method ids through the final `IdMap`. Every intent
+construction goes through `Intent.<init>`, so the gate loses nothing the restriction was going to
+serve, and it takes the working set from "every `const-string` in 42,000 methods" to a few hundred
+frames. Seed *every* string constant inside a gated frame, not only ones the manifest names: keeping
+"no constant recovered" distinguishable from "a constant was recovered and matched nothing" is what
+makes the unresolved count in Phase 4 mean anything. The manifest's string alphabet is a reporting
+aid, not a filter.
 
 **One gate to get right.** Every new path depends on `paths` membership, which fails by producing
 zero rows rather than by erroring. `.<intent>.<extras>.<key>` is representable, but only through
@@ -455,47 +467,64 @@ emitter rather than a second artifact with its own failure mode -- and the seam 
 data file had to agree on the spelling of `.<intent>` disappears with it.
 
 **What replaces the matcher.** One scan of `IdMap::functions()` (`facts.rs:1464`), parsing each
-`Lcls;->name(descriptor)ret` and matching on name plus descriptor. It is the same scan Phase 3 runs
-for send sites, over the same table, so the pass gains no new input. Matching on name plus
-descriptor rather than on an owning class is still required, and for the unchanged reason: the dex
-method id at a call site names the *declared* receiver, so `this.getIntent()` inside an activity is
-recorded against the app's subclass and never against `Landroid/app/Activity;`. A scan that
-enumerates every function gets that by construction, where a `parents` filter would have had to
-list every caller-declared type. The residual imprecision is also unchanged -- an app-defined
-method whose name and descriptor match `getIntent` is indistinguishable and gets a synthetic
-`<intent>` field.
+`Lcls;->name(descriptor)ret` and matching it against a small built-in signature table. The table has
+two matching modes, because the declared-type problem is real but narrow:
+
+- **Pinned-class rows.** Methods whose receiver is the framework type itself keep the class in the
+  key: `Landroid/content/Intent;`, `Landroid/content/ComponentName;`, or `Landroid/os/Bundle;`, plus
+  name and descriptor. A call to `Intent.setAction`, `Intent.getData`, `Intent.putExtras`, or a
+  `Bundle` accessor names the declared framework class in the dex method id, so dropping the class
+  buys nothing and can accidentally give an app method a synthetic `.<action>` or `.<extras>` field.
+- **Receiver-varying rows.** `getIntent` and `setIntent` match on name plus descriptor only. These
+  are called on the app's `Activity` subclass, so the dex method id at the call site records that
+  subclass rather than `Landroid/app/Activity;`. This is the two-row case a `parents` filter cannot
+  express without enumerating every app activity.
+
+The scan is manifest-independent and runs for every Java-family import where these method ids are
+present, including bare `.dex`, `.jar`, and APK imports whose manifest is absent or fails to decode.
+That is what makes it safe to remove the coarse Android `Intent` entries from `java-index.jsonl`:
+the static API propagation surface does not depend on Phase 1 succeeding. Manifest-dependent work --
+component inventory, filters, and send/receive pairing -- is a later step and can be skipped without
+turning off these rows.
+
+The residual imprecision is therefore limited to the receiver-varying rows: an app-defined
+`getIntent()Landroid/content/Intent;` or `setIntent(Landroid/content/Intent;)V` method is
+indistinguishable at this layer and gets the synthetic `.<intent>` treatment.
 
 **The rows.** Written `source -> destination`; each line is one
 `summary(f, dst_index, dst_path, src_index, src_path)` row, for every `f` the scan matched:
 
-| matched method (name + descriptor) | summary row(s) |
-| --- | --- |
-| `Intent.<init>(String)` | `Argument(1) -> Argument(0).<action>` |
-| `Intent.<init>(String, Uri)` | `+ Argument(2) -> Argument(0).<data>` |
-| `Intent.<init>(Context, Class)` | `Argument(2) -> Argument(0).<component>` |
-| `Intent.<init>(String, Uri, Context, Class)` | the union of the three above |
-| `Intent.<init>(Intent)` | `Argument(1) -> Argument(0)` |
-| `setAction` / `getAction` | `Argument(1) -> Argument(0).<action>` / `Argument(0).<action> -> Return` |
-| `setData`, `setDataAndType` / `getData` | the same, on `.<data>` |
-| `setClass`, `setClassName`, `setComponent` | the class-name argument `-> Argument(0).<component>` |
-| `ComponentName.<init>(Context, String)`, `(String, String)` | `Argument(2) -> Argument(0)` |
-| `getIntent` / `setIntent` | `Argument(0).<intent> -> Return` / `Argument(1) -> Argument(0).<intent>` |
-| `getExtras` / `putExtras` | `Argument(0).<extras> -> Return` / `Argument(1) -> Argument(0).<extras>` |
-| `Intent.createChooser(Intent, CharSequence)` | `Argument(0) -> Return` |
-| every builder setter | `+ Argument(0) -> Return` (they return `this`) |
+| matched method | class matching | summary row(s) |
+| --- | --- | --- |
+| `Intent.<init>(String)` | pinned to `Landroid/content/Intent;` | `Argument(1) -> Argument(0).<action>` |
+| `Intent.<init>(String, Uri)` | pinned to `Landroid/content/Intent;` | `+ Argument(2) -> Argument(0).<data>` |
+| `Intent.<init>(Context, Class)` | pinned to `Landroid/content/Intent;` | `Argument(2) -> Argument(0).<component>` |
+| `Intent.<init>(String, Uri, Context, Class)` | pinned to `Landroid/content/Intent;` | the union of the three above |
+| `Intent.<init>(Intent)` | pinned to `Landroid/content/Intent;` | `Argument(1) -> Argument(0)` |
+| `setAction` / `getAction` | pinned to `Landroid/content/Intent;` | `Argument(1) -> Argument(0).<action>` / `Argument(0).<action> -> Return` |
+| `setData`, `setDataAndType` / `getData` | pinned to `Landroid/content/Intent;` | the same, on `.<data>` |
+| `setClass`, `setClassName`, `setComponent` | pinned to `Landroid/content/Intent;` | the class-name argument `-> Argument(0).<component>` |
+| `ComponentName.<init>(Context, String)`, `(String, String)` | pinned to `Landroid/content/ComponentName;` | `Argument(2) -> Argument(0)` |
+| `getIntent` / `setIntent` | receiver-varying: name + descriptor only | `Argument(0).<intent> -> Return` / `Argument(1) -> Argument(0).<intent>` |
+| `getExtras` / `putExtras` | pinned to `Landroid/content/Intent;` | `Argument(0).<extras> -> Return` / `Argument(1) -> Argument(0).<extras>` |
+| `Bundle` accessors and `putAll` | pinned to `Landroid/os/Bundle;` | bundle entries live at the bundle root |
+| `Intent.createChooser(Intent, CharSequence)` | pinned to `Landroid/content/Intent;` | `Argument(0) -> Return` |
+| every builder setter | pinned to its framework owner unless listed receiver-varying | `+ Argument(0) -> Return` (they return `this`) |
 
 `putExtra` and `get*Extra` are deliberately absent. Their edge varies per call site, and a summary
 is keyed by callee; the next section is the whole of that argument.
 
 Six things make this work, and each is a place it could quietly fail instead:
 
-- **The call rows exist.** These are framework methods with no body in the dex, but the frontend
+- **The call rows exist and the summaries instantiate.** These are framework methods with no body in the dex, but the frontend
   records a VMT entry for every externally-referenced method (`dex/mod.rs:119-121`), so CHA
   resolves `Landroid/content/Intent;->setAction` to itself and codegen emits a `call` row
   (`codegen/mod.rs:536-545`). Without that row a summary is inert, because instantiation joins
   `summary(tgt, ..)` with `call(f, insn, tgt)` (`index_engine/mod.rs:1164`). This is the chain the
-  existing `putExtra` entry already depends on and that nobody has watched end to end; the counts
-  below are what turn it from an assumption into a measurement.
+  existing `putExtra` entry already depends on. Before the full emitter lands, add a two-line
+  fixture that calls a bodyless framework method with one pass-through summary and assert that the
+  expected `assign_like` row exists after indexing. The pass's own match counts check only the first
+  link in the chain; this assertion checks the end-to-end behaviour the intent rows rely on.
 - **`formal_param` rows are not optional.** Model codegen pushes a `FormalType::ByRef` row for
   every index a summary names and says why: `locals` is seeded from formals, so a modelled function
   without them is "silently lost" (`model_matches.rs:126-137`). The query engine needs them for a
@@ -518,15 +547,17 @@ Six things make this work, and each is a place it could quietly fail instead:
   gives up nothing on.
 - **Counting replaces `CTADL0004`.** A model generator that matches nothing gets a diagnostic; a
   scan that matches nothing is silent. So the pass logs matched functions and matched call sites
-  per API row, and treats zero matched functions in an import whose string pool contains
-  `Landroid/content/Intent;` as an error rather than a warning. That is the "app that appears to
-  send no intents" failure mode, and this is the cheapest place it can be caught. It also answers
-  what the previous revision could only promise to "fail loudly" about. And it does one thing the
-  matcher could not: because the scan sees every function, it can report the descriptors it
-  *declined* -- an `Landroid/content/Intent;-><init>` overload the table does not list, a
-  `set*`/`get*` on `Intent` nobody modelled. A table of API signatures is a checklist and
-  checklists rot; this is the mechanism that says which entry is missing rather than leaving a
-  construction path to lose its action in silence.
+  per API row, and treats zero matched functions as an error when the `IdMap` contains any method id
+  under `Landroid/content/Intent;->...` but the built-in table matched none of them. That test is
+  expressed where the pass actually runs: the dex string pool is gone by link time, but the `IdMap`
+  still contains every referenced method function. This is the "app that appears to send no
+  intents" failure mode, and this is the cheapest place it can be caught. It also answers what the
+  previous revision could only promise to "fail loudly" about. And it does one thing the matcher
+  could not: because the scan sees every function, it can report the descriptors it *declined* -- an
+  `Landroid/content/Intent;-><init>` overload the table does not list, a `set*`/`get*` on `Intent`
+  nobody modelled. A table of API signatures is a checklist and checklists rot; this is the
+  mechanism that says which entry is missing rather than leaving a construction path to lose its
+  action in silence.
 - **Port paths are a level shift, not a filter** (`docs/model-generators.md:567-590`). The
   semantics are the engine's, not the model loader's -- they fall out of `substitute_prefix` -- so
   they hold identically for a row the pass writes. A lumped `Argument(0).<extras> -> Return` read
@@ -547,6 +578,15 @@ summary is keyed by callee and holds at every call site of it, so one site's key
 site's key -- the conflation keying exists to remove, restated. The edge has to be per site, which
 means it is an `assign` on the site's own vertices: exactly the row summary instantiation would
 have produced (`index_engine/mod.rs:1164-1170`), written directly.
+
+The path convention is fixed here because every later extras API composes through it: a `Bundle`'s
+entries live at the bundle root (`bundle.<k>`), while an `Intent`'s extras live under its
+`.<extras>` field (`intent.<extras>.<k>`). `putExtras` and `getExtras` are the bridge between the two
+worlds: `putExtras` maps the bundle root to the intent's `.<extras>`, and `getExtras` maps the
+intent's `.<extras>` back to the returned bundle root. Methods added later should be checked against
+that invariant before they get rows: `replaceExtras(Bundle)`, `Bundle.putAll(Bundle)`,
+`getBundleExtra(String)`, and `putExtra(String, Bundle)` are the first cases likely to expose a
+level mismatch.
 
 The previous revision reached that row through an IR rewrite. It does not need to. By the time the
 pass runs, everything the rewrite read off the statement is in `IndexFacts`:
@@ -588,6 +628,15 @@ statement is rewritten: the pipeline slot between `ssa::transform_program` and
 and the `cap_path` re-anchoring, copy propagation never aliasing constants, frontend neutrality.
 The `call` row survives at every extras site too, which is what dissolves most of open decision 4:
 a user model on `getStringExtra` keeps firing exactly where it did.
+
+Reusing the call's own site for these emitted `assign` rows is deliberate, because it preserves the
+source span of the extras operation. It is also a fact shape codegen does not emit today: one site
+will carry a `call` row, `actual_param` rows, callee metadata, and synthetic `assign` rows. Before
+committing the emitter, check every consumer that assumes a site maps to one statement kind -- SARIF
+step rendering, `tainted_var_at_insn`, the graphviz dump, and any inspect path that renders calls or
+assignments -- and check that `prog_store` and `copy_edge` behave sensibly when the row's site is
+also a call. If a consumer really depends on the old shape, the fallback is a fresh synthetic site
+and a less precise span; do not silently accept a mis-rendered trace.
 
 Two corrections to the previous revision's table, both about levels rather than syntax:
 
@@ -691,43 +740,49 @@ that join into the engine, so this pass generates facts and reads results:
 
 | step | when | produces |
 | --- | --- | --- |
-| observe | during the import loop, IR in hand | the manifest tables and the class hierarchy for this import |
+| observe | during the import loop, IR in hand | the manifest tables, the class hierarchy, and Android-relevant Java call sites for this import |
 | link | after the loop, before the fixpoint | the intent-API `summary` + `formal_param` rows and the per-site extras assigns (Phase 2), then `intent_send`, `intent_filter`, `intent_component`, `extras_site`, the bridge sites, the delivery assigns |
 | report | after the fixpoint | counts read off `intent_pair` |
 
 The split between the first two is forced: receive-site resolution needs the manifest and the
 hierarchy, both per-import and both gone by the end of the loop -- `program_info` is dropped with
 each import -- so the observer takes them while the IR is in hand, exactly as
-`jni_observer.observe` takes the native-method table (`cli/mod.rs:258`). Send sites need only
-`facts.call` and the site `IdMap`, both of which survive the loop, so they are found in `link`.
-This is why the design can drop the earlier "match on `CallStyle`" formulation: nothing from the
-IR has to be held for the send side at all.
+`jni_observer.observe` takes the native-method table (`cli/mod.rs:258`). The send side also needs a
+small IR-time observation: a resolved `call` row does not retain the declared receiver class, and
+under `CallResolutionStrategy::Mixed` an ambiguous Java call can be represented only as
+`callee_info`. The observer therefore records Android-relevant Java calls as compact tuples --
+containing the caller function, original instruction site, declared receiver class, method name,
+descriptor, and whether codegen inserts an instance receiver -- and drops the IR. The link step uses
+those recorded tuples plus the final `IdMap`; it does not rediscover send sites from resolved call
+edges.
 
-**Send sites, found in the facts rather than in the IR.** By the time this pass runs the IR of
-each import has been dropped, but everything needed is in `IndexFacts`: scan `facts.call`, resolve
-each callee id through the site `IdMap` to its qualified name, and match. A dex method id spells
-out `Lcls;->name(descriptor)ret`, so one string gives all three of the things this pass needs.
+**Send sites, observed before the IR is dropped.** The observer matches Android framework sends on
+the declared receiver class, method name, and descriptor. Matching only the resolved callee name is
+not enough: it misses unresolved/ambiguous Java calls and cannot distinguish
+`LocalBroadcastManager.sendBroadcast` from manifest broadcasts. The observed call-site table is the
+only source of `intent_send` rows.
 
 | method (matched on name + descriptor) | intent argument |
 | --- | --- |
 | `startActivity`, `startActivityForResult`, `startService`, `startForegroundService`, `sendBroadcast`, `sendOrderedBroadcast`, `bindService` | `Argument(1)` |
-| `Intent.createChooser` (static) | `Argument(0)` |
 
 Matching on name *plus descriptor* is what answers "which argument is the intent" across the
 overloads -- `startActivityForResult(Intent, int)`, `bindService(Intent, ServiceConnection, int)`,
 `sendBroadcast(Intent, String)` -- and what rejects an app-defined method that merely shares a
 name. It falls out that the intent is `Argument(1)` for every instance-method send: codegen inserts
 the receiver as `Argument(0)` (`codegen/mod.rs:503`) and the intent is the first declared parameter
-of all of them. `createChooser` is `static`, so it has no inserted receiver and its target intent
-is `Argument(0)`.
+of all of them. `Intent.createChooser` is deliberately absent from this table. It is a framework
+factory whose `Argument(0) -> Return` summary preserves the wrapped target intent for a later
+`startActivity` call; it is not itself an ICC send and must not mint an `intent_send` row.
 
-The `cls` half of the id is not used for matching -- the receiver's declared type varies too much
-to enumerate (`Activity`, `Context`, `ContextWrapper`, `Fragment`), which is the same problem the
-`iterator` entry in `java-index.jsonl` documents at length. It is still good for one thing:
-exclusion. `LocalBroadcastManager.sendBroadcast` delivers only to receivers registered on that
-manager, never to manifest receivers, so pairing it against the manifest fabricates links; skip
-send sites whose declared receiver type is `LocalBroadcastManager` (both the `androidx` and
-`android.support` descriptors).
+The receiver's declared type still varies too much to enumerate as a hard allow-list (`Activity`,
+`Context`, `ContextWrapper`, `Fragment`), which is the same problem the `iterator` entry in
+`java-index.jsonl` documents at length. It is still used for exclusions and diagnostics.
+`LocalBroadcastManager.sendBroadcast` delivers only to receivers registered on that manager, never to
+manifest receivers, so pairing it against the manifest fabricates links; skip send sites whose
+declared receiver type is `LocalBroadcastManager` (both the `androidx` and `android.support`
+descriptors). Add a fixture proving this exclusion survives `Mixed` strategy, where a resolved
+`call` row may not exist.
 
 **Receive sites.** The manifest names a component *class*; two resolution steps turn that into
 functions to bridge into.
@@ -774,8 +829,9 @@ is a prefix substitution rather than a filter (`docs/model-generators.md:567-590
 pairing is the asymmetric one Phase 2 flags for a nightly case.
 
 One caution survives, and it stays inside the pass: the declared-type trap. Phase 2's signature
-scan matches simple name plus descriptor rather than an owning class, for exactly the reason a
-`parents` filter would have needed `Intent` listed alongside every caller-declared type.
+scan uses class-pinned matching for framework-owned methods and reserves name-plus-descriptor
+matching for the receiver-varying `getIntent` / `setIntent` rows, where a `parents` filter would
+have needed `Activity` listed alongside every caller-declared subclass.
 The other two cautions stay retired: the jvm frontend emits the same symbolic fields
 (`jvm/mod.rs:658`), so synthetic fields are portable across both Java frontends, and dex field
 symbols already carry dots inside `<...>` pretty names, so keys embed without the previous ctadl's
@@ -784,12 +840,23 @@ symbols already carry dots inside `<...>` pretty names, so keys embed without th
 **Pairing.** Three cases, in descending confidence:
 
 - *Explicit.* `new Intent(ctx, Foo.class)`, `setClass`, `setClassName`, `setComponent` name the
-  target class outright. Low fan-out, high confidence. This is the default.
+  target class outright. Low fan-out, high confidence. This is the default. For app-code sends,
+  explicit pairing is allowed regardless of `android:exported`: non-exported components are still
+  reachable from inside the same package.
 - *Implicit.* A constant action string on the intent joins against a manifest
   `<intent-filter><action android:name=...>`. Correct, but prone to fan-out: every sender of
   `ACTION_VIEW` links to every activity that filters it.
 - *Unresolved.* No constant action was recovered. The sound answer links the send to every exported
   component; the useful answer links it to nothing. Put this behind a flag, defaulted off.
+
+Do not confuse this internal ICC pairing with the external attack-surface report. Phase 1 reports
+which components another app or `adb shell am start` can reach, using `android:exported`, default
+export rules, permissions, and disabled state. Phase 3's initial linker pairs sends observed in the
+app's own bytecode, so it does not use `exported="false"` as a pruning rule. External-entry modelling
+is a separate source relation: if a later query wants to model an outside app sending an intent into
+this APK, it should consume the exported component/filter views directly rather than pretending the
+observed app-code send relation contains external callers. Synthetic negative tests for
+non-exported components belong to that external-entry surface, not to internal send-site pairing.
 
 **How a constant attaches to a send site.** Through `const_reaches`, in the engine. The intent
 argument of a send site is the call-arg pseudo-variable `call_arg!(insn, 1)`, and the
@@ -933,15 +1000,16 @@ effective filter set is unchanged afterwards, and the 10 aliases contribute zero
 targets. A fan-out bug shows up as an 11x, which is not a number anyone squints at. Getting a
 tenfold duplicate for free is rare and worth spending.
 
-All 10 are also `enabled="false"`, so this fixture pins whatever the pass decides about
-manifest-disabled components. Decide it deliberately: an app can enable an alias at runtime through
-`PackageManager.setComponentEnabledSetting`, so treating disabled-in-manifest as unreachable is a
-soundness choice rather than a free simplification, and the case file should record which way it
-went and why.
+All 10 are also `enabled="false"`. Do not skip disabled-in-manifest components: an app can enable an
+alias at runtime through `PackageManager.setComponentEnabledSetting`, so treating them as unreachable
+would be a soundness loss. The inspect report should still display the disabled state, but pairing
+keeps the component in the candidate set. This fixture pins that choice by asserting the aliases are
+reported as disabled but still folded into the target activity's effective filter set.
 
 **Send sites and the fan-out budget.** Both halves of a flow are present in `classes.dex`:
 `startActivity`, `startActivityForResult`, `sendBroadcast`, `startService`, `startForegroundService`,
-`bindService` and `Intent.createChooser` on the send side; `getStringExtra`, `getParcelableExtra`
+`bindService` on the send side, with `Intent.createChooser` present as a wrapper factory rather than
+a send; `getStringExtra`, `getParcelableExtra`
 and `getData` on the receive side. So the fixture exercises pairing, not just one end of it.
 (`startForegroundService` is absent from Phase 3's send-site list above and has been added there --
 finding it here is what this phase is for.)
@@ -955,20 +1023,26 @@ intent, not the chooser, is what pairing reads.
 
 Two measurement consequences of Phase 2, both simpler than in the revision that rewrote IR. First,
 nothing is rewritten out of the call facts: every `putExtra` and `get*Extra` site keeps its `call`
-row, so the fixture's total extras call sites is a straight count off `facts.call`, and the pass's
-keyed and lumped counts must partition it exactly. The keyed share is separately assertable as
-emitted `assign` rows whose destination path has two segments under `<extras>`, and the minted key
-set is assertable by name -- `com.noto`'s extra keys are in the string pool. Send-site numbers are
-unaffected either way. Second, the intent-API rows are no longer a generator file, so the check is
-not "no `CTADL0004`" but the scan's own table. This fixture's `classes.dex` string pool has been
-confirmed by hand to contain `setAction`, `getAction`, `setClassName`, `setComponent`,
-`createChooser`, `putExtra`, `getStringExtra`, `getIntent`, `setIntent`, `getExtras`, `putExtras`,
-`setData`, `getData`, and on the receive side `onNewIntent` and `onHandleIntent`, so pin a nonzero
-matched-function count for exactly those rows and let the rest be zero. A renamed descriptor is
-then a failing count rather than a quieter result. Assert also that the two android Intent lines
-are gone from `java-index.jsonl`, and that no summary row on `Landroid/content/Intent;` has an
-empty destination path -- a resurrected whole-object entry is exactly the regression that would
-re-conflate every key while every count above stays green.
+row, so the fixture's total extras call sites is a straight count off `facts.call`. The pass reports
+three extras numbers rather than pretending the optional recovered-key rule is a partition:
+literal-key sites that got a keyed fact row, no-literal sites that kept the lumped fact row, and
+lumped sites that the in-fixpoint rule later keyed additively. With the optional rule off, the first
+two numbers partition total extras call sites exactly. With it on, the third number is expected to
+overlap the lumped bucket because stratification prevents retracting the fallback edge. Report
+Bundle sites separately from Intent sites, since literal detection is syntactic for both but the
+in-fixpoint key rule is gated on `intent_frame` and therefore covers a narrower set. The keyed share
+is separately assertable as emitted `assign` rows whose destination path has two segments under
+`<extras>`, and the minted key set is assertable by name -- `com.noto`'s extra keys are in the
+string pool. Send-site numbers are unaffected either way. Second, the intent-API rows are no longer
+a generator file, so the check is not "no `CTADL0004`" but the scan's own table. This fixture's
+`classes.dex` string pool has been confirmed by hand to contain `setAction`, `getAction`,
+`setClassName`, `setComponent`, `createChooser`, `putExtra`, `getStringExtra`, `getIntent`,
+`setIntent`, `getExtras`, `putExtras`, `setData`, `getData`, and on the receive side `onNewIntent`
+and `onHandleIntent`, so pin a nonzero matched-function count for exactly those rows and let the
+rest be zero. A renamed descriptor is then a failing count rather than a quieter result. Assert also
+that the two android Intent lines are gone from `java-index.jsonl`, and that no summary row on
+`Landroid/content/Intent;` has an empty destination path -- a resurrected whole-object entry is
+exactly the regression that would re-conflate every key while every count above stays green.
 
 The constant relation gets its own known answers here, because it is the layer with no other
 visible surface: the number of intent frames gated, the number of `const_str_assign` rows seeded
@@ -1004,14 +1078,38 @@ therefore cannot be `Kind::Dex` cases -- `read_expected_lines` requires the key
 component and method identity instead, read off the index facts or the SARIF logical locations.
 Settle this before writing the case runner, not after.
 
-**One hand-verified end-to-end flow.** Inventory and budget are what the APK is good at; exact
-source-to-sink known answers belong in purpose-built cases under `nightly/tests/`, per the
-convention the fixture's own README states -- ground truth lives in source compiled at test time.
-But one real flow through this app is still worth having, because no synthetic case shows that the
-pass survives R8-shrunk Kotlin. Derive it once by disassembling with baksmali, which the regression
-environment already provides, and pin the result; the manifest points at two candidates, the
-`SEND`/`text/*` share path into `AppActivity` and the `PROCESS_TEXT` path into `TransparentActivity`.
-Record in the case file how the answer was derived, since nobody can re-derive it from source.
+**Flow-semantics validation.** Inventory and budget are what the APK is good at; source-to-sink
+semantics need source-built cases with ground truth in the test tree. Phase 4 therefore has three
+validation tracks rather than one:
+
+- `com.noto_54.apk` remains the real-app regression for manifest decoding, component inventory,
+  API-scan counts, send-site counts, derived pairing counts, and one hand-verified R8-shrunk flow.
+- Purpose-built cases under `nightly/tests/` cover the flow matrix directly: explicit activity
+  delivery, implicit action delivery, activity alias folding, receiver delivery, service delivery,
+  `getIntent`, `onNewIntent`, `putExtra`/`get*Extra` keyed extras, `Bundle` round trips through
+  `putExtras`/`getExtras`, and chooser wrapping.
+- The first pinned DroidBench ICC / ICC-Bench slice runs here too. The full external suite remains
+  Phase 5, but Phase 3 is not considered complete until this initial independent slice exists and is
+  either passing or explicitly xfailed with tracked reasons.
+
+Those synthetic cases assert component and method identity rather than source lines when they run
+against compiled Android bytecode. The first required cases are small: one explicit intent carrying
+a tainted extra into an activity read, one implicit action carrying the same extra through a manifest
+filter, one broadcast receiver case, one service case, one chooser case, and one `Bundle` case.
+Non-exported-component negatives are external-entry tests, not internal app-code send tests: they
+assert the exported attack-surface facts produced from the manifest, or a later explicit external
+sender relation, rather than pruning ordinary intra-app ICC.
+
+DroidBench's ICC suite and ICC-Bench expand in their own phase below. The initial slice is a gate for
+the main feature; the larger suite is what keeps the feature honest against known ICC patterns we did
+not invent for this implementation.
+
+**One hand-verified end-to-end flow.** One real flow through `com.noto` is still worth having,
+because no synthetic case shows that the pass survives R8-shrunk Kotlin. Derive it once by
+disassembling with baksmali, which the regression environment already provides, and pin the result;
+the manifest points at two candidates, the `SEND`/`text/*` share path into `AppActivity` and the
+`PROCESS_TEXT` path into `TransparentActivity`. Record in the case file how the answer was derived,
+since nobody can re-derive it from source.
 
 **What this fixture cannot validate.** Worth stating so the gaps get synthetic cases rather than
 false confidence:
@@ -1022,9 +1120,50 @@ false confidence:
   contributes none.
 - *Split APKs.* This is a single APK, so the base-manifest selection Phase 1 describes for bundles
   is untested by it.
-- *Programmatic receivers and `PendingIntent`*, which are Phase 5 anyway.
+- *Programmatic receivers and `PendingIntent`*, which are Phase 6 anyway.
 
-### Phase 5 -- Precision
+### Phase 5 -- Expanded external ICC validation
+
+DroidBench's ICC suite and ICC-Bench are explicit validation inputs for this feature, not optional
+reading. The first pinned smoke slice gates Phase 3/4 completion and runs with the regular
+`xtask regression` path. The expanded Phase 5 suite lives under `nightly/tests/android-icc/` and is
+run by the nightly GitHub workflow, not by the default fast CI path. The suites cover a broader
+matrix of inter-component communication patterns than `com.noto` or a handful of local cases can,
+and they give the implementation a regression surface that is not shaped by CTADL's own design.
+
+The testing framework for them should be separate from the small source-built nightly cases in Phase
+4:
+
+- **Fixture acquisition.** Add an xtask-managed fixture step for `nightly/tests/android-icc/` that
+  either vendors pinned DroidBench ICC / ICC-Bench APKs or downloads/builds them from pinned
+  revisions in the Nix nightly environment. Prefer source-built fixtures when feasible, but pin APK
+  hashes either way so expected answers are stable.
+- **Case manifest.** Keep expected answers in a CTADL-owned manifest file under
+  `nightly/tests/android-icc/`, keyed by fixture name.
+  Each case records the expected sender component/method, receiver component/method, ICC kind
+  (activity, receiver, service, result-back when implemented), action/component match kind, and
+  whether extras should flow. Do not assert source line numbers; assert component and method identity
+  plus the presence or absence of a taint path.
+- **Harness shape.** Add an `xtask` runner namespace for Android ICC cases rather than forcing them
+  through the existing `Kind::Dex` `expected_lines` path. The runner imports the APK, indexes it,
+  runs the query model for that fixture, and checks SARIF logical locations or index facts against
+  the case manifest. It must be filterable locally, and the expanded suite is invoked from the
+  nightly workflow; only the small Phase 4 smoke slice belongs in regular regression.
+- **Suite slicing.** Start in Phase 4 with the smallest subset that covers explicit activity,
+  implicit action, broadcast receiver, started service, bound service if supported, extras,
+  alias/filter cases, and negative non-exported external-entry cases. Phase 5 grows that subset.
+  Mark unsupported categories in the manifest with a reason and expected status (`xfail`,
+  `unsupported`, or `phase-6-plus`) rather than silently omitting them.
+- **Reporting.** Summarize pass/fail/xfail counts by ICC kind and by feature bucket. A failure should
+  say whether pairing was missing, pairing was excessive, or the taint path through extras/lifecycle
+  delivery was missing.
+
+The harness itself and the first external cases are part of the main feature gate; larger coverage
+can grow afterward. Phase 5 is therefore not permission to defer all external validation -- it is the
+nightly expansion of the already-required harness. Keep the regular regression slice small enough to
+run by default, and keep the full DroidBench / ICC-Bench end-to-end suite in the nightly hook.
+
+### Phase 6 -- Precision
 
 In rough order of value:
 
@@ -1033,20 +1172,24 @@ In rough order of value:
   work rather than a port.
 - **Programmatic receivers.** `registerReceiver(receiver, new IntentFilter(action))` registers a
   filter that never appears in the manifest.
+- **Easy constructed string constants.** Some apps build action strings from literals through
+  `String.concat`, `String.valueOf`, or simple `StringBuilder.append(...).toString()` chains instead
+  of leaving a single `const-string` at the intent site. A normal propagation model can carry the
+  fragments but cannot compute the joined string, so these sends remain unresolved under the Phase 2
+  constant rules. If this becomes worth closing, add a small bounded constant-string synthesis pass
+  before the main fixpoint: recognize literal-only same-function string-building sites, cap length
+  and fan-out, emit the synthesized value as another `const_str_assign`, and let `const_reaches` and
+  the existing intent pairing rules consume it. Do not make this a general string analysis: skip
+  variables, branches, loops, `String.format`, resource lookups, and interprocedural builders until
+  a fixture shows they matter.
 - **`PendingIntent`**, and `<provider>` authorities if content-provider flows matter.
 
 ## 6. Open decisions
 
-1. **Vendored AXML decoder or a crate.** The recommendation is vendored, for consistency with the
-   existing readers and to avoid a dependency on a frozen format. The cost is roughly 400 lines of
-   format code to own.
-2. **Implicit-intent fan-out tolerance.** This decides whether Phase 3 produces a usable result set
+1. **Implicit-intent fan-out tolerance.** This decides whether Phase 3 produces a usable result set
    or drowns a real app in links. Worth measuring on a real APK before committing to the default;
    Phase 4 is where that measurement happens, on the APK the regression suite already carries.
-3. **How manifest-disabled components are treated.** The ten `<activity-alias>` entries in the
-   Phase 4 fixture are all `enabled="false"`, and runtime code can flip that. Skipping them is a
-   soundness choice, not a simplification.
-4. **Whether the in-fixpoint keyed-extras rule ships, and what the lumped tier does beside it.**
+2. **Whether the in-fixpoint keyed-extras rule ships, and what the lumped tier does beside it.**
    The version of this decision that mattered most is gone: nothing is rewritten out of the fact
    base any more, every extras site keeps its `call` row, and a user model that
    `signature_match`es `getStringExtra` -- sourcing on intent data is a common taint configuration
@@ -1062,7 +1205,7 @@ In rough order of value:
    a saturating vertex taints anything loaded off it regardless of path
    (`query_engine/search.rs:83-86`), so it covers keyed and lumped extras alike, and it is now an
    addition to the documentation rather than a migration users are forced into.
-5. **Whether the constant rules stay intraprocedural.** Running inside the fixpoint already buys
+3. **Whether the constant rules stay intraprocedural.** Running inside the fixpoint already buys
    cross-procedure pass-through through summaries, so what is left open is only the bucket where a
    constant *originates* in a callee. Two extensions, and they differ sharply:
    - *Up-direction only* -- a `const_summary(f, formal, path, symbol)` relation meaning "f writes
@@ -1075,12 +1218,7 @@ In rough order of value:
      call string, and a call string here means the resolvent machinery for a second payload.
    Both are now cheap to *try*, because they are rules in a fixpoint that already runs rather than
    a new phase. Gate the decision on the unresolved-send-site count, not on taste.
-6. **Moving `call` out of `IndexFacts::try_save` and into `IndexResult`.** Required by the design,
-   small, and the one change that reaches outside the intent feature: the saved call graph becomes
-   the post-fixpoint one. Confirm nothing else depends on `call.parquet` holding only
-   codegen-emitted rows before making the move -- `jni::link` already adds synthetic rows, so the
-   question is about timing, not about synthetic rows as such.
-7. **Static-final action strings.** `javac` inlines `static final String` constants and Kotlin
+4. **Static-final action strings.** `javac` inlines `static final String` constants and Kotlin
    inlines `const val`, so the common cases arrive as `const-string` at the use site. What does not
    is a Kotlin companion `val` (a getter call) or an action read back through `sget`. The `sget`
    half is cheap to close without touching the interprocedural rules: scan for
