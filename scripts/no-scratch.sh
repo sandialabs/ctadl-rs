@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Reject scratch files and scratch markers in a range of commits.
+# Reject scratch files, scratch markers, and agent instruction files in a
+# range of commits.
 #
 # Usage:
 #   scripts/no-scratch.sh [-l|--list] [BASE [HEAD]]
@@ -16,6 +17,10 @@
 #
 #                   scripts/no-scratch.sh --list | xargs -r git rm
 #
+# Agent instruction files (CLAUDE.md, AGENTS.md, .cursor/rules/, ...) are local
+# scaffolding, not shipped source, so they are rejected too. Keep them
+# untracked, or in ~/.claude for machine-wide settings.
+#
 # Exits 1 if anything was flagged, 0 otherwise.
 
 set -uo pipefail
@@ -25,7 +30,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -l|--list) list_only=1; shift ;;
     -h|--help)
-      sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     --) shift; break ;;
@@ -70,6 +75,33 @@ report() { # path, message
   fi
 }
 
+# True if $1 is an agent instruction file. Matched case-insensitively, at any
+# depth, because these land wherever the agent was started.
+is_agent_file() { # path
+  local p
+  p="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$p" in
+    # Per-agent memory/instruction files.
+    claude.md|*/claude.md) return 0 ;;
+    claude.local.md|*/claude.local.md) return 0 ;;
+    agents.md|*/agents.md) return 0 ;;
+    agent.md|*/agent.md) return 0 ;;
+    gemini.md|*/gemini.md) return 0 ;;
+    # Per-agent config/rule directories.
+    .claude/*|*/.claude/*) return 0 ;;
+    .cursor/*|*/.cursor/*) return 0 ;;
+    .opencode/*|*/.opencode/*) return 0 ;;
+    .clinerules|*/.clinerules|.clinerules/*|*/.clinerules/*) return 0 ;;
+    .windsurf/*|*/.windsurf/*) return 0 ;;
+    # Dotfile rule formats.
+    .cursorrules|*/.cursorrules) return 0 ;;
+    .windsurfrules|*/.windsurfrules) return 0 ;;
+    .aider*|*/.aider*) return 0 ;;
+    .github/copilot-instructions.md) return 0 ;;
+  esac
+  return 1
+}
+
 fail=0
 while IFS= read -r -d '' f; do
   case "$f" in
@@ -79,6 +111,12 @@ while IFS= read -r -d '' f; do
       continue
       ;;
   esac
+
+  if is_agent_file "$f"; then
+    report "$f" "agent instruction file must not be merged"
+    fail=1
+    continue
+  fi
 
   # Use grep -c (reads to EOF) rather than grep -q (exits early):
   # under pipefail, grep -q's early exit SIGPIPEs the upstream greps,
@@ -96,6 +134,7 @@ if [ "$fail" -ne 0 ]; then
   if [ "$list_only" -eq 0 ]; then
     echo
     echo "Remove the scratch files/lines above, or drop the $marker comment if the code is meant to ship."
+    echo "Agent instruction files belong in .gitignore (or ~/.claude), not in the repo."
   fi
   exit 1
 fi
