@@ -314,7 +314,7 @@ impl ArtifactImport {
     ///
     /// If there are i/o or deserialization errors
     pub fn load_by_name(name: &str) -> Result<Self, Error> {
-        Self::load(&Self::config_path_by_name(name))
+        Self::load(Self::config_path_by_name(name))
             .err_context(|| format!("reading import '{name}'"))
     }
 

@@ -1550,10 +1550,7 @@ fn is_statement_expression(node: Node<'_>) -> bool {
 fn param_head(declarator: Node<'_>) -> (Option<Node<'_>>, ParameterType) {
     let mut node = declarator;
     let (mut is_ref, mut is_function, mut name) = (false, false, None);
-    loop {
-        let Some(current) = unparenthesize(node) else {
-            break;
-        };
+    while let Some(current) = unparenthesize(node) {
         match current.kind() {
             "identifier" => {
                 name = Some(current);

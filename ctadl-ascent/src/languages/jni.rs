@@ -332,11 +332,9 @@ pub fn port_map(
         ports.push((FormalIndex::new(0), FormalIndex::new(1)));
         java = 1;
     }
-    let mut native: i16 = 2;
-    for p in params {
+    for (native, p) in (2_i16..).zip(params) {
         ports.push((FormalIndex::new(java), FormalIndex::new(native)));
         java += slots.width(p);
-        native += 1;
     }
     ports.push((RETURN_INDEX.into(), RETURN_INDEX.into()));
     // Globals ride through the synthetic site exactly as they do at a real call site, so a native

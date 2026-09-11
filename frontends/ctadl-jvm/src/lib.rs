@@ -467,7 +467,7 @@ impl Context {
                         &entry.3 == defined_method
                     })
                 {
-                    log::trace!("adding external method: {}", &entry.3);
+                    log::trace!("adding external method: {}", entry.3);
                     methods.push((
                         entry.0.clone(),
                         entry.1.clone(),
@@ -485,7 +485,7 @@ impl Context {
                     }
                     fdat.return_type = entry.5;
                 } else {
-                    log::trace!("skipping defined method: {}", &entry.3);
+                    log::trace!("skipping defined method: {}", entry.3);
                 }
             }
         }

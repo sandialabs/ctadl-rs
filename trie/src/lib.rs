@@ -314,11 +314,7 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
     {
         let mut current = self;
         for item in sequence {
-            if let Some(next) = current.0.children.get(item.borrow()) {
-                current = next;
-            } else {
-                return None;
-            }
+            current = current.0.children.get(item.borrow())?;
         }
         current.0.value.as_ref()
     }
@@ -357,11 +353,7 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
     {
         let mut current = self;
         for item in sequence {
-            if let Some(next) = current.0.children.get(item.borrow()) {
-                current = next;
-            } else {
-                return None;
-            }
+            current = current.0.children.get(item.borrow())?;
         }
         Some(*current)
     }

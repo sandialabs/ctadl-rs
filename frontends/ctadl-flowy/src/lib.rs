@@ -507,7 +507,7 @@ impl FlowyCtx {
         {
             let (line, col) = name_parse.line_col();
             return Err(FlowyError::Compile {
-                message: format!("name is reserved: '{}'", &name),
+                message: format!("name is reserved: '{name}'"),
                 line,
                 col,
             });
