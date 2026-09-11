@@ -9,6 +9,7 @@ use ctadl_ascent::codegen::CallResolutionStrategy;
 use ctadl_ascent::index_engine::Parallelism;
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
+use ctadl_ascent::report::ReportFormat;
 
 /// ctadl: import artifacts, index programs, and run/query analyses.
 #[derive(Debug, Parser)]
@@ -54,6 +55,12 @@ pub enum Command {
 
     /// Inspect the CTADL store
     Inspect(InspectArgs),
+
+    /// Generate detailed report on taint-analysis relevant program properties. (See 'import')
+    ///
+    /// Needs only an import. Every number comes from the imported IR and one class-hierarchy
+    /// analysis; no index is read, and none is written.
+    Report(ReportArgs),
 
     /// Legacy Ghidra Pcode CLI: index and query commands for Ghidra integration.
     #[command(name = "legacy-pcode-cli")]
@@ -218,6 +225,30 @@ pub struct InspectArgs {
     /// With `--dump-ir`, only print functions whose name contains this substring.
     #[arg(long, value_name = "SUBSTR")]
     pub function: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ReportArgs {
+    /// Analysis project or imported program name. Naming a project reports on every program
+    /// in it, sub-imports included -- an APK's splits and native libraries each get their own
+    /// section, because the class hierarchy is per program.
+    pub name: String,
+
+    /// Output file path. Defaults to `-`, meaning stdout.
+    #[arg(long, short, default_value = "-")]
+    pub output: PathBuf,
+
+    /// Output format: `text` to read, `json` to track the numbers across runs.
+    #[arg(long, short, value_enum, default_value_t = ReportFormat::Text)]
+    pub format: ReportFormat,
+
+    /// How many rows the worst-signature and most-called-method lists carry.
+    #[arg(long, default_value_t = 10, value_name = "N")]
+    pub top: usize,
+
+    /// Skip the expensive recursion and strongly-connected-component section.
+    #[arg(long)]
+    pub no_recursion: bool,
 }
 
 #[derive(Debug, Args)]
@@ -437,6 +468,10 @@ fn main() -> anyhow::Result<()> {
         Command::Inspect(args) => {
             inspect_artifact(args)
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
+        }
+        Command::Report(args) => {
+            report_project(args)
+                .with_context(|| format!("running 'report' project: {:?}", args.name))?;
         }
         Command::Go(args) => {
             // Use the user-provided name or one derived from the first artifact.
@@ -789,6 +824,20 @@ fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn report_project(args: &ReportArgs) -> anyhow::Result<()> {
+    let project = load_or_infer_project(&args.name)?;
+    cli::report(
+        &project,
+        &args.output,
+        ctadl_ascent::report::ReportOptions {
+            format: args.format,
+            top: args.top,
+            recursion: !args.no_recursion,
+        },
+    )?;
+    Ok(())
+}
+
 /// The project `name` denotes, or the one an import of that name would be indexed into.
 ///
 /// `ctadl index app` creates a project named `app` out of the import named `app`, so before it
@@ -802,6 +851,9 @@ fn load_or_infer_project(name: &str) -> anyhow::Result<project::AnalysisProject>
         Ok(project) => Ok(project),
         Err(project_error) => match project::ArtifactImport::load_by_name(name) {
             Ok(_) => Ok(project::AnalysisProject::ephemeral(name, &[name])),
+            Err(import_error) if project::ArtifactImport::exists_by_name(name) => {
+                Err(import_error).with_context(|| format!("loading import '{name}'"))
+            }
             // Neither a project nor an import: report the project error, which is what the
             // command was asked for.
             Err(_) => Err(project_error).with_context(|| format!("loading project: '{name}'")),

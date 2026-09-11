@@ -46,6 +46,8 @@ pub const CHECKS: &[&str] = &[
     "apk:import",
     "apk:no-native-libs",
     "apk:model-check",
+    "apk:report",
+    "apk:report-invariants",
     "apk:skip-existing",
 ];
 
@@ -59,7 +61,7 @@ const IMPORT_CONFIG_FILE: &str = "import_config.json";
 const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// The `version` an import config carries today (`IMPORT_FORMAT_VERSION`). Pinned so a bump
 /// that forgets the store's readers has to come through here.
-const IMPORT_FORMAT_VERSION: &str = "6";
+const IMPORT_FORMAT_VERSION: &str = "7";
 
 /// A model file that selects something in any Java app: every `toString` override. The point is
 /// the *checking*, not the model, so the cheapest generator that cannot match nothing is the
@@ -103,6 +105,8 @@ pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
         to_outcome(check_import(work, &state, &store, &apk)),
         to_outcome(check_no_native_libs(&store)),
         to_outcome(check_model_check(work, &state, &store)),
+        to_outcome(check_report(work, &state, &store)),
+        to_outcome(check_report_invariants(work, &state)),
         to_outcome(check_skip_existing(work, &state, &store, &apk)),
     ];
     Ok(CHECKS
@@ -300,6 +304,400 @@ fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `ctadl report` runs on the imported app, says which tier it ran at, and produces the JSON
+/// a nightly job would diff.
+///
+/// The pinned counts are the substance. Everything else here would still pass if call
+/// resolution silently changed what it resolves to, and these would not. They are a property
+/// of this APK and of the Dex frontend, so a *deliberate* frontend change moves them: re-pin
+/// by running `ctadl import -l apk --name app xtask/tests/dex/com.noto_54.apk` followed by
+/// `ctadl report app --format json` and reading the four numbers back out, and say in the
+/// commit message which frontend change moved them.
+const REPORT_TOTAL_SITES: u64 = 178_310;
+const REPORT_VIRTUAL_SITES: u64 = 99_551;
+const REPORT_CHA_EDGES: u64 = 2_080_404;
+const REPORT_RTA_EDGES: u64 = 2_026_676;
+
+/// The sections this app's report must carry. `com.noto` is a Java APK, so every section
+/// applies; a program with no class hierarchy would legitimately have only the first few.
+const REPORT_SECTIONS: &[&str] = &[
+    "census",
+    "virtual_targets",
+    "worst_signatures",
+    "rta",
+    "hard_cases",
+    "kotlin_lambdas",
+    "functional_interfaces",
+    "fan_in",
+    "recursion",
+];
+
+/// The dispatch kinds this APK's report must tell apart, with the site count pinned for each.
+///
+/// Pinned for the same reason as the four totals above and re-pinned the same way: these are
+/// the numbers that would silently go to zero if a frontend stopped recording the dispatch
+/// instruction, and every other assertion here would still pass. The three sum to
+/// `REPORT_VIRTUAL_SITES`, which the invariants check independently.
+const REPORT_DISPATCH_SITES: &[(&str, u64)] = &[
+    ("virtual", 76_791),
+    ("interface", 21_153),
+    ("super", 1_607),
+    ("unknown", 0),
+];
+
+fn check_report(work: &Path, state: &Path, store: &Path) -> Result<()> {
+    // The text form first, because its opening line is the contract: a reader has to be able
+    // to tell at a glance which tier produced the numbers.
+    let text = capture(work, state, &["report", IMPORT])?;
+    let first = text.lines().next().unwrap_or_default();
+    ensure!(
+        first.contains("static tier"),
+        "the report's first line must name the tier it ran at, got: {first:?}"
+    );
+
+    let doc = report_json(work, state)?;
+    ensure!(
+        doc["tier"] == "static",
+        "the JSON must name the tier too, got {}",
+        doc["tier"]
+    );
+    let programs = doc["programs"]
+        .as_array()
+        .context("the report lists no programs")?;
+    ensure!(
+        programs.len() == 1,
+        "this APK is one program with no native libraries, got {} program(s)",
+        programs.len()
+    );
+    let p = &programs[0];
+    ensure!(
+        p["import"] == IMPORT,
+        "the program section names {} rather than the import it measured",
+        p["import"]
+    );
+    for section in REPORT_SECTIONS {
+        ensure!(
+            !p[section].is_null(),
+            "a Java program's report must carry a `{section}` section; it has {:?}",
+            p.as_object().map(|o| o.keys().collect::<Vec<_>>())
+        );
+    }
+
+    // Nothing was indexed, so nothing may have been written. `index_path()` creates the
+    // project directory as a side effect, which is exactly the mistake this catches.
+    let project = store.join(PROJECTS_DIR).join(IMPORT);
+    ensure!(
+        !project.exists(),
+        "the report wrote a project config: {}",
+        project.display()
+    );
+
+    let census = &p["census"];
+    let virt = &p["virtual_targets"];
+    let pinned = [
+        ("total call sites", &census["total"], REPORT_TOTAL_SITES),
+        (
+            "virtual call sites",
+            &census["virtual"],
+            REPORT_VIRTUAL_SITES,
+        ),
+        ("CHA edges", &virt["total_edges"], REPORT_CHA_EDGES),
+        ("RTA edges", &p["rta"]["rta_edges"], REPORT_RTA_EDGES),
+    ];
+    for (what, got, want) in pinned {
+        ensure!(
+            got.as_u64() == Some(want),
+            "{what}: the report says {got}, this APK has {want}. If a frontend change really \
+             moved it, re-pin the constants in xtask/src/apk.rs (see their doc comment)"
+        );
+    }
+
+    // The dispatch split. A frontend that stopped reading the invoke opcode would report
+    // every virtual call under one kind, and nothing above would notice.
+    let by_dispatch = &census["by_dispatch"];
+    ensure!(
+        !by_dispatch.is_null(),
+        "a Java program's census must split its virtual calls by dispatch kind; it has {:?}",
+        census.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
+    for (kind, want) in REPORT_DISPATCH_SITES {
+        let got = &by_dispatch[kind];
+        ensure!(
+            got.as_u64() == Some(*want),
+            "{kind} call sites: the report says {got}, this APK has {want}. Re-pin \
+             REPORT_DISPATCH_SITES in xtask/src/apk.rs if a frontend change really moved it"
+        );
+    }
+    Ok(())
+}
+
+/// The report's numbers have to add up, and two runs over one import have to agree.
+///
+/// These are the assertions that survive a re-pin: they hold for any program, so they catch
+/// an arithmetic mistake in a section without anyone having to know what the right answer
+/// for this APK is. Counts and sets only -- per `docs/debugging.md`, never a byte-diff of the
+/// rendered text.
+fn check_report_invariants(work: &Path, state: &Path) -> Result<()> {
+    let doc = report_json(work, state)?;
+    let p = &doc["programs"][0];
+    let n = |v: &Value| -> Result<u64> {
+        v.as_u64()
+            .with_context(|| format!("expected a number, got {v}"))
+    };
+
+    let census = &p["census"];
+    let total = n(&census["total"])?;
+    let parts = ["direct", "virtual", "func_ptr", "lua", "unknown"]
+        .iter()
+        .map(|k| n(&census[k]))
+        .sum::<Result<u64>>()?;
+    ensure!(
+        parts == total,
+        "the call census does not add up: the kinds sum to {parts}, the total says {total}"
+    );
+
+    let virt = &p["virtual_targets"];
+    let sites = n(&virt["sites"])?;
+    ensure!(
+        sites == n(&census["virtual"])?,
+        "the virtual-target section counts {sites} sites, the census counts {}",
+        census["virtual"]
+    );
+    let split = n(&virt["sites_with_zero_targets"])?
+        + n(&virt["sites_with_one_target"])?
+        + n(&virt["sites_deferred_to_hybrid_inlining"])?;
+    ensure!(
+        split == sites,
+        "zero + one + many targets is {split} sites, but there are {sites}"
+    );
+
+    // Every distribution is monotone by construction; a broken weighted percentile is the
+    // way that stops being true.
+    for (name, d) in [
+        ("targets_per_site", &virt["targets_per_site"]),
+        ("gap_per_site", &p["rta"]["gap_per_site"]),
+        ("calls_per_method", &p["fan_in"]["calls_per_method"]),
+    ] {
+        let (p50, p90, p99, max) = (n(&d["p50"])?, n(&d["p90"])?, n(&d["p99"])?, n(&d["max"])?);
+        ensure!(
+            p50 <= p90 && p90 <= p99 && p99 <= max,
+            "{name} is not monotone: p50 {p50}, p90 {p90}, p99 {p99}, max {max}"
+        );
+        let mean = d["mean"].as_f64().context("a distribution has no mean")?;
+        ensure!(
+            mean <= max as f64,
+            "{name} has mean {mean} above its max {max}"
+        );
+    }
+
+    // RTA restricts CHA, so it can only ever keep fewer edges, and the two edge totals have
+    // to be the same number counted in two places.
+    let cha = n(&virt["total_edges"])?;
+    ensure!(
+        cha == n(&p["rta"]["cha_edges"])?,
+        "the CHA edge total disagrees with itself: {cha} vs {}",
+        p["rta"]["cha_edges"]
+    );
+    let rta = n(&p["rta"]["rta_edges"])?;
+    ensure!(rta <= cha, "RTA kept {rta} edges where CHA found {cha}");
+    ensure!(
+        n(&p["rta"]["edges_dropped"])? == cha - rta,
+        "the dropped-edge count is not the difference of the two totals"
+    );
+
+    // Each printed signature row is `sites * cha_targets` edges, and RTA never exceeds CHA
+    // on any one of them. Both rankings, since they are built separately.
+    for list in ["top_by_targets", "top_by_excess"] {
+        let rows = p["worst_signatures"][list]
+            .as_array()
+            .with_context(|| format!("the `{list}` signature list is missing"))?;
+        ensure!(!rows.is_empty(), "`{list}` is empty");
+        for row in rows {
+            ensure!(
+                n(&row["edges"])? == n(&row["sites"])? * n(&row["cha_targets"])?,
+                "a signature row's edge count is not sites x targets: {row}"
+            );
+            ensure!(
+                n(&row["excess"])? == n(&row["sites"])? * n(&row["cha_targets"])?.saturating_sub(1),
+                "a signature row's excess is not sites x (targets - 1): {row}"
+            );
+            ensure!(
+                n(&row["rta_targets"])? <= n(&row["cha_targets"])?,
+                "a signature row keeps more RTA targets than CHA ones: {row}"
+            );
+        }
+        // Each list is sorted by the thing it ranks on.
+        let key = if list == "top_by_excess" {
+            "excess"
+        } else {
+            "cha_targets"
+        };
+        let mut prev = u64::MAX;
+        for row in rows {
+            let value = n(&row[key])?;
+            ensure!(value <= prev, "`{list}` is not sorted by `{key}`: {row}");
+            prev = value;
+        }
+    }
+
+    let share = |k: &str| -> Result<f64> {
+        p["worst_signatures"][k]
+            .as_f64()
+            .with_context(|| format!("{k} is not a number"))
+    };
+    for (ten, hundred) in [
+        ("top_10_site_share", "top_100_site_share"),
+        (
+            "top_10_signature_excess_share",
+            "top_100_signature_excess_share",
+        ),
+    ] {
+        let (a, b) = (share(ten)?, share(hundred)?);
+        ensure!(
+            (0.0..=1.0).contains(&a) && a <= b && b <= 1.0,
+            "the shares are not ordered: {ten} {a}, {hundred} {b}"
+        );
+    }
+    // Excess is what is left of the edge total once each resolved site is granted the one
+    // edge it must have.
+    let resolved_sites = sites - n(&virt["sites_with_zero_targets"])?;
+    ensure!(
+        n(&p["worst_signatures"]["excess_edges"])? == cha - resolved_sites,
+        "excess edges is {} but total edges minus resolved sites is {}",
+        p["worst_signatures"]["excess_edges"],
+        cha - resolved_sites
+    );
+
+    // The dispatch kinds partition the virtual sites: every `JavaCall` has exactly one, so
+    // they sum to the census's virtual count and to the target section's site count. This is
+    // what catches a site counted twice or dropped when the per-kind tables are built.
+    let by_dispatch = &p["census"]["by_dispatch"];
+    let kinds = ["virtual", "interface", "super", "unknown"];
+    let dispatch_sum = kinds
+        .iter()
+        .map(|k| n(&by_dispatch[k]))
+        .sum::<Result<u64>>()?;
+    ensure!(
+        dispatch_sum == sites,
+        "the dispatch kinds sum to {dispatch_sum} sites, but there are {sites} virtual sites"
+    );
+
+    // Each per-kind row is the whole report recomputed over that kind's sites, so every
+    // invariant that holds for the pooled numbers holds inside it, and the rows sum back.
+    let rows = virt["by_dispatch"]
+        .as_array()
+        .context("the virtual-target section carries no per-dispatch breakdown")?;
+    ensure!(
+        !rows.is_empty(),
+        "a Java program's virtual-target section must break down by dispatch kind"
+    );
+    let mut row_sites = 0;
+    let mut row_edges = 0;
+    for row in rows {
+        let kind = row["dispatch"]
+            .as_str()
+            .with_context(|| format!("a per-dispatch row has no kind: {row}"))?;
+        ensure!(
+            kinds.contains(&kind),
+            "a per-dispatch row names an unknown kind {kind:?}"
+        );
+        let s = n(&row["sites"])?;
+        ensure!(
+            s == n(&by_dispatch[kind])?,
+            "the {kind} row counts {s} sites, the census counts {}",
+            by_dispatch[kind]
+        );
+        ensure!(
+            n(&row["sites_with_zero_targets"])?
+                + n(&row["sites_with_one_target"])?
+                + n(&row["sites_deferred_to_hybrid_inlining"])?
+                == s,
+            "zero + one + many does not account for the {kind} row's sites: {row}"
+        );
+        let d = &row["targets_per_site"];
+        let (p50, p90, p99, max) = (n(&d["p50"])?, n(&d["p90"])?, n(&d["p99"])?, n(&d["max"])?);
+        ensure!(
+            p50 <= p90 && p90 <= p99 && p99 <= max,
+            "the {kind} row's distribution is not monotone: p50 {p50}, p90 {p90}, p99 {p99}, max {max}"
+        );
+        row_sites += s;
+        row_edges += n(&row["total_edges"])?;
+    }
+    ensure!(
+        row_sites == sites && row_edges == cha,
+        "the per-dispatch rows account for {row_sites} sites and {row_edges} edges, \
+         the pooled numbers say {sites} and {cha}"
+    );
+
+    // The same partition again on the two other sections that split: the excess and the RTA
+    // edge totals are each counted once per kind and once pooled.
+    let excess_sum = p["worst_signatures"]["by_dispatch"]
+        .as_array()
+        .context("the worst-signature section carries no per-dispatch breakdown")?
+        .iter()
+        .map(|row| n(&row["excess_edges"]))
+        .sum::<Result<u64>>()?;
+    ensure!(
+        excess_sum == n(&p["worst_signatures"]["excess_edges"])?,
+        "the per-kind excess sums to {excess_sum}, the pooled total says {}",
+        p["worst_signatures"]["excess_edges"]
+    );
+    let rta_rows = p["rta"]["by_dispatch"]
+        .as_array()
+        .context("the RTA section carries no per-dispatch breakdown")?;
+    let (mut rta_cha, mut rta_rta) = (0, 0);
+    for row in rta_rows {
+        ensure!(
+            n(&row["rta_edges"])? <= n(&row["cha_edges"])?,
+            "a per-kind RTA row keeps more edges than CHA found: {row}"
+        );
+        rta_cha += n(&row["cha_edges"])?;
+        rta_rta += n(&row["rta_edges"])?;
+    }
+    ensure!(
+        rta_cha == cha && rta_rta == rta,
+        "the per-kind RTA rows sum to {rta_cha}/{rta_rta} edges, the pooled totals say {cha}/{rta}"
+    );
+
+    // Removing edges can only shrink the graph, never grow it. That is the whole content of
+    // the interface-free counterfactual, and it is checkable without knowing this APK.
+    if let Some(cv) = p["recursion"]["without_interface_edges"].as_object() {
+        let full = &p["recursion"];
+        // Not `nontrivial_sccs`: that one is genuinely free to *rise*. Cutting edges can
+        // break one huge component into several smaller ones, which is more components and
+        // fewer functions inside them -- the shape the fixture actually shows.
+        for key in [
+            "edges",
+            "self_recursive",
+            "functions_in_nontrivial_sccs",
+            "largest_scc",
+        ] {
+            let (part, whole) = (n(&cv[key])?, n(&full[key])?);
+            ensure!(
+                part <= whole,
+                "the graph without interface edges has more `{key}` ({part}) than the whole \
+                 graph ({whole})"
+            );
+        }
+    }
+
+    // Reproducible: the tables the report is built from are documented as byte-stable, so
+    // two runs over one import must agree exactly. This is the assertion `docs/debugging.md`
+    // says to make, and it is safe to make here because nothing post-fixpoint is involved.
+    let again = report_json(work, state)?;
+    ensure!(
+        again == doc,
+        "two reports over the same import disagree; the report is not reproducible"
+    );
+    Ok(())
+}
+
+fn report_json(work: &Path, state: &Path) -> Result<Value> {
+    let text = capture(work, state, &["report", IMPORT, "--format", "json"])?;
+    serde_json::from_str(&text)
+        .with_context(|| format!("`ctadl report --format json` emitted invalid JSON:\n{text}"))
+}
+
 /// `--skip-existing` skips a re-import of an unchanged artifact, and only of an unchanged one.
 ///
 /// Both halves are asserted, because either alone is satisfied by a bug. A flag that always
@@ -407,7 +805,7 @@ mod tests {
     /// would silently drop a result or mislabel one. The count is what a compiler cannot catch.
     #[test]
     fn every_check_is_named() {
-        assert_eq!(CHECKS.len(), 4, "CHECKS and run_checks must stay in step");
+        assert_eq!(CHECKS.len(), 6, "CHECKS and run_checks must stay in step");
         assert_eq!(CHECKS[0], "apk:import", "the shared import reports first");
         assert!(
             CHECKS.iter().all(|n| n.starts_with("apk:")),

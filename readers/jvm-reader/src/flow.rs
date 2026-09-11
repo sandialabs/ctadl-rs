@@ -1929,6 +1929,300 @@ fn misc_stack_effect(opcode: u8) -> (usize, usize) {
     }
 }
 
+fn decode_call(code: &[u8], pc: usize, cf: &ClassFile, opcode: u8) -> ClassFileResult<CallInfo> {
+    let build_args = |param_slots: u8| -> Vec<Location> {
+        // arguments[k] are slot-based; j=0 is the bottom-most argument slot.
+        // StackInput depth is 0 at top-of-stack, so bottom-most arg is at depth param_slots-1.
+        let mut args = Vec::with_capacity(param_slots as usize);
+        for j in 0..param_slots {
+            let depth = param_slots - 1 - j;
+            args.push(Location::StackInput(depth));
+        }
+        args
+    };
+
+    let (
+        target,
+        dynamic_bootstrap,
+        dynamic_name,
+        dynamic_type,
+        call_kind,
+        stack_slots_consumed,
+        receiver,
+        arguments,
+        return_value,
+    ) = match opcode {
+        0xb6 => {
+            let idx = read_u16_be(code, pc + 1)?;
+            let target = resolve_method_target(cf, idx)?;
+            let desc = &target.descriptor;
+            let param_slots = descriptor_param_slot_count(desc) as u8;
+            let stack_slots_consumed = param_slots + 1; // receiver + args
+            let receiver = Some(Location::StackInput(param_slots));
+            let arguments = build_args(param_slots);
+            let return_value = if returns_value(desc) {
+                Some(Location::StackOutput)
+            } else {
+                None
+            };
+            (
+                Some(target),
+                None,
+                None,
+                None,
+                CallKind::Virtual,
+                stack_slots_consumed,
+                receiver,
+                arguments,
+                return_value,
+            )
+        }
+        0xb7 => {
+            let idx = read_u16_be(code, pc + 1)?;
+            let target = resolve_method_target(cf, idx)?;
+            let desc = &target.descriptor;
+            let param_slots = descriptor_param_slot_count(desc) as u8;
+            let stack_slots_consumed = param_slots + 1; // receiver + args
+            let receiver = Some(Location::StackInput(param_slots));
+            let arguments = build_args(param_slots);
+            let return_value = if returns_value(desc) {
+                Some(Location::StackOutput)
+            } else {
+                None
+            };
+            (
+                Some(target),
+                None,
+                None,
+                None,
+                CallKind::Special,
+                stack_slots_consumed,
+                receiver,
+                arguments,
+                return_value,
+            )
+        }
+        0xb8 => {
+            let idx = read_u16_be(code, pc + 1)?;
+            let target = resolve_method_target(cf, idx)?;
+            let desc = &target.descriptor;
+            let param_slots = descriptor_param_slot_count(desc) as u8;
+            let stack_slots_consumed = param_slots; // args only
+            let receiver = None;
+            let arguments = build_args(param_slots);
+            let return_value = if returns_value(desc) {
+                Some(Location::StackOutput)
+            } else {
+                None
+            };
+            (
+                Some(target),
+                None,
+                None,
+                None,
+                CallKind::Static,
+                stack_slots_consumed,
+                receiver,
+                arguments,
+                return_value,
+            )
+        }
+        0xb9 => {
+            let idx = read_u16_be(code, pc + 1)?;
+            let count = read_u8(code, pc + 3)?;
+            let target = resolve_method_target(cf, idx).ok();
+            // JVMS: invokeinterface `count` includes receiver + argument slots.
+            let stack_slots_consumed = count;
+            let param_slots = count.saturating_sub(1);
+            let receiver = Some(Location::StackInput(param_slots));
+            let arguments = build_args(param_slots);
+            let return_value = target.as_ref().and_then(|t| {
+                if returns_value(&t.descriptor) {
+                    Some(Location::StackOutput)
+                } else {
+                    None
+                }
+            });
+            (
+                target,
+                None,
+                None,
+                None,
+                CallKind::Interface,
+                stack_slots_consumed,
+                receiver,
+                arguments,
+                return_value,
+            )
+        }
+        0xba => {
+            let idx = read_u16_be(code, pc + 1)?;
+            let (name, desc) = match cf.get_cp(idx) {
+                Ok(CpEntry::InvokeDynamic {
+                    name_and_type_index,
+                    ..
+                }) => cf
+                    .get_name_and_type(*name_and_type_index)
+                    .map(|(n, d)| (n.to_string(), d.to_string())),
+                _ => Err(ClassFileError::InvalidClassFile("expected InvokeDynamic")),
+            }?;
+            let bootstrap = match cf.get_cp(idx)? {
+                CpEntry::InvokeDynamic {
+                    bootstrap_method_attr_index,
+                    ..
+                } => *bootstrap_method_attr_index,
+                _ => 0,
+            };
+            let dynamic_name = Some(name);
+            let dynamic_type = Some(desc.clone());
+            let param_slots = descriptor_param_slot_count(&desc) as u8;
+            let stack_slots_consumed = param_slots; // args only
+            let receiver = None;
+            let arguments = build_args(param_slots);
+            let return_value = if returns_value(&desc) {
+                Some(Location::StackOutput)
+            } else {
+                None
+            };
+            (
+                None,
+                Some(bootstrap),
+                dynamic_name,
+                dynamic_type,
+                CallKind::Dynamic,
+                stack_slots_consumed,
+                receiver,
+                arguments,
+                return_value,
+            )
+        }
+        _ => (
+            None,
+            None,
+            None,
+            None,
+            CallKind::Static,
+            0,
+            None,
+            Vec::new(),
+            None,
+        ),
+    };
+
+    Ok(CallInfo {
+        target,
+        dynamic_bootstrap,
+        dynamic_name,
+        dynamic_type,
+        call_kind,
+        stack_slots_consumed,
+        receiver,
+        arguments,
+        return_value,
+    })
+}
+
+// ============== Iterator ==============
+
+/// Iterator that yields `InstructionFlowInfo` for every instruction in every method (with code) in the JAR.
+pub struct InstructionFlowIter<'a> {
+    class_parsers: Iter<'a, ClassFileParser>,
+    current_methods: Option<std::vec::IntoIter<(&'a ClassFile, &'a MethodInfo)>>,
+    current_code: Option<&'a [u8]>,
+    current_cf: Option<&'a ClassFile>,
+    current_method: Option<&'a MethodInfo>,
+    method_pc: usize,
+    method_done: bool,
+    _phantom: std::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> InstructionFlowIter<'a> {
+    pub(crate) fn new(parsers: &'a [ClassFileParser]) -> Self {
+        let mut class_parsers = parsers.iter();
+        let first_parser = class_parsers.next();
+        let (current_methods, current_code, current_cf, current_method) =
+            if let Some(p) = first_parser {
+                let cf = p.class_file();
+                let methods: Vec<_> = p.methods().map(|m| (cf, m)).collect();
+                let mut into_iter = methods.into_iter();
+                let first = into_iter.next();
+                if let Some((cf, m)) = first {
+                    let code = m.code.as_ref().map(|c| c.code.as_slice());
+                    (Some(into_iter), code, Some(cf), Some(m))
+                } else {
+                    (Some(into_iter), None, Some(cf), None)
+                }
+            } else {
+                (None, None, None, None)
+            };
+        InstructionFlowIter {
+            class_parsers,
+            current_methods,
+            current_code,
+            current_cf,
+            current_method,
+            method_pc: 0,
+            method_done: current_code.is_none(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'a> Iterator for InstructionFlowIter<'a> {
+    type Item = ClassFileResult<InstructionFlowInfo<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.method_done || self.current_cf.is_none() || self.current_method.is_none() {
+                self.method_pc = 0;
+                self.method_done = false;
+                if let Some(ref mut methods) = self.current_methods {
+                    if let Some((cf, method)) = methods.next() {
+                        self.current_cf = Some(cf);
+                        self.current_method = Some(method);
+                        self.current_code = method.code.as_ref().map(|c| c.code.as_slice());
+                        self.method_done = self.current_code.is_none();
+                        continue;
+                    }
+                }
+                if let Some(next_parser) = self.class_parsers.next() {
+                    let cf = next_parser.class_file();
+                    let methods: Vec<_> = next_parser.methods().map(|m| (cf, m)).collect();
+                    self.current_methods = Some(methods.into_iter());
+                    self.current_cf = Some(cf);
+                    self.current_method = None;
+                    self.current_code = None;
+                    continue;
+                }
+                return None;
+            }
+
+            let code = self.current_code.unwrap();
+            let cf = self.current_cf.unwrap();
+            let method = self.current_method.unwrap();
+
+            if self.method_pc >= code.len() {
+                self.method_done = true;
+                continue;
+            }
+
+            match decode_flow_instruction(code, self.method_pc, cf, method) {
+                Ok((info, next_pc)) => {
+                    self.method_pc = next_pc;
+                    if self.method_pc >= code.len() {
+                        self.method_done = true;
+                    }
+                    return Some(Ok(info));
+                }
+                Err(e) => {
+                    self.method_done = true;
+                    return Some(Err(e));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2601,300 +2895,6 @@ mod tests {
                 assert_eq!(stack_len, 1);
             }
             other => panic!("expected StackUnderflow, got {other:?}"),
-        }
-    }
-}
-
-fn decode_call(code: &[u8], pc: usize, cf: &ClassFile, opcode: u8) -> ClassFileResult<CallInfo> {
-    let build_args = |param_slots: u8| -> Vec<Location> {
-        // arguments[k] are slot-based; j=0 is the bottom-most argument slot.
-        // StackInput depth is 0 at top-of-stack, so bottom-most arg is at depth param_slots-1.
-        let mut args = Vec::with_capacity(param_slots as usize);
-        for j in 0..param_slots {
-            let depth = param_slots - 1 - j;
-            args.push(Location::StackInput(depth));
-        }
-        args
-    };
-
-    let (
-        target,
-        dynamic_bootstrap,
-        dynamic_name,
-        dynamic_type,
-        call_kind,
-        stack_slots_consumed,
-        receiver,
-        arguments,
-        return_value,
-    ) = match opcode {
-        0xb6 => {
-            let idx = read_u16_be(code, pc + 1)?;
-            let target = resolve_method_target(cf, idx)?;
-            let desc = &target.descriptor;
-            let param_slots = descriptor_param_slot_count(desc) as u8;
-            let stack_slots_consumed = param_slots + 1; // receiver + args
-            let receiver = Some(Location::StackInput(param_slots));
-            let arguments = build_args(param_slots);
-            let return_value = if returns_value(desc) {
-                Some(Location::StackOutput)
-            } else {
-                None
-            };
-            (
-                Some(target),
-                None,
-                None,
-                None,
-                CallKind::Virtual,
-                stack_slots_consumed,
-                receiver,
-                arguments,
-                return_value,
-            )
-        }
-        0xb7 => {
-            let idx = read_u16_be(code, pc + 1)?;
-            let target = resolve_method_target(cf, idx)?;
-            let desc = &target.descriptor;
-            let param_slots = descriptor_param_slot_count(desc) as u8;
-            let stack_slots_consumed = param_slots + 1; // receiver + args
-            let receiver = Some(Location::StackInput(param_slots));
-            let arguments = build_args(param_slots);
-            let return_value = if returns_value(desc) {
-                Some(Location::StackOutput)
-            } else {
-                None
-            };
-            (
-                Some(target),
-                None,
-                None,
-                None,
-                CallKind::Special,
-                stack_slots_consumed,
-                receiver,
-                arguments,
-                return_value,
-            )
-        }
-        0xb8 => {
-            let idx = read_u16_be(code, pc + 1)?;
-            let target = resolve_method_target(cf, idx)?;
-            let desc = &target.descriptor;
-            let param_slots = descriptor_param_slot_count(desc) as u8;
-            let stack_slots_consumed = param_slots; // args only
-            let receiver = None;
-            let arguments = build_args(param_slots);
-            let return_value = if returns_value(desc) {
-                Some(Location::StackOutput)
-            } else {
-                None
-            };
-            (
-                Some(target),
-                None,
-                None,
-                None,
-                CallKind::Static,
-                stack_slots_consumed,
-                receiver,
-                arguments,
-                return_value,
-            )
-        }
-        0xb9 => {
-            let idx = read_u16_be(code, pc + 1)?;
-            let count = read_u8(code, pc + 3)?;
-            let target = resolve_method_target(cf, idx).ok();
-            // JVMS: invokeinterface `count` includes receiver + argument slots.
-            let stack_slots_consumed = count;
-            let param_slots = count.saturating_sub(1);
-            let receiver = Some(Location::StackInput(param_slots));
-            let arguments = build_args(param_slots);
-            let return_value = target.as_ref().and_then(|t| {
-                if returns_value(&t.descriptor) {
-                    Some(Location::StackOutput)
-                } else {
-                    None
-                }
-            });
-            (
-                target,
-                None,
-                None,
-                None,
-                CallKind::Interface,
-                stack_slots_consumed,
-                receiver,
-                arguments,
-                return_value,
-            )
-        }
-        0xba => {
-            let idx = read_u16_be(code, pc + 1)?;
-            let (name, desc) = match cf.get_cp(idx) {
-                Ok(CpEntry::InvokeDynamic {
-                    name_and_type_index,
-                    ..
-                }) => cf
-                    .get_name_and_type(*name_and_type_index)
-                    .map(|(n, d)| (n.to_string(), d.to_string())),
-                _ => Err(ClassFileError::InvalidClassFile("expected InvokeDynamic")),
-            }?;
-            let bootstrap = match cf.get_cp(idx)? {
-                CpEntry::InvokeDynamic {
-                    bootstrap_method_attr_index,
-                    ..
-                } => *bootstrap_method_attr_index,
-                _ => 0,
-            };
-            let dynamic_name = Some(name);
-            let dynamic_type = Some(desc.clone());
-            let param_slots = descriptor_param_slot_count(&desc) as u8;
-            let stack_slots_consumed = param_slots; // args only
-            let receiver = None;
-            let arguments = build_args(param_slots);
-            let return_value = if returns_value(&desc) {
-                Some(Location::StackOutput)
-            } else {
-                None
-            };
-            (
-                None,
-                Some(bootstrap),
-                dynamic_name,
-                dynamic_type,
-                CallKind::Dynamic,
-                stack_slots_consumed,
-                receiver,
-                arguments,
-                return_value,
-            )
-        }
-        _ => (
-            None,
-            None,
-            None,
-            None,
-            CallKind::Static,
-            0,
-            None,
-            Vec::new(),
-            None,
-        ),
-    };
-
-    Ok(CallInfo {
-        target,
-        dynamic_bootstrap,
-        dynamic_name,
-        dynamic_type,
-        call_kind,
-        stack_slots_consumed,
-        receiver,
-        arguments,
-        return_value,
-    })
-}
-
-// ============== Iterator ==============
-
-/// Iterator that yields `InstructionFlowInfo` for every instruction in every method (with code) in the JAR.
-pub struct InstructionFlowIter<'a> {
-    class_parsers: Iter<'a, ClassFileParser>,
-    current_methods: Option<std::vec::IntoIter<(&'a ClassFile, &'a MethodInfo)>>,
-    current_code: Option<&'a [u8]>,
-    current_cf: Option<&'a ClassFile>,
-    current_method: Option<&'a MethodInfo>,
-    method_pc: usize,
-    method_done: bool,
-    _phantom: std::marker::PhantomData<&'a ()>,
-}
-
-impl<'a> InstructionFlowIter<'a> {
-    pub(crate) fn new(parsers: &'a [ClassFileParser]) -> Self {
-        let mut class_parsers = parsers.iter();
-        let first_parser = class_parsers.next();
-        let (current_methods, current_code, current_cf, current_method) =
-            if let Some(p) = first_parser {
-                let cf = p.class_file();
-                let methods: Vec<_> = p.methods().map(|m| (cf, m)).collect();
-                let mut into_iter = methods.into_iter();
-                let first = into_iter.next();
-                if let Some((cf, m)) = first {
-                    let code = m.code.as_ref().map(|c| c.code.as_slice());
-                    (Some(into_iter), code, Some(cf), Some(m))
-                } else {
-                    (Some(into_iter), None, Some(cf), None)
-                }
-            } else {
-                (None, None, None, None)
-            };
-        InstructionFlowIter {
-            class_parsers,
-            current_methods,
-            current_code,
-            current_cf,
-            current_method,
-            method_pc: 0,
-            method_done: current_code.is_none(),
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<'a> Iterator for InstructionFlowIter<'a> {
-    type Item = ClassFileResult<InstructionFlowInfo<'a>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.method_done || self.current_cf.is_none() || self.current_method.is_none() {
-                self.method_pc = 0;
-                self.method_done = false;
-                if let Some(ref mut methods) = self.current_methods {
-                    if let Some((cf, method)) = methods.next() {
-                        self.current_cf = Some(cf);
-                        self.current_method = Some(method);
-                        self.current_code = method.code.as_ref().map(|c| c.code.as_slice());
-                        self.method_done = self.current_code.is_none();
-                        continue;
-                    }
-                }
-                if let Some(next_parser) = self.class_parsers.next() {
-                    let cf = next_parser.class_file();
-                    let methods: Vec<_> = next_parser.methods().map(|m| (cf, m)).collect();
-                    self.current_methods = Some(methods.into_iter());
-                    self.current_cf = Some(cf);
-                    self.current_method = None;
-                    self.current_code = None;
-                    continue;
-                }
-                return None;
-            }
-
-            let code = self.current_code.unwrap();
-            let cf = self.current_cf.unwrap();
-            let method = self.current_method.unwrap();
-
-            if self.method_pc >= code.len() {
-                self.method_done = true;
-                continue;
-            }
-
-            match decode_flow_instruction(code, self.method_pc, cf, method) {
-                Ok((info, next_pc)) => {
-                    self.method_pc = next_pc;
-                    if self.method_pc >= code.len() {
-                        self.method_done = true;
-                    }
-                    return Some(Ok(info));
-                }
-                Err(e) => {
-                    self.method_done = true;
-                    return Some(Err(e));
-                }
-            }
         }
     }
 }

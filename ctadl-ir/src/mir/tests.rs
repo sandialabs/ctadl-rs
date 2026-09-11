@@ -72,8 +72,7 @@ fn test_parameter_does_not_exist_error() {
     let result = prog.verify();
     assert!(
         matches!(&result, Err(e) if e.iter().any(|err| matches!(err, VerifyError::ParameterDoesNotExist { .. }))),
-        "errors: {:?}",
-        &result
+        "errors: {result:?}"
     );
 }
 
@@ -95,8 +94,7 @@ fn test_local_does_not_exist_error() {
     let result = prog.verify();
     assert!(
         matches!(&result, Err(e) if e.iter().any(|err| matches!(err, VerifyError::LocalDoesNotExist { .. }))),
-        "errors: {:?}",
-        &result
+        "errors: {result:?}"
     );
 }
 
