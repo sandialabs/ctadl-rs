@@ -1,0 +1,98 @@
+// Migrated from native-index.jsonl by `ctadl migrate-models`. Edit this file, not the original.
+
+propagation(F::arg(0).deref <- F::arg(1).deref),
+  propagation(F::return.deref <- F::arg(1).deref) :-
+  fun(F, name in {"strcpy", "wcscpy", "strncpy", "wcsncpy", "stpcpy", "wcpcpy", "stpncpy", "wcpncpy", "strcat", "wcscat", "strncat", "wcsncat", "strcpy_chk", "strncpy_chk", "stpcpy_chk", "stpncpy_chk", "strcat_chk", "strncat_chk", "wcscpy_chk", "wcsncpy_chk", "wcscat_chk", "wcsncat_chk"});
+
+propagation(F::arg(0).deref <- F::arg(1).deref),
+  propagation(F::return.deref <- F::arg(1).deref) :-
+  fun(F, name in {"memcpy", "memmove", "mempcpy", "memccpy", "bcopy", "memcpy_chk", "memmove_chk", "mempcpy_chk", "memccpy_chk"});
+
+propagation(F::arg(0).deref <- F::arg(1).deref) :-
+  fun(F, name in {"strlcpy", "strlcat", "strlcpy_chk", "strlcat_chk"});
+
+propagation(F::arg(0).deref <- F::arg(_).deref),
+  propagation(F::return.deref <- F::arg(_).deref) :-
+  fun(F, name in {"sprintf", "swprintf", "snprintf", "vsprintf", "vsnprintf", "vswprintf", "asprintf", "vasprintf", "sprintf_chk", "snprintf_chk", "vsprintf_chk", "vsnprintf_chk", "swprintf_chk", "vswprintf_chk", "asprintf_chk", "vasprintf_chk"});
+
+propagation(F::arg(_).deref <- F::arg(0).deref),
+  propagation(F::return.deref <- F::arg(0).deref) :-
+  fun(F, name in {"sscanf", "swscanf", "vsscanf", "vswscanf", "isoc99_sscanf", "isoc99_swscanf", "isoc99_vsscanf", "isoc99_vswscanf"});
+
+propagation(F::return.deref <- F::arg(0).deref) :-
+  fun(F, name in {"strdup", "strndup", "wcsdup"});
+
+propagation(F::return.deref <- F::arg(0).deref) :-
+  fun(F, name in {"strchr", "strrchr", "wcschr", "wcsrchr", "strpbrk", "wcspbrk", "strstr", "wcsstr", "strtok", "wcstok", "strsep", "strcasestr", "index", "rindex", "memchr", "memrchr", "memmem", "rawmemchr"});
+
+propagation(F::return.deref <- F::arg(0).deref),
+  propagation(F::arg(2).deref.deref <- F::arg(0).deref) :-
+  fun(F, name in {"strtok_r", "wcstok_r"});
+
+propagation(F::return.deref <- F::arg(1).deref) :-
+  fun(F, name in {"bsearch", "lsearch", "lfind"});
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"strlen", "wcslen", "strnlen", "wcsnlen"});
+
+propagation(F::return <- F::arg(0).deref) :-
+  fun(F, name in {"atoi", "atol", "atoll", "atof", "strtol", "strtoll", "strtoul", "strtoull", "strtof", "strtod", "strtold", "wcstol", "wcstoll", "wcstoul", "wcstoull", "wcstof", "wcstod", "wcstold"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"toupper", "tolower", "toascii"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ntohl", "ntohs", "ntohll", "htonl", "htons", "htonll", "bswap_16", "bswap_32", "bswap_64"});
+
+propagation(F::arg(0).deref.deref <- F::arg(2).deref) :-
+  fun(F, name = "getline");
+
+propagation(F::arg(0).deref.deref <- F::arg(3).deref) :-
+  fun(F, name = "getdelim");
+
+propagation(F::return.deref <- F::arg(0).deref) :-
+  fun(F, name in {"basename", "dirname"});
+
+propagation(F::arg(1).deref <- F::arg(0).deref),
+  propagation(F::return.deref <- F::arg(0).deref) :-
+  fun(F, name in {"realpath", "realpath_chk"});
+
+propagation(F::arg(1).deref <- F::arg(0).deref) :-
+  fun(F, name in {"readlink", "readlink_chk"});
+
+propagation(F::arg(2).deref <- F::arg(1).deref) :-
+  fun(F, name in {"readlinkat", "readlinkat_chk"});
+
+propagation(F::return.deref <- F::arg(0)) :-
+  fun(F, name = "inet_ntoa");
+
+propagation(F::arg(2).deref <- F::arg(1).deref),
+  propagation(F::return.deref <- F::arg(1).deref) :-
+  fun(F, name = "inet_ntop");
+
+propagation(F::return <- F::arg(0).deref),
+  propagation(F::arg(1).deref <- F::arg(0).deref) :-
+  fun(F, name in {"inet_addr", "inet_network", "inet_aton"});
+
+propagation(F::arg(2).deref <- F::arg(1).deref),
+  propagation(F::return <- F::arg(1).deref) :-
+  fun(F, name = "inet_pton");
+
+propagation(F::arg(0).deref <- F::arg(3).deref) :-
+  fun(F, name in {"strftime", "wcsftime", "strftime_chk"});
+
+propagation(F::return.deref <- F::arg(0).deref) :-
+  fun(F, name in {"ctime", "asctime", "ctime_r", "asctime_r"});
+
+propagation(F::arg(0).deref <- F::arg(1).deref) :-
+  fun(F, name in {"mbstowcs", "wcstombs", "mbstowcs_chk", "wcstombs_chk"});
+
+propagation(F::arg(0).deref <- F::arg(1).deref.deref) :-
+  fun(F, name in {"mbsrtowcs", "wcsrtombs"});
+
+propagation(F::return.deref <- F::arg(_)) :-
+  fun(F, name in {"malloc", "calloc", "aligned_alloc", "valloc", "memalign", "posix_memalign"});
+
+propagation(F::return.deref <- F::arg(0).deref) :-
+  fun(F, name in {"realloc", "reallocarray", "reallocf"});
+

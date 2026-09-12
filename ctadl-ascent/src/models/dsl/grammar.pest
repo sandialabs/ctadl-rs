@@ -1,0 +1,120 @@
+// Grammar for the CTADL model-matching DSL.
+//
+// The language is Datalog-shaped and non-recursive: a file is a list of rules, each deriving
+// one or more *output* atoms (`source`, `sink`, `propagation`, `bridge`, `access_paths`) from a
+// conjunction of *input* atoms over the built-in relations. See `models/dsl/mod.rs` for the
+// semantics; this file is only the surface syntax.
+//
+// Two spots need care and are marked below: the `<-` / `<` collision that `arity <- 1` versus
+// `arity < -1` turns on, and the ordered choice in `head_arg`, which is what lets an attribute,
+// a flow, a port and a bare string share one argument position.
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
+
+program = { SOI ~ rule_stmt* ~ EOI }
+
+// A head with no body is a fact: `access_paths(".next.next");`
+rule_stmt = { head_list ~ (":-" ~ body_list)? ~ ";" }
+
+// ---------------------------------------------------------------------------
+// Heads
+// ---------------------------------------------------------------------------
+
+head_list = { head_atom ~ ("," ~ head_atom)* }
+head_atom = { anchor? ~ out_rel ~ "(" ~ head_arg_list? ~ ")" }
+
+// `!name_char` keeps `sourcefoo` from lexing as `source` followed by junk.
+out_rel = @{ ("source" | "sink" | "propagation" | "bridge" | "access_paths") ~ !name_char }
+
+// `F::` — the function (or call site) an otherwise bare port hangs off.
+anchor = { term ~ "::" }
+
+head_arg_list = { head_arg ~ ("," ~ head_arg)* }
+
+// Ordered choice, and the order is the whole trick:
+//   `saturating = true`  is an attribute (lowercase name, then `=`)
+//   `F::return <- F::arg(0)` is a flow (a port, an arrow, a port)
+//   `F::arg(2)`          is a lone port
+//   `".foo.bar"`         is a literal, which is what `access_paths` takes
+// A flow must come before a lone port: `port_expr` succeeds on the left half of a flow and
+// would leave the arrow dangling.
+head_arg  = { head_attr | flow | port_expr | literal }
+head_attr = { lname ~ "=" ~ literal }
+
+flow    = { port_expr ~ flow_op ~ port_expr }
+flow_op = @{ "<->" | "<-" | "->" }
+
+// ---------------------------------------------------------------------------
+// Ports
+// ---------------------------------------------------------------------------
+
+port_expr = { anchor? ~ port }
+port      = { port_base ~ path_seg* }
+port_base = { return_kw | arg_port }
+return_kw = @{ "return" ~ !name_char }
+arg_port  = { arg_kw ~ "(" ~ arg_sel ~ ")" }
+arg_kw    = @{ ("arg" | "param") ~ !name_char }
+arg_sel   = { int | wildcard | var }
+
+// `.foo`, `[2]`, `.[2]`, `."weird.field[0]"`. The offset alternative is tried first so that
+// `.[2]` is an offset rather than a symbol whose name begins with `[`.
+path_seg    = { offset_seg | symbol_seg }
+offset_seg  = { "." ~ "[" ~ int ~ "]" | "[" ~ int ~ "]" }
+symbol_seg  = { "." ~ (seg_ident | string) }
+seg_ident   = @{ (ASCII_ALPHANUMERIC | "_" | "$" | "-" | "%" | "*" | "#" | "<" | ">")+ }
+
+// ---------------------------------------------------------------------------
+// Bodies
+// ---------------------------------------------------------------------------
+
+body_list  = { body_item ~ ("," ~ body_item)* }
+body_item  = { or_expr }
+or_expr    = { and_expr ~ ("||" ~ and_expr)* }
+and_expr   = { unary_expr ~ ("&&" ~ unary_expr)* }
+unary_expr = { neg* ~ atom_expr }
+neg        = @{ "!" ~ !"=" }
+atom_expr  = { paren_expr | rel_atom | test_expr }
+paren_expr = { "(" ~ or_expr ~ ")" }
+
+// `subclass*` and `subclass+` are relation names, not postfix operators: there is no recursion
+// in this language, so the closure is a property of the built-in, not of the rule.
+rel_atom     = { rel_name ~ "(" ~ rel_arg_list? ~ ")" }
+rel_name     = @{ lname ~ ("*" | "+")? }
+rel_arg_list = { rel_arg ~ ("," ~ rel_arg)* }
+rel_arg      = { attr_constraint | term }
+
+attr_constraint = { lname ~ attr_op ~ rhs }
+test_expr       = { term ~ attr_op ~ rhs }
+
+// `"<-"` sits between `"<="` and `"<"` on purpose. Maximal munch takes the arrow, so a mistyped
+// `arity <- 1` parses here and the AST builder reports "arrow not allowed in this position"
+// rather than the parser reporting a syntax error pointing at `1`. A real `arity < -1` is
+// unaffected: `attr_op` is atomic, so the space stops `<-` from matching.
+attr_op = @{ "<=" | ">=" | "!=" | "<-" | "<" | ">" | "=" | ("in" ~ !name_char) }
+
+rhs     = { set_lit | term }
+set_lit = { "{" ~ (literal ~ ("," ~ literal)*)? ~ "}" }
+
+// ---------------------------------------------------------------------------
+// Terminals
+// ---------------------------------------------------------------------------
+
+term     = { literal | var | wildcard }
+literal  = { string | int | bool_lit }
+wildcard = @{ "_" ~ !name_char }
+
+// Variables are uppercase so they never collide with the many built-in relation names.
+var   = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
+// Relation and attribute names. The interior `-` is what lets `qualified-id` be one name; a
+// trailing `-` is excluded so `arity -1` cannot lex as one token.
+lname = @{ (ASCII_ALPHA_LOWER | "_") ~ (ASCII_ALPHANUMERIC | "_")* ~ ("-" ~ (ASCII_ALPHANUMERIC | "_")+)* }
+
+bool_lit = @{ ("true" | "false") ~ !name_char }
+int      = @{ ("+" | "-")? ~ ASCII_DIGIT+ }
+
+string    = ${ "\"" ~ str_inner ~ "\"" }
+str_inner = @{ str_char* }
+str_char  = { (!("\"" | "\\") ~ ANY) | ("\\" ~ ANY) }
+
+name_char = _{ ASCII_ALPHANUMERIC | "_" }

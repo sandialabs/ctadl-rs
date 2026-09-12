@@ -428,6 +428,28 @@ impl BridgeSpec {
     }
 }
 
+/// A bridge whose two sides are already known, with no `where` left to evaluate.
+///
+/// This is what the DSL engine produces. A [`BridgeSpec`] carries two *unevaluated* sides
+/// because the JSON loader has to match them per import and pair them afterwards; a DSL rule
+/// has already been grounded by the time its heads are instantiated, so both function names are
+/// in hand and there is nothing left to diagnose. Phase 2 of codegen emits it through the same
+/// path as a paired spec — see [`crate::codegen::model_matches`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedBridge {
+    /// `file:rule`, for the per-bridge `info` line.
+    pub provenance: String,
+    /// The rule this came from, which is also what groups several ports into one bridge.
+    pub rule: usize,
+    /// Side A: the call side.
+    pub from: facts::Str,
+    /// Side B: the implementation side.
+    pub to: facts::Str,
+    /// The port map, in written order. The globals pair is added at emission, as it is for a
+    /// spec-driven bridge.
+    pub ports: Vec<PortPair>,
+}
+
 /// Everything a set of `--models` files contributes that does not depend on any one program.
 #[derive(Clone, Debug, Default)]
 pub struct ModelFileSpecs {
@@ -511,6 +533,12 @@ where
 pub fn scan_model_files(paths: &[PathBuf]) -> Result<ModelFileSpecs, Error> {
     let mut specs = ModelFileSpecs::default();
     for path in paths {
+        // A DSL file has no unevaluated bridge sides to scan: its rules are grounded by the
+        // engine, and what comes out is a [`ResolvedBridge`] with both function names already
+        // in it. Reading it as JSON here would fail on the first rule.
+        if super::dsl::is_dsl_path(path) {
+            continue;
+        }
         let mut errors: Vec<JsonModelError> = Vec::new();
         visit_model_file(path, |n, value| {
             if let Some(bridge) = value.pointer("/model/bridge") {

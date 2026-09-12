@@ -14,20 +14,22 @@ use crate::facts::TaintDirection;
 use ctadl_ir::mir::call::VirtualMethodTable;
 
 pub mod codegen;
+pub mod dsl;
 pub mod json;
 pub mod match_index;
 pub mod matches;
 pub mod spec;
 pub mod universe_set;
 
+pub use dsl::{DslFile, DslMatcher, DslModelSet, DslReport, Phase as DslPhase, is_dsl_path};
 pub use json::{
     EndpointStats, IndexTimeModelCounts, MatchedFunctions, PropagationStats, UnmatchedReason,
 };
 pub use match_index::ProgramMatchIndex;
 pub use matches::{BridgeMatches, EndpointMatch, ModelPort, ProgramModelMatches, PropagationMatch};
 pub use spec::{
-    BridgeSpec, Direction, ImportScope, ModelFileSpecs, PortPair, ProgramScope, Severity, SideSpec,
-    scan_model_files,
+    BridgeSpec, Direction, ImportScope, ModelFileSpecs, PortPair, ProgramScope, ResolvedBridge,
+    Severity, SideSpec, scan_model_files,
 };
 
 #[cfg(test)]
@@ -36,6 +38,10 @@ mod tests;
 /// The built-in default model file for each [`VirtualMethodTable`] variant, as
 /// `(name, contents)`. `name` appears in error context and is what [`DEFAULT_MODEL_FILES`]
 /// enumerates for the drift test.
+///
+/// These are the **JSON** originals. They are no longer what an index loads — see
+/// [`DEFAULT_DSL_MODELS`] — but they remain the migrator's input and the equivalence oracle the
+/// `.ctadl` files are checked against, which is what keeps the pair from drifting.
 pub const JAVA_DEFAULT_MODELS: (&str, &[u8]) = (
     "java-index.jsonl",
     include_bytes!("defaults/java-index.jsonl"),
@@ -59,6 +65,24 @@ pub const DEFAULT_MODEL_FILES: &[(&str, &[u8])] = &[
     LUA_DEFAULT_MODELS,
 ];
 
+/// The DSL form of each shipped default: what an index actually loads.
+///
+/// Written by `ctadl migrate-models` from the `.jsonl` beside each one and checked in, so a
+/// reader can see what the defaults say without running anything. The pair is pinned by
+/// `tests/default_models.rs`, which loads both against the same program and requires identical
+/// matches — edit one without the other and that fails.
+pub const DEFAULT_DSL_MODELS: &[(&str, &str)] = &[
+    (
+        "java-index.ctadl",
+        include_str!("defaults/java-index.ctadl"),
+    ),
+    (
+        "native-index.ctadl",
+        include_str!("defaults/native-index.ctadl"),
+    ),
+    ("lua-index.ctadl", include_str!("defaults/lua-index.ctadl")),
+];
+
 /// Returns the built-in default models for the program `index` was built from, selected by its
 /// [`VirtualMethodTable`] variant.
 ///
@@ -77,16 +101,27 @@ pub fn try_load_default_models(
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
     log::trace!("load_models");
-    let Some((name, contents)) = default_model_file(index.vmt()) else {
+    let Some((name, source)) = default_dsl_model_file(index.vmt()) else {
         return Ok(ModelLoadReport::default());
     };
     log::debug!("loading default models from {name}");
-    try_load_jsonl_models(index, BufReader::new(contents), out)
+    let file = dsl::DslFile::from_text(name, source)
+        .err_context(|| format!("loading default index models: {name}"))?;
+    let set = dsl::DslModelSet { files: vec![file] };
+    let mut matcher = dsl::DslMatcher::new(&set);
+    matcher.observe_import(index);
+    // Both phases: the defaults are propagation-only, so `All` and `Index` name the same rules,
+    // and a caller that hands them to a query gets what the file says rather than a phase
+    // decision made here.
+    matcher
+        .finish(dsl::Phase::All, out)
+        .map(ModelLoadReport::from_dsl)
         .err_context(|| format!("loading default index models: {name}"))
 }
 
 /// The built-in default model file a program with this [`VirtualMethodTable`] selects, as
-/// `(name, contents)`.
+/// `(name, contents)`. The JSON original; see [`default_dsl_model_file`] for the one an index
+/// loads.
 ///
 /// Split out of [`try_load_default_models`] so a caller that reports on the defaults rather
 /// than merely loading them names the same file the index would.
@@ -99,6 +134,18 @@ pub fn default_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'s
         // match against, and shipping one would be a language guess.
         VirtualMethodTable::Unknown => None,
     }
+}
+
+/// The DSL default a program with this [`VirtualMethodTable`] selects. Parallel to
+/// [`default_model_file`], and the one [`try_load_default_models`] runs.
+pub fn default_dsl_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'static str)> {
+    let index = match vmt {
+        VirtualMethodTable::Java { .. } => 0,
+        VirtualMethodTable::Native { .. } => 1,
+        VirtualMethodTable::Lua { .. } => 2,
+        VirtualMethodTable::Unknown => return None,
+    };
+    DEFAULT_DSL_MODELS.get(index).copied()
 }
 
 /// Load models from a `jsonl` source. `jsonl` allows streaming models one at a time efficiently.
@@ -190,6 +237,14 @@ pub fn try_load_models<P: AsRef<std::path::Path>>(
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
     let path = path.as_ref();
+    // A DSL file goes to the engine. Both phases' heads are kept: a caller with one program in
+    // hand and no phase to declare wants everything the file says, and `cli::index` /
+    // `cli::query` drive [`DslMatcher`] themselves precisely so they can say which half they
+    // are keeping.
+    if dsl::is_dsl_path(path) {
+        let report = dsl::try_load_dsl_models(index, path, dsl::Phase::All, out)?;
+        return Ok(ModelLoadReport::from_dsl(report));
+    }
     let extension = path.extension().and_then(|s| s.to_str());
     match extension {
         Some("jsonl") => {
@@ -294,6 +349,16 @@ pub fn try_check_models<P: AsRef<std::path::Path>>(
     out: &mut ProgramModelMatches,
 ) -> (ModelLoadReport, Vec<ModelCheckError>) {
     let path = path.as_ref();
+    // A DSL file is checked by loading it: parse and mode errors are load-time, so there is no
+    // second, laxer path for a linter to take. One malformed rule still costs the file, which
+    // is the one place the DSL is stricter than the JSON loader — a syntax error has no
+    // resynchronization point.
+    if dsl::is_dsl_path(path) {
+        return match dsl::try_load_dsl_models(index, path, dsl::Phase::All, out) {
+            Ok(report) => (ModelLoadReport::from_dsl(report), Vec::new()),
+            Err(e) => (ModelLoadReport::default(), vec![ModelCheckError::Stream(e)]),
+        };
+    }
     let extension = path.extension().and_then(|s| s.to_str());
     match extension {
         Some("jsonl") => match File::open(path) {
@@ -475,6 +540,7 @@ fn run_batches(
         in_function_matched: std::mem::take(&mut model_gen.in_function_matched),
         propagation_stats: std::mem::take(&mut model_gen.propagation_stats),
         access_path_stats: std::mem::take(&mut model_gen.access_path_stats),
+        dsl: None,
     };
     // `model_gen` holds the `&mut out` borrow, so dropping it is what lets the counters be read
     // back alongside the rows it appended.
@@ -517,6 +583,85 @@ pub struct ModelLoadReport {
     /// Per generator, how many `model.access_paths` entries were registered. Same gating as
     /// [`Self::matched`].
     pub access_path_stats: BTreeMap<usize, usize>,
+    /// Set when the loaded file was written in the DSL. The counters above are filled in from
+    /// it so every diagnostic surface keeps working whichever format the file was in — a rule
+    /// index plays the part of a generator index — and this carries what has no JSON
+    /// counterpart.
+    pub dsl: Option<dsl::DslReport>,
+}
+
+impl ModelLoadReport {
+    /// Projects a DSL load onto the counters the diagnostics read.
+    ///
+    /// A rule index stands in for a generator index: both name "the *n*th thing in this file",
+    /// which is what `CTADL0004` and the JSON error messages report. The `matched` /
+    /// `propagation_stats` captures stay empty — those exist for the no-index model check,
+    /// which reads [`Self::dsl`] instead.
+    pub fn from_dsl(report: dsl::DslReport) -> Self {
+        let mut endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats> = BTreeMap::new();
+        let mut matched: BTreeMap<usize, MatchedFunctions> = BTreeMap::new();
+        let mut propagation_stats: BTreeMap<usize, PropagationStats> = BTreeMap::new();
+        let mut access_path_stats: BTreeMap<usize, usize> = BTreeMap::new();
+        for file in &report.files {
+            for (i, stats) in file.rules.iter().enumerate() {
+                for (declared, rows, direction) in [
+                    (stats.source_heads, stats.sources, TaintDirection::Forward),
+                    (stats.sink_heads, stats.sinks, TaintDirection::Backward),
+                ] {
+                    if declared == 0 {
+                        continue;
+                    }
+                    let entry = endpoint_stats.entry((i, direction)).or_default();
+                    entry.ports_declared += declared;
+                    entry.endpoints_matched += rows;
+                    entry.functions_matched = entry.functions_matched.max(stats.groundings);
+                    if rows == 0 {
+                        entry.unmatched.insert(UnmatchedReason::NoFunctionMatched);
+                    }
+                }
+                if stats.propagation_heads > 0 {
+                    propagation_stats.insert(
+                        i,
+                        PropagationStats {
+                            ports_declared: stats.propagation_heads,
+                            rows: stats.propagations,
+                        },
+                    );
+                }
+                if stats.access_paths > 0 {
+                    access_path_stats.insert(i, stats.access_paths);
+                }
+                // A rule's match set is the functions its heads anchored at. There is no `All`
+                // case: a rule with an unconstrained `fun(F)` enumerates rather than staying
+                // symbolic, so the count is exact and only the *names* are capped.
+                matched.insert(
+                    i,
+                    MatchedFunctions::Some {
+                        total: stats.groundings,
+                        names: stats.matched_functions.clone(),
+                    },
+                );
+            }
+        }
+        let totals = report.totals();
+        Self {
+            endpoint_stats,
+            index_time_models: IndexTimeModelCounts {
+                propagations: report
+                    .files
+                    .iter()
+                    .flat_map(|f| f.rules.iter())
+                    .filter(|r| r.propagation_heads > 0)
+                    .count(),
+                bridges: totals.bridges,
+            },
+            matched,
+            propagation_stats,
+            access_path_stats,
+            dsl: Some(report),
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

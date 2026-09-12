@@ -253,4 +253,14 @@ impl<'p> ProgramMatchIndex<'p> {
     pub fn functions_of(&self, set: &UniverseSet<&'p str>) -> Vec<String> {
         super::json::matched_functions(set, self.vmt)
     }
+
+    /// Every function with IR data, as `(fq-name, data)`.
+    ///
+    /// The VMT names more functions than this — externals and `ext` stubs have no body — so
+    /// this is the *arity / has_code / body* half of the program, not its function universe.
+    /// The DSL relation layer joins the two; see [`super::dsl::relations::ProgramFacts`].
+    #[inline]
+    pub fn functions_with_data(&self) -> impl Iterator<Item = (&'p str, &'p FunctionData)> + '_ {
+        self.program_functions.iter().map(|(fq, data)| (*fq, *data))
+    }
 }

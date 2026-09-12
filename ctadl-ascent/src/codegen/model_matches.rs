@@ -230,7 +230,15 @@ fn codegen_bridges(
                 continue;
             };
             let ports = resolve_ports(spec, a, b, num_params);
-            emit_bridge(spec, a, b, &ports, num_params, facts, source_info);
+            emit_bridge(
+                &spec.provenance(),
+                a,
+                b,
+                &ports,
+                num_params,
+                facts,
+                source_info,
+            );
             pairs += 1;
         }
         stats.push(BridgeStats {
@@ -240,7 +248,71 @@ fn codegen_bridges(
             pairs,
         });
     }
+    stats.extend(codegen_resolved_bridges(
+        matches,
+        num_params,
+        facts,
+        source_info,
+    ));
     Ok(stats)
+}
+
+/// Emits the bridges the DSL engine already grounded.
+///
+/// No pairing and no diagnosis: a DSL rule is grounded before its heads are instantiated, so
+/// both sides are function names by the time they arrive here. What is left is exactly the
+/// emission half of [`codegen_bridges`], and it goes through the same [`emit_bridge`].
+fn codegen_resolved_bridges(
+    matches: &ProgramModelMatches,
+    num_params: &HashMap<FunctionId, i16>,
+    facts: &mut IndexFacts,
+    source_info: &mut IndexSourceInfo,
+) -> Vec<BridgeStats> {
+    let mut stats = Vec::with_capacity(matches.resolved_bridges.len());
+    for bridge in &matches.resolved_bridges {
+        let (Some(a), Some(b)) = (
+            source_info
+                .sites
+                .get_function_id(facts::Function(bridge.from)),
+            source_info
+                .sites
+                .get_function_id(facts::Function(bridge.to)),
+        ) else {
+            log::warn!(
+                "bridge {}: '{}' or '{}' is not in the fact base, so this pair is not bridged",
+                bridge.provenance,
+                bridge.from,
+                bridge.to
+            );
+            stats.push(BridgeStats {
+                provenance: bridge.provenance.clone(),
+                from_matched: 1,
+                to_matched: 1,
+                pairs: 0,
+            });
+            continue;
+        };
+        // The globals pair is added here for the same reason `resolve_ports` adds it: without
+        // it heap flows do not cross the boundary at all, and it is not user-writable.
+        let mut ports = bridge.ports.clone();
+        ports.push(PortPair::globals());
+        emit_bridge(
+            &bridge.provenance,
+            a,
+            b,
+            &ports,
+            num_params,
+            facts,
+            source_info,
+        );
+        stats.push(BridgeStats {
+            provenance: bridge.provenance.clone(),
+            from_matched: 1,
+            to_matched: 1,
+            pairs: 1,
+        });
+    }
+    stats
 }
 
 /// Acts on the verdict [`diagnose`] returns: the reporting semantics deferred from streaming.
@@ -318,7 +390,7 @@ fn resolve_ports(
 /// as the three steps that make that true: name the callee's parameter locally, wire the
 /// caller's port to it, pass it.
 fn emit_bridge(
-    spec: &BridgeSpec,
+    provenance: &str,
     a: FunctionId,
     b: FunctionId,
     ports: &[PortPair],
@@ -434,11 +506,9 @@ fn emit_bridge(
     let recovered = num_params.get(&b).copied().unwrap_or(0);
     if recovered < expected {
         log::warn!(
-            "bridge {}: the callee has {} recovered parameter(s) but the port map names {}; \
-             the prototype is incomplete, so some argument(s) will not flow past it",
-            spec.provenance(),
-            recovered,
-            expected
+            "bridge {provenance}: the callee has {recovered} recovered parameter(s) but the port \
+             map names {expected}; the prototype is incomplete, so some argument(s) will not \
+             flow past it"
         );
     }
 }
