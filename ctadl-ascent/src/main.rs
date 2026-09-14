@@ -324,12 +324,15 @@ pub struct IndexArgs {
 
     /// How the flows of a resolved indirect or virtual call are kept apart by caller.
     ///
-    /// `call-string` (the default) tags each flow with the call string that brought the target
-    /// to the call, keeping one call string per flow. `decision` tags each flow with which
-    /// formal held which target, so every caller that passed that target gets the flow,
-    /// at a cost that grows with the number of targets reaching a function. `none` shares the
-    /// resolved callee's flows among all callers, which is the cheapest and the least precise.
-    #[arg(long, default_value = "call-string")]
+    /// `decision` (the default) tags each flow with the set of decisions -- which formal held
+    /// which target -- it holds under, so every caller that passed that target gets the flow
+    /// and no other caller does. `collapse` does the same but gives up the set the moment two
+    /// decisions meet at a flow, sharing that flow among every caller that passed any target:
+    /// coarser, and far cheaper on a function that thousands of targets reach. `none` shares
+    /// the resolved callee's flows among all callers, which is the cheapest and the least
+    /// precise. `CTADL_HYBRID_CONTEXT` in the environment sets the default, for a harness that
+    /// does not pass the flag.
+    #[arg(long, default_value = "decision", env = "CTADL_HYBRID_CONTEXT")]
     pub hybrid_context: HybridContext,
 
     /// Dump the index graph to a dot file

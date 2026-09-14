@@ -52,16 +52,18 @@ use streaming_iterator::StreamingIterator;
 
 use crate::error::Error;
 use crate::facts::{
-    CallArgId, CallDispatchKey, CallString, CallTargetObject, FlowVariable, FlowVariableKind,
-    FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg,
-    PackedInsnSiteId, Path, SmallestCallString, isout,
+    CallArgId, CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex,
+    FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg,
+    PackedInsnSiteId, Path, isout,
 };
 use crate::index_engine::assign_like_trie::FromRows;
+pub use crate::index_engine::decision::{Decision, DecisionId, DecisionSet};
 use crate::index_engine::path_set::{PathSet, PathSetRef};
 
 pub mod assign_like_trie;
 pub mod c_assign_like_trie;
 pub mod c_locals_trie;
+pub mod decision;
 pub mod hybrid_set;
 pub mod locals_trie;
 pub mod path_group;
@@ -316,30 +318,33 @@ impl Default for IndexConfig {
 /// (indirect / virtual) call site invokes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum HybridContext {
-    /// The decided callee's summary is instantiated at the site as *contextual* edges tagged
-    /// with the call string that carried the resolvent down, closed into a conditional summary
-    /// of the enclosing function, and popped back up the string one frame at a time until it
-    /// lands as a plain edge in the function that held the call target. The
-    /// [`SmallestCallString`] lattice keeps one call string per contextual row, which bounds the
-    /// contextual relations by the context-free ones — and makes the result depend on the order
-    /// routes are found in: of two callers passing the same target to the same formal, only
-    /// the one whose call string wins the lattice gets the callee's conditional flows back.
-    /// The default, because it is bounded and it is what the engine has always computed.
-    #[default]
-    CallString,
     /// The decided callee's summary is instantiated at the site as *contextual* edges keyed by
     /// the [`Decision`] that resolved it, closed into a summary of the enclosing function
     /// conditioned on that decision, and applied one call site at a time at every caller whose
     /// route established the decision, until it lands as a plain edge in a function that held
     /// the call target. Two callers passing different targets get different flows.
     ///
-    /// Complete, and unbounded: a function's contextual closure is repeated once per decision
-    /// that reaches it, which on an interpreter-shaped program (one dispatch loop reached by
-    /// thousands of decisions) does not fit in memory. Opt in with `--hybrid-context decision`.
+    /// The key of a contextual row is a [`DecisionSet`], a lattice: a row holds under every
+    /// decision in its set, and rows that several decisions reach are shared rather than
+    /// repeated, so the contextual relations are bounded by the context-free ones -- one row per
+    /// `(f, v, p, a, p4)` -- whatever the number of decisions reaching a function. Complete,
+    /// deterministic (the fixpoint does not depend on the order routes are found in), and the
+    /// default.
+    #[default]
     Decision,
+    /// As `Decision`, with the set collapsed to ⊤ -- "every decision of this function" -- the
+    /// moment a row is reached by two different decisions. A conditional summary row under ⊤
+    /// is applied at every caller that establishes any decision of the function. Coarser than
+    /// `Decision` exactly where two decisions' flows meet at a row and a third decision does
+    /// not share the flow; no parameter, and still a lattice, so the fixpoint is unique. A row
+    /// changes at most once after it is created, where an exact set changes once per decision
+    /// that reaches it later, and each change re-propagates everything downstream: on a
+    /// function that thousands of decisions reach through a feedback loop that is the
+    /// difference between minutes and the context-free closure's own cost.
+    Collapse,
     /// The decided callee's summary is instantiated at the site as plain edges, exactly as a
     /// directly resolved call's would be. The resolvent machinery still decides *which* callees
-    /// a site can have — a target that never flows to the site is never instantiated — but the
+    /// a site can have -- a target that never flows to the site is never instantiated -- but the
     /// effect is shared by every caller: the context-sensitive fixpoint derives a call graph,
     /// and the dataflow is computed over it context-insensitively. No `context_*` relation is
     /// ever populated.
@@ -349,105 +354,17 @@ pub enum HybridContext {
     None,
 }
 
-impl HybridContext {
-    /// The call string a resolvent starts with at `caller`'s call site `insn`: one frame under
-    /// `CallString`, bottom (no route recorded) otherwise.
-    fn route_start(self, caller: FunctionId, insn: InsnId) -> SmallestCallString {
-        match self {
-            HybridContext::CallString => {
-                let site = PackedInsnSiteId::try_from_parts(caller, insn).unwrap();
-                SmallestCallString::Value(CallString::new().push(site).unwrap())
-            }
-            _ => SmallestCallString::Bottom,
-        }
-    }
-
-    /// The key of a contextual row seeded at a site resolved by the decision `(n, p, obj)`, or
-    /// `None` when the mode records no context.
-    fn context_of(self, n: FormalIndex, p: Path, obj: &CallTargetObject) -> Option<Context> {
-        match self {
-            HybridContext::CallString => Some(Context::Route),
-            HybridContext::Decision => Some(Context::Decision(Decision {
-                formal: n,
-                path: p,
-                target: obj.clone(),
-            })),
-            HybridContext::None => None,
-        }
-    }
-}
-
-/// Pushes `caller`'s call site `insn` onto a resolvent's call string. Bottom stays bottom (the
-/// route is not recorded); a value that would close a cycle is dropped.
-fn push_site(cs: &SmallestCallString, caller: FunctionId, insn: InsnId) -> Option<SmallestCallString> {
-    match cs {
-        SmallestCallString::Bottom => Some(SmallestCallString::Bottom),
-        SmallestCallString::Value(cs) => {
-            let site = PackedInsnSiteId::try_from_parts(caller, insn).unwrap();
-            cs.push(site).map(SmallestCallString::Value)
-        }
-    }
-}
-
-/// What a contextual row is keyed on, beside its call-string lattice column: the constant
-/// `Route` under [`HybridContext::CallString`], where the lattice column carries the route and
-/// collapses rows to one call string; the [`Decision`] under [`HybridContext::Decision`], where
-/// the lattice column stays bottom and every decision keeps its own rows.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Context {
-    Route,
-    Decision(Decision),
-}
-
-/// A row's context for display: the decision, the call string, or nothing.
-fn context_label(ctx: &Context, cs: &SmallestCallString) -> String {
-    match (ctx, cs) {
-        (Context::Decision(d), _) => d.to_string(),
-        (Context::Route, SmallestCallString::Value(cs)) => cs.to_string(),
-        (Context::Route, SmallestCallString::Bottom) => "⊥".to_string(),
-    }
-}
-
 impl std::str::FromStr for HybridContext {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, String> {
         match s {
-            "call-string" => Ok(HybridContext::CallString),
             "decision" => Ok(HybridContext::Decision),
+            "collapse" => Ok(HybridContext::Collapse),
             "none" => Ok(HybridContext::None),
             other => Err(format!(
-                "unknown hybrid context '{other}'; expected 'call-string', 'decision' or 'none'"
+                "unknown hybrid context '{other}'; expected 'decision', 'collapse' or 'none'"
             )),
         }
-    }
-}
-
-/// What a function's contextual flows are conditioned on: its formal `formal.path` holds the
-/// call target `target`. A caller establishes it by passing the target there, directly or from
-/// its own formal (rules 2.1 and 2.2); the function's conditional flows are keyed by it and
-/// applied at every such caller (rule 3.2).
-///
-/// The key names *what* was decided, never the route it arrived by, so two routes that
-/// establish the same decision share one closure and both get the result. The call-string
-/// design keeps one route per decision in a lattice, which makes the outcome depend on the
-/// order the routes are found in -- a caller whose route is superseded silently loses its
-/// flows.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Decision {
-    pub formal: FormalIndex,
-    pub path: Path,
-    pub target: CallTargetObject,
-}
-
-impl std::fmt::Display for Decision {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "[arg{}{} = {}]",
-            self.formal,
-            self.path.to_dot_string(),
-            self.target
-        )
     }
 }
 
@@ -791,41 +708,85 @@ impl<Row> Rows<Row> for ascent::boxcar::Vec<std::sync::RwLock<Row>> {
 }
 
 type CriticalSummaryRow = (FunctionId, FormalIndex, Path);
-type ResolventRow = (
-    FunctionId,
-    FormalIndex,
-    Path,
-    CallTargetObject,
-    SmallestCallString,
-);
+type ResolventRow = (FunctionId, FormalIndex, Path, CallTargetObject, DecisionId);
 type CallTargetAssignLikeRow = (FunctionId, FlowVariable, Path, CallTargetObject);
-type ContextAssignRow = (
-    FunctionId,
-    FlowVariable,
-    Path,
-    FlowVariable,
-    Path,
-    Context,
-    SmallestCallString,
-);
-type ContextLocalsRow = (
-    FunctionId,
-    FlowVariable,
-    Path,
-    FormalIndex,
-    Path,
-    Context,
-    SmallestCallString,
-);
-type ContextSummaryRow = (
-    FunctionId,
-    FormalIndex,
-    Path,
-    FormalIndex,
-    Path,
-    Context,
-    SmallestCallString,
-);
+type ContextAssignRow = (FunctionId, FlowVariable, Path, FlowVariable, Path, DecisionSet);
+type ContextLocalsRow = (FunctionId, FlowVariable, Path, FormalIndex, Path, DecisionSet);
+type ContextSummaryRow = (FunctionId, FormalIndex, Path, FormalIndex, Path, DecisionSet);
+
+/// Where the contextual rows are, for the debug log: per function, the rows of
+/// `context_locals`, the decisions reaching it (`resolvent`), the distinct decision sets its
+/// rows hold and the sum of their sizes -- the last is what a run keyed by decision instead of
+/// by decision set would hold as rows. The top functions by row count are listed.
+fn context_histogram(
+    context_locals: &dyn Rows<ContextLocalsRow>,
+    resolvent: &dyn Rows<ResolventRow>,
+    id_map: Option<&IdMap>,
+) -> String {
+    use std::fmt::Write as _;
+    #[derive(Default)]
+    struct Per {
+        rows: usize,
+        memberships: usize,
+        max_set: usize,
+        sets: hashbrown::HashSet<DecisionSet>,
+        decisions: usize,
+        top: usize,
+    }
+    let mut per: HashMap<FunctionId, Per> = HashMap::new();
+    let mut all_sets: hashbrown::HashSet<DecisionSet> = hashbrown::HashSet::new();
+    let mut rows = context_locals.stream();
+    while let Some((f, _, _, _, _, ds)) = rows.next() {
+        let e = per.entry(*f).or_default();
+        e.rows += 1;
+        e.memberships += ds.len();
+        e.max_set = e.max_set.max(ds.len());
+        e.top += usize::from(ds.is_top());
+        e.sets.insert(*ds);
+        all_sets.insert(*ds);
+    }
+    let mut rows = resolvent.stream();
+    while let Some((f, _, _, _, _)) = rows.next() {
+        per.entry(*f).or_default().decisions += 1;
+    }
+
+    let total_rows: usize = per.values().map(|p| p.rows).sum();
+    let total_memberships: usize = per.values().map(|p| p.memberships).sum();
+    let total_set_elements: usize = all_sets.iter().map(|s| s.len()).sum();
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "context_locals by function: rows={} memberships={} (rows a per-decision keying would hold) \
+         distinct sets={} (elements {}) functions={}; {}",
+        total_rows,
+        total_memberships,
+        all_sets.len(),
+        total_set_elements,
+        per.values().filter(|p| p.rows > 0).count(),
+        decision::stats()
+    );
+    let mut top: Vec<(&FunctionId, &Per)> = per.iter().filter(|(_, p)| p.rows > 0).collect();
+    top.sort_by(|a, b| b.1.rows.cmp(&a.1.rows));
+    for (f, p) in top.into_iter().take(12) {
+        let name = id_map
+            .and_then(|m| m.get_function(*f))
+            .map(|f| f.0.as_ref())
+            .unwrap_or("unknown");
+        let _ = writeln!(
+            out,
+            "  rows={:>9} top={:>9} memberships={:>10} sets={:>6} max_set={:>5} decisions={:>5} {}({})",
+            p.rows,
+            p.top,
+            p.memberships,
+            p.sets.len(),
+            p.max_set,
+            p.decisions,
+            name,
+            f.id
+        );
+    }
+    out
+}
 
 struct HybridInliningRelations<'a> {
     critical_summary: &'a dyn Rows<CriticalSummaryRow>,
@@ -860,18 +821,16 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
 
         writeln!(f, "\nResolvent ({}):", self.resolvent.len())?;
         let mut rows = self.resolvent.stream();
-        while let Some((func_id, formal_index, path, resolvent, cs)) = rows.next() {
+        while let Some((func_id, formal_index, path, resolvent, _)) = rows.next() {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
-            let cs = context_label(&Context::Route, cs);
 
             writeln!(
                 f,
-                "  {} {}({}): arg{} {} resolves to {}",
-                cs,
+                "  {}({}): arg{} {} resolves to {}",
                 func_name,
                 func_id.id,
                 formal_index,
@@ -924,8 +883,8 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
 
         writeln!(f, "\nContext Assign ({}):", self.context_assign.len())?;
         let mut rows = self.context_assign.stream();
-        while let Some((func_id, dest_var, dest_path, src_var, src_path, ctx, cs)) = rows.next() {
-            let cs = context_label(ctx, cs);
+        while let Some((func_id, dest_var, dest_path, src_var, src_path, ds)) = rows.next() {
+            let cs = ds.to_string();
             let dest_str = {
                 let var_str = if let Some(name) = dest_var.as_local() {
                     name.to_string()
@@ -958,8 +917,8 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
 
         writeln!(f, "\nContext Locals ({}):", self.context_locals.len())?;
         let mut rows = self.context_locals.stream();
-        while let Some((func_id, var, path, formal_idx, formal_path, ctx, cs)) = rows.next() {
-            let cs = context_label(ctx, cs);
+        while let Some((func_id, var, path, formal_idx, formal_path, ds)) = rows.next() {
+            let cs = ds.to_string();
             let var_str = if let Some(name) = var.as_local() {
                 name.to_string()
             } else {
@@ -987,8 +946,8 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
 
         writeln!(f, "\nContext Summary ({}):", self.context_summary.len())?;
         let mut rows = self.context_summary.stream();
-        while let Some((func_id, dest_idx, dest_path, src_idx, src_path, ctx, cs)) = rows.next() {
-            let cs = context_label(ctx, cs);
+        while let Some((func_id, dest_idx, dest_path, src_idx, src_path, ds)) = rows.next() {
+            let cs = ds.to_string();
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
@@ -1154,20 +1113,34 @@ ascent_source! {
     // Critical call occurs inside this function
     relation critical_call(FunctionId);
     // A decision at a function: its formal `n.p` holds the call target, put there by some
-    // caller. The lattice column is the route it arrived by under `HybridContext::CallString`
-    // — one call string per decision, the smallest — and bottom under `Decision`, where no
-    // route is recorded and rule 3.2 finds every caller again when it applies the result.
-    lattice resolvent(FunctionId, FormalIndex, Path, CallTargetObject, SmallestCallString);
-    // Assignment due to instantiating a summary at a critical site, keyed by the `Context` of
-    // the decision that resolved the site (see `Context` for the two modes), with the route's
-    // call string beside it as a lattice.
-    lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, Context, SmallestCallString);
-    // Context-carrying field-sensitive reachability. Seeded from `context_assign` and
-    // propagated by the forward-field rules below. Rare on C targets (0 rows when there is
-    // no resolvable indirect/virtual dispatch).
-    lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, Context, SmallestCallString);
-    // A function's summary row that holds only under a context.
-    lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, Context, SmallestCallString);
+    // caller (2.1) or handed down from a caller's own decision (2.2). One row per decision,
+    // however many routes establish it; the last column is the decision's interned id. Derived
+    // from the two `establishes_*` relations below, which keep the one fact about the route
+    // rule 3.2 needs: which caller, at which site, and under which of its own decisions.
+    relation resolvent(FunctionId, FormalIndex, Path, CallTargetObject, DecisionId);
+    // `caller` establishes decision `d` at `f` through its call site `insn` by holding the
+    // target itself (2.1's shape) ...
+    relation establishes_direct(FunctionId, DecisionId, FunctionId, InsnId);
+    // ... or by passing its own formal, on which it holds decision `up` (2.2's shape). Two
+    // relations rather than an `Option` column: a literal in a clause would make Ascent index
+    // that column alone.
+    relation establishes_via(FunctionId, DecisionId, FunctionId, InsnId, DecisionId);
+    // Assignment due to instantiating a summary at a critical site. The lattice column is the
+    // set of decisions the edge holds under: a seed (3.1) holds under the one decision that
+    // resolved the site, an inherited summary (3.2) under the caller's own decision, and rows
+    // that several decisions produce hold their union. One row per edge.
+    lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, DecisionSet);
+    // Context-carrying field-sensitive reachability, `(f, v, p, a, p4)` holds under every
+    // decision in its set. Seeded from `context_assign` and propagated by the forward-field
+    // rules below, which carry the set along and union it where flows meet; so the relation
+    // has one row per `(f, v, p, a, p4)` -- at most the context-free `locals` of a run that
+    // instantiated every decision unconditionally -- whatever the number of decisions reaching
+    // `f`. Rare on C targets (0 rows when there is no resolvable indirect/virtual dispatch).
+    lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, DecisionSet);
+    // A function's summary row that holds only under the decisions in its set. One row per
+    // summary row, like `context_locals`: unfolding the set per decision would multiply the
+    // rows by the decisions reaching the function (8 M rows on xbot, for 75 k summary rows).
+    lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, DecisionSet);
 
     // Initialize locals with formals (context-free)
     locals(infunc, v1, p1.clone(), i, p1.clone()) <--
@@ -1200,7 +1173,7 @@ ascent_source! {
     // paths must be keyed too.
     relation reach_vp(FunctionId, FlowVariable, Path);
     reach_vp(f, v, p) <-- locals(f, v, p, _, _);
-    reach_vp(f, v, p) <-- context_locals(f, v, p, _, _, _, _);
+    reach_vp(f, v, p) <-- context_locals(f, v, p, _, _, _);
     // The exact and wild keys of a `locals` path. Two relations rather than a flag column: a
     // literal in a clause makes Ascent index that column alone, and the planner then drives
     // whole-relation scans off a two-key index.
@@ -1331,7 +1304,7 @@ ascent_source! {
 
     // Hybrid Inlining Rules:
     // Phase 1: propagate up the stack from indirect calls
-    // Phase 2: propagate resolvents back down (this requires call strings)
+    // Phase 2: propagate resolvents back down, one row per decision and one hop of route
     // Phase 3: propagate conditional summaries up till they're unconditional
 
     // 1.1: Base Critical Summary. An indirect / virtual call site found. (context-free)
@@ -1349,43 +1322,51 @@ ascent_source! {
     // 2.1: Base Resolvent. A stored call target locally reaches a critical summary, so
     // instantiate the resolvent in the parameters of the summary. The target is carried
     // opaquely as a `CallTargetObject`; its variant is only tested later at call resolution.
-    resolvent(f, n, p.clone(), cto.clone(), cs_lat) <--
+    establishes_direct(f, d, caller, call_insn) <--
         critical_summary(f, n, p),
         call(caller, call_insn, f),
         let arg = call_arg!(*call_insn, *n),
         call_target_assign_like(caller, arg, p, cto),
-        config(c),
-        let cs_lat = c.hybrid_context.route_start(*caller, *call_insn);
+        let d = DecisionId::of(Decision { formal: *n, path: *p, target: cto.clone() });
+    resolvent(f, dec.formal, dec.path, dec.target.clone(), d) <--
+        establishes_direct(f, d, _, _),
+        let dec = d.get();
 
-    // Tracks resolvent to the call arg.
-    relation call_arg_resolvent(PackedCallArg, Path, CallTargetObject, SmallestCallString);
-    call_arg_resolvent(arg_p, p, obj, cs_lat) <--
-        resolvent(f, n2, p2, obj, cs_lat),
+    // Tracks resolvent to the call arg: the caller's decision `up` reaches the call arg `arg_p`
+    // at path `p`.
+    relation call_arg_resolvent(PackedCallArg, Path, CallTargetObject, DecisionId);
+    call_arg_resolvent(arg_p, p, obj, up) <--
+        resolvent(f, n2, p2, obj, up),
         locals(f, v, p, n2, p2),
         if let Some(arg_p) = v.as_call_arg();
 
-    // 2.2: Propagate Resolvent down the critical summaries, pushing the call site onto the
-    // route where one is kept. Finite either way: one row per (function, formal, path, target).
-    resolvent(f, n, p.clone(), resolvent_obj, pushed) <--
-        call_arg_resolvent(arg_p, p, resolvent_obj, cs_lat),
+    // 2.2: Propagate Resolvent down the critical summaries. Finite by construction: `resolvent`
+    // has one row per (function, formal, path, target), and nothing about the route is kept
+    // beyond the one hop `establishes_via` records.
+    establishes_via(f, d, caller, arg.insn_id, up) <--
+        call_arg_resolvent(arg_p, p, resolvent_obj, up),
         let arg = CallArgId::unpack_from_slice(&**arg_p).unwrap(),
         call(caller, arg.insn_id, f),
         let n = FormalIndex::new(arg.formal),
         critical_summary(f, n, p),
-        if let Some(pushed) = push_site(cs_lat, *caller, arg.insn_id);
+        let d = DecisionId::of(Decision { formal: n, path: *p, target: resolvent_obj.clone() });
+    resolvent(f, dec.formal, dec.path, dec.target.clone(), d) <--
+        establishes_via(f, d, _, _, _),
+        let dec = d.get();
 
     // 3.1: Contextual Assignment (seed). Given a resolvent that reaches a call site,
     // instantiate a contextual assignment doing normal summary instantiation. The resolvent
     // object itself and the dispatch key from the call site are used to determine the resolvent
-    // function. The context of the decision that resolved the site is the key of the assign.
-    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), ctx, cs_lat.clone()) <--
+    // function. The edge holds under the one decision that resolved the site.
+    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), ds) <--
         callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
         locals(caller, v_rec, p_rec, n, p),
-        resolvent(caller, n, p, resolvent_obj, cs_lat),
+        resolvent(caller, n, p, resolvent_obj, d),
         callee_resolvents(resolvent_obj, dispatch_key, resolvent_func),
-        summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
         config(c),
-        if let Some(ctx) = c.hybrid_context.context_of(*n, *p, resolvent_obj),
+        if c.hybrid_context != HybridContext::None,
+        let ds = d.singleton(c.hybrid_context == HybridContext::Collapse),
+        summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
         let v2 = call_arg!(*call_insn, *n2_sum),
         let v1 = call_arg!(*call_insn, *n1_sum);
 
@@ -1404,132 +1385,106 @@ ascent_source! {
         let v2 = call_arg!(*call_insn, *n2_sum),
         let v1 = call_arg!(*call_insn, *n1_sum);
 
-    // 3.2 under `CallString`: Contextual assignment (chain). Instantiate contextual summaries
-    // and pop the call string, either creating a new contextual assign or a bare, uncontextual
-    // assign. Only a row with a call string (a `Route` row) pops; a `Decision` row's lattice
-    // column is bottom.
-    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), Context::Route, new_cs_lat) <--
-        context_summary(f, n1, p1_sum, n2, p2_sum, _, cs_lat),
-        if let SmallestCallString::Value(cs) = cs_lat,
-        if let (new_cs, Some(call_site_id)) = cs.pop(),
-        if !new_cs.is_empty(), // keep call string invariant
-        let InsnSiteId {func_id: caller, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
-        call(caller, insn_id, f),
-        let v1 = call_arg!(insn_id, *n1),
-        let v2 = call_arg!(insn_id, *n2),
-        let new_cs_lat = SmallestCallString::Value(new_cs);
-
-    assign_like(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
-        context_summary(tgt, n1, p1_sum, n2, p2_sum, _, cs_lat),
-        if let SmallestCallString::Value(cs) = cs_lat,
-        if let (new_cs, Some(call_site_id)) = cs.pop(),
-        if new_cs.is_empty(),
-        let InsnSiteId {func_id: caller, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
-        call(caller, insn_id, tgt),
-        let v1 = call_arg!(insn_id, *n1),
-        let v2 = call_arg!(insn_id, *n2);
-
-    // 3.2 under `Decision`: apply a conditional summary at the callers whose route established
-    // its decision. The two rules mirror 2.1 and 2.2, which is what makes them complete: a
-    // caller that holds the target itself (2.1's shape) applies the summary unconditionally,
-    // and a caller that received the target through its own formal (2.2's shape) inherits the
-    // summary conditioned on that formal, and the walk continues at its callers. Every caller
-    // on every route gets it, whichever was found first.
+    // 3.2: apply a conditional summary at the callers whose route established its decision.
+    // The two rules mirror 2.1 and 2.2, which is what makes them complete: a caller that holds
+    // the target itself (2.1's shape) applies the summary unconditionally, and a caller that
+    // received the target through its own formal (2.2's shape) inherits the summary conditioned
+    // on that formal, and the walk continues at its callers. Every caller on every route gets
+    // it, whichever was found first, so the result does not depend on iteration order.
+    //
+    // Both join `context_summary` with `establishes_*` on the callee alone and test the
+    // decision by membership: the summary row's set is not unfolded (the join would then scan
+    // the unfolded relation whenever a caller-side fact is new), and both semi-naive variants
+    // are exact probes by function.
     assign_like(caller, v1, p1_sum.clone(), v2, p2_sum.clone()) <--
-        context_summary(f, n1, p1_sum, n2, p2_sum, ?Context::Decision(d), _),
-        call(caller, call_insn, f),
-        let arg = call_arg!(*call_insn, d.formal),
-        let dp = d.path,
-        let dt = d.target.clone(),
-        call_target_assign_like(caller, arg, dp, dt),
-        let v1 = call_arg!(*call_insn, *n1),
-        let v2 = call_arg!(*call_insn, *n2);
-    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), Context::Decision(up), SmallestCallString::Bottom) <--
-        context_summary(f, n1, p1_sum, n2, p2_sum, ?Context::Decision(d), _),
-        call(caller, call_insn, f),
-        let arg = call_arg!(*call_insn, d.formal),
-        let dp = d.path,
-        locals(caller, arg, dp, m, q),
-        let dt = d.target.clone(),
-        resolvent(caller, m, q, dt, _),
-        let up = Decision { formal: *m, path: *q, target: d.target.clone() },
-        let v1 = call_arg!(*call_insn, *n1),
-        let v2 = call_arg!(*call_insn, *n2);
+        context_summary(f, n1, p1_sum, n2, p2_sum, ds),
+        establishes_direct(f, d, caller, insn),
+        if ds.contains(*d),
+        let v1 = call_arg!(*insn, *n1),
+        let v2 = call_arg!(*insn, *n2);
+    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), up.singleton(ds.is_collapsing())) <--
+        context_summary(f, n1, p1_sum, n2, p2_sum, ds),
+        establishes_via(f, d, caller, insn, up),
+        if ds.contains(*d),
+        let v1 = call_arg!(*insn, *n1),
+        let v2 = call_arg!(*insn, *n2);
 
     // 3.3a: We have to reason about contextual local reachability. This involves reasoning
     // about flows composed of hops, some of which are non-contextual and some of which are
     // contextual. The following rules extend contextual flows with built-in assigns, walking
     // the same expanded edges (`ext_dst`, `edge_split`, `ext_fml`) as the context-free closure
-    // — `reach_vp` keys the contextual paths too — so every join here is exact.
-    context_locals(f, v1, p13, a, p4, ctx.clone(), cs_lat.clone()) <--
+    // — `reach_vp` keys the contextual paths too — so every join here is exact. The decision
+    // set rides along unchanged; the lattice unions it into the row it lands on.
+    context_locals(f, v1, p13, a, p4, *ds) <--
         ext_dst(f, v1, p13, v2, p23),
-        context_locals(f, v2, p23, a, p4, ctx, cs_lat);
-    context_locals(f, v1, p1, a, p43, ctx.clone(), cs_lat.clone()) <--
+        context_locals(f, v2, p23, a, p4, ds);
+    context_locals(f, v1, p1, a, p43, *ds) <--
         edge_split(f, v2, key, rest, dst),
-        context_locals(f, v2, key, a, p4, ctx, cs_lat),
+        context_locals(f, v2, key, a, p4, ds),
         let (v1, p1) = dst,
         path_set(ps),
         if let Some(p43) = ps.concat(p4, None, rest);
-    context_locals(f, v1, p1, a, p43, ctx.clone(), cs_lat.clone()) <--
+    context_locals(f, v1, p1, a, p43, *ds) <--
         ext_fml(f, v1, p1, v2, p2, adj, rest),
-        context_locals(f, v2, p2, a, p4, ctx, cs_lat),
+        context_locals(f, v2, p2, a, p4, ds),
         path_set(ps),
         if let Some(p43) = ps.concat(p4, Some(*adj), rest);
 
     // 3.3b: The following rules extend non-contextual flows with contextual assigns. A
     // contextual assign is an edge, so it gets the same keys an `assign_like` edge gets, with
-    // its context riding along, and the `locals` probes are exact.
-    relation ctx_edge_wild(FunctionId, FlowVariable, Path, i64, FlowVariable, Path, Context, SmallestCallString);
-    ctx_edge_wild(f, v2, key, m, v1, p1, ctx.clone(), cs_lat.clone()) <--
-        context_assign(f, v1, p1, v2, p2, ctx, cs_lat),
+    // its decision set riding along as a lattice (so a set that grows updates the split rather
+    // than adding a stale twin), and the `locals` probes are exact.
+    lattice ctx_edge_wild(FunctionId, FlowVariable, Path, i64, FlowVariable, Path, DecisionSet);
+    ctx_edge_wild(f, v2, key, m, v1, p1, *ds) <--
+        context_assign(f, v1, p1, v2, p2, ds),
         if let Some((key, m)) = p2.split_trailing_offset();
-    relation ctx_edge_split(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, Context, SmallestCallString);
-    ctx_edge_split(f, v2, key, rest, v1, p1, ctx.clone(), cs_lat.clone()) <--
-        context_assign(f, v1, p1, v2, p2, ctx, cs_lat),
+    lattice ctx_edge_split(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, DecisionSet);
+    ctx_edge_split(f, v2, key, rest, v1, p1, *ds) <--
+        context_assign(f, v1, p1, v2, p2, ds),
         path_set(ps),
         for (key, rest) in &ps.splits(p2).exact;
-    relation ctx_edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, Context, SmallestCallString);
-    ctx_edge_split_wild(f, v2, key, rest, v1, p1, ctx.clone(), cs_lat.clone()) <--
-        context_assign(f, v1, p1, v2, p2, ctx, cs_lat),
+    lattice ctx_edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, DecisionSet);
+    ctx_edge_split_wild(f, v2, key, rest, v1, p1, *ds) <--
+        context_assign(f, v1, p1, v2, p2, ds),
         path_set(ps),
         for (key, rest) in &ps.splits(p2).wild;
-    relation ctx_ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path, Context, SmallestCallString);
-    ctx_ext_dst(f, v1, p13, v2, p23, ctx.clone(), cs_lat.clone()) <--
+    lattice ctx_ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path, DecisionSet);
+    ctx_ext_dst(f, v1, p13, v2, p23, *ds) <--
         locals_key(f, v2, key, rest, p23),
-        context_assign(f, v1, p1, v2, key, ctx, cs_lat),
+        context_assign(f, v1, p1, v2, key, ds),
         path_set(ps),
         if let Some(p13) = ps.concat(p1, None, rest);
-    ctx_ext_dst(f, v1, p13, v2, p23, ctx.clone(), cs_lat.clone()) <--
+    ctx_ext_dst(f, v1, p13, v2, p23, *ds) <--
         locals_key_wild(f, v2, key, rest, p23),
-        ctx_edge_wild(f, v2, key, m, v1, p1, ctx, cs_lat),
+        ctx_edge_wild(f, v2, key, m, v1, p1, ds),
         if let Some(n) = rest.head_offset(),
         if n != *m,
         path_set(ps),
         if let Some(p13) = ps.concat(p1, Some(n - *m), &rest.tail());
-    relation ctx_ext_fml(FunctionId, FlowVariable, Path, FlowVariable, Path, i64, Path, Context, SmallestCallString);
-    ctx_ext_fml(f, v1, p1, v2, p2, n - *m, rest.tail(), ctx.clone(), cs_lat.clone()) <--
-        ctx_edge_split_wild(f, v2, key, rest, v1, p1, ctx, cs_lat),
+    lattice ctx_ext_fml(FunctionId, FlowVariable, Path, FlowVariable, Path, i64, Path, DecisionSet);
+    ctx_ext_fml(f, v1, p1, v2, p2, n - *m, rest.tail(), *ds) <--
+        ctx_edge_split_wild(f, v2, key, rest, v1, p1, ds),
         locals_wild(f, v2, key, m, p2),
         if let Some(n) = rest.head_offset(),
         if n != *m;
-    context_locals(f, v1, p13, a, p4, ctx.clone(), cs_lat.clone()) <--
-        ctx_ext_dst(f, v1, p13, v2, p23, ctx, cs_lat),
+    context_locals(f, v1, p13, a, p4, *ds) <--
+        ctx_ext_dst(f, v1, p13, v2, p23, ds),
         locals(f, v2, p23, a, p4);
-    context_locals(f, v1, p1, a, p43, ctx.clone(), cs_lat.clone()) <--
-        ctx_edge_split(f, v2, key, rest, v1, p1, ctx, cs_lat),
+    context_locals(f, v1, p1, a, p43, *ds) <--
+        ctx_edge_split(f, v2, key, rest, v1, p1, ds),
         locals(f, v2, key, a, p4),
         path_set(ps),
         if let Some(p43) = ps.concat(p4, None, rest);
-    context_locals(f, v1, p1, a, p43, ctx.clone(), cs_lat.clone()) <--
-        ctx_ext_fml(f, v1, p1, v2, p2, adj, rest, ctx, cs_lat),
+    context_locals(f, v1, p1, a, p43, *ds) <--
+        ctx_ext_fml(f, v1, p1, v2, p2, adj, rest, ds),
         locals(f, v2, p2, a, p4),
         path_set(ps),
         if let Some(p43) = ps.concat(p4, Some(*adj), rest);
 
     // 3.4: a context-specific flow that reaches an out-formal becomes a conditional summary
-    // under its context; rule 3.2 pops or applies it at the callers.
-    context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), ctx.clone(), cs_lat.clone()) <--
-        context_locals(func_id, dst_var, p1, n2, p2, ctx, cs_lat),
+    // under the decisions in its set; rule 3.2 applies it at the callers.
+    context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), *ds) <--
+        context_locals(func_id, dst_var, p1, n2, p2, ds),
         formal_param(func_id, dst_var, formal_ty),
         if let Some(n1) = dst_var.as_formal(),
         if isout(&n1, *formal_ty, p1),
@@ -1586,7 +1541,7 @@ ascent_source! {
     // reuse indices existing rules already require -- `formal_param` by (func, var), `call` by
     // its target column -- so no new indices are built.
     //
-    // No call string is needed: the head names the specific `insn`, so each call site of a
+    // No context is needed: the head names the specific `insn`, so each call site of a
     // factory gets its own tagged vertex; context sensitivity is inherent to this direction.
     // `p` rides through unchanged (no `substitute_prefix`), so no path growth and no `paths`
     // gate. `isout` holds for every negative formal index, so RETURN_INDEX and the multi-return
@@ -1595,11 +1550,11 @@ ascent_source! {
     //
     // Deliberately NOT seeding `resolvent` here: that is a callee-frame relation keyed on the
     // callee's formals, so a tuple for a frame whose receiver is a local has no consumer, and
-    // it would bypass rule 2.1's construction of the route. Downstream needs no
+    // it would bypass rule 2.1's record of the establishing site. Downstream needs no
     // change -- the transitive rule above walks this tuple from `call_arg(insn, -1)` to the
     // receiver over the symmetric call-site `assign_like` edges, the local-dispatch bypass
     // resolves the indirect call exactly, and if the receiver is passed onward rule 2.1
-    // derives the resolvent with a properly constructed call string.
+    // derives the resolvent with its establishing site recorded.
     call_target_assign_like(caller, cv, p.clone(), tgt) <--
         call_target_assign_like(callee, v, p, tgt),
         formal_param(callee, v, formal_ty),
@@ -1937,6 +1892,12 @@ pub fn taint_index_with_config(
             hybrid_context_summary: prog.context_summary.len(),
         };
         stats.log();
+        if stats.hybrid_context_locals > 0 {
+            log::debug!(
+                "{}",
+                context_histogram(&prog.context_locals, &prog.resolvent, id_map).trim_end()
+            );
+        }
 
         let result = IndexResult {
             summary: prog.summary.into_iter().collect(),
@@ -2020,7 +1981,7 @@ mod tests {
     /// A program that touches every part of the rules: direct calls, summaries, field-sensitive
     /// flows, and enough indirect calls (function-pointer parameter, function pointer in a
     /// struct field, one target reaching two critical sites) that the hybrid-inlining relations
-    /// and their call-string lattices all get rows.
+    /// and their decision sets all get rows.
     const SRC: &str = r"
         struct ops { int (*f)(int); int tag; };
         int id(int p) { return p; }
