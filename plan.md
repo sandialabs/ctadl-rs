@@ -105,7 +105,8 @@ model-key parsing near 1025 and 1758), `models/match_index.rs`, `models/matches.
 
 **Tests.** In `models/tests`: each rejected constraint and key gives the named error; empty
 `propagation` loads; `resolve: "inline"` loads; neither, both, or another `resolve` value
-errors. Two generators on one key resolve to the higher disposition and both appear in
+errors. In `codegen/tests.rs`: an inline key with exactly one target takes CHA, with zero or
+two or more targets defers, in both orders. Two generators on one key resolve to the higher disposition and both appear in
 provenance. A key naming an undeclared interface (`java.util.Iterator`) matches. Extend
 `ctadl-ascent/tests/default_models.rs`: the shipped Java file still parses.
 

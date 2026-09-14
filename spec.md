@@ -36,7 +36,7 @@ and every Java call site is counted into one of four buckets on the index summar
 | --- | --- | --- |
 | **R1** | Java virtual call sites are classified by one function at codegen time, in the order *dispatch model → threshold → hybrid inlining*. | I-8, I-1 |
 | **R2** | A new generator form, `find: "dispatch"`, whose `where` is evaluated against the **call site's** declared class, simple name and descriptor, and whose `model` accepts the ordinary `propagation` list. | I-6 |
-| **R3** | A matched dispatch model replaces the site's target set: one `call` row to a synthetic per-signature function carrying the summary, and no CHA edges. An **empty** propagation list emits nothing. A model may instead carry `resolve: "inline"`, which sends the site to rung 3 regardless of `K`. | I-6; viability §"How it hooks up"; §15.3 for `inline` |
+| **R3** | A matched dispatch model replaces the site's target set: one `call` row to a synthetic per-signature function carrying the summary, and no CHA edges. An **empty** propagation list emits nothing. A model may instead carry `resolve: "inline"`, which sends the site to rung 3 regardless of `K` unless it has exactly one target. | I-6; viability §"How it hooks up"; §15.3 for `inline` |
 | **R4** | A dispatch model is **refused** for a signature whose CHA target set contains a matched source or sink function; the site falls to rung 2. Refusals are reported. | viability §"One consequence that has to be stated"; assumes **A1**; residue in §15.1 |
 | **R5** | `K` is one CLI flag and one recorded index-config field, default **32**. | I-9 |
 | **R6** | Model-first is the default rung order; threshold-first is a flag. | I-9 |
@@ -136,8 +136,11 @@ known call is strictly worse than resolving it.
 **Rung 1 — dispatch model.** The key matched a dispatch model **and** models are enabled for
 this dispatch kind (§9.1). By the model's disposition (§5.2):
 
-- `resolve: "inline"` ⇒ `Defer`, counted **inlined** (sub-count `inlined_by_model`, §10.1).
-  No R4 check: inlining hides no callee, it finds them precisely (subject to R14).
+- `resolve: "inline"` ⇒ `Defer`, counted **inlined** (sub-count `inlined_by_model`, §10.1),
+  **unless the key has exactly one CHA target**, in which case ⇒ `Cha`. Inlining a
+  monomorphic site gains nothing and can lose the edge when the receiver's allocation is not
+  visible (R14). Zero targets still defer: hybrid inlining can find a callee from the allocated
+  class where the static type resolves to nothing. No R4 check: inlining hides no callee.
 - non-empty `propagation`, and the R4 intersection is empty ⇒ `Model`, counted **modelled**;
 - empty `propagation`, and the R4 intersection is empty ⇒ `Skip`, counted **skipped**;
 - R4 refused ⇒ fall through.
@@ -200,10 +203,11 @@ undeclared types by construction.
 - Empty `propagation` is the spelling of "skip this call" and must be written explicitly
   (`"propagation": []`). Neither key present is a load error, so "forgot the model" and "mean
   to discard" are different documents.
-- `"resolve": "inline"` sends every site of the key to hybrid inlining regardless of `K`. It is
-  the disposition for a signature whose bodies must stay reachable (a sink lives inside them)
-  but whose target set is too wide or too unrelated for CHA: `close`/`dispose` (§11.3). The
-  only value is `"inline"`; `"cha"` (force CHA above `K`) is not added until someone needs it.
+- `"resolve": "inline"` sends every site of the key to hybrid inlining regardless of `K`,
+  except a site with exactly one CHA target, which stays exact (§4.2). It is the disposition
+  for a signature whose bodies must stay reachable (a sink lives inside them) but whose target
+  set is too wide or too unrelated for CHA: `close`/`dispose` (§11.3). The only value is
+  `"inline"`; `"cha"` (force CHA above `K`) is not added until someone needs it.
 - `in` (`ProgramScope`) applies unchanged.
 - Add `"dispatch"` to the `find` enum in `models/ctadl-model-generator.schema.json:398`, and a
   section to `docs/model-generators.md` that states what a dispatch model hides (§15.1) before
@@ -702,7 +706,8 @@ of the ladder; do it only if §14.3's A/B shows import-time peak mattering.
 
 - `classify`: table-driven over (disposition ∈ {none, model, skip, inline}, dispatch kind,
   target count, super-resolvable) → `SiteAction`, for both orders; `inline` must give `Defer`
-  under `threshold-first` at a target count under `K`.
+  under `threshold-first` at a target count under `K`, `Cha` at exactly one target, and
+  `Defer` at zero.
 - Disposition precedence: two generators on one key, each ordered pair, → the higher one wins
   and both appear in provenance.
 - `super_resolvent`: superclass chain; interface default method; missing class (→ `None`,
@@ -822,7 +827,8 @@ that keeps a sink inside a `close()` body reachable, which is the very reason th
   the same. Edge counts are unchanged, since a deferred site emits no `call` rows either way.
   §14.3's sweep is where the real numbers land.
 - Under R14 a `close()` whose receiver never sees an allocation has no callees. That is the
-  accepted gap, and for streams the allocation is usually local.
+  accepted gap, and for streams the allocation is usually local. A site with exactly one
+  target stays on CHA (§4.2), so the entry never regresses a site that is exact today.
 
 ### 15.4 "One CLI flag" (I-9) vs a separate interface threshold (I-11)
 
