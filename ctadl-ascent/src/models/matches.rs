@@ -16,9 +16,15 @@ This is one structure spanning two phases, and each field is consumed by exactly
   so nothing about them ever enters the fact base.
 - [`ProgramModelMatches::bridges`] -- index time. Phase 2 pairs the two sides and emits the
   `call`/`actual_param`/`assign`/`formal_param` rows.
+- [`ProgramModelMatches::dispatch`] -- index time, and the second field phase *1* reads:
+  codegen classifies every Java call site against it before it emits anything for the site,
+  and phase 2 writes the matched summaries against the synthetic functions phase 1 named.
+- [`ProgramModelMatches::closure_shaped`] -- report time. A note about what hybrid inlining is
+  for; nothing resolves differently for being on it.
 - [`ProgramModelMatches::endpoints`] -- query time. Stage 2
   ([`crate::query_engine::build_query_endpoints`]) resolves and expands them into
-  `QueryEndpoint`s.
+  `QueryEndpoint`s. Phase 1 also *reads* them, without analysing them, to refuse a dispatch
+  model whose CHA targets hold one.
 
 Each phase therefore ignores the other's half, and both say so rather than dropping them in
 silence: `ctadl index` warns that the given files declare source/sink models it ignores, and
@@ -66,6 +72,75 @@ pub struct ModelPort {
     /// Set only for a positional `Argument(n)` port.
     pub index: Option<i16>,
     pub path: facts::Path,
+}
+
+/// A call site's static signature: the `(cls, simple_name, descriptor)` triple a
+/// `CallStyle::JavaCall` carries, which is what a `find: "dispatch"` generator matches.
+pub type DispatchKey = (facts::Str, facts::Str, facts::Str);
+
+/// What a matched `find: "dispatch"` generator says to do with every site of one signature.
+///
+/// Precedence when several generators match one key is `Inline > Model > Skip`: the one that
+/// keeps the most of the program reachable. So a user overrides a shipped skip by adding a
+/// propagation, and a shipped model by adding `resolve: inline`; going the other way needs
+/// `--no-default-models`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Disposition {
+    /// Hybrid inlining regardless of the threshold, unless the key has exactly one target.
+    Inline,
+    /// One synthetic summary at the site, carrying these `(destination, source)` propagations.
+    /// Two generators matching one key union their lists, as two generators matching one
+    /// function do.
+    Model(Vec<(ModelPort, ModelPort)>),
+    /// Empty propagation list: the target set is discarded and nothing flows.
+    Skip,
+}
+
+impl Disposition {
+    /// Higher wins when several generators match one key.
+    fn rank(&self) -> u8 {
+        match self {
+            Disposition::Inline => 2,
+            Disposition::Model(_) => 1,
+            Disposition::Skip => 0,
+        }
+    }
+}
+
+/// One signature a `find: "dispatch"` generator matched.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DispatchModel {
+    pub disposition: Disposition,
+    /// `file:generator-index` of every contributing generator, for diagnostics.
+    pub provenance: Vec<String>,
+}
+
+impl DispatchModel {
+    /// Folds another generator's disposition for the same key in, applying the precedence in
+    /// [`Disposition`]. Two `Model`s union their propagation lists; otherwise the higher-ranked
+    /// disposition wins. Either way both generators stay in the provenance, which is what lets
+    /// the diagnostics name the one that lost.
+    pub fn merge(&mut self, other: DispatchModel) {
+        match (&mut self.disposition, other.disposition) {
+            (Disposition::Model(ours), Disposition::Model(theirs)) => {
+                for p in theirs {
+                    if !ours.contains(&p) {
+                        ours.push(p);
+                    }
+                }
+            }
+            (ours, theirs) => {
+                if theirs.rank() > ours.rank() {
+                    *ours = theirs;
+                }
+            }
+        }
+        for p in other.provenance {
+            if !self.provenance.contains(&p) {
+                self.provenance.push(p);
+            }
+        }
+    }
 }
 
 /// One matched `propagation`: taint arriving at `src` appears at `dst` in `function`.
@@ -236,6 +311,22 @@ pub struct ProgramModelMatches {
     pub skip_analysis: BTreeSet<facts::Str>,
     /// Matched bridge sides, parallel to the scanned specs.
     pub bridges: BridgeMatches,
+    /// Signatures a `find: "dispatch"` generator matched. Index time, and the second field
+    /// phase *1* reads: codegen classifies each Java call site against this map before it
+    /// emits anything for the site.
+    ///
+    /// A `BTreeMap` so iteration order does not depend on hashing: the synthetic functions
+    /// phase 2 interns are named from these keys.
+    pub dispatch: std::collections::BTreeMap<DispatchKey, DispatchModel>,
+    /// Signatures a `model: {"closure_shaped": true}` generator named: arbitrary code behind a
+    /// one-method interface, which is what hybrid inlining is for. Report time only -- nothing
+    /// resolves differently for being on this list, and codegen never reads it.
+    ///
+    /// It exists because the structural single-abstract-method test cannot see an interface the
+    /// import does not declare, which on an app that ships no framework is half of them. A
+    /// framework name is something an obfuscator cannot touch, so the two together cover what
+    /// either alone misses.
+    pub closure_shaped: BTreeSet<DispatchKey>,
 }
 
 impl ProgramModelMatches {
@@ -257,6 +348,16 @@ impl ProgramModelMatches {
         self.skip_analysis.extend(functions);
     }
 
+    /// Folds one matched dispatch model in, merging with anything already matched for the key.
+    pub fn add_dispatch(&mut self, key: DispatchKey, model: DispatchModel) {
+        match self.dispatch.entry(key) {
+            std::collections::btree_map::Entry::Occupied(mut e) => e.get_mut().merge(model),
+            std::collections::btree_map::Entry::Vacant(e) => {
+                e.insert(model);
+            }
+        }
+    }
+
     /// Whether anything was matched at all.
     pub fn is_empty(&self) -> bool {
         self.propagations.is_empty()
@@ -264,6 +365,8 @@ impl ProgramModelMatches {
             && self.access_paths.is_empty()
             && self.skip_analysis.is_empty()
             && self.bridges.is_empty()
+            && self.dispatch.is_empty()
+            && self.closure_shaped.is_empty()
     }
 }
 

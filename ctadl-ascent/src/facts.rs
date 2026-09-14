@@ -5,7 +5,6 @@ use std::fmt::{self, Debug, Display};
 use std::ops::Deref;
 use std::str::FromStr;
 
-use ascent::lattice::Lattice;
 use ctadl_ir::Symbol;
 use derive_builder::Builder;
 use immortal::StringRef;
@@ -251,6 +250,74 @@ impl Path {
         }
         true
     }
+
+    /// Every component-wise split of this path, as `(key, rest)` with `self == key · rest`, so
+    /// that `match_prefix(self, key) == Some(rest)`. Together with [`Path::prefix_keys_wild`]
+    /// this spells out every prefix [`match_prefix`] accepts, as join keys.
+    ///
+    /// `rest` is a tail of this path, so it shares its storage; each `key` is interned anew.
+    pub fn prefix_keys(&self) -> Vec<(Path, Path)> {
+        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        let mut out = Vec::with_capacity(comps.len() + 1);
+        // `rest` is `comps[k..]`, a tail of this path.
+        let mut rest = self.0;
+        for k in 0..=comps.len() {
+            let key = Path::from_accesses(comps[..k].iter().cloned());
+            out.push((key, rest_path(rest)));
+            rest = rest.tail().unwrap_or_default();
+        }
+        out
+    }
+
+    /// The splits of this path at an offset component, as `(key, rest)` where `rest` begins
+    /// with that offset, `[n]`: a prefix `key.[m]` matches for **any** `m != n`, yielding the
+    /// suffix `[n - m] · tail` where `rest = [n] · tail` — the offset arithmetic
+    /// [`match_prefix`] performs on its last component. A rule that joins on the wild key reads
+    /// `n` off `rest` with [`Path::head_offset`] and forms the adjustment itself; the case
+    /// `m == n` is the exact key `key.[n]` of [`Path::prefix_keys`], so a wild match excludes it.
+    pub fn prefix_keys_wild(&self) -> Vec<(Path, Path)> {
+        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        let mut out = Vec::new();
+        // `rest` is `comps[k..]`, a tail of this path.
+        let mut rest = self.0;
+        for k in 0..comps.len() {
+            if matches!(comps[k], mir::PathSegment::Offset(_)) {
+                let key = Path::from_accesses(comps[..k].iter().cloned());
+                out.push((key, rest_path(rest)));
+            }
+            rest = rest.tail().unwrap_or_default();
+        }
+        out
+    }
+
+    /// Splits off a trailing offset component: `key.[m]` gives `(key, m)`. `None` for the empty
+    /// path and for a path whose last component is a symbol.
+    pub fn split_trailing_offset(&self) -> Option<(Path, i64)> {
+        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        match comps.last() {
+            Some(mir::PathSegment::Offset(mir::Offset(m))) => {
+                let m = *m;
+                let key = Path::from_accesses(comps[..comps.len() - 1].iter().cloned());
+                Some((key, m))
+            }
+            _ => None,
+        }
+    }
+
+    /// The value of the first component if it is an offset.
+    #[inline]
+    pub fn head_offset(&self) -> Option<i64> {
+        match self.0.head() {
+            Some(mir::PathSegment::Offset(mir::Offset(n))) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// This path without its first component. The empty path for the empty path.
+    #[inline]
+    pub fn tail(&self) -> Path {
+        Path(self.0.tail().unwrap_or_default())
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord)]
@@ -273,184 +340,6 @@ impl Heap {
 
     pub fn index(&self) -> FormalIndex {
         self.formal_index
-    }
-}
-
-immortal::immortal! {
-    /// A sequence of call sites representing a calling context.
-    #[derive(Serialize, Deserialize)]
-    #[serde(from = "Vec<PackedInsnSiteId>")]
-    pub struct CallString([PackedInsnSiteId])
-}
-
-impl From<Vec<PackedInsnSiteId>> for CallString {
-    fn from(v: Vec<PackedInsnSiteId>) -> Self {
-        Self::intern(&v)
-    }
-}
-
-impl Default for CallString {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CallString {
-    /// Creates an empty call string
-    pub fn new() -> Self {
-        CallString::intern(&[])
-    }
-
-    /// Returns true if the call string is empty
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Returns the number of frames in the call string
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Returns the top frame (most recent call site)
-    pub fn top(&self) -> Option<PackedInsnSiteId> {
-        self.0.last().cloned()
-    }
-
-    /// Pops the top frame, returning the new call string and the popped frame
-    pub fn pop(&self) -> (Self, Option<PackedInsnSiteId>) {
-        if self.0.is_empty() {
-            return (*self, None);
-        }
-        let popped = self.0.last().cloned();
-        let new_slice = &self.0[..self.0.len() - 1];
-        (CallString::intern(new_slice), popped)
-    }
-
-    /// Pushes a new call site onto the call string.
-    /// Returns None if a cycle is detected (i.e., the function is already in the call string).
-    pub fn push(&self, site: PackedInsnSiteId) -> Option<Self> {
-        let site_id = InsnSiteId::unpack_from_slice(&*site).ok()?;
-        // Cycle detection: if the function ID of the call site is already present in the call string, do not push it.
-        for existing_site in self.0.iter() {
-            if let Ok(existing_site_id) = InsnSiteId::unpack_from_slice(&**existing_site)
-                && existing_site_id.func_id == site_id.func_id
-            {
-                return None;
-            }
-        }
-        let mut new_vec = self.0.to_vec();
-        new_vec.push(site);
-        Some(CallString::intern(&new_vec))
-    }
-
-    /// Returns true if the call string contains the given call site
-    pub fn contains(&self, site: &PackedInsnSiteId) -> bool {
-        self.0.contains(site)
-    }
-}
-
-impl Display for CallString {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[")?;
-        for (i, site) in self.0.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}", site)?;
-        }
-        write!(f, "]")
-    }
-}
-
-/// Compares two call strings by *lattice height* for [`SmallestCallString`].
-///
-/// Returns [`Ordering::Greater`] when `a` is the higher (preferred) element — i.e.
-/// when `a` is the "smaller" call string. Smaller means shorter; among equal
-/// lengths the lexicographically smaller string is higher. (`CallString`'s derived
-/// `Ord` is the lexicographic order over its frames, used here for the tie-break.)
-fn call_string_height_cmp(a: &CallString, b: &CallString) -> std::cmp::Ordering {
-    // Shorter `a` => a.len() < b.len() => b.len().cmp(a.len()) == Greater => `a` higher.
-    // Equal length, lex-smaller `a` => a < b => b.cmp(a) == Greater => `a` higher.
-    b.len().cmp(&a.len()).then_with(|| b.cmp(a))
-}
-
-/// A lattice over [`CallString`] that joins toward the *smallest* call string.
-///
-/// Unlike [`crate::lattice::Consistent`] — which sticks to the first value seen for
-/// a key — this lattice always moves toward the smaller call string: shorter is
-/// higher, and among equal lengths the lexicographically smaller is higher. The
-/// empty call string (length 0) is therefore the top element, so a key converges to
-/// the empty / fully-resolved context whenever it is derivable. This guarantees the
-/// `cs.is_empty()` feedback — the bare `assign_like` head beside index_engine rule
-/// 3.2 — is never missed merely because some longer call string happened to be
-/// recorded first.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub enum SmallestCallString {
-    /// No value yet — the lattice bottom and the identity for `join`.
-    #[default]
-    Bottom,
-    /// A call string. Higher elements hold smaller call strings.
-    Value(CallString),
-}
-
-impl SmallestCallString {
-    /// Returns the call string, if any.
-    pub fn value(&self) -> Option<&CallString> {
-        match self {
-            SmallestCallString::Value(cs) => Some(cs),
-            SmallestCallString::Bottom => None,
-        }
-    }
-
-    /// Empty call string is top
-    pub fn top() -> Self {
-        SmallestCallString::Value(CallString::new())
-    }
-}
-
-impl PartialOrd for SmallestCallString {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for SmallestCallString {
-    /// `Bottom` is the least element; among values, the smaller call string is the
-    /// greater (higher) element. This is a total order, consistent with the
-    /// pointer-based `Eq` because interning makes equal slices pointer-equal.
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        use std::cmp::Ordering;
-        match (self, other) {
-            (SmallestCallString::Bottom, SmallestCallString::Bottom) => Ordering::Equal,
-            (SmallestCallString::Bottom, SmallestCallString::Value(_)) => Ordering::Less,
-            (SmallestCallString::Value(_), SmallestCallString::Bottom) => Ordering::Greater,
-            (SmallestCallString::Value(a), SmallestCallString::Value(b)) => {
-                call_string_height_cmp(a, b)
-            }
-        }
-    }
-}
-
-impl Lattice for SmallestCallString {
-    /// Least upper bound: moves UP toward the smaller call string. `Bottom` is the
-    /// identity; among values the smaller call string wins.
-    fn join_mut(&mut self, other: Self) -> bool {
-        if other > *self {
-            *self = other;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Greatest lower bound: moves DOWN toward the larger call string / `Bottom`.
-    fn meet_mut(&mut self, other: Self) -> bool {
-        if other < *self {
-            *self = other;
-            true
-        } else {
-            false
-        }
     }
 }
 
@@ -1914,24 +1803,80 @@ mod tests {
             PathSyntaxErrorKind::InvalidOffset("_elem_".into())
         );
     }
+}
 
+#[inline]
+fn rest_path(seq: tailshare::Seq<mir::PathSegment>) -> Path {
+    Path(seq)
+}
+
+#[cfg(test)]
+mod prefix_key_tests {
+    use super::*;
+
+    fn p(s: &str) -> Path {
+        Path::parse(s).unwrap()
+    }
+
+    /// Every `(ap, prefix)` pair agrees with `match_prefix`: the suffix it returns is exactly
+    /// what the keys of `ap` reconstruct for `prefix`, and nothing else matches.
     #[test]
-    fn test_call_string_interning() {
-        let cs1 = CallString::new();
-        let cs2 = CallString::new();
-        assert_eq!(cs1, cs2);
-        assert!(std::ptr::eq(cs1.0, cs2.0));
-
-        let site = PackedInsnSiteId([1, 2, 3, 4, 5, 6, 7, 8]);
-        // We need a valid site for push to work because of cycle detection and unpacking
-        let cs3 = cs1.push(site).expect("push failed");
-        let cs4 = cs2.push(site).expect("push failed");
-        assert_eq!(cs3, cs4);
-        assert!(std::ptr::eq(cs3.0, cs4.0));
-
-        let (cs5, popped) = cs3.pop();
-        assert_eq!(cs5, cs1);
-        assert!(std::ptr::eq(cs5.0, cs1.0));
-        assert_eq!(popped, Some(site));
+    fn prefix_keys_agree_with_match_prefix() {
+        let paths: Vec<Path> = [
+            "",
+            ".x",
+            ".y",
+            ".x.y",
+            ".x.[4]",
+            ".x.[1]",
+            ".x.[4].y",
+            ".x.[1].y",
+            ".[4]",
+            ".[1]",
+            ".[4].deref",
+            ".[7].deref.[2]",
+            ".x.y.z",
+            ".deref",
+            ".deref.[8]",
+            ".deref.[8].x",
+        ]
+        .iter()
+        .map(|s| p(s))
+        .collect();
+        for ap in &paths {
+            let keys = ap.prefix_keys();
+            let wild_keys = ap.prefix_keys_wild();
+            for prefix in &paths {
+                let expected = match_prefix(ap, prefix).map(Path);
+                // Reconstruct from the keys: an exact key equal to `prefix`, or a wild key whose
+                // `prefix` is `key.[m]`.
+                let mut found: Vec<Path> = Vec::new();
+                for (key, rest) in &keys {
+                    if key == prefix {
+                        found.push(*rest);
+                    }
+                }
+                for (key, rest) in &wild_keys {
+                    if let Some((pk, m)) = prefix.split_trailing_offset() {
+                        let n = rest.head_offset().unwrap();
+                        if pk == *key && m != n {
+                            found.push(Path::from_accesses(
+                                std::iter::once(mir::PathSegment::Offset(mir::Offset(n - m)))
+                                    .chain(rest.tail().iter().cloned()),
+                            ));
+                        }
+                    }
+                }
+                found.sort();
+                found.dedup();
+                assert_eq!(
+                    found,
+                    expected.into_iter().collect::<Vec<_>>(),
+                    "ap={} prefix={}",
+                    ap.to_dot_string(),
+                    prefix.to_dot_string()
+                );
+            }
+        }
     }
 }

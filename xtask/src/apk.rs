@@ -61,7 +61,7 @@ const IMPORT_CONFIG_FILE: &str = "import_config.json";
 const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// The `version` an import config carries today (`IMPORT_FORMAT_VERSION`). Pinned so a bump
 /// that forgets the store's readers has to come through here.
-const IMPORT_FORMAT_VERSION: &str = "7";
+const IMPORT_FORMAT_VERSION: &str = "8";
 
 /// A model file that selects something in any Java app: every `toString` override. The point is
 /// the *checking*, not the model, so the cheapest generator that cannot match nothing is the
@@ -566,6 +566,67 @@ fn check_report_invariants(work: &Path, state: &Path) -> Result<()> {
         "excess edges is {} but total edges minus resolved sites is {}",
         p["worst_signatures"]["excess_edges"],
         cha - resolved_sites
+    );
+
+    // Every Java call site lands in exactly one bucket of the call-resolution policy, pooled
+    // and again per dispatch kind. This is the invariant `ctadl index` asserts on the fact
+    // side; here it is checked on the numbers a user actually reads.
+    let policy = &p["policy"];
+    let buckets = |b: &Value| -> Result<(u64, u64)> {
+        let sum = ["modelled", "skipped", "cha", "inlined"]
+            .iter()
+            .map(|k| n(&b[k]))
+            .sum::<Result<u64>>()?;
+        Ok((sum, n(&b["java_sites"])?))
+    };
+    let (sum, java_sites) = buckets(&policy["buckets"])?;
+    ensure!(
+        sum == java_sites,
+        "the policy buckets sum to {sum} but there are {java_sites} java sites"
+    );
+    ensure!(
+        java_sites == n(&census["virtual"])?,
+        "the policy counts {java_sites} java sites, the census counts {}",
+        census["virtual"]
+    );
+    let mut per_kind = 0u64;
+    for row in policy["by_dispatch"]
+        .as_array()
+        .context("the policy section has no per-dispatch split")?
+    {
+        let (sum, sites) = buckets(row)?;
+        ensure!(
+            sum == sites,
+            "the {} buckets sum to {sum} but that kind has {sites} sites",
+            row["dispatch"]
+        );
+        per_kind += sites;
+    }
+    ensure!(
+        per_kind == java_sites,
+        "the dispatch kinds hold {per_kind} sites, the pooled count says {java_sites}"
+    );
+    // A sub-count lives inside its bucket rather than beside it.
+    ensure!(
+        n(&policy["buckets"]["cha_zero_targets"])? + n(&policy["buckets"]["cha_super_exact"])?
+            <= n(&policy["buckets"]["cha"])?,
+        "the CHA sub-counts exceed the bucket they are inside"
+    );
+    ensure!(
+        n(&policy["buckets"]["inlined_by_model"])? <= n(&policy["buckets"]["inlined"])?,
+        "more sites were inlined by a model than were inlined"
+    );
+    // The policy can only ever emit fewer edges than plain CHA: every rung either keeps the
+    // CHA set, replaces it with one edge, or drops it.
+    ensure!(
+        n(&policy["cha_edges"])? == cha,
+        "the policy section's CHA edge total disagrees with the virtual-target section: {} vs {cha}",
+        policy["cha_edges"]
+    );
+    ensure!(
+        n(&policy["policy_edges"])? <= cha,
+        "the policy emits {} edges where plain CHA emits {cha}",
+        policy["policy_edges"]
     );
 
     // The dispatch kinds partition the virtual sites: every `JavaCall` has exactly one, so

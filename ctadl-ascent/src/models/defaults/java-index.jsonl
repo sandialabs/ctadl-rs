@@ -122,3 +122,88 @@
 {"find":"methods","where":[{"constraint":"signature_match","names":["parse","toString","getQueryParameter","buildUpon","build"],"parents":["Landroid/net/Uri;","Landroid/net/Uri$Builder;"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["getString","getStringSet"],"parents":["Landroid/content/SharedPreferences;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["putString","putStringSet"],"parents":["Landroid/content/SharedPreferences$Editor;"]}],"model":{"propagation":[{"input":"Argument(2)","output":"Argument(0)"}]}}
+
+// ============================================================================================
+// DISPATCH MODELS (`find: "dispatch"`). A model here attaches to a CALL SITE's static
+// signature, not to a callee, and it REPLACES the site's target set: one summary row instead of
+// every implementation CHA can reach. That is what makes it worth having -- `toString` alone is
+// about a sixth of a median app's excess call-graph edges -- and it is also its whole risk,
+// because the callee bodies leave the analysis along with the edges.
+//
+// So the list is short and every entry is a CONTRACT: a method whose behaviour is fixed by the
+// interface it implements, not by which implementation runs. Anything whose implementations are
+// unrelated fragments of the program -- `FunctionN.invoke`, `Runnable.run`, `Provider.get`,
+// generated serializers -- is deliberately absent. Those exceed the CHA threshold and fall to
+// hybrid inlining by themselves, which is what recovers the receiver's identity.
+//
+// A model is refused for a signature whose targets hold a matched source or sink, and the site
+// takes CHA instead; `ctadl index` says so. Pass the same --models to `index` and `query`.
+//
+// THE PORTS mean what they mean on a `find: methods` propagation: the receiver is Argument(0),
+// the nth argument is Argument(n), the result is Return. Most entries below are the `find:
+// methods` entry above with `find` changed.
+//
+// The `Object` models are faithful, not merely cheap. Over 204 named-field writes across all
+// four contract methods in two apps, 181 went into an object reached from the receiver's own
+// field, 13 into an object allocated in the body, 10 unattributed, and none into an argument or
+// a static. See /Volumes/Shampoo/ctadl-sweep/sigstudy/purity.py.
+// ---- the Object contract ----
+{"find":"dispatch","where":[{"constraint":"signature_match","name":"toString"},{"constraint":"signature","pattern":"^\\(\\)Ljava/lang/String;$"}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+// hashCode and equals are models, not skips: the primitive is derived from the receiver's
+// CONTENTS, and a configuration that follows an integer is entitled to.
+{"find":"dispatch","where":[{"constraint":"signature_match","name":"hashCode"},{"constraint":"signature","pattern":"^\\(\\)I$"}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","name":"equals"},{"constraint":"signature","pattern":"^\\(Ljava/lang/Object;\\)Z$"}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","name":"clone"},{"constraint":"signature","pattern":"^\\(\\)Ljava/lang/Object;$"}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+// ---- the container contract, element-level so reads and writes compose ----
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["next"],"parents":["Ljava/util/Iterator;","Ljava/util/ListIterator;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return"}]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["iterator","listIterator"],"parents":["Ljava/lang/Iterable;","Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/SortedSet;","Ljava/util/AbstractCollection;","Ljava/util/AbstractList;","Ljava/util/AbstractSet;","Ljava/util/ArrayList;","Ljava/util/LinkedList;","Ljava/util/HashSet;","Ljava/util/TreeSet;","Ljava/util/Vector;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return.\\[]"}]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["get","getOrDefault","remove"],"parents":["Ljava/util/Map;","Ljava/util/SortedMap;","Ljava/util/NavigableMap;","Ljava/util/AbstractMap;","Ljava/util/HashMap;","Ljava/util/LinkedHashMap;","Ljava/util/TreeMap;","Ljava/util/Hashtable;","Ljava/util/EnumMap;","Ljava/util/WeakHashMap;","Ljava/util/IdentityHashMap;","Ljava/util/concurrent/ConcurrentHashMap;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return"}]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["put","putIfAbsent"],"parents":["Ljava/util/Map;","Ljava/util/SortedMap;","Ljava/util/NavigableMap;","Ljava/util/AbstractMap;","Ljava/util/HashMap;","Ljava/util/LinkedHashMap;","Ljava/util/TreeMap;","Ljava/util/Hashtable;","Ljava/util/EnumMap;","Ljava/util/WeakHashMap;","Ljava/util/IdentityHashMap;","Ljava/util/concurrent/ConcurrentHashMap;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0).\\[]"},{"input":"Argument(2)","output":"Argument(0).\\[]"}]}}
+// Views share the map's elements at the same level, so a bare port is exactly right.
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["keySet","values","entrySet"],"parents":["Ljava/util/Map;","Ljava/util/SortedMap;","Ljava/util/NavigableMap;","Ljava/util/AbstractMap;","Ljava/util/HashMap;","Ljava/util/LinkedHashMap;","Ljava/util/TreeMap;","Ljava/util/Hashtable;","Ljava/util/EnumMap;","Ljava/util/WeakHashMap;","Ljava/util/IdentityHashMap;","Ljava/util/concurrent/ConcurrentHashMap;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["getKey","getValue"],"parents":["Ljava/util/Map$Entry;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["get","peek","poll","pop","remove","getFirst","getLast","element"],"parents":["Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/SortedSet;","Ljava/util/Queue;","Ljava/util/Deque;","Ljava/util/AbstractCollection;","Ljava/util/AbstractList;","Ljava/util/AbstractSet;","Ljava/util/AbstractSequentialList;","Ljava/util/ArrayList;","Ljava/util/LinkedList;","Ljava/util/Vector;","Ljava/util/Stack;","Ljava/util/HashSet;","Ljava/util/TreeSet;","Ljava/util/ArrayDeque;","Ljava/util/concurrent/CopyOnWriteArrayList;","Ljava/util/concurrent/ConcurrentLinkedQueue;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return"}]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["add","addAll","push","offer","addFirst","addLast","set"],"parents":["Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/SortedSet;","Ljava/util/Queue;","Ljava/util/Deque;","Ljava/util/AbstractCollection;","Ljava/util/AbstractList;","Ljava/util/AbstractSet;","Ljava/util/AbstractSequentialList;","Ljava/util/ArrayList;","Ljava/util/LinkedList;","Ljava/util/Vector;","Ljava/util/Stack;","Ljava/util/HashSet;","Ljava/util/TreeSet;","Ljava/util/ArrayDeque;","Ljava/util/concurrent/CopyOnWriteArrayList;","Ljava/util/concurrent/ConcurrentLinkedQueue;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0).\\[]"},{"input":"Argument(2)","output":"Argument(0).\\[]"}]}}
+// ---- discards: an empty propagation list means "this call moves nothing" ----
+// The one lever here that can silently lose a finding, so it stays the shortest list and every
+// entry is defensible alone: the only output is a primitive derived from the receiver's SHAPE.
+// A void return is NOT evidence that nothing happens (`Runnable.run()V`,
+// `Activity.onCreate(Bundle)V`), and primitives-in/primitive-out is a fifth of the excess and a
+// third of the sites -- far too big to take wholesale. Hence keying on the contract, by name
+// and descriptor and declaring type, rather than on the descriptor alone.
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["hasNext","isEmpty"],"parents":["Ljava/util/Iterator;","Ljava/util/ListIterator;","Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/SortedSet;","Ljava/util/Queue;","Ljava/util/Deque;","Ljava/util/Map;","Ljava/util/SortedMap;","Ljava/util/AbstractCollection;","Ljava/util/AbstractList;","Ljava/util/AbstractSet;","Ljava/util/AbstractMap;","Ljava/util/AbstractSequentialList;"]},{"constraint":"signature","pattern":"^\\(\\)Z$"}],"model":{"propagation":[]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["size"],"parents":["Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/SortedSet;","Ljava/util/Queue;","Ljava/util/Deque;","Ljava/util/Map;","Ljava/util/SortedMap;","Ljava/util/AbstractCollection;","Ljava/util/AbstractList;","Ljava/util/AbstractSet;","Ljava/util/AbstractMap;","Ljava/util/AbstractSequentialList;"]},{"constraint":"signature","pattern":"^\\(\\)I$"}],"model":{"propagation":[]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["contains","containsKey","containsValue"],"parents":["Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/SortedSet;","Ljava/util/Queue;","Ljava/util/Deque;","Ljava/util/Map;","Ljava/util/SortedMap;","Ljava/util/AbstractCollection;","Ljava/util/AbstractList;","Ljava/util/AbstractSet;","Ljava/util/AbstractMap;","Ljava/util/AbstractSequentialList;"]},{"constraint":"signature","pattern":"^\\(Ljava/lang/Object;\\)Z$"}],"model":{"propagation":[]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["containsAll"],"parents":["Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/SortedSet;","Ljava/util/Queue;","Ljava/util/Deque;","Ljava/util/AbstractCollection;","Ljava/util/AbstractList;","Ljava/util/AbstractSet;","Ljava/util/AbstractSequentialList;"]},{"constraint":"signature","pattern":"^\\(Ljava/util/Collection;\\)Z$"}],"model":{"propagation":[]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["indexOf","lastIndexOf"],"parents":["Ljava/util/List;","Ljava/util/AbstractList;","Ljava/util/AbstractSequentialList;"]},{"constraint":"signature","pattern":"^\\(Ljava/lang/Object;\\)I$"}],"model":{"propagation":[]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["compareTo"],"parents":["Ljava/lang/Comparable;"]},{"constraint":"signature","pattern":"^\\(Ljava/lang/Object;\\)I$"}],"model":{"propagation":[]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["compare"],"parents":["Ljava/util/Comparator;"]},{"constraint":"signature","pattern":"^\\(Ljava/lang/Object;Ljava/lang/Object;\\)I$"}],"model":{"propagation":[]}}
+// ---- resource release: hybrid inlining, not a model ----
+// A `close()` body is where buffered data is finally handed to a file or a socket, which is
+// where a sink model lives -- and the source/sink guard cannot see a sink reached THROUGH a
+// target. A model of any shape here would keep taint out of that body. Hybrid inlining keeps
+// the body reachable and resolves the receiver precisely when its allocation is visible, which
+// for a stream it usually is. Not plain CHA either: about a fifth of an app's `close` overrides
+// write a named field, and with up to 176 targets these sites would exceed the threshold and
+// defer anyway; forcing it makes the disposition the same at every site of the signature. A
+// site with exactly one target still takes CHA, so this never makes an exact site worse.
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["close","dispose","cancel","flush","release","recycle","shutdown"],"parents":["Ljava/io/Closeable;","Ljava/lang/AutoCloseable;","Ljava/io/InputStream;","Ljava/io/OutputStream;","Ljava/io/Reader;","Ljava/io/Writer;","Ljava/util/concurrent/Future;","Lio/reactivex/disposables/Disposable;","Lio/reactivex/rxjava3/disposables/Disposable;","Landroid/database/Cursor;","Lokio/Source;","Lokio/Sink;","Lokio/BufferedSource;","Lokio/BufferedSink;"]}],"model":{"resolve":"inline"}}
+// ---- closure-shaped signatures: a note for `ctadl report`, not a resolution rule ----
+// Names what rung 3 is FOR, so the report can say which closure-shaped signatures no model
+// covers -- the per-app profiling a fixed list leaves benefit on the table for. These are
+// deliberately NOT modelled: their implementations are unrelated fragments of the program, the
+// receiver's identity is exactly what a context-sensitive technique recovers, and they exceed
+// the CHA threshold and fall to hybrid inlining by themselves. That is the line the design is
+// drawn on. They get no `resolve: inline` entry either: on real apps it would change nothing,
+// and on a small benchmark, where a `Function1.invoke` may have three targets, it would defer
+// sites CHA handles exactly.
+//
+// The structural single-abstract-method test finds the rest, including obfuscated ones, but it
+// cannot see an interface the import does not declare. A framework name an obfuscator cannot
+// touch is what covers that half.
+{"find":"dispatch","where":[{"constraint":"signature_match","parents":["Ljava/lang/Runnable;","Ljava/util/concurrent/Callable;","Ljavax/inject/Provider;","Ldagger/internal/Provider;","Ldagger/internal/Factory;","Ldagger/Lazy;","Landroid/os/Parcelable$Creator;","Lorg/reactivestreams/Subscriber;","Lkotlinx/coroutines/flow/FlowCollector;"]}],"model":{"closure_shaped":true}}
+{"find":"dispatch","where":[{"constraint":"parent","inner":{"constraint":"name","pattern":"^Lkotlin/jvm/functions/Function[0-9]+;$"}}],"model":{"closure_shaped":true}}
+{"find":"dispatch","where":[{"constraint":"parent","inner":{"constraint":"name","pattern":"^Ljava/util/function/"}}],"model":{"closure_shaped":true}}
+{"find":"dispatch","where":[{"constraint":"parent","inner":{"constraint":"name","pattern":"^Lio/reactivex/(rxjava3/core/)?(functions/|Observer|SingleObserver|CompletableObserver|MaybeObserver)"}}],"model":{"closure_shaped":true}}
+// Kotlin's continuation pair: a suspend lambda's body and the factory that makes one.
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["invokeSuspend","create"]},{"constraint":"parent","inner":{"constraint":"name","pattern":"^Lkotlin/coroutines/"}}],"model":{"closure_shaped":true}}

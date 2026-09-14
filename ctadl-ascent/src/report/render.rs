@@ -511,6 +511,147 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
         }
     }
 
+    if let Some(p) = &r.policy {
+        writeln!(
+            w,
+            "\n-- call-resolution policy (simulated) ----------------------"
+        )?;
+        writeln!(
+            w,
+            "  threshold {} ({} for interfaces), {}",
+            p.cha_threshold, p.cha_threshold_interface, p.order
+        )?;
+        let b = &p.buckets;
+        writeln!(w, "  java call sites           {:>12}", b.java_sites)?;
+        writeln!(
+            w,
+            "    modelled                {:>12}   {}",
+            b.modelled,
+            pct(b.modelled, b.java_sites)
+        )?;
+        writeln!(
+            w,
+            "    skipped                 {:>12}   {}",
+            b.skipped,
+            pct(b.skipped, b.java_sites)
+        )?;
+        writeln!(
+            w,
+            "    CHA                     {:>12}   {}   ({} with no target, {} exact super)",
+            b.cha,
+            pct(b.cha, b.java_sites),
+            b.cha_zero_targets,
+            b.cha_super_exact
+        )?;
+        writeln!(
+            w,
+            "    inlined                 {:>12}   {}   ({} by model)",
+            b.inlined,
+            pct(b.inlined, b.java_sites),
+            b.inlined_by_model
+        )?;
+        writeln!(w, "  call edges, plain CHA     {:>12}", p.cha_edges)?;
+        writeln!(
+            w,
+            "  call edges, this policy   {:>12}   {:.1}x smaller",
+            p.policy_edges,
+            ratio(p.cha_edges, p.policy_edges.max(1))
+        )?;
+        for d in &p.by_dispatch {
+            if d.buckets.java_sites == 0 {
+                continue;
+            }
+            writeln!(
+                w,
+                "  {:<10} {:>12} sites: {} modelled, {} skipped, {} CHA, {} inlined",
+                d.dispatch,
+                d.buckets.java_sites,
+                d.buckets.modelled,
+                d.buckets.skipped,
+                d.buckets.cha,
+                d.buckets.inlined
+            )?;
+        }
+        if !p.top_modelled.is_empty() {
+            writeln!(w, "  Covered by a dispatch model, by excess removed:")?;
+            for row in &p.top_modelled {
+                writeln!(
+                    w,
+                    "    {:>7} excess  {:<5}  {}  [{}]",
+                    row.signature.excess,
+                    row.disposition,
+                    signature(
+                        &row.signature.class,
+                        &row.signature.name,
+                        &row.signature.descriptor
+                    ),
+                    row.provenance.join(", ")
+                )?;
+            }
+        }
+        if !p.top_inlined.is_empty() {
+            writeln!(
+                w,
+                "  Left to hybrid inlining, by excess. These are what a dispatch model would"
+            )?;
+            writeln!(
+                w,
+                "  cover; write one and re-run this report, no re-import needed:"
+            )?;
+            for row in &p.top_inlined {
+                writeln!(
+                    w,
+                    "    {:>7} excess  {:<9}  {}{}",
+                    row.signature.excess,
+                    row.reason,
+                    signature(
+                        &row.signature.class,
+                        &row.signature.name,
+                        &row.signature.descriptor
+                    ),
+                    if row.provenance.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  [{}]", row.provenance.join(", "))
+                    }
+                )?;
+            }
+        }
+        if !p.unmodelled_closures.is_empty() {
+            writeln!(
+                w,
+                "  Closure-shaped and named by no model. A model here is the wrong tool -- these"
+            )?;
+            writeln!(
+                w,
+                "  are what hybrid inlining is for -- but they say where the residue is:"
+            )?;
+            signature_rows(w, &p.unmodelled_closures)?;
+        }
+        if !p.refused.is_empty() {
+            writeln!(
+                w,
+                "  Dispatch models refused: a matched source or sink is in the target set, so"
+            )?;
+            writeln!(
+                w,
+                "  those bodies stay in the analysis and the sites take CHA:"
+            )?;
+            for row in &p.refused {
+                writeln!(
+                    w,
+                    "    {}  <- {}",
+                    signature(
+                        &row.signature.class,
+                        &row.signature.name,
+                        &row.signature.descriptor
+                    ),
+                    row.endpoint
+                )?;
+            }
+        }
+    }
+
     if let Some(f) = &r.fan_in {
         writeln!(
             w,

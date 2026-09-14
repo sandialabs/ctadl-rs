@@ -95,6 +95,9 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     /// Per generator, how many `model.access_paths` entries parsed and were registered.
     /// Recorded only when [`Self::capture`] is set.
     pub access_path_stats: BTreeMap<usize, usize>,
+    /// What names the model file in diagnostics. Half of the `file:generator-index` provenance
+    /// a matched dispatch model records.
+    source: String,
 }
 
 /// What one generator's `where` selected in one program.
@@ -325,6 +328,9 @@ fn variable_regex() -> &'static Regex {
 pub enum FindMethod {
     Methods,
     Callsites,
+    /// Selects call sites by their own static signature rather than by the callee they resolve
+    /// to. See `docs/model-generators.md`.
+    Dispatch,
 }
 
 /// What one [`ModelGeneratorIngest::emit_endpoint_rows`] call did, folded into
@@ -355,6 +361,17 @@ fn set_slot<'p>(v: &mut Vec<UniverseSet<&'p str>>, n: usize, value: UniverseSet<
 enum CurrentSet {
     Methods,
     InFunction,
+}
+
+/// Which of the program's universes a set-narrowing constraint looks its keys up in.
+///
+/// One evaluator, two tables: `find: dispatch` narrows the same working set as `find: methods`,
+/// but its names, parents, signatures and ids come from the call sites' signature keys instead
+/// of from the VMT's implementations.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Universe {
+    Methods,
+    Dispatch,
 }
 
 /// The value a predicate-style constraint (`number_parameters`, `parent`,
@@ -402,7 +419,13 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             in_function_matched: BTreeMap::new(),
             propagation_stats: BTreeMap::new(),
             access_path_stats: BTreeMap::new(),
+            source: "<models>".to_string(),
         }
+    }
+
+    /// Names the model file being loaded, for the provenance a dispatch model records.
+    pub fn set_source(&mut self, source: impl Into<String>) {
+        self.source = source.into();
     }
 
     /// Records per-generator match sets and model-kind counters, retaining at most `names` of
@@ -538,13 +561,118 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         }
     }
 
+    /// Which universe generator `n`'s set-narrowing constraints read.
+    #[inline]
+    fn universe_kind(&self, n: usize) -> Universe {
+        match self.find_method.get(&n) {
+            Some(FindMethod::Dispatch) => Universe::Dispatch,
+            _ => Universe::Methods,
+        }
+    }
+
+    /// Whether generator `n` selects call-site signatures rather than functions.
+    #[inline]
+    fn is_dispatch(&self, n: usize) -> bool {
+        self.universe_kind(n) == Universe::Dispatch
+    }
+
+    /// A dispatch generator whose program has no dispatch universe matches nothing rather
+    /// than everything: the caller decided not to collect the call sites, and leaving the
+    /// working set at `All` would model every signature in the program.
+    #[inline]
+    fn dispatch_universe(&self, n: usize) -> Option<&'p super::match_index::DispatchUniverse<'p>> {
+        debug_assert!(self.is_dispatch(n));
+        self.index.dispatch.as_ref()
+    }
+
+    /// The name -> ids table generator `n`'s constraints look up in.
+    #[inline]
+    fn names_table(&self, n: usize) -> Option<&'p HashMap<&'p str, Vec<&'p str>>> {
+        match self.universe_kind(n) {
+            Universe::Methods => Some(&self.index.program_method_names),
+            Universe::Dispatch => self.dispatch_universe(n).map(|d| &d.by_name),
+        }
+    }
+
+    #[inline]
+    fn parents_table(&self, n: usize) -> Option<&'p HashMap<&'p str, Vec<&'p str>>> {
+        match self.universe_kind(n) {
+            Universe::Methods => Some(&self.index.program_method_parents),
+            Universe::Dispatch => self.dispatch_universe(n).map(|d| &d.by_parent),
+        }
+    }
+
+    #[inline]
+    fn signatures_table(&self, n: usize) -> Option<&'p HashMap<&'p str, Vec<&'p str>>> {
+        match self.universe_kind(n) {
+            Universe::Methods => Some(&self.index.program_method_signatures),
+            Universe::Dispatch => self.dispatch_universe(n).map(|d| &d.by_signature),
+        }
+    }
+
+    #[inline]
+    fn qualified_ids_table(&self, n: usize) -> Option<&'p HashMap<&'p str, Vec<&'p str>>> {
+        match self.universe_kind(n) {
+            Universe::Methods => Some(&self.index.program_method_qualified_ids),
+            Universe::Dispatch => self.dispatch_universe(n).map(|d| &d.by_qualified_id),
+        }
+    }
+
+    /// The full set generator `n` complements against.
+    #[inline]
+    fn universe_of(&self, n: usize) -> UniverseSet<&'p str> {
+        match self.universe_kind(n) {
+            Universe::Methods => self.index.universe.clone(),
+            Universe::Dispatch => self
+                .dispatch_universe(n)
+                .map(|d| d.universe.clone())
+                .unwrap_or_else(UniverseSet::empty),
+        }
+    }
+
+    /// Every `(class, member)` pair generator `n`'s `parent` and `extends` constraints range
+    /// over: `(declaring class, function id)` for a method generator, `(call-site class, key
+    /// id)` for a dispatch one.
+    fn class_entries(&self, n: usize) -> Option<Vec<(&'p str, &'p str)>> {
+        match self.universe_kind(n) {
+            Universe::Methods => match self.index.vmt {
+                VirtualMethodTable::Java { methods, .. } => Some(
+                    methods
+                        .iter()
+                        .map(|(cls, _, _, fid)| (cls.as_ref(), fid.as_ref()))
+                        .collect(),
+                ),
+                _ => None,
+            },
+            Universe::Dispatch => Some(
+                self.dispatch_universe(n)
+                    .into_iter()
+                    .flat_map(|d| d.parts.iter().map(|(id, (cls, _, _))| (*cls, *id)))
+                    .collect(),
+            ),
+        }
+    }
+
+    /// What generator `n`'s `where` finally selected, as the ids its model attaches to:
+    /// function fq-names for `find: methods`, signature key ids for `find: dispatch`.
+    fn matched_ids(&self, n: usize) -> Vec<String> {
+        match self.universe_kind(n) {
+            Universe::Methods => matched_functions(&self.methods[n], self.index.vmt),
+            Universe::Dispatch => match (&self.methods[n], self.dispatch_universe(n)) {
+                (UniverseSet::Explicit(set), _) => set.iter().map(|s| (*s).to_owned()).collect(),
+                (UniverseSet::All, Some(d)) => d.parts.keys().map(|id| (*id).to_owned()).collect(),
+                (UniverseSet::All, None) => Vec::new(),
+            },
+        }
+    }
+
     /// Replace the active target set with the materialized universe if it is
     /// still `All`. Used by `not` so `universe \ inner` is well-defined. Respects
     /// the scratch stack, so a `not` nested inside an `any_of` materializes the
     /// any_of's scratch rather than the top-level method set.
     #[inline]
     fn materialize_target(&mut self, n: usize) {
-        let universe = self.index.universe.clone();
+        let universe = self.universe_of(n);
         let target = self.target_set_mut(n);
         if matches!(target, UniverseSet::All) {
             *target = universe;
@@ -930,6 +1058,221 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         }
     }
 
+    /// The whole `model` object of a `find: "dispatch"` generator.
+    ///
+    /// Handled in one place rather than through the per-kind visitors because the two shapes
+    /// it accepts do not decompose the way the others do: an **empty** `propagation` list is
+    /// the spelling of "discard this call's targets", and a per-entry visitor never runs for
+    /// an empty array.
+    ///
+    /// Exactly one of `propagation`, `resolve` and `closure_shaped` is required. None of them
+    /// being present is an error, so "forgot the model" and "meant to discard" are different
+    /// documents. Every other `model` key is refused: an endpoint and a `modes` directive live
+    /// on a function, and a dispatch generator has none.
+    fn visit_dispatch_model(&mut self, n: usize, value: &serde_json::Value) {
+        // Counted like a propagation: what a query-time load reports is that the *file*
+        // declared an index-time construct.
+        self.index_time_models.propagations += 1;
+        let obj = match value.as_object() {
+            Some(obj) => obj,
+            None => {
+                self.add_json_error(crate::error::JsonModelError::MissingField {
+                    index: n,
+                    field_name: "model".to_string(),
+                });
+                return;
+            }
+        };
+        let mut ok = true;
+        for key in obj.keys() {
+            if key == "propagation" || key == "resolve" || key == "closure_shaped" {
+                continue;
+            }
+            self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                index: n,
+                field_name: key.clone(),
+                message: "not supported with find: dispatch; a dispatch model carries exactly \
+                          one of 'propagation', 'resolve' and 'closure_shaped'"
+                    .to_string(),
+            });
+            ok = false;
+        }
+        let has_propagation = obj.contains_key("propagation");
+        let has_resolve = obj.contains_key("resolve");
+        let has_closure = obj.contains_key("closure_shaped");
+        if usize::from(has_propagation) + usize::from(has_resolve) + usize::from(has_closure) != 1 {
+            self.add_json_error(crate::error::JsonModelError::MissingField {
+                index: n,
+                field_name: "propagation' / 'resolve' / 'closure_shaped".to_string(),
+            });
+            ok = false;
+        }
+        if !ok {
+            return;
+        }
+        if has_closure {
+            // A marker, not a model: it names what rung 3 is *for* so the report can say which
+            // closure-shaped signatures no model covers. Nothing resolves differently.
+            match obj["closure_shaped"].as_bool() {
+                Some(true) => {}
+                Some(false) => return,
+                None => {
+                    self.add_json_error(crate::error::JsonModelError::FieldNotString {
+                        index: n,
+                        field_name: "closure_shaped".to_string(),
+                    });
+                    return;
+                }
+            }
+            for id in self.matched_ids(n) {
+                if let Some((cls, name, desc)) = self.index.dispatch_parts(&id) {
+                    self.out.closure_shaped.insert((
+                        facts::Str::from(cls),
+                        facts::Str::from(name),
+                        facts::Str::from(desc),
+                    ));
+                }
+            }
+            return;
+        }
+        let disposition = if has_resolve {
+            match obj["resolve"].as_str() {
+                Some("inline") => matches::Disposition::Inline,
+                Some(other) => {
+                    self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                        index: n,
+                        field_name: "resolve".to_string(),
+                        message: format!("unknown value '{other}'; the defined value is 'inline'"),
+                    });
+                    return;
+                }
+                None => {
+                    self.add_json_error(crate::error::JsonModelError::FieldNotString {
+                        index: n,
+                        field_name: "resolve".to_string(),
+                    });
+                    return;
+                }
+            }
+        } else {
+            let Some(items) = obj["propagation"].as_array() else {
+                self.report_not_array(n, "propagation");
+                return;
+            };
+            let mut ports = Vec::with_capacity(items.len());
+            for item in items {
+                match self.parse_dispatch_propagation(n, item) {
+                    Some(pair) => ports.push(pair),
+                    None => return,
+                }
+            }
+            if ports.is_empty() {
+                matches::Disposition::Skip
+            } else {
+                matches::Disposition::Model(ports)
+            }
+        };
+        let provenance = vec![format!("{}:{n}", self.source)];
+        let mut rows = 0usize;
+        for id in self.matched_ids(n) {
+            let Some((cls, name, desc)) = self.index.dispatch_parts(&id) else {
+                continue;
+            };
+            let key = (
+                facts::Str::from(cls),
+                facts::Str::from(name),
+                facts::Str::from(desc),
+            );
+            self.out.add_dispatch(
+                key,
+                matches::DispatchModel {
+                    disposition: disposition.clone(),
+                    provenance: provenance.clone(),
+                },
+            );
+            rows += 1;
+        }
+        if self.capture.is_some() {
+            let stats = self.propagation_stats.entry(n).or_default();
+            stats.ports_declared += 1;
+            stats.rows += rows;
+        }
+    }
+
+    /// One entry of a dispatch model's `propagation` list. `None` after reporting an error.
+    ///
+    /// The ports mean what they mean on a `find: methods` propagation: the receiver is
+    /// `Argument(0)`, the nth argument `Argument(n)`, the result `Return`. That is what lets a
+    /// shipped default be a copy of the `find: methods` entry with `find` changed.
+    fn parse_dispatch_propagation(
+        &mut self,
+        n: usize,
+        value: &serde_json::Value,
+    ) -> Option<(matches::ModelPort, matches::ModelPort)> {
+        let read = |ingest: &mut Self, field: &str| -> Option<String> {
+            match value.get(field) {
+                Some(v) => match v.as_str() {
+                    Some(s) => Some(s.to_string()),
+                    None => {
+                        ingest.add_json_error(crate::error::JsonModelError::FieldNotString {
+                            index: n,
+                            field_name: field.to_string(),
+                        });
+                        None
+                    }
+                },
+                None => {
+                    ingest.add_json_error(crate::error::JsonModelError::MissingField {
+                        index: n,
+                        field_name: field.to_string(),
+                    });
+                    None
+                }
+            }
+        };
+        let input_str = read(self, "input")?;
+        let output_str = read(self, "output")?;
+        let input = match parse_port(&input_str, n) {
+            Ok(p) => p,
+            Err(e) => {
+                self.add_json_error(e);
+                return None;
+            }
+        };
+        let output = match parse_port(&output_str, n) {
+            Ok(p) => p,
+            Err(e) => {
+                self.add_json_error(e);
+                return None;
+            }
+        };
+        // `Variable(name)` selects a named local, which a summary has no column for and a call
+        // site has no access to.
+        for (port, field) in [(&input, "input"), (&output, "output")] {
+            if port.tag == FormalIndexTypeTag::Local {
+                self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                    index: n,
+                    field_name: field.to_string(),
+                    message: "'Variable(...)' ports are only valid on source/sink ports"
+                        .to_string(),
+                });
+                return None;
+            }
+        }
+        Some((
+            matches::ModelPort {
+                tag: output.tag,
+                index: output.index,
+                path: facts::Path::from_accesses(output.ap.iter().cloned()),
+            },
+            matches::ModelPort {
+                tag: input.tag,
+                index: input.index,
+                path: facts::Path::from_accesses(input.ap.iter().cloned()),
+            },
+        ))
+    }
+
     /// Takes the errors collected so far, leaving the ingest usable for the next batch.
     pub fn drain_errors(&mut self) -> Vec<crate::error::JsonModelError> {
         std::mem::take(&mut self.errors)
@@ -1009,6 +1352,10 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
 
     /// Validates the `model` object's keys, then visits what it carries.
     fn visit_model(&mut self, n: usize, value: &serde_json::Value) {
+        if self.is_dispatch(n) {
+            self.visit_dispatch_model(n, value);
+            return;
+        }
         // A `model` with no keys at all is legal (a bridge generator's model carries only
         // `bridge`), but an unrecognized key is not: `propagations` for `propagation` would
         // otherwise produce a generator that matches and models nothing.
@@ -1146,6 +1493,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             Some("callsites") => {
                 self.find_method.insert(n, FindMethod::Callsites);
             }
+            Some("dispatch") => {
+                self.find_method.insert(n, FindMethod::Dispatch);
+            }
             Some(other) => {
                 self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
                     index: n,
@@ -1196,8 +1546,11 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         }
         if matches!(
             self.find_method.get(&n),
-            Some(FindMethod::Methods | FindMethod::Callsites)
+            Some(FindMethod::Methods | FindMethod::Callsites | FindMethod::Dispatch)
         ) {
+            let names_table = self.names_table(n);
+            let parents_table = self.parents_table(n);
+            let qualified_ids_table = self.qualified_ids_table(n);
             let has_names = value.get("names").or(value.get("name")).is_some();
             if has_names {
                 // This horrific expression computes the set of names mentioned in the constraint
@@ -1223,10 +1576,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         .chain(name_iter)
                         .filter_map(|n| {
                             n.as_str().and_then(|name| {
-                                self.index
-                                    .program_method_names
-                                    .get(name)
-                                    .map(|names| names.iter().copied())
+                                names_table?.get(name).map(|names| names.iter().copied())
                             })
                         })
                         .flatten()
@@ -1262,8 +1612,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         .chain(parent_iter)
                         .filter_map(|p| {
                             p.as_str().and_then(|parent| {
-                                self.index
-                                    .program_method_parents
+                                parents_table?
                                     .get(parent)
                                     .map(|parents| parents.iter().copied())
                             })
@@ -1311,8 +1660,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         .chain(id_iter)
                         .filter_map(|v| {
                             v.as_str().and_then(|id| {
-                                self.index
-                                    .program_method_qualified_ids
+                                qualified_ids_table?
                                     .get(id)
                                     .map(|fids| fids.iter().copied())
                             })
@@ -1342,7 +1690,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         }
         if matches!(
             self.find_method.get(&n),
-            Some(FindMethod::Methods | FindMethod::Callsites)
+            Some(FindMethod::Methods | FindMethod::Callsites | FindMethod::Dispatch)
         ) && let Some(pattern) = value.get("pattern")
         {
             let pattern_str = match pattern.as_str() {
@@ -1369,9 +1717,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             };
 
             let matches: UniverseSet<&'p str> = self
-                .index
-                .program_method_signatures
-                .iter()
+                .signatures_table(n)
+                .into_iter()
+                .flatten()
                 .filter_map(|(sig, fids)| if rx.is_match(sig) { Some(fids) } else { None })
                 .flatten()
                 .copied()
@@ -1405,9 +1753,10 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                 });
                 self.target_set_mut(n).intersect_with(UniverseSet::empty());
             }
-            // `find` itself was missing or unrecognized; `visit_find` already reported it,
-            // so don't pile a second, more confusing error on top.
-            None => {
+            // `find` itself was missing or unrecognized, or a dispatch generator already
+            // reported this constraint as rejected; `visit_find` and `visit_where_constraint`
+            // report those, so don't pile a second, more confusing error on top.
+            _ => {
                 self.target_set_mut(n).intersect_with(UniverseSet::empty());
             }
         }
@@ -1424,6 +1773,22 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// with the analyzer, and silent skips previously masked real bugs (see docs).
     fn visit_where_constraint(&mut self, n: usize, value: &serde_json::Value) {
         match value["constraint"].as_str() {
+            // A dispatch generator selects signature keys, and a key is not a function: there
+            // is no body, no parameter list and no caller to test. `in_function` is refused for
+            // a different reason -- the policy is per signature, deliberately not per site.
+            Some(rejected @ ("in_function" | "has_code" | "number_parameters" | "uses_field"))
+                if self.is_dispatch(n) =>
+            {
+                self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                    index: n,
+                    field_name: rejected.to_string(),
+                    message: format!(
+                        "'{rejected}' is not supported with find: dispatch; it needs a function \
+                         and a dispatch generator matches a call site's signature"
+                    ),
+                });
+                self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            }
             Some(
                 "signature_match" | "signature" | "signature_pattern" | "parent" | "extends"
                 | "in_function" | "has_code" | "number_parameters" | "name" | "any_of" | "all_of"
@@ -1511,7 +1876,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     fn visit_name_constraint(&mut self, n: usize, value: &serde_json::Value) {
         if !matches!(
             self.find_method.get(&n),
-            Some(FindMethod::Methods | FindMethod::Callsites)
+            Some(FindMethod::Methods | FindMethod::Callsites | FindMethod::Dispatch)
         ) {
             return;
         }
@@ -1546,9 +1911,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             }
         };
         let matches: UniverseSet<&'p str> = self
-            .index
-            .program_method_names
-            .iter()
+            .names_table(n)
+            .into_iter()
+            .flatten()
             .filter(|(name, _)| rx.is_match(name))
             .flat_map(|(_, fids)| fids.iter().copied())
             .collect();
@@ -1679,16 +2044,10 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         // of the model file, and reporting it only on Java programs would make the same file
         // load cleanly or fail depending on the artifact.
         self.validate_predicate(n, inner, SubjectKind::Class);
-        let entries: Vec<(&'p str, &'p str)> = match self.index.vmt {
-            VirtualMethodTable::Java { methods, .. } => methods
-                .iter()
-                .map(|(cls, _, _, fid)| (cls.as_ref(), fid.as_ref()))
-                .collect(),
-            _ => {
-                log::warn!("'parent' constraint is Java-only; matching nothing on this frontend");
-                self.target_set_mut(n).intersect_with(UniverseSet::empty());
-                return;
-            }
+        let Some(entries) = self.class_entries(n) else {
+            log::warn!("'parent' constraint is Java-only; matching nothing on this frontend");
+            self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            return;
         };
         let mut matched: Vec<&'p str> = Vec::new();
         for (cls, fid) in entries {
@@ -1711,26 +2070,27 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             return;
         };
         self.validate_predicate(n, inner, SubjectKind::Class);
-        // Snapshot (fid, [supertypes]) — `hierarchy[cls]` is `[0]` = superclass, rest = interfaces.
-        let entries: Vec<(&'p str, Vec<&'p str>)> = match self.index.vmt {
-            VirtualMethodTable::Java {
-                methods, hierarchy, ..
-            } => methods
-                .iter()
-                .map(|(cls, _, _, fid)| {
-                    let supers = hierarchy
-                        .get(cls)
-                        .map(|scs| scs.iter().map(|sc| sc.as_ref()).collect())
-                        .unwrap_or_default();
-                    (fid.as_ref(), supers)
-                })
-                .collect(),
-            _ => {
-                log::warn!("'extends' constraint is Java-only; matching nothing on this frontend");
-                self.target_set_mut(n).intersect_with(UniverseSet::empty());
-                return;
-            }
+        // Snapshot (id, [supertypes]) — `hierarchy[cls]` is `[0]` = superclass, rest = interfaces.
+        let VirtualMethodTable::Java { hierarchy, .. } = self.index.vmt else {
+            log::warn!("'extends' constraint is Java-only; matching nothing on this frontend");
+            self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            return;
         };
+        let Some(classes) = self.class_entries(n) else {
+            log::warn!("'extends' constraint is Java-only; matching nothing on this frontend");
+            self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            return;
+        };
+        let entries: Vec<(&'p str, Vec<&'p str>)> = classes
+            .into_iter()
+            .map(|(cls, id)| {
+                let supers = hierarchy
+                    .get(&ctadl_ir::mir::call::JavaClass(cls.into()))
+                    .map(|scs| scs.iter().map(|sc| sc.as_ref()).collect())
+                    .unwrap_or_default();
+                (id, supers)
+            })
+            .collect();
         let mut matched: Vec<&'p str> = Vec::new();
         for (fid, supers) in &entries {
             if supers

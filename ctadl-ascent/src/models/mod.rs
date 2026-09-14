@@ -23,8 +23,11 @@ pub mod universe_set;
 pub use json::{
     EndpointStats, IndexTimeModelCounts, MatchedFunctions, PropagationStats, UnmatchedReason,
 };
-pub use match_index::ProgramMatchIndex;
-pub use matches::{BridgeMatches, EndpointMatch, ModelPort, ProgramModelMatches, PropagationMatch};
+pub use match_index::{DispatchKeys, ProgramMatchIndex};
+pub use matches::{
+    BridgeMatches, DispatchKey, DispatchModel, Disposition, EndpointMatch, ModelPort,
+    ProgramModelMatches, PropagationMatch,
+};
 pub use spec::{
     BridgeSpec, Direction, ImportScope, ModelFileSpecs, PortPair, ProgramScope, Severity, SideSpec,
     scan_model_files,
@@ -81,7 +84,7 @@ pub fn try_load_default_models(
         return Ok(ModelLoadReport::default());
     };
     log::debug!("loading default models from {name}");
-    try_load_jsonl_models(index, BufReader::new(contents), out)
+    try_load_jsonl_models_named(index, BufReader::new(contents), out, name)
         .err_context(|| format!("loading default index models: {name}"))
 }
 
@@ -101,6 +104,20 @@ pub fn default_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'s
     }
 }
 
+/// Whether the built-in defaults for a program with this [`VirtualMethodTable`] contain a
+/// `find: "dispatch"` generator.
+///
+/// The other half of the gate [`ModelFileSpecs::finds_dispatch`](spec::ModelFileSpecs) opens:
+/// together they decide whether an import pays for collecting its call sites' signature keys.
+pub fn default_models_find_dispatch(vmt: &VirtualMethodTable) -> bool {
+    let Some((_, contents)) = default_model_file(vmt) else {
+        return false;
+    };
+    jsonl_items(BufReader::new(contents)).any(|item| {
+        item.is_ok_and(|value| value.get("find").and_then(|v| v.as_str()) == Some("dispatch"))
+    })
+}
+
 /// Load models from a `jsonl` source. `jsonl` allows streaming models one at a time efficiently.
 /// The stream follows the same schema as elements of a `model_generators` array.
 ///
@@ -114,7 +131,17 @@ pub fn try_load_jsonl_models<B: BufRead>(
     rdr: B,
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
-    try_load_models_from_values(index, jsonl_items(rdr), out)
+    try_load_jsonl_models_named(index, rdr, out, "<models>")
+}
+
+/// [`try_load_jsonl_models`] for a caller that knows what to call the stream.
+pub fn try_load_jsonl_models_named<B: BufRead>(
+    index: &ProgramMatchIndex<'_>,
+    rdr: B,
+    out: &mut ProgramModelMatches,
+    source: &str,
+) -> Result<ModelLoadReport, Error> {
+    try_load_models_from_values_named(index, jsonl_items(rdr), out, source)
 }
 
 // Load models from a JSON file containing `{ "model_generators": [...] }`.
@@ -145,7 +172,7 @@ pub fn try_load_json_models<P: AsRef<std::path::Path>>(
 
     // Stream each entry into the existing loader
     let items = generators.iter().cloned().map(Ok);
-    try_load_models_from_values(index, items, out)
+    try_load_models_from_values_named(index, items, out, &path.as_ref().display().to_string())
 }
 
 /// Load models from a JSON5 file containing `{ "model_generators": [...] }`.
@@ -175,7 +202,7 @@ pub fn try_load_json5_models<P: AsRef<std::path::Path>>(
 
     // Stream each entry into the existing loader
     let items = generators.iter().cloned().map(Ok);
-    try_load_models_from_values(index, items, out)
+    try_load_models_from_values_named(index, items, out, &path.as_ref().display().to_string())
 }
 
 /// Load models from a file. The file extension is used to decide whether to load as `json`,
@@ -196,7 +223,7 @@ pub fn try_load_models<P: AsRef<std::path::Path>>(
             let file = File::open(path)
                 .err_context(|| format!("opening model JSONL file: {}", path.display()))?;
             let rdr = BufReader::new(file);
-            try_load_jsonl_models(index, rdr, out)
+            try_load_jsonl_models_named(index, rdr, out, &path.display().to_string())
                 .err_context(|| format!("reading model JSONL file: {}", path.display()))
         }
         Some("json5") => try_load_json5_models(index, path, out),
@@ -221,7 +248,18 @@ pub fn try_load_models_from_values(
     items: impl Iterator<Item = Result<serde_json::Value, Error>>,
     out: &mut ProgramModelMatches,
 ) -> Result<ModelLoadReport, Error> {
-    let outcome = run_batches(index, items, out, None, true);
+    try_load_models_from_values_named(index, items, out, "<models>")
+}
+
+/// [`try_load_models_from_values`] for a caller that knows what to call the file. The name is
+/// half of the `file:generator-index` provenance a matched dispatch model records.
+pub fn try_load_models_from_values_named(
+    index: &ProgramMatchIndex<'_>,
+    items: impl Iterator<Item = Result<serde_json::Value, Error>>,
+    out: &mut ProgramModelMatches,
+    source: &str,
+) -> Result<ModelLoadReport, Error> {
+    let outcome = run_batches(index, items, out, None, true, source);
     // A stream error ends the input; it is returned as it came, without the "encoding models"
     // context, which names the wrong stage for a file that could not be read.
     if let Some(error) = outcome.stream_error {
@@ -335,6 +373,7 @@ pub fn try_check_models<P: AsRef<std::path::Path>>(
                 out,
                 Some(capture),
                 false,
+                &path.display().to_string(),
             );
             outcome.into_check()
         }
@@ -349,7 +388,14 @@ pub fn try_check_jsonl_models<B: BufRead>(
     capture: usize,
     out: &mut ProgramModelMatches,
 ) -> (ModelLoadReport, Vec<ModelCheckError>) {
-    let outcome = run_batches(index, jsonl_items(rdr), out, Some(capture), false);
+    let outcome = run_batches(
+        index,
+        jsonl_items(rdr),
+        out,
+        Some(capture),
+        false,
+        "<models>",
+    );
     outcome.into_check()
 }
 
@@ -422,8 +468,10 @@ fn run_batches(
     out: &mut ProgramModelMatches,
     capture: Option<usize>,
     abort_on_error: bool,
+    source: &str,
 ) -> BatchOutcome {
     let mut model_gen = json::ModelGeneratorIngest::new(index, out);
+    model_gen.set_source(source);
     if let Some(cap) = capture {
         model_gen.capture_matches(cap);
     }

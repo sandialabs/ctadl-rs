@@ -22,7 +22,8 @@ use crate::error::{Error, ErrorContext};
 use crate::facts;
 use crate::facts::FlowVariable;
 use crate::index_engine::{
-    IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo, taint_index_with_config,
+    HybridContext, IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo,
+    taint_index_with_config,
 };
 use crate::languages::jni;
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
@@ -58,8 +59,13 @@ pub struct IndexOptions<'a> {
     /// re-import needed -- scanning happens at import time either way.
     pub no_jni_registry: bool,
     pub strategy: CallResolutionStrategy,
+    /// How [`CallResolutionStrategy::Mixed`] classifies a call site. Ignored by every other
+    /// strategy, and recorded in the index config either way.
+    pub call_policy: crate::codegen::CallPolicy,
     pub prune_unreachable_cfg_nodes: bool,
     pub alias_rule: bool,
+    /// How a decided critical call site's summary is instantiated; see [`HybridContext`].
+    pub hybrid_context: HybridContext,
     pub dump_index_graph: Option<&'a Path>,
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
@@ -72,8 +78,10 @@ impl Default for IndexOptions<'_> {
             no_jni_bridge: false,
             no_jni_registry: false,
             strategy: CallResolutionStrategy::Mixed,
+            call_policy: crate::codegen::CallPolicy::default(),
             prune_unreachable_cfg_nodes: true,
             alias_rule: true,
+            hybrid_context: HybridContext::default(),
             dump_index_graph: None,
             parallelism: Parallelism::Serial,
         }
@@ -95,8 +103,10 @@ pub fn index(
         no_jni_bridge,
         no_jni_registry,
         strategy,
+        call_policy,
         prune_unreachable_cfg_nodes,
         alias_rule,
+        hybrid_context,
         dump_index_graph,
         parallelism,
     } = opts;
@@ -127,10 +137,9 @@ pub fn index(
     // happen after the loop, when one `IdMap` holds every program's functions.
     let mut jni_observer = jni::JniObserver::new();
 
-    // Bodies `modes: ["skip-analysis"]` kept out of the fact base, summed over the imports.
-    // Counted by codegen rather than from the matched names, which is the only place that knows
-    // a name belonged to a function this project actually lowered.
-    let mut skipped_bodies = 0usize;
+    // What phase 1 of codegen did, summed over the imports: skipped bodies, the call-site
+    // bucket counts, and any dispatch model a matched endpoint refused.
+    let mut codegen_report = crate::codegen::CodegenReport::default();
     for import in project.iter_imports() {
         let import = import?;
         // Everything codegen records from here to the next import belongs to this one. Source
@@ -157,7 +166,18 @@ pub fn index(
         // the memory posture streaming rather than "every import's match index resident".
         {
             let scope = crate::models::ImportScope::new(import.language, &import.name);
-            let match_index = crate::models::ProgramMatchIndex::new(&program_info, scope);
+            // Only when some generator asks for it: collecting the keys is a pass over every
+            // statement, and the defaults are language-selected, so this is decided per import.
+            let wants_dispatch = file_specs.finds_dispatch
+                || (!no_default_models
+                    && crate::models::default_models_find_dispatch(&program_info.vmt));
+            let dispatch_keys = wants_dispatch
+                .then(|| crate::models::DispatchKeys::from_program(&program_info.program));
+            let match_index = crate::models::ProgramMatchIndex::new_with_dispatch(
+                &program_info,
+                scope,
+                dispatch_keys.as_ref(),
+            );
             if !no_default_models {
                 crate::models::try_load_default_models(&match_index, &mut model_matches)?;
             }
@@ -197,13 +217,14 @@ pub fn index(
         // The match block above has already contributed every `modes: ["skip-analysis"]` name
         // this import can, so codegen can drop those bodies as it goes rather than lowering
         // facts the analysis would then have to ignore.
-        skipped_bodies += codegen_program(
+        codegen_report.merge(codegen_program(
             program_info,
             &mut facts,
             &mut source_info,
             strategy,
-            &model_matches.skip_analysis,
-        );
+            call_policy,
+            &model_matches,
+        ));
         log::debug!(
             "[mem cp] after codegen_program (IR dropped, facts built): {:.1} MB",
             phys_footprint_mb()
@@ -248,8 +269,44 @@ pub fn index(
          analyzed",
         model_report.summaries,
         model_report.declared_paths,
-        skipped_bodies
+        codegen_report.skipped_bodies
     );
+    // Unconditionally, at info: without this line a mis-scoped dispatch model silently swallows
+    // a signature and the only symptom is a missing finding. The `super` row is not comparable
+    // across frontends -- the jvm frontend lowers constructors and private calls to `Super`
+    // where dex lowers them to a direct call.
+    let totals = codegen_report.totals();
+    if totals.java_sites > 0 {
+        log::info!("calls: {totals}");
+        for kind in ctadl_ir::mir::call::JavaDispatch::ALL {
+            let b = &codegen_report.buckets[kind.index()];
+            if b.java_sites == 0 {
+                log::info!("  {kind}: 0 sites");
+                continue;
+            }
+            log::info!(
+                "  {kind}: {} sites: {} modelled, {} skipped, {} CHA, {} inlined",
+                b.java_sites,
+                b.modelled,
+                b.skipped,
+                b.cha,
+                b.inlined
+            );
+        }
+    }
+    if !codegen_report.refused.is_empty() {
+        // A refusal is what keeps a sink inside a modelled signature's targets reachable, so it
+        // is a correct outcome rather than an error -- but it is also invisible otherwise, and
+        // it means the shipped policy did not cover a signature the user may think it did.
+        log::info!(
+            "{} dispatch model(s) refused because a matched source or sink is in the \
+             signature's target set; those sites take CHA instead",
+            codegen_report.refused.len()
+        );
+        for (key, endpoint) in &codegen_report.refused {
+            log::info!("  {key}: {endpoint}");
+        }
+    }
     // Unconditionally, at info, even when nothing went wrong: a bridge-only generator appears on
     // no other surface, and this line is what catches the mis-paired case (wrong slot, wrong
     // path, wrong function matched) that warn-on-empty cannot.
@@ -257,11 +314,14 @@ pub fn index(
         log::info!("bridge {stats}");
     }
     if !files_declaring_endpoints.is_empty() {
-        // The mirror of the warning `ctadl query` emits about propagation/bridging models: each
-        // phase silently discarded what the other consumes, and this closes the second half.
+        // Not "pass them to query instead": an endpoint is not analysed at index time, but it
+        // *gates* the dispatch models -- a signature whose targets hold a matched sink is not
+        // modelled -- so the same file belongs to both commands. `ctadl query` warns about the
+        // mirror case, a file declaring index-time models.
         log::warn!(
-            "{} of the given model file(s) declare source/sink models, which `ctadl index` \
-             ignores -- pass them to `ctadl query` instead: {}",
+            "{} of the given model file(s) declare source/sink models, which `ctadl index` does \
+             not analyse; it does use them to refuse a dispatch model whose targets hold one, so \
+             pass the same file(s) to `ctadl query` as well: {}",
             files_declaring_endpoints.len(),
             files_declaring_endpoints
                 .iter()
@@ -289,6 +349,7 @@ pub fn index(
     );
     let config = crate::index_engine::IndexConfig {
         alias_rule,
+        hybrid_context,
         parallelism,
     };
     log::info!("indexing (computing the flow relation)");
@@ -312,9 +373,89 @@ pub fn index(
         .try_save(&path)
         .err_context(|| format!("saving index: {}", path.display()))?;
     // Last, so a run that dies partway through leaves no stamp claiming the index is readable.
-    project.write_index_config()?;
+    project.write_index_config(Some(call_policy_record(
+        strategy,
+        &call_policy,
+        &files_declaring_endpoints,
+    )?))?;
     log::info!("wrote index to {}", path.display());
     Ok(())
+}
+
+/// Says what call policy the index being queried was built under.
+///
+/// Reported, never enforced: an index built with `--strategy cha` answers a query perfectly
+/// well, it just answers a different question. The one thing that warns is the endpoint digest,
+/// checked separately once the query knows which of its model files declare endpoints (see
+/// [`warn_on_endpoint_digest_mismatch`]).
+fn report_call_policy(
+    project: &AnalysisProject,
+) -> Option<ctadl_import::project::CallPolicyRecord> {
+    let policy = project.index_call_policy();
+    match &policy {
+        Some(policy) => log::info!("index call policy: {policy}"),
+        None => log::info!(
+            "this index records no call policy; it was built before the policy was recorded, so \
+             how it resolved calls is not known here"
+        ),
+    }
+    policy
+}
+
+/// Warns when the sources and sinks this query is using are not the ones the index's dispatch
+/// models were checked against.
+///
+/// A dispatch model is refused when the signature's CHA targets hold a matched source or sink,
+/// so an index built against other endpoints may have modelled away a signature whose targets
+/// hold one of *these* -- and the sink inside it will then never match.
+fn warn_on_endpoint_digest_mismatch(
+    policy: Option<&ctadl_import::project::CallPolicyRecord>,
+    endpoint_files: &BTreeSet<&std::path::PathBuf>,
+) -> Result<(), Error> {
+    let Some(policy) = policy else {
+        return Ok(());
+    };
+    let files: Vec<std::path::PathBuf> = endpoint_files.iter().map(|p| (*p).clone()).collect();
+    if ctadl_import::project::hash_file_contents(&files)? != policy.endpoint_model_digest {
+        log::warn!(
+            "this index's dispatch models were checked against a different set of sources and \
+             sinks; a sink inside a modelled signature's targets will not match. Re-index with \
+             the same --models."
+        );
+    }
+    Ok(())
+}
+
+/// The call policy an index was built under, for the on-disk stamp.
+///
+/// The flags are recorded as given even under a strategy that ignores them: what the user
+/// asked for is what makes a later run reproducible, and `ctadl index` warns separately when
+/// the two disagree.
+fn call_policy_record(
+    strategy: CallResolutionStrategy,
+    policy: &crate::codegen::CallPolicy,
+    endpoint_files: &BTreeSet<&std::path::PathBuf>,
+) -> Result<ctadl_import::project::CallPolicyRecord, Error> {
+    let files: Vec<std::path::PathBuf> = endpoint_files.iter().map(|p| (*p).clone()).collect();
+    Ok(ctadl_import::project::CallPolicyRecord {
+        strategy: match strategy {
+            CallResolutionStrategy::Cha => "cha",
+            CallResolutionStrategy::Hi => "hi",
+            CallResolutionStrategy::Mixed => "mixed",
+            CallResolutionStrategy::LegacyMixed => "legacy-mixed",
+        }
+        .to_string(),
+        cha_threshold: policy.cha_threshold,
+        cha_threshold_interface: policy.cha_threshold_interface,
+        dispatch_models: policy.dispatch_models,
+        dispatch_models_interface: policy.dispatch_models_interface,
+        order: match policy.order {
+            crate::codegen::DispatchOrder::ModelFirst => "model-first",
+            crate::codegen::DispatchOrder::ThresholdFirst => "threshold-first",
+        }
+        .to_string(),
+        endpoint_model_digest: ctadl_import::project::hash_file_contents(&files)?,
+    })
 }
 
 /// What [`query`] concluded about the run as a whole, mirroring
@@ -364,6 +505,7 @@ pub fn query(
     // Before touching a table: the parquet decoders panic on an encoding they cannot read, and
     // this is what turns that into an actionable "re-run `ctadl index`".
     project.check_index_config()?;
+    let indexed_policy = report_call_policy(project);
     let index_path = project.index_path()?;
     let ids = facts::IdMap::try_load(&index_path)
         .err_context(|| format!("loading IdMap from index: {}", index_path.display()))?;
@@ -396,6 +538,9 @@ pub fn query(
         // propagations are index-time constructs, and a query that silently drops them looks
         // exactly like one whose models did nothing.
         let mut ignored = crate::models::IndexTimeModelCounts::default();
+        // Which files declare endpoints, by the same test `ctadl index` applies, so the two
+        // digests are over the same thing.
+        let mut files_declaring_endpoints: BTreeSet<&std::path::PathBuf> = BTreeSet::new();
         // Import outer, model file inner: one `ProgramInfo` decode and one match index per
         // import, reused across every model file, rather than one of each per (file, import)
         // pair. The match tables are a function of the program alone.
@@ -414,6 +559,9 @@ pub fn query(
                         &mut model_matches,
                     )?;
                     ignored.merge(&report.index_time_models);
+                    if !report.endpoint_stats.is_empty() {
+                        files_declaring_endpoints.insert(model_path);
+                    }
                     // Re-key this file's Stage-1 counts by file: `ModelLoadReport` is keyed by
                     // (generator index, direction) alone, which would conflate two model files
                     // that happen to number their generators the same. Merging over imports is
@@ -443,6 +591,7 @@ pub fn query(
                 ignored.describe()
             );
         }
+        warn_on_endpoint_digest_mismatch(indexed_policy.as_ref(), &files_declaring_endpoints)?;
         let mut builder = QueryFactsBuilder::default();
         let mut endpoints = Vec::new();
         // Slightly ugly special case for flowy artifacts. Since the query is built in, take it
@@ -1002,10 +1151,11 @@ pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
 /// Measures a project's call graph and writes the result to `output` (or stdout for `-`).
 pub fn report(
     project: &AnalysisProject,
+    models: &[std::path::PathBuf],
     output: &Path,
     opts: crate::report::ReportOptions,
 ) -> Result<(), Error> {
-    let report = crate::report::report(project, opts)?;
+    let report = crate::report::report(project, models, opts)?;
     crate::report::write(&report, opts, output)?;
     if output.to_str() != Some("-") {
         log::info!("wrote {}", output.display());

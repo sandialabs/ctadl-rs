@@ -103,7 +103,11 @@ fn absolutize(path: &Path) -> PathBuf {
 ///   the call style is in every `ir-program.bitcode` and the two columns are in
 ///   `ir-vmt.bitcode`. Nothing resolves differently -- the three dispatch kinds are still
 ///   resolved alike -- so this is what a *measurement* of the difference needs.
-pub const IMPORT_FORMAT_VERSION: &str = "7";
+/// - `8`: `CallStyle::JavaCall` gained `super_start`, the class the runtime begins lookup at for
+///   a `Super` dispatch, so an `invoke-super` resolves to its single real target instead of every
+///   implementation below the named class. A `bitcode` wire-format change to every
+///   `ir-program.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "8";
 
 /// Filename of the serialized IR program inside an import directory.
 ///
@@ -155,10 +159,56 @@ pub const INDEX_FORMAT_VERSION: &str = "3";
 /// `index/` directory.
 pub const INDEX_CONFIG_FILE: &str = "index_config.json";
 
-/// The contents of `index/index_config.json`: what build wrote this index.
+/// The contents of `index/index_config.json`: what build wrote this index, and under what
+/// call-resolution policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexConfig {
     pub version: String,
+    /// `None` for an index written before this field existed. Reported, not enforced: see
+    /// [`CallPolicyRecord`].
+    #[serde(default)]
+    pub call_policy: Option<CallPolicyRecord>,
+}
+
+/// How the index resolved calls, so a query can say what it is reading.
+///
+/// Recorded and reported rather than checked. Only [`Self::endpoint_model_digest`] leads to a
+/// warning, because a dispatch model is refused against the endpoints `ctadl index` was given
+/// and a query run with different sources and sinks is asking a question the index did not
+/// answer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallPolicyRecord {
+    /// `"mixed"`, `"cha"`, `"hi"` or `"legacy-mixed"`.
+    pub strategy: String,
+    pub cha_threshold: usize,
+    pub cha_threshold_interface: usize,
+    pub dispatch_models: bool,
+    pub dispatch_models_interface: bool,
+    /// `"model-first"` or `"threshold-first"`.
+    pub order: String,
+    /// SHA-256 over the endpoint-declaring model files given to `ctadl index`, sorted. Empty
+    /// when none were given.
+    pub endpoint_model_digest: String,
+}
+
+impl std::fmt::Display for CallPolicyRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "strategy {}, cha threshold {} ({} for interfaces), dispatch models {} ({} for \
+             interfaces), {}",
+            self.strategy,
+            self.cha_threshold,
+            self.cha_threshold_interface,
+            if self.dispatch_models { "on" } else { "off" },
+            if self.dispatch_models_interface {
+                "on"
+            } else {
+                "off"
+            },
+            self.order
+        )
+    }
 }
 
 /// Reads just the format version out of the `import_config.json` beside `path`, skipping the
@@ -454,6 +504,35 @@ pub fn is_ghidra_server_url(path: &Path) -> bool {
 /// # Errors
 ///
 /// If the artifact (or any file within it) cannot be read.
+/// SHA-256 over the *contents* of a set of files, independent of the order they are given in
+/// and of where they live: the contents are sorted and length-prefixed, so two different sets
+/// cannot collide by concatenation and the same file named two ways hashes alike.
+///
+/// The empty string for no files at all, which is how "none were given" is spelled in
+/// [`CallPolicyRecord::endpoint_model_digest`].
+pub fn hash_file_contents(paths: &[PathBuf]) -> Result<String, Error> {
+    use source_info::ContentHasher;
+
+    if paths.is_empty() {
+        return Ok(String::new());
+    }
+    let mut contents = Vec::with_capacity(paths.len());
+    for path in paths {
+        contents.push(
+            std::fs::read(path)
+                .map_err(Error::Io)
+                .err_context(|| format!("hashing model file: {}", path.display()))?,
+        );
+    }
+    contents.sort();
+    let mut hasher = ContentHasher::new();
+    for data in &contents {
+        hasher.update(&(data.len() as u64).to_le_bytes());
+        hasher.update(data);
+    }
+    Ok(to_hex(&hasher.finalize()))
+}
+
 pub fn hash_artifact(path: &Path) -> Result<String, Error> {
     use source_info::ContentHasher;
 
@@ -664,7 +743,7 @@ impl AnalysisProject {
     ///
     /// If there is an error creating the index dir, or serializing or writing the config
     #[inline]
-    pub fn write_index_config(&self) -> Result<(), Error> {
+    pub fn write_index_config(&self, call_policy: Option<CallPolicyRecord>) -> Result<(), Error> {
         let path = self.index_path()?.join(INDEX_CONFIG_FILE);
         let file = File::create(&path)
             .err_context(|| format!("creating index config: '{}'", path.display()))?;
@@ -672,10 +751,20 @@ impl AnalysisProject {
             file,
             &IndexConfig {
                 version: INDEX_FORMAT_VERSION.to_string(),
+                call_policy,
             },
         )
         .err_context(|| format!("writing index config: '{}'", path.display()))?;
         Ok(())
+    }
+
+    /// The call policy this project's index was built under, or `None` for an index written
+    /// before the stamp existed or with no readable config.
+    pub fn index_call_policy(&self) -> Option<CallPolicyRecord> {
+        let path = self.dir().join("index").join(INDEX_CONFIG_FILE);
+        let file = File::open(path).ok()?;
+        let config: IndexConfig = serde_json::from_reader(file).ok()?;
+        config.call_policy
     }
 
     /// Whether `ctadl index` ever finished for this project.
@@ -955,5 +1044,35 @@ impl std::iter::FromIterator<DetectLanguage> for LanguageSet {
         Self {
             mems: iter.into_iter().collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A store written under an older import format is refused with the message that says to
+    /// re-import, rather than reaching the positional `bitcode` decoder that would fail
+    /// opaquely on it.
+    #[test]
+    fn stale_import_is_refused() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(IMPORT_CONFIG_FILE);
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "name": "app",
+                "language": "Dex",
+                "artifact_path": "/nonexistent/app.apk",
+                "import_dir": "imports/app",
+                "version": "7",
+            })
+            .to_string(),
+        )
+        .expect("write config");
+        let err = ArtifactImport::load(&path).expect_err("stale import accepted");
+        let message = err.to_string();
+        assert!(message.contains("import format 7"), "{message}");
+        assert!(message.contains("re-import it"), "{message}");
     }
 }
