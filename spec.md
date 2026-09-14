@@ -38,7 +38,7 @@ and every Java call site is counted into one of four buckets on the index summar
 | **R2** | A new generator form, `find: "dispatch"`, whose `where` is evaluated against the **call site's** declared class, simple name and descriptor, and whose `model` accepts the ordinary `propagation` list. | I-6 |
 | **R3** | A matched dispatch model replaces the site's target set: one `call` row to a synthetic per-signature function carrying the summary, and no CHA edges. An **empty** propagation list emits nothing. A model may instead carry `resolve: "inline"`, which sends the site to rung 3 regardless of `K` unless it has exactly one target. | I-6; viability §"How it hooks up"; §15.3 for `inline` |
 | **R4** | A dispatch model is **refused** for a signature whose CHA target set contains a matched source or sink function; the site falls to rung 2. Refusals are reported. | viability §"One consequence that has to be stated"; assumes **A1**; residue in §15.1 |
-| **R5** | `K` is one CLI flag and one recorded index-config field, default **32**. | I-9 |
+| **R5** | `K` is one CLI flag and one recorded index-config field, default **4** (§15.9; the intent said 32). | I-9 |
 | **R6** | Model-first is the default rung order; threshold-first is a flag. | I-9 |
 | **R7** | Interface-dispatched sites are configurable separately from class-virtual ones: their own threshold and their own model on/off. | I-11 |
 | **R8** | `invoke-super` (dex) and `invokespecial`-with-receiver (jvm) resolve to the single appropriate method, for a superclass target and for an interface default-method target. When the hierarchy cannot produce exactly one, the site falls to the ladder. | I-2 |
@@ -445,15 +445,16 @@ it flags 237 of the apps' 100-worst signatures.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--cha-threshold K` | `32` | Rung 2 threshold for virtual, super and unknown-dispatch sites. `0` disables rung 2; a very large value disables rung 3. |
+| `--cha-threshold K` | `4` | Rung 2 threshold for virtual, super and unknown-dispatch sites. `0` disables rung 2; a very large value disables rung 3. |
 | `--cha-threshold-interface K` | = `--cha-threshold` | Rung 2 threshold for `Interface` sites (R7). |
 | `--dispatch-models` / `--no-dispatch-models` | on | Rung 1 on/off. |
 | `--no-dispatch-models-interface` | off | Rung 1 off for interface sites only (R7). |
 | `--dispatch-order <model-first\|threshold-first>` | `model-first` | R6. |
 | `--strategy <mixed\|cha\|hi\|legacy-mixed>` | `mixed` | `mixed` **is** the ladder. `legacy-mixed` is today's `len() == 1` rule (N2). |
 
-`K` is not delicate: between 16 and 32 the inlined share falls by more than half while the
-graph grows by a sixth; past 32 both flatten.
+`K` is not delicate as far as the *graph* is concerned -- between 16 and 32 the inlined share
+falls by more than half while the graph grows by a sixth, and past 32 both flatten. It is very
+delicate as far as the engine is concerned; see §15.9.
 
 **The ladder lives only in the `Mixed` arm.** `classify` is called from nowhere else, so under
 `cha`, `hi` and `legacy-mixed` the `JavaCall` arm bodies are untouched: no rung 0 (a pure CHA
@@ -874,6 +875,39 @@ change alone makes newpipe index.** Run §14.3's A/B at §16 step 5, not at the 
 `legacy-mixed` (N2), the `call_policy` stamp (N5), §13.1, and the `report` flags in §12.1 are
 not in `intent.md`. Each is justified above; none is large. `legacy-mixed` and the stamp are the
 two to keep if anything is cut, because the A/B and the reproducibility warning depend on them.
+
+### 15.9 `K` defaults to 4, not the 32 the intent asked for
+
+**The contradiction.** I-9 and R5 set `K = 32`, on the strength of a knee the viability analysis
+found between 16 and 32. That knee is in **call-graph size**. Measured against the index engine
+after the fact, the knee is at 4-8, and the two are far apart.
+
+antennapod, which indexes under every setting, shows the whole trade-off (`-j 8`, 24 GiB):
+
+| config      | inlined | call edges | index time | peak     |
+| ----------- | ------- | ---------- | ---------- | -------- |
+| legacy rule | 19.4%   | 116,992    |   19 s     | 3.54 GiB |
+| K=4         |  3.3%   | 153,798    |   19 s     | 3.57 GiB |
+| K=8         |  1.7%   | 168,017    |   52 s     | 4.83 GiB |
+| K=32        |  0.6%   | 190,600    |  106 s     | 6.36 GiB |
+
+K=4 takes hybrid inlining's exposure from 19.4% to 3.3% for no measurable index cost; K=32 buys
+the remaining 2.7 points at 5.6x the time and 1.8x the memory. `xbot_android_samp` puts the
+cliff in the same place and is sharper about it: flat at ~210 s through 8, eight times slower at
+16, out of memory at 32 -- and at K<=8 the ladder beats the legacy rule outright there, 219 s
+against 357 s, because rung 0 and the models remove more work than the threshold adds.
+
+The cause is §15.7's unmeasured quantity. The ladder turns deferred sites into CHA edges, and
+every app that struggles has a large recursive strongly connected component -- 16,056 functions
+on antennapod, 19,058 on newpipe, 31,476 on schildi, 1,188 on xbot -- inside which fixpoint cost
+is superlinear in edges. The corpus graph is 23.3x smaller than plain CHA as designed; the
+engine's job got bigger anyway.
+
+**Decision: default 4.** It is one flag and one recorded field, so a precision-sensitive run
+raises it. What this does *not* do is make newpipe or schildi index: §14.3's A/B shows both
+still exceeding 24 GiB under `legacy-mixed` and under `mixed` alike, exactly as §15.7 warned.
+The engine's own cost is now the binding constraint, and it is not something this change can
+reach.
 
 ---
 

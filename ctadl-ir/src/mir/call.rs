@@ -2,6 +2,7 @@ use std::ops::Deref;
 use std::{fmt, fmt::Display};
 
 use hashbrown::hash_map::HashMap;
+use hashbrown::hash_set::HashSet;
 use smallvec::SmallVec;
 use thin_vec::ThinVec;
 
@@ -94,6 +95,15 @@ pub enum CallStyle {
         /// Which of `invoke-virtual` / `-interface` / `-super` this was. Resolution ignores
         /// it; see [`JavaDispatch`].
         dispatch: JavaDispatch,
+        /// For `dispatch: Super`, the class the runtime begins method lookup at. `None` for
+        /// every other dispatch kind and for a `Super` site whose frontend could not
+        /// determine it.
+        ///
+        /// Kept beside `cls` rather than overwriting it: `cls` is what a model matches and
+        /// what `ctadl report` counts. The two differ because the instruction names the class
+        /// of the *method reference*, which for a Dalvik `invoke-super` may be the current
+        /// class rather than the superclass the runtime starts at.
+        super_start: Option<Symbol>,
     },
     /// Lua `recv:m(...)` (or `recv.m(recv, ...)`); resolved via the metatable
     /// (`__index`) chain. Unlike [`CallStyle::JavaCall`] there is **no static
@@ -162,10 +172,17 @@ impl Display for CallStyle {
                 simple_name,
                 descriptor,
                 dispatch,
-            } => write!(
-                f,
-                "java-call {dispatch} {receiver}.<{cls}.{simple_name}{descriptor}>"
-            ),
+                super_start,
+            } => {
+                write!(
+                    f,
+                    "java-call {dispatch} {receiver}.<{cls}.{simple_name}{descriptor}>"
+                )?;
+                match super_start {
+                    Some(start) => write!(f, " from {start}"),
+                    None => Ok(()),
+                }
+            }
             LuaCall { receiver, method } => write!(f, "lua-call {receiver}:{method}"),
             FuncPtrCall { callee, signature } => match signature {
                 Some(signature) => write!(f, "funcptr-call {callee} <{signature}>"),
@@ -322,7 +339,138 @@ pub enum VirtualMethodTable {
     },
 }
 
+/// The methods every class inherits from `java.lang.Object`, which an interface may redeclare
+/// for documentation. Java's own functional-interface rule excludes them, so the
+/// single-abstract-method test does too.
+const OBJECT_METHODS: [(&str, &str); 3] = [
+    ("toString", "()Ljava/lang/String;"),
+    ("equals", "(Ljava/lang/Object;)Z"),
+    ("hashCode", "()I"),
+];
+
+/// What a [`VirtualMethodTable`] says about types, as opposed to what a call site says about
+/// dispatch. A call records the instruction it came from, whatever its receiver's type turns
+/// out to be; this records what the import declares a type to be.
+///
+/// Only the types this import declares appear here. An interface from code that was not
+/// imported is simply absent, so a lookup that fails means "not declared an interface here",
+/// never "known not to be one".
+#[derive(Debug, Default, Clone)]
+pub struct TypeFacts {
+    pub interfaces: HashSet<Symbol>,
+    /// Interfaces with exactly one abstract method over their whole super-interface closure:
+    /// the functional ones. See [`VirtualMethodTable::type_facts`].
+    pub single_abstract_method: HashSet<Symbol>,
+}
+
+impl TypeFacts {
+    /// Whether the import declares any interfaces at all.
+    pub fn is_empty(&self) -> bool {
+        self.interfaces.is_empty()
+    }
+
+    /// `None` when the import declares no interfaces at all. That prevents reading "this
+    /// receiver is not an interface" off a program that had no way to say otherwise.
+    pub fn receiver_is_interface(&self, cls: &Symbol) -> Option<bool> {
+        (!self.is_empty()).then(|| self.interfaces.contains(cls))
+    }
+}
+
 impl VirtualMethodTable {
+    /// Which types this table declares to be interfaces, and which of those are
+    /// single-abstract-method (functional) interfaces. Empty for a non-Java table.
+    ///
+    /// The test closes over a type's **transitive super-interfaces** rather than looking only
+    /// at what the interface itself declares. `dagger.internal.Provider` declares no method of
+    /// its own -- its one method is `get`, declared on the `javax.inject.Provider` it extends --
+    /// and a declared-methods-only test misses it and every interface shaped like it.
+    ///
+    /// Two subtractions make the count mean what it says. Implementations declared anywhere in
+    /// the closure are removed, because `methods` holds interface *default* methods, which are
+    /// not abstract; without this a one-abstract-one-default interface reads as two. And
+    /// `toString`, `equals` and `hashCode` are removed, matching Java's own rule for a
+    /// functional interface.
+    pub fn type_facts(&self) -> TypeFacts {
+        let VirtualMethodTable::Java {
+            methods,
+            hierarchy,
+            interfaces,
+            abstract_methods,
+            ..
+        } = self
+        else {
+            return TypeFacts::default();
+        };
+        let interfaces: HashSet<Symbol> = interfaces.iter().map(|c| c.0.clone()).collect();
+        // Distinct (name, descriptor) pairs per declaring type, rather than a running count.
+        // One class can be declared in two dex files of the same app, and a method listed
+        // twice is still one method.
+        let mut declared: HashMap<Symbol, HashSet<(Symbol, Symbol)>> = HashMap::new();
+        for (cls, name, desc) in abstract_methods {
+            declared
+                .entry(cls.0.clone())
+                .or_default()
+                .insert((name.0.clone(), desc.0.clone()));
+        }
+        let mut implemented: HashMap<Symbol, HashSet<(Symbol, Symbol)>> = HashMap::new();
+        for (cls, name, desc, _id) in methods {
+            implemented
+                .entry(cls.0.clone())
+                .or_default()
+                .insert((name.0.clone(), desc.0.clone()));
+        }
+        let object_methods: HashSet<(Symbol, Symbol)> = OBJECT_METHODS
+            .iter()
+            .map(|(n, d)| (Symbol::from(*n), Symbol::from(*d)))
+            .collect();
+
+        let mut single_abstract_method = HashSet::new();
+        let mut closure: Vec<Symbol> = Vec::new();
+        let mut seen: HashSet<Symbol> = HashSet::new();
+        for iface in &interfaces {
+            closure.clear();
+            seen.clear();
+            closure.push(iface.clone());
+            seen.insert(iface.clone());
+            let mut next = 0;
+            while next < closure.len() {
+                let cls = closure[next].clone();
+                next += 1;
+                let Some(parents) = hierarchy.get(&JavaClass(cls)) else {
+                    continue;
+                };
+                for parent in parents {
+                    if interfaces.contains(&parent.0) && seen.insert(parent.0.clone()) {
+                        closure.push(parent.0.clone());
+                    }
+                }
+            }
+            let mut abstracts: HashSet<(Symbol, Symbol)> = HashSet::new();
+            for cls in &closure {
+                if let Some(ms) = declared.get(cls) {
+                    abstracts.extend(ms.iter().cloned());
+                }
+            }
+            for cls in &closure {
+                if let Some(ms) = implemented.get(cls) {
+                    for m in ms {
+                        abstracts.remove(m);
+                    }
+                }
+            }
+            for m in &object_methods {
+                abstracts.remove(m);
+            }
+            if abstracts.len() == 1 {
+                single_abstract_method.insert(iface.clone());
+            }
+        }
+        TypeFacts {
+            interfaces,
+            single_abstract_method,
+        }
+    }
+
     pub fn new_java() -> Self {
         VirtualMethodTable::Java {
             methods: Vec::new(),
@@ -615,5 +763,129 @@ impl From<NativeQualifiedName> for Symbol {
 impl Display for NativeQualifiedName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod type_facts_tests {
+    use super::*;
+
+    fn java(
+        interfaces: &[&str],
+        hierarchy: &[(&str, &[&str])],
+        abstract_methods: &[(&str, &str, &str)],
+        methods: &[(&str, &str, &str)],
+    ) -> VirtualMethodTable {
+        VirtualMethodTable::Java {
+            methods: methods
+                .iter()
+                .map(|(c, n, d)| {
+                    (
+                        JavaClass((*c).into()),
+                        JavaSimpleName((*n).into()),
+                        JavaSignature((*d).into()),
+                        JavaMethod(format!("{c}->{n}{d}").into()),
+                    )
+                })
+                .collect(),
+            hierarchy: hierarchy
+                .iter()
+                .map(|(sub, sups)| {
+                    (
+                        JavaClass((*sub).into()),
+                        sups.iter().map(|s| JavaClass((*s).into())).collect(),
+                    )
+                })
+                .collect(),
+            interfaces: interfaces.iter().map(|c| JavaClass((*c).into())).collect(),
+            abstract_methods: abstract_methods
+                .iter()
+                .map(|(c, n, d)| {
+                    (
+                        JavaClass((*c).into()),
+                        JavaSimpleName((*n).into()),
+                        JavaSignature((*d).into()),
+                    )
+                })
+                .collect(),
+            natives: Vec::new(),
+        }
+    }
+
+    fn is_sam(vmt: &VirtualMethodTable, cls: &str) -> bool {
+        vmt.type_facts()
+            .single_abstract_method
+            .contains(&Symbol::from(cls))
+    }
+
+    /// `dagger.internal.Provider` declares nothing of its own: its one method comes from the
+    /// `javax.inject.Provider` it extends. A declared-methods-only test misses both.
+    #[test]
+    fn inherited_abstract_method_counts() {
+        let vmt = java(
+            &["Ljavax/inject/Provider;", "Ldagger/internal/Provider;"],
+            &[(
+                "Ldagger/internal/Provider;",
+                &["Ljavax/inject/Provider;"][..],
+            )],
+            &[("Ljavax/inject/Provider;", "get", "()Ljava/lang/Object;")],
+            &[],
+        );
+        assert!(is_sam(&vmt, "Ldagger/internal/Provider;"));
+        assert!(is_sam(&vmt, "Ljavax/inject/Provider;"));
+    }
+
+    /// A default method has a body, so it is in `methods` rather than `abstract_methods`.
+    /// Without subtracting implementations the interface reads as having two.
+    #[test]
+    fn default_method_is_not_abstract() {
+        let vmt = java(
+            &["LI;"],
+            &[],
+            &[("LI;", "run", "()V"), ("LI;", "helper", "()V")],
+            &[("LI;", "helper", "()V")],
+        );
+        assert!(is_sam(&vmt, "LI;"));
+    }
+
+    /// Interfaces redeclare `equals` for documentation. Java's functional-interface rule
+    /// ignores it, so this one is still single-abstract-method.
+    #[test]
+    fn redeclared_object_method_is_ignored() {
+        let vmt = java(
+            &["LI;"],
+            &[],
+            &[
+                ("LI;", "run", "()V"),
+                ("LI;", "equals", "(Ljava/lang/Object;)Z"),
+            ],
+            &[],
+        );
+        assert!(is_sam(&vmt, "LI;"));
+    }
+
+    /// Two genuinely abstract methods in the closure is not a functional interface.
+    #[test]
+    fn two_abstract_methods_is_not_functional() {
+        let vmt = java(
+            &["LBase;", "LI;"],
+            &[("LI;", &["LBase;"][..])],
+            &[("LBase;", "a", "()V"), ("LI;", "b", "()V")],
+            &[],
+        );
+        assert!(!is_sam(&vmt, "LI;"));
+        assert!(is_sam(&vmt, "LBase;"));
+    }
+
+    /// A class extending a functional interface is not itself one: only interfaces are.
+    #[test]
+    fn only_interfaces_qualify() {
+        let vmt = java(
+            &["LI;"],
+            &[("LC;", &["LI;"][..])],
+            &[("LI;", "run", "()V")],
+            &[("LC;", "run", "()V")],
+        );
+        assert!(!is_sam(&vmt, "LC;"));
     }
 }

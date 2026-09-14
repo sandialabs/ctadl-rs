@@ -123,6 +123,20 @@ struct Context {
     defined: HashMap<String, FunctionIdx>,
     // vmt entries for externs so far
     ext: HashMap<String, (JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
+    /// The class whose methods are being lowered, and its direct parents. Set once per class in
+    /// [`Context::process`] and read by [`Context::decode_call`] to fill in `super_start`: an
+    /// `invoke-super` begins lookup at the enclosing class's superclass, which the instruction
+    /// itself does not name.
+    enclosing: Option<EnclosingClass>,
+}
+
+/// What lowering an `invoke-super` needs to know about the class the call appears in.
+#[derive(Debug, Default)]
+struct EnclosingClass {
+    superclass: Option<Symbol>,
+    /// The interfaces the class directly implements. An `X.super.m()` names one of these, and
+    /// there lookup begins at the named interface rather than at the superclass.
+    interfaces: Vec<Symbol>,
 }
 
 impl Context {
@@ -148,6 +162,7 @@ impl Context {
             call_to: Default::default(),
             defined: Default::default(),
             ext: Default::default(),
+            enclosing: None,
         }
     }
 
@@ -192,13 +207,17 @@ impl Context {
                 let parents = hierarchy
                     .entry(JavaClass(class_name.clone().into()))
                     .or_default();
-                for sup in superclass_opt.into_iter().chain(iface_vec) {
-                    parents.push(sup);
+                for sup in superclass_opt.iter().chain(iface_vec.iter()) {
+                    parents.push(sup.clone());
                 }
                 if ACC_INTERFACE.is_set_in(class_def.access_flags) {
                     interfaces.push(JavaClass(class_name.into()));
                 }
             }
+            self.enclosing = Some(EnclosingClass {
+                superclass: superclass_opt.map(|c| c.0),
+                interfaces: iface_vec.into_iter().map(|c| c.0).collect(),
+            });
             let class_data = parser.class_data(class_def)?;
             for enc in class_data
                 .direct_methods
@@ -533,6 +552,24 @@ impl Context {
         })
     }
 
+    /// Where an `invoke-super` naming `cls` begins method lookup.
+    ///
+    /// Dalvik starts at the superclass of the class declaring the current method, not at the
+    /// class the instruction names -- d8 usually writes the superclass there, but not always,
+    /// and a walk from the current class would resolve the call to itself. The exception is
+    /// `X.super.m()`, whose reference names an interface the enclosing class implements
+    /// directly; there lookup does start at the named interface.
+    ///
+    /// `None` when the enclosing class is unknown or has no superclass, which leaves the site
+    /// on the ordinary resolvent set.
+    fn super_start(&self, cls: &Symbol) -> Option<Symbol> {
+        let enclosing = self.enclosing.as_ref()?;
+        if enclosing.interfaces.iter().any(|i| i == cls) {
+            return Some(cls.clone());
+        }
+        enclosing.superclass.clone()
+    }
+
     /// Decode a call instruction into a `StatementKind::CallAssign`.
     /// Returns `None` for non‑call instructions.
     /// The return value is a single element which can be used to process subsequent 'move-result'
@@ -584,13 +621,19 @@ impl Context {
             None => CallStyle::DirectCall {
                 call_edges: CallEdges::Explicit([method_id].into_iter().collect()),
             },
-            Some(dispatch) => CallStyle::JavaCall {
-                receiver: args[0].variable_ref().unwrap().clone(),
-                cls: cls.into(),
-                simple_name: simple_name.into(),
-                descriptor: descriptor.into(),
-                dispatch,
-            },
+            Some(dispatch) => {
+                let cls: Symbol = cls.into();
+                CallStyle::JavaCall {
+                    receiver: args[0].variable_ref().unwrap().clone(),
+                    super_start: (dispatch == JavaDispatch::Super)
+                        .then(|| self.super_start(&cls))
+                        .flatten(),
+                    cls,
+                    simple_name: simple_name.into(),
+                    descriptor: descriptor.into(),
+                    dispatch,
+                }
+            }
         };
 
         // Dex returns into a special register, so just create a temporary.

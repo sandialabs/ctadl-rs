@@ -23,7 +23,7 @@ use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::visit::Visitor;
 use ctadl_ir::mir::{
     FunctionIdx, ProgramInfo, StatementKind, Symbol,
-    call::{CallStyle, JavaDispatch},
+    call::{CallStyle, JavaDispatch, TypeFacts},
 };
 
 /// A method's simple name and descriptor, matched exactly. Obfuscation renames and
@@ -88,6 +88,8 @@ pub struct CallGraphReport {
     pub kotlin_lambdas: Option<KotlinLambdas>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub functional_interfaces: Option<FunctionalInterfaces>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PolicySection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fan_in: Option<FanIn>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -431,6 +433,306 @@ pub struct FunctionalInterfaces {
     pub top: Vec<SignatureRow>,
 }
 
+/// Section 13: what the call-resolution policy would do to this program.
+///
+/// Simulates the [`CallResolutionStrategy::Mixed`] ladder over the complete key table without
+/// indexing anything, so a user can write dispatch models against their own app and see the
+/// effect in seconds. [`Self::top_inlined`] and [`Self::unmodelled_closures`] are what that
+/// loop reads.
+///
+/// [`CallResolutionStrategy::Mixed`]: crate::codegen::CallResolutionStrategy
+#[derive(Debug, Serialize)]
+pub struct PolicySection {
+    /// The policy simulated, as `ctadl index` would record it.
+    pub cha_threshold: usize,
+    pub cha_threshold_interface: usize,
+    pub order: String,
+    pub buckets: crate::codegen::SiteBuckets,
+    pub by_dispatch: Vec<DispatchBuckets>,
+    /// Edges plain CHA would emit, and edges the policy emits. The ratio is the headline.
+    pub cha_edges: usize,
+    pub policy_edges: usize,
+    /// Left on hybrid inlining, ranked by excess, each row saying what put it there. What a
+    /// user writes dispatch models against.
+    pub top_inlined: Vec<InlinedSignatureRow>,
+    /// Matched by a dispatch model, ranked by the excess it removes.
+    pub top_modelled: Vec<ModelledSignatureRow>,
+    /// Dispatch models a matched source or sink refused. Empty unless endpoint-declaring model
+    /// files were given.
+    pub refused: Vec<RefusedSignatureRow>,
+    /// Closure-shaped -- single-abstract-method receiver, or a name on the shipped list -- and
+    /// named by no model. The per-app profiling a fixed list leaves benefit on the table for.
+    pub unmodelled_closures: Vec<SignatureRow>,
+}
+
+/// [`PolicySection::buckets`] restricted to one dispatch kind.
+#[derive(Debug, Serialize)]
+pub struct DispatchBuckets {
+    pub dispatch: &'static str,
+    #[serde(flatten)]
+    pub buckets: crate::codegen::SiteBuckets,
+}
+
+/// A signature the policy leaves on hybrid inlining.
+#[derive(Debug, Serialize)]
+pub struct InlinedSignatureRow {
+    #[serde(flatten)]
+    pub signature: SignatureRow,
+    /// `"threshold"` or `"model"`. A mis-scoped `resolve: inline` entry looks exactly like a
+    /// signature that is genuinely too wide, so the row says which it is.
+    pub reason: &'static str,
+    /// `file:generator-index` of the entry that deferred it, when a model did.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub provenance: Vec<String>,
+}
+
+/// A signature a dispatch model covers.
+#[derive(Debug, Serialize)]
+pub struct ModelledSignatureRow {
+    #[serde(flatten)]
+    pub signature: SignatureRow,
+    /// `"model"` for a propagation, `"skip"` for an empty one.
+    pub disposition: &'static str,
+    pub provenance: Vec<String>,
+}
+
+/// A signature whose dispatch model was refused because its targets hold a matched endpoint.
+#[derive(Debug, Serialize)]
+pub struct RefusedSignatureRow {
+    #[serde(flatten)]
+    pub signature: SignatureRow,
+    /// The source or sink inside the target set. The reason those bodies have to stay in the
+    /// analysis, and so the reason the site takes CHA.
+    pub endpoint: String,
+    pub provenance: Vec<String>,
+}
+
+/// Simulates the ladder over the whole key table.
+///
+/// Built from the complete table, not from [`WorstSignatures::top_by_excess`], which drops
+/// every zero-excess signature -- thousands of them on a real app. Site percentages computed
+/// from that list would be wrong.
+fn policy_section(
+    w: &Walk,
+    targets: &Targets,
+    types: &TypeFacts,
+    cha: &ClassHierarchyAnalysis,
+    matches: &crate::models::ProgramModelMatches,
+    opts: super::ReportOptions,
+) -> PolicySection {
+    use crate::codegen::{DispatchDisposition, DispatchOrder, Rung, SiteBuckets};
+    use crate::models::Disposition;
+
+    let policy = opts.call_policy;
+    let endpoints: std::collections::HashSet<&str> = matches
+        .endpoints
+        .iter()
+        .map(|e| e.function.as_ref())
+        .collect();
+    // How many super sites of each key the hierarchy resolves exactly. Rung 0 precedes
+    // everything else, so those sites never reach the model or the threshold.
+    let mut super_exact: HashMap<u32, usize> = HashMap::new();
+    for ((k, start), count) in &w.super_starts {
+        let (_, name, desc) = &w.keys[*k as usize];
+        if let crate::codegen::SuperResolution::Exactly(_) = cha.super_resolvent(start, name, desc)
+        {
+            *super_exact.entry(*k).or_default() += count;
+        }
+    }
+
+    let mut buckets = [SiteBuckets::default(); 4];
+    let mut cha_edges = 0usize;
+    let mut policy_edges = 0usize;
+    // `(excess, key id, disposition flag)`; the rows themselves are built after ranking.
+    let mut inlined: Vec<(usize, usize, bool)> = Vec::new();
+    let mut modelled: Vec<(usize, usize, bool)> = Vec::new();
+    let mut refused: Vec<RefusedSignatureRow> = Vec::new();
+    let mut unmodelled: Vec<(usize, usize)> = Vec::new();
+
+    for k in 0..w.keys.len() {
+        let (cls, name, desc) = &w.keys[k];
+        let count = targets.cha[k].len();
+        cha_edges += count * w.sites(k);
+        let model = matches.dispatch.get(&(
+            crate::facts::Str::from(cls.as_ref()),
+            crate::facts::Str::from(name.as_ref()),
+            crate::facts::Str::from(desc.as_ref()),
+        ));
+        // The rung-1 refusal, over the same direct target set codegen intersects.
+        let endpoint = match model.map(|m| &m.disposition) {
+            Some(Disposition::Model(_)) | Some(Disposition::Skip) => targets.cha[k]
+                .iter()
+                .map(|node| w.nodes[*node as usize].as_ref())
+                .find(|target| endpoints.contains(target)),
+            _ => None,
+        };
+        if let (Some(endpoint), Some(model)) = (endpoint, model) {
+            refused.push(RefusedSignatureRow {
+                signature: signature_row(w, targets, types, k, Population::All, true),
+                endpoint: endpoint.to_string(),
+                provenance: model.provenance.clone(),
+            });
+        }
+        let disposition = if endpoint.is_some() {
+            None
+        } else {
+            model.map(|m| match m.disposition {
+                Disposition::Inline => DispatchDisposition::Inline,
+                Disposition::Model(_) => DispatchDisposition::Model,
+                Disposition::Skip => DispatchDisposition::Skip,
+            })
+        };
+
+        let mut this_key = SiteBuckets::default();
+        for dispatch in JavaDispatch::ALL {
+            let mut sites = w.sites_of(k, dispatch);
+            if sites == 0 {
+                continue;
+            }
+            let b = &mut buckets[dispatch.index()];
+            b.java_sites += sites;
+            this_key.java_sites += sites;
+            // Rung 0.
+            if dispatch == JavaDispatch::Super {
+                let exact = super_exact
+                    .get(&(k as u32))
+                    .copied()
+                    .unwrap_or(0)
+                    .min(sites);
+                b.cha += exact;
+                b.cha_super_exact += exact;
+                this_key.cha += exact;
+                policy_edges += exact;
+                sites -= exact;
+                if sites == 0 {
+                    continue;
+                }
+            }
+            let rung = crate::codegen::classify_rung(&policy, dispatch, count, disposition);
+            match rung {
+                Rung::Model => {
+                    b.modelled += sites;
+                    this_key.modelled += sites;
+                    // One `call` row to the signature's synthetic function.
+                    policy_edges += sites;
+                }
+                Rung::Skip => {
+                    b.skipped += sites;
+                    this_key.skipped += sites;
+                }
+                Rung::Cha => {
+                    b.cha += sites;
+                    this_key.cha += sites;
+                    if count == 0 {
+                        b.cha_zero_targets += sites;
+                        this_key.cha_zero_targets += sites;
+                    }
+                    policy_edges += count * sites;
+                }
+                Rung::Inline { by_model } => {
+                    b.inlined += sites;
+                    this_key.inlined += sites;
+                    if by_model {
+                        b.inlined_by_model += sites;
+                        this_key.inlined_by_model += sites;
+                    }
+                }
+            }
+        }
+
+        let excess = excess_of_key(w, targets, k, Population::All);
+        if this_key.inlined > 0 {
+            inlined.push((excess, k, this_key.inlined_by_model > 0));
+        }
+        if this_key.modelled > 0 || this_key.skipped > 0 {
+            modelled.push((excess, k, this_key.modelled > 0));
+        }
+        // Closure-shaped and covered by no model: what a user would write one against.
+        let closure_shaped = types.single_abstract_method.contains(cls)
+            || matches.closure_shaped.contains(&(
+                crate::facts::Str::from(cls.as_ref()),
+                crate::facts::Str::from(name.as_ref()),
+                crate::facts::Str::from(desc.as_ref()),
+            ));
+        if closure_shaped && model.is_none() {
+            unmodelled.push((excess, k));
+        }
+    }
+
+    // Rank on the excess alone, cut to `top`, and only then build the rows. Under
+    // `--top 1000000` the eager form materialized a `SignatureRow` -- three owned strings --
+    // for every key in the program, three times over.
+    let rank = |rows: &mut Vec<(usize, usize, bool)>| {
+        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        rows.truncate(opts.top);
+    };
+    rank(&mut inlined);
+    rank(&mut modelled);
+    unmodelled.sort_by(|a, b| b.0.cmp(&a.0));
+    unmodelled.truncate(opts.top);
+    refused.sort_by(|a, b| b.signature.excess.cmp(&a.signature.excess));
+    let provenance_of = |k: usize| -> Vec<String> {
+        let (cls, name, desc) = &w.keys[k];
+        matches
+            .dispatch
+            .get(&(
+                crate::facts::Str::from(cls.as_ref()),
+                crate::facts::Str::from(name.as_ref()),
+                crate::facts::Str::from(desc.as_ref()),
+            ))
+            .map(|m| m.provenance.clone())
+            .unwrap_or_default()
+    };
+
+    let mut total = SiteBuckets::default();
+    for b in &buckets {
+        total.add(b);
+    }
+    PolicySection {
+        cha_threshold: policy.cha_threshold,
+        cha_threshold_interface: policy.cha_threshold_interface,
+        order: match policy.order {
+            DispatchOrder::ModelFirst => "model-first".to_string(),
+            DispatchOrder::ThresholdFirst => "threshold-first".to_string(),
+        },
+        buckets: total,
+        by_dispatch: JavaDispatch::ALL
+            .into_iter()
+            .map(|d| DispatchBuckets {
+                dispatch: d.as_str(),
+                buckets: buckets[d.index()],
+            })
+            .collect(),
+        cha_edges,
+        policy_edges,
+        top_inlined: inlined
+            .into_iter()
+            .map(|(_, k, by_model)| InlinedSignatureRow {
+                signature: signature_row(w, targets, types, k, Population::All, true),
+                reason: if by_model { "model" } else { "threshold" },
+                provenance: if by_model {
+                    provenance_of(k)
+                } else {
+                    Vec::new()
+                },
+            })
+            .collect(),
+        top_modelled: modelled
+            .into_iter()
+            .map(|(_, k, is_model)| ModelledSignatureRow {
+                signature: signature_row(w, targets, types, k, Population::All, true),
+                disposition: if is_model { "model" } else { "skip" },
+                provenance: provenance_of(k),
+            })
+            .collect(),
+        refused,
+        unmodelled_closures: unmodelled
+            .into_iter()
+            .map(|(_, k)| signature_row(w, targets, types, k, Population::All, true))
+            .collect(),
+    }
+}
+
 /// Section 9: how many sites call each method.
 ///
 /// Measured over the CHA call graph. A direct call contributes one edge, and a virtual site
@@ -541,6 +843,13 @@ struct Walk {
     /// and without the interface edges, and the statements are gone by then.
     caller_keys: Vec<Vec<(u32, JavaDispatch)>>,
     caller_direct: Vec<Vec<u32>>,
+    /// Super-dispatched sites by `(key id, the class the runtime begins lookup at)`, counted.
+    ///
+    /// The start class is a property of the *site* -- it is the enclosing class's superclass,
+    /// not anything the signature carries -- so the policy section cannot recover it from the
+    /// key table. There are few enough distinct pairs to hold: super calls are about a
+    /// hundredth of the virtual ones.
+    super_starts: HashMap<(u32, Symbol), usize>,
 }
 
 impl Walk {
@@ -614,7 +923,8 @@ fn walk(program: &ctadl_ir::mir::Program) -> Walk {
                         simple_name,
                         descriptor,
                         dispatch,
-                        ..
+                        super_start,
+                        receiver: _,
                     } => {
                         w.census.virtual_ += 1;
                         let id = w.key(
@@ -622,6 +932,10 @@ fn walk(program: &ctadl_ir::mir::Program) -> Walk {
                             *dispatch,
                         );
                         w.caller_keys[caller as usize].push((id, *dispatch));
+                        if *dispatch == JavaDispatch::Super {
+                            let start = super_start.clone().unwrap_or_else(|| cls.clone());
+                            *w.super_starts.entry((id, start)).or_default() += 1;
+                        }
                     }
                     CallStyle::LuaCall { method, .. } => {
                         w.census.lua += 1;
@@ -652,6 +966,7 @@ pub fn measure(
     import: &str,
     program_info: &ProgramInfo,
     opts: super::ReportOptions,
+    matches: &crate::models::ProgramModelMatches,
 ) -> CallGraphReport {
     let top = opts.top;
     let language = match &program_info.vmt {
@@ -684,6 +999,7 @@ pub fn measure(
         hard_cases: None,
         kotlin_lambdas: None,
         functional_interfaces: None,
+        policy: None,
         fan_in: None,
         recursion: None,
     };
@@ -710,7 +1026,7 @@ pub fn measure(
     let targets = resolve_keys(&mut w, &cha);
     // What the VMT says about types, as opposed to what the call sites say about dispatch.
     // Empty for a Lua program, which has neither.
-    let types = TypeFacts::from_vmt(&program_info.vmt);
+    let types = program_info.vmt.type_facts();
 
     report.virtual_targets = Some(virtual_targets(&w, &targets, split));
     report.worst_signatures = Some(worst_signatures(&w, &targets, &types, top, split));
@@ -719,74 +1035,13 @@ pub fn measure(
         report.hard_cases = Some(hard_cases(&w, &targets));
         report.kotlin_lambdas = Some(kotlin_lambdas(&w, &targets));
         report.functional_interfaces = Some(functional_interfaces(&w, &targets, &types, top));
+        report.policy = Some(policy_section(&w, &targets, &types, &cha, matches, opts));
     }
     report.fan_in = Some(fan_in(&w, &targets, top, split));
     if opts.recursion {
         report.recursion = Some(recursion(w, targets));
     }
     report
-}
-
-/// What the virtual method table says about types, as opposed to what a call site says
-/// about dispatch. Both are new in this phase, and they answer different questions. A call
-/// records the instruction it came from, whatever its receiver's type turns out to be. This
-/// records what the import declares a type to be.
-///
-/// Only the types this import declares appear here. An interface from code that was not
-/// imported is simply absent, so a lookup that fails means "not declared an interface here",
-/// never "known not to be one". That is why
-/// [`FunctionalInterfaces::interface_sites_on_unknown_type`] is reported alongside anything
-/// derived from this.
-#[derive(Default)]
-struct TypeFacts {
-    interfaces: std::collections::HashSet<Symbol>,
-    /// Interfaces declaring exactly one abstract method: the functional ones.
-    single_abstract_method: std::collections::HashSet<Symbol>,
-}
-
-impl TypeFacts {
-    fn from_vmt(vmt: &ctadl_ir::call::VirtualMethodTable) -> Self {
-        let ctadl_ir::call::VirtualMethodTable::Java {
-            interfaces,
-            abstract_methods,
-            ..
-        } = vmt
-        else {
-            return Self::default();
-        };
-        let interfaces: std::collections::HashSet<Symbol> =
-            interfaces.iter().map(|c| c.0.clone()).collect();
-        // Distinct (name, descriptor) pairs per declaring type, rather than a running
-        // count. One class can be declared in two dex files of the same app, and a method
-        // listed twice is still one method.
-        let mut declared: HashMap<Symbol, std::collections::BTreeSet<(Symbol, Symbol)>> =
-            HashMap::new();
-        for (cls, name, desc) in abstract_methods {
-            declared
-                .entry(cls.0.clone())
-                .or_default()
-                .insert((name.0.clone(), desc.0.clone()));
-        }
-        let single_abstract_method = declared
-            .into_iter()
-            .filter(|(cls, methods)| methods.len() == 1 && interfaces.contains(cls))
-            .map(|(cls, _)| cls)
-            .collect();
-        Self {
-            interfaces,
-            single_abstract_method,
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.interfaces.is_empty()
-    }
-
-    /// `None` when the import declares no interfaces at all. That prevents reading "this
-    /// receiver is not an interface" off a program that had no way to say otherwise.
-    fn receiver_is_interface(&self, cls: &Symbol) -> Option<bool> {
-        (!self.is_empty()).then(|| self.interfaces.contains(cls))
-    }
 }
 
 /// The CHA and RTA target sets of every signature the walk saw, as node ids.
@@ -1576,6 +1831,7 @@ mod tests {
                     simple_name: name.into(),
                     descriptor: "()V".into(),
                     dispatch,
+                    super_start: None,
                 },
                 Vec::new(),
                 Vec::new(),
@@ -1599,7 +1855,12 @@ mod tests {
     #[test]
     fn dispatch_kinds_are_measured_separately() {
         let info = dispatch_program();
-        let report = measure("t", &info, super::super::ReportOptions::default());
+        let report = measure(
+            "t",
+            &info,
+            super::super::ReportOptions::default(),
+            &Default::default(),
+        );
 
         let census = report
             .census
@@ -1669,6 +1930,41 @@ mod tests {
             .expect("the program has interface dispatch");
         assert!(cv.edges < rec.edges, "the interface call contributed edges");
         assert_eq!((rec.nontrivial_sccs, cv.nontrivial_sccs), (0, 0));
+    }
+
+    /// The policy section is built from the complete key table, so a signature with no excess
+    /// -- one target, or none -- is still counted into a bucket. Building it from
+    /// `top_by_excess`, which drops those, would make every site percentage wrong.
+    #[test]
+    fn the_policy_section_counts_every_site() {
+        let info = dispatch_program();
+        let report = measure(
+            "t",
+            &info,
+            super::super::ReportOptions::default(),
+            &Default::default(),
+        );
+        let policy = report.policy.expect("a Java program simulates the policy");
+        assert_eq!(
+            policy.buckets.java_sites, report.census.virtual_,
+            "every Java call site is in a bucket"
+        );
+        assert_eq!(
+            policy.buckets.modelled
+                + policy.buckets.skipped
+                + policy.buckets.cha
+                + policy.buckets.inlined,
+            policy.buckets.java_sites
+        );
+        // Three sites, each with two targets, all under the default threshold. The super site
+        // resolves exactly, so it contributes one edge instead of two.
+        assert_eq!(policy.cha_edges, 6);
+        assert_eq!(policy.policy_edges, 5);
+        assert_eq!(policy.buckets.cha_super_exact, 1);
+        assert!(
+            policy.top_modelled.is_empty() && policy.refused.is_empty(),
+            "no model file was given"
+        );
     }
 
     #[test]

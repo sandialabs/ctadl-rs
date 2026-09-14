@@ -14,6 +14,14 @@ Some notes about choices made in the design of generating code:
 Parameters in IR are mapped to the same indices in the Datalog. Return values are mapped to index
 -1, -2, -3, etc. The global heap is mapped to [`GLOBALS_INDEX`], which is [`i16::MIN`].
 
+# Resolving a Java call
+
+Under [`CallResolutionStrategy::Mixed`] every Java call site is classified by one function,
+`CodegenVisitor::classify`, which runs a four-rung ladder: super resolution, a dispatch model,
+a target-count threshold, then hybrid inlining. Each site lands in exactly one of four counted
+buckets, and [`codegen_program`] asserts that the counts add up. The other strategies have a
+fixed answer for every site and consult none of the policy.
+
 `skip_analysis` holds the names a `modes: ["skip-analysis"]` generator matched (see
 [`crate::models::matches::ProgramModelMatches::skip_analysis`]). Those functions get their
 signature lowered and their body dropped, which is the whole implementation of the directive:
@@ -31,7 +39,11 @@ use crate::facts as fx;
 use crate::facts::{FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, Str};
 use crate::index_engine::{IndexFacts, source_info::IndexSourceInfo};
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::{call::VirtualMethodTable, visit::Visitor, *};
+use ctadl_ir::mir::{
+    call::{JavaDispatch, VirtualMethodTable},
+    visit::Visitor,
+    *,
+};
 
 #[cfg(test)]
 mod tests;
@@ -46,22 +58,274 @@ pub enum CallResolutionStrategy {
     Cha,
     /// Every call is resolved with hybrid inlining (no calls resolved with CHA).
     Hi,
-    /// CHA for easy calls, hybrid inlining otherwise.
+    /// The ladder: super resolution, then a dispatch model, then a target-count threshold,
+    /// then hybrid inlining.
     #[default]
     Mixed,
+    /// CHA when the site has exactly one target, hybrid inlining otherwise. Kept as the
+    /// baseline the ladder is measured against, on one binary.
+    LegacyMixed,
+}
+
+/// Which rung the ladder tries first, the dispatch model or the threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum DispatchOrder {
+    /// Take a modelled signature out of the analysis whatever its target count.
+    #[default]
+    ModelFirst,
+    /// Resolve a signature with few enough targets exactly, even when a model matches it.
+    /// For a precision-sensitive run.
+    ThresholdFirst,
+}
+
+/// Default for [`CallPolicy::cha_threshold`].
+///
+/// Chosen for what it costs the *engine*, not for the size of the call graph. Raising it keeps
+/// shrinking the share of sites hybrid inlining has to take -- 19.4% of antennapod's sites at
+/// the legacy rule, 3.3% here, 0.6% at 32 -- but each step also turns deferred sites into CHA
+/// edges, and on a program with a large recursive strongly connected component the fixpoint
+/// cost of those is superlinear. Measured on antennapod, indexing takes 19 s at 4 and 106 s at
+/// 32 for 2.7 further points; on xbot_android_samp it is flat through 8, eight times slower at
+/// 16, and out of memory at 32.
+///
+/// So 4 buys most of the soundness win for no index cost at all. A run that wants the last
+/// points, and can pay for them, raises the flag.
+pub const DEFAULT_CHA_THRESHOLD: usize = 4;
+
+/// How [`CallResolutionStrategy::Mixed`] classifies a Java call site.
+///
+/// Read at codegen and nowhere else. It is *recorded* in the on-disk index config so a query
+/// can say what policy produced the index it is reading, but the engine never sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallPolicy {
+    /// Rung 2: at or under this many CHA targets, a site gets ordinary CHA edges. `0` disables
+    /// rung 2; a very large value disables rung 3.
+    pub cha_threshold: usize,
+    /// Rung 2 for `Interface` sites, which are a different population: about a tenth of them
+    /// resolve to a single target against four fifths of ordinary virtual calls.
+    pub cha_threshold_interface: usize,
+    /// Rung 1 on or off, for virtual, super and unknown-dispatch sites.
+    pub dispatch_models: bool,
+    /// Rung 1 on or off for interface sites.
+    pub dispatch_models_interface: bool,
+    pub order: DispatchOrder,
+}
+
+impl Default for CallPolicy {
+    fn default() -> Self {
+        Self {
+            cha_threshold: DEFAULT_CHA_THRESHOLD,
+            cha_threshold_interface: DEFAULT_CHA_THRESHOLD,
+            dispatch_models: true,
+            dispatch_models_interface: true,
+            order: DispatchOrder::default(),
+        }
+    }
+}
+
+/// What a matched `find: "dispatch"` model says to do with a signature, once the source/sink
+/// refusal has had its say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchDisposition {
+    /// A non-empty propagation list: one synthetic summary at the site.
+    Model,
+    /// An empty propagation list: the target set is discarded.
+    Skip,
+    /// `resolve: "inline"`: hybrid inlining whatever the target count.
+    Inline,
+}
+
+/// Which rung of the ladder a site takes, once rung 0 has declined it.
+///
+/// One function decides this ([`classify_rung`]) and two callers read it: codegen, which emits
+/// the rows, and `ctadl report`'s policy section, which simulates the whole classification over
+/// an import without indexing. A second implementation is how the report starts describing a
+/// policy the index does not run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rung {
+    /// Rung 1 with a propagation.
+    Model,
+    /// Rung 1 with an empty propagation.
+    Skip,
+    /// Rung 2: ordinary CHA edges over the signature's resolvent set, which may be empty.
+    Cha,
+    /// Rung 3, or a rung-1 `inline` disposition (`by_model`).
+    Inline { by_model: bool },
+}
+
+/// The ladder below rung 0: a dispatch model, then the threshold, then hybrid inlining.
+///
+/// `targets` is the signature's CHA target count and `disposition` its matched model, if the
+/// caller's policy admits one for this dispatch kind.
+pub fn classify_rung(
+    policy: &CallPolicy,
+    dispatch: JavaDispatch,
+    targets: usize,
+    disposition: Option<DispatchDisposition>,
+) -> Rung {
+    let interface = dispatch == JavaDispatch::Interface;
+    let models_on = if interface {
+        policy.dispatch_models_interface
+    } else {
+        policy.dispatch_models
+    };
+    let threshold = if interface {
+        policy.cha_threshold_interface
+    } else {
+        policy.cha_threshold
+    };
+    let disposition = if models_on { disposition } else { None };
+
+    // The `inline` disposition is honoured in both orders: its purpose is to keep the site off
+    // CHA, and threshold-first would silently undo that for every site at or under `K`. A site
+    // with exactly one target stays exact, though -- inlining a monomorphic site gains nothing
+    // and loses the edge when the receiver's allocation is not visible. Zero targets still
+    // defer: hybrid inlining can find a callee from the allocated class where the static type
+    // resolves to nothing.
+    if disposition == Some(DispatchDisposition::Inline) {
+        return if targets == 1 {
+            Rung::Cha
+        } else {
+            Rung::Inline { by_model: true }
+        };
+    }
+    let modelled = match disposition {
+        Some(DispatchDisposition::Model) => Some(Rung::Model),
+        Some(DispatchDisposition::Skip) => Some(Rung::Skip),
+        _ => None,
+    };
+    // Rung 1. Model-first ignores the target count, which is what takes a sixth of an app's
+    // sites out of the engine.
+    if policy.order == DispatchOrder::ModelFirst
+        && let Some(rung) = modelled
+    {
+        return rung;
+    }
+    // Rung 2, which covers 0 and 1 targets as well.
+    if targets <= threshold {
+        return Rung::Cha;
+    }
+    // Threshold-first reaches rung 1 only above `K`.
+    if let Some(rung) = modelled {
+        return rung;
+    }
+    // Rung 3.
+    Rung::Inline { by_model: false }
+}
+
+/// Every Java call site lands in exactly one of the four buckets. The invariant is asserted:
+/// `modelled + skipped + cha + inlined == java_sites`.
+///
+/// Without these counts a mis-scoped dispatch model silently swallows a signature and the only
+/// symptom is a missing finding.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct SiteBuckets {
+    /// Rung 1 with a propagation: one `call` row to the signature's synthetic function.
+    pub modelled: usize,
+    /// Rung 1 with an empty propagation: the target set was discarded.
+    pub skipped: usize,
+    /// Rung 0 or rung 2: ordinary CHA edges.
+    pub cha: usize,
+    /// Rung 3, or a rung-1 `resolve: inline`: deferred to hybrid inlining.
+    pub inlined: usize,
+    /// Sub-count of [`Self::cha`]: sites that resolved to nothing at all, so the rung emitted
+    /// no rows. Reporting it is how the fraction of a percent of sites with no callee stops
+    /// being silent.
+    pub cha_zero_targets: usize,
+    /// Sub-count of [`Self::cha`]: sites where super resolution found the single real target.
+    pub cha_super_exact: usize,
+    /// Sub-count of [`Self::inlined`]: sites a `resolve: inline` model deferred, rather than
+    /// the threshold. A mis-scoped entry moves sites to hybrid inlining silently, and its only
+    /// other symptom is a slower index.
+    pub inlined_by_model: usize,
+    pub java_sites: usize,
+}
+
+impl SiteBuckets {
+    /// Folds another set of counts in, bucket by bucket.
+    pub fn add(&mut self, other: &SiteBuckets) {
+        self.modelled += other.modelled;
+        self.skipped += other.skipped;
+        self.cha += other.cha;
+        self.inlined += other.inlined;
+        self.cha_zero_targets += other.cha_zero_targets;
+        self.cha_super_exact += other.cha_super_exact;
+        self.inlined_by_model += other.inlined_by_model;
+        self.java_sites += other.java_sites;
+    }
+
+    /// Whether every site landed in exactly one bucket.
+    pub fn balanced(&self) -> bool {
+        self.modelled + self.skipped + self.cha + self.inlined == self.java_sites
+    }
+}
+
+impl std::fmt::Display for SiteBuckets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} java site(s): {} modelled, {} skipped, {} CHA ({} with no target, {} exact \
+             super), {} inlined ({} by model)",
+            self.java_sites,
+            self.modelled,
+            self.skipped,
+            self.cha,
+            self.cha_zero_targets,
+            self.cha_super_exact,
+            self.inlined,
+            self.inlined_by_model
+        )
+    }
+}
+
+/// What phase 1 of codegen did, beyond the facts it wrote. Accumulated over the import loop.
+#[derive(Debug, Default, Clone)]
+pub struct CodegenReport {
+    /// Bodies a `modes: ["skip-analysis"]` generator kept out of the fact base. Counted here
+    /// rather than from the matched names, which is the only place that knows a name belonged
+    /// to a function this project actually lowered.
+    pub skipped_bodies: usize,
+    /// Java call sites by bucket, per [`JavaDispatch::index`].
+    pub buckets: [SiteBuckets; 4],
+    /// Signatures whose dispatch model was refused because the CHA target set holds a matched
+    /// source or sink, mapped to the endpoint that refused it.
+    pub refused: BTreeMap<String, String>,
+}
+
+impl CodegenReport {
+    /// Every dispatch kind together.
+    pub fn totals(&self) -> SiteBuckets {
+        let mut total = SiteBuckets::default();
+        for b in &self.buckets {
+            total.add(b);
+        }
+        total
+    }
+
+    /// Folds another import's phase-1 report in.
+    pub fn merge(&mut self, other: CodegenReport) {
+        self.skipped_bodies += other.skipped_bodies;
+        for (ours, theirs) in self.buckets.iter_mut().zip(other.buckets.iter()) {
+            ours.add(theirs);
+        }
+        self.refused.extend(other.refused);
+    }
 }
 
 /// Generate code for a program in SSA form (see [`ctadl_ir::ssa::transform`]).
 ///
-/// Returns the number of bodies skipped.
+/// `matches` is what the model files matched against *this* import; phase 1 reads its
+/// `skip_analysis`, `dispatch` and `endpoints` fields. `policy` parameterizes
+/// [`CallResolutionStrategy::Mixed`] and is ignored by every other strategy.
 #[inline]
 pub fn codegen_program(
     mut program_info: ProgramInfo,
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
     strategy: CallResolutionStrategy,
-    skip_analysis: &BTreeSet<Str>,
-) -> usize {
+    policy: CallPolicy,
+    matches: &crate::models::ProgramModelMatches,
+) -> CodegenReport {
     let mut instantiated_classes = BTreeSet::new();
     let mut finder = InstantiationFinder {
         instantiated_classes: &mut instantiated_classes,
@@ -74,13 +338,23 @@ pub fn codegen_program(
     }
 
     let cha = ClassHierarchyAnalysis::new(&program_info.vmt, instantiated_classes);
-    emit_callee_resolvents(&cha, facts, source_info);
-    let mut v = CodegenVisitor::new(cha, facts, source_info, strategy, skip_analysis);
+    let mut v = CodegenVisitor::new(cha, facts, source_info, strategy, policy, matches);
     for f in program_info.program.functions.drain(..) {
         v.visit_function_data(FunctionIdx::new(0), &f);
     }
     v.finish_with_vmt(&program_info.vmt);
-    v.skipped
+    let report = std::mem::take(&mut v.report);
+    let totals = report.totals();
+    // Returning a `SiteAction` for every site makes this true by construction; the assertion
+    // keeps it true when someone adds a rung.
+    debug_assert!(
+        totals.balanced(),
+        "unbalanced call-site buckets: {totals:?}"
+    );
+    if !totals.balanced() {
+        log::error!("unbalanced call-site buckets: {totals:?}");
+    }
+    report
 }
 
 /// Generate code for a function in SSA form (see [`ctadl_ir::ssa::transform`]).
@@ -102,15 +376,15 @@ pub fn codegen_function(
     finder.visit_function_data(FunctionIdx::new(0), function_data);
 
     let cha = ClassHierarchyAnalysis::new(&VirtualMethodTable::Unknown, instantiated_classes);
-    emit_callee_resolvents(&cha, facts, source_info);
     log::trace!("codegen for {}", function_data.name);
-    let no_skips = BTreeSet::new();
+    let no_matches = crate::models::ProgramModelMatches::default();
     let mut v = CodegenVisitor::new(
         cha,
         facts,
         source_info,
         CallResolutionStrategy::Mixed,
-        &no_skips,
+        CallPolicy::default(),
+        &no_matches,
     );
     v.visit_function_data(FunctionIdx::new(0), function_data);
     v.finish();
@@ -201,13 +475,57 @@ struct CodegenVisitor<'a> {
     /// `callee_resolvents`, which is what lets the unified resolution rules resolve a reached
     /// function pointer to itself without a `C`-specific rule in the index engine.
     funcptr_targets: BTreeSet<fx::FunctionId>,
-    /// Functions whose body must not be lowered: what a `modes: ["skip-analysis"]` generator
-    /// matched. See [`codegen_program`].
-    skip_analysis: &'a BTreeSet<Str>,
-    /// How many bodies this visitor actually dropped, for the `ctadl index` report. Counted here
-    /// rather than from the name set because a model file names functions that may or may not be
-    /// in this program.
-    skipped: usize,
+    /// What the model files matched against this import. Phase 1 reads three of its fields:
+    /// `skip_analysis` (whose bodies are not lowered), `dispatch` (rung 1 of the ladder) and
+    /// `endpoints` (which refuses a dispatch model, see [`Self::key_facts`]).
+    matches: &'a crate::models::ProgramModelMatches,
+    /// How [`CallResolutionStrategy::Mixed`] classifies a site.
+    policy: CallPolicy,
+    /// The functions a source or sink model matched, for the rung-1 refusal.
+    endpoint_functions: BTreeSet<Str>,
+    /// Everything about a signature the ladder needs that is not a property of the site. Sites
+    /// outnumber signatures by two to three orders of magnitude, which is what makes computing
+    /// this once per key rather than once per site worth the map.
+    key_cache: hashbrown::HashMap<SignatureKey, KeyFacts>,
+    /// Signatures a site has actually been modelled with, so the synthetic function's
+    /// `external_function` row is pushed once.
+    synthetics: BTreeSet<SignatureKey>,
+    /// The `(simple name, descriptor)` pairs some site deferred to hybrid inlining.
+    ///
+    /// `callee_resolvents` is what the engine's resolution rule joins a deferred site's
+    /// receiver class against, and a pair no site deferred can never be joined. Collecting
+    /// them here and emitting in [`Self::finish`] is what keeps the whole program's CHA table
+    /// out of the fact base. The class is deliberately not part of the key: the join is on the
+    /// receiver's *allocated* class, which is not the one the site names.
+    deferred_dispatch: BTreeSet<(Symbol, Symbol)>,
+    /// What this visitor did, returned by [`codegen_program`].
+    report: CodegenReport,
+}
+
+/// Everything the ladder needs to know about one signature, independent of the site.
+#[derive(Debug, Clone)]
+struct KeyFacts {
+    /// How many methods CHA resolves the signature to.
+    targets: usize,
+    /// The rung-1 disposition, after the source/sink refusal has had its say.
+    disposition: Option<DispatchDisposition>,
+}
+
+/// What a site's static signature, dispatch kind and CHA target count decide. Returned for
+/// every Java site, zero-resolvent ones included, so the bucket counts cover all of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SiteAction {
+    /// Rung 1, non-empty propagation: one `call` row to the signature's synthetic function.
+    Model(fx::FunctionId),
+    /// Rung 1, empty propagation: emit nothing, count it.
+    Skip,
+    /// Rung 2, and every site under `--strategy cha`: ordinary CHA edges over the signature's
+    /// resolvent set, which may be empty.
+    Cha,
+    /// Rung 0: super resolution found the one real target.
+    SuperExact(Symbol),
+    /// Rung 3, or a rung-1 `resolve: inline`: hybrid inlining.
+    Defer { by_model: bool },
 }
 
 impl<'a> CodegenVisitor<'a> {
@@ -219,7 +537,8 @@ impl<'a> CodegenVisitor<'a> {
         facts: &'a mut IndexFacts,
         source_info: &'a mut IndexSourceInfo,
         strategy: CallResolutionStrategy,
-        skip_analysis: &'a BTreeSet<Str>,
+        policy: CallPolicy,
+        matches: &'a crate::models::ProgramModelMatches,
     ) -> Self {
         Self {
             function: None,
@@ -230,9 +549,217 @@ impl<'a> CodegenVisitor<'a> {
             paths_dedup: Default::default(),
             cap_path: Default::default(),
             funcptr_targets: Default::default(),
-            skip_analysis,
-            skipped: 0,
+            endpoint_functions: matches.endpoints.iter().map(|e| e.function).collect(),
+            matches,
+            policy,
+            key_cache: Default::default(),
+            synthetics: Default::default(),
+            deferred_dispatch: Default::default(),
+            report: Default::default(),
         }
+    }
+
+    /// Which of the four buckets a Java call site belongs in, and what to emit there.
+    ///
+    /// Under every strategy but [`CallResolutionStrategy::Mixed`] this is the strategy's own
+    /// fixed answer; `Mixed` runs the ladder in [`Self::classify_ladder`].
+    fn classify(
+        &mut self,
+        key: &SignatureKey,
+        dispatch: JavaDispatch,
+        super_start: Option<&Symbol>,
+    ) -> SiteAction {
+        match self.strategy {
+            CallResolutionStrategy::Cha => SiteAction::Cha,
+            CallResolutionStrategy::Hi => SiteAction::Defer { by_model: false },
+            CallResolutionStrategy::LegacyMixed => {
+                // A zero-target site emits nothing either way, so it takes the CHA arm; that
+                // is also where the ladder counts it.
+                if self.resolvent_count(key) <= 1 {
+                    SiteAction::Cha
+                } else {
+                    SiteAction::Defer { by_model: false }
+                }
+            }
+            CallResolutionStrategy::Mixed => self.classify_ladder(key, dispatch, super_start),
+        }
+    }
+
+    /// Rung 0, then [`classify_rung`] for the rest.
+    fn classify_ladder(
+        &mut self,
+        key: &SignatureKey,
+        dispatch: JavaDispatch,
+        super_start: Option<&Symbol>,
+    ) -> SiteAction {
+        // Rung 0. A super call's target is known, so modelling it would be strictly worse than
+        // resolving it; this rung does not move under `--dispatch-order`.
+        if dispatch == JavaDispatch::Super {
+            let start = super_start.unwrap_or(&key.0);
+            if let SuperResolution::Exactly(target) =
+                self.cha.super_resolvent(start, &key.1, &key.2)
+            {
+                return SiteAction::SuperExact(target);
+            }
+        }
+        let facts = self.key_facts(key);
+        match classify_rung(&self.policy, dispatch, facts.targets, facts.disposition) {
+            Rung::Model => SiteAction::Model(self.synthetic(key)),
+            Rung::Skip => SiteAction::Skip,
+            Rung::Cha => SiteAction::Cha,
+            Rung::Inline { by_model } => SiteAction::Defer { by_model },
+        }
+    }
+
+    /// Emits the rows a classified site calls for, and counts it into its bucket.
+    fn apply(
+        &mut self,
+        site: fx::PackedInsnSiteId,
+        recv_var: FlowVariable,
+        key: &SignatureKey,
+        dispatch: JavaDispatch,
+        action: SiteAction,
+    ) {
+        let (cls, simple_name, descriptor) = key;
+        let buckets = &mut self.report.buckets[dispatch.index()];
+        buckets.java_sites += 1;
+        match action {
+            SiteAction::Model(target) => {
+                buckets.modelled += 1;
+                log::trace!("java: model {cls}.{simple_name}{descriptor}");
+                self.facts.call.push((site, target));
+            }
+            SiteAction::Skip => {
+                buckets.skipped += 1;
+                log::trace!("java: skip {cls}.{simple_name}{descriptor}");
+            }
+            SiteAction::SuperExact(target) => {
+                buckets.cha += 1;
+                buckets.cha_super_exact += 1;
+                log::trace!("java: super resolve {cls}.{simple_name}{descriptor} to {target}");
+                let target = fx::Function(target.into());
+                let target = self.source_info.sites.get_or_add_function(target);
+                self.facts.call.push((site, target));
+            }
+            SiteAction::Cha => {
+                let resolvents: SmallVec<[Symbol; 4]> = self
+                    .cha
+                    .java_resolvents(cls.clone(), simple_name.clone(), descriptor.clone())
+                    .collect();
+                buckets.cha += 1;
+                if resolvents.is_empty() {
+                    buckets.cha_zero_targets += 1;
+                    log::trace!("java: no resolvents {cls}.{simple_name}{descriptor}");
+                } else {
+                    log::trace!(
+                        "java: CHA resolve {cls}.{simple_name}{descriptor} with {} target(s)",
+                        resolvents.len()
+                    );
+                }
+                for target in resolvents {
+                    let target = fx::Function(target.into());
+                    let target = self.source_info.sites.get_or_add_function(target);
+                    self.facts.call.push((site, target));
+                }
+            }
+            SiteAction::Defer { by_model } => {
+                buckets.inlined += 1;
+                if by_model {
+                    buckets.inlined_by_model += 1;
+                }
+                log::trace!("java: hybrid resolve {cls}.{simple_name}{descriptor} (deferred)");
+                self.deferred_dispatch
+                    .insert((simple_name.clone(), descriptor.clone()));
+                self.facts.callee_info.push((
+                    site,
+                    FlowVertex(recv_var, fx::Path::empty()),
+                    fx::CallDispatchKey::Java(simple_name.clone(), descriptor.clone()),
+                ));
+            }
+        }
+    }
+
+    /// The function a modelled signature's summary hangs off, interned on first use.
+    ///
+    /// Interned here rather than when the model is matched, so a signature whose model is
+    /// switched off for this site's dispatch kind, or lost to the threshold under
+    /// `threshold-first`, leaves no function behind in the fact base.
+    fn synthetic(&mut self, key: &SignatureKey) -> fx::FunctionId {
+        let id = self
+            .source_info
+            .sites
+            .get_or_add_function(fx::Function(Str::from(
+                synthetic_dispatch_function(key).as_str(),
+            )));
+        if self.synthetics.insert(key.clone()) {
+            // No body. Phase 2 gives it the `formal_param` rows its summary mentions and the
+            // summary itself, and nothing else does.
+            self.facts.external_function.push((id,));
+        }
+        id
+    }
+
+    /// How many methods CHA resolves `key` to.
+    fn resolvent_count(&self, key: &SignatureKey) -> usize {
+        self.cha
+            .java_resolvents(key.0.clone(), key.1.clone(), key.2.clone())
+            .len()
+    }
+
+    /// Everything about a signature the ladder needs, computed once per signature.
+    ///
+    /// A dispatch model is **refused** when the signature's CHA target set holds a function a
+    /// source or sink model matched: modelling the site would take those bodies out of the
+    /// analysis along with the endpoint inside them. The site falls to the threshold instead.
+    /// The check is over the *direct* targets and cannot be more than that -- making it
+    /// transitive would refuse nearly every model, since most of a program sits in one SCC --
+    /// which is why a signature whose bodies must stay reachable takes `resolve: inline`.
+    ///
+    /// `Inline` is never refused: hybrid inlining hides no callee.
+    fn key_facts(&mut self, key: &SignatureKey) -> KeyFacts {
+        if let Some(facts) = self.key_cache.get(key) {
+            return facts.clone();
+        }
+        let targets: SmallVec<[Symbol; 4]> = self
+            .cha
+            .java_resolvents(key.0.clone(), key.1.clone(), key.2.clone())
+            .collect();
+        let model_key = (
+            Str::from(key.0.as_ref()),
+            Str::from(key.1.as_ref()),
+            Str::from(key.2.as_ref()),
+        );
+        let disposition = match self.matches.dispatch.get(&model_key) {
+            None => None,
+            Some(model) => match &model.disposition {
+                crate::models::Disposition::Inline => Some(DispatchDisposition::Inline),
+                crate::models::Disposition::Model(_) | crate::models::Disposition::Skip => {
+                    let endpoint = targets
+                        .iter()
+                        .map(|t| Str::from(t.as_ref()))
+                        .find(|t| self.endpoint_functions.contains(t));
+                    match endpoint {
+                        Some(endpoint) => {
+                            self.report.refused.insert(
+                                format!("{}->{}{}", key.0, key.1, key.2),
+                                endpoint.to_string(),
+                            );
+                            None
+                        }
+                        None if matches!(model.disposition, crate::models::Disposition::Skip) => {
+                            Some(DispatchDisposition::Skip)
+                        }
+                        None => Some(DispatchDisposition::Model),
+                    }
+                }
+            },
+        };
+        let facts = KeyFacts {
+            targets: targets.len(),
+            disposition,
+        };
+        self.key_cache.insert(key.clone(), facts.clone());
+        facts
     }
 
     /// Gens the dedup'd paths to the facts
@@ -245,6 +772,8 @@ impl<'a> CodegenVisitor<'a> {
         if std::env::var_os("CTADL_NO_EMPTY_PATH").is_none() {
             self.paths_dedup.insert((fx::Path::empty(),));
         }
+        let deferred = std::mem::take(&mut self.deferred_dispatch);
+        emit_callee_resolvents(&self.cha, &deferred, self.facts, self.source_info);
         let paths = std::mem::take(&mut self.paths_dedup);
         self.facts.paths.extend(paths);
         let funcptr_targets = std::mem::take(&mut self.funcptr_targets);
@@ -273,7 +802,7 @@ impl Visitor for CodegenVisitor<'_> {
         let name: Str = function.name.clone().into();
         // Checked before the name is interned, against the same spelling the model matcher took
         // out of the IR.
-        let skip = self.skip_analysis.contains(&name);
+        let skip = self.matches.skip_analysis.contains(&name);
         let func_id = self
             .source_info
             .sites
@@ -299,7 +828,7 @@ impl Visitor for CodegenVisitor<'_> {
             // like a stub.
             log::debug!("skip-analysis: not lowering the body of {}", function.name);
             self.visit_params(&function.params);
-            self.skipped += 1;
+            self.report.skipped_bodies += 1;
             return;
         }
         self.super_function_data(idx, function);
@@ -509,71 +1038,15 @@ impl Visitor for CodegenVisitor<'_> {
                         cls,
                         simple_name,
                         descriptor,
-                        dispatch: _,
+                        dispatch,
+                        super_start,
                     } => {
                         let recv_var = self.trans_variable_ref(receiver);
                         // add receiver as actual arg 0
                         args.insert(0, Exp::Variable(receiver.clone()));
-                        let resolvents = self.cha.java_resolvents(
-                            cls.clone(),
-                            simple_name.clone(),
-                            descriptor.clone(),
-                        );
-                        match self.strategy {
-                            CallResolutionStrategy::Cha => {
-                                log::trace!(
-                                    "java: CHA resolve {cls}.{simple_name}{descriptor} with {} targets",
-                                    resolvents.len()
-                                );
-                                for target in resolvents {
-                                    let target = fx::Function(target.into());
-                                    let target = self.source_info.sites.get_or_add_function(target);
-                                    self.facts.call.push((site, target));
-                                }
-                            }
-                            CallResolutionStrategy::Hi => {
-                                self.facts.callee_info.push((
-                                    site,
-                                    FlowVertex(recv_var, fx::Path::empty()),
-                                    fx::CallDispatchKey::Java(
-                                        simple_name.clone(),
-                                        descriptor.clone(),
-                                    ),
-                                ));
-                                log::trace!(
-                                    "java: HI resolve {cls}.{simple_name}{descriptor} (deferred)"
-                                );
-                            }
-                            CallResolutionStrategy::Mixed => {
-                                if resolvents.len() == 1 {
-                                    let mut resolvents = resolvents;
-                                    let target = resolvents.next().unwrap();
-                                    log::trace!(
-                                        "java: exact resolve {cls}.{simple_name}{descriptor} to {target}"
-                                    );
-                                    let target = fx::Function(target.into());
-                                    let target = self.source_info.sites.get_or_add_function(target);
-                                    self.facts.call.push((site, target));
-                                } else if resolvents.len() == 0 {
-                                    log::trace!(
-                                        "java: no resolvents {cls}.{simple_name}{descriptor}",
-                                    );
-                                } else {
-                                    self.facts.callee_info.push((
-                                        site,
-                                        FlowVertex(recv_var, fx::Path::empty()),
-                                        fx::CallDispatchKey::Java(
-                                            simple_name.clone(),
-                                            descriptor.clone(),
-                                        ),
-                                    ));
-                                    log::trace!(
-                                        "java: hybrid resolve {cls}.{simple_name}{descriptor} with {} targets",
-                                        resolvents.len()
-                                    );
-                                }
-                            }
-                        }
+                        let key = (cls.clone(), simple_name.clone(), descriptor.clone());
+                        let action = self.classify(&key, *dispatch, super_start.as_ref());
+                        self.apply(site, recv_var, &key, *dispatch, action);
                     }
                     CallStyle::LuaCall { receiver, method } => {
                         // A Lua receiver has no static type, so there is no declared class to key
@@ -584,6 +1057,9 @@ impl Visitor for CodegenVisitor<'_> {
                         // re-inserted here.
                         let recv_var = self.trans_variable_ref(receiver);
                         let resolvents = self.cha.lua_resolvents_by_method(method);
+                        // The empty descriptor is the sentinel the Lua CHA arm keys on; see
+                        // [`Self::deferred_dispatch`].
+                        let deferred_key = (method.clone(), Symbol::from(""));
                         // Deferred, context-sensitive resolution: the receiver's object facts
                         // (`call_target_assign`) join the Lua CHA `callee_resolvents` under this
                         // dispatch key at analysis time.
@@ -605,10 +1081,14 @@ impl Visitor for CodegenVisitor<'_> {
                                 }
                             }
                             CallResolutionStrategy::Hi => {
+                                self.deferred_dispatch.insert(deferred_key);
                                 self.facts.callee_info.push(deferred);
                                 log::trace!("lua: HI resolve {receiver}:{method} (deferred)");
                             }
-                            CallResolutionStrategy::Mixed => {
+                            // The ladder is a Java construct: it keys on a static receiver
+                            // class, a dispatch kind and a signature, and a Lua call has none
+                            // of the three. Both mixed strategies get the same arm here.
+                            CallResolutionStrategy::Mixed | CallResolutionStrategy::LegacyMixed => {
                                 if resolvents.is_empty() {
                                     log::trace!("lua: no resolvents {receiver}:{method}");
                                 } else {
@@ -638,6 +1118,7 @@ impl Visitor for CodegenVisitor<'_> {
                                     // resolved through the callee's summary, while the deferred
                                     // path instantiates it context-sensitively with a call
                                     // string, and each finds flows the other merges away.
+                                    self.deferred_dispatch.insert(deferred_key);
                                     self.facts.callee_info.push(deferred);
                                     log::trace!(
                                         "lua: hybrid resolve {receiver}:{method} with {} target(s) + deferred",
@@ -954,6 +1435,22 @@ pub(crate) enum ChaLanguage {
 /// sentinel for [`ChaLanguage::Lua`], which has no overloading.
 pub(crate) type ChaResolvents = BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>>;
 
+/// A call site's static signature: `(class, method simple name, descriptor)`.
+pub(crate) type SignatureKey = (Symbol, Symbol, Symbol);
+
+/// What [`ClassHierarchyAnalysis::super_resolvent`] found by walking up from a start class.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SuperResolution {
+    /// One class in the nearest level declaring the method, and this is its implementation.
+    Exactly(Symbol),
+    /// No class at or above the start declares it: the hierarchy is incomplete, or the start
+    /// class is not in this import.
+    None,
+    /// Several classes at the same level declare it, so the runtime's choice is not
+    /// recoverable from the hierarchy alone.
+    Ambiguous(usize),
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct ClassHierarchyAnalysis {
     language: ChaLanguage,
@@ -962,6 +1459,16 @@ pub(crate) struct ClassHierarchyAnalysis {
     /// program actually allocates inherits it. Empty unless built with [`Self::with_rta`],
     /// because codegen never asks for it and computing it is measurement, not resolution.
     rta_resolvents: ChaResolvents,
+    /// Maps a signature key to the implementation its own class declares. Built from the
+    /// `method_implemented` rows only: an abstract declaration has no body to resolve to.
+    declared: hashbrown::HashMap<SignatureKey, Symbol>,
+    /// `cls -> its direct parents` (superclass and super-interfaces, as the VMT `hierarchy`
+    /// gives it). The upward half of what `run_cha` computes downward, kept small rather than
+    /// materialized: `cha_super_method` is class x inherited method for the whole program.
+    parents: hashbrown::HashMap<Symbol, SmallVec<[Symbol; 2]>>,
+    /// Memo keyed by start signature. Bounded by distinct super-call signatures, about 1% of
+    /// the virtual ones.
+    super_memo: std::cell::RefCell<hashbrown::HashMap<SignatureKey, SuperResolution>>,
 }
 
 impl ClassHierarchyAnalysis {
@@ -986,7 +1493,7 @@ impl ClassHierarchyAnalysis {
                 interfaces,
                 ..
             } => {
-                let method_implemented = methods
+                let method_implemented: Vec<(Symbol, Symbol, Symbol, Symbol)> = methods
                     .iter()
                     .cloned()
                     .map(|(a, b, c, d)| (a.into(), b.into(), c.into(), d.into()))
@@ -1005,6 +1512,8 @@ impl ClassHierarchyAnalysis {
                 let super_interface = Default::default();
                 let instantiated_classes_vec =
                     instantiated_classes.into_iter().map(|s| (s,)).collect();
+                let declared = declared_implementations(&method_implemented);
+                let parents = direct_parents(hierarchy);
                 let (resolvents, rta_resolvents) = run_cha(
                     method_implemented,
                     direct_superclass,
@@ -1017,6 +1526,9 @@ impl ClassHierarchyAnalysis {
                     language: ChaLanguage::Java,
                     resolvents,
                     rta_resolvents,
+                    declared,
+                    parents,
+                    super_memo: Default::default(),
                 }
             }
             // Lua mirrors the Java arm: a Lua method is a `method_implemented` with a fixed
@@ -1051,6 +1563,7 @@ impl ClassHierarchyAnalysis {
                     language: ChaLanguage::Lua,
                     resolvents,
                     rta_resolvents,
+                    ..Default::default()
                 }
             }
             _ => {
@@ -1117,6 +1630,62 @@ impl ClassHierarchyAnalysis {
         Self::lua_lookup(&self.rta_resolvents, method)
     }
 
+    /// The single method a `super`-dispatched call starting at `start` reaches, if the
+    /// hierarchy determines one.
+    ///
+    /// Breadth-first up [`Self::parents`], level 0 being `start` itself, collecting the
+    /// implementations declared at the first level where any class declares the signature and
+    /// stopping there. That is JVM and Dalvik lookup order, and it covers both super cases: a
+    /// superclass target, where the walk climbs the class chain, and an interface default
+    /// method for `X.super.m()`, where `X` declares it and level 0 is the answer.
+    ///
+    /// A walk that finds nothing returns [`SuperResolution::None`] and the caller falls back to
+    /// the full CHA resolvent set. It never hands back an empty target set that CHA would have
+    /// filled: resolving `super` is a precision change, and this is what keeps it from also
+    /// being a soundness one.
+    pub(crate) fn super_resolvent(
+        &self,
+        start: &Symbol,
+        name: &Symbol,
+        descriptor: &Symbol,
+    ) -> SuperResolution {
+        let key = (start.clone(), name.clone(), descriptor.clone());
+        if let Some(cached) = self.super_memo.borrow().get(&key) {
+            return cached.clone();
+        }
+        let result = self.walk_super(start, name, descriptor);
+        self.super_memo.borrow_mut().insert(key, result.clone());
+        result
+    }
+
+    fn walk_super(&self, start: &Symbol, name: &Symbol, descriptor: &Symbol) -> SuperResolution {
+        let mut level: Vec<Symbol> = vec![start.clone()];
+        let mut seen: BTreeSet<Symbol> = level.iter().cloned().collect();
+        while !level.is_empty() {
+            let found: SmallVec<[Symbol; 2]> = level
+                .iter()
+                .filter_map(|cls| {
+                    self.declared
+                        .get(&(cls.clone(), name.clone(), descriptor.clone()))
+                        .cloned()
+                })
+                .collect();
+            match found.len() {
+                0 => {}
+                1 => return SuperResolution::Exactly(found.into_iter().next().unwrap()),
+                n => return SuperResolution::Ambiguous(n),
+            }
+            level = level
+                .iter()
+                .filter_map(|cls| self.parents.get(cls))
+                .flatten()
+                .filter(|parent| seen.insert((*parent).clone()))
+                .cloned()
+                .collect();
+        }
+        SuperResolution::None
+    }
+
     fn lua_lookup(table: &ChaResolvents, method: &Symbol) -> BTreeSet<Symbol> {
         table
             .iter()
@@ -1126,16 +1695,65 @@ impl ClassHierarchyAnalysis {
     }
 }
 
+/// Maps each signature key to the implementation its own class declares, from the same
+/// `method_implemented` rows [`run_cha`] takes. A class declaring one signature twice -- the
+/// same class in two dex files of one app -- keeps the first, since both rows name the same
+/// method id.
+fn declared_implementations(
+    method_implemented: &[(Symbol, Symbol, Symbol, Symbol)],
+) -> hashbrown::HashMap<SignatureKey, Symbol> {
+    let mut declared = hashbrown::HashMap::new();
+    for (cls, name, desc, id) in method_implemented {
+        declared
+            .entry((cls.clone(), name.clone(), desc.clone()))
+            .or_insert_with(|| id.clone());
+    }
+    declared
+}
+
+/// The VMT hierarchy read in the direction super resolution walks: subclass to its direct
+/// parents, superclass and super-interfaces together.
+fn direct_parents(
+    hierarchy: &hashbrown::HashMap<
+        ctadl_ir::mir::call::JavaClass,
+        SmallVec<[ctadl_ir::mir::call::JavaClass; 2]>,
+    >,
+) -> hashbrown::HashMap<Symbol, SmallVec<[Symbol; 2]>> {
+    hierarchy
+        .iter()
+        .map(|(sub, sups)| (sub.0.clone(), sups.iter().map(|s| s.0.clone()).collect()))
+        .collect()
+}
+
+/// The function a modelled signature's summary hangs off.
+///
+/// One per matched key, not per generator or per site: per-key is what makes `Argument(*)`
+/// well defined, since the descriptor fixes the arity. The `ctadl$dispatch$` prefix cannot
+/// collide with a dex or jvm method id, both of which begin with `L`.
+pub fn synthetic_dispatch_function(key: &SignatureKey) -> String {
+    format!("ctadl$dispatch${}->{}{}", key.0, key.1, key.2)
+}
+
 /// Emits the `callee_resolvents` rows for a completed CHA, under the language's own
 /// `(CallTargetObject, CallDispatchKey)` pair: `(Symbol(cls), Java(name, desc))` for JVM/Dex,
 /// `(LuaClass(cls), Lua(name))` for Lua. The `""` descriptor the Lua CHA arm feeds `run_cha`
 /// stays an implementation detail of that arm and never reaches a fact.
+///
+/// `wanted` holds the `(name, descriptor)` pairs some site deferred to hybrid inlining. Those
+/// are the only pairs the engine's resolution rule can join, so a row under any other pair is
+/// dead weight -- on a run where the ladder defers a couple of percent of sites, almost all of
+/// them. The *class* is not filtered: the join is on the receiver's allocated class, which is
+/// not the one the deferred site names.
 fn emit_callee_resolvents(
     cha: &ClassHierarchyAnalysis,
+    wanted: &BTreeSet<(Symbol, Symbol)>,
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
 ) {
     for ((cls, name, desc), targets) in &cha.resolvents {
+        if !wanted.contains(&(name.clone(), desc.clone())) {
+            continue;
+        }
         let (object, key) = match cha.language {
             ChaLanguage::Java => (
                 fx::CallTargetObject::Symbol(cls.clone()),

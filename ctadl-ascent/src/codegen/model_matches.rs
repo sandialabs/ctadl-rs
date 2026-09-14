@@ -12,9 +12,11 @@ Two things depend on that ordering and are improved by it:
 - **A bridge** pins matches in two different programs, so both sides' functions have to be in
   one [`crate::facts::IdMap`] before either can be resolved to an id.
 
-Nothing here modifies the IR, and nothing synthesizes a function. A bridge is one `call` row,
-one temporary per mapped callee index, and one `assign` row per port direction; everything
-downstream is ordinary summary instantiation, and no inference rule knows a bridge was involved.
+Nothing here modifies the IR. One thing here synthesizes a function: a matched `find:
+"dispatch"` model's summary hangs off a `ctadl$dispatch$…` function that phase 1 interned and
+pointed the call site at. A bridge, by contrast, is one `call` row, one temporary per mapped
+callee index, and one `assign` row per port direction; everything downstream is ordinary summary
+instantiation, and no inference rule knows a bridge or a dispatch model was involved.
 */
 
 use hashbrown::hash_map::HashMap;
@@ -27,7 +29,9 @@ use crate::facts::{
 };
 use crate::index_engine::IndexFacts;
 use crate::index_engine::source_info::IndexSourceInfo;
-use crate::models::matches::{BridgeSideMatches, ModelPort, PropagationMatch, diagnose};
+use crate::models::matches::{
+    BridgeSideMatches, Disposition, ModelPort, PropagationMatch, diagnose,
+};
 use crate::models::spec::{BridgePort, BridgeSpec, PortPair, Severity};
 use crate::models::{FormalIndexTypeTag, ProgramModelMatches};
 
@@ -87,10 +91,49 @@ pub fn codegen_model_matches(
     let arg_arity = facts.compute_arg_arity();
     let num_params = facts.compute_num_params();
 
+    let propagations: Vec<PropagationMatch> = matches
+        .propagations
+        .iter()
+        .copied()
+        .chain(dispatch_propagations(matches))
+        .collect();
     Ok(ModelCodegenReport {
-        summaries: codegen_propagations(&matches.propagations, &arg_arity, facts, source_info),
+        summaries: codegen_propagations(&propagations, &arg_arity, facts, source_info),
         declared_paths: codegen_declared_paths(matches, facts),
         bridges: codegen_bridges(specs, matches, &num_params, facts, source_info)?,
+    })
+}
+
+/// A matched dispatch model's propagations, against the synthetic function phase 1 named.
+///
+/// Phase 1 and phase 2 agree on that function by *name*, and `get_or_add_function` interns one
+/// name to one id from either side. A signature phase 1 did not model -- because the strategy
+/// is not `mixed`, because the source/sink guard refused it, or because it appears in no
+/// import -- has no such function in the fact base, and `codegen_propagations` skips a function
+/// it cannot find, so nothing else has to know which keys were used.
+fn dispatch_propagations(
+    matches: &ProgramModelMatches,
+) -> impl Iterator<Item = PropagationMatch> + '_ {
+    matches.dispatch.iter().flat_map(|(key, model)| {
+        let Disposition::Model(ports) = &model.disposition else {
+            return Vec::new();
+        };
+        let function = facts::Str::from(
+            crate::codegen::synthetic_dispatch_function(&(
+                key.0.as_ref().into(),
+                key.1.as_ref().into(),
+                key.2.as_ref().into(),
+            ))
+            .as_str(),
+        );
+        ports
+            .iter()
+            .map(|(dst, src)| PropagationMatch {
+                function,
+                dst: *dst,
+                src: *src,
+            })
+            .collect()
     })
 }
 

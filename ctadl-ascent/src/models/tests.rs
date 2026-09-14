@@ -456,3 +456,337 @@ mod universe_set_diff {
         assert!(as_set(&a).is_empty());
     }
 }
+
+// ---------------------------------------------------------------------------------------
+// `find: "dispatch"`
+// ---------------------------------------------------------------------------------------
+
+mod dispatch {
+    use super::*;
+    use crate::models::match_index::DispatchKeys;
+    use ctadl_ir::mir::call::{
+        CallStyle, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
+        VirtualMethodTable,
+    };
+    use ctadl_ir::mir::{
+        BasicBlockData, FunctionData, Functions, Program, Statement, StatementKind, VariableRef,
+    };
+
+    /// One caller whose body dispatches on each `(cls, name, descriptor)` given. The VMT
+    /// declares `Lcom/example/Impl;->next(...)`, so a `find: methods` generator has something to
+    /// match and the dispatch keys can be seen to differ from it.
+    fn java_program(sites: &[(&str, &str, &str)]) -> ProgramInfo {
+        use ctadl_ir::mir::builder::FunctionBuilder;
+
+        let mut caller = FunctionData {
+            name: "Lcom/example/Caller;->run()V".to_string(),
+            ..Default::default()
+        };
+        {
+            let mut fb = FunctionBuilder::new(&mut caller);
+            let body = fb.add_block();
+            let mut b = fb.at_block(body);
+            let x: VariableRef = b.new_local_var("x");
+            for (cls, name, desc) in sites {
+                b.create_call(
+                    CallStyle::JavaCall {
+                        receiver: x.clone(),
+                        cls: (*cls).into(),
+                        simple_name: (*name).into(),
+                        descriptor: (*desc).into(),
+                        dispatch: JavaDispatch::Interface,
+                        super_start: None,
+                    },
+                    Vec::new(),
+                    Vec::new(),
+                );
+            }
+            b.create_ret(Vec::<ctadl_ir::mir::Exp>::new());
+        }
+        let mut impl_fn = FunctionData::default();
+        impl_fn.set_name("Lcom/example/Impl;->next()Ljava/lang/Object;".to_string());
+        let blocks = impl_fn.blocks.blocks_mut();
+        let entry = blocks.push(BasicBlockData::new(None));
+        blocks[entry].extend(vec![Statement::new_kind(StatementKind::Nop)]);
+
+        ProgramInfo {
+            vmt: VirtualMethodTable::Java {
+                methods: vec![(
+                    JavaClass("Lcom/example/Impl;".into()),
+                    JavaSimpleName("next".into()),
+                    JavaSignature("()Ljava/lang/Object;".into()),
+                    JavaMethod("Lcom/example/Impl;->next()Ljava/lang/Object;".into()),
+                )],
+                hierarchy: Default::default(),
+                interfaces: vec![JavaClass("Ljava/util/Iterator;".into())],
+                abstract_methods: Vec::new(),
+                natives: Vec::new(),
+            },
+            program: Program::new(Functions::new(vec![caller, impl_fn])),
+            ..Default::default()
+        }
+    }
+
+    /// Matches `generators` against a program whose call sites are `sites`.
+    fn dispatch_of(
+        sites: &[(&str, &str, &str)],
+        generators: Vec<serde_json::Value>,
+    ) -> Result<ProgramModelMatches, crate::error::Error> {
+        let program_info = java_program(sites);
+        let keys = DispatchKeys::from_program(&program_info.program);
+        let mut out = ProgramModelMatches::default();
+        {
+            let match_index = ProgramMatchIndex::new_with_dispatch(
+                &program_info,
+                ImportScope::unknown(),
+                Some(&keys),
+            );
+            let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
+            ingest.encode_models(generators)?;
+        }
+        Ok(out)
+    }
+
+    fn errors_of(generators: Vec<serde_json::Value>) -> String {
+        match dispatch_of(
+            &[("Ljava/util/Iterator;", "next", "()Ljava/lang/Object;")],
+            generators,
+        ) {
+            Err(crate::error::Error::JsonModel(errors)) => errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; "),
+            other => panic!("expected a load error, got {other:?}"),
+        }
+    }
+
+    fn model(propagation: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "find": "dispatch",
+            "where": [{"constraint": "signature_match", "name": "next"}],
+            "model": {"propagation": propagation},
+        })
+    }
+
+    const ITERATOR: (&str, &str, &str) = ("Ljava/util/Iterator;", "next", "()Ljava/lang/Object;");
+
+    /// The point of the form: half an app's interface sites name a type it never declares, so
+    /// `java.util.Iterator` has no row in the method universe and `find: methods` cannot name
+    /// it. The keys of the call sites contain it by construction.
+    #[test]
+    fn matches_a_type_the_program_never_declares() {
+        let out = dispatch_of(
+            &[ITERATOR],
+            vec![serde_json::json!({
+                "find": "dispatch",
+                "where": [{"constraint": "signature_match", "names": ["next"],
+                           "parents": ["Ljava/util/Iterator;"]}],
+                "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]},
+            })],
+        )
+        .expect("loading");
+        assert_eq!(out.dispatch.len(), 1);
+        let (key, matched) = out.dispatch.iter().next().unwrap();
+        assert_eq!((key.0.as_ref(), key.1.as_ref(), key.2.as_ref()), ITERATOR);
+        assert!(matches!(matched.disposition, Disposition::Model(_)));
+        assert_eq!(matched.provenance, vec!["<models>:0".to_string()]);
+    }
+
+    #[test]
+    fn an_empty_propagation_is_a_skip() {
+        let out = dispatch_of(&[ITERATOR], vec![model(serde_json::json!([]))]).expect("loading");
+        assert_eq!(
+            out.dispatch.values().next().map(|m| &m.disposition),
+            Some(&Disposition::Skip)
+        );
+    }
+
+    #[test]
+    fn resolve_inline_loads() {
+        let out = dispatch_of(
+            &[ITERATOR],
+            vec![serde_json::json!({
+                "find": "dispatch",
+                "where": [{"constraint": "signature_match", "name": "next"}],
+                "model": {"resolve": "inline"},
+            })],
+        )
+        .expect("loading");
+        assert_eq!(
+            out.dispatch.values().next().map(|m| &m.disposition),
+            Some(&Disposition::Inline)
+        );
+    }
+
+    /// "Forgot the model" and "meant to discard" have to be different documents, so neither key
+    /// is an error and both keys is too.
+    #[test]
+    fn exactly_one_of_propagation_and_resolve_is_required() {
+        for m in [
+            serde_json::json!({}),
+            serde_json::json!({"propagation": [], "resolve": "inline"}),
+        ] {
+            let err = errors_of(vec![serde_json::json!({
+                "find": "dispatch",
+                "where": [{"constraint": "signature_match", "name": "next"}],
+                "model": m,
+            })]);
+            assert!(
+                err.contains("propagation") && err.contains("resolve"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_resolve_value_errors() {
+        let err = errors_of(vec![serde_json::json!({
+            "find": "dispatch",
+            "where": [{"constraint": "signature_match", "name": "next"}],
+            "model": {"resolve": "cha"},
+        })]);
+        assert!(err.contains("'cha'") && err.contains("'inline'"), "{err}");
+    }
+
+    /// An endpoint and a `modes` directive live on a function, and a dispatch generator has
+    /// none.
+    #[test]
+    fn every_other_model_key_is_refused() {
+        for key in [
+            "sources",
+            "sinks",
+            "taint",
+            "modes",
+            "bridge",
+            "access_paths",
+        ] {
+            let err = errors_of(vec![serde_json::json!({
+                "find": "dispatch",
+                "where": [{"constraint": "signature_match", "name": "next"}],
+                "model": {key: []},
+            })]);
+            assert!(err.contains(key), "{key}: {err}");
+        }
+    }
+
+    /// The constraints that need a `FunctionData`, plus `in_function`, which is refused because
+    /// the policy is per signature rather than per site.
+    #[test]
+    fn per_function_constraints_are_refused_by_name() {
+        for (constraint, extra) in [
+            (
+                "in_function",
+                serde_json::json!({"inner": {"constraint": "name", "pattern": "x"}}),
+            ),
+            ("has_code", serde_json::json!({"value": true})),
+            (
+                "number_parameters",
+                serde_json::json!({"inner": {"constraint": "==", "value": 1}}),
+            ),
+            ("uses_field", serde_json::json!({"name": "f"})),
+        ] {
+            let mut c = extra;
+            c["constraint"] = serde_json::json!(constraint);
+            let err = errors_of(vec![serde_json::json!({
+                "find": "dispatch",
+                "where": [c],
+                "model": {"propagation": []},
+            })]);
+            assert!(err.contains(constraint), "{constraint}: {err}");
+        }
+    }
+
+    /// `Inline > Model > Skip`, whichever order the generators arrive in, and both are named in
+    /// the provenance so the diagnostics can say which one lost.
+    #[test]
+    fn dispositions_take_precedence_in_either_order() {
+        let skip = model(serde_json::json!([]));
+        let propagate = model(serde_json::json!([{"input": "Argument(0)", "output": "Return"}]));
+        let inline = serde_json::json!({
+            "find": "dispatch",
+            "where": [{"constraint": "signature_match", "name": "next"}],
+            "model": {"resolve": "inline"},
+        });
+        let pairs = [
+            (skip.clone(), propagate.clone()),
+            (propagate.clone(), skip.clone()),
+        ];
+        for (a, b) in pairs {
+            let out = dispatch_of(&[ITERATOR], vec![a, b]).expect("loading");
+            let matched = out.dispatch.values().next().expect("one key");
+            assert!(matches!(matched.disposition, Disposition::Model(_)));
+            assert_eq!(matched.provenance.len(), 2);
+        }
+        for (a, b) in [
+            (inline.clone(), propagate.clone()),
+            (propagate.clone(), inline.clone()),
+        ] {
+            let out = dispatch_of(&[ITERATOR], vec![a, b]).expect("loading");
+            let matched = out.dispatch.values().next().expect("one key");
+            assert_eq!(matched.disposition, Disposition::Inline);
+            assert_eq!(matched.provenance.len(), 2);
+        }
+    }
+
+    /// Two generators that both model one key union their propagation lists, as two generators
+    /// matching one function do.
+    #[test]
+    fn two_models_on_one_key_union_their_propagations() {
+        let out = dispatch_of(
+            &[ITERATOR],
+            vec![
+                model(serde_json::json!([{"input": "Argument(0)", "output": "Return"}])),
+                model(serde_json::json!([{"input": "Argument(1)", "output": "Return"}])),
+            ],
+        )
+        .expect("loading");
+        let Disposition::Model(ports) = &out.dispatch.values().next().unwrap().disposition else {
+            panic!("expected a model");
+        };
+        assert_eq!(ports.len(), 2);
+    }
+
+    /// A dispatch generator narrows the call sites' signatures, and a method generator the
+    /// program's implementations. The same `where` selects different things.
+    #[test]
+    fn the_two_universes_are_separate() {
+        let out = dispatch_of(
+            &[ITERATOR],
+            vec![
+                model(serde_json::json!([{"input": "Argument(0)", "output": "Return"}])),
+                serde_json::json!({
+                    "find": "methods",
+                    "where": [{"constraint": "signature_match", "name": "next"}],
+                    "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]},
+                }),
+            ],
+        )
+        .expect("loading");
+        assert_eq!(out.dispatch.len(), 1, "the site's signature");
+        assert_eq!(out.propagations.len(), 1, "the implementation");
+        assert_eq!(
+            out.propagations[0].function.as_ref(),
+            "Lcom/example/Impl;->next()Ljava/lang/Object;"
+        );
+    }
+
+    /// Without a dispatch universe the generator matches nothing, rather than everything: the
+    /// caller decided not to collect the call sites, and an unnarrowed working set would model
+    /// every signature in the program.
+    #[test]
+    fn no_dispatch_universe_matches_nothing() {
+        let program_info = java_program(&[ITERATOR]);
+        let mut out = ProgramModelMatches::default();
+        {
+            let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+            let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
+            ingest
+                .encode_models(vec![model(serde_json::json!([
+                    {"input": "Argument(0)", "output": "Return"}
+                ]))])
+                .expect("loading");
+        }
+        assert!(out.dispatch.is_empty());
+    }
+}

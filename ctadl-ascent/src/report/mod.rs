@@ -9,14 +9,14 @@ handful of call sites, push hybrid inlining one frame deeper, or leave it alone.
 
 `spec.md` describes two tiers: **static**, which needs only an import, and **resolved**,
 which reads an index. This version implements the static tier only, and says so in its first
-line. That is not a shortcut. Under the default [`CallResolutionStrategy::Mixed`], codegen
-emits a `call` edge only where CHA already resolved to exactly one target, pushes the
-ambiguous sites to `callee_info`, and drops the zero-target ones silently -- so `call.parquet`
-is the monomorphic subset and everything an index could say about *resolution* is already
-derivable from the import. Fan-in and recursion over the CHA graph, which is what hybrid
-inlining actually contends with, need no index at all. What an index would genuinely add is
-how many call frames away a receiver's allocation is, and that needs a new output relation
-first.
+line. That is not a shortcut. Every rung of the [`CallResolutionStrategy::Mixed`] ladder is a
+function of the import -- a signature's CHA target count, the class hierarchy an
+`invoke-super` walks, and which signatures a model file names -- so the `policy` section
+simulates the whole classification without reading an index, which is what lets a user write a
+dispatch model and see its effect in seconds. Fan-in and recursion over the CHA graph, which is
+what hybrid inlining actually contends with, need no index either. What an index would
+genuinely add is how many call frames away a receiver's allocation is, and that needs a new
+output relation first.
 
 [`CallResolutionStrategy::Mixed`]: crate::codegen::CallResolutionStrategy
 
@@ -97,6 +97,12 @@ pub struct ReportOptions {
     /// -- each caller's class-virtual targets are stored first and the second pass stops
     /// there.
     pub recursion: bool,
+    /// Suppress the built-in default models when simulating the call-resolution policy, so
+    /// `--models` is the complete set. Mirrors `ctadl index`.
+    pub no_default_models: bool,
+    /// The policy the `policy` section simulates. Give `ctadl report` the same flags as
+    /// `ctadl index` and the two agree.
+    pub call_policy: crate::codegen::CallPolicy,
 }
 
 impl Default for ReportOptions {
@@ -106,6 +112,8 @@ impl Default for ReportOptions {
             // `intent.md` asks for the top 10.
             top: 10,
             recursion: true,
+            no_default_models: false,
+            call_policy: crate::codegen::CallPolicy::default(),
         }
     }
 }
@@ -126,7 +134,11 @@ pub struct Report {
 }
 
 /// Measures every program in `project` and returns the result. Reads no index.
-pub fn report(project: &AnalysisProject, opts: ReportOptions) -> Result<Report, Error> {
+pub fn report(
+    project: &AnalysisProject,
+    models: &[std::path::PathBuf],
+    opts: ReportOptions,
+) -> Result<Report, Error> {
     log::info!(
         "reporting on '{}' from {} import(s): {}",
         project.name,
@@ -155,7 +167,16 @@ pub fn report(project: &AnalysisProject, opts: ReportOptions) -> Result<Report, 
             import.name,
             program_info.program.functions.len()
         );
-        programs.push(callgraph::measure(&import.name, &program_info, opts));
+        // The policy section simulates the ladder, and rung 1 is a matched dispatch model. This
+        // is the same load `ctadl index` does, against the same program, so the two agree on
+        // which signatures a model covers.
+        let matches = match_models(&program_info, &import, models, opts)?;
+        programs.push(callgraph::measure(
+            &import.name,
+            &program_info,
+            opts,
+            &matches,
+        ));
         // `program_info` goes out of scope here in any case; naming the drop is a note that
         // it must, since the next import is decoded into the space this one held and the
         // peak should be one program rather than all of them.
@@ -167,6 +188,31 @@ pub fn report(project: &AnalysisProject, opts: ReportOptions) -> Result<Report, 
         programs,
         empty_imports,
     })
+}
+
+/// Loads the model files against one import, the way `ctadl index` does.
+///
+/// Only the dispatch generators matter to the report, but the whole file is loaded: an endpoint
+/// is what refuses a dispatch model, and a report that did not see the endpoints would claim
+/// coverage the index will not give.
+fn match_models(
+    program_info: &ctadl_ir::ProgramInfo,
+    import: &crate::project::ArtifactImport,
+    models: &[std::path::PathBuf],
+    opts: ReportOptions,
+) -> Result<crate::models::ProgramModelMatches, Error> {
+    let mut matches = crate::models::ProgramModelMatches::default();
+    let scope = crate::models::ImportScope::new(import.language, &import.name);
+    let keys = crate::models::DispatchKeys::from_program(&program_info.program);
+    let match_index =
+        crate::models::ProgramMatchIndex::new_with_dispatch(program_info, scope, Some(&keys));
+    if !opts.no_default_models {
+        crate::models::try_load_default_models(&match_index, &mut matches)?;
+    }
+    for path in models {
+        crate::models::try_load_models(&match_index, path, &mut matches)?;
+    }
+    Ok(matches)
 }
 
 /// Renders `report` to `output`, or to stdout for `-`.

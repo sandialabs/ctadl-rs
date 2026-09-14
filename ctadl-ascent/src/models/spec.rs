@@ -432,6 +432,10 @@ impl BridgeSpec {
 #[derive(Clone, Debug, Default)]
 pub struct ModelFileSpecs {
     pub bridges: Vec<BridgeSpec>,
+    /// Whether any generator in the scanned files uses `find: "dispatch"`. Read before the
+    /// import loop, because collecting the signature keys such a generator matches costs a
+    /// pass over every statement and only those generators read them.
+    pub finds_dispatch: bool,
 }
 
 impl ModelFileSpecs {
@@ -513,6 +517,9 @@ pub fn scan_model_files(paths: &[PathBuf]) -> Result<ModelFileSpecs, Error> {
     for path in paths {
         let mut errors: Vec<JsonModelError> = Vec::new();
         visit_model_file(path, |n, value| {
+            if value.get("find").and_then(|v| v.as_str()) == Some("dispatch") {
+                specs.finds_dispatch = true;
+            }
             if let Some(bridge) = value.pointer("/model/bridge") {
                 match parse_bridge(path, n, value, bridge, &mut errors) {
                     Some(spec) => specs.bridges.push(spec),

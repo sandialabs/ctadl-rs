@@ -135,16 +135,53 @@ struct Context {
     >,
     call_result: Option<VariableRef>,
     catch_result: Option<VariableRef>,
+    /// The class whose methods are being lowered, and its direct parents. Set once per class in
+    /// [`Context::process`] and read when lowering an `invokespecial` to fill in `super_start`:
+    /// a `super.m()` begins lookup at the enclosing class's superclass, which the instruction
+    /// itself does not name.
+    enclosing: Option<EnclosingClass>,
+}
+
+/// What lowering an `invokespecial` needs to know about the class the call appears in.
+#[derive(Debug, Default)]
+struct EnclosingClass {
+    name: Symbol,
+    superclass: Option<Symbol>,
+    /// The interfaces the class directly implements. An `X.super.m()` names one of these, and
+    /// there lookup begins at the named interface rather than at the superclass.
+    interfaces: Vec<Symbol>,
 }
 
 type DupSlotPair = (u32, u32);
 
 impl Context {
+    /// Where an `invokespecial` naming `cls.name` begins method lookup.
+    ///
+    /// Under `ACC_SUPER` a `super.m()` starts at the superclass of the class declaring the
+    /// current method, not at the class the instruction names. Three cases start at the named
+    /// class instead: `X.super.m()`, whose reference names an interface the enclosing class
+    /// implements directly; a constructor, whose target class is exact; and a private call,
+    /// which names the current class.
+    ///
+    /// `None` when the enclosing class is unknown or has no superclass, which leaves the site
+    /// on the ordinary resolvent set.
+    fn super_start(&self, cls: &str, name: &str) -> Option<Symbol> {
+        let enclosing = self.enclosing.as_ref()?;
+        if name == "<init>"
+            || &*enclosing.name == cls
+            || enclosing.interfaces.iter().any(|i| &**i == cls)
+        {
+            return Some(Symbol::from(cls));
+        }
+        enclosing.superclass.clone()
+    }
+
     fn new() -> Self {
         Self {
             ext: Default::default(),
             call_result: None,
             catch_result: None,
+            enclosing: None,
         }
     }
 
@@ -177,12 +214,14 @@ impl Context {
             );
 
             let mut iface_vec = SmallVec::new();
-            if let Some(jc) = superclass_opt {
+            if let Some(jc) = superclass_opt.clone() {
                 iface_vec.push(jc)
             };
+            let mut direct_interfaces = Vec::new();
             for type_idx in &class_def.interfaces {
                 let iface = jvm_class_symbol(parser.get_class_name(*type_idx).ok().unwrap());
                 iface_vec.push(JavaClass(iface.clone().into()));
+                direct_interfaces.push(Symbol::from(iface.as_str()));
                 log::trace!("Interface: {}", iface);
             }
 
@@ -197,6 +236,11 @@ impl Context {
                     interfaces.push(JavaClass(class_name.to_string().into()));
                 }
             }
+            self.enclosing = Some(EnclosingClass {
+                name: Symbol::from(class_name.as_str()),
+                superclass: superclass_opt.map(|c| c.0),
+                interfaces: direct_interfaces,
+            });
             for enc in parser.methods() {
                 let sig = parser.method_signature(enc)?;
                 let method_name = parser.method_name(enc)?;
@@ -616,6 +660,7 @@ impl Context {
                             // goes is decided by a bootstrap method at run time. Recorded as
                             // unknown rather than guessed at.
                             dispatch: JavaDispatch::Unknown,
+                            super_start: None,
                         }
                     }
                     // other calls have a class name, method name, and descriptor
@@ -654,6 +699,10 @@ impl Context {
                                 // receiver. Recorded honestly rather than asserted, since a
                                 // new `CallKind` should not make this arm lie.
                                 CallKind::Dynamic | CallKind::Static => JavaDispatch::Unknown,
+                            },
+                            super_start: match call.call_kind {
+                                CallKind::Special => self.super_start(&class_name, method_name),
+                                _ => None,
                             },
                         }
                     }

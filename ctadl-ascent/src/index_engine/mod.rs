@@ -2094,6 +2094,7 @@ mod tests {
             &mut facts,
             &mut source_info,
             CallResolutionStrategy::Mixed,
+            Default::default(),
             &Default::default(),
         );
         (facts, source_info)

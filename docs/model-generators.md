@@ -190,13 +190,14 @@ shipped default has to land in the schema as well, or the check fails.
 | ------------ | ------------------------------------------------------------- |
 | `methods`    | Functions / methods (the common case).                        |
 | `callsites`  | Individual call *sites* — a specific call, not the callee everywhere. |
+| `dispatch`   | Java call sites by their own **static signature**, replacing what the site resolves to. See §8.5. |
 | `variables`  | Variables. *(declared in the schema but not yet handled by the loader.)* |
 | `fields`     | Fields of objects/structs. *(declared in the schema but not yet handled by the loader.)* |
 
 > **Implementation note.** The loader
 > ([`models/json.rs`](../ctadl-ascent/src/models/json.rs)) currently only
-> branches on `methods` and `callsites`; a `find` of `variables` or `fields`
-> raises a parse error today. They're reserved in the schema.
+> branches on `methods`, `callsites` and `dispatch`; a `find` of `variables` or
+> `fields` raises a parse error today. They're reserved in the schema.
 
 ### `in` — which imports
 
@@ -864,10 +865,97 @@ source/sink at a precise location without over-tainting every call.
 
 ---
 
+## 8.5. `find: dispatch` — modelling a Java call site's signature
+
+**Read this first: a dispatch model hides the callee.** It replaces the site's target set with
+one summary, so every implementation CHA could have reached leaves the analysis at that site,
+along with anything reachable *through* those bodies. If a sink lives inside one of them, no
+flow will ever reach it. That is the whole cost of the form, and it is the reason the shipped
+list is short and consists only of methods whose behaviour is fixed by a contract.
+
+CTADL does refuse a model whose CHA target set holds a function a source or sink model matched,
+and says so at `info`. The guard sees the **direct** targets only: it catches a sink declared
+*on* a target method, and not one reached through a target's body (a `close()` that calls
+`OutputStream.write`). It cannot be made transitive — most of a program sits in one strongly
+connected component, and a transitive check would refuse nearly every model. For a signature
+whose bodies must stay reachable, use `resolve: "inline"` below rather than a model of any
+shape. The guard also needs the endpoint file at index time, so pass the same `--models` to
+`ctadl index` and `ctadl query`; the index records a digest of them and `ctadl query` warns
+when they differ.
+
+### What it does
+
+`--strategy mixed` classifies each Java call site in order:
+
+1. **`invoke-super`** resolves to its one real target when the hierarchy determines one.
+2. A **dispatch model** matching the site's signature: one `call` row to a synthetic
+   `ctadl$dispatch$…` function carrying the summary, and no CHA edges.
+3. The **threshold** `--cha-threshold` (default 4): at or under that many CHA targets, the site
+   gets ordinary CHA edges. Raising it leaves less to hybrid inlining but costs the index
+   engine, steeply on a program with a large recursive strongly connected component.
+4. Everything else goes to hybrid inlining.
+
+`--dispatch-order threshold-first` swaps steps 2 and 3, for a precision-sensitive run.
+`--no-dispatch-models` turns step 2 off. `ctadl report --models` takes the same flags and
+simulates the whole thing without indexing, which is how to see what a model would cover.
+
+### Surface
+
+```jsonc
+{ "find": "dispatch",
+  "where": [ { "constraint": "signature_match", "name": "toString",
+               "parents": ["Ljava/lang/Object;"] } ],
+  "model": { "propagation": [ { "input": "Argument(*)", "output": "Return" } ] } }
+```
+
+`where` is evaluated against the **call site's** declared class, simple name and descriptor —
+not against a function. So `parent`/`parents` is the class the invoke instruction names, `name`
+is the method's simple name, and `signature`/`signature_pattern` matches the descriptor. The
+`qualified-id` spelling is the ordinary `Lcls;->name(desc)`.
+
+This is the reason the form exists: `find: methods` matches the program's *implementations*, and
+about half of an app's interface call sites name a type the app never declares.
+`java.util.Iterator` has no implementation row, so no `find: methods` generator can name it. The
+call sites' signature keys contain it by construction.
+
+`in_function`, `has_code`, `number_parameters` and `uses_field` are load errors here: they need
+a function, and a signature is not one. (`in_function` is refused for a second reason — the
+policy is deliberately per signature, not per site.)
+
+`model` carries **exactly one** of:
+
+| Key | Meaning |
+| --- | --- |
+| `propagation` | The site's summary, with the same port semantics as a `find: methods` propagation: the receiver is `Argument(0)`, the nth argument `Argument(n)`, the result `Return`. |
+| `propagation: []` | An **empty** list is the spelling of "this call moves nothing". Written explicitly, so "forgot the model" and "meant to discard" are different documents. |
+| `resolve: "inline"` | Send every site of this signature to hybrid inlining whatever its target count, except a site with exactly one target, which stays exact. For a signature whose bodies must stay reachable but whose target set is too wide for CHA — `close`, `dispose`, and the rest of the resource contract. |
+| `closure_shaped: true` | A note for `ctadl report`, not a resolution rule. Marks arbitrary code behind a one-method interface, which is what hybrid inlining is for, so the report can say which closure-shaped signatures no model covers. |
+
+Omitting all four is a load error, and so is any other `model` key: an endpoint and a `modes`
+directive live on a function, and there is none here.
+
+When several generators match one signature, the disposition that keeps the most of the program
+reachable wins: `inline` > `propagation` > empty. So a user overrides a shipped discard by
+adding a propagation and a shipped model by adding `resolve: inline`; going the other way needs
+`--no-default-models`. Two propagation lists on one signature union.
+
+### What not to model
+
+`FunctionN.invoke`, `Runnable.run`, `Provider.get`, `invokeSuspend`/`create` and the generated
+serializers are one-method interfaces whose implementations are unrelated fragments of the
+program. There is no contract to model, and the receiver's identity is exactly what hybrid
+inlining recovers. They exceed the threshold and fall to it on their own. That is the line the
+design is drawn on.
+
+---
+
 ## 9. Typical use cases at a glance
 
 | Goal | `find` | `model` keys |
 | --- | --- | --- |
+| Take a contract method's callees out of the call graph | `dispatch` | `propagation` |
+| Discard a call whose only output is a shape primitive | `dispatch` | `propagation: []` |
+| Keep a signature's bodies reachable but off CHA | `dispatch` | `resolve: "inline"` |
 | Mark a function's output as untrusted input | `methods` | `sources` |
 | Mark a whole value (all offsets/fields) as untrusted, e.g. `argv` | `methods` | `sources` + `saturating: true` |
 | Flag a dangerous API | `methods` | `sinks` |

@@ -413,7 +413,7 @@ fn test_hash_artifact_file_and_dir() {
 fn index_version_gate_accepts_what_this_build_wrote() {
     run_store_test(|| {
         let project = AnalysisProject::try_create("gate_ok", &["nonexistent_import"]).unwrap();
-        project.write_index_config().unwrap();
+        project.write_index_config(None).unwrap();
         assert!(
             project.check_index_config().is_ok(),
             "an index this build just stamped must be readable"
