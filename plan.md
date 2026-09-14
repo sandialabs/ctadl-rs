@@ -1,4 +1,4 @@
-# Implementation plan — CHA with a surgical fallback
+# Implementation plan — CHA with a surgical fallback - DO-NOT-MERGE
 
 Builds `spec.md` in ten steps. Each step compiles, passes tests, and can be committed on its
 own. Step numbers match spec §16. Capture every measurement run's output under
