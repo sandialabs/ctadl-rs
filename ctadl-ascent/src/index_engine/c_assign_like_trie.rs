@@ -1,12 +1,12 @@
 //! The parallel twin of [`super::assign_like_trie`], for `ascent_par!`.
 //!
 //! Same shape as [`super::c_locals_trie`], one level simpler. The store is a single forward map
-//! `(F, Vsrc) -> [(Vdst, Pdst, Psrc)]`, which serves both logical indices as views: `0_3`
-//! point-probes `(F, Vsrc)`, and the full `0_1_2_3_4` index handles existence, dedup, and
-//! whole-relation iteration. The outer `hashbrown::HashMap` becomes a `DashMap` so rayon threads
-//! can insert concurrently; the leaves stay a `Vec`, deduped by linear scan, for the reason
-//! [`super::assign_like_trie`] gives: keyed on `(F, Vsrc)` the relation fans out to fewer than two
-//! leaves per group, and a whole hash table per group would cost more than the index it replaces.
+//! `(F, Vsrc) -> group`, whose group is a [`super::path_group::PathGroup`] keyed on `Psrc` and
+//! carrying `(Vdst, Pdst)`. It serves every logical index as a view: `0_3` iterates a group,
+//! `0_3_4` looks a source path up in it, and the full `0_1_2_3_4` index handles existence,
+//! dedup, and whole-relation iteration. The outer `hashbrown::HashMap` becomes a `DashMap` so
+//! rayon threads can insert concurrently; a concurrent insert takes one shard lock and inserts
+//! into the group under it.
 //!
 //! Correctness note, same as both serial modules: the *only* real `RelIndexMerge` lives on the
 //! ind_common ([`CAssignTrie`]), so no row is merged twice per iteration.
@@ -32,7 +32,8 @@ use std::ops::Index;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::assign_like_trie::FromRows;
-use super::c_locals_trie::{CMap, Hasher};
+use super::c_locals_trie::{CMap, CollectedParIter, Hasher};
+use super::path_group::PathGroup;
 use super::locals_trie::{DynIter, hb_bytes};
 use ascent::dashmap::ReadOnlyView;
 use ascent::internal::{
@@ -42,10 +43,9 @@ use ascent::internal::{
 };
 use ascent::rayon::iter::ParallelIterator;
 use ascent::rayon::iter::plumbing::UnindexedConsumer;
-use ascent::rayon::prelude::IntoParallelRefIterator;
 
 /// The leaves of one `(F, Vsrc)` group: `{col1, col2, col4}` of the tuple.
-type Leaves<Vd, Pd, Ps> = Vec<(Vd, Pd, Ps)>;
+type Leaves<Vd, Pd, Ps> = PathGroup<Ps, Vd, Pd>;
 
 // ---------------------------------------------------------------------------
 // Physical `rel!` storage.
@@ -190,7 +190,7 @@ where
         self.fwd
             .frozen()
             .get(&(f.clone(), vs.clone()))
-            .is_some_and(|leaves| leaves.contains(&(vd.clone(), pd.clone(), ps.clone())))
+            .is_some_and(|group| group.contains(ps, vd, pd))
     }
 
     /// Insert a full tuple through a **shared** reference. Returns true if it was new to *this*
@@ -198,20 +198,17 @@ where
     /// entry is one shard write lock, held across the leaf scan and push.
     fn c_insert(&self, key: &(F, Vd, Pd, Vs, Ps)) -> bool {
         let (f, vd, pd, vs, ps) = key;
-        let leaf = (vd.clone(), pd.clone(), ps.clone());
-        let mut leaves = self
+        let leaf = (ps.clone(), vd.clone(), pd.clone());
+        let added = self
             .fwd
             .unfrozen()
             .entry((f.clone(), vs.clone()))
-            .or_default();
-        if leaves.contains(&leaf) {
-            false
-        } else {
-            leaves.push(leaf);
-            drop(leaves);
+            .or_default()
+            .insert(leaf);
+        if added {
             self.len.fetch_add(1, Ordering::Relaxed);
-            true
         }
+        added
     }
 
     /// Merge `from` into `self`, taking the union. Ascent runs this single-threaded on `&mut`,
@@ -224,14 +221,8 @@ where
             // the next `new` store, and a fresh `DashMap` would allocate a whole shard array on
             // every fixpoint iteration. See `c_locals_trie::CLocalsIndCommon::absorb`.
             for shard in from.fwd.unfrozen_mut().shards_mut() {
-                for (key, leaves) in shard.get_mut().drain() {
-                    let mut dst = fwd.entry(key).or_default();
-                    for leaf in leaves.into_inner() {
-                        if !dst.contains(&leaf) {
-                            dst.push(leaf);
-                            added += 1;
-                        }
-                    }
+                for (key, group) in shard.get_mut().drain() {
+                    added += fwd.entry(key).or_default().merge(group.into_inner());
                 }
             }
         }
@@ -252,21 +243,14 @@ where
         let mut max_group = 0usize;
         // The closure borrows `trie`/`max_group` mutably; scope it so they are readable after.
         {
-            let mut visit = |leaves: &Leaves<Vd, Pd, Ps>| {
-                trie += leaves.capacity() * sz_leaf;
-                max_group = max_group.max(leaves.len());
+            let mut visit = |group: &Leaves<Vd, Pd, Ps>| {
+                trie += group.heap_bytes();
+                max_group = max_group.max(group.len());
             };
             match &self.fwd {
                 CMap::Frozen(v) => v.iter().for_each(|(_, leaves)| visit(leaves)),
                 CMap::Unfrozen(dm) => dm.iter().for_each(|e| visit(e.value())),
             }
-        }
-        if max_group > 4096 {
-            log::warn!(
-                "c_assign_like_trie: largest (F,Vsrc) group has {} leaves; linear leaf dedup is \
-                 O(group size) and may be slow for such groups",
-                max_group
-            );
         }
         let n = self.len();
         let groups = self.fwd.len();
@@ -309,8 +293,8 @@ where
             unreachable!("just unfrozen")
         };
         let mut out = Vec::with_capacity(n);
-        for ((f, vs), leaves) in fwd.into_iter() {
-            for (vd, pd, ps) in leaves {
+        for ((f, vs), group) in fwd.into_iter() {
+            for (ps, vd, pd) in group {
                 out.push((f.clone(), vd, pd, vs.clone(), ps));
             }
         }
@@ -357,24 +341,27 @@ where
 
 /// A group's leaves as `(&Vd, &Pd, &Ps)`, split over the leaf slice. Leaves live in a `Vec`, so
 /// this needs no intermediate allocation.
-type LeafParIter<'a, Vd, Pd, Ps> = ascent::rayon::iter::Map<
-    ascent::rayon::slice::Iter<'a, (Vd, Pd, Ps)>,
-    for<'x> fn(&'x (Vd, Pd, Ps)) -> (&'x Vd, &'x Pd, &'x Ps),
->;
+type LeafParIter<'a, Vd, Pd, Ps> = CollectedParIter<(&'a Vd, &'a Pd, &'a Ps)>;
 
+/// A group's leaves as `(&Vd, &Pd, &Ps)`, in the tuple's column order.
 #[inline]
-fn split_leaf<Vd, Pd, Ps>((vd, pd, ps): &(Vd, Pd, Ps)) -> (&Vd, &Pd, &Ps) {
-    (vd, pd, ps)
+fn leaves<Vd, Pd, Ps>(group: &Leaves<Vd, Pd, Ps>) -> impl Iterator<Item = (&Vd, &Pd, &Ps)> + Clone
+where
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    group.iter().map(|(ps, vd, pd)| (vd, pd, ps))
 }
 
 #[inline]
-fn leaf_par_iter<Vd, Pd, Ps>(leaves: &[(Vd, Pd, Ps)]) -> LeafParIter<'_, Vd, Pd, Ps>
+fn leaf_par_iter<Vd, Pd, Ps>(group: &Leaves<Vd, Pd, Ps>) -> LeafParIter<'_, Vd, Pd, Ps>
 where
-    Vd: Sync,
-    Pd: Sync,
-    Ps: Sync,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
 {
-    leaves.par_iter().map(split_leaf as _)
+    CollectedParIter(leaves(group).collect())
 }
 
 /// `iter_all` over `0_3`: one key per `(F, Vsrc)` group, with that group's leaves.
@@ -401,7 +388,7 @@ where
         C: UnindexedConsumer<Self::Item>,
     {
         DashMapViewParIter::new(self.fwd)
-            .map(|((f, vs), leaves)| ((f, vs), leaf_par_iter(leaves)))
+            .map(|((f, vs), group)| ((f, vs), leaf_par_iter(group)))
             .drive_unindexed(consumer)
     }
 }
@@ -433,9 +420,8 @@ where
         C: UnindexedConsumer<Self::Item>,
     {
         DashMapViewParIter::new(self.fwd)
-            .flat_map_iter(|((f, vs), leaves)| {
-                leaves
-                    .iter()
+            .flat_map_iter(|((f, vs), group)| {
+                leaves(group)
                     .map(move |(vd, pd, ps)| ((f, vd, pd, vs, ps), ascent::rayon::iter::once(&())))
             })
             .drive_unindexed(consumer)
@@ -447,6 +433,95 @@ where
 // write target, because the blanket `ToRelIndex0` impl routes `to_c_rel_index_write` to
 // `to_rel_index`.
 // ---------------------------------------------------------------------------
+
+/// A group's leaves bucketed by source path, for `iter_all` over `0_3_4`.
+fn by_path<Vd, Pd, Ps>(group: &Leaves<Vd, Pd, Ps>) -> Vec<(&Ps, Vec<(&Vd, &Pd)>)>
+where
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    let mut byp: hashbrown::HashMap<&Ps, Vec<(&Vd, &Pd)>, rustc_hash::FxBuildHasher> =
+        Default::default();
+    for (ps, vd, pd) in group.iter() {
+        byp.entry(ps).or_default().push((vd, pd));
+    }
+    byp.into_iter().collect()
+}
+
+/// `iter_all` over `0_3_4`: one key per `(F, Vsrc, Psrc)`, with its `(Vdst, Pdst)` leaves.
+pub struct CView034AllParIter<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+{
+    fwd: &'a ReadOnlyView<(F, Vs), Leaves<Vd, Pd, Ps>, Hasher>,
+}
+
+impl<'a, F, Vd, Pd, Vs, Ps> ParallelIterator for CView034AllParIter<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash + Send + Sync,
+    Vd: Clone + Eq + Hash + Send + Sync,
+    Pd: Clone + Eq + Hash + Send + Sync,
+    Vs: Clone + Eq + Hash + Send + Sync,
+    Ps: Clone + Eq + Hash + Send + Sync,
+{
+    type Item = ((&'a F, &'a Vs, &'a Ps), CollectedParIter<(&'a Vd, &'a Pd)>);
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+    where
+        C: UnindexedConsumer<Self::Item>,
+    {
+        DashMapViewParIter::new(self.fwd)
+            .flat_map_iter(|((f, vs), group)| {
+                by_path(group)
+                    .into_iter()
+                    .map(move |(ps, vps)| ((f, vs, ps), CollectedParIter(vps)))
+            })
+            .drive_unindexed(consumer)
+    }
+}
+
+/// Every row, as `(&F, &Vd, &Pd, &Vs, &Ps)`, split over the store's shards.
+pub struct CAllRowsParIter<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+{
+    fwd: &'a ReadOnlyView<(F, Vs), Leaves<Vd, Pd, Ps>, Hasher>,
+}
+
+impl<F, Vd, Pd, Vs, Ps> Clone for CAllRowsParIter<'_, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+{
+    fn clone(&self) -> Self {
+        Self { fwd: self.fwd }
+    }
+}
+
+impl<'a, F, Vd, Pd, Vs, Ps> ParallelIterator for CAllRowsParIter<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash + Send + Sync,
+    Vd: Clone + Eq + Hash + Send + Sync,
+    Pd: Clone + Eq + Hash + Send + Sync,
+    Vs: Clone + Eq + Hash + Send + Sync,
+    Ps: Clone + Eq + Hash + Send + Sync,
+{
+    type Item = (&'a F, &'a Vd, &'a Pd, &'a Vs, &'a Ps);
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+    where
+        C: UnindexedConsumer<Self::Item>,
+    {
+        DashMapViewParIter::new(self.fwd)
+            .flat_map_iter(|((f, vs), group)| {
+                leaves(group).map(move |(vd, pd, ps)| (f, vd, pd, vs, ps))
+            })
+            .drive_unindexed(consumer)
+    }
+}
 
 macro_rules! marker {
     ($to:ident, $view:ident) => {
@@ -524,6 +599,233 @@ macro_rules! marker {
 
 marker!(CTo03, CView03);
 marker!(CToFull, CViewFull);
+marker!(CTo034, CView034);
+marker!(CToNone, CViewNone);
+
+// ---- 0_3_4: (F, Vsrc, Psrc) -> (Vdst, Pdst), the exact-path probe --------------
+impl<'a, F, Vd, Pd, Vs, Ps> RelIndexRead<'a> for CView034<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = (F, Vs, Ps);
+    type Value = (&'a Vd, &'a Pd);
+    type IteratorType = super::path_group::Get<'a, Ps, Vd, Pd>;
+    #[inline]
+    fn index_get(&'a self, key: &(F, Vs, Ps)) -> Option<Self::IteratorType> {
+        let group = self.0.fwd.frozen().get(&(key.0.clone(), key.1.clone()))?;
+        group.get(&key.2)
+    }
+    #[inline]
+    fn len_estimate(&self) -> usize {
+        self.0.len()
+    }
+}
+impl<'a, F, Vd, Pd, Vs, Ps> RelIndexReadAll<'a> for CView034<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = (&'a F, &'a Vs, &'a Ps);
+    type Value = (&'a Vd, &'a Pd);
+    type ValueIteratorType = DynIter<'a, Self::Value>;
+    type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
+    #[inline]
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        Box::new(self.0.fwd.frozen().iter().flat_map(|((f, vs), group)| {
+            by_path(group).into_iter().map(move |(ps, vps)| {
+                let it = DynIter::new(move || vps.clone().into_iter());
+                ((f, vs, ps), it)
+            })
+        }))
+    }
+}
+impl<'a, F, Vd, Pd, Vs, Ps> CRelIndexRead<'a> for CView034<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash + Send + Sync,
+    Vd: Clone + Eq + Hash + Send + Sync,
+    Pd: Clone + Eq + Hash + Send + Sync,
+    Vs: Clone + Eq + Hash + Send + Sync,
+    Ps: Clone + Eq + Hash + Send + Sync,
+{
+    type Key = (F, Vs, Ps);
+    type Value = (&'a Vd, &'a Pd);
+    type IteratorType = CollectedParIter<Self::Value>;
+    #[inline]
+    fn c_index_get(&'a self, key: &(F, Vs, Ps)) -> Option<Self::IteratorType> {
+        let group = self.0.fwd.frozen().get(&(key.0.clone(), key.1.clone()))?;
+        let matches: Vec<_> = group.get(&key.2)?.collect();
+        if matches.is_empty() {
+            return None;
+        }
+        Some(CollectedParIter(matches))
+    }
+}
+impl<'a, F, Vd, Pd, Vs, Ps> CRelIndexReadAll<'a> for CView034<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash + Send + Sync,
+    Vd: Clone + Eq + Hash + Send + Sync,
+    Pd: Clone + Eq + Hash + Send + Sync,
+    Vs: Clone + Eq + Hash + Send + Sync,
+    Ps: Clone + Eq + Hash + Send + Sync,
+{
+    type Key = (&'a F, &'a Vs, &'a Ps);
+    type Value = (&'a Vd, &'a Pd);
+    type ValueIteratorType = CollectedParIter<Self::Value>;
+    type AllIteratorType = CView034AllParIter<'a, F, Vd, Pd, Vs, Ps>;
+    #[inline]
+    fn c_iter_all(&'a self) -> Self::AllIteratorType {
+        CView034AllParIter {
+            fwd: self.0.fwd.frozen(),
+        }
+    }
+}
+impl<F, Vd, Pd, Vs, Ps> RelIndexWrite for CView034<'_, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = (F, Vs, Ps);
+    type Value = (Vd, Pd);
+    #[inline(always)]
+    fn index_insert(&mut self, _key: Self::Key, _value: Self::Value) {}
+}
+impl<F, Vd, Pd, Vs, Ps> CRelIndexWrite for CView034<'_, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = (F, Vs, Ps);
+    type Value = (Vd, Pd);
+    #[inline(always)]
+    fn index_insert(&self, _key: Self::Key, _value: Self::Value) {}
+}
+
+// ---- none: every row ----------------------------------------------------------
+impl<'a, F, Vd, Pd, Vs, Ps> RelIndexRead<'a> for CViewNone<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = ();
+    type Value = (&'a F, &'a Vd, &'a Pd, &'a Vs, &'a Ps);
+    type IteratorType = DynIter<'a, Self::Value>;
+    #[inline]
+    fn index_get(&'a self, _key: &()) -> Option<Self::IteratorType> {
+        let fwd = self.0.fwd.frozen();
+        Some(DynIter::new(move || {
+            fwd.iter().flat_map(|((f, vs), group)| {
+                leaves(group).map(move |(vd, pd, ps)| (f, vd, pd, vs, ps))
+            })
+        }))
+    }
+    #[inline]
+    fn len_estimate(&self) -> usize {
+        1
+    }
+    #[inline]
+    fn is_empty(&'a self) -> bool {
+        self.0.is_empty()
+    }
+}
+impl<'a, F, Vd, Pd, Vs, Ps> RelIndexReadAll<'a> for CViewNone<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = ();
+    type Value = (&'a F, &'a Vd, &'a Pd, &'a Vs, &'a Ps);
+    type ValueIteratorType = DynIter<'a, Self::Value>;
+    type AllIteratorType = std::iter::Once<((), Self::ValueIteratorType)>;
+    #[inline]
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        std::iter::once(((), RelIndexRead::index_get(self, &()).unwrap()))
+    }
+}
+impl<'a, F, Vd, Pd, Vs, Ps> CRelIndexRead<'a> for CViewNone<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash + Send + Sync,
+    Vd: Clone + Eq + Hash + Send + Sync,
+    Pd: Clone + Eq + Hash + Send + Sync,
+    Vs: Clone + Eq + Hash + Send + Sync,
+    Ps: Clone + Eq + Hash + Send + Sync,
+{
+    type Key = ();
+    type Value = (&'a F, &'a Vd, &'a Pd, &'a Vs, &'a Ps);
+    type IteratorType = CAllRowsParIter<'a, F, Vd, Pd, Vs, Ps>;
+    #[inline]
+    fn c_index_get(&'a self, _key: &()) -> Option<Self::IteratorType> {
+        Some(CAllRowsParIter {
+            fwd: self.0.fwd.frozen(),
+        })
+    }
+}
+impl<'a, F, Vd, Pd, Vs, Ps> CRelIndexReadAll<'a> for CViewNone<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash + Send + Sync,
+    Vd: Clone + Eq + Hash + Send + Sync,
+    Pd: Clone + Eq + Hash + Send + Sync,
+    Vs: Clone + Eq + Hash + Send + Sync,
+    Ps: Clone + Eq + Hash + Send + Sync,
+{
+    type Key = ();
+    type Value = (&'a F, &'a Vd, &'a Pd, &'a Vs, &'a Ps);
+    type ValueIteratorType = CAllRowsParIter<'a, F, Vd, Pd, Vs, Ps>;
+    type AllIteratorType = ascent::rayon::iter::Once<((), Self::ValueIteratorType)>;
+    #[inline]
+    fn c_iter_all(&'a self) -> Self::AllIteratorType {
+        ascent::rayon::iter::once((
+            (),
+            CAllRowsParIter {
+                fwd: self.0.fwd.frozen(),
+            },
+        ))
+    }
+}
+impl<F, Vd, Pd, Vs, Ps> RelIndexWrite for CViewNone<'_, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = ();
+    type Value = (F, Vd, Pd, Vs, Ps);
+    #[inline(always)]
+    fn index_insert(&mut self, _key: Self::Key, _value: Self::Value) {}
+}
+impl<F, Vd, Pd, Vs, Ps> CRelIndexWrite for CViewNone<'_, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = ();
+    type Value = (F, Vd, Pd, Vs, Ps);
+    #[inline(always)]
+    fn index_insert(&self, _key: Self::Key, _value: Self::Value) {}
+}
 
 // ---- 0_3: (F, Vsrc) -> (Vdst, Pdst, Psrc) ---------------------------------
 impl<'a, F, Vd, Pd, Vs, Ps> RelIndexRead<'a> for CView03<'a, F, Vd, Pd, Vs, Ps>
@@ -539,8 +841,8 @@ where
     type IteratorType = DynIter<'a, Self::Value>;
     #[inline]
     fn index_get(&'a self, key: &(F, Vs)) -> Option<Self::IteratorType> {
-        let leaves = self.0.fwd.frozen().get(key)?;
-        Some(DynIter::new(move || leaves.iter().map(split_leaf)))
+        let group = self.0.fwd.frozen().get(key)?;
+        Some(DynIter::new(move || leaves(group)))
     }
     #[inline]
     fn len_estimate(&self) -> usize {
@@ -561,8 +863,8 @@ where
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(self.0.fwd.frozen().iter().map(|((f, vs), leaves)| {
-            let it = DynIter::new(move || leaves.iter().map(split_leaf));
+        Box::new(self.0.fwd.frozen().iter().map(|((f, vs), group)| {
+            let it = DynIter::new(move || leaves(group));
             ((f, vs), it)
         }))
     }
@@ -580,8 +882,8 @@ where
     type IteratorType = LeafParIter<'a, Vd, Pd, Ps>;
     #[inline]
     fn c_index_get(&'a self, key: &(F, Vs)) -> Option<Self::IteratorType> {
-        let leaves = self.0.fwd.frozen().get(key)?;
-        Some(leaf_par_iter(leaves))
+        let group = self.0.fwd.frozen().get(key)?;
+        Some(leaf_par_iter(group))
     }
 }
 impl<'a, F, Vd, Pd, Vs, Ps> CRelIndexReadAll<'a> for CView03<'a, F, Vd, Pd, Vs, Ps>
@@ -681,10 +983,8 @@ where
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(self.0.fwd.frozen().iter().flat_map(|((f, vs), leaves)| {
-            leaves
-                .iter()
-                .map(move |(vd, pd, ps)| ((f, vd, pd, vs, ps), std::iter::once(&())))
+        Box::new(self.0.fwd.frozen().iter().flat_map(|((f, vs), group)| {
+            leaves(group).map(move |(vd, pd, ps)| ((f, vd, pd, vs, ps), std::iter::once(&())))
         }))
     }
 }

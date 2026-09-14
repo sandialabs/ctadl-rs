@@ -251,6 +251,74 @@ impl Path {
         }
         true
     }
+
+    /// Every component-wise split of this path, as `(key, rest)` with `self == key · rest`, so
+    /// that `match_prefix(self, key) == Some(rest)`. Together with [`Path::prefix_keys_wild`]
+    /// this spells out every prefix [`match_prefix`] accepts, as join keys.
+    ///
+    /// `rest` is a tail of this path, so it shares its storage; each `key` is interned anew.
+    pub fn prefix_keys(&self) -> Vec<(Path, Path)> {
+        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        let mut out = Vec::with_capacity(comps.len() + 1);
+        // `rest` is `comps[k..]`, a tail of this path.
+        let mut rest = self.0;
+        for k in 0..=comps.len() {
+            let key = Path::from_accesses(comps[..k].iter().cloned());
+            out.push((key, rest_path(rest)));
+            rest = rest.tail().unwrap_or_default();
+        }
+        out
+    }
+
+    /// The splits of this path at an offset component, as `(key, rest)` where `rest` begins
+    /// with that offset, `[n]`: a prefix `key.[m]` matches for **any** `m != n`, yielding the
+    /// suffix `[n - m] · tail` where `rest = [n] · tail` — the offset arithmetic
+    /// [`match_prefix`] performs on its last component. A rule that joins on the wild key reads
+    /// `n` off `rest` with [`Path::head_offset`] and forms the adjustment itself; the case
+    /// `m == n` is the exact key `key.[n]` of [`Path::prefix_keys`], so a wild match excludes it.
+    pub fn prefix_keys_wild(&self) -> Vec<(Path, Path)> {
+        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        let mut out = Vec::new();
+        // `rest` is `comps[k..]`, a tail of this path.
+        let mut rest = self.0;
+        for k in 0..comps.len() {
+            if matches!(comps[k], mir::PathSegment::Offset(_)) {
+                let key = Path::from_accesses(comps[..k].iter().cloned());
+                out.push((key, rest_path(rest)));
+            }
+            rest = rest.tail().unwrap_or_default();
+        }
+        out
+    }
+
+    /// Splits off a trailing offset component: `key.[m]` gives `(key, m)`. `None` for the empty
+    /// path and for a path whose last component is a symbol.
+    pub fn split_trailing_offset(&self) -> Option<(Path, i64)> {
+        let comps: Vec<mir::PathSegment> = self.iter().cloned().collect();
+        match comps.last() {
+            Some(mir::PathSegment::Offset(mir::Offset(m))) => {
+                let m = *m;
+                let key = Path::from_accesses(comps[..comps.len() - 1].iter().cloned());
+                Some((key, m))
+            }
+            _ => None,
+        }
+    }
+
+    /// The value of the first component if it is an offset.
+    #[inline]
+    pub fn head_offset(&self) -> Option<i64> {
+        match self.0.head() {
+            Some(mir::PathSegment::Offset(mir::Offset(n))) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// This path without its first component. The empty path for the empty path.
+    #[inline]
+    pub fn tail(&self) -> Path {
+        Path(self.0.tail().unwrap_or_default())
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord)]
@@ -1933,5 +2001,67 @@ mod tests {
         assert_eq!(cs5, cs1);
         assert!(std::ptr::eq(cs5.0, cs1.0));
         assert_eq!(popped, Some(site));
+    }
+}
+
+#[inline]
+fn rest_path(seq: tailshare::Seq<mir::PathSegment>) -> Path {
+    Path(seq)
+}
+
+#[cfg(test)]
+mod prefix_key_tests {
+    use super::*;
+
+    fn p(s: &str) -> Path {
+        Path::parse(s).unwrap()
+    }
+
+    /// Every `(ap, prefix)` pair agrees with `match_prefix`: the suffix it returns is exactly
+    /// what the keys of `ap` reconstruct for `prefix`, and nothing else matches.
+    #[test]
+    fn prefix_keys_agree_with_match_prefix() {
+        let paths: Vec<Path> = [
+            "", ".x", ".y", ".x.y", ".x.[4]", ".x.[1]", ".x.[4].y", ".x.[1].y", ".[4]", ".[1]",
+            ".[4].deref", ".[7].deref.[2]", ".x.y.z", ".deref", ".deref.[8]", ".deref.[8].x",
+        ]
+        .iter()
+        .map(|s| p(s))
+        .collect();
+        for ap in &paths {
+            let keys = ap.prefix_keys();
+            let wild_keys = ap.prefix_keys_wild();
+            for prefix in &paths {
+                let expected = match_prefix(ap, prefix).map(Path);
+                // Reconstruct from the keys: an exact key equal to `prefix`, or a wild key whose
+                // `prefix` is `key.[m]`.
+                let mut found: Vec<Path> = Vec::new();
+                for (key, rest) in &keys {
+                    if key == prefix {
+                        found.push(*rest);
+                    }
+                }
+                for (key, rest) in &wild_keys {
+                    if let Some((pk, m)) = prefix.split_trailing_offset() {
+                        let n = rest.head_offset().unwrap();
+                        if pk == *key && m != n {
+                            found.push(Path::from_accesses(
+                                std::iter::once(mir::PathSegment::Offset(mir::Offset(n - m)))
+                                    .chain(rest.tail().iter().cloned()),
+                            ));
+                        }
+                    }
+                }
+                found.sort();
+                found.dedup();
+                assert_eq!(
+                    found,
+                    expected.into_iter().collect::<Vec<_>>(),
+                    "ap={} prefix={}",
+                    ap.to_dot_string(),
+                    prefix.to_dot_string()
+                );
+            }
+        }
     }
 }

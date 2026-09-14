@@ -39,6 +39,7 @@ to 0.f.
 
 use std::num::NonZeroUsize;
 use std::path;
+use std::sync::Arc;
 
 use ascent::ascent;
 use ascent::ascent_par;
@@ -56,12 +57,15 @@ use crate::facts::{
     PackedInsnSiteId, Path, SmallestCallString, isout,
 };
 use crate::index_engine::assign_like_trie::FromRows;
+use crate::index_engine::path_set::{PathSet, PathSetRef};
 
 pub mod assign_like_trie;
 pub mod c_assign_like_trie;
 pub mod c_locals_trie;
 pub mod hybrid_set;
 pub mod locals_trie;
+pub mod path_group;
+pub mod path_set;
 pub mod source_info;
 
 /// An assignment statement. The order is destination vertex then source vertex.
@@ -291,6 +295,8 @@ impl IndexFacts {
 pub struct IndexConfig {
     /// Enables the aliasing summary rule.
     pub alias_rule: bool,
+    /// How a critical call site's resolved summary is instantiated. See [`HybridContext`].
+    pub hybrid_context: HybridContext,
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
@@ -300,8 +306,148 @@ impl Default for IndexConfig {
     fn default() -> Self {
         IndexConfig {
             alias_rule: true,
+            hybrid_context: HybridContext::default(),
             parallelism: Parallelism::Serial,
         }
+    }
+}
+
+/// What the hybrid-inlining rules do once a resolvent has decided which function a critical
+/// (indirect / virtual) call site invokes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum HybridContext {
+    /// The decided callee's summary is instantiated at the site as *contextual* edges tagged
+    /// with the call string that carried the resolvent down, closed into a conditional summary
+    /// of the enclosing function, and popped back up the string one frame at a time until it
+    /// lands as a plain edge in the function that held the call target. The
+    /// [`SmallestCallString`] lattice keeps one call string per contextual row, which bounds the
+    /// contextual relations by the context-free ones — and makes the result depend on the order
+    /// routes are found in: of two callers passing the same target to the same formal, only
+    /// the one whose call string wins the lattice gets the callee's conditional flows back.
+    /// The default, because it is bounded and it is what the engine has always computed.
+    #[default]
+    CallString,
+    /// The decided callee's summary is instantiated at the site as *contextual* edges keyed by
+    /// the [`Decision`] that resolved it, closed into a summary of the enclosing function
+    /// conditioned on that decision, and applied one call site at a time at every caller whose
+    /// route established the decision, until it lands as a plain edge in a function that held
+    /// the call target. Two callers passing different targets get different flows.
+    ///
+    /// Complete, and unbounded: a function's contextual closure is repeated once per decision
+    /// that reaches it, which on an interpreter-shaped program (one dispatch loop reached by
+    /// thousands of decisions) does not fit in memory. Opt in with `--hybrid-context decision`.
+    Decision,
+    /// The decided callee's summary is instantiated at the site as plain edges, exactly as a
+    /// directly resolved call's would be. The resolvent machinery still decides *which* callees
+    /// a site can have — a target that never flows to the site is never instantiated — but the
+    /// effect is shared by every caller: the context-sensitive fixpoint derives a call graph,
+    /// and the dataflow is computed over it context-insensitively. No `context_*` relation is
+    /// ever populated.
+    ///
+    /// Bounded by the context-free analysis; but it unions the decisions at a site, which is
+    /// what hybrid inlining exists to avoid (`tests/tnt/hybrid_inlining.tnt`).
+    None,
+}
+
+impl HybridContext {
+    /// The call string a resolvent starts with at `caller`'s call site `insn`: one frame under
+    /// `CallString`, bottom (no route recorded) otherwise.
+    fn route_start(self, caller: FunctionId, insn: InsnId) -> SmallestCallString {
+        match self {
+            HybridContext::CallString => {
+                let site = PackedInsnSiteId::try_from_parts(caller, insn).unwrap();
+                SmallestCallString::Value(CallString::new().push(site).unwrap())
+            }
+            _ => SmallestCallString::Bottom,
+        }
+    }
+
+    /// The key of a contextual row seeded at a site resolved by the decision `(n, p, obj)`, or
+    /// `None` when the mode records no context.
+    fn context_of(self, n: FormalIndex, p: Path, obj: &CallTargetObject) -> Option<Context> {
+        match self {
+            HybridContext::CallString => Some(Context::Route),
+            HybridContext::Decision => Some(Context::Decision(Decision {
+                formal: n,
+                path: p,
+                target: obj.clone(),
+            })),
+            HybridContext::None => None,
+        }
+    }
+}
+
+/// Pushes `caller`'s call site `insn` onto a resolvent's call string. Bottom stays bottom (the
+/// route is not recorded); a value that would close a cycle is dropped.
+fn push_site(cs: &SmallestCallString, caller: FunctionId, insn: InsnId) -> Option<SmallestCallString> {
+    match cs {
+        SmallestCallString::Bottom => Some(SmallestCallString::Bottom),
+        SmallestCallString::Value(cs) => {
+            let site = PackedInsnSiteId::try_from_parts(caller, insn).unwrap();
+            cs.push(site).map(SmallestCallString::Value)
+        }
+    }
+}
+
+/// What a contextual row is keyed on, beside its call-string lattice column: the constant
+/// `Route` under [`HybridContext::CallString`], where the lattice column carries the route and
+/// collapses rows to one call string; the [`Decision`] under [`HybridContext::Decision`], where
+/// the lattice column stays bottom and every decision keeps its own rows.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Context {
+    Route,
+    Decision(Decision),
+}
+
+/// A row's context for display: the decision, the call string, or nothing.
+fn context_label(ctx: &Context, cs: &SmallestCallString) -> String {
+    match (ctx, cs) {
+        (Context::Decision(d), _) => d.to_string(),
+        (Context::Route, SmallestCallString::Value(cs)) => cs.to_string(),
+        (Context::Route, SmallestCallString::Bottom) => "⊥".to_string(),
+    }
+}
+
+impl std::str::FromStr for HybridContext {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "call-string" => Ok(HybridContext::CallString),
+            "decision" => Ok(HybridContext::Decision),
+            "none" => Ok(HybridContext::None),
+            other => Err(format!(
+                "unknown hybrid context '{other}'; expected 'call-string', 'decision' or 'none'"
+            )),
+        }
+    }
+}
+
+/// What a function's contextual flows are conditioned on: its formal `formal.path` holds the
+/// call target `target`. A caller establishes it by passing the target there, directly or from
+/// its own formal (rules 2.1 and 2.2); the function's conditional flows are keyed by it and
+/// applied at every such caller (rule 3.2).
+///
+/// The key names *what* was decided, never the route it arrived by, so two routes that
+/// establish the same decision share one closure and both get the result. The call-string
+/// design keeps one route per decision in a lattice, which makes the outcome depend on the
+/// order the routes are found in -- a caller whose route is superseded silently loses its
+/// flows.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Decision {
+    pub formal: FormalIndex,
+    pub path: Path,
+    pub target: CallTargetObject,
+}
+
+impl std::fmt::Display for Decision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[arg{}{} = {}]",
+            self.formal,
+            self.path.to_dot_string(),
+            self.target
+        )
     }
 }
 
@@ -659,6 +805,7 @@ type ContextAssignRow = (
     Path,
     FlowVariable,
     Path,
+    Context,
     SmallestCallString,
 );
 type ContextLocalsRow = (
@@ -667,6 +814,7 @@ type ContextLocalsRow = (
     Path,
     FormalIndex,
     Path,
+    Context,
     SmallestCallString,
 );
 type ContextSummaryRow = (
@@ -675,6 +823,7 @@ type ContextSummaryRow = (
     Path,
     FormalIndex,
     Path,
+    Context,
     SmallestCallString,
 );
 
@@ -717,10 +866,7 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
                 .and_then(|m| m.get_function(*func_id))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
-            let cs = match cs {
-                SmallestCallString::Value(cs) => cs.to_string(),
-                SmallestCallString::Bottom => "⊥".to_string(),
-            };
+            let cs = context_label(&Context::Route, cs);
 
             writeln!(
                 f,
@@ -778,11 +924,8 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
 
         writeln!(f, "\nContext Assign ({}):", self.context_assign.len())?;
         let mut rows = self.context_assign.stream();
-        while let Some((func_id, dest_var, dest_path, src_var, src_path, cs)) = rows.next() {
-            let cs = match cs {
-                SmallestCallString::Value(cs) => cs.to_string(),
-                SmallestCallString::Bottom => "⊥".to_string(),
-            };
+        while let Some((func_id, dest_var, dest_path, src_var, src_path, ctx, cs)) = rows.next() {
+            let cs = context_label(ctx, cs);
             let dest_str = {
                 let var_str = if let Some(name) = dest_var.as_local() {
                     name.to_string()
@@ -815,11 +958,8 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
 
         writeln!(f, "\nContext Locals ({}):", self.context_locals.len())?;
         let mut rows = self.context_locals.stream();
-        while let Some((func_id, var, path, formal_idx, formal_path, cs)) = rows.next() {
-            let cs = match cs {
-                SmallestCallString::Value(cs) => cs.to_string(),
-                SmallestCallString::Bottom => "⊥".to_string(),
-            };
+        while let Some((func_id, var, path, formal_idx, formal_path, ctx, cs)) = rows.next() {
+            let cs = context_label(ctx, cs);
             let var_str = if let Some(name) = var.as_local() {
                 name.to_string()
             } else {
@@ -847,11 +987,8 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
 
         writeln!(f, "\nContext Summary ({}):", self.context_summary.len())?;
         let mut rows = self.context_summary.stream();
-        while let Some((func_id, dest_idx, dest_path, src_idx, src_path, cs)) = rows.next() {
-            let cs = match cs {
-                SmallestCallString::Value(cs) => cs.to_string(),
-                SmallestCallString::Bottom => "⊥".to_string(),
-            };
+        while let Some((func_id, dest_idx, dest_path, src_idx, src_path, ctx, cs)) = rows.next() {
+            let cs = context_label(ctx, cs);
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
@@ -948,6 +1085,24 @@ fn compute_alias_of_formal(
     pre.alias_of_formal
 }
 
+/// Computes `paths`, the admissible access paths: the syntactic program paths, the paths the
+/// input summaries mention, and each one-level concatenation of the two. Its own small
+/// fixpoint, run BEFORE the main ascent, so the main program takes `paths` as a plain input
+/// and can also hold it as a [`PathSet`] for lookups that never build a path.
+fn compute_paths(program_paths: Vec<(Path,)>, model_paths: Vec<(Path,)>) -> Vec<(Path,)> {
+    let pre = ascent_run! {
+        relation program_paths(Path) = program_paths;
+        relation model_paths(Path) = model_paths;
+        relation paths(Path);
+        paths(p) <-- program_paths(p);
+        paths(p) <-- model_paths(p);
+        // Combine model paths with program paths (one level only to ensure termination)
+        paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
+        paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
+    };
+    pre.paths
+}
+
 ascent_source! {
     /// The index datalog: every relation and rule of the index engine, written exactly once.
     index_rules:
@@ -965,8 +1120,10 @@ ascent_source! {
 
     // Analysis drivers:
 
-    // Set of syntactic access paths
+    // Set of syntactic access paths. Computed before the run by `compute_paths`; `path_set`
+    // holds the same set as a [`PathSet`], for the rules that test a concatenation.
     relation paths(Path);
+    relation path_set(PathSetRef);
     relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path);
     relation config(IndexConfig);
 
@@ -989,8 +1146,6 @@ ascent_source! {
     // to the receiver vertices of critical calls; the union of what were the separate
     // `func_ptr_assign_like` and `java_obj_assign_like` relations.
     relation call_target_assign_like(FunctionId, FlowVariable, Path, CallTargetObject);
-    relation model_paths(Path);
-    relation program_paths(Path);
 
     // Hybrid Inlining relations: critical_summary(f, n, p). f(n.p = obj) invokes obj at some
     // critical call site. The critical site itself is not tracked here; it can be recovered by
@@ -998,39 +1153,21 @@ ascent_source! {
     relation critical_summary(FunctionId, FormalIndex, Path);
     // Critical call occurs inside this function
     relation critical_call(FunctionId);
-    // Resolvent reaches the formals of Function. The call string is a lattice value so the
-    // remaining columns functionally determine at most one call string: (func_id, formal_index,
-    // path, object) -> call-string. This way we don't get the same object resolved through
-    // multiple stack configuration paths. Invariant: the call string is non-empty.
+    // A decision at a function: its formal `n.p` holds the call target, put there by some
+    // caller. The lattice column is the route it arrived by under `HybridContext::CallString`
+    // — one call string per decision, the smallest — and bottom under `Decision`, where no
+    // route is recorded and rule 3.2 finds every caller again when it applies the result.
     lattice resolvent(FunctionId, FormalIndex, Path, CallTargetObject, SmallestCallString);
-    // Assignment due to instantiating a summary from a resolvent. Invariant: call string is
-    // non-empty.
-    lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, SmallestCallString);
+    // Assignment due to instantiating a summary at a critical site, keyed by the `Context` of
+    // the decision that resolved the site (see `Context` for the two modes), with the route's
+    // call string beside it as a lattice.
+    lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, Context, SmallestCallString);
     // Context-carrying field-sensitive reachability. Seeded from `context_assign` and
-    // propagated by its own forward-field rules below. Rare on C targets (0 rows when there is
-    // no resolvable indirect/virtual dispatch); the lattice column keeps the smallest call
-    // string per (func,var,path,formal,fpath). Invariant: call string is non-empty.
-    lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
-    // Invariant: call string is non-empty.
-    lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, SmallestCallString);
-
-    // Sets up paths from input program with static info. Paths must remain finite so we
-    // shouldn't add paths from constructed summaries directly.
-    program_paths(p) <-- actual_param(_, _, vx), let FlowVertex(_, p) = vx;
-    // The receiver access path of an indirect / virtual call is also a syntactic
-    // program path. Register it so that `call_target_assign_like`
-    // can propagate a stored target across an SSA version of the receiver (the
-    // transitive rules gate on `paths(p_new)`). Without this, a second store into the
-    // same aggregate (`o.a = id; o.b = id; o.a(s)` or `fps[0]=id; fps[1]=id; fps[0](s)`)
-    // creates a new receiver version whose call path was never an `actual_param`, so the
-    // binding fails to reach the call and taint is dropped (F2).
-    program_paths(p) <-- callee_info(_, _, _, p, _);
-    paths(p) <-- program_paths(p);
-    paths(p) <-- model_paths(p);
-
-    // Combine model paths with program paths (one level only to ensure termination)
-    paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
-    paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
+    // propagated by the forward-field rules below. Rare on C targets (0 rows when there is
+    // no resolvable indirect/virtual dispatch).
+    lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, Context, SmallestCallString);
+    // A function's summary row that holds only under a context.
+    lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, Context, SmallestCallString);
 
     // Initialize locals with formals (context-free)
     locals(infunc, v1, p1.clone(), i, p1.clone()) <--
@@ -1038,17 +1175,114 @@ ascent_source! {
         if let Some(i) = v1.as_formal(),
         let p1 = Path::empty();
 
-    // Forward field propagation (context-free).
-    locals(infunc, v1, p13.clone(), a, p4) <--
-        locals(infunc, v2, p23, a, p4),
-        assign_like(infunc, v1, p1, v2, p2),
-        if let Some(p13) = p23.substitute_prefix(p2, p1),
-        paths(&p13);
-    locals(infunc, v1, p1, a, p43.clone()) <--
-        locals(infunc, v2, p2, a, p4),
-        assign_like(infunc, v1, p1, v2, p23),
-        if let Some(p43) = p23.substitute_prefix(p2, p4),
-        paths(&p43);
+    // Forward field propagation (context-free), as exact-key joins.
+    //
+    // A local propagation step extends a reachability row `v2.p23 <- a.p4` across an edge
+    // `v1.p1 = v2.p2` whose source path `p2` is a prefix of `p23`, deriving `v1.(p1·rest)` for
+    // the `rest` after the prefix -- or, in the other direction, extends the formal side when
+    // the edge reads a longer path than the row holds. Joining that on `(f, v2)` alone and
+    // testing the prefix afterwards visits every edge at the vertex for every row at it: on a
+    // dense function that is hundreds of pairs per row, a derived path allocated for a tenth
+    // of them and a tenth of those admissible -- billions of pairs per iteration for millions
+    // of rows, and the fixpoint never arrives. So every path is split ONCE at each point it
+    // could match a prefix, the join is keyed on the split, and the extension is tested by
+    // lookup (`path_set`) rather than by building it. Every retrieved pair matches, and nothing
+    // is allocated for a pair that fails.
+    //
+    // A prefix may end in an offset that matches any offset (`match_prefix`'s arithmetic on its
+    // last component), so each side carries a `wild` key beside its exact keys: the exact key
+    // `.x.[4]` and the wild key `(.x, [4]·rest)`, matched by an edge path `.x.[m]` for `m != 4`
+    // with the suffix adjusted by `4 - m`. `Path::prefix_keys` spells out both.
+
+    // The distinct `(f, v, p)` reached in either half, context-free or contextual, so the
+    // splits below run once per path, not once per row (rows outnumber paths thirty to one on
+    // a dense binary). The contextual closure (3.3a) walks the same expanded edges, so its
+    // paths must be keyed too.
+    relation reach_vp(FunctionId, FlowVariable, Path);
+    reach_vp(f, v, p) <-- locals(f, v, p, _, _);
+    reach_vp(f, v, p) <-- context_locals(f, v, p, _, _, _, _);
+    // The exact and wild keys of a `locals` path. Two relations rather than a flag column: a
+    // literal in a clause makes Ascent index that column alone, and the planner then drives
+    // whole-relation scans off a two-key index.
+    // Held in the `locals` store: same shape, `(f, v, key)` probed exactly, `(rest, p)` leaves.
+    #[ds($crate::index_engine::locals_trie)]
+    relation locals_key(FunctionId, FlowVariable, Path, Path, Path);
+    locals_key(f, v, key, rest, p) <--
+        reach_vp(f, v, p),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p).exact;
+    relation locals_key_wild(FunctionId, FlowVariable, Path, Path, Path);
+    locals_key_wild(f, v, key, rest, p) <--
+        reach_vp(f, v, p),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p).wild;
+    // A `locals` path ending in an offset, keyed without it, for the wild match.
+    relation locals_wild(FunctionId, FlowVariable, Path, i64, Path);
+    locals_wild(f, v, key, m, p) <--
+        reach_vp(f, v, p),
+        if let Some((key, m)) = p.split_trailing_offset();
+    // An edge whose source path ends in an offset, keyed without it, for the wild match.
+    relation assign_wild(FunctionId, FlowVariable, Path, i64, FlowVariable, Path);
+    assign_wild(f, v2, key, m, v1, p1) <--
+        assign_like(f, v1, p1, v2, p2),
+        if let Some((key, m)) = p2.split_trailing_offset();
+    // The exact and wild keys of an edge's source path. The destination vertex rides as one
+    // tuple column so that the relation fits the `locals` store's five-column shape.
+    #[ds($crate::index_engine::locals_trie)]
+    relation edge_split(FunctionId, FlowVariable, Path, Path, (FlowVariable, Path));
+    edge_split(f, v2, key, rest, (*v1, *p1)) <--
+        assign_like(f, v1, p1, v2, p2),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p2).exact;
+    relation edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path);
+    edge_split_wild(f, v2, key, rest, v1, p1) <--
+        assign_like(f, v1, p1, v2, p2),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p2).wild;
+
+    // Destination side: `v1.p1 = v2.p2` and a `locals` path `p23 = p2·rest` give `v1.(p1·rest)`
+    // whatever `v2.p23` has. `ext_dst` is that expanded edge, derived once per (edge, path)
+    // rather than once per `locals` row, so the reachability step below is an exact join.
+    // Held in the `assign_like` store: it is an edge, probed exactly by `(f, v2, p23)`.
+    #[ds($crate::index_engine::assign_like_trie)]
+    relation ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path);
+    ext_dst(f, v1, p13, v2, p23) <--
+        locals_key(f, v2, key, rest, p23),
+        assign_like(f, v1, p1, v2, key),
+        path_set(ps),
+        if let Some(p13) = ps.concat(p1, None, rest);
+    ext_dst(f, v1, p13, v2, p23) <--
+        locals_key_wild(f, v2, key, rest, p23),
+        assign_wild(f, v2, key, m, v1, p1),
+        if let Some(n) = rest.head_offset(),
+        if n != *m,
+        path_set(ps),
+        if let Some(p13) = ps.concat(p1, Some(n - *m), &rest.tail());
+    locals(f, v1, p13, a, p4) <--
+        ext_dst(f, v1, p13, v2, p23),
+        locals(f, v2, p23, a, p4);
+
+    // Formal side: `v1.p1 = v2.p23` with `p23 = p2·rest` and `v2.p2` reached from `a.p4` give
+    // `v1.p1` reached from `a.(p4·rest)`. The split is on the edge's source path, and the
+    // `locals` probe is exact.
+    locals(f, v1, p1, a, p43) <--
+        edge_split(f, v2, key, rest, dst),
+        locals(f, v2, key, a, p4),
+        let (v1, p1) = dst,
+        path_set(ps),
+        if let Some(p43) = ps.concat(p4, None, rest);
+    // The wild half: the `locals` path is `key.[m]`, the edge reads `key.[n]·tail`.
+    relation ext_fml(FunctionId, FlowVariable, Path, FlowVariable, Path, i64, Path);
+    ext_fml(f, v1, p1, v2, p2, n - *m, rest.tail()) <--
+        edge_split_wild(f, v2, key, rest, v1, p1),
+        locals_wild(f, v2, key, m, p2),
+        if let Some(n) = rest.head_offset(),
+        if n != *m;
+    locals(f, v1, p1, a, p43) <--
+        ext_fml(f, v1, p1, v2, p2, adj, rest),
+        locals(f, v2, p2, a, p4),
+        path_set(ps),
+        if let Some(p43) = ps.concat(p4, Some(*adj), rest);
 
     // Compute assignments from call sites
     assign_like(func_id, v.clone(), p, cv.clone(), Path::empty()),
@@ -1120,46 +1354,62 @@ ascent_source! {
         call(caller, call_insn, f),
         let arg = call_arg!(*call_insn, *n),
         call_target_assign_like(caller, arg, p, cto),
-        let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
-        if let Some(new_cs) = CallString::new().push(call_site_id),
-        let cs_lat = SmallestCallString::Value(new_cs);
+        config(c),
+        let cs_lat = c.hybrid_context.route_start(*caller, *call_insn);
 
-    // Tracks resolvent to the call arg. Invariant: `call_arg_resolvent` call string is
-    // non-empty.
+    // Tracks resolvent to the call arg.
     relation call_arg_resolvent(PackedCallArg, Path, CallTargetObject, SmallestCallString);
     call_arg_resolvent(arg_p, p, obj, cs_lat) <--
         resolvent(f, n2, p2, obj, cs_lat),
         locals(f, v, p, n2, p2),
         if let Some(arg_p) = v.as_call_arg();
 
-    // 2.2: Propagate Resolvent down the critical summaries, pushing call site
-    resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
+    // 2.2: Propagate Resolvent down the critical summaries, pushing the call site onto the
+    // route where one is kept. Finite either way: one row per (function, formal, path, target).
+    resolvent(f, n, p.clone(), resolvent_obj, pushed) <--
         call_arg_resolvent(arg_p, p, resolvent_obj, cs_lat),
         let arg = CallArgId::unpack_from_slice(&**arg_p).unwrap(),
         call(caller, arg.insn_id, f),
         let n = FormalIndex::new(arg.formal),
         critical_summary(f, n, p),
-        if let SmallestCallString::Value(cs) = cs_lat,
-        let call_site_id = PackedInsnSiteId::try_from_parts(*caller, arg.insn_id).unwrap(),
-        if let Some(new_cs) = cs.push(call_site_id);
+        if let Some(pushed) = push_site(cs_lat, *caller, arg.insn_id);
 
     // 3.1: Contextual Assignment (seed). Given a resolvent that reaches a call site,
     // instantiate a contextual assignment doing normal summary instantiation. The resolvent
     // object itself and the dispatch key from the call site are used to determine the resolvent
-    // function. The context of the resolvent is associated with the assign.
-    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), cs_lat.clone()) <--
+    // function. The context of the decision that resolved the site is the key of the assign.
+    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), ctx, cs_lat.clone()) <--
         callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
         locals(caller, v_rec, p_rec, n, p),
         resolvent(caller, n, p, resolvent_obj, cs_lat),
         callee_resolvents(resolvent_obj, dispatch_key, resolvent_func),
         summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
+        config(c),
+        if let Some(ctx) = c.hybrid_context.context_of(*n, *p, resolvent_obj),
         let v2 = call_arg!(*call_insn, *n2_sum),
         let v1 = call_arg!(*call_insn, *n1_sum);
 
-    // 3.2: Contextual assignment (chain). Instantiate contextual summaries and pop call string,
-    // either creating a new contextual assign or a bare, uncontextual assign
-    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), new_cs_lat) <--
-        context_summary(f, n1, p1_sum, n2, p2_sum, cs_lat),
+    // 3.1 without context (`HybridContext::None`): the same instantiation, as a plain edge.
+    // No context is recorded, so the effect is shared by every caller that reaches the site;
+    // rules 3.2-3.4 then have nothing to do. Same body shape as the local-dispatch bypass
+    // below, with the target arriving through a resolvent instead of a local store.
+    assign_like(caller, v1, p1_sum.clone(), v2, p2_sum.clone()) <--
+        callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
+        locals(caller, v_rec, p_rec, n, p),
+        resolvent(caller, n, p, resolvent_obj, _),
+        callee_resolvents(resolvent_obj, dispatch_key, resolvent_func),
+        summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
+        config(c),
+        if c.hybrid_context == HybridContext::None,
+        let v2 = call_arg!(*call_insn, *n2_sum),
+        let v1 = call_arg!(*call_insn, *n1_sum);
+
+    // 3.2 under `CallString`: Contextual assignment (chain). Instantiate contextual summaries
+    // and pop the call string, either creating a new contextual assign or a bare, uncontextual
+    // assign. Only a row with a call string (a `Route` row) pops; a `Decision` row's lattice
+    // column is bottom.
+    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), Context::Route, new_cs_lat) <--
+        context_summary(f, n1, p1_sum, n2, p2_sum, _, cs_lat),
         if let SmallestCallString::Value(cs) = cs_lat,
         if let (new_cs, Some(call_site_id)) = cs.pop(),
         if !new_cs.is_empty(), // keep call string invariant
@@ -1170,7 +1420,7 @@ ascent_source! {
         let new_cs_lat = SmallestCallString::Value(new_cs);
 
     assign_like(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
-        context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
+        context_summary(tgt, n1, p1_sum, n2, p2_sum, _, cs_lat),
         if let SmallestCallString::Value(cs) = cs_lat,
         if let (new_cs, Some(call_site_id)) = cs.pop(),
         if new_cs.is_empty(),
@@ -1179,37 +1429,107 @@ ascent_source! {
         let v1 = call_arg!(insn_id, *n1),
         let v2 = call_arg!(insn_id, *n2);
 
+    // 3.2 under `Decision`: apply a conditional summary at the callers whose route established
+    // its decision. The two rules mirror 2.1 and 2.2, which is what makes them complete: a
+    // caller that holds the target itself (2.1's shape) applies the summary unconditionally,
+    // and a caller that received the target through its own formal (2.2's shape) inherits the
+    // summary conditioned on that formal, and the walk continues at its callers. Every caller
+    // on every route gets it, whichever was found first.
+    assign_like(caller, v1, p1_sum.clone(), v2, p2_sum.clone()) <--
+        context_summary(f, n1, p1_sum, n2, p2_sum, ?Context::Decision(d), _),
+        call(caller, call_insn, f),
+        let arg = call_arg!(*call_insn, d.formal),
+        let dp = d.path,
+        let dt = d.target.clone(),
+        call_target_assign_like(caller, arg, dp, dt),
+        let v1 = call_arg!(*call_insn, *n1),
+        let v2 = call_arg!(*call_insn, *n2);
+    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), Context::Decision(up), SmallestCallString::Bottom) <--
+        context_summary(f, n1, p1_sum, n2, p2_sum, ?Context::Decision(d), _),
+        call(caller, call_insn, f),
+        let arg = call_arg!(*call_insn, d.formal),
+        let dp = d.path,
+        locals(caller, arg, dp, m, q),
+        let dt = d.target.clone(),
+        resolvent(caller, m, q, dt, _),
+        let up = Decision { formal: *m, path: *q, target: d.target.clone() },
+        let v1 = call_arg!(*call_insn, *n1),
+        let v2 = call_arg!(*call_insn, *n2);
+
     // 3.3a: We have to reason about contextual local reachability. This involves reasoning
     // about flows composed of hops, some of which are non-contextual and some of which are
-    // contextual. The following two rules extend contextual flows with built-in assigns using
-    // the same shape as forward/backward propagation.
-    context_locals(infunc, v1, p13.clone(), a, p4, cs_lat.clone()) <--
-        context_locals(infunc, v2, p23, a, p4, cs_lat),
-        assign_like(infunc, v1, p1, v2, p2),
-        if let Some(p13) = p23.substitute_prefix(p2, p1),
-        paths(&p13);
-    context_locals(infunc, v1, p1, a, p43.clone(), cs_lat.clone()) <--
-        context_locals(infunc, v2, p2, a, p4, cs_lat),
-        assign_like(infunc, v1, p1, v2, p23),
-        if let Some(p43) = p23.substitute_prefix(p2, p4),
-        paths(&p43);
+    // contextual. The following rules extend contextual flows with built-in assigns, walking
+    // the same expanded edges (`ext_dst`, `edge_split`, `ext_fml`) as the context-free closure
+    // — `reach_vp` keys the contextual paths too — so every join here is exact.
+    context_locals(f, v1, p13, a, p4, ctx.clone(), cs_lat.clone()) <--
+        ext_dst(f, v1, p13, v2, p23),
+        context_locals(f, v2, p23, a, p4, ctx, cs_lat);
+    context_locals(f, v1, p1, a, p43, ctx.clone(), cs_lat.clone()) <--
+        edge_split(f, v2, key, rest, dst),
+        context_locals(f, v2, key, a, p4, ctx, cs_lat),
+        let (v1, p1) = dst,
+        path_set(ps),
+        if let Some(p43) = ps.concat(p4, None, rest);
+    context_locals(f, v1, p1, a, p43, ctx.clone(), cs_lat.clone()) <--
+        ext_fml(f, v1, p1, v2, p2, adj, rest),
+        context_locals(f, v2, p2, a, p4, ctx, cs_lat),
+        path_set(ps),
+        if let Some(p43) = ps.concat(p4, Some(*adj), rest);
 
-    // 3.3b: The following two rules extend non-contextual flows with contextual assigns.
-    context_locals(func_id, v1.clone(), p13.clone(), a.clone(), p4.clone(), cs_lat.clone()) <--
-        context_assign(func_id, v1, p1, v2, p2, cs_lat),
-        locals(func_id, v2, p23, a, p4),
-        if let Some(p13) = p23.substitute_prefix(p2, p1),
-        paths(&p13);
-    context_locals(func_id, v1.clone(), p1.clone(), a.clone(), p43.clone(), cs_lat.clone()) <--
-        context_assign(func_id, v1, p1, v2, p23, cs_lat),
-        locals(func_id, v2, p2, a, p4),
-        if let Some(p43) = p23.substitute_prefix(p2, p4),
-        paths(&p43);
+    // 3.3b: The following rules extend non-contextual flows with contextual assigns. A
+    // contextual assign is an edge, so it gets the same keys an `assign_like` edge gets, with
+    // its context riding along, and the `locals` probes are exact.
+    relation ctx_edge_wild(FunctionId, FlowVariable, Path, i64, FlowVariable, Path, Context, SmallestCallString);
+    ctx_edge_wild(f, v2, key, m, v1, p1, ctx.clone(), cs_lat.clone()) <--
+        context_assign(f, v1, p1, v2, p2, ctx, cs_lat),
+        if let Some((key, m)) = p2.split_trailing_offset();
+    relation ctx_edge_split(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, Context, SmallestCallString);
+    ctx_edge_split(f, v2, key, rest, v1, p1, ctx.clone(), cs_lat.clone()) <--
+        context_assign(f, v1, p1, v2, p2, ctx, cs_lat),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p2).exact;
+    relation ctx_edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, Context, SmallestCallString);
+    ctx_edge_split_wild(f, v2, key, rest, v1, p1, ctx.clone(), cs_lat.clone()) <--
+        context_assign(f, v1, p1, v2, p2, ctx, cs_lat),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p2).wild;
+    relation ctx_ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path, Context, SmallestCallString);
+    ctx_ext_dst(f, v1, p13, v2, p23, ctx.clone(), cs_lat.clone()) <--
+        locals_key(f, v2, key, rest, p23),
+        context_assign(f, v1, p1, v2, key, ctx, cs_lat),
+        path_set(ps),
+        if let Some(p13) = ps.concat(p1, None, rest);
+    ctx_ext_dst(f, v1, p13, v2, p23, ctx.clone(), cs_lat.clone()) <--
+        locals_key_wild(f, v2, key, rest, p23),
+        ctx_edge_wild(f, v2, key, m, v1, p1, ctx, cs_lat),
+        if let Some(n) = rest.head_offset(),
+        if n != *m,
+        path_set(ps),
+        if let Some(p13) = ps.concat(p1, Some(n - *m), &rest.tail());
+    relation ctx_ext_fml(FunctionId, FlowVariable, Path, FlowVariable, Path, i64, Path, Context, SmallestCallString);
+    ctx_ext_fml(f, v1, p1, v2, p2, n - *m, rest.tail(), ctx.clone(), cs_lat.clone()) <--
+        ctx_edge_split_wild(f, v2, key, rest, v1, p1, ctx, cs_lat),
+        locals_wild(f, v2, key, m, p2),
+        if let Some(n) = rest.head_offset(),
+        if n != *m;
+    context_locals(f, v1, p13, a, p4, ctx.clone(), cs_lat.clone()) <--
+        ctx_ext_dst(f, v1, p13, v2, p23, ctx, cs_lat),
+        locals(f, v2, p23, a, p4);
+    context_locals(f, v1, p1, a, p43, ctx.clone(), cs_lat.clone()) <--
+        ctx_edge_split(f, v2, key, rest, v1, p1, ctx, cs_lat),
+        locals(f, v2, key, a, p4),
+        path_set(ps),
+        if let Some(p43) = ps.concat(p4, None, rest);
+    context_locals(f, v1, p1, a, p43, ctx.clone(), cs_lat.clone()) <--
+        ctx_ext_fml(f, v1, p1, v2, p2, adj, rest, ctx, cs_lat),
+        locals(f, v2, p2, a, p4),
+        path_set(ps),
+        if let Some(p43) = ps.concat(p4, Some(*adj), rest);
 
     // 3.4: a context-specific flow that reaches an out-formal becomes a conditional summary
-    // tagged with its call string; contextual assignment (chain) pops it back to the caller.
-    context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), cs_lat.clone()) <--
-        context_locals(func_id, dst_var, p1, n2, p2, cs_lat),
+    // under its context; rule 3.2 pops or applies it at the callers.
+    context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), ctx.clone(), cs_lat.clone()) <--
+        context_locals(func_id, dst_var, p1, n2, p2, ctx, cs_lat),
         formal_param(func_id, dst_var, formal_ty),
         if let Some(n1) = dst_var.as_formal(),
         if isout(&n1, *formal_ty, p1),
@@ -1275,7 +1595,7 @@ ascent_source! {
     //
     // Deliberately NOT seeding `resolvent` here: that is a callee-frame relation keyed on the
     // callee's formals, so a tuple for a frame whose receiver is a local has no consumer, and
-    // it would bypass the `CallString::new().push(..)` construction. Downstream needs no
+    // it would bypass rule 2.1's construction of the route. Downstream needs no
     // change -- the transitive rule above walks this tuple from `call_arg(insn, -1)` to the
     // receiver over the symmetric call-site `assign_like` edges, the local-dispatch bypass
     // resolves the indirect call exactly, and if the receiver is passed onward rule 2.1
@@ -1442,6 +1762,32 @@ pub fn taint_index_with_config(
         alias_of_formal.len(),
         phys_footprint_mb()
     );
+    // `paths` is closed before the run (see `compute_paths`), and held twice: as the `paths`
+    // relation, and as a `PathSet` for the local propagation rules' lookups.
+    let mut all_program_paths = program_paths;
+    all_program_paths.extend(
+        facts
+            .actual_param
+            .iter()
+            .map(|(_, _, FlowVertex(_, p))| (*p,)),
+    );
+    // The receiver access path of an indirect / virtual call is also a syntactic program path.
+    // Registering it lets `call_target_assign_like` propagate a stored target across an SSA
+    // version of the receiver (the transitive rules gate on `paths(p_new)`). Without this, a
+    // second store into the same aggregate (`o.a = id; o.b = id; o.a(s)` or
+    // `fps[0]=id; fps[1]=id; fps[0](s)`) creates a new receiver version whose call path was
+    // never an `actual_param`, so the binding fails to reach the call and taint is dropped.
+    all_program_paths.extend(facts.callee_info.iter().map(|(_, FlowVertex(_, p), _)| (*p,)));
+    let paths = compute_paths(
+        all_program_paths.into_iter().collect(),
+        summary_paths.into_iter().collect(),
+    );
+    let path_set = PathSetRef(Arc::new(PathSet::from_paths(paths.iter().map(|(p,)| *p))));
+    log::debug!(
+        "[mem cp] + paths ({} rows), about to enter ascent_run: {:.1} MB",
+        paths.len(),
+        phys_footprint_mb()
+    );
     log::info!("index engine: {parallelism}");
 
     ascent! {
@@ -1512,8 +1858,8 @@ pub fn taint_index_with_config(
         prog.__assign_like_ind_common = FromRows::from_rows(assign_like);
         prog.prog_store = prog_store.into_iter().collect();
         prog.alias_of_formal = alias_of_formal.into_iter().collect();
-        prog.model_paths = summary_paths.into_iter().collect();
-        prog.program_paths = program_paths.into_iter().collect();
+        prog.paths = paths.iter().cloned().collect();
+        prog.path_set = vec![(path_set.clone(),)].into_iter().collect();
 
         let reached_fixpoint = prog.run_timeout(index_timeout);
         if !reached_fixpoint {
@@ -1527,6 +1873,19 @@ pub fn taint_index_with_config(
             phys_footprint_mb()
         );
         log::debug!("index scc times: {}", prog.scc_times_summary());
+        log::debug!(
+            "propagation relations: reach_vp={} locals_key={} locals_key_wild={} locals_wild={} \
+             assign_wild={} edge_split={} edge_split_wild={} ext_dst={} ext_fml={}",
+            prog.reach_vp.len(),
+            prog.__locals_key_ind_common.len(),
+            prog.locals_key_wild.len(),
+            prog.locals_wild.len(),
+            prog.assign_wild.len(),
+            prog.__edge_split_ind_common.len(),
+            prog.edge_split_wild.len(),
+            prog.__ext_dst_ind_common.len(),
+            prog.ext_fml.len()
+        );
         // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
         log::debug!("{}", prog.__locals_ind_common.heap_report());
         log::debug!("{}", prog.__assign_like_ind_common.heap_report());
@@ -1719,12 +2078,13 @@ mod tests {
         let (facts, source_info) = index_program(program);
         let id_map = Some(&source_info.sites);
 
-        let serial = taint_index_with_config(facts.clone(), IndexConfig::default(), id_map);
+        let config = IndexConfig::default();
+        let serial = taint_index_with_config(facts.clone(), config.clone(), id_map);
         let parallel = taint_index_with_config(
             facts,
             IndexConfig {
                 parallelism: Parallelism::Threads(NonZeroUsize::new(8).unwrap()),
-                ..IndexConfig::default()
+                ..config
             },
             id_map,
         );

@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ctadl_ascent::cli;
 use ctadl_ascent::codegen::CallResolutionStrategy;
-use ctadl_ascent::index_engine::Parallelism;
+use ctadl_ascent::index_engine::{HybridContext, Parallelism};
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
@@ -322,6 +322,16 @@ pub struct IndexArgs {
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub alias_rule: Option<bool>,
 
+    /// How the flows of a resolved indirect or virtual call are kept apart by caller.
+    ///
+    /// `call-string` (the default) tags each flow with the call string that brought the target
+    /// to the call, keeping one call string per flow. `decision` tags each flow with which
+    /// formal held which target, so every caller that passed that target gets the flow,
+    /// at a cost that grows with the number of targets reaching a function. `none` shares the
+    /// resolved callee's flows among all callers, which is the cheapest and the least precise.
+    #[arg(long, default_value = "call-string")]
+    pub hybrid_context: HybridContext,
+
     /// Dump the index graph to a dot file
     #[arg(long)]
     pub dump_index_graph: Option<PathBuf>,
@@ -521,6 +531,7 @@ fn main() -> anyhow::Result<()> {
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
+                hybrid_context: HybridContext::default(),
                 dump_index_graph: args.dump_index_graph.clone(),
                 jobs: None,
             })
@@ -666,6 +677,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
+                hybrid_context: HybridContext::default(),
                 dump_index_graph: None,
                 jobs: None,
             };
@@ -788,6 +800,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
             strategy: args.strategy,
             prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
             alias_rule: args.alias_rule.unwrap_or(true),
+            hybrid_context: args.hybrid_context,
             dump_index_graph: args.dump_index_graph.as_deref(),
             parallelism: Parallelism::from_jobs(args.jobs.unwrap_or(1)),
         },
