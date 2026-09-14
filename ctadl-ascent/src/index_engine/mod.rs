@@ -766,7 +766,7 @@ fn context_histogram(
         decision::stats()
     );
     let mut top: Vec<(&FunctionId, &Per)> = per.iter().filter(|(_, p)| p.rows > 0).collect();
-    top.sort_by(|a, b| b.1.rows.cmp(&a.1.rows));
+    top.sort_by_key(|(_, p)| std::cmp::Reverse(p.rows));
     for (f, p) in top.into_iter().take(12) {
         let name = id_map
             .and_then(|m| m.get_function(*f))
@@ -878,7 +878,7 @@ fn dropped_compositions(
         edge_src.len()
     );
     let mut top: Vec<(&FunctionId, &Per)> = per.iter().collect();
-    top.sort_by(|a, b| b.1.rows.cmp(&a.1.rows));
+    top.sort_by_key(|(_, p)| std::cmp::Reverse(p.rows));
     for (f, p) in top.into_iter().take(12) {
         let name = id_map
             .and_then(|m| m.get_function(*f))

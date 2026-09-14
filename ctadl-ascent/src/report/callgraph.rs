@@ -663,14 +663,14 @@ fn policy_section(
     // `--top 1000000` the eager form materialized a `SignatureRow` -- three owned strings --
     // for every key in the program, three times over.
     let rank = |rows: &mut Vec<(usize, usize, bool)>| {
-        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.0));
         rows.truncate(opts.top);
     };
     rank(&mut inlined);
     rank(&mut modelled);
-    unmodelled.sort_by(|a, b| b.0.cmp(&a.0));
+    unmodelled.sort_by_key(|r| std::cmp::Reverse(r.0));
     unmodelled.truncate(opts.top);
-    refused.sort_by(|a, b| b.signature.excess.cmp(&a.signature.excess));
+    refused.sort_by_key(|r| std::cmp::Reverse(r.signature.excess));
     let provenance_of = |k: usize| -> Vec<String> {
         let (cls, name, desc) = &w.keys[k];
         matches

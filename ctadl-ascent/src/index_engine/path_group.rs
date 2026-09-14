@@ -463,7 +463,7 @@ mod model_tests {
             let n = (rng.next() % 300) as usize;
             for _ in 0..n {
                 let leaf = ((rng.next() % paths as u64) as u32, (rng.next() % 5) as u16, rng.next() % 50);
-                if rng.next() % 3 == 0 {
+                if rng.next().is_multiple_of(3) {
                     assert_eq!(other.insert(leaf), other_model.insert(leaf), "round {round}");
                 } else {
                     assert_eq!(g.insert(leaf), model.insert(leaf), "round {round}");
