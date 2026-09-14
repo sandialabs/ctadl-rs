@@ -83,7 +83,10 @@ impl DecisionId {
         let id = DecisionId(u32::try_from(table.decisions.len()).expect("decision ids exhausted"));
         table.decisions.push(d.clone());
         table.ids.insert(d, id);
-        let slot = SINGLETONS.push((DecisionSet::intern(&[id], false), DecisionSet::intern(&[id], true)));
+        let slot = SINGLETONS.push((
+            DecisionSet::intern(&[id], false),
+            DecisionSet::intern(&[id], true),
+        ));
         debug_assert_eq!(slot, id.0 as usize);
         id
     }
@@ -176,8 +179,14 @@ fn union_cache_get(a: usize, b: usize) -> Option<&'static [DecisionId]> {
     if s1 & 1 == 1 {
         return None;
     }
-    let (sa, sb) = (slot.a.load(Ordering::Relaxed), slot.b.load(Ordering::Relaxed));
-    let (ptr, len) = (slot.ptr.load(Ordering::Relaxed), slot.len.load(Ordering::Relaxed));
+    let (sa, sb) = (
+        slot.a.load(Ordering::Relaxed),
+        slot.b.load(Ordering::Relaxed),
+    );
+    let (ptr, len) = (
+        slot.ptr.load(Ordering::Relaxed),
+        slot.len.load(Ordering::Relaxed),
+    );
     std::sync::atomic::fence(Ordering::Acquire);
     if slot.seq.load(Ordering::Relaxed) != s1 || sa != a || sb != b {
         return None;
@@ -373,7 +382,12 @@ impl DecisionSet {
         if other.is_top() {
             return self;
         }
-        let out: Vec<DecisionId> = self.ids.iter().copied().filter(|d| other.contains(*d)).collect();
+        let out: Vec<DecisionId> = self
+            .ids
+            .iter()
+            .copied()
+            .filter(|d| other.contains(*d))
+            .collect();
         DecisionSet::intern(&out, self.collapse)
     }
 }

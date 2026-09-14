@@ -33,8 +33,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::assign_like_trie::FromRows;
 use super::c_locals_trie::{CMap, CollectedParIter, Hasher};
-use super::path_group::PathGroup;
 use super::locals_trie::{DynIter, hb_bytes};
+use super::path_group::PathGroup;
 use ascent::dashmap::ReadOnlyView;
 use ascent::internal::{
     CRelFullIndexWrite, CRelIndexRead, CRelIndexReadAll, CRelIndexWrite, DashMapViewParIter,

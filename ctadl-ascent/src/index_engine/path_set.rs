@@ -267,17 +267,38 @@ mod tests {
         assert!(!set.contains(&p(".y")));
         // plain concatenation
         assert_eq!(set.concat(&p(".x"), None, &p(".y")), Some(p(".x.y")));
-        assert_eq!(set.concat(&Path::empty(), None, &p(".x.y")), Some(p(".x.y")));
+        assert_eq!(
+            set.concat(&Path::empty(), None, &p(".x.y")),
+            Some(p(".x.y"))
+        );
         assert_eq!(set.concat(&p(".x"), None, &Path::empty()), Some(p(".x")));
         assert_eq!(set.concat(&p(".y"), None, &p(".x")), None);
         // offsets merge at the junction
-        assert_eq!(set.concat(&p(".x.[3]"), None, &p(".[5]")), Some(p(".x.[8]")));
-        assert_eq!(set.concat(&p(".x.[3]"), Some(5), &Path::empty()), Some(p(".x.[8]")));
-        assert_eq!(set.concat(&p(".x.[3]"), Some(2), &p(".[3].y")), Some(p(".x.[8].y")));
+        assert_eq!(
+            set.concat(&p(".x.[3]"), None, &p(".[5]")),
+            Some(p(".x.[8]"))
+        );
+        assert_eq!(
+            set.concat(&p(".x.[3]"), Some(5), &Path::empty()),
+            Some(p(".x.[8]"))
+        );
+        assert_eq!(
+            set.concat(&p(".x.[3]"), Some(2), &p(".[3].y")),
+            Some(p(".x.[8].y"))
+        );
         // a zero-sum run disappears
-        assert_eq!(set.concat(&p(".x.[3]"), Some(-3), &p(".y")), Some(p(".x.y")));
-        assert_eq!(set.concat(&p(".[4]"), Some(-4), &Path::empty()), Some(Path::empty()));
-        assert_eq!(set.concat(&p(".[1]"), None, &p(".[3].deref")), Some(p(".[4].deref")));
+        assert_eq!(
+            set.concat(&p(".x.[3]"), Some(-3), &p(".y")),
+            Some(p(".x.y"))
+        );
+        assert_eq!(
+            set.concat(&p(".[4]"), Some(-4), &Path::empty()),
+            Some(Path::empty())
+        );
+        assert_eq!(
+            set.concat(&p(".[1]"), None, &p(".[3].deref")),
+            Some(p(".[4].deref"))
+        );
         // and the result is the set's own interned path
         assert_eq!(set.concat(&p(".x"), None, &p(".[8]")), Some(p(".x.[8]")));
     }

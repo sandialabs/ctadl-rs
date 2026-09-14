@@ -132,10 +132,8 @@ where
         match &self.inner {
             Inner::Flat(set) => set.heap_bytes(),
             Inner::ByPath { map, .. } => {
-                hb_bytes(
-                    map.capacity(),
-                    std::mem::size_of::<(P, Set<(A, B)>)>(),
-                ) + map.values().map(Set::heap_bytes).sum::<usize>()
+                hb_bytes(map.capacity(), std::mem::size_of::<(P, Set<(A, B)>)>())
+                    + map.values().map(Set::heap_bytes).sum::<usize>()
             }
         }
     }
@@ -445,7 +443,10 @@ mod model_tests {
     struct Lcg(u64);
     impl Lcg {
         fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             self.0 >> 33
         }
     }
@@ -462,15 +463,30 @@ mod model_tests {
             let mut other_model: HashSet<(u32, u16, u64)> = HashSet::new();
             let n = (rng.next() % 300) as usize;
             for _ in 0..n {
-                let leaf = ((rng.next() % paths as u64) as u32, (rng.next() % 5) as u16, rng.next() % 50);
+                let leaf = (
+                    (rng.next() % paths as u64) as u32,
+                    (rng.next() % 5) as u16,
+                    rng.next() % 50,
+                );
                 if rng.next().is_multiple_of(3) {
-                    assert_eq!(other.insert(leaf), other_model.insert(leaf), "round {round}");
+                    assert_eq!(
+                        other.insert(leaf),
+                        other_model.insert(leaf),
+                        "round {round}"
+                    );
                 } else {
                     assert_eq!(g.insert(leaf), model.insert(leaf), "round {round}");
                 }
                 assert_eq!(g.len(), model.len());
-                let probe = ((rng.next() % paths as u64) as u32, (rng.next() % 5) as u16, rng.next() % 50);
-                assert_eq!(g.contains(&probe.0, &probe.1, &probe.2), model.contains(&probe));
+                let probe = (
+                    (rng.next() % paths as u64) as u32,
+                    (rng.next() % 5) as u16,
+                    rng.next() % 50,
+                );
+                assert_eq!(
+                    g.contains(&probe.0, &probe.1, &probe.2),
+                    model.contains(&probe)
+                );
             }
             let before = model.len();
             let added = g.merge(other);
@@ -480,12 +496,24 @@ mod model_tests {
             let all: HashSet<_> = g.iter().map(|(p, a, b)| (*p, *a, *b)).collect();
             assert_eq!(all, model, "round {round}");
             for p in 0..paths {
-                let expect: HashSet<_> = model.iter().filter(|l| l.0 == p).map(|l| (l.1, l.2)).collect();
-                let got: HashSet<_> = g.get(&p).into_iter().flatten().map(|(a, b)| (*a, *b)).collect();
+                let expect: HashSet<_> = model
+                    .iter()
+                    .filter(|l| l.0 == p)
+                    .map(|l| (l.1, l.2))
+                    .collect();
+                let got: HashSet<_> = g
+                    .get(&p)
+                    .into_iter()
+                    .flatten()
+                    .map(|(a, b)| (*a, *b))
+                    .collect();
                 assert_eq!(got, expect, "round {round} path {p}");
                 assert_eq!(g.get(&p).is_some(), !expect.is_empty());
             }
-            assert_eq!(g.num_paths(), model.iter().map(|l| l.0).collect::<HashSet<_>>().len());
+            assert_eq!(
+                g.num_paths(),
+                model.iter().map(|l| l.0).collect::<HashSet<_>>().len()
+            );
             let owned: HashSet<_> = g.into_iter().collect();
             assert_eq!(owned, model);
         }

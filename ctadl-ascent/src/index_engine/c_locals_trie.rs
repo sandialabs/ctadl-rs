@@ -72,8 +72,8 @@ use ascent::rayon::iter::{IntoParallelIterator, ParallelIterator};
 use ascent_base::util::update;
 use rustc_hash::FxHasher;
 
-use super::path_group::PathGroup;
 use super::locals_trie::{DynIter, HeapReport, hb_bytes};
+use super::path_group::PathGroup;
 
 /// The store keys are trusted ids derived from the program, so we hash them with the fast,
 /// deterministic `FxHasher` rather than the DoS-resistant SipHash the std collections use. This is
@@ -672,12 +672,7 @@ where
         C: UnindexedConsumer<Self::Item>,
     {
         DashMapViewParIter::new(self.fwd)
-            .map(|((f, v), group)| {
-                (
-                    (f, v),
-                    CollectedParIter(group.iter().collect()),
-                )
-            })
+            .map(|((f, v), group)| ((f, v), CollectedParIter(group.iter().collect())))
             .drive_unindexed(consumer)
     }
 }
@@ -953,9 +948,7 @@ where
     #[inline]
     fn index_get(&'a self, key: &(F, V)) -> Option<Self::IteratorType> {
         let group = self.0.fwd.frozen().get(key)?;
-        Some(DynIter::new(move || {
-            group.iter()
-        }))
+        Some(DynIter::new(move || group.iter()))
     }
     #[inline]
     fn len_estimate(&self) -> usize {
@@ -996,9 +989,7 @@ where
     #[inline]
     fn c_index_get(&'a self, key: &(F, V)) -> Option<Self::IteratorType> {
         let group = self.0.fwd.frozen().get(key)?;
-        Some(CollectedParIter(
-            group.iter().collect(),
-        ))
+        Some(CollectedParIter(group.iter().collect()))
     }
 }
 impl<'a, F, V, P, M, Fp> CRelIndexReadAll<'a> for CView01<'a, F, V, P, M, Fp>

@@ -1803,7 +1803,6 @@ mod tests {
             PathSyntaxErrorKind::InvalidOffset("_elem_".into())
         );
     }
-
 }
 
 #[inline]
@@ -1824,8 +1823,22 @@ mod prefix_key_tests {
     #[test]
     fn prefix_keys_agree_with_match_prefix() {
         let paths: Vec<Path> = [
-            "", ".x", ".y", ".x.y", ".x.[4]", ".x.[1]", ".x.[4].y", ".x.[1].y", ".[4]", ".[1]",
-            ".[4].deref", ".[7].deref.[2]", ".x.y.z", ".deref", ".deref.[8]", ".deref.[8].x",
+            "",
+            ".x",
+            ".y",
+            ".x.y",
+            ".x.[4]",
+            ".x.[1]",
+            ".x.[4].y",
+            ".x.[1].y",
+            ".[4]",
+            ".[1]",
+            ".[4].deref",
+            ".[7].deref.[2]",
+            ".x.y.z",
+            ".deref",
+            ".deref.[8]",
+            ".deref.[8].x",
         ]
         .iter()
         .map(|s| p(s))

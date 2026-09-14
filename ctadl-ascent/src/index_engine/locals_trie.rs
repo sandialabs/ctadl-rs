@@ -782,9 +782,7 @@ where
     #[inline]
     fn index_get(&'a self, key: &(F, V)) -> Option<Self::IteratorType> {
         let group = self.0.fwd.get(key)?;
-        Some(DynIter::new(move || {
-            group.iter()
-        }))
+        Some(DynIter::new(move || group.iter()))
     }
     #[inline]
     fn len_estimate(&self) -> usize {

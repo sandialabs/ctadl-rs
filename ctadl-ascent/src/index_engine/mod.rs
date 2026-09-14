@@ -710,9 +710,30 @@ impl<Row> Rows<Row> for ascent::boxcar::Vec<std::sync::RwLock<Row>> {
 type CriticalSummaryRow = (FunctionId, FormalIndex, Path);
 type ResolventRow = (FunctionId, FormalIndex, Path, CallTargetObject, DecisionId);
 type CallTargetAssignLikeRow = (FunctionId, FlowVariable, Path, CallTargetObject);
-type ContextAssignRow = (FunctionId, FlowVariable, Path, FlowVariable, Path, DecisionSet);
-type ContextLocalsRow = (FunctionId, FlowVariable, Path, FormalIndex, Path, DecisionSet);
-type ContextSummaryRow = (FunctionId, FormalIndex, Path, FormalIndex, Path, DecisionSet);
+type ContextAssignRow = (
+    FunctionId,
+    FlowVariable,
+    Path,
+    FlowVariable,
+    Path,
+    DecisionSet,
+);
+type ContextLocalsRow = (
+    FunctionId,
+    FlowVariable,
+    Path,
+    FormalIndex,
+    Path,
+    DecisionSet,
+);
+type ContextSummaryRow = (
+    FunctionId,
+    FormalIndex,
+    Path,
+    FormalIndex,
+    Path,
+    DecisionSet,
+);
 
 /// Where the contextual rows are, for the debug log: per function, the rows of
 /// `context_locals`, the decisions reaching it (`resolvent`), the distinct decision sets its
@@ -800,7 +821,9 @@ fn context_histogram(
 trait LocalsProbe {
     fn has(&self, f: &FunctionId, v: &FlowVariable, p: &Path, a: &FormalIndex, p4: &Path) -> bool;
 }
-impl LocalsProbe for locals_trie::LocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path> {
+impl LocalsProbe
+    for locals_trie::LocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path>
+{
     fn has(&self, f: &FunctionId, v: &FlowVariable, p: &Path, a: &FormalIndex, p4: &Path) -> bool {
         self.contains(f, v, p, a, p4)
     }
@@ -825,7 +848,9 @@ fn dropped_compositions(
     let mut edge_src: HashMap<(FunctionId, FlowVariable, Path), DecisionSet> = HashMap::new();
     let mut rows = context_assign.stream();
     while let Some((f, _, _, v2, p2, ds)) = rows.next() {
-        let e = edge_src.entry((*f, *v2, *p2)).or_insert_with(DecisionSet::empty);
+        let e = edge_src
+            .entry((*f, *v2, *p2))
+            .or_insert_with(DecisionSet::empty);
         *e = e.union(*ds);
     }
     #[derive(Default)]
@@ -1842,7 +1867,12 @@ pub fn taint_index_with_config(
     // second store into the same aggregate (`o.a = id; o.b = id; o.a(s)` or
     // `fps[0]=id; fps[1]=id; fps[0](s)`) creates a new receiver version whose call path was
     // never an `actual_param`, so the binding fails to reach the call and taint is dropped.
-    all_program_paths.extend(facts.callee_info.iter().map(|(_, FlowVertex(_, p), _)| (*p,)));
+    all_program_paths.extend(
+        facts
+            .callee_info
+            .iter()
+            .map(|(_, FlowVertex(_, p), _)| (*p,)),
+    );
     let paths = compute_paths(
         all_program_paths.into_iter().collect(),
         summary_paths.into_iter().collect(),
