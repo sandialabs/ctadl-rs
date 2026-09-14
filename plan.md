@@ -4,6 +4,29 @@ Builds `spec.md` in ten steps. Each step compiles, passes tests, and can be comm
 own. Step numbers match spec §16. Capture every measurement run's output under
 `/Volumes/Shampoo/ctadl-sweep/`.
 
+## Which phase this work happens in
+
+Almost all of it is codegen: the code that writes the facts, which runs before any
+`index_engine` rule does. Steps 1-9 are entirely codegen. The ladder picks a rung per call site
+and emits rows; it adds no inference rules and changes none. `summary` is a base relation, so a
+dispatch model is just more facts.
+
+Three things that are easy to get wrong:
+
+- `K` and the rest of the call policy are read at codegen and never reach the engine. Two
+  different structs are called `IndexConfig`: the on-disk stamp (`ctadl-import/src/project.rs:160`),
+  which records the policy, and the engine's own parameters
+  (`ctadl-ascent/src/index_engine/mod.rs:297`), which have nothing to do with it. `CallPolicy`
+  goes to `codegen_program` and is recorded in the first one only.
+- "Phase 1" and "phase 2" below are codegen's two phases - the import loop, then the pass over
+  model matches once every import is in - not analysis phases.
+- Step 10 is the only step that touches analysis. Trimming `callee_resolvents` is safe because
+  of what the resolution rules can join at the fixpoint, not because of anything codegen does,
+  and the optional zero-callee counter lives in the engine.
+
+A deferred site spans both: codegen emits `callee_info` and no `call` rows, and whether a callee
+is ever found happens later, at the fixpoint, only when an allocation reaches the receiver.
+
 Test commands used throughout:
 
 ```

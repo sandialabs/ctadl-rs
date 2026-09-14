@@ -1,4 +1,4 @@
-# Spec — CHA with a surgical, expensive fallback — DO-NOT-MERGE
+# Spec — Ladder of call resolution strategies — DO-NOT-MERGE
 
 Requirements and design for `intent.md`, against this branch (`cha-with-surgical-fallback`,
 import format 7). Every number quoted here comes from `cha-viability.md` and is not re-derived.
