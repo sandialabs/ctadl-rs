@@ -451,6 +451,15 @@ it flags 237 of the apps' 100-worst signatures.
 `K` is not delicate: between 16 and 32 the inlined share falls by more than half while the
 graph grows by a sixth; past 32 both flatten.
 
+**The ladder lives only in the `Mixed` arm.** `classify` is called from nowhere else, so under
+`cha`, `hi` and `legacy-mixed` the `JavaCall` arm bodies are untouched: no rung 0 (a pure CHA
+run still resolves `invoke-super` to every implementation below the named class, which keeps the
+viability A/B's `cha` column comparable), no dispatch models (they are loaded and matched but
+never consulted), no threshold. The bucket line still prints under every strategy, since
+counting happens where rows are emitted. Giving `--cha-threshold*`, `--dispatch-models*` or
+`--dispatch-order` with a strategy other than `mixed` is a `warn`, and the `call_policy` stamp
+records the flags as given.
+
 ### 9.2 Recorded in the index config (R5, N5)
 
 `ctadl_import::project::IndexConfig` (`project.rs:160`) holds only `version`, so an index built
