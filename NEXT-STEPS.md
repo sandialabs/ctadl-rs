@@ -133,6 +133,94 @@ flow under `d` alone, and would hand it to a caller that passes `copyA` with som
 A correct key is a *conjunction* of decisions -- products of decisions per row, which is the
 unboundedness of item 1 in a new place -- so any fix needs its bound before it needs rules.
 
+### Measured (2026-09-10)
+
+Two counts, on every TaintBench app, `smbd` and the modelled `rcs`, all under the default
+`decision` mode:
+
+- **Shape**, from the index alone (`callee_info`, `actual_param`, `assign`, `formal_param`;
+  variable-level closure over `assign`, globals channel excluded): functions with two or more
+  critical sites whose receivers come from a formal, where one site's return/out vertex reaches
+  another site's argument.
+- **Dropped compositions**, exact, from a post-fixpoint pass the engine now logs at `debug`
+  (`dropped_compositions` in `index_engine/mod.rs`, after the `context_locals by function`
+  histogram): `context_locals` rows sitting at the source vertex of a `context_assign` edge with
+  no context-free `locals` twin, i.e. the compositions 3.3a/3.3b never derive. Split by whether
+  the row's set and the edge's set share a decision. Exact-split matches only, so a lower bound
+  for the offset/wild cases.
+
+| app | functions | sites in shape (functions) | resolvents | `context_locals` | dropped rows | shared | disjoint | vertices (functions) | summaries only under `none` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| xbot | 11,012 | 1,249 (179) | 2,868 | 9,147,332 | **26,457** | 26,141 | **316** | 521 (59) | 109,297 |
+| smbd | 6,398 | 89 (16) | 38 | 75,032 | **2,640** | 2,640 | 0 | 174 (9) | 1,626,850 |
+| vibleaker | 33,524 | 1,007 (208) | 446 | 10,364 | 524 | 524 | 0 | 252 (12) | 1,660 |
+| scipiex | 3,876 | 70 (29) | 57 | 1,376 | 376 | 376 | 0 | 106 (5) | 184 |
+| fakeplay | 6,984 | 166 (55) | 76 | 2,685 | 76 | 76 | 0 | 33 (9) | 282 |
+| beita | 4,066 | 92 (27) | 75 | 2,299 | 69 | 69 | 0 | 29 (7) | 287 |
+| fakedaum | 2,125 | 33 (12) | 29 | 1,649 | 42 | 42 | 0 | 15 (6) | 132 |
+| rcs (modelled) | 22,064 | 1,510 (87) | 116 | 3,578 | 16 | 16 | 0 | 16 (9) | 193 |
+| save_me | 17,174 | 1,680 (133) | 285 | 3,382 | 12 | 12 | 0 | 6 (2) | 227 |
+| cajino_baidu | 18,715 | 351 (124) | 224 | 4,961 | 12 | 12 | 0 | 5 (4) | 156 |
+| phospy | 1,872 | 26 (20) | 22 | 38 | 3 | 3 | 0 | 3 (3) | 3 |
+| hummingbad | 31,802 | 260 (127) | 372 | 2,919 | 1 | 0 | 1 | 1 (1) | 188 |
+| fakemart | 2,470 | 12 (9) | 21 | 177 | 1 | 0 | 1 | 1 (1) | 10 |
+| 5 more apps | | ≤ 36 | ≤ 15 | ≤ 496 | 0 | 0 | 0 | 0 | |
+| 21 more apps | | ≤ 21 | 0 | 0 | 0 | 0 | 0 | 0 | |
+
+(The `none` column is an upper bound that also contains the caller-merging `none` does by
+design; on `smbd` it is all merging -- `tdb_traverse` alone has dozens of callback targets.)
+
+What it says:
+
+- **The shape is everywhere the contextual rows are, but it is not the conjunction case.**
+  Of 30,229 dropped rows across the corpus, **318 (1.1 %) need two different decisions**; 316 of
+  those are in `xbot`'s `Interpreter.doCallSpecial` / `doAdd`, one each in `hummingbad` and
+  `fakemart`. Everything else composes under a decision *both* sides already hold: the row's set
+  and the edge's set intersect. That case is not a conjunction at all -- the row holds under each
+  `d ∈ D`, the edge under each `e ∈ E`, so the composition holds under every `d ∈ D ∩ E`, and
+  `D ∩ E` is a set of the same kind, no larger than either. The fixture in this item (`d` and
+  `e` on different formals) is the rare shape; the common one is one decided formal used at two
+  sites, or one decided site in a loop whose output feeds its own input
+  (`ASCIIUtility.getBytes` / `MimeMultipart.readFully` reading into a buffer, `tdb_traverse`
+  calling its callback per record, `CodedInputStream.readMessage`, `tdb`/`prs_pointer`/
+  `pass_check`/`pm_process` on `smbd`). Minimal form -- one decision, two sites, and the
+  engine still reports `return <- obj` absent (`dropped compositions: rows=1 shared=1`):
+
+  ```
+  def copy(x): 1  where summaries [return <- x]  { start: return x; }
+
+  def f(cb, z): 1
+  { start:
+    y = cb(z);        # decision d = [arg0 = copy]:  y <- z   under {d}
+    x = cb(y);        # the same d:                  x <- y   under {d}
+    return x; }
+
+  def bar(obj): 1
+  where summaries [return <- obj]
+  { start: tmp = f(ptr<copy>, obj); return tmp; }
+  ```
+
+  Both edges hold under `{d}`; `y` reaches `z` under `{d}` (3.3b); but `x <- y` is a
+  contextual edge and `y`'s row is a contextual local, and no rule joins those two, so `x`
+  never gets a row. Nothing here needs `d AND e`.
+- **A bounded fix covers 99 % of it**: compose a contextual edge with a contextual local under
+  `D ∩ E` when that is non-empty. Three rules mirroring 3.3b's `ctx_ext_dst` / `ctx_edge_split`
+  / `ctx_ext_fml` with `context_locals` in place of `locals` and `ds.intersection(es)` as the
+  set, gated on non-empty. Sets only shrink along a composition, so the row count stays bounded
+  by the same context-free `locals` as today; what it costs is one more join family in the
+  contextual SCC (`context_locals` rows at a contextual edge source are 155 k of `xbot`'s 9.1 M,
+  and 3 k of `smbd`'s 75 k). Under `collapse` ⊤ ∩ X = X, so it is the same rule.
+- **The remaining 1 % is the conjunction case** and needs the product key this item describes;
+  on this corpus it is confined to Rhino's interpreter and two library methods, and is not
+  worth a bound of its own until the intersection rule is in and the count re-measured.
+- Whether any dropped row reaches a *summary* is not measured (the `none` diff cannot separate
+  it from merging). The intersection rule would answer that exactly: diff `summary.parquet`
+  before and after.
+
+Reproduce: `RUST_LOG=warn,ctadl=debug` on any index and read the `dropped compositions` line;
+the shape query is `duckdb` over the four parquet tables above (call-arg vertex ids decode as
+`insn = arg >> 32`, `formal = (arg >> 12) & 0xffff`).
+
 ## 6. Bookkeeping
 
 - `../ct-firmware-eval/BENCHMARKS.md` still records `ath_dev`/`cfg80211`/`smbd` as killed;

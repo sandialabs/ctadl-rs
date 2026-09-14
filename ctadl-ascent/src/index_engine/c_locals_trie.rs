@@ -378,7 +378,7 @@ where
     /// Existence probe against the **frozen** store. Rules only ever probe `total`/`delta`, which
     /// are frozen for the whole evaluation phase.
     #[inline]
-    fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
+    pub(crate) fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
         // `(P,M,Fp)` are cheap to clone: 8-byte handles plus an i16.
         self.fwd
             .frozen()

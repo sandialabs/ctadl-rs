@@ -788,6 +788,116 @@ fn context_histogram(
     out
 }
 
+/// Sizing for `NEXT-STEPS.md` item 5: contextual flows that would need a contextual edge to
+/// compose with a contextual local. Rules 3.3a/3.3b compose `context_assign` only with the
+/// context-free `locals`, and `context_locals` only with the context-free `assign_like`, so a
+/// `context_locals` row that sits at the source vertex of a `context_assign` edge and has no
+/// context-free `locals` twin is a composition the engine never derives. Counts those rows, split
+/// by whether the row's set and the edge's set share a decision (`shared`: the composition would
+/// hold under the intersection, a sound single-decision key) or not (`disjoint`: it needs a
+/// conjunction of decisions). Exact-split matches only, so a lower bound on the wild/offset cases.
+/// An exact `(f, v, p, a, p4)` probe of the `locals` store, serial or concurrent.
+trait LocalsProbe {
+    fn has(&self, f: &FunctionId, v: &FlowVariable, p: &Path, a: &FormalIndex, p4: &Path) -> bool;
+}
+impl LocalsProbe for locals_trie::LocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path> {
+    fn has(&self, f: &FunctionId, v: &FlowVariable, p: &Path, a: &FormalIndex, p4: &Path) -> bool {
+        self.contains(f, v, p, a, p4)
+    }
+}
+impl LocalsProbe
+    for c_locals_trie::CLocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path>
+{
+    fn has(&self, f: &FunctionId, v: &FlowVariable, p: &Path, a: &FormalIndex, p4: &Path) -> bool {
+        self.contains(f, v, p, a, p4)
+    }
+}
+
+fn dropped_compositions(
+    context_assign: &dyn Rows<ContextAssignRow>,
+    context_locals: &dyn Rows<ContextLocalsRow>,
+    locals: &dyn LocalsProbe,
+    path_set: &PathSet,
+    id_map: Option<&IdMap>,
+) -> String {
+    use std::fmt::Write as _;
+    // Source vertex of every contextual edge, with the union of the sets the edges hold under.
+    let mut edge_src: HashMap<(FunctionId, FlowVariable, Path), DecisionSet> = HashMap::new();
+    let mut rows = context_assign.stream();
+    while let Some((f, _, _, v2, p2, ds)) = rows.next() {
+        let e = edge_src.entry((*f, *v2, *p2)).or_insert_with(DecisionSet::empty);
+        *e = e.union(*ds);
+    }
+    #[derive(Default)]
+    struct Per {
+        rows: usize,
+        shared: usize,
+        disjoint: usize,
+        vertices: hashbrown::HashSet<(FlowVariable, Path)>,
+    }
+    let mut per: HashMap<FunctionId, Per> = HashMap::new();
+    let mut at_edge = 0usize;
+    let mut rows = context_locals.stream();
+    while let Some((f, v, p, a, p4, ds)) = rows.next() {
+        let mut hit: Option<DecisionSet> = None;
+        for (key, _) in &path_set.splits(p).exact {
+            if let Some(e) = edge_src.get(&(*f, *v, *key)) {
+                hit = Some(hit.map_or(*e, |h| h.union(*e)));
+            }
+        }
+        let Some(e) = hit else { continue };
+        at_edge += 1;
+        if locals.has(f, v, p, a, p4) {
+            continue;
+        }
+        let per = per.entry(*f).or_default();
+        per.rows += 1;
+        if ds.intersection(e).is_empty() {
+            per.disjoint += 1;
+        } else {
+            per.shared += 1;
+        }
+        per.vertices.insert((*v, *p));
+    }
+    let rows: usize = per.values().map(|p| p.rows).sum();
+    let shared: usize = per.values().map(|p| p.shared).sum();
+    let disjoint: usize = per.values().map(|p| p.disjoint).sum();
+    let vertices: usize = per.values().map(|p| p.vertices.len()).sum();
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "dropped compositions (context_locals rows at a context_assign source with no context-free \
+         locals twin): rows={} shared={} disjoint={} vertices={} functions={}; context_locals rows \
+         at a context_assign source={}; edge sources={}",
+        rows,
+        shared,
+        disjoint,
+        vertices,
+        per.len(),
+        at_edge,
+        edge_src.len()
+    );
+    let mut top: Vec<(&FunctionId, &Per)> = per.iter().collect();
+    top.sort_by(|a, b| b.1.rows.cmp(&a.1.rows));
+    for (f, p) in top.into_iter().take(12) {
+        let name = id_map
+            .and_then(|m| m.get_function(*f))
+            .map(|f| f.0.as_ref())
+            .unwrap_or("unknown");
+        let _ = writeln!(
+            out,
+            "  rows={:>8} shared={:>8} disjoint={:>8} vertices={:>6} {}({})",
+            p.rows,
+            p.shared,
+            p.disjoint,
+            p.vertices.len(),
+            name,
+            f.id
+        );
+    }
+    out
+}
+
 struct HybridInliningRelations<'a> {
     critical_summary: &'a dyn Rows<CriticalSummaryRow>,
     resolvent: &'a dyn Rows<ResolventRow>,
@@ -1896,6 +2006,17 @@ pub fn taint_index_with_config(
             log::debug!(
                 "{}",
                 context_histogram(&prog.context_locals, &prog.resolvent, id_map).trim_end()
+            );
+            log::debug!(
+                "{}",
+                dropped_compositions(
+                    &prog.context_assign,
+                    &prog.context_locals,
+                    &prog.__locals_ind_common,
+                    &path_set.0,
+                    id_map
+                )
+                .trim_end()
             );
         }
 
