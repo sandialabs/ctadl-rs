@@ -322,6 +322,10 @@ fn copy_find(parent: &mut std::collections::HashMap<CopyKey, CopyKey>, x: CopyKe
 /// Θ(C²) all-pairs empty-path `alias_of_field` closure: instead of materializing
 /// every pair of a C-variable copy group, we hand the taint engine one edge per
 /// non-representative member and let taint equalize through the representative.
+///
+/// Copies that WRITE a formal are skipped, for the same reason the index's
+/// [`crate::index_engine`] `compute_alias_of_formal` drops them: to avoid sharing taint
+/// in both directions on everything that passes through a parameter slot.
 pub(crate) fn compute_copy_alias(
     assign: &[(FunctionId, FlowVariable, Path, FlowVariable, Path)],
 ) -> Vec<(FunctionId, FlowVariable, FlowVariable)> {
@@ -329,6 +333,11 @@ pub(crate) fn compute_copy_alias(
     let mut parent: HashMap<CopyKey, CopyKey> = HashMap::new();
     for (f, dst, dp, src, sp) in assign {
         if !dp.is_empty() || !sp.is_empty() {
+            continue;
+        }
+        // The `ParamFlow` write-back described above. Union-find is direction-blind, so
+        // this edge has to be dropped at construction; there is no way to union "one way".
+        if dst.as_formal().is_some() {
             continue;
         }
         let a: CopyKey = (*f, *dst);
@@ -357,9 +366,10 @@ pub(crate) fn compute_copy_alias(
 ///
 /// The default regime is the demand-driven graph search ([`search::taint_search`]):
 /// sources are partitioned by label, and each label set runs one multi-start
-/// realizable-path search directly over the program tables, with aliasing
-/// consulted through a union-find of the copy classes. Set `CTADL_QUERY_DATALOG=1`
-/// to fall back to the datalog closure engine ([`taint_analysis_datalog`]).
+/// realizable-path search directly over the program tables, with aliasing followed
+/// directionally along the copy graph (see [`search::ObjectScope`]). Set
+/// `CTADL_QUERY_DATALOG=1` to fall back to the datalog closure engine
+/// ([`taint_analysis_datalog`]), which still unifies copy classes for field taint.
 pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     if std::env::var("CTADL_QUERY_DATALOG").is_ok() {
         taint_analysis_datalog(facts, id_map)
@@ -403,9 +413,9 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
         // materialized Θ(C²) rows for a group of C copy-connected variables — the
         // query-phase memory blowup. Register-to-register moves in firmware SSA form
         // groups of C≈10⁴, so Θ(C²) reached 10⁸–10⁹ rows. Union-find collapses that
-        // to O(C): 2 edges (member↔rep) per variable, and taint equalizes across the
-        // group by routing through the representative in two hops (see the equalize
-        // rules just below).
+        // to O(C): 2 edges (member↔rep) per variable, and FIELD taint equalizes
+        // across the group by routing through the representative in two hops (see
+        // the equalize rules just below). Value taint is not equalized.
         relation copy_alias(FunctionId, FlowVariable, FlowVariable);
 
         // Initialize taint with source
@@ -469,23 +479,15 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
             assign_like(infunc, x, Path::empty(), a, p),
             if !p.is_empty();
 
-        // Copy-class taint equalization — the union-find replacement for the old
-        // all-pairs empty-path alias closure. A copy-connected group shares taint,
-        // routed through its representative so the cost is O(C) rather than Θ(C²):
-        // every member's taint collapses onto the rep, and the rep's taint expands
-        // to every member (two hops connect any two members). Empty-path taint is
-        // equalized unconditionally (matching the old ungated `alias_of_field(_, _,
-        // ∅)` propagation); non-empty-path taint is equalized only for materialized
-        // paths (matching the old `paths(p12)` gate). State and endpoint ride along
-        // unchanged, exactly as the old alias propagation carried them.
-        taint(infunc, ts, rep.clone(), Path::empty(), a.clone()),
-        taint_edge_directed(FlowEdge::Intra, infunc, rep.clone(), Path::empty(), infunc, v.clone(), Path::empty(), a.direction) <--
-            taint(infunc, ts, v, Path::empty(), a),
-            copy_alias(infunc, v, rep);
-        taint(infunc, ts, v.clone(), Path::empty(), a.clone()),
-        taint_edge_directed(FlowEdge::Intra, infunc, v.clone(), Path::empty(), infunc, rep.clone(), Path::empty(), a.direction) <--
-            taint(infunc, ts, rep, Path::empty(), a),
-            copy_alias(infunc, v, rep);
+        // Copy-class taint equalization for FIELD taint only — union-find over copy
+        // classes, restricted to non-empty paths. A whole-variable copy `dst = src`
+        // makes the two hold the same *object*, so a taint on a field of that object
+        // (`v.p`, `p` non-empty) is shared across the copy group; that is what these
+        // rules equalize, routed through the representative so the cost is O(C)
+        // rather than Θ(C²). The *value* itself (empty path) is NOT equalized: value
+        // flow is one-way, and the forward direction is already carried by the
+        // `assign_like` propagation rule above (the empty path is a member of
+        // `paths`).
         taint(infunc, ts, rep.clone(), p.clone(), a.clone()),
         taint_edge_directed(FlowEdge::Intra, infunc, rep.clone(), p.clone(), infunc, v.clone(), p.clone(), a.direction) <--
             taint(infunc, ts, v, p, a),

@@ -8,18 +8,23 @@ tables. Nothing is materialized beyond the states the search actually reaches.
 
 The regime:
 
-1. Aliasing is precomputed efficiently: union-find over the empty-path copy
-   edges gives each copy-connected variable group a representative
-   ([`super::compute_copy_alias`]), and field loads are indexed by destination
-   for demand-driven field-alias back-flow. No alias closure is materialized.
+1. Aliasing is directed, not unified. Whole-variable copies (`dst = src`, both
+   paths empty) are indexed both ways: by source, so a tainted *value* flows
+   forward along the copy and nowhere else; and by destination, so a taint on
+   a *field* of the object `dst` points to hops back to `src` -- the two hold
+   the same object, and object identity is symmetric where value flow is not.
+   A one-bit [`ObjectScope`] on every node keeps that hop from leaking
+   transitively (see its docs). Field loads are indexed by destination for
+   demand-driven field-alias back-flow. No alias closure is materialized.
 2. Sources are partitioned by label: all source endpoints sharing a label form
    one start *set* and participate in the same search, sharing a visited set.
 3. Each set runs [`find_annotated_paths_from_set`] — the multi-start variant of
    the formatter's realizable-path search — over the implicit graph whose edges
    are expanded on demand from `assign_like`, `formal_param`, and `call`
-   ([`TaintSearchGraph`]). Expansion reaches the aliases of a node (its copy
-   class, routed through the union-find representative; the bases of the loads
-   that defined it) as well as its direct assignment successors. The search
+   ([`TaintSearchGraph`]). Expansion reaches the aliases of a node (the copy
+   sources holding the same object, when its scope allows the hop; the bases
+   of the loads that defined it) as well as its direct assignment successors.
+   The search
    threads a [`TaintState`] annotation along the edges so call/return matching
    is respected: a `Call` edge enters `Restricted`, and a `Return` edge is only
    traversable while `Free`.
@@ -48,15 +53,52 @@ use crate::facts::{
     PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintLevel, TaintState, isout,
 };
 
-use super::{QueryEndpoint, QueryFacts, QueryResult, compute_copy_alias};
+use super::{QueryEndpoint, QueryFacts, QueryResult};
+
+/// Which objects a taint on a *non-empty* access path `v.p` is about.
+///
+/// A whole-variable copy `dst = src` says two things with different symmetry.
+/// The value flows one way: if `src` is tainted then `dst` is, and a taint that
+/// later lands on `dst` says nothing about `src`. But the two variables now
+/// point to the *same object*, and that is an equivalence: a taint on the field
+/// `dst.f` -- on the object -- is a taint on `src.f`, and on every other copy of
+/// `src`. So value taint (empty path) only ever moves forward along a copy,
+/// while field taint (non-empty path) may also hop *backward* along it.
+///
+/// Doing that hop naively re-creates the unification this replaced: hop back
+/// from `dst` to `src`, forward to a sibling `t = src`, back from `t` to its
+/// other source in `t = phi(src, u)`, forward to every copy of `u` -- and `u`'s
+/// object never aliased `dst`'s at all. The bit below is what stops it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ObjectScope {
+    /// The taint arrived here by a *fresh derivation* -- a source seed, a field
+    /// load or store, a call/return boundary -- rather than by being copied in.
+    /// A copy `v = src` shares the referenced object, so from `All` the taint may
+    /// hop *backward* to `v`'s copy sources: each holds the same object and is an
+    /// alias. Those aliases are `All` in turn, so the hop chains up the copy graph
+    /// and the ordinary forward copy steps fan it back out to every sibling copy
+    /// of the same object -- one level of genuine aliasing, in both frontends'
+    /// reference semantics.
+    All,
+    /// The taint arrived by being *copied in* along `v = src`, so it is about the
+    /// one object that flowed down that copy. It still flows *forward* along `v`'s
+    /// outgoing copies (same object) and any non-copy step off it -- a load, a
+    /// store -- starts a fresh `All` derivation at the destination. But it does
+    /// NOT hop backward: doing so would chase `v`'s *other* incoming copies, whose
+    /// objects never carried this taint, and that transitive back-and-forth is
+    /// exactly the unification (and the false positives) this replaced.
+    Fixed,
+}
 
 /// A node of the implicit taint graph: a variable and access path within a
-/// function, plus the [`TaintLevel`] magnitude carried in-band. The level must
-/// live in the node (not the annotation) because successor generation
-/// ([`LazySuccessors::labeled_successors`]) sees only the node, and a saturating
-/// vertex generates extra edges a plain one does not. The [`TaintState`]
-/// call/return discipline stays the annotation — the two are orthogonal.
-pub type TaintNode = (FunctionId, FlowVariable, Path, TaintLevel);
+/// function, plus the [`TaintLevel`] magnitude and the [`ObjectScope`] carried
+/// in-band. Both must live in the node (not the annotation) because successor
+/// generation ([`LazySuccessors::labeled_successors`]) sees only the node, and
+/// a saturating vertex generates extra edges a plain one does not, just as an
+/// `All`-scoped vertex generates the backward copy hop a `Fixed` one does not.
+/// The [`TaintState`] call/return discipline stays the annotation — the three
+/// are orthogonal.
+pub type TaintNode = (FunctionId, FlowVariable, Path, TaintLevel, ObjectScope);
 
 /// The level-agnostic vertex identity `(function, variable, access path)`, used
 /// for sink matching and emission — where the taint magnitude is invisible (the
@@ -64,12 +106,10 @@ pub type TaintNode = (FunctionId, FlowVariable, Path, TaintLevel);
 type TaintVertex = (FunctionId, FlowVariable, Path);
 
 /// The implicit taint dataflow graph: edges are computed on demand from indexed
-/// program tables, never materialized. Edge expansion mirrors the closure
-/// engine's forward propagation rules — direct assigns with path substitution,
-/// field-alias back-flow from loads, copy-class equalization through the
-/// union-find representative, and formal/actual call-boundary steps — so a
-/// search over this graph visits exactly the vertices forward taint
-/// propagation would have tainted.
+/// program tables, never materialized. Edge expansion covers direct assigns
+/// with path substitution, field-alias back-flow from loads, the backward copy
+/// hop that carries object identity (see [`ObjectScope`]), and formal/actual
+/// call-boundary steps.
 pub struct TaintSearchGraph {
     /// `assign_like` edges indexed by source variable:
     /// `(f, src) -> [(dst, dst_path, src_path)]`.
@@ -93,13 +133,18 @@ pub struct TaintSearchGraph {
     /// The materialized access paths; a step producing a non-materialized path
     /// is dropped, the same gate the closure engine's `paths(p)` premises apply.
     paths: HashSet<Path>,
-    /// Copy-class member -> representative (`member != rep`), from union-find
-    /// over the empty-path copy edges.
-    copy_rep: HashMap<(FunctionId, FlowVariable), FlowVariable>,
-    /// Copy-class representative -> members (excluding the rep itself), sorted
-    /// so successor order — and therefore search tie-breaking — is
-    /// deterministic.
-    copy_members: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>>,
+    /// Whole-variable copies `dst = src` (both paths empty) indexed by
+    /// destination: `(f, dst) -> [src]`, sorted and deduplicated so successor
+    /// order — and therefore search tie-breaking — is deterministic. This is
+    /// the backward direction of the copy graph, consulted only by the object
+    /// hop of an `All`-scoped node on a non-empty path (the forward direction
+    /// is already in `assign_by_src`). Copies that *write a formal* are left
+    /// out: codegen's `ParamFlow` emits `formal_i = v_k` to hand the parameter's
+    /// final version back to the caller, and since a formal is one node rather
+    /// than an SSA chain, hopping back across that edge would fuse the values
+    /// entering and leaving the function -- the same cycle the index's
+    /// `alias_of_formal` refuses to close.
+    copies_by_dst: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>>,
     /// Sink access paths per `(function, variable)`, from the backward
     /// endpoints. Consulted only by the saturating rule: a saturating vertex
     /// `(v, p)` reaches any sink `(v, q)` whose path `q` extends `p` (reading
@@ -152,15 +197,16 @@ impl TaintSearchGraph {
 
         let paths = facts.paths.iter().map(|(p,)| *p).collect();
 
-        let mut copy_rep = HashMap::default();
-        let mut copy_members: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>> =
+        let mut copies_by_dst: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>> =
             HashMap::default();
-        for (f, member, rep) in compute_copy_alias(&facts.assign) {
-            copy_rep.insert((f, member), rep);
-            copy_members.entry((f, rep)).or_default().push(member);
+        for (f, dst, dp, src, sp) in &facts.assign {
+            if dp.is_empty() && sp.is_empty() && dst.as_formal().is_none() && dst != src {
+                copies_by_dst.entry((*f, *dst)).or_default().push(*src);
+            }
         }
-        for members in copy_members.values_mut() {
-            members.sort_unstable();
+        for srcs in copies_by_dst.values_mut() {
+            srcs.sort_unstable();
+            srcs.dedup();
         }
 
         // Sink access paths per variable, for the saturating rule's sink-side
@@ -184,8 +230,7 @@ impl TaintSearchGraph {
             callers_by_callee,
             callee_by_site,
             paths,
-            copy_rep,
-            copy_members,
+            copies_by_dst,
             sink_ext_by_var,
         }
     }
@@ -196,7 +241,7 @@ impl LazySuccessors for TaintSearchGraph {
     type Label = FlowEdge;
 
     fn labeled_successors(&self, node: &TaintNode) -> Vec<(TaintNode, FlowEdge)> {
-        let (f, v, p, level) = *node;
+        let (f, v, p, level, scope) = *node;
         let mut out = Vec::new();
 
         // The taint level rides along every existing edge unchanged, so
@@ -205,12 +250,20 @@ impl LazySuccessors for TaintSearchGraph {
 
         // Direct assign-like flow with path substitution: taint on `src.p` with
         // `p = sp·rest` flows to `dst.(dp·rest)`, for materialized paths only.
+        // A whole-variable copy carries the taint to the same object, so the
+        // destination's scope is `Fixed`; any other step is a fresh derivation
+        // about whatever the destination holds, so it starts `All`.
         if let Some(edges) = self.assign_by_src.get(&(f, v)) {
             for (dst, dp, sp) in edges {
                 if let Some(p2) = p.substitute_prefix(sp, dp)
                     && self.paths.contains(&p2)
                 {
-                    out.push(((f, *dst, p2, level), FlowEdge::Intra));
+                    let scope2 = if dp.is_empty() && sp.is_empty() {
+                        ObjectScope::Fixed
+                    } else {
+                        ObjectScope::All
+                    };
+                    out.push(((f, *dst, p2, level, scope2), FlowEdge::Intra));
                 }
             }
         }
@@ -222,32 +275,36 @@ impl LazySuccessors for TaintSearchGraph {
         // closure engine additionally gated its alias seeding on the base being
         // tainted — a flooding mitigation the demand-driven expansion doesn't
         // need, since only reached states are ever expanded.
+        // The base `a` is read off whichever object it holds, so the taint on
+        // `a.(q·p)` is about all of them: `All`.
         if let Some(loads) = self.loads_by_dst.get(&(f, v)) {
             for (a, q) in loads {
                 if p.is_empty() {
-                    out.push(((f, *a, *q, level), FlowEdge::Intra));
+                    out.push(((f, *a, *q, level, ObjectScope::All), FlowEdge::Intra));
                 } else {
                     let qp = q.concat(&p);
                     if self.paths.contains(&qp) {
-                        out.push(((f, *a, qp, level), FlowEdge::Intra));
+                        out.push(((f, *a, qp, level, ObjectScope::All), FlowEdge::Intra));
                     }
                 }
             }
         }
 
-        // Copy-class equalization: an empty-path copy group shares taint at
-        // every path. Routed through the union-find representative so a group
-        // of C variables costs O(C) edges (member -> rep, rep -> members)
-        // rather than the Θ(C²) all-pairs closure: any two members connect in
-        // two hops.
-        if p.is_empty() || self.paths.contains(&p) {
-            if let Some(rep) = self.copy_rep.get(&(f, v)) {
-                out.push(((f, *rep, p, level), FlowEdge::Intra));
-            }
-            if let Some(members) = self.copy_members.get(&(f, v)) {
-                for m in members {
-                    out.push(((f, *m, p, level), FlowEdge::Intra));
-                }
+        // Object hop: a taint on `v` that arrived by a fresh derivation (`All`)
+        // is about whatever object `v` holds, so it also holds at each copy
+        // *source* of `v` -- `v = src` means `src` references that same object,
+        // an alias. Each alias is `All` too, so the hop chains up the copy graph
+        // and the forward copy steps above fan it back out to every sibling copy.
+        // A `Fixed` node -- one that arrived *by* a copy -- does not hop, which is
+        // what stops the chain from crossing into unrelated objects (see
+        // [`ObjectScope`]). This is object identity, so it applies at the empty
+        // path (a copied reference) exactly as at a field path.
+        if scope == ObjectScope::All
+            && (p.is_empty() || self.paths.contains(&p))
+            && let Some(srcs) = self.copies_by_dst.get(&(f, v))
+        {
+            for src in srcs {
+                out.push(((f, *src, p, level, ObjectScope::All), FlowEdge::Intra));
             }
         }
 
@@ -264,7 +321,13 @@ impl LazySuccessors for TaintSearchGraph {
             if let Some(loads) = self.loads_by_src.get(&(f, v)) {
                 for (dst, _q) in loads {
                     out.push((
-                        (f, *dst, Path::empty(), TaintLevel::Saturating),
+                        (
+                            f,
+                            *dst,
+                            Path::empty(),
+                            TaintLevel::Saturating,
+                            ObjectScope::All,
+                        ),
                         FlowEdge::Intra,
                     ));
                 }
@@ -281,7 +344,8 @@ impl LazySuccessors for TaintSearchGraph {
             if let Some(qs) = self.sink_ext_by_var.get(&(f, v)) {
                 for q in qs {
                     if q.len() > p.len() && q.is_extension_of(&p) {
-                        out.push(((f, v, *q, TaintLevel::Saturating), FlowEdge::Intra));
+                        // Same variable, same object, longer path: keep the scope.
+                        out.push(((f, v, *q, TaintLevel::Saturating, scope), FlowEdge::Intra));
                     }
                 }
             }
@@ -300,8 +364,17 @@ impl LazySuccessors for TaintSearchGraph {
             for site in sites {
                 let InsnSiteId { func_id, insn_id } = InsnSiteId::try_from(site).unwrap();
                 let call_arg = PackedCallArg::try_from_parts(insn_id, formal).unwrap();
+                // The call-arg vertex holds the actual's object, and an out-flowing
+                // write through the formal is visible to every alias of that
+                // object in the caller, so the taint re-enters at `All`.
                 out.push((
-                    (func_id, FlowVariable::call_arg_packed(call_arg), p, level),
+                    (
+                        func_id,
+                        FlowVariable::call_arg_packed(call_arg),
+                        p,
+                        level,
+                        ObjectScope::All,
+                    ),
                     FlowEdge::Return(*site),
                 ));
             }
@@ -315,7 +388,13 @@ impl LazySuccessors for TaintSearchGraph {
             if let Some(callee) = self.callee_by_site.get(&site) {
                 let formal_var = FlowVariable::formal_index(call_arg_id.formal());
                 if self.formal_ty.contains_key(&(*callee, formal_var)) {
-                    out.push(((*callee, formal_var, p, level), FlowEdge::Call(site)));
+                    // A formal has no incoming copies the hop would follow (its
+                    // `ParamFlow` write-backs are excluded), so `All` is inert here
+                    // and merely keeps the node canonical.
+                    out.push((
+                        (*callee, formal_var, p, level, ObjectScope::All),
+                        FlowEdge::Call(site),
+                    ));
                 }
             }
         }
@@ -444,7 +523,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
             } else {
                 TaintLevel::Plain
             };
-            let node = (ep.infunc, ep.vertex.0, ep.vertex.1, level);
+            let node = (ep.infunc, ep.vertex.0, ep.vertex.1, level, ObjectScope::All);
             if let hashbrown::hash_map::Entry::Vacant(e) = start_origin.entry(node) {
                 e.insert(i as u32);
                 starts.push(node);
@@ -480,8 +559,8 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
             {
                 continue;
             }
-            // Emission drops the level (the "collapse"): every reached state is a
-            // plain tainted row, exactly as before.
+            // Emission drops the level and the scope (the "collapse"): every
+            // reached state is a plain tainted row, exactly as before.
             let ep = &endpoints[origin[i] as usize];
             taint.push((st.node.0, st.annot, st.node.1, st.node.2, ep.clone()));
         }
@@ -492,8 +571,9 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         // formatter walks, and every node on it is tagged with the sink's
         // endpoint — the backward-direction tag that marks the flow's source
         // end as completing a source -> sink flow.
-        // Dedup by the level-agnostic vertex: one path per sink vertex, even if
-        // the vertex is reached as both `Saturating` and `Plain`.
+        // Dedup by the level- and scope-agnostic vertex: one path per sink
+        // vertex, even if the vertex is reached as both `Saturating` and `Plain`,
+        // or as both `All` and `Fixed`.
         let mut reported: HashSet<TaintVertex> = HashSet::default();
         let mut paths_found = 0usize;
         for &t in &search.targets {

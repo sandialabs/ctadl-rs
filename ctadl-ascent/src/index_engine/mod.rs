@@ -1150,8 +1150,12 @@ pub fn taint_index(facts: IndexFacts) -> IndexResult {
 }
 
 /// Computes `alias_of_formal`: the whole-variable copy-closure of the formals over ORIGINAL program
-/// copies. A variable `v` aliases formal `i` (in function `f`) when `v` is reachable from `f`'s
-/// formal purely through whole-variable copies (`copy_edge`) present in the original program.
+/// copies. A variable `v` aliases formal `i` (in function `f`) when `v` is reachable FROM `f`'s
+/// formal `i`, following whole-variable copies (`copy_edge`) present in the original program in the
+/// direction of assignment only. The closure is inclusion-based (Andersen-style), not
+/// unification-based (Steensgaard-style): a copy `dst = src` lets `dst` inherit `src`'s
+/// formal-aliases and never the reverse, so a formal's alias set only ever grows downstream of the
+/// formal itself.
 ///
 /// This depends only on `formal_param` and `copy_edge`, so it is computed in its own small fixpoint
 /// BEFORE the main ascent. Doing so keeps `copy_edge` out of the main engine entirely (one fewer
@@ -1159,13 +1163,22 @@ pub fn taint_index(facts: IndexFacts) -> IndexResult {
 /// pre-populated input.
 fn compute_alias_of_formal(
     formal_param: &[(FunctionId, FlowVariable, FormalType)],
-    copy_edge: Vec<(FunctionId, FlowVariable, FlowVariable)>,
+    mut copy_edge: Vec<(FunctionId, FlowVariable, FlowVariable)>,
 ) -> Vec<(FunctionId, FlowVariable, FormalIndex)> {
     // Base case: a formal whole-aliases itself.
     let alias_base: Vec<_> = formal_param
         .iter()
         .filter_map(|(infunc, v1, _)| v1.as_formal().map(|i| (*infunc, *v1, i)))
         .collect();
+    // Keep only the copies that flow AWAY from a formal.
+    let before = copy_edge.len();
+    copy_edge.retain(|(_, dst, _)| dst.as_formal().is_none());
+    log::debug!(
+        "alias_of_formal: dropped {} formal-destination copy edges ({} of {} retained)",
+        before - copy_edge.len(),
+        copy_edge.len(),
+        before
+    );
     let pre = ascent_run! {
         relation alias_of_formal(FunctionId, FlowVariable, FormalIndex) = alias_base;
         relation copy_edge(FunctionId, FlowVariable, FlowVariable) = copy_edge;
@@ -1231,10 +1244,12 @@ ascent_source! {
     // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
     relation prog_store(FunctionId, FlowVariable, Path);
     // A variable that whole-aliases a formal purely through original program copies. This is
-    // the copy-closure of `locals(v, empty, formal, empty)` restricted to original assigns:
-    // it finds strictly fewer aliases (drops inter-procedural / summary-derived copies) but
-    // ALL aliases established by original program assignments. Feeds the aliasing summary rule.
-    // Precomputed above in its own fixpoint (see the `alias_of_formal` let-binding).
+    // the copy-closure of `locals(v, empty, formal, empty)` restricted to original assigns,
+    // followed only in the direction of assignment: it finds strictly fewer aliases (drops
+    // inter-procedural / summary-derived copies, and the `ParamFlow` write-backs onto the formal
+    // node that would make the closure unification-like) but every alias reachable forward from a
+    // formal through original program assignments. Feeds the aliasing summary rule.
+    // Precomputed above in its own fixpoint (see `compute_alias_of_formal`).
     relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
     // Call targets (function pointers and Java objects) propagated across `assign_like`
     // to the receiver vertices of critical calls; the union of what were the separate
