@@ -321,7 +321,13 @@ impl LazySuccessors for TaintSearchGraph {
             if let Some(loads) = self.loads_by_src.get(&(f, v)) {
                 for (dst, _q) in loads {
                     out.push((
-                        (f, *dst, Path::empty(), TaintLevel::Saturating, ObjectScope::All),
+                        (
+                            f,
+                            *dst,
+                            Path::empty(),
+                            TaintLevel::Saturating,
+                            ObjectScope::All,
+                        ),
                         FlowEdge::Intra,
                     ));
                 }
@@ -339,10 +345,7 @@ impl LazySuccessors for TaintSearchGraph {
                 for q in qs {
                     if q.len() > p.len() && q.is_extension_of(&p) {
                         // Same variable, same object, longer path: keep the scope.
-                        out.push((
-                            (f, v, *q, TaintLevel::Saturating, scope),
-                            FlowEdge::Intra,
-                        ));
+                        out.push(((f, v, *q, TaintLevel::Saturating, scope), FlowEdge::Intra));
                     }
                 }
             }
