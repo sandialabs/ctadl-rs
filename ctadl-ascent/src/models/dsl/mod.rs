@@ -1,8 +1,9 @@
 /*! The model-matching DSL: a small Datalog with an execution engine.
 
 A model file is a list of rules. Each derives one or more *output* atoms — `source`, `sink`,
-`propagation`, `bridge`, `access_paths` — from a conjunction of atoms over the *input* relations
-the analyzer already has: `fun`, `param`, `callsite`, `subclass`, `uses_field`.
+`propagation`, `bridge`, `access_paths`, `dispatch` — from a conjunction of atoms over the
+*input* relations the analyzer already has: `fun`, `callsig`, `param`, `callsite`, `subclass`,
+`uses_field`.
 
 ```text
 // java.net.URL.openConnection: the receiver flows to the return value, which is a source
@@ -34,8 +35,8 @@ Finishing after the loop rather than per import is what makes a bridging rule ex
 all. Such a rule names two programs in one body, and no single import satisfies it; the body's
 connected components are accumulated separately and joined at the end. See [`eval`].
 
-`index` keeps the propagation / bridge / access-path heads and `query` keeps the source / sink
-ones. Each says how many rules contributed nothing to it, rather than dropping them in silence;
+`index` keeps the propagation / bridge / access-path / dispatch heads and `query` keeps the
+source / sink ones. Each says how many rules contributed nothing to it, rather than dropping them in silence;
 a rule contributing at least one head to the running phase is never counted.
 */
 
@@ -240,6 +241,15 @@ impl DslModelSet {
 
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
+    }
+
+    /// Whether any rule in the set reads `callsig`.
+    ///
+    /// The DSL's half of the gate [`ModelFileSpecs::finds_dispatch`](super::spec::ModelFileSpecs)
+    /// opens: the signature keys `callsig` ranges over cost a pass over every statement to
+    /// collect, so an import pays for them only when some rule asks.
+    pub fn uses_callsig(&self) -> bool {
+        self.files.iter().any(|f| f.program.uses_callsig())
     }
 }
 

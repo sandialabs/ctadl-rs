@@ -134,6 +134,8 @@ const CALLER: &str = "C";
 const SITE: &str = "S";
 /// Side B of a bridge.
 const OTHER: &str = "G";
+/// The signature key of a `find: dispatch` generator.
+const DISPATCH_KEY: &str = "K";
 
 fn migrate_generator(
     index: usize,
@@ -145,16 +147,33 @@ fn migrate_generator(
         .get("find")
         .and_then(|v| v.as_str())
         .unwrap_or("methods");
-    let callsites = match find {
-        "methods" => false,
-        "callsites" => true,
+    let (callsites, dispatch) = match find {
+        "methods" => (false, false),
+        "callsites" => (true, false),
+        "dispatch" => (false, true),
         other => {
             report.warn(index, format!("'find: {other}' is not supported; skipped"));
             return;
         }
     };
+    // `fun` for a method or call-site generator, `callsig` for a dispatch one. The subject is
+    // renamed with it so a migrated file reads as what it ranges over.
+    let (relation, subject) = if dispatch {
+        ("callsig", DISPATCH_KEY)
+    } else {
+        ("fun", SUBJECT)
+    };
 
     let scope = scope_attrs(generator.get("in"));
+    if dispatch && !scope.is_empty() {
+        // A signature key is composed from a call site, not read out of an import's method
+        // table, so it carries no `language` or `import` of its own to narrow on.
+        report.warn(
+            index,
+            "'in' has no counterpart on a 'callsig' key, which carries no language or import; \
+             not translated",
+        );
+    }
     let mut fresh = Fresh::default();
 
     let mut base: Vec<String> = Vec::new();
@@ -171,13 +190,18 @@ fn migrate_generator(
     };
     let ctx = Ctx {
         index,
-        subject: SUBJECT,
+        subject,
         callsites,
+        relation,
     };
     let disjuncts = compile(&expr, false, &ctx, &mut fresh, report);
 
-    let anchor = if callsites { SITE } else { SUBJECT };
-    let heads = migrate_model(index, generator, anchor, &mut fresh, report);
+    let anchor = if callsites { SITE } else { subject };
+    let heads = if dispatch {
+        migrate_dispatch_model(index, generator, anchor, report)
+    } else {
+        migrate_model(index, generator, anchor, &mut fresh, report)
+    };
     if heads.is_empty() {
         return;
     }
@@ -186,7 +210,13 @@ fn migrate_generator(
     // folding it into the shared body would make every other head depend on it.
     for disjunct in &disjuncts {
         let mut body = base.clone();
-        body.extend(with_subject(disjunct.clone(), SUBJECT, &scope));
+        let subject_scope: &[String] = if dispatch { &[] } else { &scope };
+        body.extend(with_subject(
+            disjunct.clone(),
+            relation,
+            subject,
+            subject_scope,
+        ));
         let (bridge_heads, plain_heads): (Vec<_>, Vec<_>) =
             heads.iter().partition(|h| h.needs_side_b);
         if !plain_heads.is_empty() {
@@ -224,15 +254,20 @@ fn write_rule(out: &mut String, heads: &[String], body: &[String]) {
 /// are folded into the first one rather than written as a second atom over the same variable.
 /// A `where` that does not — or an absent one — gets the bare atom, because a head variable has
 /// to be bound by *something*.
-fn with_subject(mut atoms: Vec<String>, subject: &str, scope: &[String]) -> Vec<String> {
-    let open = format!("fun({subject}, ");
+fn with_subject(
+    mut atoms: Vec<String>,
+    relation: &str,
+    subject: &str,
+    scope: &[String],
+) -> Vec<String> {
+    let open = format!("{relation}({subject}, ");
     match atoms.iter().position(|a| a.starts_with(&open)) {
         Some(i) if !scope.is_empty() => {
             atoms[i] = format!("{open}{}, {}", scope.join(", "), &atoms[i][open.len()..]);
         }
         Some(_) => {}
-        None if atoms.iter().any(|a| a == &format!("fun({subject})")) => {}
-        None => atoms.insert(0, atom("fun", subject, scope)),
+        None if atoms.iter().any(|a| a == &format!("{relation}({subject})")) => {}
+        None => atoms.insert(0, atom(relation, subject, scope)),
     }
     atoms
 }
@@ -276,6 +311,10 @@ struct Ctx<'a> {
     index: usize,
     subject: &'a str,
     callsites: bool,
+    /// The relation the subject ranges over: `fun` for `find: methods` / `callsites`,
+    /// `callsig` for `find: dispatch`. The attribute names are the same in both, which is what
+    /// lets one constraint compiler serve them.
+    relation: &'a str,
 }
 
 /// A disjunction of conjunctions of body atoms, as text.
@@ -404,13 +443,13 @@ fn leaf_atoms(
                 report.warn(ctx.index, "'signature_match' with no usable field; skipped");
                 return Vec::new();
             }
-            vec![vec![atom("fun", subject, &attrs)]]
+            vec![vec![atom(ctx.relation, subject, &attrs)]]
         }
         "name" => match value.get("pattern").and_then(|v| v.as_str()) {
             Some(pattern) => {
                 let v = fresh.next("N");
                 vec![vec![
-                    atom("fun", subject, &[format!("name = {v}")]),
+                    atom(ctx.relation, subject, &[format!("name = {v}")]),
                     format!("regex_match({v}, {})", quote(pattern)),
                 ]]
             }
@@ -423,7 +462,7 @@ fn leaf_atoms(
             Some(pattern) => {
                 let v = fresh.next("Sig");
                 vec![vec![
-                    atom("fun", subject, &[format!("signature = {v}")]),
+                    atom(ctx.relation, subject, &[format!("signature = {v}")]),
                     format!("regex_match({v}, {})", quote(pattern)),
                 ]]
             }
@@ -433,7 +472,11 @@ fn leaf_atoms(
             }
         },
         "has_code" => match value.get("value").and_then(|v| v.as_bool()) {
-            Some(b) => vec![vec![atom("fun", subject, &[format!("has_code = {b}")])]],
+            Some(b) => vec![vec![atom(
+                ctx.relation,
+                subject,
+                &[format!("has_code = {b}")],
+            )]],
             None => {
                 report.warn(ctx.index, "'has_code' with no boolean 'value'; skipped");
                 Vec::new()
@@ -502,6 +545,7 @@ fn leaf_atoms(
                 index: ctx.index,
                 subject: CALLER,
                 callsites: false,
+                relation: "fun",
             };
             compile(&Expr::Prim(inner), false, &caller_ctx, fresh, report)
         }
@@ -532,7 +576,11 @@ fn int_predicate(
     {
         // `arity < -1` needs the space: `<-` is the flow arrow. `format!` writes one anyway,
         // but the rule is worth stating where the string is built.
-        return vec![vec![atom("fun", subject, &[format!("arity {op} {v}")])]];
+        return vec![vec![atom(
+            ctx.relation,
+            subject,
+            &[format!("arity {op} {v}")],
+        )]];
     }
     // Anything richer becomes a bound arity plus a boolean expression over it.
     let var = fresh.next("A");
@@ -544,7 +592,7 @@ fn int_predicate(
         return Vec::new();
     };
     vec![vec![
-        atom("fun", subject, &[format!("arity = {var}")]),
+        atom(ctx.relation, subject, &[format!("arity = {var}")]),
         expr,
     ]]
 }
@@ -624,10 +672,14 @@ fn class_predicate(
     match via_super {
         Some(sup) => {
             let owner = fresh.next("P");
-            atoms.push(atom("fun", subject, &[format!("parent = {owner}")]));
+            atoms.push(atom(ctx.relation, subject, &[format!("parent = {owner}")]));
             atoms.push(format!("subclass({owner}, {sup})"));
         }
-        None => atoms.push(atom("fun", subject, &[format!("parent = {class_var}")])),
+        None => atoms.push(atom(
+            ctx.relation,
+            subject,
+            &[format!("parent = {class_var}")],
+        )),
     }
     match kind {
         "signature_match" => {
@@ -769,6 +821,79 @@ fn migrate_model(
     heads
 }
 
+/// The `model` of a `find: "dispatch"` generator.
+///
+/// Its own translator rather than a branch of [`migrate_model`] because the shapes do not
+/// overlap: a dispatch model carries exactly one of `propagation`, `resolve` and
+/// `closure_shaped`, and an *empty* `propagation` list means "this call moves nothing" rather
+/// than "no heads" — which is `resolve = "skip"` here, since a head is an atom and there is no
+/// empty one to write.
+fn migrate_dispatch_model(
+    index: usize,
+    generator: &Value,
+    anchor: &str,
+    report: &mut MigrationReport,
+) -> Vec<HeadText> {
+    let Some(model) = generator.get("model") else {
+        report.warn(index, "no 'model'; nothing to derive");
+        return Vec::new();
+    };
+    let head = |text: String| HeadText {
+        text,
+        needs_side_b: false,
+        extra_body: Vec::new(),
+    };
+    if let Some(value) = model.get("closure_shaped") {
+        return match value.as_bool() {
+            Some(true) => vec![head(format!("{anchor}::dispatch(closure_shaped = true)"))],
+            // `false` derives nothing, exactly as in the JSON loader.
+            Some(false) => Vec::new(),
+            None => {
+                report.warn(index, "'closure_shaped' is not a boolean; skipped");
+                Vec::new()
+            }
+        };
+    }
+    if let Some(value) = model.get("resolve") {
+        return match value.as_str() {
+            Some("inline") => vec![head(format!("{anchor}::dispatch(resolve = \"inline\")"))],
+            Some(other) => {
+                report.warn(
+                    index,
+                    format!("unknown 'resolve' value {other:?}; the defined value is 'inline'"),
+                );
+                Vec::new()
+            }
+            None => {
+                report.warn(index, "'resolve' is not a string; skipped");
+                Vec::new()
+            }
+        };
+    }
+    let Some(items) = model.get("propagation").and_then(|v| v.as_array()) else {
+        report.warn(
+            index,
+            "a dispatch model carries one of 'propagation', 'resolve' and 'closure_shaped'; \
+             skipped",
+        );
+        return Vec::new();
+    };
+    if items.is_empty() {
+        return vec![head(format!("{anchor}::dispatch(resolve = \"skip\")"))];
+    }
+    let mut heads = Vec::new();
+    for item in items {
+        let (Some(input), Some(output)) = (
+            port_text(item.get("input"), index, report),
+            port_text(item.get("output"), index, report),
+        ) else {
+            continue;
+        };
+        heads.push(head(format!("{anchor}::dispatch({output} <- {input})")));
+    }
+    heads
+}
+
 fn migrate_bridge(
     index: usize,
     bridge: &Value,
@@ -798,6 +923,7 @@ fn migrate_bridge(
         index,
         subject: OTHER,
         callsites: false,
+        relation: "fun",
     };
     let expr = match to.get("where").and_then(|v| v.as_array()) {
         Some(items) => Expr::And(items.iter().map(Expr::Prim).collect()),
@@ -813,6 +939,7 @@ fn migrate_bridge(
     }
     let side_b = with_subject(
         disjuncts.first().cloned().unwrap_or_default(),
+        "fun",
         OTHER,
         &scope,
     );

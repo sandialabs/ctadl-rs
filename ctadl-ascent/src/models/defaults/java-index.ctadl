@@ -267,3 +267,107 @@ propagation(F::return <- F::arg(0)) :-
 propagation(F::arg(0) <- F::arg(2)) :-
   fun(F, name in {"putString", "putStringSet"}, parent = "Landroid/content/SharedPreferences$Editor;");
 
+K::dispatch(return <- arg(_)) :-
+  callsig(K, name = "toString"),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(\\)Ljava/lang/String;$");
+
+K::dispatch(return <- arg(_)) :-
+  callsig(K, name = "hashCode"),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(\\)I$");
+
+K::dispatch(return <- arg(_)) :-
+  callsig(K, name = "equals"),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(Ljava/lang/Object;\\)Z$");
+
+K::dispatch(return <- arg(0)) :-
+  callsig(K, name = "clone"),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(\\)Ljava/lang/Object;$");
+
+K::dispatch(return <- arg(0)."[]") :-
+  callsig(K, name = "next", parent in {"Ljava/util/Iterator;", "Ljava/util/ListIterator;"});
+
+K::dispatch(return."[]" <- arg(0)."[]") :-
+  callsig(K, name in {"iterator", "listIterator"}, parent in {"Ljava/lang/Iterable;", "Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/SortedSet;", "Ljava/util/AbstractCollection;", "Ljava/util/AbstractList;", "Ljava/util/AbstractSet;", "Ljava/util/ArrayList;", "Ljava/util/LinkedList;", "Ljava/util/HashSet;", "Ljava/util/TreeSet;", "Ljava/util/Vector;"});
+
+K::dispatch(return <- arg(0)."[]") :-
+  callsig(K, name in {"get", "getOrDefault", "remove"}, parent in {"Ljava/util/Map;", "Ljava/util/SortedMap;", "Ljava/util/NavigableMap;", "Ljava/util/AbstractMap;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/EnumMap;", "Ljava/util/WeakHashMap;", "Ljava/util/IdentityHashMap;", "Ljava/util/concurrent/ConcurrentHashMap;"});
+
+K::dispatch(arg(0)."[]" <- arg(1)),
+  K::dispatch(arg(0)."[]" <- arg(2)) :-
+  callsig(K, name in {"put", "putIfAbsent"}, parent in {"Ljava/util/Map;", "Ljava/util/SortedMap;", "Ljava/util/NavigableMap;", "Ljava/util/AbstractMap;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/EnumMap;", "Ljava/util/WeakHashMap;", "Ljava/util/IdentityHashMap;", "Ljava/util/concurrent/ConcurrentHashMap;"});
+
+K::dispatch(return <- arg(0)) :-
+  callsig(K, name in {"keySet", "values", "entrySet"}, parent in {"Ljava/util/Map;", "Ljava/util/SortedMap;", "Ljava/util/NavigableMap;", "Ljava/util/AbstractMap;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/EnumMap;", "Ljava/util/WeakHashMap;", "Ljava/util/IdentityHashMap;", "Ljava/util/concurrent/ConcurrentHashMap;"});
+
+K::dispatch(return <- arg(0)) :-
+  callsig(K, name in {"getKey", "getValue"}, parent = "Ljava/util/Map$Entry;");
+
+K::dispatch(return <- arg(0)."[]") :-
+  callsig(K, name in {"get", "peek", "poll", "pop", "remove", "getFirst", "getLast", "element"}, parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/SortedSet;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/AbstractCollection;", "Ljava/util/AbstractList;", "Ljava/util/AbstractSet;", "Ljava/util/AbstractSequentialList;", "Ljava/util/ArrayList;", "Ljava/util/LinkedList;", "Ljava/util/Vector;", "Ljava/util/Stack;", "Ljava/util/HashSet;", "Ljava/util/TreeSet;", "Ljava/util/ArrayDeque;", "Ljava/util/concurrent/CopyOnWriteArrayList;", "Ljava/util/concurrent/ConcurrentLinkedQueue;"});
+
+K::dispatch(arg(0)."[]" <- arg(1)),
+  K::dispatch(arg(0)."[]" <- arg(2)) :-
+  callsig(K, name in {"add", "addAll", "push", "offer", "addFirst", "addLast", "set"}, parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/SortedSet;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/AbstractCollection;", "Ljava/util/AbstractList;", "Ljava/util/AbstractSet;", "Ljava/util/AbstractSequentialList;", "Ljava/util/ArrayList;", "Ljava/util/LinkedList;", "Ljava/util/Vector;", "Ljava/util/Stack;", "Ljava/util/HashSet;", "Ljava/util/TreeSet;", "Ljava/util/ArrayDeque;", "Ljava/util/concurrent/CopyOnWriteArrayList;", "Ljava/util/concurrent/ConcurrentLinkedQueue;"});
+
+K::dispatch(resolve = "skip") :-
+  callsig(K, name in {"hasNext", "isEmpty"}, parent in {"Ljava/util/Iterator;", "Ljava/util/ListIterator;", "Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/SortedSet;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/Map;", "Ljava/util/SortedMap;", "Ljava/util/AbstractCollection;", "Ljava/util/AbstractList;", "Ljava/util/AbstractSet;", "Ljava/util/AbstractMap;", "Ljava/util/AbstractSequentialList;"}),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(\\)Z$");
+
+K::dispatch(resolve = "skip") :-
+  callsig(K, name = "size", parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/SortedSet;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/Map;", "Ljava/util/SortedMap;", "Ljava/util/AbstractCollection;", "Ljava/util/AbstractList;", "Ljava/util/AbstractSet;", "Ljava/util/AbstractMap;", "Ljava/util/AbstractSequentialList;"}),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(\\)I$");
+
+K::dispatch(resolve = "skip") :-
+  callsig(K, name in {"contains", "containsKey", "containsValue"}, parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/SortedSet;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/Map;", "Ljava/util/SortedMap;", "Ljava/util/AbstractCollection;", "Ljava/util/AbstractList;", "Ljava/util/AbstractSet;", "Ljava/util/AbstractMap;", "Ljava/util/AbstractSequentialList;"}),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(Ljava/lang/Object;\\)Z$");
+
+K::dispatch(resolve = "skip") :-
+  callsig(K, name = "containsAll", parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/SortedSet;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/AbstractCollection;", "Ljava/util/AbstractList;", "Ljava/util/AbstractSet;", "Ljava/util/AbstractSequentialList;"}),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(Ljava/util/Collection;\\)Z$");
+
+K::dispatch(resolve = "skip") :-
+  callsig(K, name in {"indexOf", "lastIndexOf"}, parent in {"Ljava/util/List;", "Ljava/util/AbstractList;", "Ljava/util/AbstractSequentialList;"}),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(Ljava/lang/Object;\\)I$");
+
+K::dispatch(resolve = "skip") :-
+  callsig(K, name = "compareTo", parent = "Ljava/lang/Comparable;"),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(Ljava/lang/Object;\\)I$");
+
+K::dispatch(resolve = "skip") :-
+  callsig(K, name = "compare", parent = "Ljava/util/Comparator;"),
+  callsig(K, signature = Sig0),
+  regex_match(Sig0, "^\\(Ljava/lang/Object;Ljava/lang/Object;\\)I$");
+
+K::dispatch(resolve = "inline") :-
+  callsig(K, name in {"close", "dispose", "cancel", "flush", "release", "recycle", "shutdown"}, parent in {"Ljava/io/Closeable;", "Ljava/lang/AutoCloseable;", "Ljava/io/InputStream;", "Ljava/io/OutputStream;", "Ljava/io/Reader;", "Ljava/io/Writer;", "Ljava/util/concurrent/Future;", "Lio/reactivex/disposables/Disposable;", "Lio/reactivex/rxjava3/disposables/Disposable;", "Landroid/database/Cursor;", "Lokio/Source;", "Lokio/Sink;", "Lokio/BufferedSource;", "Lokio/BufferedSink;"});
+
+K::dispatch(closure_shaped = true) :-
+  callsig(K, parent in {"Ljava/lang/Runnable;", "Ljava/util/concurrent/Callable;", "Ljavax/inject/Provider;", "Ldagger/internal/Provider;", "Ldagger/internal/Factory;", "Ldagger/Lazy;", "Landroid/os/Parcelable$Creator;", "Lorg/reactivestreams/Subscriber;", "Lkotlinx/coroutines/flow/FlowCollector;"});
+
+K::dispatch(closure_shaped = true) :-
+  callsig(K, parent = P0),
+  regex_match(P0, "^Lkotlin/jvm/functions/Function[0-9]+;$");
+
+K::dispatch(closure_shaped = true) :-
+  callsig(K, parent = P0),
+  regex_match(P0, "^Ljava/util/function/");
+
+K::dispatch(closure_shaped = true) :-
+  callsig(K, parent = P0),
+  regex_match(P0, "^Lio/reactivex/(rxjava3/core/)?(functions/|Observer|SingleObserver|CompletableObserver|MaybeObserver)");
+
+K::dispatch(closure_shaped = true) :-
+  callsig(K, name in {"invokeSuspend", "create"}),
+  callsig(K, parent = P0),
+  regex_match(P0, "^Lkotlin/coroutines/");
+

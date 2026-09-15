@@ -537,3 +537,120 @@ fn every_shipped_default_migrates_and_loads() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Dispatch
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_dispatch_head_takes_a_flow_or_one_attribute() {
+    check_ok(r#"K::dispatch(return <- arg(0)) :- callsig(K, name = "toString");"#);
+    check_ok(r#"K::dispatch(resolve = "inline") :- callsig(K, name = "close");"#);
+    check_ok(r#"K::dispatch(resolve = "skip") :- callsig(K, name = "size");"#);
+    check_ok(
+        r#"K::dispatch(closure_shaped = true) :- callsig(K, parent = "Ljava/lang/Runnable;");"#,
+    );
+}
+
+/// The three forms are alternatives, not a bag: a signature that is modelled is not also
+/// skipped. This is the DSL's counterpart of the JSON loader's "exactly one of 'propagation',
+/// 'resolve' and 'closure_shaped'".
+#[test]
+fn a_dispatch_head_says_exactly_one_thing() {
+    let err =
+        check_err(r#"K::dispatch(return <- arg(0), resolve = "skip") :- callsig(K, name = "x");"#);
+    assert!(err.contains("never both"), "{err}");
+
+    let err = check_err(
+        r#"K::dispatch(resolve = "inline", closure_shaped = true) :- callsig(K, name = "x");"#,
+    );
+    assert!(err.contains("exactly one thing"), "{err}");
+
+    let err = check_err(r#"K::dispatch() :- callsig(K, name = "x");"#);
+    assert!(err.contains("needs a flow"), "{err}");
+}
+
+#[test]
+fn unknown_dispatch_values_are_named() {
+    let err = check_err(r#"K::dispatch(resolve = "cha") :- callsig(K, name = "x");"#);
+    assert!(err.contains("expected \"inline\" or \"skip\""), "{err}");
+}
+
+/// A dispatch model attaches to a call *signature*, which is a different universe from `fun`:
+/// half an app's interface call sites name a type that has no method-table row at all.
+#[test]
+fn a_dispatch_head_anchors_at_a_callsig_not_a_function() {
+    let err = check_err(r#"F::dispatch(resolve = "skip") :- fun(F, name = "x");"#);
+    assert!(err.contains("cannot anchor a 'dispatch' head"), "{err}");
+}
+
+#[test]
+fn a_dispatch_model_is_one_signatures_summary() {
+    let err = check_err(r#"dispatch(K::return <- J::arg(0)) :- callsig(K), callsig(J);"#);
+    assert!(
+        err.contains("both ports must be anchored at the same 'callsig' key"),
+        "{err}"
+    );
+}
+
+/// `callsig` is an input relation and `dispatch` an output one, so neither can stand in for the
+/// other. Getting this wrong is the likeliest typo in a hand-written dispatch rule.
+#[test]
+fn callsig_and_dispatch_do_not_swap() {
+    let err = check_err(r#"K::dispatch(resolve = "skip") :- dispatch(K);"#);
+    assert!(err.contains("can only appear in a rule head"), "{err}");
+
+    let err = check_err(r#"K::callsig(resolve = "skip") :- callsig(K);"#);
+    assert!(
+        err.contains("expected out_rel") || err.contains("callsig"),
+        "{err}"
+    );
+}
+
+#[test]
+fn callsig_has_no_body_dependent_attributes() {
+    let err = check_err(r#"K::dispatch(resolve = "skip") :- callsig(K, has_code = true);"#);
+    assert!(err.contains("not an attribute of 'callsig'"), "{err}");
+}
+
+/// The migrator's three dispatch shapes, including the empty `propagation` list that the JSON
+/// format spells a discard with and this language spells `resolve = "skip"`.
+#[test]
+fn dispatch_generators_migrate() {
+    let values: Vec<serde_json::Value> = [
+        r#"{"find":"dispatch","where":[{"constraint":"signature_match","name":"toString"}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}"#,
+        r#"{"find":"dispatch","where":[{"constraint":"signature_match","name":"size"}],"model":{"propagation":[]}}"#,
+        r#"{"find":"dispatch","where":[{"constraint":"signature_match","name":"close"}],"model":{"resolve":"inline"}}"#,
+        r#"{"find":"dispatch","where":[{"constraint":"signature_match","parents":["Ljava/lang/Runnable;"]}],"model":{"closure_shaped":true}}"#,
+    ]
+    .iter()
+    .map(|l| serde_json::from_str(l).expect("valid json"))
+    .collect();
+    let (dsl, report) = migrate::migrate_generators(values.iter(), None);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(dsl.contains(r#"K::dispatch(return <- arg(_))"#), "{dsl}");
+    assert!(dsl.contains(r#"K::dispatch(resolve = "skip")"#), "{dsl}");
+    assert!(dsl.contains(r#"K::dispatch(resolve = "inline")"#), "{dsl}");
+    assert!(
+        dsl.contains(r#"K::dispatch(closure_shaped = true)"#),
+        "{dsl}"
+    );
+    assert!(dsl.contains("callsig(K, "), "{dsl}");
+    check_ok(&dsl);
+}
+
+/// `in` narrows by language and import, and a signature key is composed from a call site rather
+/// than read out of an import's method table, so it carries neither.
+#[test]
+fn a_scoped_dispatch_generator_says_its_scope_is_dropped() {
+    let value: serde_json::Value = serde_json::from_str(
+        r#"{"find":"dispatch","in":{"language":"dex"},"where":[{"constraint":"signature_match","name":"toString"}],"model":{"resolve":"inline"}}"#,
+    )
+    .expect("valid json");
+    let (_, report) = migrate::migrate_generators(std::iter::once(&value), None);
+    assert!(
+        report.warnings.iter().any(|w| w.contains("'in'")),
+        "{:?}",
+        report.warnings
+    );
+}

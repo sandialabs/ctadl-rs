@@ -25,7 +25,10 @@ use ctadl_ir::mir::PathSegment;
 use crate::facts::TaintDirection;
 use crate::facts::{self, FormalIndex};
 use crate::models::FormalIndexTypeTag;
-use crate::models::matches::{EndpointMatch, ModelPort, ProgramModelMatches, PropagationMatch};
+use crate::models::matches::{
+    DispatchKey, DispatchModel, Disposition, EndpointMatch, ModelPort, ProgramModelMatches,
+    PropagationMatch,
+};
 use crate::models::spec::{BridgePort, Direction, PortPair, ResolvedBridge};
 
 use super::ast::*;
@@ -57,6 +60,10 @@ pub struct RuleStats {
     pub propagations: usize,
     pub bridges: usize,
     pub access_paths: usize,
+    /// `dispatch` heads the rule declares.
+    pub dispatch_heads: usize,
+    /// Signature keys a `dispatch` head attached a model, skip, inline or marker to.
+    pub dispatch: usize,
     /// Distinct functions the rule's heads anchored at, capped at [`MATCHED_SAMPLE_CAP`].
     /// This is the DSL's answer to "what did this rule select", which `CTADL0011` reports.
     pub matched_functions: BTreeSet<String>,
@@ -70,7 +77,12 @@ pub const MATCHED_SAMPLE_CAP: usize = 32;
 
 impl RuleStats {
     pub fn total_rows(&self) -> usize {
-        self.sources + self.sinks + self.propagations + self.bridges + self.access_paths
+        self.sources
+            + self.sinks
+            + self.propagations
+            + self.bridges
+            + self.access_paths
+            + self.dispatch
     }
 
     pub fn merge(&mut self, other: &Self) {
@@ -79,11 +91,13 @@ impl RuleStats {
         self.source_heads = self.source_heads.max(other.source_heads);
         self.sink_heads = self.sink_heads.max(other.sink_heads);
         self.propagation_heads = self.propagation_heads.max(other.propagation_heads);
+        self.dispatch_heads = self.dispatch_heads.max(other.dispatch_heads);
         self.sources += other.sources;
         self.sinks += other.sinks;
         self.propagations += other.propagations;
         self.bridges += other.bridges;
         self.access_paths += other.access_paths;
+        self.dispatch += other.dispatch;
         for name in &other.matched_functions {
             if self.matched_functions.len() >= MATCHED_SAMPLE_CAP {
                 break;
@@ -118,6 +132,7 @@ impl Phase {
                     HeadKind::Propagation { .. }
                         | HeadKind::Bridge { .. }
                         | HeadKind::AccessPath { .. }
+                        | HeadKind::Dispatch { .. }
                 )
         )
     }
@@ -141,6 +156,7 @@ pub fn emit_rule(
             HeadKind::Source { .. } => stats.source_heads += 1,
             HeadKind::Sink { .. } => stats.sink_heads += 1,
             HeadKind::Propagation { .. } => stats.propagation_heads += 1,
+            HeadKind::Dispatch { .. } => stats.dispatch_heads += 1,
             _ => {}
         }
     }
@@ -331,6 +347,119 @@ fn emit_head(
                 .insert(facts::Path::from_accesses(segments.iter().cloned()));
             stats.access_paths += 1;
         }
+        HeadKind::Dispatch { disposition } => {
+            let Some((key, id)) = resolve_callsig(rule, head, disposition, binding, errors) else {
+                return;
+            };
+            match disposition {
+                // A marker, not a model: it names what hybrid inlining is *for* so the report
+                // can say which closure-shaped signatures no model covers. Nothing resolves
+                // differently for being on this list.
+                DispatchHead::ClosureShaped => {
+                    out.closure_shaped.insert(key);
+                }
+                _ => {
+                    let disposition = match disposition {
+                        DispatchHead::Inline => Disposition::Inline,
+                        DispatchHead::Skip => Disposition::Skip,
+                        DispatchHead::ClosureShaped => unreachable!("handled above"),
+                        DispatchHead::Flow(flow) => {
+                            let (Some(left), Some(right)) = (
+                                model_port(&flow.left.port, binding, flow.span, errors),
+                                model_port(&flow.right.port, binding, flow.span, errors),
+                            ) else {
+                                return;
+                            };
+                            // `(destination, source)`, which is what `Disposition::Model`
+                            // holds -- the same order, and the same reading of the arrow, as
+                            // the `propagation` arm above.
+                            let ports = match flow.op {
+                                FlowOp::ToRight => vec![(right, left)],
+                                FlowOp::ToLeft => vec![(left, right)],
+                                FlowOp::Both => vec![(left, right), (right, left)],
+                            };
+                            Disposition::Model(ports)
+                        }
+                    };
+                    out.add_dispatch(
+                        key,
+                        DispatchModel {
+                            disposition,
+                            // Already `file:rule`; see `DslFile::provenance`.
+                            provenance: vec![provenance.to_string()],
+                        },
+                    );
+                }
+            }
+            stats.dispatch += 1;
+            note_match(stats, id);
+        }
+    }
+}
+
+/// The signature key a `dispatch` head is anchored at, as the `(cls, name, descriptor)` triple
+/// codegen keys on, plus the composed id for reporting.
+///
+/// The triple rides on the binding rather than being split back out of the id: see
+/// [`Value::CallSig`].
+fn resolve_callsig(
+    rule: &Rule,
+    head: &Head,
+    disposition: &DispatchHead,
+    binding: &Binding,
+    errors: &mut DslErrors,
+) -> Option<(DispatchKey, facts::Str)> {
+    let span = match disposition {
+        DispatchHead::Flow(flow) => flow.span,
+        _ => head.span,
+    };
+    // A flow's ports may carry the anchor instead of the head atom, exactly as a propagation's
+    // may.
+    let term = head
+        .anchor
+        .as_ref()
+        .or_else(|| match disposition {
+            DispatchHead::Flow(flow) => flow.left.anchor.as_ref().or(flow.right.anchor.as_ref()),
+            _ => None,
+        })
+        .or_else(|| {
+            errors.push(DslError::Rule {
+                message: format!(
+                    "rule {}: a 'dispatch' head must be anchored at a 'callsig' key",
+                    rule.index
+                ),
+                span,
+            });
+            None
+        })?;
+    let value = match term {
+        Term::Var(v) => binding.get(v)?,
+        _ => {
+            errors.push(DslError::Rule {
+                message: "a 'dispatch' head is anchored at a variable bound by 'callsig'"
+                    .to_string(),
+                span,
+            });
+            return None;
+        }
+    };
+    match value {
+        Value::CallSig {
+            id,
+            cls,
+            name,
+            desc,
+        } => Some(((cls, name, desc), id)),
+        other => {
+            errors.push(DslError::Rule {
+                message: format!(
+                    "'{other}' is not a call signature, so no dispatch model attaches to it; \
+                     bind the anchor with 'callsig(K)'"
+                ),
+                span,
+            });
+            None
+        }
     }
 }
 
@@ -487,7 +616,10 @@ fn head_vars(head: &Head) -> Vec<String> {
     let ports: Vec<&PortExpr> = match &head.kind {
         HeadKind::Source { port, .. } | HeadKind::Sink { port, .. } => vec![port],
         HeadKind::Propagation { flow } | HeadKind::Bridge { flow } => vec![&flow.left, &flow.right],
-        HeadKind::AccessPath { .. } => vec![],
+        HeadKind::Dispatch {
+            disposition: DispatchHead::Flow(flow),
+        } => vec![&flow.left, &flow.right],
+        HeadKind::AccessPath { .. } | HeadKind::Dispatch { .. } => vec![],
     };
     for port in ports {
         if let Some(Term::Var(v)) = &port.anchor {

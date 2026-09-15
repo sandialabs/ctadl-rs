@@ -1,9 +1,9 @@
 // Grammar for the CTADL model-matching DSL.
 //
 // The language is Datalog-shaped and non-recursive: a file is a list of rules, each deriving
-// one or more *output* atoms (`source`, `sink`, `propagation`, `bridge`, `access_paths`) from a
-// conjunction of *input* atoms over the built-in relations. See `models/dsl/mod.rs` for the
-// semantics; this file is only the surface syntax.
+// one or more *output* atoms (`source`, `sink`, `propagation`, `bridge`, `access_paths`,
+// `dispatch`) from a conjunction of *input* atoms over the built-in relations. See
+// `models/dsl/mod.rs` for the semantics; this file is only the surface syntax.
 //
 // Two spots need care and are marked below: the `<-` / `<` collision that `arity <- 1` versus
 // `arity < -1` turns on, and the ordered choice in `head_arg`, which is what lets an attribute,
@@ -25,7 +25,9 @@ head_list = { head_atom ~ ("," ~ head_atom)* }
 head_atom = { anchor? ~ out_rel ~ "(" ~ head_arg_list? ~ ")" }
 
 // `!name_char` keeps `sourcefoo` from lexing as `source` followed by junk.
-out_rel = @{ ("source" | "sink" | "propagation" | "bridge" | "access_paths") ~ !name_char }
+out_rel = @{
+    ("source" | "sink" | "propagation" | "bridge" | "access_paths" | "dispatch") ~ !name_char
+}
 
 // `F::` — the function (or call site) an otherwise bare port hangs off.
 anchor = { term ~ "::" }

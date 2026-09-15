@@ -212,3 +212,22 @@ ProgramMatchIndex tables.
 - no support for the inert schema keys (taint, modes/skip-analysis, forward_self)
 - reserved-but-unimplemented find: variables/fields. generally, all relations are built in so any potential relation name is reserved
 - if the model migrator meets these unsupported keys in the wild, it should warn that they aren't translated
+
+## `find: dispatch`
+
+Added to the JSON format after this document was first written, and carried across rather than
+left behind: a dispatch model attaches to a call *signature* and replaces the site's target set,
+which is what makes the hybrid call graph affordable, and defaults that quietly lost it would
+disable the feature for Java.
+
+It needs its own universe, not a view of `fun`: the method table holds implementations, and about
+half an app's interface call sites name a type that has no row there. So `callsig(K)` is an input
+relation of its own, built from the call sites, carrying the four attributes a key can have
+(`name`, `parent`, `signature`, `qualified-id`) and none of the ones that read a body.
+
+The head is `K::dispatch(...)`, saying exactly one of: a summary flow, `resolve = "inline"`,
+`resolve = "skip"` (the JSON's empty `propagation` list — a head is an atom, and there is no
+empty one to write), or `closure_shaped = true`. Index-time, like a propagation.
+
+Collecting the keys costs a pass over every statement, so it is gated: an import pays only when
+some rule reads `callsig`, or when the language's defaults do.

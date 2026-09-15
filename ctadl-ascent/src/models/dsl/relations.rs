@@ -56,9 +56,36 @@ pub struct CallSiteRow {
     pub callee: Str,
 }
 
+/// One distinct static call-site signature: what `callsig` ranges over and what a `dispatch`
+/// head attaches a model to.
+///
+/// Deliberately *not* a [`FunRow`]. The two universes differ: `funs` is built from the VMT's
+/// implementations, and about half of an app's interface call sites name a type that has no row
+/// there -- `java.util.Iterator` is never an implementation -- so `fun` cannot name them. These
+/// keys come from the call sites themselves, so by construction they can.
+///
+/// Every attribute is a single value rather than a list of accepted spellings: a key is
+/// composed from the site's three components, so there is only ever one way to spell it.
+#[derive(Clone, Debug)]
+pub struct CallSigRow {
+    /// `Lcls;->name(desc)` -- the canonical id, and the `callsig` relation's one column.
+    pub id: Str,
+    /// The simple method name the site names.
+    pub name: Str,
+    /// The static class the site names.
+    pub parent: Str,
+    /// The descriptor, e.g. `()Ljava/lang/String;`.
+    pub signature: Str,
+}
+
 /// Every built-in relation, materialized for one program.
 pub struct ProgramFacts {
     pub funs: Vec<FunRow>,
+    /// The distinct static call-site signatures, empty unless the import was indexed with a
+    /// dispatch universe (see `ProgramMatchIndex::new_with_dispatch`). A rule using `callsig`
+    /// against a program collected without one matches nothing rather than erroring: the same
+    /// posture `fun`'s body-dependent attributes take on a bodyless callee.
+    pub callsigs: Vec<CallSigRow>,
     pub callsites: Vec<CallSiteRow>,
     /// `(function, field)` pairs from every `Load`/`Store`.
     pub uses_field: Vec<(Str, Str)>,
@@ -83,6 +110,10 @@ pub struct ProgramFacts {
     callsite_by_id: HashMap<Str, usize>,
     uses_field_by_fun: HashMap<Str, Vec<usize>>,
     supers_of: HashMap<Str, Vec<Str>>,
+    callsigs_by_id: HashMap<Str, usize>,
+    callsigs_by_name: HashMap<Str, Vec<usize>>,
+    callsigs_by_parent: HashMap<Str, Vec<usize>>,
+    callsigs_by_signature: HashMap<Str, Vec<usize>>,
 }
 
 impl ProgramFacts {
@@ -246,8 +277,42 @@ impl ProgramFacts {
         classes.sort_unstable();
         classes.dedup();
 
+        // The call-site signature universe, when the caller asked for one. `parts` is already
+        // the distinct set, so there is nothing to deduplicate here.
+        let mut callsigs: Vec<CallSigRow> = Vec::new();
+        if let Some(universe) = index.dispatch.as_ref() {
+            callsigs.extend(
+                universe
+                    .parts
+                    .iter()
+                    .map(|(id, (cls, name, desc))| CallSigRow {
+                        id: Str::from(*id),
+                        name: Str::from(*name),
+                        parent: Str::from(*cls),
+                        signature: Str::from(*desc),
+                    }),
+            );
+            // `parts` is a hash map, so its iteration order is not the program's. Sort by the
+            // canonical id: a rule that scans the universe must enumerate the same way twice.
+            callsigs.sort_unstable_by_key(|r| r.id);
+        }
+        let mut callsigs_by_id: HashMap<Str, usize> = HashMap::new();
+        let mut callsigs_by_name: HashMap<Str, Vec<usize>> = HashMap::new();
+        let mut callsigs_by_parent: HashMap<Str, Vec<usize>> = HashMap::new();
+        let mut callsigs_by_signature: HashMap<Str, Vec<usize>> = HashMap::new();
+        for (i, row) in callsigs.iter().enumerate() {
+            callsigs_by_id.insert(row.id, i);
+            callsigs_by_name.entry(row.name).or_default().push(i);
+            callsigs_by_parent.entry(row.parent).or_default().push(i);
+            callsigs_by_signature
+                .entry(row.signature)
+                .or_default()
+                .push(i);
+        }
+
         Self {
             funs: rows,
+            callsigs,
             callsites,
             uses_field,
             subclass,
@@ -264,6 +329,10 @@ impl ProgramFacts {
             callsite_by_id,
             uses_field_by_fun,
             supers_of,
+            callsigs_by_id,
+            callsigs_by_name,
+            callsigs_by_parent,
+            callsigs_by_signature,
         }
     }
 
@@ -286,6 +355,29 @@ impl ProgramFacts {
             FunKey::QualifiedId => &self.by_qualified_id,
         };
         map.get(&value).map_or(&[], |v| v.as_slice())
+    }
+
+    #[inline]
+    pub fn callsig_index(&self, id: Str) -> Option<usize> {
+        self.callsigs_by_id.get(&id).copied()
+    }
+
+    /// Row indices a `callsig` attribute lookup reaches. `qualified-id` is the id itself, which
+    /// is why it needs no map of its own.
+    #[inline]
+    pub fn callsigs_by(&self, key: FunKey, value: Str) -> &[usize] {
+        match key {
+            FunKey::Name => self.callsigs_by_name.get(&value),
+            FunKey::Parent => self.callsigs_by_parent.get(&value),
+            FunKey::Signature => self.callsigs_by_signature.get(&value),
+            FunKey::QualifiedId => {
+                return match self.callsigs_by_id.get(&value) {
+                    Some(i) => std::slice::from_ref(i),
+                    None => &[],
+                };
+            }
+        }
+        .map_or(&[], |v| v.as_slice())
     }
 
     #[inline]

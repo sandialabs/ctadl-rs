@@ -68,6 +68,15 @@ pub enum Value {
         caller: Str,
         callee: Str,
     },
+    /// A static call signature. Carries its three components for the same reason a [`Self::Site`]
+    /// carries its caller and callee: `emit` runs after the last import's facts are dropped, and
+    /// a dispatch model is keyed on the triple rather than on the composed id.
+    CallSig {
+        id: Str,
+        cls: Str,
+        name: Str,
+        desc: Str,
+    },
 }
 
 impl Value {
@@ -76,6 +85,7 @@ impl Value {
             Value::Str(s) => Some(*s),
             // A site's identity is its id; joining a site against a string compares that.
             Value::Site { id, .. } => Some(*id),
+            Value::CallSig { id, .. } => Some(*id),
             _ => None,
         }
     }
@@ -95,6 +105,7 @@ impl std::fmt::Display for Value {
             Value::Int(i) => write!(f, "{i}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::Site { id, .. } => write!(f, "{id}"),
+            Value::CallSig { id, .. } => write!(f, "{id}"),
         }
     }
 }
@@ -293,6 +304,7 @@ impl<'a> Evaluator<'a> {
     fn generate(&self, atom: &Atom, env: &Env, out: &mut Vec<Extension>) {
         match atom.name.as_str() {
             "fun" => self.generate_fun(atom, env, out),
+            "callsig" => self.generate_callsig(atom, env, out),
             "param" => self.generate_param(atom, env, out),
             "callsite" => self.generate_callsite(atom, env, out),
             "subclass" => self.generate_subclass(atom, env, false, false, out),
@@ -331,6 +343,109 @@ impl<'a> Evaluator<'a> {
             }
             out.append(&mut alternatives);
         }
+    }
+
+    /// `callsig(K, ...)`: the same shape as [`Self::generate_fun`] over the call-signature
+    /// universe.
+    ///
+    /// A program collected without a dispatch universe has no rows, so such a rule matches
+    /// nothing rather than erroring — the gate that decides whether to collect them lives in
+    /// `cli`, and a rule that asks for one is what opens it.
+    fn generate_callsig(&self, atom: &Atom, env: &Env, out: &mut Vec<Extension>) {
+        let subject = &atom.columns[0];
+        let candidates: Vec<usize> = match self.resolve(subject, env) {
+            Some(Value::Str(id)) | Some(Value::CallSig { id, .. }) => {
+                match self.facts.callsig_index(id) {
+                    Some(i) => vec![i],
+                    None => return,
+                }
+            }
+            Some(_) => return,
+            None => match self.keyed_callsigs(atom, env) {
+                Some(list) => list,
+                None => (0..self.facts.callsigs.len()).collect(),
+            },
+        };
+        for i in candidates {
+            let row = &self.facts.callsigs[i];
+            let Some(mut alternatives) = self.callsig_attr_options(atom, row, env) else {
+                continue;
+            };
+            if let Term::Var(v) = subject
+                && !env.contains_key(v)
+            {
+                let value = Value::CallSig {
+                    id: row.id,
+                    cls: row.parent,
+                    name: row.name,
+                    desc: row.signature,
+                };
+                for ext in &mut alternatives {
+                    ext.push((v.clone(), value));
+                }
+            }
+            out.append(&mut alternatives);
+        }
+    }
+
+    /// [`Self::keyed_candidates`] over the call-signature universe.
+    fn keyed_callsigs(&self, atom: &Atom, env: &Env) -> Option<Vec<usize>> {
+        for attr in &atom.attrs {
+            let key = match attr.name.as_str() {
+                "name" => FunKey::Name,
+                "parent" => FunKey::Parent,
+                "signature" => FunKey::Signature,
+                "qualified-id" => FunKey::QualifiedId,
+                _ => continue,
+            };
+            match (attr.op, &attr.rhs) {
+                (CmpOp::Eq, Rhs::Term(t)) => {
+                    if let Some(Value::Str(s)) = self.resolve(t, env) {
+                        return Some(self.facts.callsigs_by(key, s).to_vec());
+                    }
+                }
+                (CmpOp::In, Rhs::Set(items)) => {
+                    let mut all: Vec<usize> = Vec::new();
+                    for lit in items {
+                        if let Literal::Str(s) = lit {
+                            all.extend_from_slice(
+                                self.facts.callsigs_by(key, Str::from(s.as_str())),
+                            );
+                        }
+                    }
+                    all.sort_unstable();
+                    all.dedup();
+                    return Some(all);
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Every way a signature key can satisfy the atom's attributes.
+    ///
+    /// Unlike a function, a key has exactly one spelling of each attribute — it is composed from
+    /// the site's three components — so each is a one-element slice and the multi-spelling case
+    /// [`Self::fun_attr_options`] exists for cannot arise.
+    fn callsig_attr_options(
+        &self,
+        atom: &Atom,
+        row: &super::relations::CallSigRow,
+        env: &Env,
+    ) -> Option<Vec<Extension>> {
+        let mut alternatives: Vec<Extension> = vec![Vec::new()];
+        for attr in &atom.attrs {
+            let options = match attr.name.as_str() {
+                "name" => self.multi_attr(attr, std::slice::from_ref(&row.name), env),
+                "parent" => self.multi_attr(attr, std::slice::from_ref(&row.parent), env),
+                "signature" => self.multi_attr(attr, std::slice::from_ref(&row.signature), env),
+                "qualified-id" => self.multi_attr(attr, std::slice::from_ref(&row.id), env),
+                _ => None,
+            }?;
+            alternatives = cross(alternatives, options)?;
+        }
+        Some(alternatives)
     }
 
     /// Row indices reachable through an indexed attribute (`name`, `parent`, `signature`,

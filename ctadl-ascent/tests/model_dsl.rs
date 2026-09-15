@@ -760,3 +760,164 @@ fn a_callsite_anchored_bridge_says_how_to_write_it() {
     assert!(text.contains("attaches inside a function"), "{text}");
     assert!(text.contains("callee_string = F"), "{text}");
 }
+
+// ---------------------------------------------------------------------------
+// Dispatch
+// ---------------------------------------------------------------------------
+
+/// A Java call site, which is what `callsig` ranges over.
+fn java_call(cls: &str, name: &str, desc: &str) -> Statement {
+    Statement::new_kind(StatementKind::CallAssign {
+        style: CallStyle::JavaCall {
+            receiver: VariableRef::new_local_idx(LocalIdx::new(0)),
+            cls: Symbol::from(cls),
+            simple_name: Symbol::from(name),
+            descriptor: Symbol::from(desc),
+            dispatch: ctadl_ir::mir::call::JavaDispatch::Interface,
+            super_start: None,
+        },
+        rets: Default::default(),
+        args: Default::default(),
+    })
+}
+
+/// A program whose one function calls `Iterator.next`, `Collection.size` and `Runnable.run`.
+///
+/// None of the three is *declared* here: that is the point of the relation. `Ljava/util/Iterator;`
+/// has no row in any app's method table, so `fun` cannot name it and `callsig` must.
+fn dispatch_program() -> ProgramInfo {
+    ProgramInfo {
+        vmt: VirtualMethodTable::Java {
+            methods: Vec::new(),
+            hierarchy: Default::default(),
+            interfaces: Vec::new(),
+            abstract_methods: Vec::new(),
+            natives: Vec::new(),
+        },
+        program: Program::new(Functions::new(vec![function(
+            "Lc/App;->handle()V",
+            1,
+            vec![
+                java_call("Ljava/util/Iterator;", "next", "()Ljava/lang/Object;"),
+                java_call("Ljava/util/Collection;", "size", "()I"),
+                java_call("Ljava/lang/Runnable;", "run", "()V"),
+            ],
+        )])),
+        ..Default::default()
+    }
+}
+
+/// Runs `source` with the dispatch universe collected, which `callsig` needs.
+fn run_dispatch(program_info: &ProgramInfo, source: &str) -> ProgramModelMatches {
+    let file = match dsl::DslFile::from_text("test.ctadl", source) {
+        Ok(f) => f,
+        Err(e) => panic!("{e}"),
+    };
+    let set = dsl::DslModelSet { files: vec![file] };
+    let mut matcher = dsl::DslMatcher::new(&set);
+    let keys = ctadl_ascent::models::DispatchKeys::from_program(&program_info.program);
+    let index =
+        ProgramMatchIndex::new_with_dispatch(program_info, ImportScope::unknown(), Some(&keys));
+    matcher.observe_import(&index);
+    let mut out = ProgramModelMatches::default();
+    matcher
+        .finish(dsl::Phase::All, &mut out)
+        .unwrap_or_else(|e| panic!("{e}"));
+    out
+}
+
+fn key(
+    cls: &str,
+    name: &str,
+    desc: &str,
+) -> (
+    ctadl_ascent::facts::Str,
+    ctadl_ascent::facts::Str,
+    ctadl_ascent::facts::Str,
+) {
+    (
+        ctadl_ascent::facts::Str::from(cls),
+        ctadl_ascent::facts::Str::from(name),
+        ctadl_ascent::facts::Str::from(desc),
+    )
+}
+
+#[test]
+fn callsig_names_types_the_program_never_declares() {
+    let out = run_dispatch(
+        &dispatch_program(),
+        r#"K::dispatch(resolve = "skip") :- callsig(K, parent = "Ljava/util/Iterator;");"#,
+    );
+    // The VMT above declares no methods at all, so `fun` has nothing: only the call sites do.
+    assert_eq!(
+        out.dispatch.keys().collect::<Vec<_>>(),
+        vec![&key("Ljava/util/Iterator;", "next", "()Ljava/lang/Object;")]
+    );
+}
+
+#[test]
+fn a_dispatch_flow_becomes_a_model_with_its_ports() {
+    use ctadl_ascent::models::matches::Disposition;
+    let out = run_dispatch(
+        &dispatch_program(),
+        r#"K::dispatch(return <- arg(0)."[]") :- callsig(K, name = "next");"#,
+    );
+    let model = &out.dispatch[&key("Ljava/util/Iterator;", "next", "()Ljava/lang/Object;")];
+    let Disposition::Model(ports) = &model.disposition else {
+        panic!("expected a model, got {:?}", model.disposition);
+    };
+    assert_eq!(ports.len(), 1);
+    // `(destination, source)`: the return is written, the receiver's element read.
+    assert_eq!(ports[0].0.tag, FormalIndexTypeTag::Return);
+    assert_eq!(ports[0].1.tag, FormalIndexTypeTag::Index);
+    assert_eq!(ports[0].1.index, Some(0));
+    // The canonical spelling escapes the bracket, as `models/dsl/tests.rs` pins elsewhere.
+    assert_eq!(ports[0].1.path.to_dot_string(), r".\[]");
+}
+
+#[test]
+fn closure_shaped_is_a_marker_not_a_model() {
+    let out = run_dispatch(
+        &dispatch_program(),
+        r#"K::dispatch(closure_shaped = true) :- callsig(K, parent = "Ljava/lang/Runnable;");"#,
+    );
+    assert!(out.dispatch.is_empty(), "{:?}", out.dispatch);
+    assert_eq!(
+        out.closure_shaped.iter().collect::<Vec<_>>(),
+        vec![&key("Ljava/lang/Runnable;", "run", "()V")]
+    );
+}
+
+/// Dispatch heads are index-time, like a propagation: `ctadl query` keeps the source/sink half.
+#[test]
+fn a_dispatch_head_belongs_to_the_index_phase() {
+    let source = r#"K::dispatch(resolve = "inline") :- callsig(K, name = "size");"#;
+    let program_info = dispatch_program();
+    let keys = ctadl_ascent::models::DispatchKeys::from_program(&program_info.program);
+    for (phase, want) in [(dsl::Phase::Index, 1), (dsl::Phase::Query, 0)] {
+        let file = dsl::DslFile::from_text("test.ctadl", source).expect("parses");
+        let set = dsl::DslModelSet { files: vec![file] };
+        let mut matcher = dsl::DslMatcher::new(&set);
+        let index = ProgramMatchIndex::new_with_dispatch(
+            &program_info,
+            ImportScope::unknown(),
+            Some(&keys),
+        );
+        matcher.observe_import(&index);
+        let mut out = ProgramModelMatches::default();
+        matcher.finish(phase, &mut out).expect("finishes");
+        assert_eq!(out.dispatch.len(), want, "{phase:?}");
+    }
+}
+
+/// A program collected without the dispatch universe matches nothing rather than erroring: the
+/// gate that decides whether to collect the keys lives in `cli`, and this is what a rule sees
+/// when it is closed.
+#[test]
+fn callsig_is_empty_without_a_dispatch_universe() {
+    let out = run(
+        &dispatch_program(),
+        r#"K::dispatch(resolve = "skip") :- callsig(K, name = "next");"#,
+    );
+    assert!(out.dispatch.is_empty());
+}

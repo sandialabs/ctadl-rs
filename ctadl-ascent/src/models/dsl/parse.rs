@@ -176,6 +176,11 @@ impl Builder {
                 HeadArg::Attr(name, lit, s) => attrs.push((name, lit, s)),
             }
         }
+        // `dispatch` is settled first: its attribute forms carry no subject at all, so the
+        // one-subject rule below does not apply to them.
+        if relation == "dispatch" {
+            return self.dispatch_head(span, ports, flows, literals, attrs);
+        }
         // Every output relation takes exactly one subject; several subjects are written as
         // several comma-separated head atoms, which is what the design's multi-port examples do.
         let subjects = ports.len() + flows.len() + literals.len();
@@ -328,6 +333,111 @@ impl Builder {
             }
             other => {
                 self.error(span, format!("unknown output relation '{other}'"));
+                None
+            }
+        }
+    }
+
+    /// A `dispatch` head: `K::dispatch(return <- arg(0))`, or one of the attribute forms
+    /// `resolve = "inline"` / `resolve = "skip"` / `closure_shaped = true`.
+    ///
+    /// Exactly one of the three, mirroring the JSON loader, so that a generator that forgot its
+    /// model and one that meant to discard the call's targets stay different documents.
+    fn dispatch_head(
+        &mut self,
+        span: Span,
+        ports: Vec<PortExpr>,
+        mut flows: Vec<Flow>,
+        literals: Vec<(Literal, Span)>,
+        attrs: Vec<(String, Literal, Span)>,
+    ) -> Option<HeadKind> {
+        if !ports.is_empty() {
+            self.error(
+                span,
+                "'dispatch' takes a flow such as 'K::dispatch(return <- arg(0))', not a bare port",
+            );
+            return None;
+        }
+        if let Some((_, lspan)) = literals.first() {
+            self.error(
+                *lspan,
+                "'dispatch' takes a flow or an attribute, not a string",
+            );
+            return None;
+        }
+        let mut disposition: Option<DispatchHead> = None;
+        let mut set = |this: &mut Self, d: DispatchHead, at: Span| {
+            if disposition.is_some() {
+                this.error(
+                    at,
+                    "a 'dispatch' head says exactly one thing; write a separate head atom for                      each, or a separate rule",
+                );
+            } else {
+                disposition = Some(d);
+            }
+        };
+        for (name, lit, aspan) in attrs {
+            match name.as_str() {
+                "resolve" => match &lit {
+                    Literal::Str(v) if v == "inline" => set(self, DispatchHead::Inline, aspan),
+                    Literal::Str(v) if v == "skip" => set(self, DispatchHead::Skip, aspan),
+                    Literal::Str(other) => self.error(
+                        aspan,
+                        format!(
+                            "unknown 'resolve' value {other:?}; expected \"inline\" or \"skip\""
+                        ),
+                    ),
+                    other => {
+                        self.error(aspan, format!("'resolve' must be a string; found {other}"))
+                    }
+                },
+                "closure_shaped" => match lit {
+                    Literal::Bool(true) => set(self, DispatchHead::ClosureShaped, aspan),
+                    // `false` is not a head: it derives nothing, exactly as in the JSON loader.
+                    Literal::Bool(false) => return None,
+                    other => self.error(
+                        aspan,
+                        format!("'closure_shaped' must be a boolean; found {other}"),
+                    ),
+                },
+                other => self.error(
+                    aspan,
+                    format!(
+                        "'{other}' is not an attribute of 'dispatch'; expected 'resolve' or \
+                         'closure_shaped'"
+                    ),
+                ),
+            }
+        }
+        if let Some(flow) = flows.pop() {
+            if !flows.is_empty() {
+                self.error(
+                    span,
+                    "'dispatch' takes one flow per head atom; write several head atoms \
+                     separated by ','",
+                );
+                return None;
+            }
+            if disposition.is_some() {
+                self.error(
+                    span,
+                    "a 'dispatch' head carries a flow or an attribute, never both: a signature \
+                     that is modelled is not also skipped, inlined or closure-shaped",
+                );
+                return None;
+            }
+            return Some(HeadKind::Dispatch {
+                disposition: DispatchHead::Flow(flow),
+            });
+        }
+        match disposition {
+            Some(disposition) => Some(HeadKind::Dispatch { disposition }),
+            None => {
+                self.error(
+                    span,
+                    "'dispatch' needs a flow such as 'K::dispatch(return <- arg(0))', or one of \
+                     'resolve = \"inline\"', 'resolve = \"skip\"', 'closure_shaped = true'",
+                );
                 None
             }
         }

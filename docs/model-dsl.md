@@ -87,6 +87,7 @@ optional **attributes**; an attribute you do not mention is not constrained.
 | relation | columns | attributes |
 | --- | --- | --- |
 | `fun(F)` | fully qualified function name | `name`, `arity`, `language`, `parent`, `signature`, `has_code`, `qualified-id`, `import` |
+| `callsig(K)` | a distinct static **call signature** | `name`, `parent`, `signature`, `qualified-id` |
 | `param(F, Index)` | function, parameter index | — |
 | `callsite(F, Site)` | the *caller*, the site | `callee_string` |
 | `subclass(Sub, Super)` | two classes, direct edge | — |
@@ -107,6 +108,13 @@ Notes worth having:
   nothing, which is fail-closed.
 - `callee_string` is the fully qualified callee (joinable with `fun`) or, for an indirect call,
   the variable the program text calls through.
+- `callsig` is a **different universe from `fun`**, not a view of it. `fun` is built from the
+  method table, which holds implementations; `callsig` is built from the call sites, so it names
+  types the program never declares — `Ljava/util/Iterator;` has no implementation row anywhere,
+  and only `callsig` can select it. It carries no `arity`, `has_code`, `language` or `import`: a
+  signature key is composed from a call site, not read out of an import's method table. Collecting
+  the keys costs a pass over every statement, so an import pays for it only when some rule reads
+  `callsig`; a rule that reads it against an import collected without them matches nothing.
 
 Every relation name is built in. A file cannot define one, so a name that is not in the table is a
 typo and is reported as one.
@@ -182,6 +190,8 @@ The point of a model file is to derive these.
 | `propagation(<flow>)` | a flow within **one** function | — |
 | `bridge(<flow>)` | a flow between **two** functions | — |
 | `access_paths("…")` | a literal access path | — |
+| `K::dispatch(<flow>)` | a flow within **one** call signature | — |
+| `K::dispatch(…)` | — | `resolve` (`"inline"` / `"skip"`), `closure_shaped` |
 
 - **`kind`** is the taint label. A flow is reported when a source's kind reaches a sink of the
   same kind. It defaults to `"taint"` for both directions, so the smallest useful pair of rules
@@ -190,6 +200,22 @@ The point of a model file is to derive these.
   recursively. Reach for it when callers index into the value — C's `argv` is the motivating case.
 - **`wildcard`** (sink only): the sink matches any access-path extension of the port. On by
   default; set `false` to require the exact path.
+- **`dispatch`** attaches a model to a call *signature* rather than a function, and **replaces**
+  the site's target set with it: one summary row instead of every implementation CHA can reach.
+  Anchor it at a `callsig` key. It says exactly one thing —
+
+  | written | means |
+  | --- | --- |
+  | `K::dispatch(return <- arg(0))` | a summary flow; the receiver is `arg(0)`, as on a `propagation` |
+  | `K::dispatch(resolve = "inline")` | defer to hybrid inlining regardless of the threshold |
+  | `K::dispatch(resolve = "skip")` | this call moves nothing; the target set is discarded |
+  | `K::dispatch(closure_shaped = true)` | a report-time marker; nothing resolves differently |
+
+  A flow and an attribute in one head is an error, so "forgot the model" and "meant to discard"
+  stay different documents. Several flow heads on one key accumulate into one summary. Because a
+  dispatch model takes the callee bodies out of the analysis along with the edges, it belongs on
+  methods whose behaviour is fixed by the interface they implement — see the commentary in
+  `ctadl-ascent/src/models/defaults/java-index.ctadl`.
 
 Each output relation takes exactly one port, flow or path. Several are written as several
 comma-separated heads:
@@ -280,8 +306,8 @@ dropped with it, which is what keeps a multi-artifact index streaming rather tha
 
 ### Phases
 
-The engine is phased. `ctadl index` keeps the `propagation` / `bridge` / `access_paths` heads;
-`ctadl query` keeps the `source` / `sink` ones. Each says how many rules contributed nothing to
+The engine is phased. `ctadl index` keeps the `propagation` / `bridge` / `access_paths` /
+`dispatch` heads; `ctadl query` keeps the `source` / `sink` ones. Each says how many rules contributed nothing to
 it, and a rule contributing at least one head to the running phase is never counted:
 
 ```
@@ -313,6 +339,7 @@ How the JSON constructs map:
 | --- | --- |
 | `find: methods` | the subject variable `F`, bound by `fun(F, …)` |
 | `find: callsites` | `callsite(C, S, callee_string = F)`, ports anchored at `S` |
+| `find: dispatch` | the key variable `K`, bound by `callsig(K, …)` |
 | `in: {language, languages, import}` | `fun(F, language = …, import = …)` |
 | `signature_match` name/parent/qualified-id | `fun(F, name = …, parent = …, qualified-id = …)` |
 | `name` / `signature` / `signature_pattern` | `fun(F, name = N), regex_match(N, …)` |
@@ -324,6 +351,10 @@ How the JSON constructs map:
 | `all_of` | more atoms in one body |
 | `not` | `!atom`, or `!(a && b)` when the constraint needs two atoms |
 | `in_function` | constraints on `C`, the caller column of `callsite` |
+| `model: {propagation: [...]}` under `find: dispatch` | `K::dispatch(<out> <- <in>)` |
+| `model: {propagation: []}` | `K::dispatch(resolve = "skip")` — a head is an atom, and there is no empty one |
+| `model: {resolve: "inline"}` | `K::dispatch(resolve = "inline")` |
+| `model: {closure_shaped: true}` | `K::dispatch(closure_shaped = true)` |
 
 Three things do not carry across, and are reported rather than approximated:
 
@@ -333,6 +364,8 @@ Three things do not carry across, and are reported rather than approximated:
 - A `bridge` with no `arguments` map. The JSON loader falls back to an identity map over the
   arity the two sides share, which needs the fact base and cannot be written as a rule. Write the
   map.
+- An `in` scope on a `find: dispatch` generator: a signature key carries no language or import to
+  narrow on.
 
 ---
 

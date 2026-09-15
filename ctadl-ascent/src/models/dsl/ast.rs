@@ -63,9 +63,12 @@ impl Rule {
         for head in &self.heads {
             match head.kind {
                 HeadKind::Source { .. } | HeadKind::Sink { .. } => query_time = true,
+                // A dispatch model is read by codegen as it lowers each call site, so it is
+                // index-time like a propagation, never query-time.
                 HeadKind::Propagation { .. }
                 | HeadKind::Bridge { .. }
-                | HeadKind::AccessPath { .. } => index_time = true,
+                | HeadKind::AccessPath { .. }
+                | HeadKind::Dispatch { .. } => index_time = true,
             }
         }
         (index_time, query_time)
@@ -109,6 +112,28 @@ pub enum HeadKind {
         text: String,
         segments: Vec<PathSegment>,
     },
+    /// A model for a call *signature* rather than a function: what `find: "dispatch"` is in the
+    /// JSON format. Anchored at a `callsig` key, whose model replaces the site's whole target
+    /// set.
+    Dispatch {
+        disposition: DispatchHead,
+    },
+}
+
+/// The three things a `dispatch` head can say. Exactly one per head, which is what keeps
+/// "forgot the model" and "meant to discard" different documents.
+#[derive(Clone, Debug)]
+pub enum DispatchHead {
+    /// `K::dispatch(return <- arg(0))` -- one flow of the summary this signature gets. Several
+    /// flows may share a head, and several heads may share a key; they accumulate.
+    Flow(Flow),
+    /// `K::dispatch(resolve = "inline")` -- defer to hybrid inlining.
+    Inline,
+    /// `K::dispatch(resolve = "skip")` -- this call moves nothing. The JSON spells it as an
+    /// empty `propagation` list, which has no counterpart in a language whose heads are atoms.
+    Skip,
+    /// `K::dispatch(closure_shaped = true)` -- a report-time marker, not a resolution rule.
+    ClosureShaped,
 }
 
 impl HeadKind {
@@ -119,6 +144,7 @@ impl HeadKind {
             HeadKind::Propagation { .. } => "propagation",
             HeadKind::Bridge { .. } => "bridge",
             HeadKind::AccessPath { .. } => "access_paths",
+            HeadKind::Dispatch { .. } => "dispatch",
         }
     }
 }
@@ -301,12 +327,28 @@ impl fmt::Display for Literal {
     }
 }
 
+impl Program {
+    /// Whether any rule's body reads `callsig`. See
+    /// [`DslModelSet::uses_callsig`](super::DslModelSet::uses_callsig).
+    pub fn uses_callsig(&self) -> bool {
+        fn in_item(item: &BodyItem) -> bool {
+            match item {
+                BodyItem::Atom(atom) => atom.name == "callsig",
+                BodyItem::Not(inner) => in_item(inner),
+                BodyItem::And(items) | BodyItem::Or(items) => items.iter().any(in_item),
+            }
+        }
+        self.rules.iter().any(|r| r.body.iter().any(in_item))
+    }
+}
+
 /// Every relation name the language reserves, whether or not a rule can currently use it.
 ///
 /// The design reserves *all* relation names: they are built in, so a model file cannot define
 /// one, and a name that is not here is a typo rather than a user relation.
 pub const BUILTIN_RELATIONS: &[&str] = &[
     "fun",
+    "callsig",
     "param",
     "callsite",
     "subclass",
@@ -319,7 +361,14 @@ pub const BUILTIN_RELATIONS: &[&str] = &[
 pub const BUILTIN_OPERATORS: &[&str] = &["regex_match"];
 
 /// The output relations a head may name.
-pub const OUTPUT_RELATIONS: &[&str] = &["source", "sink", "propagation", "bridge", "access_paths"];
+pub const OUTPUT_RELATIONS: &[&str] = &[
+    "source",
+    "sink",
+    "propagation",
+    "bridge",
+    "access_paths",
+    "dispatch",
+];
 
 /// Attribute names each built-in relation honors.
 pub fn relation_attributes(name: &str) -> &'static [&'static str] {
@@ -334,6 +383,9 @@ pub fn relation_attributes(name: &str) -> &'static [&'static str] {
             "qualified-id",
             "import",
         ],
+        // A signature key has no body and no import of its own, so `arity`, `has_code`,
+        // `language` and `import` are absent rather than always-false.
+        "callsig" => &["name", "parent", "signature", "qualified-id"],
         "callsite" => &["callee_string"],
         _ => &[],
     }
@@ -343,6 +395,7 @@ pub fn relation_attributes(name: &str) -> &'static [&'static str] {
 pub fn relation_arity(name: &str) -> Option<usize> {
     match name {
         "fun" => Some(1),
+        "callsig" => Some(1),
         "param" => Some(2),
         "callsite" => Some(2),
         "subclass" | "subclass*" | "subclass+" => Some(2),

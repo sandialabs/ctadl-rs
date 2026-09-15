@@ -28,6 +28,10 @@ pub enum VarType {
     Function,
     /// A call site, bound by `callsite`'s second column.
     Site,
+    /// A static call *signature*, bound by `callsig`'s only column. Distinct from
+    /// [`Self::Function`]: the two universes overlap but neither contains the other, and only
+    /// this one can anchor a `dispatch` head.
+    CallSig,
     Class,
     Str,
     Int,
@@ -40,6 +44,7 @@ impl VarType {
             VarType::Unknown => "value",
             VarType::Function => "function",
             VarType::Site => "call site",
+            VarType::CallSig => "call signature",
             VarType::Class => "class",
             VarType::Str => "string",
             VarType::Int => "integer",
@@ -206,7 +211,10 @@ fn collect_head_vars(head: &Head, out: &mut BTreeSet<String>) {
     let ports: Vec<&PortExpr> = match &head.kind {
         HeadKind::Source { port, .. } | HeadKind::Sink { port, .. } => vec![port],
         HeadKind::Propagation { flow } | HeadKind::Bridge { flow } => vec![&flow.left, &flow.right],
-        HeadKind::AccessPath { .. } => vec![],
+        HeadKind::Dispatch {
+            disposition: DispatchHead::Flow(flow),
+        } => vec![&flow.left, &flow.right],
+        HeadKind::AccessPath { .. } | HeadKind::Dispatch { .. } => vec![],
     };
     for port in ports {
         if let Some(Term::Var(v)) = &port.anchor {
@@ -546,7 +554,10 @@ fn check_head(
     let ports: Vec<&PortExpr> = match &head.kind {
         HeadKind::Source { port, .. } | HeadKind::Sink { port, .. } => vec![port],
         HeadKind::Propagation { flow } | HeadKind::Bridge { flow } => vec![&flow.left, &flow.right],
-        HeadKind::AccessPath { .. } => vec![],
+        HeadKind::Dispatch {
+            disposition: DispatchHead::Flow(flow),
+        } => vec![&flow.left, &flow.right],
+        HeadKind::AccessPath { .. } | HeadKind::Dispatch { .. } => vec![],
     };
 
     // Resolve each port's anchor: its own, else the head atom's.
@@ -558,7 +569,11 @@ fn check_head(
                 require(term, port.span, "the port anchor", errors);
                 if let Term::Var(v) = term {
                     match types.get(v).copied().unwrap_or(VarType::Unknown) {
-                        VarType::Function | VarType::Site | VarType::Str | VarType::Unknown => {}
+                        VarType::Function
+                        | VarType::Site
+                        | VarType::CallSig
+                        | VarType::Str
+                        | VarType::Unknown => {}
                         other => errors.push(DslError::Rule {
                             message: format!(
                                 "'{v}' is a {} and cannot anchor a port; a port hangs off a \
@@ -665,6 +680,61 @@ fn check_head(
                              'callsite(_, {v}, callee_string = F)' and write 'F::' — which covers \
                              every call site of it."
                         ),
+                        span: flow.span,
+                    });
+                }
+            }
+        }
+        HeadKind::Dispatch { disposition } => {
+            // Every form anchors at a signature key. The anchor is the whole subject of the
+            // attribute forms, so a missing one is reported here rather than by the port loop
+            // above, which those forms never enter.
+            let span = match disposition {
+                DispatchHead::Flow(flow) => flow.span,
+                _ => head.span,
+            };
+            match head
+                .anchor
+                .as_ref()
+                .or_else(|| anchors.iter().flatten().copied().next())
+            {
+                Some(Term::Var(v)) => {
+                    if let Some(t) = types.get(v)
+                        && !matches!(t, VarType::CallSig | VarType::Unknown)
+                    {
+                        errors.push(DslError::Rule {
+                            message: format!(
+                                "'{v}' is a {} and cannot anchor a 'dispatch' head; a dispatch \
+                                 model attaches to a call signature. Bind it with 'callsig({v})'.",
+                                t.name()
+                            ),
+                            span,
+                        });
+                    }
+                }
+                Some(_) => {}
+                None => errors.push(DslError::Rule {
+                    message: "this 'dispatch' head has no anchor. Write 'K::dispatch(...)' so it \
+                              names the call signature it models."
+                        .to_string(),
+                    span,
+                }),
+            }
+            // Both ports of a dispatch flow describe the *same* signature's summary, exactly as
+            // a propagation describes one function's.
+            if let DispatchHead::Flow(flow) = disposition {
+                let same = match (
+                    anchors.first().copied().flatten(),
+                    anchors.get(1).copied().flatten(),
+                ) {
+                    (Some(a), Some(b)) => same_term(a, b),
+                    _ => true,
+                };
+                if !same {
+                    errors.push(DslError::Rule {
+                        message: "a dispatch model is one signature's summary, so both ports \
+                                  must be anchored at the same 'callsig' key."
+                            .to_string(),
                         span: flow.span,
                     });
                 }
@@ -831,6 +901,9 @@ fn generator_cost(item: &BodyItem, bound: &BTreeSet<String>) -> u32 {
         "subclass" | "subclass*" | "subclass+" => 10,
         "uses_field" => 20,
         "param" => 25,
+        // Ranked beside `fun`: the same four attributes are indexed, over a universe that is
+        // typically an order of magnitude smaller.
+        "callsig" => 28,
         "fun" => 30,
         "callsite" => 40,
         _ => 50,
@@ -850,6 +923,7 @@ fn generator_cost(item: &BodyItem, bound: &BTreeSet<String>) -> u32 {
 fn column_types(name: &str) -> &'static [VarType] {
     match name {
         "fun" => &[VarType::Function],
+        "callsig" => &[VarType::CallSig],
         "param" => &[VarType::Function, VarType::Int],
         "callsite" => &[VarType::Function, VarType::Site],
         "subclass" | "subclass*" | "subclass+" => &[VarType::Class, VarType::Class],
@@ -864,6 +938,7 @@ pub fn attribute_type(relation: &str, attr: &str) -> VarType {
         ("fun", "arity") => VarType::Int,
         ("fun", "has_code") => VarType::Bool,
         ("fun", "parent") => VarType::Class,
+        ("callsig", "parent") => VarType::Class,
         ("callsite", "callee_string") => VarType::Function,
         _ => VarType::Str,
     }

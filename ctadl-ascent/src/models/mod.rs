@@ -139,18 +139,25 @@ pub fn default_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'s
     }
 }
 
-/// Whether the built-in defaults for a program with this [`VirtualMethodTable`] contain a
-/// `find: "dispatch"` generator.
+/// Whether the built-in defaults for a program with this [`VirtualMethodTable`] ask for the
+/// call-site signature keys.
 ///
 /// The other half of the gate [`ModelFileSpecs::finds_dispatch`](spec::ModelFileSpecs) opens:
 /// together they decide whether an import pays for collecting its call sites' signature keys.
+///
+/// Read off the **DSL** defaults, because those are what [`try_load_default_models`] runs. The
+/// `.jsonl` original says the same thing -- the pair is pinned by `tests/default_models.rs` --
+/// but answering from the file that is not loaded would be one more way for the two to drift.
 pub fn default_models_find_dispatch(vmt: &VirtualMethodTable) -> bool {
-    let Some((_, contents)) = default_model_file(vmt) else {
+    let Some((name, source)) = default_dsl_model_file(vmt) else {
         return false;
     };
-    jsonl_items(BufReader::new(contents)).any(|item| {
-        item.is_ok_and(|value| value.get("find").and_then(|v| v.as_str()) == Some("dispatch"))
-    })
+    // A shipped default that does not parse is a build-time bug, and every other caller of this
+    // file reports it with a span; here there is no diagnostic channel and nothing to gain from
+    // guessing, so an unparsable file simply asks for nothing.
+    dsl::DslFile::from_text(name, source)
+        .map(|f| f.program.uses_callsig())
+        .unwrap_or(false)
 }
 
 /// The DSL default a program with this [`VirtualMethodTable`] selects. Parallel to

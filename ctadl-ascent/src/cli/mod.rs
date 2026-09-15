@@ -210,6 +210,7 @@ pub fn index(
             // Only when some generator asks for it: collecting the keys is a pass over every
             // statement, and the defaults are language-selected, so this is decided per import.
             let wants_dispatch = file_specs.finds_dispatch
+                || dsl_models.uses_callsig()
                 || (!no_default_models
                     && crate::models::default_models_find_dispatch(&program_info.vmt));
             let dispatch_keys = wants_dispatch
