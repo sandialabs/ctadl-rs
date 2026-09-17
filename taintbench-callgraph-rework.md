@@ -9,17 +9,29 @@ a5f4f557 Fully hybrid call graph (#127)
 2ba7e014 Delete CLAUDE md (#126)          <- the baseline measured here
 ```
 
-This document measures all 38 apps at three points: before both commits, with
-`#127` only, and with both. Short version:
+This document measures all 38 apps at four points - neither commit, each one on
+its own, and both - so the two can be told apart. `#128` applies to `2ba7e014`
+without `#127` cleanly and compiles, which is what makes the fourth point
+possible.
+
+Short version:
 
 - **`#127` costs time and memory and finds the same things.** Indexing the suite
   goes from 134 s to 259 s and the worst app's peak memory from 2.8 GB to
-  6.5 GB. The suite still passes 38/38.
-- **`#128` buys back the time and then some, but loses flows.** Querying the
-  suite drops from 297 s to 31 s, and detection drops from 92 of TaintBench's
-  191 ground-truth flows to 77. Sixteen apps fail the suite.
+  6.5 GB. The suite still passes 38/38 with `#127` alone.
+- **`#128` is where the recall goes.** Querying the suite drops from 243 s to
+  30 s, and detection drops from 92 of TaintBench's 191 ground-truth flows to
+  76. It does this with or without `#127`.
 - Together they leave the suite **faster overall but heavier**: 471 s to 389 s
-  wall-clock, and peak memory up on 26 of the 38 apps.
+  wall-clock, detection at 77, and peak memory up on 26 of the 38 apps.
+- **`#128` on its own is the cheapest of the four**, by a wide margin: 258 s for
+  the suite at 3.4 GB peak, against 389 s and 6.3 GB for `main`. It finds 76
+  flows where `main` finds 77.
+
+The two effects barely interact. `#127` adds about 125 s of index time and
+doubles peak memory whether or not `#128` is present; `#128` removes about 210 s
+of query time and 16 flows whether or not `#127` is present. The one place they
+touch is `fakedaum` #2, which `#128` alone loses and `#127` puts back.
 
 Some of `#128`'s speedup is simply work not done. `roidsec`'s query goes from
 170 s to 8 s and loses two of its six flows; `proxy_samp`'s goes from 6.8 s to
@@ -35,8 +47,8 @@ narrower now.
 
 ## What stopped being detected
 
-Sixteen apps report a regression - a flow in their committed `expected.json`
-that is no longer found:
+Sixteen apps report a regression on `main` - a flow in their committed
+`expected.json` that is no longer found:
 
 | app | findings lost | now detected |
 | --- | --- | --- |
@@ -57,6 +69,8 @@ that is no longer found:
 | `threatjapan_uracto` | 2 | 0/2 |
 | `vibleaker_android_samp` | 2 | 2/4 |
 
+With `#128` alone it is the same sixteen plus `fakedaum` (#2), seventeen in all.
+
 `remote_control_smack` is the one mixed case: it loses six baseline findings and
 picks up eleven others, ending at 11/17 against 6/17 before. Everything else in
 the table is a straight loss.
@@ -67,8 +81,8 @@ that used to find every flow they had - `dsencrypt_samp`, `hummingbad_android_sa
 
 **The committed `expected.json` files were left alone.** Rebaselining them would
 make the suite green and erase the finding; they stay as they are so the check
-keeps reporting the sixteen failures until somebody decides the new behaviour is
-the intended one.
+keeps reporting the failures until somebody decides the new behaviour is the
+intended one.
 
 ## Per benchmark
 
@@ -127,90 +141,142 @@ flows either before or after.
 
 ## Which of the two commits did what
 
-Splitting the suite by phase separates them cleanly:
+The four points, each the median of its runs:
 
-| | index (all 38) | query (all 38) | worst app's peak memory |
-| --- | ---: | ---: | ---: |
-| `2ba7e014` before | 134 s | 243 s | 3.4 GB |
-| `a5f4f557` (`#127` only) | 259 s | 297 s | 6.5 GB |
-| `0183c42c` (both, `origin/main`) | 264 s | 31 s | 6.1 GB |
+| | index (all 38) | query (all 38) | worst app's peak | flows found | false positives |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `2ba7e014`, neither | 134 s | 243 s | 3.4 GB | 92/191 | 8 |
+| `#127` only | 259 s | 297 s | 6.5 GB | 93/191 | 8 |
+| `#128` only | 134 s | 30 s | 3.4 GB | 76/191 | 3 |
+| both (`origin/main`) | 264 s | 31 s | 6.1 GB | 77/191 | 3 |
 
-- **`#127` is the cost.** Index time roughly doubles and stays there; `#128`
-  adds nothing on top (259 s to 264 s). Peak memory nearly doubles at `#127` and
-  `#128` gives a little back. Detection at `#127` alone is unchanged except that
-  `threatjapan_uracto` picks up one more flow, so the suite passes 38/38 there.
-- **`#128` is the recall loss and the query speedup.** Query time falls by 89%
-  and every one of the sixteen regressions appears only once `#128` is in.
+Read down the columns and the two commits separate almost perfectly:
 
-Two apps show `#127` blowing up the *query* in a way `#128` then repairs:
+- **`#127` is the cost and nothing else.** It adds ~125 s of index time and
+  roughly doubles peak memory, in both the presence and the absence of `#128`,
+  and it does not cost a single flow - detection goes *up* by one (both 92 → 93
+  and 76 → 77 are `threatjapan_uracto` #1, with `fakedaum` #2 the same story in
+  the `#128` column).
+- **`#128` is the recall loss and the query speedup**, also in both the presence
+  and the absence of `#127`: query time down ~87%, 16 flows gone, false
+  positives 8 → 3.
+
+Two apps show `#127` blowing up the *query* in a way `#128` then masks:
 `fakeplay` goes 0.9 s → 68.5 s → 1.0 s, and `samsapo`'s peak memory goes
-125 MB → 1313 MB → 197 MB. Neither is visible in the end-to-end numbers, but
-both would bite anything that ships `#127` without `#128`.
+125 MB → 1313 MB → 197 MB. Neither is visible in the end-to-end numbers for
+`main`, but both would bite anything that ships `#127` without `#128`.
 
 `vibleaker_android_samp` is the one app `#127` makes *faster* to index: 23.3 s
 down to 8.1 s, though its peak memory still rises from 1.1 GB to 1.8 GB.
 
-### Per phase, per app
+The uncomfortable row is the third one. `#128` by itself runs the suite in 258 s
+at 3.4 GB and finds 76 flows; `main` runs it in 389 s at 6.3 GB and finds 77.
+Whatever `#127` is for, this suite does not show it paying for itself.
 
-Seconds for index and query, MB for peak memory; median of the runs. Columns are
-before / `#127` only / both.
+### Total time and peak memory, per app
 
-| app | index before | index +#127 | index after both | query before | query +#127 | query after both | peak mem before | peak mem +#127 | peak mem after both |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `backflash` | 0.27 | 0.44 | 0.45 | 0.58 | 0.58 | 0.30 | 89 | 127 | 128 |
-| `beita_com_beita_contact` | 0.50 | 0.81 | 0.84 | 0.87 | 1.27 | 0.51 | 164 | 348 | 223 |
-| `cajino_baidu` | 1.89 | 3.08 | 3.07 | 11.37 | 11.80 | 1.93 | 612 | 701 | 688 |
-| `chulia` | 0.04 | 0.06 | 0.06 | 0.09 | 0.10 | 0.06 | 16 | 20 | 20 |
-| `death_ring_materialflow` | 0.12 | 0.19 | 0.19 | 0.20 | 0.20 | 0.13 | 46 | 65 | 65 |
-| `dsencrypt_samp` | 0.01 | 0.02 | 0.02 | 0.11 | 0.11 | 0.04 | 10 | 10 | 8 |
-| `exprespam` | 0.01 | 0.02 | 0.02 | 0.08 | 0.08 | 0.05 | 11 | 11 | 9 |
-| `fakeappstore` | 0.30 | 0.50 | 0.51 | 0.39 | 0.40 | 0.23 | 80 | 127 | 119 |
-| `fakebank_android_samp` | 0.24 | 0.42 | 0.42 | 0.42 | 0.45 | 0.30 | 79 | 131 | 127 |
-| `fakedaum` | 0.17 | 0.29 | 0.28 | 0.40 | 0.48 | 0.21 | 77 | 88 | 89 |
-| `fakemart` | 0.28 | 0.43 | 0.43 | 0.23 | 0.23 | 0.19 | 87 | 132 | 132 |
-| `fakeplay` | 0.67 | 1.08 | 1.08 | 0.92 | 68.50 | 1.04 | 215 | 753 | 267 |
-| `faketaobao` | 0.22 | 0.39 | 0.38 | 0.19 | 0.20 | 0.15 | 78 | 121 | 117 |
-| `godwon_samp` | 0.01 | 0.02 | 0.02 | 0.04 | 0.04 | 0.04 | 8 | 8 | 8 |
-| `hummingbad_android_samp` | 3.96 | 5.93 | 5.92 | 5.77 | 6.63 | 2.64 | 1170 | 1449 | 1444 |
-| `jollyserv` | 0.46 | 0.79 | 0.79 | 0.72 | 1.13 | 0.37 | 151 | 233 | 206 |
-| `overlay_android_samp` | 0.12 | 0.19 | 0.18 | 0.22 | 0.22 | 0.15 | 44 | 61 | 61 |
-| `overlaylocker2_android_samp` | 0.58 | 1.00 | 1.00 | 1.47 | 1.99 | 0.58 | 161 | 252 | 250 |
-| `phospy` | 0.17 | 0.27 | 0.27 | 3.27 | 4.29 | 0.30 | 86 | 107 | 102 |
-| `proxy_samp` | 0.03 | 0.04 | 0.04 | 6.79 | 7.62 | 0.19 | 91 | 98 | 15 |
-| `remote_control_smack` | 30.42 | 30.40 | 30.85 | 14.08 | 12.69 | 5.75 | 3373 | 3830 | 3824 |
-| `repane` | 0.01 | 0.02 | 0.02 | 0.05 | 0.06 | 0.04 | 9 | 9 | 9 |
-| `roidsec` | 0.03 | 0.04 | 0.04 | 169.99 | 149.51 | 7.79 | 1343 | 1290 | 89 |
-| `samsapo` | 0.42 | 0.70 | 0.70 | 0.93 | 4.89 | 0.34 | 125 | 1313 | 197 |
-| `save_me` | 1.54 | 2.46 | 2.46 | 1.57 | 2.56 | 1.13 | 352 | 513 | 508 |
-| `scipiex` | 0.45 | 0.72 | 0.72 | 0.49 | 0.49 | 0.36 | 124 | 201 | 201 |
-| `slocker_android_samp` | 0.31 | 0.53 | 0.53 | 0.29 | 0.29 | 0.23 | 90 | 139 | 142 |
-| `sms_google` | 0.04 | 0.07 | 0.06 | 3.36 | 2.50 | 0.14 | 61 | 54 | 20 |
-| `sms_send_locker_qqmagic` | 0.03 | 0.03 | 0.03 | 8.04 | 6.92 | 0.11 | 93 | 81 | 13 |
-| `smssend_packageInstaller` | 0.26 | 0.44 | 0.43 | 0.88 | 1.07 | 0.29 | 136 | 206 | 123 |
-| `smssilience_fake_vertu` | 0.01 | 0.02 | 0.02 | 0.16 | 0.15 | 0.04 | 12 | 12 | 8 |
-| `smsstealer_kysn_assassincreed_android_samp` | 0.42 | 0.72 | 0.72 | 0.39 | 0.40 | 0.29 | 126 | 193 | 198 |
-| `stels_flashplayer_android_update` | 0.22 | 0.38 | 0.38 | 1.87 | 1.83 | 0.32 | 125 | 125 | 117 |
-| `tetus` | 0.05 | 0.08 | 0.08 | 0.11 | 0.11 | 0.09 | 22 | 25 | 25 |
-| `the_interview_movieshow` | 0.01 | 0.02 | 0.02 | 0.04 | 0.04 | 0.03 | 8 | 9 | 8 |
-| `threatjapan_uracto` | 0.20 | 0.34 | 0.34 | 0.22 | 0.29 | 0.16 | 74 | 114 | 112 |
-| `vibleaker_android_samp` | 23.26 | 8.13 | 8.12 | 4.25 | 4.68 | 2.93 | 1084 | 1795 | 1812 |
-| `xbot_android_samp` | 66.55 | 197.86 | 202.29 | 1.85 | 2.33 | 2.00 | 2789 | 6657 | 6255 |
+| app | time none | time #127 | time #128 | time both | mem none | mem #127 | mem #128 | mem both |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `backflash` | 0.92 | 1.10 | 0.65 | 0.85 | 89 | 127 | 90 | 128 |
+| `beita_com_beita_contact` | 1.50 | 2.21 | 1.10 | 1.48 | 164 | 348 | 137 | 223 |
+| `cajino_baidu` | 13.66 | 15.29 | 4.13 | 5.41 | 612 | 701 | 453 | 688 |
+| `chulia` | 0.14 | 0.16 | 0.11 | 0.13 | 16 | 20 | 14 | 20 |
+| `death_ring_materialflow` | 0.36 | 0.43 | 0.29 | 0.36 | 46 | 65 | 46 | 65 |
+| `dsencrypt_samp` | 0.13 | 0.14 | 0.06 | 0.07 | 10 | 10 | 9 | 8 |
+| `exprespam` | 0.09 | 0.10 | 0.06 | 0.07 | 11 | 11 | 9 | 9 |
+| `fakeappstore` | 0.77 | 0.97 | 0.60 | 0.82 | 80 | 127 | 74 | 119 |
+| `fakebank_android_samp` | 0.74 | 0.94 | 0.70 | 0.79 | 79 | 131 | 80 | 127 |
+| `fakedaum` | 0.61 | 0.81 | 0.38 | 0.54 | 77 | 88 | 57 | 89 |
+| `fakemart` | 0.59 | 0.74 | 0.54 | 0.70 | 87 | 132 | 89 | 132 |
+| `fakeplay` | 1.75 | 69.74 | 1.25 | 2.29 | 215 | 753 | 183 | 267 |
+| `faketaobao` | 0.47 | 0.64 | 0.44 | 0.59 | 78 | 121 | 77 | 117 |
+| `godwon_samp` | 0.05 | 0.06 | 0.05 | 0.06 | 8 | 8 | 8 | 8 |
+| `hummingbad_android_samp` | 10.50 | 13.33 | 7.29 | 9.33 | 1170 | 1449 | 892 | 1444 |
+| `jollyserv` | 1.30 | 2.04 | 0.94 | 1.28 | 151 | 233 | 131 | 206 |
+| `overlay_android_samp` | 0.38 | 0.45 | 0.31 | 0.37 | 44 | 61 | 44 | 61 |
+| `overlaylocker2_android_samp` | 2.20 | 3.14 | 1.29 | 1.73 | 161 | 252 | 161 | 250 |
+| `phospy` | 3.49 | 4.61 | 0.53 | 0.62 | 86 | 107 | 61 | 102 |
+| `proxy_samp` | 6.83 | 7.67 | 0.23 | 0.24 | 91 | 98 | 15 | 15 |
+| `remote_control_smack` | 133.82 | 132.55 | 126.00 | 125.96 | 3373 | 3830 | 3433 | 3824 |
+| `repane` | 0.07 | 0.08 | 0.07 | 0.07 | 9 | 9 | 9 | 9 |
+| `roidsec` | 170.03 | 149.56 | 7.81 | 7.84 | 1343 | 1290 | 89 | 89 |
+| `samsapo` | 1.49 | 5.73 | 0.90 | 1.18 | 125 | 1313 | 127 | 197 |
+| `save_me` | 3.45 | 5.36 | 2.96 | 3.93 | 352 | 513 | 359 | 508 |
+| `scipiex` | 1.06 | 1.34 | 0.93 | 1.20 | 124 | 201 | 128 | 201 |
+| `slocker_android_samp` | 0.69 | 0.91 | 0.63 | 0.85 | 90 | 139 | 89 | 142 |
+| `sms_google` | 3.42 | 2.58 | 0.20 | 0.22 | 61 | 54 | 17 | 20 |
+| `sms_send_locker_qqmagic` | 8.08 | 6.96 | 0.14 | 0.15 | 93 | 81 | 12 | 13 |
+| `smssend_packageInstaller` | 1.20 | 1.58 | 0.60 | 0.79 | 136 | 206 | 82 | 123 |
+| `smssilience_fake_vertu` | 0.18 | 0.18 | 0.06 | 0.07 | 12 | 12 | 8 | 8 |
+| `smsstealer_kysn_assassincreed_android_samp` | 0.92 | 1.24 | 0.80 | 1.12 | 126 | 193 | 126 | 198 |
+| `stels_flashplayer_android_update` | 2.15 | 2.28 | 0.60 | 0.76 | 125 | 125 | 78 | 117 |
+| `tetus` | 0.17 | 0.20 | 0.15 | 0.18 | 22 | 25 | 17 | 25 |
+| `the_interview_movieshow` | 0.06 | 0.08 | 0.05 | 0.06 | 8 | 9 | 8 | 8 |
+| `threatjapan_uracto` | 0.48 | 0.69 | 0.40 | 0.55 | 74 | 114 | 72 | 112 |
+| `vibleaker_android_samp` | 28.37 | 13.65 | 26.89 | 11.90 | 1084 | 1795 | 1089 | 1812 |
+| `xbot_android_samp` | 68.76 | 200.55 | 68.31 | 204.65 | 2789 | 6657 | 3133 | 6255 |
+| **all 38** | **471** | **650** | **258** | **389** | **3373** | **6657** | **3433** | **6255** |
+
+### Index and query time, per app
+
+| app | index none | index #127 | index #128 | index both | query none | query #127 | query #128 | query both |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `backflash` | 0.27 | 0.44 | 0.27 | 0.45 | 0.58 | 0.58 | 0.29 | 0.30 |
+| `beita_com_beita_contact` | 0.50 | 0.81 | 0.52 | 0.84 | 0.87 | 1.27 | 0.46 | 0.51 |
+| `cajino_baidu` | 1.89 | 3.08 | 1.88 | 3.07 | 11.37 | 11.80 | 1.85 | 1.93 |
+| `chulia` | 0.04 | 0.06 | 0.04 | 0.06 | 0.09 | 0.10 | 0.06 | 0.06 |
+| `death_ring_materialflow` | 0.12 | 0.19 | 0.12 | 0.19 | 0.20 | 0.20 | 0.13 | 0.13 |
+| `dsencrypt_samp` | 0.01 | 0.02 | 0.01 | 0.02 | 0.11 | 0.11 | 0.04 | 0.04 |
+| `exprespam` | 0.01 | 0.02 | 0.01 | 0.02 | 0.08 | 0.08 | 0.05 | 0.05 |
+| `fakeappstore` | 0.30 | 0.50 | 0.29 | 0.51 | 0.39 | 0.40 | 0.23 | 0.23 |
+| `fakebank_android_samp` | 0.24 | 0.42 | 0.25 | 0.42 | 0.42 | 0.45 | 0.38 | 0.30 |
+| `fakedaum` | 0.17 | 0.29 | 0.17 | 0.28 | 0.40 | 0.48 | 0.17 | 0.21 |
+| `fakemart` | 0.28 | 0.43 | 0.28 | 0.43 | 0.23 | 0.23 | 0.18 | 0.19 |
+| `fakeplay` | 0.67 | 1.08 | 0.66 | 1.08 | 0.92 | 68.50 | 0.43 | 1.04 |
+| `faketaobao` | 0.22 | 0.39 | 0.23 | 0.38 | 0.19 | 0.20 | 0.15 | 0.15 |
+| `godwon_samp` | 0.01 | 0.02 | 0.01 | 0.02 | 0.04 | 0.04 | 0.04 | 0.04 |
+| `hummingbad_android_samp` | 3.96 | 5.93 | 3.96 | 5.92 | 5.77 | 6.63 | 2.58 | 2.64 |
+| `jollyserv` | 0.46 | 0.79 | 0.46 | 0.79 | 0.72 | 1.13 | 0.35 | 0.37 |
+| `overlay_android_samp` | 0.12 | 0.19 | 0.12 | 0.18 | 0.22 | 0.22 | 0.15 | 0.15 |
+| `overlaylocker2_android_samp` | 0.58 | 1.00 | 0.59 | 1.00 | 1.47 | 1.99 | 0.55 | 0.58 |
+| `phospy` | 0.17 | 0.27 | 0.17 | 0.27 | 3.27 | 4.29 | 0.30 | 0.30 |
+| `proxy_samp` | 0.03 | 0.04 | 0.03 | 0.04 | 6.79 | 7.62 | 0.19 | 0.19 |
+| `remote_control_smack` | 30.42 | 30.40 | 30.29 | 30.85 | 14.08 | 12.69 | 5.64 | 5.75 |
+| `repane` | 0.01 | 0.02 | 0.01 | 0.02 | 0.05 | 0.06 | 0.04 | 0.04 |
+| `roidsec` | 0.03 | 0.04 | 0.03 | 0.04 | 169.99 | 149.51 | 7.77 | 7.79 |
+| `samsapo` | 0.42 | 0.70 | 0.42 | 0.70 | 0.93 | 4.89 | 0.34 | 0.34 |
+| `save_me` | 1.54 | 2.46 | 1.54 | 2.46 | 1.57 | 2.56 | 1.08 | 1.13 |
+| `scipiex` | 0.45 | 0.72 | 0.45 | 0.72 | 0.49 | 0.49 | 0.36 | 0.36 |
+| `slocker_android_samp` | 0.31 | 0.53 | 0.31 | 0.53 | 0.29 | 0.29 | 0.23 | 0.23 |
+| `sms_google` | 0.04 | 0.07 | 0.04 | 0.06 | 3.36 | 2.50 | 0.14 | 0.14 |
+| `sms_send_locker_qqmagic` | 0.03 | 0.03 | 0.02 | 0.03 | 8.04 | 6.92 | 0.11 | 0.11 |
+| `smssend_packageInstaller` | 0.26 | 0.44 | 0.25 | 0.43 | 0.88 | 1.07 | 0.28 | 0.29 |
+| `smssilience_fake_vertu` | 0.01 | 0.02 | 0.01 | 0.02 | 0.16 | 0.15 | 0.04 | 0.04 |
+| `smsstealer_kysn_assassincreed_android_samp` | 0.42 | 0.72 | 0.41 | 0.72 | 0.39 | 0.40 | 0.28 | 0.29 |
+| `stels_flashplayer_android_update` | 0.22 | 0.38 | 0.23 | 0.38 | 1.87 | 1.83 | 0.31 | 0.32 |
+| `tetus` | 0.05 | 0.08 | 0.05 | 0.08 | 0.11 | 0.11 | 0.09 | 0.09 |
+| `the_interview_movieshow` | 0.01 | 0.02 | 0.01 | 0.02 | 0.04 | 0.04 | 0.03 | 0.03 |
+| `threatjapan_uracto` | 0.20 | 0.34 | 0.20 | 0.34 | 0.22 | 0.29 | 0.15 | 0.16 |
+| `vibleaker_android_samp` | 23.26 | 8.13 | 23.22 | 8.12 | 4.25 | 4.68 | 2.83 | 2.93 |
+| `xbot_android_samp` | 66.55 | 197.86 | 66.44 | 202.29 | 1.85 | 2.33 | 1.51 | 2.00 |
+| **all 38** | **134** | **259** | **134** | **264** | **243** | **297** | **30** | **31** |
 
 ## How this was measured
 
-Three binaries, each built with `nix build .#packages.aarch64-darwin.default`
+Four binaries, each built with `nix build .#packages.aarch64-darwin.default`
 from the same branch code, differing only in what they sit on top of:
 
 | point | base | branch content |
 | --- | --- | --- |
-| before | `2ba7e014` | this branch's suite and query-memory work |
+| neither | `2ba7e014` | this branch's suite and query-memory work |
 | `#127` only | `a5f4f557` | same |
-| after | `0183c42c` | same (this is the rebased branch) |
+| `#128` only | `2ba7e014` + `0183c42c` cherry-picked (applies clean) | same |
+| both | `0183c42c` | same (this is the rebased branch) |
 
 The branch's temporary index counters (`facts::counters`) are left out of all
-three. `origin/main` deletes the call-string lattice they count, so the rebase
-has to drop them anyway; dropping them from the baseline too keeps the three
-points differing only by the commits under test.
+four. `origin/main` deletes the call-string lattice they count, so the rebase
+has to drop them anyway; dropping them everywhere keeps the four points
+differing only by the commits under test.
 
 Each run is the ordinary suite - `xtask taintbench` over all 38 apps, APKs from
 the Nix store - with `ctadl` on `PATH` replaced by a shim that runs the real
@@ -218,11 +284,12 @@ binary under `/usr/bin/time -l` and records wall time and **peak memory
 footprint** per phase. Footprint rather than RSS: macOS compresses cold pages,
 so RSS understates a big run badly.
 
-Runs were sequential on an idle M1 Ultra (20 cores, 128 GB), three repetitions
-for the before and after points and two for `#127`-only, alternating the order
-so machine drift could not favour one side. Repeats agree closely - suite
-wall-clock came in at 493/466/476 s before and 395/389/394 s after - and every
-repetition of a configuration produced identical per-finding verdicts.
+Runs were sequential on an idle M1 Ultra (20 cores, 128 GB): three repetitions
+of the neither and both points, two of each single-commit point, alternating the
+order so machine drift could not favour one side. Repeats agree closely - suite
+wall-clock came in at 493/466/476 s for neither, 395/389/394 s for both, and
+264/263 s for `#128` alone - and every repetition of a configuration produced
+identical per-finding verdicts.
 
 One check on the baseline: the branch's own pre-rebase state (on `99bbed37`,
 five commits older than `2ba7e014`) measures the same to within a second on
@@ -236,7 +303,7 @@ Raw data, kept outside the repo:
 /Volumes/Shampoo/ct-taintbench-rebase-20260917/
   logs/suite-<tag>.log        full suite output per run
   logs/measure-<tag>.tsv      tag, app, phase, seconds, peak bytes, max rss, exit
-  report.py, compare.py       the scripts that build the tables above
+  report.py, report4.py       the scripts that build the tables above
 ```
 
 The per-phase measurements are also committed here as
@@ -252,7 +319,10 @@ The suite is red and it should stay red until one of these happens:
    false positives, and `expected.json` is rebaselined deliberately, with this
    document as the record of what changed.
 
-The memory growth from `#127` is a separate question and does not depend on that
-choice. `xbot_android_samp` at 6.3 GB is the app to look at first: it is three
-times slower to index and finds nothing either way, so whatever the new call
-graph is enumerating there is pure cost.
+`#127` is a separate question, and the four-point table makes it a sharper one
+than it first looked: on this suite `#127` costs 125 s of index time and doubles
+peak memory while adding one flow. `xbot_android_samp` is where to look first -
+three times slower to index at 6.3 GB, and it finds none of its three flows
+either way, so whatever the new call graph enumerates there is pure cost. That
+this suite does not show `#127` paying for itself is not an argument that it
+doesn't elsewhere; it is an argument for knowing where it does.

@@ -38,10 +38,20 @@ about twice as long as before and peak memory is up on 26 of the 38 apps, while
 querying is roughly eight times faster, so the suite's total wall-clock actually
 falls from 471 s to 389 s.
 
-All of that comes from the two new engine commits, and they split cleanly:
+All of that comes from the two new engine commits, and they split cleanly.
+Measured four ways - neither commit, each alone, and both - in
+[`taintbench-callgraph-rework.md`](taintbench-callgraph-rework.md):
+
+| | index (all 38) | query (all 38) | worst app's peak | flows found |
+| --- | ---: | ---: | ---: | ---: |
+| `2ba7e014`, neither | 134 s | 243 s | 3.4 GB | 92/191 |
+| `#127` only | 259 s | 297 s | 6.5 GB | 93/191 |
+| `#128` only | 134 s | 30 s | 3.4 GB | 76/191 |
+| both (this base) | 264 s | 31 s | 6.1 GB | 77/191 |
+
 `#127` costs the time and memory and finds the same things; `#128` loses the
-flows and buys the query time. Measured three ways, per app, in
-[`taintbench-callgraph-rework.md`](taintbench-callgraph-rework.md).
+flows and buys the query time. Each holds with or without the other, so the
+attribution does not rest on the order they landed in.
 
 The committed `expected.json` baselines were **not** updated. Rebaselining would
 make the check green and lose the finding; they stay as they are so the sixteen

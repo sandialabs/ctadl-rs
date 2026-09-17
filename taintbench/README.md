@@ -11,7 +11,8 @@ SDK is needed — only `ctadl`.
 
 As of the rebase onto `origin/main` (`0183c42c`), **16 of the 38 apps fail**:
 they no longer find flows their `expected.json` says they should. The cause is
-`#128` ("Andersen style aliasing in query"), and the whole picture — what was
+`#128` ("Andersen style aliasing in query") - measured with and without `#127`,
+so that is the commit itself and not an interaction - and the whole picture — what was
 lost, what was gained, and what it did to time and memory — is in
 [`../taintbench-callgraph-rework.md`](../taintbench-callgraph-rework.md).
 
