@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ctadl_ascent::cli;
 use ctadl_ascent::codegen::{CallPolicy, CallResolutionStrategy, DispatchOrder};
-use ctadl_ascent::index_engine::{HybridContext, Parallelism};
+use ctadl_ascent::index_engine::{ContextJoin, HybridContext, Parallelism};
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
@@ -395,6 +395,14 @@ pub struct IndexArgs {
     #[arg(long, default_value = "decision", env = "CTADL_HYBRID_CONTEXT")]
     pub hybrid_context: HybridContext,
 
+    /// How the index engine pairs a function's conditional summaries with the calls that
+    /// established a decision at it (rule 3.2 of hybrid inlining). `sets` (the default) and
+    /// `unfold` join on the decision exactly; `scan` joins on the function and filters, which
+    /// is quadratic on functions that many decisions reach. Same result under all three.
+    /// `CTADL_CONTEXT_JOIN` in the environment sets the default.
+    #[arg(long, default_value = "sets", env = "CTADL_CONTEXT_JOIN")]
+    pub context_join: ContextJoin,
+
     /// Dump the index graph to a dot file
     #[arg(long)]
     pub dump_index_graph: Option<PathBuf>,
@@ -664,6 +672,7 @@ fn main() -> anyhow::Result<()> {
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 hybrid_context: HybridContext::default(),
+                context_join: ContextJoin::default(),
                 dump_index_graph: args.dump_index_graph.clone(),
                 jobs: None,
             })
@@ -815,6 +824,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 hybrid_context: HybridContext::default(),
+                context_join: ContextJoin::default(),
                 dump_index_graph: None,
                 jobs: None,
             };
@@ -939,6 +949,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
             prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
             alias_rule: args.alias_rule.unwrap_or(true),
             hybrid_context: args.hybrid_context,
+            context_join: args.context_join,
             dump_index_graph: args.dump_index_graph.as_deref(),
             parallelism: Parallelism::from_jobs(args.jobs.unwrap_or(1)),
         },

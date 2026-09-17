@@ -299,6 +299,8 @@ pub struct IndexConfig {
     pub alias_rule: bool,
     /// How a critical call site's resolved summary is instantiated. See [`HybridContext`].
     pub hybrid_context: HybridContext,
+    /// How rule 3.2 finds the callers a conditional summary applies at. See [`ContextJoin`].
+    pub context_join: ContextJoin,
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
@@ -309,8 +311,55 @@ impl Default for IndexConfig {
         IndexConfig {
             alias_rule: true,
             hybrid_context: HybridContext::default(),
+            context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
         }
+    }
+}
+
+/// How rule 3.2 pairs a function's conditional summaries (`context_summary`, one row per
+/// summary row, keyed by a [`DecisionSet`]) with the calls that established a decision at it
+/// (`establishes_direct` / `establishes_via`, one row per call site and decision). All three
+/// compute the same fixpoint; they differ in how much of the pairing is wasted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum ContextJoin {
+    /// Join both sides on the function alone and test `ds.contains(d)` on every pair. The
+    /// work is `|summaries(f)| x |establishing calls(f)|` per function, most of which the
+    /// membership test throws away (`docs/bug-context-assign-blowup.md`).
+    Scan,
+    /// Factor the pairing through the distinct decision sets the summaries carry: unfold each
+    /// set's members once (`set_member`), join those with the establishing calls on
+    /// `(f, d)`, and join the result back to the summary rows on `(f, set)`. Every join is an
+    /// exact probe, and the unfolding is per distinct set, not per summary row.
+    #[default]
+    Sets,
+    /// Unfold every summary row per decision in its set (`context_summary_d`) and join the
+    /// establishing calls on `(f, d)`. Exact probes too, but the unfolded relation has one row
+    /// per (summary row, decision): more memory than `Sets` wherever rows share a set.
+    Unfold,
+}
+
+impl std::str::FromStr for ContextJoin {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "scan" => Ok(ContextJoin::Scan),
+            "sets" => Ok(ContextJoin::Sets),
+            "unfold" => Ok(ContextJoin::Unfold),
+            other => Err(format!(
+                "unknown context join '{other}'; expected 'scan', 'sets' or 'unfold'"
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for ContextJoin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ContextJoin::Scan => "scan",
+            ContextJoin::Sets => "sets",
+            ContextJoin::Unfold => "unfold",
+        })
     }
 }
 
@@ -342,6 +391,19 @@ pub enum HybridContext {
     /// function that thousands of decisions reach through a feedback loop that is the
     /// difference between minutes and the context-free closure's own cost.
     Collapse,
+    /// As `Decision`, with the set widened to ⊤ the moment an exact union has more than `k`
+    /// members. `Bounded(1)` is `Collapse` on the same lattice (`⊥ < {d} < ⊤`), and every
+    /// `k` bounds the number of times a row can change to `k + 1`. Coarser than `Decision`
+    /// exactly where more than `k` decisions share a row and another decision does not.
+    Bounded(usize),
+    /// As `Bounded(k)`, but a row whose set widens to ⊤ leaves the contextual closure: a ⊤
+    /// edge becomes a plain `assign_like` edge and a ⊤ local a plain `locals` row, so the flow
+    /// is shared by every caller through the ordinary `summary` (as under `None`), and nothing
+    /// contextual is derived from it. Coarser than `Bounded(k)` downstream of the widened row
+    /// (`Bounded` still conditions the callers' inherited flows on their own decisions), but
+    /// no ⊤ summary is ever applied at every establishing caller, which is what makes
+    /// `Bounded` feed back on itself.
+    Spill(usize),
     /// The decided callee's summary is instantiated at the site as plain edges, exactly as a
     /// directly resolved call's would be. The resolvent machinery still decides *which* callees
     /// a site can have -- a target that never flows to the site is never instantiated -- but the
@@ -361,9 +423,17 @@ impl std::str::FromStr for HybridContext {
             "decision" => Ok(HybridContext::Decision),
             "collapse" => Ok(HybridContext::Collapse),
             "none" => Ok(HybridContext::None),
-            other => Err(format!(
-                "unknown hybrid context '{other}'; expected 'decision', 'collapse' or 'none'"
-            )),
+            other => match (
+                other.strip_prefix("bounded:").map(str::parse::<usize>),
+                other.strip_prefix("spill:").map(str::parse::<usize>),
+            ) {
+                (Some(Ok(k)), _) if k > 0 => Ok(HybridContext::Bounded(k)),
+                (_, Some(Ok(k))) if k > 0 => Ok(HybridContext::Spill(k)),
+                _ => Err(format!(
+                    "unknown hybrid context '{other}'; expected 'decision', 'collapse', \
+                     'bounded:K', 'spill:K' (K >= 1) or 'none'"
+                )),
+            },
         }
     }
 }
@@ -1542,20 +1612,111 @@ ascent_source! {
     // on that formal, and the walk continues at its callers. Every caller on every route gets
     // it, whichever was found first, so the result does not depend on iteration order.
     //
-    // Both join `context_summary` with `establishes_*` on the callee alone and test the
-    // decision by membership: the summary row's set is not unfolded (the join would then scan
-    // the unfolded relation whenever a caller-side fact is new), and both semi-naive variants
-    // are exact probes by function.
+    // How the summaries are paired with the establishing calls is [`ContextJoin`]; the three
+    // variants below compute the same rows.
+    //
+    // `Scan`: join on the callee alone and test the decision by membership. Both semi-naive
+    // variants are exact probes by function, but the pairing is `|summaries(f)| x
+    // |establishing calls(f)|` and the test throws most of it away.
     assign_like(caller, v1, p1_sum.clone(), v2, p2_sum.clone()) <--
+        config(c),
+        if c.context_join == ContextJoin::Scan,
         context_summary(f, n1, p1_sum, n2, p2_sum, ds),
         establishes_direct(f, d, caller, insn),
         if ds.contains(*d),
         let v1 = call_arg!(*insn, *n1),
         let v2 = call_arg!(*insn, *n2);
     context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), up.singleton(ds.is_collapsing())) <--
+        config(c),
+        if c.context_join == ContextJoin::Scan,
         context_summary(f, n1, p1_sum, n2, p2_sum, ds),
         establishes_via(f, d, caller, insn, up),
         if ds.contains(*d),
+        let v1 = call_arg!(*insn, *n1),
+        let v2 = call_arg!(*insn, *n2);
+
+    // `Sets`: the distinct sets a function's conditional summaries hold under (sets are
+    // interned and shared across rows, so there are far fewer sets than rows), each unfolded
+    // once into its members. The establishing calls are then joined on `(f, d)`, exactly, and
+    // the result is joined back to the summary rows on `(f, set)`, exactly. A set that grows
+    // (a lattice update) re-emits its summary row into the delta, which re-derives the set's
+    // row here; the stale `(f, old set)` rows stay and are harmless (they name a subset).
+    // ⊤ has no members to unfold: a function whose summaries hold under ⊤ takes every
+    // establishing call, through `context_summary_top`, keyed by the function alone.
+    relation context_summary_set(FunctionId, DecisionSet);
+    context_summary_set(f, *ds) <--
+        config(c),
+        if c.context_join == ContextJoin::Sets,
+        context_summary(f, _, _, _, _, ds);
+    relation set_member(FunctionId, DecisionId, DecisionSet);
+    set_member(f, d, *ds) <--
+        context_summary_set(f, ds),
+        if !ds.is_top(),
+        for d in ds.ids();
+    relation context_summary_top(FunctionId, DecisionSet);
+    context_summary_top(f, *ds) <--
+        context_summary_set(f, ds),
+        if ds.is_top();
+    relation set_establishes_direct(FunctionId, DecisionSet, FunctionId, InsnId);
+    set_establishes_direct(f, *ds, caller, insn) <--
+        set_member(f, d, ds),
+        establishes_direct(f, d, caller, insn);
+    set_establishes_direct(f, *ds, caller, insn) <--
+        context_summary_top(f, ds),
+        establishes_direct(f, _, caller, insn);
+    relation set_establishes_via(FunctionId, DecisionSet, FunctionId, InsnId, DecisionId);
+    set_establishes_via(f, *ds, caller, insn, up) <--
+        set_member(f, d, ds),
+        establishes_via(f, d, caller, insn, up);
+    set_establishes_via(f, *ds, caller, insn, up) <--
+        context_summary_top(f, ds),
+        establishes_via(f, _, caller, insn, up);
+    assign_like(caller, v1, p1_sum.clone(), v2, p2_sum.clone()) <--
+        config(c),
+        if c.context_join == ContextJoin::Sets,
+        context_summary(f, n1, p1_sum, n2, p2_sum, ds),
+        set_establishes_direct(f, ds, caller, insn),
+        let v1 = call_arg!(*insn, *n1),
+        let v2 = call_arg!(*insn, *n2);
+    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), up.singleton(ds.is_collapsing())) <--
+        config(c),
+        if c.context_join == ContextJoin::Sets,
+        context_summary(f, n1, p1_sum, n2, p2_sum, ds),
+        set_establishes_via(f, ds, caller, insn, up),
+        let v1 = call_arg!(*insn, *n1),
+        let v2 = call_arg!(*insn, *n2);
+
+    // `Unfold`: one row per (summary row, decision in its set), joined with the establishing
+    // calls on `(f, d)`. Monotone (a set only grows), so a plain relation. ⊤ unfolds to every
+    // decision at the function, through `resolvent`, gated by the small `top_summary_func`
+    // so a new resolvent never scans the summaries.
+    relation context_summary_d(FunctionId, DecisionId, FormalIndex, Path, FormalIndex, Path);
+    context_summary_d(f, d, n1, p1, n2, p2) <--
+        config(c),
+        if c.context_join == ContextJoin::Unfold,
+        context_summary(f, n1, p1, n2, p2, ds),
+        if !ds.is_top(),
+        for d in ds.ids();
+    relation top_summary_func(FunctionId);
+    top_summary_func(f) <--
+        config(c),
+        if c.context_join == ContextJoin::Unfold,
+        context_summary(f, _, _, _, _, ds),
+        if ds.is_top();
+    context_summary_d(f, d, n1, p1, n2, p2) <--
+        top_summary_func(f),
+        resolvent(f, _, _, _, d),
+        context_summary(f, n1, p1, n2, p2, ds),
+        if ds.is_top();
+    assign_like(caller, v1, p1_sum.clone(), v2, p2_sum.clone()) <--
+        context_summary_d(f, d, n1, p1_sum, n2, p2_sum),
+        establishes_direct(f, d, caller, insn),
+        let v1 = call_arg!(*insn, *n1),
+        let v2 = call_arg!(*insn, *n2);
+    context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), up.singleton(c.hybrid_context == HybridContext::Collapse)) <--
+        config(c),
+        context_summary_d(f, d, n1, p1_sum, n2, p2_sum),
+        establishes_via(f, d, caller, insn, up),
         let v1 = call_arg!(*insn, *n1),
         let v2 = call_arg!(*insn, *n2);
 
@@ -1567,16 +1728,19 @@ ascent_source! {
     // set rides along unchanged; the lattice unions it into the row it lands on.
     context_locals(f, v1, p13, a, p4, *ds) <--
         ext_dst(f, v1, p13, v2, p23),
-        context_locals(f, v2, p23, a, p4, ds);
+        context_locals(f, v2, p23, a, p4, ds),
+        if !decision::spills(*ds);
     context_locals(f, v1, p1, a, p43, *ds) <--
         edge_split(f, v2, key, rest, dst),
         context_locals(f, v2, key, a, p4, ds),
+        if !decision::spills(*ds),
         let (v1, p1) = dst,
         path_set(ps),
         if let Some(p43) = ps.concat(p4, None, rest);
     context_locals(f, v1, p1, a, p43, *ds) <--
         ext_fml(f, v1, p1, v2, p2, adj, rest),
         context_locals(f, v2, p2, a, p4, ds),
+        if !decision::spills(*ds),
         path_set(ps),
         if let Some(p43) = ps.concat(p4, Some(*adj), rest);
 
@@ -1587,21 +1751,25 @@ ascent_source! {
     lattice ctx_edge_wild(FunctionId, FlowVariable, Path, i64, FlowVariable, Path, DecisionSet);
     ctx_edge_wild(f, v2, key, m, v1, p1, *ds) <--
         context_assign(f, v1, p1, v2, p2, ds),
+        if !decision::spills(*ds),
         if let Some((key, m)) = p2.split_trailing_offset();
     lattice ctx_edge_split(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, DecisionSet);
     ctx_edge_split(f, v2, key, rest, v1, p1, *ds) <--
         context_assign(f, v1, p1, v2, p2, ds),
+        if !decision::spills(*ds),
         path_set(ps),
         for (key, rest) in &ps.splits(p2).exact;
     lattice ctx_edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, DecisionSet);
     ctx_edge_split_wild(f, v2, key, rest, v1, p1, *ds) <--
         context_assign(f, v1, p1, v2, p2, ds),
+        if !decision::spills(*ds),
         path_set(ps),
         for (key, rest) in &ps.splits(p2).wild;
     lattice ctx_ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path, DecisionSet);
     ctx_ext_dst(f, v1, p13, v2, p23, *ds) <--
         locals_key(f, v2, key, rest, p23),
         context_assign(f, v1, p1, v2, key, ds),
+        if !decision::spills(*ds),
         path_set(ps),
         if let Some(p13) = ps.concat(p1, None, rest);
     ctx_ext_dst(f, v1, p13, v2, p23, *ds) <--
@@ -1635,10 +1803,21 @@ ascent_source! {
     // under the decisions in its set; rule 3.2 applies it at the callers.
     context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), *ds) <--
         context_locals(func_id, dst_var, p1, n2, p2, ds),
+        if !decision::spills(*ds),
         formal_param(func_id, dst_var, formal_ty),
         if let Some(n1) = dst_var.as_formal(),
         if isout(&n1, *formal_ty, p1),
         if n1 != *n2 || p1 != p2;
+
+    // 3.5 (`HybridContext::Spill`): a row widened to ⊤ leaves the contextual closure and joins
+    // the context-free one, which shares it with every caller through `summary`. The rules
+    // above stop at a spilled row, so nothing contextual is derived from it.
+    assign_like(f, v1, p1, v2, p2) <--
+        context_assign(f, v1, p1, v2, p2, ds),
+        if decision::spills(*ds);
+    locals(f, v, p, a, p4) <--
+        context_locals(f, v, p, a, p4, ds),
+        if decision::spills(*ds);
 
     // Local virtual / indirect call and resolvent, bypassing the resolvent / summary machinery
     assign_like(func_id, v1.into(), p1, v2.into(), p2) <--
@@ -1736,6 +1915,13 @@ pub fn taint_index_with_config(
     id_map: Option<&IdMap>,
 ) -> IndexResult {
     let parallelism = config.parallelism;
+    // The widening bound is process-global (sets are interned process-wide); one kind of set
+    // per run.
+    decision::set_widen_bound(match config.hybrid_context {
+        HybridContext::Bounded(k) | HybridContext::Spill(k) => k,
+        _ => 0,
+    });
+    decision::set_spill(matches!(config.hybrid_context, HybridContext::Spill(_)));
     use hashbrown::hash_set::HashSet;
     let num_functions = facts
         .formal_param
@@ -1983,6 +2169,32 @@ pub fn taint_index_with_config(
             phys_footprint_mb()
         );
         log::debug!("index scc times: {}", prog.scc_times_summary());
+        // Every relation's tuple count, straight from ascent's own generated summary. This is
+        // the census the rule-time ranking is normalized against (time per tuple), so it has to
+        // cover ALL relations, not the hand-picked few the `propagation relations:` line below
+        // lists. Logged BEFORE the `assign_like` store is drained into the output Vec, so the
+        // counts describe the fixpoint's state at the moment it stopped -- which, under
+        // `CTADL_INDEX_TIMEOUT_SECS`, is the partial state we are trying to characterize.
+        //
+        // Three relations read 0 here and are reported separately on the next line: `assign_like`,
+        // `locals`, `edge_split`, `locals_key` and `ext_dst` live in BYODS stores, so their
+        // physical `SeedVec` relation holds no tuples.
+        log::debug!(
+            "[relsizes] index relation sizes:\n{}",
+            prog.relation_sizes_summary()
+        );
+        log::debug!(
+            "[relsizes] byods-backed: assign_like size: {}\nlocals size: {}\nedge_split size: {}\nlocals_key size: {}\next_dst size: {}",
+            prog.__assign_like_ind_common.len(),
+            prog.__locals_ind_common.len(),
+            prog.__edge_split_ind_common.len(),
+            prog.__locals_key_ind_common.len(),
+            prog.__ext_dst_ind_common.len()
+        );
+        log::debug!(
+            "[mem cp] after relation census (nothing drained yet): {:.1} MB",
+            phys_footprint_mb()
+        );
         log::debug!(
             "propagation relations: reach_vp={} locals_key={} locals_key_wild={} locals_wild={} \
              assign_wild={} edge_split={} edge_split_wild={} ext_dst={} ext_fml={}",
@@ -2250,6 +2462,61 @@ mod tests {
         );
 
         assert_eq!(canonical(serial), canonical(parallel));
+    }
+
+    /// The three context joins are three ways to pair the same two relations, so they must
+    /// agree on every relation, internal and returned. Same fixture and same checks as the
+    /// engine test above.
+    #[test_log::test]
+    fn context_joins_agree() {
+        let (program, _) = program_from_string(SRC);
+        let (facts, source_info) = index_program(program);
+        let id_map = Some(&source_info.sites);
+        let run = |context_join| {
+            taint_index_with_config(
+                facts.clone(),
+                IndexConfig {
+                    context_join,
+                    ..IndexConfig::default()
+                },
+                id_map,
+            )
+        };
+        let scan = run(ContextJoin::Scan);
+        for other in [ContextJoin::Sets, ContextJoin::Unfold] {
+            let r = run(other);
+            let (s, p) = (&scan.stats, &r.stats);
+            assert_eq!(s.final_locals, p.final_locals, "{other}: locals");
+            assert_eq!(s.hybrid_resolvent, p.hybrid_resolvent, "{other}: resolvent");
+            assert_eq!(
+                s.hybrid_context_assign, p.hybrid_context_assign,
+                "{other}: context_assign"
+            );
+            assert_eq!(
+                s.hybrid_context_locals, p.hybrid_context_locals,
+                "{other}: context_locals"
+            );
+            assert_eq!(
+                s.hybrid_context_summary, p.hybrid_context_summary,
+                "{other}: context_summary"
+            );
+            assert!(
+                s.hybrid_context_assign > 0,
+                "fixture derived no context_assign rows"
+            );
+            assert_eq!(
+                canonical(taint_index_with_config(
+                    facts.clone(),
+                    IndexConfig {
+                        context_join: ContextJoin::Scan,
+                        ..IndexConfig::default()
+                    },
+                    id_map
+                )),
+                canonical(r),
+                "{other}"
+            );
+        }
     }
 
     #[test]

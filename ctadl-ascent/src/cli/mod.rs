@@ -22,7 +22,7 @@ use crate::error::{Error, ErrorContext};
 use crate::facts;
 use crate::facts::FlowVariable;
 use crate::index_engine::{
-    HybridContext, IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo,
+    ContextJoin, HybridContext, IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo,
     taint_index_with_config,
 };
 use crate::languages::jni;
@@ -66,6 +66,8 @@ pub struct IndexOptions<'a> {
     pub alias_rule: bool,
     /// How a decided critical call site's summary is instantiated; see [`HybridContext`].
     pub hybrid_context: HybridContext,
+    /// How rule 3.2 pairs conditional summaries with establishing calls; see [`ContextJoin`].
+    pub context_join: ContextJoin,
     pub dump_index_graph: Option<&'a Path>,
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
@@ -82,6 +84,7 @@ impl Default for IndexOptions<'_> {
             prune_unreachable_cfg_nodes: true,
             alias_rule: true,
             hybrid_context: HybridContext::default(),
+            context_join: ContextJoin::default(),
             dump_index_graph: None,
             parallelism: Parallelism::Serial,
         }
@@ -107,6 +110,7 @@ pub fn index(
         prune_unreachable_cfg_nodes,
         alias_rule,
         hybrid_context,
+        context_join,
         dump_index_graph,
         parallelism,
     } = opts;
@@ -350,6 +354,7 @@ pub fn index(
     let config = crate::index_engine::IndexConfig {
         alias_rule,
         hybrid_context,
+        context_join,
         parallelism,
     };
     log::info!("indexing (computing the flow relation)");
