@@ -52,9 +52,9 @@ use streaming_iterator::StreamingIterator;
 
 use crate::error::Error;
 use crate::facts::{
-    CallArgId, CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex,
-    FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg,
-    PackedInsnSiteId, Path, isout,
+    CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex,
+    FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path,
+    isout,
 };
 use crate::index_engine::assign_like_trie::FromRows;
 pub use crate::index_engine::decision::{Decision, DecisionId, DecisionSet};
@@ -1552,24 +1552,34 @@ ascent_source! {
         establishes_direct(f, d, _, _),
         let dec = d.get();
 
-    // Tracks resolvent to the call arg: the caller's decision `up` reaches the call arg `arg_p`
-    // at path `p`.
-    relation call_arg_resolvent(PackedCallArg, Path, CallTargetObject, DecisionId);
-    call_arg_resolvent(arg_p, p, obj, up) <--
-        resolvent(f, n2, p2, obj, up),
-        locals(f, v, p, n2, p2),
-        if let Some(arg_p) = v.as_call_arg();
-
     // 2.2: Propagate Resolvent down the critical summaries. Finite by construction: `resolvent`
     // has one row per (function, formal, path, target), and nothing about the route is kept
     // beyond the one hop `establishes_via` records.
-    establishes_via(f, d, caller, arg.insn_id, up) <--
-        call_arg_resolvent(arg_p, p, resolvent_obj, up),
-        let arg = CallArgId::unpack_from_slice(&**arg_p).unwrap(),
-        call(caller, arg.insn_id, f),
-        let n = FormalIndex::new(arg.formal),
+    //
+    // Two exact two-way joins. `critical_arg` names, in the caller `g`, the call-arg vertex
+    // `arg` (of site `insn`, formal `n`) whose callee `f` has a critical summary at `n.p`: the
+    // only vertices a resolvent can be passed on through. `critical_reach` is those vertices'
+    // rows of `locals`, joined on `(g, arg, p)`, which is an index `locals` already has for the
+    // field rules; and only it meets `resolvent`. Joining `resolvent` with `locals` on the
+    // formal and testing `as_call_arg` and `critical_summary` afterwards paired every local
+    // reaching a formal with every resolvent at it and kept a few percent: 40-90% of all rule
+    // time on the runaway apps, a 51 M-row intermediate for 2.8 M `establishes_via` rows on
+    // skytube. Materializing the call-arg rows of `locals` instead was 59 M rows on launcher
+    // (41% of `locals`); keying the filter by the vertex needs nothing new
+    // (`docs/context-assign-fix-candidates.md`).
+    relation critical_arg(FunctionId, FlowVariable, Path, FunctionId, InsnId, FormalIndex);
+    critical_arg(g, arg, p, f, insn, n) <--
         critical_summary(f, n, p),
-        let d = DecisionId::of(Decision { formal: n, path: *p, target: resolvent_obj.clone() });
+        call(g, insn, f),
+        let arg = call_arg!(*insn, *n);
+    relation critical_reach(FunctionId, FormalIndex, Path, FunctionId, InsnId, FormalIndex, Path);
+    critical_reach(g, n2, p2, f, insn, n, p) <--
+        locals(g, arg, p, n2, p2),
+        critical_arg(g, arg, p, f, insn, n);
+    establishes_via(f, d, g, insn, up) <--
+        critical_reach(g, n2, p2, f, insn, n, p),
+        resolvent(g, n2, p2, obj, up),
+        let d = DecisionId::of(Decision { formal: *n, path: *p, target: obj.clone() });
     resolvent(f, dec.formal, dec.path, dec.target.clone(), d) <--
         establishes_via(f, d, _, _, _),
         let dec = d.get();
