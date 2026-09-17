@@ -1,5 +1,13 @@
 # The TaintBench false positives: what causes them
 
+> **Five of these eight are gone as of the rebase onto `origin/main`.** `#128`
+> ("Andersen style aliasing in query") stops reporting `proxy_samp` #16 and #20
+> and `save_me` #26-28; only `phospy` #3-#5 remain. That is mechanisms 1 and 2
+> below getting narrower — and it comes with 26 true flows lost, so it is not a
+> free improvement. See
+> [`taintbench-callgraph-rework.md`](taintbench-callgraph-rework.md). The
+> analysis below is unchanged and still describes the `8baae049` run.
+
 The TaintBench run at commit `8baae049` finds 92 of 191 ground-truth flows. It
 also reports the callee pair of 20 of the suite's 45 findings marked
 `isNegative` — flows that look real but are not. By TaintBench's own rule all 20

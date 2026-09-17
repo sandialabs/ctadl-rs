@@ -4,6 +4,14 @@ This compares the TaintBench numbers for the Rust/ascent CTADL in this repo
 against the baseline the Souffle CTADL (version 0.14.1) recorded in
 `../ctadl-souffle-taintbench/taintbench-summary.md`.
 
+> **These numbers are from before the call-graph rework.** `#127` and `#128`
+> landed on `main` in September and change what the suite finds: detection falls
+> from 92 flows to 77 and false positives from 8 to 3, so the ascent column below
+> no longer describes the tree after a rebase onto `main`. The comparison against
+> Souffle is kept as it was measured; what changed, per app, is in
+> [`taintbench-callgraph-rework.md`](taintbench-callgraph-rework.md). Nothing
+> below has been re-run.
+
 Run on 2026-08-14 at commit `8baae049`, via the pinned Nix check:
 
 ```sh

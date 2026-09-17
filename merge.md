@@ -4,6 +4,87 @@ Rebased `taintbench` onto `origin/main` and re-ran the TaintBench suite (see
 `taintbench/README.md`). Newest rebase first; the earlier sections are kept as
 the record of where each conflict came from.
 
+# Rebase onto `0183c42c` (#122 - #128)
+
+Previous base was `99bbed37` ("Move crate groups into subdirectories (#121)");
+seven main commits came in:
+
+```
+0183c42c Andersen style aliasing in query (#128)          <- new base
+a5f4f557 Fully hybrid call graph (#127)
+2ba7e014 Delete CLAUDE md (#126)
+51452046 Add `report` subcommand (#125)
+44e46bdf Regression fix (#124)
+cea3ea6b character encoding fix (#123)
+1175dbd2 flake update fix for nightly (#122)
+99bbed37 Move crate groups into subdirectories (#121)     <- old base
+```
+
+## Result
+
+Twenty of the twenty-two branch commits replayed. Two were dropped (below), one
+conflicted, and the runner (`xtask/src/taintbench.rs`) needed no changes.
+
+**The suite no longer passes.** This is the first rebase that changes what ctadl
+finds:
+
+```
+22 passed, 0 skipped, 16 failed of 38 app(s)
+```
+
+Detection drops from 92 of TaintBench's 191 ground-truth flows to 77 - 26 flows
+lost, 11 gained. False positives drop from 8 to 3. Indexing the suite takes
+about twice as long as before and peak memory is up on 26 of the 38 apps, while
+querying is roughly eight times faster, so the suite's total wall-clock actually
+falls from 471 s to 389 s.
+
+All of that comes from the two new engine commits, and they split cleanly:
+`#127` costs the time and memory and finds the same things; `#128` loses the
+flows and buys the query time. Measured three ways, per app, in
+[`taintbench-callgraph-rework.md`](taintbench-callgraph-rework.md).
+
+The committed `expected.json` baselines were **not** updated. Rebaselining would
+make the check green and lose the finding; they stay as they are so the sixteen
+failures keep being reported until someone decides the new behaviour is what we
+want.
+
+## Commits dropped
+
+`8ee23ca5` "Fix index_engine comments" and `68419a08` "More cleanup in
+index_engine rules" both add or edit `facts::counters`, the temporary
+instrumentation for the hybrid-inlining investigation (see
+`hybrid-inlining-plateau.md`). `#127` deletes the call-string lattice those
+counters count - `CallString` and `SmallestCallString` no longer exist anywhere
+in `ctadl-ascent` - and rewrites the `locals` / `context_locals` rules they
+counted into keyed joins. There is nothing left for the counters to attach to,
+so both commits resolve to main's side and drop out.
+
+`#127` also brings its own instrumentation in the same place, logging the sizes
+of the new propagation relations (`reach_vp`, `locals_key`, `edge_split`,
+`ext_dst`, and friends) next to the existing scc-time summary.
+
+## Conflict resolved
+
+### `768c44bc` "Taintbench" - `xtask/src/main.rs`
+
+`#125` added a `report-eval` subcommand to the same three places this commit
+adds `taintbench`: the dispatch `match`, the argument parser, and the help text.
+Both were kept, in that order. The module comment at the top of the file said
+"Two tasks" and now lists three.
+
+## Verification
+
+- `cargo check --workspace --all-targets` - clean
+- The rebased branch's own code changes are intact: the `Arc<QueryEndpoint>`
+  sharing, the post-hoc `taint_edge` projection, and the borrowed taint graph in
+  `TaintAnalysisResults` all merged into `#128`'s rewritten `search.rs` without
+  conflict.
+- Suite run: 22 passed, 16 failed, recorded in
+  [`taintbench-run-7e804754.log`](taintbench-run-7e804754.log).
+- Before rebasing, the branch was run at its old head `c9280964` and reproduced
+  `taintbench-run-8baae049.log` verdict-for-verdict, so the changes above are
+  the new base's and not drift in the suite.
+
 # Rebase onto `99bbed37` (#121)
 
 Previous base was `5fcb2c89` ("Extract language frontends into per-language

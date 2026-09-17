@@ -7,6 +7,18 @@ reproduce. It is **separate from the nightly `regression` suite** and much
 lighter: ctadl imports the prebuilt APK directly, so no javac/dx/Ghidra/Android
 SDK is needed — only `ctadl`.
 
+## The suite is currently red
+
+As of the rebase onto `origin/main` (`0183c42c`), **16 of the 38 apps fail**:
+they no longer find flows their `expected.json` says they should. The cause is
+`#128` ("Andersen style aliasing in query"), and the whole picture — what was
+lost, what was gained, and what it did to time and memory — is in
+[`../taintbench-callgraph-rework.md`](../taintbench-callgraph-rework.md).
+
+The baselines have deliberately **not** been updated. If you are here because
+the check is failing, that is the finding, not a stale baseline: please read
+that document before rebaselining anything.
+
 ## Running
 
 ```sh
