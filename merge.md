@@ -53,6 +53,13 @@ Measured four ways - neither commit, each alone, and both - in
 flows and buys the query time. Each holds with or without the other, so the
 attribution does not rest on the order they landed in.
 
+`origin/blowup2` (`28f949ea`, two commits on top of this base) removes most of
+`#127`'s index cost: suite index time 264 s -> 147 s, within 9% of the
+pre-`#127` baseline, and the worst app's peak memory 6.1 GB -> 4.6 GB, with
+per-finding verdicts identical to `main`. It does not touch the recall loss -
+those are index-side fixes - so rebasing onto it instead would leave the same
+sixteen apps failing. Worth folding in when it lands on `main`.
+
 The committed `expected.json` baselines were **not** updated. Rebaselining would
 make the check green and lose the finding; they stay as they are so the sixteen
 failures keep being reported until someone decides the new behaviour is what we

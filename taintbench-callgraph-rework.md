@@ -27,6 +27,11 @@ Short version:
 - **`#128` on its own is the cheapest of the four**, by a wide margin: 258 s for
   the suite at 3.4 GB peak, against 389 s and 6.3 GB for `main`. It finds 76
   flows where `main` finds 77.
+- **`origin/blowup2` (`28f949ea`) removes most of `#127`'s cost.** Two commits on
+  top of `main` bring suite index time back from 264 s to 147 s - within 9% of
+  the pre-`#127` baseline - and the worst app's peak memory from 6.3 GB to
+  4.6 GB, finding exactly what `main` finds. It is the fifth point measured
+  here.
 
 The two effects barely interact. `#127` adds about 125 s of index time and
 doubles peak memory whether or not `#128` is present; `#128` removes about 210 s
@@ -149,6 +154,7 @@ The four points, each the median of its runs:
 | `#127` only | 259 s | 297 s | 6.5 GB | 93/191 | 8 |
 | `#128` only | 134 s | 30 s | 3.4 GB | 76/191 | 3 |
 | both (`origin/main`) | 264 s | 31 s | 6.1 GB | 77/191 | 3 |
+| both + `28f949ea` (`origin/blowup2`) | 147 s | 31 s | 4.6 GB | 77/191 | 3 |
 
 Read down the columns and the two commits separate almost perfectly:
 
@@ -173,97 +179,211 @@ The uncomfortable row is the third one. `#128` by itself runs the suite in 258 s
 at 3.4 GB and finds 76 flows; `main` runs it in 389 s at 6.3 GB and finds 77.
 Whatever `#127` is for, this suite does not show it paying for itself.
 
-### Total time and peak memory, per app
+## How `#127`'s cost is shaped
 
-| app | time none | time #127 | time #128 | time both | mem none | mem #127 | mem #128 | mem both |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `backflash` | 0.92 | 1.10 | 0.65 | 0.85 | 89 | 127 | 90 | 128 |
-| `beita_com_beita_contact` | 1.50 | 2.21 | 1.10 | 1.48 | 164 | 348 | 137 | 223 |
-| `cajino_baidu` | 13.66 | 15.29 | 4.13 | 5.41 | 612 | 701 | 453 | 688 |
-| `chulia` | 0.14 | 0.16 | 0.11 | 0.13 | 16 | 20 | 14 | 20 |
-| `death_ring_materialflow` | 0.36 | 0.43 | 0.29 | 0.36 | 46 | 65 | 46 | 65 |
-| `dsencrypt_samp` | 0.13 | 0.14 | 0.06 | 0.07 | 10 | 10 | 9 | 8 |
-| `exprespam` | 0.09 | 0.10 | 0.06 | 0.07 | 11 | 11 | 9 | 9 |
-| `fakeappstore` | 0.77 | 0.97 | 0.60 | 0.82 | 80 | 127 | 74 | 119 |
-| `fakebank_android_samp` | 0.74 | 0.94 | 0.70 | 0.79 | 79 | 131 | 80 | 127 |
-| `fakedaum` | 0.61 | 0.81 | 0.38 | 0.54 | 77 | 88 | 57 | 89 |
-| `fakemart` | 0.59 | 0.74 | 0.54 | 0.70 | 87 | 132 | 89 | 132 |
-| `fakeplay` | 1.75 | 69.74 | 1.25 | 2.29 | 215 | 753 | 183 | 267 |
-| `faketaobao` | 0.47 | 0.64 | 0.44 | 0.59 | 78 | 121 | 77 | 117 |
-| `godwon_samp` | 0.05 | 0.06 | 0.05 | 0.06 | 8 | 8 | 8 | 8 |
-| `hummingbad_android_samp` | 10.50 | 13.33 | 7.29 | 9.33 | 1170 | 1449 | 892 | 1444 |
-| `jollyserv` | 1.30 | 2.04 | 0.94 | 1.28 | 151 | 233 | 131 | 206 |
-| `overlay_android_samp` | 0.38 | 0.45 | 0.31 | 0.37 | 44 | 61 | 44 | 61 |
-| `overlaylocker2_android_samp` | 2.20 | 3.14 | 1.29 | 1.73 | 161 | 252 | 161 | 250 |
-| `phospy` | 3.49 | 4.61 | 0.53 | 0.62 | 86 | 107 | 61 | 102 |
-| `proxy_samp` | 6.83 | 7.67 | 0.23 | 0.24 | 91 | 98 | 15 | 15 |
-| `remote_control_smack` | 133.82 | 132.55 | 126.00 | 125.96 | 3373 | 3830 | 3433 | 3824 |
-| `repane` | 0.07 | 0.08 | 0.07 | 0.07 | 9 | 9 | 9 | 9 |
-| `roidsec` | 170.03 | 149.56 | 7.81 | 7.84 | 1343 | 1290 | 89 | 89 |
-| `samsapo` | 1.49 | 5.73 | 0.90 | 1.18 | 125 | 1313 | 127 | 197 |
-| `save_me` | 3.45 | 5.36 | 2.96 | 3.93 | 352 | 513 | 359 | 508 |
-| `scipiex` | 1.06 | 1.34 | 0.93 | 1.20 | 124 | 201 | 128 | 201 |
-| `slocker_android_samp` | 0.69 | 0.91 | 0.63 | 0.85 | 90 | 139 | 89 | 142 |
-| `sms_google` | 3.42 | 2.58 | 0.20 | 0.22 | 61 | 54 | 17 | 20 |
-| `sms_send_locker_qqmagic` | 8.08 | 6.96 | 0.14 | 0.15 | 93 | 81 | 12 | 13 |
-| `smssend_packageInstaller` | 1.20 | 1.58 | 0.60 | 0.79 | 136 | 206 | 82 | 123 |
-| `smssilience_fake_vertu` | 0.18 | 0.18 | 0.06 | 0.07 | 12 | 12 | 8 | 8 |
-| `smsstealer_kysn_assassincreed_android_samp` | 0.92 | 1.24 | 0.80 | 1.12 | 126 | 193 | 126 | 198 |
-| `stels_flashplayer_android_update` | 2.15 | 2.28 | 0.60 | 0.76 | 125 | 125 | 78 | 117 |
-| `tetus` | 0.17 | 0.20 | 0.15 | 0.18 | 22 | 25 | 17 | 25 |
-| `the_interview_movieshow` | 0.06 | 0.08 | 0.05 | 0.06 | 8 | 9 | 8 | 8 |
-| `threatjapan_uracto` | 0.48 | 0.69 | 0.40 | 0.55 | 74 | 114 | 72 | 112 |
-| `vibleaker_android_samp` | 28.37 | 13.65 | 26.89 | 11.90 | 1084 | 1795 | 1089 | 1812 |
-| `xbot_android_samp` | 68.76 | 200.55 | 68.31 | 204.65 | 2789 | 6657 | 3133 | 6255 |
-| **all 38** | **471** | **650** | **258** | **389** | **3373** | **6657** | **3433** | **6255** |
+The suite total hides two different things, and they want separating.
 
-### Index and query time, per app
+**For almost every app it is a flat multiplier, not worse scaling.** Across the
+24 apps whose index takes more than 0.05 s and which behave uniformly, `#127`
+multiplies index time by a median of **1.65x**, in a tight band from 1.00x to
+1.77x. That multiplier has no relationship to app size: the correlation between
+an app's slowdown and the log of its APK size is **r = -0.03**. A cost that grows
+with the input would show up here as a slowdown that climbs with size, and it
+does not.
 
-| app | index none | index #127 | index #128 | index both | query none | query #127 | query #128 | query both |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `backflash` | 0.27 | 0.44 | 0.27 | 0.45 | 0.58 | 0.58 | 0.29 | 0.30 |
-| `beita_com_beita_contact` | 0.50 | 0.81 | 0.52 | 0.84 | 0.87 | 1.27 | 0.46 | 0.51 |
-| `cajino_baidu` | 1.89 | 3.08 | 1.88 | 3.07 | 11.37 | 11.80 | 1.85 | 1.93 |
-| `chulia` | 0.04 | 0.06 | 0.04 | 0.06 | 0.09 | 0.10 | 0.06 | 0.06 |
-| `death_ring_materialflow` | 0.12 | 0.19 | 0.12 | 0.19 | 0.20 | 0.20 | 0.13 | 0.13 |
-| `dsencrypt_samp` | 0.01 | 0.02 | 0.01 | 0.02 | 0.11 | 0.11 | 0.04 | 0.04 |
-| `exprespam` | 0.01 | 0.02 | 0.01 | 0.02 | 0.08 | 0.08 | 0.05 | 0.05 |
-| `fakeappstore` | 0.30 | 0.50 | 0.29 | 0.51 | 0.39 | 0.40 | 0.23 | 0.23 |
-| `fakebank_android_samp` | 0.24 | 0.42 | 0.25 | 0.42 | 0.42 | 0.45 | 0.38 | 0.30 |
-| `fakedaum` | 0.17 | 0.29 | 0.17 | 0.28 | 0.40 | 0.48 | 0.17 | 0.21 |
-| `fakemart` | 0.28 | 0.43 | 0.28 | 0.43 | 0.23 | 0.23 | 0.18 | 0.19 |
-| `fakeplay` | 0.67 | 1.08 | 0.66 | 1.08 | 0.92 | 68.50 | 0.43 | 1.04 |
-| `faketaobao` | 0.22 | 0.39 | 0.23 | 0.38 | 0.19 | 0.20 | 0.15 | 0.15 |
-| `godwon_samp` | 0.01 | 0.02 | 0.01 | 0.02 | 0.04 | 0.04 | 0.04 | 0.04 |
-| `hummingbad_android_samp` | 3.96 | 5.93 | 3.96 | 5.92 | 5.77 | 6.63 | 2.58 | 2.64 |
-| `jollyserv` | 0.46 | 0.79 | 0.46 | 0.79 | 0.72 | 1.13 | 0.35 | 0.37 |
-| `overlay_android_samp` | 0.12 | 0.19 | 0.12 | 0.18 | 0.22 | 0.22 | 0.15 | 0.15 |
-| `overlaylocker2_android_samp` | 0.58 | 1.00 | 0.59 | 1.00 | 1.47 | 1.99 | 0.55 | 0.58 |
-| `phospy` | 0.17 | 0.27 | 0.17 | 0.27 | 3.27 | 4.29 | 0.30 | 0.30 |
-| `proxy_samp` | 0.03 | 0.04 | 0.03 | 0.04 | 6.79 | 7.62 | 0.19 | 0.19 |
-| `remote_control_smack` | 30.42 | 30.40 | 30.29 | 30.85 | 14.08 | 12.69 | 5.64 | 5.75 |
-| `repane` | 0.01 | 0.02 | 0.01 | 0.02 | 0.05 | 0.06 | 0.04 | 0.04 |
-| `roidsec` | 0.03 | 0.04 | 0.03 | 0.04 | 169.99 | 149.51 | 7.77 | 7.79 |
-| `samsapo` | 0.42 | 0.70 | 0.42 | 0.70 | 0.93 | 4.89 | 0.34 | 0.34 |
-| `save_me` | 1.54 | 2.46 | 1.54 | 2.46 | 1.57 | 2.56 | 1.08 | 1.13 |
-| `scipiex` | 0.45 | 0.72 | 0.45 | 0.72 | 0.49 | 0.49 | 0.36 | 0.36 |
-| `slocker_android_samp` | 0.31 | 0.53 | 0.31 | 0.53 | 0.29 | 0.29 | 0.23 | 0.23 |
-| `sms_google` | 0.04 | 0.07 | 0.04 | 0.06 | 3.36 | 2.50 | 0.14 | 0.14 |
-| `sms_send_locker_qqmagic` | 0.03 | 0.03 | 0.02 | 0.03 | 8.04 | 6.92 | 0.11 | 0.11 |
-| `smssend_packageInstaller` | 0.26 | 0.44 | 0.25 | 0.43 | 0.88 | 1.07 | 0.28 | 0.29 |
-| `smssilience_fake_vertu` | 0.01 | 0.02 | 0.01 | 0.02 | 0.16 | 0.15 | 0.04 | 0.04 |
-| `smsstealer_kysn_assassincreed_android_samp` | 0.42 | 0.72 | 0.41 | 0.72 | 0.39 | 0.40 | 0.28 | 0.29 |
-| `stels_flashplayer_android_update` | 0.22 | 0.38 | 0.23 | 0.38 | 1.87 | 1.83 | 0.31 | 0.32 |
-| `tetus` | 0.05 | 0.08 | 0.05 | 0.08 | 0.11 | 0.11 | 0.09 | 0.09 |
-| `the_interview_movieshow` | 0.01 | 0.02 | 0.01 | 0.02 | 0.04 | 0.04 | 0.03 | 0.03 |
-| `threatjapan_uracto` | 0.20 | 0.34 | 0.20 | 0.34 | 0.22 | 0.29 | 0.15 | 0.16 |
-| `vibleaker_android_samp` | 23.26 | 8.13 | 23.22 | 8.12 | 4.25 | 4.68 | 2.83 | 2.93 |
-| `xbot_android_samp` | 66.55 | 197.86 | 66.44 | 202.29 | 1.85 | 2.33 | 1.51 | 2.00 |
-| **all 38** | **134** | **259** | **134** | **264** | **243** | **297** | **30** | **31** |
+(APK size is a weak proxy for analysis work in any case - index time at the
+baseline fits size with an R^2 of only 0.47, and apps of similar size differ by
+four orders of magnitude in index time - so the suite cannot say much about the
+*exponent*. What it can say cleanly is that the multiplier is flat.)
+
+**Two apps break the pattern, in opposite directions.**
+
+| app | index before | index +`#127` | | peak memory |
+| --- | ---: | ---: | --- | --- |
+| `vibleaker_android_samp` (5.4 MB, the largest APK) | 23.3 s | 8.1 s | x0.35 | 1.1 -> 1.8 GB |
+| `xbot_android_samp` | 66.6 s | 197.9 s | x2.97 | 2.8 -> 6.7 GB |
+
+So `#127` changed *which* apps are expensive rather than lowering the cost
+overall: a 3x win on the largest app and a 3x loss on the most expensive one.
+
+What `xbot` costs it is not more hybrid inlining - by `#127`'s own counters the
+critical summaries go down (6492 -> 5475) and the resolvent with them
+(8884 -> 6780). It is the propagation relations getting bigger:
+`context_assign` 132k -> 396k rows, `context_locals` 8.2M -> 10.7M,
+`assign_like` 979k -> 1.28M. The new call graph feeds more edges into the same
+closure. `xbot` embeds Rhino (`org.mozilla.javascript`), and 87% of its 18813
+virtual call sites resolve by CHA rather than by inlining.
+
+## What the blowup fixes change
+
+`origin/blowup2` is two commits on top of `origin/main`:
+
+```
+28f949ea fix 2
+208d85a7 more
+0183c42c Andersen style aliasing in query (#128)   <- origin/main
+```
+
+They go after exactly the tail described above, and they get most of it:
+
+| | index (all 38) | vs baseline | worst app's peak | vs baseline |
+| --- | ---: | ---: | ---: | ---: |
+| `2ba7e014`, neither | 134 s | - | 3.4 GB | - |
+| `origin/main` | 264 s | x1.96 | 6.1 GB | x1.85 |
+| `origin/blowup2` | 147 s | **x1.09** | 4.6 GB | **x1.39** |
+
+`xbot` alone accounts for nearly all of it: 202 s down to 84 s and 6.3 GB down
+to 4.6 GB. No other app moves by more than 2%, and the per-finding verdicts are
+**identical to `main`** - same 22 passes, same 16 failures, same 77 flows, same
+3 false positives. These are index-side fixes; they do not touch `#128`'s
+recall loss, and nothing suggests they were meant to.
+
+What they do not remove is the flat multiplier. The per-app median index
+slowdown against the pre-`#127` baseline is 1.65x at `#127`, 1.66x at `main`,
+and **1.64x** with the fixes - unchanged. Peak memory tells the same story: the
+worst app comes down from x1.85 to x1.39, but the per-app median stays at x1.24
+and 26 of the 38 apps are still more than 10% heavier than before `#127`.
+
+So on this suite the fixes turn `#127` from "doubles the suite's index time"
+into "costs 9% overall, and 1.65x on a typical small app". The tail is handled;
+the constant factor is not.
+
+### Total time per app, seconds
+
+| app | none | #127 | #128 | both | both+fixes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `backflash` | 0.92 | 1.10 | 0.65 | 0.85 | 0.81 |
+| `beita_com_beita_contact` | 1.50 | 2.21 | 1.10 | 1.48 | 1.43 |
+| `cajino_baidu` | 13.66 | 15.29 | 4.13 | 5.41 | 5.42 |
+| `chulia` | 0.14 | 0.16 | 0.11 | 0.13 | 0.13 |
+| `death_ring_materialflow` | 0.36 | 0.43 | 0.29 | 0.36 | 0.36 |
+| `dsencrypt_samp` | 0.13 | 0.14 | 0.06 | 0.07 | 0.07 |
+| `exprespam` | 0.09 | 0.10 | 0.06 | 0.07 | 0.07 |
+| `fakeappstore` | 0.77 | 0.97 | 0.60 | 0.82 | 0.82 |
+| `fakebank_android_samp` | 0.74 | 0.94 | 0.70 | 0.79 | 0.79 |
+| `fakedaum` | 0.61 | 0.81 | 0.38 | 0.54 | 0.53 |
+| `fakemart` | 0.59 | 0.74 | 0.54 | 0.70 | 0.69 |
+| `fakeplay` | 1.75 | 69.74 | 1.25 | 2.29 | 2.29 |
+| `faketaobao` | 0.47 | 0.64 | 0.44 | 0.59 | 0.59 |
+| `godwon_samp` | 0.05 | 0.06 | 0.05 | 0.06 | 0.06 |
+| `hummingbad_android_samp` | 10.50 | 13.33 | 7.29 | 9.33 | 9.36 |
+| `jollyserv` | 1.30 | 2.04 | 0.94 | 1.28 | 1.27 |
+| `overlay_android_samp` | 0.38 | 0.45 | 0.31 | 0.37 | 0.38 |
+| `overlaylocker2_android_samp` | 2.20 | 3.14 | 1.29 | 1.73 | 1.74 |
+| `phospy` | 3.49 | 4.61 | 0.53 | 0.62 | 0.62 |
+| `proxy_samp` | 6.83 | 7.67 | 0.23 | 0.24 | 0.24 |
+| `remote_control_smack` | 133.82 | 132.55 | 126.00 | 125.96 | 126.96 |
+| `repane` | 0.07 | 0.08 | 0.07 | 0.07 | 0.07 |
+| `roidsec` | 170.03 | 149.56 | 7.81 | 7.84 | 7.89 |
+| `samsapo` | 1.49 | 5.73 | 0.90 | 1.18 | 1.19 |
+| `save_me` | 3.45 | 5.36 | 2.96 | 3.93 | 3.95 |
+| `scipiex` | 1.06 | 1.34 | 0.93 | 1.20 | 1.21 |
+| `slocker_android_samp` | 0.69 | 0.91 | 0.63 | 0.85 | 0.85 |
+| `sms_google` | 3.42 | 2.58 | 0.20 | 0.22 | 0.22 |
+| `sms_send_locker_qqmagic` | 8.08 | 6.96 | 0.14 | 0.15 | 0.15 |
+| `smssend_packageInstaller` | 1.20 | 1.58 | 0.60 | 0.79 | 0.78 |
+| `smssilience_fake_vertu` | 0.18 | 0.18 | 0.06 | 0.07 | 0.07 |
+| `smsstealer_kysn_assassincreed_android_samp` | 0.92 | 1.24 | 0.80 | 1.12 | 1.12 |
+| `stels_flashplayer_android_update` | 2.15 | 2.28 | 0.60 | 0.76 | 0.76 |
+| `tetus` | 0.17 | 0.20 | 0.15 | 0.18 | 0.18 |
+| `the_interview_movieshow` | 0.06 | 0.08 | 0.05 | 0.06 | 0.06 |
+| `threatjapan_uracto` | 0.48 | 0.69 | 0.40 | 0.55 | 0.55 |
+| `vibleaker_android_samp` | 28.37 | 13.65 | 26.89 | 11.90 | 11.90 |
+| `xbot_android_samp` | 68.76 | 200.55 | 68.31 | 204.65 | 86.76 |
+| **all 38** | **470.88** | **650.09** | **258.43** | **389.21** | **272.34** |
+
+### Peak memory per app, MB
+
+| app | none | #127 | #128 | both | both+fixes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `backflash` | 89 | 127 | 90 | 128 | 128 |
+| `beita_com_beita_contact` | 164 | 348 | 137 | 223 | 219 |
+| `cajino_baidu` | 612 | 701 | 453 | 688 | 687 |
+| `chulia` | 16 | 20 | 14 | 20 | 19 |
+| `death_ring_materialflow` | 46 | 65 | 46 | 65 | 64 |
+| `dsencrypt_samp` | 10 | 10 | 9 | 8 | 8 |
+| `exprespam` | 11 | 11 | 9 | 9 | 9 |
+| `fakeappstore` | 80 | 127 | 74 | 119 | 124 |
+| `fakebank_android_samp` | 79 | 131 | 80 | 127 | 128 |
+| `fakedaum` | 77 | 88 | 57 | 89 | 88 |
+| `fakemart` | 87 | 132 | 89 | 132 | 130 |
+| `fakeplay` | 215 | 753 | 183 | 267 | 267 |
+| `faketaobao` | 78 | 121 | 77 | 117 | 117 |
+| `godwon_samp` | 8 | 8 | 8 | 8 | 8 |
+| `hummingbad_android_samp` | 1170 | 1449 | 892 | 1444 | 1437 |
+| `jollyserv` | 151 | 233 | 131 | 206 | 206 |
+| `overlay_android_samp` | 44 | 61 | 44 | 61 | 61 |
+| `overlaylocker2_android_samp` | 161 | 252 | 161 | 250 | 251 |
+| `phospy` | 86 | 107 | 61 | 102 | 102 |
+| `proxy_samp` | 91 | 98 | 15 | 15 | 15 |
+| `remote_control_smack` | 3373 | 3830 | 3433 | 3824 | 3809 |
+| `repane` | 9 | 9 | 9 | 9 | 9 |
+| `roidsec` | 1343 | 1290 | 89 | 89 | 89 |
+| `samsapo` | 125 | 1313 | 127 | 197 | 202 |
+| `save_me` | 352 | 513 | 359 | 508 | 507 |
+| `scipiex` | 124 | 201 | 128 | 201 | 201 |
+| `slocker_android_samp` | 90 | 139 | 89 | 142 | 140 |
+| `sms_google` | 61 | 54 | 17 | 20 | 20 |
+| `sms_send_locker_qqmagic` | 93 | 81 | 12 | 13 | 12 |
+| `smssend_packageInstaller` | 136 | 206 | 82 | 123 | 125 |
+| `smssilience_fake_vertu` | 12 | 12 | 8 | 8 | 8 |
+| `smsstealer_kysn_assassincreed_android_samp` | 126 | 193 | 126 | 198 | 198 |
+| `stels_flashplayer_android_update` | 125 | 125 | 78 | 117 | 116 |
+| `tetus` | 22 | 25 | 17 | 25 | 25 |
+| `the_interview_movieshow` | 8 | 9 | 8 | 8 | 8 |
+| `threatjapan_uracto` | 74 | 114 | 72 | 112 | 112 |
+| `vibleaker_android_samp` | 1084 | 1795 | 1089 | 1812 | 1806 |
+| `xbot_android_samp` | 2789 | 6657 | 3133 | 6255 | 4685 |
+| **all 38** | **3373** | **6657** | **3433** | **6255** | **4685** |
+
+### Index time per app, seconds
+
+| app | none | #127 | #128 | both | both+fixes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `backflash` | 0.27 | 0.44 | 0.27 | 0.45 | 0.45 |
+| `beita_com_beita_contact` | 0.50 | 0.81 | 0.52 | 0.84 | 0.82 |
+| `cajino_baidu` | 1.89 | 3.08 | 1.88 | 3.07 | 3.09 |
+| `chulia` | 0.04 | 0.06 | 0.04 | 0.06 | 0.06 |
+| `death_ring_materialflow` | 0.12 | 0.19 | 0.12 | 0.19 | 0.19 |
+| `dsencrypt_samp` | 0.01 | 0.02 | 0.01 | 0.02 | 0.02 |
+| `exprespam` | 0.01 | 0.02 | 0.01 | 0.02 | 0.02 |
+| `fakeappstore` | 0.30 | 0.50 | 0.29 | 0.51 | 0.50 |
+| `fakebank_android_samp` | 0.24 | 0.42 | 0.25 | 0.42 | 0.42 |
+| `fakedaum` | 0.17 | 0.29 | 0.17 | 0.28 | 0.28 |
+| `fakemart` | 0.28 | 0.43 | 0.28 | 0.43 | 0.43 |
+| `fakeplay` | 0.67 | 1.08 | 0.66 | 1.08 | 1.09 |
+| `faketaobao` | 0.22 | 0.39 | 0.23 | 0.38 | 0.38 |
+| `godwon_samp` | 0.01 | 0.02 | 0.01 | 0.02 | 0.02 |
+| `hummingbad_android_samp` | 3.96 | 5.93 | 3.96 | 5.92 | 5.95 |
+| `jollyserv` | 0.46 | 0.79 | 0.46 | 0.79 | 0.78 |
+| `overlay_android_samp` | 0.12 | 0.19 | 0.12 | 0.18 | 0.19 |
+| `overlaylocker2_android_samp` | 0.58 | 1.00 | 0.59 | 1.00 | 1.01 |
+| `phospy` | 0.17 | 0.27 | 0.17 | 0.27 | 0.27 |
+| `proxy_samp` | 0.03 | 0.04 | 0.03 | 0.04 | 0.04 |
+| `remote_control_smack` | 30.42 | 30.40 | 30.29 | 30.85 | 31.52 |
+| `repane` | 0.01 | 0.02 | 0.01 | 0.02 | 0.02 |
+| `roidsec` | 0.03 | 0.04 | 0.03 | 0.04 | 0.04 |
+| `samsapo` | 0.42 | 0.70 | 0.42 | 0.70 | 0.70 |
+| `save_me` | 1.54 | 2.46 | 1.54 | 2.46 | 2.50 |
+| `scipiex` | 0.45 | 0.72 | 0.45 | 0.72 | 0.73 |
+| `slocker_android_samp` | 0.31 | 0.53 | 0.31 | 0.53 | 0.53 |
+| `sms_google` | 0.04 | 0.07 | 0.04 | 0.06 | 0.06 |
+| `sms_send_locker_qqmagic` | 0.03 | 0.03 | 0.02 | 0.03 | 0.03 |
+| `smssend_packageInstaller` | 0.26 | 0.44 | 0.25 | 0.43 | 0.42 |
+| `smssilience_fake_vertu` | 0.01 | 0.02 | 0.01 | 0.02 | 0.02 |
+| `smsstealer_kysn_assassincreed_android_samp` | 0.42 | 0.72 | 0.41 | 0.72 | 0.72 |
+| `stels_flashplayer_android_update` | 0.22 | 0.38 | 0.23 | 0.38 | 0.38 |
+| `tetus` | 0.05 | 0.08 | 0.05 | 0.08 | 0.08 |
+| `the_interview_movieshow` | 0.01 | 0.02 | 0.01 | 0.02 | 0.02 |
+| `threatjapan_uracto` | 0.20 | 0.34 | 0.20 | 0.34 | 0.34 |
+| `vibleaker_android_samp` | 23.26 | 8.13 | 23.22 | 8.12 | 8.16 |
+| `xbot_android_samp` | 66.55 | 197.86 | 66.44 | 202.29 | 84.41 |
+| **all 38** | **134.28** | **258.93** | **133.99** | **263.78** | **146.69** |
+
 
 ## How this was measured
 
-Four binaries, each built with `nix build .#packages.aarch64-darwin.default`
+Five binaries, each built with `nix build .#packages.aarch64-darwin.default`
 from the same branch code, differing only in what they sit on top of:
 
 | point | base | branch content |
@@ -272,9 +392,10 @@ from the same branch code, differing only in what they sit on top of:
 | `#127` only | `a5f4f557` | same |
 | `#128` only | `2ba7e014` + `0183c42c` cherry-picked (applies clean) | same |
 | both | `0183c42c` | same (this is the rebased branch) |
+| both + fixes | `28f949ea` (`origin/blowup2`) | same |
 
 The branch's temporary index counters (`facts::counters`) are left out of all
-four. `origin/main` deletes the call-string lattice they count, so the rebase
+five. `origin/main` deletes the call-string lattice they count, so the rebase
 has to drop them anyway; dropping them everywhere keeps the four points
 differing only by the commits under test.
 
@@ -285,11 +406,12 @@ footprint** per phase. Footprint rather than RSS: macOS compresses cold pages,
 so RSS understates a big run badly.
 
 Runs were sequential on an idle M1 Ultra (20 cores, 128 GB): three repetitions
-of the neither and both points, two of each single-commit point, alternating the
-order so machine drift could not favour one side. Repeats agree closely - suite
-wall-clock came in at 493/466/476 s for neither, 395/389/394 s for both, and
-264/263 s for `#128` alone - and every repetition of a configuration produced
-identical per-finding verdicts.
+of the neither, both, and both-plus-fixes points, two of each single-commit
+point, alternating the order so machine drift could not favour one side. Repeats
+agree closely - suite wall-clock came in at 493/466/476 s for neither,
+395/389/394 s for both, 278/277/277 s with the fixes, and 264/263 s for `#128`
+alone - and every repetition of a configuration produced identical per-finding
+verdicts.
 
 One check on the baseline: the branch's own pre-rebase state (on `99bbed37`,
 five commits older than `2ba7e014`) measures the same to within a second on
@@ -319,10 +441,24 @@ The suite is red and it should stay red until one of these happens:
    false positives, and `expected.json` is rebaselined deliberately, with this
    document as the record of what changed.
 
-`#127` is a separate question, and the four-point table makes it a sharper one
-than it first looked: on this suite `#127` costs 125 s of index time and doubles
-peak memory while adding one flow. `xbot_android_samp` is where to look first -
-three times slower to index at 6.3 GB, and it finds none of its three flows
-either way, so whatever the new call graph enumerates there is pure cost. That
-this suite does not show `#127` paying for itself is not an argument that it
-doesn't elsewhere; it is an argument for knowing where it does.
+`#127` is a separate question, and it looks different with `origin/blowup2`
+measured. The headline cost - suite index time doubling - is mostly gone: the
+fixes bring it back to 9% over the pre-`#127` baseline, and `xbot` from 3x to
+1.27x. What remains is a 1.65x median index slowdown on ordinary apps and a
+1.24x median memory increase, which the fixes leave untouched, in exchange for
+one extra flow on this suite.
+
+Whether that trade is worth it is not a question TaintBench can answer. These
+are 27 KB to 5.4 MB APKs and the suite's whole index is 147 s; a call graph
+built for scale should be judged on inputs where the old one hurts. Two
+measurements would say more than anything here:
+
+- **`remote_control_smack` with the unwinder model off.** It is the one app in
+  the suite that ever blew up - hours, until `native-index.jsonl` marked the ARM
+  unwinder `skip-analysis` (see `hybrid-inlining-plateau.md`). Its index time is
+  flat across every point measured here *because* that model is on. If `#127`
+  makes the model unnecessary, that is the scalability win, and nothing in this
+  document can see it.
+- **`xtask report-eval --apks <dir>` over a real corpus.** That is what the
+  subcommand is for, and it is where an app large enough to separate a 1.65x
+  constant from a better growth curve would come from.
