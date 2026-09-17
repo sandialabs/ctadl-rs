@@ -75,6 +75,7 @@ Both were kept, in that order. The module comment at the top of the file said
 ## Verification
 
 - `cargo check --workspace --all-targets` - clean
+- `cargo test --workspace` - 1011 passed, 0 failed
 - The rebased branch's own code changes are intact: the `Arc<QueryEndpoint>`
   sharing, the post-hoc `taint_edge` projection, and the borrowed taint graph in
   `TaintAnalysisResults` all merged into `#128`'s rewritten `search.rs` without
