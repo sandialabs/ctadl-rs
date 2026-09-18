@@ -103,6 +103,22 @@ pub mod callee_resolvents {
     save_load!();
 }
 
+pub mod resolved_call {
+    use super::*;
+    /// An indirect / virtual call site the index *resolved*, and the concrete callee it
+    /// resolved to. One row per (site, target) pair; a site with several targets gets
+    /// several rows.
+    ///
+    /// The complement of this against [`callee_info`] is the set of call sites the call
+    /// graph does not cover, which is what says where a taint search can silently stop.
+    /// Recovering it from [`assign`] instead would undercount: a site that resolved to a
+    /// callee with an empty summary instantiates no edges and would look unresolved.
+    pub type Record = (FunctionId, InsnId, FunctionId);
+    pub const COLUMNS: [&str; 3] = ["func_id", "insn_id", "target_id"];
+    pub const FILENAME: &str = "resolved_call.parquet";
+    save_load!();
+}
+
 pub mod summary {
     use super::*;
     pub type Record = (FunctionId, FormalIndex, Path, FormalIndex, Path);
