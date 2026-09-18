@@ -1,3 +1,5 @@
+# Compositional indexing of sub-imports (especially native Android code) - DO-NOT-MERGE
+
 Importing Android code that has native code inside of it normally co-indexes everything. This loads all the code into one indexing job and retains precision when analyzing both sides of JNI interactions. The problem is, for larg apps, this takes too many resources. This analyzer is compositional, so let's leverage that by building the ability to index the native code (sub-indexes) each independently, then loading their function summaries as models into the indexing step of the apk itself.
 
 Add a CLI flag so that sub-imports are indexed compositionally. As said above, the canonical case for this is Android + native code, but it really applies to anything that has sub-imports.
