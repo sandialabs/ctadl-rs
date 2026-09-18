@@ -205,6 +205,8 @@ four orders of magnitude in index time - so the suite cannot say much about the
 
 So `#127` changed *which* apps are expensive rather than lowering the cost
 overall: a 3x win on the largest app and a 3x loss on the most expensive one.
+Both come out of the same mechanism - see "Where the constant factor comes from"
+below.
 
 What `xbot` costs it is not more hybrid inlining - by `#127`'s own counters the
 critical summaries go down (6492 -> 5475) and the resolvent with them
@@ -213,6 +215,97 @@ critical summaries go down (6492 -> 5475) and the resolvent with them
 `assign_like` 979k -> 1.28M. The new call graph feeds more edges into the same
 closure. `xbot` embeds Rhino (`org.mozilla.javascript`), and 87% of its 18813
 virtual call sites resolve by CHA rather than by inlining.
+
+## Where the constant factor comes from
+
+The 1.65x is not `#127` computing more answers. It is `#127` building a new
+layer of intermediate structure to compute the same answers a different way.
+
+**The outputs barely move.** Median across ten apps spanning the suite
+(`backflash`, `beita_com_beita_contact`, `cajino_baidu`, `fakeplay`,
+`hummingbad_android_samp`, `jollyserv`, `overlaylocker2_android_samp`,
+`samsapo`, `save_me`, `scipiex`), `#127` against the baseline:
+
+| relation | ratio |
+| --- | ---: |
+| `assign_like` (final) | **x1.01** |
+| `locals` (final) | x1.18 |
+| `summary` | x1.37 |
+| `call_target_assign_like` | **x0.69** |
+| `context_assign` | **x0.12** |
+| `context_locals` | **x0.14** |
+| `critical_summary` | **x0.15** |
+| `resolvent` | x0.50 |
+| index time | **x1.62** |
+
+`assign_like` is flat, and everything contextual *collapses* - an eighth of the
+contextual assigns, a seventh of the contextual locals, a seventh of the
+critical summaries, and a third fewer call-target assigns. The call graph got
+smaller and more precise, exactly as intended. Time still went up 62%.
+
+**What went up is machinery that did not exist before.** `#127` adds
+`index_engine/{path_group,path_set,decision}.rs` - none of the three is present
+at `2ba7e014` - and four new relations in the propagation rules (`reach_vp`,
+`locals_key`, `edge_split`, `ext_dst`; also absent at `2ba7e014`). Rather than
+joining on the vertex and testing the path prefix afterwards, every path is
+split once at each point it could match a prefix, the join is keyed on the
+split, and the extension is looked up. That is a better plan asymptotically, and
+the splits have to be built, stored and indexed:
+
+| app | `locals` rows | new relations, summed | ratio |
+| --- | ---: | ---: | ---: |
+| `backflash` | 69715 | 336555 | x4.83 |
+| `beita_com_beita_contact` | 125226 | 633431 | x5.06 |
+| `cajino_baidu` | 432968 | 2017431 | x4.66 |
+| `hummingbad_android_samp` | 870255 | 3906682 | x4.49 |
+| `samsapo` | 166967 | 524827 | x3.14 |
+| `save_me` | 483518 | 1773995 | x3.67 |
+
+Between three and five times as many intermediate rows as the relation they
+serve, on every app, in fixed proportion to the program. That is the shape of a
+flat multiplier.
+
+**The profile agrees.** Sampling `hummingbad`'s index at 1 ms under both builds
+and attributing leaf samples:
+
+| component | before | after |
+| --- | ---: | ---: |
+| allocation (`libsystem_malloc`) | 352 | 1038 |
+| `path_group` + `path_set` | **0** | **426** |
+| `assign_like_trie` | 24 | 209 |
+| `locals_trie` | 193 | 301 |
+| `index_engine` (rule bodies) | 356 | 520 |
+| `hybrid_set` | 30 | 126 |
+
+Allocation nearly triples and is the largest single bucket; the new path
+machinery goes from nothing to 11% of the profile; trie insertion grows with it.
+No pre-existing component dominates the delta - it is spread across building and
+indexing the new rows.
+
+**The same mechanism explains both outliers.** What varies between apps is
+whether the contextual work `#127` saves is big enough to pay for the splitting
+it adds:
+
+| app | `critical_summary` | `context_locals` | index |
+| --- | --- | --- | --- |
+| `vibleaker` (x0.35, the win) | 7155 -> **1394** | 7613 -> 5525 | 23.3 s -> 8.1 s |
+| `xbot` (x2.97, the loss) | 6492 -> 5475 | 8.2M -> **10.7M** | 66.6 s -> 197.9 s |
+
+`vibleaker` was paying for critical summaries, and `#127` removes four fifths of
+them. `xbot`'s contextual closure *grew* by 2.5M rows instead of shrinking, so
+it pays the new machinery and gets nothing back. A typical small app is neither
+case: it has little contextual work to save, so it just pays.
+
+That is also why `origin/blowup2` does not move the constant. On
+`hummingbad`, `cajino_baidu` and `backflash` its propagation-relation counts are
+**byte-identical** to `#127`'s - the machinery is untouched. The fixes go after
+`xbot`'s contextual blowup, which is the tail, not the tax.
+
+The reading this supports: `#127` buys a cheaper contextual closure with a fixed
+per-program cost. On inputs where the contextual closure is the bottleneck that
+is a win, and `vibleaker` - the largest APK here - is the one app in the suite
+big enough to show it. On 27 KB to 5.4 MB of Android malware it mostly is not
+the bottleneck, so what the suite sees is the bill.
 
 ## What the blowup fixes change
 
@@ -425,7 +518,10 @@ Raw data, kept outside the repo:
 /Volumes/Shampoo/ct-taintbench-rebase-20260917/
   logs/suite-<tag>.log        full suite output per run
   logs/measure-<tag>.tsv      tag, app, phase, seconds, peak bytes, max rss, exit
-  report.py, report4.py       the scripts that build the tables above
+  sweep/<cfg>/<app>/index.log RUST_LOG=debug index, for the relation counters
+  prof/<cfg>/<app>/sample.txt `sample` profile of one index run
+  report.py, report5.py       the scripts that build the tables above
+  counter-sweep.sh, profile.sh how the last two were produced
 ```
 
 The per-phase measurements are also committed here as
