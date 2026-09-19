@@ -303,6 +303,17 @@ pub fn check<P: AsRef<Path>>(
     dump_index_graph: Option<&Path>,
     models: &[std::path::PathBuf],
 ) -> anyhow::Result<()> {
+    check_with_config(file, dump_index_graph, models, IndexConfig::default())
+}
+
+/// [`check`] under an explicit index configuration, so a fixture's assertions can be run under
+/// every hybrid-context mode and context join.
+pub fn check_with_config<P: AsRef<Path>>(
+    file: P,
+    dump_index_graph: Option<&Path>,
+    models: &[std::path::PathBuf],
+    config: IndexConfig,
+) -> anyhow::Result<()> {
     let file = file.as_ref();
     let program = flowy::compile_program(file)?;
     let mut pass_count = 0;
@@ -366,11 +377,8 @@ pub fn check<P: AsRef<Path>>(
                 .map(|ep| (ep,))
         })
         .collect();
-    let index_result = taint_index_with_config(
-        index_facts.clone(),
-        IndexConfig::default(),
-        Some(&source_info.sites),
-    );
+    let index_result =
+        taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
 
     if let Some(dot_path) = dump_index_graph {
         let mut file = std::fs::File::create(dot_path)

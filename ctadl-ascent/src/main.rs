@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ctadl_ascent::cli;
 use ctadl_ascent::codegen::{CallPolicy, CallResolutionStrategy, DispatchOrder};
-use ctadl_ascent::index_engine::{HybridContext, Parallelism};
+use ctadl_ascent::index_engine::{ContextJoin, HybridContext, Parallelism};
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
@@ -214,7 +214,7 @@ pub enum ImportLanguage {
 
 #[derive(Debug, Args)]
 pub struct InspectArgs {
-    /// Artifact name, project name, or store path
+    /// Imported artifact name, index name, or a path to a file in the store
     pub name: Option<String>,
 
     /// Instead of summary statistics, pretty-print the imported IR. Prints every function
@@ -225,6 +225,11 @@ pub struct InspectArgs {
     /// With `--dump-ir`, only print functions whose name contains this substring.
     #[arg(long, value_name = "SUBSTR")]
     pub function: Option<String>,
+
+    /// Write the index (assign-like) graph of this project to a Graphviz DOT file. Requires a
+    /// project name; conflicts with `--dump-ir`.
+    #[arg(long, value_name = "FILE", conflicts_with = "dump_ir")]
+    pub dump_index_graph: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -395,9 +400,13 @@ pub struct IndexArgs {
     #[arg(long, default_value = "decision", env = "CTADL_HYBRID_CONTEXT")]
     pub hybrid_context: HybridContext,
 
-    /// Dump the index graph to a dot file
-    #[arg(long)]
-    pub dump_index_graph: Option<PathBuf>,
+    /// How the index engine pairs a function's conditional summaries with the calls that
+    /// established a decision at it (rule 3.2 of hybrid inlining). `sets` (the default) and
+    /// `unfold` join on the decision exactly; `scan` joins on the function and filters, which
+    /// is quadratic on functions that many decisions reach. Same result under all three.
+    /// `CTADL_CONTEXT_JOIN` in the environment sets the default.
+    #[arg(long, default_value = "sets", env = "CTADL_CONTEXT_JOIN")]
+    pub context_join: ContextJoin,
 
     /// Number of threads to compute the flow relation with.
     ///
@@ -499,10 +508,6 @@ pub struct GoArgs {
     /// Dump the taint graph to a dot file
     #[arg(long)]
     pub dump_taint_graph: Option<PathBuf>,
-
-    /// Dump the index graph to a dot file
-    #[arg(long)]
-    pub dump_index_graph: Option<PathBuf>,
 
     /// Call resolution strategy: cha, hi, mixed, legacy-mixed
     ///
@@ -664,7 +669,7 @@ fn main() -> anyhow::Result<()> {
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 hybrid_context: HybridContext::default(),
-                dump_index_graph: args.dump_index_graph.clone(),
+                context_join: ContextJoin::default(),
                 jobs: None,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
@@ -815,7 +820,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 hybrid_context: HybridContext::default(),
-                dump_index_graph: None,
+                context_join: ContextJoin::default(),
                 jobs: None,
             };
             index_artifacts_to_store(&index_args)?;
@@ -939,7 +944,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
             prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
             alias_rule: args.alias_rule.unwrap_or(true),
             hybrid_context: args.hybrid_context,
-            dump_index_graph: args.dump_index_graph.as_deref(),
+            context_join: args.context_join,
             parallelism: Parallelism::from_jobs(args.jobs.unwrap_or(1)),
         },
     )?;
@@ -1021,6 +1026,15 @@ fn load_or_infer_project(name: &str) -> anyhow::Result<project::AnalysisProject>
 }
 
 fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
+    if let Some(dot_path) = &args.dump_index_graph {
+        let Some(name) = &args.name else {
+            anyhow::bail!("--dump-index-graph requires a project name");
+        };
+        let project = project::AnalysisProject::try_load_name(name)
+            .with_context(|| format!("loading project: '{name}'"))?;
+        return cli::inspect_index_graph(&project, dot_path).map_err(Into::into);
+    }
+
     if let Some(name) = &args.name {
         let path = Path::new(name);
         if path.exists() && path.is_file() {
@@ -1153,5 +1167,61 @@ fn file_looks_binary(path: &Path) -> bool {
     match file.read(&mut buf) {
         Ok(n) => buf[..n].contains(&0),
         Err(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// The two dump modes read different things -- one an import's IR, the other a project's
+    /// index -- so asking for both at once is a usage error, not a silent pick.
+    #[test]
+    fn inspect_rejects_dump_index_graph_with_dump_ir() {
+        let err = Cli::try_parse_from([
+            "ctadl",
+            "inspect",
+            "p",
+            "--dump-index-graph",
+            "g.dot",
+            "--dump-ir",
+        ])
+        .expect_err("--dump-index-graph and --dump-ir must conflict")
+        .to_string();
+        assert!(
+            err.contains("--dump-ir"),
+            "the error must name the conflict: {err}"
+        );
+    }
+
+    #[test]
+    fn inspect_accepts_dump_index_graph_with_a_name() {
+        let cli = Cli::try_parse_from(["ctadl", "inspect", "p", "--dump-index-graph", "g.dot"])
+            .expect("must parse");
+        let Command::Inspect(args) = cli.cmd else {
+            panic!("expected the inspect subcommand");
+        };
+        assert_eq!(args.name.as_deref(), Some("p"));
+        assert_eq!(args.dump_index_graph.as_deref(), Some(Path::new("g.dot")));
+    }
+
+    /// The name is required, but as a runtime check rather than a clap `requires`, mirroring the
+    /// neighbouring `--dump-ir`. So it parses, and `inspect_artifact` is what refuses it -- before
+    /// it touches the store, which is why this test needs none.
+    #[test]
+    fn inspect_dump_index_graph_without_a_name_is_a_usage_error() {
+        let cli = Cli::try_parse_from(["ctadl", "inspect", "--dump-index-graph", "g.dot"])
+            .expect("must parse; the name check is at run time");
+        let Command::Inspect(args) = cli.cmd else {
+            panic!("expected the inspect subcommand");
+        };
+        let err = inspect_artifact(&args)
+            .expect_err("a dump with no project name must fail")
+            .to_string();
+        assert!(
+            err.contains("requires a project name"),
+            "the error must say what is missing: {err}"
+        );
     }
 }

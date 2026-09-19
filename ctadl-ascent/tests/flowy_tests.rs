@@ -1,6 +1,29 @@
 use anyhow::Context;
 
 use ctadl_ascent::codegen::flowy;
+use ctadl_ascent::index_engine::{ContextJoin, HybridContext, IndexConfig};
+
+/// The configurations every fixture must pass under: the three context joins compute one
+/// fixpoint, so a fixture that passes under one must pass under all. `CTADL_TEST_HYBRID_CONTEXT`
+/// (e.g. `collapse`, `bounded:2`) swaps in a coarser hybrid context for all of them, to see
+/// which fixtures a precision trade-off breaks; it is not set in CI.
+fn configs() -> Vec<IndexConfig> {
+    let hybrid_context = std::env::var("CTADL_TEST_HYBRID_CONTEXT")
+        .ok()
+        .map(|s| {
+            s.parse::<HybridContext>()
+                .expect("CTADL_TEST_HYBRID_CONTEXT")
+        })
+        .unwrap_or_default();
+    [ContextJoin::Sets, ContextJoin::Scan, ContextJoin::Unfold]
+        .into_iter()
+        .map(|context_join| IndexConfig {
+            hybrid_context,
+            context_join,
+            ..IndexConfig::default()
+        })
+        .collect()
+}
 
 /// Indexes a .tnt file and ensures the summary requirements are met.
 ///
@@ -15,15 +38,19 @@ fn tnt_test<P: AsRef<std::path::Path>>(filename: P) -> anyhow::Result<()> {
         .into_iter()
         .filter(|p| p.exists())
         .collect();
-    flowy::check(filename, None, &models)
-        .map(|_| ())
-        .with_context(|| {
-            format!(
-            "Running test {}. The per-check failures are logged at `warn`, and this test binary installs no logger, so run the case on its own to see them: 'RUST_LOG=warn cargo run -p ctadl-ascent --example flowy -- {}'",
+    for config in configs() {
+        flowy::check_with_config(filename, None, &models, config.clone())
+            .map(|_| ())
+            .with_context(|| {
+                format!(
+            "Running test {} under {:?}. The per-check failures are logged at `warn`, and this test binary installs no logger, so run the case on its own to see them: 'RUST_LOG=warn cargo run -p ctadl-ascent --example flowy -- {}'",
             filename.display(),
+            config,
             filename.display()
         )
-        })
+            })?;
+    }
+    Ok(())
 }
 
 /// Tests that the "require Loads" IR representation (field reads lower to `Load` instructions

@@ -134,6 +134,30 @@ static TOP_MARK: [DecisionId; 1] = [DecisionId(u32::MAX)];
 
 static SETS: LazyLock<immortal::Interner<[DecisionId]>> =
     LazyLock::new(|| immortal::Interner::new(64));
+/// The widening bound on exact sets: an exact union with more members than this is ⊤. `0` is
+/// no bound. Process-global like the interners (one kind of set per run); set by
+/// [`set_widen_bound`] before the run.
+static WIDEN_BOUND: AtomicUsize = AtomicUsize::new(0);
+
+/// Sets the widening bound for exact sets (`HybridContext::Bounded(k)`); `0` removes it.
+pub fn set_widen_bound(k: usize) {
+    WIDEN_BOUND.store(k, Ordering::Relaxed);
+}
+
+/// Whether a widened (⊤) row spills into the context-free relations instead of staying a
+/// contextual row (`HybridContext::Spill(k)`). Read on the closure's hot rules, so an atomic
+/// rather than a `config` clause.
+static SPILL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_spill(on: bool) {
+    SPILL.store(on, Ordering::Relaxed);
+}
+
+/// `true` when `ds` is ⊤ and ⊤ rows spill: the row leaves the contextual closure here.
+pub fn spills(ds: DecisionSet) -> bool {
+    ds.is_top() && SPILL.load(Ordering::Relaxed)
+}
+
 /// Unions computed (both operands non-trivial), and how many of those produced a new set.
 static UNIONS: AtomicUsize = AtomicUsize::new(0);
 static UNIONS_GREW: AtomicUsize = AtomicUsize::new(0);
@@ -235,11 +259,20 @@ impl DecisionSet {
         DecisionSet::intern(&[d], collapse)
     }
 
-    /// ⊤: every decision of the function the row belongs to. Only a collapsing join makes it.
+    /// ⊤: every decision of the function the row belongs to. A collapsing join makes it, and
+    /// so does an exact union that passes the widening bound (`top_exact`).
     pub fn top() -> DecisionSet {
         DecisionSet {
             ids: &TOP_MARK,
             collapse: true,
+        }
+    }
+
+    /// ⊤ of the exact kind: what a bounded exact union widens to. Absorbs every exact join.
+    pub fn top_exact() -> DecisionSet {
+        DecisionSet {
+            ids: &TOP_MARK,
+            collapse: false,
         }
     }
 
@@ -320,6 +353,14 @@ impl DecisionSet {
             return DecisionSet::top();
         }
         UNIONS.fetch_add(1, Ordering::Relaxed);
+        // Exact ⊤ (a widened set) absorbs.
+        if self.is_top() {
+            return self;
+        }
+        if other.is_top() {
+            UNIONS_GREW.fetch_add(1, Ordering::Relaxed);
+            return other;
+        }
         // The key is unordered: union is commutative.
         let (a, b) = {
             let (a, b) = (self.ids.as_ptr() as usize, other.ids.as_ptr() as usize);
@@ -371,6 +412,10 @@ impl DecisionSet {
         }
         out.extend_from_slice(&a[i..]);
         out.extend_from_slice(&b[j..]);
+        let bound = WIDEN_BOUND.load(Ordering::Relaxed);
+        if bound != 0 && out.len() > bound {
+            return DecisionSet::top_exact();
+        }
         DecisionSet::intern(&out, false)
     }
 

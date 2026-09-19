@@ -22,7 +22,7 @@ use crate::error::{Error, ErrorContext};
 use crate::facts;
 use crate::facts::FlowVariable;
 use crate::index_engine::{
-    HybridContext, IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo,
+    ContextJoin, HybridContext, IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo,
     taint_index_with_config,
 };
 use crate::languages::jni;
@@ -49,7 +49,7 @@ pub use ctadl_frontends::{ImportOptions, import_and_save as import, import_artif
 /// Follows [`ImportOptions`]. [`Default`] is what `ctadl index` does
 /// with no flags.
 #[derive(Debug, Clone, Copy)]
-pub struct IndexOptions<'a> {
+pub struct IndexOptions {
     /// Suppress the automatic JNI link between Java `native` stubs and their native implementations
     /// (see [`crate::languages::jni`]). Suppresses the registry with it: the registry is one of the
     /// bridge's resolution tiers, not a separate feature.
@@ -66,13 +66,14 @@ pub struct IndexOptions<'a> {
     pub alias_rule: bool,
     /// How a decided critical call site's summary is instantiated; see [`HybridContext`].
     pub hybrid_context: HybridContext,
-    pub dump_index_graph: Option<&'a Path>,
+    /// How rule 3.2 pairs conditional summaries with establishing calls; see [`ContextJoin`].
+    pub context_join: ContextJoin,
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
 }
 
-impl Default for IndexOptions<'_> {
+impl Default for IndexOptions {
     fn default() -> Self {
         Self {
             no_jni_bridge: false,
@@ -82,7 +83,7 @@ impl Default for IndexOptions<'_> {
             prune_unreachable_cfg_nodes: true,
             alias_rule: true,
             hybrid_context: HybridContext::default(),
-            dump_index_graph: None,
+            context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
         }
     }
@@ -97,7 +98,7 @@ pub fn index(
     summary_projects: &[String],
     models: &[std::path::PathBuf],
     no_default_models: bool,
-    opts: IndexOptions<'_>,
+    opts: IndexOptions,
 ) -> Result<(), Error> {
     let IndexOptions {
         no_jni_bridge,
@@ -107,7 +108,7 @@ pub fn index(
         prune_unreachable_cfg_nodes,
         alias_rule,
         hybrid_context,
-        dump_index_graph,
+        context_join,
         parallelism,
     } = opts;
     use crate::index_engine::phys_footprint_mb;
@@ -350,6 +351,7 @@ pub fn index(
     let config = crate::index_engine::IndexConfig {
         alias_rule,
         hybrid_context,
+        context_join,
         parallelism,
     };
     log::info!("indexing (computing the flow relation)");
@@ -362,10 +364,6 @@ pub fn index(
         if import.language == ArtifactLanguage::Flowy {
             crate::codegen::flowy::index_check(&import, &result, &sites)?;
         }
-    }
-
-    if let Some(dot_path) = dump_index_graph {
-        dump_index_graph_dot(&result.assign_like, &sites, dot_path)?;
     }
 
     let path = project.index_path()?;
@@ -1146,6 +1144,34 @@ pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+/// Renders a finished project's index (assign-like) graph to a Graphviz DOT file.
+///
+/// Reads `assign.parquet` and `function_id.parquet` out of the project's index directory -- the
+/// same rows `ctadl index` used to hold in memory -- so no re-index is needed. Sorts assigns for
+/// stability.
+///
+/// # Errors
+///
+/// [`ctadl_import::Error::MissingIndex`] if the project was never indexed, and
+/// [`ctadl_import::Error::IncompatibleIndex`] if the index was written by a build this one cannot
+/// read.
+pub fn inspect_index_graph(project: &AnalysisProject, dot_path: &Path) -> Result<(), Error> {
+    if !project.has_index() {
+        return Err(Error::from(ctadl_import::Error::MissingIndex {
+            project: project.name.clone(),
+        }));
+    }
+    // Before touching a table: the parquet decoders panic on an encoding they cannot read.
+    project.check_index_config()?;
+    let index_path = project.index_path()?;
+    let ids = facts::IdMap::try_load(&index_path)
+        .err_context(|| format!("loading IdMap from index: {}", index_path.display()))?;
+    let mut assign_like = facts::schema::assign::try_load(&index_path)
+        .err_context(|| format!("loading assign table from index: {}", index_path.display()))?;
+    assign_like.sort_unstable_by(crate::graphviz::index_edge_cmp);
+    dump_index_graph_dot(&assign_like, &ids, dot_path)
 }
 
 /// Measures a project's call graph and writes the result to `output` (or stdout for `-`).

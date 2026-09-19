@@ -58,6 +58,34 @@ JOIN read_parquet('function_id.parquet') AS f
 ON t.endpoint_infunc = f.id;
 ```
 
+# Dumping the index graph
+
+The index graph --- the `assign` relation, drawn --- comes out of a *finished* index:
+
+```
+ctadl index app
+ctadl inspect app --dump-index-graph app.dot
+```
+
+`NAME` here is an analysis project, not an import: the flag reads `assign.parquet` and
+`function_id.parquet` out of the project's `index/`, so nothing is re-indexed and nothing is
+written back to the store. The project must have been indexed; if it was not, or if the index was
+written by an incompatible build, this fails the same way `ctadl query` would.
+
+An edge `A -> B` is the assignment `B = A`. A node is the triple (function, variable, access
+path), so `local(t)` and `local(t).x` are distinct; the file opens with a legend saying so.
+
+Two dumps of the same program are byte-identical, and `diff` between them is meaningful. This is
+the one thing in the post-fixpoint output that is --- see the next section for why the tables
+themselves are not. `inspect` gets it by sorting `assign` by content before rendering
+(`graphviz::index_edge_cmp`), which is also why node ids and variable names are compared as text
+rather than by their string-table ids.
+
+Two things to know before pointing this at a real target. The whole `assign` table is loaded into
+memory, and on a large program it is the biggest thing in the index. And the resulting graph has
+millions of nodes, which Graphviz will not lay out usefully --- there is no filtering flag yet, so
+this is a tool for small inputs and for reduced test cases.
+
 # `index` is not deterministic
 
 Running `index` twice on the same unchanged artifacts does not give you the same
