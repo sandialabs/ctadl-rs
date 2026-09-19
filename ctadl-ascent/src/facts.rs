@@ -862,6 +862,20 @@ impl FlowVariable {
     pub fn is_globals(&self) -> bool {
         crate::codegen::variable_is_globals(self)
     }
+
+    /// Orders two flow variables by what they *denote*, not by their packed bits. This is usable as
+    /// a sort comparator over a whole index table.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use FlowVariableKind::*;
+        match (self.kind(), other.kind()) {
+            (Uninit, Uninit) => std::cmp::Ordering::Equal,
+            (Local(a), Local(b)) => a.as_str().cmp(b.as_str()),
+            (Formal(a), Formal(b)) => a.cmp(&b),
+            (CallArg(a), CallArg(b)) => a.0.cmp(&b.0),
+            // Different variants: order by the tag, which is what the derived `Ord` does too.
+            _ => (self.0 & TAG_MASK).cmp(&(other.0 & TAG_MASK)),
+        }
+    }
 }
 
 impl Display for FlowVariable {

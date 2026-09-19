@@ -1,5 +1,6 @@
 use rustc_graphviz as dot;
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
@@ -211,9 +212,29 @@ pub fn render_taint_graph<W: Write>(
     dot::render(&graph, writer)
 }
 
+/// An index-graph vertex: `(function, variable, access-path)`.
+pub type IndexVertex = (FunctionId, FlowVariable, Path);
+
+/// One row of the `assign` relation: the assignment `dst = src` inside `function`, drawn as the
+/// edge `src -> dst`.
+pub type AssignRow = (FunctionId, FlowVariable, Path, FlowVariable, Path);
+
+/// Orders two index-graph vertices by what they denote, so a rendering is reproducible.
+pub fn index_vertex_cmp(a: &IndexVertex, b: &IndexVertex) -> Ordering {
+    a.0.cmp(&b.0)
+        .then_with(|| a.1.content_cmp(&b.1))
+        .then_with(|| a.2.cmp(&b.2))
+}
+
+/// Orders two `assign` rows by their drawn edge: destination vertex first, then source.
+pub fn index_edge_cmp(a: &AssignRow, b: &AssignRow) -> Ordering {
+    index_vertex_cmp(&(a.0, a.1, a.2), &(b.0, b.1, b.2))
+        .then_with(|| index_vertex_cmp(&(a.0, a.3, a.4), &(b.0, b.3, b.4)))
+}
+
 pub struct IndexGraphViz<'a> {
-    nodes: Vec<(FunctionId, FlowVariable, Path)>,
-    edges: &'a [(FunctionId, FlowVariable, Path, FlowVariable, Path)],
+    nodes: Vec<IndexVertex>,
+    edges: &'a [AssignRow],
     id_map: &'a crate::facts::IdMap,
 }
 
@@ -282,8 +303,11 @@ impl<'a> dot::GraphWalk<'a> for IndexGraphViz<'a> {
     }
 }
 
+/// Renders the index (assign-like) graph as Graphviz DOT.
+///
+/// Nodes come out in [`index_vertex_cmp`] order. Edges come out in slice order.
 pub fn render_index_graph<W: Write>(
-    assign_like: &[(FunctionId, FlowVariable, Path, FlowVariable, Path)],
+    assign_like: &[AssignRow],
     id_map: &crate::facts::IdMap,
     writer: &mut W,
 ) -> std::io::Result<()> {
@@ -292,8 +316,10 @@ pub fn render_index_graph<W: Write>(
         nodes.insert((*func_id, *dst_var, *dst_path));
         nodes.insert((*func_id, *src_var, *src_path));
     }
+    let mut nodes: Vec<IndexVertex> = nodes.into_iter().collect();
+    nodes.sort_unstable_by(index_vertex_cmp);
     let graph = IndexGraphViz {
-        nodes: nodes.into_iter().collect(),
+        nodes,
         edges: assign_like,
         id_map,
     };

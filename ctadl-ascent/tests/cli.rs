@@ -462,3 +462,142 @@ fn index_version_gate_rejects_a_different_version() {
         );
     });
 }
+
+// ---------------------------------------------------------------------------
+// `inspect --dump-index-graph`: rendering the index graph from a finished index.
+//
+// The graph used to come out of `ctadl index --dump-index-graph`, as a side effect of a run
+// that already had `assign_like` in memory. It now comes out of `inspect`, which reads the two
+// tables it needs back from the index directory -- so what these cover is that read path:
+// `assign.parquet` for the edges, `function_id.parquet` for the labels.
+// ---------------------------------------------------------------------------
+
+/// Imports and indexes `xfer.c` into a project of its own, ready to dump.
+fn index_xfer_project(import_name: &str, project_name: &str) -> AnalysisProject {
+    let import =
+        ArtifactImport::try_create(import_name, ArtifactLanguage::C, &c_fixture("xfer.c")).unwrap();
+    cli::import(&import, cli::ImportOptions::default()).unwrap();
+    let project = AnalysisProject::try_create(project_name, &[import_name]).unwrap();
+    cli::index(
+        &project,
+        &[],
+        &[c_fixture("xfer.json")],
+        false,
+        cli::IndexOptions::default(),
+    )
+    .unwrap();
+    project
+}
+
+/// The DOT lines that declare an edge. Skips the leading legend, which explains the `A -> B`
+/// convention and would otherwise count as an edge.
+fn edge_lines(dot: &str) -> Vec<&str> {
+    dot.lines()
+        .filter(|l| l.contains("->") && !l.trim_start().starts_with("//"))
+        .collect()
+}
+
+#[test]
+fn inspect_index_graph_writes_a_dot_file() {
+    run_store_test(|| {
+        let project = index_xfer_project("dump_graph_c", "dump_graph_c_proj");
+
+        let out_dir = tempdir().unwrap();
+        let dot_path = out_dir.path().join("index.dot");
+        cli::inspect_index_graph(&project, &dot_path).unwrap();
+
+        let dot = std::fs::read_to_string(&dot_path).unwrap();
+        // The legend is embedded as a leading DOT comment so the file documents itself.
+        assert!(
+            dot.starts_with("// Index (assign-like) graph."),
+            "expected the legend comment first:\n{dot}"
+        );
+        assert!(dot.contains("digraph index_graph"), "not a digraph:\n{dot}");
+        assert!(
+            !edge_lines(&dot).is_empty(),
+            "expected at least one edge:\n{dot}"
+        );
+    });
+}
+
+/// The dumped graph is the index's `assign` relation, labelled through its `IdMap`.
+///
+/// One edge line per stored row, and the labels name the functions the fixture declares rather
+/// than the `func_<n>` fallback `render_index_graph` uses when a lookup misses -- which is what
+/// says `function_id.parquet` was loaded and really does resolve the ids in `assign.parquet`.
+#[test]
+fn inspect_index_graph_matches_the_stored_assign_relation() {
+    use ctadl_ascent::facts;
+
+    run_store_test(|| {
+        let project = index_xfer_project("dump_graph_eq_c", "dump_graph_eq_c_proj");
+
+        let out_dir = tempdir().unwrap();
+        let dot_path = out_dir.path().join("index.dot");
+        cli::inspect_index_graph(&project, &dot_path).unwrap();
+        let dot = std::fs::read_to_string(&dot_path).unwrap();
+
+        let index_path = project.index_path().unwrap();
+        let assign = facts::schema::assign::try_load(&index_path).unwrap();
+        assert!(!assign.is_empty(), "the fixture must index to something");
+        assert_eq!(
+            edge_lines(&dot).len(),
+            assign.len(),
+            "one edge line per assign row:\n{dot}"
+        );
+
+        assert!(
+            dot.contains("transfer"),
+            "expected a function name from the fixture, not the func_<n> fallback:\n{dot}"
+        );
+        // `render_index_graph` falls back to `func_<n>` for an id the IdMap does not know, and
+        // a label always opens with the function name, so this is that fallback and nothing else.
+        assert!(
+            !dot.contains("[label=\"func_"),
+            "every function id must resolve through the IdMap:\n{dot}"
+        );
+    });
+}
+
+#[test]
+fn inspect_index_graph_without_an_index_fails() {
+    run_store_test(|| {
+        // Created but never indexed: `has_index` is false, so this must not reach a table.
+        let project =
+            AnalysisProject::try_create("dump_graph_noindex", &["nonexistent_import"]).unwrap();
+        let out_dir = tempdir().unwrap();
+        let dot_path = out_dir.path().join("index.dot");
+
+        match cli::inspect_index_graph(&project, &dot_path) {
+            Err(ctadl_ascent::error::Error::Import(ctadl_import::Error::MissingIndex {
+                project: p,
+            })) => assert_eq!(p, "dump_graph_noindex"),
+            other => panic!("expected MissingIndex, got: {other:?}"),
+        }
+        assert!(
+            !dot_path.exists(),
+            "a failed dump must not leave a file behind"
+        );
+    });
+}
+
+/// An index this build cannot read is refused by the version gate, before any table is touched
+/// -- so this needs no parquet files at all.
+#[test]
+fn inspect_index_graph_rejects_a_stale_index() {
+    run_store_test(|| {
+        let project =
+            AnalysisProject::try_create("dump_graph_stale", &["nonexistent_import"]).unwrap();
+        let config = project.index_path().unwrap().join(INDEX_CONFIG_FILE);
+        std::fs::write(&config, r#"{"version":"1"}"#).unwrap();
+
+        let out_dir = tempdir().unwrap();
+        match cli::inspect_index_graph(&project, &out_dir.path().join("index.dot")) {
+            Err(ctadl_ascent::error::Error::Import(ctadl_import::Error::IncompatibleIndex {
+                found,
+                ..
+            })) => assert_eq!(found, "1"),
+            other => panic!("expected IncompatibleIndex, got: {other:?}"),
+        }
+    });
+}
