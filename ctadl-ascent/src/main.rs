@@ -219,16 +219,21 @@ pub struct InspectArgs {
 
     /// Instead of summary statistics, pretty-print the imported IR. Prints every function
     /// unless `--function` narrows the set. Requires an artifact/project name.
-    #[arg(long)]
+    #[arg(long, requires = "name")]
     pub dump_ir: bool,
 
     /// With `--dump-ir`, only print functions whose name contains this substring.
-    #[arg(long, value_name = "SUBSTR")]
+    #[arg(long, value_name = "SUBSTR", requires = "dump_ir")]
     pub function: Option<String>,
 
     /// Write the index (assign-like) graph of this project to a Graphviz DOT file. Requires a
     /// project name; conflicts with `--dump-ir`.
-    #[arg(long, value_name = "FILE", conflicts_with = "dump_ir")]
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with = "dump_ir",
+        requires = "name"
+    )]
     pub dump_index_graph: Option<PathBuf>,
 }
 
@@ -1027,9 +1032,10 @@ fn load_or_infer_project(name: &str) -> anyhow::Result<project::AnalysisProject>
 
 fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
     if let Some(dot_path) = &args.dump_index_graph {
-        let Some(name) = &args.name else {
-            anyhow::bail!("--dump-index-graph requires a project name");
-        };
+        let name = args
+            .name
+            .as_ref()
+            .expect("--dump-index-graph parses only with a name");
         let project = project::AnalysisProject::try_load_name(name)
             .with_context(|| format!("loading project: '{name}'"))?;
         return cli::inspect_index_graph(&project, dot_path).map_err(Into::into);
@@ -1068,9 +1074,6 @@ fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
             cli::inspect(&import)?;
         }
     } else {
-        if args.dump_ir {
-            anyhow::bail!("--dump-ir requires an artifact or project name");
-        }
         cli::list_store_contents()?;
     }
     Ok(())
@@ -1206,21 +1209,13 @@ mod tests {
         assert_eq!(args.dump_index_graph.as_deref(), Some(Path::new("g.dot")));
     }
 
-    /// The name is required, but as a runtime check rather than a clap `requires`, mirroring the
-    /// neighbouring `--dump-ir`. So it parses, and `inspect_artifact` is what refuses it -- before
-    /// it touches the store, which is why this test needs none.
     #[test]
     fn inspect_dump_index_graph_without_a_name_is_a_usage_error() {
-        let cli = Cli::try_parse_from(["ctadl", "inspect", "--dump-index-graph", "g.dot"])
-            .expect("must parse; the name check is at run time");
-        let Command::Inspect(args) = cli.cmd else {
-            panic!("expected the inspect subcommand");
-        };
-        let err = inspect_artifact(&args)
+        let err = Cli::try_parse_from(["ctadl", "inspect", "--dump-index-graph", "g.dot"])
             .expect_err("a dump with no project name must fail")
             .to_string();
         assert!(
-            err.contains("requires a project name"),
+            err.contains("NAME"),
             "the error must say what is missing: {err}"
         );
     }
