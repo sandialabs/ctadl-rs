@@ -82,11 +82,22 @@ else about it. A `FunctionId` that exists only as a name in the `IdMap` and a se
 composes at call sites exactly like a fully analyzed function.
 
 Also relevant: `ctadl index` already has `-s/--summary NAME`, which calls `load_and_map_summaries`
-(`ctadl-ascent/src/cli/mod.rs:984`). It reads another project's `summary.parquet` and `IdMap`,
-and copies each row across **when the function name already exists in the current project**. That
-is the right shape but the wrong policy for us: in compositional mode the native function
-deliberately does *not* exist in the app's fact base, so every row would be discarded. It also
-runs *after* `jni::link`, which is too late.
+(`ctadl-ascent/src/cli/mod.rs:985`). It reads another project's `summary.parquet` and `IdMap`, and
+copies each row across **when the function name already exists in the current project**. It runs at
+`cli/mod.rs:337`, after `jni::link` at `:258` and before `facts.try_save` at `:341`.
+
+That is the right shape and the wrong job. Two differences decide it, and neither is timing —
+loading rows after `link` is exactly where §4.3 step 8 wants them:
+
+- *What it loads.* It takes the whole of another project's summary table and keeps every row whose
+  function name resolves here. Compositional mode must load only the bridged functions' rows, or it
+  reintroduces the path blowup of §7/C4.
+- *What names it.* It takes a project name from the user. The compositional path derives its set
+  from the project's own native sub-imports and must also handle what `--summary` has no notion of:
+  native arities for the prototype check, and the `external_function` marking of F10.
+
+The discard rule is not itself the obstacle — step 6 interns the native names before `link`, so by
+line 337 they do exist. But the two paths stay separate anyway; see §7/C3.
 
 ---
 
@@ -103,7 +114,10 @@ runs *after* `jni::link`, which is too late.
   lists only the imports it actually co-indexed.
 - **F4.** The app index loads, from each sub-index, only the summary rows for the native
   functions reached across the JNI boundary — not the whole summary table, and none of the other
-  index tables except what is needed to resolve names and arities.
+  index tables except what is needed to resolve names and arities. Access paths follow the rows
+  and only the rows: the paths that enter the app's `model_path` set are exactly those the retained
+  rows mention, and the sub-index's `paths.parquet` is never read. See §7/C4 for why this is a
+  requirement and not an optimization.
 - **F5.** JNI matching is applied when loading. Both binding mechanisms work: `Java_…` name
   mangling (long name then short name) and recovered `RegisterNatives` tables. Argument ports are
   mapped across the JNI ABI shift exactly as the co-indexed path does.
@@ -118,6 +132,9 @@ runs *after* `jni::link`, which is too late.
   without Ghidra.
 - **F9.** The run reports, at `info`, what it did: which native sub-imports were indexed, how many
   summary rows each contributed, how many were loaded, and how many native methods linked.
+- **F10.** A bridged native function the sub-index knows nothing about — no summary rows *and* no
+  `formal_param` rows — is marked `external_function` in the app's fact base, so a query reports
+  absorption at its call sites rather than silently reporting no flow (§4.4, §7/C7).
 
 ### Non-functional
 
@@ -128,8 +145,13 @@ runs *after* `jni::link`, which is too late.
 - **N2.** Wall-clock time may grow — several fixpoints instead of one — but not
   catastrophically. Expect it to be roughly the sum of the parts, minus whatever the co-indexed run
   spent on cross-boundary work.
-- **N3.** Findings on the JNI regression cases must be identical to the co-indexed run. Where they
-  cannot be (see §6), the difference must be known, documented, and pinned by a test.
+- **N3.** The bar is **correct mapping, not equal precision.** A compositional run is less precise
+  than a co-indexed one (§6, §7/C6); that loss is accepted and is not quantified. What must hold is
+  that every loaded summary row lands on the function it came from, with its formal indices and
+  access paths unchanged, and that the bridge's port map joins them to the Java side exactly as the
+  co-indexed path does. On the JNI regression fixtures — small enough that the lost precision does
+  not bite — correct mapping shows up as the same findings from the same known answers, which is
+  why §8.4 is written that way. A difference *there* is a mapping bug, not accepted loss.
 
 ### Out of scope
 
@@ -186,8 +208,16 @@ analyzed under one policy. It writes `summary.parquet`, `function_id.parquet`,
 `formal_param.parquet` and the rest through `IndexFacts::try_save` / `IndexResult::try_save`, and
 stamps `index_config.json` last, as usual. Nothing new on disk.
 
-Consequence worth advertising: `ctadl query app__arm64-v8a__libfoo -m models.json5` works, and
-answers questions about that library alone.
+**A sub-index is a first-class, user-visible project, not an implementation detail** (§10/Q5). It
+is listed by `ctadl inspect` like any other, and `ctadl query app__arm64-v8a__libfoo -m
+models.json5` works and answers questions about that library alone. Nothing hides it, nothing
+garbage-collects it, and its name is stable and derived (`<parent>__<abi>__<stem>`), so it can be
+scripted against.
+
+That is what makes §6.5 an acceptable trade rather than a hole: the native half's findings leave
+the app's SARIF, but they do not disappear — they are in a project the user can name and query.
+`AnalysisProject.sub_indexes` (§4.9) is the link back, so from the app index a user (or `ctadl
+inspect`) can find the sub-indexes it was built from.
 
 ### 4.3 Order of operations in the app's run
 
@@ -213,7 +243,9 @@ exists and keeps its current place.
    step 5, finds the interned native ids from step 6, and emits its `call` / `actual_param` /
    `formal_param` rows exactly as it does today.
 8. **new** — Collect the set of native `FunctionId`s that `jni::link` actually targeted, and load
-   only those functions' summary rows out of each sub-index into `facts.summary` (§4.4).
+   only those functions' summary rows out of each sub-index into `facts.summary` (§4.4). Any
+   bridged function that got neither a summary row nor a `formal_param` row from its sub-index is
+   pushed onto `facts.external_function` (F10, §7/C7).
 9. Everything after this — model codegen, `facts.try_save`, `taint_index_with_config`, saving the
    result — is unchanged.
 
@@ -257,7 +289,7 @@ the claim the regression tests in §8 pin.
 | --- | --- | --- |
 | `function_id.parquet` (`IdMap::try_load`) | yes, in full | resolving sub-index `FunctionId` to a name, and back to an app-side id |
 | `formal_param.parquet` | yes, in full | native arity, for the incomplete-prototype check |
-| `summary.parquet` | yes, filtered to bridged functions | the summaries themselves |
+| `summary.parquet` | yes, filtered to bridged functions | the summaries themselves, and the only source of paths that cross the seam |
 | `ir-vmt.bitcode` (from the *import*, not the index) | yes | the native symbol table for JNI resolution |
 | `jni-registry.json` (from the import) | yes | `RegisterNatives` bindings |
 | `assign.parquet`, `paths.parquet`, `actual_param.parquet`, `call.parquet`, source info | **no** | not needed; these are the large ones |
@@ -276,6 +308,14 @@ implementation, call it and filter in memory, then drop the `Vec` — correct, a
 library's summary table, which is far smaller than its `assign` table. If measurement shows that
 peak matters, push the filter into the parquet reader as a follow-up; do not do it up front.
 
+Filtering in memory is enough for correctness — the discarded rows never reach `facts.summary`, so
+they never become `model_path`s, which is what C4 is about. It is *not* enough to avoid interning
+them. A summary row stores its two access paths as dot-strings (`facts/parquet.rs:534`) and
+decoding parses each one back into a `Path`, so reading the whole table interns every path and
+every string in it, and §4.6's interners never give them back. The rows are dropped; the residue
+is not. That makes pushing the filter into the parquet reader the fix for a measured interner
+problem as well as for a measured peak — but still a follow-up, not up-front work.
+
 **Which functions count as bridged.** The set is exactly what `jni::link` resolved. Two things
 feed it and both are already handled by existing code: the mangled-symbol tiers in
 `resolve_by_symbol`, and the `RegisterNatives` attribution in `attribute_registries`. Because we
@@ -287,14 +327,37 @@ ambiguity refusal, and the registration-beats-symbol rule.
 everything it calls inside the library. Loading the entry point's summary therefore covers the
 library's internals; nothing deeper needs loading.
 
+**A bridged function the sub-index knows nothing about is marked `external_function`.** Both inputs
+are already at hand: the filtered `summary` load says whether it has any rows, and the
+`formal_param` table loaded in step 3 says whether it has any parameters. Zero of each means the
+sub-index recovered nothing usable — typically a function whose prototype Ghidra failed to recover
+— and the app's fact base says so with an `external_function` row, which makes a query report
+absorption at the bridge site instead of "analyzed, no flow".
+
+The test is deliberately narrow: **zero summary rows *and* zero formal params**, not "bodyless".
+`external_function` means "no body in this fact base" in codegen terms — it is pushed for every
+block-less function (`codegen/mod.rs:812`) and even for the synthetic dispatch functions that
+*do* receive summary rows in phase 2 (`codegen/mod.rs:697`), so bodyless-plus-summaries is a
+normal, already-supported shape. But `absorbing_functions` (`query_engine/mod.rs:564`) joins on
+`external_function` with no regard for whether the target has summaries, so marking a
+well-summarized native would report absorption at a call site that in fact propagates flow. A
+compositionally-summarized function is not external; only an empty one is.
+
+Pushing a row onto `facts.external_function` is the whole change. Nothing in `index_engine`,
+`codegen` or `query_engine` moves (§5): the relation is an ordinary input fact, consumed for a
+function count (`index_engine/mod.rs:1744`) and for absorption.
+
 ### 4.5 Reusing a sub-index
 
 A sub-index depends only on the sub-import's contents and the index options. Re-indexing an
 unchanged library on every app run would make the feature painful to iterate on, so: skip a
 sub-index when a fresh one already exists.
 
-Freshness needs a stamp. `IndexConfig` (`ctadl-import/src/project.rs`) currently records
-`version` and an optional `call_policy`. Add one more optional field:
+Freshness needs a stamp. `ctadl_import::project::IndexConfig` (`ctadl-import/src/project.rs:165`)
+— the on-disk `index/index_config.json`, **not** the same-named runtime struct
+`ctadl_ascent::index_engine::IndexConfig` (`index_engine/mod.rs:297`, which holds `alias_rule`,
+`hybrid_context` and `parallelism`) — currently records `version` and an optional `call_policy`.
+Add one more optional field:
 
 ```rust
 pub struct IndexConfig {
@@ -386,7 +449,9 @@ Mirror `--compositional-native-sub-imports` on `ctadl go`, which forwards to `In
 
 Interaction with the existing `-s/--summary NAME`: both end in `facts.summary`, and both may be
 given. `--summary` keeps its current meaning — copy rows for functions that already exist in this
-project, by name. The new path is separate and does not change it.
+project, by name — and is **not touched by this work**. It serves a different workflow: projects
+indexed separately and composed by hand, where the user knows the two halves share function names.
+The new path is separate and does not change it.
 
 ### 4.8 Logging
 
@@ -398,12 +463,28 @@ compositional: indexing 'app__arm64-v8a__libfoo' (1 of 3)
 compositional: 'app__arm64-v8a__libfoo': 4812 summary row(s) over 1190 function(s)
 compositional: 'app__arm64-v8a__libcrypto': reusing existing sub-index
 compositional: loaded 96 summary row(s) for 12 bridged function(s) from 3 sub-index(es)
+compositional: 2 bridged function(s) had no summary and no prototype; marked external
 jni bridge: 14 native method(s): 12 linked (9 registered), 1 unresolved, 1 ambiguous
 ```
 
 The `jni bridge` and `jni registry` lines are the existing ones and must keep reporting the same
 numbers they would in a co-indexed run. That is the cheapest signal that the feature is working:
 a method that fails to link produces no flow and no error.
+
+At `warn`, after `link`, when it left `native` methods unresolved *and* a native sub-import has no
+`jni-registry.json` (§7/C5):
+
+```
+compositional: 'app__arm64-v8a__libfoo' has no jni-registry.json, so its RegisterNatives
+  bindings could not be recovered and 23 native method(s) linked by exported symbol alone.
+  Re-import the parent artifact to scan for them:
+      ctadl import '/path/to/app.apk' --name app
+  (`--skip-existing` will not create one.)
+```
+
+The parent's `artifact_path` and name come from the `ArtifactImport` the sub-import was derived
+from, which the run already holds. The sub-import's own `artifact_path` is the `.so` the importer
+extracted into the store, so it is *not* what the user re-imports.
 
 At `debug`: per-function summary row counts, and the `[mem cp]` footprint around each sub-index.
 
@@ -412,7 +493,11 @@ At `debug`: per-function summary row counts, and the `[mem cp]` footprint around
 - `IndexConfig` gains `inputs` (`#[serde(default)]`). No format-version bump.
 - `AnalysisProject` gains `sub_indexes: Vec<String>` (`#[serde(default)]`) recording which
   sub-index projects fed this one, so `ctadl inspect` and `ctadl query` can report it and a later
-  query can warn when a sub-index has gone stale.
+  query can warn when a sub-index has gone stale. It stays its own field: not merged with
+  `--summary`'s sources, and not folded into `imports` as a per-entry flag (§7/C3). The project
+  config is rewritten on every index run — `index_artifacts_to_store` calls
+  `AnalysisProject::try_create`, which saves (`main.rs:928`) — so the field tracks the run that
+  wrote the index rather than going stale behind it.
 - Nothing else. No new files, no new directories, no change to `IMPORT_FORMAT_VERSION` or
   `INDEX_FORMAT_VERSION`.
 
@@ -510,47 +595,111 @@ makes co-indexing infeasible, and the simpler orchestration and directly testabl
 worth it. F6 is worded to match (release is of the fact base, not of the process). The subprocess
 variant is documented in §4.6 as a follow-up if §8.5 measures the residue as a real cost.
 
-**C3 — the existing `--summary` flag does the opposite of what we need.**
-`load_and_map_summaries` keeps a row only when the function *already exists* in the target
-project; compositional mode needs rows for functions that deliberately do not. This is why the new
-path is separate rather than a tweak to the existing one. Worth deciding whether the two should
-eventually merge; this spec keeps them apart to avoid changing `--summary`'s behaviour.
+**C3 — the existing `--summary` flag does the opposite of what we need. RESOLVED: leave
+`--summary` untouched.** `load_and_map_summaries` keeps a row only when the function *already
+exists* in the target project; compositional mode needs rows for functions that deliberately do
+not. That is not a defect in `--summary`: it exists for a different workflow, where projects are
+indexed separately and then composed manually, and name-matching is exactly what that workflow
+wants. So the new path is a separate one, not a tweak to the existing one, and the two are not to
+be merged.
 
-**C4 — summary paths can blow up the path set.** Every distinct path in a loaded summary becomes a
-`model_path`, and `compute_paths` concatenates every model path with every program path. Loading
-the summaries of a handful of bridged functions is fine. Loading a whole library's summary table
-would be a `|model| × |program|` self-join. This is the concrete reason F4 says "filtered to the
-bridged functions" and not "load the sub-index's summaries". It must not be relaxed without
-measuring.
+**Decided: not unified, at any level.** Not the flag, not the loader, and not the on-disk record.
+The sub-indexes a run built are recorded by `AnalysisProject.sub_indexes` (§4.9), not by folding
+them into a shared list of "projects we took summaries from". They are not the same kind of thing:
+a sub-index is a dependency this run created out of the project's own imports and can recreate,
+while a `--summary` project is a user-supplied one this run only consumes. Sharing the loader was
+considered and rejected for the same reason — the differences (§2) are exactly the parts that
+matter, and a shared helper with two policy flags buys little for the risk of moving `--summary`'s
+behaviour.
 
-**C5 — resolution quality depends on `jni-registry.json`, which is written at import time.** A
-library imported before the registry scanner existed has no sidecar, and `import --skip-existing`
-will not create one. In compositional mode this is more visible than today, because that library's
-methods will link by symbol name alone and most Android apps export almost no `Java_…` symbols.
-The failure is silent — fewer links, no error. Mitigation: when a native sub-import has no
-`jni-registry.json`, say so at `warn` and name the re-import command.
+Known and out of scope: an index built with `--summary` records nothing about where the rows came
+from. `write_index_config` (`ctadl-import/src/project.rs:746`) writes `version` and `call_policy`
+and nothing else, and the mapped rows are merged into this project's own `summary.parquet` under
+this project's ids, so they are indistinguishable afterwards. That gap predates this work and is
+not part of it.
 
-**C6 — precision loss has not been quantified.** The design argues that loading a summary is
-equivalent to deriving it, and the argument is sound for the context-free case. It has not been
-measured on a real app. The nightly JNI cases (§8) pin equivalence on small fixtures; a real APK
-A/B is the thing that would justify turning this on by default, and it is not part of this work.
+**C4 — summary paths can blow up the path set. ACCEPTED: filter to the bridged functions and
+their paths.** Every distinct path in a loaded summary becomes a `model_path`, and `compute_paths`
+concatenates every model path with every program path. Loading the summaries of a handful of
+bridged functions is fine. Loading a whole library's summary table would be a `|model| × |program|`
+self-join — and on a path-heavy native library that is precisely the cost the feature exists to
+avoid, reintroduced on the app side.
 
-**C7 — `external_function` for a bridged native.** Today a call to an unmodelled external
-function makes the query report absorption. A compositionally-summarized native function is not
-external — the sub-index analyzed it — so this spec does not mark it so. But a native function
-whose prototype Ghidra failed to recover produces no useful summary and will now look "analyzed,
-no flow" instead of "unknown". **Open:** mark it `external_function` when the sub-index has zero
-summary rows *and* zero formal params for it.
+So F4 is the design, not a tuning knob: load the rows for the bridged functions, and with them only
+the paths those rows mention. Nothing pulls in the sub-index's path set wholesale — `paths.parquet`
+stays unread (§4.4), and a native function nothing bridges to contributes nothing. It must not be
+relaxed without measuring.
 
-**C8 — index policy must match across the seam.** A sub-index built with a different
-`--strategy` or `--cha-threshold` answers a different question. §4.2 passes the app's options
-down, and §4.5 makes a policy mismatch force a re-index. A user who indexes a sub-import by hand
-first, with other flags, gets it re-indexed; that is the intended behaviour, but it will surprise
-someone.
+**C5 — resolution quality depends on `jni-registry.json`, which is written at import time.
+ACCEPTED: warn.** A library imported before the registry scanner existed has no sidecar, and
+`import --skip-existing` will not create one. In compositional mode this is more visible than
+today, because that library's methods will link by symbol name alone and most Android apps export
+almost no `Java_…` symbols. The failure is silent — fewer links, no error. So the run says so at
+`warn` and names the re-import command (§4.8).
 
-**C9 — store concurrency.** Two app runs sharing a native sub-import would race on the same
-sub-index project directory. The store has no locking today. Low priority, but the failure mode is
-a corrupt index rather than an error, so it should at least be written down.
+One refinement, because a blanket warning would cry wolf: **a missing sidecar does not mean the
+library was never scanned.** `scan_import` writes nothing when it finds no tables
+(`jni_registry.rs:197`, "Does nothing at all … when it holds no tables"), so a library that
+legitimately binds everything through exported `Java_…` symbols looks exactly like one imported by
+a build that predates the scanner. There is no positive "scanned, found none" marker on disk.
+
+The warning is therefore conditioned on an actual failure: emit it when `link` left `native`
+methods unresolved **and** a native sub-import has no sidecar. Then it fires when it has something
+to explain and stays quiet when symbol linking did the job. If the ambiguity itself becomes a
+nuisance, the fix is to make `scan_import` write an empty registry so "scanned" is observable —
+that is an importer change, it does not retroactively help existing imports, and it is not part of
+this work.
+
+**C6 — precision loss. ACCEPTED, and not quantified.** Compositional analysis loses precision at
+the boundary: the specific losses are listed in §6, and the largest is that a loaded summary is
+context-free where a co-indexed run could specialize per call site. That is the price of the
+feature, it is accepted, and **no A/B against a co-indexed run on a real app is part of this
+work.**
+
+What replaces it is a narrower obligation: the summaries must be *mapped correctly*. Loading a row
+must put it on the right function with its formal indices and access paths intact, and the bridge
+must join those indices to the Java side the way the co-indexed path does (§4.4, N3). That is a
+property of the loader and the port map, and it is checkable on small fixtures — §8.1, §8.2 and
+§8.4 check it. It does not require, and does not imply, a claim about how much precision a real
+app retains.
+
+Consequence for §10/Q4: without a measurement, this flag stays opt-in. Anyone who later wants it
+on by default has to do the A/B this spec declines to do.
+
+**C7 — `external_function` for a bridged native. RESOLVED: mark it, in that case only.** Today a
+call to an unmodelled external function makes the query report absorption. A
+compositionally-summarized native function is not external — the sub-index analyzed it — so it is
+not marked. But a native function whose prototype Ghidra failed to recover produces no useful
+summary and would otherwise look "analyzed, no flow" instead of "unknown".
+
+So: when the sub-index has zero summary rows *and* zero formal params for a bridged function, the
+app's fact base gets an `external_function` row for it (F10, §4.4). The conjunction matters —
+`absorbing_functions` does not check for summaries, so a broader rule would report absorption at
+boundaries that really do carry flow.
+
+
+**C8 — index policy must match across the seam. ACCEPTED: re-index on mismatch.** A sub-index
+built with a different `--strategy` or `--cha-threshold` answers a different question, and two
+halves analyzed under two policies are not a single analysis. So the design keeps one policy per
+run: §4.2 passes the app's options down to every sub-index, and §4.5's freshness test includes the
+policy, which makes a mismatch force a re-index rather than silently reusing the wrong index.
+
+The cost is accepted: a user who indexed a sub-import by hand first, under other flags, has that
+work redone when an app run needs it under its own policy. That is the intended behaviour — the
+alternative is an app index built from summaries that answer a different question — and §4.8's
+`info` line says when a sub-index is re-indexed rather than reused, so it is visible rather than
+mysterious.
+
+**C9 — store concurrency. ACKNOWLEDGED: nothing is built for it.** Two app runs sharing a native
+sub-import would race on the same sub-index project directory, and the failure mode is a corrupt
+index rather than an error. The store has no locking today, this feature adds none, and it adds no
+detection either — not a lock file, not a staleness check, not a warning.
+
+Recorded so the failure is recognizable if someone hits it, not as deferred work. The feature does
+not make the situation worse in kind: `ctadl index` already writes a project directory with no
+locking, and two concurrent runs over the same project already race. Compositional mode only makes
+a shared directory likelier, by giving two app runs a reason to write the same sub-index. If it
+ever bites, the fix belongs in the store, applied to every project, not bolted onto this path.
 
 ---
 
@@ -574,11 +723,13 @@ a corrupt index rather than an error, so it should at least be written down.
    beside a Dex import is **not** summarized (§7/C1); and a project with no Java half leaves the
    flag a no-op. Uses the synthetic APK builder already in that file.
 
-4. **End-to-end equivalence** (nightly, `xtask/src/discovery.rs`). Add
+4. **End-to-end mapping** (nightly, `xtask/src/discovery.rs`). Add
    **`Jni:Foo+apk-compositional`** beside `Jni:Foo+apk`: the same APK packaging, indexed with the
    flag, making the same claims from the same `foo.json` known answer. This runs over `JniFlow`,
    `JniArgShift` and `JniRegister` — plain flow, the ABI argument shift, and `RegisterNatives` —
-   for free, and it is the test that says the feature preserves findings. A
+   for free, and it is the test that says the summaries were mapped right: the fixtures are small
+   enough that nothing in §6 costs a finding, so a claim that stops holding is a mapping bug, not
+   accepted precision loss (N3, §7/C6). A
    `+split-apks-compositional` variant is worth adding too: it is the case where the `.so` is a
    sub-import of one APK and the Dex is a different top-level import, which exercises the
    cross-import resolution the bridge does in `attribute_registries`.
@@ -598,8 +749,13 @@ a corrupt index rather than an error, so it should at least be written down.
    the signal to revisit the subprocess variant.
 
 6. **Failure paths.** A native sub-import whose index fails leaves the app run succeeding with a
-   warning (F8). A sub-index that is stale gets re-indexed. `--compositional-native-sub-imports` together
-   with a `bridge` model is refused (§6.4).
+   warning (F8). A sub-index that is stale gets re-indexed — including one that is current in every
+   way except that it was built under a different index policy (§7/C8). `--compositional-native-sub-imports` together
+   with a `bridge` model is refused (§6.4). A sub-import with no `jni-registry.json` and unresolved
+   `native` methods warns and names the parent's re-import command; one with no sidecar whose
+   methods all linked by symbol does **not** warn (§7/C5). A bridged function with no summary rows
+   and no formal params gets an `external_function` row and a query reports absorption at its call
+   site; one with summaries does not get the row (F10, §7/C7).
 
 ---
 
@@ -619,11 +775,15 @@ a corrupt index rather than an error, so it should at least be written down.
 1. ~~C2 — subprocess per sub-index, or in-process with partial memory release?~~ **Resolved:
    in-process.** The interner residue is accepted; see §4.6 and §7/C2. Nothing blocks
    implementation.
-2. C7 — should a bridged native with an empty summary be marked `external_function`?
+2. ~~C7 — should a bridged native with an empty summary be marked `external_function`?~~
+   **Resolved: yes**, when it has neither summary rows nor formal params. See §7/C7 and F10.
 3. ~~C1 — is the separate-files workflow (`ctadl index app app_dex app_native`) meant to be left
    out?~~ **Resolved: yes, left out.** The flag is silently a no-op there by design; nothing is
    built for that workflow.
-4. Should `--compositional-native-sub-imports` eventually become the default for APKs above some
-   size, or stay opt-in? (Needs C6 measured first.)
-5. Is a sub-index meant to be a first-class, user-visible project, or an implementation detail that
-   `ctadl inspect` hides? This spec makes it first-class and queryable.
+4. ~~Should `--compositional-native-sub-imports` eventually become the default for APKs above some
+   size, or stay opt-in?~~ **Resolved for now: opt-in.** §7/C6 accepts the precision loss without
+   quantifying it, and a default would need exactly the measurement this work declines to make.
+5. ~~Is a sub-index meant to be a first-class, user-visible project, or an implementation detail
+   that `ctadl inspect` hides?~~ **Resolved: first-class and user-visible.** It is an ordinary
+   project in the store, listed by `ctadl inspect` and queryable by name; nothing hides it. See
+   §4.2.
