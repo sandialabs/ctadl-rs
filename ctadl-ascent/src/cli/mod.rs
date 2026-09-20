@@ -1063,14 +1063,24 @@ fn load_and_map_summaries(
 /// locals are resolved to their source names through each function's `Locals` table
 /// (`WithLocalNames`), since `%L7` on its own tells a reader nothing.
 pub fn dump_ir(import: &ArtifactImport, filter: Option<&str>) -> Result<(), Error> {
-    let program_info = load_import(import, SourceInfoMode::Skip)?;
-    let mut matched = 0usize;
-    for func in program_info.program.functions.iter() {
-        if filter.is_none_or(|pat| func.name.contains(pat)) {
-            matched += 1;
-            println!("{}", ctadl_ir::mir::WithLocalNames(func));
+    let subs = walk_sub_imports(import);
+    let headers = !subs.is_empty();
+    let mut matched = dump_one(
+        &load_import(import, SourceInfoMode::Skip)?,
+        &import.name,
+        filter,
+        headers,
+    );
+
+    for (name, loaded) in subs {
+        let loaded =
+            loaded.and_then(|child| load_import(&child, SourceInfoMode::Skip).map_err(Error::from));
+        match loaded {
+            Ok(info) => matched += dump_one(&info, &name, filter, headers),
+            Err(e) => log::warn!("skipping sub-import '{name}': {e}"),
         }
     }
+
     if let Some(pat) = filter
         && matched == 0
     {
@@ -1079,72 +1089,174 @@ pub fn dump_ir(import: &ArtifactImport, filter: Option<&str>) -> Result<(), Erro
     Ok(())
 }
 
-pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
-    let program_info = load_import(import, SourceInfoMode::Skip)?;
-    let program = &program_info.program;
+/// Prints one import's functions, and says how many it printed.
+fn dump_one(
+    program_info: &ctadl_ir::ProgramInfo,
+    name: &str,
+    filter: Option<&str>,
+    header: bool,
+) -> usize {
+    let mut matched = 0usize;
+    for func in program_info.program.functions.iter() {
+        if filter.is_none_or(|pat| func.name.contains(pat)) {
+            if header && matched == 0 {
+                println!("// ---- {name} ----");
+            }
+            matched += 1;
+            println!("{}", ctadl_ir::mir::WithLocalNames(func));
+        }
+    }
+    matched
+}
 
-    let mut total_assignments = 0;
-    let mut func_assignments = Vec::new();
-    let mut call_style_counts: std::collections::HashMap<&'static str, usize> =
-        std::collections::HashMap::new();
+/// What [`inspect`] measures for one import. Counts rather than printed lines, so a bundle's
+/// sub-imports can be summed into a total.
+#[derive(Default)]
+struct ImportStats {
+    /// Assignments per function, for the median and the function count.
+    per_function: Vec<usize>,
+    assignments: usize,
+    call_styles: std::collections::BTreeMap<&'static str, usize>,
+}
 
-    for func in program.functions.iter() {
-        let mut current_func_assignments = 0;
-        for block in func.blocks.iter() {
-            for stmt in block.statements.iter() {
-                current_func_assignments += stmt.iter_dst_var().count();
+impl ImportStats {
+    fn measure(program_info: &ctadl_ir::ProgramInfo) -> Self {
+        let mut stats = Self::default();
+        for func in program_info.program.functions.iter() {
+            let mut func_assignments = 0;
+            for block in func.blocks.iter() {
+                for stmt in block.statements.iter() {
+                    func_assignments += stmt.iter_dst_var().count();
 
-                if let ctadl_ir::StatementKind::CallAssign { style, .. } = &stmt.kind {
-                    let style_name = match style {
-                        ctadl_ir::call::CallStyle::Unknown => "Unknown",
-                        ctadl_ir::call::CallStyle::DirectCall { .. } => "DirectCall",
-                        ctadl_ir::call::CallStyle::FuncPtrCall { .. } => "FuncPtrCall",
-                        ctadl_ir::call::CallStyle::JavaCall { .. } => "JavaCall",
-                        ctadl_ir::call::CallStyle::LuaCall { .. } => "LuaCall",
-                    };
-                    *call_style_counts.entry(style_name).or_insert(0) += 1;
+                    if let ctadl_ir::StatementKind::CallAssign { style, .. } = &stmt.kind {
+                        let style_name = match style {
+                            ctadl_ir::call::CallStyle::Unknown => "Unknown",
+                            ctadl_ir::call::CallStyle::DirectCall { .. } => "DirectCall",
+                            ctadl_ir::call::CallStyle::FuncPtrCall { .. } => "FuncPtrCall",
+                            ctadl_ir::call::CallStyle::JavaCall { .. } => "JavaCall",
+                            ctadl_ir::call::CallStyle::LuaCall { .. } => "LuaCall",
+                        };
+                        *stats.call_styles.entry(style_name).or_insert(0) += 1;
+                    }
                 }
             }
+            stats.assignments += func_assignments;
+            stats.per_function.push(func_assignments);
         }
-        total_assignments += current_func_assignments;
-        func_assignments.push(current_func_assignments);
+        stats
     }
 
-    func_assignments.sort_unstable();
-    let median_assignments = if func_assignments.is_empty() {
-        0.0
-    } else {
-        let mid = func_assignments.len() / 2;
-        if func_assignments.len() % 2 == 0 {
-            (func_assignments[mid - 1] + func_assignments[mid]) as f64 / 2.0
-        } else {
-            func_assignments[mid] as f64
+    fn merge(&mut self, other: Self) {
+        self.per_function.extend(other.per_function);
+        self.assignments += other.assignments;
+        for (style, count) in other.call_styles {
+            *self.call_styles.entry(style).or_insert(0) += count;
         }
-    };
+    }
 
+    fn median(&self) -> f64 {
+        if self.per_function.is_empty() {
+            return 0.0;
+        }
+        let mut sorted = self.per_function.clone();
+        sorted.sort_unstable();
+        let mid = sorted.len() / 2;
+        if sorted.len().is_multiple_of(2) {
+            (sorted[mid - 1] + sorted[mid]) as f64 / 2.0
+        } else {
+            sorted[mid] as f64
+        }
+    }
+
+    fn print(&self) {
+        println!("  Number of functions: {}", self.per_function.len());
+        println!("  Total number of assignments: {}", self.assignments);
+        println!("  Median assignments per function: {:.1}", self.median());
+        println!("  CallStyle Distribution:");
+        if self.call_styles.is_empty() {
+            println!("    None");
+        } else {
+            for (style, count) in &self.call_styles {
+                println!("    {}: {}", style, count);
+            }
+        }
+    }
+}
+
+/// Every import reachable from `root` through `sub_imports`, parent first and each one once,
+/// paired with the error when its config will not load.
+pub fn walk_sub_imports(root: &ArtifactImport) -> Vec<(String, Result<ArtifactImport, Error>)> {
+    fn walk(
+        names: &[String],
+        seen: &mut std::collections::HashSet<String>,
+        out: &mut Vec<(String, Result<ArtifactImport, Error>)>,
+    ) {
+        for name in names {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            match ArtifactImport::load_by_name(name) {
+                Ok(child) => {
+                    let subs = child.sub_imports.clone();
+                    out.push((name.clone(), Ok(child)));
+                    walk(&subs, seen, out);
+                }
+                // Nothing to recurse into: its own sub-imports are in the config that will not
+                // load.
+                Err(e) => out.push((name.clone(), Err(Error::from(e)))),
+            }
+        }
+    }
+
+    let mut seen = std::collections::HashSet::from([root.name.clone()]);
+    let mut out = Vec::new();
+    walk(&root.sub_imports, &mut seen, &mut out);
+    out
+}
+
+/// Reports an import's statistics, and those of every import derived from it.
+pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
+    // The subject of the command: a failure here is the answer, not a footnote.
+    let stats = ImportStats::measure(&load_import(import, SourceInfoMode::Skip)?);
+    print_import_header(import);
+    stats.print();
+
+    let mut total = ImportStats::default();
+    total.merge(stats);
+    let mut counted = 1usize;
+
+    for (name, loaded) in walk_sub_imports(import) {
+        println!();
+        let measured = loaded.and_then(|child| {
+            let info = load_import(&child, SourceInfoMode::Skip).map_err(Error::from)?;
+            Ok((child, ImportStats::measure(&info)))
+        });
+        match measured {
+            Ok((child, stats)) => {
+                print_import_header(&child);
+                stats.print();
+                total.merge(stats);
+                counted += 1;
+            }
+            // One sub-import that cannot be read is a line in the report, not the end of it.
+            Err(e) => println!("Artifact: {name} -- {e}"),
+        }
+    }
+
+    if counted > 1 {
+        println!();
+        println!("Total over {counted} imports:");
+        total.print();
+    }
+    Ok(())
+}
+
+fn print_import_header(import: &ArtifactImport) {
     println!(
         "Artifact: {} ({})",
         import.name,
         import.artifact_path.display()
     );
-    println!("  Number of functions: {}", program.functions.len());
-    println!("  Total number of assignments: {}", total_assignments);
-    println!(
-        "  Median assignments per function: {:.1}",
-        median_assignments
-    );
-    println!("  CallStyle Distribution:");
-    if call_style_counts.is_empty() {
-        println!("    None");
-    } else {
-        let mut sorted_counts: Vec<_> = call_style_counts.into_iter().collect();
-        sorted_counts.sort_by_key(|&(style, _)| style);
-        for (style, count) in sorted_counts {
-            println!("    {}: {}", style, count);
-        }
-    }
-
-    Ok(())
 }
 
 /// What `ctadl inspect` says about an analysis project -- an index -- as opposed to the imported
