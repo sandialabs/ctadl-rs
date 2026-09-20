@@ -74,6 +74,13 @@ pub enum Error {
         expected: String,
         artifact_path: PathBuf,
     },
+    #[error(
+        "import '{name}' never finished; re-import it from '{}'", .artifact_path.display()
+    )]
+    IncompleteImport {
+        name: String,
+        artifact_path: PathBuf,
+    },
     /// No index has been written for the project yet. This is different from
     /// [`Error::IncompatibleIndex`], which means an index exists but cannot be read. `ctadl
     /// query` never raises this error when it is given model files, because it checks those

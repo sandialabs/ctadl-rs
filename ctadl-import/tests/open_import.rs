@@ -181,3 +181,47 @@ fn an_import_from_an_older_build_is_refused_by_directory() {
     assert_eq!(found, "5");
     assert!(full_message(&err).contains("import format 5"), "{err:?}");
 }
+
+/// An import that died during translation leaves its config behind, because the config is
+/// written when the import starts. Opening it is refused on the missing completion mark rather
+/// than on a missing bitcode file, so the message says what to do about it.
+#[test]
+fn an_import_that_never_finished_is_refused() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = dir.path().join("half.dex");
+    std::fs::write(&artifact, b"not really a dex").unwrap();
+    // `try_create` and nothing else: exactly what a run that failed to translate leaves.
+    let import = ArtifactImport::try_create("half_done", ArtifactLanguage::Dex, &artifact).unwrap();
+    assert!(!import.is_complete());
+
+    let err = open_import("half_done", ssa::Pipeline::none()).unwrap_err();
+    let message = full_message(&err);
+    assert!(message.contains("never finished"), "{message}");
+    assert!(
+        message.contains(&artifact.display().to_string()),
+        "the message has to name the artifact to re-import: {message}"
+    );
+}
+
+/// `save_program_info` writes the mark last, and `try_create` clears it, so a re-import is
+/// unmarked again from the moment it starts until the moment it finishes.
+#[test]
+fn the_completion_mark_is_written_last_and_cleared_by_a_re_import() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let import = write_import("marked", dir.path());
+    assert_eq!(
+        ArtifactImport::load_by_name("marked").unwrap().status,
+        Some(ctadl_import::project::IMPORT_STATUS_DONE.to_string())
+    );
+
+    // A re-import starts by writing a fresh config over the old one.
+    ArtifactImport::try_create("marked", ArtifactLanguage::Dex, &import.artifact_path).unwrap();
+    let restarted = ArtifactImport::load_by_name("marked").unwrap();
+    assert_eq!(restarted.status, None);
+    assert!(
+        !restarted.is_complete(),
+        "the stored program is still there, but this import is running again"
+    );
+}

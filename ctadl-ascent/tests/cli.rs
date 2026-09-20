@@ -601,3 +601,197 @@ fn inspect_index_graph_rejects_a_stale_index() {
         }
     });
 }
+
+/// `ctadl inspect <name>` on a project reports what the store knows about it. A project that was
+/// never indexed says so -- and, since this is a read-only view, leaves no `index/` behind
+/// claiming it was.
+#[test]
+fn inspect_project_reports_a_project_that_was_never_indexed() {
+    run_store_test(|| {
+        let import = ArtifactImport::try_create(
+            "inspect_proj_import",
+            ArtifactLanguage::C,
+            &c_fixture("xfer.c"),
+        )
+        .unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+        let project =
+            AnalysisProject::try_create("inspect_proj_none", &["inspect_proj_import"]).unwrap();
+
+        let summary = cli::summarize_project(&project).unwrap();
+        assert_eq!(summary.name, "inspect_proj_none");
+        assert_eq!(summary.imports.len(), 1);
+        assert_eq!(summary.imports[0].name, "inspect_proj_import");
+        assert!(
+            summary.imports[0].problem.is_none(),
+            "a readable import has nothing to report: {:?}",
+            summary.imports[0]
+        );
+        assert!(
+            matches!(summary.index, cli::IndexStatus::Missing),
+            "expected no index, got: {:?}",
+            summary.index
+        );
+        assert!(
+            !project.dir().join("index").exists(),
+            "inspecting must not create the index directory"
+        );
+    });
+}
+
+/// A project outlives the imports it names. The one that is gone is named in its own line
+/// instead of failing the whole summary.
+#[test]
+fn inspect_project_names_an_import_that_is_gone() {
+    run_store_test(|| {
+        let project =
+            AnalysisProject::try_create("inspect_proj_missing", &["inspect_proj_absent"]).unwrap();
+
+        let summary = cli::summarize_project(&project).unwrap();
+        assert_eq!(summary.imports.len(), 1);
+        assert!(
+            summary.imports[0]
+                .problem
+                .as_deref()
+                .is_some_and(|s| s.contains("missing"))
+        );
+    });
+}
+
+/// An import's config is written before the artifact is translated, so a config on its own is
+/// not a finished import. The stored program is what says so.
+#[test]
+fn inspect_project_flags_an_import_that_never_finished() {
+    run_store_test(|| {
+        // `try_create` writes the config; without `cli::import` there is no stored program,
+        // which is exactly what an import that died during translation leaves behind.
+        ArtifactImport::try_create(
+            "inspect_proj_partial",
+            ArtifactLanguage::C,
+            &c_fixture("xfer.c"),
+        )
+        .unwrap();
+        let project =
+            AnalysisProject::try_create("inspect_proj_half", &["inspect_proj_partial"]).unwrap();
+
+        let summary = cli::summarize_project(&project).unwrap();
+        let problem = summary.imports[0].problem.as_deref().unwrap_or("");
+        assert!(
+            problem.contains("never finished"),
+            "expected the half-written import to be flagged, got: {problem:?}"
+        );
+    });
+}
+
+/// Tables with no stamp are an index that never finished. They are still counted: the row count
+/// comes from the parquet footer, not from the encoding an unreadable index gets wrong, and how
+/// big the last index was is what decides whether to re-run `ctadl index`.
+#[test]
+fn inspect_project_counts_the_tables_of_an_unfinished_index() {
+    run_store_test(|| {
+        use ctadl_ascent::facts::FunctionId;
+        use ctadl_ascent::facts::schema::external_function;
+
+        let project =
+            AnalysisProject::try_create("inspect_proj_partial_index", &["inspect_proj_absent"])
+                .unwrap();
+        let index = project.index_path().unwrap();
+        external_function::try_save(&index, vec![(FunctionId::new(1),), (FunctionId::new(2),)])
+            .unwrap();
+
+        match cli::summarize_project(&project).unwrap().index {
+            cli::IndexStatus::Unfinished { tables } => {
+                assert_eq!(tables.len(), 1);
+                assert_eq!(tables[0].name, "external_function");
+                assert_eq!(tables[0].rows, Some(2));
+            }
+            other => panic!("expected an unfinished index, got: {other:?}"),
+        }
+    });
+}
+
+/// A stamp naming another format is a stale index, which is a different report from an
+/// unfinished one: it finished, this build just cannot read it.
+#[test]
+fn inspect_project_reports_a_stale_index() {
+    run_store_test(|| {
+        let project =
+            AnalysisProject::try_create("inspect_proj_stale", &["inspect_proj_absent"]).unwrap();
+        let config = project.index_path().unwrap().join(INDEX_CONFIG_FILE);
+        std::fs::write(&config, r#"{"version":"1"}"#).unwrap();
+
+        match cli::summarize_project(&project).unwrap().index {
+            cli::IndexStatus::Stale {
+                found, expected, ..
+            } => {
+                assert_eq!(found, "1");
+                assert_eq!(expected, INDEX_FORMAT_VERSION);
+            }
+            other => panic!("expected a stale index, got: {other:?}"),
+        }
+    });
+}
+
+/// A re-index drops the stamp before it overwrites the first table, so a run that dies partway
+/// leaves an index that reads as unfinished rather than one the old stamp still vouches for.
+#[cfg(unix)]
+#[test]
+fn a_failed_reindex_leaves_no_stamp() {
+    run_store_test(|| {
+        use std::os::unix::fs::PermissionsExt;
+
+        let project = index_xfer_project("reindex_c", "reindex_c_proj");
+        assert!(project.has_index(), "the first index must stamp");
+
+        // Make one table unwritable so the second run fails after it has overwritten others.
+        let table = project.index_path().unwrap().join("summary.parquet");
+        let readonly = std::fs::Permissions::from_mode(0o444);
+        std::fs::set_permissions(&table, readonly).unwrap();
+        let result = cli::index(
+            &project,
+            &[],
+            &[c_fixture("xfer.json")],
+            false,
+            cli::IndexOptions::default(),
+        );
+        std::fs::set_permissions(&table, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(result.is_err(), "the re-index was supposed to fail");
+        assert!(
+            !project.has_index(),
+            "a half-written index must not carry the previous run's stamp"
+        );
+        assert!(
+            matches!(
+                cli::summarize_project(&project).unwrap().index,
+                cli::IndexStatus::Unfinished { .. }
+            ),
+            "the tables are there, so this is an unfinished index, not a missing one"
+        );
+    });
+}
+
+/// A stamped index reads back as ready, one entry per table.
+#[test]
+fn inspect_project_lists_the_tables_of_a_readable_index() {
+    run_store_test(|| {
+        use ctadl_ascent::facts::FunctionId;
+        use ctadl_ascent::facts::schema::external_function;
+
+        let project =
+            AnalysisProject::try_create("inspect_proj_ready", &["inspect_proj_absent"]).unwrap();
+        let index = project.index_path().unwrap();
+        external_function::try_save(&index, vec![(FunctionId::new(7),)]).unwrap();
+        project.write_index_config(None).unwrap();
+
+        match cli::summarize_project(&project).unwrap().index {
+            cli::IndexStatus::Ready { tables } => {
+                assert_eq!(tables.len(), 1);
+                assert_eq!(tables[0].name, "external_function");
+                assert_eq!(tables[0].rows, Some(1));
+                assert!(tables[0].bytes > 0);
+            }
+            other => panic!("expected a readable index, got: {other:?}"),
+        }
+    });
+}

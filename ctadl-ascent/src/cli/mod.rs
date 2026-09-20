@@ -339,6 +339,7 @@ pub fn index(
     }
 
     let path = project.index_path()?;
+    project.clear_index_config()?;
     facts.try_save(&path)?;
     inspect_index_facts(&facts, Some(&source_info.sites)).unwrap();
     // Only the (small) site IdMap is needed after saving
@@ -1062,14 +1063,24 @@ fn load_and_map_summaries(
 /// locals are resolved to their source names through each function's `Locals` table
 /// (`WithLocalNames`), since `%L7` on its own tells a reader nothing.
 pub fn dump_ir(import: &ArtifactImport, filter: Option<&str>) -> Result<(), Error> {
-    let program_info = load_import(import, SourceInfoMode::Skip)?;
-    let mut matched = 0usize;
-    for func in program_info.program.functions.iter() {
-        if filter.is_none_or(|pat| func.name.contains(pat)) {
-            matched += 1;
-            println!("{}", ctadl_ir::mir::WithLocalNames(func));
+    let subs = walk_sub_imports(import);
+    let headers = !subs.is_empty();
+    let mut matched = dump_one(
+        &load_import(import, SourceInfoMode::Skip)?,
+        &import.name,
+        filter,
+        headers,
+    );
+
+    for (name, loaded) in subs {
+        let loaded =
+            loaded.and_then(|child| load_import(&child, SourceInfoMode::Skip).map_err(Error::from));
+        match loaded {
+            Ok(info) => matched += dump_one(&info, &name, filter, headers),
+            Err(e) => log::warn!("skipping sub-import '{name}': {e}"),
         }
     }
+
     if let Some(pat) = filter
         && matched == 0
     {
@@ -1078,72 +1089,401 @@ pub fn dump_ir(import: &ArtifactImport, filter: Option<&str>) -> Result<(), Erro
     Ok(())
 }
 
-pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
-    let program_info = load_import(import, SourceInfoMode::Skip)?;
-    let program = &program_info.program;
+/// Prints one import's functions, and says how many it printed.
+fn dump_one(
+    program_info: &ctadl_ir::ProgramInfo,
+    name: &str,
+    filter: Option<&str>,
+    header: bool,
+) -> usize {
+    let mut matched = 0usize;
+    for func in program_info.program.functions.iter() {
+        if filter.is_none_or(|pat| func.name.contains(pat)) {
+            if header && matched == 0 {
+                println!("// ---- {name} ----");
+            }
+            matched += 1;
+            println!("{}", ctadl_ir::mir::WithLocalNames(func));
+        }
+    }
+    matched
+}
 
-    let mut total_assignments = 0;
-    let mut func_assignments = Vec::new();
-    let mut call_style_counts: std::collections::HashMap<&'static str, usize> =
-        std::collections::HashMap::new();
+/// What [`inspect`] measures for one import. Counts rather than printed lines, so a bundle's
+/// sub-imports can be summed into a total.
+#[derive(Default)]
+struct ImportStats {
+    /// Assignments per function, for the median and the function count.
+    per_function: Vec<usize>,
+    assignments: usize,
+    call_styles: std::collections::BTreeMap<&'static str, usize>,
+}
 
-    for func in program.functions.iter() {
-        let mut current_func_assignments = 0;
-        for block in func.blocks.iter() {
-            for stmt in block.statements.iter() {
-                current_func_assignments += stmt.iter_dst_var().count();
+impl ImportStats {
+    fn measure(program_info: &ctadl_ir::ProgramInfo) -> Self {
+        let mut stats = Self::default();
+        for func in program_info.program.functions.iter() {
+            let mut func_assignments = 0;
+            for block in func.blocks.iter() {
+                for stmt in block.statements.iter() {
+                    func_assignments += stmt.iter_dst_var().count();
 
-                if let ctadl_ir::StatementKind::CallAssign { style, .. } = &stmt.kind {
-                    let style_name = match style {
-                        ctadl_ir::call::CallStyle::Unknown => "Unknown",
-                        ctadl_ir::call::CallStyle::DirectCall { .. } => "DirectCall",
-                        ctadl_ir::call::CallStyle::FuncPtrCall { .. } => "FuncPtrCall",
-                        ctadl_ir::call::CallStyle::JavaCall { .. } => "JavaCall",
-                        ctadl_ir::call::CallStyle::LuaCall { .. } => "LuaCall",
-                    };
-                    *call_style_counts.entry(style_name).or_insert(0) += 1;
+                    if let ctadl_ir::StatementKind::CallAssign { style, .. } = &stmt.kind {
+                        let style_name = match style {
+                            ctadl_ir::call::CallStyle::Unknown => "Unknown",
+                            ctadl_ir::call::CallStyle::DirectCall { .. } => "DirectCall",
+                            ctadl_ir::call::CallStyle::FuncPtrCall { .. } => "FuncPtrCall",
+                            ctadl_ir::call::CallStyle::JavaCall { .. } => "JavaCall",
+                            ctadl_ir::call::CallStyle::LuaCall { .. } => "LuaCall",
+                        };
+                        *stats.call_styles.entry(style_name).or_insert(0) += 1;
+                    }
                 }
             }
+            stats.assignments += func_assignments;
+            stats.per_function.push(func_assignments);
         }
-        total_assignments += current_func_assignments;
-        func_assignments.push(current_func_assignments);
+        stats
     }
 
-    func_assignments.sort_unstable();
-    let median_assignments = if func_assignments.is_empty() {
-        0.0
-    } else {
-        let mid = func_assignments.len() / 2;
-        if func_assignments.len() % 2 == 0 {
-            (func_assignments[mid - 1] + func_assignments[mid]) as f64 / 2.0
-        } else {
-            func_assignments[mid] as f64
+    fn merge(&mut self, other: Self) {
+        self.per_function.extend(other.per_function);
+        self.assignments += other.assignments;
+        for (style, count) in other.call_styles {
+            *self.call_styles.entry(style).or_insert(0) += count;
         }
-    };
+    }
 
+    fn median(&self) -> f64 {
+        if self.per_function.is_empty() {
+            return 0.0;
+        }
+        let mut sorted = self.per_function.clone();
+        sorted.sort_unstable();
+        let mid = sorted.len() / 2;
+        if sorted.len().is_multiple_of(2) {
+            (sorted[mid - 1] + sorted[mid]) as f64 / 2.0
+        } else {
+            sorted[mid] as f64
+        }
+    }
+
+    fn print(&self) {
+        println!("  Number of functions: {}", self.per_function.len());
+        println!("  Total number of assignments: {}", self.assignments);
+        println!("  Median assignments per function: {:.1}", self.median());
+        println!("  CallStyle Distribution:");
+        if self.call_styles.is_empty() {
+            println!("    None");
+        } else {
+            for (style, count) in &self.call_styles {
+                println!("    {}: {}", style, count);
+            }
+        }
+    }
+}
+
+/// Every import reachable from `root` through `sub_imports`, parent first and each one once,
+/// paired with the error when its config will not load.
+pub fn walk_sub_imports(root: &ArtifactImport) -> Vec<(String, Result<ArtifactImport, Error>)> {
+    fn walk(
+        names: &[String],
+        seen: &mut std::collections::HashSet<String>,
+        out: &mut Vec<(String, Result<ArtifactImport, Error>)>,
+    ) {
+        for name in names {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            match ArtifactImport::load_by_name(name) {
+                Ok(child) => {
+                    let subs = child.sub_imports.clone();
+                    out.push((name.clone(), Ok(child)));
+                    walk(&subs, seen, out);
+                }
+                // Nothing to recurse into: its own sub-imports are in the config that will not
+                // load.
+                Err(e) => out.push((name.clone(), Err(Error::from(e)))),
+            }
+        }
+    }
+
+    let mut seen = std::collections::HashSet::from([root.name.clone()]);
+    let mut out = Vec::new();
+    walk(&root.sub_imports, &mut seen, &mut out);
+    out
+}
+
+/// Reports an import's statistics, and those of every import derived from it.
+pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
+    // The subject of the command: a failure here is the answer, not a footnote.
+    let stats = ImportStats::measure(&load_import(import, SourceInfoMode::Skip)?);
+    print_import_header(import);
+    stats.print();
+
+    let mut total = ImportStats::default();
+    total.merge(stats);
+    let mut counted = 1usize;
+
+    for (name, loaded) in walk_sub_imports(import) {
+        println!();
+        let measured = loaded.and_then(|child| {
+            let info = load_import(&child, SourceInfoMode::Skip).map_err(Error::from)?;
+            Ok((child, ImportStats::measure(&info)))
+        });
+        match measured {
+            Ok((child, stats)) => {
+                print_import_header(&child);
+                stats.print();
+                total.merge(stats);
+                counted += 1;
+            }
+            // One sub-import that cannot be read is a line in the report, not the end of it.
+            Err(e) => println!("Artifact: {name} -- {e}"),
+        }
+    }
+
+    if counted > 1 {
+        println!();
+        println!("Total over {counted} imports:");
+        total.print();
+    }
+    Ok(())
+}
+
+fn print_import_header(import: &ArtifactImport) {
     println!(
         "Artifact: {} ({})",
         import.name,
         import.artifact_path.display()
     );
-    println!("  Number of functions: {}", program.functions.len());
-    println!("  Total number of assignments: {}", total_assignments);
-    println!(
-        "  Median assignments per function: {:.1}",
-        median_assignments
-    );
-    println!("  CallStyle Distribution:");
-    if call_style_counts.is_empty() {
-        println!("    None");
+}
+
+/// What `ctadl inspect` says about an analysis project -- an index -- as opposed to the imported
+/// artifact it was built from.
+#[derive(Debug)]
+pub struct ProjectSummary {
+    pub name: String,
+    /// One entry per import the project names, in project order (a parent before its
+    /// sub-imports).
+    pub imports: Vec<ImportStatus>,
+    pub index: IndexStatus,
+}
+
+/// One of a project's imports, and whether the store can still read it.
+#[derive(Debug)]
+pub struct ImportStatus {
+    pub name: String,
+    /// `None` when the import reads back, otherwise why it does not.
+    pub problem: Option<String>,
+}
+
+/// Whether a project's index is there, and readable by this build.
+#[derive(Debug)]
+pub enum IndexStatus {
+    /// `ctadl index` has not run, or left nothing behind.
+    Missing,
+    /// Tables, but no stamp: an index run died partway, or the index predates the stamp.
+    Unfinished { tables: Vec<TableSummary> },
+    /// Stamped with a format this build cannot decode. The tables are still listed: how big the
+    /// last index was is what decides whether to re-run `ctadl index`.
+    Stale {
+        found: String,
+        expected: String,
+        tables: Vec<TableSummary>,
+    },
+    /// Tables are on disk and this build can decode them.
+    Ready { tables: Vec<TableSummary> },
+}
+
+/// One `*.parquet` table in a project's `index/`.
+#[derive(Debug)]
+pub struct TableSummary {
+    /// The table name, which is the file stem: `assign.parquet` is `assign`.
+    pub name: String,
+    /// Rows, out of the parquet footer, or `None` if the footer could not be read.
+    pub rows: Option<i64>,
+    pub bytes: u64,
+}
+
+/// Collects what [`inspect_project`] prints.
+///
+/// # Errors
+///
+/// If the index's config file is there but cannot be read. A config that is *absent*, or that
+/// names a format version this build does not speak, is [`IndexStatus::Stale`] rather than an
+/// error: reporting that is the point of inspecting.
+pub fn summarize_project(project: &AnalysisProject) -> Result<ProjectSummary, Error> {
+    let imports = project
+        .imports
+        .iter()
+        .map(|name| ImportStatus {
+            name: name.clone(),
+            problem: match ArtifactImport::load_by_name(name) {
+                Ok(import) if !import.is_complete() => Some(format!(
+                    "never finished; re-import '{}'",
+                    import.artifact_path.display()
+                )),
+                Ok(_) => None,
+                Err(e) if ArtifactImport::exists_by_name(name) => Some(e.to_string()),
+                Err(_) => Some("missing from the store".to_string()),
+            },
+        })
+        .collect();
+
+    let tables = index_tables(&project.dir().join("index"));
+    let index = if !project.has_index() {
+        if tables.is_empty() {
+            IndexStatus::Missing
+        } else {
+            IndexStatus::Unfinished { tables }
+        }
     } else {
-        let mut sorted_counts: Vec<_> = call_style_counts.into_iter().collect();
-        sorted_counts.sort_by_key(|&(style, _)| style);
-        for (style, count) in sorted_counts {
-            println!("    {}: {}", style, count);
+        match project.check_index_config() {
+            Ok(()) => IndexStatus::Ready { tables },
+            Err(ctadl_import::Error::IncompatibleIndex {
+                found, expected, ..
+            }) => IndexStatus::Stale {
+                found,
+                expected,
+                tables,
+            },
+            Err(e) => return Err(Error::from(e)),
+        }
+    };
+
+    Ok(ProjectSummary {
+        name: project.name.clone(),
+        imports,
+        index,
+    })
+}
+
+/// Every `*.parquet` in `dir`, by name, with its row count and size on disk. A directory that is
+/// not there is an empty list: a project that was never indexed has no `index/`.
+fn index_tables(dir: &Path) -> Vec<TableSummary> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut tables: Vec<TableSummary> = entries
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "parquet"))
+        .map(|entry| {
+            let path = entry.path();
+            TableSummary {
+                name: path
+                    .file_stem()
+                    .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned()),
+                rows: parquet_rows(&path),
+                bytes: entry.metadata().map_or(0, |meta| meta.len()),
+            }
+        })
+        .collect();
+    tables.sort_by(|a, b| a.name.cmp(&b.name));
+    tables
+}
+
+/// Rows in a parquet file, read from its footer.
+fn parquet_rows(path: &Path) -> Option<i64> {
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    let file = std::fs::File::open(path).ok()?;
+    // `try_new` reads the footer. Row groups are read only once the reader is built and
+    // iterated, which this never does.
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file).ok()?;
+    Some(builder.metadata().file_metadata().num_rows())
+}
+
+/// Prints what the store knows about an analysis project. See [`ProjectSummary`] for why the
+/// program-level numbers are not here.
+///
+/// # Errors
+///
+/// See [`summarize_project`].
+pub fn inspect_project(project: &AnalysisProject) -> Result<(), Error> {
+    let summary = summarize_project(project)?;
+
+    println!("Index: {}", summary.name);
+    if summary.imports.is_empty() {
+        println!("  Imports: none");
+    } else {
+        println!("  Imports:");
+        for import in &summary.imports {
+            match &import.problem {
+                None => println!("    {}", import.name),
+                Some(problem) => println!("    {} -- {}", import.name, problem),
+            }
+        }
+    }
+
+    let tables = match &summary.index {
+        IndexStatus::Missing => {
+            println!(
+                "  Status: not indexed; run `ctadl index {}` to build one",
+                summary.name
+            );
+            &[][..]
+        }
+        IndexStatus::Unfinished { tables } => {
+            println!(
+                "  Status: unfinished -- tables but no stamp, so an index run died partway \
+                 (or predates the stamp); re-run `ctadl index {}`",
+                summary.name
+            );
+            tables
+        }
+        IndexStatus::Stale {
+            found,
+            expected,
+            tables,
+        } => {
+            println!(
+                "  Status: unreadable -- index format {found}, this build expects {expected}; \
+                 re-run `ctadl index {}`",
+                summary.name
+            );
+            tables
+        }
+        IndexStatus::Ready { tables } => {
+            println!(
+                "  Status: indexed (index format {})",
+                crate::project::INDEX_FORMAT_VERSION
+            );
+            tables
+        }
+    };
+
+    if !tables.is_empty() {
+        println!("  Tables:");
+        for table in tables {
+            let rows = table
+                .rows
+                .map_or_else(|| "?".to_string(), |rows| rows.to_string());
+            println!(
+                "    {:<24}{:>12} rows{:>12}",
+                table.name,
+                rows,
+                human_bytes(table.bytes)
+            );
         }
     }
 
     Ok(())
+}
+
+/// Bytes as a short readable string, for a listing where the exact count is noise.
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 /// Renders a finished project's index (assign-like) graph to a Graphviz DOT file.

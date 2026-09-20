@@ -72,15 +72,29 @@ pub fn save_program_info(
         .err_context(|| format!("creating source info dir: {}", path.display()))?;
     source_info::write_parquet_source_info(&path, &obj)
         .err_context(|| format!("writing source info: {}", path.display()))?;
-    Ok(())
+
+    ArtifactImport::mark_complete(&import.name)
 }
 
-/// Reads the [`ProgramInfo`] out of the directory of an artifact that was already imported.
-///
-/// The IR comes back exactly as the front end wrote it, with no pass run over it. A caller that
-/// is going to generate facts wants [`open_import`] instead, which is this function plus
-/// [`ssa::run_pipeline`].
+/// Reads the [`ProgramInfo`] out of the directory of an artifact that was already imported,
+/// returning an error if incomplete.
+fn refuse_unfinished(import: &ArtifactImport) -> Result<(), Error> {
+    if import.is_complete() {
+        return Ok(());
+    }
+    if let Ok(stored) = ArtifactImport::load(import.config_path())
+        && stored.is_complete()
+    {
+        return Ok(());
+    }
+    Err(Error::IncompleteImport {
+        name: import.name.clone(),
+        artifact_path: import.artifact_path.clone(),
+    })
+}
+
 pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<ProgramInfo, Error> {
+    refuse_unfinished(import)?;
     let path = &import.program_path();
     log::debug!("reading {}", path.display());
     let data =

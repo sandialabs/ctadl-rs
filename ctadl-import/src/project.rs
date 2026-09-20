@@ -155,6 +155,9 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   carrying an unrelated line from another artifact.
 pub const INDEX_FORMAT_VERSION: &str = "3";
 
+/// What [`ArtifactImport::status`] holds once an import has finished.
+pub const IMPORT_STATUS_DONE: &str = "done";
+
 /// Filename of an index's config, which records its [`INDEX_FORMAT_VERSION`], inside a project's
 /// `index/` directory.
 pub const INDEX_CONFIG_FILE: &str = "index_config.json";
@@ -265,6 +268,9 @@ pub struct ArtifactImport {
     /// from a single `ctadl import app.apk`. Empty for every other language.
     #[serde(default)]
     pub sub_imports: Vec<String>,
+    /// [`IMPORT_STATUS_DONE`] once the import has finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 impl ArtifactImport {
@@ -303,6 +309,7 @@ impl ArtifactImport {
             image_base: None,
             hash: None,
             sub_imports: Vec::new(),
+            status: None,
         };
         result.save()?;
         Ok(result)
@@ -434,6 +441,26 @@ impl ArtifactImport {
     #[inline]
     pub fn destination_exists(&self) -> bool {
         self.program_path().exists()
+    }
+
+    /// Whether this import ran to completion.
+    #[inline]
+    pub fn is_complete(&self) -> bool {
+        match self.status.as_deref() {
+            Some(status) => status == IMPORT_STATUS_DONE,
+            None => false,
+        }
+    }
+
+    /// Marks the import named `name` finished.
+    ///
+    /// # Errors
+    ///
+    /// If the config cannot be read or written.
+    pub fn mark_complete(name: &str) -> Result<(), Error> {
+        let mut import = Self::load_by_name(name)?;
+        import.status = Some(IMPORT_STATUS_DONE.to_string());
+        import.save()
     }
 
     /// Records the artifact's content hash in the config and persists it. Call this
@@ -734,6 +761,22 @@ impl AnalysisProject {
         Ok(path)
     }
 
+    /// Drops the index stamp, so the index reads as unfinished.
+    ///
+    /// # Errors
+    ///
+    /// If the index directory cannot be created, or the stamp is there and cannot be removed.
+    #[inline]
+    pub fn clear_index_config(&self) -> Result<(), Error> {
+        let path = self.index_path()?.join(INDEX_CONFIG_FILE);
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            // Nothing to drop.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e).err_context(|| format!("removing index config: '{}'", path.display())),
+        }
+    }
+
     /// Stamps the index directory with [`INDEX_FORMAT_VERSION`].
     ///
     /// Call this *last* in `index`, after every table is on disk, so a run that dies partway
@@ -768,12 +811,6 @@ impl AnalysisProject {
     }
 
     /// Whether `ctadl index` ever finished for this project.
-    ///
-    /// The stamp is written *last* (see [`Self::write_index_config`]), so this is false both
-    /// for a project that was never indexed and for one whose index is still being written --
-    /// which is exactly when `ctadl query` falls back to checking the model files alone. It
-    /// deliberately does not read the version: an index this build cannot read still exists,
-    /// and [`Self::check_index_config`] is what says so.
     #[inline]
     pub fn has_index(&self) -> bool {
         self.dir().join("index").join(INDEX_CONFIG_FILE).is_file()
