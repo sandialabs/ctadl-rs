@@ -339,6 +339,7 @@ pub fn index(
     }
 
     let path = project.index_path()?;
+    project.clear_index_config()?;
     facts.try_save(&path)?;
     inspect_index_facts(&facts, Some(&source_info.sites)).unwrap();
     // Only the (small) site IdMap is needed after saving
@@ -1144,6 +1145,233 @@ pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+/// What `ctadl inspect` says about an analysis project -- an index -- as opposed to the imported
+/// artifact it was built from.
+#[derive(Debug)]
+pub struct ProjectSummary {
+    pub name: String,
+    /// One entry per import the project names, in project order (a parent before its
+    /// sub-imports).
+    pub imports: Vec<ImportStatus>,
+    pub index: IndexStatus,
+}
+
+/// One of a project's imports, and whether the store can still read it.
+#[derive(Debug)]
+pub struct ImportStatus {
+    pub name: String,
+    /// `None` when the import reads back, otherwise why it does not.
+    pub problem: Option<String>,
+}
+
+/// Whether a project's index is there, and readable by this build.
+#[derive(Debug)]
+pub enum IndexStatus {
+    /// `ctadl index` has not run, or left nothing behind.
+    Missing,
+    /// Tables, but no stamp: an index run died partway, or the index predates the stamp.
+    Unfinished { tables: Vec<TableSummary> },
+    /// Stamped with a format this build cannot decode. The tables are still listed: how big the
+    /// last index was is what decides whether to re-run `ctadl index`.
+    Stale {
+        found: String,
+        expected: String,
+        tables: Vec<TableSummary>,
+    },
+    /// Tables are on disk and this build can decode them.
+    Ready { tables: Vec<TableSummary> },
+}
+
+/// One `*.parquet` table in a project's `index/`.
+#[derive(Debug)]
+pub struct TableSummary {
+    /// The table name, which is the file stem: `assign.parquet` is `assign`.
+    pub name: String,
+    /// Rows, out of the parquet footer, or `None` if the footer could not be read.
+    pub rows: Option<i64>,
+    pub bytes: u64,
+}
+
+/// Collects what [`inspect_project`] prints.
+///
+/// # Errors
+///
+/// If the index's config file is there but cannot be read. A config that is *absent*, or that
+/// names a format version this build does not speak, is [`IndexStatus::Stale`] rather than an
+/// error: reporting that is the point of inspecting.
+pub fn summarize_project(project: &AnalysisProject) -> Result<ProjectSummary, Error> {
+    let imports = project
+        .imports
+        .iter()
+        .map(|name| ImportStatus {
+            name: name.clone(),
+            problem: match ArtifactImport::load_by_name(name) {
+                Ok(import) if !import.is_complete() => Some(format!(
+                    "never finished; re-import '{}'",
+                    import.artifact_path.display()
+                )),
+                Ok(_) => None,
+                Err(e) if ArtifactImport::exists_by_name(name) => Some(e.to_string()),
+                Err(_) => Some("missing from the store".to_string()),
+            },
+        })
+        .collect();
+
+    let tables = index_tables(&project.dir().join("index"));
+    let index = if !project.has_index() {
+        if tables.is_empty() {
+            IndexStatus::Missing
+        } else {
+            IndexStatus::Unfinished { tables }
+        }
+    } else {
+        match project.check_index_config() {
+            Ok(()) => IndexStatus::Ready { tables },
+            Err(ctadl_import::Error::IncompatibleIndex {
+                found, expected, ..
+            }) => IndexStatus::Stale {
+                found,
+                expected,
+                tables,
+            },
+            Err(e) => return Err(Error::from(e)),
+        }
+    };
+
+    Ok(ProjectSummary {
+        name: project.name.clone(),
+        imports,
+        index,
+    })
+}
+
+/// Every `*.parquet` in `dir`, by name, with its row count and size on disk. A directory that is
+/// not there is an empty list: a project that was never indexed has no `index/`.
+fn index_tables(dir: &Path) -> Vec<TableSummary> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut tables: Vec<TableSummary> = entries
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "parquet"))
+        .map(|entry| {
+            let path = entry.path();
+            TableSummary {
+                name: path
+                    .file_stem()
+                    .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned()),
+                rows: parquet_rows(&path),
+                bytes: entry.metadata().map_or(0, |meta| meta.len()),
+            }
+        })
+        .collect();
+    tables.sort_by(|a, b| a.name.cmp(&b.name));
+    tables
+}
+
+/// Rows in a parquet file, read from its footer.
+fn parquet_rows(path: &Path) -> Option<i64> {
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    let file = std::fs::File::open(path).ok()?;
+    // `try_new` reads the footer. Row groups are read only once the reader is built and
+    // iterated, which this never does.
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file).ok()?;
+    Some(builder.metadata().file_metadata().num_rows())
+}
+
+/// Prints what the store knows about an analysis project. See [`ProjectSummary`] for why the
+/// program-level numbers are not here.
+///
+/// # Errors
+///
+/// See [`summarize_project`].
+pub fn inspect_project(project: &AnalysisProject) -> Result<(), Error> {
+    let summary = summarize_project(project)?;
+
+    println!("Index: {}", summary.name);
+    if summary.imports.is_empty() {
+        println!("  Imports: none");
+    } else {
+        println!("  Imports:");
+        for import in &summary.imports {
+            match &import.problem {
+                None => println!("    {}", import.name),
+                Some(problem) => println!("    {} -- {}", import.name, problem),
+            }
+        }
+    }
+
+    let tables = match &summary.index {
+        IndexStatus::Missing => {
+            println!(
+                "  Status: not indexed; run `ctadl index {}` to build one",
+                summary.name
+            );
+            &[][..]
+        }
+        IndexStatus::Unfinished { tables } => {
+            println!(
+                "  Status: unfinished -- tables but no stamp, so an index run died partway \
+                 (or predates the stamp); re-run `ctadl index {}`",
+                summary.name
+            );
+            tables
+        }
+        IndexStatus::Stale {
+            found,
+            expected,
+            tables,
+        } => {
+            println!(
+                "  Status: unreadable -- index format {found}, this build expects {expected}; \
+                 re-run `ctadl index {}`",
+                summary.name
+            );
+            tables
+        }
+        IndexStatus::Ready { tables } => {
+            println!(
+                "  Status: indexed (index format {})",
+                crate::project::INDEX_FORMAT_VERSION
+            );
+            tables
+        }
+    };
+
+    if !tables.is_empty() {
+        println!("  Tables:");
+        for table in tables {
+            let rows = table
+                .rows
+                .map_or_else(|| "?".to_string(), |rows| rows.to_string());
+            println!(
+                "    {:<24}{:>12} rows{:>12}",
+                table.name,
+                rows,
+                human_bytes(table.bytes)
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Bytes as a short readable string, for a listing where the exact count is noise.
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 /// Renders a finished project's index (assign-like) graph to a Graphviz DOT file.

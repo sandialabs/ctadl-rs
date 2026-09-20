@@ -214,11 +214,11 @@ pub enum ImportLanguage {
 
 #[derive(Debug, Args)]
 pub struct InspectArgs {
-    /// Imported artifact name, index name, or a path to a file in the store
+    /// Imported artifact name, index name, or a path to a file in the store.
     pub name: Option<String>,
 
     /// Instead of summary statistics, pretty-print the imported IR. Prints every function
-    /// unless `--function` narrows the set. Requires an artifact/project name.
+    /// unless `--function` narrows the set. Requires an imported artifact name.
     #[arg(long, requires = "name")]
     pub dump_ir: bool,
 
@@ -1066,12 +1066,49 @@ fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
             }
         }
 
-        let import = project::ArtifactImport::load_by_name(name)
-            .with_context(|| format!("loading artifact import: '{}'", name))?;
+        let (import, unreadable_import) = match project::ArtifactImport::load_by_name(name) {
+            Ok(import) => (Some(import), None),
+            Err(err) if project::ArtifactImport::exists_by_name(name) => (None, Some(err)),
+            Err(_) => (None, None),
+        };
+        let index = project::AnalysisProject::try_load_name(name).ok();
+
+        if import.is_none() && unreadable_import.is_none() && index.is_none() {
+            anyhow::bail!(
+                "no imported artifact or index named '{name}'; run `ctadl inspect` with no \
+                 name to list the store"
+            );
+        }
+
         if args.dump_ir {
-            cli::dump_ir(&import, args.function.as_deref())?;
-        } else {
-            cli::inspect(&import)?;
+            if let Some(err) = unreadable_import {
+                return Err(err).with_context(|| format!("loading artifact import: '{name}'"));
+            }
+            let Some(import) = &import else {
+                let project = index
+                    .as_ref()
+                    .expect("checked above: no import means an index");
+                anyhow::bail!(
+                    "--dump-ir needs an imported artifact, and '{name}' is an index; name one \
+                     of its imports instead: {}",
+                    project.imports.join(", ")
+                );
+            };
+            return cli::dump_ir(import, args.function.as_deref()).map_err(Into::into);
+        }
+
+        if let Some(import) = &import {
+            cli::inspect(import)?;
+        }
+        if let Some(project) = &index {
+            // Separate the two sections when both of them are printed.
+            if import.is_some() {
+                println!();
+            }
+            cli::inspect_project(project)?;
+        }
+        if let Some(err) = unreadable_import {
+            return Err(err).with_context(|| format!("loading artifact import: '{name}'"));
         }
     } else {
         cli::list_store_contents()?;
