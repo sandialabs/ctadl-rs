@@ -1073,7 +1073,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-ascent"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1145,7 +1145,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-c"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "ctadl-ascent",
@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-dex"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-flowy"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "ctadl-ir",
  "hashbrown 0.16.1",
@@ -1197,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-frontends"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "bitcode",
  "ctadl-c",
@@ -1214,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-import"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "bitcode",
  "ctadl-flowy",
@@ -1234,7 +1234,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-ir"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "bit-set",
  "bitcode",
@@ -1253,7 +1253,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-jvm"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-lua"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -1282,7 +1282,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-pcode"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "ctadl-import",
  "ctadl-ir",
@@ -2101,7 +2101,7 @@ dependencies = [
 
 [[package]]
 name = "dex-reader"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "log",
  "streaming-iterator",
@@ -2685,7 +2685,7 @@ dependencies = [
 
 [[package]]
 name = "immortal"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "hashbrown 0.15.5",
  "parking_lot 0.12.5",
@@ -2828,7 +2828,7 @@ dependencies = [
 
 [[package]]
 name = "jvm-reader"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "zip 8.2.0",
 ]
@@ -3317,7 +3317,7 @@ dependencies = [
 
 [[package]]
 name = "pcode-reader"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "ascent",
  "ascent_base",
@@ -3713,7 +3713,7 @@ checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
 
 [[package]]
 name = "rustc_graphviz"
-version = "0.1.2"
+version = "0.1.3"
 
 [[package]]
 name = "rustc_version"
@@ -3974,7 +3974,7 @@ checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
 name = "source-info"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "arrow",
  "datafusion",
@@ -4111,7 +4111,7 @@ dependencies = [
 
 [[package]]
 name = "tailshare"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "immortal",
  "parking_lot 0.12.5",
@@ -4416,7 +4416,7 @@ dependencies = [
 
 [[package]]
 name = "trie"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "criterion",
  "parking_lot 0.12.5",
@@ -5071,7 +5071,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "boon",
