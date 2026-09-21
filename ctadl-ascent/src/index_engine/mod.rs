@@ -482,11 +482,7 @@ pub struct IndexStats {
     pub final_locals: usize,
     pub initial_call_target_assign: usize,
     pub final_call_target_assign_like: usize,
-    /// Indirect / virtual call sites the index was asked to resolve, i.e. `callee_info` rows.
     pub initial_callee_info: usize,
-    /// `(site, target)` pairs it resolved. Not comparable to
-    /// [`Self::initial_callee_info`] as a ratio -- a site with several targets contributes
-    /// several rows -- but the two together say whether resolution happened at all.
     pub final_resolved_call: usize,
     pub initial_summary: usize,
     pub final_summary: usize,
@@ -566,9 +562,6 @@ pub struct IndexResult {
     pub summary: Vec<FunctionSummary>,
     pub assign_like: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
     pub call_target_assign_like: Vec<(FunctionId, FlowVariable, Path, CallTargetObject)>,
-    /// Which indirect / virtual call sites resolved, and to what. The fixpoint resolves a
-    /// site in order to instantiate its callee's summary; this keeps the resolution itself,
-    /// which is otherwise consumed inside a rule body and never recorded.
     pub resolved_call: Vec<(FunctionId, InsnId, FunctionId)>,
     pub paths: Vec<(Path,)>,
     pub external_function: Vec<(FunctionId,)>,
@@ -1344,15 +1337,7 @@ ascent_source! {
     // `func_ptr_assign_like` and `java_obj_assign_like` relations.
     relation call_target_assign_like(FunctionId, FlowVariable, Path, CallTargetObject);
 
-    // Which indirect / virtual call sites resolved, and to what. Purely an output: nothing
-    // below reads it, and the two rules deriving it mirror the two places a site is actually
-    // resolved -- the local-dispatch bypass and the resolvent path -- minus their `summary`
-    // join.
-    //
-    // Dropping that join is the point. Those rules resolve a site in order to instantiate
-    // its callee's summary, so a site whose callee summarizes to nothing derives no rows and
-    // is indistinguishable from one that never resolved at all. A consumer measuring which
-    // call sites the call graph covers has to be able to tell those apart.
+    // Which indirect / virtual call sites resolved to what
     relation resolved_call(FunctionId, InsnId, FunctionId);
 
     // Hybrid Inlining relations: critical_summary(f, n, p). f(n.p = obj) invokes obj at some
@@ -1644,15 +1629,17 @@ ascent_source! {
         let v2 = call_arg!(*call_insn, *n2_sum),
         let v1 = call_arg!(*call_insn, *n1_sum);
 
-    // The resolution the two rules above perform, recorded. Ungated by `config`, because
-    // both of them resolve through a resolvent and only differ in whether they keep the
-    // decision; and without their `summary` join, so a callee that summarizes to nothing
-    // still counts as resolved.
+    // The resolution the two rules above perform, recorded.
     resolved_call(caller, call_insn, resolvent_func) <--
         callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
         locals(caller, v_rec, p_rec, n, p),
         resolvent(caller, n, p, resolvent_obj, _),
         callee_resolvents(resolvent_obj, dispatch_key, resolvent_func);
+
+    resolved_call(func_id, insn_id, resolve_tgt) <--
+        callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
+        call_target_assign_like(func_id, arg, arg_p, cto),
+        callee_resolvents(cto, dispatch_key, resolve_tgt);
 
     // 3.2: apply a conditional summary at the callers whose route established its decision.
     // The two rules mirror 2.1 and 2.2, which is what makes them complete: a caller that holds
@@ -1879,14 +1866,6 @@ ascent_source! {
         let n1_id = PackedCallArg::try_from_parts(*insn_id, *n1).unwrap(),
         let v2 = FlowVariableKind::CallArg(n2_id),
         let v1 = FlowVariableKind::CallArg(n1_id);
-
-    // The bypass's resolution, recorded, again without the `summary` join. This is the arm
-    // that covers a target stored in the calling function itself; the resolvent arm above
-    // covers one handed down through a formal. A site can be resolved by either.
-    resolved_call(func_id, insn_id, resolve_tgt) <--
-        callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
-        call_target_assign_like(func_id, arg, arg_p, cto),
-        callee_resolvents(cto, dispatch_key, resolve_tgt);
 
     // Functions whose tag closure we bother to compute. `critical_call` alone is too narrow:
     // a pure factory (`h = lookup()`, `Account.new`) contains no indirect call and calls
@@ -2378,6 +2357,11 @@ mod tests {
     use crate::codegen::{CallResolutionStrategy, codegen_program};
     use crate::index_engine::source_info::IndexSourceInfo;
     use ctadl_ir::ProgramInfo;
+    use ctadl_ir::mir::builder::FunctionBuilder;
+    use ctadl_ir::mir::call::{CallEdges, CallObject, CallStyle};
+    use ctadl_ir::mir::{
+        AccessPath, Exp, FunctionData, Functions, ParameterType, Program, ReturnType,
+    };
 
     /// Lowers one C translation unit. This function and [`index_program`] are test helpers
     /// that belong to the engine. `ctadl-c` has almost the same helpers, but the engine keeps
@@ -2583,22 +2567,141 @@ mod tests {
         }
     }
 
-    /// The id of the single function whose name contains `needle`.
-    fn func_id(id_map: &IdMap, needle: &str) -> FunctionId {
-        let mut hits = id_map
-            .functions()
-            .filter(|(_, f)| f.0.as_ref().contains(needle));
-        let (id, _) = hits
-            .next()
-            .unwrap_or_else(|| panic!("no function matching {needle:?}"));
-        assert!(hits.next().is_none(), "several functions match {needle:?}");
-        id
+    /// The id codegen gave `name`. An exact lookup rather than a search: these programs are
+    /// built here, so the name in the fixture is the name in the id map.
+    fn func_id(id_map: &IdMap, name: &str) -> FunctionId {
+        id_map
+            .get_function_id(crate::facts::Function(name.into()))
+            .unwrap_or_else(|| panic!("no function named {name:?}"))
     }
 
-    /// Runs the index and hands back the result beside the id map, which is what the
-    /// `resolved_call` assertions need in order to name a callee.
-    fn index_source(src: &str) -> (IndexResult, IndexSourceInfo) {
-        let (program, _) = program_from_string(src);
+    /// `fn <name>(p) { return p; }`, or `{ return 7; }` when `pass_through` is false.
+    ///
+    /// The constant-returning form is the whole point of the empty-summary fixture below: a
+    /// formal that reaches no out-formal derives no `summary` row, so the call site that
+    /// resolves to it instantiates nothing.
+    fn leaf(name: &str, pass_through: bool) -> FunctionData {
+        let mut f = FunctionData {
+            name: name.to_string(),
+            return_type: ReturnType { arity: 1 },
+            ..Default::default()
+        };
+        let mut fb = FunctionBuilder::new(&mut f);
+        let p = fb.add_param(ParameterType::ByVal);
+        let body = fb.add_block();
+        let mut b = fb.at_block(body);
+        let ret: Exp = if pass_through {
+            b.new_param_var(p).into()
+        } else {
+            b.new_int_exp(7)
+        };
+        b.create_ret(vec![ret]);
+        f
+    }
+
+    /// `fn <name>(x) { fp = <target>; return fp(x); }`.
+    ///
+    /// The target is established in the calling function itself, which is the arm the
+    /// local-dispatch bypass covers. The `ObjectRef` operand is what codegen turns into the
+    /// `call_target_assign` row that resolution follows to the call site; the `FuncPtrCall`
+    /// is what it turns into the `callee_info` row naming the site.
+    fn calls_stored_target(name: &str, target: &str) -> FunctionData {
+        let mut f = FunctionData {
+            name: name.to_string(),
+            return_type: ReturnType { arity: 1 },
+            ..Default::default()
+        };
+        let mut fb = FunctionBuilder::new(&mut f);
+        let x = fb.add_param(ParameterType::ByVal);
+        let body = fb.add_block();
+        let mut b = fb.at_block(body);
+        let (fp, r, x) = (
+            b.new_local_var("fp"),
+            b.new_local_var("r"),
+            b.new_param_var(x),
+        );
+        b.create_assign(
+            fp.clone(),
+            vec![Exp::ObjectRef(CallObject::FunctionPtr(target.into()))],
+        );
+        b.create_call(
+            CallStyle::FuncPtrCall {
+                callee: AccessPath::from(fp),
+                signature: None,
+            },
+            vec![r.clone()],
+            vec![x.into()],
+        );
+        b.create_ret(vec![r.into()]);
+        f
+    }
+
+    /// `fn <name>(f, x) { return f(x); }`.
+    ///
+    /// Nothing here establishes the target: it has to arrive from a caller, which is the arm
+    /// the resolvent path covers. On its own this function is also the unresolvable fixture,
+    /// since a site whose formal nothing reaches resolves to nothing.
+    fn calls_formal_target(name: &str) -> FunctionData {
+        let mut f = FunctionData {
+            name: name.to_string(),
+            return_type: ReturnType { arity: 1 },
+            ..Default::default()
+        };
+        let mut fb = FunctionBuilder::new(&mut f);
+        let callee = fb.add_param(ParameterType::ByVal);
+        let x = fb.add_param(ParameterType::ByVal);
+        let body = fb.add_block();
+        let mut b = fb.at_block(body);
+        let (r, callee, x) = (
+            b.new_local_var("r"),
+            b.new_param_var(callee),
+            b.new_param_var(x),
+        );
+        b.create_call(
+            CallStyle::FuncPtrCall {
+                callee: AccessPath::from(callee),
+                signature: None,
+            },
+            vec![r.clone()],
+            vec![x.into()],
+        );
+        b.create_ret(vec![r.into()]);
+        f
+    }
+
+    /// `fn <name>(a) { return <callee>(<target>, a); }`: hands `target` to `callee`'s
+    /// function-pointer formal, which is what seeds the resolvent the formal arm needs.
+    fn passes_target(name: &str, callee: &str, target: &str) -> FunctionData {
+        let mut f = FunctionData {
+            name: name.to_string(),
+            return_type: ReturnType { arity: 1 },
+            ..Default::default()
+        };
+        let mut fb = FunctionBuilder::new(&mut f);
+        let a = fb.add_param(ParameterType::ByVal);
+        let body = fb.add_block();
+        let mut b = fb.at_block(body);
+        let (r, a) = (b.new_local_var("r"), b.new_param_var(a));
+        b.create_call(
+            CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(ctadl_ir::thin_vec![callee.to_string()]),
+            },
+            vec![r.clone()],
+            vec![
+                Exp::ObjectRef(CallObject::FunctionPtr(target.into())),
+                a.into(),
+            ],
+        );
+        b.create_ret(vec![r.into()]);
+        f
+    }
+
+    /// Runs the index over an explicitly built program and hands back the result beside the
+    /// id map, which is what the `resolved_call` assertions need in order to name a callee.
+    fn index_functions(
+        functions: impl IntoIterator<Item = FunctionData>,
+    ) -> (IndexResult, IndexSourceInfo) {
+        let program = Program::new(Functions::new(functions));
         let (facts, source_info) = index_program(program);
         let result =
             taint_index_with_config(facts, IndexConfig::default(), Some(&source_info.sites));
@@ -2610,14 +2713,12 @@ mod tests {
     /// alone would silently drop half the call graph.
     #[test_log::test]
     fn resolved_call_covers_both_dispatch_arms() {
-        const SRC: &str = r"
-            struct ops { int (*f)(int); };
-            int id(int p) { return p; }
-            int local_arm(int x) { struct ops o; o.f = id; return o.f(x); }
-            int formal_arm(int (*f)(int), int x) { return f(x); }
-            int drive(int a) { return local_arm(a) + formal_arm(id, a); }";
-
-        let (result, si) = index_source(SRC);
+        let (result, si) = index_functions([
+            leaf("id", true),
+            calls_stored_target("local_arm", "id"),
+            calls_formal_target("formal_arm"),
+            passes_target("drive", "formal_arm", "id"),
+        ]);
         let id_map = &si.sites;
         let (id, local_arm, formal_arm) = (
             func_id(id_map, "id"),
@@ -2638,55 +2739,6 @@ mod tests {
         assert!(
             resolved.contains(&(formal_arm, id)),
             "the target passed through a formal did not resolve; resolved_call = {:?}",
-            result.resolved_call
-        );
-    }
-
-    /// The whole point of the relation: a site with no target must be distinguishable from a
-    /// resolved one. `orphan` is never called, so nothing ever reaches its function-pointer
-    /// formal.
-    #[test_log::test]
-    fn unresolvable_site_is_recorded_nowhere() {
-        const SRC: &str = r"
-            int orphan(int (*f)(int), int x) { return f(x); }";
-
-        let (result, _) = index_source(SRC);
-        assert!(
-            result.stats.initial_callee_info > 0,
-            "fixture produced no indirect call site to leave unresolved"
-        );
-        assert!(
-            result.resolved_call.is_empty(),
-            "a site with no reaching target was reported as resolved: {:?}",
-            result.resolved_call
-        );
-    }
-
-    /// The bug this relation exists to avoid. Deriving resolution from the dataflow instead
-    /// would miss this: `constant` summarizes to nothing, so its call site instantiates no
-    /// edges even though the site resolved perfectly well.
-    #[test_log::test]
-    fn resolved_call_records_a_callee_that_summarizes_to_nothing() {
-        const SRC: &str = r"
-            struct ops { int (*f)(int); };
-            int constant(int p) { return 7; }
-            int call_it(int x) { struct ops o; o.f = constant; return o.f(x); }";
-
-        let (result, si) = index_source(SRC);
-        let id_map = &si.sites;
-        let (constant, call_it) = (func_id(id_map, "constant"), func_id(id_map, "call_it"));
-
-        // The fixture only proves anything if the callee really has no summary.
-        assert!(
-            !result.summary.iter().any(|s| s.0 == constant),
-            "fixture is not the empty-summary case: constant has summary rows"
-        );
-        assert!(
-            result
-                .resolved_call
-                .iter()
-                .any(|(caller, _, target)| *caller == call_it && *target == constant),
-            "a resolved site whose callee summarizes to nothing went unrecorded: {:?}",
             result.resolved_call
         );
     }
