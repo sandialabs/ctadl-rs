@@ -103,6 +103,15 @@ pub mod callee_resolvents {
     save_load!();
 }
 
+pub mod resolved_call {
+    use super::*;
+    /// An indirect / virtual call site the index resolved.
+    pub type Record = (FunctionId, InsnId, FunctionId);
+    pub const COLUMNS: [&str; 3] = ["func_id", "insn_id", "target_id"];
+    pub const FILENAME: &str = "resolved_call.parquet";
+    save_load!();
+}
+
 pub mod summary {
     use super::*;
     pub type Record = (FunctionId, FormalIndex, Path, FormalIndex, Path);

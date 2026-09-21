@@ -482,6 +482,8 @@ pub struct IndexStats {
     pub final_locals: usize,
     pub initial_call_target_assign: usize,
     pub final_call_target_assign_like: usize,
+    pub initial_callee_info: usize,
+    pub final_resolved_call: usize,
     pub initial_summary: usize,
     pub final_summary: usize,
     pub num_functions: usize,
@@ -527,6 +529,11 @@ impl IndexStats {
             self.initial_call_target_assign
         );
         log::debug!(
+            "call resolution: {} (site, target) pair(s) over {} indirect call site(s)",
+            self.final_resolved_call,
+            self.initial_callee_info
+        );
+        log::debug!(
             "relation increase: summary: {:.2} ({}/{}) (ratio over num_functions)",
             ratio(self.final_summary, self.num_functions),
             self.final_summary,
@@ -555,6 +562,7 @@ pub struct IndexResult {
     pub summary: Vec<FunctionSummary>,
     pub assign_like: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
     pub call_target_assign_like: Vec<(FunctionId, FlowVariable, Path, CallTargetObject)>,
+    pub resolved_call: Vec<(FunctionId, InsnId, FunctionId)>,
     pub paths: Vec<(Path,)>,
     pub external_function: Vec<(FunctionId,)>,
     pub stats: IndexStats,
@@ -595,6 +603,7 @@ impl IndexResult {
             phys_footprint_mb()
         );
         external_function::try_save(&dir, self.external_function)?;
+        resolved_call::try_save(&dir, self.resolved_call)?;
         log::debug!(
             "[mem cp] result.try_save done: {:.1} MB",
             phys_footprint_mb()
@@ -608,10 +617,12 @@ impl IndexResult {
         let assign_like = assign::try_load(&dir)?;
         let paths = paths::try_load(&dir)?;
         let external_function = external_function::try_load(&dir)?;
+        let resolved_call = resolved_call::try_load(&dir)?;
         Ok(IndexResult {
             summary,
             assign_like,
             call_target_assign_like: Vec::new(),
+            resolved_call,
             paths,
             external_function,
             stats: IndexStats::default(),
@@ -1326,6 +1337,9 @@ ascent_source! {
     // `func_ptr_assign_like` and `java_obj_assign_like` relations.
     relation call_target_assign_like(FunctionId, FlowVariable, Path, CallTargetObject);
 
+    // Which indirect / virtual call sites resolved to what
+    relation resolved_call(FunctionId, InsnId, FunctionId);
+
     // Hybrid Inlining relations: critical_summary(f, n, p). f(n.p = obj) invokes obj at some
     // critical call site. The critical site itself is not tracked here; it can be recovered by
     // the Contextual Assignment rule.
@@ -1614,6 +1628,18 @@ ascent_source! {
         if c.hybrid_context == HybridContext::None,
         let v2 = call_arg!(*call_insn, *n2_sum),
         let v1 = call_arg!(*call_insn, *n1_sum);
+
+    // The resolution the two rules above perform, recorded.
+    resolved_call(caller, call_insn, resolvent_func) <--
+        callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
+        locals(caller, v_rec, p_rec, n, p),
+        resolvent(caller, n, p, resolvent_obj, _),
+        callee_resolvents(resolvent_obj, dispatch_key, resolvent_func);
+
+    resolved_call(func_id, insn_id, resolve_tgt) <--
+        callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
+        call_target_assign_like(func_id, arg, arg_p, cto),
+        callee_resolvents(cto, dispatch_key, resolve_tgt);
 
     // 3.2: apply a conditional summary at the callers whose route established its decision.
     // The two rules mirror 2.1 and 2.2, which is what makes them complete: a caller that holds
@@ -2262,6 +2288,8 @@ pub fn taint_index_with_config(
             num_functions,
             num_variables,
             reached_variables,
+            initial_callee_info: prog.callee_info.len(),
+            final_resolved_call: prog.resolved_call.len(),
             hybrid_critical_summary: prog.critical_summary.len(),
             hybrid_resolvent: prog.resolvent.len(),
             hybrid_context_assign: prog.context_assign.len(),
@@ -2291,6 +2319,7 @@ pub fn taint_index_with_config(
             summary: prog.summary.into_iter().collect(),
             assign_like: assign_like_out,
             call_target_assign_like: prog.call_target_assign_like.into_iter().collect(),
+            resolved_call: prog.resolved_call.into_iter().collect(),
             paths: prog.paths.into_iter().collect(),
             external_function: facts.external_function,
             stats,
@@ -2328,6 +2357,11 @@ mod tests {
     use crate::codegen::{CallResolutionStrategy, codegen_program};
     use crate::index_engine::source_info::IndexSourceInfo;
     use ctadl_ir::ProgramInfo;
+    use ctadl_ir::mir::builder::FunctionBuilder;
+    use ctadl_ir::mir::call::{CallEdges, CallObject, CallStyle};
+    use ctadl_ir::mir::{
+        AccessPath, Exp, FunctionData, Functions, ParameterType, Program, ReturnType,
+    };
 
     /// Lowers one C translation unit. This function and [`index_program`] are test helpers
     /// that belong to the engine. `ctadl-c` has almost the same helpers, but the engine keeps
@@ -2394,6 +2428,7 @@ mod tests {
         Vec<FunctionSummary>,
         Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
         Vec<(FunctionId, FlowVariable, Path, CallTargetObject)>,
+        Vec<(FunctionId, InsnId, FunctionId)>,
         Vec<(Path,)>,
         Vec<(FunctionId,)>,
     ) {
@@ -2401,6 +2436,7 @@ mod tests {
             mut summary,
             mut assign_like,
             mut call_target_assign_like,
+            mut resolved_call,
             mut paths,
             mut external_function,
             stats: _,
@@ -2408,12 +2444,14 @@ mod tests {
         summary.sort();
         assign_like.sort();
         call_target_assign_like.sort();
+        resolved_call.sort();
         paths.sort();
         external_function.sort();
         (
             summary,
             assign_like,
             call_target_assign_like,
+            resolved_call,
             paths,
             external_function,
         )
@@ -2527,6 +2565,182 @@ mod tests {
                 "{other}"
             );
         }
+    }
+
+    /// The id codegen gave `name`. An exact lookup rather than a search: these programs are
+    /// built here, so the name in the fixture is the name in the id map.
+    fn func_id(id_map: &IdMap, name: &str) -> FunctionId {
+        id_map
+            .get_function_id(crate::facts::Function(name.into()))
+            .unwrap_or_else(|| panic!("no function named {name:?}"))
+    }
+
+    /// `fn <name>(p) { return p; }`, or `{ return 7; }` when `pass_through` is false.
+    ///
+    /// The constant-returning form is the whole point of the empty-summary fixture below: a
+    /// formal that reaches no out-formal derives no `summary` row, so the call site that
+    /// resolves to it instantiates nothing.
+    fn leaf(name: &str, pass_through: bool) -> FunctionData {
+        let mut f = FunctionData {
+            name: name.to_string(),
+            return_type: ReturnType { arity: 1 },
+            ..Default::default()
+        };
+        let mut fb = FunctionBuilder::new(&mut f);
+        let p = fb.add_param(ParameterType::ByVal);
+        let body = fb.add_block();
+        let mut b = fb.at_block(body);
+        let ret: Exp = if pass_through {
+            b.new_param_var(p).into()
+        } else {
+            b.new_int_exp(7)
+        };
+        b.create_ret(vec![ret]);
+        f
+    }
+
+    /// `fn <name>(x) { fp = <target>; return fp(x); }`.
+    ///
+    /// The target is established in the calling function itself, which is the arm the
+    /// local-dispatch bypass covers. The `ObjectRef` operand is what codegen turns into the
+    /// `call_target_assign` row that resolution follows to the call site; the `FuncPtrCall`
+    /// is what it turns into the `callee_info` row naming the site.
+    fn calls_stored_target(name: &str, target: &str) -> FunctionData {
+        let mut f = FunctionData {
+            name: name.to_string(),
+            return_type: ReturnType { arity: 1 },
+            ..Default::default()
+        };
+        let mut fb = FunctionBuilder::new(&mut f);
+        let x = fb.add_param(ParameterType::ByVal);
+        let body = fb.add_block();
+        let mut b = fb.at_block(body);
+        let (fp, r, x) = (
+            b.new_local_var("fp"),
+            b.new_local_var("r"),
+            b.new_param_var(x),
+        );
+        b.create_assign(
+            fp.clone(),
+            vec![Exp::ObjectRef(CallObject::FunctionPtr(target.into()))],
+        );
+        b.create_call(
+            CallStyle::FuncPtrCall {
+                callee: AccessPath::from(fp),
+                signature: None,
+            },
+            vec![r.clone()],
+            vec![x.into()],
+        );
+        b.create_ret(vec![r.into()]);
+        f
+    }
+
+    /// `fn <name>(f, x) { return f(x); }`.
+    ///
+    /// Nothing here establishes the target: it has to arrive from a caller, which is the arm
+    /// the resolvent path covers. On its own this function is also the unresolvable fixture,
+    /// since a site whose formal nothing reaches resolves to nothing.
+    fn calls_formal_target(name: &str) -> FunctionData {
+        let mut f = FunctionData {
+            name: name.to_string(),
+            return_type: ReturnType { arity: 1 },
+            ..Default::default()
+        };
+        let mut fb = FunctionBuilder::new(&mut f);
+        let callee = fb.add_param(ParameterType::ByVal);
+        let x = fb.add_param(ParameterType::ByVal);
+        let body = fb.add_block();
+        let mut b = fb.at_block(body);
+        let (r, callee, x) = (
+            b.new_local_var("r"),
+            b.new_param_var(callee),
+            b.new_param_var(x),
+        );
+        b.create_call(
+            CallStyle::FuncPtrCall {
+                callee: AccessPath::from(callee),
+                signature: None,
+            },
+            vec![r.clone()],
+            vec![x.into()],
+        );
+        b.create_ret(vec![r.into()]);
+        f
+    }
+
+    /// `fn <name>(a) { return <callee>(<target>, a); }`: hands `target` to `callee`'s
+    /// function-pointer formal, which is what seeds the resolvent the formal arm needs.
+    fn passes_target(name: &str, callee: &str, target: &str) -> FunctionData {
+        let mut f = FunctionData {
+            name: name.to_string(),
+            return_type: ReturnType { arity: 1 },
+            ..Default::default()
+        };
+        let mut fb = FunctionBuilder::new(&mut f);
+        let a = fb.add_param(ParameterType::ByVal);
+        let body = fb.add_block();
+        let mut b = fb.at_block(body);
+        let (r, a) = (b.new_local_var("r"), b.new_param_var(a));
+        b.create_call(
+            CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(ctadl_ir::thin_vec![callee.to_string()]),
+            },
+            vec![r.clone()],
+            vec![
+                Exp::ObjectRef(CallObject::FunctionPtr(target.into())),
+                a.into(),
+            ],
+        );
+        b.create_ret(vec![r.into()]);
+        f
+    }
+
+    /// Runs the index over an explicitly built program and hands back the result beside the
+    /// id map, which is what the `resolved_call` assertions need in order to name a callee.
+    fn index_functions(
+        functions: impl IntoIterator<Item = FunctionData>,
+    ) -> (IndexResult, IndexSourceInfo) {
+        let program = Program::new(Functions::new(functions));
+        let (facts, source_info) = index_program(program);
+        let result =
+            taint_index_with_config(facts, IndexConfig::default(), Some(&source_info.sites));
+        (result, source_info)
+    }
+
+    /// A site is resolved by either of two rules -- a target stored in the calling function,
+    /// or one arriving through a formal -- and `resolved_call` has an arm for each. One arm
+    /// alone would silently drop half the call graph.
+    #[test_log::test]
+    fn resolved_call_covers_both_dispatch_arms() {
+        let (result, si) = index_functions([
+            leaf("id", true),
+            calls_stored_target("local_arm", "id"),
+            calls_formal_target("formal_arm"),
+            passes_target("drive", "formal_arm", "id"),
+        ]);
+        let id_map = &si.sites;
+        let (id, local_arm, formal_arm) = (
+            func_id(id_map, "id"),
+            func_id(id_map, "local_arm"),
+            func_id(id_map, "formal_arm"),
+        );
+
+        let resolved: Vec<(FunctionId, FunctionId)> = result
+            .resolved_call
+            .iter()
+            .map(|(caller, _, target)| (*caller, *target))
+            .collect();
+        assert!(
+            resolved.contains(&(local_arm, id)),
+            "the locally stored target did not resolve; resolved_call = {:?}",
+            result.resolved_call
+        );
+        assert!(
+            resolved.contains(&(formal_arm, id)),
+            "the target passed through a formal did not resolve; resolved_call = {:?}",
+            result.resolved_call
+        );
     }
 
     #[test]
