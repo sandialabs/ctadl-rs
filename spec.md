@@ -357,25 +357,48 @@ Freshness needs a stamp. `ctadl_import::project::IndexConfig` (`ctadl-import/src
 — the on-disk `index/index_config.json`, **not** the same-named runtime struct
 `ctadl_ascent::index_engine::IndexConfig` (`index_engine/mod.rs:297`, which holds `alias_rule`,
 `hybrid_context` and `parallelism`) — currently records `version` and an optional `call_policy`.
-Add one more optional field:
+That is a partial record, scoped to what `ctadl query` needed to print. Replace it with the whole
+configuration, in one optional field:
 
 ```rust
 pub struct IndexConfig {
     pub version: String,
+    /// Legacy; read only when `record` is absent.
     #[serde(default)] pub call_policy: Option<CallPolicyRecord>,
-    /// What this index was built from: the imports' content hashes, in project order.
-    #[serde(default)] pub inputs: Option<InputDigest>,
+    #[serde(default)] pub record: Option<IndexRecord>,
+}
+
+pub struct IndexRecord {
+    /// Inputs: imports and their content hashes, the `-m` files that could admit one of the
+    /// project's imports (digested by content), the shipped default models (digested), the
+    /// `--no-default-models` switch, and the `--summary` projects. A difference means the index
+    /// answers a different question.
+    pub inputs: IndexInputs,
+    /// The call policy, as today.
+    pub policy: CallPolicyRecord,
+    /// The remaining `IndexOptions` that change the result: alias rule, hybrid context, CFG
+    /// pruning, and the two JNI switches. Not parallelism, not the dot dump.
+    pub engine: EngineRecord,
 }
 ```
 
+The plan (Phase 1) has the field-by-field shape. Two things about the model digest matter here.
+It covers the shipped defaults, because `INDEX_FORMAT_VERSION` is a table-format version and not
+a build id, so an edited `native-index.jsonl` would otherwise go unnoticed. And it covers only the
+`-m` files that could *admit* the project's imports, judged by each block's `in` scope: a file
+scoped wholly to `dex` contributes nothing to a native sub-index's digest, so editing Java models
+does not re-index every native library.
+
 A sub-index is fresh when its `index_config.json` exists, its `version` matches
-`INDEX_FORMAT_VERSION`, its `inputs` digest matches the sub-import's recorded
-`ArtifactImport::hash`, and its `call_policy` matches the policy this run would use. Anything else
-— missing field, older index, changed flags — means re-index.
+`INDEX_FORMAT_VERSION`, and its `record.inputs` equal the inputs this run would use. Anything else
+— missing record, older index, changed library, changed admitting model — means re-index. `policy`
+and `engine` are *not* part of the test: a fresh sub-index that differs only there is reused, and
+the difference is reported at `warn` (§7/C8). `--force-sub-index` is how to rebuild it under the
+current configuration.
 
 Because the new field is `#[serde(default)]` and no table encoding changes, this does **not**
-require bumping `INDEX_FORMAT_VERSION`. An older index simply reads back with `inputs: None` and
-is treated as not fresh.
+require bumping `INDEX_FORMAT_VERSION`. An older index simply reads back with `record: None` and
+is treated as not fresh; `ctadl query` keeps reading its `call_policy`.
 
 Give the flag an escape hatch (`--force-sub-index`, or reuse a general `--force`) that re-indexes
 regardless.
@@ -486,11 +509,23 @@ The parent's `artifact_path` and name come from the `ArtifactImport` the sub-imp
 from, which the run already holds. The sub-import's own `artifact_path` is the `.so` the importer
 extracted into the store, so it is *not* what the user re-imports.
 
+At `warn`, when a reused sub-index was built under a different index policy (§7/C8). Both
+policies are printed through `CallPolicyRecord`'s `Display`:
+
+```
+compositional: reusing 'app__arm64-v8a__libfoo', which was indexed under strategy cha, cha
+  threshold 5 (5 for interfaces), dispatch models on (on for interfaces), model-first; this run
+  uses strategy mixed, cha threshold 5 (5 for interfaces), dispatch models on (on for
+  interfaces), model-first. Pass --force-sub-index to rebuild it under this run's policy.
+```
+
 At `debug`: per-function summary row counts, and the `[mem cp]` footprint around each sub-index.
 
 ### 4.9 On-disk changes
 
-- `IndexConfig` gains `inputs` (`#[serde(default)]`). No format-version bump.
+- `IndexConfig` gains `record: Option<IndexRecord>` (`#[serde(default)]`), the whole
+  configuration the index was built under (§4.5). `call_policy` stays for legacy stamps. No
+  format-version bump.
 - `AnalysisProject` gains `sub_indexes: Vec<String>` (`#[serde(default)]`) recording which
   sub-index projects fed this one, so `ctadl inspect` and `ctadl query` can report it and a later
   query can warn when a sub-index has gone stale. It stays its own field: not merged with
@@ -508,7 +543,8 @@ At `debug`: per-function summary row counts, and the `[mem cp]` footprint around
 | File | Change |
 | --- | --- |
 | `ctadl-import/src/store.rs` | **new** `load_vmt(&ArtifactImport)`; `load_import` calls it. |
-| `ctadl-import/src/project.rs` | `IndexConfig.inputs`; `AnalysisProject.sub_indexes`; helper to test sub-index freshness; helper to partition a name list into co-indexed vs. eligible native sub-imports (by `ArtifactLanguage`, plus the Java-half guard). |
+| `ctadl-import/src/project.rs` | `IndexConfig.record` (`IndexRecord`, `IndexInputs`, `EngineRecord`); `AnalysisProject.sub_indexes`; helper to test sub-index freshness against the inputs; helper to partition a name list into co-indexed vs. eligible native sub-imports (by `ArtifactLanguage`, plus the Java-half guard). |
+| `ctadl-ascent/src/models/spec.rs` | `admitting_model_files`: which `-m` files could apply to a given set of imports, by their blocks' `in` scopes. Feeds the model digest. |
 | `ctadl-ascent/src/languages/jni.rs` | `JniObserver::observe_vmt(&VirtualMethodTable, SlotModel)`; `observe` becomes a wrapper. `link` gains an optional map of externally supplied native arities for the prototype check, and returns (or records) the set of native `FunctionId`s it bridged. |
 | `ctadl-ascent/src/cli/mod.rs` | `IndexOptions.compositional_native_sub_imports` and `.force_sub_index`; the orchestration in §4.3; a new `sub_index` module holding the per-library run, the `SubIndexSummaries` loader and the filtered summary load. `load_and_map_summaries` is left alone. |
 | `ctadl-ascent/src/main.rs` | the two new flags on `IndexArgs` and `GoArgs`; wire through; fill the other `IndexArgs` literals. |
@@ -678,17 +714,20 @@ app's fact base gets an `external_function` row for it (F10, §4.4). The conjunc
 boundaries that really do carry flow.
 
 
-**C8 — index policy must match across the seam. ACCEPTED: re-index on mismatch.** A sub-index
-built with a different `--strategy` or `--cha-threshold` answers a different question, and two
-halves analyzed under two policies are not a single analysis. So the design keeps one policy per
-run: §4.2 passes the app's options down to every sub-index, and §4.5's freshness test includes the
-policy, which makes a mismatch force a re-index rather than silently reusing the wrong index.
+**C8 — index policy must match across the seam. RESOLVED: warn on mismatch, reuse anyway.** A
+sub-index built with a different `--strategy` or `--cha-threshold` answers a different question,
+and two halves analyzed under two policies are not a single analysis. The design still aims for one
+policy per run — §4.2 passes the app's options down to every sub-index it builds — but a sub-index
+that already exists under another policy is reused, not rebuilt. §4.5's freshness test covers the
+format version and the library's contents only; the policy is compared separately, and a difference
+is reported at `warn`, naming both policies and `--force-sub-index` as the way to rebuild.
 
-The cost is accepted: a user who indexed a sub-import by hand first, under other flags, has that
-work redone when an app run needs it under its own policy. That is the intended behaviour — the
-alternative is an app index built from summaries that answer a different question — and §4.8's
-`info` line says when a sub-index is re-indexed rather than reused, so it is visible rather than
-mysterious.
+The trade is deliberate. Re-indexing on mismatch would redo a large library's fixpoint whenever the
+user tried a different `--strategy` on the app, which is exactly the iteration the reuse in §4.5
+exists to make cheap. And a native library's summaries rarely turn on the Java-side call policy: a
+`.so` has no class hierarchy for `--cha-threshold` to act on. So the app run says what it reused
+and under what policy, and the user decides whether that matters. A user who wants both halves
+under one policy passes `--force-sub-index`.
 
 **C9 — store concurrency. ACKNOWLEDGED: nothing is built for it.** Two app runs sharing a native
 sub-import would race on the same sub-index project directory, and the failure mode is a corrupt
@@ -749,8 +788,9 @@ ever bites, the fix belongs in the store, applied to every project, not bolted o
    the signal to revisit the subprocess variant.
 
 6. **Failure paths.** A native sub-import whose index fails leaves the app run succeeding with a
-   warning (F8). A sub-index that is stale gets re-indexed — including one that is current in every
-   way except that it was built under a different index policy (§7/C8). `--compositional-native-sub-imports` together
+   warning (F8). A sub-index that is stale gets re-indexed; one that is current in every way
+   except that it was built under a different index policy is reused, with a `warn` naming both
+   policies, and `--force-sub-index` rebuilds it (§7/C8). `--compositional-native-sub-imports` together
    with a `bridge` model is refused (§6.4). A sub-import with no `jni-registry.json` and unresolved
    `native` methods warns and names the parent's re-import command; one with no sidecar whose
    methods all linked by symbol does **not** warn (§7/C5). A bridged function with no summary rows
