@@ -1,0 +1,13 @@
+// DroidBench 3.0-develop, secure-software-engineering/DroidBench
+// Pinned commit: a57fa6f42f278591695672f1aa8b37c275139370
+// Upstream APK path: apk/InterComponentCommunication/ComponentNotInManifest1.apk
+// Fixture SHA-256: 30707cf3cf5d61d33071413a18921ca6459358413111dffa8949daf80ac5ac77
+// Upstream description: IMEI is stored in an Intent for an Activity that is not in the manifest;
+// no ICC delivery should be resolved.
+{
+  apk: "fixtures/droidbench-component-not-in-manifest-1.apk",
+  model: "models/droidbench-activity-communication-2.json",
+  expect_flow: false,
+  expected_intent_pairs: 0,
+  status: "pass",
+}

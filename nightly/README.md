@@ -27,13 +27,16 @@ cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, or `jni` (comma-separated, or
+`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, `jni`, or `android-icc` (comma-separated, or
 repeated) and defaults to all of them. It selects *before* anything runs, so
 `--frontend pcode` never invokes the Java toolchain, `--frontend jvm,dex` never
 starts Ghidra, and `--frontend lua` needs no external toolchain at all. `jni` is
 the odd one out: its cases build both halves of a JNI boundary, so they need the
 Java toolchain *and* Ghidra. Use it with `--filter` to narrow further:
 `--frontend pcode --filter funcptr`.
+
+`android-icc` discovers Phase 5 external benchmark specs under `tests/android-icc/`. Missing pinned
+APKs report as `SKIP`, so fixture acquisition can be added incrementally without hiding the runner.
 
 > **Note:** the `lua` frontend lowers its `tests/lua/` cases end to end, including
 > table field-sensitivity, varargs, `ipairs`/`pairs` and `table.insert`, and
@@ -97,6 +100,9 @@ both — the same reasons the taint cases are nightly:
   in, so all these need is the `ctadl` binary.
 - **`models:*`** — the model files ctadl ships, validated against the model generator schema it
   publishes. Reads three small files and runs no tool.
+- **`AndroidIcc:*`** — pinned external DroidBench/ICC-Bench APK specs under
+  `tests/android-icc/`. Each spec names an APK fixture, a model file, whether a flow is expected,
+  and optional `intent_pair.parquet` counts.
 
 The `apk:*` checks are where the analyzer meets a real app rather than a fixture: 6.4 MB, two
 `classes*.dex`, some 50,000 functions. Importing it costs about 13 seconds, which is why they live

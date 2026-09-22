@@ -1,0 +1,15 @@
+// DroidBench 3.0-develop, secure-software-engineering/DroidBench
+// Pinned commit: a57fa6f42f278591695672f1aa8b37c275139370
+// Upstream APK path: apk/InterComponentCommunication/ActivityCommunication2.apk
+// Fixture SHA-256: 2b226f745d8174271c1e8c7d93ea29fc66f311b787286990ea8a7f1ceaf1bdc0
+// Upstream description: IMEI is obtained in one Activity and stored in an Intent extra for the
+// next Activity, which leaks it to Android Log.
+// Current status: xfail because this case constructs the action string with substring(), which is
+// tracked as Phase 6+ string construction support.
+{
+  apk: "fixtures/droidbench-activity-communication-2.apk",
+  model: "models/droidbench-activity-communication-2.json",
+  expect_flow: true,
+  expected_intent_pairs: 1,
+  status: "phase6-plus",
+}

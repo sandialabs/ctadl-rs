@@ -170,6 +170,22 @@ pub fn read_bundle_entry(path: &std::path::Path, entry_name: &str) -> DexResult<
     Ok(buf)
 }
 
+/// Decompresses one entry of an APK by name.
+pub fn read_apk_entry(path: &std::path::Path, entry_name: &str) -> DexResult<Vec<u8>> {
+    let file = std::fs::File::open(path)
+        .map_err(|_| crate::error::DexError::InvalidDex("cannot open APK"))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|_| crate::error::DexError::InvalidDex("APK is not a valid ZIP"))?;
+    let mut entry = archive
+        .by_name(entry_name)
+        .map_err(|_| crate::error::DexError::InvalidDex("no such entry in APK"))?;
+    let mut buf = Vec::new();
+    entry
+        .read_to_end(&mut buf)
+        .map_err(|_| crate::error::DexError::InvalidDex("failed to decompress APK entry"))?;
+    Ok(buf)
+}
+
 /// True when the APK at `path` carries at least one `classes*.dex` entry. Only the ZIP central
 /// directory is read; nothing is decompressed or parsed.
 ///

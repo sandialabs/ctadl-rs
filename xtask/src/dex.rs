@@ -95,6 +95,10 @@ pub fn run_checks(
     match apk {
         Some(path) if path.exists() => {
             results.push(("dex:apk".to_string(), to_outcome(check_apk(path))));
+            results.push((
+                "intent:apk-manifest".to_string(),
+                to_outcome(check_apk_manifest(path)),
+            ));
         }
         Some(path) => {
             results.push((
@@ -336,6 +340,43 @@ fn check_apk(apk: &Path) -> Result<()> {
     }
     if entries == 0 {
         bail!("APK {} contained no classes*.dex entries", apk.display());
+    }
+    Ok(())
+}
+
+/// The committed APK's binary manifest decodes into the expected component inventory.
+fn check_apk_manifest(apk: &Path) -> Result<()> {
+    let bytes = dex_reader::apk::read_apk_entry(apk, "AndroidManifest.xml")
+        .with_context(|| format!("reading AndroidManifest.xml from {}", apk.display()))?;
+    let manifest = ctadl_ascent::languages::android_manifest::parse_manifest(&bytes)
+        .with_context(|| format!("parsing AndroidManifest.xml from {}", apk.display()))?;
+    let components = manifest.components();
+    if apk.file_name().and_then(|name| name.to_str()) == Some("com.noto_54.apk") {
+        anyhow::ensure!(
+            manifest.nodes.len() == 180,
+            "expected 180 manifest nodes, got {}",
+            manifest.nodes.len()
+        );
+        anyhow::ensure!(
+            manifest.attrs.len() == 302,
+            "expected 302 manifest attrs, got {}",
+            manifest.attrs.len()
+        );
+        anyhow::ensure!(
+            components.len() == 35,
+            "expected 35 manifest components, got {}",
+            components.len()
+        );
+        anyhow::ensure!(
+            components
+                .iter()
+                .filter(|component| component.tag == "activity-alias")
+                .count()
+                == 10,
+            "expected 10 activity aliases"
+        );
+    } else {
+        anyhow::ensure!(!manifest.nodes.is_empty(), "manifest has no nodes");
     }
     Ok(())
 }

@@ -13,6 +13,7 @@ belongs in `xtask`, and one that needs only a synthetic one belongs here.
 
 */
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Once;
 use tempfile::tempdir;
 
@@ -206,6 +207,698 @@ fn test_cli_query_c_sources_and_sinks() {
         }
     });
 }
+
+/// The fixture APK ships no `lib/<abi>` entries, so the native-library pass is a no-op
+/// and the import records no sub-imports. This is the path every APK without native
+/// code takes, and the one that must not need Ghidra.
+#[test]
+fn test_cli_import_apk_without_native_libs() {
+    run_store_test(|| {
+        let name = "test_import_no_native";
+        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+
+        let reloaded = ArtifactImport::load_by_name(name).unwrap();
+        assert!(
+            reloaded.sub_imports.is_empty(),
+            "an APK with no native libraries records no sub-imports, got {:?}",
+            reloaded.sub_imports
+        );
+        // Nothing was extracted, so the staging directory was never created.
+        assert!(!import.import_path().join("native").exists());
+    });
+}
+
+#[test]
+fn test_android_phase4_noto_manifest_and_intent_counts() {
+    run_store_test(|| {
+        let import_name = "phase4_noto_import";
+        let project_name = "phase4_noto_project";
+        let import =
+            ArtifactImport::try_create(import_name, ArtifactLanguage::Apk, &test_file()).unwrap();
+        cli::import(
+            &import,
+            cli::ImportOptions {
+                native_libs: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let manifest =
+            ctadl_ascent::languages::android_manifest::AndroidManifest::load(import.import_path())
+                .unwrap();
+        assert_eq!(manifest.nodes.len(), 180);
+        assert_eq!(manifest.attrs.len(), 302);
+        let components = manifest.components();
+        assert_eq!(components.len(), 35);
+        assert_eq!(
+            components
+                .iter()
+                .filter(|component| component.tag == "activity-alias")
+                .count(),
+            10
+        );
+        assert!(components.iter().any(|component| {
+            component.descriptor.as_deref() == Some("Lcom/noto/app/AppActivity;")
+                && component.exported == Some(true)
+                && component.has_intent_filter
+        }));
+        assert!(components.iter().any(|component| {
+            component.descriptor.as_deref() == Some("Lcom/noto/app/note/NoteReminderReceiver;")
+                && component.exported == Some(false)
+        }));
+
+        let project = AnalysisProject::try_create(project_name, &[import_name]).unwrap();
+        cli::index(&project, &[], &[], false, cli::IndexOptions::default()).unwrap();
+
+        let index_path = project.index_path().unwrap();
+        let pairs = ctadl_ascent::facts::schema::intent_pair::try_load(&index_path).unwrap();
+        let explicit = pairs
+            .iter()
+            .filter(|(_, _, _, kind)| *kind == ctadl_ascent::facts::IntentPairKind::Explicit)
+            .count();
+        let implicit = pairs.len() - explicit;
+        assert_eq!(explicit, 5, "intent pairs: {pairs:?}");
+        assert_eq!(implicit, 1, "intent pairs: {pairs:?}");
+
+        let calls = ctadl_ascent::facts::schema::call::try_load(&index_path).unwrap();
+        assert!(
+            calls.len() >= pairs.len(),
+            "final call graph should include derived intent calls"
+        );
+    });
+}
+
+#[test]
+fn test_android_phase4_explicit_activity_extra_flow() {
+    run_store_test(|| {
+        if !android_tools_available() {
+            return;
+        }
+        let manifest = r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+            <application>
+                <activity android:name=".AppActivity" android:exported="false" />
+            </application>
+        </manifest>"#;
+        let app = r#"package com.example;
+
+import android.app.Activity;
+import android.os.Bundle;
+import android.content.Intent;
+
+public class Sender extends Activity {
+    public void go(String tainted) {
+        Intent i = new Intent(this, AppActivity.class);
+        i.putExtra("k", tainted);
+        startActivity(i);
+    }
+}
+
+class AppActivity extends Activity {
+    public void onCreate(Bundle b) {
+        sink(getIntent().getStringExtra("k"));
+    }
+    static void sink(String s) {}
+}
+"#;
+        run_android_icc_link_case("phase4_explicit_activity", manifest, app, 1);
+    });
+}
+
+#[test]
+fn test_android_phase4_implicit_activity_extra_flow() {
+    run_store_test(|| {
+        if !android_tools_available() {
+            return;
+        }
+        let manifest = r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+            <application>
+                <activity android:name=".AppActivity" android:exported="true">
+                    <intent-filter>
+                        <action android:name="com.example.SEND" />
+                        <category android:name="android.intent.category.DEFAULT" />
+                        <data android:mimeType="text/plain" />
+                    </intent-filter>
+                </activity>
+            </application>
+        </manifest>"#;
+        let app = r#"package com.example;
+
+import android.app.Activity;
+import android.os.Bundle;
+import android.content.Intent;
+
+public class Sender extends Activity {
+    public void go(String tainted) {
+        Intent i = new Intent("com.example.SEND");
+        i.setType("text/plain");
+        i.putExtra("k", tainted);
+        startActivity(i);
+    }
+}
+
+class AppActivity extends Activity {
+    public void onCreate(Bundle b) {
+        sink(getIntent().getStringExtra("k"));
+    }
+    static void sink(String s) {}
+}
+"#;
+        run_android_icc_link_case("phase4_implicit_activity", manifest, app, 1);
+    });
+}
+
+#[test]
+fn test_android_phase4_broadcast_receiver_extra_flow() {
+    run_store_test(|| {
+        if !android_tools_available() {
+            return;
+        }
+        let manifest = r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+            <application>
+                <receiver android:name=".MyReceiver" android:exported="true">
+                    <intent-filter>
+                        <action android:name="com.example.RECEIVE" />
+                    </intent-filter>
+                </receiver>
+            </application>
+        </manifest>"#;
+        let app = r#"package com.example;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+
+public class Sender extends Context {
+    public void go(String tainted) {
+        Intent i = new Intent("com.example.RECEIVE");
+        i.putExtra("k", tainted);
+        sendBroadcast(i);
+    }
+}
+
+class MyReceiver extends BroadcastReceiver {
+    public void onReceive(Context c, Intent i) {
+        sink(i.getStringExtra("k"));
+    }
+    static void sink(String s) {}
+}
+"#;
+        run_android_icc_link_case("phase4_broadcast", manifest, app, 1);
+    });
+}
+
+#[test]
+fn test_android_phase4_started_service_extra_flow() {
+    run_store_test(|| {
+        if !android_tools_available() {
+            return;
+        }
+        let manifest = r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+            <application>
+                <service android:name=".MyService" android:exported="false" />
+            </application>
+        </manifest>"#;
+        let app = r#"package com.example;
+
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+
+public class Sender extends Context {
+    public void go(String tainted) {
+        Intent i = new Intent(this, MyService.class);
+        i.putExtra("k", tainted);
+        startService(i);
+    }
+}
+
+class MyService extends Service {
+    public int onStartCommand(Intent i, int flags, int startId) {
+        sink(i.getStringExtra("k"));
+        return 0;
+    }
+    static void sink(String s) {}
+}
+"#;
+        run_android_icc_link_case("phase4_started_service", manifest, app, 1);
+    });
+}
+
+#[test]
+fn test_android_phase4_explicit_activity_extra_tainted_path() {
+    run_store_test(|| {
+        if !android_tools_available() {
+            return;
+        }
+        let manifest = r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+            <application>
+                <activity android:name=".AppActivity" android:exported="false" />
+            </application>
+        </manifest>"#;
+        let app = r#"package com.example;
+
+import android.app.Activity;
+import android.content.Intent;
+
+public class Sender extends Activity {
+    public void go(String tainted) {
+        Intent i = new Intent(this, AppActivity.class);
+        i.putExtra("k", tainted);
+        startActivity(i);
+    }
+}
+
+class AppActivity extends Activity {
+    public void onNewIntent(Intent i) {
+        sink(i.getStringExtra("k"));
+    }
+    static void sink(String s) {}
+}
+"#;
+        run_android_icc_flow_case(
+            "phase4_explicit_activity_flow",
+            manifest,
+            app,
+            "Lcom/example/AppActivity;",
+        );
+    });
+}
+
+#[test]
+fn test_android_phase4_explicit_activity_get_intent_extra_tainted_path() {
+    run_store_test(|| {
+        if !android_tools_available() {
+            return;
+        }
+        let manifest = r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+            <application>
+                <activity android:name=".AppActivity" android:exported="false" />
+            </application>
+        </manifest>"#;
+        let app = r#"package com.example;
+
+import android.app.Activity;
+import android.os.Bundle;
+import android.content.Intent;
+
+public class Sender extends Activity {
+    public void go(String tainted) {
+        Intent i = new Intent(this, AppActivity.class);
+        i.putExtra("k", tainted);
+        startActivity(i);
+    }
+}
+
+class AppActivity extends Activity {
+    public void onCreate(Bundle b) {
+        sink(getIntent().getStringExtra("k"));
+    }
+    static void sink(String s) {}
+}
+"#;
+        run_android_icc_flow_case(
+            "phase4_explicit_activity_get_intent_flow",
+            manifest,
+            app,
+            "Lcom/example/AppActivity;",
+        );
+    });
+}
+
+#[test]
+fn test_android_phase4_broadcast_receiver_extra_tainted_path() {
+    run_store_test(|| {
+        if !android_tools_available() {
+            return;
+        }
+        let manifest = r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+            <application>
+                <receiver android:name=".MyReceiver" android:exported="true">
+                    <intent-filter>
+                        <action android:name="com.example.RECEIVE" />
+                    </intent-filter>
+                </receiver>
+            </application>
+        </manifest>"#;
+        let app = r#"package com.example;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+
+public class Sender extends Context {
+    public void go(String tainted) {
+        Intent i = new Intent("com.example.RECEIVE");
+        i.putExtra("k", tainted);
+        sendBroadcast(i);
+    }
+}
+
+class MyReceiver extends BroadcastReceiver {
+    public void onReceive(Context c, Intent i) {
+        sink(i.getStringExtra("k"));
+    }
+    static void sink(String s) {}
+}
+"#;
+        run_android_icc_flow_case(
+            "phase4_broadcast_flow",
+            manifest,
+            app,
+            "Lcom/example/MyReceiver;",
+        );
+    });
+}
+
+#[test]
+fn test_android_phase4_started_service_extra_tainted_path() {
+    run_store_test(|| {
+        if !android_tools_available() {
+            return;
+        }
+        let manifest = r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
+            <application>
+                <service android:name=".MyService" android:exported="false" />
+            </application>
+        </manifest>"#;
+        let app = r#"package com.example;
+
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+
+public class Sender extends Context {
+    public void go(String tainted) {
+        Intent i = new Intent(this, MyService.class);
+        i.putExtra("k", tainted);
+        startService(i);
+    }
+}
+
+class MyService extends Service {
+    public int onStartCommand(Intent i, int flags, int startId) {
+        sink(i.getStringExtra("k"));
+        return 0;
+    }
+    static void sink(String s) {}
+}
+"#;
+        run_android_icc_flow_case(
+            "phase4_started_service_flow",
+            manifest,
+            app,
+            "Lcom/example/MyService;",
+        );
+    });
+}
+
+fn android_tools_available() -> bool {
+    which::which("javac").is_ok() && which::which("dx").is_ok()
+}
+
+fn run_android_icc_link_case(name: &str, manifest: &str, app_source: &str, expected_pairs: usize) {
+    use ctadl_ascent::facts::schema;
+
+    let (project, _dir) = import_index_android_icc_case(name, manifest, app_source, None);
+    let index_path = project.index_path().unwrap();
+    let pairs = schema::intent_pair::try_load(&index_path).unwrap();
+    assert_eq!(
+        pairs.len(),
+        expected_pairs,
+        "unexpected ICC pairs for {name}"
+    );
+    let calls = schema::call::try_load(&index_path).unwrap();
+    assert!(
+        calls.iter().any(|(caller, insn, callee)| pairs.iter().any(
+            |(pair_caller, pair_insn, pair_callee, _)| caller == pair_caller
+                && insn == pair_insn
+                && callee == pair_callee
+        )),
+        "expected derived ICC pair to be persisted in final call graph for {name}"
+    );
+}
+
+fn run_android_icc_flow_case(name: &str, manifest: &str, app_source: &str, sink_parent: &str) {
+    use ctadl_ascent::facts::schema;
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    let (project, dir) = import_index_android_icc_case(
+        name,
+        manifest,
+        app_source,
+        Some(android_icc_model(sink_parent)),
+    );
+    let model = dir.path().join("query.json");
+    let index_path = project.index_path().unwrap();
+    let pairs = schema::intent_pair::try_load(&index_path).unwrap();
+    assert!(
+        !pairs.is_empty(),
+        "expected at least one ICC pair for {name}"
+    );
+    let calls = schema::call::try_load(&index_path).unwrap();
+    assert!(
+        calls.iter().any(|(caller, insn, callee)| pairs.iter().any(
+            |(pair_caller, pair_insn, pair_callee, _)| caller == pair_caller
+                && insn == pair_insn
+                && callee == pair_callee
+        )),
+        "expected derived ICC pair to be persisted in final call graph for {name}"
+    );
+    let assign_like = schema::assign::try_load(&index_path).unwrap();
+    let paths = schema::paths::try_load(&index_path).unwrap();
+    assert!(
+        paths.iter().any(|(p,)| p.to_dot_string() == ".<extras>"),
+        "missing extras path for {name}; paths={paths:?}"
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|(p,)| p.to_dot_string() == ".<intent>.<extras>"),
+        "missing composed activity intent extras path for {name}; paths={paths:?}"
+    );
+    assert!(
+        assign_like.iter().any(
+            |(_, _, dst, _, src)| dst.to_dot_string().contains("<extras>")
+                || src.to_dot_string().contains("<extras>")
+        ),
+        "missing extras assign_like rows for {name}; assign_like={assign_like:?}"
+    );
+
+    let sarif = dir.path().join("out.sarif");
+    cli::query(&project, &[model], &sarif, SarifProfile::default(), None).unwrap();
+
+    let text = std::fs::read_to_string(&sarif).unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let findings = doc["runs"][0]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|result| {
+            result["ruleId"]
+                .as_str()
+                .is_some_and(|id| id.contains("tainted-path"))
+                && result["kind"].as_str() == Some("fail")
+        })
+        .count();
+    if findings == 0 {
+        panic!(
+            "expected an ICC tainted-path finding for {name}; pairs={pairs:?}; SARIF was {text}"
+        );
+    }
+}
+
+fn import_index_android_icc_case(
+    name: &str,
+    manifest: &str,
+    app_source: &str,
+    model_text: Option<String>,
+) -> (AnalysisProject, tempfile::TempDir) {
+    let dir = tempdir().unwrap();
+    let apk = build_android_icc_apk(dir.path(), name, manifest, app_source);
+    let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &apk).unwrap();
+    cli::import(
+        &import,
+        cli::ImportOptions {
+            native_libs: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let project = AnalysisProject::try_create(&format!("{name}_project"), &[name]).unwrap();
+    let models = if let Some(model_text) = model_text {
+        let model = dir.path().join("query.json");
+        std::fs::write(&model, model_text).unwrap();
+        vec![model]
+    } else {
+        Vec::new()
+    };
+    cli::index(&project, &[], &models, false, cli::IndexOptions::default()).unwrap();
+    (project, dir)
+}
+
+fn android_icc_model(sink_parent: &str) -> String {
+    format!(
+        r#"{{
+  "model_generators": [
+    {{
+      "find": "callsites",
+      "where": [{{"constraint": "signature_match", "name": "putExtra", "parent": "Landroid/content/Intent;"}}],
+      "model": {{"sources": [{{"kind": "UserInput", "port": "Argument(2)"}}]}}
+    }},
+    {{
+      "find": "methods",
+      "where": [{{"constraint": "signature_match", "name": "sink", "parent": "{sink_parent}"}}],
+      "model": {{"sinks": [{{"kind": "TaintedData", "port": "Argument(0)"}}]}}
+    }}
+  ]
+}}"#
+    )
+}
+
+fn build_android_icc_apk(
+    dir: &std::path::Path,
+    name: &str,
+    manifest: &str,
+    app_source: &str,
+) -> PathBuf {
+    let src = dir.join("src");
+    let classes = dir.join("classes");
+    std::fs::create_dir_all(src.join("android/app")).unwrap();
+    std::fs::create_dir_all(src.join("android/content")).unwrap();
+    std::fs::create_dir_all(src.join("android/os")).unwrap();
+    std::fs::create_dir_all(src.join("com/example")).unwrap();
+
+    std::fs::write(src.join("android/content/Context.java"), ANDROID_CONTEXT).unwrap();
+    std::fs::write(src.join("android/content/Intent.java"), ANDROID_INTENT).unwrap();
+    std::fs::write(
+        src.join("android/content/BroadcastReceiver.java"),
+        ANDROID_RECEIVER,
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("android/content/ComponentName.java"),
+        ANDROID_COMPONENT_NAME,
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("android/content/ServiceConnection.java"),
+        ANDROID_SERVICE_CONNECTION,
+    )
+    .unwrap();
+    std::fs::write(src.join("android/app/Activity.java"), ANDROID_ACTIVITY).unwrap();
+    std::fs::write(src.join("android/app/Service.java"), ANDROID_SERVICE).unwrap();
+    std::fs::write(src.join("android/os/Bundle.java"), ANDROID_BUNDLE).unwrap();
+    std::fs::write(src.join("android/os/IBinder.java"), ANDROID_IBINDER).unwrap();
+    std::fs::write(src.join("com/example/Sender.java"), app_source).unwrap();
+
+    std::fs::create_dir_all(&classes).unwrap();
+    let mut sources = Vec::new();
+    collect_java_sources(&src, &mut sources);
+    let mut javac = Command::new("javac");
+    javac
+        .args(["--release", "8", "-encoding", "UTF-8", "-d"])
+        .arg(&classes)
+        .args(&sources);
+    assert!(javac.status().unwrap().success(), "javac failed");
+
+    let dex = dir.join("classes.dex");
+    let class_files = collect_class_files_for_dx(&classes);
+    let mut dx = Command::new("dx");
+    dx.current_dir(&classes)
+        .arg("--dex")
+        .arg("--min-sdk-version=24")
+        .arg(format!("--output={}", dex.display()))
+        .args(class_files);
+    assert!(dx.status().unwrap().success(), "dx failed");
+
+    let apk = dir.join(format!("{name}.apk"));
+    let file = std::fs::File::create(&apk).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
+    let options =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    use std::io::Write as _;
+    zip.start_file("AndroidManifest.xml", options).unwrap();
+    zip.write_all(manifest.as_bytes()).unwrap();
+    zip.start_file("classes.dex", options).unwrap();
+    zip.write_all(&std::fs::read(dex).unwrap()).unwrap();
+    zip.finish().unwrap();
+    apk
+}
+
+fn collect_java_sources(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            collect_java_sources(&path, out);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("java") {
+            out.push(path);
+        }
+    }
+}
+
+fn collect_class_files_for_dx(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_class_files_relative(dir, dir, &mut out);
+    out
+}
+
+fn collect_class_files_relative(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    out: &mut Vec<PathBuf>,
+) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            collect_class_files_relative(root, &path, out);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("class") {
+            out.push(path.strip_prefix(root).unwrap().to_path_buf());
+        }
+    }
+}
+
+const ANDROID_CONTEXT: &str = r#"package android.content;
+public class Context {
+  public void startActivity(Intent i) {}
+  public void sendBroadcast(Intent i) {}
+  public ComponentName startService(Intent i) { return null; }
+  public boolean bindService(Intent i, ServiceConnection c, int flags) { return true; }
+}"#;
+
+const ANDROID_INTENT: &str = r#"package android.content;
+public class Intent {
+  public Intent() {}
+  public Intent(String action) {}
+  public Intent(Context c, Class cls) {}
+  public Intent setAction(String s) { return this; }
+  public Intent setType(String s) { return this; }
+  public Intent setDataAndType(Object d, String s) { return this; }
+  public Intent putExtra(String k, String v) { return this; }
+  public String getStringExtra(String k) { return null; }
+}"#;
+
+const ANDROID_ACTIVITY: &str = r#"package android.app;
+public class Activity extends android.content.Context {
+  public android.content.Intent getIntent() { return null; }
+  public void setIntent(android.content.Intent i) {}
+}"#;
+
+const ANDROID_RECEIVER: &str = r#"package android.content;
+public class BroadcastReceiver {
+  public void onReceive(Context c, Intent i) {}
+}"#;
+
+const ANDROID_SERVICE: &str = r#"package android.app;
+public class Service extends android.content.Context {
+}"#;
+
+const ANDROID_BUNDLE: &str = "package android.os; public class Bundle {}";
+const ANDROID_IBINDER: &str = "package android.os; public interface IBinder {}";
+const ANDROID_COMPONENT_NAME: &str = "package android.content; public class ComponentName { public ComponentName(Context c, String s) {} public ComponentName(String p, String c) {} }";
+const ANDROID_SERVICE_CONNECTION: &str =
+    "package android.content; public interface ServiceConnection {}";
 
 /// Writes an APK built from `(entry name, contents)` pairs into `dir`, and returns its
 /// path. Enough of an APK for the import path: a ZIP whose entry names are what the Dex

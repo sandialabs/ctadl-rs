@@ -9,7 +9,7 @@ all the intermediate files should be stored; the API below this should be writte
 as parameters.
 */
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 mod model_check;
@@ -25,7 +25,7 @@ use crate::index_engine::{
     ContextJoin, HybridContext, IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo,
     taint_index_with_config,
 };
-use crate::languages::jni;
+use crate::languages::{android_intent, jni};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
@@ -137,6 +137,7 @@ pub fn index(
     // Collects both halves of every JNI boundary as the imports go by; the link itself can only
     // happen after the loop, when one `IdMap` holds every program's functions.
     let mut jni_observer = jni::JniObserver::new();
+    let mut android_intent_observer = android_intent::AndroidIntentObserver::default();
 
     // What phase 1 of codegen did, summed over the imports: skipped bodies, the call-site
     // bucket counts, and any dispatch model a matched endpoint refused.
@@ -148,6 +149,7 @@ pub fn index(
         source_info.begin_import(&import.name);
         log::info!("'{}': loading IR", import.name);
         let mut program_info = load_import(&import, SourceInfoMode::Skip)?;
+        android_intent_observer.observe_import(&program_info);
         log::debug!(
             "[mem cp] loaded IR program (before SSA/codegen): {:.1} MB",
             phys_footprint_mb()
@@ -265,6 +267,7 @@ pub fn index(
         &mut facts,
         &mut source_info,
     )?;
+    let android_intent_stats = android_intent::emit_phase2_facts(&mut facts, &source_info.sites);
     log::info!(
         "models: {} summary row(s), {} declared access path(s), {} function body(ies) not \
          analyzed",
@@ -272,6 +275,28 @@ pub fn index(
         model_report.declared_paths,
         codegen_report.skipped_bodies
     );
+    if android_intent_stats.api_functions > 0 || android_intent_stats.intent_frames > 0 {
+        log::info!(
+            "android intent api: {} function(s), {} summary row(s), {} frame(s), {} keyed extras site(s), {} lumped extras site(s)",
+            android_intent_stats.api_functions,
+            android_intent_stats.api_summary_rows,
+            android_intent_stats.intent_frames,
+            android_intent_stats.keyed_extra_sites,
+            android_intent_stats.lumped_extra_sites,
+        );
+    }
+    let android_phase3_stats = android_intent::emit_phase3_facts(
+        project,
+        &android_intent_observer,
+        &mut facts,
+        &mut source_info,
+    )?;
+    if android_phase3_stats.intent_frames > 0 {
+        log::info!(
+            "android intent linking: {} send frame(s)",
+            android_phase3_stats.intent_frames,
+        );
+    }
     // Unconditionally, at info: without this line a mis-scoped dispatch model silently swallows
     // a signature and the only symptom is a missing finding. The `super` row is not comparable
     // across frontends -- the jvm frontend lowers constructors and private calls to `Super`
@@ -357,6 +382,20 @@ pub fn index(
     };
     log::info!("indexing (computing the flow relation)");
     let result = taint_index_with_config(facts, config, Some(&sites));
+    if !result.intent_pair.is_empty() {
+        let explicit = result
+            .intent_pair
+            .iter()
+            .filter(|(_, _, _, kind)| *kind == crate::facts::IntentPairKind::Explicit)
+            .count();
+        let implicit = result.intent_pair.len() - explicit;
+        log::info!(
+            "android intent pairs: {} explicit, {} implicit, {} total",
+            explicit,
+            implicit,
+            result.intent_pair.len()
+        );
+    }
 
     // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index
     // time, check them here.
@@ -513,6 +552,18 @@ pub fn query(
         .err_context(|| format!("loading index facts from: {}", index_path.display()))?;
     let index_result = IndexResult::try_load(&index_path)
         .err_context(|| format!("loading index result from: {}", index_path.display()))?;
+    let final_call = index_facts
+        .call
+        .iter()
+        .copied()
+        .chain(index_result.resolved_call.iter().map(|(func_id, insn_id, target)| {
+            (
+                facts::PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+                *target,
+            )
+        }))
+        .collect::<Vec<_>>();
+    let endpoint_call = endpoint_call_graph(&index_facts, &final_call, &ids);
 
     // Assembled alongside the query itself and handed to the SARIF writer, which turns it
     // into `run.invocations[0]`. See `formatter::QueryDiagnostics`.
@@ -598,7 +649,7 @@ pub fn query(
         for import in project.iter_imports() {
             let import = import?;
             if import.language == ArtifactLanguage::Flowy {
-                let eps = crate::codegen::flowy::get_endpoints(&import, &ids, &index_facts.call)?;
+                let eps = crate::codegen::flowy::get_endpoints(&import, &ids, &final_call)?;
                 endpoints.extend(eps);
             }
         }
@@ -621,6 +672,7 @@ pub fn query(
                 &index_facts,
                 &ids,
                 &index_result.assign_like,
+                &endpoint_call,
             );
             diagnostics.unresolved_functions = built.unresolved_functions;
             endpoints.extend(built.endpoints);
@@ -669,7 +721,7 @@ pub fn query(
             .endpoints(endpoints)
             .formal_param(formal_params)
             .actual_param(index_facts.actual_param.clone())
-            .call(index_facts.call.clone())
+            .call(endpoint_call.clone())
             .assign(index_result.assign_like)
             .paths(index_result.paths)
             .external_function(index_result.external_function);
@@ -682,7 +734,7 @@ pub fn query(
     for import in project.iter_imports() {
         let import = import?;
         if import.language == ArtifactLanguage::Flowy {
-            crate::codegen::flowy::query_check(&import, &result, &ids, &index_facts.call)?;
+            crate::codegen::flowy::query_check(&import, &result, &ids, &final_call)?;
         }
     }
 
@@ -691,7 +743,7 @@ pub fn query(
     b.taint(result.taint)
         .taint_edge(result.taint_edge)
         .index_actual_param(index_facts.actual_param)
-        .call(index_facts.call)
+        .call(endpoint_call)
         .id_to_name(ids.get_id_to_name_map());
     let facts = b.build().unwrap();
 
@@ -716,6 +768,30 @@ pub fn query(
         execution_successful,
         model_check_only: false,
     })
+}
+
+fn endpoint_call_graph(
+    facts: &IndexFacts,
+    final_call: &[(facts::PackedInsnSiteId, facts::FunctionId)],
+    ids: &facts::IdMap,
+) -> Vec<(facts::PackedInsnSiteId, facts::FunctionId)> {
+    let mut calls: BTreeSet<_> = final_call.iter().copied().collect();
+    let functions: BTreeMap<_, _> = ids
+        .functions()
+        .map(|(id, function)| (function.0.to_string(), id))
+        .collect();
+    for (site, class, name, descriptor) in &facts.android_call_site {
+        let target = format!(
+            "{}->{}{}",
+            class.as_ref(),
+            name.as_ref(),
+            descriptor.as_ref()
+        );
+        if let Some(target_id) = functions.get(&target) {
+            calls.insert((*site, *target_id));
+        }
+    }
+    calls.into_iter().collect()
 }
 
 /// [`query`] for a project with no index: report what the model files match against the

@@ -299,6 +299,7 @@
                   # would self-skip here -- which is the one place the drift is
                   # meant to be caught.
                   ${self.packages.${system}.default}/bin/xtask regression \
+                    --frontend dex,jvm,pcode,lua,jni,c,android-icc \
                     --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
                     --models-dir ${./ctadl-ascent/src/models}
