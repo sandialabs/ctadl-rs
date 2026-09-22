@@ -1,0 +1,38 @@
+// Migrated from lua-index.jsonl by `ctadl migrate-models`. Edit this file, not the original.
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"format", "rep", "sub", "upper", "lower", "reverse", "char"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"gsub", "match", "gmatch", "byte", "len"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"table.concat", "table.remove", "table.unpack", "unpack"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"rawget", "next"});
+
+propagation(F::arg(0) <- F::arg(2)) :-
+  fun(F, name = "rawset");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"tostring", "tonumber", "assert"});
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"os.date", "os.getenv", "os.tmpname"});
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"io.open", "io.read", "io.lines", "read"});
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "write");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"cjson.encode", "cjson.decode", "cjson.safe.encode", "cjson.safe.decode"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ngx.escape_uri", "ngx.unescape_uri", "ngx.encode_base64", "ngx.decode_base64", "ngx.encode_args", "ngx.decode_args", "ngx.quote_sql_str", "ngx.md5", "ngx.sha1_bin"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"ngx.re.match", "ngx.re.gsub", "ngx.re.sub"});
+

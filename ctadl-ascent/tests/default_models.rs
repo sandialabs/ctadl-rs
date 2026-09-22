@@ -9,7 +9,7 @@
 //! *every* index of the language that selects it.
 
 use ctadl_ascent::models::{
-    DEFAULT_MODEL_FILES, ImportScope, ProgramMatchIndex, ProgramModelMatches,
+    DEFAULT_MODEL_FILES, DispatchKeys, ImportScope, ProgramMatchIndex, ProgramModelMatches,
     try_load_default_models, try_load_jsonl_models,
 };
 use ctadl_ir::mir::ProgramInfo;
@@ -37,6 +37,62 @@ fn function(name: &str) -> FunctionData {
     f
 }
 
+/// Java call sites whose static signatures exercise every shape a dispatch default takes: a
+/// modelled one (`toString`), an element-level container read and write, a discard (`size`), an
+/// `inline` (`close`), and a closure-shaped marker (`Runnable.run`).
+///
+/// The equivalence test below needs these because a `find: "dispatch"` generator matches call
+/// *signatures*, not methods: with no call sites the dispatch universe is empty and both
+/// loaders agree on nothing, which would pass while proving nothing.
+const DISPATCH_SITES: &[(&str, &str, &str)] = &[
+    ("Ljava/lang/Object;", "toString", "()Ljava/lang/String;"),
+    ("Ljava/util/Iterator;", "next", "()Ljava/lang/Object;"),
+    (
+        "Ljava/util/Map;",
+        "put",
+        "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+    ),
+    ("Ljava/util/Collection;", "size", "()I"),
+    ("Ljava/io/Closeable;", "close", "()V"),
+    ("Ljava/lang/Runnable;", "run", "()V"),
+];
+
+/// A function whose body is one `JavaCall` per [`DISPATCH_SITES`] entry.
+fn dispatch_caller() -> FunctionData {
+    use ctadl_ir::Idx;
+    use ctadl_ir::builder::FunctionBuilder;
+    use ctadl_ir::mir::Exp;
+    use ctadl_ir::mir::call::{CallStyle, JavaDispatch};
+
+    let mut f = FunctionData {
+        name: "Lcom/example/Caller;->run()V".to_string(),
+        ..Default::default()
+    };
+    f.params.parameters.push(ParameterType::ByRef);
+    let mut fb = FunctionBuilder::new(&mut f);
+    let body = fb.add_block();
+    let mut b = fb.at_block(body);
+    for (cls, name, desc) in DISPATCH_SITES {
+        let recv = b.new_local_var("recv");
+        let result = b.new_local_var("result");
+        b.create_call(
+            CallStyle::JavaCall {
+                receiver: recv,
+                cls: (*cls).into(),
+                simple_name: (*name).into(),
+                descriptor: (*desc).into(),
+                dispatch: JavaDispatch::Interface,
+                super_start: None,
+            },
+            vec![result],
+            vec![Exp::Variable(
+                b.new_param_var(ctadl_ir::mir::ParameterIdx::new(0)),
+            )],
+        );
+    }
+    f
+}
+
 /// The two probe names. `strcpy` is modeled by `native-index.jsonl` and by nothing else;
 /// `format` by `lua-index.jsonl` and by nothing else. `toString` on `Ljava/lang/String;` is the
 /// Java probe, but it needs a class, so it is added per-VMT below.
@@ -47,9 +103,20 @@ const JAVA_PROBE: &str = "Ljava/lang/String;->toString()Ljava/lang/String;";
 const JAVA_LIST_ADD: &str = "Ljava/util/ArrayList;->add(Ljava/lang/Object;)Z";
 
 fn program(vmt: VirtualMethodTable, names: &[&str]) -> ProgramInfo {
+    program_with(vmt, names, Vec::new())
+}
+
+/// [`program`], plus functions built elsewhere -- the call-site carrier the dispatch defaults
+/// need.
+fn program_with(vmt: VirtualMethodTable, names: &[&str], extra: Vec<FunctionData>) -> ProgramInfo {
+    let funcs = names
+        .iter()
+        .map(|n| function(n))
+        .chain(extra)
+        .collect::<Vec<_>>();
     ProgramInfo {
         vmt,
-        program: Program::new(Functions::new(names.iter().map(|n| function(n)))),
+        program: Program::new(Functions::new(funcs)),
         ..Default::default()
     }
 }
@@ -84,7 +151,7 @@ fn java_program() -> ProgramInfo {
             JavaMethod(JAVA_LIST_ADD.into()),
         ),
     ];
-    program(
+    program_with(
         VirtualMethodTable::Java {
             methods,
             hierarchy: Default::default(),
@@ -98,6 +165,7 @@ fn java_program() -> ProgramInfo {
             "Lcom/example/C;->format(I)V",
             JAVA_LIST_ADD,
         ],
+        vec![dispatch_caller()],
     )
 }
 
@@ -352,4 +420,117 @@ fn jsonl_comments_are_skipped_without_consuming_an_index() {
     .unwrap();
     assert_eq!(bare.propagations.len(), commented.propagations.len());
     assert!(!bare.propagations.is_empty());
+}
+
+/// The `.ctadl` defaults an index loads and the `.jsonl` originals they were migrated from
+/// must match the *same things*.
+///
+/// This is the check the design asks for by name: a migrated model file has to produce
+/// semantically equivalent matching results. It is also the only thing keeping the pair from
+/// drifting — edit one and not the other and this fails, naming the file.
+#[test]
+fn the_dsl_defaults_match_what_the_json_defaults_matched() {
+    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, dsl};
+
+    let programs = [
+        ("java", java_program()),
+        ("native", native_program()),
+        ("lua", lua_program()),
+        ("unknown", unknown_program()),
+    ];
+    for (i, (json_name, json_contents)) in DEFAULT_MODEL_FILES.iter().enumerate() {
+        let (dsl_name, dsl_source) = DEFAULT_DSL_MODELS[i];
+        for (vmt_name, program_info) in &programs {
+            // With the dispatch universe, so a `find: "dispatch"` generator on one side and a
+            // `callsig` rule on the other both have something to match. Built unconditionally:
+            // a program with no Java call sites simply yields no keys.
+            let dispatch_keys = DispatchKeys::from_program(&program_info.program);
+            let match_index = ProgramMatchIndex::new_with_dispatch(
+                program_info,
+                ImportScope::unknown(),
+                Some(&dispatch_keys),
+            );
+
+            let mut from_json = ProgramModelMatches::default();
+            try_load_jsonl_models(&match_index, BufReader::new(*json_contents), &mut from_json)
+                .unwrap_or_else(|e| panic!("{json_name} on {vmt_name}: {e}"));
+
+            let mut from_dsl = ProgramModelMatches::default();
+            let file = dsl::DslFile::from_text(dsl_name, dsl_source)
+                .unwrap_or_else(|e| panic!("{dsl_name}: {e}"));
+            let set = dsl::DslModelSet { files: vec![file] };
+            let mut matcher = dsl::DslMatcher::new(&set);
+            matcher.observe_import(&match_index);
+            matcher
+                .finish(dsl::Phase::All, &mut from_dsl)
+                .unwrap_or_else(|e| panic!("{dsl_name} on {vmt_name}: {e}"));
+
+            // Compared as sets: the two loaders visit in different orders, and a duplicate row
+            // is inert (codegen pushes the same summary twice).
+            let key = |p: &ctadl_ascent::models::PropagationMatch| {
+                (
+                    p.function.to_string(),
+                    format!("{:?}{:?}", p.dst.tag, p.dst.index),
+                    p.dst.path.to_dot_string(),
+                    format!("{:?}{:?}", p.src.tag, p.src.index),
+                    p.src.path.to_dot_string(),
+                )
+            };
+            let json_rows: BTreeSet<_> = from_json.propagations.iter().map(key).collect();
+            let dsl_rows: BTreeSet<_> = from_dsl.propagations.iter().map(key).collect();
+            assert_eq!(
+                json_rows, dsl_rows,
+                "{dsl_name} and {json_name} disagree on a {vmt_name} program"
+            );
+            assert_eq!(
+                from_json.access_paths, from_dsl.access_paths,
+                "{dsl_name} and {json_name} declare different access paths on {vmt_name}"
+            );
+            // Dispatch models, compared for the same reason: a `find: "dispatch"` generator the
+            // DSL file does not carry would otherwise be invisible here, and an index would
+            // silently lose the hybrid call graph for the language whose defaults dropped it.
+            //
+            // Dispositions only. Provenance records which file and which generator a model came
+            // from, so the two loaders *must* differ there -- that is the field doing its job,
+            // not a disagreement about what the defaults say.
+            let dispositions = |m: &ProgramModelMatches| {
+                m.dispatch
+                    .iter()
+                    .map(|(k, v)| (*k, v.disposition.clone()))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            };
+            assert_eq!(
+                dispositions(&from_json),
+                dispositions(&from_dsl),
+                "{dsl_name} and {json_name} disagree on the dispatch models of a {vmt_name} \
+                 program"
+            );
+            assert_eq!(
+                from_json.closure_shaped, from_dsl.closure_shaped,
+                "{dsl_name} and {json_name} disagree on which {vmt_name} signatures are \
+                 closure-shaped"
+            );
+        }
+    }
+}
+
+/// The gate that decides whether an import pays to collect its call sites' signature keys.
+///
+/// Worth pinning on its own: if it ever answers `false` for Java, every dispatch rule in the
+/// defaults matches nothing and the hybrid call graph quietly reverts to CHA — with no error,
+/// because a rule over an empty universe is not a failure. The equivalence test above builds the
+/// universe unconditionally, so it would not notice.
+#[test]
+fn the_java_defaults_ask_for_the_dispatch_universe() {
+    use ctadl_ascent::models::default_models_find_dispatch;
+
+    assert!(
+        default_models_find_dispatch(&java_program().vmt),
+        "the Java defaults declare dispatch models, so they must open the gate"
+    );
+    // The other shipped defaults declare none, and must not make every import pay for a pass
+    // over every statement.
+    assert!(!default_models_find_dispatch(&native_program().vmt));
+    assert!(!default_models_find_dispatch(&lua_program().vmt));
+    assert!(!default_models_find_dispatch(&unknown_program().vmt));
 }

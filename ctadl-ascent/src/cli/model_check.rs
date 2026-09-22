@@ -195,6 +195,9 @@ pub fn check_programs(
     }
 
     // Matching, per import.
+    let wants_dispatch = files
+        .iter()
+        .any(|f| f.generators.iter().any(|g| g.declares_dispatch));
     let mut matches = ProgramModelMatches::default();
     let mut imports_checked = 0usize;
     for item in programs {
@@ -210,7 +213,16 @@ pub fn check_programs(
                 continue;
             }
         };
-        let match_index = ProgramMatchIndex::new(&program_info, scope.clone());
+        // Collecting the signature keys is a pass over every statement, so it is paid for only
+        // when some checked generator attaches a model to one. Without it a dispatch generator
+        // would report as matching nothing, which is the opposite of what this command is for.
+        let dispatch_keys = wants_dispatch
+            .then(|| crate::models::DispatchKeys::from_program(&program_info.program));
+        let match_index = ProgramMatchIndex::new_with_dispatch(
+            &program_info,
+            scope.clone(),
+            dispatch_keys.as_ref(),
+        );
 
         // Which generators this import's scope admits, accumulated per import. Computed here
         // and not from the matching pass because a scoped-out generator leaves no stats at all.
@@ -310,6 +322,9 @@ struct GeneratorState {
     declares_access_paths: bool,
     /// A `modes` directive.
     declares_modes: bool,
+    /// A dispatch model: `find: "dispatch"` in JSON, a `dispatch` head in the DSL. Gates the
+    /// signature-key collection below, which costs a pass over every statement.
+    declares_dispatch: bool,
     has_bridge: bool,
     matched: Option<MatchedFunctions>,
     endpoint_stats: BTreeMap<TaintDirection, EndpointStats>,
@@ -338,6 +353,9 @@ impl FileState {
     /// read to the end.
     fn take_inventory(&mut self) -> bool {
         let path = self.path.clone();
+        if models::is_dsl_path(&path) {
+            return self.take_dsl_inventory();
+        }
         let outcome = spec::visit_model_file(&path, |n, value| {
             // The errors are dropped: the matching pass parses the same clause and reports
             // them, once, as the model errors they are. What is wanted here is only whether
@@ -358,6 +376,7 @@ impl FileState {
                 declares_propagation: has_entries(value, "propagation"),
                 declares_access_paths: has_entries(value, "access_paths"),
                 declares_modes: has_entries(value, "modes"),
+                declares_dispatch: value.get("find").and_then(|v| v.as_str()) == Some("dispatch"),
                 has_bridge: value.pointer("/model/bridge").is_some(),
                 matched: None,
                 endpoint_stats: BTreeMap::new(),
@@ -374,6 +393,63 @@ impl FileState {
                 false
             }
         }
+    }
+
+    /// [`Self::take_inventory`] for a model DSL file: one entry per rule.
+    ///
+    /// A rule has no `in` clause — a DSL rule scopes itself with `fun(F, language = …)`, which
+    /// is an ordinary attribute and cannot be read off without a program. So every rule is
+    /// reported as applicable and `CTADL0009` ("this generator's scope admits no import") never
+    /// fires for one. The rule that matched nothing is still reported, through `CTADL0004`,
+    /// which is the diagnostic that actually distinguishes the two cases.
+    fn take_dsl_inventory(&mut self) -> bool {
+        let file = match models::dsl::DslFile::read(&self.path) {
+            Ok(file) => file,
+            Err(e) => {
+                self.record_error(render_chain(&e));
+                return false;
+            }
+        };
+        for rule in &file.program.rules {
+            use models::dsl::ast::HeadKind;
+            let state = GeneratorState {
+                index: rule.index,
+                find: Some("rule".to_string()),
+                scope_text: None,
+                scope: ProgramScope::default(),
+                scope_malformed: false,
+                applicable: true,
+                declares_endpoints: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Source { .. } | HeadKind::Sink { .. })),
+                declares_propagation: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Propagation { .. })),
+                declares_access_paths: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::AccessPath { .. })),
+                // The DSL has no `modes` directive: the migrator reports `modes` as one of the
+                // JSON keys it cannot carry over, so no rule can declare one.
+                declares_modes: false,
+                declares_dispatch: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Dispatch { .. })),
+                has_bridge: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Bridge { .. })),
+                matched: None,
+                endpoint_stats: BTreeMap::new(),
+                propagation_stats: PropagationStats::default(),
+            };
+            self.positions.insert(rule.index, self.generators.len());
+            self.generators.push(state);
+        }
+        true
     }
 
     /// Records whether this import's scope admits each generator.
@@ -443,6 +519,7 @@ impl FileState {
                 || generator.declares_propagation
                 || generator.declares_access_paths
                 || generator.declares_modes
+                || generator.declares_dispatch
                 || generator.has_bridge;
             // Reported only for a generator that declares a model: a scoped-out generator
             // declaring nothing is nothing to act on.
