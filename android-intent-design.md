@@ -1,4 +1,4 @@
-# Android Intent support - DO-NOT-MERGE
+# Android Intent support
 
 A design for teaching CTADL the Intent surface of an Android app: the components declared in
 `AndroidManifest.xml`, the intent filters that make them reachable, and the data flows that run

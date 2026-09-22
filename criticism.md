@@ -1,4 +1,4 @@
-# Criticism of Android Intent Design and Implementation Plan - DO-NOT-MERGE
+# Criticism of Android Intent Design and Implementation Plan
 
 This review covers the current `android-intent-design.md` and `implementation-plan.md` against the
 repository as it stands. The iteration is materially better than a pass that rewrites IR or tries to

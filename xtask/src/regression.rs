@@ -22,6 +22,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::apk;
+use crate::android_icc;
 use crate::assertions;
 use crate::dex;
 use crate::discovery::{self, Frontend, Kind, Packaging, TestCase};
@@ -703,7 +704,78 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             *packaging,
             worker,
         ),
+        Kind::AndroidIcc { spec } => run_android_icc(&case.name, spec),
     }
+}
+
+fn run_android_icc(name: &str, spec_path: &Path) -> Result<Outcome> {
+    let spec = android_icc::load_spec(spec_path)?;
+    let (apk, model) = android_icc::resolve_paths(spec_path, &spec);
+    if !apk.is_file() {
+        return Ok(Outcome::Skip(format!(
+            "APK fixture not found at {}; provide the pinned external benchmark fixture",
+            apk.display()
+        )));
+    }
+    if !model.is_file() {
+        return Ok(Outcome::Skip(format!(
+            "model file not found at {}; provide the expected-answer model",
+            model.display()
+        )));
+    }
+
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+    let project = format!("{name}_project").replace(':', "_");
+    let sarif = work.join("out.sarif");
+
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "import",
+            "--language",
+            "apk",
+            "--no-native-libs",
+            "--name",
+            &project,
+            &apk.to_string_lossy(),
+        ],
+    )?;
+    run_ctadl(&work, &state, &["index", &project])?;
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "query",
+            &project,
+            "-m",
+            &model.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
+    )?;
+
+    let index_dir = state
+        .join("ctadl")
+        .join("projects")
+        .join(&project)
+        .join("index");
+    let outcome = match android_icc::check_intent_pairs(&index_dir, spec.expected_intent_pairs) {
+        Ok(()) => android_icc::check_sarif(&spec, &sarif)?,
+        Err(err) => Outcome::Fail(format!("{err:#}")),
+    };
+    let outcome = match (spec.status, outcome) {
+        (android_icc::CaseStatus::Pass, outcome) => outcome,
+        (_, Outcome::Pass) => Outcome::Fail(format!(
+            "case is marked {:?}, but it now passes; update the Android ICC expected status",
+            spec.status
+        )),
+        (_, Outcome::Fail(why)) => Outcome::Xfail(why),
+        (_, other) => other,
+    };
+    with_valid_sarif(&work, &[&sarif], outcome)
 }
 
 // --- DEX / Java -----------------------------------------------------------

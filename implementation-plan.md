@@ -1,4 +1,4 @@
-# Android Intent Support Implementation Plan - DO-NOT-MERGE
+# Android Intent Support Implementation Plan
 
 This is the implementation checklist for the Android Intent support described in
 `android-intent-design.md`. It intentionally omits most design reasoning and keeps the work ordered
@@ -303,6 +303,9 @@ external smoke slice gates the main feature.
 
 1. Add nightly fixture acquisition.
    - Store expanded-suite fixtures and expected-answer files under `nightly/tests/android-icc/`.
+   - Started: `nightly/tests/android-icc/` now contains the runner README and a scaffold
+     DroidBench fixture set with pinned prebuilt APKs from upstream commit
+     `a57fa6f42f278591695672f1aa8b37c275139370`.
    - Vendor pinned APKs or download/build from pinned upstream revisions in the Nix nightly
      environment.
    - Record fixture hashes even when built from source.
@@ -317,6 +320,11 @@ external smoke slice gates the main feature.
 
 3. Add an `xtask` Android ICC runner.
    - Add a frontend selector such as `--frontend android-icc` or `--frontend icc`.
+   - Started: `xtask regression --frontend android-icc` discovers `*.json5` specs, imports/indexes
+     APKs when present, runs query models, validates SARIF, and checks optional `intent_pair` counts.
+   - Initial real-suite state: `ComponentNotInManifest1` is enforced passing; `ActivityCommunication2`
+     and `ActivityCommunication5` are tracked XFAILs for string-construction and `getIntent()`
+     lifecycle delivery gaps.
    - Import the fixture APK, index it, run the fixture query model, validate SARIF, and compare
      logical locations or index facts with the expected-answer manifest.
    - Preserve filtering by fixture name and feature bucket.

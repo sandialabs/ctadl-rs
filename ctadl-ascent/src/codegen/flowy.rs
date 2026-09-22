@@ -379,6 +379,17 @@ pub fn check_with_config<P: AsRef<Path>>(
         .collect();
     let index_result =
         taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
+    let final_call = index_facts
+        .call
+        .iter()
+        .copied()
+        .chain(index_result.resolved_call.iter().map(|(func_id, insn_id, target)| {
+            (
+                fx::PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+                *target,
+            )
+        }))
+        .collect::<Vec<_>>();
 
     if let Some(dot_path) = dump_index_graph {
         let mut file = std::fs::File::create(dot_path)
@@ -406,7 +417,7 @@ pub fn check_with_config<P: AsRef<Path>>(
     let mut format_facts_builder = formatter::FormatFactsBuilder::default();
     format_facts_builder
         .index_actual_param(index_facts.actual_param.clone())
-        .call(index_facts.call.clone())
+        .call(final_call.clone())
         .id_to_name(source_info.sites.get_id_to_name_map());
 
     let query_facts = QueryFacts {
@@ -414,9 +425,9 @@ pub fn check_with_config<P: AsRef<Path>>(
         actual_param: index_facts.actual_param,
         // Cloned: the call graph is also needed below to resolve declared
         // endpoints to their call-site-anchored forms during the query check.
-        call: index_facts.call.clone(),
+        call: final_call.clone(),
         assign: index_result.assign_like,
-        paths: index_facts.paths,
+        paths: index_result.paths,
         external_function: index_result.external_function,
         endpoints,
     };
@@ -429,7 +440,7 @@ pub fn check_with_config<P: AsRef<Path>>(
         &query_result,
         program.requirements.endpoint_requires,
         &source_info.sites,
-        &index_facts.call,
+        &final_call,
     )?;
     pass_count += ipass;
     fail_count += ifail;

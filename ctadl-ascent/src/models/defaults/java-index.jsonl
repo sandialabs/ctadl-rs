@@ -117,8 +117,6 @@
 {"find":"methods","where":[{"constraint":"signature_match","names":["of","ofNullable","get","orElse","orElseGet"],"parents":["Ljava/util/Optional;"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["name"],"parents":["Ljava/lang/Enum;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
 // ---- android ----
-{"find":"methods","where":[{"constraint":"signature_match","names":["getStringExtra","getData","getAction"],"parents":["Landroid/content/Intent;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
-{"find":"methods","where":[{"constraint":"signature_match","names":["putExtra"],"parents":["Landroid/content/Intent;"]}],"model":{"propagation":[{"input":"Argument(2)","output":"Argument(0)"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["parse","toString","getQueryParameter","buildUpon","build"],"parents":["Landroid/net/Uri;","Landroid/net/Uri$Builder;"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["getString","getStringSet"],"parents":["Landroid/content/SharedPreferences;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["putString","putStringSet"],"parents":["Landroid/content/SharedPreferences$Editor;"]}],"model":{"propagation":[{"input":"Argument(2)","output":"Argument(0)"}]}}

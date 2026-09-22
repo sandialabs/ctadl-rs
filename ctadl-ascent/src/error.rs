@@ -187,6 +187,8 @@ pub enum Error {
     Parquet(#[from] parquet::errors::ParquetError),
     #[error("arrow error")]
     Arrow(#[from] arrow::error::ArrowError),
+    #[error("android manifest error: {message}")]
+    AndroidManifest { message: String },
     #[error("flowy error")]
     Flowy(#[from] ctadl_flowy::FlowyError),
     #[error("datafusion error")]

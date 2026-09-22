@@ -1,0 +1,40 @@
+{
+  "model_generators": [
+    {
+      "find": "callsites",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "putExtra",
+          "parent": "Landroid/content/Intent;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "DroidBenchIccExtra",
+            "port": "Argument(2)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "i",
+          "parent": "Landroid/util/Log;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "LogLeak",
+            "port": "Argument(1)"
+          }
+        ]
+      }
+    }
+  ]
+}

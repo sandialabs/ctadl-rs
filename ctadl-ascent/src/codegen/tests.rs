@@ -177,7 +177,7 @@ fn test_basic2_source_sink() {
     let qfacts = QueryFacts {
         formal_param: facts.formal_param,
         actual_param: facts.actual_param,
-        call: facts.call,
+        call: index_result.call,
         assign: index_result.assign_like,
         paths: facts.paths,
         external_function: index_result.external_function,
@@ -360,6 +360,66 @@ fn test_local_to_global_field() {
     assert!(
         !has_bad_flow,
         "Local variable should flow to a field of globals, not the globals index itself"
+    );
+}
+
+#[test]
+fn string_constant_assignment_emits_const_fact() {
+    let mut f = FunctionData {
+        name: "const_assign".to_string(),
+        return_type: ReturnType { arity: 0 },
+        ..Default::default()
+    };
+    let mut fb = FunctionBuilder::new(&mut f);
+    let body = fb.add_block();
+    let mut b = fb.at_block(body);
+    let dst = b.new_local_var("dst");
+    b.create_assign(dst, [Exp::new_str("hello")]);
+    b.create_ret([]);
+
+    let mut facts = IndexFacts::default();
+    let mut source_info = IndexSourceInfo::default();
+    codegen_function(&f, &mut facts, &mut source_info);
+
+    assert_eq!(facts.const_str_assign.len(), 1);
+    assert_eq!(facts.const_str_assign[0].2, Str::from("hello"));
+}
+
+#[test]
+fn string_constant_call_argument_emits_const_fact_without_actual_param() {
+    let mut f = FunctionData {
+        name: "const_call_arg".to_string(),
+        return_type: ReturnType { arity: 0 },
+        ..Default::default()
+    };
+    let mut fb = FunctionBuilder::new(&mut f);
+    let body = fb.add_block();
+    let mut b = fb.at_block(body);
+    let style = CallStyle::DirectCall {
+        call_edges: CallEdges::Explicit(["callee".to_string()].into_iter().collect()),
+    };
+    b.create_call(style, [], [Exp::new_str("ACTION")]);
+    b.create_ret([]);
+
+    let mut facts = IndexFacts::default();
+    let mut source_info = IndexSourceInfo::default();
+    codegen_function(&f, &mut facts, &mut source_info);
+
+    assert_eq!(facts.const_str_assign.len(), 1);
+    assert_eq!(facts.const_str_assign[0].2, Str::from("ACTION"));
+    assert!(
+        facts
+            .actual_param
+            .iter()
+            .all(|(_, formal, _)| **formal != 0)
+    );
+    let FlowVertex(var, path) = &facts.const_str_assign[0].1;
+    assert!(path.is_empty());
+    assert_eq!(
+        var.as_call_arg()
+            .and_then(|packed| fx::CallArgId::try_from(packed).ok())
+            .map(|arg| arg.formal),
+        Some(0)
     );
 }
 

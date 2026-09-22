@@ -89,7 +89,6 @@ pub fn import_bundle(
         });
     }
     order_splits(&mut splits);
-
     log::info!(
         "{}: {} split APK(s): {}",
         bundle.display(),
@@ -260,5 +259,20 @@ mod tests {
         assert!(!is_nothing_to_import(&Error::Path {
             message: "unrelated".to_string()
         }));
+    }
+
+    fn write_test_apk(path: &Path, with_dex: bool, package: &str) {
+        use std::io::Write as _;
+
+        let file = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::FileOptions::default();
+        zip.start_file("AndroidManifest.xml", options).unwrap();
+        write!(zip, r#"<manifest package="{package}" />"#).unwrap();
+        if with_dex {
+            zip.start_file("classes.dex", options).unwrap();
+            zip.write_all(b"dex\n035\0").unwrap();
+        }
+        zip.finish().unwrap();
     }
 }
