@@ -509,6 +509,23 @@ fn emit_extras_assigns(facts: &mut IndexFacts, _ids: &IdMap, stats: &mut Android
                 FlowVertex(src.0, src.1.concat(&src_path)),
             ));
         }
+        if sig.class == COMPONENT_NAME
+            && matches!(
+                sig.descriptor,
+                "(Landroid/content/Context;Ljava/lang/String;)V"
+                    | "(Ljava/lang/String;Ljava/lang/String;)V"
+            )
+        {
+            let recv = actuals
+                .get(&(*site, FormalIndex::new(0)))
+                .cloned()
+                .unwrap_or_else(|| call_arg_vertex(insn_id, FormalIndex::new(0)));
+            let class_arg = actuals
+                .get(&(*site, FormalIndex::new(2)))
+                .cloned()
+                .unwrap_or_else(|| call_arg_vertex(insn_id, FormalIndex::new(2)));
+            assigns.insert((*site, recv, class_arg));
+        }
         let Some(op) = extras_op(sig) else {
             continue;
         };
@@ -677,10 +694,14 @@ fn api_rows(sig: JavaSig<'_>) -> Vec<(FormalIndex, Path, FormalIndex, Path)> {
             ("getData", "()Landroid/net/Uri;") => {
                 rows.push((RETURN_INDEX.into(), Path::empty(), idx(0), path("<data>")))
             }
-            ("setClass", _) | ("setClassName", _) | ("setComponent", _) => {
+            ("setClass", _) | ("setClassName", _) => {
                 if let Some(component_arg) = component_name_arg(sig) {
                     rows.push((idx(0), path("<component>"), component_arg, Path::empty()));
                 }
+                rows.push((RETURN_INDEX.into(), Path::empty(), idx(0), Path::empty()));
+            }
+            ("setComponent", _) => {
+                rows.push((idx(0), path("<component>"), idx(1), Path::empty()));
                 rows.push((RETURN_INDEX.into(), Path::empty(), idx(0), Path::empty()));
             }
             ("getExtras", "()Landroid/os/Bundle;") => {

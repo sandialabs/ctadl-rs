@@ -177,7 +177,7 @@ fn test_basic2_source_sink() {
     let qfacts = QueryFacts {
         formal_param: facts.formal_param,
         actual_param: facts.actual_param,
-        call: index_result.call,
+        call: facts.call,
         assign: index_result.assign_like,
         paths: facts.paths,
         external_function: index_result.external_function,

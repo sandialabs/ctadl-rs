@@ -12,8 +12,8 @@
 //!     cargo xtask regression --tests-dir <dir>
 //!     cargo xtask report-eval --apks <dir>
 
-mod apk;
 mod android_icc;
+mod apk;
 mod assertions;
 mod baksmali;
 mod dex;

@@ -383,12 +383,17 @@ pub fn check_with_config<P: AsRef<Path>>(
         .call
         .iter()
         .copied()
-        .chain(index_result.resolved_call.iter().map(|(func_id, insn_id, target)| {
-            (
-                fx::PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
-                *target,
-            )
-        }))
+        .chain(
+            index_result
+                .resolved_call
+                .iter()
+                .map(|(func_id, insn_id, target)| {
+                    (
+                        fx::PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+                        *target,
+                    )
+                }),
+        )
         .collect::<Vec<_>>();
 
     if let Some(dot_path) = dump_index_graph {
