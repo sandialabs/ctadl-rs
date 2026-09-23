@@ -21,8 +21,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
-use crate::apk;
 use crate::android_icc;
+use crate::apk;
 use crate::assertions;
 use crate::dex;
 use crate::discovery::{self, Frontend, Kind, Packaging, TestCase};

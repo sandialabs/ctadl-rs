@@ -29,6 +29,19 @@ pub fn initialize() {
     });
 }
 
+fn test_file() -> PathBuf {
+    [
+        env!("CARGO_MANIFEST_DIR"),
+        "..",
+        "xtask",
+        "tests",
+        "dex",
+        "com.noto_54.apk",
+    ]
+    .iter()
+    .collect()
+}
+
 /// Wrap the body of your store tests in this. See the note at the top of the file.
 fn run_store_test<F>(test: F)
 where
@@ -977,7 +990,10 @@ fn test_cli_import_resource_only_split_apk_is_rejected() {
                 .unwrap();
         let err = cli::import(&import, cli::ImportOptions::default()).unwrap_err();
         assert!(
-            matches!(err, ctadl_import::Error::NothingToImport { .. }),
+            matches!(
+                err,
+                ctadl_ascent::error::Error::Import(ctadl_import::Error::NothingToImport { .. })
+            ),
             "expected NothingToImport, got {err:?}"
         );
         // The message has to name both halves it looked for; that is what tells the user

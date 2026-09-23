@@ -25,7 +25,7 @@ use crate::index_engine::{
     ContextJoin, HybridContext, IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo,
     taint_index_with_config,
 };
-use crate::languages::{android_intent, jni};
+use crate::languages::{android_intent, android_manifest, jni};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
@@ -42,7 +42,24 @@ use ctadl_import::{SourceInfoMode, load_import};
 /// code calls it. The code itself lives in [`ctadl_frontends`], because choosing a front end by
 /// language is not the engine's job. Keeping it in a crate below the engine is what lets a
 /// program that reads only Dex build neither the engine nor the other front ends.
-pub use ctadl_frontends::{ImportOptions, import_and_save as import, import_artifact};
+pub use ctadl_frontends::{ImportOptions, import_artifact};
+
+pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Error> {
+    ctadl_frontends::import_and_save(import, opts)?;
+    if import.language == ArtifactLanguage::Apk {
+        match android_manifest::import_from_apk(import) {
+            Ok(Some(manifest)) => log::info!(
+                "{}: AndroidManifest.xml: {} node(s), {} attribute(s)",
+                import.artifact_path.display(),
+                manifest.nodes.len(),
+                manifest.attrs.len()
+            ),
+            Ok(None) => {}
+            Err(e) => log::warn!("{}: could not decode AndroidManifest.xml: {e}", import.name),
+        }
+    }
+    Ok(())
+}
 
 /// How to perform one index, beyond the project and the model files.
 ///
@@ -556,12 +573,17 @@ pub fn query(
         .call
         .iter()
         .copied()
-        .chain(index_result.resolved_call.iter().map(|(func_id, insn_id, target)| {
-            (
-                facts::PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
-                *target,
-            )
-        }))
+        .chain(
+            index_result
+                .resolved_call
+                .iter()
+                .map(|(func_id, insn_id, target)| {
+                    (
+                        facts::PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+                        *target,
+                    )
+                }),
+        )
         .collect::<Vec<_>>();
     let endpoint_call = endpoint_call_graph(&index_facts, &final_call, &ids);
 

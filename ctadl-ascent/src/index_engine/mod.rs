@@ -2533,6 +2533,8 @@ mod tests {
             mut assign_like,
             mut call_target_assign_like,
             mut resolved_call,
+            const_reaches: _,
+            intent_pair: _,
             mut paths,
             mut external_function,
             stats: _,
