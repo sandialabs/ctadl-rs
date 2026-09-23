@@ -668,7 +668,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::facts::{FlowVertex, Label};
+    use crate::facts::{FlowVertex, FormalIndex, InsnId, Label};
 
     /// A single-field access path `.field`.
     fn field_path(field: &str) -> Path {
@@ -787,6 +787,81 @@ mod tests {
         assert!(
             plain.taint_edge.is_empty(),
             "plain source at the bare path must not reach the `.field` sink"
+        );
+    }
+
+    #[test]
+    fn activity_get_intent_lifecycle_bridge_reaches_sink() {
+        let sender = FunctionId::new(1);
+        let receiver = FunctionId::new(2);
+        let put_extra_value = FlowVariable::call_arg_packed(
+            PackedCallArg::try_from_parts(InsnId::new(10), FormalIndex::new(2)).unwrap(),
+        );
+        let bridge_receiver = FlowVariable::call_arg_packed(
+            PackedCallArg::try_from_parts(InsnId::new(20), FormalIndex::new(0)).unwrap(),
+        );
+        let sink_arg = FlowVariable::call_arg_packed(
+            PackedCallArg::try_from_parts(InsnId::new(30), FormalIndex::new(0)).unwrap(),
+        );
+        let tainted = FlowVariable::local("tainted".into());
+        let intent = FlowVariable::local("intent".into());
+        let got_intent = FlowVariable::local("got_intent".into());
+        let extra = FlowVariable::local("extra".into());
+        let extras_k = Path::from_symbol_names(["<extras>", "k"]);
+        let intent_path = Path::from_symbol_names(["<intent>"]);
+        let intent_extras_k = Path::from_symbol_names(["<intent>", "<extras>", "k"]);
+
+        let mut src = source(sender.id, put_extra_value, false);
+        src.label = Label("UserInput".into());
+        let mut snk = sink(receiver.id, sink_arg);
+        snk.label = Label("TaintedData".into());
+        let facts = QueryFacts {
+            endpoints: vec![(src,), (snk,)],
+            formal_param: vec![
+                (
+                    receiver,
+                    FlowVariable::formal_index(FormalIndex::new(0)),
+                    FormalType::ByRef,
+                ),
+                (sender, put_extra_value, FormalType::ByRef),
+            ],
+            call: vec![(
+                PackedInsnSiteId::try_from_parts(sender, InsnId::new(20)).unwrap(),
+                receiver,
+            )],
+            assign: vec![
+                (
+                    sender,
+                    tainted,
+                    Path::empty(),
+                    put_extra_value,
+                    Path::empty(),
+                ),
+                (sender, intent, extras_k, tainted, Path::empty()),
+                (sender, bridge_receiver, intent_path, intent, Path::empty()),
+                (
+                    receiver,
+                    got_intent,
+                    Path::empty(),
+                    FlowVariable::formal_index(FormalIndex::new(0)),
+                    intent_path,
+                ),
+                (receiver, extra, Path::empty(), got_intent, extras_k),
+                (receiver, sink_arg, Path::empty(), extra, Path::empty()),
+            ],
+            paths: vec![
+                (Path::empty(),),
+                (extras_k,),
+                (intent_path,),
+                (intent_extras_k,),
+            ],
+            ..Default::default()
+        };
+
+        let result = taint_search(facts, None);
+        assert!(
+            !result.taint_edge.is_empty(),
+            "activity getIntent lifecycle bridge should reach the sink"
         );
     }
 }

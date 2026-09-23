@@ -1174,6 +1174,22 @@ pub enum TaintDirection {
     Backward,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+pub enum IntentKind {
+    #[default]
+    Activity,
+    Receiver,
+    StartedService,
+    BoundService,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+pub enum IntentPairKind {
+    #[default]
+    Explicit,
+    Implicit,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Default)]
 pub enum FormalType {
     #[default]

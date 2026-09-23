@@ -53,8 +53,8 @@ use streaming_iterator::StreamingIterator;
 use crate::error::Error;
 use crate::facts::{
     CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex,
-    FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path,
-    isout,
+    FormalType, FunctionId, IdMap, InsnId, InsnSiteId, IntentKind, IntentPairKind, PackedCallArg,
+    PackedInsnSiteId, Path, Str, isout,
 };
 use crate::index_engine::assign_like_trie::FromRows;
 pub use crate::index_engine::decision::{Decision, DecisionId, DecisionSet};
@@ -95,6 +95,12 @@ pub struct IndexFacts {
     /// the C-style function-pointer case from the Java-object case.
     #[builder(default)]
     pub call_target_assign: Vec<(PackedInsnSiteId, FlowVertex, CallTargetObject)>,
+    /// A string constant stored at a vertex by an assignment, store, or call argument.
+    #[builder(default)]
+    pub const_str_assign: Vec<(PackedInsnSiteId, FlowVertex, Str)>,
+    /// Observed Java call sites: declared class, simple method name, descriptor.
+    #[builder(default)]
+    pub android_call_site: Vec<(PackedInsnSiteId, Str, Str, Str)>,
     /// An indirect / virtual call site awaiting resolution
     #[builder(default)]
     pub callee_info: Vec<(PackedInsnSiteId, FlowVertex, CallDispatchKey)>,
@@ -106,6 +112,15 @@ pub struct IndexFacts {
     pub summary: Vec<FunctionSummary>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
+    /// Functions where string-constant propagation is worth computing.
+    #[builder(default)]
+    pub intent_frame: Vec<(FunctionId,)>,
+    #[builder(default)]
+    pub intent_send: Vec<(FunctionId, InsnId, InsnId, FormalIndex, IntentKind)>,
+    #[builder(default)]
+    pub intent_filter: Vec<(Str, Str, IntentKind, FunctionId)>,
+    #[builder(default)]
+    pub intent_component: Vec<(Str, IntentKind, FunctionId)>,
     #[builder(default)]
     pub external_function: Vec<(FunctionId,)>,
 }
@@ -563,6 +578,8 @@ pub struct IndexResult {
     pub assign_like: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
     pub call_target_assign_like: Vec<(FunctionId, FlowVariable, Path, CallTargetObject)>,
     pub resolved_call: Vec<(FunctionId, InsnId, FunctionId)>,
+    pub const_reaches: Vec<(FunctionId, FlowVariable, Path, Str)>,
+    pub intent_pair: Vec<(FunctionId, InsnId, FunctionId, IntentPairKind)>,
     pub paths: Vec<(Path,)>,
     pub external_function: Vec<(FunctionId,)>,
     pub stats: IndexStats,
@@ -604,6 +621,7 @@ impl IndexResult {
         );
         external_function::try_save(&dir, self.external_function)?;
         resolved_call::try_save(&dir, self.resolved_call)?;
+        intent_pair::try_save(&dir, self.intent_pair)?;
         log::debug!(
             "[mem cp] result.try_save done: {:.1} MB",
             phys_footprint_mb()
@@ -618,11 +636,14 @@ impl IndexResult {
         let paths = paths::try_load(&dir)?;
         let external_function = external_function::try_load(&dir)?;
         let resolved_call = resolved_call::try_load(&dir)?;
+        let intent_pair = intent_pair::try_load(&dir)?;
         Ok(IndexResult {
             summary,
             assign_like,
             call_target_assign_like: Vec::new(),
             resolved_call,
+            const_reaches: Vec::new(),
+            intent_pair,
             paths,
             external_function,
             stats: IndexStats::default(),
@@ -1291,6 +1312,19 @@ fn compute_paths(program_paths: Vec<(Path,)>, model_paths: Vec<(Path,)>) -> Vec<
     pre.paths
 }
 
+fn mime_matches(filter: &str, actual: &str) -> bool {
+    if filter == actual || filter == "*/*" {
+        return true;
+    }
+    let Some((filter_top, filter_sub)) = filter.split_once('/') else {
+        return false;
+    };
+    let Some((actual_top, _actual_sub)) = actual.split_once('/') else {
+        return false;
+    };
+    filter_sub == "*" && filter_top == actual_top
+}
+
 ascent_source! {
     /// The index datalog: every relation and rule of the index engine, written exactly once.
     index_rules:
@@ -1303,8 +1337,12 @@ ascent_source! {
     // `CallTargetObject::FunctionId`) or a Java object (`x = new Foo()`,
     // `CallTargetObject::Symbol`).
     relation call_target_assign(FunctionId, FlowVertex, CallTargetObject);
+    relation const_str_assign(FunctionId, FlowVariable, Path, Str);
     relation callee_info(FunctionId, InsnId, FlowVariable, Path, CallDispatchKey);
     relation callee_resolvents(CallTargetObject, CallDispatchKey, FunctionId);
+    relation intent_send(FunctionId, InsnId, InsnId, FormalIndex, IntentKind);
+    relation intent_filter(Str, Str, IntentKind, FunctionId);
+    relation intent_component(Str, IntentKind, FunctionId);
 
     // Analysis drivers:
 
@@ -1314,6 +1352,7 @@ ascent_source! {
     relation path_set(PathSetRef);
     relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path);
     relation config(IndexConfig);
+    relation intent_frame(FunctionId);
 
     // Derived:
 
@@ -1336,9 +1375,11 @@ ascent_source! {
     // to the receiver vertices of critical calls; the union of what were the separate
     // `func_ptr_assign_like` and `java_obj_assign_like` relations.
     relation call_target_assign_like(FunctionId, FlowVariable, Path, CallTargetObject);
+    relation const_reaches(FunctionId, FlowVariable, Path, Str);
 
     // Which indirect / virtual call sites resolved to what
     relation resolved_call(FunctionId, InsnId, FunctionId);
+    relation intent_pair(FunctionId, InsnId, FunctionId, IntentPairKind);
 
     // Hybrid Inlining relations: critical_summary(f, n, p). f(n.p = obj) invokes obj at some
     // critical call site. The critical site itself is not tracked here; it can be recovered by
@@ -1507,6 +1548,47 @@ ascent_source! {
         let p1 = dst_path,
         let v2 = call_arg!(*insn_id, *n2),
         let p2 = src_path;
+
+    const_reaches(func_id, v.clone(), p.clone(), s) <--
+        intent_frame(func_id),
+        const_str_assign(func_id, v, p, s);
+
+    const_reaches(func_id, v1.clone(), p_new.clone(), s) <--
+        intent_frame(func_id),
+        const_reaches(func_id, v2, p_context, s),
+        assign_like(func_id, v1, p1, v2, p2),
+        if let Some(p_new) = p_context.substitute_prefix(p2, p1),
+        path_set(ps),
+        if ps.contains(&p_new);
+
+    intent_pair(func_id, bridge_insn, recv, IntentPairKind::Explicit) <--
+        intent_send(func_id, bridge_insn, send_insn, n, kind),
+        let component_path = Path::from_symbol_names(["<component>"]),
+        let arg = call_arg!(*send_insn, *n),
+        const_reaches(func_id, arg, component_path, cls),
+        intent_component(cls, kind, recv);
+
+    intent_pair(func_id, bridge_insn, recv, IntentPairKind::Implicit) <--
+        intent_send(func_id, bridge_insn, send_insn, n, kind),
+        let action_path = Path::from_symbol_names(["<action>"]),
+        let arg = call_arg!(*send_insn, *n),
+        const_reaches(func_id, arg, action_path, action),
+        intent_filter(action, filter_mime, kind, recv),
+        if filter_mime.as_ref().is_empty();
+
+    intent_pair(func_id, bridge_insn, recv, IntentPairKind::Implicit) <--
+        intent_send(func_id, bridge_insn, send_insn, n, kind),
+        let action_path = Path::from_symbol_names(["<action>"]),
+        let type_path = Path::from_symbol_names(["<type>"]),
+        let arg = call_arg!(*send_insn, *n),
+        const_reaches(func_id, arg, action_path, action),
+        const_reaches(func_id, arg, type_path, mime),
+        intent_filter(action, filter_mime, kind, recv),
+        if !filter_mime.as_ref().is_empty(),
+        if mime_matches(filter_mime.as_ref(), mime.as_ref());
+
+    resolved_call(func_id, bridge_insn, recv) <--
+        intent_pair(func_id, bridge_insn, recv, _);
 
     // Compute context-free summaries from local reachability.
     summary(infunc, n1, p1, n2, p2) <--
@@ -2183,6 +2265,18 @@ pub fn taint_index_with_config(
             .collect();
         prog.callee_resolvents = facts.callee_resolvents.into_iter().collect();
         prog.summary = facts.summary.into_iter().collect();
+        prog.const_str_assign = facts
+            .const_str_assign
+            .into_iter()
+            .map(|(site_id, vx, value)| {
+                let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+                (func_id, vx.0, vx.1, value)
+            })
+            .collect();
+        prog.intent_frame = facts.intent_frame.into_iter().collect();
+        prog.intent_send = facts.intent_send.into_iter().collect();
+        prog.intent_filter = facts.intent_filter.into_iter().collect();
+        prog.intent_component = facts.intent_component.into_iter().collect();
         prog.config = config_val.into_iter().collect();
         // Seeding goes through the `FromRows` trait rather than naming a store type, so this line is
         // the same under `ascent!` and `ascent_par!`: the field's type selects the serial `AssignTrie`
@@ -2320,6 +2414,8 @@ pub fn taint_index_with_config(
             assign_like: assign_like_out,
             call_target_assign_like: prog.call_target_assign_like.into_iter().collect(),
             resolved_call: prog.resolved_call.into_iter().collect(),
+            const_reaches: prog.const_reaches.into_iter().collect(),
+            intent_pair: prog.intent_pair.into_iter().collect(),
             paths: prog.paths.into_iter().collect(),
             external_function: facts.external_function,
             stats,
@@ -2437,6 +2533,8 @@ mod tests {
             mut assign_like,
             mut call_target_assign_like,
             mut resolved_call,
+            const_reaches: _,
+            intent_pair: _,
             mut paths,
             mut external_function,
             stats: _,

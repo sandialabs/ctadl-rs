@@ -45,6 +45,8 @@ pub enum Kind {
         /// same thing, so the set is a direct A/B on the importer alone.
         packaging: Packaging,
     },
+    /// Pinned external Android ICC benchmark APK plus expected-answer spec.
+    AndroidIcc { spec: PathBuf },
 }
 
 /// How a [`Kind::Jni`] case hands its two halves to `ctadl import`.
@@ -71,6 +73,7 @@ impl Kind {
             Kind::C { .. } => Frontend::C,
             Kind::Lua { .. } => Frontend::Lua,
             Kind::Jni { .. } => Frontend::Jni,
+            Kind::AndroidIcc { .. } => Frontend::AndroidIcc,
         }
     }
 }
@@ -93,6 +96,8 @@ pub enum Frontend {
     /// pcode toolchains at once. It selects separately so `--frontend jni` runs
     /// the two-import cases without also running every dex and pcode case.
     Jni,
+    /// External Android ICC benchmark APKs (DroidBench ICC / ICC-Bench style).
+    AndroidIcc,
 }
 
 impl Frontend {
@@ -103,6 +108,7 @@ impl Frontend {
         Frontend::Lua,
         Frontend::Jni,
         Frontend::C,
+        Frontend::AndroidIcc,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -113,6 +119,7 @@ impl Frontend {
             Frontend::C => "c",
             Frontend::Lua => "lua",
             Frontend::Jni => "jni",
+            Frontend::AndroidIcc => "android-icc",
         }
     }
 }
@@ -128,8 +135,9 @@ impl FromStr for Frontend {
             "c" => Ok(Frontend::C),
             "lua" => Ok(Frontend::Lua),
             "jni" => Ok(Frontend::Jni),
+            "android-icc" | "icc" => Ok(Frontend::AndroidIcc),
             other => {
-                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni)")
+                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni, android-icc)")
             }
         }
     }
@@ -162,7 +170,28 @@ pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
     cases.extend(discover_pcode(&tests_dir.join("c"))?);
     cases.extend(discover_lua(&tests_dir.join("lua"))?);
     cases.extend(discover_jni(&tests_dir.join("jni"))?);
+    cases.extend(discover_android_icc(&tests_dir.join("android-icc"))?);
     cases.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(cases)
+}
+
+fn discover_android_icc(dir: &Path) -> Result<Vec<TestCase>> {
+    let mut cases = Vec::new();
+    if !dir.is_dir() {
+        return Ok(cases);
+    }
+    for entry in read_dir_sorted(dir)? {
+        if entry.extension().and_then(|e| e.to_str()) != Some("json5") {
+            continue;
+        }
+        let stem = file_stem(&entry)?;
+        cases.push(TestCase {
+            name: format!("AndroidIcc:{stem}"),
+            kind: Kind::AndroidIcc {
+                spec: absolute(&entry)?,
+            },
+        });
+    }
     Ok(cases)
 }
 
@@ -404,7 +433,7 @@ fn to_kebab_case(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{discover_jni, to_kebab_case, Frontend, Kind, Packaging};
+    use super::{discover_android_icc, discover_jni, to_kebab_case, Frontend, Kind, Packaging};
 
     /// Every shipped JNI case is discovered, and one that carries a `<kebab>.bridge.jsonl`
     /// yields a second, declaratively-bridged case beside it.
@@ -526,6 +555,11 @@ mod tests {
         assert_eq!("dex".parse::<Frontend>().unwrap(), Frontend::Dex);
         assert_eq!("c".parse::<Frontend>().unwrap(), Frontend::C);
         assert_eq!("jni".parse::<Frontend>().unwrap(), Frontend::Jni);
+        assert_eq!(
+            "android-icc".parse::<Frontend>().unwrap(),
+            Frontend::AndroidIcc
+        );
+        assert_eq!("icc".parse::<Frontend>().unwrap(), Frontend::AndroidIcc);
         // Tolerate stray whitespace/case from a comma-separated list.
         assert_eq!(" Pcode ".parse::<Frontend>().unwrap(), Frontend::Pcode);
         assert_eq!(" C ".parse::<Frontend>().unwrap(), Frontend::C);
@@ -535,6 +569,24 @@ mod tests {
         for frontend in Frontend::ALL {
             assert_eq!(frontend.as_str().parse::<Frontend>().unwrap(), *frontend);
         }
+    }
+
+    #[test]
+    fn discovers_android_icc_specs() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("nightly/tests/android-icc");
+        if !dir.is_dir() {
+            return;
+        }
+        let cases = discover_android_icc(&dir).expect("discovering android icc cases");
+        assert!(
+            cases
+                .iter()
+                .any(|c| c.name == "AndroidIcc:droidbench-activity-communication-2"),
+            "scaffold Android ICC case not discovered"
+        );
     }
 
     #[test]

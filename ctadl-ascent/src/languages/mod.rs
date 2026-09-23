@@ -1,3 +1,5 @@
+pub mod android_intent;
+pub mod android_manifest;
 pub mod jni;
 
 /// The JVM front end. It is its own crate, and it depends on `jvm-reader` and nothing else: no

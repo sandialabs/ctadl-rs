@@ -107,7 +107,8 @@ fn absolutize(path: &Path) -> PathBuf {
 ///   a `Super` dispatch, so an `invoke-super` resolves to its single real target instead of every
 ///   implementation below the named class. A `bitcode` wire-format change to every
 ///   `ir-program.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "8";
+/// - `9`: APK imports gained persisted Android manifest triple tables.
+pub const IMPORT_FORMAT_VERSION: &str = "9";
 
 /// Filename of the serialized IR program inside an import directory.
 ///
@@ -153,7 +154,9 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   column cannot say which import's source-info database to read one in -- which is exactly
 ///   how a multi-import project used to render every result once per import, each copy
 ///   carrying an unrelated line from another artifact.
-pub const INDEX_FORMAT_VERSION: &str = "3";
+/// - `4`: `call.parquet` moved from pre-fixpoint [`crate::index_engine::IndexFacts`] output to
+///   post-fixpoint [`crate::index_engine::IndexResult`] output, so query sees derived calls.
+pub const INDEX_FORMAT_VERSION: &str = "4";
 
 /// What [`ArtifactImport::status`] holds once an import has finished.
 pub const IMPORT_STATUS_DONE: &str = "done";

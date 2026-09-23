@@ -20,7 +20,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
-use crate::facts::{self, FlowVariable, FlowVertex, Label};
+use crate::facts::{self, FlowVariable, FlowVertex, Label, PackedInsnSiteId};
 use crate::index_engine::IndexFacts;
 
 /// The outcome of Stage 2: the resolved endpoints, the formals they register, and the
@@ -53,6 +53,7 @@ pub fn build_query_endpoints(
         FlowVariable,
         facts::Path,
     )],
+    call: &[(PackedInsnSiteId, facts::FunctionId)],
 ) -> BuiltEndpoints {
     use crate::models::FormalIndexTypeTag;
     let func_num_params = facts.compute_arg_arity();
@@ -241,9 +242,9 @@ pub fn build_query_endpoints(
                 Some(formal) if callsite_scoped => {
                     // Anchor only at the matching call sites (callee is `infunc`, caller is
                     // constrained by `caller_filter`); no function-anchored fallback.
-                    base.anchored_at_callsites_filtered(formal, &facts.call, caller_filter)
+                    base.anchored_at_callsites_filtered(formal, call, caller_filter)
                 }
-                Some(formal) => base.anchored_at_callsites(formal, &facts.call),
+                Some(formal) => base.anchored_at_callsites(formal, call),
                 None => vec![base],
             };
             for ep in fanned {

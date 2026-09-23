@@ -208,10 +208,44 @@ pub mod external_function {
     save_load!();
 }
 
+pub mod intent_pair {
+    use super::*;
+    use crate::facts::IntentPairKind;
+    pub type Record = (FunctionId, InsnId, FunctionId, IntentPairKind);
+    pub const COLUMNS: [&str; 4] = ["func_id", "insn_id", "receiver_id", "kind"];
+    pub const FILENAME: &str = "intent_pair.parquet";
+    save_load!();
+}
+
+pub mod manifest_node {
+    use super::*;
+    pub type Record = (u32, String);
+    pub const COLUMNS: [&str; 2] = ["node_id", "tag"];
+    pub const FILENAME: &str = "manifest_node.parquet";
+    save_load!();
+}
+
+pub mod manifest_node_child {
+    use super::*;
+    pub type Record = (u32, u32);
+    pub const COLUMNS: [&str; 2] = ["parent_id", "child_id"];
+    pub const FILENAME: &str = "manifest_node_child.parquet";
+    save_load!();
+}
+
+pub mod manifest_node_attr {
+    use super::*;
+    pub type Record = (u32, String, String);
+    pub const COLUMNS: [&str; 3] = ["node_id", "key", "value"];
+    pub const FILENAME: &str = "manifest_node_attr.parquet";
+    save_load!();
+}
+
 #[cfg(test)]
 mod tests {
     use crate::facts::{
-        CallTargetObject, FlowEdge, FlowVariable, FunctionId, InsnId, PackedInsnSiteId, Path,
+        CallTargetObject, FlowEdge, FlowVariable, FunctionId, InsnId, IntentPairKind,
+        PackedInsnSiteId, Path,
     };
 
     /// The `call_target_assign` schema encodes a [`CallTargetObject`] into a tag column
@@ -377,6 +411,29 @@ mod tests {
                 FlowEdge::Return(site)
             ]
         );
+        assert_eq!(loaded, records);
+    }
+
+    #[test]
+    fn intent_pair_round_trips() {
+        let records: Vec<super::intent_pair::Record> = vec![
+            (
+                FunctionId::new(1),
+                InsnId::new(10),
+                FunctionId::new(2),
+                IntentPairKind::Explicit,
+            ),
+            (
+                FunctionId::new(1),
+                InsnId::new(11),
+                FunctionId::new(3),
+                IntentPairKind::Implicit,
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::intent_pair::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::intent_pair::try_load(dir.path()).unwrap();
         assert_eq!(loaded, records);
     }
 }
