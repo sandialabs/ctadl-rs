@@ -24,6 +24,9 @@ ctadl-pcode = { path = "../frontends/ctadl-pcode", optional = true }
 bitcode = { version = "0.6", features = ["serde"], optional = true }
 dex-reader = { path = "../readers/dex-reader", optional = true }
 
+[dev-dependencies]
+zip = "0.6"
+
 [features]
 # `xapk` is on by default, even though the plan left it off. A bundle is a ZIP file of APKs,
 # and `dex_reader::apk` already reads that, so turning it on adds no dependency. Leaving it off
