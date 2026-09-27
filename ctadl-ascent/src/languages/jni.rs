@@ -607,16 +607,39 @@ pub struct LinkStats {
     /// Recovered `RegisterNatives` entries that tier 1 could not attribute to a single class.
     /// Not a subset of anything above: it counts table entries, not Java methods.
     pub unattributed: usize,
+    /// Of those linked, ones whose implementation came from a `--summary` project rather than
+    /// from an import of this one. A subset of `linked`.
+    pub from_summary: usize,
+    /// Of those linked, ones whose recovered native prototype disagrees with what the Dex
+    /// descriptor implies. A subset of `linked`: the link is emitted anyway.
+    pub prototype_mismatch: usize,
 }
 
 impl std::fmt::Display for LinkStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} native method(s): {} linked ({} registered), {} unresolved, {} ambiguous",
-            self.natives, self.linked, self.registered, self.unresolved, self.ambiguous
+            "{} native method(s): {} linked ({} registered, {} from summary, {} prototype \
+             mismatch), {} unresolved, {} ambiguous",
+            self.natives,
+            self.linked,
+            self.registered,
+            self.from_summary,
+            self.prototype_mismatch,
+            self.unresolved,
+            self.ambiguous
         )
     }
+}
+
+/// What [`link`] did: the counts, and each native function it linked a method to.
+#[derive(Debug, Default, Clone)]
+pub struct LinkOutcome {
+    pub stats: LinkStats,
+    /// Every native function at least one method was linked to, once each, with where it was
+    /// observed. `cli::index` counts the summaries a `--summary` project supplied for each one,
+    /// since a bridge whose target got none produces no flow and no error.
+    pub targets: BTreeMap<FunctionId, NativeTarget>,
 }
 
 /// How a Java native method resolved against the native half.
@@ -641,16 +664,19 @@ enum Resolution<'a> {
 /// `actual_param` and `formal_param` rows that make taint cross the boundary.
 ///
 /// Call it after the import loop and before the facts are saved: that is the first point at which
-/// both programs' functions live in one [`crate::facts::IdMap`].
+/// both programs' functions live in one [`crate::facts::IdMap`]. The Java stub has to be in the
+/// fact base already. The native function is interned if it is not: that is the case for a
+/// target observed only in a `--summary` project, whose code this index never loads.
 pub fn link(
     obs: &JniObserver,
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
-) -> LinkStats {
-    let mut stats = LinkStats::default();
+) -> LinkOutcome {
+    let mut outcome = LinkOutcome::default();
     if obs.natives.is_empty() {
-        return stats;
+        return outcome;
     }
+    let stats = &mut outcome.stats;
 
     // Arity of each function *before* the bridge adds formals, so the diagnostic below reports
     // what the frontend recovered rather than what this pass just synthesized.
@@ -686,7 +712,7 @@ pub fn link(
             .entry(target.function.as_str())
             .or_insert(target);
     }
-    let registered = attribute_registries(obs, &natives, &by_function, &mut stats);
+    let registered = attribute_registries(obs, &natives, &by_function, stats);
 
     for nat in natives {
         stats.natives += 1;
@@ -731,20 +757,12 @@ pub fn link(
         };
 
         let function = target.function.as_str();
-        // Both sides must already be interned; they are, unless an import was dropped.
-        let (Some(java_id), Some(native_id)) = (
-            source_info
-                .sites
-                .get_function_id(facts::Function(nat.method.as_str().into())),
-            source_info
-                .sites
-                .get_function_id(facts::Function(function.into())),
-        ) else {
-            log::debug!(
-                "jni bridge: '{}' or '{}' is not in the fact base",
-                nat.method,
-                function
-            );
+        // The stub must already be interned; it is, unless its import was dropped.
+        let Some(java_id) = source_info
+            .sites
+            .get_function_id(facts::Function(nat.method.as_str().into()))
+        else {
+            log::debug!("jni bridge: '{}' is not in the fact base", nat.method);
             stats.unresolved += 1;
             continue;
         };
@@ -758,6 +776,11 @@ pub fn link(
             stats.unresolved += 1;
             continue;
         };
+        // A no-op for a co-indexed target. A summary-only one is interned here: the index
+        // engine replays its summaries over the call edge by id, so the id is all it needs.
+        let native_id = source_info
+            .sites
+            .get_or_add_function(facts::Function(function.into()));
 
         // An incomplete prototype is the one failure mode that silently drops arguments: Ghidra
         // gives a function with no recovered prototype zero parameters, and a mapped port past its
@@ -769,7 +792,8 @@ pub fn link(
             .max()
             .map_or(0, |highest| highest + 1);
         let recovered = num_params.get(&native_id).copied().unwrap_or(0);
-        if recovered < expected {
+        // A summary-only target has no `formal_param` rows here to count.
+        if target.origin == Origin::Current && recovered < expected {
             log::warn!(
                 "jni bridge: '{}' resolves to '{}', which has {} recovered parameter(s) but needs \
                  {}; the prototype is incomplete, so some argument(s) will not flow",
@@ -785,10 +809,17 @@ pub fn link(
         if via_registry {
             stats.registered += 1;
         }
+        if matches!(target.origin, Origin::Summary(_)) {
+            stats.from_summary += 1;
+        }
+        outcome
+            .targets
+            .entry(native_id)
+            .or_insert_with(|| target.clone());
     }
 
     log::info!("jni bridge: {}", stats);
-    stats
+    outcome
 }
 
 /// Runs tier-1 attribution over every import's recovered tables and returns the resulting

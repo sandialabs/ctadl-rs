@@ -294,8 +294,10 @@ pub struct IndexArgs {
     pub progs: Vec<String>,
 
     /// Load summaries from one or more previously indexed projects and map them into the current project.
-    /// The summaries will be filtered to only include functions that exist in the current project.
-    /// Can be specified multiple times to load from multiple projects.
+    /// The summaries are filtered to functions that exist in the current project, including native
+    /// targets linked by the JNI bridge: a summary project's native libraries (their symbol and
+    /// `RegisterNatives` tables, not their code) are available to link this project's Java
+    /// `native` methods against. Can be specified multiple times to load from multiple projects.
     #[arg(long, short, action = clap::ArgAction::Append, id = "NAME")]
     pub summary: Vec<String>,
 

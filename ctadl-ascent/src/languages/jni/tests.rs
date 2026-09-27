@@ -335,7 +335,7 @@ fn links_an_instance_native_to_its_implementation() {
     // A site that already exists in the stub, so "the bridge mints a fresh one" is testable.
     let existing = source_info.add_insn_site(function_id(&source_info, &stub));
 
-    let stats = link(&obs, &mut facts, &mut source_info);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
     assert_eq!(
         stats,
         LinkStats {
@@ -344,7 +344,9 @@ fn links_an_instance_native_to_its_implementation() {
             registered: 0,
             unresolved: 0,
             ambiguous: 0,
-            unattributed: 0
+            unattributed: 0,
+            from_summary: 0,
+            prototype_mismatch: 0
         }
     );
 
@@ -400,7 +402,7 @@ fn links_a_static_native_without_a_this_port() {
     );
 
     let (mut facts, mut source_info) = fact_base(&[(&stub, 0), ("Java_JniFlow_nativeStash", 3)]);
-    let stats = link(&obs, &mut facts, &mut source_info);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
     assert_eq!(stats.linked, 1);
 
     let site = facts.call[0].0;
@@ -449,7 +451,7 @@ fn two_natives_get_two_distinct_sites() {
         ("Java_JniFlow_nativeStash", 3),
         ("Java_JniFlow_nativeFetch", 2),
     ]);
-    let stats = link(&obs, &mut facts, &mut source_info);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
     assert_eq!(stats.linked, 2);
 
     let sites: Vec<_> = facts.call.iter().map(|(s, _)| *s).collect();
@@ -476,7 +478,7 @@ fn a_method_observed_twice_is_bridged_once() {
     );
 
     let (mut facts, mut source_info) = fact_base(&[(&stub, 0), ("Java_JniFlow_go", 2)]);
-    let stats = link(&obs, &mut facts, &mut source_info);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
     assert_eq!(
         stats,
         LinkStats {
@@ -485,7 +487,9 @@ fn a_method_observed_twice_is_bridged_once() {
             registered: 0,
             unresolved: 0,
             ambiguous: 0,
-            unattributed: 0
+            unattributed: 0,
+            from_summary: 0,
+            prototype_mismatch: 0
         }
     );
     assert_eq!(facts.call.len(), 1);
@@ -506,7 +510,7 @@ fn emits_nothing_when_there_is_no_native_import() {
     assert!(obs.is_empty());
 
     let (mut facts, mut source_info) = fact_base(&[(&stub, 0)]);
-    let stats = link(&obs, &mut facts, &mut source_info);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
     assert_eq!(
         stats,
         LinkStats {
@@ -515,7 +519,9 @@ fn emits_nothing_when_there_is_no_native_import() {
             registered: 0,
             unresolved: 1,
             ambiguous: 0,
-            unattributed: 0
+            unattributed: 0,
+            from_summary: 0,
+            prototype_mismatch: 0
         }
     );
     assert!(facts.call.is_empty());
@@ -552,7 +558,7 @@ fn resolve_against(
     let borrowed: Vec<(&str, i16)> = functions.iter().map(|(n, a)| (n.as_str(), *a)).collect();
 
     let (mut facts, mut source_info) = fact_base(&borrowed);
-    let stats = link(&obs, &mut facts, &mut source_info);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
     let linked = facts.call.first().map(|(_, target)| {
         source_info
             .sites
@@ -602,7 +608,9 @@ fn skips_an_overloaded_native_with_only_a_short_symbol() {
             registered: 0,
             unresolved: 0,
             ambiguous: 2,
-            unattributed: 0
+            unattributed: 0,
+            from_summary: 0,
+            prototype_mismatch: 0
         }
     );
     assert_eq!(linked, None);
@@ -651,7 +659,9 @@ fn skips_a_symbol_carried_by_several_native_functions() {
             registered: 0,
             unresolved: 0,
             ambiguous: 1,
-            unattributed: 0
+            unattributed: 0,
+            from_summary: 0,
+            prototype_mismatch: 0
         }
     );
 }
@@ -670,7 +680,9 @@ fn reports_a_native_with_no_matching_symbol_as_unresolved() {
             registered: 0,
             unresolved: 1,
             ambiguous: 0,
-            unattributed: 0
+            unattributed: 0,
+            from_summary: 0,
+            prototype_mismatch: 0
         }
     );
 }
@@ -751,7 +763,7 @@ fn links_a_native_bound_by_register_natives() {
     );
 
     let (mut facts, mut source_info) = fact_base(&[(&stub, 0), ("stash_impl", 7)]);
-    let stats = link(&obs, &mut facts, &mut source_info);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
     assert_eq!(
         stats,
         LinkStats {
@@ -760,7 +772,9 @@ fn links_a_native_bound_by_register_natives() {
             registered: 1,
             unresolved: 0,
             ambiguous: 0,
-            unattributed: 0
+            unattributed: 0,
+            from_summary: 0,
+            prototype_mismatch: 0
         }
     );
     assert_eq!(facts.call.len(), 1);
@@ -801,7 +815,7 @@ fn a_registration_wins_over_a_matching_symbol() {
         ("Java_JniFlow_nativeStash", 2),
         ("stash_impl", 2),
     ]);
-    let stats = link(&obs, &mut facts, &mut source_info);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
     assert_eq!(stats.linked, 1);
     assert_eq!(stats.registered, 1);
     assert_eq!(facts.call.len(), 1, "one bridge, not two");
@@ -843,7 +857,7 @@ fn a_registration_rescues_an_overload_a_short_symbol_cannot_resolve() {
         ("f_int", 3),
         ("f_long", 3),
     ]);
-    let stats = link(&obs, &mut facts, &mut source_info);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
     assert_eq!(
         stats,
         LinkStats {
@@ -852,7 +866,9 @@ fn a_registration_rescues_an_overload_a_short_symbol_cannot_resolve() {
             registered: 2,
             unresolved: 0,
             ambiguous: 0,
-            unattributed: 0
+            unattributed: 0,
+            from_summary: 0,
+            prototype_mismatch: 0
         }
     );
     let targets: HashSet<FunctionId> = facts.call.iter().map(|(_, target)| *target).collect();
@@ -884,7 +900,7 @@ fn an_unattributed_entry_is_counted_and_not_linked() {
     );
 
     let (mut facts, mut source_info) = fact_base(&[(&stub, 0), ("bdjo_impl", 3)]);
-    let stats = link(&obs, &mut facts, &mut source_info);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
     assert_eq!(stats.linked, 0);
     assert_eq!(stats.registered, 0);
     assert_eq!(stats.unattributed, 1);
@@ -1065,4 +1081,150 @@ fn the_native_only_path_ignores_java_natives() {
             origin: Origin::Summary("xproj".into()),
         }]
     );
+}
+
+// ---------------------------------------------------------------------------
+// Targets observed in a summary project
+// ---------------------------------------------------------------------------
+
+/// A target known only from a summary project is not in the fact base: its library's code was
+/// never loaded. The bridge interns it, so the summaries mapped in afterwards have an id to
+/// land on.
+#[test]
+fn a_summary_target_links_and_is_interned() {
+    let java = "LJniFlow;";
+    let descriptor = "(Ljava/lang/String;)V";
+    let stub = java_method_name(java, "nativeStash", descriptor);
+
+    let mut obs = JniObserver::new();
+    obs.observe_java(
+        &java_program(&[(java, "nativeStash", descriptor, true)]).vmt,
+        SlotModel::Register,
+    );
+    obs.observe_native_vmt(
+        &native_program(&[("Java_JniFlow_nativeStash", "Java_JniFlow_nativeStash")]).vmt,
+        NativeAbi::Arm64,
+        Origin::Summary("xproj".into()),
+    );
+
+    // Only the stub: the native function is nowhere in this index.
+    let (mut facts, mut source_info) = fact_base(&[(&stub, 0)]);
+    assert!(
+        source_info
+            .sites
+            .get_function_id(Function("Java_JniFlow_nativeStash".into()))
+            .is_none()
+    );
+
+    let outcome = link(&obs, &mut facts, &mut source_info);
+    assert_eq!(
+        outcome.stats,
+        LinkStats {
+            natives: 1,
+            linked: 1,
+            registered: 0,
+            unresolved: 0,
+            ambiguous: 0,
+            unattributed: 0,
+            from_summary: 1,
+            prototype_mismatch: 0
+        }
+    );
+    let native_id = function_id(&source_info, "Java_JniFlow_nativeStash");
+    assert_eq!(facts.call.len(), 1);
+    assert_eq!(facts.call[0].1, native_id);
+    assert_eq!(
+        actuals(&facts, facts.call[0].0),
+        vec![
+            (GLOBALS_INDEX, GLOBALS_INDEX),
+            (RETURN_INDEX, RETURN_INDEX),
+            (2, 0),
+        ],
+        "the same bridge a co-indexed target gets"
+    );
+    assert_eq!(
+        outcome.targets[&native_id].origin,
+        Origin::Summary("xproj".into())
+    );
+}
+
+/// A registration recovered from a summary project's library links the same way.
+#[test]
+fn a_summary_registration_links() {
+    let java = "Lcom/example/Superpack;";
+    let descriptor = "(J)Z";
+    let stub = java_method_name(java, "usable", descriptor);
+
+    let mut obs = JniObserver::new();
+    obs.observe_java(
+        &java_program(&[(java, "usable", descriptor, true)]).vmt,
+        SlotModel::Register,
+    );
+    obs.observe_native_vmt(
+        &native_program(&[("usable_impl", "usable_impl")]).vmt,
+        NativeAbi::Arm64,
+        Origin::Summary("xproj".into()),
+    );
+    observe_table(
+        &mut obs,
+        "app__arm64-v8a__libx",
+        &[("usable", descriptor, "usable_impl")],
+    );
+
+    let (mut facts, mut source_info) = fact_base(&[(&stub, 0)]);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
+    assert_eq!(
+        (stats.linked, stats.registered, stats.from_summary),
+        (1, 1, 1)
+    );
+    assert_eq!(facts.call[0].1, function_id(&source_info, "usable_impl"));
+}
+
+/// Why `cli::index` observes an import at most once: two observations put two targets under
+/// every symbol, and the bridge cannot pick one.
+#[test]
+fn an_import_observed_twice_makes_its_symbols_ambiguous() {
+    let java = "LJniFlow;";
+    let stub = java_method_name(java, "go", "()V");
+    let lib = native_program(&[("Java_JniFlow_go", "Java_JniFlow_go")]);
+
+    let mut obs = JniObserver::new();
+    obs.observe(
+        &java_program(&[(java, "go", "()V", true)]),
+        SlotModel::Register,
+        NativeAbi::Unknown,
+    );
+    obs.observe(&lib, SlotModel::Argument, NativeAbi::Unknown);
+    obs.observe_native_vmt(
+        &lib.vmt,
+        NativeAbi::Unknown,
+        Origin::Summary("xproj".into()),
+    );
+
+    let (mut facts, mut source_info) = fact_base(&[(&stub, 0), ("Java_JniFlow_go", 2)]);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
+    assert_eq!((stats.linked, stats.ambiguous), (0, 1));
+}
+
+/// A Java `native` declared in a summary project is never observed, so it is never linked, even
+/// when the implementation is right there.
+#[test]
+fn a_summary_projects_java_native_is_not_linked() {
+    let java = "LJniFlow;";
+    let stub = java_method_name(java, "go", "()V");
+    let mut obs = JniObserver::new();
+    for program in [
+        java_program(&[(java, "go", "()V", true)]),
+        native_program(&[("Java_JniFlow_go", "Java_JniFlow_go")]),
+    ] {
+        obs.observe_native_vmt(
+            &program.vmt,
+            NativeAbi::Unknown,
+            Origin::Summary("xproj".into()),
+        );
+    }
+    let (mut facts, mut source_info) = fact_base(&[(&stub, 0)]);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
+    assert_eq!(stats, LinkStats::default());
+    assert!(facts.call.is_empty());
 }

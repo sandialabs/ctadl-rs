@@ -107,7 +107,10 @@ impl Default for IndexOptions {
 }
 
 /// Indexes a project
-/// If summary_projects is provided, loads summaries from those projects and maps them into the current project.
+/// If summary_projects is provided, loads summaries from those projects and maps them into the
+/// current project. Their imports' native halves (symbol tables and `RegisterNatives` tables, never
+/// their IR) also feed the JNI bridge, so a Java `native` method implemented in a library indexed
+/// only in a summary project is linked to it; see [`jni`].
 /// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
 /// complete set. See [`IndexOptions`] for the rest.
 pub fn index(
@@ -136,6 +139,17 @@ pub fn index(
         project.imports.join(", ")
     );
     log::debug!("[mem cp] index() start: {:.1} MB", phys_footprint_mb());
+    // Opened once, and checked before the import loop so an unusable one fails fast. The JNI
+    // bridge reads their imports' native halves and `load_and_map_summaries` their summaries.
+    let summary_projects: Vec<AnalysisProject> = summary_projects
+        .iter()
+        .map(|name| {
+            let summary_project = AnalysisProject::try_load_name(name)
+                .err_context(|| format!("loading summary project: {name}"))?;
+            summary_project.check_index_config()?;
+            Ok(summary_project)
+        })
+        .collect::<Result<_, Error>>()?;
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
 
@@ -277,10 +291,19 @@ pub fn index(
     );
 
     // Every import's functions are interned by now, which is what the bridge needs to resolve a
-    // Java `native` stub and its `Java_…` implementation to two ids in the same map.
-    if !no_jni_bridge {
-        jni::link(&jni_observer, &mut facts, &mut source_info);
-    }
+    // Java `native` stub and its `Java_…` implementation to two ids in the same map. A native
+    // target observed only in a summary project is interned by the link itself.
+    let jni_targets = if no_jni_bridge {
+        Default::default()
+    } else {
+        observe_summary_natives(
+            project,
+            &summary_projects,
+            &mut jni_observer,
+            no_jni_registry,
+        )?;
+        jni::link(&jni_observer, &mut facts, &mut source_info).targets
+    };
 
     let model_report = crate::codegen::model_matches::codegen_model_matches(
         &model_matches,
@@ -379,10 +402,18 @@ pub fn index(
     }
     drop(model_matches);
 
-    // Load and map summaries from multiple projects if specified
-    for summary_project_name in summary_projects {
-        load_and_map_summaries(summary_project_name, project, &mut facts, &mut source_info)?;
+    // Load and map summaries from multiple projects if specified. After the link, which is what
+    // interns a summary-only native target and so lets its summaries through the filter.
+    let mut mapped_per_function: HashMap<facts::FunctionId, usize> = HashMap::new();
+    for summary_project in &summary_projects {
+        load_and_map_summaries(
+            summary_project,
+            &mut facts,
+            &source_info,
+            &mut mapped_per_function,
+        )?;
     }
+    report_bridged_summaries(&jni_targets, &mapped_per_function);
 
     let path = project.index_path()?;
     project.clear_index_config()?;
@@ -1040,22 +1071,114 @@ fn dump_taint_graph_dot(
     Ok(())
 }
 
-/// Load summaries from a previously indexed project and map them into the current project.
-/// This function handles the FunctionId mapping between the source and target projects.
-fn load_and_map_summaries(
-    summary_project_name: &str,
-    _current_project: &AnalysisProject,
-    current_facts: &mut IndexFacts,
-    current_source_info: &mut IndexSourceInfo,
+/// Feeds the JNI observer the native half of every import of the `--summary` projects: each
+/// import's symbol table, read without its program IR, and unless `no_jni_registry` its
+/// `RegisterNatives` tables.
+///
+/// Only the native half: a Java `native` declared in a summary project has no stub in this fact
+/// base to link. An import that is also one of this project's, or of an earlier summary project,
+/// is skipped, since observing it twice would make every one of its symbols ambiguous.
+fn observe_summary_natives(
+    project: &AnalysisProject,
+    summary_projects: &[AnalysisProject],
+    jni_observer: &mut jni::JniObserver,
+    no_jni_registry: bool,
 ) -> Result<(), Error> {
+    for (summary_project, name) in summary_imports(project, summary_projects) {
+        let import = ArtifactImport::load_by_name(name).err_context(|| {
+            format!("loading import '{name}' of summary project '{summary_project}'")
+        })?;
+        log::info!(
+            "'{}': reading native symbols for the JNI bridge (summary project \
+             '{summary_project}')",
+            import.name,
+        );
+        let vmt = ctadl_import::load_vmt(&import)?;
+        jni_observer.observe_native_vmt(
+            &vmt,
+            jni::NativeAbi::of(&import),
+            jni::Origin::Summary(summary_project.to_string()),
+        );
+        if !no_jni_registry {
+            jni_observer.observe_registry(&import)?;
+        }
+    }
+    Ok(())
+}
+
+/// The `(summary project, import)` pairs [`observe_summary_natives`] reads, in order: each
+/// summary project's imports, minus any this project or an earlier summary project already has.
+fn summary_imports<'a>(
+    project: &'a AnalysisProject,
+    summary_projects: &'a [AnalysisProject],
+) -> Vec<(&'a str, &'a str)> {
+    let mut seen: std::collections::HashSet<&str> =
+        project.imports.iter().map(String::as_str).collect();
+    summary_projects
+        .iter()
+        .flat_map(|summary_project| {
+            summary_project
+                .imports
+                .iter()
+                .map(move |name| (summary_project.name.as_str(), name.as_str()))
+        })
+        .filter(|(_, name)| seen.insert(name))
+        .collect()
+}
+
+/// Says how many of the summaries mapped in from `--summary` projects belong to natives the JNI
+/// bridge linked to, and warns for each summary-sourced target that got none: its bridge carries
+/// no flow, and nothing else would say so.
+fn report_bridged_summaries(
+    targets: &std::collections::BTreeMap<facts::FunctionId, jni::NativeTarget>,
+    mapped_per_function: &HashMap<facts::FunctionId, usize>,
+) {
+    let mut from_summary = 0usize;
+    let mut mapped = 0usize;
+    for (id, target) in targets {
+        let jni::Origin::Summary(summary_project) = &target.origin else {
+            continue;
+        };
+        from_summary += 1;
+        let count = mapped_per_function.get(id).copied().unwrap_or(0);
+        mapped += count;
+        if count == 0 {
+            log::warn!(
+                "jni bridge: '{}' is linked to summary project '{summary_project}', which has no \
+                 summaries for it; no flow will cross this bridge. Check that the project was \
+                 indexed from this library",
+                target.function
+            );
+        }
+    }
+    if from_summary > 0 {
+        log::info!(
+            "jni bridge: {mapped} mapped summar{} belong to {from_summary} native function(s) \
+             linked from summary projects",
+            if mapped == 1 { "y" } else { "ies" }
+        );
+    }
+}
+
+/// Maps a previously indexed project's summaries into the current project.
+///
+/// A summary is kept only when its function is in the current project's `IdMap` by name. That
+/// includes a native function the JNI bridge linked to and interned from a summary project,
+/// which is why this runs after [`jni::link`]. `mapped_per_function` counts the summaries kept
+/// per function in the current project.
+///
+/// Only context-free `summary` rows are mapped; `context_summary` and `critical_summary` are
+/// not.
+fn load_and_map_summaries(
+    summary_project: &AnalysisProject,
+    current_facts: &mut IndexFacts,
+    current_source_info: &IndexSourceInfo,
+    mapped_per_function: &mut HashMap<facts::FunctionId, usize>,
+) -> Result<(), Error> {
+    let summary_project_name = summary_project.name.as_str();
     log::info!("Loading summaries from project: {}", summary_project_name);
 
-    // Load the summary project
-    let summary_project = AnalysisProject::try_load_name(summary_project_name)
-        .err_context(|| format!("loading summary project: {}", summary_project_name))?;
-
     // Load summaries directly using schema::summary::try_load
-    summary_project.check_index_config()?;
     let summary_index_path = summary_project.index_path()?;
     let source_summaries = crate::facts::schema::summary::try_load(&summary_index_path)
         .err_context(|| format!("loading source project summaries: {}", summary_project_name))?;
@@ -1107,6 +1230,7 @@ fn load_and_map_summaries(
         current_facts
             .summary
             .push((target_func_id, dst_index, dst_path, src_index, src_path));
+        *mapped_per_function.entry(target_func_id).or_default() += 1;
         mapped_summaries += 1;
     }
 
@@ -1910,4 +2034,33 @@ pub fn inspect_index_facts(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project(name: &str, imports: &[&str]) -> AnalysisProject {
+        AnalysisProject {
+            name: name.to_string(),
+            project_dir: std::path::PathBuf::from("projects").join(name),
+            imports: imports.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// An import in both this project and a summary project, or in two summary projects, is
+    /// observed once. Observed twice, every one of its symbols would have two targets and the
+    /// bridge would call each ambiguous.
+    #[test]
+    fn a_shared_import_is_observed_once() {
+        let app = project("app", &["app", "app__x86__libshared"]);
+        let summaries = [
+            project("xproj", &["app__x86__libshared", "app__x86__libx"]),
+            project("yproj", &["app__x86__libx", "app__x86__liby"]),
+        ];
+        assert_eq!(
+            summary_imports(&app, &summaries),
+            [("xproj", "app__x86__libx"), ("yproj", "app__x86__liby")]
+        );
+    }
 }
