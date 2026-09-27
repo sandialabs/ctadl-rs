@@ -30,7 +30,9 @@
 //! segment it is, and on `.[<numeric>]`, pinned by `tests/tnt/port_in_offset.tnt`.
 
 use ctadl_ascent::cli;
-use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, init_store_path};
+use ctadl_ascent::project::{
+    AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports, init_store_path,
+};
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
@@ -121,7 +123,8 @@ fn flows(case: &str, store: &str, index_model: &str, probe: &str) -> bool {
     let import =
         ArtifactImport::try_create(case, ArtifactLanguage::Lua, &src).expect("import args");
     cli::import(&import, cli::ImportOptions::default()).expect("importing lua");
-    let project = AnalysisProject::try_create(case, &[case.to_string()]).expect("project");
+    let project =
+        AnalysisProject::try_create(case, &[case.to_string()], SubImports::All).expect("project");
     cli::index(
         &project,
         &[],

@@ -299,6 +299,19 @@ pub struct IndexArgs {
     #[arg(long, short, action = clap::ArgAction::Append, id = "NAME")]
     pub summary: Vec<String>,
 
+    /// Do not co-index the native libraries imported out of an APK or XAPK.
+    ///
+    /// The index-time counterpart of `ctadl import --no-native-libs`: naming an APK normally
+    /// also indexes every `.so` imported out of it, and this drops those (the `pcode`
+    /// sub-imports) while keeping an XAPK's split APKs. An import named explicitly is always
+    /// kept. Use it with `--summary` to index the Java half of an app against a project that
+    /// indexed one of its libraries on its own:
+    ///
+    ///   ctadl index xproj app__arm64-v8a__libX
+    ///   ctadl index appproj app --no-native-libs --summary xproj
+    #[arg(long)]
+    pub no_native_libs: bool,
+
     /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
     /// multiple times to load multiple model files. This option is use primarily to provide
     /// propagation models, which provide function summaries for indexing external or
@@ -661,6 +674,7 @@ fn main() -> anyhow::Result<()> {
                 name: name.clone(),
                 progs: imported_names.clone(),
                 summary: vec![],
+                no_native_libs: false,
                 models: args.models.clone(),
                 no_default_models: args.no_default_models,
                 no_jni_bridge: args.no_jni_bridge,
@@ -812,6 +826,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 name: legacy_name.to_string(),
                 progs: vec![legacy_name.to_string()],
                 summary: vec![],
+                no_native_libs: false,
                 models: args.models.clone(),
                 no_default_models: false,
                 no_jni_bridge: false,
@@ -935,7 +950,12 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
     } else {
         args.progs.clone()
     };
-    let project = project::AnalysisProject::try_create(&args.name, &import_names)?;
+    let sub_imports = if args.no_native_libs {
+        project::SubImports::NoNativeLibs
+    } else {
+        project::SubImports::All
+    };
+    let project = project::AnalysisProject::try_create(&args.name, &import_names, sub_imports)?;
     cli::index(
         &project,
         &args.summary,
@@ -1019,7 +1039,11 @@ fn load_or_infer_project(name: &str) -> anyhow::Result<project::AnalysisProject>
     match project::AnalysisProject::try_load_name(name) {
         Ok(project) => Ok(project),
         Err(project_error) => match project::ArtifactImport::load_by_name(name) {
-            Ok(_) => Ok(project::AnalysisProject::ephemeral(name, &[name])),
+            Ok(_) => Ok(project::AnalysisProject::ephemeral(
+                name,
+                &[name],
+                project::SubImports::All,
+            )),
             Err(import_error) if project::ArtifactImport::exists_by_name(name) => {
                 Err(import_error).with_context(|| format!("loading import '{name}'"))
             }
