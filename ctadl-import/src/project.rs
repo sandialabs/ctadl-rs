@@ -27,6 +27,7 @@ identity does not move when the store does.
 
 */
 
+use std::collections::BTreeMap;
 use std::env;
 use std::fs::{File, canonicalize};
 use std::sync::OnceLock;
@@ -176,6 +177,14 @@ pub struct IndexConfig {
     /// [`CallPolicyRecord`].
     #[serde(default)]
     pub call_policy: Option<CallPolicyRecord>,
+    /// Import name -> the [`ArtifactImport::hash`] it had when this index was written, for each
+    /// of the project's imports that recorded one. A project that uses this one as a `--summary`
+    /// compares these against the imports' current hashes to notice a summary that went stale.
+    ///
+    /// Empty for an index written before this field existed. The field is additive, so
+    /// [`INDEX_FORMAT_VERSION`] did not change for it.
+    #[serde(default)]
+    pub import_hashes: BTreeMap<String, String>,
 }
 
 /// How the index resolved calls, so a query can say what it is reading.
@@ -832,6 +841,13 @@ impl AnalysisProject {
     /// If there is an error creating the index dir, or serializing or writing the config
     #[inline]
     pub fn write_index_config(&self, call_policy: Option<CallPolicyRecord>) -> Result<(), Error> {
+        // An import that cannot be loaded, or never recorded a hash, is left out: there is
+        // nothing to compare it against later.
+        let import_hashes: BTreeMap<String, String> = self
+            .iter_imports()
+            .filter_map(Result::ok)
+            .filter_map(|import| Some((import.name, import.hash?)))
+            .collect();
         let path = self.index_path()?.join(INDEX_CONFIG_FILE);
         let file = File::create(&path)
             .err_context(|| format!("creating index config: '{}'", path.display()))?;
@@ -840,6 +856,7 @@ impl AnalysisProject {
             &IndexConfig {
                 version: INDEX_FORMAT_VERSION.to_string(),
                 call_policy,
+                import_hashes,
             },
         )
         .err_context(|| format!("writing index config: '{}'", path.display()))?;
@@ -849,10 +866,14 @@ impl AnalysisProject {
     /// The call policy this project's index was built under, or `None` for an index written
     /// before the stamp existed or with no readable config.
     pub fn index_call_policy(&self) -> Option<CallPolicyRecord> {
+        self.index_config()?.call_policy
+    }
+
+    /// This project's index config, or `None` when there is no readable one.
+    pub fn index_config(&self) -> Option<IndexConfig> {
         let path = self.dir().join("index").join(INDEX_CONFIG_FILE);
         let file = File::open(path).ok()?;
-        let config: IndexConfig = serde_json::from_reader(file).ok()?;
-        config.call_policy
+        serde_json::from_reader(file).ok()
     }
 
     /// Whether `ctadl index` ever finished for this project.
@@ -1156,5 +1177,17 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("import format 7"), "{message}");
         assert!(message.contains("re-import it"), "{message}");
+    }
+
+    /// An index written before `import_hashes` existed still loads, with no hashes.
+    #[test]
+    fn an_index_config_without_import_hashes_loads() {
+        let config: IndexConfig = serde_json::from_value(serde_json::json!({
+            "version": INDEX_FORMAT_VERSION,
+            "call_policy": null,
+        }))
+        .expect("old index config");
+        assert_eq!(config.version, INDEX_FORMAT_VERSION);
+        assert!(config.import_hashes.is_empty());
     }
 }
