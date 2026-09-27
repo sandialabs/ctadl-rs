@@ -1084,6 +1084,9 @@ fn observe_summary_natives(
     jni_observer: &mut jni::JniObserver,
     no_jni_registry: bool,
 ) -> Result<(), Error> {
+    for summary_project in summary_projects {
+        check_summary_provenance(project, summary_project);
+    }
     for (summary_project, name) in summary_imports(project, summary_projects) {
         let import = ArtifactImport::load_by_name(name).err_context(|| {
             format!("loading import '{name}' of summary project '{summary_project}'")
@@ -1104,6 +1107,90 @@ fn observe_summary_natives(
         }
     }
     Ok(())
+}
+
+/// Something [`check_summary_provenance`] found wrong with a summary project. None of it stops
+/// the index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SummaryProvenance {
+    /// The summary project's native library `import` is not one this project's imports were
+    /// expanded from: another ABI, another app, or another version of this one.
+    NotThisApp { project: String, import: String },
+    /// `import` changed since the summary project was indexed, so its summaries describe
+    /// another build of it.
+    Stale { project: String, import: String },
+    /// The summary project's index predates recorded import hashes, so staleness cannot be
+    /// checked.
+    NoHashes { project: String },
+}
+
+/// Warns when a `--summary` project may not describe this project's native libraries, and
+/// returns what it found.
+///
+/// For each native library (`pcode` import) of `summary_project`:
+///
+/// - **Not this app's library.** It is neither one of this project's imports nor among the
+///   `sub_imports` recorded on them. Those are read from the import configs, so they are the
+///   full lists, before `--no-native-libs` filtered the project.
+/// - **Stale.** Its hash differs from the one recorded when `summary_project` was indexed.
+///
+/// An index written before those hashes were recorded gets one `info` line instead.
+pub fn check_summary_provenance(
+    project: &AnalysisProject,
+    summary_project: &AnalysisProject,
+) -> Vec<SummaryProvenance> {
+    let mut found = Vec::new();
+    let mut ours: std::collections::HashSet<String> = project.imports.iter().cloned().collect();
+    for import in project.iter_imports().filter_map(Result::ok) {
+        ours.extend(import.sub_imports);
+    }
+    let recorded = summary_project
+        .index_config()
+        .map(|config| config.import_hashes)
+        .unwrap_or_default();
+    let name = &summary_project.name;
+    let libraries = summary_project
+        .iter_imports()
+        .filter_map(Result::ok)
+        .filter(|import| import.language == ArtifactLanguage::Pcode);
+    for import in libraries {
+        if !ours.contains(&import.name) {
+            log::warn!(
+                "summary provenance: '{}' in summary project '{name}' is not a native library of \
+                 this project's imports ({}); it may be another ABI, another app, or another \
+                 version of this one, and its natives may not be this app's",
+                import.name,
+                project.imports.join(", ")
+            );
+            found.push(SummaryProvenance::NotThisApp {
+                project: name.clone(),
+                import: import.name.clone(),
+            });
+        }
+        if let (Some(current), Some(indexed)) = (&import.hash, recorded.get(&import.name))
+            && current != indexed
+        {
+            log::warn!(
+                "summary provenance: '{}' changed since summary project '{name}' was indexed, \
+                 so its summaries describe another build of it; re-run `ctadl index {name}`",
+                import.name
+            );
+            found.push(SummaryProvenance::Stale {
+                project: name.clone(),
+                import: import.name.clone(),
+            });
+        }
+    }
+    if recorded.is_empty() {
+        log::info!(
+            "summary provenance: summary project '{name}' records no import hashes (it was \
+             indexed by an older build), so whether its summaries are stale cannot be checked"
+        );
+        found.push(SummaryProvenance::NoHashes {
+            project: name.clone(),
+        });
+    }
+    found
 }
 
 /// The `(summary project, import)` pairs [`observe_summary_natives`] reads, in order: each

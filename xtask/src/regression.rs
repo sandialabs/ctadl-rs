@@ -1992,6 +1992,8 @@ const DUMMY_LIBRARY: &str = "int ctadl_dummy_add(int a, int b) { return a + b; }
 ///     common claims check crossed a summary-sourced link. Skipped when the case expects no
 ///     flow at all.
 ///  4. `inspect` and both graph dumps work on an index whose native targets have no body.
+///  5. The summary project, which indexed this app's own library just now, draws no provenance
+///     warning.
 #[allow(clippy::too_many_arguments)]
 fn check_summary_workflow(
     work: &Path,
@@ -2026,6 +2028,15 @@ fn check_summary_workflow(
     if dump.contains("ctadl_dummy_add") {
         return Ok(Some(format!(
             "a function of '{y_import}' is in the app's IdMap; see inspect-idmap.log"
+        )));
+    }
+
+    if let Some(line) = index_log
+        .lines()
+        .find(|line| line.contains("warning: summary provenance"))
+    {
+        return Ok(Some(format!(
+            "the summary project is this app's library, but the index warned: {line}"
         )));
     }
 
