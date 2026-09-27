@@ -104,9 +104,25 @@ declares. [`port_map`] maps ports across that shift:
 | --- | --- |
 | -- (nothing) | `0` -- `JNIEnv *env` |
 | `this`, instance methods only | `1` -- `jobject` / `jclass` |
-| declared parameter *k* | `2 + k` |
+| declared parameter *k* | the next native index, or the next two for a split `long`/`double` |
 | return value | return value |
 | globals | globals |
+
+Where the declared parameters land depends on the [`NativeSlotModel`]:
+
+| Layout | Used for | Declared `J`/`D` | Everything else |
+| --- | --- | --- | --- |
+| `Typed` | every ABI when the recovered count matches it; the default | 1 native index | 1 native index |
+| `SplitWide` | 32-bit ABIs (`armeabi-v7a`, `x86`) only | 2 consecutive native indices (low, high) | 1 native index |
+
+A 32-bit ABI passes a `long` or `double` in two registers or stack words, and a disassembler that
+recovered no types shows two parameters. Under `SplitWide` the one Java slot maps to both halves,
+so taint reaches whichever half the native code reads. [`choose_layout`] picks the layout per
+method, from the library's ABI ([`NativeAbi`], read off its ELF header) and the parameter count
+Ghidra recovered ([`NativeProto`], read off the native VMT): `Typed` when the count matches it,
+else `SplitWide` on a 32-bit ABI when the count matches that, else `Typed` with a warning (see
+Diagnostics). The Dex descriptor is authoritative; the recovered count only chooses between the
+layouts it allows.
 
 The Java-side *slot* of parameter *k* is frontend-dependent and is not `k` in general, which is
 what [`SlotModel`] captures: Dex numbers parameters by *register*, so `long`/`double` consume two
@@ -117,6 +133,37 @@ Only the *normal* return is mapped: a Java function has return arity 2 (normal a
 a native function has one, and a JNI implementation cannot throw into the second. Globals are
 threaded through exactly as they are at a real call site. Because ports are bidirectional,
 by-reference out-parameters and the return value come back across the boundary with no extra work.
+
+# Linking against a summary project
+
+The native half does not have to be co-indexed. `ctadl index app --no-native-libs --summary xproj`
+indexes the app's Java half alone, against a project `xproj` that indexed one of its libraries on
+its own:
+
+```sh
+ctadl import app.apk
+ctadl index xproj app__arm64-v8a__libX
+ctadl index appproj app --no-native-libs --summary xproj
+ctadl query appproj -m models.json
+```
+
+For each import of a summary project, `cli::index` reads the symbol table (the VMT only, through
+[`ctadl_import::load_vmt`]) and the `RegisterNatives` tables, and feeds them to
+[`JniObserver::observe_native_vmt`] with [`Origin::Summary`]. It never loads the library's IR. A
+summary project contributes native *targets* only: a Java `native` it declares has no stub in this
+fact base, so it is not observed. An import that is also in the current project, or in an earlier
+summary project, is read once, since two observations would make every one of its symbols
+ambiguous.
+
+[`link`] then interns a summary-sourced target with `get_or_add_function` and emits the same
+bridge a co-indexed target gets. The summaries `--summary` maps in afterwards are filtered to
+functions in the current `IdMap`, which now includes that target, and the index engine replays
+them over the bridge's call edge. [`LinkStats::from_summary`] counts these links, and the index
+logs how many mapped summaries belong to them. A summary-sourced target with no summaries at all
+gets a warning, since its bridge carries no flow and nothing else would say so.
+
+`--no-jni-bridge` skips all of this, and `--no-jni-registry` skips the summary projects' tables
+as it does the current project's.
 
 # Reading the results
 
@@ -136,10 +183,19 @@ The pass warns, at `warn` level, on what it cannot resolve silently:
 - **Ambiguity.** Either the class has several native overloads of a name whose only symbol is the
   short form, or several native functions carry the matched symbol name. The method is skipped. A
   `RegisterNatives` binding resolves this case outright, since it names the descriptor.
-- **An incomplete native prototype.** The implementation resolved, but the disassembler recovered
-  fewer parameters than the port map needs -- Ghidra gives a function with no recovered prototype
-  zero parameters at all -- so some arguments have nothing on the far side to flow into. Build the
-  library with `-g` (or otherwise give Ghidra the types) and re-import.
+- **A native prototype that does not fit the descriptor.** The implementation resolved, but the
+  parameter count Ghidra recovered is not what the Dex descriptor implies under any layout (see
+  [`choose_layout`]). One warning per method, each counted in [`LinkStats::prototype_mismatch`];
+  the link is emitted either way:
+  - *No prototype recovered.* The function has no parameters in the IR, so no argument flows,
+    and it has no return value either.
+  - *Too few parameters.* The arguments past the last recovered one have nothing on the far
+    side to flow into.
+  - *Too many parameters* (and not varargs). The arguments may be mis-slotted.
+
+  Build the library with `-g` (or otherwise give Ghidra the types) and re-import. The check reads
+  the count off the native VMT, so a co-indexed target and a summary-sourced one are checked the
+  same way.
 - **A registration that disagrees with a symbol.** Both bindings exist and name different
   functions; the registration wins, as it does at run time.
 
@@ -169,6 +225,23 @@ legitimately has one per `native` declaration. So do unattributed table entries.
 - **An index written before this feature cannot be queried**, since the per-import span provenance
   above is an index format change. `ctadl query` on an older index says so and asks for a
   re-`index`.
+- **Floating-point parameters may be mis-slotted.** On `arm64-v8a`, `x86_64` and hard-float
+  targets, `float` and `double` arrive in FP registers. Without a recovered prototype, Ghidra may
+  list them after the integer parameters rather than in declaration order, and `Typed` then maps
+  them to the wrong native indices. The count check cannot see this.
+- **The prototype check compares counts only.** The pcode frontend records `_` for every
+  parameter type, so a mis-slotting that keeps the count right passes silently. Checking types
+  needs the frontend to record them.
+- **`armeabi-v7a` register-pair padding is not modelled.** AAPCS passes a 64-bit argument in an
+  even/odd register pair, so for `(IJ)V` it skips `r3`. If Ghidra, without a prototype, shows the
+  skipped register as a parameter, the count matches neither layout and the method gets the
+  *too many* warning. The 32-bit regression fixture is `x86`, whose cdecl ABI has no padding.
+- **Only context-free summaries cross from a summary project.** `--summary` maps `summary` rows,
+  not `context_summary` or `critical_summary`, so a flow in the library that depends on resolving
+  an indirect call is lost.
+- **A result through a summary-sourced native is located on the Java side only.** The library's
+  instructions are not in the app's index, only its summaries, so the SARIF has no location
+  inside it. Co-index the library to see the native half of a flow.
 
 # See also
 
@@ -348,6 +421,108 @@ pub struct NativeTarget {
     pub origin: Origin,
 }
 
+/// How a native implementation receives its declared parameters, past `JNIEnv *` and the
+/// `jobject`/`jclass`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum NativeSlotModel {
+    /// One native parameter per declared parameter, wide or not. What every ABI does when the
+    /// disassembler recovered a typed prototype, and the default.
+    Typed,
+    /// A `long`/`double` recovered as two consecutive native parameters (low half, then high
+    /// half), everything else as one. What a 32-bit ABI looks like to a disassembler that
+    /// recovered no types: the value really does arrive in two registers or stack words.
+    SplitWide,
+}
+
+impl NativeSlotModel {
+    /// How many native parameters a parameter of this type descriptor occupies.
+    fn width(self, descriptor: &str) -> i16 {
+        match self {
+            NativeSlotModel::SplitWide if is_wide(descriptor) => 2,
+            _ => 1,
+        }
+    }
+
+    /// How many native parameters a method with these declared parameters has under this
+    /// layout, `JNIEnv *` and the `jobject`/`jclass` included.
+    fn count(self, params: &[&str]) -> usize {
+        2 + params.iter().map(|p| self.width(p) as usize).sum::<usize>()
+    }
+}
+
+/// Whether a parameter descriptor is a `long` or a `double`.
+fn is_wide(descriptor: &str) -> bool {
+    descriptor == "J" || descriptor == "D"
+}
+
+/// What the prototype check found for one linked method. See [`choose_layout`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProtoCheck {
+    /// The recovered count is the one the chosen layout implies.
+    Match,
+    /// Ghidra recovered no prototype, so the native function has no parameters in the IR.
+    NoPrototype,
+    /// Fewer native parameters were recovered than the chosen layout needs; the arguments past
+    /// the last recovered one have nothing to flow into.
+    TooFew { recovered: usize, expected: usize },
+    /// More were recovered than any layout implies, so the arguments may be mis-slotted.
+    /// `split` is the `SplitWide` count when that layout applies to this ABI and method.
+    TooMany {
+        recovered: usize,
+        typed: usize,
+        split: Option<usize>,
+    },
+}
+
+/// Chooses the native slot layout for one linked method and checks its recovered prototype.
+///
+/// The Dex descriptor is authoritative; the recovered count only picks between the layouts it
+/// allows:
+///
+/// 1. If the count equals the [`NativeSlotModel::Typed`] count, use `Typed`.
+/// 2. Otherwise, on a 32-bit ABI, for a method with a `long`/`double` parameter, if it equals
+///    the [`NativeSlotModel::SplitWide`] count, use `SplitWide`.
+/// 3. Otherwise use `Typed`, and report the mismatch.
+///
+/// A varargs prototype with more parameters than the layout needs is not a mismatch.
+pub fn choose_layout(
+    params: &[&str],
+    proto: NativeProto,
+    abi: NativeAbi,
+) -> (NativeSlotModel, ProtoCheck) {
+    let typed = NativeSlotModel::Typed.count(params);
+    let split = (abi.is_32bit() && params.iter().any(|p| is_wide(p)))
+        .then(|| NativeSlotModel::SplitWide.count(params));
+    let NativeProto::Known {
+        params: recovered,
+        vararg,
+    } = proto
+    else {
+        return (NativeSlotModel::Typed, ProtoCheck::NoPrototype);
+    };
+    if recovered == typed {
+        return (NativeSlotModel::Typed, ProtoCheck::Match);
+    }
+    if split == Some(recovered) {
+        return (NativeSlotModel::SplitWide, ProtoCheck::Match);
+    }
+    let check = if recovered < typed {
+        ProtoCheck::TooFew {
+            recovered,
+            expected: typed,
+        }
+    } else if vararg {
+        ProtoCheck::Match
+    } else {
+        ProtoCheck::TooMany {
+            recovered,
+            typed,
+            split,
+        }
+    };
+    (NativeSlotModel::Typed, check)
+}
+
 // ---------------------------------------------------------------------------
 // Name mangling (JNI spec, "Resolving Native Method Names")
 // ---------------------------------------------------------------------------
@@ -425,28 +600,35 @@ pub fn param_descriptor(descriptor: &str) -> Option<String> {
 /// The `(java_index, native_index)` port pairs for one native method, including `this`, the return
 /// value and the globals pseudo-parameter.
 ///
-/// The native side is fixed by the JNI ABI: index 0 is `JNIEnv *` (never mapped), index 1 is the
-/// receiver `jobject` for an instance method or the declaring `jclass` for a static one, and
-/// declared parameter *k* lands at `2 + k`. The Java side depends on `slots`. Only `-1` is mapped
-/// for returns: a Java function has return arity 2 (`-1` normal, `-2` exception) while a native
-/// function has one.
+/// The native side is fixed by the JNI ABI up to `native`: index 0 is `JNIEnv *` (never mapped),
+/// index 1 is the receiver `jobject` for an instance method or the declaring `jclass` for a static
+/// one, and the declared parameters follow from index 2, one native index each under
+/// [`NativeSlotModel::Typed`]. Under [`NativeSlotModel::SplitWide`] a `long`/`double` takes two,
+/// and its one Java slot is mapped to *both*, so taint reaches whichever half the native code
+/// reads. The Java side depends on `slots`. Only `-1` is mapped for returns: a Java function has
+/// return arity 2 (`-1` normal, `-2` exception) while a native function has one.
 ///
 /// Returns `None` if `descriptor` is not a well-formed method descriptor.
 pub fn port_map(
     descriptor: &str,
     is_static: bool,
     slots: SlotModel,
+    native: NativeSlotModel,
 ) -> Option<Vec<(FormalIndex, FormalIndex)>> {
     let params = descriptor_params(descriptor)?;
-    let mut ports = Vec::with_capacity(params.len() + 3);
+    let mut ports = Vec::with_capacity(2 * params.len() + 3);
     let mut java: i16 = 0;
     if !is_static {
         // The receiver occupies slot 0 on both Java frontends, and arrives as the `jobject`.
         ports.push((FormalIndex::new(0), FormalIndex::new(1)));
         java = 1;
     }
-    for (native, p) in (2_i16..).zip(params) {
-        ports.push((FormalIndex::new(java), FormalIndex::new(native)));
+    let mut next: i16 = 2;
+    for p in params {
+        for _ in 0..native.width(p) {
+            ports.push((FormalIndex::new(java), FormalIndex::new(next)));
+            next += 1;
+        }
         java += slots.width(p);
     }
     ports.push((RETURN_INDEX.into(), RETURN_INDEX.into()));
@@ -678,10 +860,6 @@ pub fn link(
     }
     let stats = &mut outcome.stats;
 
-    // Arity of each function *before* the bridge adds formals, so the diagnostic below reports
-    // what the frontend recovered rather than what this pass just synthesized.
-    let num_params = facts.compute_num_params();
-
     // Two imports can declare the same method (an app and a library jar, say). One bridge is
     // enough -- both spellings intern to the same `FunctionId` -- and deduplicating here also
     // keeps the overload count below from mistaking a re-observation for a second overload. The
@@ -767,7 +945,7 @@ pub fn link(
             continue;
         };
 
-        let Some(ports) = port_map(&nat.descriptor, nat.is_static, nat.slots) else {
+        let Some(params) = descriptor_params(&nat.descriptor) else {
             log::warn!(
                 "jni bridge: not linking '{}': malformed descriptor '{}'",
                 nat.method,
@@ -776,33 +954,29 @@ pub fn link(
             stats.unresolved += 1;
             continue;
         };
+        // Reads the count the frontend recovered off the target's VMT signature rather than off
+        // `formal_param`, so a summary-only target, which has no formals here, is checked
+        // exactly like a co-indexed one.
+        let (layout, check) = choose_layout(&params, target.proto, target.abi);
+        if layout == NativeSlotModel::SplitWide {
+            log::debug!(
+                "jni bridge: '{}' -> '{}': {:?} ABI, prototype has each long/double split in \
+                 two; using SplitWide",
+                nat.method,
+                function,
+                target.abi
+            );
+        }
+        if warn_on_proto_check(&nat.method, function, &check) {
+            stats.prototype_mismatch += 1;
+        }
+        let ports = port_map(&nat.descriptor, nat.is_static, nat.slots, layout)
+            .expect("the descriptor parsed above");
         // A no-op for a co-indexed target. A summary-only one is interned here: the index
         // engine replays its summaries over the call edge by id, so the id is all it needs.
         let native_id = source_info
             .sites
             .get_or_add_function(facts::Function(function.into()));
-
-        // An incomplete prototype is the one failure mode that silently drops arguments: Ghidra
-        // gives a function with no recovered prototype zero parameters, and a mapped port past its
-        // arity then has no formal on the far side to flow into.
-        let expected = ports
-            .iter()
-            .map(|(_, native)| **native)
-            .filter(|native| *native >= 0)
-            .max()
-            .map_or(0, |highest| highest + 1);
-        let recovered = num_params.get(&native_id).copied().unwrap_or(0);
-        // A summary-only target has no `formal_param` rows here to count.
-        if target.origin == Origin::Current && recovered < expected {
-            log::warn!(
-                "jni bridge: '{}' resolves to '{}', which has {} recovered parameter(s) but needs \
-                 {}; the prototype is incomplete, so some argument(s) will not flow",
-                nat.method,
-                function,
-                recovered,
-                expected
-            );
-        }
 
         emit_bridge(java_id, native_id, &ports, facts, source_info);
         stats.linked += 1;
@@ -820,6 +994,43 @@ pub fn link(
 
     log::info!("jni bridge: {}", stats);
     outcome
+}
+
+/// Warns about a prototype that does not fit its Dex descriptor, and says whether it did. The
+/// link is emitted either way.
+fn warn_on_proto_check(method: &str, function: &str, check: &ProtoCheck) -> bool {
+    match check {
+        ProtoCheck::Match => return false,
+        ProtoCheck::NoPrototype => log::warn!(
+            "jni bridge: '{method}' resolves to '{function}', for which the disassembler \
+             recovered no prototype, so no argument and no return value will flow. Build the \
+             library with -g (or otherwise give Ghidra its types) and re-import"
+        ),
+        // An incomplete prototype is the one failure mode that silently drops arguments: a
+        // mapped port past the recovered arity has no formal on the far side to flow into.
+        ProtoCheck::TooFew {
+            recovered,
+            expected,
+        } => log::warn!(
+            "jni bridge: '{method}' resolves to '{function}', which has {recovered} recovered \
+             parameter(s) but needs {expected}; the prototype is incomplete, so the argument(s) \
+             above index {} will not flow",
+            recovered.saturating_sub(1)
+        ),
+        ProtoCheck::TooMany {
+            recovered,
+            typed,
+            split,
+        } => log::warn!(
+            "jni bridge: '{method}' resolves to '{function}', whose recovered prototype has \
+             {recovered} parameter(s) where the Dex descriptor implies {typed}{}; arguments may \
+             be mis-slotted",
+            split.map_or(String::new(), |split| format!(
+                " ({split} with each long/double split in two)"
+            ))
+        ),
+    }
+    true
 }
 
 /// Runs tier-1 attribution over every import's recovered tables and returns the resulting

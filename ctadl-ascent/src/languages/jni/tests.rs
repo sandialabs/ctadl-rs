@@ -102,7 +102,16 @@ fn rejects_a_malformed_descriptor() {
 
 /// `(java, native)` pairs as plain `i16`s, for readable assertions.
 fn ports(descriptor: &str, is_static: bool, slots: SlotModel) -> Vec<(i16, i16)> {
-    port_map(descriptor, is_static, slots)
+    split_ports(descriptor, is_static, slots, NativeSlotModel::Typed)
+}
+
+fn split_ports(
+    descriptor: &str,
+    is_static: bool,
+    slots: SlotModel,
+    native: NativeSlotModel,
+) -> Vec<(i16, i16)> {
+    port_map(descriptor, is_static, slots, native)
         .unwrap()
         .into_iter()
         .map(|(j, n)| (*j, *n))
@@ -205,7 +214,15 @@ fn return_and_globals_appear_exactly_once() {
 
 #[test]
 fn port_map_rejects_a_malformed_descriptor() {
-    assert!(port_map("not-a-descriptor", true, SlotModel::Argument).is_none());
+    assert!(
+        port_map(
+            "not-a-descriptor",
+            true,
+            SlotModel::Argument,
+            NativeSlotModel::Typed
+        )
+        .is_none()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -243,16 +260,33 @@ fn java_method_name(cls: &str, name: &str, descriptor: &str) -> String {
     format!("{cls}->{name}{descriptor}")
 }
 
-/// `(simple name, fully-qualified IR name)` -> a native program whose VMT carries those symbols.
+/// A recovered prototype no port map in these tests outgrows, and varargs, so the prototype
+/// check stays quiet. The tests of that check build their own signatures with
+/// [`native_program_with`].
+const ROOMY: &str = "undefined(_, _, _, _, _, _, _, _, ...)";
+
+/// `(simple name, fully-qualified IR name)` -> a native program whose VMT carries those symbols,
+/// each with the [`ROOMY`] prototype.
 fn native_program(symbols: &[(&str, &str)]) -> ProgramInfo {
+    let with: Vec<(&str, &str, &str)> = symbols
+        .iter()
+        .map(|(simple, func)| (*simple, *func, ROOMY))
+        .collect();
+    native_program_with(&with)
+}
+
+/// `(simple name, fully-qualified IR name, signature)` -> a native program whose VMT carries
+/// those symbols. The signature is spelled as the pcode frontend spells it: `ret(_, _)`, or
+/// `()` for no recovered prototype.
+fn native_program_with(symbols: &[(&str, &str, &str)]) -> ProgramInfo {
     ProgramInfo {
         vmt: VirtualMethodTable::Native {
             methods: symbols
                 .iter()
-                .map(|(simple, func)| {
+                .map(|(simple, func, sig)| {
                     (
                         NativeSimpleName((*simple).into()),
-                        NativeSignature("undefined()".into()),
+                        NativeSignature((*sig).into()),
                         NativeFunction((*func).into()),
                         NativeQualifiedName((*simple).into()),
                     )
@@ -1073,10 +1107,7 @@ fn the_native_only_path_ignores_java_natives() {
         obs.symbols["Java_A_a"],
         [NativeTarget {
             function: "Java_A_a".into(),
-            proto: NativeProto::Known {
-                params: 0,
-                vararg: false
-            },
+            proto: NativeProto::parse(ROOMY),
             abi: NativeAbi::Arm64,
             origin: Origin::Summary("xproj".into()),
         }]
@@ -1227,4 +1258,279 @@ fn a_summary_projects_java_native_is_not_linked() {
     let stats = link(&obs, &mut facts, &mut source_info).stats;
     assert_eq!(stats, LinkStats::default());
     assert!(facts.call.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// ABI-aware port map and the prototype check
+// ---------------------------------------------------------------------------
+
+/// On a 32-bit ABI with no recovered types, a `long` arrives in two native parameters and its
+/// one Java slot is mapped to both.
+#[test]
+fn split_wide_maps_a_long_to_both_halves() {
+    let r = (RETURN_INDEX, RETURN_INDEX);
+    let g = (GLOBALS_INDEX, GLOBALS_INDEX);
+    let split = |d, is_static| {
+        split_ports(
+            d,
+            is_static,
+            SlotModel::Register,
+            NativeSlotModel::SplitWide,
+        )
+    };
+
+    assert_eq!(split("(J)V", true), vec![(0, 2), (0, 3), r, g]);
+    assert_eq!(split("(J)V", false), vec![(0, 1), (1, 2), (1, 3), r, g]);
+
+    assert_eq!(split("(IJ)V", true), vec![(0, 2), (1, 3), (1, 4), r, g]);
+    assert_eq!(
+        split("(IJ)V", false),
+        vec![(0, 1), (1, 2), (2, 3), (2, 4), r, g]
+    );
+
+    // Dex register slots: `D` takes Java slots 0-1 and `J` 2-3, so the `int` is at 4.
+    assert_eq!(
+        split("(DJI)J", true),
+        vec![(0, 2), (0, 3), (2, 4), (2, 5), (4, 6), r, g]
+    );
+    assert_eq!(
+        split("(DJI)J", false),
+        vec![(0, 1), (1, 2), (1, 3), (3, 4), (3, 5), (5, 6), r, g]
+    );
+}
+
+#[test]
+fn split_wide_follows_the_jvm_argument_slots_too() {
+    assert_eq!(
+        split_ports(
+            "(DJI)J",
+            true,
+            SlotModel::Argument,
+            NativeSlotModel::SplitWide
+        ),
+        vec![
+            (0, 2),
+            (0, 3),
+            (1, 4),
+            (1, 5),
+            (2, 6),
+            (RETURN_INDEX, RETURN_INDEX),
+            (GLOBALS_INDEX, GLOBALS_INDEX)
+        ]
+    );
+}
+
+fn known(params: usize) -> NativeProto {
+    NativeProto::Known {
+        params,
+        vararg: false,
+    }
+}
+
+#[test]
+fn choose_layout_takes_typed_when_the_count_matches() {
+    // `(IJ)V` is `env, cls, int, long`: four under Typed, five split.
+    for abi in [
+        NativeAbi::Arm64,
+        NativeAbi::Arm32,
+        NativeAbi::X86,
+        NativeAbi::Unknown,
+    ] {
+        assert_eq!(
+            choose_layout(&["I", "J"], known(4), abi),
+            (NativeSlotModel::Typed, ProtoCheck::Match),
+            "{abi:?}"
+        );
+    }
+}
+
+#[test]
+fn choose_layout_takes_split_wide_on_a_32_bit_abi() {
+    for abi in [NativeAbi::Arm32, NativeAbi::X86] {
+        assert_eq!(
+            choose_layout(&["I", "J"], known(5), abi),
+            (NativeSlotModel::SplitWide, ProtoCheck::Match),
+            "{abi:?}"
+        );
+        assert_eq!(
+            choose_layout(&["D", "J", "I"], known(7), abi),
+            (NativeSlotModel::SplitWide, ProtoCheck::Match),
+            "{abi:?}"
+        );
+    }
+}
+
+/// A 64-bit ABI never splits, so a split-looking count there is a mismatch.
+#[test]
+fn choose_layout_never_splits_on_a_64_bit_abi() {
+    for abi in [NativeAbi::Arm64, NativeAbi::X86_64, NativeAbi::Unknown] {
+        assert_eq!(
+            choose_layout(&["I", "J"], known(5), abi),
+            (
+                NativeSlotModel::Typed,
+                ProtoCheck::TooMany {
+                    recovered: 5,
+                    typed: 4,
+                    split: None
+                }
+            ),
+            "{abi:?}"
+        );
+    }
+}
+
+#[test]
+fn choose_layout_reports_no_prototype() {
+    assert_eq!(
+        choose_layout(&["I"], NativeProto::Unknown, NativeAbi::Arm64),
+        (NativeSlotModel::Typed, ProtoCheck::NoPrototype)
+    );
+}
+
+#[test]
+fn choose_layout_reports_too_few() {
+    assert_eq!(
+        choose_layout(&["I", "J"], known(2), NativeAbi::Arm32),
+        (
+            NativeSlotModel::Typed,
+            ProtoCheck::TooFew {
+                recovered: 2,
+                expected: 4
+            }
+        )
+    );
+}
+
+#[test]
+fn choose_layout_reports_too_many_unless_vararg() {
+    assert_eq!(
+        choose_layout(&["I", "J"], known(6), NativeAbi::Arm32),
+        (
+            NativeSlotModel::Typed,
+            ProtoCheck::TooMany {
+                recovered: 6,
+                typed: 4,
+                split: Some(5)
+            }
+        )
+    );
+    assert_eq!(
+        choose_layout(
+            &["I", "J"],
+            NativeProto::Known {
+                params: 6,
+                vararg: true
+            },
+            NativeAbi::Arm32
+        ),
+        (NativeSlotModel::Typed, ProtoCheck::Match)
+    );
+}
+
+/// Links one static native of `descriptor` to an implementation with signature `sig`, observed
+/// as `origin`, and returns the stats and the bridge's `(native index, java slot)` rows.
+fn link_one(
+    descriptor: &str,
+    sig: &str,
+    abi: NativeAbi,
+    origin: Origin,
+) -> (LinkStats, Vec<(i16, i16)>) {
+    let java = "LW;";
+    let stub = java_method_name(java, "w", descriptor);
+    let mut obs = JniObserver::new();
+    obs.observe_java(
+        &java_program(&[(java, "w", descriptor, true)]).vmt,
+        SlotModel::Register,
+    );
+    obs.observe_native_vmt(
+        &native_program_with(&[("Java_W_w", "Java_W_w", sig)]).vmt,
+        abi,
+        origin.clone(),
+    );
+    // A co-indexed target is in the fact base with the formals codegen gave it; a summary one
+    // is not there at all. Neither is where the check reads the count from.
+    let mut functions = vec![(stub.as_str(), 0)];
+    if origin == Origin::Current {
+        functions.push(("Java_W_w", 1));
+    }
+    let (mut facts, mut source_info) = fact_base(&functions);
+    let stats = link(&obs, &mut facts, &mut source_info).stats;
+    let rows = facts
+        .call
+        .first()
+        .map(|(site, _)| actuals(&facts, *site))
+        .unwrap_or_default();
+    (stats, rows)
+}
+
+/// Each warning row counts one mismatch, and the link is emitted anyway.
+#[test]
+fn each_prototype_warning_counts_a_mismatch_and_still_links() {
+    for (sig, abi) in [
+        // No prototype recovered.
+        ("()", NativeAbi::Arm64),
+        // Fewer than the layout needs: `(IJ)V` needs four.
+        ("void(_, _, _)", NativeAbi::Arm64),
+        // More than any layout implies.
+        ("void(_, _, _, _, _, _)", NativeAbi::Arm32),
+    ] {
+        let (stats, rows) = link_one("(IJ)V", sig, abi, Origin::Current);
+        assert_eq!(
+            (stats.linked, stats.prototype_mismatch),
+            (1, 1),
+            "{sig} on {abi:?}"
+        );
+        assert!(!rows.is_empty(), "{sig}: the bridge is emitted anyway");
+    }
+    let (stats, _) = link_one(
+        "(IJ)V",
+        "void(_, _, _, _)",
+        NativeAbi::Arm64,
+        Origin::Current,
+    );
+    assert_eq!(stats.prototype_mismatch, 0);
+}
+
+/// The 32-bit layout reaches the emitted bridge: the long's Java slot feeds both halves.
+#[test]
+fn a_split_prototype_links_with_split_wide() {
+    let (stats, rows) = link_one(
+        "(IJ)V",
+        "void(_, _, _, _, _)",
+        NativeAbi::X86,
+        Origin::Current,
+    );
+    assert_eq!((stats.linked, stats.prototype_mismatch), (1, 0));
+    assert_eq!(
+        rows,
+        vec![
+            (GLOBALS_INDEX, GLOBALS_INDEX),
+            (RETURN_INDEX, RETURN_INDEX),
+            (2, 0),
+            (3, 1),
+            (4, 1)
+        ]
+    );
+}
+
+/// The check reads the count off the VMT signature, not off `formal_param`, so a target that
+/// came from a summary project, with no formals in this fact base, is checked the same way.
+#[test]
+fn co_indexed_and_summary_targets_are_checked_alike() {
+    for (sig, abi) in [
+        ("()", NativeAbi::Arm64),
+        ("void(_, _, _)", NativeAbi::Arm64),
+        ("void(_, _, _, _)", NativeAbi::Arm64),
+        ("void(_, _, _, _, _)", NativeAbi::Arm32),
+        ("void(_, _, _, _, _, _)", NativeAbi::Arm32),
+    ] {
+        let (current, current_rows) = link_one("(IJ)V", sig, abi, Origin::Current);
+        let (summary, summary_rows) = link_one("(IJ)V", sig, abi, Origin::Summary("x".into()));
+        assert_eq!(
+            current.prototype_mismatch, summary.prototype_mismatch,
+            "{sig} on {abi:?}"
+        );
+        assert_eq!(current_rows, summary_rows, "{sig} on {abi:?}");
+        assert_eq!((current.from_summary, summary.from_summary), (0, 1));
+    }
 }
