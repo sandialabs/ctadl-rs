@@ -1232,8 +1232,9 @@ fn report_bridged_summaries(
         if count == 0 {
             log::warn!(
                 "jni bridge: '{}' is linked to summary project '{summary_project}', which has no \
-                 summaries for it; no flow will cross this bridge. Check that the project was \
-                 indexed from this library",
+                 summaries for it, so no flow will cross this bridge. Either the function has no \
+                 flow CTADL can see (no parameters, or arguments read only through JNIEnv), or \
+                 the project was indexed from another build of the library",
                 target.function
             );
         }
