@@ -362,18 +362,42 @@ struct Scan {
 /// both short; this only bounds the work done rejecting a bad candidate.
 const MAX_STRING: usize = 512;
 
+/// How many leading bytes of a file [`elf_machine_class`] reads.
+pub const ELF_IDENT_PREFIX: usize = 20;
+
+/// An ELF file's `(e_machine, EI_CLASS)`, read from the first [`ELF_IDENT_PREFIX`] bytes. `None`
+/// for a zero-length file, a truncated header, a foreign magic, or an unknown class or byte
+/// order.
+///
+/// The JNI bridge calls this to tell a 32-bit library from a 64-bit one, and on which
+/// architecture, without loading the whole file.
+pub fn elf_machine_class(data: &[u8]) -> Option<(u16, u8)> {
+    // Three separate quiet returns, all of which the corpus contains: a zero-length file, a
+    // truncated header, and a foreign magic (`PK\x03\x04`, `\x7fKOM`, `SKCL`).
+    let ident = data.get(..ELF_IDENT_PREFIX)?;
+    if ident[..4] != elf::ELFMAG {
+        return None;
+    }
+    // `Ident::class` is the fifth byte and `Ident::data` the sixth; `e_machine` follows the
+    // 16-byte ident and the two-byte `e_type`.
+    let class = ident[4];
+    if class != elf::ELFCLASS32 && class != elf::ELFCLASS64 {
+        return None;
+    }
+    let machine = [ident[18], ident[19]];
+    let machine = match ident[5] {
+        elf::ELFDATA2LSB => u16::from_le_bytes(machine),
+        elf::ELFDATA2MSB => u16::from_be_bytes(machine),
+        _ => return None,
+    };
+    Some((machine, class))
+}
+
 /// Scans an ELF image for `JNINativeMethod` tables. `None` when `data` is not an ELF this build
 /// understands -- a truncated header, a foreign magic, an empty file -- which are all things the
 /// reference corpus actually contains under `lib/<abi>/*.so`.
 fn scan_bytes(data: &[u8]) -> Option<Scan> {
-    // Three separate quiet returns, all of which the corpus contains: a zero-length file, a
-    // truncated header, and a foreign magic (`PK\x03\x04`, `\x7fKOM`, `SKCL`).
-    let ident = data.get(..16)?;
-    if ident[..4] != elf::ELFMAG {
-        return None;
-    }
-    // `Ident::class` is the fifth byte.
-    match ident[4] {
+    match elf_machine_class(data)?.1 {
         elf::ELFCLASS32 => scan_elf::<elf::FileHeader32<Endianness>>(data),
         elf::ELFCLASS64 => scan_elf::<elf::FileHeader64<Endianness>>(data),
         _ => None,

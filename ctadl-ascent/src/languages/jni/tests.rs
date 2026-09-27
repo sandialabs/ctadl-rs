@@ -319,6 +319,7 @@ fn links_an_instance_native_to_its_implementation() {
     obs.observe(
         &java_program(&[(java, "encrypt", descriptor, false)]),
         SlotModel::Register,
+        NativeAbi::Unknown,
     );
     obs.observe(
         &native_program(&[(
@@ -326,6 +327,7 @@ fn links_an_instance_native_to_its_implementation() {
             "Java_com_example_Crypto_encrypt",
         )]),
         SlotModel::Argument,
+        NativeAbi::Unknown,
     );
 
     let (mut facts, mut source_info) =
@@ -389,10 +391,12 @@ fn links_a_static_native_without_a_this_port() {
     obs.observe(
         &java_program(&[(java, "nativeStash", descriptor, true)]),
         SlotModel::Register,
+        NativeAbi::Unknown,
     );
     obs.observe(
         &native_program(&[("Java_JniFlow_nativeStash", "Java_JniFlow_nativeStash")]),
         SlotModel::Argument,
+        NativeAbi::Unknown,
     );
 
     let (mut facts, mut source_info) = fact_base(&[(&stub, 0), ("Java_JniFlow_nativeStash", 3)]);
@@ -428,6 +432,7 @@ fn two_natives_get_two_distinct_sites() {
             (java, "nativeFetch", fetch, true),
         ]),
         SlotModel::Register,
+        NativeAbi::Unknown,
     );
     obs.observe(
         &native_program(&[
@@ -435,6 +440,7 @@ fn two_natives_get_two_distinct_sites() {
             ("Java_JniFlow_nativeFetch", "Java_JniFlow_nativeFetch"),
         ]),
         SlotModel::Argument,
+        NativeAbi::Unknown,
     );
 
     let (mut facts, mut source_info) = fact_base(&[
@@ -461,11 +467,12 @@ fn a_method_observed_twice_is_bridged_once() {
     let program = java_program(&[(java, "go", descriptor, true)]);
 
     let mut obs = JniObserver::new();
-    obs.observe(&program, SlotModel::Register);
-    obs.observe(&program, SlotModel::Argument);
+    obs.observe(&program, SlotModel::Register, NativeAbi::Unknown);
+    obs.observe(&program, SlotModel::Argument, NativeAbi::Unknown);
     obs.observe(
         &native_program(&[("Java_JniFlow_go", "Java_JniFlow_go")]),
         SlotModel::Argument,
+        NativeAbi::Unknown,
     );
 
     let (mut facts, mut source_info) = fact_base(&[(&stub, 0), ("Java_JniFlow_go", 2)]);
@@ -494,6 +501,7 @@ fn emits_nothing_when_there_is_no_native_import() {
     obs.observe(
         &java_program(&[(java, "go", descriptor, true)]),
         SlotModel::Register,
+        NativeAbi::Unknown,
     );
     assert!(obs.is_empty());
 
@@ -525,8 +533,16 @@ fn resolve_against(
     symbols: &[(&str, &str)],
 ) -> (LinkStats, Option<String>) {
     let mut obs = JniObserver::new();
-    obs.observe(&java_program(natives), SlotModel::Register);
-    obs.observe(&native_program(symbols), SlotModel::Argument);
+    obs.observe(
+        &java_program(natives),
+        SlotModel::Register,
+        NativeAbi::Unknown,
+    );
+    obs.observe(
+        &native_program(symbols),
+        SlotModel::Argument,
+        NativeAbi::Unknown,
+    );
 
     let mut functions: Vec<(String, i16)> = natives
         .iter()
@@ -720,11 +736,13 @@ fn links_a_native_bound_by_register_natives() {
     obs.observe(
         &java_program(&[(java, "readBytesNative", descriptor, false)]),
         SlotModel::Register,
+        NativeAbi::Unknown,
     );
     // The library exports one unrelated symbol; nothing here is a mangled JNI name.
     obs.observe(
         &native_program(&[("stash_impl", "stash_impl")]),
         SlotModel::Argument,
+        NativeAbi::Unknown,
     );
     observe_table(
         &mut obs,
@@ -761,10 +779,16 @@ fn a_registration_wins_over_a_matching_symbol() {
     obs.observe(
         &java_program(&[(java, "nativeStash", descriptor, true)]),
         SlotModel::Register,
+        NativeAbi::Unknown,
     );
     obs.observe(
-        &native_program(&[("Java_JniFlow_nativeStash", "Java_JniFlow_nativeStash")]),
+        // The library's symbol table lists every function, the registered one included.
+        &native_program(&[
+            ("Java_JniFlow_nativeStash", "Java_JniFlow_nativeStash"),
+            ("stash_impl", "stash_impl"),
+        ]),
         SlotModel::Argument,
+        NativeAbi::Unknown,
     );
     observe_table(
         &mut obs,
@@ -794,11 +818,17 @@ fn a_registration_rescues_an_overload_a_short_symbol_cannot_resolve() {
     obs.observe(
         &java_program(&[(java, "f", "(I)V", true), (java, "f", "(J)V", true)]),
         SlotModel::Register,
+        NativeAbi::Unknown,
     );
-    // Only the short symbol exists, so both overloads are ambiguous by name alone.
+    // Only the short JNI symbol exists, so both overloads are ambiguous by name alone.
     obs.observe(
-        &native_program(&[("Java_Foo_f", "Java_Foo_f")]),
+        &native_program(&[
+            ("Java_Foo_f", "Java_Foo_f"),
+            ("f_int", "f_int"),
+            ("f_long", "f_long"),
+        ]),
         SlotModel::Argument,
+        NativeAbi::Unknown,
     );
     observe_table(
         &mut obs,
@@ -839,10 +869,12 @@ fn an_unattributed_entry_is_counted_and_not_linked() {
     obs.observe(
         &java_program(&[(java, "a", "()V", true)]),
         SlotModel::Register,
+        NativeAbi::Unknown,
     );
     obs.observe(
         &native_program(&[("unrelated", "unrelated")]),
         SlotModel::Argument,
+        NativeAbi::Unknown,
     );
     // The Java half of this library ships outside `classes.dex`, so nothing matches.
     observe_table(
@@ -868,8 +900,169 @@ fn a_registry_alone_is_not_an_empty_observer() {
     obs.observe(
         &java_program(&[("LA;", "a", "()V", true)]),
         SlotModel::Register,
+        NativeAbi::Unknown,
     );
     assert!(obs.is_empty(), "no native half at all");
     observe_table(&mut obs, "lib", &[("a", "()V", "a_impl")]);
     assert!(!obs.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Native prototypes and ABIs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parses_a_native_signature() {
+    assert_eq!(NativeProto::parse("()"), NativeProto::Unknown);
+    assert_eq!(
+        NativeProto::parse("void()"),
+        NativeProto::Known {
+            params: 0,
+            vararg: false
+        }
+    );
+    assert_eq!(
+        NativeProto::parse("undefined8(_, _, _)"),
+        NativeProto::Known {
+            params: 3,
+            vararg: false
+        }
+    );
+    assert_eq!(
+        NativeProto::parse("int(_, ...)"),
+        NativeProto::Known {
+            params: 1,
+            vararg: true
+        }
+    );
+    // A return type with parentheses of its own: the parameter list is the last group.
+    assert_eq!(
+        NativeProto::parse("void (*)(int)(_, _)"),
+        NativeProto::Known {
+            params: 2,
+            vararg: false
+        }
+    );
+    assert_eq!(NativeProto::parse(""), NativeProto::Unknown);
+    assert_eq!(NativeProto::parse("garbage"), NativeProto::Unknown);
+    assert_eq!(NativeProto::parse("int(_, _"), NativeProto::Unknown);
+}
+
+/// The first 20 bytes of an ELF file: the ident, `e_type`, and `e_machine`.
+fn elf_header(class: u8, little_endian: bool, machine: u16) -> Vec<u8> {
+    let mut header = vec![
+        0x7f,
+        b'E',
+        b'L',
+        b'F',
+        class,
+        if little_endian { 1 } else { 2 },
+        1,
+    ];
+    header.resize(16, 0);
+    header.extend_from_slice(&3u16.to_le_bytes()); // ET_DYN
+    if little_endian {
+        header.extend_from_slice(&machine.to_le_bytes());
+    } else {
+        header.extend_from_slice(&machine.to_be_bytes());
+    }
+    header
+}
+
+#[test]
+fn reads_the_abi_from_an_elf_header() {
+    use object::elf;
+    let abi = |class, machine| NativeAbi::from_elf_header(&elf_header(class, true, machine));
+    assert_eq!(abi(elf::ELFCLASS64, elf::EM_AARCH64), NativeAbi::Arm64);
+    assert_eq!(abi(elf::ELFCLASS64, elf::EM_X86_64), NativeAbi::X86_64);
+    assert_eq!(abi(elf::ELFCLASS32, elf::EM_ARM), NativeAbi::Arm32);
+    assert_eq!(abi(elf::ELFCLASS32, elf::EM_386), NativeAbi::X86);
+    // x32: an x86-64 machine in a 32-bit class is none of the four.
+    assert_eq!(abi(elf::ELFCLASS32, elf::EM_X86_64), NativeAbi::Unknown);
+    assert_eq!(
+        NativeAbi::from_elf_header(&elf_header(elf::ELFCLASS32, false, elf::EM_ARM)),
+        NativeAbi::Arm32,
+        "e_machine is read in the file's byte order"
+    );
+    assert!(NativeAbi::Arm32.is_32bit() && NativeAbi::X86.is_32bit());
+    assert!(!NativeAbi::Arm64.is_32bit() && !NativeAbi::Unknown.is_32bit());
+}
+
+#[test]
+fn a_non_elf_file_has_an_unknown_abi() {
+    assert_eq!(NativeAbi::from_elf_header(b""), NativeAbi::Unknown);
+    assert_eq!(
+        NativeAbi::from_elf_header(b"\x7fELF\x02"),
+        NativeAbi::Unknown
+    );
+    assert_eq!(
+        NativeAbi::from_elf_header(b"PK\x03\x04 a zip under lib/ with a .so name"),
+        NativeAbi::Unknown
+    );
+    assert_eq!(
+        NativeAbi::from_elf_header(b"\xcf\xfa\xed\xfe a Mach-O dylib, long enough"),
+        NativeAbi::Unknown
+    );
+}
+
+/// `NativeAbi::of` reads the import's artifact, and gives up quietly when it cannot.
+#[test]
+fn reads_the_abi_of_an_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let import = |artifact: std::path::PathBuf| ArtifactImport {
+        name: "lib".into(),
+        language: ArtifactLanguage::Pcode,
+        artifact_path: artifact,
+        import_dir: "imports/lib".into(),
+        version: crate::project::IMPORT_FORMAT_VERSION.into(),
+        image_base: None,
+        hash: None,
+        sub_imports: Vec::new(),
+        status: None,
+    };
+
+    let so = dir.path().join("libx.so");
+    let mut bytes = elf_header(object::elf::ELFCLASS32, true, object::elf::EM_ARM);
+    bytes.extend_from_slice(&[0; 64]);
+    std::fs::write(&so, bytes).unwrap();
+    assert_eq!(NativeAbi::of(&import(so)), NativeAbi::Arm32);
+
+    assert_eq!(
+        NativeAbi::of(&import(dir.path().join("missing.so"))),
+        NativeAbi::Unknown
+    );
+    assert_eq!(
+        NativeAbi::of(&import("ghidra://host/repo/libx.so".into())),
+        NativeAbi::Unknown
+    );
+}
+
+/// A summary project's import contributes its symbols and nothing else: a Java `native` it
+/// declares is not observed, since its stub is not in this fact base.
+#[test]
+fn the_native_only_path_ignores_java_natives() {
+    let mut obs = JniObserver::new();
+    obs.observe_native_vmt(
+        &java_program(&[("LA;", "a", "()V", true)]).vmt,
+        NativeAbi::Unknown,
+        Origin::Summary("xproj".into()),
+    );
+    assert!(obs.natives.is_empty());
+    obs.observe_native_vmt(
+        &native_program(&[("Java_A_a", "Java_A_a")]).vmt,
+        NativeAbi::Arm64,
+        Origin::Summary("xproj".into()),
+    );
+    assert_eq!(
+        obs.symbols["Java_A_a"],
+        [NativeTarget {
+            function: "Java_A_a".into(),
+            proto: NativeProto::Known {
+                params: 0,
+                vararg: false
+            },
+            abi: NativeAbi::Arm64,
+            origin: Origin::Summary("xproj".into()),
+        }]
+    );
 }

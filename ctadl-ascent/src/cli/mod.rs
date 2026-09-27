@@ -172,7 +172,11 @@ pub fn index(
             phys_footprint_mb()
         );
         if !no_jni_bridge {
-            jni_observer.observe(&program_info, jni::SlotModel::for_language(import.language));
+            jni_observer.observe(
+                &program_info,
+                jni::SlotModel::for_language(import.language),
+                jni::NativeAbi::of(&import),
+            );
             if !no_jni_registry {
                 // The `RegisterNatives` tables this import's library was scanned for. Read from
                 // the import directory rather than from the IR: they are a sidecar, so no
