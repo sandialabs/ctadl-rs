@@ -695,13 +695,19 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             config,
             bridge,
             packaging,
+            abi,
+            untyped,
         } => run_jni(
             &case.name,
             java,
             native,
             config,
             bridge.as_deref(),
-            *packaging,
+            JniBuild {
+                packaging: *packaging,
+                abi,
+                untyped: *untyped,
+            },
             worker,
         ),
         Kind::AndroidIcc { spec } => run_android_icc(&case.name, spec),
@@ -1366,7 +1372,7 @@ fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result
     std::fs::create_dir_all(&state)?;
     std::fs::create_dir_all(&outdir)?;
 
-    let (cc, addr2line) = pick_toolchain();
+    let (cc, addr2line) = pick_toolchain("x86_64");
 
     // Compile to a relocatable object with debug info.
     let obj = outdir.join(format!("{name}.o"));
@@ -1539,7 +1545,23 @@ fn parse_addr2line_line(output: &str) -> Option<i64> {
 
 /// Mirror the old script's compiler/addr2line selection: prefer an x86_64 Linux
 /// (cross-)compiler, fall back to the native tools.
-fn pick_toolchain() -> (String, String) {
+///
+/// `abi` is the Android ABI a JNI case builds for. `x86` selects the 32-bit x86 toolchain, with
+/// no fallback: a native compiler would build the wrong ABI, so the case skips when the `i686`
+/// one is not on PATH. Every other ABI gets the x86_64 one -- the ABI directory a library is
+/// packaged under is a label, and Ghidra disassembles whatever it actually is.
+fn pick_toolchain(abi: &str) -> (String, String) {
+    if abi == "x86" {
+        for prefix in ["i686-unknown-linux-gnu-", "i686-linux-gnu-"] {
+            if exec::which(&format!("{prefix}gcc")).is_some() {
+                return (format!("{prefix}gcc"), format!("{prefix}addr2line"));
+            }
+        }
+        return (
+            "i686-unknown-linux-gnu-gcc".to_string(),
+            "i686-unknown-linux-gnu-addr2line".to_string(),
+        );
+    }
     for prefix in ["x86_64-unknown-linux-gnu-", "x86_64-linux-gnu-"] {
         if exec::which(&format!("{prefix}gcc")).is_some() {
             return (format!("{prefix}gcc"), format!("{prefix}addr2line"));
@@ -1631,9 +1653,14 @@ fn run_jni(
     native: &Path,
     config: &Path,
     bridge: Option<&Path>,
-    packaging: Packaging,
+    build: JniBuild<'_>,
     worker: &Worker,
 ) -> Result<Outcome> {
+    let JniBuild {
+        packaging,
+        abi,
+        untyped,
+    } = build;
     for tool in ["javac", "dx"] {
         if exec::which(tool).is_none() {
             return Ok(Outcome::Skip(format!("`{tool}` not on PATH")));
@@ -1642,8 +1669,13 @@ fn run_jni(
     // Both halves of the pcode toolchain are in the loop: the compiler builds the native
     // half, and `addr2line` maps the addresses reported in it back to C source lines for
     // `expected_native_lines`.
-    let (cc, addr2line) = pick_toolchain();
-    for tool in [&cc, &addr2line] {
+    let (cc, addr2line) = pick_toolchain(abi);
+    let objcopy = addr2line.replace("addr2line", "objcopy");
+    let mut tools = vec![&cc, &addr2line];
+    if untyped {
+        tools.push(&objcopy);
+    }
+    for tool in tools {
         if exec::which(tool).is_none() {
             return Ok(Outcome::Skip(format!("`{tool}` not on PATH")));
         }
@@ -1692,16 +1724,32 @@ fn run_jni(
     // Compile the native half to a real shared library, not a relocatable object:
     // the point of the case is the ABI a `System.loadLibrary` target actually has.
     // `-g` gives Ghidra's DWARF analyzer the exact prototypes, which is what makes
-    // the bridge's native-arity check pass instead of warning.
+    // the bridge's native-arity check pass instead of warning. An untyped case strips
+    // that debug info from the library it imports and keeps the `-g` build beside it:
+    // stripping moves no code, so `addr2line` still maps the imported library's
+    // addresses back to C lines through it.
     let lib = work.join(format!("lib{}.so", class.to_lowercase()));
+    let lines_lib = if untyped {
+        work.join("debug").join(file_name_of(&lib)?)
+    } else {
+        lib.clone()
+    };
+    if let Some(dir) = lines_lib.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let mut compile = Command::new(&cc);
     compile
         .current_dir(&work)
         .args(["-g", "-O0", "-shared", "-fPIC"])
         .arg(native)
         .arg("-o")
-        .arg(&lib);
+        .arg(&lines_lib);
     exec::run_checked(compile, &cc)?;
+    if untyped {
+        let mut strip = Command::new(&objcopy);
+        strip.arg("--strip-debug").arg(&lines_lib).arg(&lib);
+        exec::run_checked(strip, &objcopy)?;
+    }
 
     // `ctadl index <project> <prog>...` takes the programs to co-index positionally.
     // Two imports for `Separate` and `SplitApks`; `SingleApk` and `SummaryApk` import once and
@@ -1717,10 +1765,9 @@ fn run_jni(
     // without re-running the case.
     let ctadl = |args: &[&str], log: &str| run_ctadl_logged(&work, &state, env, args, log);
 
-    // The ABI directory is a label, not a claim about the host: what matters is that the
-    // importer finds `lib/<abi>/*.so`, and Ghidra disassembles whatever architecture the
-    // library actually is.
-    let abi = "arm64-v8a";
+    // For the default ABI the directory is a label, not a claim about the host: what matters
+    // is that the importer finds `lib/<abi>/*.so`, and Ghidra disassembles whatever
+    // architecture the library actually is. An `x86` case really is 32-bit x86.
     let lib_entry = format!("lib/{abi}/{}", file_name_of(&lib)?);
     match packaging {
         Packaging::SingleApk => {
@@ -1741,7 +1788,7 @@ fn run_jni(
             // One APK each, the way an app bundle ships them. The native one has no
             // `classes*.dex` at all -- that is the whole point of the variant.
             let base = work.join(format!("{class}.apk"));
-            let split = work.join(format!("{class}.config.arm64_v8a.apk"));
+            let split = work.join(format!("{class}.config.{}.apk", abi.replace('-', "_")));
             write_apk(&base, &[("classes.dex", &dex)])?;
             write_apk(&split, &[(&lib_entry, &lib)])?;
             for (name, apk) in [(&dex_project, &base), (&native_project, &split)] {
@@ -1824,7 +1871,19 @@ fn run_jni(
         bridge_arg = bridge.to_string_lossy().into_owned();
         index_args.extend_from_slice(&["--no-jni-bridge", "-m", &bridge_arg]);
     }
-    let index_log = ctadl(&index_args, "index.log")?;
+    // The bridge's per-method pairings and layout choices are logged at `debug`; the index log
+    // keeps them, and an untyped case asserts on the layout.
+    let mut index_env = env.to_vec();
+    index_env.push((
+        "RUST_LOG".to_string(),
+        "warn,ctadl=info,ctadl_ascent::languages::jni=debug".to_string(),
+    ));
+    let index_log = run_ctadl_logged(&work, &state, &index_env, &index_args, "index.log")?;
+    if let Some(expected) = assertions::read_untyped_native_layout(config)? {
+        if let Some(why) = check_native_layout(&index_log, untyped, &expected) {
+            return Ok(Outcome::Fail(why));
+        }
+    }
     ctadl(
         &[
             "query",
@@ -1885,11 +1944,38 @@ fn run_jni(
         &sarif,
         &machine_sarif,
         &linemap,
-        native_claims.then_some(lib.as_path()),
+        native_claims.then_some(lines_lib.as_path()),
         &work,
         &addr2line,
     )?;
     with_valid_sarif(&work, &[&sarif, &machine_sarif], outcome)
+}
+
+/// How a JNI case builds and packages its library.
+struct JniBuild<'a> {
+    packaging: Packaging,
+    /// The Android ABI: which toolchain builds the library, and its `lib/<abi>/` directory.
+    abi: &'a str,
+    /// Strip the library's debug info before importing it.
+    untyped: bool,
+}
+
+/// Checks the native slot layout the bridge logged for a case that runs both with and without
+/// debug info. The stripped build must choose `expected`; the `-g` build must choose `Typed`,
+/// since DWARF gives Ghidra the real prototype. Either way no prototype may mismatch.
+fn check_native_layout(index_log: &str, untyped: bool, expected: &str) -> Option<String> {
+    let layout = if untyped { expected } else { "Typed" };
+    let split = index_log.contains("using SplitWide");
+    if split != (layout == "SplitWide") {
+        return Some(format!(
+            "expected the bridge to choose the {layout} layout ({} build); see index.log",
+            if untyped { "stripped" } else { "-g" }
+        ));
+    }
+    if !index_log.contains(" 0 prototype mismatch)") {
+        return Some("the bridge reported a prototype mismatch; see index.log".to_string());
+    }
+    None
 }
 
 /// The `+summary` case's second library. It exports no JNI symbol and binds nothing, and its
@@ -2260,7 +2346,7 @@ fn run_ghidra_project_check(worker: &Worker) -> Result<(String, Outcome)> {
             Outcome::Skip("Ghidra analyzeHeadless not found (set GHIDRA_HOME)".to_string()),
         ));
     };
-    let (cc, _addr2line) = pick_toolchain();
+    let (cc, _addr2line) = pick_toolchain("x86_64");
     if exec::which(&cc).is_none() {
         return Ok((name, Outcome::Skip(format!("`{cc}` not on PATH"))));
     }
