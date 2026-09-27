@@ -62,6 +62,12 @@ pub enum Packaging {
     /// Android App Bundle is distributed, and what an XAPK download unpacks to: the
     /// native half arrives in an APK with no `classes*.dex` in it at all.
     SplitApks,
+    /// Package both into one APK beside a second, JNI-free library, import it once, and index
+    /// the library on its own into a summary project. The app is then indexed with
+    /// `--no-native-libs --summary <that project>`, so the bridge links against the library's
+    /// symbol and `RegisterNatives` tables and its saved summaries, never its code, and the
+    /// second library is never loaded at all.
+    SummaryApk,
 }
 
 impl Kind {
@@ -370,6 +376,19 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
                 packaging: Packaging::SplitApks,
             },
         });
+        // And the summary workflow: the library indexed on its own, the app indexed without
+        // its libraries against that project. Same claims about the Java half; the native
+        // half is reached only through the library's summaries.
+        cases.push(TestCase {
+            name: format!("Jni:{stem}+summary"),
+            kind: Kind::Jni {
+                java: absolute(&entry)?,
+                native: absolute(&native)?,
+                config: absolute(&config)?,
+                bridge: None,
+                packaging: Packaging::SummaryApk,
+            },
+        });
         // A sibling `<kebab>.bridge.jsonl` turns the case into an A/B: the same two artifacts
         // and the same claims, joined by a hand-written `model.bridge` under
         // `--no-jni-bridge` instead of by the built-in pass. If the declarative construct is
@@ -470,6 +489,10 @@ mod tests {
                 names.contains(&format!("Jni:{stem}+split-apks").as_str()),
                 "the split-APK A/B case is missing: {names:?}"
             );
+            assert!(
+                names.contains(&format!("Jni:{stem}+summary").as_str()),
+                "the summary-project case is missing: {names:?}"
+            );
         }
         // The variants of each case differ in exactly one thing: which mechanism joins
         // the boundary, or how the artifacts are packaged. Same sources, same config, so
@@ -510,6 +533,7 @@ mod tests {
             for (suffix, expected) in [
                 ("+apk", Packaging::SingleApk),
                 ("+split-apks", Packaging::SplitApks),
+                ("+summary", Packaging::SummaryApk),
             ] {
                 let (packaged_artifacts, packaged_bridge, packaged) = of(suffix);
                 assert_eq!(artifacts, packaged_artifacts);
@@ -522,7 +546,7 @@ mod tests {
         }
     }
 
-    /// A case with no `.bridge.jsonl` gets the three built-in variants and no A/B one. That is
+    /// A case with no `.bridge.jsonl` gets the four built-in variants and no A/B one. That is
     /// how `JniRegister` ships: its boundary is joined by a `RegisterNatives` table recovered
     /// from the library, and a hand-written bridge model would be testing something else.
     #[test]
@@ -536,7 +560,8 @@ mod tests {
         }
         let cases = discover_jni(&dir).expect("discovering jni cases");
         let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
-        for suffix in ["", "+apk", "+split-apks"] {
+        // `+summary` is the registry-only boundary reached through a summary project.
+        for suffix in ["", "+apk", "+split-apks", "+summary"] {
             assert!(
                 names.contains(&format!("Jni:JniRegister{suffix}").as_str()),
                 "the RegisterNatives case is missing: {names:?}"

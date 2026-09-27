@@ -1088,6 +1088,14 @@ fn jar_arg(jar: &Path) -> String {
     jar.to_string_lossy().into_owned()
 }
 
+/// The file name of `path` without its extension: `libjniflow` for `libjniflow.so`, which is
+/// how the APK importer names a library's sub-import.
+fn file_stem_of(path: &Path) -> Result<&str> {
+    path.file_stem()
+        .and_then(|n| n.to_str())
+        .with_context(|| format!("path has no usable file name: {}", path.display()))
+}
+
 fn file_name_of(path: &Path) -> Result<&str> {
     path.file_name()
         .and_then(|n| n.to_str())
@@ -1567,6 +1575,44 @@ fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&s
     Ok(())
 }
 
+/// Like [`run_ctadl_env`], and also writes the command line, stdout and stderr to
+/// `work/<log>`, and returns that text. A command that fails still fails the case, with the log
+/// named in the error.
+fn run_ctadl_logged(
+    work: &Path,
+    state: &Path,
+    env: &[(String, String)],
+    args: &[&str],
+    log: &str,
+) -> Result<String> {
+    let mut cmd = Command::new(ctadl_bin()?);
+    cmd.current_dir(work)
+        .env("XDG_STATE_HOME", state)
+        .args(args);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let what = format!("ctadl {}", args.join(" "));
+    let output = cmd
+        .output()
+        .with_context(|| format!("failed to spawn `{what}`"))?;
+    let text = format!(
+        "$ {what}\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
+        String::from_utf8_lossy(&output.stdout).trim_end(),
+        String::from_utf8_lossy(&output.stderr).trim_end(),
+    );
+    let path = work.join(log);
+    std::fs::write(&path, &text).with_context(|| format!("writing {}", path.display()))?;
+    if !output.status.success() {
+        bail!(
+            "`{what}` failed (exit {}); see {}\n{text}",
+            output.status.code().unwrap_or(-1),
+            path.display()
+        );
+    }
+    Ok(text)
+}
+
 // --- JNI (Java + native, two imports) --------------------------------------
 
 /// Run one JNI case: compile `Foo.java` to a DEX and `Foo.c` to a shared library,
@@ -1658,34 +1704,37 @@ fn run_jni(
     exec::run_checked(compile, &cc)?;
 
     // `ctadl index <project> <prog>...` takes the programs to co-index positionally.
-    // Two imports for `Separate` and `SplitApks`; `SingleApk` imports once and relies on
-    // the APK importer to produce the native sub-import and on the project to pick it up.
+    // Two imports for `Separate` and `SplitApks`; `SingleApk` and `SummaryApk` import once and
+    // rely on the APK importer to produce the native sub-import(s).
     let dex_project = format!("{class}_dex");
     let native_project = format!("{class}_native");
+    let summary_project = format!("{class}_xproj");
     let project = format!("{class}_jni");
     let sarif = work.join(format!("{class}_output.sarif"));
     let machine_sarif = work.join(format!("{class}_machine.sarif"));
     let env = &worker.ghidra_env;
+    // Every ctadl step's output lands beside the artifacts, so a failure can be followed up
+    // without re-running the case.
+    let ctadl = |args: &[&str], log: &str| run_ctadl_logged(&work, &state, env, args, log);
 
     // The ABI directory is a label, not a claim about the host: what matters is that the
     // importer finds `lib/<abi>/*.so`, and Ghidra disassembles whatever architecture the
     // library actually is.
-    let lib_entry = format!("lib/arm64-v8a/{}", file_name_of(&lib)?);
+    let abi = "arm64-v8a";
+    let lib_entry = format!("lib/{abi}/{}", file_name_of(&lib)?);
     match packaging {
         Packaging::SingleApk => {
             // Both artifacts in one APK, the way an ordinary Android app ships them.
             let packaged = work.join(format!("{class}.apk"));
             write_apk(&packaged, &[("classes.dex", &dex), (&lib_entry, &lib)])?;
-            run_ctadl_env(
-                &work,
-                &state,
-                env,
+            ctadl(
                 &[
                     "import",
                     "--name",
                     &dex_project,
                     &packaged.to_string_lossy(),
                 ],
+                "import.log",
             )?;
         }
         Packaging::SplitApks => {
@@ -1696,25 +1745,18 @@ fn run_jni(
             write_apk(&base, &[("classes.dex", &dex)])?;
             write_apk(&split, &[(&lib_entry, &lib)])?;
             for (name, apk) in [(&dex_project, &base), (&native_project, &split)] {
-                run_ctadl_env(
-                    &work,
-                    &state,
-                    env,
+                ctadl(
                     &["import", "--name", name, &apk.to_string_lossy()],
+                    &format!("import-{name}.log"),
                 )?;
             }
         }
         Packaging::Separate => {
-            run_ctadl_env(
-                &work,
-                &state,
-                env,
+            ctadl(
                 &["import", "--name", &dex_project, &dex_arg(&dex)],
+                "import-dex.log",
             )?;
-            run_ctadl_env(
-                &work,
-                &state,
-                env,
+            ctadl(
                 &[
                     "import",
                     "-l",
@@ -1723,27 +1765,67 @@ fn run_jni(
                     "-n",
                     &native_project,
                 ],
+                "import-native.log",
             )?;
+        }
+        Packaging::SummaryApk => {
+            // The app ships a second library that has nothing to do with JNI. The summary
+            // workflow must never load it: not into the summary project, which names only X,
+            // and not into the app's, which drops its native libraries.
+            let dummy_src = work.join("dummy.c");
+            std::fs::write(&dummy_src, DUMMY_LIBRARY)?;
+            let dummy = work.join("libdummy.so");
+            let mut compile = Command::new(&cc);
+            compile
+                .current_dir(&work)
+                .args(["-g", "-O0", "-shared", "-fPIC"])
+                .arg(&dummy_src)
+                .arg("-o")
+                .arg(&dummy);
+            exec::run_checked(compile, &cc)?;
+            let dummy_entry = format!("lib/{abi}/libdummy.so");
+
+            let packaged = work.join(format!("{class}.apk"));
+            write_apk(
+                &packaged,
+                &[
+                    ("classes.dex", &dex),
+                    (&lib_entry, &lib),
+                    (&dummy_entry, &dummy),
+                ],
+            )?;
+            ctadl(
+                &[
+                    "import",
+                    "--name",
+                    &dex_project,
+                    &packaged.to_string_lossy(),
+                ],
+                "import.log",
+            )?;
+            let x_import = format!("{dex_project}__{abi}__{}", file_stem_of(&lib)?);
+            ctadl(&["index", &summary_project, &x_import], "index-xproj.log")?;
         }
     }
     // With a declarative bridge, the built-in pass is switched off entirely: leaving both on
     // would double-bridge the pair, giving two sites and duplicated flows, and the case would
     // pass for the wrong reason.
     let mut index_args: Vec<&str> = vec!["index", &project, &dex_project];
-    if packaging != Packaging::SingleApk {
+    match packaging {
         // `SplitApks` names the native APK, whose own sub-import carries the library.
-        index_args.push(&native_project);
+        Packaging::Separate | Packaging::SplitApks => index_args.push(&native_project),
+        Packaging::SingleApk => {}
+        Packaging::SummaryApk => {
+            index_args.extend_from_slice(&["--no-native-libs", "--summary", &summary_project])
+        }
     }
     let bridge_arg;
     if let Some(bridge) = bridge {
         bridge_arg = bridge.to_string_lossy().into_owned();
         index_args.extend_from_slice(&["--no-jni-bridge", "-m", &bridge_arg]);
     }
-    run_ctadl_env(&work, &state, env, &index_args)?;
-    run_ctadl_env(
-        &work,
-        &state,
-        env,
+    let index_log = ctadl(&index_args, "index.log")?;
+    ctadl(
         &[
             "query",
             &project,
@@ -1752,11 +1834,9 @@ fn run_jni(
             "-o",
             &sarif.to_string_lossy(),
         ],
+        "query.log",
     )?;
-    run_ctadl_env(
-        &work,
-        &state,
-        env,
+    ctadl(
         &[
             "query",
             &project,
@@ -1767,7 +1847,25 @@ fn run_jni(
             "-o",
             &machine_sarif.to_string_lossy(),
         ],
+        "query-machine.log",
     )?;
+
+    if packaging == Packaging::SummaryApk {
+        let failed = check_summary_workflow(
+            &work,
+            &state,
+            env,
+            &project,
+            &dex_project,
+            &format!("{dex_project}__{abi}__{}", file_stem_of(&lib)?),
+            &format!("{dex_project}__{abi}__libdummy"),
+            config,
+            &index_log,
+        )?;
+        if let Some(why) = failed {
+            return with_valid_sarif(&work, &[&sarif, &machine_sarif], Outcome::Fail(why));
+        }
+    }
 
     // Build the Java-side offset -> line map, exactly as `run_dex` does.
     let linemap = work.join(format!("{class}_linemap.json"));
@@ -1779,16 +1877,128 @@ fn run_jni(
         .arg(&linemap);
     exec::run_checked(reader, "dex-reader")?;
 
+    // Under `SummaryApk` the library's code is not in the app's index -- only its summaries
+    // are -- so no result is located inside it and there are no native lines to check.
+    let native_claims = packaging != Packaging::SummaryApk;
     let outcome = check_jni_case(
         config,
         &sarif,
         &machine_sarif,
         &linemap,
-        &lib,
+        native_claims.then_some(lib.as_path()),
         &work,
         &addr2line,
     )?;
     with_valid_sarif(&work, &[&sarif, &machine_sarif], outcome)
+}
+
+/// The `+summary` case's second library. It exports no JNI symbol and binds nothing, and its
+/// one function has a name nothing else in the case uses, so it is easy to look for.
+const DUMMY_LIBRARY: &str = "int ctadl_dummy_add(int a, int b) { return a + b; }\n";
+
+/// The claims specific to the summary workflow, beyond the ones every JNI case makes. `None`
+/// when they all hold, or why one does not.
+///
+///  1. The JNI-free library `y_import` is nowhere in the app project: not in its `imports`,
+///     and no function of it in its `IdMap`.
+///  2. Neither library's IR was loaded to index the app: no `'<import>': loading IR` line.
+///  3. The bridge linked at least one native out of the summary project, so the flow the
+///     common claims check crossed a summary-sourced link. Skipped when the case expects no
+///     flow at all.
+///  4. `inspect` and both graph dumps work on an index whose native targets have no body.
+#[allow(clippy::too_many_arguments)]
+fn check_summary_workflow(
+    work: &Path,
+    state: &Path,
+    env: &[(String, String)],
+    project: &str,
+    dex_project: &str,
+    x_import: &str,
+    y_import: &str,
+    config: &Path,
+    index_log: &str,
+) -> Result<Option<String>> {
+    let ctadl = |args: &[&str], log: &str| run_ctadl_logged(work, state, env, args, log);
+    let project_dir = state.join("ctadl").join("projects").join(project);
+
+    let config_text = std::fs::read_to_string(project_dir.join("project_config.json"))
+        .context("reading the app's project config")?;
+    let imports: Vec<String> = serde_json::from_str::<serde_json::Value>(&config_text)?["imports"]
+        .as_array()
+        .context("project config has no imports list")?
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    if imports != [dex_project] {
+        return Ok(Some(format!(
+            "--no-native-libs should leave only '{dex_project}' in the project, got {imports:?}"
+        )));
+    }
+
+    let id_map = project_dir.join("index").join("function_id.parquet");
+    let dump = ctadl(&["inspect", &id_map.to_string_lossy()], "inspect-idmap.log")?;
+    if dump.contains("ctadl_dummy_add") {
+        return Ok(Some(format!(
+            "a function of '{y_import}' is in the app's IdMap; see inspect-idmap.log"
+        )));
+    }
+
+    for import in [x_import, y_import] {
+        if index_log.contains(&format!("'{import}': loading IR")) {
+            return Ok(Some(format!(
+                "indexing the app loaded the IR of '{import}'; see index.log"
+            )));
+        }
+    }
+
+    if !assertions::read_expected_lines(config)?.is_empty() {
+        match from_summary_links(index_log) {
+            Some(n) if n > 0 => {}
+            other => {
+                return Ok(Some(format!(
+                    "the bridge linked no native from the summary project (from_summary = \
+                     {other:?}); see index.log"
+                )));
+            }
+        }
+    }
+
+    ctadl(&["inspect", project], "inspect.log")?;
+    ctadl(
+        &[
+            "inspect",
+            project,
+            "--dump-index-graph",
+            &work.join("index-graph.dot").to_string_lossy(),
+        ],
+        "inspect-index-graph.log",
+    )?;
+    ctadl(
+        &[
+            "query",
+            project,
+            "-m",
+            &config.to_string_lossy(),
+            "-o",
+            &work.join("graph.sarif").to_string_lossy(),
+            "--dump-taint-graph",
+            &work.join("taint-graph.dot").to_string_lossy(),
+        ],
+        "query-taint-graph.log",
+    )?;
+    Ok(None)
+}
+
+/// The `from summary` count on the `jni bridge:` line of an index log, which reads
+/// `… linked (R registered, S from summary, P prototype mismatch), …`.
+fn from_summary_links(index_log: &str) -> Option<usize> {
+    index_log
+        .lines()
+        .filter(|line| line.starts_with("jni bridge:") && line.contains(" native method(s): "))
+        .find_map(|line| {
+            let (before, _) = line.split_once(" from summary")?;
+            before.rsplit(' ').next()?.parse().ok()
+        })
 }
 
 /// JNI pass criterion. Claims 1-3 are about *Java* source lines; claim 4 crosses the
@@ -1807,7 +2017,9 @@ fn run_jni(
 ///  4. *Native lines*: every `expected_native_lines` entry is among the C source lines
 ///     the reported native addresses map back to, via [`native_lines`]. This is the
 ///     claim that the taint is where it should be on the far side, in the artifact it
-///     should be in -- not merely that a Java-side flow exists.
+///     should be in -- not merely that a Java-side flow exists. Skipped when `lib` is
+///     `None`: a `+summary` case reaches the library only through its summaries, so no
+///     result is located inside it.
 ///
 /// There is deliberately no Darwin self-skip, unlike [`check_pcode_case`]: every
 /// criterion here, native lines included, is satisfied on Darwin today. If Ghidra
@@ -1818,7 +2030,7 @@ fn check_jni_case(
     human_sarif: &Path,
     machine_sarif: &Path,
     linemap: &Path,
-    lib: &Path,
+    lib: Option<&Path>,
     work: &Path,
     addr2line: &str,
 ) -> Result<Outcome> {
@@ -1859,7 +2071,7 @@ fn check_jni_case(
     }
 
     let expected_native = assertions::read_expected_native_lines(config)?;
-    if !expected_native.is_empty() {
+    if let (Some(lib), false) = (lib, expected_native.is_empty()) {
         let native = native_lines(human_sarif, machine_sarif, lib, work, addr2line)?;
         let missing: Vec<i64> = expected_native
             .iter()
@@ -2244,4 +2456,20 @@ fn scratch_dir(name: &str) -> Result<PathBuf> {
     let dir = run_root().join(&safe_name);
     exec::fresh_dir(&dir)?;
     Ok(dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::from_summary_links;
+
+    #[test]
+    fn reads_the_from_summary_count_off_the_bridge_line() {
+        let log = "indexing project 'app' from 1 import(s): app\n\
+                   jni bridge: 2 native method(s): 2 linked (1 registered, 2 from summary, 0 \
+                   prototype mismatch), 0 unresolved, 0 ambiguous\n\
+                   jni bridge: 4 mapped summaries belong to 2 native function(s) linked from \
+                   summary projects\n";
+        assert_eq!(from_summary_links(log), Some(2));
+        assert_eq!(from_summary_links("no bridge line here\n"), None);
+    }
 }

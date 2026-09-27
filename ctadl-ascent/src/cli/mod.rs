@@ -1798,6 +1798,15 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
 
     let parent = path.parent().unwrap_or(std::path::Path::new("."));
 
+    // The generic `Debug` dump below prints an interned name as its string id, which says
+    // nothing about which function it is, so the IdMap prints its names instead.
+    if filename == function_id::FILENAME {
+        for (id, function) in function_id::try_load(parent)? {
+            println!("{} {}", id.id, function);
+        }
+        return Ok(());
+    }
+
     macro_rules! match_schema {
         ($($mod:ident),*) => {
             match filename {
@@ -1825,7 +1834,6 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
         taint,
         index_source_map,
         import_id,
-        function_id,
         external_function
     );
 
