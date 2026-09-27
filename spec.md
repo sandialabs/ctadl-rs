@@ -241,7 +241,26 @@ holds:
 - **Registry case**: the §1 workflow where X binds only through `RegisterNatives`, as in
   `nightly/tests/jni/JniRegister`.
 - **32-bit**: an `armeabi-v7a` fixture with a `jlong` parameter, with and without a typed
-  prototype. Both must yield the flow.
+  prototype. Both must yield the flow. Facebook Lite ships no 32-bit code. The smallest real app
+  in `~/apps` with `armeabi-v7a` libraries is `fdroid/org.schabi.newpipe_1015_cb84069.apk`
+  (11.5 MB, one library, `libandroidx.graphics.path.so`). Import it with `--native-abi
+  armeabi-v7a` for a real-world check of the layout choice.
+- **Real app**: `~/apps/Facebook+Lite_513.0.0.6.105_APKPure.apk` (3.4 MB, one `classes.dex`,
+  `arm64-v8a` only). This is the smallest APK in `~/apps` with native code, and it matches the
+  §1 shape exactly:
+
+  | Role | Library | JNI surface |
+  | --- | --- | --- |
+  | X | `libsuperpack-jni.so` (195 KB) | Exports one `Java_…` symbol (`Java_com_facebook_superpack_AssetDecompressor_testDecompressorLibraryUsable`) and has `JNI_OnLoad`. Its data holds `RegisterNatives` descriptors such as `(J)Z`, `(JJ)V` and `([BII)V`, so it exercises both the symbol and the registry resolution paths. |
+  | Y | `libbreakpad_cpp_helper.so` (7 KB) | No JNI symbols. It must never appear in the Dex project. |
+
+  Run §1 with `X = <app>__arm64-v8a__libsuperpack-jni`. Assert that:
+    - `jni bridge` reports `from_summary > 0` and `registered > 0`.
+    - It links the same set of natives as a full co-index of the APK with X.
+    - The provenance check (§4.6) stays silent.
+
+  The APK is proprietary. Reference it by path and do not commit it. Skip the test when the
+  file is absent.
 - **Nightly**: add the workflow to `nightly/tests/jni/`. Per `CLAUDE.md`, capture all run output
   to files (under `/Volumes/Shampoo` if large).
 
