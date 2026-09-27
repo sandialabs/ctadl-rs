@@ -1,4 +1,4 @@
-# Spec: JNI bridging against native summaries
+# Spec: JNI bridging against native summaries - DO-NOT-MERGE
 
 Source: `intent.md`. Branch: `jni-native`.
 

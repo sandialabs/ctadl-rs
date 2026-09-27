@@ -1,4 +1,4 @@
-# Plan: JNI bridging against native summaries
+# Plan: JNI bridging against native summaries - DO-NOT-MERGE
 
 Implements `spec.md`. One PR on `jni-native` with one commit per step. Each commit builds and
 passes `cargo test`. Run `cargo xtask regression --frontend jni` at steps 5, 8 and 10. Capture
