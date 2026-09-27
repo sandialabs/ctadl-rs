@@ -1,7 +1,8 @@
 /*! Reads and writes a [`ProgramInfo`] in an import directory.
 
-The writer ([`save_program_info`]) and the readers ([`load_import`], [`open_import`]) are all
-public, so no other crate has to work out the store layout and the bitcode filenames for itself.
+The writer ([`save_program_info`]) and the readers ([`load_import`], [`load_vmt`],
+[`open_import`]) are all public, so no other crate has to work out the store layout and the
+bitcode filenames for itself.
 This matters because code that reads the files directly cannot tell when
 [`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION) has changed. It either decodes
 nonsense or fails with a `bitcode::Error` that explains nothing. [`open_import`] always goes
@@ -10,6 +11,7 @@ through [`ArtifactImport::load`], so an out-of-date store fails with
 */
 
 use ctadl_ir::graph::is_connected;
+use ctadl_ir::mir::call::VirtualMethodTable;
 use ctadl_ir::{ProgramInfo, encode, ssa};
 
 use crate::error::{Error, ErrorContext};
@@ -94,19 +96,13 @@ fn refuse_unfinished(import: &ArtifactImport) -> Result<(), Error> {
 }
 
 pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<ProgramInfo, Error> {
-    refuse_unfinished(import)?;
+    let vmt = load_vmt(import)?;
     let path = &import.program_path();
     log::debug!("reading {}", path.display());
     let data =
         std::fs::read(path).err_context(|| format!("reading program: {}", path.display()))?;
     let program = encode::decode_program(&data)
         .err_context(|| format!("decoding program: {}", path.display()))?;
-
-    let path = &import.vmt_path();
-    log::debug!("reading {}", path.display());
-    let data = std::fs::read(path).err_context(|| format!("reading vmt: {}", path.display()))?;
-    let vmt =
-        encode::decode_vmt(&data).err_context(|| format!("decoding vmt: {}", path.display()))?;
 
     let source_info = match src {
         SourceInfoMode::Skip => Default::default(),
@@ -123,6 +119,23 @@ pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<Progr
         vmt,
         source_info,
     })
+}
+
+/// Reads only the [`VirtualMethodTable`] of an import, leaving its program IR on disk.
+///
+/// The VMT is small next to the program. Code that needs an import's symbol table and nothing
+/// else -- the JNI bridge reading a `--summary` project's libraries -- calls this rather than
+/// [`load_import`], which calls it too, so the two read the same table.
+///
+/// # Errors
+///
+/// If the import did not finish, or its VMT cannot be read or decoded.
+pub fn load_vmt(import: &ArtifactImport) -> Result<VirtualMethodTable, Error> {
+    refuse_unfinished(import)?;
+    let path = &import.vmt_path();
+    log::debug!("reading {}", path.display());
+    let data = std::fs::read(path).err_context(|| format!("reading vmt: {}", path.display()))?;
+    encode::decode_vmt(&data).err_context(|| format!("decoding vmt: {}", path.display()))
 }
 
 /// Turns an import in the store into preprocessed IR, in one call.
