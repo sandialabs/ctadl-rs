@@ -236,6 +236,13 @@ legitimately has one per `native` declaration. So do unattributed table entries.
   even/odd register pair, so for `(IJ)V` it skips `r3`. If Ghidra, without a prototype, shows the
   skipped register as a parameter, the count matches neither layout and the method gets the
   *too many* warning. The 32-bit regression fixture is `x86`, whose cdecl ABI has no padding.
+- **A stripped 32-bit x86 export may show no parameters, and has no return value.** For a
+  function nothing in the library calls, which is every JNI entry point, Ghidra recovers cdecl
+  stack parameters only when the function reads the lowest slots too: one that ignores `env` and
+  `jobject` gets no parameters at all, and the *no prototype* warning. It never infers a return
+  value for such a function, so taint cannot come back to Java through one. Separately, the pcode
+  frontend does not model a 64-bit return (`EDX:EAX`) on x86 as one value, even with DWARF. The
+  `JniWide` regression case is shaped around all three.
 - **Only context-free summaries cross from a summary project.** `--summary` maps `summary` rows,
   not `context_summary` or `critical_summary`, so a flow in the library that depends on resolving
   an indirect call is lost.
