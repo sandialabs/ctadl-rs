@@ -1547,9 +1547,9 @@ fn parse_addr2line_line(output: &str) -> Option<i64> {
 /// (cross-)compiler, fall back to the native tools.
 ///
 /// `abi` is the Android ABI a JNI case builds for. `x86` selects the 32-bit x86 toolchain, with
-/// no fallback: a native compiler would build the wrong ABI, so the case skips when the `i686`
-/// one is not on PATH. Every other ABI gets the x86_64 one -- the ABI directory a library is
-/// packaged under is a label, and Ghidra disassembles whatever it actually is.
+/// no fallback: a native compiler would build the wrong ABI. Every other ABI gets the x86_64 one
+/// -- the ABI directory a library is packaged under is a label, and Ghidra disassembles whatever
+/// it actually is.
 fn pick_toolchain(abi: &str) -> (String, String) {
     if abi == "x86" {
         for prefix in ["i686-unknown-linux-gnu-", "i686-linux-gnu-"] {
@@ -2115,8 +2115,7 @@ fn from_summary_links(index_log: &str) -> Option<usize> {
 ///     the reported native addresses map back to, via [`native_lines`]. This is the
 ///     claim that the taint is where it should be on the far side, in the artifact it
 ///     should be in -- not merely that a Java-side flow exists. Skipped when `lib` is
-///     `None`: a `+summary` case reaches the library only through its summaries, so no
-///     result is located inside it.
+///     `None`.
 ///
 /// There is deliberately no Darwin self-skip, unlike [`check_pcode_case`]: every
 /// criterion here, native lines included, is satisfied on Darwin today. If Ghidra

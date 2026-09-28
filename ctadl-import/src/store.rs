@@ -123,9 +123,8 @@ pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<Progr
 
 /// Reads only the [`VirtualMethodTable`] of an import, leaving its program IR on disk.
 ///
-/// The VMT is small next to the program. Code that needs an import's symbol table and nothing
-/// else -- the JNI bridge reading a `--summary` project's libraries -- calls this rather than
-/// [`load_import`], which calls it too, so the two read the same table.
+/// The VMT is small next to the program. [`load_import`] calls this too, so the two read the
+/// same table.
 ///
 /// # Errors
 ///

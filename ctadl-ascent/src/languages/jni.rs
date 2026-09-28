@@ -116,13 +116,8 @@ Where the declared parameters land depends on the [`NativeSlotModel`]:
 | `SplitWide` | 32-bit ABIs (`armeabi-v7a`, `x86`) only | 2 consecutive native indices (low, high) | 1 native index |
 
 A 32-bit ABI passes a `long` or `double` in two registers or stack words, and a disassembler that
-recovered no types shows two parameters. Under `SplitWide` the one Java slot maps to both halves,
-so taint reaches whichever half the native code reads. [`choose_layout`] picks the layout per
-method, from the library's ABI ([`NativeAbi`], read off its ELF header) and the parameter count
-Ghidra recovered ([`NativeProto`], read off the native VMT): `Typed` when the count matches it,
-else `SplitWide` on a 32-bit ABI when the count matches that, else `Typed` with a warning (see
-Diagnostics). The Dex descriptor is authoritative; the recovered count only chooses between the
-layouts it allows.
+recovered no types shows two parameters. [`choose_layout`] picks the layout per method, from the
+library's ABI ([`NativeAbi`]) and the parameter count Ghidra recovered ([`NativeProto`]).
 
 The Java-side *slot* of parameter *k* is frontend-dependent and is not `k` in general, which is
 what [`SlotModel`] captures: Dex numbers parameters by *register*, so `long`/`double` consume two
@@ -147,20 +142,10 @@ ctadl index appproj app --no-native-libs --summary xproj
 ctadl query appproj -m models.json
 ```
 
-For each import of a summary project, `cli::index` reads the symbol table (the VMT only, through
-[`ctadl_import::load_vmt`]) and the `RegisterNatives` tables, and feeds them to
-[`JniObserver::observe_native_vmt`] with [`Origin::Summary`]. It never loads the library's IR. A
-summary project contributes native *targets* only: a Java `native` it declares has no stub in this
-fact base, so it is not observed. An import that is also in the current project, or in an earlier
-summary project, is read once, since two observations would make every one of its symbols
-ambiguous.
-
-[`link`] then interns a summary-sourced target with `get_or_add_function` and emits the same
-bridge a co-indexed target gets. The summaries `--summary` maps in afterwards are filtered to
-functions in the current `IdMap`, which now includes that target, and the index engine replays
-them over the bridge's call edge. [`LinkStats::from_summary`] counts these links, and the index
-logs how many mapped summaries belong to them. A summary-sourced target with no summaries at all
-gets a warning, since its bridge carries no flow and nothing else would say so.
+`cli::index` feeds the observer the symbol and `RegisterNatives` tables of each summary project's
+imports, never their IR, as native targets with [`Origin::Summary`]. [`link`] links a Java
+`native` to such a target as it would to a co-indexed one, and the summaries `--summary` maps in
+carry the flow across the bridge. [`LinkStats::from_summary`] counts these links.
 
 `--no-jni-bridge` skips all of this, and `--no-jni-registry` skips the summary projects' tables
 as it does the current project's.
@@ -184,18 +169,10 @@ The pass warns, at `warn` level, on what it cannot resolve silently:
   short form, or several native functions carry the matched symbol name. The method is skipped. A
   `RegisterNatives` binding resolves this case outright, since it names the descriptor.
 - **A native prototype that does not fit the descriptor.** The implementation resolved, but the
-  parameter count Ghidra recovered is not what the Dex descriptor implies under any layout (see
-  [`choose_layout`]). One warning per method, each counted in [`LinkStats::prototype_mismatch`];
-  the link is emitted either way:
-  - *No prototype recovered.* The function has no parameters in the IR, so no argument flows,
-    and it has no return value either.
-  - *Too few parameters.* The arguments past the last recovered one have nothing on the far
-    side to flow into.
-  - *Too many parameters* (and not varargs). The arguments may be mis-slotted.
-
-  Build the library with `-g` (or otherwise give Ghidra the types) and re-import. The check reads
-  the count off the native VMT, so a co-indexed target and a summary-sourced one are checked the
-  same way.
+  parameter count Ghidra recovered is not what the Dex descriptor implies under any layout: none
+  recovered, too few, or too many (see [`ProtoCheck`]). One warning per method, each counted in
+  [`LinkStats::prototype_mismatch`]; the link is emitted either way. Build the library with `-g`
+  (or otherwise give Ghidra the types) and re-import.
 - **A registration that disagrees with a symbol.** Both bindings exist and name different
   functions; the registration wins, as it does at run time.
 
@@ -719,8 +696,7 @@ impl JniObserver {
     }
 
     /// Records the native half of one import: its symbol table. `origin` says whether the import
-    /// belongs to this project or to a `--summary` project; a summary import contributes only
-    /// this half, read with [`ctadl_import::load_vmt`] and never codegen'd.
+    /// belongs to this project or to a `--summary` project.
     ///
     /// Call it at most once per import. A second call puts two targets under every symbol, and
     /// the bridge then reports each as ambiguous.
@@ -826,8 +802,7 @@ impl std::fmt::Display for LinkStats {
 pub struct LinkOutcome {
     pub stats: LinkStats,
     /// Every native function at least one method was linked to, once each, with where it was
-    /// observed. `cli::index` counts the summaries a `--summary` project supplied for each one,
-    /// since a bridge whose target got none produces no flow and no error.
+    /// observed.
     pub targets: BTreeMap<FunctionId, NativeTarget>,
 }
 
@@ -979,8 +954,6 @@ pub fn link(
         }
         let ports = port_map(&nat.descriptor, nat.is_static, nat.slots, layout)
             .expect("the descriptor parsed above");
-        // A no-op for a co-indexed target. A summary-only one is interned here: the index
-        // engine replays its summaries over the call edge by id, so the id is all it needs.
         let native_id = source_info
             .sites
             .get_or_add_function(facts::Function(function.into()));
@@ -1013,8 +986,6 @@ fn warn_on_proto_check(method: &str, function: &str, check: &ProtoCheck) -> bool
              recovered no prototype, so no argument and no return value will flow. Build the \
              library with -g (or otherwise give Ghidra its types) and re-import"
         ),
-        // An incomplete prototype is the one failure mode that silently drops arguments: a
-        // mapped port past the recovered arity has no formal on the far side to flow into.
         ProtoCheck::TooFew {
             recovered,
             expected,

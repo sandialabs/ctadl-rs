@@ -178,8 +178,7 @@ pub struct IndexConfig {
     #[serde(default)]
     pub call_policy: Option<CallPolicyRecord>,
     /// Import name -> the [`ArtifactImport::hash`] it had when this index was written, for each
-    /// of the project's imports that recorded one. A project that uses this one as a `--summary`
-    /// compares these against the imports' current hashes to notice a summary that went stale.
+    /// of the project's imports that recorded one.
     ///
     /// Empty for an index written before this field existed. The field is additive, so
     /// [`INDEX_FORMAT_VERSION`] did not change for it.
@@ -644,15 +643,13 @@ pub enum SubImports {
     #[default]
     All,
     /// Every sub-import except the native libraries, i.e. those whose language is
-    /// [`ArtifactLanguage::Pcode`]. An XAPK's split APKs are kept. This is `ctadl index
-    /// --no-native-libs`, for indexing an app's Java half against a `--summary` project that
-    /// indexed one of its libraries on its own.
+    /// [`ArtifactLanguage::Pcode`]. An XAPK's split APKs are kept.
     NoNativeLibs,
 }
 
 impl SubImports {
     /// Whether the expanded sub-import `name` stays in the project. A sub-import whose config
-    /// cannot be loaded is kept, as it always has been: `cli::index` reports it properly.
+    /// cannot be loaded is kept.
     fn keeps(self, name: &str) -> bool {
         match self {
             SubImports::All => true,
@@ -703,8 +700,7 @@ impl AnalysisProject {
     /// left exactly as it was. Nothing that reads or writes the project's directory may be
     /// called on the result -- notably [`Self::index_path`], which creates it.
     ///
-    /// `sub_imports` says which expanded sub-imports to keep; see [`SubImports`]. It never drops
-    /// a name in `import_names`.
+    /// `sub_imports` says which expanded sub-imports to keep; see [`SubImports`].
     pub fn ephemeral<S: AsRef<str>>(
         name: &str,
         import_names: &[S],

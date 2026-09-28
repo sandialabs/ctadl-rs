@@ -366,14 +366,9 @@ const MAX_STRING: usize = 512;
 pub const ELF_IDENT_PREFIX: usize = 20;
 
 /// An ELF file's `(e_machine, EI_CLASS)`, read from the first [`ELF_IDENT_PREFIX`] bytes. `None`
-/// for a zero-length file, a truncated header, a foreign magic, or an unknown class or byte
-/// order.
-///
-/// The JNI bridge calls this to tell a 32-bit library from a 64-bit one, and on which
-/// architecture, without loading the whole file.
+/// for a zero-length file, a truncated header, a foreign magic (the corpus has `PK\x03\x04`,
+/// `\x7fKOM` and `SKCL`), or an unknown class or byte order.
 pub fn elf_machine_class(data: &[u8]) -> Option<(u16, u8)> {
-    // Three separate quiet returns, all of which the corpus contains: a zero-length file, a
-    // truncated header, and a foreign magic (`PK\x03\x04`, `\x7fKOM`, `SKCL`).
     let ident = data.get(..ELF_IDENT_PREFIX)?;
     if ident[..4] != elf::ELFMAG {
         return None;
@@ -393,9 +388,8 @@ pub fn elf_machine_class(data: &[u8]) -> Option<(u16, u8)> {
     Some((machine, class))
 }
 
-/// Scans an ELF image for `JNINativeMethod` tables. `None` when `data` is not an ELF this build
-/// understands -- a truncated header, a foreign magic, an empty file -- which are all things the
-/// reference corpus actually contains under `lib/<abi>/*.so`.
+/// Scans an ELF image for `JNINativeMethod` tables. `None` for anything [`elf_machine_class`]
+/// rejects, all of which the reference corpus contains under `lib/<abi>/*.so`.
 fn scan_bytes(data: &[u8]) -> Option<Scan> {
     match elf_machine_class(data)?.1 {
         elf::ELFCLASS32 => scan_elf::<elf::FileHeader32<Endianness>>(data),

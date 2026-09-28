@@ -291,8 +291,7 @@ pub fn index(
     );
 
     // Every import's functions are interned by now, which is what the bridge needs to resolve a
-    // Java `native` stub and its `Java_…` implementation to two ids in the same map. A native
-    // target observed only in a summary project is interned by the link itself.
+    // Java `native` stub and its `Java_…` implementation to two ids in the same map.
     let jni_targets = if no_jni_bridge {
         Default::default()
     } else {
@@ -1073,11 +1072,7 @@ fn dump_taint_graph_dot(
 
 /// Feeds the JNI observer the native half of every import of the `--summary` projects: each
 /// import's symbol table, read without its program IR, and unless `no_jni_registry` its
-/// `RegisterNatives` tables.
-///
-/// Only the native half: a Java `native` declared in a summary project has no stub in this fact
-/// base to link. An import that is also one of this project's, or of an earlier summary project,
-/// is skipped, since observing it twice would make every one of its symbols ambiguous.
+/// `RegisterNatives` tables. Imports already observed are skipped; see [`summary_imports`].
 fn observe_summary_natives(
     project: &AnalysisProject,
     summary_projects: &[AnalysisProject],
@@ -1245,10 +1240,8 @@ fn report_bridged_summaries(
 
 /// Maps a previously indexed project's summaries into the current project.
 ///
-/// A summary is kept only when its function is in the current project's `IdMap` by name. That
-/// includes a native function the JNI bridge linked to and interned from a summary project,
-/// which is why this runs after [`jni::link`]. `mapped_per_function` counts the summaries kept
-/// per function in the current project.
+/// A summary is kept only when its function is in the current project's `IdMap` by name.
+/// `mapped_per_function` counts the summaries kept per function in the current project.
 ///
 /// Only context-free `summary` rows are mapped; `context_summary` and `critical_summary` are
 /// not.
