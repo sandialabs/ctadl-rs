@@ -187,6 +187,10 @@
             # Where it is not cross (x86_64 Linux) it collapses to the native
             # gcc, which is the right linker there anyway.
             pkgs.pkgsCross.gnu64.stdenv.cc
+            # The 32-bit x86 toolchain (`i686-unknown-linux-gnu-` prefixed, so it
+            # claims no `cc` either), for the JNI cases that need a 32-bit
+            # library: the ABI on which a `long` arrives split in two.
+            pkgs.pkgsCross.gnu32.stdenv.cc
             pkgs.binutils
             dex-reader
             jvm-reader

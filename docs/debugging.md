@@ -49,6 +49,9 @@ See summaries from the index:
 select * from summary.parquet join function_id.parquet on summary.func_id = function_id.id limit 10;
 ```
 
+`ctadl inspect <index>/function_id.parquet` prints the same function table without duckdb,
+one `<id> function(<name>)` per line.
+
 Get functions endpoints are in:
 
 ```sql

@@ -104,9 +104,20 @@ declares. [`port_map`] maps ports across that shift:
 | --- | --- |
 | -- (nothing) | `0` -- `JNIEnv *env` |
 | `this`, instance methods only | `1` -- `jobject` / `jclass` |
-| declared parameter *k* | `2 + k` |
+| declared parameter *k* | the next native index, or the next two for a split `long`/`double` |
 | return value | return value |
 | globals | globals |
+
+Where the declared parameters land depends on the [`NativeSlotModel`]:
+
+| Layout | Used for | Declared `J`/`D` | Everything else |
+| --- | --- | --- | --- |
+| `Typed` | every ABI when the recovered count matches it; the default | 1 native index | 1 native index |
+| `SplitWide` | 32-bit ABIs (`armeabi-v7a`, `x86`) only | 2 consecutive native indices (low, high) | 1 native index |
+
+A 32-bit ABI passes a `long` or `double` in two registers or stack words, and a disassembler that
+recovered no types shows two parameters. [`choose_layout`] picks the layout per method, from the
+library's ABI ([`NativeAbi`]) and the parameter count Ghidra recovered ([`NativeProto`]).
 
 The Java-side *slot* of parameter *k* is frontend-dependent and is not `k` in general, which is
 what [`SlotModel`] captures: Dex numbers parameters by *register*, so `long`/`double` consume two
@@ -117,6 +128,27 @@ Only the *normal* return is mapped: a Java function has return arity 2 (normal a
 a native function has one, and a JNI implementation cannot throw into the second. Globals are
 threaded through exactly as they are at a real call site. Because ports are bidirectional,
 by-reference out-parameters and the return value come back across the boundary with no extra work.
+
+# Linking against a summary project
+
+The native half does not have to be co-indexed. `ctadl index app --no-native-libs --summary xproj`
+indexes the app's Java half alone, against a project `xproj` that indexed one of its libraries on
+its own:
+
+```sh
+ctadl import app.apk
+ctadl index xproj app__arm64-v8a__libX
+ctadl index appproj app --no-native-libs --summary xproj
+ctadl query appproj -m models.json
+```
+
+`cli::index` feeds the observer the symbol and `RegisterNatives` tables of each summary project's
+imports, never their IR, as native targets with [`Origin::Summary`]. [`link`] links a Java
+`native` to such a target as it would to a co-indexed one, and the summaries `--summary` maps in
+carry the flow across the bridge. [`LinkStats::from_summary`] counts these links.
+
+`--no-jni-bridge` skips all of this, and `--no-jni-registry` skips the summary projects' tables
+as it does the current project's.
 
 # Reading the results
 
@@ -136,10 +168,11 @@ The pass warns, at `warn` level, on what it cannot resolve silently:
 - **Ambiguity.** Either the class has several native overloads of a name whose only symbol is the
   short form, or several native functions carry the matched symbol name. The method is skipped. A
   `RegisterNatives` binding resolves this case outright, since it names the descriptor.
-- **An incomplete native prototype.** The implementation resolved, but the disassembler recovered
-  fewer parameters than the port map needs -- Ghidra gives a function with no recovered prototype
-  zero parameters at all -- so some arguments have nothing on the far side to flow into. Build the
-  library with `-g` (or otherwise give Ghidra the types) and re-import.
+- **A native prototype that does not fit the descriptor.** The implementation resolved, but the
+  parameter count Ghidra recovered is not what the Dex descriptor implies under any layout: none
+  recovered, too few, or too many (see [`ProtoCheck`]). One warning per method, each counted in
+  [`LinkStats::prototype_mismatch`]; the link is emitted either way. Build the library with `-g`
+  (or otherwise give Ghidra the types) and re-import.
 - **A registration that disagrees with a symbol.** Both bindings exist and name different
   functions; the registration wins, as it does at run time.
 
@@ -169,6 +202,30 @@ legitimately has one per `native` declaration. So do unattributed table entries.
 - **An index written before this feature cannot be queried**, since the per-import span provenance
   above is an index format change. `ctadl query` on an older index says so and asks for a
   re-`index`.
+- **Floating-point parameters may be mis-slotted.** On `arm64-v8a`, `x86_64` and hard-float
+  targets, `float` and `double` arrive in FP registers. Without a recovered prototype, Ghidra may
+  list them after the integer parameters rather than in declaration order, and `Typed` then maps
+  them to the wrong native indices. The count check cannot see this.
+- **The prototype check compares counts only.** The pcode frontend records `_` for every
+  parameter type, so a mis-slotting that keeps the count right passes silently. Checking types
+  needs the frontend to record them.
+- **`armeabi-v7a` register-pair padding is not modelled.** AAPCS passes a 64-bit argument in an
+  even/odd register pair, so for `(IJ)V` it skips `r3`. If Ghidra, without a prototype, shows the
+  skipped register as a parameter, the count matches neither layout and the method gets the
+  *too many* warning. The 32-bit regression fixture is `x86`, whose cdecl ABI has no padding.
+- **A stripped 32-bit x86 export may show no parameters, and has no return value.** For a
+  function nothing in the library calls, which is every JNI entry point, Ghidra recovers cdecl
+  stack parameters only when the function reads the lowest slots too: one that ignores `env` and
+  `jobject` gets no parameters at all, and the *no prototype* warning. It never infers a return
+  value for such a function, so taint cannot come back to Java through one. Separately, the pcode
+  frontend does not model a 64-bit return (`EDX:EAX`) on x86 as one value, even with DWARF. The
+  `JniWide` regression case is shaped around all three.
+- **Only context-free summaries cross from a summary project.** `--summary` maps `summary` rows,
+  not `context_summary` or `critical_summary`, so a flow in the library that depends on resolving
+  an indirect call is lost.
+- **A result through a summary-sourced native is located on the Java side only.** The library's
+  instructions are not in the app's index, only its summaries, so the SARIF has no location
+  inside it. Co-index the library to see the native half of a flow.
 
 # See also
 
@@ -233,6 +290,221 @@ impl SlotModel {
             _ => 1,
         }
     }
+}
+
+/// The ABI a native library was built for, which decides how a `long` or `double` argument
+/// arrives: in one native parameter on a 64-bit ABI, possibly in two on a 32-bit one.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum NativeAbi {
+    /// `arm64-v8a`.
+    Arm64,
+    /// `x86_64`.
+    X86_64,
+    /// `armeabi-v7a` (and `armeabi`).
+    Arm32,
+    /// `x86`.
+    X86,
+    /// Not an ELF this recognizes, or no artifact to read. Treated like the 64-bit ABIs.
+    Unknown,
+}
+
+impl NativeAbi {
+    /// The ABI of an import, read from the ELF header of its artifact. For an APK's native
+    /// sub-import that is the `.so` extracted into the store. A non-ELF file, a missing artifact
+    /// or a Ghidra-server URL gives [`NativeAbi::Unknown`].
+    pub fn of(import: &ArtifactImport) -> Self {
+        use std::io::Read;
+        if crate::project::is_ghidra_server_url(&import.artifact_path) {
+            return NativeAbi::Unknown;
+        }
+        let mut header = [0u8; registry::ELF_IDENT_PREFIX];
+        let read = std::fs::File::open(&import.artifact_path)
+            .and_then(|mut file| file.read_exact(&mut header));
+        match read {
+            Ok(()) => Self::from_elf_header(&header),
+            Err(_) => NativeAbi::Unknown,
+        }
+    }
+
+    /// The ABI named by the start of an ELF file. See [`registry::elf_machine_class`].
+    pub fn from_elf_header(data: &[u8]) -> Self {
+        use object::elf;
+        match registry::elf_machine_class(data) {
+            Some((elf::EM_AARCH64, elf::ELFCLASS64)) => NativeAbi::Arm64,
+            Some((elf::EM_X86_64, elf::ELFCLASS64)) => NativeAbi::X86_64,
+            Some((elf::EM_ARM, elf::ELFCLASS32)) => NativeAbi::Arm32,
+            Some((elf::EM_386, elf::ELFCLASS32)) => NativeAbi::X86,
+            _ => NativeAbi::Unknown,
+        }
+    }
+
+    /// Whether a `long`/`double` argument can arrive split across two native parameters.
+    pub fn is_32bit(self) -> bool {
+        matches!(self, NativeAbi::Arm32 | NativeAbi::X86)
+    }
+}
+
+/// The prototype Ghidra recovered for a native function, as far as the pcode frontend records
+/// it: a parameter count and a varargs flag. Parameter types are not recorded.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum NativeProto {
+    /// No prototype was recovered. The function has no parameters in the IR at all.
+    Unknown,
+    /// `params` recovered parameters, plus `...` when `vararg`.
+    Known { params: usize, vararg: bool },
+}
+
+impl NativeProto {
+    /// Parses a native VMT signature. The pcode frontend writes `ret(_, _, …)`, one `_` per
+    /// recovered parameter and a trailing `...` for varargs, or `()` when Ghidra recovered no
+    /// prototype. Anything else is [`NativeProto::Unknown`].
+    pub fn parse(sig: &str) -> Self {
+        // The parameter list is the *last* parenthesized group: a return type may hold
+        // parentheses of its own (a function pointer), and parameters are only `_` and `...`.
+        let Some((ret, params)) = sig.trim().rsplit_once('(') else {
+            return NativeProto::Unknown;
+        };
+        let Some(params) = params.strip_suffix(')') else {
+            return NativeProto::Unknown;
+        };
+        if ret.trim().is_empty() {
+            return NativeProto::Unknown;
+        }
+        let (mut count, mut vararg) = (0, false);
+        for param in params.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            if param == "..." {
+                vararg = true;
+            } else {
+                count += 1;
+            }
+        }
+        NativeProto::Known {
+            params: count,
+            vararg,
+        }
+    }
+}
+
+/// Where a native target was observed.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum Origin {
+    /// An import of the project being indexed.
+    Current,
+    /// An import of the named `--summary` project. Its code is not in this index; only its
+    /// symbol table, its `RegisterNatives` tables and its saved summaries are.
+    Summary(String),
+}
+
+/// One native function the bridge can link a Java `native` method to.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeTarget {
+    /// The fully-qualified IR function name, which is what the call edge targets.
+    pub function: String,
+    pub proto: NativeProto,
+    pub abi: NativeAbi,
+    pub origin: Origin,
+}
+
+/// How a native implementation receives its declared parameters, past `JNIEnv *` and the
+/// `jobject`/`jclass`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum NativeSlotModel {
+    /// One native parameter per declared parameter, wide or not. What every ABI does when the
+    /// disassembler recovered a typed prototype, and the default.
+    Typed,
+    /// A `long`/`double` recovered as two consecutive native parameters (low half, then high
+    /// half), everything else as one. What a 32-bit ABI looks like to a disassembler that
+    /// recovered no types: the value really does arrive in two registers or stack words.
+    SplitWide,
+}
+
+impl NativeSlotModel {
+    /// How many native parameters a parameter of this type descriptor occupies.
+    fn width(self, descriptor: &str) -> i16 {
+        match self {
+            NativeSlotModel::SplitWide if is_wide(descriptor) => 2,
+            _ => 1,
+        }
+    }
+
+    /// How many native parameters a method with these declared parameters has under this
+    /// layout, `JNIEnv *` and the `jobject`/`jclass` included.
+    fn count(self, params: &[&str]) -> usize {
+        2 + params.iter().map(|p| self.width(p) as usize).sum::<usize>()
+    }
+}
+
+/// Whether a parameter descriptor is a `long` or a `double`.
+fn is_wide(descriptor: &str) -> bool {
+    descriptor == "J" || descriptor == "D"
+}
+
+/// What the prototype check found for one linked method. See [`choose_layout`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProtoCheck {
+    /// The recovered count is the one the chosen layout implies.
+    Match,
+    /// Ghidra recovered no prototype, so the native function has no parameters in the IR.
+    NoPrototype,
+    /// Fewer native parameters were recovered than the chosen layout needs; the arguments past
+    /// the last recovered one have nothing to flow into.
+    TooFew { recovered: usize, expected: usize },
+    /// More were recovered than any layout implies, so the arguments may be mis-slotted.
+    /// `split` is the `SplitWide` count when that layout applies to this ABI and method.
+    TooMany {
+        recovered: usize,
+        typed: usize,
+        split: Option<usize>,
+    },
+}
+
+/// Chooses the native slot layout for one linked method and checks its recovered prototype.
+///
+/// The Dex descriptor is authoritative; the recovered count only picks between the layouts it
+/// allows:
+///
+/// 1. If the count equals the [`NativeSlotModel::Typed`] count, use `Typed`.
+/// 2. Otherwise, on a 32-bit ABI, for a method with a `long`/`double` parameter, if it equals
+///    the [`NativeSlotModel::SplitWide`] count, use `SplitWide`.
+/// 3. Otherwise use `Typed`, and report the mismatch.
+///
+/// A varargs prototype with more parameters than the layout needs is not a mismatch.
+pub fn choose_layout(
+    params: &[&str],
+    proto: NativeProto,
+    abi: NativeAbi,
+) -> (NativeSlotModel, ProtoCheck) {
+    let typed = NativeSlotModel::Typed.count(params);
+    let split = (abi.is_32bit() && params.iter().any(|p| is_wide(p)))
+        .then(|| NativeSlotModel::SplitWide.count(params));
+    let NativeProto::Known {
+        params: recovered,
+        vararg,
+    } = proto
+    else {
+        return (NativeSlotModel::Typed, ProtoCheck::NoPrototype);
+    };
+    if recovered == typed {
+        return (NativeSlotModel::Typed, ProtoCheck::Match);
+    }
+    if split == Some(recovered) {
+        return (NativeSlotModel::SplitWide, ProtoCheck::Match);
+    }
+    let check = if recovered < typed {
+        ProtoCheck::TooFew {
+            recovered,
+            expected: typed,
+        }
+    } else if vararg {
+        ProtoCheck::Match
+    } else {
+        ProtoCheck::TooMany {
+            recovered,
+            typed,
+            split,
+        }
+    };
+    (NativeSlotModel::Typed, check)
 }
 
 // ---------------------------------------------------------------------------
@@ -312,28 +584,35 @@ pub fn param_descriptor(descriptor: &str) -> Option<String> {
 /// The `(java_index, native_index)` port pairs for one native method, including `this`, the return
 /// value and the globals pseudo-parameter.
 ///
-/// The native side is fixed by the JNI ABI: index 0 is `JNIEnv *` (never mapped), index 1 is the
-/// receiver `jobject` for an instance method or the declaring `jclass` for a static one, and
-/// declared parameter *k* lands at `2 + k`. The Java side depends on `slots`. Only `-1` is mapped
-/// for returns: a Java function has return arity 2 (`-1` normal, `-2` exception) while a native
-/// function has one.
+/// The native side is fixed by the JNI ABI up to `native`: index 0 is `JNIEnv *` (never mapped),
+/// index 1 is the receiver `jobject` for an instance method or the declaring `jclass` for a static
+/// one, and the declared parameters follow from index 2, one native index each under
+/// [`NativeSlotModel::Typed`]. Under [`NativeSlotModel::SplitWide`] a `long`/`double` takes two,
+/// and its one Java slot is mapped to *both*, so taint reaches whichever half the native code
+/// reads. The Java side depends on `slots`. Only `-1` is mapped for returns: a Java function has
+/// return arity 2 (`-1` normal, `-2` exception) while a native function has one.
 ///
 /// Returns `None` if `descriptor` is not a well-formed method descriptor.
 pub fn port_map(
     descriptor: &str,
     is_static: bool,
     slots: SlotModel,
+    native: NativeSlotModel,
 ) -> Option<Vec<(FormalIndex, FormalIndex)>> {
     let params = descriptor_params(descriptor)?;
-    let mut ports = Vec::with_capacity(params.len() + 3);
+    let mut ports = Vec::with_capacity(2 * params.len() + 3);
     let mut java: i16 = 0;
     if !is_static {
         // The receiver occupies slot 0 on both Java frontends, and arrives as the `jobject`.
         ports.push((FormalIndex::new(0), FormalIndex::new(1)));
         java = 1;
     }
-    for (native, p) in (2_i16..).zip(params) {
-        ports.push((FormalIndex::new(java), FormalIndex::new(native)));
+    let mut next: i16 = 2;
+    for p in params {
+        for _ in 0..native.width(p) {
+            ports.push((FormalIndex::new(java), FormalIndex::new(next)));
+            next += 1;
+        }
         java += slots.width(p);
     }
     ports.push((RETURN_INDEX.into(), RETURN_INDEX.into()));
@@ -372,8 +651,8 @@ struct JavaNative {
 #[derive(Default, Debug)]
 pub struct JniObserver {
     natives: Vec<JavaNative>,
-    /// Native simple name -> the fully-qualified IR function name(s) carrying it.
-    symbols: BTreeMap<String, Vec<String>>,
+    /// Native simple name -> the native function(s) carrying it.
+    symbols: BTreeMap<String, Vec<NativeTarget>>,
     /// One entry per import that shipped a `jni-registry.json`: its name, and the tables
     /// recovered from it.
     ///
@@ -387,43 +666,63 @@ impl JniObserver {
         Self::default()
     }
 
-    /// Records one import's contribution. Call it per import, before `codegen_program` consumes the
-    /// [`ProgramInfo`]. `slots` describes how *this* frontend numbers parameters; see
-    /// [`SlotModel::for_language`].
-    pub fn observe(&mut self, program_info: &ProgramInfo, slots: SlotModel) {
-        match &program_info.vmt {
-            VirtualMethodTable::Java { natives, .. } => {
-                for (cls, name, sig, method, is_static) in natives {
-                    let (cls, name, sig, method): (&str, &str, &str, &str) =
-                        (cls, name, sig, method);
-                    self.natives.push(JavaNative {
-                        method: method.to_string(),
-                        class_internal: internal_class_name(cls).to_string(),
-                        simple_name: name.to_string(),
-                        descriptor: sig.to_string(),
-                        is_static: *is_static,
-                        slots,
-                    });
-                }
-            }
-            VirtualMethodTable::Native { methods } => {
-                // Match against the *simple* name, not the IR function name: the pcode frontend
-                // decorates the latter (uniquing suffixes, `<EXTERNAL>::sym@addr`) and already
-                // strips the leading underscore Mach-O prefixes every C symbol with.
-                for (simple, _sig, func, _qualified) in methods {
-                    let (simple, func): (&str, &str) = (simple, func);
-                    self.symbols
-                        .entry(simple.to_string())
-                        .or_default()
-                        .push(func.to_string());
-                }
-            }
-            VirtualMethodTable::Lua { .. } | VirtualMethodTable::Unknown => {}
+    /// Records one import of the project being indexed: both its Java `native` methods and its
+    /// native symbol table, whichever it has. Call it per import, before `codegen_program`
+    /// consumes the [`ProgramInfo`]. `slots` describes how *this* frontend numbers parameters
+    /// (see [`SlotModel::for_language`]), and `abi` what a native import was built for (see
+    /// [`NativeAbi::of`]).
+    pub fn observe(&mut self, program_info: &ProgramInfo, slots: SlotModel, abi: NativeAbi) {
+        self.observe_java(&program_info.vmt, slots);
+        self.observe_native_vmt(&program_info.vmt, abi, Origin::Current);
+    }
+
+    /// Records the Java half of one import: the methods it declares `native`. Only imports of
+    /// the project being indexed contribute these, since only their stubs are in the fact base.
+    pub fn observe_java(&mut self, vmt: &VirtualMethodTable, slots: SlotModel) {
+        let VirtualMethodTable::Java { natives, .. } = vmt else {
+            return;
+        };
+        for (cls, name, sig, method, is_static) in natives {
+            let (cls, name, sig, method): (&str, &str, &str, &str) = (cls, name, sig, method);
+            self.natives.push(JavaNative {
+                method: method.to_string(),
+                class_internal: internal_class_name(cls).to_string(),
+                simple_name: name.to_string(),
+                descriptor: sig.to_string(),
+                is_static: *is_static,
+                slots,
+            });
+        }
+    }
+
+    /// Records the native half of one import: its symbol table. `origin` says whether the import
+    /// belongs to this project or to a `--summary` project.
+    ///
+    /// Call it at most once per import. A second call puts two targets under every symbol, and
+    /// the bridge then reports each as ambiguous.
+    pub fn observe_native_vmt(&mut self, vmt: &VirtualMethodTable, abi: NativeAbi, origin: Origin) {
+        let VirtualMethodTable::Native { methods } = vmt else {
+            return;
+        };
+        // Match against the *simple* name, not the IR function name: the pcode frontend
+        // decorates the latter (uniquing suffixes, `<EXTERNAL>::sym@addr`) and already strips
+        // the leading underscore Mach-O prefixes every C symbol with.
+        for (simple, sig, func, _qualified) in methods {
+            let (simple, sig, func): (&str, &str, &str) = (simple, sig, func);
+            self.symbols
+                .entry(simple.to_string())
+                .or_default()
+                .push(NativeTarget {
+                    function: func.to_string(),
+                    proto: NativeProto::parse(sig),
+                    abi,
+                    origin: origin.clone(),
+                });
         }
     }
 
     /// Records one import's recovered `RegisterNatives` tables, if it has any. Call it per
-    /// import, beside [`Self::observe`].
+    /// import, beside [`Self::observe`] or [`Self::observe_native_vmt`].
     ///
     /// # Errors
     ///
@@ -473,25 +772,47 @@ pub struct LinkStats {
     /// Recovered `RegisterNatives` entries that tier 1 could not attribute to a single class.
     /// Not a subset of anything above: it counts table entries, not Java methods.
     pub unattributed: usize,
+    /// Of those linked, ones whose implementation came from a `--summary` project rather than
+    /// from an import of this one. A subset of `linked`.
+    pub from_summary: usize,
+    /// Of those linked, ones whose recovered native prototype disagrees with what the Dex
+    /// descriptor implies. A subset of `linked`: the link is emitted anyway.
+    pub prototype_mismatch: usize,
 }
 
 impl std::fmt::Display for LinkStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} native method(s): {} linked ({} registered), {} unresolved, {} ambiguous",
-            self.natives, self.linked, self.registered, self.unresolved, self.ambiguous
+            "{} native method(s): {} linked ({} registered, {} from summary, {} prototype \
+             mismatch), {} unresolved, {} ambiguous",
+            self.natives,
+            self.linked,
+            self.registered,
+            self.from_summary,
+            self.prototype_mismatch,
+            self.unresolved,
+            self.ambiguous
         )
     }
 }
 
+/// What [`link`] did: the counts, and each native function it linked a method to.
+#[derive(Debug, Default, Clone)]
+pub struct LinkOutcome {
+    pub stats: LinkStats,
+    /// Every native function at least one method was linked to, once each, with where it was
+    /// observed.
+    pub targets: BTreeMap<FunctionId, NativeTarget>,
+}
+
 /// How a Java native method resolved against the native half.
 enum Resolution<'a> {
-    /// The mangled symbol (or, for a registered native, its registered name), and the IR
-    /// function name it belongs to.
+    /// The mangled symbol (or, for a registered native, its registered name), and the native
+    /// function it belongs to.
     Found {
         symbol: String,
-        function: &'a str,
+        target: &'a NativeTarget,
         /// True when this came from a recovered `RegisterNatives` table.
         registered: bool,
     },
@@ -507,20 +828,19 @@ enum Resolution<'a> {
 /// `actual_param` and `formal_param` rows that make taint cross the boundary.
 ///
 /// Call it after the import loop and before the facts are saved: that is the first point at which
-/// both programs' functions live in one [`crate::facts::IdMap`].
+/// both programs' functions live in one [`crate::facts::IdMap`]. The Java stub has to be in the
+/// fact base already. The native function is interned if it is not: that is the case for a
+/// target observed only in a `--summary` project, whose code this index never loads.
 pub fn link(
     obs: &JniObserver,
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
-) -> LinkStats {
-    let mut stats = LinkStats::default();
+) -> LinkOutcome {
+    let mut outcome = LinkOutcome::default();
     if obs.natives.is_empty() {
-        return stats;
+        return outcome;
     }
-
-    // Arity of each function *before* the bridge adds formals, so the diagnostic below reports
-    // what the frontend recovered rather than what this pass just synthesized.
-    let num_params = facts.compute_num_params();
+    let stats = &mut outcome.stats;
 
     // Two imports can declare the same method (an app and a library jar, say). One bridge is
     // enough -- both spellings intern to the same `FunctionId` -- and deduplicating here also
@@ -543,25 +863,34 @@ pub fn link(
             .or_default() += 1;
     }
 
-    let registered = attribute_registries(obs, &natives, &mut stats);
+    // IR function name -> its target, for the registry tier, whose tables name functions rather
+    // than symbols. The first observation wins: the project's own imports are observed before
+    // any summary project's.
+    let mut by_function: HashMap<&str, &NativeTarget> = HashMap::new();
+    for target in obs.symbols.values().flatten() {
+        by_function
+            .entry(target.function.as_str())
+            .or_insert(target);
+    }
+    let registered = attribute_registries(obs, &natives, &by_function, stats);
 
     for nat in natives {
         stats.natives += 1;
 
-        let (function, via_registry) = match resolve(nat, &obs.symbols, &overloads, &registered) {
+        let (target, via_registry) = match resolve(nat, &obs.symbols, &overloads, &registered) {
             Resolution::Found {
                 symbol,
-                function,
+                target,
                 registered,
             } => {
                 log::debug!(
                     "jni bridge: {} -> {} ({}{})",
                     nat.method,
-                    function,
+                    target.function,
                     if registered { "registered as " } else { "" },
                     symbol
                 );
-                (function, registered)
+                (target, registered)
             }
             Resolution::Ambiguous { symbol, reason } => {
                 log::warn!(
@@ -587,25 +916,18 @@ pub fn link(
             }
         };
 
-        // Both sides must already be interned; they are, unless an import was dropped.
-        let (Some(java_id), Some(native_id)) = (
-            source_info
-                .sites
-                .get_function_id(facts::Function(nat.method.as_str().into())),
-            source_info
-                .sites
-                .get_function_id(facts::Function(function.into())),
-        ) else {
-            log::debug!(
-                "jni bridge: '{}' or '{}' is not in the fact base",
-                nat.method,
-                function
-            );
+        let function = target.function.as_str();
+        // The stub must already be interned; it is, unless its import was dropped.
+        let Some(java_id) = source_info
+            .sites
+            .get_function_id(facts::Function(nat.method.as_str().into()))
+        else {
+            log::debug!("jni bridge: '{}' is not in the fact base", nat.method);
             stats.unresolved += 1;
             continue;
         };
 
-        let Some(ports) = port_map(&nat.descriptor, nat.is_static, nat.slots) else {
+        let Some(params) = descriptor_params(&nat.descriptor) else {
             log::warn!(
                 "jni bridge: not linking '{}': malformed descriptor '{}'",
                 nat.method,
@@ -614,37 +936,79 @@ pub fn link(
             stats.unresolved += 1;
             continue;
         };
-
-        // An incomplete prototype is the one failure mode that silently drops arguments: Ghidra
-        // gives a function with no recovered prototype zero parameters, and a mapped port past its
-        // arity then has no formal on the far side to flow into.
-        let expected = ports
-            .iter()
-            .map(|(_, native)| **native)
-            .filter(|native| *native >= 0)
-            .max()
-            .map_or(0, |highest| highest + 1);
-        let recovered = num_params.get(&native_id).copied().unwrap_or(0);
-        if recovered < expected {
-            log::warn!(
-                "jni bridge: '{}' resolves to '{}', which has {} recovered parameter(s) but needs \
-                 {}; the prototype is incomplete, so some argument(s) will not flow",
+        // Reads the count the frontend recovered off the target's VMT signature rather than off
+        // `formal_param`, so a summary-only target, which has no formals here, is checked
+        // exactly like a co-indexed one.
+        let (layout, check) = choose_layout(&params, target.proto, target.abi);
+        if layout == NativeSlotModel::SplitWide {
+            log::debug!(
+                "jni bridge: '{}' -> '{}': {:?} ABI, prototype has each long/double split in \
+                 two; using SplitWide",
                 nat.method,
                 function,
-                recovered,
-                expected
+                target.abi
             );
         }
+        if warn_on_proto_check(&nat.method, function, &check) {
+            stats.prototype_mismatch += 1;
+        }
+        let ports = port_map(&nat.descriptor, nat.is_static, nat.slots, layout)
+            .expect("the descriptor parsed above");
+        let native_id = source_info
+            .sites
+            .get_or_add_function(facts::Function(function.into()));
 
         emit_bridge(java_id, native_id, &ports, facts, source_info);
         stats.linked += 1;
         if via_registry {
             stats.registered += 1;
         }
+        if matches!(target.origin, Origin::Summary(_)) {
+            stats.from_summary += 1;
+        }
+        outcome
+            .targets
+            .entry(native_id)
+            .or_insert_with(|| target.clone());
     }
 
     log::info!("jni bridge: {}", stats);
-    stats
+    outcome
+}
+
+/// Warns about a prototype that does not fit its Dex descriptor, and says whether it did. The
+/// link is emitted either way.
+fn warn_on_proto_check(method: &str, function: &str, check: &ProtoCheck) -> bool {
+    match check {
+        ProtoCheck::Match => return false,
+        ProtoCheck::NoPrototype => log::warn!(
+            "jni bridge: '{method}' resolves to '{function}', for which the disassembler \
+             recovered no prototype, so no argument and no return value will flow. Build the \
+             library with -g (or otherwise give Ghidra its types) and re-import"
+        ),
+        ProtoCheck::TooFew {
+            recovered,
+            expected,
+        } => log::warn!(
+            "jni bridge: '{method}' resolves to '{function}', which has {recovered} recovered \
+             parameter(s) but needs {expected}; the prototype is incomplete, so the argument(s) \
+             above index {} will not flow",
+            recovered.saturating_sub(1)
+        ),
+        ProtoCheck::TooMany {
+            recovered,
+            typed,
+            split,
+        } => log::warn!(
+            "jni bridge: '{method}' resolves to '{function}', whose recovered prototype has \
+             {recovered} parameter(s) where the Dex descriptor implies {typed}{}; arguments may \
+             be mis-slotted",
+            split.map_or(String::new(), |split| format!(
+                " ({split} with each long/double split in two)"
+            ))
+        ),
+    }
+    true
 }
 
 /// Runs tier-1 attribution over every import's recovered tables and returns the resulting
@@ -656,9 +1020,10 @@ pub fn link(
 fn attribute_registries<'a>(
     obs: &'a JniObserver,
     natives: &[&'a JavaNative],
+    by_function: &HashMap<&str, &'a NativeTarget>,
     stats: &mut LinkStats,
-) -> HashMap<&'a str, &'a str> {
-    let mut links: HashMap<&'a str, &'a str> = HashMap::new();
+) -> HashMap<&'a str, &'a NativeTarget> {
+    let mut links: HashMap<&'a str, &'a NativeTarget> = HashMap::new();
     if obs.registries.is_empty() {
         return links;
     }
@@ -703,15 +1068,26 @@ fn attribute_registries<'a>(
             else {
                 continue;
             };
-            if let Some(previous) = links.insert(nat.method.as_str(), function)
-                && previous != function
+            // The scan names a function out of the same import's symbol table, so this finds
+            // it unless that import's VMT was not observed.
+            let Some(target) = by_function.get(function).copied() else {
+                log::debug!(
+                    "jni registry: '{}' is registered to '{}', which no observed symbol table \
+                     has",
+                    nat.method,
+                    function,
+                );
+                continue;
+            };
+            if let Some(previous) = links.insert(nat.method.as_str(), target)
+                && previous.function != target.function
             {
                 log::warn!(
                     "jni registry: '{}' is registered twice, to '{}' and '{}'; keeping the \
                      latter",
                     nat.method,
-                    previous,
-                    function,
+                    previous.function,
+                    target.function,
                 );
             }
         }
@@ -762,33 +1138,33 @@ fn attribute_registries<'a>(
 /// cannot be attributed.
 fn resolve<'a>(
     nat: &JavaNative,
-    symbols: &'a BTreeMap<String, Vec<String>>,
+    symbols: &'a BTreeMap<String, Vec<NativeTarget>>,
     overloads: &HashMap<(&str, &str), usize>,
-    registered: &HashMap<&'a str, &'a str>,
+    registered: &HashMap<&'a str, &'a NativeTarget>,
 ) -> Resolution<'a> {
-    if let Some(function) = registered.get(nat.method.as_str()).copied() {
+    if let Some(target) = registered.get(nat.method.as_str()).copied() {
         // Resolve the symbol side too, purely to notice a disagreement. `resolve` must still
         // return exactly one answer: `emit_bridge` mints a *fresh* site per call, so returning
         // both would double-bridge the method.
         if let Resolution::Found {
-            function: by_symbol,
+            target: by_symbol,
             symbol,
             ..
         } = resolve_by_symbol(nat, symbols, overloads)
-            && by_symbol != function
+            && by_symbol.function != target.function
         {
             log::warn!(
                 "jni bridge: '{}' is registered to '{}' but symbol '{}' names '{}'; using the \
                  registration, which is what the runtime does",
                 nat.method,
-                function,
+                target.function,
                 symbol,
-                by_symbol,
+                by_symbol.function,
             );
         }
         return Resolution::Found {
             symbol: nat.simple_name.clone(),
-            function,
+            target,
             registered: true,
         };
     }
@@ -798,13 +1174,13 @@ fn resolve<'a>(
 /// Tiers 1 and 2: the JNI name-mangling convention. See [`resolve`].
 fn resolve_by_symbol<'a>(
     nat: &JavaNative,
-    symbols: &'a BTreeMap<String, Vec<String>>,
+    symbols: &'a BTreeMap<String, Vec<NativeTarget>>,
     overloads: &HashMap<(&str, &str), usize>,
 ) -> Resolution<'a> {
-    let unique = |symbol: String, candidates: &'a [String]| match candidates {
+    let unique = |symbol: String, candidates: &'a [NativeTarget]| match candidates {
         [only] => Resolution::Found {
             symbol,
-            function: only.as_str(),
+            target: only,
             registered: false,
         },
         many => Resolution::Ambiguous {

@@ -44,6 +44,12 @@ pub enum Kind {
         /// How the two artifacts reach `ctadl import`. Every packaging asserts exactly the
         /// same thing, so the set is a direct A/B on the importer alone.
         packaging: Packaging,
+        /// The Android ABI the library is built for, from the config's `native_abi`.
+        abi: String,
+        /// Strip the library's debug info before importing it, so Ghidra recovers no types.
+        /// Only for a config with `untyped_native_layout`, which names the layout the bridge
+        /// must then choose.
+        untyped: bool,
     },
     /// Pinned external Android ICC benchmark APK plus expected-answer spec.
     AndroidIcc { spec: PathBuf },
@@ -62,6 +68,12 @@ pub enum Packaging {
     /// Android App Bundle is distributed, and what an XAPK download unpacks to: the
     /// native half arrives in an APK with no `classes*.dex` in it at all.
     SplitApks,
+    /// Package both into one APK beside a second, JNI-free library, import it once, and index
+    /// the library on its own into a summary project. The app is then indexed with
+    /// `--no-native-libs --summary <that project>`, so the bridge links against the library's
+    /// symbol and `RegisterNatives` tables and its saved summaries, never its code, and the
+    /// second library is never loaded at all.
+    SummaryApk,
 }
 
 impl Kind {
@@ -334,6 +346,7 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
         if !config.is_file() {
             continue;
         }
+        let abi = crate::assertions::read_native_abi(&config)?;
         cases.push(TestCase {
             name: format!("Jni:{stem}"),
             kind: Kind::Jni {
@@ -342,6 +355,8 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
                 config: absolute(&config)?,
                 bridge: None,
                 packaging: Packaging::Separate,
+                abi: abi.clone(),
+                untyped: false,
             },
         });
         // The same two artifacts and the same claims, but packaged the way a real
@@ -355,6 +370,8 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
                 config: absolute(&config)?,
                 bridge: None,
                 packaging: Packaging::SingleApk,
+                abi: abi.clone(),
+                untyped: false,
             },
         });
         // And the way an app *bundle* ships them: two APKs, the native one carrying no
@@ -368,6 +385,23 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
                 config: absolute(&config)?,
                 bridge: None,
                 packaging: Packaging::SplitApks,
+                abi: abi.clone(),
+                untyped: false,
+            },
+        });
+        // And the summary workflow: the library indexed on its own, the app indexed without
+        // its libraries against that project. Same claims about the Java half; the native
+        // half is reached only through the library's summaries.
+        cases.push(TestCase {
+            name: format!("Jni:{stem}+summary"),
+            kind: Kind::Jni {
+                java: absolute(&entry)?,
+                native: absolute(&native)?,
+                config: absolute(&config)?,
+                bridge: None,
+                packaging: Packaging::SummaryApk,
+                abi: abi.clone(),
+                untyped: false,
             },
         });
         // A sibling `<kebab>.bridge.jsonl` turns the case into an A/B: the same two artifacts
@@ -384,6 +418,26 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
                     config: absolute(&config)?,
                     bridge: Some(absolute(&bridge)?),
                     packaging: Packaging::Separate,
+                    abi: abi.clone(),
+                    untyped: false,
+                },
+            });
+        }
+        // The library again with its debug info stripped, so Ghidra recovers no types and a
+        // `long` on a 32-bit ABI shows up as two parameters. Co-indexed only: stripped, Ghidra
+        // infers no return value for an export nothing calls, so the flow cannot come back to
+        // Java, and a sink inside the library is out of reach of a `+summary` app index.
+        if crate::assertions::read_untyped_native_layout(&config)?.is_some() {
+            cases.push(TestCase {
+                name: format!("Jni:{stem}+untyped"),
+                kind: Kind::Jni {
+                    java: absolute(&entry)?,
+                    native: absolute(&native)?,
+                    config: absolute(&config)?,
+                    bridge: None,
+                    packaging: Packaging::Separate,
+                    abi: abi.clone(),
+                    untyped: true,
                 },
             });
         }
@@ -470,6 +524,10 @@ mod tests {
                 names.contains(&format!("Jni:{stem}+split-apks").as_str()),
                 "the split-APK A/B case is missing: {names:?}"
             );
+            assert!(
+                names.contains(&format!("Jni:{stem}+summary").as_str()),
+                "the summary-project case is missing: {names:?}"
+            );
         }
         // The variants of each case differ in exactly one thing: which mechanism joins
         // the boundary, or how the artifacts are packaged. Same sources, same config, so
@@ -487,6 +545,7 @@ mod tests {
                             config,
                             bridge,
                             packaging,
+                            ..
                         } => (
                             (java.clone(), native.clone(), config.clone()),
                             bridge.clone(),
@@ -510,6 +569,7 @@ mod tests {
             for (suffix, expected) in [
                 ("+apk", Packaging::SingleApk),
                 ("+split-apks", Packaging::SplitApks),
+                ("+summary", Packaging::SummaryApk),
             ] {
                 let (packaged_artifacts, packaged_bridge, packaged) = of(suffix);
                 assert_eq!(artifacts, packaged_artifacts);
@@ -522,7 +582,7 @@ mod tests {
         }
     }
 
-    /// A case with no `.bridge.jsonl` gets the three built-in variants and no A/B one. That is
+    /// A case with no `.bridge.jsonl` gets the four built-in variants and no A/B one. That is
     /// how `JniRegister` ships: its boundary is joined by a `RegisterNatives` table recovered
     /// from the library, and a hand-written bridge model would be testing something else.
     #[test]
@@ -536,7 +596,8 @@ mod tests {
         }
         let cases = discover_jni(&dir).expect("discovering jni cases");
         let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
-        for suffix in ["", "+apk", "+split-apks"] {
+        // `+summary` is the registry-only boundary reached through a summary project.
+        for suffix in ["", "+apk", "+split-apks", "+summary"] {
             assert!(
                 names.contains(&format!("Jni:JniRegister{suffix}").as_str()),
                 "the RegisterNatives case is missing: {names:?}"
@@ -546,6 +607,64 @@ mod tests {
             !names.contains(&"Jni:JniRegister+bridge"),
             "no bridge model ships beside it, so there is nothing to A/B against"
         );
+    }
+
+    /// A case whose config names an `untyped_native_layout` also runs stripped, co-indexed only,
+    /// and every variant builds for the config's ABI.
+    #[test]
+    fn an_untyped_layout_adds_a_stripped_variant() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("nightly/tests/jni");
+        if !dir.is_dir() {
+            return;
+        }
+        let cases = discover_jni(&dir).expect("discovering jni cases");
+        let wide: Vec<(&str, &Kind)> = cases
+            .iter()
+            .filter(|c| c.name.starts_with("Jni:JniWide"))
+            .map(|c| (c.name.as_str(), &c.kind))
+            .collect();
+        let names: Vec<&str> = wide.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            names,
+            [
+                "Jni:JniWide",
+                "Jni:JniWide+apk",
+                "Jni:JniWide+split-apks",
+                "Jni:JniWide+summary",
+                "Jni:JniWide+untyped"
+            ]
+        );
+        for (name, kind) in wide {
+            let Kind::Jni {
+                abi,
+                untyped,
+                packaging,
+                ..
+            } = kind
+            else {
+                panic!("expected a Jni case for {name}");
+            };
+            assert_eq!(abi, "x86", "{name}");
+            assert_eq!(*untyped, name.ends_with("+untyped"), "{name}");
+            if *untyped {
+                assert_eq!(*packaging, Packaging::Separate);
+            }
+        }
+        // Every other case builds for the default ABI and is never stripped.
+        for case in cases.iter().filter(|c| !c.name.starts_with("Jni:JniWide")) {
+            let Kind::Jni { abi, untyped, .. } = &case.kind else {
+                continue;
+            };
+            assert_eq!(
+                (abi.as_str(), *untyped),
+                ("arm64-v8a", false),
+                "{}",
+                case.name
+            );
+        }
     }
 
     #[test]

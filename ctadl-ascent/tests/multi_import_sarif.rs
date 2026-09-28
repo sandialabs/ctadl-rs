@@ -16,7 +16,9 @@
 //! library), pinned end to end by `nightly/tests/jni/`, which needs Ghidra and a Java toolchain.
 
 use ctadl_ascent::cli;
-use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, init_store_path};
+use ctadl_ascent::project::{
+    AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports, init_store_path,
+};
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -104,7 +106,7 @@ fn query_two_import_project(case: &str, profile: SarifProfile) -> Value {
         })
         .collect();
 
-    let project = AnalysisProject::try_create(case, &imports).expect("project");
+    let project = AnalysisProject::try_create(case, &imports, SubImports::All).expect("project");
     cli::index(&project, &[], &[], false, cli::IndexOptions::default()).expect("indexing");
 
     let query_models = dir.join(format!("{case}-query.json"));

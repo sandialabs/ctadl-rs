@@ -10,7 +10,7 @@ use std::sync::Once;
 use ctadl_import::project::{
     ArtifactImport, ArtifactLanguage, IMPORT_FORMAT_VERSION, init_store_path,
 };
-use ctadl_import::{SourceInfoMode, load_import, open_import, save_program_info};
+use ctadl_import::{SourceInfoMode, load_import, load_vmt, open_import, save_program_info};
 use ctadl_ir::ProgramInfo;
 use ctadl_ir::ssa;
 
@@ -224,4 +224,55 @@ fn the_completion_mark_is_written_last_and_cleared_by_a_re_import() {
         !restarted.is_complete(),
         "the stored program is still there, but this import is running again"
     );
+}
+
+/// [`load_vmt`] reads the same table [`load_import`] does, without the program. The fixture is a
+/// Lua VMT with one row per column, so an empty-vs-empty comparison cannot pass by accident.
+#[test]
+fn load_vmt_agrees_with_load_import() {
+    use ctadl_ir::mir::Symbol;
+    use ctadl_ir::mir::call::VirtualMethodTable;
+
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = dir.path().join("account.lua");
+    std::fs::write(&artifact, b"-- not really lua").unwrap();
+    let import = ArtifactImport::try_create("vmt_only", ArtifactLanguage::Lua, &artifact).unwrap();
+    let vmt = VirtualMethodTable::Lua {
+        methods: vec![(
+            Symbol::from("lua$class$Account"),
+            Symbol::from("deposit"),
+            Symbol::from("Account.deposit"),
+        )],
+        functions: vec![(Symbol::from("deposit"), Symbol::from("Account.deposit"))],
+        externals: vec![(Symbol::from("format"), Symbol::from("string.format"))],
+        hierarchy: Default::default(),
+    };
+    save_program_info(
+        ProgramInfo {
+            vmt: vmt.clone(),
+            ..Default::default()
+        },
+        &import,
+    )
+    .unwrap();
+
+    let only = load_vmt(&import).unwrap();
+    assert_eq!(only, vmt);
+    assert_eq!(
+        only,
+        load_import(&import, SourceInfoMode::Skip).unwrap().vmt
+    );
+}
+
+/// [`load_vmt`] refuses an unfinished import the way [`load_import`] does.
+#[test]
+fn load_vmt_refuses_an_unfinished_import() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = dir.path().join("half.dex");
+    std::fs::write(&artifact, b"not really a dex").unwrap();
+    let import = ArtifactImport::try_create("vmt_half", ArtifactLanguage::Dex, &artifact).unwrap();
+    let message = full_message(&load_vmt(&import).unwrap_err());
+    assert!(message.contains("never finished"), "{message}");
 }

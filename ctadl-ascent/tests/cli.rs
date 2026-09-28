@@ -126,7 +126,9 @@ fn test_cli_query_c_sources_and_sinks() {
                 .unwrap();
         cli::import(&import, cli::ImportOptions::default()).unwrap();
 
-        let project = AnalysisProject::try_create("test_xfer_c_proj", &["test_xfer_c"]).unwrap();
+        let project =
+            AnalysisProject::try_create("test_xfer_c_proj", &["test_xfer_c"], SubImports::All)
+                .unwrap();
         let models = vec![c_fixture("xfer.json")];
         cli::index(
             &project,
@@ -655,7 +657,8 @@ fn import_index_android_icc_case(
         },
     )
     .unwrap();
-    let project = AnalysisProject::try_create(&format!("{name}_project"), &[name]).unwrap();
+    let project =
+        AnalysisProject::try_create(&format!("{name}_project"), &[name], SubImports::All).unwrap();
     let models = if let Some(model_text) = model_text {
         let model = dir.path().join("query.json");
         std::fs::write(&model, model_text).unwrap();
@@ -938,7 +941,9 @@ fn test_project_expands_sub_imports() {
         parent.sub_imports = vec!["expand_child_a".into(), "expand_child_b".into()];
         parent.save().unwrap();
 
-        let project = AnalysisProject::try_create("expand_proj", &["expand_parent"]).unwrap();
+        let project =
+            AnalysisProject::try_create("expand_proj", &["expand_parent"], SubImports::All)
+                .unwrap();
         // Parent first, then its sub-imports in order.
         assert_eq!(
             project.imports,
@@ -946,9 +951,12 @@ fn test_project_expands_sub_imports() {
         );
 
         // Naming a sub-import explicitly alongside its parent does not index it twice.
-        let project =
-            AnalysisProject::try_create("expand_proj_dedup", &["expand_parent", "expand_child_b"])
-                .unwrap();
+        let project = AnalysisProject::try_create(
+            "expand_proj_dedup",
+            &["expand_parent", "expand_child_b"],
+            SubImports::All,
+        )
+        .unwrap();
         assert_eq!(
             project.imports,
             ["expand_parent", "expand_child_a", "expand_child_b"]
@@ -961,7 +969,9 @@ fn test_project_expands_sub_imports() {
 #[test]
 fn test_project_expansion_tolerates_a_missing_import() {
     run_store_test(|| {
-        let project = AnalysisProject::try_create("expand_missing", &["no_such_import"]).unwrap();
+        let project =
+            AnalysisProject::try_create("expand_missing", &["no_such_import"], SubImports::All)
+                .unwrap();
         assert_eq!(project.imports, ["no_such_import"]);
     });
 }
@@ -1003,7 +1013,7 @@ fn test_hash_artifact_file_and_dir() {
 //        assert!(result.is_ok());
 //        //let import = result.unwrap();
 
-//        let result = AnalysisProject::try_create("test_index_project", &["test_index_artifact"]);
+//        let result = AnalysisProject::try_create("test_index_project", &["test_index_artifact"], SubImports::All);
 //        assert!(result.is_ok());
 //        let project = result.unwrap();
 //        let result = cli::index(&project);
@@ -1037,7 +1047,9 @@ fn test_hash_artifact_file_and_dir() {
 #[test]
 fn index_version_gate_accepts_what_this_build_wrote() {
     run_store_test(|| {
-        let project = AnalysisProject::try_create("gate_ok", &["nonexistent_import"]).unwrap();
+        let project =
+            AnalysisProject::try_create("gate_ok", &["nonexistent_import"], SubImports::All)
+                .unwrap();
         project.write_index_config(None).unwrap();
         assert!(
             project.check_index_config().is_ok(),
@@ -1049,7 +1061,9 @@ fn index_version_gate_accepts_what_this_build_wrote() {
 #[test]
 fn index_version_gate_rejects_an_index_from_before_the_gate() {
     run_store_test(|| {
-        let project = AnalysisProject::try_create("gate_missing", &["nonexistent_import"]).unwrap();
+        let project =
+            AnalysisProject::try_create("gate_missing", &["nonexistent_import"], SubImports::All)
+                .unwrap();
         // An `index/` with no config is one written before the gate existed -- exactly the
         // stale-encoding case, since those builds wrote unescaped `.[]` / `.[_elem_]`.
         std::fs::create_dir_all(project.index_path().unwrap()).unwrap();
@@ -1070,7 +1084,9 @@ fn index_version_gate_rejects_an_index_from_before_the_gate() {
 #[test]
 fn index_version_gate_rejects_a_different_version() {
     run_store_test(|| {
-        let project = AnalysisProject::try_create("gate_stale", &["nonexistent_import"]).unwrap();
+        let project =
+            AnalysisProject::try_create("gate_stale", &["nonexistent_import"], SubImports::All)
+                .unwrap();
         let path = project.index_path().unwrap().join(INDEX_CONFIG_FILE);
         std::fs::write(&path, r#"{"version":"1"}"#).unwrap();
         match project.check_index_config() {
@@ -1102,7 +1118,8 @@ fn index_xfer_project(import_name: &str, project_name: &str) -> AnalysisProject 
     let import =
         ArtifactImport::try_create(import_name, ArtifactLanguage::C, &c_fixture("xfer.c")).unwrap();
     cli::import(&import, cli::ImportOptions::default()).unwrap();
-    let project = AnalysisProject::try_create(project_name, &[import_name]).unwrap();
+    let project =
+        AnalysisProject::try_create(project_name, &[import_name], SubImports::All).unwrap();
     cli::index(
         &project,
         &[],
@@ -1188,8 +1205,12 @@ fn inspect_index_graph_matches_the_stored_assign_relation() {
 fn inspect_index_graph_without_an_index_fails() {
     run_store_test(|| {
         // Created but never indexed: `has_index` is false, so this must not reach a table.
-        let project =
-            AnalysisProject::try_create("dump_graph_noindex", &["nonexistent_import"]).unwrap();
+        let project = AnalysisProject::try_create(
+            "dump_graph_noindex",
+            &["nonexistent_import"],
+            SubImports::All,
+        )
+        .unwrap();
         let out_dir = tempdir().unwrap();
         let dot_path = out_dir.path().join("index.dot");
 
@@ -1211,8 +1232,12 @@ fn inspect_index_graph_without_an_index_fails() {
 #[test]
 fn inspect_index_graph_rejects_a_stale_index() {
     run_store_test(|| {
-        let project =
-            AnalysisProject::try_create("dump_graph_stale", &["nonexistent_import"]).unwrap();
+        let project = AnalysisProject::try_create(
+            "dump_graph_stale",
+            &["nonexistent_import"],
+            SubImports::All,
+        )
+        .unwrap();
         let config = project.index_path().unwrap().join(INDEX_CONFIG_FILE);
         std::fs::write(&config, r#"{"version":"1"}"#).unwrap();
 
@@ -1240,8 +1265,12 @@ fn inspect_project_reports_a_project_that_was_never_indexed() {
         )
         .unwrap();
         cli::import(&import, cli::ImportOptions::default()).unwrap();
-        let project =
-            AnalysisProject::try_create("inspect_proj_none", &["inspect_proj_import"]).unwrap();
+        let project = AnalysisProject::try_create(
+            "inspect_proj_none",
+            &["inspect_proj_import"],
+            SubImports::All,
+        )
+        .unwrap();
 
         let summary = cli::summarize_project(&project).unwrap();
         assert_eq!(summary.name, "inspect_proj_none");
@@ -1269,8 +1298,12 @@ fn inspect_project_reports_a_project_that_was_never_indexed() {
 #[test]
 fn inspect_project_names_an_import_that_is_gone() {
     run_store_test(|| {
-        let project =
-            AnalysisProject::try_create("inspect_proj_missing", &["inspect_proj_absent"]).unwrap();
+        let project = AnalysisProject::try_create(
+            "inspect_proj_missing",
+            &["inspect_proj_absent"],
+            SubImports::All,
+        )
+        .unwrap();
 
         let summary = cli::summarize_project(&project).unwrap();
         assert_eq!(summary.imports.len(), 1);
@@ -1296,8 +1329,12 @@ fn inspect_project_flags_an_import_that_never_finished() {
             &c_fixture("xfer.c"),
         )
         .unwrap();
-        let project =
-            AnalysisProject::try_create("inspect_proj_half", &["inspect_proj_partial"]).unwrap();
+        let project = AnalysisProject::try_create(
+            "inspect_proj_half",
+            &["inspect_proj_partial"],
+            SubImports::All,
+        )
+        .unwrap();
 
         let summary = cli::summarize_project(&project).unwrap();
         let problem = summary.imports[0].problem.as_deref().unwrap_or("");
@@ -1317,9 +1354,12 @@ fn inspect_project_counts_the_tables_of_an_unfinished_index() {
         use ctadl_ascent::facts::FunctionId;
         use ctadl_ascent::facts::schema::external_function;
 
-        let project =
-            AnalysisProject::try_create("inspect_proj_partial_index", &["inspect_proj_absent"])
-                .unwrap();
+        let project = AnalysisProject::try_create(
+            "inspect_proj_partial_index",
+            &["inspect_proj_absent"],
+            SubImports::All,
+        )
+        .unwrap();
         let index = project.index_path().unwrap();
         external_function::try_save(&index, vec![(FunctionId::new(1),), (FunctionId::new(2),)])
             .unwrap();
@@ -1340,8 +1380,12 @@ fn inspect_project_counts_the_tables_of_an_unfinished_index() {
 #[test]
 fn inspect_project_reports_a_stale_index() {
     run_store_test(|| {
-        let project =
-            AnalysisProject::try_create("inspect_proj_stale", &["inspect_proj_absent"]).unwrap();
+        let project = AnalysisProject::try_create(
+            "inspect_proj_stale",
+            &["inspect_proj_absent"],
+            SubImports::All,
+        )
+        .unwrap();
         let config = project.index_path().unwrap().join(INDEX_CONFIG_FILE);
         std::fs::write(&config, r#"{"version":"1"}"#).unwrap();
 
@@ -1403,8 +1447,12 @@ fn inspect_project_lists_the_tables_of_a_readable_index() {
         use ctadl_ascent::facts::FunctionId;
         use ctadl_ascent::facts::schema::external_function;
 
-        let project =
-            AnalysisProject::try_create("inspect_proj_ready", &["inspect_proj_absent"]).unwrap();
+        let project = AnalysisProject::try_create(
+            "inspect_proj_ready",
+            &["inspect_proj_absent"],
+            SubImports::All,
+        )
+        .unwrap();
         let index = project.index_path().unwrap();
         external_function::try_save(&index, vec![(FunctionId::new(7),)]).unwrap();
         project.write_index_config(None).unwrap();

@@ -17,7 +17,9 @@
 //! against the built-in pass.
 
 use ctadl_ascent::cli;
-use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, init_store_path};
+use ctadl_ascent::project::{
+    AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports, init_store_path,
+};
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -107,7 +109,7 @@ fn import_pair(case: &str, lib_text: &str) -> (String, String) {
 fn flows_found(case: &str, lib_text: &str, models: &[PathBuf]) -> usize {
     let dir = store_dir();
     let (app, lib) = import_pair(case, lib_text);
-    let project = AnalysisProject::try_create(case, &[app, lib]).expect("project");
+    let project = AnalysisProject::try_create(case, &[app, lib], SubImports::All).expect("project");
     cli::index(&project, &[], models, false, cli::IndexOptions::default()).expect("indexing");
 
     let query_models = dir.join(format!("{case}-query.json"));

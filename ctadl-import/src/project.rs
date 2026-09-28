@@ -27,6 +27,7 @@ identity does not move when the store does.
 
 */
 
+use std::collections::BTreeMap;
 use std::env;
 use std::fs::{File, canonicalize};
 use std::sync::OnceLock;
@@ -176,6 +177,13 @@ pub struct IndexConfig {
     /// [`CallPolicyRecord`].
     #[serde(default)]
     pub call_policy: Option<CallPolicyRecord>,
+    /// Import name -> the [`ArtifactImport::hash`] it had when this index was written, for each
+    /// of the project's imports that recorded one.
+    ///
+    /// Empty for an index written before this field existed. The field is additive, so
+    /// [`INDEX_FORMAT_VERSION`] did not change for it.
+    #[serde(default)]
+    pub import_hashes: BTreeMap<String, String>,
 }
 
 /// How the index resolved calls, so a query can say what it is reading.
@@ -625,6 +633,32 @@ fn to_hex(bytes: &[u8]) -> String {
     s
 }
 
+/// Which of a named import's [`ArtifactImport::sub_imports`] an [`AnalysisProject`] expands to.
+///
+/// Only *expanded* sub-imports are filtered. An import named explicitly is always kept, even
+/// when it is also some other named import's sub-import.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SubImports {
+    /// Every sub-import: an APK's native libraries, an XAPK's split APKs and their libraries.
+    #[default]
+    All,
+    /// Every sub-import except the native libraries, i.e. those whose language is
+    /// [`ArtifactLanguage::Pcode`]. An XAPK's split APKs are kept.
+    NoNativeLibs,
+}
+
+impl SubImports {
+    /// Whether the expanded sub-import `name` stays in the project. A sub-import whose config
+    /// cannot be loaded is kept.
+    fn keeps(self, name: &str) -> bool {
+        match self {
+            SubImports::All => true,
+            SubImports::NoNativeLibs => ArtifactImport::load_by_name(name)
+                .map_or(true, |import| import.language != ArtifactLanguage::Pcode),
+        }
+    }
+}
+
 /// An analysis project allows you to index single or multiple artifacts together.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct AnalysisProject {
@@ -648,8 +682,9 @@ impl AnalysisProject {
     pub fn try_create<S: AsRef<str>>(
         name: &str,
         import_names: &[S],
+        sub_imports: SubImports,
     ) -> Result<AnalysisProject, Error> {
-        let result = Self::ephemeral(name, import_names);
+        let result = Self::ephemeral(name, import_names, sub_imports);
         let path = result.dir();
         std::fs::create_dir_all(&path)
             .map_err(Error::Io)
@@ -664,7 +699,13 @@ impl AnalysisProject {
     /// ever imported: the query has an import list to match models against, and the store is
     /// left exactly as it was. Nothing that reads or writes the project's directory may be
     /// called on the result -- notably [`Self::index_path`], which creates it.
-    pub fn ephemeral<S: AsRef<str>>(name: &str, import_names: &[S]) -> AnalysisProject {
+    ///
+    /// `sub_imports` says which expanded sub-imports to keep; see [`SubImports`].
+    pub fn ephemeral<S: AsRef<str>>(
+        name: &str,
+        import_names: &[S],
+        sub_imports: SubImports,
+    ) -> AnalysisProject {
         // Expand each name to itself followed by its sub-imports, then dedup
         // (order-preserving): `index` co-indexes every argument, so a repeated program name
         // (e.g. `index amuled amuled`) would codegen its facts twice and inflate every
@@ -677,6 +718,8 @@ impl AnalysisProject {
         // A name with no loadable config passes through unchanged rather than erroring --
         // a project may legitimately be created before (or without) its imports, and
         // `cli::index` has its own preflight gates that report that properly.
+        let named: std::collections::HashSet<&str> =
+            import_names.iter().map(|s| s.as_ref()).collect();
         let mut seen = std::collections::HashSet::new();
         let imports: Vec<String> = import_names
             .iter()
@@ -684,7 +727,9 @@ impl AnalysisProject {
                 let name = s.as_ref().to_owned();
                 let subs = ArtifactImport::load_by_name(&name)
                     .map(|import| import.sub_imports)
-                    .unwrap_or_default();
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|sub| named.contains(sub.as_str()) || sub_imports.keeps(sub));
                 std::iter::once(name).chain(subs)
             })
             .filter(|n| seen.insert(n.clone()))
@@ -792,6 +837,13 @@ impl AnalysisProject {
     /// If there is an error creating the index dir, or serializing or writing the config
     #[inline]
     pub fn write_index_config(&self, call_policy: Option<CallPolicyRecord>) -> Result<(), Error> {
+        // An import that cannot be loaded, or never recorded a hash, is left out: there is
+        // nothing to compare it against later.
+        let import_hashes: BTreeMap<String, String> = self
+            .iter_imports()
+            .filter_map(Result::ok)
+            .filter_map(|import| Some((import.name, import.hash?)))
+            .collect();
         let path = self.index_path()?.join(INDEX_CONFIG_FILE);
         let file = File::create(&path)
             .err_context(|| format!("creating index config: '{}'", path.display()))?;
@@ -800,6 +852,7 @@ impl AnalysisProject {
             &IndexConfig {
                 version: INDEX_FORMAT_VERSION.to_string(),
                 call_policy,
+                import_hashes,
             },
         )
         .err_context(|| format!("writing index config: '{}'", path.display()))?;
@@ -809,10 +862,14 @@ impl AnalysisProject {
     /// The call policy this project's index was built under, or `None` for an index written
     /// before the stamp existed or with no readable config.
     pub fn index_call_policy(&self) -> Option<CallPolicyRecord> {
+        self.index_config()?.call_policy
+    }
+
+    /// This project's index config, or `None` when there is no readable one.
+    pub fn index_config(&self) -> Option<IndexConfig> {
         let path = self.dir().join("index").join(INDEX_CONFIG_FILE);
         let file = File::open(path).ok()?;
-        let config: IndexConfig = serde_json::from_reader(file).ok()?;
-        config.call_policy
+        serde_json::from_reader(file).ok()
     }
 
     /// Whether `ctadl index` ever finished for this project.
@@ -1116,5 +1173,17 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("import format 7"), "{message}");
         assert!(message.contains("re-import it"), "{message}");
+    }
+
+    /// An index written before `import_hashes` existed still loads, with no hashes.
+    #[test]
+    fn an_index_config_without_import_hashes_loads() {
+        let config: IndexConfig = serde_json::from_value(serde_json::json!({
+            "version": INDEX_FORMAT_VERSION,
+            "call_policy": null,
+        }))
+        .expect("old index config");
+        assert_eq!(config.version, INDEX_FORMAT_VERSION);
+        assert!(config.import_hashes.is_empty());
     }
 }
