@@ -117,7 +117,7 @@ the ~77 s the workspace's tests spent executing, and moving them out halved `car
 | `apk:model-check` | `ctadl query` against an import that was never indexed exits non-zero, reports which imports it checked and what the generator selected, and writes **nothing** into the store. |
 | `apk:report` | `ctadl report` runs on the import, its first line names the static tier, the JSON carries every section a Java program has, four aggregate counts plus the site count of each dispatch kind are pinned to this APK, and nothing is written into the store. |
 | `apk:report-invariants` | The report's numbers add up — the census sums to its total, the target split sums to the virtual sites, the dispatch kinds partition those sites and their per-kind edge, excess and RTA totals sum back to the pooled ones, every distribution is monotone, RTA never exceeds CHA, the edge shares are ordered, and removing the interface edges cannot grow the call graph — and two runs over one import are byte-identical. |
-| `apk:skip-existing` | `--skip-existing` skips a re-import of an unchanged artifact, and only of an unchanged one: falsify the recorded hash and the same command re-imports. |
+| `apk:reimport` | A re-import skips an unchanged artifact, and only an unchanged one: falsify the recorded hash and the same command re-imports; `--force` re-imports an unchanged one. |
 
 They select with `--frontend dex` (the app is a Dex artifact) and, like `dex:apk`, self-skip when
 no APK resolves. `cargo xtask regression --frontend dex --filter apk:` runs just these, and needs
