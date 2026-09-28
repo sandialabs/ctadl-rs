@@ -3,8 +3,9 @@ name = "xtask"
 version.workspace = true
 edition = "2021"
 
-# Developer task runner for the nightly regression suite. This is intentionally
-# a tiny, dependency-light binary so it builds quickly inside the Nix check.
+# Developer task runner for the nightly regression suite. Keep its own
+# dependencies light so it builds quickly inside the Nix check; the one
+# exception is `ctadl-ascent`, explained below.
 [lints]
 workspace = true
 
@@ -30,6 +31,10 @@ jvm-reader = { path = "../readers/jvm-reader" }
 # real-world APK). dex-reader is workspace-excluded too, so its bin stays out of
 # the distro; only its library is pulled in here.
 dex-reader = { path = "../readers/dex-reader" }
+# The Android checks read what `ctadl` wrote -- decoded manifests and index facts
+# such as `intent_pair.parquet` -- through the analyzer's own loaders rather than
+# re-implementing them. This is the one heavy dependency here: it builds the
+# whole analyzer.
 ctadl-ascent = { path = "../ctadl-ascent" }
 # The JNI `+apk` cases package a DEX and a shared library into an APK so the
 # importer can be made to find `lib/<abi>` for itself. Not a new dependency in

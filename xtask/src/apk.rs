@@ -52,10 +52,9 @@ pub const CHECKS: &[&str] = &[
     "apk:manifest-and-intents",
 ];
 
-// The store layout `ctadl` writes. Duplicated from `ctadl_import::project` rather than imported:
-// xtask deliberately does not depend on the analyzer crate (see `xtask/Cargo.toml`), and these
-// checks are *about* the on-disk contract anyway -- a path that moves should fail them loudly
-// here rather than follow the analyzer silently.
+// The store layout `ctadl` writes. Duplicated from `ctadl_import::project` rather than imported,
+// even though xtask links the analyzer: these checks are *about* the on-disk contract, so a path
+// that moves should fail them loudly here rather than follow the analyzer silently.
 const IMPORTS_DIR: &str = "imports";
 const PROJECTS_DIR: &str = "projects";
 const IMPORT_CONFIG_FILE: &str = "import_config.json";
