@@ -1,4 +1,4 @@
-# TaintBench head to head: ascent CTADL vs Souffle CTADL
+# TaintBench head to head: ascent CTADL vs Souffle CTADL - DO-NOT-MERGE
 
 This compares the TaintBench numbers for the Rust/ascent CTADL in this repo
 against the baseline the Souffle CTADL (version 0.14.1) recorded in
