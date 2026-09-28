@@ -631,6 +631,15 @@ fn android_tools_available() -> bool {
     which::which("javac").is_ok() && which::which("dx").is_ok()
 }
 
+/// The final call graph as `query` sees it: codegen's `call` table plus the calls the index
+/// derived (`resolved_call`), which is where ICC pairs are persisted.
+fn final_call_graph(index_path: &std::path::Path) -> Vec<ctadl_ascent::facts::schema::call::Record> {
+    use ctadl_ascent::facts::schema;
+    let mut calls = schema::call::try_load(index_path).unwrap();
+    calls.extend(schema::resolved_call::try_load(index_path).unwrap());
+    calls
+}
+
 fn run_android_icc_link_case(name: &str, manifest: &str, app_source: &str, expected_pairs: usize) {
     use ctadl_ascent::facts::schema;
 
@@ -642,7 +651,7 @@ fn run_android_icc_link_case(name: &str, manifest: &str, app_source: &str, expec
         expected_pairs,
         "unexpected ICC pairs for {name}"
     );
-    let calls = schema::call::try_load(&index_path).unwrap();
+    let calls = final_call_graph(&index_path);
     assert!(
         calls.iter().any(|(caller, insn, callee)| pairs.iter().any(
             |(pair_caller, pair_insn, pair_callee, _)| caller == pair_caller
@@ -670,7 +679,7 @@ fn run_android_icc_flow_case(name: &str, manifest: &str, app_source: &str, sink_
         !pairs.is_empty(),
         "expected at least one ICC pair for {name}"
     );
-    let calls = schema::call::try_load(&index_path).unwrap();
+    let calls = final_call_graph(&index_path);
     assert!(
         calls.iter().any(|(caller, insn, callee)| pairs.iter().any(
             |(pair_caller, pair_insn, pair_callee, _)| caller == pair_caller

@@ -2914,7 +2914,13 @@ fn variable_port_selects_lowest_ssa_version() {
         endpoints: eps,
         formals,
         ..
-    } = build_query_endpoints(&matches.endpoints, &facts, &source_info.sites, &assign_like);
+    } = build_query_endpoints(
+        &matches.endpoints,
+        &facts,
+        &source_info.sites,
+        &assign_like,
+        &facts.call,
+    );
 
     // Exactly one endpoint (not one per version), anchored in f, forward, and — since a local is
     // not a formal — no formal registered.
