@@ -711,9 +711,15 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
 fn run_android_icc(name: &str, spec_path: &Path) -> Result<Outcome> {
     let spec = android_icc::load_spec(spec_path)?;
     let (apk, model) = android_icc::resolve_paths(spec_path, &spec);
+    let Some(apk) = apk else {
+        return Ok(Outcome::Skip(format!(
+            "{} is not set; the Nix dev shell provides the benchmark APKs",
+            android_icc::APKS_ENV
+        )));
+    };
     if !apk.is_file() {
         return Ok(Outcome::Skip(format!(
-            "APK fixture not found at {}; provide the pinned external benchmark fixture",
+            "APK fixture not found at {}",
             apk.display()
         )));
     }

@@ -35,8 +35,8 @@ the odd one out: its cases build both halves of a JNI boundary, so they need the
 Java toolchain *and* Ghidra. Use it with `--filter` to narrow further:
 `--frontend pcode --filter funcptr`.
 
-`android-icc` discovers Phase 5 external benchmark specs under `tests/android-icc/`. Missing pinned
-APKs report as `SKIP`, so fixture acquisition can be added incrementally without hiding the runner.
+`android-icc` discovers Phase 5 external benchmark specs under `tests/android-icc/`. Their APKs
+come from the flake (`CTADL_ANDROID_ICC_APKS`, set in the dev shell); without it they report `SKIP`.
 
 > **Note:** the `lua` frontend lowers its `tests/lua/` cases end to end, including
 > table field-sensitivity, varargs, `ipairs`/`pairs` and `table.insert`, and
@@ -101,7 +101,7 @@ both — the same reasons the taint cases are nightly:
 - **`models:*`** — the model files ctadl ships, validated against the model generator schema it
   publishes. Reads three small files and runs no tool.
 - **`AndroidIcc:*`** — pinned external DroidBench/ICC-Bench APK specs under
-  `tests/android-icc/`. Each spec names an APK fixture, a model file, whether a flow is expected,
+  `tests/android-icc/`. Each spec names a flake-fetched APK, a model file, whether a flow is expected,
   and optional `intent_pair.parquet` counts.
 
 The `apk:*` checks are where the analyzer meets a real app rather than a fixture: 6.4 MB, two

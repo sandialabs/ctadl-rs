@@ -7,7 +7,7 @@
 // Current status: xfail because this case constructs the action string with substring(), which is
 // tracked as Phase 6+ string construction support.
 {
-  apk: "fixtures/droidbench-activity-communication-2.apk",
+  apk: "ActivityCommunication2.apk",
   model: "models/droidbench-activity-communication-2.json",
   expect_flow: true,
   expected_intent_pairs: 1,

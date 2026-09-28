@@ -5,7 +5,7 @@
 // Upstream description: IMEI is stored in an Intent for an Activity that is not in the manifest;
 // no ICC delivery should be resolved.
 {
-  apk: "fixtures/droidbench-component-not-in-manifest-1.apk",
+  apk: "ComponentNotInManifest1.apk",
   model: "models/droidbench-activity-communication-2.json",
   expect_flow: false,
   expected_intent_pairs: 0,

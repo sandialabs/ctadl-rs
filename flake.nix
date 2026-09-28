@@ -197,6 +197,27 @@
           ];
         };
 
+        # The DroidBench ICC APKs the `android-icc` regression specs name, fetched
+        # at the commit the specs pin instead of being committed to this repo.
+        # xtask finds them through CTADL_ANDROID_ICC_APKS, which the dev shell
+        # and the regression check both set; without it those cases SKIP.
+        droidbenchIccApks =
+          let
+            rev = "a57fa6f42f278591695672f1aa8b37c275139370";
+            apk = name: hash: {
+              name = "${name}.apk";
+              path = pkgs.fetchurl {
+                url = "https://raw.githubusercontent.com/secure-software-engineering/DroidBench/${rev}/apk/InterComponentCommunication/${name}.apk";
+                inherit hash;
+              };
+            };
+          in
+          pkgs.linkFarm "droidbench-icc-apks" [
+            (apk "ActivityCommunication2" "sha256-KyJvdF2BdCccHox9k+op/GbzEbeHKGmQ6op/HOrxvcA=")
+            (apk "ActivityCommunication5" "sha256-MVtam+x1OU2TUN2PBaJnULM2PlC/jBawvLwPdS05FVw=")
+            (apk "ComponentNotInManifest1" "sha256-MHB8889dYdMwcUE6GJIcpkWTWEExEd/6iUna+ArFrHc=")
+          ];
+
         # The distributable `ctadl` binaries, one per released target. What each
         # one is, why it cannot just be `packages.default`, and which builder
         # can produce which target all live in ./nix/release.nix.
@@ -292,6 +313,7 @@
                   # stale binary, but the Nix sandbox has no source tree or cargo.
                   # Point it at the ctadl that ships in packages.default instead.
                   export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
+                  export CTADL_ANDROID_ICC_APKS="${droidbenchIccApks}"
                   # The `models:*` checks hold the model files ctadl ships to
                   # `ctadl-model-generator.schema.json`. Both live in the
                   # ctadl-ascent crate, outside ./nightly, and this sandbox has
@@ -407,6 +429,7 @@
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
             ANDROID_SDK_ROOT = "${androidSdk.androidsdk}/libexec/android-sdk";
+            CTADL_ANDROID_ICC_APKS = "${droidbenchIccApks}";
 
             shellHook = ''
               export PATH="${androidSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"

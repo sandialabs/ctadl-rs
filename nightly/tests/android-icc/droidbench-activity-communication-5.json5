@@ -4,7 +4,7 @@
 // Fixture SHA-256: 315b5a9bec75394d9350dd8f05a26750b3363e50bf8c16b0bcbc0f752d39155c
 // Upstream description: IMEI is sent through an Intent with a ComponentName and leaked to Log.
 {
-  apk: "fixtures/droidbench-activity-communication-5.apk",
+  apk: "ActivityCommunication5.apk",
   model: "models/droidbench-activity-communication-2.json",
   expect_flow: true,
   expected_intent_pairs: 1,

@@ -1,8 +1,9 @@
 //! Nightly Android ICC external-suite runner.
 //!
 //! Phase 5 keeps DroidBench / ICC-Bench style fixtures out of the fast default
-//! regression path, but gives them a first-class runner so pinned APKs can be
-//! dropped under `nightly/tests/android-icc/` without changing Rust code.
+//! regression path, but gives them a first-class runner. The APKs are not in
+//! the repo: the flake fetches them at a pinned commit and names the directory
+//! in `CTADL_ANDROID_ICC_APKS`, which the dev shell and the regression check set.
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +15,7 @@ use crate::regression::Outcome;
 
 #[derive(Debug, Deserialize)]
 pub struct CaseSpec {
-    /// APK path relative to this spec file, or absolute.
+    /// APK file name inside the `CTADL_ANDROID_ICC_APKS` directory.
     pub apk: PathBuf,
     /// Query model path relative to this spec file, or absolute.
     pub model: PathBuf,
@@ -51,19 +52,14 @@ pub fn load_spec(path: &Path) -> Result<CaseSpec> {
     json5::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
-pub fn resolve_paths(spec_path: &Path, spec: &CaseSpec) -> (PathBuf, PathBuf) {
-    let base = spec_path.parent().unwrap_or_else(|| Path::new("."));
-    let apk = resolve_one(base, &spec.apk);
-    let model = resolve_one(base, &spec.model);
-    (apk, model)
-}
+/// Where the fetched benchmark APKs live; see the module docs.
+pub const APKS_ENV: &str = "CTADL_ANDROID_ICC_APKS";
 
-fn resolve_one(base: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        base.join(path)
-    }
+/// The case's APK (`None` when `CTADL_ANDROID_ICC_APKS` is unset) and model file.
+pub fn resolve_paths(spec_path: &Path, spec: &CaseSpec) -> (Option<PathBuf>, PathBuf) {
+    let base = spec_path.parent().unwrap_or_else(|| Path::new("."));
+    let apk = std::env::var_os(APKS_ENV).map(|dir| PathBuf::from(dir).join(&spec.apk));
+    (apk, base.join(&spec.model))
 }
 
 pub fn check_sarif(spec: &CaseSpec, sarif: &Path) -> Result<Outcome> {
