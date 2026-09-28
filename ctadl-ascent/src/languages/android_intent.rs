@@ -45,7 +45,7 @@ impl AndroidIntentObserver {
 pub fn emit_phase2_facts(facts: &mut IndexFacts, ids: &IdMap) -> AndroidIntentStats {
     let mut stats = emit_api_summaries(facts, ids);
     stats.intent_frames = emit_intent_frames(facts, ids);
-    emit_extras_assigns(facts, ids, &mut stats);
+    emit_extras_assigns(facts, &mut stats);
     stats
 }
 
@@ -463,7 +463,7 @@ fn descriptor_to_dotted(descriptor: &str) -> Option<String> {
         .map(|s| s.replace('/', "."))
 }
 
-fn emit_extras_assigns(facts: &mut IndexFacts, _ids: &IdMap, stats: &mut AndroidIntentStats) {
+fn emit_extras_assigns(facts: &mut IndexFacts, stats: &mut AndroidIntentStats) {
     let actuals: BTreeMap<_, _> = facts
         .actual_param
         .iter()
@@ -484,48 +484,6 @@ fn emit_extras_assigns(facts: &mut IndexFacts, _ids: &IdMap, stats: &mut Android
             descriptor: descriptor.as_ref(),
         };
         let InsnSiteId { insn_id, .. } = InsnSiteId::try_from(*site).unwrap();
-        for (dst_idx, dst_path, src_idx, src_path) in api_rows(sig) {
-            let dst = observed_api_receiver_vertex(sig, dst_idx).unwrap_or_else(|| {
-                actuals
-                    .get(&(*site, dst_idx))
-                    .cloned()
-                    .unwrap_or_else(|| call_arg_vertex(insn_id, dst_idx))
-            });
-            let src = observed_api_receiver_vertex(sig, src_idx).unwrap_or_else(|| {
-                actuals
-                    .get(&(*site, src_idx))
-                    .cloned()
-                    .unwrap_or_else(|| call_arg_vertex(insn_id, src_idx))
-            });
-            if !dst_path.is_empty() {
-                paths.insert((dst_path,));
-            }
-            if !src_path.is_empty() {
-                paths.insert((src_path,));
-            }
-            assigns.insert((
-                *site,
-                FlowVertex(dst.0, dst.1.concat(&dst_path)),
-                FlowVertex(src.0, src.1.concat(&src_path)),
-            ));
-        }
-        if sig.class == COMPONENT_NAME
-            && matches!(
-                sig.descriptor,
-                "(Landroid/content/Context;Ljava/lang/String;)V"
-                    | "(Ljava/lang/String;Ljava/lang/String;)V"
-            )
-        {
-            let recv = actuals
-                .get(&(*site, FormalIndex::new(0)))
-                .cloned()
-                .unwrap_or_else(|| call_arg_vertex(insn_id, FormalIndex::new(0)));
-            let class_arg = actuals
-                .get(&(*site, FormalIndex::new(2)))
-                .cloned()
-                .unwrap_or_else(|| call_arg_vertex(insn_id, FormalIndex::new(2)));
-            assigns.insert((*site, recv, class_arg));
-        }
         let Some(op) = extras_op(sig) else {
             continue;
         };
@@ -591,21 +549,6 @@ fn emit_extras_assigns(facts: &mut IndexFacts, _ids: &IdMap, stats: &mut Android
 
 fn call_arg_vertex(insn_id: InsnId, formal: FormalIndex) -> FlowVertex {
     FlowVertex(call_arg_var(insn_id, formal), Path::empty())
-}
-
-fn observed_api_receiver_vertex(sig: JavaSig<'_>, formal: FormalIndex) -> Option<FlowVertex> {
-    if matches!(
-        (sig.name, sig.descriptor, *formal),
-        ("getIntent", "()Landroid/content/Intent;", 0)
-            | ("setIntent", "(Landroid/content/Intent;)V", 0)
-    ) {
-        Some(FlowVertex(
-            FlowVariable::formal_index(FormalIndex::new(0)),
-            Path::empty(),
-        ))
-    } else {
-        None
-    }
 }
 
 fn call_arg_var(insn_id: InsnId, formal: FormalIndex) -> FlowVariable {
