@@ -9,7 +9,7 @@ all the intermediate files should be stored; the API below this should be writte
 as parameters.
 */
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 mod model_check;
@@ -570,7 +570,6 @@ pub fn query(
     let index_result = IndexResult::try_load(&index_path)
         .err_context(|| format!("loading index result from: {}", index_path.display()))?;
     let final_call = index_result.final_call(&index_facts.call);
-    let endpoint_call = endpoint_call_graph(&index_facts, &final_call, &ids);
 
     // Assembled alongside the query itself and handed to the SARIF writer, which turns it
     // into `run.invocations[0]`. See `formatter::QueryDiagnostics`.
@@ -679,7 +678,7 @@ pub fn query(
                 &index_facts,
                 &ids,
                 &index_result.assign_like,
-                &endpoint_call,
+                &final_call,
             );
             diagnostics.unresolved_functions = built.unresolved_functions;
             endpoints.extend(built.endpoints);
@@ -728,7 +727,7 @@ pub fn query(
             .endpoints(endpoints)
             .formal_param(formal_params)
             .actual_param(index_facts.actual_param.clone())
-            .call(endpoint_call.clone())
+            .call(final_call.clone())
             .assign(index_result.assign_like)
             .paths(index_result.paths)
             .external_function(index_result.external_function);
@@ -750,7 +749,7 @@ pub fn query(
     b.taint(result.taint)
         .taint_edge(result.taint_edge)
         .index_actual_param(index_facts.actual_param)
-        .call(endpoint_call)
+        .call(final_call)
         .id_to_name(ids.get_id_to_name_map());
     let facts = b.build().unwrap();
 
@@ -775,30 +774,6 @@ pub fn query(
         execution_successful,
         model_check_only: false,
     })
-}
-
-fn endpoint_call_graph(
-    facts: &IndexFacts,
-    final_call: &[(facts::PackedInsnSiteId, facts::FunctionId)],
-    ids: &facts::IdMap,
-) -> Vec<(facts::PackedInsnSiteId, facts::FunctionId)> {
-    let mut calls: BTreeSet<_> = final_call.iter().copied().collect();
-    let functions: BTreeMap<_, _> = ids
-        .functions()
-        .map(|(id, function)| (function.0.to_string(), id))
-        .collect();
-    for (site, class, name, descriptor) in &facts.android_call_site {
-        let target = format!(
-            "{}->{}{}",
-            class.as_ref(),
-            name.as_ref(),
-            descriptor.as_ref()
-        );
-        if let Some(target_id) = functions.get(&target) {
-            calls.insert((*site, *target_id));
-        }
-    }
-    calls.into_iter().collect()
 }
 
 /// [`query`] for a project with no index: report what the model files match against the
