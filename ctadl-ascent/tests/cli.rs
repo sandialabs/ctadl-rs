@@ -657,7 +657,8 @@ fn import_index_android_icc_case(
         },
     )
     .unwrap();
-    let project = AnalysisProject::try_create(&format!("{name}_project"), &[name]).unwrap();
+    let project =
+        AnalysisProject::try_create(&format!("{name}_project"), &[name], SubImports::All).unwrap();
     let models = if let Some(model_text) = model_text {
         let model = dir.path().join("query.json");
         std::fs::write(&model, model_text).unwrap();
