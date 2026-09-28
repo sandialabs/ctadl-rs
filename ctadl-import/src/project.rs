@@ -154,8 +154,10 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   column cannot say which import's source-info database to read one in -- which is exactly
 ///   how a multi-import project used to render every result once per import, each copy
 ///   carrying an unrelated line from another artifact.
-/// - `4`: `call.parquet` moved from pre-fixpoint [`crate::index_engine::IndexFacts`] output to
-///   post-fixpoint [`crate::index_engine::IndexResult`] output, so query sees derived calls.
+/// - `4`: the index gained `intent_pair.parquet`, the Android ICC pairings the fixpoint derived,
+///   which loading an index result now requires. The pairings' call edges are persisted in
+///   `resolved_call.parquet`. `call.parquet` holds the pre-fixpoint relation, and a consumer that
+///   wants the final call graph must union the two, as query does.
 pub const INDEX_FORMAT_VERSION: &str = "4";
 
 /// What [`ArtifactImport::status`] holds once an import has finished.
