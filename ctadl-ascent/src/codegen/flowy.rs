@@ -379,22 +379,7 @@ pub fn check_with_config<P: AsRef<Path>>(
         .collect();
     let index_result =
         taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
-    let final_call = index_facts
-        .call
-        .iter()
-        .copied()
-        .chain(
-            index_result
-                .resolved_call
-                .iter()
-                .map(|(func_id, insn_id, target)| {
-                    (
-                        fx::PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
-                        *target,
-                    )
-                }),
-        )
-        .collect::<Vec<_>>();
+    let final_call = index_result.final_call(&index_facts.call);
 
     if let Some(dot_path) = dump_index_graph {
         let mut file = std::fs::File::create(dot_path)

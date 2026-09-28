@@ -569,22 +569,7 @@ pub fn query(
         .err_context(|| format!("loading index facts from: {}", index_path.display()))?;
     let index_result = IndexResult::try_load(&index_path)
         .err_context(|| format!("loading index result from: {}", index_path.display()))?;
-    let final_call = index_facts
-        .call
-        .iter()
-        .copied()
-        .chain(
-            index_result
-                .resolved_call
-                .iter()
-                .map(|(func_id, insn_id, target)| {
-                    (
-                        facts::PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
-                        *target,
-                    )
-                }),
-        )
-        .collect::<Vec<_>>();
+    let final_call = index_result.final_call(&index_facts.call);
     let endpoint_call = endpoint_call_graph(&index_facts, &final_call, &ids);
 
     // Assembled alongside the query itself and handed to the SARIF writer, which turns it

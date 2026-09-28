@@ -716,6 +716,23 @@ impl<'a> std::fmt::Display for IndexResultDisplay<'a> {
 }
 
 impl IndexResult {
+    /// The final call graph: `call`, the pre-fixpoint relation codegen emitted, plus every call
+    /// the fixpoint resolved or derived (virtual dispatch, Android intent pairings).
+    pub fn final_call(
+        &self,
+        call: &[(PackedInsnSiteId, FunctionId)],
+    ) -> Vec<(PackedInsnSiteId, FunctionId)> {
+        call.iter()
+            .copied()
+            .chain(self.resolved_call.iter().map(|(func_id, insn_id, target)| {
+                (
+                    PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+                    *target,
+                )
+            }))
+            .collect()
+    }
+
     pub fn display<'a>(&'a self, id_map: Option<&'a IdMap>) -> IndexResultDisplay<'a> {
         IndexResultDisplay {
             result: self,
