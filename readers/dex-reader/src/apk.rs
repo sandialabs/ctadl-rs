@@ -153,20 +153,20 @@ pub fn split_apk_entries_of_file(path: &std::path::Path) -> DexResult<Vec<SplitA
     Ok(entries)
 }
 
-/// Decompresses one entry of an app bundle. Reopens the archive, so extracting every split costs
-/// one central-directory read each rather than holding the whole bundle in memory.
+/// Decompresses one entry of an app bundle or APK. Reopens the archive, so extracting every
+/// split costs one central-directory read each rather than holding the whole bundle in memory.
 pub fn read_bundle_entry(path: &std::path::Path, entry_name: &str) -> DexResult<Vec<u8>> {
     let file = std::fs::File::open(path)
-        .map_err(|_| crate::error::DexError::InvalidDex("cannot open app bundle"))?;
+        .map_err(|_| crate::error::DexError::InvalidDex("cannot open ZIP archive"))?;
     let mut archive = ZipArchive::new(file)
-        .map_err(|_| crate::error::DexError::InvalidDex("app bundle is not a valid ZIP"))?;
+        .map_err(|_| crate::error::DexError::InvalidDex("not a valid ZIP archive"))?;
     let mut entry = archive
         .by_name(entry_name)
-        .map_err(|_| crate::error::DexError::InvalidDex("no such entry in app bundle"))?;
+        .map_err(|_| crate::error::DexError::InvalidDex("no such entry in ZIP archive"))?;
     let mut buf = Vec::new();
     entry
         .read_to_end(&mut buf)
-        .map_err(|_| crate::error::DexError::InvalidDex("failed to decompress bundle entry"))?;
+        .map_err(|_| crate::error::DexError::InvalidDex("failed to decompress ZIP entry"))?;
     Ok(buf)
 }
 

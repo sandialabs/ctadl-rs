@@ -977,6 +977,14 @@ impl Visitor for CodegenVisitor<'_> {
                             object,
                         ));
                     }
+                    if let Exp::Str(value) = src {
+                        let dest = self.trans_variable_ref(dest);
+                        self.facts.const_str_assign.push((
+                            site,
+                            FlowVertex(dest, fx::Path::empty()),
+                            Str::from(value.clone()),
+                        ));
+                    }
                     let Some(src) = self.trans_exp(src) else {
                         continue;
                     };
@@ -1042,6 +1050,12 @@ impl Visitor for CodegenVisitor<'_> {
                         super_start,
                     } => {
                         let recv_var = self.trans_variable_ref(receiver);
+                        self.facts.android_call_site.push((
+                            site,
+                            Str::from(cls.clone()),
+                            Str::from(simple_name.clone()),
+                            Str::from(descriptor.clone()),
+                        ));
                         // add receiver as actual arg 0
                         args.insert(0, Exp::Variable(receiver.clone()));
                         let key = (cls.clone(), simple_name.clone(), descriptor.clone());
@@ -1180,6 +1194,20 @@ impl Visitor for CodegenVisitor<'_> {
                         ));
                     }
 
+                    if let Exp::Str(value) = arg_exp {
+                        let call_arg_packed = fx::PackedCallArg::try_from_parts(
+                            fx::InsnSiteId::try_from(site).unwrap().insn_id,
+                            formal_index,
+                        )
+                        .unwrap();
+                        let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
+                        self.facts.const_str_assign.push((
+                            site,
+                            FlowVertex(call_arg_var, fx::Path::empty()),
+                            Str::from(value.clone()),
+                        ));
+                    }
+
                     let Some(arg) = self.trans_exp(arg_exp) else {
                         continue;
                     };
@@ -1287,6 +1315,13 @@ impl Visitor for CodegenVisitor<'_> {
                     self.facts
                         .call_target_assign
                         .push((site, dest.clone(), object));
+                }
+                if let Exp::Str(value) = value {
+                    self.facts.const_str_assign.push((
+                        site,
+                        dest.clone(),
+                        Str::from(value.clone()),
+                    ));
                 }
                 if let Some(value) = self.trans_exp(value) {
                     self.facts.assign.push((site, dest, value));

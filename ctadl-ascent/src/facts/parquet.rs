@@ -1110,6 +1110,40 @@ impl DecodeColumn<facts::TaintDirection> for DefaultDecoder {
     }
 }
 
+impl EncodeColumn<facts::IntentPairKind> for DefaultEncoder {
+    #[inline]
+    fn encode_column(
+        name: &str,
+        col: Vec<facts::IntentPairKind>,
+    ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
+        <Self as EncodeColumn<u8>>::encode_column(
+            name,
+            col.into_iter()
+                .map(|kind| match kind {
+                    facts::IntentPairKind::Explicit => 0,
+                    facts::IntentPairKind::Implicit => 1,
+                })
+                .collect_vec(),
+        )
+    }
+}
+
+impl DecodeColumn<facts::IntentPairKind> for DefaultDecoder {
+    #[inline]
+    fn into_decode_array(
+        name: &str,
+        batch: &RecordBatch,
+    ) -> impl IntoIterator<Item = facts::IntentPairKind> {
+        <Self as DecodeColumn<u8>>::into_decode_array(name, batch)
+            .into_iter()
+            .map(|tag| match tag {
+                0 => facts::IntentPairKind::Explicit,
+                1 => facts::IntentPairKind::Implicit,
+                _ => panic!("bad encoding of IntentPairKind"),
+            })
+    }
+}
+
 // type QueryEndpointEncoding = (
 
 impl EncodeColumn<query_engine::QueryEndpoint> for DefaultEncoder {
