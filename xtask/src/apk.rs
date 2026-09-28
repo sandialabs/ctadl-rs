@@ -839,7 +839,10 @@ fn check_manifest_and_intents(work: &Path, state: &Path, store: &Path) -> Result
         .iter()
         .filter(|c| c.tag == "activity-alias")
         .count();
-    ensure!(aliases == 10, "expected 10 activity-aliases, found {aliases}");
+    ensure!(
+        aliases == 10,
+        "expected 10 activity-aliases, found {aliases}"
+    );
     ensure!(
         components.iter().any(|c| {
             c.descriptor.as_deref() == Some("Lcom/noto/app/AppActivity;")

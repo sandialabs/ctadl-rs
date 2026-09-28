@@ -164,11 +164,7 @@ fn emit_send_sites(
         };
         for (formal, dst_path) in ports {
             let dst = call_arg_var(bridge.insn_id, FormalIndex::new(*formal));
-            assigns.insert((
-                bridge_site,
-                FlowVertex(dst, dst_path.clone()),
-                intent.clone(),
-            ));
+            assigns.insert((bridge_site, FlowVertex(dst, *dst_path), intent.clone()));
         }
     }
     stats.intent_frames += frames.len();
