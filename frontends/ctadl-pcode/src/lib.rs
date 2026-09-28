@@ -41,6 +41,9 @@ pub mod ghidra;
 // every link the module wrote to its own items.
 pub mod jni_registry;
 
+// Prototypes of JNI native implementations, handed to Ghidra before it decompiles for export.
+pub mod jni_signatures;
+
 /// This is hardcoded for now, but should be read from the facts
 const WORD_SIZE: i64 = 8;
 
@@ -51,11 +54,41 @@ pub fn ghidra_available() -> bool {
 
 /// Import pcode facts from an artifact by running Ghidra and then converting the facts
 pub fn import_pcode(import: &ctadl_import::project::ArtifactImport) -> Result<ProgramInfo, Error> {
+    import_pcode_with_hints(import, &[])
+}
+
+/// [`import_pcode`], also telling Ghidra the prototypes of the JNI natives in `java_hints` (from
+/// the Dex that declares them; see [`jni_signatures::from_java_natives`]). The library's own
+/// `RegisterNatives` tables are always read for more.
+pub fn import_pcode_with_hints(
+    import: &ctadl_import::project::ArtifactImport,
+    java_hints: &[jni_signatures::SignatureHint],
+) -> Result<ProgramInfo, Error> {
     let path = &import.artifact_path;
     let import_path = import.import_path();
 
+    let mut hints = java_hints.to_vec();
+    if let Ok(ghidra::GhidraSource::Binary(_)) = ghidra::GhidraSource::detect(path)
+        && let Ok(data) = std::fs::read(path)
+    {
+        hints.extend(jni_signatures::from_registry(&data));
+    }
+    let hints_path = import_path.join(jni_signatures::HINTS_FILE);
+    let hints_path = if hints.is_empty() {
+        None
+    } else {
+        jni_signatures::write(&hints_path, &hints)?;
+        log::debug!(
+            "{} JNI signature hint(s) for '{}' in {}",
+            hints.len(),
+            import.name,
+            hints_path.display()
+        );
+        Some(hints_path)
+    };
+
     // Run Ghidra to generate facts
-    ghidra::run_ghidra_export(path, &import_path)?;
+    ghidra::run_ghidra_export(path, &import_path, hints_path.as_deref())?;
 
     let facts_dir = import_path.join("facts");
 

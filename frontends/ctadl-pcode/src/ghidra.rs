@@ -124,17 +124,27 @@ fn project_from_gpr(gpr: &Path) -> Result<GhidraSource, Error> {
 
 /// Runs the pcode exporter against `artifact_path`, auto-detecting whether it is a
 /// binary to import, an existing local Ghidra project, or a Ghidra Server URL. See
-/// [`GhidraSource::detect`].
-pub fn run_ghidra_export(artifact_path: &Path, output_dir: &Path) -> Result<(), Error> {
+/// [`GhidraSource::detect`]. `hints`, if given, is a JNI signature hints file; see
+/// [`crate::jni_signatures`].
+pub fn run_ghidra_export(
+    artifact_path: &Path,
+    output_dir: &Path,
+    hints: Option<&Path>,
+) -> Result<(), Error> {
     let source = GhidraSource::detect(artifact_path)?;
-    run_ghidra_export_source(&source, output_dir)
+    run_ghidra_export_source(&source, output_dir, hints)
 }
 
 /// Runs the pcode exporter against an explicit [`GhidraSource`]. Binaries are
 /// imported into a throwaway project (which is deleted afterwards); existing
 /// projects and server repositories are opened read-only via `-process`, so the
-/// user's data is never modified.
-pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Result<(), Error> {
+/// user's data is never modified. (The exporter's signature recovery still runs on them, but only
+/// in memory: a program opened read-only is never saved.)
+pub fn run_ghidra_export_source(
+    source: &GhidraSource,
+    output_dir: &Path,
+    hints: Option<&Path>,
+) -> Result<(), Error> {
     // Benchmark/dev escape hatch: reuse already-exported pcode facts and skip the (slow) Ghidra
     // run, so re-import only re-runs the facts→IR conversion (which is what changes when the
     // frontend lowering changes). Enabled by `CTADL_REUSE_FACTS` when the facts dir is non-empty.
@@ -228,9 +238,11 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
     command
         .arg("-postScript")
         .arg("ExportPcode.java")
-        .arg(&facts_dir)
-        .arg("-scriptPath")
-        .arg(&script_path);
+        .arg(&facts_dir);
+    if let Some(hints) = hints {
+        command.arg(hints);
+    }
+    command.arg("-scriptPath").arg(&script_path);
 
     let log_path = output_dir.join(GHIDRA_LOG_NAME);
 

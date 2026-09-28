@@ -221,7 +221,10 @@ fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<Progra
             );
         }
     }
-    record_sub_imports(import, apk_native::import_native_libs(import, opts)?)?;
+    record_sub_imports(
+        import,
+        apk_native::import_native_libs(import, opts, &program_info)?,
+    )?;
     Ok(program_info)
 }
 
