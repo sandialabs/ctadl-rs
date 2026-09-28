@@ -140,7 +140,6 @@ fn emit_send_sites(
         .collect();
     let mut sends = BTreeSet::new();
     let mut assigns = BTreeSet::new();
-    let mut actuals = BTreeSet::new();
     let mut frames = BTreeSet::new();
     for (site, cls, name, descriptor) in &facts.android_call_site {
         if is_local_broadcast_manager(cls.as_ref()) {
@@ -156,62 +155,25 @@ fn emit_send_sites(
         let intent = call_arg_vertex(insn_id, intent_arg);
         sends.insert((func_id, bridge.insn_id, insn_id, intent_arg, kind));
         frames.insert((func_id,));
-        match kind {
-            IntentKind::Activity => {
-                actuals.insert((
-                    bridge_site,
-                    FormalIndex::new(0),
-                    FlowVertex(
-                        call_arg_var(bridge.insn_id, FormalIndex::new(0)),
-                        Path::empty(),
-                    ),
-                ));
-                actuals.insert((bridge_site, FormalIndex::new(1), intent.clone()));
-                assigns.insert((
-                    bridge_site,
-                    FlowVertex(
-                        call_arg_var(bridge.insn_id, FormalIndex::new(0)),
-                        path("<intent>"),
-                    ),
-                    intent.clone(),
-                ));
-                assigns.insert((
-                    bridge_site,
-                    FlowVertex(
-                        call_arg_var(bridge.insn_id, FormalIndex::new(1)),
-                        Path::empty(),
-                    ),
-                    intent,
-                ));
-            }
-            IntentKind::Receiver => {
-                actuals.insert((bridge_site, FormalIndex::new(2), intent.clone()));
-                assigns.insert((
-                    bridge_site,
-                    FlowVertex(
-                        call_arg_var(bridge.insn_id, FormalIndex::new(2)),
-                        Path::empty(),
-                    ),
-                    intent,
-                ));
-            }
-            IntentKind::StartedService | IntentKind::BoundService => {
-                actuals.insert((bridge_site, FormalIndex::new(1), intent.clone()));
-                assigns.insert((
-                    bridge_site,
-                    FlowVertex(
-                        call_arg_var(bridge.insn_id, FormalIndex::new(1)),
-                        Path::empty(),
-                    ),
-                    intent,
-                ));
-            }
+        // One-directional delivery: `assign` rather than `actual_param`, whose symmetric
+        // lowering would carry the receiver's writes back into the sender's intent.
+        let ports: &[(i16, Path)] = match kind {
+            IntentKind::Activity => &[(0, path("<intent>")), (1, Path::empty())],
+            IntentKind::Receiver => &[(2, Path::empty())],
+            IntentKind::StartedService | IntentKind::BoundService => &[(1, Path::empty())],
+        };
+        for (formal, dst_path) in ports {
+            let dst = call_arg_var(bridge.insn_id, FormalIndex::new(*formal));
+            assigns.insert((
+                bridge_site,
+                FlowVertex(dst, dst_path.clone()),
+                intent.clone(),
+            ));
         }
     }
     stats.intent_frames += frames.len();
     facts.intent_frame.extend(frames);
     facts.intent_send.extend(sends);
-    facts.actual_param.extend(actuals);
     facts.assign.extend(assigns);
     facts
         .paths
