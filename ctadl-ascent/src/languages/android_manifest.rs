@@ -185,14 +185,14 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<AndroidManifest, Error> {
 }
 
 pub fn import_from_apk(import: &ArtifactImport) -> Result<Option<AndroidManifest>, Error> {
-    let bytes = match dex_reader::apk::read_apk_entry(&import.artifact_path, "AndroidManifest.xml")
-    {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            log::debug!("{}: no AndroidManifest.xml imported: {e}", import.name);
-            return Ok(None);
-        }
-    };
+    let bytes =
+        match dex_reader::apk::read_bundle_entry(&import.artifact_path, "AndroidManifest.xml") {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::debug!("{}: no AndroidManifest.xml imported: {e}", import.name);
+                return Ok(None);
+            }
+        };
     let manifest = parse_manifest(&bytes)?;
     manifest.save(import.import_path())?;
     Ok(Some(manifest))
@@ -603,7 +603,7 @@ mod tests {
         if !apk.exists() {
             return;
         }
-        let bytes = dex_reader::apk::read_apk_entry(&apk, "AndroidManifest.xml").unwrap();
+        let bytes = dex_reader::apk::read_bundle_entry(&apk, "AndroidManifest.xml").unwrap();
         let manifest = parse_manifest(&bytes).unwrap();
         assert_eq!(manifest.nodes.len(), 180);
         assert_eq!(manifest.attrs.len(), 302);

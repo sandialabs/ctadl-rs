@@ -346,7 +346,7 @@ fn check_apk(apk: &Path) -> Result<()> {
 
 /// The committed APK's binary manifest decodes into the expected component inventory.
 fn check_apk_manifest(apk: &Path) -> Result<()> {
-    let bytes = dex_reader::apk::read_apk_entry(apk, "AndroidManifest.xml")
+    let bytes = dex_reader::apk::read_bundle_entry(apk, "AndroidManifest.xml")
         .with_context(|| format!("reading AndroidManifest.xml from {}", apk.display()))?;
     let manifest = ctadl_ascent::languages::android_manifest::parse_manifest(&bytes)
         .with_context(|| format!("parsing AndroidManifest.xml from {}", apk.display()))?;
