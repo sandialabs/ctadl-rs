@@ -81,6 +81,9 @@ pub fn require_native_libs(apk_path: &Path) -> Result<(), Error> {
 /// Returns an empty vector -- never an error -- when the APK has no native libraries,
 /// when the caller disabled them, or when Ghidra is not available to disassemble them.
 ///
+/// `java` is the APK's Java half, already imported. Its `native` declarations fix the prototypes of
+/// the functions that implement them, which Ghidra is told before it decompiles each library.
+///
 /// # Errors
 ///
 /// Only for failures that are not specific to one library: the APK cannot be read, or
@@ -88,6 +91,7 @@ pub fn require_native_libs(apk_path: &Path) -> Result<(), Error> {
 pub fn import_native_libs(
     parent: &ArtifactImport,
     opts: ImportOptions<'_>,
+    java: &ctadl_ir::ProgramInfo,
 ) -> Result<Vec<String>, Error> {
     if !opts.native_libs {
         return Ok(Vec::new());
@@ -227,7 +231,7 @@ pub fn import_native_libs(
         let dest = dest_dir.join(&entry.file_name);
         let name = sub_import_name(&parent.name, abi, &entry.file_name);
 
-        match import_one(&dest, &bytes, &name, opts.skip_existing) {
+        match import_one(&dest, &bytes, &name, opts.skip_existing, java) {
             Ok(Outcome::Imported) => names.push(name),
             Ok(Outcome::Reused) => {
                 reused += 1;
@@ -282,19 +286,30 @@ const NO_NATIVE_FRONTEND: &str =
 #[cfg(not(feature = "pcode"))]
 const NO_NATIVE_FRONTEND: &str = "this build was compiled without ctadl-frontends' `pcode` feature";
 
-/// Disassembles one extracted library and writes it to the store.
+/// Disassembles one extracted library and writes it to the store, telling Ghidra the prototypes
+/// of the natives `java` declares.
 ///
 /// This is a separate function so that the `pcode` feature has to switch out only this one
 /// function, and not the extraction loop around it. When the feature is off,
 /// [`import_native_libs`] returns before anything calls this.
 #[cfg(feature = "pcode")]
-fn lower_native(child: &ArtifactImport) -> Result<(), Error> {
-    let program_info = ctadl_pcode::import_pcode(child)?;
+fn lower_native(child: &ArtifactImport, java: &ctadl_ir::ProgramInfo) -> Result<(), Error> {
+    let hints = match &java.vmt {
+        ctadl_ir::mir::call::VirtualMethodTable::Java { natives, .. } => {
+            ctadl_pcode::jni_signatures::from_java_natives(
+                natives
+                    .iter()
+                    .map(|(cls, name, sig, _, _)| (&***cls, &***name, &***sig)),
+            )
+        }
+        _ => Vec::new(),
+    };
+    let program_info = ctadl_pcode::import_pcode_with_hints(child, &hints)?;
     ctadl_import::save_program_info(program_info, child)
 }
 
 #[cfg(not(feature = "pcode"))]
-fn lower_native(_child: &ArtifactImport) -> Result<(), Error> {
+fn lower_native(_child: &ArtifactImport, _java: &ctadl_ir::ProgramInfo) -> Result<(), Error> {
     unreachable!("import_native_libs returns early when the `pcode` feature is off")
 }
 
@@ -311,6 +326,7 @@ fn import_one(
     bytes: &[u8],
     name: &str,
     skip_existing: bool,
+    java: &ctadl_ir::ProgramInfo,
 ) -> Result<Outcome, Error> {
     // Write before the up-to-date check: it compares the *content* hash recorded by the
     // previous import against the file on disk, so the file has to be the one this APK
@@ -327,7 +343,7 @@ fn import_one(
     }
 
     let child = ArtifactImport::try_create(name, ArtifactLanguage::Pcode, dest)?;
-    lower_native(&child)?;
+    lower_native(&child, java)?;
 
     // `import_pcode` records Ghidra's image base on the config and re-saves it, so
     // reload rather than writing the stale in-memory copy back over it.
