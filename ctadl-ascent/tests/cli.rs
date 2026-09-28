@@ -29,19 +29,6 @@ pub fn initialize() {
     });
 }
 
-fn test_file() -> PathBuf {
-    [
-        env!("CARGO_MANIFEST_DIR"),
-        "..",
-        "xtask",
-        "tests",
-        "dex",
-        "com.noto_54.apk",
-    ]
-    .iter()
-    .collect()
-}
-
 /// Wrap the body of your store tests in this. See the note at the top of the file.
 fn run_store_test<F>(test: F)
 where
@@ -218,88 +205,6 @@ fn test_cli_query_c_sources_and_sinks() {
                  line 12 is the summarized `transfer(&x[1], s)` call: {text}"
             );
         }
-    });
-}
-
-/// The fixture APK ships no `lib/<abi>` entries, so the native-library pass is a no-op
-/// and the import records no sub-imports. This is the path every APK without native
-/// code takes, and the one that must not need Ghidra.
-#[test]
-fn test_cli_import_apk_without_native_libs() {
-    run_store_test(|| {
-        let name = "test_import_no_native";
-        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
-        cli::import(&import, cli::ImportOptions::default()).unwrap();
-
-        let reloaded = ArtifactImport::load_by_name(name).unwrap();
-        assert!(
-            reloaded.sub_imports.is_empty(),
-            "an APK with no native libraries records no sub-imports, got {:?}",
-            reloaded.sub_imports
-        );
-        // Nothing was extracted, so the staging directory was never created.
-        assert!(!import.import_path().join("native").exists());
-    });
-}
-
-#[test]
-fn test_android_phase4_noto_manifest_and_intent_counts() {
-    run_store_test(|| {
-        let import_name = "phase4_noto_import";
-        let project_name = "phase4_noto_project";
-        let import =
-            ArtifactImport::try_create(import_name, ArtifactLanguage::Apk, &test_file()).unwrap();
-        cli::import(
-            &import,
-            cli::ImportOptions {
-                native_libs: false,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-        let manifest =
-            ctadl_ascent::languages::android_manifest::AndroidManifest::load(import.import_path())
-                .unwrap();
-        assert_eq!(manifest.nodes.len(), 180);
-        assert_eq!(manifest.attrs.len(), 302);
-        let components = manifest.components();
-        assert_eq!(components.len(), 35);
-        assert_eq!(
-            components
-                .iter()
-                .filter(|component| component.tag == "activity-alias")
-                .count(),
-            10
-        );
-        assert!(components.iter().any(|component| {
-            component.descriptor.as_deref() == Some("Lcom/noto/app/AppActivity;")
-                && component.exported == Some(true)
-                && component.has_intent_filter
-        }));
-        assert!(components.iter().any(|component| {
-            component.descriptor.as_deref() == Some("Lcom/noto/app/note/NoteReminderReceiver;")
-                && component.exported == Some(false)
-        }));
-
-        let project = AnalysisProject::try_create(project_name, &[import_name]).unwrap();
-        cli::index(&project, &[], &[], false, cli::IndexOptions::default()).unwrap();
-
-        let index_path = project.index_path().unwrap();
-        let pairs = ctadl_ascent::facts::schema::intent_pair::try_load(&index_path).unwrap();
-        let explicit = pairs
-            .iter()
-            .filter(|(_, _, _, kind)| *kind == ctadl_ascent::facts::IntentPairKind::Explicit)
-            .count();
-        let implicit = pairs.len() - explicit;
-        assert_eq!(explicit, 5, "intent pairs: {pairs:?}");
-        assert_eq!(implicit, 1, "intent pairs: {pairs:?}");
-
-        let calls = ctadl_ascent::facts::schema::call::try_load(&index_path).unwrap();
-        assert!(
-            calls.len() >= pairs.len(),
-            "final call graph should include derived intent calls"
-        );
     });
 }
 

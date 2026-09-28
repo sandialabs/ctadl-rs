@@ -49,6 +49,7 @@ pub const CHECKS: &[&str] = &[
     "apk:report",
     "apk:report-invariants",
     "apk:skip-existing",
+    "apk:manifest-and-intents",
 ];
 
 // The store layout `ctadl` writes. Duplicated from `ctadl_import::project` rather than imported:
@@ -61,7 +62,7 @@ const IMPORT_CONFIG_FILE: &str = "import_config.json";
 const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// The `version` an import config carries today (`IMPORT_FORMAT_VERSION`). Pinned so a bump
 /// that forgets the store's readers has to come through here.
-const IMPORT_FORMAT_VERSION: &str = "8";
+const IMPORT_FORMAT_VERSION: &str = "9";
 
 /// A model file that selects something in any Java app: every `toString` override. The point is
 /// the *checking*, not the model, so the cheapest generator that cannot match nothing is the
@@ -100,7 +101,8 @@ pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
     // Positional, and in the order [`CHECKS`] names them -- the checks share a store, so the
     // order is part of the arrangement rather than a presentation choice. `apk:model-check` runs
     // before `apk:skip-existing` because it wants the store exactly as the first import left it,
-    // and `apk:skip-existing` re-imports.
+    // and `apk:skip-existing` re-imports. `apk:manifest-and-intents` runs last because it indexes,
+    // which writes the project `apk:model-check` asserts is absent.
     let outcomes = [
         to_outcome(check_import(work, &state, &store, &apk)),
         to_outcome(check_no_native_libs(&store)),
@@ -108,6 +110,7 @@ pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
         to_outcome(check_report(work, &state, &store)),
         to_outcome(check_report_invariants(work, &state)),
         to_outcome(check_skip_existing(work, &state, &store, &apk)),
+        to_outcome(check_manifest_and_intents(work, &state, &store)),
     ];
     Ok(CHECKS
         .iter()
@@ -803,6 +806,80 @@ fn check_skip_existing(work: &Path, state: &Path, store: &Path, apk: &Path) -> R
     Ok(())
 }
 
+/// The imported manifest has the shape this app's `AndroidManifest.xml` has, and indexing the app
+/// links the intents it sends to the components that receive them.
+///
+/// The counts are a property of this APK, of the manifest decoder, and of intent resolution, so
+/// a deliberate change to either moves them; re-pin from `ctadl index app` and say in the commit
+/// message which change moved them. The index is the expensive part -- several minutes on this
+/// app, which is why this lives here and not under `cargo test`.
+fn check_manifest_and_intents(work: &Path, state: &Path, store: &Path) -> Result<()> {
+    use ctadl_ascent::facts::IntentPairKind;
+    use ctadl_ascent::languages::android_manifest::AndroidManifest;
+
+    let manifest = AndroidManifest::load(import_dir(store))
+        .with_context(|| format!("loading the manifest under {}", import_dir(store).display()))?;
+    ensure!(
+        manifest.nodes.len() == 180,
+        "expected 180 manifest nodes, found {}",
+        manifest.nodes.len()
+    );
+    ensure!(
+        manifest.attrs.len() == 302,
+        "expected 302 manifest attributes, found {}",
+        manifest.attrs.len()
+    );
+    let components = manifest.components();
+    ensure!(
+        components.len() == 35,
+        "expected 35 components, found {}",
+        components.len()
+    );
+    let aliases = components
+        .iter()
+        .filter(|c| c.tag == "activity-alias")
+        .count();
+    ensure!(aliases == 10, "expected 10 activity-aliases, found {aliases}");
+    ensure!(
+        components.iter().any(|c| {
+            c.descriptor.as_deref() == Some("Lcom/noto/app/AppActivity;")
+                && c.exported == Some(true)
+                && c.has_intent_filter
+        }),
+        "AppActivity is not an exported component with an intent filter"
+    );
+    ensure!(
+        components.iter().any(|c| {
+            c.descriptor.as_deref() == Some("Lcom/noto/app/note/NoteReminderReceiver;")
+                && c.exported == Some(false)
+        }),
+        "NoteReminderReceiver is not an unexported component"
+    );
+
+    exec::run_checked(command(work, state, &["index", IMPORT])?, "ctadl index")?;
+    let index = store.join(PROJECTS_DIR).join(IMPORT).join("index");
+    let pairs = ctadl_ascent::facts::schema::intent_pair::try_load(&index)
+        .with_context(|| format!("loading intent pairs from {}", index.display()))?;
+    let explicit = pairs
+        .iter()
+        .filter(|(_, _, _, kind)| *kind == IntentPairKind::Explicit)
+        .count();
+    let implicit = pairs.len() - explicit;
+    ensure!(
+        explicit == 5 && implicit == 1,
+        "expected 5 explicit and 1 implicit intent pair, found {explicit} and {implicit}: {pairs:?}"
+    );
+    let calls = ctadl_ascent::facts::schema::call::try_load(&index)
+        .with_context(|| format!("loading calls from {}", index.display()))?;
+    ensure!(
+        calls.len() >= pairs.len(),
+        "the final call graph ({} calls) should include the {} derived intent calls",
+        calls.len(),
+        pairs.len()
+    );
+    Ok(())
+}
+
 // --- helpers --------------------------------------------------------------
 
 /// Import the app under [`IMPORT`], with `extra` appended to the command.
@@ -866,7 +943,7 @@ mod tests {
     /// would silently drop a result or mislabel one. The count is what a compiler cannot catch.
     #[test]
     fn every_check_is_named() {
-        assert_eq!(CHECKS.len(), 6, "CHECKS and run_checks must stay in step");
+        assert_eq!(CHECKS.len(), 7, "CHECKS and run_checks must stay in step");
         assert_eq!(CHECKS[0], "apk:import", "the shared import reports first");
         assert!(
             CHECKS.iter().all(|n| n.starts_with("apk:")),
