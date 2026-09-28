@@ -350,6 +350,15 @@ where
         r
     }
 
+    /// Visit every row. For the index dump.
+    pub fn for_each_row(&self, mut visit: impl FnMut(&F, &V, &P, &M, &Fp)) {
+        for ((f, v), group) in self.fwd.iter() {
+            for (p, m, fp) in group.iter() {
+                visit(f, v, p, m, fp);
+            }
+        }
+    }
+
     #[inline]
     pub(crate) fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
         // `(P,M,Fp)` are cheap to clone: 8-byte handles plus an i16. Cloning them lets us skip

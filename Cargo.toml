@@ -56,3 +56,8 @@ lto = "thin"
 inherits = "release"
 debug = true
 strip = "none"
+
+# DO-NOT-MERGE (ceno deep dive): Ascent's `run_timeout` returns from inside an SCC and drops its
+# stores; the vendored macro keeps them, so a timed-out index run can still be censused.
+[patch.crates-io]
+ascent_macro = { path = "vendor/ascent_macro" }

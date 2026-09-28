@@ -102,6 +102,15 @@ where
         .expect("Type mismatch in interner registry")
 }
 
+/// `(nodes, table bytes, payload bytes)` of the interner behind `Seq<T>`; see
+/// [`immortal::Interner::heap_stats`].
+pub fn interner_heap_stats<T>() -> (usize, usize, usize)
+where
+    T: Hash + Eq + Clone + Send + Sync + 'static,
+{
+    get_interner::<T>().heap_stats()
+}
+
 fn resolve_global_interner<T>(type_id: TypeId) -> &'static (dyn Any + Send + Sync)
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,

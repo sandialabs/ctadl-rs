@@ -273,6 +273,29 @@ where
         )
     }
 
+    /// Visit every row as `(f, vd, pd, vs, ps)`. For the index dump.
+    pub fn for_each_row(&self, mut visit: impl FnMut(&F, &Vd, &Pd, &Vs, &Ps)) {
+        for ((f, vs), group) in self.fwd.iter() {
+            for (ps, vd, pd) in group.iter() {
+                visit(f, vd, pd, vs, ps);
+            }
+        }
+    }
+
+    /// `(groups, rows, bytes)` of the trie, counted the way [`Self::heap_report`] counts it.
+    /// For the index memory census.
+    pub fn heap_totals(&self) -> (usize, usize, usize) {
+        let sz_key = std::mem::size_of::<(F, Vs)>();
+        let mut bytes = hb_bytes(
+            self.fwd.capacity(),
+            sz_key + std::mem::size_of::<PathGroup<Ps, Vd, Pd>>(),
+        );
+        for group in self.fwd.values() {
+            bytes += group.heap_bytes();
+        }
+        (self.fwd.len(), self.len, bytes)
+    }
+
     /// Rebuild the logical relation as full tuples `(F, Vd, Pd, Vs, Ps)`, consuming the store.
     ///
     /// We use this to materialize the saved `assign_like` output after the run, because the

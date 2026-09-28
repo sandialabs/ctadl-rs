@@ -55,6 +55,25 @@ impl<T: ?Sized + Hash + Eq + Send + Sync + 'static> Interner<T> {
         write.insert_unique(hash, leaked, |&x| self.state.hash_one(x));
         leaked
     }
+
+    /// `(entries, table bytes, payload bytes)`: how many values are interned, an estimate of
+    /// the shards' hash tables (one pointer and one control byte per bucket at the table's
+    /// load factor), and the bytes of the leaked values themselves. For memory accounting;
+    /// takes every shard's read lock in turn.
+    pub fn heap_stats(&self) -> (usize, usize, usize) {
+        let (mut n, mut table, mut payload) = (0, 0, 0);
+        for shard in self.shards.iter() {
+            let t = shard.read();
+            n += t.len();
+            let cap = t.capacity();
+            if cap > 0 {
+                let buckets = (cap * 8).div_ceil(7).next_power_of_two().max(4);
+                table += buckets * (std::mem::size_of::<&T>() + 1) + 16;
+            }
+            payload += t.iter().map(|&x| std::mem::size_of_val(x)).sum::<usize>();
+        }
+        (n, table, payload)
+    }
 }
 
 /// Defines a new interned type.

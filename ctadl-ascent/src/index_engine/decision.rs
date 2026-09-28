@@ -530,6 +530,12 @@ pub fn stats() -> String {
     )
 }
 
+/// `(interned sets, table bytes, payload bytes)` of the decision-set interner, for the index
+/// memory census.
+pub fn set_heap_stats() -> (usize, usize, usize) {
+    SETS.heap_stats()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
