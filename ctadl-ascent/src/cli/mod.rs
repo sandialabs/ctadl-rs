@@ -1127,14 +1127,9 @@ pub enum SummaryProvenance {
 /// Warns when a `--summary` project may not describe this project's native libraries, and
 /// returns what it found.
 ///
-/// For each native library (`pcode` import) of `summary_project`:
-///
-/// - **Not this app's library.** It is neither one of this project's imports nor among the
-///   `sub_imports` recorded on them. Those are read from the import configs, so they are the
-///   full lists, before `--no-native-libs` filtered the project.
-/// - **Stale.** Its hash differs from the one recorded when `summary_project` was indexed.
-///
-/// An index written before those hashes were recorded gets one `info` line instead.
+/// This project's libraries are its imports plus the `sub_imports` recorded on them. Those are
+/// read from the import configs, so they are the full lists, before `--no-native-libs` filtered
+/// the project.
 pub fn check_summary_provenance(
     project: &AnalysisProject,
     summary_project: &AnalysisProject,
