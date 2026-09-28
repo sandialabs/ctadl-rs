@@ -633,7 +633,9 @@ fn android_tools_available() -> bool {
 
 /// The final call graph as `query` sees it: codegen's `call` table plus the calls the index
 /// derived (`resolved_call`), which is where ICC pairs are persisted.
-fn final_call_graph(index_path: &std::path::Path) -> Vec<ctadl_ascent::facts::schema::call::Record> {
+fn final_call_graph(
+    index_path: &std::path::Path,
+) -> Vec<ctadl_ascent::facts::schema::call::Record> {
     use ctadl_ascent::facts::schema;
     let mut calls = schema::call::try_load(index_path).unwrap();
     calls.extend(schema::resolved_call::try_load(index_path).unwrap());
