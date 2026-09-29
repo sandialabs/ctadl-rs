@@ -832,6 +832,75 @@ const ANDROID_COMPONENT_NAME: &str = "package android.content; public class Comp
 const ANDROID_SERVICE_CONNECTION: &str =
     "package android.content; public interface ServiceConnection {}";
 
+/// `callsmear.c`: exactly the `sink_hit_*` calls are reached.
+#[test]
+fn test_cli_query_c_no_callsite_smear() {
+    use ctadl_ascent::cli;
+    use ctadl_ascent::codegen::CallResolutionStrategy;
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    run_store_test(|| {
+        let import = ArtifactImport::try_create(
+            "test_callsmear_c",
+            ArtifactLanguage::C,
+            &c_fixture("callsmear.c"),
+        )
+        .unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+
+        let project = AnalysisProject::try_create(
+            "test_callsmear_c_proj",
+            &["test_callsmear_c"],
+            SubImports::All,
+        )
+        .unwrap();
+        let models = vec![c_fixture("callsmear.json")];
+        cli::index(
+            &project,
+            &[],
+            &models,
+            false,
+            cli::IndexOptions {
+                strategy: CallResolutionStrategy::default(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let out_dir = tempdir().unwrap();
+        let sarif = out_dir.path().join("out.sarif");
+        cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
+
+        let text = std::fs::read_to_string(&sarif).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let reached: std::collections::BTreeSet<&str> = doc["runs"][0]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| {
+                r["ruleId"]
+                    .as_str()
+                    .is_some_and(|id| id.contains("tainted-path"))
+                    && r["kind"].as_str() == Some("fail")
+            })
+            .flat_map(|r| r["properties"]["sinkFunctions"].as_array().unwrap())
+            .filter_map(|f| f.as_str())
+            .collect();
+
+        let expected: std::collections::BTreeSet<&str> = [
+            "sink_hit_buf",
+            "sink_hit_field",
+            "sink_hit_mul",
+            "sink_hit_prod",
+            "sink_hit_ret",
+            "sink_hit_retarg",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(reached, expected, "sinks reached: {text}");
+    });
+}
+
 /// Writes an APK built from `(entry name, contents)` pairs into `dir`, and returns its
 /// path. Enough of an APK for the import path: a ZIP whose entry names are what the Dex
 /// and native-library passes look for.
