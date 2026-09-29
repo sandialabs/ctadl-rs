@@ -28,24 +28,21 @@ fn function_f() -> FunctionData {
     let body = blocks.push(BasicBlockData::new(None));
     {
         let a = AccessPath {
-            variable_ref: VariableRef::new_local_idx(a_idx),
-            path: Default::default(),
+            base: VariableRef::new_local_idx(a_idx),
+            accesses: Default::default(),
         };
         let p = AccessPath {
-            variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-            path: Default::default(),
+            base: VariableRef::new_parameter(ParameterIdx::new(0)),
+            accesses: Default::default(),
         };
         let q = AccessPath {
-            variable_ref: VariableRef::new_parameter(ParameterIdx::new(1)),
-            path: Default::default(),
+            base: VariableRef::new_parameter(ParameterIdx::new(1)),
+            accesses: Default::default(),
         };
         let stmts: IndexVec<StatementIdx, _> = indexvec![
+            Statement::new_kind(StatementKind::assign(a.base.clone(), [Exp::from(q)])),
             Statement::new_kind(StatementKind::assign(
-                a.variable_ref.clone(),
-                [Exp::from(q)]
-            )),
-            Statement::new_kind(StatementKind::assign(
-                p.variable_ref.clone(),
+                p.base.clone(),
                 [Exp::from(a.clone())]
             )),
         ];
@@ -74,22 +71,22 @@ fn function_g() -> FunctionData {
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let a = AccessPath {
-        variable_ref: VariableRef::new_local_idx(a_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(a_idx),
+        accesses: Default::default(),
     };
     let b = AccessPath {
-        variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-        path: Default::default(),
+        base: VariableRef::new_parameter(ParameterIdx::new(0)),
+        accesses: Default::default(),
     };
     let c = AccessPath {
-        variable_ref: VariableRef::new_local_idx(c_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(c_idx),
+        accesses: Default::default(),
     };
     let call_edges = CallEdges::Explicit(thin_vec::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
         Statement::new_kind(StatementKind::assign(
-            a.variable_ref.clone(),
+            a.base.clone(),
             [Exp::Bytes(1u8.to_be_bytes().to_vec())]
         )),
         Statement::new_kind(StatementKind::CallAssign {
@@ -126,26 +123,26 @@ fn function_g1() -> FunctionData {
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
     let a = AccessPath {
-        variable_ref: VariableRef::new_local_idx(a_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(a_idx),
+        accesses: Default::default(),
     };
     let b = AccessPath {
-        variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-        path: Default::default(),
+        base: VariableRef::new_parameter(ParameterIdx::new(0)),
+        accesses: Default::default(),
     };
     let _c = AccessPath {
-        variable_ref: VariableRef::new_local_idx(c_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(c_idx),
+        accesses: Default::default(),
     };
     let c1 = AccessPath {
-        variable_ref: VariableRef::new_local_idx(c1_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(c1_idx),
+        accesses: Default::default(),
     };
     let call_edges = CallEdges::Explicit(thin_vec::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
         Statement::new_kind(StatementKind::assign(
-            a.variable_ref.clone(),
+            a.base.clone(),
             [Exp::Bytes(1u8.to_be_bytes().to_vec())]
         )),
         Statement::new_kind(StatementKind::CallAssign {
@@ -184,14 +181,58 @@ fn program_h() -> Program {
     let body = blocks.push(BasicBlockData::new(None));
     {
         let p = AccessPath {
-            variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-            path: Default::default(),
+            base: VariableRef::new_parameter(ParameterIdx::new(0)),
+            accesses: Default::default(),
         };
         let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
                 AccessPath::without_fields(global_ref.clone()),
-                FieldPath::symbol("bar"),
+                FieldRef::symbol("bar"),
+                Exp::from(p.clone()),
+            )),];
+        let body_block = &mut h[body];
+        body_block.extend(stmts);
+        body_block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
+            args: smallvec![],
+        }));
+    }
+    program
+}
+
+// def F(p)
+// {
+//   %global = update(%global, .bar := p);
+// }
+//
+// The functional-update counterpart of `program_h`. A `Store` writes a field without defining a
+// variable; an `Update` copies the `source` aggregate and defines a *new* version of the
+// destination. SSA must therefore version the destination (a fresh version) distinctly from the
+// source (the incoming version) it reads.
+fn program_h_update() -> Program {
+    let mut program = Program::default();
+    program.functions.push(FunctionData::default());
+    let h = &mut program.functions[0.into()];
+    h.set_name("F".to_string());
+    h.params.push(ParameterType::ByVal);
+    let blocks = h.blocks.blocks_mut();
+    let _start = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
+        TerminatorKind::Goto {
+            targets: vec![BasicBlockIdx::new(1)].into(),
+        },
+    ))));
+    let body = blocks.push(BasicBlockData::new(None));
+    {
+        let p = AccessPath {
+            base: VariableRef::new_parameter(ParameterIdx::new(0)),
+            accesses: Default::default(),
+        };
+        let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
+        let stmts: IndexVec<StatementIdx, _> =
+            indexvec![Statement::new_kind(StatementKind::update(
+                AccessPath::without_fields(global_ref.clone()),
+                global_ref.clone(),
+                FieldRef::symbol("bar"),
                 Exp::from(p.clone()),
             )),];
         let body_block = &mut h[body];
@@ -250,6 +291,39 @@ fn test_ssa_function_h() {
     log::trace!("{p}");
     transform_program(&mut p, false);
     check_ssa_func(&p.functions[0.into()]);
+}
+
+#[test]
+fn test_ssa_function_h_update() {
+    let mut p = program_h_update();
+    log::trace!("{p}");
+    transform_program(&mut p, false);
+    log::trace!("{p}");
+    let f = &p.functions[0.into()];
+    check_ssa_func(f);
+
+    // A functional update defines a fresh version of the aggregate: SSA must rename the `Update`'s
+    // destination to a version distinct from the `source` it reads (the whole point of naming them
+    // separately). Both are the global heap here, so `%global_1 = update(%global_0, .bar := p_0)`.
+    let (dest, source) = f
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .find_map(|s| match &s.kind {
+            StatementKind::Update { dest, source, .. } => Some((dest.clone(), source.clone())),
+            _ => None,
+        })
+        .expect("expected an Update statement");
+    assert_eq!(
+        dest.base.variable, source.variable,
+        "same aggregate variable"
+    );
+    assert!(dest.base.version.is_some(), "destination is versioned");
+    assert!(source.version.is_some(), "source is versioned");
+    assert_ne!(
+        dest.base.version, source.version,
+        "destination gets a fresh version distinct from the source read"
+    );
 }
 
 #[test]
@@ -603,3 +677,65 @@ impl Visitor for SsaCheck {
 //    assert!(df.phis.len() > 0);
 //    log::trace!("irreducible df: {:#?}", df);
 //}
+
+/// The cleanup passes are documented as doing nothing to a program that has already been
+/// through them. That is what lets `ctadl index` run them over a flowy import, which is already
+/// in SSA form. This test checks the claim instead of taking it on trust.
+///
+/// Note what this does not check. [`transform`] requires that the function is not already in
+/// SSA form, and it means it: `complete` moves returns into a new exit block every time it
+/// runs, so running the whole [`Pipeline::index_default`] a second time makes the control-flow
+/// graph bigger. Running the pipeline twice is safe only for the passes that say they are safe
+/// to repeat.
+#[test]
+fn test_pipeline_cleanups_are_noops_after_index_default() {
+    let cleanups = Pipeline {
+        ssa: false,
+        ..Pipeline::index_default()
+    };
+    for mut program in [program_f(), program_h()] {
+        run_pipeline(&mut program, Pipeline::index_default());
+        // `Program` does not implement `PartialEq`. Printing it gives the full IR dump, and
+        // comparing dumps is what "the passes changed nothing" means here anyway.
+        let once = program.to_string();
+        run_pipeline(&mut program, cleanups);
+        assert_eq!(
+            once,
+            program.to_string(),
+            "a cleanup pass changed an already-preprocessed program"
+        );
+        for (idx, f) in program.functions.iter_enumerated() {
+            let mut verify = MirVerify::default();
+            verify.visit_function_data(idx, f);
+            assert_eq!(Ok(()), verify.take_error());
+        }
+    }
+}
+
+/// `tag()` records which passes ran, so it has to give different names to pipelines that a
+/// report might compare.
+#[test]
+fn test_pipeline_tag() {
+    assert_eq!(Pipeline::index_default().tag(), "dt+co+ssa(prune)+cp");
+    assert_eq!(Pipeline::index_default().prune(false).tag(), "dt+co+ssa+cp");
+    assert_eq!(Pipeline::ssa_only().tag(), "ssa(prune)");
+    assert_eq!(Pipeline::none().tag(), "none");
+    // Pruning does nothing without SSA, and the tag says so instead of suggesting that a pass
+    // ran.
+    assert_eq!(Pipeline::none().prune(true).tag(), "none");
+}
+
+/// Checks that `Pipeline::none()` really runs no passes.
+#[test]
+fn test_pipeline_none_is_identity() {
+    let mut program = program_f();
+    let before = program.to_string();
+    run_pipeline(&mut program, Pipeline::none());
+    assert_eq!(before, program.to_string());
+}
+
+fn program_f() -> Program {
+    let mut program = Program::default();
+    program.functions.push(function_f());
+    program
+}

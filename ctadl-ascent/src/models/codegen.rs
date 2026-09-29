@@ -27,7 +27,7 @@ pub fn load_models(vmt: &VirtualMethodTable, facts: &mut IndexFacts, idmap: &IdM
                 // Synth a call to doInBackground
                 if let Some(do_in_bg_f) = idmap.get_function_id((**do_in_bg).clone().into());
         };
-        log::trace!("synth_call: {:?}", &result.synth_call);
+        log::trace!("synth_call: {:?}", result.synth_call);
         facts.call.extend(result.synth_call);
     }
 }

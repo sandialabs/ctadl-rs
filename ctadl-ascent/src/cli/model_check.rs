@@ -157,7 +157,7 @@ pub fn check_models(
         let import = ArtifactImport::load_by_name(name)
             .err_context(|| format!("loading import: '{name}'"))?;
         let scope = ImportScope::new(import.language, &import.name);
-        let program_info = super::load_program_info_without_source_info(&import)
+        let program_info = ctadl_import::load_import(&import, ctadl_import::SourceInfoMode::Skip)
             .err_context(|| format!("loading import: '{name}'"))?;
         Ok((scope, program_info))
     });

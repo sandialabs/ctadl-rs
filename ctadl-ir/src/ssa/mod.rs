@@ -47,6 +47,144 @@ struct SsaRename {
     c: HashMap<ArcIntern<Variable>, usize>,
 }
 
+/// The IR-to-IR passes that have to run after an import is read and before facts are
+/// generated.
+///
+/// The order of the passes belongs to the pipeline, not to the caller. Before this type
+/// existed, the order was four lines inside `ctadl index`, so anything else that read an import
+/// had to copy the order out of a command-line function and hope it was still current.
+/// [`Pipeline::index_default`] is now the one place that says what `ctadl index` runs, and
+/// [`run_pipeline`] is the one place that runs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pipeline {
+    /// Run [`eliminate_dead_temps`], which drops temporaries that are assigned but never read.
+    pub dead_temps: bool,
+    /// Run [`coalesce_copies`], which merges away copy temporaries that have a single use.
+    pub coalesce: bool,
+    /// Run [`transform_program`], which places phi nodes using Cytron's algorithm and renames
+    /// variables into SSA form.
+    pub ssa: bool,
+    /// Run [`propagate_copies`], which forwards copies through the SSA graph.
+    pub copy_prop: bool,
+    /// Passed on to [`transform_program`]. Has no effect unless `ssa` is set.
+    ///
+    /// Set this whenever the IR comes from a front end that can emit blocks no path reaches.
+    /// SSA conversion needs every block to be reachable from the start block and panics
+    /// otherwise, and pruning is how a caller makes that true.
+    pub prune_unreachable: bool,
+}
+
+impl Pipeline {
+    /// The passes `ctadl index` runs. This function is the only definition of that set.
+    ///
+    /// Dead-temp elimination runs first for two reasons. It removes definitions that coalescing
+    /// cannot remove, because a dead temporary has no use to merge it into. And it makes the
+    /// program smaller before coalescing scans it. Both passes do nothing to a program that is
+    /// already in SSA form, such as a flowy import, which is why running the whole pipeline
+    /// twice gives the same result as running it once.
+    #[inline]
+    pub fn index_default() -> Self {
+        Pipeline {
+            dead_temps: true,
+            coalesce: true,
+            ssa: true,
+            copy_prop: true,
+            prune_unreachable: true,
+        }
+    }
+
+    /// Run no passes at all, leaving the IR as the front end produced it.
+    #[inline]
+    pub fn none() -> Self {
+        Pipeline {
+            dead_temps: false,
+            coalesce: false,
+            ssa: false,
+            copy_prop: false,
+            prune_unreachable: false,
+        }
+    }
+
+    /// Run SSA renaming and unreachable-block pruning, and none of the cleanup passes.
+    #[inline]
+    pub fn ssa_only() -> Self {
+        Pipeline {
+            ssa: true,
+            prune_unreachable: true,
+            ..Pipeline::none()
+        }
+    }
+
+    /// Sets [`Pipeline::prune_unreachable`]. This lets a caller pass an index option through
+    /// without writing out the rest of the pipeline again.
+    #[inline]
+    #[must_use]
+    pub fn prune(mut self, prune_unreachable: bool) -> Self {
+        self.prune_unreachable = prune_unreachable;
+        self
+    }
+
+    /// A short name for this pipeline, to record in a log line or a report which passes ran.
+    /// For example, `dt+co+ssa(prune)+cp`, or `none`.
+    ///
+    /// The same `Pipeline` value always produces the same string, and two pipelines produce the
+    /// same string only when they are equal.
+    pub fn tag(&self) -> String {
+        let mut parts: Vec<&'static str> = Vec::with_capacity(4);
+        if self.dead_temps {
+            parts.push("dt");
+        }
+        if self.coalesce {
+            parts.push("co");
+        }
+        if self.ssa {
+            parts.push(if self.prune_unreachable {
+                "ssa(prune)"
+            } else {
+                "ssa"
+            });
+        }
+        if self.copy_prop {
+            parts.push("cp");
+        }
+        if parts.is_empty() {
+            // `prune_unreachable` does nothing on its own, without `ssa`. So "none" is the
+            // right answer here: this pipeline runs no passes.
+            return "none".to_string();
+        }
+        parts.join("+")
+    }
+}
+
+impl Default for Pipeline {
+    #[inline]
+    fn default() -> Self {
+        Pipeline::index_default()
+    }
+}
+
+/// Runs the passes that `p` selects, in the only order that is valid for them.
+///
+/// `ctadl index` used to contain this code directly. Anything that reads an import and then
+/// generates facts should call this rather than list the passes again.
+pub fn run_pipeline(program: &mut Program, p: Pipeline) {
+    if p.dead_temps {
+        eliminate_dead_temps(program);
+    }
+    if p.coalesce {
+        coalesce_copies(program);
+    }
+    if p.ssa {
+        transform_program(program, p.prune_unreachable);
+    }
+    if p.copy_prop {
+        propagate_copies(program);
+    }
+}
+
+/// Transforms every function in the program into SSA form by calling [`transform`] on each one.
+///
+/// Every function has to meet the preconditions listed on [`transform`].
 pub fn transform_program(program: &mut Program, prune: bool) {
     for (_, f) in program.functions.iter_enumerated_mut() {
         log::debug!("f: {f}");
@@ -59,7 +197,38 @@ pub fn transform_program(program: &mut Program, prune: bool) {
 ///
 /// - `prune`: Prune unreachable CFG blocks before transforming
 ///
-/// Precondition: the function isn't already in SSA form.
+/// This function is where a function's control-flow graph stops being something under
+/// construction and starts being a graph that gets walked. Up to this point a
+/// [`BasicBlockData`] is allowed to be missing its terminator, because front ends build the
+/// statements of a block before they know its successors. From here on that is not allowed:
+/// this pass computes dominators, a dominance frontier, and predecessor sets, and all three
+/// read the graph through the terminators.
+///
+/// # Preconditions
+///
+/// - Every block has a terminator. A block without one is a block still being built, and this
+///   pass has no way to know where control leaves it.
+/// - Every `goto` names at least one target, and every target is a block of this function.
+/// - Every block is reachable from the start block. Passing `prune` makes this true by deleting
+///   the unreachable blocks first, which is what callers that read imported code should do,
+///   because a front end can easily emit code no path reaches.
+/// - The function is not already in SSA form. Running this twice would version the versions.
+///
+/// The first two preconditions are what [`FunctionData::verify`] checks, so a caller holding IR
+/// from a source it does not control can call that first and get a list of errors. There is no
+/// such check for the last two.
+///
+/// A caller that breaks a precondition gets a panic, not an error. A missing terminator panics
+/// in [`BasicBlockData::terminator`]. A block that no path reaches trips the assertion in
+/// [`DominatorTree::new`], which says the graph contains nodes not reachable from entry. This
+/// is deliberate: the IR is wrong at that point, and the passes downstream of SSA would
+/// otherwise produce quietly wrong facts.
+///
+/// # Postconditions
+///
+/// The function passes [`FunctionData::verify`], which this pass asserts before returning. It
+/// has exactly one `return`, and that `return` is the terminator of the single exit block this
+/// pass adds. Every variable use names a version, and version 0 is the incoming version.
 pub fn transform(function: &mut FunctionData, prune: bool) {
     if function.blocks.is_empty() {
         return;
@@ -100,6 +269,13 @@ pub fn transform(function: &mut FunctionData, prune: bool) {
     function.verify().unwrap();
 }
 
+/// Deletes the blocks that no path from the start block reaches, and renumbers the ones that
+/// remain so the indices stay contiguous. `goto` targets and phi operands are updated to the new
+/// numbering.
+///
+/// This is how a caller satisfies the reachability precondition of [`transform`]. Dominators
+/// are only defined for blocks the start block reaches, so an unreachable block left in place
+/// is a panic later, not a wrong answer.
 fn prune_unreachable_nodes(function: &mut FunctionData) {
     let reachable_indices = reachable(&function.blocks);
     if reachable_indices.len() == function.blocks.num_nodes() {
@@ -165,7 +341,8 @@ fn prune_unreachable_nodes(function: &mut FunctionData) {
 /// exit block. For this to be correct, it's important that _$ret be a fresh variable, which is
 /// why we prefixed it in an odd way.
 ///
-/// Precondition: Function has a start block.
+/// Preconditions: the function has a start block, and every block has a terminator. This runs
+/// as part of [`transform`], so it inherits that function's preconditions.
 fn complete(function: &mut FunctionData) {
     // Creates block data for a "return <retvars>" block. Since we're going to rewrite all CFG
     // blocks to add the assignments and gotos, we don't actually wire up the exit block until the
