@@ -57,10 +57,7 @@
       "where": [
         {
           "constraint": "signature_match",
-          "qualified-ids": [
-            "ChessBoard::getDuckPos",
-            "ChessBoard::getMyMove"
-          ]
+          "qualified-id": "ChessBoard::getMyMove"
         }
       ],
       "model": {
@@ -94,10 +91,7 @@
           "constraint": "in_function",
           "inner": {
             "constraint": "signature_match",
-            "qualified-ids": [
-              "Lt2/l;->F(Ljava/lang/String;)V",
-              "Lu2/g;->onClick(Landroid/view/View;)V"
-            ]
+            "qualified-id": "Lt2/l;->F(Ljava/lang/String;)V"
           }
         }
       ],
