@@ -15,8 +15,8 @@
 //    and into StringBuilder.append in Java. That needs the return value recovered across the
 //    library's PLT stubs and tail calls (ExportPcode.java's SignatureRecovery).
 //
-// The model scopes the Java sinks to two methods: with every StringBuilder.append in the app as a
-// sink, the query takes minutes instead of seconds.
+// The model scopes the Java sinks to the one method the native value reaches, `Lt2/l;->F`: with
+// every StringBuilder.append in the app as a sink, the query takes minutes instead of seconds.
 {
   apk: "jwtc.android.chess_297.apk",
   model: "models/jwtc-android-chess.json",
