@@ -36,6 +36,11 @@ pub use dead_temps::{eliminate_dead_temps, eliminate_dead_temps_function};
 mod copy_prop;
 pub use copy_prop::{propagate_copies, propagate_copies_function};
 
+mod mem2reg;
+pub use mem2reg::{
+    EscapePolicy, Mem2RegStats, STACK_TOP, promote_stack_slots, promote_stack_slots_function,
+};
+
 #[derive(Debug)]
 struct PhiPlace {
     variables: HashSet<ArcIntern<Variable>>,
@@ -66,6 +71,9 @@ pub struct Pipeline {
     pub dead_temps: bool,
     /// Run [`coalesce_copies`], which merges away copy temporaries that have a single use.
     pub coalesce: bool,
+    /// Run [`promote_stack_slots`] with this policy, which turns stack slots into locals so SSA
+    /// versions them. `None` skips it.
+    pub mem2reg: Option<EscapePolicy>,
     /// Run [`transform_program`], which places pruned phi nodes using Cytron's algorithm and renames
     /// variables into SSA form.
     pub ssa: bool,
@@ -92,6 +100,10 @@ impl Pipeline {
         Pipeline {
             dead_temps: true,
             coalesce: true,
+            // An escaped frame address is assumed to reach 8 slots. On `androidudpbus` this cuts
+            // the index from 849 s and 52 GB to 163 s and 15 GB, and it loses no flow in the
+            // regression suite. `Exact` is as fast but loses the flow in `example.c`.
+            mem2reg: Some(EscapePolicy::Window(8)),
             ssa: true,
             copy_prop: true,
             prune_unreachable: true,
@@ -104,6 +116,7 @@ impl Pipeline {
         Pipeline {
             dead_temps: false,
             coalesce: false,
+            mem2reg: None,
             ssa: false,
             copy_prop: false,
             prune_unreachable: false,
@@ -135,12 +148,15 @@ impl Pipeline {
     /// The same `Pipeline` value always produces the same string, and two pipelines produce the
     /// same string only when they are equal.
     pub fn tag(&self) -> String {
-        let mut parts: Vec<String> = Vec::with_capacity(4);
+        let mut parts: Vec<String> = Vec::with_capacity(5);
         if self.dead_temps {
             parts.push("dt".into());
         }
         if self.coalesce {
             parts.push("co".into());
+        }
+        if let Some(policy) = self.mem2reg {
+            parts.push(format!("m2r({})", policy.tag()));
         }
         if self.ssa {
             parts.push(if self.prune_unreachable {
@@ -178,6 +194,9 @@ pub fn run_pipeline(program: &mut Program, p: Pipeline) {
     }
     if p.coalesce {
         coalesce_copies(program);
+    }
+    if let Some(policy) = p.mem2reg {
+        promote_stack_slots(program, policy);
     }
     if p.ssa {
         transform_program(program, p.prune_unreachable);
@@ -713,7 +732,10 @@ pub fn eliminate_dead_phis_function(function: &mut FunctionData) -> usize {
     for (_, data) in function.blocks.iter_enumerated() {
         for s in data.statements.iter() {
             if let StatementKind::Phi { dest, operands } = &s.kind {
-                phi_ops.insert(dest.clone(), operands.iter().map(|(_, v)| v.clone()).collect());
+                phi_ops.insert(
+                    dest.clone(),
+                    operands.iter().map(|(_, v)| v.clone()).collect(),
+                );
             } else {
                 roots.extend(s.iter_src_var().cloned());
             }
