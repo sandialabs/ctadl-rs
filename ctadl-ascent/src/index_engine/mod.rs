@@ -2358,6 +2358,13 @@ pub fn taint_index_with_config(
         // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
         log::debug!("{}", prog.__locals_ind_common.heap_report());
         log::debug!("{}", prog.__assign_like_ind_common.heap_report());
+        if let Some(dir) = std::env::var_os("CTADL_LOCALS_CENSUS") {
+            locals_census(
+                std::path::Path::new(&dir),
+                LocalsRows::census_rows(&prog.__locals_ind_common),
+                id_map,
+            );
+        }
         // The formatter reads these through the `Rows` trait, so this call is the same under `ascent!`
         // (plain `Vec`s) and `ascent_par!` (`boxcar::Vec`s, with lattices as
         // `boxcar::Vec<RwLock<..>>`): each field's own type selects the impl, and nothing is copied in
@@ -2873,5 +2880,76 @@ mod tests {
             Parallelism::Serial
         };
         assert_eq!(Parallelism::from_jobs(0), expected);
+    }
+}
+
+/// EXPERIMENT: aggregate the `locals` rows into TSVs under `dir`, to see what makes the relation
+/// big. Written for a `CTADL_INDEX_TIMEOUT_SECS` run; each file is sorted by count, descending.
+fn locals_census<'a>(
+    dir: &path::Path,
+    rows: impl Iterator<Item = (&'a FunctionId, &'a FlowVariable, &'a Path, &'a FormalIndex, &'a Path)>,
+    id_map: Option<&IdMap>,
+) {
+    use std::io::Write;
+    let fname = |f: &FunctionId| {
+        id_map
+            .and_then(|m| m.get_function(*f))
+            .map(|f| f.0.to_string())
+            .unwrap_or_else(|| format!("#{}", f.id))
+    };
+    let vname = |v: &FlowVariable| {
+        v.as_local().map(|n| n.to_string()).unwrap_or_else(|| format!("{v}"))
+    };
+    let mut by_f: HashMap<FunctionId, usize> = HashMap::new();
+    let mut by_fv: HashMap<(FunctionId, FlowVariable), usize> = HashMap::new();
+    let mut by_src: HashMap<(FunctionId, FormalIndex, Path), usize> = HashMap::new();
+    let mut by_fp: HashMap<(FunctionId, Path), usize> = HashMap::new();
+    let mut by_p4: HashMap<Path, usize> = HashMap::new();
+    let mut lens: HashMap<(usize, usize), usize> = HashMap::new();
+    let mut n = 0usize;
+    for (f, v, p, a, p4) in rows {
+        n += 1;
+        *by_f.entry(*f).or_default() += 1;
+        *by_fv.entry((*f, *v)).or_default() += 1;
+        *by_src.entry((*f, *a, *p4)).or_default() += 1;
+        *by_fp.entry((*f, *p)).or_default() += 1;
+        *by_p4.entry(*p4).or_default() += 1;
+        *lens.entry((p.len(), p4.len())).or_default() += 1;
+    }
+    let _ = std::fs::create_dir_all(dir);
+    fn dump<K>(dir: &path::Path, name: &str, header: &str, m: HashMap<K, usize>, top: usize, fmt: impl Fn(&K) -> String) {
+        let mut v: Vec<_> = m.into_iter().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut w = std::io::BufWriter::new(std::fs::File::create(dir.join(name)).unwrap());
+        writeln!(w, "rows\t{header}").unwrap();
+        for (k, c) in v.into_iter().take(top) {
+            writeln!(w, "{c}\t{}", fmt(&k)).unwrap();
+        }
+    }
+    log::info!(
+        "locals census: {n} rows, {} funcs, {} (f,v), {} (f,a,p4), {} (f,p), {} p4 -> {}",
+        by_f.len(), by_fv.len(), by_src.len(), by_fp.len(), by_p4.len(), dir.display()
+    );
+    dump(dir, "by_func.tsv", "func", by_f, usize::MAX, |f| fname(f));
+    dump(dir, "by_fv.tsv", "func\tvar", by_fv, 20000, |(f, v)| format!("{}\t{}", fname(f), vname(v)));
+    dump(dir, "by_src.tsv", "func\tformal\tp4", by_src, 20000, |(f, a, p4)| format!("{}\t{:?}\t{}", fname(f), a, p4));
+    dump(dir, "by_fp.tsv", "func\tp", by_fp, 20000, |(f, p)| format!("{}\t{}", fname(f), p));
+    dump(dir, "by_p4.tsv", "p4", by_p4, 20000, |p| format!("{p}"));
+    dump(dir, "lens.tsv", "len_p\tlen_p4", lens, usize::MAX, |(a, b)| format!("{a}\t{b}"));
+}
+
+/// EXPERIMENT: rows for [`locals_census`]; serial engine only.
+trait LocalsRows {
+    fn census_rows(&self) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_>;
+}
+impl LocalsRows for locals_trie::LocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path> {
+    fn census_rows(&self) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_> {
+        Box::new(self.iter_rows())
+    }
+}
+impl LocalsRows for c_locals_trie::CLocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path> {
+    fn census_rows(&self) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_> {
+        log::warn!("locals census: serial engine only");
+        Box::new(std::iter::empty())
     }
 }

@@ -214,6 +214,15 @@ pub fn run_pipeline(program: &mut Program, p: Pipeline) {
     }
     if p.ssa {
         transform_program_with(program, p.prune_unreachable, p.param_write_back);
+        // EXPERIMENT (androidudpbus blowup): drop phis no real use reaches.
+        if std::env::var_os("CTADL_DEAD_PHIS").is_some() {
+            let n: usize = program
+                .functions
+                .iter_enumerated_mut()
+                .map(|(_, f)| eliminate_dead_phis_function(f))
+                .sum();
+            log::info!("dead phis: deleted {n}");
+        }
     }
     if p.copy_prop {
         propagate_copies(program);
@@ -759,4 +768,49 @@ impl SsaRename {
     fn c_mut(&mut self, v: &ArcIntern<Variable>) -> &mut usize {
         self.c.get_mut(v).unwrap()
     }
+}
+
+/// EXPERIMENT: deletes every phi whose destination no non-phi statement or terminator reaches
+/// through phi operands. Turns minimal SSA into pruned SSA after the fact.
+pub fn eliminate_dead_phis_function(function: &mut FunctionData) -> usize {
+    let mut phi_ops: HashMap<VariableRef, Vec<VariableRef>> = HashMap::new();
+    let mut roots: Vec<VariableRef> = Vec::new();
+    for (_, data) in function.blocks.iter_enumerated() {
+        for s in data.statements.iter() {
+            if let StatementKind::Phi { dest, operands } = &s.kind {
+                phi_ops.insert(dest.clone(), operands.iter().map(|(_, v)| v.clone()).collect());
+            } else {
+                roots.extend(s.iter_src_var().cloned());
+            }
+        }
+        if let Some(t) = data.terminator_opt() {
+            roots.extend(t.iter_src_var().cloned());
+        }
+    }
+    let mut live: HashSet<VariableRef> = HashSet::new();
+    while let Some(v) = roots.pop() {
+        if let Some(ops) = phi_ops.get(&v) {
+            if live.insert(v) {
+                roots.extend(ops.iter().cloned());
+            }
+        }
+    }
+    let dead = phi_ops.len() - live.len();
+    if dead == 0 {
+        return 0;
+    }
+    let blocks = function.blocks.blocks_mut_preserves_cfg();
+    for bb in blocks.indices() {
+        let block = &mut blocks[bb];
+        let old = std::mem::take(&mut block.statements);
+        for s in old.into_iter_inner() {
+            if let StatementKind::Phi { dest, .. } = &s.kind {
+                if !live.contains(dest) {
+                    continue;
+                }
+            }
+            block.statements.push_back(s);
+        }
+    }
+    dead
 }
