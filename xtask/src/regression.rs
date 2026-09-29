@@ -1538,23 +1538,17 @@ fn check_pcode_case(
             .map(|addr| addr - PCODE_BASE_ADDRESS)
             .collect()
     };
-    if offsets.is_empty() {
-        if cfg!(target_os = "macos") {
-            return Ok(Outcome::Skip(
-                "no tainted instructions on Darwin; skipping strict offset check".to_string(),
-            ));
-        }
-        return Ok(Outcome::Fail(
-            "no tainted instructions in SARIF output".to_string(),
-        ));
-    }
-
-    // A positive case must also carry a connected source -> sink flow. Checked
-    // after the tainted-instruction guard above so the macOS self-skip (where there
-    // is no taint output at all) still wins rather than reporting a spurious failure.
+    // A positive case must carry a connected source -> sink flow. This is checked
+    // before the tainted-instruction guard below so a lost flow reports as one, on
+    // every platform. (This used to be a SKIP on Darwin, which hid a lost flow.)
     if !connects {
         return Ok(Outcome::Fail(
             "no code flow connects a source to a sink".to_string(),
+        ));
+    }
+    if offsets.is_empty() {
+        return Ok(Outcome::Fail(
+            "no tainted instructions in SARIF output".to_string(),
         ));
     }
 
