@@ -246,6 +246,7 @@
                   # Point it at the ctadl that ships in packages.default instead.
                   export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
                   export CTADL_ANDROID_ICC_APKS="${android.droidbenchIccApks}"
+                  export CTADL_ANDROID_NATIVE_APKS="${android.androidNativeApks}"
                   # The `models:*` checks hold the model files ctadl ships to
                   # `ctadl-model-generator.schema.json`. Both live in the
                   # ctadl-ascent crate, outside ./nightly, and this sandbox has
@@ -256,7 +257,7 @@
                   # input), the Cecil goldens and the built fixtures, and diff
                   # against the `cecil-dump` that testEnv puts on PATH.
                   ${self.packages.${system}.default}/bin/xtask regression \
-                    --frontend dex,jvm,pcode,lua,jni,c,android-icc,cil \
+                    --frontend dex,jvm,pcode,lua,jni,c,android-icc,android-native,cil \
                     --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
                     --models-dir ${./ctadl-ascent/src/models} \
@@ -326,6 +327,7 @@
             ANDROID_DEBUG_SYSTEM_IMAGE = android.androidDebugSystemImage;
             FRIDA_SERVER = "${android.fridaServer}";
             CTADL_ANDROID_ICC_APKS = "${android.droidbenchIccApks}";
+            CTADL_ANDROID_NATIVE_APKS = "${android.androidNativeApks}";
             DOTNET_NOLOGO = "1";
             DOTNET_CLI_TELEMETRY_OPTOUT = "1";
             DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";

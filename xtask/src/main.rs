@@ -16,6 +16,7 @@
 //!     cargo xtask cil bless|codegen
 
 mod android_icc;
+mod android_native;
 mod apk;
 mod asm_flow;
 mod assertions;
@@ -94,7 +95,7 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let value = args.next().context("--frontend requires a value")?;
                 let names: Vec<&str> = value.split(',').filter(|s| !s.trim().is_empty()).collect();
                 if names.is_empty() {
-                    bail!("--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc, cil");
+                    bail!("--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc, cil, android-native");
                 }
                 let selected = frontends.get_or_insert_with(BTreeSet::new);
                 for name in names {
@@ -362,9 +363,9 @@ cargo xtask <task>
 Tasks:
   regression                 Run the source-sink taint regression suite.
     --frontend <f>           Only exercise frontend <f>: `pcode`, `jvm`, `dex`,
-                             `lua`, `jni`, `c`, `android-icc` or `cil` (default:
-                             all). Accepts a comma-separated list and may be
-                             repeated; unselected
+                             `lua`, `jni`, `c`, `android-icc`, `cil` or
+                             `android-native` (default: all). Accepts a
+                             comma-separated list and may be repeated; unselected
                              frontends are skipped entirely, so their toolchains
                              are not needed. E.g. `--frontend pcode` runs the
                              C/pcode cases and the Ghidra checks without any Java
@@ -372,7 +373,10 @@ Tasks:
                              source cases. `jni` is the two-import bridge cases,
                              which need the Java *and* Ghidra toolchains.
                              `android-icc` runs external DroidBench/ICC-Bench
-                             APK specs under `tests/android-icc`. `cil` runs the
+                             APK specs under `tests/android-icc`, and
+                             `android-native` real apps with native code under
+                             `tests/android-native` (Ghidra and the Nix-fetched
+                             APKs in CTADL_ANDROID_NATIVE_APKS). `cil` runs the
                              cil-reader checks against Mono.Cecil (see
                              --cecil-src).
     --filter <name>          Only run cases whose name contains <name>.

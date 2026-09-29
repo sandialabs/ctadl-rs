@@ -280,6 +280,29 @@ let
       (apk "ComponentNotInManifest1" "sha256-MHB8889dYdMwcUE6GJIcpkWTWEExEd/6iUna+ArFrHc=")
     ];
 
+  # Real, permissively licensed F-Droid apps with native code, for the
+  # `android-native` regression specs. Fetched at a pinned hash instead of
+  # being committed; xtask finds them through CTADL_ANDROID_NATIVE_APKS, and
+  # without it those cases SKIP. F-Droid moves a superseded version from
+  # repo/ to archive/, so both are listed.
+  androidNativeApks =
+    let
+      fdroid = file: hash: {
+        name = file;
+        path = pkgs.fetchurl {
+          urls = [
+            "https://f-droid.org/repo/${file}"
+            "https://f-droid.org/archive/${file}"
+          ];
+          inherit hash;
+        };
+      };
+    in
+    pkgs.linkFarm "android-native-apks" [
+      # MIT. See nightly/tests/android-native/jwtc-android-chess.json5.
+      (fdroid "jwtc.android.chess_297.apk" "sha256-ly2va3HqW4YUkluIfaF3/mpSHPYMSJ0LjAD1/86Ygek=")
+    ];
+
 in
 {
   inherit
@@ -296,6 +319,7 @@ in
     dex-reader
     jvm-reader
     droidbenchIccApks
+    androidNativeApks
     ;
   androidSdkBuildTools = buildToolsDir androidSdk;
   androidDebugSdkBuildTools = buildToolsDir androidDebugSdk;

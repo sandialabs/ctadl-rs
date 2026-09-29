@@ -57,6 +57,8 @@ pub enum Kind {
     /// `crate::cil::cases`. `source` is a `.cs` file, or a directory of them that are
     /// separate assemblies.
     Cil { source: PathBuf, config: PathBuf },
+    /// Pinned real Android app with native code, plus a spec of what must link and flow.
+    AndroidNative { spec: PathBuf },
 }
 
 /// How a [`Kind::Jni`] case hands its two halves to `ctadl import`.
@@ -95,6 +97,7 @@ impl Kind {
             Kind::Jni { .. } => Frontend::Jni,
             Kind::AndroidIcc { .. } => Frontend::AndroidIcc,
             Kind::Cil { .. } => Frontend::Cil,
+            Kind::AndroidNative { .. } => Frontend::AndroidNative,
         }
     }
 }
@@ -122,6 +125,8 @@ pub enum Frontend {
     /// The cil-reader and CIL frontend checks (see [`crate::cil`]), and the C# taint
     /// cases under `tests/cil`.
     Cil,
+    /// Real Android apps with native code, imported whole: needs Ghidra, like `Jni`.
+    AndroidNative,
 }
 
 impl Frontend {
@@ -134,6 +139,7 @@ impl Frontend {
         Frontend::C,
         Frontend::AndroidIcc,
         Frontend::Cil,
+        Frontend::AndroidNative,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -146,6 +152,7 @@ impl Frontend {
             Frontend::Jni => "jni",
             Frontend::AndroidIcc => "android-icc",
             Frontend::Cil => "cil",
+            Frontend::AndroidNative => "android-native",
         }
     }
 }
@@ -163,8 +170,9 @@ impl FromStr for Frontend {
             "jni" => Ok(Frontend::Jni),
             "android-icc" | "icc" => Ok(Frontend::AndroidIcc),
             "cil" => Ok(Frontend::Cil),
+            "android-native" => Ok(Frontend::AndroidNative),
             other => {
-                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni, android-icc, cil)")
+                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni, android-icc, cil, android-native)")
             }
         }
     }
@@ -199,6 +207,7 @@ pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
     cases.extend(discover_jni(&tests_dir.join("jni"))?);
     cases.extend(discover_android_icc(&tests_dir.join("android-icc"))?);
     cases.extend(discover_cil(&tests_dir.join("cil"))?);
+    cases.extend(discover_android_native(&tests_dir.join("android-native"))?);
     cases.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(cases)
 }
@@ -243,6 +252,26 @@ fn discover_android_icc(dir: &Path) -> Result<Vec<TestCase>> {
         cases.push(TestCase {
             name: format!("AndroidIcc:{stem}"),
             kind: Kind::AndroidIcc {
+                spec: absolute(&entry)?,
+            },
+        });
+    }
+    Ok(cases)
+}
+
+fn discover_android_native(dir: &Path) -> Result<Vec<TestCase>> {
+    let mut cases = Vec::new();
+    if !dir.is_dir() {
+        return Ok(cases);
+    }
+    for entry in read_dir_sorted(dir)? {
+        if entry.extension().and_then(|e| e.to_str()) != Some("json5") {
+            continue;
+        }
+        let stem = file_stem(&entry)?;
+        cases.push(TestCase {
+            name: format!("AndroidNative:{stem}"),
+            kind: Kind::AndroidNative {
                 spec: absolute(&entry)?,
             },
         });
@@ -544,7 +573,10 @@ fn to_kebab_case(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{discover_android_icc, discover_jni, to_kebab_case, Frontend, Kind, Packaging};
+    use super::{
+        discover_android_icc, discover_android_native, discover_jni, to_kebab_case, Frontend, Kind,
+        Packaging,
+    };
 
     /// Every shipped JNI case is discovered, and one that carries a `<kebab>.bridge.jsonl`
     /// yields a second, declaratively-bridged case beside it.
@@ -739,6 +771,10 @@ mod tests {
             Frontend::AndroidIcc
         );
         assert_eq!("icc".parse::<Frontend>().unwrap(), Frontend::AndroidIcc);
+        assert_eq!(
+            "android-native".parse::<Frontend>().unwrap(),
+            Frontend::AndroidNative
+        );
         // Tolerate stray whitespace/case from a comma-separated list.
         assert_eq!(" Pcode ".parse::<Frontend>().unwrap(), Frontend::Pcode);
         assert_eq!(" C ".parse::<Frontend>().unwrap(), Frontend::C);
@@ -748,6 +784,28 @@ mod tests {
         for frontend in Frontend::ALL {
             assert_eq!(frontend.as_str().parse::<Frontend>().unwrap(), *frontend);
         }
+    }
+
+    #[test]
+    fn discovers_android_native_specs() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("nightly/tests/android-native");
+        if !dir.is_dir() {
+            return;
+        }
+        let cases = discover_android_native(&dir).expect("discovering android native cases");
+        assert!(
+            cases
+                .iter()
+                .any(|c| c.name == "AndroidNative:jwtc-android-chess"),
+            "{:?}",
+            cases.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+        assert!(cases
+            .iter()
+            .all(|c| c.kind.frontend() == Frontend::AndroidNative));
     }
 
     #[test]
