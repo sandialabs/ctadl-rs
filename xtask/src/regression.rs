@@ -1798,6 +1798,28 @@ fn run_jni(
                 )?;
             }
         }
+        Packaging::Xapk => {
+            // The `SplitApks` pair, as one app bundle.
+            let base = work.join(format!("{class}.apk"));
+            let split = work.join(format!("{class}.config.{}.apk", abi.replace('-', "_")));
+            write_apk(&base, &[("classes.dex", &dex)])?;
+            write_apk(&split, &[(&lib_entry, &lib)])?;
+            let bundle = work.join(format!("{class}.xapk"));
+            write_apk(
+                &bundle,
+                &[
+                    (file_name_of(&base)?, &base),
+                    (file_name_of(&split)?, &split),
+                ],
+            )?;
+            ctadl(
+                &["import", "--name", &dex_project, &bundle.to_string_lossy()],
+                "import.log",
+            )?;
+            if let Some(why) = check_bundle_signature_hints(&state.join("ctadl"))? {
+                return Ok(Outcome::Fail(why));
+            }
+        }
         Packaging::Separate => {
             ctadl(
                 &["import", "--name", &dex_project, &dex_arg(&dex)],
@@ -1861,7 +1883,8 @@ fn run_jni(
     match packaging {
         // `SplitApks` names the native APK, whose own sub-import carries the library.
         Packaging::Separate | Packaging::SplitApks => index_args.push(&native_project),
-        Packaging::SingleApk => {}
+        // Both import once; the APK's or the bundle's sub-imports carry the library.
+        Packaging::SingleApk | Packaging::Xapk => {}
         Packaging::SummaryApk => {
             index_args.extend_from_slice(&["--no-native-libs", "--summary", &summary_project])
         }
@@ -1949,6 +1972,29 @@ fn run_jni(
         &addr2line,
     )?;
     with_valid_sarif(&work, &[&sarif, &machine_sarif], outcome)
+}
+
+/// Checks that importing an app bundle told Ghidra the prototypes of the natives its base split
+/// declares, though the library is in another split: some library import's `jni-signatures.tsv`
+/// has a `Java_*` symbol row. Only a DEX supplies those -- a library's own `RegisterNatives` tables
+/// give addresses -- and the native split has none of its own.
+fn check_bundle_signature_hints(store: &Path) -> Result<Option<String>> {
+    let imports = store.join("imports");
+    for entry in
+        std::fs::read_dir(&imports).with_context(|| format!("listing {}", imports.display()))?
+    {
+        let hints = entry?.path().join("jni-signatures.tsv");
+        if let Ok(text) = std::fs::read_to_string(&hints) {
+            if text.lines().any(|l| l.starts_with("sym\tJava_")) {
+                return Ok(None);
+            }
+        }
+    }
+    Ok(Some(format!(
+        "no library import under {} has a Java_* signature hint: the bundle importer did not pass \
+         the base split's natives to the native split",
+        imports.display()
+    )))
 }
 
 /// How a JNI case builds and packages its library.

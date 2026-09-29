@@ -59,6 +59,11 @@ pub struct ImportOptions<'a> {
     /// Import the libraries for this ABI instead of the preferred one. See
     /// `dex_reader::apk::ABI_PREFERENCE`.
     pub native_abi: Option<&'a str>,
+    /// Java `native` methods the app declares outside this artifact. An APK's own Dex supplies
+    /// the rest. Both tell Ghidra the prototypes of the functions implementing them, when it
+    /// disassembles the APK's libraries. An app bundle's native-only split has no Dex of its
+    /// own, so [`xapk`] passes it the natives its Dex-bearing splits declare.
+    pub java_natives: &'a [JavaNative],
 }
 
 impl Default for ImportOptions<'_> {
@@ -67,7 +72,34 @@ impl Default for ImportOptions<'_> {
             skip_existing: false,
             native_libs: true,
             native_abi: None,
+            java_natives: &[],
         }
+    }
+}
+
+/// A Java `native` method: what fixes the C prototype of the function that implements it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JavaNative {
+    /// The declaring class, as the Java VMT records it (`Lcom/example/Crypto;`).
+    pub class: String,
+    /// The method's simple name.
+    pub name: String,
+    /// Its method descriptor, e.g. `([BI)[B`.
+    pub descriptor: String,
+}
+
+/// The `native` methods a Java VMT declares. Empty for a native program's VMT.
+pub fn java_natives(vmt: &ctadl_ir::mir::call::VirtualMethodTable) -> Vec<JavaNative> {
+    match vmt {
+        ctadl_ir::mir::call::VirtualMethodTable::Java { natives, .. } => natives
+            .iter()
+            .map(|(cls, name, sig, _, _)| JavaNative {
+                class: cls.to_string(),
+                name: name.to_string(),
+                descriptor: sig.to_string(),
+            })
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -221,9 +253,12 @@ fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<Progra
             );
         }
     }
+    // This APK's own natives, and any the rest of the app declares (see `java_natives`).
+    let mut natives = java_natives(&program_info.vmt);
+    natives.extend_from_slice(opts.java_natives);
     record_sub_imports(
         import,
-        apk_native::import_native_libs(import, opts, &program_info)?,
+        apk_native::import_native_libs(import, opts, &natives)?,
     )?;
     Ok(program_info)
 }

@@ -68,6 +68,10 @@ pub enum Packaging {
     /// Android App Bundle is distributed, and what an XAPK download unpacks to: the
     /// native half arrives in an APK with no `classes*.dex` in it at all.
     SplitApks,
+    /// The two APKs of [`Self::SplitApks`], zipped into one app bundle (`.xapk`) and imported
+    /// once. The native split still has no DEX, but the bundle importer passes it the base
+    /// split's `native` declarations, so its library is disassembled knowing their prototypes.
+    Xapk,
     /// Package both into one APK beside a second, JNI-free library, import it once, and index
     /// the library on its own into a summary project. The app is then indexed with
     /// `--no-native-libs --summary <that project>`, so the bridge links against the library's
@@ -389,6 +393,20 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
                 untyped: false,
             },
         });
+        // And the same two APKs as one `.xapk`, imported with one command: the bundle importer has
+        // to hand the base split's natives to the native split. Same claims again.
+        cases.push(TestCase {
+            name: format!("Jni:{stem}+xapk"),
+            kind: Kind::Jni {
+                java: absolute(&entry)?,
+                native: absolute(&native)?,
+                config: absolute(&config)?,
+                bridge: None,
+                packaging: Packaging::Xapk,
+                abi: abi.clone(),
+                untyped: false,
+            },
+        });
         // And the summary workflow: the library indexed on its own, the app indexed without
         // its libraries against that project. Same claims about the Java half; the native
         // half is reached only through the library's summaries.
@@ -569,6 +587,7 @@ mod tests {
             for (suffix, expected) in [
                 ("+apk", Packaging::SingleApk),
                 ("+split-apks", Packaging::SplitApks),
+                ("+xapk", Packaging::Xapk),
                 ("+summary", Packaging::SummaryApk),
             ] {
                 let (packaged_artifacts, packaged_bridge, packaged) = of(suffix);
@@ -597,7 +616,7 @@ mod tests {
         let cases = discover_jni(&dir).expect("discovering jni cases");
         let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
         // `+summary` is the registry-only boundary reached through a summary project.
-        for suffix in ["", "+apk", "+split-apks", "+summary"] {
+        for suffix in ["", "+apk", "+split-apks", "+xapk", "+summary"] {
             assert!(
                 names.contains(&format!("Jni:JniRegister{suffix}").as_str()),
                 "the RegisterNatives case is missing: {names:?}"
@@ -633,6 +652,7 @@ mod tests {
                 "Jni:JniWide",
                 "Jni:JniWide+apk",
                 "Jni:JniWide+split-apks",
+                "Jni:JniWide+xapk",
                 "Jni:JniWide+summary",
                 "Jni:JniWide+untyped"
             ]
