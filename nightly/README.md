@@ -80,6 +80,10 @@ they are picked up automatically; no list to edit.
   - `Jni:Foo+split-apks` packages each half into an APK of its own and imports
     both, the way an app bundle (or an XAPK download) ships. The native APK has
     no `classes*.dex` in it at all.
+  - `Jni:Foo+xapk` zips those two APKs into one `.xapk` and imports it once. It
+    also checks that the native split's library was disassembled knowing the
+    prototypes of the natives the base split declares: its `jni-signatures.tsv`
+    has a `Java_*` row, which only a DEX can supply.
 
   A sibling `foo.bridge.jsonl` adds a third variant, `Jni:Foo+bridge`, which
   joins the boundary with a declarative model under `--no-jni-bridge` instead of

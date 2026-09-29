@@ -19,13 +19,22 @@ and record the result on the parent.
   of 30. [`crate::apk_native::require_native_libs`] raises [`Error::NothingToImport`] for a split with
   neither Dex nor `lib/`; that one error is caught here and logged at debug. Anything else
   propagates.
+
+# Natives cross splits
+
+The Java `native` declarations are in the base split's Dex, and the libraries implementing them in
+`config.<abi>.apk`. Importing a library tells Ghidra each native's prototype, which only the
+declaration fixes (see `ctadl_pcode::jni_signatures`), so the natives the Dex-bearing splits
+declare are passed on to every split imported after them, through
+[`ImportOptions::java_natives`]. [`order_splits`] is what makes "after them" mean every
+native-only split.
 */
 
 use std::path::{Path, PathBuf};
 
 use dex_reader::apk::{has_dex_entries_of_file, read_bundle_entry, split_apk_entries_of_file};
 
-use crate::ImportOptions;
+use crate::{ImportOptions, JavaNative};
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_import::project::{ArtifactImport, ArtifactLanguage};
 
@@ -103,12 +112,26 @@ pub fn import_bundle(
 
     let mut names = Vec::new();
     let mut skipped = 0usize;
-    for Split { name, path, .. } in &splits {
-        match import_split(name, path, opts) {
+    // The natives declared by the splits imported so far, handed on to the ones after.
+    let mut natives = opts.java_natives.to_vec();
+    for Split {
+        name,
+        path,
+        has_dex,
+    } in &splits
+    {
+        let split_opts = ImportOptions {
+            java_natives: &natives,
+            ..opts
+        };
+        match import_split(name, path, split_opts) {
             Ok(sub_imports) => {
                 // Flat, not nested: `AnalysisProject::ephemeral` expands one level only.
                 names.push(name.clone());
                 names.extend(sub_imports);
+                if *has_dex {
+                    natives.extend(declared_natives(name));
+                }
             }
             Err(e) if is_nothing_to_import(&e) => {
                 skipped += 1;
@@ -171,6 +194,23 @@ fn import_split(name: &str, dest: &Path, opts: ImportOptions<'_>) -> Result<Vec<
     let mut child = ArtifactImport::load_by_name(name)?;
     child.record_artifact_hash()?;
     Ok(child.sub_imports)
+}
+
+/// The `native` methods the imported split `name` declares, read back from the store, so a split
+/// reused because it is unchanged contributes them as well as a freshly imported one. Best-effort:
+/// failing to read them costs the later splits' libraries their prototypes, not the import.
+fn declared_natives(name: &str) -> Vec<JavaNative> {
+    let vmt = ArtifactImport::load_by_name(name).and_then(|import| ctadl_import::load_vmt(&import));
+    match vmt {
+        Ok(vmt) => crate::java_natives(&vmt),
+        Err(e) => {
+            log::warn!(
+                "could not read the native methods split '{name}' declares, so the other splits' \
+                 libraries will not get their prototypes: {e}"
+            );
+            Vec::new()
+        }
+    }
 }
 
 /// Removes the import directory created for a split that turned out to hold no code.

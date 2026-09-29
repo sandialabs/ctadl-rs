@@ -1010,6 +1010,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             native_libs: !args.no_native_libs,
             native_abi: args.native_abi.as_deref(),
             cil_include_framework: args.include_framework,
+            ..Default::default()
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote
