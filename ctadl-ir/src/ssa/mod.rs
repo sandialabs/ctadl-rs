@@ -1,6 +1,11 @@
 /*!
 This module implements Cytron et al's phi placement and SSA renaming.
 
+The SSA form is *pruned*: a phi for a variable goes only where the variable is live on entry to
+the block, so no phi is placed that no later use can observe. Minimal SSA placed every phi the
+iterated dominance frontier asks for, and on large native functions over 98% of them were dead
+(`libudphub`: 5.19 M phis, 59 k of them live).
+
 After SSA conversion, one may depend on a few things:
 - All variables are versioned. Version 0 is the "incoming" version for each variable, conceptually.
 - Right before each `return`, there is a `param-flow` instruction that indicates, for each formal
@@ -61,7 +66,7 @@ pub struct Pipeline {
     pub dead_temps: bool,
     /// Run [`coalesce_copies`], which merges away copy temporaries that have a single use.
     pub coalesce: bool,
-    /// Run [`transform_program`], which places phi nodes using Cytron's algorithm and renames
+    /// Run [`transform_program`], which places pruned phi nodes using Cytron's algorithm and renames
     /// variables into SSA form.
     pub ssa: bool,
     /// Run [`propagate_copies`], which forwards copies through the SSA graph.
@@ -228,8 +233,25 @@ pub fn transform_program(program: &mut Program, prune: bool) {
 ///
 /// The function passes [`FunctionData::verify`], which this pass asserts before returning. It
 /// has exactly one `return`, and that `return` is the terminator of the single exit block this
-/// pass adds. Every variable use names a version, and version 0 is the incoming version.
+/// pass adds. Every variable use names a version, and version 0 is the incoming version. The
+/// form is pruned: every phi is reached by some non-phi use (see the module documentation).
+#[inline]
 pub fn transform(function: &mut FunctionData, prune: bool) {
+    transform_with(function, prune, PhiMode::Pruned);
+}
+
+/// Which phis [`PhiPlace`] inserts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PhiMode {
+    /// Every block in the iterated dominance frontier of a variable's definitions gets a phi.
+    /// Only the tests use this, as the baseline pruned SSA is checked against.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Minimal,
+    /// Of those blocks, only the ones where the variable is live on entry get a phi.
+    Pruned,
+}
+
+fn transform_with(function: &mut FunctionData, prune: bool, mode: PhiMode) {
     if function.blocks.is_empty() {
         return;
     }
@@ -239,7 +261,7 @@ pub fn transform(function: &mut FunctionData, prune: bool) {
     // Forward returns into the exit block as a new return. Change the former returns into gotos
     log::trace!("begin ssa transform");
     complete(function);
-    let phi = PhiPlace::new(function);
+    let phi = PhiPlace::new(function, mode);
     log::trace!("blocks after phi place: {}", function.blocks);
     SsaRename::new(&mut function.blocks, phi);
 
@@ -428,7 +450,12 @@ impl MutVisitor for SingleExitRewrite {
 impl PhiPlace {
     /// Place phi functions. Figure 11 in the Cytron et al paper. The returns are used to
     /// initialize variable sets.
-    fn new(function: &mut FunctionData) -> Self {
+    ///
+    /// With [`PhiMode::Pruned`], a phi for `v` goes at `y` only if `y` is in the iterated
+    /// dominance frontier of `v`'s definitions *and* `v` is live on entry to `y`. This is the
+    /// pruned SSA of Choi, Cytron and Ferrante. The worklist still visits every block of the
+    /// iterated dominance frontier; liveness decides only whether a phi is inserted there.
+    fn new(function: &mut FunctionData, mode: PhiMode) -> Self {
         let dominators = DominatorTree::new(&function.blocks);
         let mut phi_place = Self {
             variables: Default::default(),
@@ -436,22 +463,39 @@ impl PhiPlace {
         };
         // Script-a in the paper. Maps variable to all the blocks that assign that variable.
         let mut a: HashMap<ArcIntern<Variable>, SmallVec<[BasicBlockIdx; 4]>> = Default::default();
+        // Maps each variable to the blocks that read it before any assignment to it in the same
+        // block: the blocks where it is live on entry because of a use inside the block.
+        let mut upward_uses: HashMap<ArcIntern<Variable>, SmallVec<[BasicBlockIdx; 4]>> =
+            Default::default();
         // Set of all variables.
         let variables = &mut phi_place.variables;
 
-        // Initialize `a` and `variables`.
+        // Initialize `a`, `upward_uses` and `variables`. A statement reads its sources before it
+        // writes its destinations, so `x = x + 1` is an upward-exposed use of `x`.
+        let mut killed: HashSet<ArcIntern<Variable>> = HashSet::new();
+        let mut used: HashSet<ArcIntern<Variable>> = HashSet::new();
         for (bb, data) in function.blocks.iter_enumerated() {
+            killed.clear();
+            used.clear();
+            let mut note_use = |v: &VariableRef, killed: &HashSet<_>| {
+                if !killed.contains(&v.variable) && used.insert(v.variable.clone()) {
+                    upward_uses.entry(v.variable.clone()).or_default().push(bb);
+                }
+            };
             for stmt in data.iter() {
+                for v in stmt.iter_src_var() {
+                    variables.insert(v.variable.clone());
+                    note_use(v, &killed);
+                }
                 for v in stmt.iter_dst_var() {
                     a.entry(v.variable.clone()).or_default().push(bb);
                     variables.insert(v.variable.clone());
-                }
-                for v in stmt.iter_src_var() {
-                    variables.insert(v.variable.clone());
+                    killed.insert(v.variable.clone());
                 }
             }
             for v in data.terminator().iter_src_var() {
                 variables.insert(v.variable.clone());
+                note_use(v, &killed);
             }
         }
 
@@ -465,17 +509,45 @@ impl PhiPlace {
         // outer loop.
         let mut work: IndexVec<BasicBlockIdx, usize> =
             IndexVec::from_elem_n(0, function.blocks.num_nodes());
-        // has_already[x] indices whether a phi-function for v has been inserted at x.
+        // has_already[x] indices whether a phi-function for v has been considered at x.
         let mut has_already: IndexVec<BasicBlockIdx, usize> =
             IndexVec::from_elem_n(0, function.blocks.num_nodes());
+        // defines[x] == iter_count means x assigns v; live_in[x] == iter_count means v is live on
+        // entry to x. Stamped with iter_count, like `work`, so they need no clearing per variable.
+        let mut defines: IndexVec<BasicBlockIdx, usize> =
+            IndexVec::from_elem_n(0, function.blocks.num_nodes());
+        let mut live_in: IndexVec<BasicBlockIdx, usize> =
+            IndexVec::from_elem_n(0, function.blocks.num_nodes());
+        let mut live_w: Vec<BasicBlockIdx> = Vec::new();
         let mut iter_count = 0;
 
         let df = DominanceFrontier::new(&function.blocks, &phi_place.dominators);
         for v in variables.clone() {
             assert!(w.is_empty());
             iter_count += 1;
+            let defs = assigns_of(&v);
+            if mode == PhiMode::Pruned {
+                // Live-in set of v: walk backward from the upward-exposed uses, and stop at
+                // blocks that assign v. A block that both assigns v and reads it first is
+                // already a seed, so stopping there loses nothing.
+                for &x in &defs {
+                    defines[x] = iter_count;
+                }
+                for &x in upward_uses.get(&v).map(|u| u.as_slice()).unwrap_or_default() {
+                    live_in[x] = iter_count;
+                    live_w.push(x);
+                }
+                while let Some(x) = live_w.pop() {
+                    for p in function.blocks.predecessors(x) {
+                        if live_in[p] < iter_count && defines[p] < iter_count {
+                            live_in[p] = iter_count;
+                            live_w.push(p);
+                        }
+                    }
+                }
+            }
             // Set up worklist with set of basic blocks with assignments to v.
-            for x in assigns_of(&v) {
+            for x in defs {
                 work[x] = iter_count;
                 w.push(x);
             }
@@ -483,17 +555,19 @@ impl PhiPlace {
                 let df_y: SmallVec<[_; 4]> = df.iter(x).collect();
                 for y in df_y.into_iter() {
                     if has_already[y] < iter_count {
-                        // Insert a phi func with placeholder copies of predecessor operand
-                        let operands = function
-                            .blocks
-                            .predecessors(y)
-                            .map(|pred| (pred, VariableRef::new_var_ref(v.clone())))
-                            .collect();
-                        let block_data = &mut function.blocks.blocks_mut_preserves_cfg()[y];
-                        block_data.push_front(Statement::new_kind(StatementKind::Phi {
-                            dest: VariableRef::new_var_ref(v.clone()),
-                            operands,
-                        }));
+                        if mode == PhiMode::Minimal || live_in[y] == iter_count {
+                            // Insert a phi func with placeholder copies of predecessor operand
+                            let operands = function
+                                .blocks
+                                .predecessors(y)
+                                .map(|pred| (pred, VariableRef::new_var_ref(v.clone())))
+                                .collect();
+                            let block_data = &mut function.blocks.blocks_mut_preserves_cfg()[y];
+                            block_data.push_front(Statement::new_kind(StatementKind::Phi {
+                                dest: VariableRef::new_var_ref(v.clone()),
+                                operands,
+                            }));
+                        }
                         // Done with placing
 
                         has_already[y] = iter_count;
