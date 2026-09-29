@@ -27,7 +27,7 @@ cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, `jni`, or `android-icc` (comma-separated, or
+`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, `jni`, `android-icc`, or `android-native` (comma-separated, or
 repeated) and defaults to all of them. It selects *before* anything runs, so
 `--frontend pcode` never invokes the Java toolchain, `--frontend jvm,dex` never
 starts Ghidra, and `--frontend lua` needs no external toolchain at all. `jni` is
@@ -37,6 +37,12 @@ Java toolchain *and* Ghidra. Use it with `--filter` to narrow further:
 
 `android-icc` discovers Phase 5 external benchmark specs under `tests/android-icc/`. Their APKs
 come from the flake (`CTADL_ANDROID_ICC_APKS`, set in the dev shell); without it they report `SKIP`.
+
+`android-native` discovers specs under `tests/android-native/` for real apps with native code:
+permissively licensed F-Droid apps, imported whole with their libraries, so they need Ghidra. Their
+APKs come from the flake too (`CTADL_ANDROID_NATIVE_APKS`, set in the dev shell), fetched at a
+pinned hash and never committed; without it they report `SKIP`. Use `--release`: with a debug
+`ctadl` the chess case takes a couple of minutes instead of about 35 seconds.
 
 > **Note:** the `lua` frontend lowers its `tests/lua/` cases end to end, including
 > table field-sensitivity, varargs, `ipairs`/`pairs` and `table.insert`, and
@@ -107,6 +113,13 @@ both — the same reasons the taint cases are nightly:
 - **`AndroidIcc:*`** — pinned external DroidBench/ICC-Bench APK specs under
   `tests/android-icc/`. Each spec names a flake-fetched APK, a model file, whether a flow is expected,
   and optional `intent_pair.parquet` counts.
+- **`AndroidNative:*`** — pinned real apps with native code, under `tests/android-native/`. Each spec
+  names a flake-fetched APK and a model file, the counts the JNI bridge's summary line must report
+  (linked, registered, prototype mismatches), and flows that must come back, matched by taint label
+  and by prefixes of their source and sink callees. `jwtc-android-chess` has flows in both
+  directions: a value read in Java reaching the C++ engine, and an engine return value reaching Java.
+  Without the import's signature recovery (`CTADL_NO_SIGNATURE_RECOVERY=1`) it fails on both 35
+  prototype mismatches and the lost native-to-Java flow.
 
 The `apk:*` checks are where the analyzer meets a real app rather than a fixture: 6.4 MB, two
 `classes*.dex`, some 50,000 functions. Importing it costs about 13 seconds, which is why they live

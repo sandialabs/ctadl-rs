@@ -312,6 +312,30 @@
             (apk "ComponentNotInManifest1" "sha256-MHB8889dYdMwcUE6GJIcpkWTWEExEd/6iUna+ArFrHc=")
           ];
 
+        # Real, permissively licensed F-Droid apps with native code, for the
+        # `android-native` regression specs. Fetched at a pinned hash instead of
+        # being committed; xtask finds them through CTADL_ANDROID_NATIVE_APKS,
+        # which the dev shell and the regression check both set, and without it
+        # those cases SKIP. F-Droid moves a superseded version from repo/ to
+        # archive/, so both are listed.
+        androidNativeApks =
+          let
+            fdroid = file: hash: {
+              name = file;
+              path = pkgs.fetchurl {
+                urls = [
+                  "https://f-droid.org/repo/${file}"
+                  "https://f-droid.org/archive/${file}"
+                ];
+                inherit hash;
+              };
+            };
+          in
+          pkgs.linkFarm "android-native-apks" [
+            # MIT. See nightly/tests/android-native/jwtc-android-chess.json5.
+            (fdroid "jwtc.android.chess_297.apk" "sha256-ly2va3HqW4YUkluIfaF3/mpSHPYMSJ0LjAD1/86Ygek=")
+          ];
+
         # The distributable `ctadl` binaries, one per released target. What each
         # one is, why it cannot just be `packages.default`, and which builder
         # can produce which target all live in ./nix/release.nix.
@@ -408,6 +432,7 @@
                   # Point it at the ctadl that ships in packages.default instead.
                   export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
                   export CTADL_ANDROID_ICC_APKS="${droidbenchIccApks}"
+                  export CTADL_ANDROID_NATIVE_APKS="${androidNativeApks}"
                   # The `models:*` checks hold the model files ctadl ships to
                   # `ctadl-model-generator.schema.json`. Both live in the
                   # ctadl-ascent crate, outside ./nightly, and this sandbox has
@@ -415,7 +440,7 @@
                   # would self-skip here -- which is the one place the drift is
                   # meant to be caught.
                   ${self.packages.${system}.default}/bin/xtask regression \
-                    --frontend dex,jvm,pcode,lua,jni,c,android-icc \
+                    --frontend dex,jvm,pcode,lua,jni,c,android-icc,android-native \
                     --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
                     --models-dir ${./ctadl-ascent/src/models}
@@ -540,6 +565,7 @@
             ANDROID_NDK_ROOT = "${androidDebugSdk.androidsdk}/libexec/android-sdk/ndk-bundle";
             FRIDA_SERVER = "${fridaServer}";
             CTADL_ANDROID_ICC_APKS = "${droidbenchIccApks}";
+            CTADL_ANDROID_NATIVE_APKS = "${androidNativeApks}";
 
             # The debugging SDK's bin/ (adb, emulator, avdmanager, ...) goes
             # ahead of testEnv's, which carries the regression SDK's adb too.

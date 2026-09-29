@@ -22,6 +22,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::android_icc;
+use crate::android_native;
 use crate::apk;
 use crate::assertions;
 use crate::dex;
@@ -711,6 +712,7 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             worker,
         ),
         Kind::AndroidIcc { spec } => run_android_icc(&case.name, spec),
+        Kind::AndroidNative { spec } => run_android_native(&case.name, spec, worker),
     }
 }
 
@@ -786,6 +788,79 @@ fn run_android_icc(name: &str, spec_path: &Path) -> Result<Outcome> {
         )),
         (_, Outcome::Fail(why)) => Outcome::Xfail(why),
         (_, other) => other,
+    };
+    with_valid_sarif(&work, &[&sarif], outcome)
+}
+
+/// Imports a real app with its native libraries, indexes and queries it with the spec's model, and
+/// checks what the JNI bridge linked and which flows came back. See [`android_native`].
+fn run_android_native(name: &str, spec_path: &Path, worker: &Worker) -> Result<Outcome> {
+    let spec = android_native::load_spec(spec_path)?;
+    let (apk, model) = android_native::resolve_paths(spec_path, &spec);
+    let Some(apk) = apk else {
+        return Ok(Outcome::Skip(format!(
+            "{} is not set; the Nix dev shell provides the app APKs",
+            android_native::APKS_ENV
+        )));
+    };
+    if !apk.is_file() {
+        return Ok(Outcome::Skip(format!(
+            "APK fixture not found at {}",
+            apk.display()
+        )));
+    }
+    if !model.is_file() {
+        bail!("model file not found at {}", model.display());
+    }
+
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+    let project = "app";
+    let sarif = work.join("out.sarif");
+    let model = model.to_string_lossy().into_owned();
+    // The bridge's summary line is logged at `info`.
+    let mut env = worker.ghidra_env.clone();
+    env.push(("RUST_LOG".to_string(), "warn,ctadl=info".to_string()));
+    let ctadl = |args: &[&str], log: &str| run_ctadl_logged(&work, &state, &env, args, log);
+
+    ctadl(
+        &[
+            "import",
+            "--language",
+            "apk",
+            "--name",
+            project,
+            &apk.to_string_lossy(),
+        ],
+        "import.log",
+    )?;
+    let index_log = ctadl(&["index", project, "-m", &model], "index.log")?;
+    ctadl(
+        &[
+            "query",
+            project,
+            "-m",
+            &model,
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
+        "query.log",
+    )?;
+
+    // Both checks, reported together: a regression in what links usually also loses flows, and
+    // seeing both says which.
+    let failures: Vec<String> = [
+        android_native::check_bridge(&index_log, &spec.bridge),
+        android_native::check_flows(&sarif, &spec.flows)?,
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let outcome = if failures.is_empty() {
+        Outcome::Pass
+    } else {
+        Outcome::Fail(failures.join("\n"))
     };
     with_valid_sarif(&work, &[&sarif], outcome)
 }

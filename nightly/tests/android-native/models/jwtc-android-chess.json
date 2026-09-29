@@ -1,0 +1,114 @@
+{
+  "model_generators": [
+    {
+      "find": "callsites",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "get",
+          "parent": "Ljava/util/ArrayList;"
+        },
+        {
+          "constraint": "in_function",
+          "inner": {
+            "constraint": "signature_match",
+            "qualified-id": "Lx2/c;->s(I)V"
+          }
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "JavaMove",
+            "port": "Return",
+            "saturating": true
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "in": {
+        "language": "pcode"
+      },
+      "where": [
+        {
+          "constraint": "signature_match",
+          "qualified-ids": [
+            "Game::move",
+            "ChessBoard::requestDuckMove"
+          ]
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "JavaMove",
+            "port": "Argument(1)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "in": {
+        "language": "pcode"
+      },
+      "where": [
+        {
+          "constraint": "signature_match",
+          "qualified-ids": [
+            "ChessBoard::getDuckPos",
+            "ChessBoard::getMyMove"
+          ]
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "NativeValue",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "callsites",
+      "where": [
+        {
+          "constraint": "any_of",
+          "inners": [
+            {
+              "constraint": "signature_match",
+              "name": "append",
+              "parent": "Ljava/lang/StringBuilder;"
+            },
+            {
+              "constraint": "signature_match",
+              "name": "d",
+              "parent": "Landroid/util/Log;"
+            }
+          ]
+        },
+        {
+          "constraint": "in_function",
+          "inner": {
+            "constraint": "signature_match",
+            "qualified-ids": [
+              "Lt2/l;->F(Ljava/lang/String;)V",
+              "Lu2/g;->onClick(Landroid/view/View;)V"
+            ]
+          }
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "NativeValue",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    }
+  ]
+}
