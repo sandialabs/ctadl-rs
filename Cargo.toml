@@ -61,3 +61,6 @@ lto = "thin"
 inherits = "release"
 debug = true
 strip = "none"
+
+[patch.crates-io]
+ascent_macro = { path = "vendor/ascent_macro" }
