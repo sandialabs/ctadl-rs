@@ -41,6 +41,7 @@ use std::hash::BuildHasherDefault;
 use rustc_hash::FxHasher;
 
 use ctadl_ir::graph::{LazyAnnotation, LazySuccessors, find_annotated_paths_from_set};
+use ctadl_ir::mir::PathSegment;
 
 /// `hashbrown` maps/sets keyed by the deterministic, fast `FxHasher` rather than
 /// the DoS-resistant SipHash the std collections default to — the taint tables
@@ -155,6 +156,30 @@ pub struct TaintSearchGraph {
     sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>>,
 }
 
+/// Does a load at `q` read the value saturated at `p`? True at or below `p`, or at the
+/// parent `p = q.deref`. Offsets are ignored; siblings and other parents are not.
+fn saturating_read(q: &Path, p: &Path) -> bool {
+    let mut p = p.iter().filter(|s| s.is_symbol());
+    let mut q = q.iter().filter(|s| s.is_symbol());
+    loop {
+        match (p.next(), q.next()) {
+            (None, _) => return true,
+            (Some(a), Some(b)) if a == b => continue,
+            (Some(PathSegment::Symbol(sym)), None) => {
+                return &**sym == "deref" && p.next().is_none();
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// A call's return: summary edges into it compute a value, not copy a reference.
+fn is_call_return(v: &FlowVariable) -> bool {
+    v.as_call_arg()
+        .and_then(|c| CallArgId::try_from(c).ok())
+        .is_some_and(|c| c.formal == crate::codegen::RETURN_INDEX)
+}
+
 impl TaintSearchGraph {
     pub fn new(facts: &QueryFacts) -> Self {
         let mut assign_by_src: HashMap<
@@ -200,7 +225,12 @@ impl TaintSearchGraph {
         let mut copies_by_dst: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>> =
             HashMap::default();
         for (f, dst, dp, src, sp) in &facts.assign {
-            if dp.is_empty() && sp.is_empty() && dst.as_formal().is_none() && dst != src {
+            if dp.is_empty()
+                && sp.is_empty()
+                && dst.as_formal().is_none()
+                && dst != src
+                && !is_call_return(dst)
+            {
                 copies_by_dst.entry((*f, *dst)).or_default().push(*src);
             }
         }
@@ -279,9 +309,7 @@ impl LazySuccessors for TaintSearchGraph {
         // `a.(q·p)` is about all of them: `All`.
         if let Some(loads) = self.loads_by_dst.get(&(f, v)) {
             for (a, q) in loads {
-                if p.is_empty() {
-                    out.push(((f, *a, *q, level, ObjectScope::All), FlowEdge::Intra));
-                } else {
+                if !p.is_empty() {
                     let qp = q.concat(&p);
                     if self.paths.contains(&qp) {
                         out.push(((f, *a, qp, level, ObjectScope::All), FlowEdge::Intra));
@@ -319,7 +347,10 @@ impl LazySuccessors for TaintSearchGraph {
         // over-taint.
         if level == TaintLevel::Saturating {
             if let Some(loads) = self.loads_by_src.get(&(f, v)) {
-                for (dst, _q) in loads {
+                for (dst, q) in loads {
+                    if !saturating_read(q, &p) {
+                        continue;
+                    }
                     out.push((
                         (
                             f,
