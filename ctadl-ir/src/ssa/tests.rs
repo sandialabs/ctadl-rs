@@ -719,6 +719,19 @@ fn test_pipeline_tag() {
     assert_eq!(Pipeline::index_default().tag(), "dt+co+ssa(prune)+cp");
     assert_eq!(Pipeline::index_default().prune(false).tag(), "dt+co+ssa+cp");
     assert_eq!(Pipeline::ssa_only().tag(), "ssa(prune)");
+    assert_eq!(
+        Pipeline::ssa_only()
+            .param_write_back(ParamWriteBack::Entry)
+            .tag(),
+        "ssa(prune,entry)"
+    );
+    assert_eq!(
+        Pipeline::ssa_only()
+            .prune(false)
+            .param_write_back(ParamWriteBack::Entry)
+            .tag(),
+        "ssa(entry)"
+    );
     assert_eq!(Pipeline::none().tag(), "none");
     // Pruning does nothing without SSA, and the tag says so instead of suggesting that a pass
     // ran.
@@ -784,7 +797,11 @@ fn function_diamond() -> FunctionData {
     let blocks = f.blocks.blocks_mut();
     blocks.push(BasicBlockData::new(goto(&[1, 2])));
     let mut b1 = BasicBlockData::new(goto(&[3]));
-    b1.extend([assign(&x, [konst(1)]), assign(&t, [konst(1)]), assign(&p, [konst(1)])]);
+    b1.extend([
+        assign(&x, [konst(1)]),
+        assign(&t, [konst(1)]),
+        assign(&p, [konst(1)]),
+    ]);
     blocks.push(b1);
     let mut b2 = BasicBlockData::new(goto(&[3]));
     b2.extend([assign(&x, [konst(2)]), assign(&t, [konst(2)])]);
@@ -840,7 +857,10 @@ fn phi_placements(f: &FunctionData) -> HashSet<Placement> {
     for (bb, data) in f.blocks.iter_enumerated() {
         for s in data.iter() {
             if let StatementKind::Phi { dest, .. } = &s.kind {
-                assert!(out.insert((bb, dest.variable.clone())), "two phis for {dest} in {bb:?}");
+                assert!(
+                    out.insert((bb, dest.variable.clone())),
+                    "two phis for {dest} in {bb:?}"
+                );
             }
         }
     }
@@ -899,7 +919,7 @@ fn all_test_functions() -> Vec<FunctionData> {
 fn test_pruned_phis_are_the_live_minimal_phis() {
     for f in all_test_functions() {
         let mut minimal = f.clone();
-        transform_with(&mut minimal, true, PhiMode::Minimal);
+        transform_with(&mut minimal, true, PhiMode::Minimal, ParamWriteBack::Exit);
         let mut pruned = f.clone();
         transform(&mut pruned, true);
         check_ssa_func(&pruned);
@@ -917,18 +937,50 @@ fn test_pruned_phis_are_the_live_minimal_phis() {
 fn test_pruned_diamond() {
     let mut f = function_diamond();
     let mut minimal = f.clone();
-    transform_with(&mut minimal, true, PhiMode::Minimal);
+    transform_with(&mut minimal, true, PhiMode::Minimal, ParamWriteBack::Exit);
     transform(&mut f, true);
     check_ssa_func(&f);
     let (minimal, pruned) = (phi_placements(&minimal), phi_placements(&f));
     // Minimal SSA merges `t` at the join and again at the exit, which `complete` makes a join.
-    assert_eq!(placements_named(&minimal, &f, "t"), 2, "minimal SSA merges the dead `t`");
+    assert_eq!(
+        placements_named(&minimal, &f, "t"),
+        2,
+        "minimal SSA merges the dead `t`"
+    );
     assert_eq!(placements_named(&pruned, &f, "t"), 0, "`t` is never read");
     assert_eq!(placements_named(&pruned, &f, "x"), 1, "`x` is returned");
     let p = VariableRef::new_parameter(ParameterIdx::new(0)).variable;
     assert!(
-        pruned.iter().any(|(bb, v)| *v == p && *bb == BasicBlockIdx::new(3)),
+        pruned
+            .iter()
+            .any(|(bb, v)| *v == p && *bb == BasicBlockIdx::new(3)),
         "`p` reaches param-flow, so the join merges it"
+    );
+}
+
+#[test]
+fn test_entry_write_back() {
+    // `p` is reassigned on one branch of the diamond. Under `Entry` the param-flow reads `p_0`,
+    // the caller's argument, and nothing merges `p` at the join.
+    let mut f = function_diamond();
+    transform_with(&mut f, true, PhiMode::Pruned, ParamWriteBack::Entry);
+    check_ssa_func(&f);
+    let p = VariableRef::new_parameter(ParameterIdx::new(0));
+    let flows: Vec<_> = f
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .filter_map(|st| match &st.kind {
+            StatementKind::ParamFlow { params, .. } => Some(params.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(flows.len(), 1, "one param-flow, in the exit block");
+    assert_eq!(flows[0].len(), 1);
+    assert_eq!(flows[0][ParameterIdx::new(0)], p.with_version(0));
+    assert!(
+        !phi_placements(&f).iter().any(|(_, v)| *v == p.variable),
+        "no phi merges `p`"
     );
 }
 
@@ -936,14 +988,17 @@ fn test_pruned_diamond() {
 fn test_pruned_loop() {
     let mut f = function_loop();
     let mut minimal = f.clone();
-    transform_with(&mut minimal, true, PhiMode::Minimal);
+    transform_with(&mut minimal, true, PhiMode::Minimal, ParamWriteBack::Exit);
     transform(&mut f, true);
     check_ssa_func(&f);
     let (minimal, pruned) = (phi_placements(&minimal), phi_placements(&f));
     let header = BasicBlockIdx::new(1);
     let i = local(&mut f.clone(), "i").variable;
     let d = local(&mut f.clone(), "d").variable;
-    assert!(minimal.contains(&(header, d.clone())), "minimal SSA merges the dead `d`");
+    assert!(
+        minimal.contains(&(header, d.clone())),
+        "minimal SSA merges the dead `d`"
+    );
     assert!(!pruned.contains(&(header, d)), "`d` is never read");
     assert!(pruned.contains(&(header, i)), "`i` is loop-carried");
 }
