@@ -115,7 +115,7 @@ or copied (1,291) inside the function.
    before a call or escape, and reload it after a call. Direct accesses between escapes would
    then be in SSA, and only the values live at an escape would mix. Not started.
 5. **Measure `glxy` and `cpuinfo`: done.** `glxy` finishes (120 s, 21.6 GB) and shows the same
-   pattern as `androidudpbus`. `cpuinfo` still times out, and the cause is not native code.
+   pattern as `androidudpbus`. `cpuinfo` still times out, and the cause is not native code; see "`cpuinfo` blowup".
 
 ### After mem2reg: what's left (2026-09-29)
 
@@ -131,8 +131,8 @@ or copied (1,291) inside the function.
   paths, and reach about 16k SSA temporaries. In `glxy`'s `FUN_0010b408`, three kept slots
   (-35104, -35080, -35072) take about 765 stores and 1,550 loads each.
 - **`cpuinfo` is a Java-side problem.** Its native libraries are tiny (mem2reg touched about 5k
-  accesses). Its index has 53,796 CHA call sites and 623,583 paths. There's no census for it,
-  because the census is only written when the index completes.
+  accesses). Its index has 53,796 CHA call sites and 623,583 paths. The cause is R8-merged
+  Kotlin lambdas; see "`cpuinfo` blowup".
 
 ### Data
 
@@ -173,3 +173,92 @@ Experiment switches:
 On the older a979c371 binary, `com.kaeruct.glxy` hit the 48 GB cap and `com.kgurgul.cpuinfo` timed
 out. With `31594e08`, `glxy` finishes and `cpuinfo` still times out; see "After mem2reg: what's
 left".
+
+## `cpuinfo` blowup: R8-merged Kotlin lambdas (2026-09-30)
+
+`com.kgurgul.cpuinfo` does not index in 30 minutes. It is not a memory blowup (28.9 GB at 640 s)
+but a fixpoint that never converges: after 640 s, scc 4 is still adding rows and minting
+decisions, and every iteration costs more per new row than the last.
+
+### Where the time goes
+
+Timeout ladder (10 to 640 s, `CTADL_INDEX_TIMEOUT_SECS`, default `HybridContext::Decision`):
+
+| Rung | Iterations | Peak | `locals` | `context_locals` | `call_target_assign_like` | Decisions |
+|---|---|---|---|---|---|---|
+| 10 s | 41 | 2.5 GB | 3.1 M | 0.14 M | 1.1 M | 5.8 k |
+| 40 s | 95 | 6.9 GB | 15.2 M | 4.3 M | 5.8 M | 10.1 k |
+| 160 s | 118 | 16.0 GB | 34.9 M | 20.0 M | 7.8 M | 16.2 k |
+| 640 s | 127 | 28.9 GB | 56.9 M | 39.0 M | 8.7 M | 18.6 k |
+
+Rule costs per tuple look normal, so the signal is the marginal cost, rule time per new row
+between rungs. Two relations blow up:
+
+- **`context_locals`**: 1.2 µs per new row at 10–20 s, 26.8 µs at 320–640 s. At 640 s its rules
+  are 64% of rule time. It is a lattice relation, and its decision sets grow one decision at a
+  time: 221 M unions grew a set for 39 M rows, about 6 updates per row, and every update sends
+  the row through the whole contextual closure again. `set_establishes_via` grows the same way
+  (0.8 M, 3.8 M, 13.1 M at 160, 320, 640 s), since every grown set is unfolded again in full.
+- **`call_target_assign_like`**: 0.9 µs per new row, rising to 87.7 µs. Its transitive rule joins
+  on `(f, v2)` and only then tests `substitute_prefix`. At 160 s it visited 2.04 B pairs; 1.6%
+  matched the prefix and 0.9% were program paths. This is the wasted join that the `locals`
+  rules' split keys were built to avoid (see the comment above `reach_vp`).
+
+### The cause: merged lambda classes are dispatch hubs
+
+The functions that hold the most `context_locals` rows are all R8-merged Kotlin suspend lambdas:
+`Li;->r` and `Li;->e`, `Lp8;->r`, `Lk;->r`, `Lt40;->r`. (`nv2` is `SuspendLambda`, `vk` is
+`BaseContinuationImpl`, `yp0` and `up0` are `Function2` and `Function1`.)
+
+- **Many lambdas share one method.** `Li;` merges 29 lambdas behind a synthetic `int i` class
+  id: `r` (`invokeSuspend`) and `e` (`invoke`) switch on it, and the captured state of all 29 is
+  in the untyped `Object` fields `k` and `l`. The analysis does not see the switch, so `r` is the
+  union of all 29 bodies, and the virtual calls in it, on casts of `this.l`, dispatch on
+  whatever any of the 62 construction sites stored there. At 320 s `Li;->r` had 1,734 decisions,
+  7,165 distinct decision sets, a largest set of 318 and 726 M memberships.
+- **The union is instantiated 30 times over.** Each of `Li;->e`'s 30 switch cases calls
+  `this.p(..).r(Unit)`, so `r`'s union summary lands at 30 identical call sites. Each site's
+  receiver vertex holds 3,129 call-target tags and has 20,181 out-edges: 63 M pairs per vertex,
+  1.9 B of the 3.2 B pairs that a full re-derivation of `call_target_assign_like` would visit.
+- **75 `SuspendLambda` subclasses carry a class id**, so the pattern recurs across the app.
+
+### Hybrid context mode is not the fix
+
+Both other modes also fail to finish on their own, just differently:
+
+- `none` timed out at 1200 s (31.5 GB). With no context, every caller gets the union of the
+  resolved callees' summaries: `assign_like` reached 59 M rows (105x its input), `summary`
+  10.2 M, `locals` 217 M. `call_target_assign_like` alone took 45% of rule time.
+- `collapse` hit a 30 GiB cap at 822 s, about the same memory trajectory as `decision`. Profiled
+  alone at 600 s (27.2 GB), it removes the churn (9.3 M set-growing unions, against 221 M) but
+  not the volume: `context_locals` reached 55 M rows, nearly all of them ⊤, in the same hub
+  functions (`Li;->e` 10.4 M, `Li;->r` 7.9 M, `Lk;->r` 6.2 M). A ⊤ summary is applied at every
+  caller that establishes any decision, so decisions doubled, to 38.8 k.
+  `call_target_assign_like` was again the most expensive rule, at 24% of rule time.
+
+### Recommendations
+
+1. **Key the `call_target_assign_like` transitive rule on the path prefix.** Split the tag's
+   path once, the way `locals_key` and `edge_split` do, so the join only retrieves edges whose
+   source path is a prefix of the tag's path. This removes 98% of the rule's pairs without
+   changing its result. It is the cheapest fix and helps in every mode. Not started.
+2. **Handle R8 class-merged lambdas at import.** The class-id field is `final synthetic int`,
+   set in the constructor and switched on at the top of `r`, `e` and `p`. Splitting the merged
+   class back into one function per switch case, or making the switch arm depend on the
+   constructor's class id, would give each lambda its own summary and its own decisions. This
+   removes the cause rather than its cost. Not started.
+3. **Bound decision-set churn.** `bounded:K` or `spill:K` caps how often a row's set can change.
+   Not measured on `cpuinfo` yet; it trades precision on exactly these hub functions.
+
+### Data
+
+All output is under `/Volumes/Shampoo/ct-bigapk/small/cpuinfo-blowup/`:
+
+- `RESULTS.md`: a summary. `ladder.log`: time and peak memory for every run.
+- `runs/t<N>/`: the ladder rungs; `index.err` has the rule times, relation sizes and the
+  `context_locals by function` census; `rank.txt` is from `rank.py`.
+- `marginal.txt` (from `marginal.py`): rule time, rows and marginal cost per head relation.
+- `runs/probe-t160/`: the `call_target_assign_like` join counters and fan-out census, from the
+  binary `ctadl-probe` built with `probe.diff` (uncommitted).
+- `runs/hc-none/`, `runs/hc-collapse*/`: the hybrid context A/B.
+- `smali/out/`: the app's baksmali output (`i.smali` is the merged lambda class `Li;`).
