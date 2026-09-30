@@ -361,19 +361,45 @@ The measurements of recommendations 1 and 2 are under
   the index graphs and their comparison.
 - `repin/`: how the apk report counts were re-pinned.
 
-## `greenbits` blowup: call targets travel along value flows (2026-09-30)
+## `greenbits` blowup: reused parameter registers written back to the formals (2026-09-30)
 
 `com.greenaddress.greenbits_android_wallet` (Dex only, 215 k functions after the R8 split) does not
 index. With `92fac26b` (recommendations 1 and 2 of "`cpuinfo` blowup") it hits a 55 GiB guard at
 440 s, about 400 s into the fixpoint. No fixpoint in sight: 97 iterations at 320 s, against the
 1,316 `cpuinfo` needs.
 
-**Status:** characterized, not fixed. The fixes are below.
+**Status:** fixed. SSA now writes back each parameter's entry version for JVM bytecode imports,
+and the index reaches a fixpoint in 399 iterations at 12.4 GB. See "The cause" and "Results".
 
 ### The cause
 
-Hybrid inlining uses the taint relations as if they were points-to, and on this app that makes
-most of its call-target facts impossible.
+R8 reuses parameter registers, and SSA's exit param-flow wrote each parameter's *exit* version
+back to its formal. `UTF8JsonGenerator.writeBinary(Base64Variant, byte[], int, int)` ends with
+
+```smali
+    iget-object p1, p0, ...->_outputBuffer:[B   # p1, the Base64Variant, := this._outputBuffer
+    iget-byte   p0, p0, ...->_quoteChar:B       # p0, this, := this._quoteChar
+    aput-byte   p0, p1, p2
+    return-void
+```
+
+so the write-back `formal(0) <- @p0_2 <- @p0_1 <- @p0_0._quoteChar` gave the summaries
+`this <- this._quoteChar` and `variant <- this._outputBuffer`. A caller cannot see its argument
+rebound, so both are impossible. They produced call-target decisions like this:
+
+1. `JsonGenerator.writeBinary(byte[], int, int)` calls `this.writeBinary(variant, data, off,
+   len)`, which resolves to `UTF8JsonGenerator`, `WriterBasedJsonGenerator` and `TokenBuffer`.
+   The UTF8 summary lands on the call-arg vertex as `arg0 <- arg0._quoteChar`, and the
+   formal-side `locals` rule gives `locals(arg0, ε, 0, ._quoteChar)`.
+2. `TokenBuffer.writeBinary` has a genuine `critical_summary` at `(0, ε)`, since its `this`
+   reaches virtual calls. Rule 1.2 joins it with the `locals` row from step 1, at the same
+   call-arg, and derives `critical_summary(JsonGenerator.writeBinary, 0, ._quoteChar)`.
+3. Rule 1.2 carries it up through `ByteArraySerializer`, `_serialize` and
+   `ObjectWriter$Prefetch.serialize`, and rules 2.1/2.2 mint one decision per serializer class
+   that reaches the byte.
+
+Traced with the probe's `CTADL_FOCUS` dump (see "Data"). The analysis below was written before
+the cause was known, and attributes these rows to value flow:
 
 - `locals` and `assign_like` are value-flow relations: a value computed from `x` counts as
   coming from `x`.
@@ -454,7 +480,47 @@ function); the table above counts `resolvent` rows.
 repeats the whole row. `cta_key` is stored three times, and it is recommendation 1's relation.
 Recommendation 1 is still a net memory loss here, as "Beyond `cpuinfo`" found.
 
-### Fixes
+### Fix: write back entry versions for JVM bytecode
+
+`ParamWriteBack::Entry` in `ctadl-ir/src/ssa/mod.rs` builds the exit param-flow without the
+parameters and fills in their version 0 after renaming. `ctadl index` chooses it per import
+(`ArtifactLanguage::param_write_back`): `Entry` for jvm, jar, dex, apk and xapk, and `Exit` for
+the rest.
+
+The C front end needs `Exit`: it lowers `*out = source()` to `assign @p0 = %t0`, since a pointer
+parameter stands for its pointee, and the write-back is how `C:outparam` gets its flow. Applied
+to every language, `Entry` lost that flow.
+
+### Results
+
+Same import and probe binary, at the 55 GiB guard, on a machine under load (so wall times are not
+comparable):
+
+| Build | Result | Iterations | Peak | `locals` | `critical_summary` | Decisions | `context_locals` | Default containers |
+|---|---|---|---|---|---|---|---|---|
+| `92fac26b` (320 s rung) | still growing | 97 | 42.2 GB | 69.1 M | 387 k | 585 k | 11.7 M | 25.9 GB |
+| `92fac26b` | killed at 55 GiB, 440 s | | 55 GiB | | | | | |
+| entry write-back | fixpoint | 399 | 12.4 GB | 7.5 M | 64 k | 36 k | 77 k | 2.6 GB |
+
+- `call_target_assign_like` falls from 23.5 M rows to 0.97 M, and `cta_key` from 52.8 M to 1.6 M.
+- `_quoteChar` is in no `critical_summary` row. The Jackson hubs keep at most one decision:
+  `Prefetch.serialize` had 847.
+- `typecheck.py`: 92.4% of decisions are compatible (17% before), 0.003% put an object in a
+  primitive slot (6%), and impossible decisions hold 1.7% of `context_locals` memberships (44%).
+  Of the 5.8% (2,123) "not a subtype" left, 799 are `$r8id` classes, which the split creates at
+  import and the smali does not declare, so the script may not know their supertypes. The rest
+  are not examined yet; the worst functions are Kotlin `bootstrap()` view models and Koin
+  `module`, not Jackson.
+- The regression suite loses no real flow. Its SARIF is identical in 329 of 330 files. In the
+  chess app, the `getMyMove -> StringBuilder.append` flow into `Lt2/l;->F` was the same
+  artifact: `F` reuses its `String` parameter's register for `getMyMove()`'s result, and the exit
+  write-back fed that into its own incoming `String`. The fixture now scopes the sink to
+  `Lx2/c;->y`, where the move really is appended; that passes with and without the change.
+
+### Fixes considered before the cause was known
+
+With the write-back fixed, none of these is needed for greenbits. 1 and 2 are still sound
+precision filters.
 
 1. **Filter call-target tags by static type.** This removes the cause, and it shrinks both halves:
    the call-target relations that hold half the memory, and the decisions.
@@ -487,8 +553,6 @@ Recommendation 1 is still a net memory loss here, as "Beyond `cpuinfo`" found.
 6. **Not a general fix: a Jackson model.** It would help this app, but the Compose and coroutine
    hubs show the problem is general.
 
-Start with 1's first step and 2, then measure greenbits and the regression suite's SARIF diff.
-
 ### Data
 
 All output is under `/Volumes/Shampoo/ct-bigapk/small/greenbits-probe/`:
@@ -513,3 +577,17 @@ All output is under `/Volumes/Shampoo/ct-bigapk/small/greenbits-probe/`:
   memory per relation across the rungs.
 - `typecheck.py <decisions.tsv>`: classifies each decision against `smali/out`, the app's
   baksmali output. `runs/*/typecheck.txt` holds its output.
+- `bin/ctadl-focus` (`bin/ctadl-focus.diff`): the probe plus `CTADL_FOCUS=<dir>:<substr>|...`,
+  which dumps `call`, `summary`, `assign_like` and `locals` rows for the named functions (serial
+  engine only). `runs/focus-t40/focus/*.tsv` is the trace in "The cause".
+- `bin/ctadl-entry` (`bin/ctadl-entry.diff`): the probe with the entry write-back for every
+  language. `runs/entry-guard55/`: the greenbits run in "Results", with `typecheck.txt` and
+  `idx.txt`. `runs/scoped-guard55/`: the same run with the per-language build; identical.
+
+The fix's measurements are under `/Volumes/Shampoo/ct-bigapk/small/paramflow-entry/`:
+
+- `bin/ctadl-{base,entry,scoped}`: the probe (`92fac26b`), the probe with the write-back for every
+  language, and the branch build with it for JVM bytecode only (`bin/ctadl-scoped.diff`).
+- `reg-{base,entry,scoped}/`, `sarif-diff.txt`, `sarif-diff-scoped.txt`: the regression suite and
+  its comparisons. `chess-repin-{base,scoped}/`: the chess case with the re-scoped sink.
+- `chess-app-ir.txt`: the chess app's IR dump, for the `Lt2/l;->F` and `Lx2/c;->y` bodies.
