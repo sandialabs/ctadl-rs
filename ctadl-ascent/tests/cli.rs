@@ -1539,3 +1539,76 @@ fn inspect_project_lists_the_tables_of_a_readable_index() {
         }
     });
 }
+
+/// End-to-end recall check on `ptrfield.c` with **no propagation model loaded**: a pointer to
+/// the source's bytes is stored in a struct field by one function and handed to a body-less
+/// sink by another. `sink_hit` must be reached and the constant sibling `sink_clean` must stay
+/// silent, so the test fails on either half alone:
+///
+/// - Without `compute_paths` minting `.deref` for a native-language import
+///   (`IndexConfig::deref_paths`), the compound path `arg.deref` is inadmissible (no frame
+///   spells it; no model supplies `deref`), the store `req->arg = line + 2` cannot carry the
+///   pointee's taint, and `sink_hit` is missed.
+/// - With the call-site smear, `verb`'s (real) taint leaks onto its siblings, so `sink_clean`
+///   is wrongly reached -- which is also how this flow used to be "found": through the pointer
+///   `arg` at the empty path, never through the bytes.
+#[test]
+fn test_cli_query_c_pointer_field_without_models() {
+    use ctadl_ascent::cli;
+    use ctadl_ascent::codegen::CallResolutionStrategy;
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    run_store_test(|| {
+        let import = ArtifactImport::try_create(
+            "test_ptrfield_c",
+            ArtifactLanguage::C,
+            &c_fixture("ptrfield.c"),
+        )
+        .unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+
+        let project = AnalysisProject::try_create(
+            "test_ptrfield_c_proj",
+            &["test_ptrfield_c"],
+            SubImports::All,
+        )
+        .unwrap();
+        // `ptrfield.json` declares sources and sinks only: no propagation entry, so nothing
+        // mentions `.deref` at index time and no model path is available to concatenate.
+        let models = vec![c_fixture("ptrfield.json")];
+        cli::index(
+            &project,
+            &[],
+            &models,
+            false,
+            cli::IndexOptions {
+                strategy: CallResolutionStrategy::default(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let out_dir = tempdir().unwrap();
+        let sarif = out_dir.path().join("out.sarif");
+        cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
+
+        let text = std::fs::read_to_string(&sarif).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let reached: std::collections::BTreeSet<&str> = doc["runs"][0]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| {
+                r["ruleId"]
+                    .as_str()
+                    .is_some_and(|id| id.contains("tainted-path"))
+                    && r["kind"].as_str() == Some("fail")
+            })
+            .flat_map(|r| r["properties"]["sinkFunctions"].as_array().unwrap())
+            .filter_map(|f| f.as_str())
+            .collect();
+
+        let expected: std::collections::BTreeSet<&str> = ["sink_hit"].into_iter().collect();
+        assert_eq!(reached, expected, "sinks reached: {text}");
+    });
+}
