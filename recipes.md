@@ -1,4 +1,4 @@
-# Characterizing Datalog Rule Blowups
+# Characterizing Datalog Rule Blowups - DO-NOT-MERGE
 
 - Run benchmarks under a memory guard and note the time it takes to hit this guard. You need to stay under the guard to get Ascent to print useful information.
 - Run the benchmark with an Ascent `generate_run_timeout` so that when it terminates, it still provides useful per-rule profile information.
