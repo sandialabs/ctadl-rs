@@ -45,6 +45,7 @@ use ascent::ascent;
 use ascent::ascent_par;
 use ascent::ascent_run;
 use ascent::ascent_source;
+use ctadl_ir::mir::PathSegment;
 use derive_builder::Builder;
 use hashbrown::hash_map::HashMap;
 use packed_struct::prelude::*;
@@ -319,6 +320,9 @@ pub struct IndexConfig {
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
+    /// Admits `<path>.deref` for every program path. The native front ends (C, pcode) deal in
+    /// pointers, and every pointer may be dereferenced. See [`compute_paths`].
+    pub deref_paths: bool,
 }
 
 impl Default for IndexConfig {
@@ -328,6 +332,7 @@ impl Default for IndexConfig {
             hybrid_context: HybridContext::default(),
             context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
+            deref_paths: false,
         }
     }
 }
@@ -1311,11 +1316,38 @@ fn compute_alias_of_formal(
     pre.alias_of_formal
 }
 
+/// The synthetic field the native front ends use for "the memory at this address": the C
+/// front end's `DEREF_FIELD`, pcode's `PathSegment::symbol("deref")`. The query engine's
+/// saturating-read rule keys on the same spelling.
+const DEREF_FIELD: &str = "deref";
+
 /// Computes `paths`, the admissible access paths: the syntactic program paths, the paths the
 /// input summaries mention, and each one-level concatenation of the two. Its own small
 /// fixpoint, run BEFORE the main ascent, so the main program takes `paths` as a plain input
 /// and can also hold it as a [`PathSet`] for lookups that never build a path.
-fn compute_paths(program_paths: Vec<(Path,)>, model_paths: Vec<(Path,)>) -> Vec<(Path,)> {
+///
+/// With `deref_paths` (a native front end: every pointer may be dereferenced), `deref` is also
+/// a model path, so every program path gains its `.deref` extension exactly as it would under
+/// a loaded summary that mentions `.deref`. The flow through a pointer stored in a field needs
+/// that compound path: the store `o->p = b` carries `b`'s pointee only onto `p.deref`, which
+/// no single frame spells (the reader loads `o->p`, and a callee dereferences its own formal).
+/// With no propagation model loaded there was nothing to concatenate, so an index built
+/// without models silently lost that flow, while loading any summary that happened to
+/// mention `.deref`, even for an unrelated function, brought it back. Front ends without
+/// pointers (Java, Lua) leave the flag off and are unchanged.
+fn compute_paths(
+    program_paths: Vec<(Path,)>,
+    mut model_paths: Vec<(Path,)>,
+    deref_paths: bool,
+) -> Vec<(Path,)> {
+    if deref_paths {
+        let deref = (Path::from_accesses(std::iter::once(PathSegment::symbol(
+            DEREF_FIELD,
+        ))),);
+        if !model_paths.contains(&deref) {
+            model_paths.push(deref);
+        }
+    }
     let pre = ascent_run! {
         relation program_paths(Path) = program_paths;
         relation model_paths(Path) = model_paths;
@@ -2178,6 +2210,7 @@ pub fn taint_index_with_config(
             (func_id, insn_id, *target)
         })
         .collect();
+    let deref_paths = config.deref_paths;
     let config_val = vec![(config,)];
 
     // Precompute `alias_of_formal` in its own small fixpoint, BEFORE the main ascent -- see
@@ -2212,6 +2245,7 @@ pub fn taint_index_with_config(
     let paths = compute_paths(
         all_program_paths.into_iter().collect(),
         summary_paths.into_iter().collect(),
+        deref_paths,
     );
     let path_set = PathSetRef(Arc::new(PathSet::from_paths(paths.iter().map(|(p,)| *p))));
     log::debug!(
@@ -2873,5 +2907,29 @@ mod tests {
             Parallelism::Serial
         };
         assert_eq!(Parallelism::from_jobs(0), expected);
+    }
+
+    /// With `deref_paths` (a native-language import), `compute_paths` mints `<program
+    /// path>.deref` on its own. The store `o->p = b` carries the pointee only onto `p.deref`,
+    /// which no single frame spells; with no summary loaded there used to be no model path to
+    /// concatenate, so the flow through a pointer stored in a field was lost
+    /// (`tests/c/ptrfield.c`).
+    #[test]
+    fn compute_paths_admits_deref_of_every_program_path_for_native_imports() {
+        let p = |s: &str| (Path::parse(s).unwrap(),);
+        let program = vec![(Path::empty(),), p(".p"), p(".q")];
+        let paths = compute_paths(program.clone(), vec![], true);
+        assert!(paths.contains(&p(".p.deref")), "{paths:?}");
+        assert!(paths.contains(&p(".q.deref")), "{paths:?}");
+
+        // Off (a Java or Lua import): nothing is invented, the path set is unchanged.
+        let paths = compute_paths(program.clone(), vec![], false);
+        assert_eq!(paths.len(), program.len(), "{paths:?}");
+        assert!(!paths.contains(&p(".p.deref")));
+
+        // A loaded summary that already mentions `.deref` makes the flag a no-op.
+        let with_model = compute_paths(program.clone(), vec![p(".deref")], false);
+        let with_flag = compute_paths(program, vec![], true);
+        assert_eq!(with_model, with_flag);
     }
 }
