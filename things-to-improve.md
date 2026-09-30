@@ -517,6 +517,22 @@ comparable):
   write-back fed that into its own incoming `String`. The fixture now scopes the sink to
   `Lx2/c;->y`, where the move really is appended; that passes with and without the change.
 
+### Open: the 5.8% of decisions still impossible
+
+2,123 decisions still fail `typecheck.py`'s subtype check. They hold 1.7% of `context_locals`
+memberships, so they don't matter for memory, but each one is still a wrong decision.
+
+- **799 target `$r8id` classes.** These may not be errors at all: the split creates `C$r8id<k>`
+  at import, the smali doesn't declare it, and so the script can't know it extends `C`. Teach
+  `typecheck.py` that, then recount.
+- **1,324 are unexplained.** The worst are Kotlin `bootstrap()` view models
+  (`WalletBalanceViewModel`, `CreateTransactionViewModelAbstract`) and Koin `module`. Trace one
+  with `bin/ctadl-focus`, as in "The cause", to see whether this is value flow (fix 4) or needs
+  the static-type filter (fix 1).
+
+Reproduce with `python3 typecheck.py runs/entry-guard55/census/decisions.tsv` in
+`greenbits-probe/`.
+
 ### Fixes considered before the cause was known
 
 With the write-back fixed, none of these is needed for greenbits. 1 and 2 are still sound
