@@ -115,7 +115,8 @@ or copied (1,291) inside the function.
    before a call or escape, and reload it after a call. Direct accesses between escapes would
    then be in SSA, and only the values live at an escape would mix. Not started.
 5. **Measure `glxy` and `cpuinfo`: done.** `glxy` finishes (120 s, 21.6 GB) and shows the same
-   pattern as `androidudpbus`. `cpuinfo` still times out, and the cause is not native code; see "`cpuinfo` blowup".
+   pattern as `androidudpbus`. `cpuinfo` still times out, and the cause is not native code; see "`cpuinfo` blowup". With
+   `a7d716e8` it finishes in 82 s at 12.4 GB.
 
 ### After mem2reg: what's left (2026-09-29)
 
@@ -132,7 +133,7 @@ or copied (1,291) inside the function.
   (-35104, -35080, -35072) take about 765 stores and 1,550 loads each.
 - **`cpuinfo` is a Java-side problem.** Its native libraries are tiny (mem2reg touched about 5k
   accesses). Its index has 53,796 CHA call sites and 623,583 paths. The cause is R8-merged
-  Kotlin lambdas; see "`cpuinfo` blowup".
+  Kotlin lambdas; see "`cpuinfo` blowup". Splitting them at import (`a7d716e8`) fixes it.
 
 ### Data
 
@@ -172,13 +173,17 @@ Experiment switches:
 
 On the older a979c371 binary, `com.kaeruct.glxy` hit the 48 GB cap and `com.kgurgul.cpuinfo` timed
 out. With `31594e08`, `glxy` finishes and `cpuinfo` still times out; see "After mem2reg: what's
-left".
+left". With `a7d716e8`, `cpuinfo` finishes too; see "`cpuinfo` blowup".
 
 ## `cpuinfo` blowup: R8-merged Kotlin lambdas (2026-09-30)
 
 `com.kgurgul.cpuinfo` does not index in 30 minutes. It is not a memory blowup (28.9 GB at 640 s)
 but a fixpoint that never converges: after 640 s, scc 4 is still adding rows and minting
 decisions, and every iteration costs more per new row than the last.
+
+**Status:** fixed. Splitting the merged classes at import (recommendation 2, `a7d716e8`) makes the
+index converge. With the keyed call-target rule (recommendation 1, `76982fc4`) as well, it takes
+82 s and peaks at 12.4 GB. See "Results".
 
 ### Where the time goes
 
@@ -238,17 +243,96 @@ Both other modes also fail to finish on their own, just differently:
 
 ### Recommendations
 
-1. **Key the `call_target_assign_like` transitive rule on the path prefix.** Split the tag's
-   path once, the way `locals_key` and `edge_split` do, so the join only retrieves edges whose
-   source path is a prefix of the tag's path. This removes 98% of the rule's pairs without
-   changing its result. It is the cheapest fix and helps in every mode. Not started.
-2. **Handle R8 class-merged lambdas at import.** The class-id field is `final synthetic int`,
-   set in the constructor and switched on at the top of `r`, `e` and `p`. Splitting the merged
-   class back into one function per switch case, or making the switch arm depend on the
-   constructor's class id, would give each lambda its own summary and its own decisions. This
-   removes the cause rather than its cost. Not started.
-3. **Bound decision-set churn.** `bounded:K` or `spill:K` caps how often a row's set can change.
-   Not measured on `cpuinfo` yet; it trades precision on exactly these hub functions.
+1. **Key the `call_target_assign_like` transitive rule on the path prefix: done** (`76982fc4`).
+   Each tag's path is split once at every prefix (`cta_key`, `cta_key_wild`), so the join only
+   retrieves edges whose source path is that prefix. The step emits the new tag's exact keys
+   itself. A first version derived them in a separate rule, which cost an extra iteration per
+   edge and fell behind the baseline. On its own this doesn't make `cpuinfo` converge, because
+   `context_locals` dominates.
+2. **Handle R8 class-merged lambdas at import: done** (`a7d716e8`). `ctadl-dex/src/merged.rs`
+   finds a `final int` field that each constructor stores from an argument or a constant, and
+   that methods load from `this` and switch on. It uses a must-analysis of register values, so
+   `move-object v4, p0` and a constant id in the constructor are handled. Each id gets a
+   subclass `C$r8id<k>` with clones of the switching methods, each switch narrowed to arm `k`.
+   Construction sites with a known id allocate the subclass. The `synthetic` flag is not
+   required, since `final` is what makes the split sound. This fixes `cpuinfo`.
+3. **Bound decision-set churn.** Not needed for `cpuinfo` now: with the split it mints 7.2 k
+   decisions and `context_locals` holds 1.1 M rows. Not measured.
+
+### Results (2026-09-30)
+
+Each configuration was measured on a fresh import made with its own binary. `rec2` alone is
+`1a5de8c2` (branch `r8-merged-lambdas`, the baseline plus recommendation 2).
+
+| Build | Result | Wall time | Peak memory | Iterations | `locals` | `context_locals` | Join pairs (transitive rule) |
+|---|---|---|---|---|---|---|---|
+| baseline `62ffedde` | cut off at 1800 s | 1894 s | 41.5 GB | 134 | 74.6 M | 58.0 M | 18.6 B (0.59% prefix matches) |
+| rec 1 `76982fc4` | cut off at 1800 s | 1895 s | 50.4 GB | 137 | 84.2 M | 68.2 M | 122 M |
+| rec 2 `1a5de8c2` | fixpoint | 116–119 s | 7.6–7.8 GB | 1,316 | 27.0 M | 1.08 M | 581 M (42% prefix matches) |
+| both `a7d716e8` | fixpoint | 82–85 s | 12.4 GB | 1,316 | 27.0 M | 1.08 M | 246 M |
+
+- **Rec 1 does its job but is not enough.**
+  - At 160 s it visits 30.7 M pairs instead of 1.69 B. The call-target rules take 17.6 s instead
+    of 24.4 s, and the run gets further in the same time: 117 iterations against 115, and 32.6 M
+    `locals` rows against 29.0 M.
+  - At 1800 s the call-target rules take 32 s, down from 210 s, but `context_locals` still takes
+    1,433 s. That is the churn rec 2 removes.
+- **Rec 2 removes the cause.**
+  - 620 classes split into 3,562 ids, 1,068 methods are cloned per id, and 4,296 construction
+    sites are retagged.
+  - Decisions fall from 22 k (still growing) to 7.2 k, and `context_locals` from 58 M rows (still
+    growing) to 1.1 M.
+  - Before pruning, the Java IR grows from 598 k to 2.2 M assignments, because each clone carries
+    every arm until SSA prunes the unreachable ones. The import time is unchanged at 37–39 s.
+- **Together, rec 1 cuts rec 2's time by 30%.**
+  - With the split, the unkeyed call-target rule is 46% of the fixpoint's rule time: 43 s of
+    92 s. Keyed, it takes 15 s of 58 s.
+  - It costs memory: `cta_key` holds 15.4 M rows, and the peak rises from 7.6 GB to 12.4 GB.
+    Moving `cta_key` into a BYODS store the way `locals_key` is held is the obvious next step.
+- **Neither change loses a result.**
+  - The regression suite's SARIF is identical across all four builds, all 324 files.
+  - `ClassIdMergedFlow`, new with rec 2, has the merged shape with five ids, more than CHA
+    resolves statically. Under dex, the baseline reports a false positive at line 30 and rec 2
+    reports only the two real flows. The jvm frontend shares the config and has no split, so the
+    false positive is not asserted.
+  - Rec 2 re-pins the xtask apk report counts, because `com.noto` has 137 merged classes, and it
+    bumps `IMPORT_FORMAT_VERSION` to 10.
+- **Two sources of nondeterminism turned up while checking that rec 1 leaves results alone.**
+  - The decision-set relations (`set_*`, `context_summary_set`) differ between two runs of the
+    same binary.
+  - The pcode import is not deterministic. One run's import of `FUN_00105b18` in
+    `libcpuinfo-libs.so` had one assignment and two locals in a different order, which changed
+    6 `assign_like` edges. All 25,250 Java functions have identical edge counts in rec 2 and
+    both.
+
+### Beyond `cpuinfo` (2026-09-30)
+
+I imported and indexed the Dex half of every APK in the corpus. The results are in
+`/Volumes/Shampoo/ct-bigapk/small/r8-general/RESULTS.md`.
+
+- **Merged classes are common.** 12 of 15 apps have at least one. `ceno` has 986 classes split
+  into 5,812 ids, `greenbits` has 809 into 6,979, `cpuinfo` 620, `chess` 173, `pincredible`
+  150 and `komodo` 83.
+- **Rec 2 generalizes where merged classes are the hub.**
+  - `ie.equalit.ceno` goes from hitting the 28 GiB cap at 599 s to finishing in 110 s at
+    13.9 GB. `cpuinfo`'s Dex half goes from the cap at 819 s to 96 s.
+  - Small apps are unchanged.
+  - On `darkcoin`, which has 8 merged classes, rec 2 alone takes 169 s at 17.4 GB against the
+    baseline's 179 s at 18.0 GB.
+- **Rec 1 does not generalize as written.** It pays off only where the unkeyed join is mostly
+  wasted, as on `cpuinfo`, where 0.6% of pairs matched the prefix.
+  - On `darkcoin` 34% matched, so rec 1 saves no time. `cta_key` adds 44 M rows, and the peak
+    goes from 18.0 GB to 27.2 GB.
+  - On `greenbits` it cuts the pairs from 1.7 B to 90 M. But the keyed rule is slower (31 s
+    against 22 s at 240 s), and it adds 8 GB.
+  - It needs a compact `cta_key` store, like `locals_key`'s BYODS trie, or a switch to the keyed
+    join only at high-fan-out vertices. Until then it is a net loss outside `cpuinfo`.
+- **`greenbits` blows up for another reason.** It hits a 55 GiB cap under both builds, with
+  87 k decisions at 240 s, and the split raises that to 110 k. Its `context_locals` hubs are
+  Jackson databind's generic serializers, with up to 2 k decisions per function: for example
+  `ObjectMapper._convert`, `DefaultSerializerProvider.serializeValue` and
+  `ObjectWriter$Prefetch.serialize`. Recommendation 3 (bound decision churn) or a Jackson
+  dispatch model is the candidate fix. Not started.
 
 ### Data
 
@@ -262,3 +346,17 @@ All output is under `/Volumes/Shampoo/ct-bigapk/small/cpuinfo-blowup/`:
   binary `ctadl-probe` built with `probe.diff` (uncommitted).
 - `runs/hc-none/`, `runs/hc-collapse*/`: the hybrid context A/B.
 - `smali/out/`: the app's baksmali output (`i.smali` is the merged lambda class `Li;`).
+
+The measurements of recommendations 1 and 2 are under
+`/Volumes/Shampoo/ct-bigapk/small/cpuinfo-recs/`:
+
+- `RESULTS.md`, `ladder.log`: a summary, and time and peak memory for every run.
+- `bin/`: every binary measured, with its commit or diff.
+- `runs/<build>/import/`: the import each build made. `runs/<build>/t<N>/`: the index runs.
+  `index.err` is the full debug log, and `rank.txt` comes from `../cpuinfo-blowup/rank.py`.
+- `reg-<build>/`, `sarif-diff-*.txt` (made by `sarif_diff.py`): the regression suite for each
+  build, and their comparisons.
+- `case-{base,rec2}/`: the `ClassIdMergedFlow` case under each binary.
+- `runs/{rec2,both}/t1800/index-graph.dot`, `dot_edges.py`, `index-graph-perfn-rec2-both.txt`:
+  the index graphs and their comparison.
+- `repin/`: how the apk report counts were re-pinned.
