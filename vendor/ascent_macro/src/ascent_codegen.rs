@@ -90,6 +90,7 @@ pub(crate) fn compile_mir(mir: &AscentMir, is_ascent_run: bool) -> proc_macro2::
    let update_indices_body = compile_update_indices_function_body(mir);
    let relation_sizes_body = compile_relation_sizes_body(mir);
    let scc_times_summary_body = compile_scc_times_summary_body(mir);
+   let index_sizes_body = compile_index_sizes_body(mir);
 
    let mut type_constraints = vec![];
    let mut field_type_names = HashSet::<String>::new();
@@ -323,6 +324,11 @@ pub(crate) fn compile_mir(mir: &AscentMir, is_ascent_run: bool) -> proc_macro2::
          pub fn scc_times_summary(&self) -> String {
             #![allow(clippy::all)]
             #scc_times_summary_body
+         }
+         #[allow(dead_code, non_camel_case_types)]
+         pub fn index_sizes_summary(&self) -> String {
+            #![allow(clippy::all)]
+            #index_sizes_body
          }
       }
       impl #impl_impl_generics Default for #struct_name #impl_ty_generics #impl_where_clause {
@@ -675,6 +681,70 @@ fn compile_relation_sizes_body(mir: &AscentMir) -> proc_macro2::TokenStream {
       use std::fmt::Write;
       let mut res = String::new();
       #(#write_sizes)*
+      res
+   }
+}
+
+/// Body of `index_sizes_summary`: per relation and per index, keys, entries and approximate shallow
+/// heap bytes, for sizing which relations and indices hold a run's memory. Autoref specialization
+/// picks an estimator for ascent's default containers; any other container (BYODS, parallel)
+/// prints n/a and needs its own report.
+fn compile_index_sizes_body(mir: &AscentMir) -> proc_macro2::TokenStream {
+   let mut lines = vec![];
+   for (r, inds) in mir.relations_ir_relations.iter().sorted_by_key(|(r, _)| &r.name) {
+      let rel_name = &r.name;
+      let rel_name_str = r.name.to_string();
+      lines.push(quote! {
+         let __b = (&self.#rel_name).__ind_bytes();
+         writeln!(&mut res, "rel {} {}", #rel_name_str, __fmt(__b)).unwrap();
+      });
+      for ind in inds.iter().sorted_by_cached_key(|ind| ind.ir_name()) {
+         let ir = ind.ir_name();
+         let ir_str = ir.to_string();
+         lines.push(quote! {
+            let __b = (&self.#ir).__ind_bytes();
+            writeln!(&mut res, "  ind {} {}", #ir_str, __fmt(__b)).unwrap();
+         });
+      }
+   }
+   quote! {
+      use std::fmt::Write;
+      use std::mem::size_of;
+      type __B = Option<(usize, usize, usize)>;
+      trait __IndBytes { fn __ind_bytes(&self) -> __B; }
+      trait __IndBytesFb { fn __ind_bytes(&self) -> __B; }
+      impl<T> __IndBytesFb for &T { fn __ind_bytes(&self) -> __B { None } }
+      impl<T> __IndBytes for ::std::vec::Vec<T> {
+         fn __ind_bytes(&self) -> __B { Some((self.len(), self.len(), self.capacity() * size_of::<T>())) }
+      }
+      impl<K, V> __IndBytes for ::ascent::rel::ToRelIndexType<K, V> {
+         fn __ind_bytes(&self) -> __B {
+            let m = &self.0;
+            let (mut e, mut c) = (0usize, 0usize);
+            for v in m.values() { e += v.len(); c += v.capacity(); }
+            Some((m.len(), e, m.capacity() * (size_of::<(K, ::std::vec::Vec<V>)>() + 1) + c * size_of::<V>()))
+         }
+      }
+      impl<K, V> __IndBytes for ::ascent::internal::RelFullIndexType<K, V> {
+         fn __ind_bytes(&self) -> __B {
+            Some((self.len(), self.len(), self.capacity() * (size_of::<(K, V)>() + 1)))
+         }
+      }
+      impl<K, V, S> __IndBytes for ::std::collections::HashMap<K, ::std::collections::HashSet<V, S>, S> {
+         fn __ind_bytes(&self) -> __B {
+            let (mut e, mut c) = (0usize, 0usize);
+            for v in self.values() { e += v.len(); c += v.capacity(); }
+            Some((self.len(), e, self.capacity() * (size_of::<(K, ::std::collections::HashSet<V, S>)>() + 1) + c * (size_of::<V>() + 1)))
+         }
+      }
+      fn __fmt(b: __B) -> String {
+         match b {
+            Some((k, e, by)) => format!("keys={} entries={} bytes={} ({:.1} MB)", k, e, by, by as f64 / 1e6),
+            None => "n/a".to_string(),
+         }
+      }
+      let mut res = String::new();
+      #(#lines)*
       res
    }
 }

@@ -2592,6 +2592,9 @@ pub fn taint_index_with_config(
                     vec![
                         self.__locals_ind_common.heap_report().to_string(),
                         self.__assign_like_ind_common.heap_report().to_string(),
+                        format!("[byods] locals_key: {}", self.__locals_key_ind_common.heap_report()),
+                        format!("[byods] edge_split: {}", self.__edge_split_ind_common.heap_report()),
+                        format!("[byods] ext_dst: {}", self.__ext_dst_ind_common.heap_report()),
                     ]
                 }
                 fn num_reached_variables(&self) -> usize {
@@ -2773,6 +2776,9 @@ pub fn taint_index_with_config(
                 ],
             )
         };
+        // Rows, keys and approximate bytes of every relation and each of its indices; the BYODS
+        // stores print n/a here and report their own sizes below.
+        log::debug!("[idxsizes] index sizes:\n{}", prog.index_sizes_summary());
         log::debug!(
             "[mem cp] after relation census (nothing drained yet): {:.1} MB",
             phys_footprint_mb()
