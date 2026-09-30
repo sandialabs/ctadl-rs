@@ -83,6 +83,32 @@ lsm::lsm_col!(FormalIndex, 1);
 lsm::lsm_col!(PackedInsnSiteId, 1);
 lsm::lsm_col!(FlowVertex, 2);
 
+/// EXPERIMENT: counters on one rule's join, to tell pairs visited from pairs kept.
+pub(crate) mod probe {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    /// `call_target_assign_like` transitive rule: pairs out of the `(f, v2)` join ...
+    pub const CTA_PAIRS: usize = 0;
+    /// ... of which `substitute_prefix` matched ...
+    pub const CTA_PREFIX: usize = 1;
+    /// ... and of which the result is a program path (a head tuple, new or not).
+    pub const CTA_PATHS: usize = 2;
+    static COUNTS: [AtomicU64; 3] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
+    #[inline]
+    pub fn hit(i: usize) -> bool {
+        COUNTS[i].fetch_add(1, Ordering::Relaxed);
+        true
+    }
+    pub fn report() -> String {
+        let c = |i: usize| COUNTS[i].load(Ordering::Relaxed);
+        format!(
+            "cta probe: pairs={} prefix_match={} in_paths={}",
+            c(CTA_PAIRS),
+            c(CTA_PREFIX),
+            c(CTA_PATHS)
+        )
+    }
+}
+
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
 pub type FunctionSummary = (FunctionId, FormalIndex, Path, FormalIndex, Path);
@@ -1031,6 +1057,83 @@ struct StoreSizes {
     edge_split: usize,
     locals_key: usize,
     ext_dst: usize,
+}
+
+/// EXPERIMENT: where the `call_target_assign_like` transitive rule's join work goes. For each
+/// `(f, v)`, the tags held there times the `assign_like` edges reading `v` is the number of pairs
+/// the rule visits to re-derive everything at `v` once; summed per function and listed per
+/// variable, with the objects that reach the most vertices.
+fn cta_census(
+    cta: &dyn Rows<(FunctionId, FlowVariable, Path, CallTargetObject)>,
+    assign_like: &[(FunctionId, FlowVariable, Path, FlowVariable, Path)],
+    id_map: Option<&IdMap>,
+) -> String {
+    use std::fmt::Write as _;
+    let fname = |f: &FunctionId| {
+        id_map
+            .and_then(|m| m.get_function(*f))
+            .map(|f| f.0.to_string())
+            .unwrap_or_else(|| format!("#{}", f.id))
+    };
+    let mut tags: HashMap<(FunctionId, FlowVariable), usize> = HashMap::new();
+    let mut by_obj: HashMap<CallTargetObject, usize> = HashMap::new();
+    let mut by_path_len: HashMap<usize, usize> = HashMap::new();
+    let mut rows = cta.stream();
+    while let Some((f, v, p, o)) = rows.next() {
+        *tags.entry((*f, *v)).or_default() += 1;
+        *by_obj.entry(o.clone()).or_default() += 1;
+        *by_path_len.entry(p.len()).or_default() += 1;
+    }
+    let mut outdeg: HashMap<(FunctionId, FlowVariable), usize> = HashMap::new();
+    for (f, _, _, v2, _) in assign_like {
+        *outdeg.entry((*f, *v2)).or_default() += 1;
+    }
+    let mut per_fv: Vec<((FunctionId, FlowVariable), usize, usize)> = tags
+        .iter()
+        .map(|(k, t)| (*k, *t, outdeg.get(k).copied().unwrap_or(0)))
+        .collect();
+    per_fv.sort_by_key(|(_, t, d)| std::cmp::Reverse(t * d));
+    let mut per_f: HashMap<FunctionId, (usize, usize)> = HashMap::new();
+    for ((f, _), t, d) in &per_fv {
+        let e = per_f.entry(*f).or_default();
+        e.0 += t;
+        e.1 += t * d;
+    }
+    let total: usize = per_fv.iter().map(|(_, t, d)| t * d).sum();
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "cta census: rows={} (f,v)={} functions={} pairs per full re-derivation={} objects={}",
+        cta.len(),
+        tags.len(),
+        per_f.len(),
+        total,
+        by_obj.len()
+    );
+    let mut lens: Vec<_> = by_path_len.into_iter().collect();
+    lens.sort();
+    let _ = writeln!(out, "  rows by tag path length: {lens:?}");
+    let mut fs: Vec<_> = per_f.into_iter().collect();
+    fs.sort_by_key(|(_, (_, w))| std::cmp::Reverse(*w));
+    let _ = writeln!(out, "  top functions by tags x out-edges:");
+    for (f, (t, w)) in fs.iter().take(15) {
+        let _ = writeln!(out, "    pairs={w:>12} tags={t:>9}  {}", fname(f));
+    }
+    let _ = writeln!(out, "  top (f, v) by tags x out-edges:");
+    for ((f, v), t, d) in per_fv.iter().take(25) {
+        let _ = writeln!(out, "    pairs={:>12} tags={t:>7} out_edges={d:>7}  {v}  {}", t * d, fname(f));
+    }
+    let mut objs: Vec<_> = by_obj.into_iter().collect();
+    objs.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    let _ = writeln!(out, "  top objects by rows:");
+    for (o, n) in objs.iter().take(15) {
+        let name = match o {
+            CallTargetObject::FunctionId(f) => format!("fn {}", fname(f)),
+            other => format!("{other:?}"),
+        };
+        let _ = writeln!(out, "    rows={n:>9}  {name}");
+    }
+    out
 }
 
 fn dropped_compositions(
@@ -2132,8 +2235,11 @@ ascent_source! {
         tag_closure_func(func_id),
         call_target_assign_like(func_id, v2, p_context, tgt),
         assign_like(func_id, v1, p1, v2, p2),
+        if probe::hit(probe::CTA_PAIRS),
         if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-        paths(&p_new);
+        if probe::hit(probe::CTA_PREFIX),
+        paths(&p_new),
+        if probe::hit(probe::CTA_PATHS);
 
     // Return-direction call-target propagation. Rule 2.1 pushes a caller's tag DOWN onto a
     // callee's formal; this is its missing twin, carrying a tag a callee holds on an
@@ -2671,6 +2777,11 @@ pub fn taint_index_with_config(
         );
 
         let assign_like_out = prog.take_assign_like();
+        log::debug!("{}", probe::report());
+        log::debug!(
+            "{}",
+            cta_census(&prog.call_target_assign_like, &assign_like_out, id_map).trim_end()
+        );
         let reached_variables = prog.num_reached_variables();
 
         let stats = IndexStats {
