@@ -487,9 +487,24 @@ parameters and fills in their version 0 after renaming. `ctadl index` chooses it
 (`ArtifactLanguage::param_write_back`): `Entry` for jvm, jar, dex, apk and xapk, and `Exit` for
 the rest.
 
-The C front end needs `Exit`: it lowers `*out = source()` to `assign @p0 = %t0`, since a pointer
-parameter stands for its pointee, and the write-back is how `C:outparam` gets its flow. Applied
-to every language, `Entry` lost that flow.
+C keeps `Exit` because of a deficiency in the C front end, not because C needs it. The front
+end treats a pointer as its pointee: `&v` lowers to `v`, a read of `*p` to `p`, and a store
+`*out = source()` to `assign @p0 = %t0` (`flatten_expr` and the `pointer_expression` arm of
+`flatten_lvalue` in `frontends/ctadl-c/src/lib.rs`). Only an interior address (`p = &x[1]`) or a
+same-block `p = &x` alias gets a real target, with the `deref` field. An out-parameter
+therefore reaches the caller only through the exit-version write-back. Applied to every
+language, `Entry` lost `C:outparam`'s only flow. A comment on the `C` arm of
+`param_write_back` records this.
+
+### Open: lower C pointer writes to `.deref`, then use `Entry` for C
+
+If `*p` lowered to `p.deref` for stores and reads, and `&v` to an address whose `deref` is `v`,
+a write through a pointer parameter would be a field store on its entry version, and C could
+use `Entry`. That also removes a C false flow of the same kind as R8's: a function that rebinds
+a pointer parameter (`p = p->next; *p = x`) currently writes `x` back to the caller's pointer.
+All three changes have to go in together. With only the store changed, the callee writes
+`v.deref` and the caller still reads `v`, so `outparam` still loses its flow. Needs the C
+regression family run against it.
 
 ### Results
 
