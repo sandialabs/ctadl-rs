@@ -12,11 +12,15 @@
 //    JNI.requestDuckMove, and it reaches the engine's `Game::move` and
 //    `ChessBoard::requestDuckMove` inside the library.
 //  * Native into Java: `ChessBoard::getMyMove`'s return value comes back out of its JNI wrapper
-//    and into StringBuilder.append in Java. That needs the return value recovered across the
-//    library's PLT stubs and tail calls (ExportPcode.java's SignatureRecovery).
+//    and into StringBuilder.append in Java: `Lm2/v;->y0` passes it to `Lx2/c;->y` as the move,
+//    which appends its name (`jwtc/chess/g;->f`) to the move text. That needs the return value
+//    recovered across the library's PLT stubs and tail calls (ExportPcode.java's
+//    SignatureRecovery).
 //
-// The model scopes the Java sinks to the one method the native value reaches, `Lt2/l;->F`: with
-// every StringBuilder.append in the app as a sink, the query takes minutes instead of seconds.
+// The model scopes the Java sinks to that one method, `Lx2/c;->y`: with every StringBuilder.append
+// in the app as a sink, the query takes minutes instead of seconds. It used to be `Lt2/l;->F`,
+// where the flow was an artifact: F reuses its String parameter's register for getMyMove()'s
+// result, and writing the exit version back to the formal fed it into F's own incoming String.
 {
   apk: "jwtc.android.chess_297.apk",
   model: "models/jwtc-android-chess.json",

@@ -91,7 +91,7 @@
           "constraint": "in_function",
           "inner": {
             "constraint": "signature_match",
-            "qualified-id": "Lt2/l;->F(Ljava/lang/String;)V"
+            "qualified-id": "Lx2/c;->y(Landroid/content/res/Resources;Ljava/lang/String;IZ)Ljava/lang/String;"
           }
         }
       ],
