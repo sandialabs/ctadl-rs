@@ -1,6 +1,7 @@
 /*! Check flowy programs
 
-This module provides a function, [`check`], to check the assertions in a Flowy program.
+This module provides a function, [`check`], to check the assertions in a Flowy program. The
+*import* half lives in [`ctadl_frontends::flowy`], which needs no engine; see there for why.
 */
 use std::path::Path;
 
@@ -15,33 +16,8 @@ use crate::query_engine::formatter;
 use crate::query_engine::{QueryEndpoint, QueryFacts, QueryResult, taint_analysis};
 use ctadl_flowy as flowy;
 use ctadl_flowy::{EndpointRequires, FlowSpec, Port, PortBase, SummaryRequires, SummarySpec};
-use ctadl_ir::ProgramInfo;
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::Variable;
-
-/// Imports a flowy artifact into the store. This also saves the requirements so that they can be
-/// checked at query time.
-pub fn import(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
-    let program = flowy::compile_program(&import.artifact_path).err_context(|| {
-        format!(
-            "compiling flowy program: {}",
-            import.artifact_path.display()
-        )
-    })?;
-
-    // Save requirements
-    let data = bitcode::serialize(&program.requirements).map_err(Error::Bitcode)?;
-    std::fs::write(import.requirements_path(), data)
-        .map_err(Error::Io)
-        .err_context(|| {
-            format!(
-                "writing requirements: {}",
-                import.requirements_path().display()
-            )
-        })?;
-
-    Ok(program.program_info)
-}
 
 /// Loads flowy requirements for an import.
 fn load_requirements(
@@ -327,6 +303,17 @@ pub fn check<P: AsRef<Path>>(
     dump_index_graph: Option<&Path>,
     models: &[std::path::PathBuf],
 ) -> anyhow::Result<()> {
+    check_with_config(file, dump_index_graph, models, IndexConfig::default())
+}
+
+/// [`check`] under an explicit index configuration, so a fixture's assertions can be run under
+/// every hybrid-context mode and context join.
+pub fn check_with_config<P: AsRef<Path>>(
+    file: P,
+    dump_index_graph: Option<&Path>,
+    models: &[std::path::PathBuf],
+    config: IndexConfig,
+) -> anyhow::Result<()> {
     let file = file.as_ref();
     let program = flowy::compile_program(file)?;
     let mut pass_count = 0;
@@ -361,7 +348,8 @@ pub fn check<P: AsRef<Path>>(
         &mut index_facts,
         &mut source_info,
         CallResolutionStrategy::Mixed,
-        &model_matches.skip_analysis,
+        crate::codegen::CallPolicy::default(),
+        &model_matches,
     );
     // No bridge specs, so nothing here can raise the model errors phase 2 reports: every one of
     // them is about pairing two bridge sides.
@@ -389,11 +377,9 @@ pub fn check<P: AsRef<Path>>(
                 .map(|ep| (ep,))
         })
         .collect();
-    let index_result = taint_index_with_config(
-        index_facts.clone(),
-        IndexConfig::default(),
-        Some(&source_info.sites),
-    );
+    let index_result =
+        taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
+    let final_call = index_result.final_call(&index_facts.call);
 
     if let Some(dot_path) = dump_index_graph {
         let mut file = std::fs::File::create(dot_path)
@@ -421,7 +407,7 @@ pub fn check<P: AsRef<Path>>(
     let mut format_facts_builder = formatter::FormatFactsBuilder::default();
     format_facts_builder
         .index_actual_param(index_facts.actual_param.clone())
-        .call(index_facts.call.clone())
+        .call(final_call.clone())
         .id_to_name(source_info.sites.get_id_to_name_map());
 
     let query_facts = QueryFacts {
@@ -429,9 +415,9 @@ pub fn check<P: AsRef<Path>>(
         actual_param: index_facts.actual_param,
         // Cloned: the call graph is also needed below to resolve declared
         // endpoints to their call-site-anchored forms during the query check.
-        call: index_facts.call.clone(),
+        call: final_call.clone(),
         assign: index_result.assign_like,
-        paths: index_facts.paths,
+        paths: index_result.paths,
         external_function: index_result.external_function,
         endpoints,
     };
@@ -444,7 +430,7 @@ pub fn check<P: AsRef<Path>>(
         &query_result,
         program.requirements.endpoint_requires,
         &source_info.sites,
-        &index_facts.call,
+        &final_call,
     )?;
     pass_count += ipass;
     fail_count += ifail;

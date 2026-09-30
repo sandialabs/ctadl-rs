@@ -1865,12 +1865,12 @@ async fn register_parquet_checked(
         .await
         .err_context(|| format!("reading {table_name} from {path}"))?;
     if table.schema().fields().is_empty() {
-        return Err(Error::Path {
+        return Err(Error::from(ctadl_import::Error::Path {
             message: format!(
                 "cannot read parquet for table `{table_name}`: no columns found at {path} \
                  (the file is missing or unreadable)"
             ),
-        });
+        }));
     }
     Ok(())
 }

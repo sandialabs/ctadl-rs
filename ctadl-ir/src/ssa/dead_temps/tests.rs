@@ -31,7 +31,7 @@ fn load(dest: &str, source: &str, field: &str) -> Statement {
     Statement::new_kind(StatementKind::load(
         local(dest),
         local(source),
-        FieldPath::symbol(field),
+        FieldRef::symbol(field),
     ))
 }
 
@@ -221,7 +221,7 @@ fn keeps_store() {
     // store %global.f := v;   (a Store defines no variable)   =>  never a candidate
     let mut f = one_block_function(vec![Statement::new_kind(StatementKind::store(
         AccessPath::without_fields(VariableRef::new_global()),
-        FieldPath::symbol("f"),
+        FieldRef::symbol("f"),
         read("v"),
     ))]);
     eliminate_dead_temps_function(&mut f);

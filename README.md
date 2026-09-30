@@ -18,6 +18,7 @@ current set of flags.
 | `go` | One-shot convenience: import, index, and query in a single invocation. |
 | `init-model` | Emit a template JSON5 model file for defining sources, sinks, and external function propagation models. |
 | `inspect` | Inspect the contents of the CTADL store (artifacts, projects). |
+| `report` | Measure an imported program's call graph. Needs only an import; reads no index. |
 | `legacy-pcode-cli` | Legacy `index`/`query` commands kept for Ghidra pcode integration. |
 
 One-shot APK analysis:
@@ -37,6 +38,25 @@ ctadl query my-app --models sources-and-sinks.json5 --output check.sarif
 ctadl index my-app
 ctadl query my-app --models sources-and-sinks.json5 --output results.sarif
 ```
+
+### Report
+
+`ctadl report <name>` measures program-analysis-relevant statistics about a program, heavily
+focused on the call graph. It walks the imported IR and runs one class-hierarchy analysis, and
+prints the call census, how many targets each virtual call site has (with the distribution, not
+just the mean), which method signatures own most of the imprecision, what restricting to
+allocated types would buy, fan-in, and recursion.
+
+```bash
+ctadl import /path/to/app.apk --name my-app
+ctadl report my-app                 # for reading
+ctadl report my-app --format json   # for tracking the numbers across runs
+```
+
+It needs no index and writes nothing to the store. Naming a project reports on every program in
+it separately, since the class hierarchy is per program — for an `.xapk` that is one report per
+split APK. `--no-recursion` skips the one section that has to build the whole call graph, which
+on a very large app is most of the running time.
 
 ### Import
 
@@ -77,11 +97,16 @@ produces no flow *and no error*, so the analysis just comes out quieter than it 
 
 ```
 jni registry: 3 table(s), 28 entr(ies) in app__arm64-v8a__libcrypto: 28 attributed to 3 class(es), 0 unattributed
-jni bridge: 14 native method(s): 12 linked (9 registered), 1 unresolved, 1 ambiguous
+jni bridge: 14 native method(s): 12 linked (9 registered, 0 from summary, 1 prototype mismatch), 1 unresolved, 1 ambiguous
 ```
 
-`registered` counts the subset of `linked` that came from a `RegisterNatives` table. For the
-per-method pairings, run with `RUST_LOG=warn,ctadl_ascent::languages::jni=debug`.
+`registered`, `from summary` and `prototype mismatch` each count a subset of `linked`: the links
+that came from a `RegisterNatives` table, the ones whose implementation came from a `--summary`
+project (below), and the ones whose native prototype, as the disassembler recovered it, does not
+fit the Java descriptor. Each mismatch gets its own warning; the usual fix is to build the library
+with `-g` and re-import. On a 32-bit ABI (`armeabi-v7a`, `x86`) a `long` or `double` argument
+recovered as two parameters is not a mismatch: the bridge maps it to both. For the per-method
+pairings, run with `RUST_LOG=warn,ctadl_ascent::languages::jni=debug`.
 
 Two flags switch it off, for an A/B of what it contributes: `--no-jni-registry` links by symbol
 name alone, and `--no-jni-bridge` disables the pass entirely (and implies the first). Use
@@ -89,6 +114,36 @@ name alone, and `--no-jni-bridge` disables the pass entirely (and implies the fi
 [`bridge` model](docs/model-generators.md#bridge), so the pair is not bridged twice. Note that the
 `RegisterNatives` tables are recovered at *import* time, so a library imported before this feature
 existed has none, and `ctadl import --skip-existing` will not create one — re-import without it.
+
+#### Linking against a library indexed on its own
+
+A large app's Java half and each of its libraries can be indexed separately. Index the library
+into a project of its own, then index the app without its libraries and pass that project as a
+`--summary`:
+
+```bash
+ctadl import app.apk                          # app, app__arm64-v8a__libX, app__arm64-v8a__libY
+ctadl index  xproj app__arm64-v8a__libX       # the library, on its own
+ctadl index  appproj app --no-native-libs --summary xproj
+ctadl query  appproj -m models.json           # Java -> libX -> Java flows are found
+```
+
+`index --no-native-libs` drops the native libraries naming an APK or XAPK would otherwise pull in
+(an `.xapk`'s split APKs stay), so `libY` is never loaded. An import named on the command line is
+always kept. `query`, `report` and `inspect` read the project's saved import list, so they see the
+same filtered set with no flag of their own.
+
+`--summary P` maps `P`'s saved function summaries into the project, keeping those for functions
+the project has. For the JNI bridge it also reads each of `P`'s libraries' symbol table and
+`RegisterNatives` tables (never their code), so a Java `native` implemented there is linked, and
+the summaries of the function it links to come in with it. The `jni bridge` line counts these
+links as `from summary`, and a warning names any linked function `P` has no summaries for. Another
+warning says when `P` may not describe this app: a library that is not one of this app's
+sub-imports (another ABI, app or version), or one that changed since `P` was indexed.
+
+The native half of such a flow is carried by the summaries alone, so its SARIF locates the Java
+steps only; co-index the library to see where the taint goes inside it. Only context-free summaries
+cross this way, so a flow in the library that depends on resolving an indirect call is lost.
 
 ## Documentation
 
@@ -98,30 +153,14 @@ existed has none, and `ctadl import --skip-existing` will not create one — re-
 
 # Testing
 
-Unit and integration tests run with Cargo:
+We provide unit and integration tests, as well as regression tests:
 
 ```bash
 cargo test
+cargo xtask regression
 ```
 
-The regression tests, however, are only reliable when run through Nix, which
-pins the full toolchain (compilers, Ghidra, etc.) the fixtures are built and
-checked against. To run the whole suite as a sealed check:
-
-```bash
-nix build .#checks.${system}.regression
-```
-
-where `${system}` is your platform (e.g. `aarch64-darwin`, `x86_64-linux`).
-Running the regression suite outside Nix is not reliable because results depend
-on the exact compiler/disassembler versions Nix provides.
-
-For iterating on tests, the `regression` dev shell provides that same pinned
-toolchain while letting you run the harness against your local working tree:
-
-```bash
-nix develop .#regression -c cargo xtask regression
-```
+The regression tests require some complex toolchains; the Nix dev shell provides those dependencies.
 
 # History
 

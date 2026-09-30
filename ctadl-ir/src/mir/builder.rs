@@ -2,8 +2,8 @@ use crate::index::idx::Idx;
 use crate::mir::call::CallStyle;
 use crate::mir::terminator::{Terminator, TerminatorKind};
 use crate::mir::{
-    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldAccesses, FieldPath, FunctionData,
-    LocalIdx, Locals, ParameterIdx, ParameterType, Statement, StatementIdx, StatementKind,
+    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldRef, FunctionData, LocalIdx, Locals,
+    OffsetAccesses, ParameterIdx, ParameterType, Statement, StatementIdx, StatementKind,
     VariableRef,
 };
 
@@ -139,7 +139,7 @@ impl<'a> BasicBlockBuilder<'a> {
         &mut self,
         dest: VariableRef,
         source: impl Into<AccessPath>,
-        field: impl Into<FieldPath>,
+        field: impl Into<FieldRef>,
     ) -> StatementIdx {
         let statement = Statement::new_kind(StatementKind::load(dest, source, field));
         let current_pos = self.insertion_point;
@@ -156,7 +156,7 @@ impl<'a> BasicBlockBuilder<'a> {
     pub fn create_store(
         &mut self,
         dest: impl Into<AccessPath>,
-        field: impl Into<FieldPath>,
+        field: impl Into<FieldRef>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
         let statement =
@@ -176,13 +176,40 @@ impl<'a> BasicBlockBuilder<'a> {
     pub fn create_assign_or_store(
         &mut self,
         dest: impl Into<AccessPath>,
-        field: Option<FieldPath>,
+        field: Option<FieldRef>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
         let statement = Statement::new_kind(StatementKind::assign_or_store(
             dest.into(),
             field,
             source.into(),
+        ));
+        let current_pos = self.insertion_point;
+        self.insert_statement(statement);
+        StatementIdx::from(current_pos as u32)
+    }
+
+    /// Create and insert a functional update `dest = update (source, dest.field := value)` (see
+    /// [`StatementKind::Update`]). Unlike [`Self::create_store`], the `dest` variable is defined (a
+    /// new version of the aggregate), so the `source` aggregate is named separately.
+    ///
+    /// # Arguments
+    /// * `dest` - Destination address (offset-only access path); its variable is (re)defined
+    /// * `source` - Source aggregate copied into `dest` before the field write
+    /// * `field` - Symbolic field written
+    /// * `value` - Source expression stored into the field
+    pub fn create_update(
+        &mut self,
+        dest: impl Into<AccessPath>,
+        source: VariableRef,
+        field: impl Into<FieldRef>,
+        value: impl Into<Exp>,
+    ) -> StatementIdx {
+        let statement = Statement::new_kind(StatementKind::update(
+            dest.into(),
+            source,
+            field,
+            value.into(),
         ));
         let current_pos = self.insertion_point;
         self.insert_statement(statement);
@@ -308,8 +335,8 @@ impl<'a> BasicBlockBuilder<'a> {
         offsets: impl IntoIterator<Item = i64>,
     ) -> AccessPath {
         AccessPath {
-            variable_ref,
-            path: FieldAccesses::with_offsets(offsets),
+            base: variable_ref,
+            accesses: OffsetAccesses::with_offsets(offsets),
         }
     }
 
@@ -317,8 +344,8 @@ impl<'a> BasicBlockBuilder<'a> {
     ///
     /// # Arguments
     /// * `offset` - Numeric offset
-    pub fn new_offset_path(&self, offset: i64) -> FieldAccesses {
-        FieldAccesses::with_offset(offset)
+    pub fn new_offset_path(&self, offset: i64) -> OffsetAccesses {
+        OffsetAccesses::with_offset(offset)
     }
 
     /// Create a string expression
@@ -335,5 +362,13 @@ impl<'a> BasicBlockBuilder<'a> {
     /// * `bytes` - Byte values
     pub fn new_bytes_exp(&self, bytes: Vec<u8>) -> Exp {
         Exp::new_bytes(bytes)
+    }
+
+    /// Creates an integer expression.
+    ///
+    /// # Arguments
+    /// * `value` - the value of the constant, sign-extended to `i64`
+    pub fn new_int_exp(&self, value: i64) -> Exp {
+        Exp::new_int(value)
     }
 }

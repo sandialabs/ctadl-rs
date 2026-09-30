@@ -10,7 +10,7 @@ structure field access, to maximize the opportunity for the compiler to throw er
 changes.
 */
 use super::*;
-use FieldAccess;
+use OffsetAccess;
 
 macro_rules! basic_blocks {
     ($blocks:ident, mut, true) => {
@@ -84,7 +84,7 @@ macro_rules! make_ast_visitor {
             fn visit_access_path(&mut self, access_path: &$($mutability)? AccessPath) {
                 self.super_access_path(access_path);
             }
-            fn visit_field_accesses(&mut self, field_accesses: &$($mutability)? FieldAccesses) {
+            fn visit_field_accesses(&mut self, field_accesses: &$($mutability)? OffsetAccesses) {
                 self.super_field_accesses(field_accesses);
             }
             fn visit_call_style(&mut self, call_style: &$($mutability)? CallStyle) {
@@ -187,6 +187,11 @@ macro_rules! make_ast_visitor {
                         self.visit_access_path(dest);
                         self.visit_exp(value);
                     }
+                    Update { dest, source, field: _, value } => {
+                        self.visit_access_path(dest);
+                        self.visit_variable_ref(source);
+                        self.visit_exp(value);
+                    }
                     Nop => (),
                 }
             }
@@ -197,7 +202,7 @@ macro_rules! make_ast_visitor {
                     CallStyle::FuncPtrCall { callee, signature: _ } => {
                         self.visit_access_path(callee);
                     }
-                    CallStyle::JavaCall { receiver, cls: _, simple_name: _, descriptor: _ } => {
+                    CallStyle::JavaCall { receiver, cls: _, simple_name: _, descriptor: _, dispatch: _, super_start: _ } => {
                         self.visit_variable_ref(receiver)
                     },
                     CallStyle::LuaCall { receiver, method: _ } => {
@@ -235,6 +240,7 @@ macro_rules! make_ast_visitor {
                         self.visit_access_path(access_path);
                     }
                     Exp::Bytes(_) => {}
+                    Exp::Int(_) => {}
                     Exp::Str(_) => {}
                     Exp::ObjectRef(_) => {}
                 }
@@ -245,16 +251,16 @@ macro_rules! make_ast_visitor {
             }
 
             fn super_access_path(&mut self, access_path: &$($mutability)? AccessPath) {
-                let AccessPath { variable_ref, path } = access_path;
-                self.visit_variable_ref(variable_ref);
-                self.visit_field_accesses(path);
+                let AccessPath { base, accesses } = access_path;
+                self.visit_variable_ref(base);
+                self.visit_field_accesses(accesses);
             }
 
-            fn super_field_accesses(&mut self, field_accesses: &$($mutability)? FieldAccesses) {
+            fn super_field_accesses(&mut self, field_accesses: &$($mutability)? OffsetAccesses) {
                 // Traverse each field access in the sequence (offset-only)
-                for field_access in &field_accesses.fields {
+                for field_access in &field_accesses.offsets {
                     match field_access {
-                        FieldAccess::Offset(_) => {
+                        OffsetAccess::Offset(_) => {
                             // No additional traversal needed for Offset
                         }
                     }

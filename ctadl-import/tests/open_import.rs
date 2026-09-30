@@ -1,0 +1,278 @@
+/*! Tests the reading side from end to end, with no front end in the process.
+
+That is the point of these tests, and of the crate. Everything below runs against a store that
+`ctadl-import` alone wrote and read, with no parser and no engine. That is all another program
+needs to depend on in order to read CTADL imports.
+*/
+
+use std::sync::Once;
+
+use ctadl_import::project::{
+    ArtifactImport, ArtifactLanguage, IMPORT_FORMAT_VERSION, init_store_path,
+};
+use ctadl_import::{SourceInfoMode, load_import, load_vmt, open_import, save_program_info};
+use ctadl_ir::ProgramInfo;
+use ctadl_ir::ssa;
+
+/// The store root belongs to the whole process and can be set only once, so every test in this
+/// binary shares a single store.
+static INIT: Once = Once::new();
+
+fn store() {
+    INIT.call_once(|| {
+        let dir = tempfile::tempdir().unwrap();
+        init_store_path(Some(dir)).unwrap();
+    });
+}
+
+/// Writes an empty import called `name`. Its artifact is a file in `dir`.
+fn write_import(name: &str, dir: &std::path::Path) -> ArtifactImport {
+    let artifact = dir.join(format!("{name}.dex"));
+    std::fs::write(&artifact, b"not really a dex").unwrap();
+    let import = ArtifactImport::try_create(name, ArtifactLanguage::Dex, &artifact).unwrap();
+    save_program_info(ProgramInfo::default(), &import).unwrap();
+    import
+}
+
+/// Calls `save_program_info` and then `open_import`. This is the round trip another program
+/// gets without having to know the store layout or the bitcode filenames.
+#[test]
+fn a_saved_import_opens_by_name() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    write_import("round_trip", dir.path());
+
+    let opened = open_import("round_trip", ssa::Pipeline::index_default()).unwrap();
+    assert!(opened.program.functions.is_empty());
+    // `open_import` does not read source info. A caller who wants it calls `load_import`.
+    assert_eq!(opened.source_info.spans.len(), 0);
+}
+
+/// Opens the same import by its directory instead of by its name. This is what lets a program
+/// read a store it did not create.
+#[test]
+fn a_saved_import_opens_by_directory() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let import = write_import("by_dir", dir.path());
+
+    let path = import.import_path();
+    let opened = open_import(path.to_str().unwrap(), ssa::Pipeline::none()).unwrap();
+    assert!(opened.program.functions.is_empty());
+}
+
+/// A name that is neither a directory nor an import in this store fails with an error that
+/// says where it looked. Naming the store root is usually enough, because the real problem is
+/// almost always a wrong `--store`.
+#[test]
+fn an_unknown_name_names_the_store_it_searched() {
+    store();
+    let err = open_import("no_such_import", ssa::Pipeline::none()).unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("no_such_import"), "{message}");
+    assert!(message.contains("imports"), "{message}");
+}
+
+/// [`load_import`] returns the IR as the front end wrote it. [`open_import`] does the same and
+/// then runs the pipeline. On an empty program the two have to agree, which is a cheap way to
+/// check that `open_import` does nothing else along the way.
+#[test]
+fn load_and_open_agree_before_any_pass_has_work_to_do() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let import = write_import("agree", dir.path());
+
+    let loaded = load_import(&import, SourceInfoMode::Skip).unwrap();
+    let opened = open_import("agree", ssa::Pipeline::index_default()).unwrap();
+    assert_eq!(
+        loaded.program.functions.len(),
+        opened.program.functions.len()
+    );
+}
+
+/// Rewrites the `version` field of `import`'s config, leaving everything else alone. This is
+/// what a store written by an older build looks like from here: the files are all present and
+/// the bitcode is readable, only the format they were written in is not the one this build
+/// expects.
+fn set_config_version(import: &ArtifactImport, version: &str) {
+    let path = import.config_path();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut config: serde_json::Value = serde_json::from_str(&text).unwrap();
+    config["version"] = serde_json::Value::String(version.to_string());
+    std::fs::write(&path, serde_json::to_string(&config).unwrap()).unwrap();
+}
+
+/// The whole message a user sees, which is the error joined to its causes. `Error::Context`
+/// prints only its own context line, so the diagnostic that matters is one link down; `main`
+/// returns `anyhow::Result`, which walks the chain the same way this does.
+fn full_message(err: &ctadl_import::Error) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut source = std::error::Error::source(err);
+    while let Some(cause) = source {
+        parts.push(cause.to_string());
+        source = cause.source();
+    }
+    parts.join(": ")
+}
+
+/// Walks the cause chain for the [`Error::IncompatibleImport`] the version check raises. It is
+/// not the outermost error: `resolve_import` wraps it in an `Error::Context` saying which import
+/// it was reading.
+fn incompatible_cause(err: &ctadl_import::Error) -> (String, String, String) {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(e) = current {
+        if let Some(ctadl_import::Error::IncompatibleImport {
+            name,
+            found,
+            expected,
+            ..
+        }) = e.downcast_ref::<ctadl_import::Error>()
+        {
+            return (name.clone(), found.clone(), expected.clone());
+        }
+        current = e.source();
+    }
+    panic!("no IncompatibleImport in the cause chain of: {err:?}");
+}
+
+/// A store written by an older build is refused, and the error says which artifact to import
+/// again.
+///
+/// This is the regression the reader exists for. Reading `ir-program.bitcode` directly -- which
+/// is what a downstream crate had to do before [`open_import`] was public -- cannot make this
+/// check, so a stale store either decodes into something wrong or fails with a `bitcode::Error`
+/// that names no cause. Here the bitcode is perfectly readable and the version is the only thing
+/// wrong, which is the point: the check fires on the config, before the decode.
+#[test]
+fn an_import_from_an_older_build_is_refused_by_name() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let import = write_import("stale_by_name", dir.path());
+    set_config_version(&import, "5");
+
+    let err = open_import("stale_by_name", ssa::Pipeline::index_default()).unwrap_err();
+    let (name, found, expected) = incompatible_cause(&err);
+    assert_eq!(name, "stale_by_name");
+    assert_eq!(found, "5");
+    assert_eq!(expected, IMPORT_FORMAT_VERSION);
+
+    // The user's next move is to import that artifact again, so the message has to name it.
+    let message = full_message(&err);
+    assert!(
+        message.contains(&import.artifact_path.display().to_string()),
+        "{message}"
+    );
+    assert!(message.contains("re-import it"), "{message}");
+}
+
+/// The same, opened by directory rather than by name. Both spellings resolve through
+/// [`ArtifactImport::load`], and neither goes around it -- which is what makes the check
+/// unavoidable rather than merely available.
+#[test]
+fn an_import_from_an_older_build_is_refused_by_directory() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let import = write_import("stale_by_dir", dir.path());
+    set_config_version(&import, "5");
+
+    let path = import.import_path();
+    let err = open_import(path.to_str().unwrap(), ssa::Pipeline::none()).unwrap_err();
+    let (_, found, _) = incompatible_cause(&err);
+    assert_eq!(found, "5");
+    assert!(full_message(&err).contains("import format 5"), "{err:?}");
+}
+
+/// An import that died during translation leaves its config behind, because the config is
+/// written when the import starts. Opening it is refused on the missing completion mark rather
+/// than on a missing bitcode file, so the message says what to do about it.
+#[test]
+fn an_import_that_never_finished_is_refused() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = dir.path().join("half.dex");
+    std::fs::write(&artifact, b"not really a dex").unwrap();
+    // `try_create` and nothing else: exactly what a run that failed to translate leaves.
+    let import = ArtifactImport::try_create("half_done", ArtifactLanguage::Dex, &artifact).unwrap();
+    assert!(!import.is_complete());
+
+    let err = open_import("half_done", ssa::Pipeline::none()).unwrap_err();
+    let message = full_message(&err);
+    assert!(message.contains("never finished"), "{message}");
+    assert!(
+        message.contains(&artifact.display().to_string()),
+        "the message has to name the artifact to re-import: {message}"
+    );
+}
+
+/// `save_program_info` writes the mark last, and `try_create` clears it, so a re-import is
+/// unmarked again from the moment it starts until the moment it finishes.
+#[test]
+fn the_completion_mark_is_written_last_and_cleared_by_a_re_import() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let import = write_import("marked", dir.path());
+    assert_eq!(
+        ArtifactImport::load_by_name("marked").unwrap().status,
+        Some(ctadl_import::project::IMPORT_STATUS_DONE.to_string())
+    );
+
+    // A re-import starts by writing a fresh config over the old one.
+    ArtifactImport::try_create("marked", ArtifactLanguage::Dex, &import.artifact_path).unwrap();
+    let restarted = ArtifactImport::load_by_name("marked").unwrap();
+    assert_eq!(restarted.status, None);
+    assert!(
+        !restarted.is_complete(),
+        "the stored program is still there, but this import is running again"
+    );
+}
+
+/// [`load_vmt`] reads the same table [`load_import`] does, without the program. The fixture is a
+/// Lua VMT with one row per column, so an empty-vs-empty comparison cannot pass by accident.
+#[test]
+fn load_vmt_agrees_with_load_import() {
+    use ctadl_ir::mir::Symbol;
+    use ctadl_ir::mir::call::VirtualMethodTable;
+
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = dir.path().join("account.lua");
+    std::fs::write(&artifact, b"-- not really lua").unwrap();
+    let import = ArtifactImport::try_create("vmt_only", ArtifactLanguage::Lua, &artifact).unwrap();
+    let vmt = VirtualMethodTable::Lua {
+        methods: vec![(
+            Symbol::from("lua$class$Account"),
+            Symbol::from("deposit"),
+            Symbol::from("Account.deposit"),
+        )],
+        functions: vec![(Symbol::from("deposit"), Symbol::from("Account.deposit"))],
+        externals: vec![(Symbol::from("format"), Symbol::from("string.format"))],
+        hierarchy: Default::default(),
+    };
+    save_program_info(
+        ProgramInfo {
+            vmt: vmt.clone(),
+            ..Default::default()
+        },
+        &import,
+    )
+    .unwrap();
+
+    let only = load_vmt(&import).unwrap();
+    assert_eq!(only, vmt);
+    assert_eq!(
+        only,
+        load_import(&import, SourceInfoMode::Skip).unwrap().vmt
+    );
+}
+
+/// [`load_vmt`] refuses an unfinished import the way [`load_import`] does.
+#[test]
+fn load_vmt_refuses_an_unfinished_import() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = dir.path().join("half.dex");
+    std::fs::write(&artifact, b"not really a dex").unwrap();
+    let import = ArtifactImport::try_create("vmt_half", ArtifactLanguage::Dex, &artifact).unwrap();
+    let message = full_message(&load_vmt(&import).unwrap_err());
+    assert!(message.contains("never finished"), "{message}");
+}

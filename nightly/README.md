@@ -19,22 +19,24 @@ nix build .#checks.x86_64-linux.regression       # Linux / CI
 
 This is the supported way to run the suite, and it is what the nightly GitHub
 workflow runs on a schedule. Add expensive tests here, not in YAML.
-If you are iterating on individual cases, the flake also provides a local dev
-shell with the full regression toolchain on `PATH`:
+For iterating on individual cases, run the harness directly — the dev shell
+already carries the full regression toolchain on `PATH`:
 
 ```sh
-nix develop .#regression
 cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, or `jni` (comma-separated, or
+`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, `jni`, or `android-icc` (comma-separated, or
 repeated) and defaults to all of them. It selects *before* anything runs, so
 `--frontend pcode` never invokes the Java toolchain, `--frontend jvm,dex` never
 starts Ghidra, and `--frontend lua` needs no external toolchain at all. `jni` is
 the odd one out: its cases build both halves of a JNI boundary, so they need the
 Java toolchain *and* Ghidra. Use it with `--filter` to narrow further:
 `--frontend pcode --filter funcptr`.
+
+`android-icc` discovers Phase 5 external benchmark specs under `tests/android-icc/`. Their APKs
+come from the flake (`CTADL_ANDROID_ICC_APKS`, set in the dev shell); without it they report `SKIP`.
 
 > **Note:** the `lua` frontend lowers its `tests/lua/` cases end to end, including
 > table field-sensitivity, varargs, `ipairs`/`pairs` and `table.insert`, and
@@ -98,23 +100,36 @@ both — the same reasons the taint cases are nightly:
   in, so all these need is the `ctadl` binary.
 - **`models:*`** — the model files ctadl ships, validated against the model generator schema it
   publishes. Reads three small files and runs no tool.
+- **`AndroidIcc:*`** — pinned external DroidBench/ICC-Bench APK specs under
+  `tests/android-icc/`. Each spec names a flake-fetched APK, a model file, whether a flow is expected,
+  and optional `intent_pair.parquet` counts.
 
 The `apk:*` checks are where the analyzer meets a real app rather than a fixture: 6.4 MB, two
 `classes*.dex`, some 50,000 functions. Importing it costs about 13 seconds, which is why they live
 here — they used to be `#[test]`s in `ctadl-ascent/tests/cli.rs`, where they accounted for ~60 s of
 the ~77 s the workspace's tests spent executing, and moving them out halved `cargo test
---workspace`. The import is done **once** and the four checks read the store it wrote:
+--workspace`. The import is done **once** and the checks below read the store it wrote:
 
 | Check | What it claims |
 | --- | --- |
 | `apk:import` | The app imports, the config records the language, format version, artifact path and content hash, and `ctadl inspect` decodes the stored program and reports functions in it. |
 | `apk:no-native-libs` | This APK carries no `lib/<abi>` entries, so the native-library pass records no sub-imports and stages nothing — the path that must not need Ghidra. |
 | `apk:model-check` | `ctadl query` against an import that was never indexed exits non-zero, reports which imports it checked and what the generator selected, and writes **nothing** into the store. |
+| `apk:report` | `ctadl report` runs on the import, its first line names the static tier, the JSON carries every section a Java program has, four aggregate counts plus the site count of each dispatch kind are pinned to this APK, and nothing is written into the store. |
+| `apk:report-invariants` | The report's numbers add up — the census sums to its total, the target split sums to the virtual sites, the dispatch kinds partition those sites and their per-kind edge, excess and RTA totals sum back to the pooled ones, every distribution is monotone, RTA never exceeds CHA, the edge shares are ordered, and removing the interface edges cannot grow the call graph — and two runs over one import are byte-identical. |
 | `apk:skip-existing` | `--skip-existing` skips a re-import of an unchanged artifact, and only of an unchanged one: falsify the recorded hash and the same command re-imports. |
 
 They select with `--frontend dex` (the app is a Dex artifact) and, like `dex:apk`, self-skip when
 no APK resolves. `cargo xtask regression --frontend dex --filter apk:` runs just these, and needs
 nothing on `PATH` beyond a Rust toolchain to build `ctadl`.
+
+`apk:report` is the only check in the suite that pins concrete analysis numbers rather than
+properties. That is deliberate: it is what catches a silent change in what call resolution
+resolves *to*, which no invariant can see. The per-dispatch counts are pinned for the sharper
+version of the same reason: a frontend that stopped reading the invoke opcode would report
+every virtual call under one kind, and every other assertion here would still pass. The constants live beside the check in
+`xtask/src/apk.rs` with instructions for re-pinning them, and a commit that moves them should
+say which frontend change did.
 
 Because these drive the shipped binary rather than the library, they cover what a library-level
 test cannot: argument wiring in `main.rs`, exit statuses, and the on-disk shape of the store. The
@@ -287,6 +302,6 @@ warning and skips the validation rather than failing every case.
   and the final line reports `N passed, M skipped, K failed`.
 - The runner expects its tools (`ctadl`, `dex-reader`, `javac`, `dx`, `gcc`,
   `addr2line`, Ghidra, `checksarif`) on `PATH`. The flake check in [Running](#running) builds
-  and supplies all of them and `nix develop .#regression` provides an
-  interactive shell with the same toolchain for local iteration.
+  and supplies all of them; the dev shell carries the same toolchain for local
+  iteration.
 - `scripts/*.py` are unused by the current suite and kept only for reference.

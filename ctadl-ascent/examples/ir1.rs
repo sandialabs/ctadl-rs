@@ -34,24 +34,21 @@ fn function_f() -> FunctionData {
     let body = blocks.push(BasicBlockData::new(None));
     {
         let a = AccessPath {
-            variable_ref: VariableRef::new_local_idx(a_idx),
-            path: Default::default(),
+            base: VariableRef::new_local_idx(a_idx),
+            accesses: Default::default(),
         };
         let p = AccessPath {
-            variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-            path: Default::default(),
+            base: VariableRef::new_parameter(ParameterIdx::new(0)),
+            accesses: Default::default(),
         };
         let q = AccessPath {
-            variable_ref: VariableRef::new_parameter(ParameterIdx::new(1)),
-            path: Default::default(),
+            base: VariableRef::new_parameter(ParameterIdx::new(1)),
+            accesses: Default::default(),
         };
         let stmts: IndexVec<StatementIdx, _> = indexvec![
+            Statement::new_kind(StatementKind::assign(a.base.clone(), [Exp::from(q)])),
             Statement::new_kind(StatementKind::assign(
-                a.variable_ref.clone(),
-                [Exp::from(q)]
-            )),
-            Statement::new_kind(StatementKind::assign(
-                p.variable_ref.clone(),
+                p.base.clone(),
                 [Exp::from(a.clone())]
             ))
         ];
@@ -80,22 +77,22 @@ fn function_g() -> FunctionData {
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let a = AccessPath {
-        variable_ref: VariableRef::new_local_idx(a_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(a_idx),
+        accesses: Default::default(),
     };
     let b = AccessPath {
-        variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-        path: Default::default(),
+        base: VariableRef::new_parameter(ParameterIdx::new(0)),
+        accesses: Default::default(),
     };
     let c = AccessPath {
-        variable_ref: VariableRef::new_local_idx(c_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(c_idx),
+        accesses: Default::default(),
     };
     let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
         Statement::new_kind(StatementKind::assign(
-            a.variable_ref.clone(),
+            a.base.clone(),
             [Exp::Bytes(1u8.to_be_bytes().to_vec())]
         )),
         Statement::new_kind(StatementKind::CallAssign {
@@ -132,22 +129,22 @@ fn function_g1() -> FunctionData {
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
     let a = AccessPath {
-        variable_ref: VariableRef::new_local_idx(a_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(a_idx),
+        accesses: Default::default(),
     };
     let b = AccessPath {
-        variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-        path: Default::default(),
+        base: VariableRef::new_parameter(ParameterIdx::new(0)),
+        accesses: Default::default(),
     };
     let c1 = AccessPath {
-        variable_ref: VariableRef::new_local_idx(c1_idx),
-        path: Default::default(),
+        base: VariableRef::new_local_idx(c1_idx),
+        accesses: Default::default(),
     };
     let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
         Statement::new_kind(StatementKind::assign(
-            a.variable_ref.clone(),
+            a.base.clone(),
             [Exp::Bytes(1u8.to_be_bytes().to_vec())]
         )),
         Statement::new_kind(StatementKind::CallAssign {
@@ -186,14 +183,14 @@ fn program_h() -> Program {
     let body = blocks.push(BasicBlockData::new(None));
     {
         let p = AccessPath {
-            variable_ref: VariableRef::new_parameter(ParameterIdx::new(0)),
-            path: Default::default(),
+            base: VariableRef::new_parameter(ParameterIdx::new(0)),
+            accesses: Default::default(),
         };
         let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
                 AccessPath::without_fields(global_ref.clone()),
-                ctadl_ir::mir::FieldPath::symbol("bar"),
+                ctadl_ir::mir::FieldRef::symbol("bar"),
                 Exp::from(p.clone()),
             ))];
         let body_block = &mut h[body];

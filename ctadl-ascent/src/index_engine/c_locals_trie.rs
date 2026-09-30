@@ -72,8 +72,8 @@ use ascent::rayon::iter::{IntoParallelIterator, ParallelIterator};
 use ascent_base::util::update;
 use rustc_hash::FxHasher;
 
-use super::hybrid_set::HybridSet;
 use super::locals_trie::{DynIter, HeapReport, hb_bytes};
+use super::path_group::PathGroup;
 
 /// The store keys are trusted ids derived from the program, so we hash them with the fast,
 /// deterministic `FxHasher` rather than the DoS-resistant SipHash the std collections use. This is
@@ -81,7 +81,7 @@ use super::locals_trie::{DynIter, HeapReport, hb_bytes};
 pub type Hasher = BuildHasherDefault<FxHasher>;
 type Set<T> = hashbrown::HashSet<T, Hasher>;
 /// The leaves of one `(F,V)` group. See [`super::locals_trie`] for why this is a [`HybridSet`].
-type Group<P, M, Fp> = HybridSet<(P, M, Fp)>;
+type Group<P, M, Fp> = PathGroup<P, M, Fp>;
 
 // ---------------------------------------------------------------------------
 // A freezable concurrent map.
@@ -378,12 +378,12 @@ where
     /// Existence probe against the **frozen** store. Rules only ever probe `total`/`delta`, which
     /// are frozen for the whole evaluation phase.
     #[inline]
-    fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
+    pub(crate) fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
         // `(P,M,Fp)` are cheap to clone: 8-byte handles plus an i16.
         self.fwd
             .frozen()
             .get(&(f.clone(), v.clone()))
-            .is_some_and(|group| group.contains(&(p.clone(), m.clone(), fp.clone())))
+            .is_some_and(|group| group.contains(p, m, fp))
     }
 
     /// Insert a full tuple through a **shared** reference. Returns true if it was new to *this*
@@ -486,7 +486,6 @@ where
         // set, cleared per group, keeps the report to a single extra allocation. It holds `P` by
         // value rather than by reference: the unfrozen `DashMap` hands out guarded values whose
         // lifetime is the loop iteration, and `P` is a cheap handle to clone.
-        let mut ps: Set<P> = Set::default();
         // Each `visit_*` closure borrows `r` mutably, so it is scoped to end the borrow before
         // the next one starts.
         {
@@ -502,11 +501,7 @@ where
                     r.large_groups += 1;
                 }
                 r.fwd_bytes += group.heap_bytes();
-                ps.clear();
-                for (p, _, _) in group.iter() {
-                    ps.insert(p.clone());
-                }
-                r.p_entries += ps.len();
+                r.p_entries += group.num_paths();
             };
             match &self.fwd {
                 CMap::Frozen(v) => v.iter().for_each(|(_, group)| visit_group(group)),
@@ -553,7 +548,7 @@ where
 /// native parallel iterator, and rayon needs a nameable `ParallelIterator + Clone` type. Since the
 /// median group holds one leaf, collecting is cheap; and it only ever happens when a keyed clause
 /// drives a parallel loop, which is rare.
-pub struct CollectedParIter<T>(Vec<T>);
+pub struct CollectedParIter<T>(pub(crate) Vec<T>);
 
 impl<T: Clone> Clone for CollectedParIter<T> {
     fn clone(&self) -> Self {
@@ -677,12 +672,7 @@ where
         C: UnindexedConsumer<Self::Item>,
     {
         DashMapViewParIter::new(self.fwd)
-            .map(|((f, v), group)| {
-                (
-                    (f, v),
-                    CollectedParIter(group.iter().map(|(p, m, fp)| (p, m, fp)).collect()),
-                )
-            })
+            .map(|((f, v), group)| ((f, v), CollectedParIter(group.iter().collect())))
             .drive_unindexed(consumer)
     }
 }
@@ -958,9 +948,7 @@ where
     #[inline]
     fn index_get(&'a self, key: &(F, V)) -> Option<Self::IteratorType> {
         let group = self.0.fwd.frozen().get(key)?;
-        Some(DynIter::new(move || {
-            group.iter().map(|(p, m, fp)| (p, m, fp))
-        }))
+        Some(DynIter::new(move || group.iter()))
     }
     #[inline]
     fn len_estimate(&self) -> usize {
@@ -982,7 +970,7 @@ where
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
         Box::new(self.0.fwd.frozen().iter().map(|((f, v), group)| {
-            let it = DynIter::new(move || group.iter().map(|(p, m, fp)| (p, m, fp)));
+            let it = DynIter::new(move || group.iter());
             ((f, v), it)
         }))
     }
@@ -1001,9 +989,7 @@ where
     #[inline]
     fn c_index_get(&'a self, key: &(F, V)) -> Option<Self::IteratorType> {
         let group = self.0.fwd.frozen().get(key)?;
-        Some(CollectedParIter(
-            group.iter().map(|(p, m, fp)| (p, m, fp)).collect(),
-        ))
+        Some(CollectedParIter(group.iter().collect()))
     }
 }
 impl<'a, F, V, P, M, Fp> CRelIndexReadAll<'a> for CView01<'a, F, V, P, M, Fp>
@@ -1037,24 +1023,13 @@ where
 {
     type Key = (F, V, P);
     type Value = (&'a M, &'a Fp);
-    type IteratorType = DynIter<'a, Self::Value>;
+    type IteratorType = super::path_group::Get<'a, P, M, Fp>;
     #[inline]
     fn index_get(&'a self, key: &(F, V, P)) -> Option<Self::IteratorType> {
         let group = self.0.fwd.frozen().get(&(key.0.clone(), key.1.clone()))?;
-        let p = key.2.clone();
-        // A group is a set, not a sorted run, so this filters rather than slicing a range. The
-        // scan up front is what lets us return `None` for a `P` the group does not hold, which
-        // cuts the caller's whole join; it stops at the first match, and the median group holds a
-        // single leaf.
-        if !group.iter().any(|(pp, _, _)| *pp == p) {
-            return None;
-        }
-        Some(DynIter::new(move || {
-            let p = p.clone();
-            group
-                .iter()
-                .filter_map(move |(pp, m, fp)| (*pp == p).then_some((m, fp)))
-        }))
+        // `PathGroup::get` answers `None` for a `P` the group does not hold, which cuts the
+        // caller's whole join. On a large group the probe is one hash lookup.
+        group.get(&key.2)
     }
     #[inline]
     fn len_estimate(&self) -> usize {
@@ -1102,11 +1077,7 @@ where
     #[inline]
     fn c_index_get(&'a self, key: &(F, V, P)) -> Option<Self::IteratorType> {
         let group = self.0.fwd.frozen().get(&(key.0.clone(), key.1.clone()))?;
-        let p = &key.2;
-        let matches: Vec<_> = group
-            .iter()
-            .filter_map(|(pp, m, fp)| (pp == p).then_some((m, fp)))
-            .collect();
+        let matches: Vec<_> = group.get(&key.2)?.collect();
         // A miss must be `None`, not an empty iterator: `None` cuts the caller's join.
         if matches.is_empty() {
             return None;

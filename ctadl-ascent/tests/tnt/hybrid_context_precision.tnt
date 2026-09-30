@@ -1,0 +1,93 @@
+// What `--hybrid-context collapse` and `bounded:K` give up, in the smallest program that shows it.
+//
+// `foo` calls its function-pointer formal `poly`. Three callers pass three targets that all have
+// the same summary (`return <- obj`), and a fourth passes one that does not. Under `decision`
+// the contextual edge `tmp <- obj` in `foo` holds under the exact set {polyA, polyB, polyC}, so
+// the conditional summary of `foo` is applied at barA, barB and barC and not at barD.
+//
+// `collapse` (K = 1) widens the set to ⊤ the moment polyB joins polyA at the edge; `bounded:2`
+// does so when polyC joins. ⊤ means "every decision of foo", so the summary is applied at barD
+// too, and barD's `return </- obj` fails. In general `bounded:K` loses exactly this when more than
+// K targets share a flow at one row and another target does not; a caller passing that other
+// target inherits the shared flow.
+//
+// The suite runs this file under `decision`; `CTADL_TEST_HYBRID_CONTEXT=collapse` or `bounded:2`
+// makes it fail, which is the point.
+
+def polyA(obj): 1
+where summaries [return <- obj]
+{
+start:
+  return obj;
+}
+
+def polyB(obj): 1
+where summaries [return <- obj]
+{
+start:
+  return obj;
+}
+
+def polyC(obj): 1
+where summaries [return <- obj]
+{
+start:
+  return obj;
+}
+
+def polyD(obj): 1
+where summaries [return </- obj]
+{
+start:
+  obj.dst = obj.src;
+  return "hi";
+}
+
+def foo(poly, obj): 1
+{
+start:
+  tmp = poly(obj);
+  return tmp;
+}
+
+def barA(obj): 1
+where summaries [return <- obj]
+{
+start:
+  tmp = foo(ptr<polyA>, obj);
+  return tmp;
+}
+
+def barB(obj): 1
+where summaries [return <- obj]
+{
+start:
+  tmp = foo(ptr<polyB>, obj);
+  return tmp;
+}
+
+def barC(obj): 1
+where summaries [return <- obj]
+{
+start:
+  tmp = foo(ptr<polyC>, obj);
+  return tmp;
+}
+
+def barD(obj): 1
+where summaries [return </- obj]
+{
+start:
+  tmp = foo(ptr<polyD>, obj);
+  return tmp;
+}
+
+def service() {
+start:
+  first = source(Obj);
+  a = barA(first);
+  d = barD(first);
+  sink(a, Obj);
+  errsink(d, Obj);
+  return;
+}

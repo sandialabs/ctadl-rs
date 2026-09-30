@@ -5,9 +5,11 @@ use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ctadl_ascent::cli;
-use ctadl_ascent::codegen::CallResolutionStrategy;
+use ctadl_ascent::codegen::{CallPolicy, CallResolutionStrategy, DispatchOrder};
+use ctadl_ascent::index_engine::{ContextJoin, HybridContext, Parallelism};
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
+use ctadl_ascent::report::ReportFormat;
 
 /// ctadl: import artifacts, index programs, and run/query analyses.
 #[derive(Debug, Parser)]
@@ -53,6 +55,12 @@ pub enum Command {
 
     /// Inspect the CTADL store
     Inspect(InspectArgs),
+
+    /// Generate detailed report on taint-analysis relevant program properties. (See 'import')
+    ///
+    /// Needs only an import. Every number comes from the imported IR and one class-hierarchy
+    /// analysis; no index is read, and none is written.
+    Report(ReportArgs),
 
     /// Legacy Ghidra Pcode CLI: index and query commands for Ghidra integration.
     #[command(name = "legacy-pcode-cli")]
@@ -206,17 +214,74 @@ pub enum ImportLanguage {
 
 #[derive(Debug, Args)]
 pub struct InspectArgs {
-    /// Artifact name, project name, or store path
+    /// Imported artifact name, index name, or a path to a file in the store.
     pub name: Option<String>,
 
     /// Instead of summary statistics, pretty-print the imported IR. Prints every function
-    /// unless `--function` narrows the set. Requires an artifact/project name.
-    #[arg(long)]
+    /// unless `--function` narrows the set. Requires an imported artifact name.
+    #[arg(long, requires = "name")]
     pub dump_ir: bool,
 
     /// With `--dump-ir`, only print functions whose name contains this substring.
-    #[arg(long, value_name = "SUBSTR")]
+    #[arg(long, value_name = "SUBSTR", requires = "dump_ir")]
     pub function: Option<String>,
+
+    /// Write the index (assign-like) graph of this project to a Graphviz DOT file. Requires a
+    /// project name; conflicts with `--dump-ir`.
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with = "dump_ir",
+        requires = "name"
+    )]
+    pub dump_index_graph: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct ReportArgs {
+    /// Analysis project or imported program name. Naming a project reports on every program
+    /// in it, sub-imports included -- an APK's splits and native libraries each get their own
+    /// section, because the class hierarchy is per program.
+    pub name: String,
+
+    /// Output file path. Defaults to `-`, meaning stdout.
+    #[arg(long, short, default_value = "-")]
+    pub output: PathBuf,
+
+    /// Output format: `text` to read, `json` to track the numbers across runs.
+    #[arg(long, short, value_enum, default_value_t = ReportFormat::Text)]
+    pub format: ReportFormat,
+
+    /// How many rows the worst-signature and most-called-method lists carry.
+    #[arg(long, default_value_t = 10, value_name = "N")]
+    pub top: usize,
+
+    /// Skip the expensive recursion and strongly-connected-component section.
+    #[arg(long)]
+    pub no_recursion: bool,
+
+    /// Load additional models from one or more JSON, JSON5, or JSONL files, as `ctadl index`
+    /// would. The report reads nothing but writes the `policy` section against them, so this is
+    /// how to see what a `find: "dispatch"` model would cover before re-indexing.
+    #[arg(long, short, action = clap::ArgAction::Append, value_name = "FILE")]
+    pub models: Vec<PathBuf>,
+
+    /// Suppress the built-in default models, leaving `--models` as the complete set.
+    #[arg(long)]
+    pub no_default_models: bool,
+
+    /// The call-resolution policy the `policy` section simulates. Give the same values as
+    /// `ctadl index` and the two agree. See `ctadl index --help`.
+    #[arg(long, default_value_t = ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD)]
+    pub cha_threshold: usize,
+
+    /// `--cha-threshold` for interface-dispatched sites. Defaults to `--cha-threshold`.
+    #[arg(long)]
+    pub cha_threshold_interface: Option<usize>,
+
+    /// Whether a matched dispatch model beats the threshold or the other way round.
+    #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
+    pub dispatch_order: DispatchOrder,
 }
 
 #[derive(Debug, Args)]
@@ -229,10 +294,25 @@ pub struct IndexArgs {
     pub progs: Vec<String>,
 
     /// Load summaries from one or more previously indexed projects and map them into the current project.
-    /// The summaries will be filtered to only include functions that exist in the current project.
-    /// Can be specified multiple times to load from multiple projects.
+    /// The summaries are filtered to functions that exist in the current project, including native
+    /// targets linked by the JNI bridge: a summary project's native libraries (their symbol and
+    /// `RegisterNatives` tables, not their code) are available to link this project's Java
+    /// `native` methods against. Can be specified multiple times to load from multiple projects.
     #[arg(long, short, action = clap::ArgAction::Append, id = "NAME")]
     pub summary: Vec<String>,
+
+    /// Do not co-index the native libraries imported out of an APK or XAPK.
+    ///
+    /// The index-time counterpart of `ctadl import --no-native-libs`: naming an APK normally
+    /// also indexes every `.so` imported out of it, and this drops those (the `pcode`
+    /// sub-imports) while keeping an XAPK's split APKs. An import named explicitly is always
+    /// kept. Use it with `--summary` to index the Java half of an app against a project that
+    /// indexed one of its libraries on its own:
+    ///
+    ///   ctadl index xproj app__arm64-v8a__libX
+    ///   ctadl index appproj app --no-native-libs --summary xproj
+    #[arg(long)]
+    pub no_native_libs: bool,
 
     /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
     /// multiple times to load multiple model files. This option is use primarily to provide
@@ -269,9 +349,46 @@ pub struct IndexArgs {
     #[arg(long)]
     pub no_jni_registry: bool,
 
-    /// Call resolution strategy: cha, hi, mixed
+    /// Call resolution strategy: cha, hi, mixed, legacy-mixed
+    ///
+    /// `mixed` is the ladder: an `invoke-super` resolves to its one real target, then a
+    /// dispatch model, then the threshold below, then hybrid inlining. `legacy-mixed` is CHA
+    /// when the site has exactly one target and hybrid inlining otherwise.
     #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
     pub strategy: CallResolutionStrategy,
+
+    /// Resolve a call site with CHA when it has at most this many targets, and defer it to
+    /// hybrid inlining above that. `--strategy mixed` only.
+    ///
+    /// `0` resolves nothing with CHA; a very large value never defers. Raising it leaves less
+    /// to hybrid inlining but costs the index engine: on a program with a large recursive
+    /// strongly connected component the CHA edges it adds are superlinear in the fixpoint. The
+    /// default is where that cost starts; going higher is worth it only when the extra
+    /// precision is.
+    #[arg(long, default_value_t = ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD)]
+    pub cha_threshold: usize,
+
+    /// `--cha-threshold` for interface-dispatched sites, which are a different population:
+    /// about a tenth of them resolve to a single target against four fifths of ordinary
+    /// virtual calls. Defaults to `--cha-threshold`.
+    #[arg(long)]
+    pub cha_threshold_interface: Option<usize>,
+
+    /// Ignore `find: "dispatch"` models, so every site takes the threshold instead.
+    #[arg(long)]
+    pub no_dispatch_models: bool,
+
+    /// Ignore `find: "dispatch"` models at interface-dispatched sites only.
+    #[arg(long)]
+    pub no_dispatch_models_interface: bool,
+
+    /// Whether a matched dispatch model beats the threshold or the other way round.
+    ///
+    /// `model-first` takes a modelled signature out of the analysis whatever its target count.
+    /// `threshold-first` resolves a signature with few enough targets exactly even when a model
+    /// matches it, for a precision-sensitive run.
+    #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
+    pub dispatch_order: DispatchOrder,
 
     /// Prune unreachable CFG nodes before SSA transformation.
     ///
@@ -290,9 +407,61 @@ pub struct IndexArgs {
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub alias_rule: Option<bool>,
 
-    /// Dump the index graph to a dot file
-    #[arg(long)]
-    pub dump_index_graph: Option<PathBuf>,
+    /// How the flows of a resolved indirect or virtual call are kept apart by caller.
+    ///
+    /// `decision` (the default) tags each flow with the set of decisions -- which formal held
+    /// which target -- it holds under, so every caller that passed that target gets the flow
+    /// and no other caller does. `collapse` does the same but gives up the set the moment two
+    /// decisions meet at a flow, sharing that flow among every caller that passed any target:
+    /// coarser, and far cheaper on a function that thousands of targets reach. `none` shares
+    /// the resolved callee's flows among all callers, which is the cheapest and the least
+    /// precise. `CTADL_HYBRID_CONTEXT` in the environment sets the default, for a harness that
+    /// does not pass the flag.
+    #[arg(long, default_value = "decision", env = "CTADL_HYBRID_CONTEXT")]
+    pub hybrid_context: HybridContext,
+
+    /// How the index engine pairs a function's conditional summaries with the calls that
+    /// established a decision at it (rule 3.2 of hybrid inlining). `sets` (the default) and
+    /// `unfold` join on the decision exactly; `scan` joins on the function and filters, which
+    /// is quadratic on functions that many decisions reach. Same result under all three.
+    /// `CTADL_CONTEXT_JOIN` in the environment sets the default.
+    #[arg(long, default_value = "sets", env = "CTADL_CONTEXT_JOIN")]
+    pub context_join: ContextJoin,
+
+    /// Number of threads to compute the flow relation with.
+    ///
+    /// `1`, the default, runs the serial index engine. Any larger value runs the parallel
+    /// engine on exactly that many threads. `0`, or `-j` with no value, uses every core the OS
+    /// reports. Both engines evaluate the same rules and derive the same relations.
+    #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
+    pub jobs: Option<usize>,
+}
+
+impl IndexArgs {
+    /// The ladder flags as one policy. `--cha-threshold-interface` defaults to
+    /// `--cha-threshold`, so setting one flag gives one threshold and the second exists only
+    /// for the population that behaves differently.
+    ///
+    /// Warns when a ladder flag is given with a strategy that does not read it: the policy is
+    /// recorded in the index config as given either way, so a silent no-op would be
+    /// indistinguishable from a policy that took effect.
+    pub fn call_policy(&self) -> CallPolicy {
+        let policy = CallPolicy {
+            cha_threshold: self.cha_threshold,
+            cha_threshold_interface: self.cha_threshold_interface.unwrap_or(self.cha_threshold),
+            dispatch_models: !self.no_dispatch_models,
+            dispatch_models_interface: !self.no_dispatch_models
+                && !self.no_dispatch_models_interface,
+            order: self.dispatch_order,
+        };
+        if self.strategy != CallResolutionStrategy::Mixed && policy != CallPolicy::default() {
+            log::warn!(
+                "the call-policy flags apply to --strategy mixed; --strategy {:?} ignores them",
+                self.strategy
+            );
+        }
+        policy
+    }
 }
 
 #[derive(Debug, Args)]
@@ -360,13 +529,46 @@ pub struct GoArgs {
     #[arg(long)]
     pub dump_taint_graph: Option<PathBuf>,
 
-    /// Dump the index graph to a dot file
-    #[arg(long)]
-    pub dump_index_graph: Option<PathBuf>,
-
-    /// Call resolution strategy: cha, hi, mixed
+    /// Call resolution strategy: cha, hi, mixed, legacy-mixed
+    ///
+    /// `mixed` is the ladder: an `invoke-super` resolves to its one real target, then a
+    /// dispatch model, then the threshold below, then hybrid inlining. `legacy-mixed` is CHA
+    /// when the site has exactly one target and hybrid inlining otherwise.
     #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
     pub strategy: CallResolutionStrategy,
+
+    /// Resolve a call site with CHA when it has at most this many targets, and defer it to
+    /// hybrid inlining above that. `--strategy mixed` only.
+    ///
+    /// `0` resolves nothing with CHA; a very large value never defers. Raising it leaves less
+    /// to hybrid inlining but costs the index engine: on a program with a large recursive
+    /// strongly connected component the CHA edges it adds are superlinear in the fixpoint. The
+    /// default is where that cost starts; going higher is worth it only when the extra
+    /// precision is.
+    #[arg(long, default_value_t = ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD)]
+    pub cha_threshold: usize,
+
+    /// `--cha-threshold` for interface-dispatched sites, which are a different population:
+    /// about a tenth of them resolve to a single target against four fifths of ordinary
+    /// virtual calls. Defaults to `--cha-threshold`.
+    #[arg(long)]
+    pub cha_threshold_interface: Option<usize>,
+
+    /// Ignore `find: "dispatch"` models, so every site takes the threshold instead.
+    #[arg(long)]
+    pub no_dispatch_models: bool,
+
+    /// Ignore `find: "dispatch"` models at interface-dispatched sites only.
+    #[arg(long)]
+    pub no_dispatch_models_interface: bool,
+
+    /// Whether a matched dispatch model beats the threshold or the other way round.
+    ///
+    /// `model-first` takes a modelled signature out of the analysis whatever its target count.
+    /// `threshold-first` resolves a signature with few enough targets exactly even when a model
+    /// matches it, for a precision-sensitive run.
+    #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
+    pub dispatch_order: DispatchOrder,
 
     /// Language/IR family for the artifact: jvm, dex, or auto
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
@@ -429,6 +631,10 @@ fn main() -> anyhow::Result<()> {
             inspect_artifact(args)
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
         }
+        Command::Report(args) => {
+            report_project(args)
+                .with_context(|| format!("running 'report' project: {:?}", args.name))?;
+        }
         Command::Go(args) => {
             // Use the user-provided name or one derived from the first artifact.
             let name = match &args.name {
@@ -470,14 +676,22 @@ fn main() -> anyhow::Result<()> {
                 name: name.clone(),
                 progs: imported_names.clone(),
                 summary: vec![],
+                no_native_libs: false,
                 models: args.models.clone(),
                 no_default_models: args.no_default_models,
                 no_jni_bridge: args.no_jni_bridge,
                 no_jni_registry: args.no_jni_registry,
                 strategy: args.strategy,
+                cha_threshold: args.cha_threshold,
+                cha_threshold_interface: args.cha_threshold_interface,
+                no_dispatch_models: args.no_dispatch_models,
+                no_dispatch_models_interface: args.no_dispatch_models_interface,
+                dispatch_order: args.dispatch_order,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
-                dump_index_graph: args.dump_index_graph.clone(),
+                hybrid_context: HybridContext::default(),
+                context_join: ContextJoin::default(),
+                jobs: None,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -614,14 +828,22 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 name: legacy_name.to_string(),
                 progs: vec![legacy_name.to_string()],
                 summary: vec![],
+                no_native_libs: false,
                 models: args.models.clone(),
                 no_default_models: false,
                 no_jni_bridge: false,
                 no_jni_registry: false,
                 strategy: CallResolutionStrategy::Mixed,
+                cha_threshold: ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD,
+                cha_threshold_interface: None,
+                no_dispatch_models: false,
+                no_dispatch_models_interface: false,
+                dispatch_order: DispatchOrder::ModelFirst,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
-                dump_index_graph: None,
+                hybrid_context: HybridContext::default(),
+                context_join: ContextJoin::default(),
+                jobs: None,
             };
             index_artifacts_to_store(&index_args)?;
         }
@@ -730,7 +952,12 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
     } else {
         args.progs.clone()
     };
-    let project = project::AnalysisProject::try_create(&args.name, &import_names)?;
+    let sub_imports = if args.no_native_libs {
+        project::SubImports::NoNativeLibs
+    } else {
+        project::SubImports::All
+    };
+    let project = project::AnalysisProject::try_create(&args.name, &import_names, sub_imports)?;
     cli::index(
         &project,
         &args.summary,
@@ -740,9 +967,12 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
             no_jni_bridge: args.no_jni_bridge,
             no_jni_registry: args.no_jni_registry,
             strategy: args.strategy,
+            call_policy: args.call_policy(),
             prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
             alias_rule: args.alias_rule.unwrap_or(true),
-            dump_index_graph: args.dump_index_graph.as_deref(),
+            hybrid_context: args.hybrid_context,
+            context_join: args.context_join,
+            parallelism: Parallelism::from_jobs(args.jobs.unwrap_or(1)),
         },
     )?;
     Ok(())
@@ -777,6 +1007,28 @@ fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn report_project(args: &ReportArgs) -> anyhow::Result<()> {
+    let project = load_or_infer_project(&args.name)?;
+    cli::report(
+        &project,
+        &args.models,
+        &args.output,
+        ctadl_ascent::report::ReportOptions {
+            format: args.format,
+            top: args.top,
+            recursion: !args.no_recursion,
+            no_default_models: args.no_default_models,
+            call_policy: CallPolicy {
+                cha_threshold: args.cha_threshold,
+                cha_threshold_interface: args.cha_threshold_interface.unwrap_or(args.cha_threshold),
+                order: args.dispatch_order,
+                ..CallPolicy::default()
+            },
+        },
+    )?;
+    Ok(())
+}
+
 /// The project `name` denotes, or the one an import of that name would be indexed into.
 ///
 /// `ctadl index app` creates a project named `app` out of the import named `app`, so before it
@@ -789,7 +1041,14 @@ fn load_or_infer_project(name: &str) -> anyhow::Result<project::AnalysisProject>
     match project::AnalysisProject::try_load_name(name) {
         Ok(project) => Ok(project),
         Err(project_error) => match project::ArtifactImport::load_by_name(name) {
-            Ok(_) => Ok(project::AnalysisProject::ephemeral(name, &[name])),
+            Ok(_) => Ok(project::AnalysisProject::ephemeral(
+                name,
+                &[name],
+                project::SubImports::All,
+            )),
+            Err(import_error) if project::ArtifactImport::exists_by_name(name) => {
+                Err(import_error).with_context(|| format!("loading import '{name}'"))
+            }
             // Neither a project nor an import: report the project error, which is what the
             // command was asked for.
             Err(_) => Err(project_error).with_context(|| format!("loading project: '{name}'")),
@@ -798,6 +1057,16 @@ fn load_or_infer_project(name: &str) -> anyhow::Result<project::AnalysisProject>
 }
 
 fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
+    if let Some(dot_path) = &args.dump_index_graph {
+        let name = args
+            .name
+            .as_ref()
+            .expect("--dump-index-graph parses only with a name");
+        let project = project::AnalysisProject::try_load_name(name)
+            .with_context(|| format!("loading project: '{name}'"))?;
+        return cli::inspect_index_graph(&project, dot_path).map_err(Into::into);
+    }
+
     if let Some(name) = &args.name {
         let path = Path::new(name);
         if path.exists() && path.is_file() {
@@ -823,17 +1092,51 @@ fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
             }
         }
 
-        let import = project::ArtifactImport::load_by_name(name)
-            .with_context(|| format!("loading artifact import: '{}'", name))?;
+        let (import, unreadable_import) = match project::ArtifactImport::load_by_name(name) {
+            Ok(import) => (Some(import), None),
+            Err(err) if project::ArtifactImport::exists_by_name(name) => (None, Some(err)),
+            Err(_) => (None, None),
+        };
+        let index = project::AnalysisProject::try_load_name(name).ok();
+
+        if import.is_none() && unreadable_import.is_none() && index.is_none() {
+            anyhow::bail!(
+                "no imported artifact or index named '{name}'; run `ctadl inspect` with no \
+                 name to list the store"
+            );
+        }
+
         if args.dump_ir {
-            cli::dump_ir(&import, args.function.as_deref())?;
-        } else {
-            cli::inspect(&import)?;
+            if let Some(err) = unreadable_import {
+                return Err(err).with_context(|| format!("loading artifact import: '{name}'"));
+            }
+            let Some(import) = &import else {
+                let project = index
+                    .as_ref()
+                    .expect("checked above: no import means an index");
+                anyhow::bail!(
+                    "--dump-ir needs an imported artifact, and '{name}' is an index; name one \
+                     of its imports instead: {}",
+                    project.imports.join(", ")
+                );
+            };
+            return cli::dump_ir(import, args.function.as_deref()).map_err(Into::into);
+        }
+
+        if let Some(import) = &import {
+            cli::inspect(import)?;
+        }
+        if let Some(project) = &index {
+            // Separate the two sections when both of them are printed.
+            if import.is_some() {
+                println!();
+            }
+            cli::inspect_project(project)?;
+        }
+        if let Some(err) = unreadable_import {
+            return Err(err).with_context(|| format!("loading artifact import: '{name}'"));
         }
     } else {
-        if args.dump_ir {
-            anyhow::bail!("--dump-ir requires an artifact or project name");
-        }
         cli::list_store_contents()?;
     }
     Ok(())
@@ -930,5 +1233,53 @@ fn file_looks_binary(path: &Path) -> bool {
     match file.read(&mut buf) {
         Ok(n) => buf[..n].contains(&0),
         Err(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// The two dump modes read different things -- one an import's IR, the other a project's
+    /// index -- so asking for both at once is a usage error, not a silent pick.
+    #[test]
+    fn inspect_rejects_dump_index_graph_with_dump_ir() {
+        let err = Cli::try_parse_from([
+            "ctadl",
+            "inspect",
+            "p",
+            "--dump-index-graph",
+            "g.dot",
+            "--dump-ir",
+        ])
+        .expect_err("--dump-index-graph and --dump-ir must conflict")
+        .to_string();
+        assert!(
+            err.contains("--dump-ir"),
+            "the error must name the conflict: {err}"
+        );
+    }
+
+    #[test]
+    fn inspect_accepts_dump_index_graph_with_a_name() {
+        let cli = Cli::try_parse_from(["ctadl", "inspect", "p", "--dump-index-graph", "g.dot"])
+            .expect("must parse");
+        let Command::Inspect(args) = cli.cmd else {
+            panic!("expected the inspect subcommand");
+        };
+        assert_eq!(args.name.as_deref(), Some("p"));
+        assert_eq!(args.dump_index_graph.as_deref(), Some(Path::new("g.dot")));
+    }
+
+    #[test]
+    fn inspect_dump_index_graph_without_a_name_is_a_usage_error() {
+        let err = Cli::try_parse_from(["ctadl", "inspect", "--dump-index-graph", "g.dot"])
+            .expect_err("a dump with no project name must fail")
+            .to_string();
+        assert!(
+            err.contains("NAME"),
+            "the error must say what is missing: {err}"
+        );
     }
 }

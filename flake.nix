@@ -128,7 +128,15 @@
           version = workspaceVersion;
           name = "dex-reader";
           release = false;
-          cargoBuildOptions = x: x ++ [ "--package" "dex-reader" "--lib" "--examples" ];
+          cargoBuildOptions =
+            x:
+            x
+            ++ [
+              "--package"
+              "dex-reader"
+              "--lib"
+              "--examples"
+            ];
         };
 
         # `jvm-reader` is the same arrangement for the JVM E2E linemap step.
@@ -137,15 +145,23 @@
           version = workspaceVersion;
           name = "jvm-reader";
           release = false;
-          cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" "--lib" "--examples" ];
+          cargoBuildOptions =
+            x:
+            x
+            ++ [
+              "--package"
+              "jvm-reader"
+              "--lib"
+              "--examples"
+            ];
         };
 
         # The external toolchain the regression scripts expect on PATH
         # (dex-reader, jvm-reader, javac, dx, gcc/addr2line, ghidra, jq,
-        # python3). Deliberately excludes this repo's own package so that
-        # `devShells.regression` can be used to run parts of the suite against a
-        # locally built ctadl/xtask; the `regression` check adds the Nix-built
-        # package on top.
+        # python3). Deliberately excludes this repo's own package so that the
+        # dev shell can be used to run parts of the suite against a locally
+        # built ctadl/xtask; the `regression` check adds the Nix-built package
+        # on top.
         testEnv = pkgs.buildEnv {
           name = "ctadl-nightly-test-env";
           # The cc-wrapper and binutils-wrapper both ship a few overlapping
@@ -171,6 +187,10 @@
             # Where it is not cross (x86_64 Linux) it collapses to the native
             # gcc, which is the right linker there anyway.
             pkgs.pkgsCross.gnu64.stdenv.cc
+            # The 32-bit x86 toolchain (`i686-unknown-linux-gnu-` prefixed, so it
+            # claims no `cc` either), for the JNI cases that need a 32-bit
+            # library: the ABI on which a `long` arrives split in two.
+            pkgs.pkgsCross.gnu32.stdenv.cc
             pkgs.binutils
             dex-reader
             jvm-reader
@@ -180,6 +200,27 @@
             pkgs.ghidra-bin
           ];
         };
+
+        # The DroidBench ICC APKs the `android-icc` regression specs name, fetched
+        # at the commit the specs pin instead of being committed to this repo.
+        # xtask finds them through CTADL_ANDROID_ICC_APKS, which the dev shell
+        # and the regression check both set; without it those cases SKIP.
+        droidbenchIccApks =
+          let
+            rev = "a57fa6f42f278591695672f1aa8b37c275139370";
+            apk = name: hash: {
+              name = "${name}.apk";
+              path = pkgs.fetchurl {
+                url = "https://raw.githubusercontent.com/secure-software-engineering/DroidBench/${rev}/apk/InterComponentCommunication/${name}.apk";
+                inherit hash;
+              };
+            };
+          in
+          pkgs.linkFarm "droidbench-icc-apks" [
+            (apk "ActivityCommunication2" "sha256-KyJvdF2BdCccHox9k+op/GbzEbeHKGmQ6op/HOrxvcA=")
+            (apk "ActivityCommunication5" "sha256-MVtam+x1OU2TUN2PBaJnULM2PlC/jBawvLwPdS05FVw=")
+            (apk "ComponentNotInManifest1" "sha256-MHB8889dYdMwcUE6GJIcpkWTWEExEd/6iUna+ArFrHc=")
+          ];
 
         # The distributable `ctadl` binaries, one per released target. What each
         # one is, why it cannot just be `packages.default`, and which builder
@@ -276,6 +317,7 @@
                   # stale binary, but the Nix sandbox has no source tree or cargo.
                   # Point it at the ctadl that ships in packages.default instead.
                   export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
+                  export CTADL_ANDROID_ICC_APKS="${droidbenchIccApks}"
                   # The `models:*` checks hold the model files ctadl ships to
                   # `ctadl-model-generator.schema.json`. Both live in the
                   # ctadl-ascent crate, outside ./nightly, and this sandbox has
@@ -283,7 +325,8 @@
                   # would self-skip here -- which is the one place the drift is
                   # meant to be caught.
                   ${self.packages.${system}.default}/bin/xtask regression \
-                    --jvm-samples ${./jvm-reader/tests/sample} \
+                    --frontend dex,jvm,pcode,lua,jni,c,android-icc \
+                    --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
                     --models-dir ${./ctadl-ascent/src/models}
 
@@ -309,8 +352,20 @@
               version = workspaceVersion;
               name = "dex-reader-tests";
               mode = "test";
-              cargoBuildOptions = x: x ++ [ "--package" "dex-reader" ];
-              cargoTestOptions = opts: opts ++ [ "--package" "dex-reader" ];
+              cargoBuildOptions =
+                x:
+                x
+                ++ [
+                  "--package"
+                  "dex-reader"
+                ];
+              cargoTestOptions =
+                opts:
+                opts
+                ++ [
+                  "--package"
+                  "dex-reader"
+                ];
             };
 
             # jvm-reader's unit tests, same arrangement -- and, like dex-reader's,
@@ -323,8 +378,20 @@
               version = workspaceVersion;
               name = "jvm-reader-tests";
               mode = "test";
-              cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" ];
-              cargoTestOptions = opts: opts ++ [ "--package" "jvm-reader" ];
+              cargoBuildOptions =
+                x:
+                x
+                ++ [
+                  "--package"
+                  "jvm-reader"
+                ];
+              cargoTestOptions =
+                opts:
+                opts
+                ++ [
+                  "--package"
+                  "jvm-reader"
+                ];
             };
           in
           {
@@ -332,6 +399,10 @@
           };
 
         formatter = pkgs.nixfmt;
+        # One shell for everything: the day-to-day Rust/Nix tooling plus the
+        # external toolchain the regression suite needs (ghidra, the Android
+        # SDK, a JDK, dex-reader/jvm-reader, ...). `cargo xtask regression`
+        # runs straight from here.
         devShells.default =
           with pkgs;
           mkShell {
@@ -357,20 +428,12 @@
               bzip2
               ghidra-bin
             ];
-            RUST_SRC_PATH = rustPlatform.rustLibSrc;
-          };
-
-          # nix develop .#regression
-          devShells.regression = pkgs.mkShell {
-            buildInputs = with pkgs; [
-              nil
-              nixd
-            ];
             packages = [ testEnv ];
 
+            RUST_SRC_PATH = rustPlatform.rustLibSrc;
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
             ANDROID_SDK_ROOT = "${androidSdk.androidsdk}/libexec/android-sdk";
-            RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
+            CTADL_ANDROID_ICC_APKS = "${droidbenchIccApks}";
 
             shellHook = ''
               export PATH="${androidSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"
