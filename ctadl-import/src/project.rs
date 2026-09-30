@@ -109,7 +109,10 @@ fn absolutize(path: &Path) -> PathBuf {
 ///   implementation below the named class. A `bitcode` wire-format change to every
 ///   `ir-program.bitcode`.
 /// - `9`: APK imports gained persisted Android manifest triple tables.
-pub const IMPORT_FORMAT_VERSION: &str = "9";
+/// - `10`: The dex frontend splits a class-merged class (R8's merged lambdas) into one class per
+///   class id, with clones of its switching methods and retagged construction sites. The file
+///   format is unchanged, but an older import of such an app has the merged methods only.
+pub const IMPORT_FORMAT_VERSION: &str = "10";
 
 /// Filename of the serialized IR program inside an import directory.
 ///

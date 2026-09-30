@@ -61,7 +61,7 @@ const IMPORT_CONFIG_FILE: &str = "import_config.json";
 const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// The `version` an import config carries today (`IMPORT_FORMAT_VERSION`). Pinned so a bump
 /// that forgets the store's readers has to come through here.
-const IMPORT_FORMAT_VERSION: &str = "9";
+const IMPORT_FORMAT_VERSION: &str = "10";
 
 /// A model file that selects something in any Java app: every `toString` override. The point is
 /// the *checking*, not the model, so the cheapest generator that cannot match nothing is the
@@ -341,9 +341,9 @@ const REPORT_SECTIONS: &[&str] = &[
 /// instruction, and every other assertion here would still pass. The three sum to
 /// `REPORT_VIRTUAL_SITES`, which the invariants check independently.
 const REPORT_DISPATCH_SITES: &[(&str, u64)] = &[
-    ("virtual", 76_791),
-    ("interface", 21_153),
-    ("super", 1_607),
+    ("virtual", 82_375),
+    ("interface", 23_129),
+    ("super", 1_636),
     ("unknown", 0),
 ];
 
