@@ -2481,6 +2481,9 @@ pub fn taint_index_with_config(
             prog.__locals_key_ind_common.len(),
             prog.__ext_dst_ind_common.len()
         );
+        // Rows, keys and approximate bytes of every relation and each of its indices; the BYODS
+        // stores print n/a here and report their own sizes below.
+        log::debug!("[idxsizes] index sizes:\n{}", prog.index_sizes_summary());
         log::debug!(
             "[mem cp] after relation census (nothing drained yet): {:.1} MB",
             phys_footprint_mb()
@@ -2501,6 +2504,9 @@ pub fn taint_index_with_config(
         // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
         log::debug!("{}", prog.__locals_ind_common.heap_report());
         log::debug!("{}", prog.__assign_like_ind_common.heap_report());
+        log::debug!("[byods] locals_key: {}", prog.__locals_key_ind_common.heap_report());
+        log::debug!("[byods] edge_split: {}", prog.__edge_split_ind_common.heap_report());
+        log::debug!("[byods] ext_dst: {}", prog.__ext_dst_ind_common.heap_report());
         if let Some(dir) = std::env::var_os("CTADL_LOCALS_CENSUS") {
             locals_census(
                 std::path::Path::new(&dir),
