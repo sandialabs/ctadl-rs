@@ -2086,16 +2086,53 @@ ascent_source! {
         call_target_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
         tag_closure_func(func_id);
 
-    call_target_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
-        // This results in large reduction on some test cases
-        tag_closure_func(func_id),
-        call_target_assign_like(func_id, v2, p_context, tgt),
-        assign_like(func_id, v1, p1, v2, p2),
+    // Transitive propagation: a tag at `v2.p` crosses an edge `v1.p1 = v2.p2` whose source path
+    // `p2` is a prefix of `p`, giving a tag at `v1.(p1·rest)`. It is the destination side of the
+    // `locals` closure (`ext_dst`) and is keyed the same way: joined on `(f, v2)` alone and
+    // tested with `substitute_prefix` afterwards, it visited every edge at the vertex for every
+    // tag there, and on a receiver vertex of an instantiated summary (thousands of tags,
+    // twenty thousand out-edges) 98% of those pairs failed the prefix. So each tag's path is
+    // split once at every prefix, and the join retrieves only the edges that read that prefix.
+    // A seed path need not be admissible, hence `splits_any`; the result is, by `concat`.
+    // `tag_closure_func` gates the split: the transitive rule only runs in those functions.
+    relation cta_key(FunctionId, FlowVariable, Path, Path, CallTargetObject);
+    cta_key(f, v, key, rest, tgt) <--
+        call_target_assign_like(f, v, p, tgt),
+        tag_closure_func(f),
+        path_set(ps),
+        for (key, rest) in ps.splits_any(p).exact.iter();
+    relation cta_key_wild(FunctionId, FlowVariable, Path, Path, CallTargetObject);
+    cta_key_wild(f, v, key, rest, tgt) <--
+        call_target_assign_like(f, v, p, tgt),
+        tag_closure_func(f),
+        path_set(ps),
+        for (key, rest) in ps.splits_any(p).wild.iter();
+    // The step emits the new tag's exact keys itself. Split by the rules above, a tag would
+    // reach `cta_key` an iteration after it was derived, and a chain of edges would take two
+    // iterations per edge instead of one. (The wild keys, which only offset paths have, still
+    // take the extra iteration.) Every split re-emits the tag, and all but the first insert
+    // are no-ops.
+    call_target_assign_like(f, v1, p13, tgt), cta_key(f, v1, k13, r13, tgt) <--
+        cta_key(f, v2, key, rest, tgt),
+        assign_like(f, v1, p1, v2, key),
         if probe::hit(probe::CTA_PAIRS),
-        if let Some(p_new) = p_context.substitute_prefix(p2, p1),
         if probe::hit(probe::CTA_PREFIX),
-        paths(&p_new),
-        if probe::hit(probe::CTA_PATHS);
+        path_set(ps),
+        if let Some(p13) = ps.concat(p1, None, rest),
+        if probe::hit(probe::CTA_PATHS),
+        for (k13, r13) in ps.splits(&p13).exact.iter();
+    // The wild half: the tag path is `key.[n]·tail`, the edge reads `key.[m]` with `m != n`.
+    call_target_assign_like(f, v1, p13, tgt), cta_key(f, v1, k13, r13, tgt) <--
+        cta_key_wild(f, v2, key, rest, tgt),
+        assign_wild(f, v2, key, m, v1, p1),
+        if probe::hit(probe::CTA_PAIRS),
+        if let Some(n) = rest.head_offset(),
+        if n != *m,
+        if probe::hit(probe::CTA_PREFIX),
+        path_set(ps),
+        if let Some(p13) = ps.concat(p1, Some(n - *m), &rest.tail()),
+        if probe::hit(probe::CTA_PATHS),
+        for (k13, r13) in ps.splits(&p13).exact.iter();
 
     // Return-direction call-target propagation. Rule 2.1 pushes a caller's tag DOWN onto a
     // callee's formal; this is its missing twin, carrying a tag a callee holds on an
@@ -2305,7 +2342,7 @@ pub fn taint_index_with_config(
     );
     // The receiver access path of an indirect / virtual call is also a syntactic program path.
     // Registering it lets `call_target_assign_like` propagate a stored target across an SSA
-    // version of the receiver (the transitive rules gate on `paths(p_new)`). Without this, a
+    // version of the receiver (the transitive rules admit only a result in `paths`). Without this, a
     // second store into the same aggregate (`o.a = id; o.b = id; o.a(s)` or
     // `fps[0]=id; fps[1]=id; fps[0](s)`) creates a new receiver version whose call path was
     // never an `actual_param`, so the binding fails to reach the call and taint is dropped.
