@@ -331,8 +331,8 @@ I imported and indexed the Dex half of every APK in the corpus. The results are 
   87 k decisions at 240 s, and the split raises that to 110 k. Its `context_locals` hubs are
   Jackson databind's generic serializers, with up to 2 k decisions per function: for example
   `ObjectMapper._convert`, `DefaultSerializerProvider.serializeValue` and
-  `ObjectWriter$Prefetch.serialize`. Recommendation 3 (bound decision churn) or a Jackson
-  dispatch model is the candidate fix. Not started.
+  `ObjectWriter$Prefetch.serialize`. The cause is not Jackson, and bounding decision churn is
+  not the fix; see "`greenbits` blowup".
 
 ### Data
 
@@ -360,3 +360,156 @@ The measurements of recommendations 1 and 2 are under
 - `runs/{rec2,both}/t1800/index-graph.dot`, `dot_edges.py`, `index-graph-perfn-rec2-both.txt`:
   the index graphs and their comparison.
 - `repin/`: how the apk report counts were re-pinned.
+
+## `greenbits` blowup: call targets travel along value flows (2026-09-30)
+
+`com.greenaddress.greenbits_android_wallet` (Dex only, 215 k functions after the R8 split) does not
+index. With `92fac26b` (recommendations 1 and 2 of "`cpuinfo` blowup") it hits a 55 GiB guard at
+440 s, about 400 s into the fixpoint. No fixpoint in sight: 97 iterations at 320 s, against the
+1,316 `cpuinfo` needs.
+
+**Status:** characterized, not fixed. The fixes are below.
+
+### The cause
+
+Hybrid inlining uses the taint relations as if they were points-to, and on this app that makes
+most of its call-target facts impossible.
+
+- `locals` and `assign_like` are value-flow relations: a value computed from `x` counts as
+  coming from `x`.
+- Rule 1.1 asks `locals` which formal paths reach the receiver of a critical call. In
+  `DefaultSerializerProvider._serialize` the only critical site is `p3.serialize(..)`, but
+  `critical_summary` also lists `arg1`, the value being serialized, since Jackson looks the
+  serializer up by `value.getClass()`. In `ObjectWriter$Prefetch.serialize` the critical paths
+  include `gen._quoteChar` (a `byte`), `gen._outputTail` (an `int`), `HEX_BYTES_UPPER[]` and a
+  `$SwitchMap` `int[]`.
+- `call_target_assign_like` walks `assign_like`, so object classes reach those paths. A decision
+  is minted per (formal path, class). `Prefetch.serialize` gets about 23 paths x 37 serializer
+  classes = 847 decisions, each with its own conditional summary, and each row's decision set
+  grows one member at a time.
+
+**Most decisions are provably impossible.** A probe dumped every decision, and each was checked
+against the class hierarchy in the app's smali (dex formals are registers, so `J` and `D` take two):
+
+| Rung | Decisions | Class not a subtype of the declared type | Object in a primitive slot | Compatible | Undecidable | `context_locals` memberships held by impossible decisions |
+|---|---|---|---|---|---|---|
+| 40 s | 44 k | 40.9% | 0.2% | 55.0% | 3.9% | 10.5% |
+| 80 s | 178 k | 59.5% | 6.0% | 30.1% | 4.3% | 17.9% |
+| 160 s | 448 k | 57.7% | 6.7% | 17.6% | 18.1% | 37.8% |
+| 320 s | 585 k | 53.5% | 5.5% | 16.8% | 24.1% | 50.3% |
+
+Decisions here are `resolvent` rows, one per (function, formal.path, target). "Undecidable" is
+`Object`-typed or framework-typed. Examples: a `JsonGenerator` formal "holds"
+`StdDelegatingSerializer`, `ObjectMapper` "holds" `BeanDeserializer`, and a `byte[]` element holds a
+serializer. The worst functions aren't Jackson: Compose's `SpanStyleKt.fastMerge` (28.5 k of 29.8 k
+decisions impossible, objects in `long` slots), `TextStyle.merge`, and kotlinx `JobSupport`.
+
+**It is not the context machinery.** At 240 s, `--hybrid-context none` is worse than `decision`:
+85 M `locals` rows against 53 M, 27 M `assign_like` against 21 M, 39.7 GB against 35.4 GB. Neither
+converges. The decisions make it worse, but the context-free closure is too big on its own,
+because the same impossible call targets resolve calls and instantiate summaries.
+
+### Where the time and memory go
+
+Timeout ladder (10 to 320 s, 55 GiB guard, default `decision`):
+
+| Rung | Iterations | Peak | `locals` | `call_target_assign_like` | `cta_key` | `context_locals` | Decisions | Set unions that grew |
+|---|---|---|---|---|---|---|---|---|
+| 10 s | 1 | 9.9 GB | 0.8 M | 0.08 M | 0 | 0 | n/a | n/a |
+| 40 s | 21 | 13.5 GB | 7.3 M | 1.2 M | 1.6 M | 0.02 M | 13 k | 12 k |
+| 80 s | 53 | 18.2 GB | 22.6 M | 5.3 M | 9.2 M | 0.58 M | 44 k | 0.3 M |
+| 160 s | 79 | 26.7 GB | 41.9 M | 13.0 M | 25.8 M | 4.05 M | 100 k | 40 M |
+| 320 s | 97 | 42.2 GB | 69.2 M | 23.5 M | 52.8 M | 11.7 M | 120 k | 201 M |
+
+"Decisions" here counts distinct interned `Decision`s (formal.path = target, without the
+function); the table above counts `resolvent` rows.
+
+- **Time.** At 320 s, the `call_target_assign_like`/`cta_key` step is the most expensive rule (14%
+  of rule time), followed by `context_locals` (11%, 7% and 7% for its three largest rules) and
+  `locals` (7%, 7% and 5%).
+  - The context-free relations cost the same per new row at every rung: `locals` 0.9 µs,
+    `call_target_assign_like` 2.1 µs. They are expensive by volume.
+  - `context_locals` costs more per new row as the sets grow: 1.4, 1.6, 6.2 and 9.2 µs from
+    20→40 s to 160→320 s. `context_assign` costs 14.6 µs per new row. This is the churn from
+    "`cpuinfo` blowup", driven by the impossible decisions.
+- **Memory: call-target tags take about half.** At 320 s the footprint is 39.0 GB.
+  - The per-index census accounts for 34.3 GB: 25.9 GB in Ascent's default containers and 8.4 GB
+    in BYODS stores.
+  - `call_target_assign_like` and `cta_key` hold 17.0 GB of that and account for 17 of the
+    30 GB the footprint grows from 10 s to 320 s.
+  - Every contextual relation together holds 5.3 GB; `locals` is 2.4 GB.
+
+| Relation (320 s) | Rows | Total | Row store | Indices |
+|---|---|---|---|---|
+| `cta_key` | 52.8 M | 10.13 GB | 3.76 GB | `cta_key_indices_0_1_2_3_4` 3.35 GB (full), `cta_key_indices_0_1_2` 3.03 GB (4.7 M keys) |
+| `call_target_assign_like` | 23.5 M | 6.91 GB | 1.61 GB | `_indices_0_1_2_3` 1.44 GB (full), `_indices_0` 1.35 GB (48 k keys), `_indices_0_1_2` 1.33 GB (4.4 M keys), `_indices_0_1` 1.18 GB (0.84 M keys) |
+| `edge_split` (BYODS) | 38.5 M | 2.58 GB | | trie |
+| `locals` (BYODS) | 69.1 M | 2.42 GB | | trie |
+| `context_locals` | 11.7 M | 1.89 GB | 0.94 GB | `_indices_0_1_2_3_4` 0.60 GB, `_indices_0_1_2` 0.21 GB, `_indices_none` 0.13 GB |
+| `assign_like` (BYODS) | 23.8 M | 1.60 GB | | trie |
+| `establishes_via` | 5.9 M | 0.96 GB | 0.20 GB | 4 indices, 0.16-0.21 GB each |
+| `set_establishes_via` | 4.2 M | 0.87 GB | 0.40 GB | `_indices_0_1_2_3_4` 0.36 GB, `_indices_0_1` 0.10 GB |
+
+`call_target_assign_like` is stored five times: the row store plus four indices, one of which
+repeats the whole row. `cta_key` is stored three times, and it is recommendation 1's relation.
+Recommendation 1 is still a net memory loss here, as "Beyond `cpuinfo`" found.
+
+### Fixes
+
+1. **Filter call-target tags by static type.** This removes the cause, and it shrinks both halves:
+   the call-target relations that hold half the memory, and the decisions.
+   - First step, with facts we have: drop a tag at a `ByVal` formal and at a field or array
+     element of primitive type (field types are already in the path symbols). That covers the
+     5.5-6.7% primitive cases.
+   - Full fix: export a subtype fact from the dex import (the frontend already reads `.super`
+     and `.implements`) and the static type of each vertex, and drop a tag wherever
+     `target <: declared type` fails. That covers the 54-60%. A `check-cast` should narrow the
+     same way.
+2. **Only mint a decision whose target can resolve a critical call.** Add the site's dispatch key
+   to `critical_summary`, carry it up through rule 1.2, and require
+   `callee_resolvents(target, key, _)` in rules 2.1 and 2.2.
+   - A target that answers none of the calls its decision exists for never produces a
+     `context_assign` (rule 3.1 needs exactly that join), so this should change no results and
+     needs no new facts.
+   - It removes the `JsonGenerator` and `byte[]` cases, but not method names every class has,
+     such as `toString`.
+   - It prunes decisions only, not tags, so on its own it leaves the memory.
+   - Effect not measured.
+3. **Store call-target tags compactly.** Independent of precision: put `call_target_assign_like`
+   and `cta_key` in a BYODS trie, as `locals` and `assign_like` are (37 and 67 B/row, against
+   294 and 192 B/row here), or drop recommendation 1's `cta_key` outside high-fan-out vertices.
+4. **Build critical summaries from identity flows only.** Rule 1.1 should ask which formal path
+   the receiver object comes from: copies, field loads and stores, and returns, not computed
+   values. This is the most accurate fix and the most work: it needs an identity-flow subset of
+   `locals`.
+5. **Not a fix: bounding decision sets.** `bounded:k` and `spill:k` cap the churn, but `none`
+   shows the context-free closure does not converge either.
+6. **Not a general fix: a Jackson model.** It would help this app, but the Compose and coroutine
+   hubs show the problem is general.
+
+Start with 1's first step and 2, then measure greenbits and the regression suite's SARIF diff.
+
+### Data
+
+All output is under `/Volumes/Shampoo/ct-bigapk/small/greenbits-probe/`:
+
+- `RESULTS.md`: a summary. `ladder.log`: time and peak memory for every run.
+- `bin/ctadl` (with `bin/ctadl.diff`, uncommitted, on `92fac26b`) is the probe binary for the
+  ladder. `bin/ctadl-v1` made `runs/{decision,none}-t240`. `src/` is the probe's detached git
+  worktree, and `run.sh` indexes the r8-general `both` import. The probe:
+  - `CTADL_DECISION_CENSUS=<dir>` writes `decisions.tsv`, `critical_summary.tsv`,
+    `callee_info.tsv`, `context_sets.tsv` and `establishes_{direct,via}.tsv`. This part is
+    uncommitted.
+  - The vendored Ascent macro generates `index_sizes_summary()`: keys, entries and approximate
+    shallow bytes per relation and per index, logged as `[idxsizes]`. It also logs heap reports
+    for the `locals_key`, `edge_split` and `ext_dst` stores. Committed in `429a66fa`, so every
+    index run now logs both.
+- `runs/t{10,20,40,80,160,320}/`: the ladder. `index.err` is the full log, and `census/` is the
+  decision dump. `runs/t{80,320}/rank.txt` come from `../cpuinfo-blowup/rank.py`, and
+  `runs/t320/idx.txt` from `idx.py`.
+- `runs/guard55/`: no timeout, killed at the 55 GiB guard at 440 s.
+- `runs/{decision,none}-t240/`: the hybrid-context A/B.
+- `marginal.txt` (from `../cpuinfo-blowup/marginal.py`), `memgrowth.txt`: marginal cost and
+  memory per relation across the rungs.
+- `typecheck.py <decisions.tsv>`: classifies each decision against `smali/out`, the app's
+  baksmali output. `runs/*/typecheck.txt` holds its output.
