@@ -1975,6 +1975,17 @@ ascent_source! {
     relation tag_closure_func(FunctionId);
     tag_closure_func(f) <-- critical_call(f);
     tag_closure_func(f) <-- call_target_assign(f, _, _), call(_, _, f);
+    // A caller of a function that exports a tag on an out-formal walks its tags too: the
+    // target may have been installed several frames down (`begin(&img)` -> `pick(img)` storing
+    // `img->get`) and has to climb through frames that make no indirect call of their own
+    // before it meets its call site. Driven by a tag actually reaching an out-formal, so only
+    // frames a tag enters are admitted.
+    tag_closure_func(caller) <--
+        call_target_assign_like(callee, v, p, _),
+        formal_param(callee, v, formal_ty),
+        if let Some(n) = v.as_formal(),
+        if isout(&n, *formal_ty, p),
+        call(caller, _, callee);
 
     // Call Target Propagation (function pointers and Java objects alike). The stored
     // target is carried opaquely as a `CallTargetObject`; the variant is only tested
@@ -2019,13 +2030,16 @@ ascent_source! {
     // receiver over the symmetric call-site `assign_like` edges, the local-dispatch bypass
     // resolves the indirect call exactly, and if the receiver is passed onward rule 2.1
     // derives the resolvent with its establishing site recorded.
+    //
+    // Not gated on `critical_call(caller)`: a frame that only forwards the object
+    // (`begin(img) { pick(img); }`) makes no indirect call, and the gate stopped the tag one
+    // frame short of the frame that does (see `tag_closure_func` above).
     call_target_assign_like(caller, cv, p.clone(), tgt) <--
         call_target_assign_like(callee, v, p, tgt),
         formal_param(callee, v, formal_ty),
         if let Some(n) = v.as_formal(),
         if isout(&n, *formal_ty, p),
         call(caller, insn, callee),
-        critical_call(caller),
         let cv = call_arg!(*insn, n);
 
     critical_call(func_id) <-- callee_info(func_id, _, _, _, _);

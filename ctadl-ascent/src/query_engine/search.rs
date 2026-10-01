@@ -129,8 +129,9 @@ pub struct TaintSearchGraph {
     formal_ty: HashMap<(FunctionId, FlowVariable), FormalType>,
     /// Call sites indexed by callee, for formal-to-actual (function exit) steps.
     callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>>,
-    /// Callee of each call site, for actual-to-formal (call entry) steps.
-    callee_by_site: HashMap<PackedInsnSiteId, FunctionId>,
+    /// Callees of each call site, for actual-to-formal (call entry) steps. Several when the
+    /// index resolved an indirect or virtual call to more than one target.
+    callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>>,
     /// The materialized access paths; a step producing a non-materialized path
     /// is dropped, the same gate the closure engine's `paths(p)` premises apply.
     paths: HashSet<Path>,
@@ -214,10 +215,10 @@ impl TaintSearchGraph {
             .collect();
 
         let mut callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>> = HashMap::default();
-        let mut callee_by_site = HashMap::default();
+        let mut callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>> = HashMap::default();
         for (site, callee) in &facts.call {
             callers_by_callee.entry(*callee).or_default().push(*site);
-            callee_by_site.insert(*site, *callee);
+            callee_by_site.entry(*site).or_default().push(*callee);
         }
 
         let paths = facts.paths.iter().map(|(p,)| *p).collect();
@@ -416,7 +417,7 @@ impl LazySuccessors for TaintSearchGraph {
         if let Some(packed) = v.as_call_arg() {
             let call_arg_id = CallArgId::try_from(packed).unwrap();
             let site = PackedInsnSiteId::try_from_parts(f, call_arg_id.insn_id).unwrap();
-            if let Some(callee) = self.callee_by_site.get(&site) {
+            for callee in self.callee_by_site.get(&site).into_iter().flatten() {
                 let formal_var = FlowVariable::formal_index(call_arg_id.formal());
                 if self.formal_ty.contains_key(&(*callee, formal_var)) {
                     // A formal has no incoming copies the hop would follow (its
@@ -659,10 +660,10 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         if !v.is_globals() && *call_arg_id.formal() >= 0 {
             tainted_insn.insert((site, src.label.clone(), *v, *p));
         }
-        if let Some(target) = graph.callee_by_site.get(&site)
-            && external.contains(target)
-        {
-            absorbing.insert((*target, src.clone(), call_arg_id.formal()));
+        for target in graph.callee_by_site.get(&site).into_iter().flatten() {
+            if external.contains(target) {
+                absorbing.insert((*target, src.clone(), call_arg_id.formal()));
+            }
         }
     }
 

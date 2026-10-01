@@ -24,7 +24,7 @@ One consequence remains unfixed and is pinned elsewhere: `nightly/tests/c/ptrari
 to an offset address too, which it does not yet.
 */
 
-use ctadl_ir::ParameterType::{ByRef, ByVal};
+use ctadl_ir::ParameterType::ByVal;
 use ctadl_ir::{Exp, StatementKind, Variable};
 
 use crate::test_utils::*;
@@ -106,12 +106,12 @@ fn simple_global_assign() {
 
 #[test_log::test]
 fn basic_params() {
-    // How parameters are passed: a plain `int x` is by-value, a pointer `int *y` is by-reference.
+    // Every parameter is by value, a pointer `int *y` included.
     let src = r"
             void basic_params(int x, int *y) {}
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByVal, ByRef]);
+    check_params(&prog, &[ByVal, ByVal]);
 }
 
 #[test_log::test]
@@ -152,25 +152,24 @@ fn param_flows_through_local() {
 
 #[test_log::test]
 fn return_from_pointer() {
-    // Returning a dereferenced pointer parameter (`return *y;`). CTADL doesn't distinguish `*y` from
-    // `y`, so the summary is identical to returning the param directly: param 0 reaches the return.
+    // `return *y;` returns the pointee, `@p0.deref`.
     let src = r"
             int return_from_pointer(int *y) {
                 return *y;
             }
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByRef]);
+    check_params(&prog, &[ByVal]);
+    check_loads(&prog, "@p0.deref");
 
     let summary = get_summary(prog).unwrap().0;
     check_summary_count(&summary, 1);
-    check_returns_param(&summary, 0, "");
+    check_returns_param(&summary, 0, ".deref");
 }
 
 #[test_log::test]
 fn return_from_pointer_through_local() {
-    // Returning a dereferenced pointer parameter through a local (`int b = *y; return b;`). The
-    // pointer deref and the local copy are both transparent -- param 0 still reaches the return.
+    // `int b = *y; return b;`: a load of `@p0.deref` through a transparent local.
     let src = r"
             int return_from_pointer_through_local(int *y) {
                 int b = *y;
@@ -178,12 +177,12 @@ fn return_from_pointer_through_local() {
             }
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByRef]);
-    check_assign_or_update(&prog, "b", ["@p0"], None);
+    check_params(&prog, &[ByVal]);
+    check_loads(&prog, "@p0.deref");
 
     let summary = get_summary(prog).unwrap().0;
     check_summary_count(&summary, 1);
-    check_returns_param(&summary, 0, "");
+    check_returns_param(&summary, 0, ".deref");
 }
 
 #[test_log::test]
@@ -1999,6 +1998,60 @@ fn funcptr_array_multistore_flows() {
     check_returns_param(&summary, 1, "");
 }
 
+// A function pointer installed into a struct field by a helper, then called through the field
+// from another frame. `setup2` only forwards the object and makes no indirect call itself:
+// that is the frame the call-target tag has to climb through on its way back up (libtiff:
+// TIFFRGBAImageBegin -> PickContigCase stores `img->get`, called from TIFFRGBAImageGet). The
+// two `by_callee` tests are the one-frame controls; the two `two_frames_down` tests are the
+// bug. Each asserts on `wrap`, the only function that receives `b` as @p1.
+const FUNCPTR_SETUP_PRELUDE: &str = r"
+    int id(int p) { return p; }
+    struct S { int (*op)(int); };
+    void setup(struct S *s) { s->op = id; }
+    void setup2(struct S *s) { setup(s); }
+    int run(struct S *s, int x) { return s->op(x); }
+";
+
+#[test_log::test]
+fn funcptr_stored_by_callee_called_in_caller() {
+    let src = format!(
+        "{FUNCPTR_SETUP_PRELUDE}
+        int wrap(int a, int b) {{ struct S o; setup(&o); return o.op(b); }}"
+    );
+    let (summary, si) = get_summary(program_from_string(&src).0).unwrap();
+    check_returns_param_in(&summary, &si, "wrap", 1, "");
+}
+
+#[test_log::test]
+fn funcptr_stored_two_frames_down_called_in_caller() {
+    let src = format!(
+        "{FUNCPTR_SETUP_PRELUDE}
+        int wrap(int a, int b) {{ struct S o; setup2(&o); return o.op(b); }}"
+    );
+    let (summary, si) = get_summary(program_from_string(&src).0).unwrap();
+    check_returns_param_in(&summary, &si, "wrap", 1, "");
+}
+
+#[test_log::test]
+fn funcptr_stored_by_callee_called_in_other_callee() {
+    let src = format!(
+        "{FUNCPTR_SETUP_PRELUDE}
+        int wrap(int a, int b) {{ struct S o; setup(&o); return run(&o, b); }}"
+    );
+    let (summary, si) = get_summary(program_from_string(&src).0).unwrap();
+    check_returns_param_in(&summary, &si, "wrap", 1, "");
+}
+
+#[test_log::test]
+fn funcptr_stored_two_frames_down_called_in_other_callee() {
+    let src = format!(
+        "{FUNCPTR_SETUP_PRELUDE}
+        int wrap(int a, int b) {{ struct S o; setup2(&o); return run(&o, b); }}"
+    );
+    let (summary, si) = get_summary(program_from_string(&src).0).unwrap();
+    check_returns_param_in(&summary, &si, "wrap", 1, "");
+}
+
 // ============================================================================
 // Cross-function flow (recursion, call-depth, globals), field/struct precision,
 // expression-level dataflow, and `#[ignore]`d aspirational tests for constructs
@@ -2046,6 +2099,20 @@ fn deref_paren_field_equivalent() {
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&s, 0, ".x");
+}
+
+#[test_log::test]
+fn store_through_a_stepped_pointer_reaches_the_pointee() {
+    // `*out++ = *in++` must store through `out`, as `*out = *in` does.
+    let src = r"
+        void post(char *out, char *in) { *out++ = *in++; }
+        void pre(char *out, char *in)  { *++out = *in; }
+        void dec(char *out, char *in)  { *(out--) = *in; }
+        void loop(char *out, char *in, int n) { while (n--) *out++ = *in++; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    for f in ["post", "pre", "dec", "loop"] {
+        check_flow_in(&s, &si, f, 1, ".deref", 0, ".deref");
+    }
 }
 
 #[test_log::test]
@@ -2257,14 +2324,13 @@ fn field_store_then_load_roundtrips() {
 
 #[test_log::test]
 fn out_param_write_propagates() {
-    // The canonical C out-parameter taint shape: `*out = src` should propagate src (@p1) into the
-    // object reached through out (@p0). This is the highest-value pointer pattern for a taint tool.
+    // The canonical C out-parameter: `*out = src` carries src (@p1) into `@p0.deref`.
     let src = r"
         void f(int *out, int src) {
             *out = src;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_flow(&s, 1, "", 0, "");
+    check_flow(&s, 1, "", 0, ".deref");
 }
 
 #[test_log::test]
@@ -2644,10 +2710,8 @@ fn static_local_flows() {
 
 #[test_log::test]
 fn addr_of_local_write_through_taints_pointee() {
-    // Soundness: writing through a local's address must write the *pointee*. The
-    // value-copy model (`*p = src` -> `assign p = src`) is sound for reads but drops the
-    // write-back; resolving `*p` to its same-block pointee lowers the store to
-    // `assign x = src` -- a real def of `x` -- so a later `sink(x)` observes the taint.
+    // Writing through a local's address writes the pointee: `x` is address-taken, so the
+    // same-block alias lowers `*p = src` to `store x.deref := src`.
     let src = r"
         int f() {
             int x = 0;
@@ -2657,14 +2721,12 @@ fn addr_of_local_write_through_taints_pointee() {
             return x;
         }";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, "x", ["src"], None); // *p = src  ==>  x = src
+    check_assign_or_update(&prog, "x.deref", ["src"], None); // *p = src  ==>  x.deref := src
 }
 
 #[test_log::test]
 fn addr_of_local_read_through_resolves_pointee() {
-    // Reading through the alias (`int *p = &x; int y = *p;`) resolves `*p` to `x`, so `y`
-    // reads the current `x` -- the read path is consistent with the write path (both route
-    // the dereference to the pointee).
+    // Reading through the alias loads `x`'s cell: `int y = *p;` is `load x.deref`.
     let src = r"
         int f() {
             int x = source();
@@ -2673,15 +2735,13 @@ fn addr_of_local_read_through_resolves_pointee() {
             return y;
         }";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, "y", ["x"], None); // y = *p  ==>  y = x
+    check_loads(&prog, "x.deref"); // y = *p  ==>  y = load x.deref
 }
 
 #[test_log::test]
 fn addr_of_alias_does_not_cross_basic_blocks() {
-    // The must-points-to is confined to the block the binding was recorded in: once
-    // control flow intervenes, `*p` falls back to the value-copy model rather than
-    // unsoundly resolving a possibly-stale alias across a branch. The post-if store writes
-    // `p`, and the only write to `x` is its initializer.
+    // The alias is confined to its block: after the branch, `*p = src` stores to `p.deref`;
+    // `p` and `x` are each written once.
     let src = r"
         int f(int c) {
             int x = 0;
@@ -2692,12 +2752,13 @@ fn addr_of_alias_does_not_cross_basic_blocks() {
             return x;
         }";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, "p", ["src"], None); // fallback: *p = src  ==>  p = src
+    check_assign_or_update(&prog, "p.deref", ["src"], None); // *p = src  ==>  p.deref := src
     assert_eq!(
-        count_writes_to(&prog, "x"),
+        count_writes_to(&prog, "x.deref"),
         1,
         "only `int x = 0` should write x; the post-if `*p = src` must not resolve to x across a block boundary"
     );
+    check_writes_to(&prog, "p", 1); // `int *p = &x` only: a store through `p` is not a write to it
 }
 
 #[test_log::test]
@@ -4415,7 +4476,7 @@ fn a_cast_of_an_object_in_lvalue_position_is_unchanged() {
         void c(struct T *t, int x) { *(int *)(t->q) = x; }";
     let (prog, _) = program_from_string(deref_of_field);
     check_loads(&prog, "@p0.q");
-    check_assign_or_update(&prog, "<t0>", ["@p1"], None);
+    check_assign_or_update(&prog, "<t0>.deref", ["@p1"], None);
 
     let thru_arithmetic = r"
         struct S { int f; };
@@ -4468,7 +4529,7 @@ fn pointer_returning_definition_is_collected() {
         "a `char *` definition must be collected\n{dump}"
     );
     check_return_arity(&prog, "dup", 1);
-    check_params(&prog, &[ByRef]);
+    check_params(&prog, &[ByVal]);
     check_block_count(&prog, 1);
 }
 
@@ -4699,7 +4760,7 @@ fn a_double_pointer_parameter_is_bound() {
     // Dropping `v` would take `w` down to `@p0`; both must bind at their own index.
     let src = r"void f(char **v, char *w) { char **a; char *b; a = v; b = w; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByRef, ByRef]);
+    check_params(&prog, &[ByVal, ByVal]);
     let (a, b) = (local_render(&prog, "f", "a"), local_render(&prog, "f", "b"));
     assert!(
         check_match(&dump, &format!("assign {a} = @p0")),
@@ -4717,7 +4778,7 @@ fn main_binds_argc_and_argv_in_that_order() {
     // here too, because depth is not a list of cases.
     let src = r"int main(int argc, char **argv) { int n; char **a; n = argc; a = argv; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByVal, ByRef]);
+    check_params(&prog, &[ByVal, ByVal]);
     let (n, a) = (
         local_render(&prog, "main", "n"),
         local_render(&prog, "main", "a"),
@@ -4730,7 +4791,7 @@ fn main_binds_argc_and_argv_in_that_order() {
 
     let deep = r"void g(char ***v, int n) { char ***a; int b; a = v; b = n; }";
     let (prog, dump) = program_from_string(deep);
-    check_params(&prog, &[ByRef, ByVal]);
+    check_params(&prog, &[ByVal, ByVal]);
     let (a, b) = (local_render(&prog, "g", "a"), local_render(&prog, "g", "b"));
     assert!(
         check_match(&dump, &format!("assign {a} = @p0"))
@@ -4745,7 +4806,7 @@ fn taint_flows_through_a_double_pointer_parameter() {
     // that name and the summary would be empty.
     let src = r"char **argv_of(char **v) { return v; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByRef]);
+    check_params(&prog, &[ByVal]);
     check_return_arity(&prog, "argv_of", 1);
     assert!(
         check_match(&dump, "return @p0"),
@@ -4756,18 +4817,16 @@ fn taint_flows_through_a_double_pointer_parameter() {
 }
 
 #[test_log::test]
-fn a_parameter_is_by_reference_at_every_depth() {
-    // `ParameterType` is a property of the declarator's shape, not of how many layers the
-    // query happened to spell: anything that dereferences to storage the caller can see is
-    // `ByRef`, at any depth, and a plain value is `ByVal`.
+fn every_parameter_is_by_value_at_every_depth() {
+    // Every parameter is `ByVal`, at any pointer depth.
     for (src, want) in [
         (r"void f(int a) { int x; x = a; }", ByVal),
-        (r"void f(char *a) { char *x; x = a; }", ByRef),
-        (r"void f(char **a) { char **x; x = a; }", ByRef),
-        (r"void f(char ***a) { char ***x; x = a; }", ByRef),
-        (r"void f(char *a[]) { char **x; x = a; }", ByRef),
-        (r"void f(char a[10][20]) { char *x; x = a[0]; }", ByRef),
-        (r"void f(struct S **a) { struct S **x; x = a; }", ByRef),
+        (r"void f(char *a) { char *x; x = a; }", ByVal),
+        (r"void f(char **a) { char **x; x = a; }", ByVal),
+        (r"void f(char ***a) { char ***x; x = a; }", ByVal),
+        (r"void f(char *a[]) { char **x; x = a; }", ByVal),
+        (r"void f(char a[10][20]) { char *x; x = a[0]; }", ByVal),
+        (r"void f(struct S **a) { struct S **x; x = a; }", ByVal),
     ] {
         let (prog, dump) = program_from_string(src);
         let got = get_only_function(&prog)
@@ -4788,7 +4847,7 @@ fn a_function_pointer_parameter_is_one_parameter() {
     // `ByVal`: what it points at is code, not storage.
     let src = r"void g(int (*cb)(int a, int b), char *s) { char *t; t = s; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByVal, ByRef]);
+    check_params(&prog, &[ByVal, ByVal]);
     let t = local_render(&prog, "g", "t");
     assert!(
         check_match(&dump, &format!("assign {t} = @p1")),
@@ -4799,7 +4858,7 @@ fn a_function_pointer_parameter_is_one_parameter() {
     // parameter, and so is a pointer to a function returning a pointer.
     let typed = r"void h(int cb(int a), char *s) { char *t; t = s; }";
     let (prog, dump) = program_from_string(typed);
-    check_params(&prog, &[ByVal, ByRef]);
+    check_params(&prog, &[ByVal, ByVal]);
     let t = local_render(&prog, "h", "t");
     assert!(
         check_match(&dump, &format!("assign {t} = @p1")),
@@ -4814,7 +4873,7 @@ fn a_nameless_parameter_holds_its_slot_without_binding_a_name() {
     // list, and `Argument(1)` means the second one. The slot is reserved; no name is bound.
     let src = r"void k(char **, int n) { int x; x = n; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByRef, ByVal]);
+    check_params(&prog, &[ByVal, ByVal]);
     let x = local_render(&prog, "k", "x");
     assert!(
         check_match(&dump, &format!("assign {x} = @p1")),
@@ -4852,7 +4911,7 @@ fn a_variadic_marker_is_not_a_parameter() {
     // count it as a formal either.
     let src = r"void logmsg(const char *fmt, int level, ...) { int x; x = level; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByRef, ByVal]);
+    check_params(&prog, &[ByVal, ByVal]);
     let x = local_render(&prog, "logmsg", "x");
     assert!(
         check_match(&dump, &format!("assign {x} = @p1")),
