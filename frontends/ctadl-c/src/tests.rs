@@ -2103,6 +2103,20 @@ fn deref_paren_field_equivalent() {
 }
 
 #[test_log::test]
+fn store_through_a_stepped_pointer_reaches_the_pointee() {
+    // `*out++ = *in++` must store through `out`, as `*out = *in` does.
+    let src = r"
+        void post(char *out, char *in) { *out++ = *in++; }
+        void pre(char *out, char *in)  { *++out = *in; }
+        void dec(char *out, char *in)  { *(out--) = *in; }
+        void loop(char *out, char *in, int n) { while (n--) *out++ = *in++; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    for f in ["post", "pre", "dec", "loop"] {
+        check_flow_in(&s, &si, f, 1, "", 0, "");
+    }
+}
+
+#[test_log::test]
 fn ternary_both_arms_flow() {
     // A ternary `a ? b : c` can yield either arm, so both `b` and `c` flow to the result (here the
     // return). The condition `a` is a control dependence, not a data source. `flatten_expr` lowers
