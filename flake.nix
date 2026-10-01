@@ -177,7 +177,8 @@
         # whole tree, so that editing the rest of the repo does not rebuild
         # them. The root manifest still lists every member, which cargo would
         # fail to load, so `preBuild` cuts `members` down to the two readers;
-        # naersk runs it in its dependency pass too.
+        # naersk runs it in its dependency pass too. vendor/ascent_macro rides
+        # along only because naersk copies every `[patch]` path, used or not.
         readersSrc = pkgs.lib.fileset.toSource {
           root = ./.;
           fileset = pkgs.lib.fileset.unions [
@@ -185,6 +186,7 @@
             ./Cargo.lock
             ./readers/dex-reader
             ./readers/jvm-reader
+            ./vendor/ascent_macro
           ];
         };
         readersPreBuild = ''
