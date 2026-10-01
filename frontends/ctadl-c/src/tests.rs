@@ -1999,6 +1999,60 @@ fn funcptr_array_multistore_flows() {
     check_returns_param(&summary, 1, "");
 }
 
+// A function pointer installed into a struct field by a helper, then called through the field
+// from another frame. `setup2` only forwards the object and makes no indirect call itself:
+// that is the frame the call-target tag has to climb through on its way back up (libtiff:
+// TIFFRGBAImageBegin -> PickContigCase stores `img->get`, called from TIFFRGBAImageGet). The
+// two `by_callee` tests are the one-frame controls; the two `two_frames_down` tests are the
+// bug. Each asserts on `wrap`, the only function that receives `b` as @p1.
+const FUNCPTR_SETUP_PRELUDE: &str = r"
+    int id(int p) { return p; }
+    struct S { int (*op)(int); };
+    void setup(struct S *s) { s->op = id; }
+    void setup2(struct S *s) { setup(s); }
+    int run(struct S *s, int x) { return s->op(x); }
+";
+
+#[test_log::test]
+fn funcptr_stored_by_callee_called_in_caller() {
+    let src = format!(
+        "{FUNCPTR_SETUP_PRELUDE}
+        int wrap(int a, int b) {{ struct S o; setup(&o); return o.op(b); }}"
+    );
+    let (summary, si) = get_summary(program_from_string(&src).0).unwrap();
+    check_returns_param_in(&summary, &si, "wrap", 1, "");
+}
+
+#[test_log::test]
+fn funcptr_stored_two_frames_down_called_in_caller() {
+    let src = format!(
+        "{FUNCPTR_SETUP_PRELUDE}
+        int wrap(int a, int b) {{ struct S o; setup2(&o); return o.op(b); }}"
+    );
+    let (summary, si) = get_summary(program_from_string(&src).0).unwrap();
+    check_returns_param_in(&summary, &si, "wrap", 1, "");
+}
+
+#[test_log::test]
+fn funcptr_stored_by_callee_called_in_other_callee() {
+    let src = format!(
+        "{FUNCPTR_SETUP_PRELUDE}
+        int wrap(int a, int b) {{ struct S o; setup(&o); return run(&o, b); }}"
+    );
+    let (summary, si) = get_summary(program_from_string(&src).0).unwrap();
+    check_returns_param_in(&summary, &si, "wrap", 1, "");
+}
+
+#[test_log::test]
+fn funcptr_stored_two_frames_down_called_in_other_callee() {
+    let src = format!(
+        "{FUNCPTR_SETUP_PRELUDE}
+        int wrap(int a, int b) {{ struct S o; setup2(&o); return run(&o, b); }}"
+    );
+    let (summary, si) = get_summary(program_from_string(&src).0).unwrap();
+    check_returns_param_in(&summary, &si, "wrap", 1, "");
+}
+
 // ============================================================================
 // Cross-function flow (recursion, call-depth, globals), field/struct precision,
 // expression-level dataflow, and `#[ignore]`d aspirational tests for constructs
