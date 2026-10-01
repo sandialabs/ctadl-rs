@@ -173,6 +173,24 @@
         # derivations stay named after it; see the root Cargo.toml.
         workspaceVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
 
+        # The readers' source: the workspace root plus the two readers, not the
+        # whole tree, so that editing the rest of the repo does not rebuild
+        # them. The root manifest still lists every member, which cargo would
+        # fail to load, so `preBuild` cuts `members` down to the two readers;
+        # naersk runs it in its dependency pass too.
+        readersSrc = pkgs.lib.fileset.toSource {
+          root = ./.;
+          fileset = pkgs.lib.fileset.unions [
+            ./Cargo.toml
+            ./Cargo.lock
+            ./readers/dex-reader
+            ./readers/jvm-reader
+          ];
+        };
+        readersPreBuild = ''
+          sed -z -i 's|members *= *\[[^]]*\]|members = ["readers/dex-reader", "readers/jvm-reader"]|' Cargo.toml
+        '';
+
         # `dex-reader` is the DEX dumper the linemap step of the DEX regression
         # tests runs. It is an *example* of the dex-reader crate, not a bin, so
         # that a plain `cargo build` -- which is what packages.default runs --
@@ -181,8 +199,8 @@
         #
         # Two details of the target selection:
         #
-        # - The src is the whole workspace, not ./dex-reader. dex-reader is a
-        #   workspace member now, and a member cannot be built alone: its
+        # - The src is `readersSrc` below, not ./readers/dex-reader. dex-reader
+        #   is a workspace member, and a member cannot be built alone: its
         #   `version.workspace = true` needs the root manifest.
         # - `--lib` rides along with `--examples` for naersk's sake. naersk
         #   builds dependencies in a first pass over a stub source tree, which
@@ -194,7 +212,8 @@
         # naersk installs whatever cargo reports as an executable, and an
         # example is one, so this lands at $out/bin/dex-reader as before.
         dex-reader = naersk-lib.buildPackage {
-          src = ./.;
+          src = readersSrc;
+          preBuild = readersPreBuild;
           version = workspaceVersion;
           name = "dex-reader";
           release = false;
@@ -211,7 +230,8 @@
 
         # `jvm-reader` is the same arrangement for the JVM E2E linemap step.
         jvm-reader = naersk-lib.buildPackage {
-          src = ./.;
+          src = readersSrc;
+          preBuild = readersPreBuild;
           version = workspaceVersion;
           name = "jvm-reader";
           release = false;
