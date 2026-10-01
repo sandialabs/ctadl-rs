@@ -1098,6 +1098,30 @@ impl ArtifactLanguage {
         }
     }
 
+    /// Which parameter versions SSA hands back to the formals, for IR this language's front end
+    /// produced (see [`ctadl_ir::ssa::ParamWriteBack`]). JVM bytecode parameters are locals that
+    /// a method may rebind, R8 reuses their registers freely, and the caller's argument cannot
+    /// change, so the write-back is the entry version. The C front end writes through a pointer
+    /// parameter by assigning to it, and the others keep the version live at exit as before.
+    pub fn param_write_back(self) -> ctadl_ir::ssa::ParamWriteBack {
+        use ctadl_ir::ssa::ParamWriteBack;
+        match self {
+            ArtifactLanguage::Jvm
+            | ArtifactLanguage::Jar
+            | ArtifactLanguage::Dex
+            | ArtifactLanguage::Apk
+            | ArtifactLanguage::Xapk => ParamWriteBack::Entry,
+            // A deficiency in the C front end, not a property of C: it lowers `*out = x` to
+            // `out = x` and `&v` to `v` (a pointer stands for its pointee), so out-parameters
+            // reach the caller only through the exit version. With `*p` lowered to `p.deref`
+            // and `&v` to an address, C could use `Entry` too.
+            ArtifactLanguage::C
+            | ArtifactLanguage::Lua
+            | ArtifactLanguage::Pcode
+            | ArtifactLanguage::Flowy => ParamWriteBack::Exit,
+        }
+    }
+
     /// Inverse of [`Self::name`]. `None` for anything else, which callers report as an error
     /// rather than silently dropping -- a scope naming a language that does not exist would
     /// otherwise admit nothing and look like an app with no cross-language flow.
