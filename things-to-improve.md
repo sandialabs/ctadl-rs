@@ -522,31 +522,114 @@ comparable):
   `Prefetch.serialize` had 847.
 - `typecheck.py`: 92.4% of decisions are compatible (17% before), 0.003% put an object in a
   primitive slot (6%), and impossible decisions hold 1.7% of `context_locals` memberships (44%).
-  Of the 5.8% (2,123) "not a subtype" left, 799 are `$r8id` classes, which the split creates at
-  import and the smali does not declare, so the script may not know their supertypes. The rest
-  are not examined yet; the worst functions are Kotlin `bootstrap()` view models and Koin
-  `module`, not Jackson.
+  Of the 5.8% (2,123) "not a subtype" left, 799 are `$r8id` classes that the script couldn't
+  type; they are fine. The other 1,324 are real; see "The 3.6% of decisions still impossible".
 - The regression suite loses no real flow. Its SARIF is identical in 329 of 330 files. In the
   chess app, the `getMyMove -> StringBuilder.append` flow into `Lt2/l;->F` was the same
   artifact: `F` reuses its `String` parameter's register for `getMyMove()`'s result, and the exit
   write-back fed that into its own incoming `String`. The fixture now scopes the sink to
   `Lx2/c;->y`, where the move really is appended; that passes with and without the change.
 
-### Open: the 5.8% of decisions still impossible
+### The 3.6% of decisions still impossible (2026-09-30)
 
-2,123 decisions still fail `typecheck.py`'s subtype check. They hold 1.7% of `context_locals`
-memberships, so they don't matter for memory, but each one is still a wrong decision.
+**The 799 `$r8id` decisions are fine.** `typecheck2.py` is `typecheck.py` plus
+`C$r8id<k> <: C`. With it, "not a subtype" drops from 2,123 to exactly 1,324, and those hold
+1.0% of `context_locals` memberships.
 
-- **799 target `$r8id` classes.** These may not be errors at all: the split creates `C$r8id<k>`
-  at import, the smali doesn't declare it, and so the script can't know it extends `C`. Teach
-  `typecheck.py` that, then recount.
-- **1,324 are unexplained.** The worst are Kotlin `bootstrap()` view models
-  (`WalletBalanceViewModel`, `CreateTransactionViewModelAbstract`) and Koin `module`. Trace one
-  with `bin/ctadl-focus`, as in "The cause", to see whether this is value flow (fix 4) or needs
-  the static-type filter (fix 1).
+**The 1,324 are real.** Each comes from one of four gaps in how call-target tags move. None of
+these loses a flow. Each adds a context the program can't reach, and the decisions that context
+passes down. Those can produce false flows, and they raise the cost.
 
-Reproduce with `python3 typecheck.py runs/entry-guard55/census/decisions.tsv` in
-`greenbits-probe/`.
+**Most are inherited.** 831 of the 1,324 have only upstream decisions that are themselves
+impossible (rule 2.2). Each bad root seeds about 1.7 more. Every decision traces back to these
+roots:
+
+| Root cause | Decisions | Example |
+|---|---|---|
+| The tag skips a `check-cast` in the caller | 520 | `DeserializerCache._createDeserializer2` does `instance-of`/`check-cast CollectionType` on a `JavaType`, then calls `createCollectionDeserializer`. Its `MapType` and `SimpleType` tags go through anyway. |
+| The tag skips a type test in a callee, through its return value | 368 | Kotlin's type checker: `lowerBoundIfFlexible(x)` returns `asRigidType(x)`, which is `x.unwrap()` behind `instance-of`/`check-cast SimpleType`. The analysis has `ret <- x`, so `FlexibleTypeImpl` and `RawTypeImpl` reach `RigidTypeMarker` formals. |
+| The receiver goes to a CHA override it can't dispatch to | 286 | Every view model's constructor calls `invoke-virtual {p0}, GreenViewModel;->bootstrap()`. CHA resolves that site to three `bootstrap`s. Rules 2.1/2.2 push `this` into all three, so `WalletBalanceViewModel.bootstrap` gets 68 sibling view models as `this`. |
+| Computed value (fix 4) | 54 | `UtilsKt.accept` passes `contentType.toString()` to `append(String, String)`, and the `String` carries the `ContentType` tag. |
+| Mixed, or in a recursive cycle | 97 | 56 are in Kotlin's `FunctionDescriptorImpl.doSubstitute`/`substitute` recursion, where the root walk cuts the cycle. |
+
+- **Receiver.** Rules 2.1 and 2.2 join `call(caller, insn, f)`, which lists every CHA target,
+  with the tag at the argument. They never test that the tag dispatches to `f`. Rule 3.1 does
+  test it, with `callee_resolvents(obj, key, f)`, but only for sites in `callee_info`. The
+  bootstrap site (insn 1929437) has three `call` rows and no `callee_info` row, so there is no
+  key to test against. The fix: for formal 0 at a CHA site, require that the target resolves
+  to `f`. That needs the site's dispatch key exported for CHA sites too. This is the one
+  cause that could grow quadratically: a hub method with many overrides, called on `this` from
+  many subclasses, gets subclasses × overrides decisions.
+- **Casts and type tests** (888 together). Kotlin's `as?`, and Java's `if (x instanceof T)
+  ((T) x)`. A `check-cast` passes the value through unchanged, so the tag follows it. Of the 26
+  receiver decisions whose call site admits no target, 24 are this kind too. Examples are
+  `(RingBuffer) L$1` in `windowedIterator`, where a coroutine spill slot holds an `ArrayList` in
+  another state, and Jackson's `(ContainerSerializer) ser`.
+- **One filter covers all four.** Only mint a decision when the target is a subtype of the
+  formal's declared type at that path: fix 1's filter, applied in rules 2.1/2.2 rather than to
+  every tag. The inputs are what `typecheck.py` already uses: the method signature, field types
+  in the path, and `.super`/`.implements`. It keeps `Object`, array-element and framework
+  cases, as the script does. It drops the decisions but not the tags, so a cast or receiver
+  filter on the tags is still the more precise fix. Not implemented.
+
+The data is under `greenbits-probe/impossible/` (see `RESULTS.md` there). To reproduce, run
+`python3 typecheck2.py runs/entry-guard55/census/decisions.tsv runs/entry-guard55/impossible.tsv`,
+then `impossible/{bodies,classify,origins,roots}.py`, from `greenbits-probe/`.
+
+### Across the corpus (2026-09-30)
+
+The same build, measurement and scripts, on the Dex half of all 15 apps. Each ran alone under a
+55 GiB memguard cap with an 1800 s timeout. All 15 reach a fixpoint, and `udpbus` and
+`andiodine` mint no decisions. Greenbits was re-run the same way and reproduces the 1,324.
+
+| App | Index | Decisions | ok | `$r8id` fixed | Impossible | Held memberships | Inherited only | Receiver | Caller cast | Other |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `cash.p.terminal` | 469 s, 40.7 GB | 83,092 | 93.0% | 14 | 2,881 | 0.4% | 1,186 | 9% | 33% | 58% |
+| `darkcoin` | 69 s, 9.9 GB | 27,682 | 86.3% | 0 | 1,456 | 1.1% | 411 | 27% | 26% | 44% |
+| `greenbits` | 120 s, 13.0 GB | 36,489 | 94.6% | 799 | 1,325 | 1.0% | 831 | 22% | 41% | 33% |
+| `ceno` | 30 s, 4.8 GB | 6,548 | 92.3% | 2,988 | 190 | 0.2% | 67 | 31% | 51% | 18% |
+| `cpuinfo` | 15 s, 2.1 GB | 4,569 | 94.9% | 2,150 | 88 | 0.2% | 27 | 26% | 50% | 24% |
+| `tinykeepass` | 8 s, 1.2 GB | 1,428 | 88.7% | 0 | 32 | 0.3% | 13 | 72% | 0% | 28% |
+| `komodo` | 11 s, 1.8 GB | 1,200 | 93.3% | 8 | 20 | 0.1% | 8 | 70% | 25% | 5% |
+| `ipcam` | 11 s, 1.8 GB | 863 | 85.5% | 0 | 18 | 0.0% | 8 | 89% | 0% | 11% |
+| `pincredible` | 4 s, 0.9 GB | 439 | 86.8% | 29 | 19 | 0.3% | 9 | 0% | 68% | 32% |
+| `glxy`, `chess`, `pckeyboard`, `openttd` | 2-7 s, ≤ 0.9 GB | 619 | | 10 | 11 | 0.0% | 0 | | | |
+
+"Impossible" is subtype failures plus objects in primitive slots. The three cause columns are
+shares of those. Greenbits also has 56 decisions (4%) in a cycle, and darkcoin 33 (2%). Totals:
+162,929 decisions, 6,040 (3.7%) impossible and 2,560 of those inherited only. By root: receiver
+1,092 (18%), caller cast 2,030 (34%), other 2,826 (47%), no root reached 92.
+
+- **Greenbits is typical.** Every app with more than a few hundred decisions has 3–5%
+  impossible, holding at most 1.1% of `context_locals` memberships. Nowhere do they matter for
+  memory.
+- **The `$r8id` correction matters most where the split is big.** It accounts for 2,988 on
+  `ceno` and 2,150 on `cpuinfo`. Without it those apps would look far worse than they are.
+- **Which cause dominates depends on the libraries.**
+  - Small apps are mostly the receiver cause (70–89%).
+  - The big crypto wallets are mostly "other". There it is almost all the Bouncy Castle and
+    Spongy Castle ASN.1 idiom `X.getInstance(Object o)`: return `(X) o` if `o instanceof X`,
+    otherwise build a new `X`. So `CVCertificateRequest.getInstance(o)` hands
+    `DERApplicationSpecific.getInstance(o)`'s result to `<init>(DERApplicationSpecific)`, and
+    that result is `o` behind an `instance-of`/`check-cast`. This is the same type test in the
+    callee as Kotlin's `asRigidType`.
+  - `cash.p.terminal` adds Jackson's `TypeFactory`, where a `JavaType` computed from a
+    `java.lang.reflect.Type` carries the `Type`'s tag. That is a computed value.
+- **So casts and type tests account for most of it.** Caller casts (34%) plus "other" (47%)
+  are 81% of the roots. "Other" is mostly type tests in callees, but it also holds computed
+  values, and it is split from them by package name only. A tag filter at `check-cast`, or the declared-type check on
+  decisions above, addresses the bulk. The receiver check is the smaller half of the fix
+  everywhere except small apps.
+- **Side result: the entry write-back also helps apps that did finish.** Same imports as "Beyond
+  `cpuinfo`", and iteration counts are comparable even though wall times are not (those runs went
+  four at a time). `cpuinfo` falls from 1,316 iterations and 12.4 GB to 231 and 2.1 GB. `ceno`
+  goes from 540 and 13.9 GB to 283 and 4.8 GB, and `darkcoin` from 606 and 29.7 GB to 423 and
+  9.9 GB. `cash.p.terminal` wasn't measured before; it is now the largest at 40.7 GB.
+
+The data is under `/Volumes/Shampoo/ct-bigapk/small/impossible-corpus/`: `RESULTS.md`, `table.md`,
+`ladder.log`, and per app `<pkg>/runs/entry/` (index log, census, typecheck) and
+`<pkg>/impossible/`. Reproduce with `run.sh`, `smali.sh` and `analyze.sh <pkg>`, then
+`summarize.py`.
 
 ### Fixes considered before the cause was known
 
