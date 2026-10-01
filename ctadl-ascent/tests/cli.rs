@@ -999,6 +999,28 @@ fn test_cli_query_c_allocation_size_is_not_contents() {
     });
 }
 
+/// `pointers.c`: exactly the `sink_hit_*` calls are reached.
+#[test]
+fn test_cli_query_c_pointer_model() {
+    run_store_test(|| {
+        assert_eq!(
+            c_sinks_reached("pointers", &[]),
+            [
+                "sink_hit_copy",
+                "sink_hit_index_star",
+                "sink_hit_loop",
+                "sink_hit_moved",
+                "sink_hit_offset",
+                "sink_hit_out",
+                "sink_hit_rest",
+                "sink_hit_star_index",
+            ]
+            .map(String::from)
+            .into()
+        );
+    });
+}
+
 /// Writes an APK built from `(entry name, contents)` pairs into `dir`, and returns its
 /// path. Enough of an APK for the import path: a ZIP whose entry names are what the Dex
 /// and native-library passes look for.
