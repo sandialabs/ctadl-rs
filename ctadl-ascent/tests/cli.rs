@@ -901,9 +901,8 @@ fn test_cli_query_c_no_callsite_smear() {
     });
 }
 
-/// Imports the C fixture `<stem>.c`, indexes and queries it with `<stem>.json`, and returns the
-/// names of the sink functions the tainted-path results reach.
-fn c_sinks_reached(stem: &str) -> std::collections::BTreeSet<String> {
+/// Imports, indexes (`<stem>.json` + `index_models`) and queries `<stem>.c`; returns the sinks reached.
+fn c_sinks_reached(stem: &str, index_models: &[PathBuf]) -> std::collections::BTreeSet<String> {
     use ctadl_ascent::codegen::CallResolutionStrategy;
     use ctadl_ascent::query_engine::formatter::SarifProfile;
 
@@ -922,10 +921,11 @@ fn c_sinks_reached(stem: &str) -> std::collections::BTreeSet<String> {
     )
     .unwrap();
     let models = vec![c_fixture(&format!("{stem}.json"))];
+    let all_index_models: Vec<PathBuf> = models.iter().chain(index_models).cloned().collect();
     cli::index(
         &project,
         &[],
-        &models,
+        &all_index_models,
         false,
         cli::IndexOptions {
             strategy: CallResolutionStrategy::default(),
@@ -959,7 +959,7 @@ fn c_sinks_reached(stem: &str) -> std::collections::BTreeSet<String> {
 fn test_cli_query_c_funcptr_with_two_targets() {
     run_store_test(|| {
         assert_eq!(
-            c_sinks_reached("funcptrmulti"),
+            c_sinks_reached("funcptrmulti", &[]),
             ["sink_a", "sink_b"].map(String::from).into()
         );
     });
@@ -971,8 +971,30 @@ fn test_cli_query_c_funcptr_with_two_targets() {
 fn test_cli_query_c_funcptr_stored_two_frames_down() {
     run_store_test(|| {
         assert_eq!(
-            c_sinks_reached("funcptr2down"),
+            c_sinks_reached("funcptr2down", &[]),
             ["sink_strips", "sink_tiles"].map(String::from).into()
+        );
+    });
+}
+
+/// `allocsize.c` with the native defaults: a malloc size does not taint the buffer.
+#[test]
+fn test_cli_query_c_allocation_size_is_not_contents() {
+    let native_defaults: PathBuf = [
+        env!("CARGO_MANIFEST_DIR"),
+        "src",
+        "models",
+        "defaults",
+        "native-index.jsonl",
+    ]
+    .iter()
+    .collect();
+    run_store_test(|| {
+        assert_eq!(
+            c_sinks_reached("allocsize", &[native_defaults.clone()]),
+            ["sink_hit_local", "sink_hit_returned", "sink_len"]
+                .map(String::from)
+                .into()
         );
     });
 }
