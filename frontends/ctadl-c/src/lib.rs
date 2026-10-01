@@ -4384,6 +4384,22 @@ impl<'a> Context<'a> {
                 let is_deref = node
                     .child_by_field_name("operator")
                     .is_some_and(|op| to_str(&op, source) == "*");
+                // `*p++ = v`: lower the update, then store through `p` (not the update's temp).
+                let mut operand = arg;
+                while operand.kind() == "parenthesized_expression" {
+                    match first_named_child(operand) {
+                        Some(inner) if inner.kind() != "compound_statement" => operand = inner,
+                        _ => break,
+                    }
+                }
+                let arg = if is_deref && operand.kind() == "update_expression" {
+                    self.flatten_update_expression(program, operand, source, scope_view)?;
+                    operand
+                        .child_by_field_name("argument")
+                        .expect("an update expression has an argument")
+                } else {
+                    arg
+                };
                 let ptr = self.flatten_lvalue(program, arg, source, scope_view)?;
                 // A store through `*p` where `p` has a known same-block address-of alias
                 // (`p = &x`) targets the pointee `x` directly, so the write is observed at
