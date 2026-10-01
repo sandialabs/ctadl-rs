@@ -1098,11 +1098,8 @@ impl ArtifactLanguage {
         }
     }
 
-    /// Which parameter versions SSA hands back to the formals, for IR this language's front end
-    /// produced (see [`ctadl_ir::ssa::ParamWriteBack`]). JVM bytecode parameters are locals that
-    /// a method may rebind, R8 reuses their registers freely, and the caller's argument cannot
-    /// change, so the write-back is the entry version. The C front end writes through a pointer
-    /// parameter by assigning to it, and the others keep the version live at exit as before.
+    /// Which parameter versions SSA writes back to the formals, for IR from this language's
+    /// front end. See [`ctadl_ir::ssa::ParamWriteBack`].
     pub fn param_write_back(self) -> ctadl_ir::ssa::ParamWriteBack {
         use ctadl_ir::ssa::ParamWriteBack;
         match self {

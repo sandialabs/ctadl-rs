@@ -2,9 +2,7 @@
 This module implements Cytron et al's phi placement and SSA renaming.
 
 The SSA form is *pruned*: a phi for a variable goes only where the variable is live on entry to
-the block, so no phi is placed that no later use can observe. Minimal SSA placed every phi the
-iterated dominance frontier asks for, and on large native functions over 98% of them were dead
-(`libudphub`: 5.19 M phis, 59 k of them live).
+the block, so no phi is placed that no later use can observe.
 
 After SSA conversion, one may depend on a few things:
 - All variables are versioned. Version 0 is the "incoming" version for each variable, conceptually.
@@ -77,8 +75,8 @@ pub struct Pipeline {
     /// SSA conversion needs every block to be reachable from the start block and panics
     /// otherwise, and pruning is how a caller makes that true.
     pub prune_unreachable: bool,
-    /// Passed on to [`transform_program_with`]: which version of each parameter the exit
-    /// param-flow hands back to its formal. Has no effect unless `ssa` is set.
+    /// Passed on to [`transform_program_with`]; see [`ParamWriteBack`]. Has no effect unless
+    /// `ssa` is set.
     pub param_write_back: ParamWriteBack,
 }
 
@@ -87,16 +85,13 @@ pub struct Pipeline {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ParamWriteBack {
     /// The version live at exit. Right for a front end that writes through a parameter by
-    /// assigning to it: the C front end lowers `*out = x` to `out = x`, because a pointer
-    /// parameter stands for its pointee.
+    /// assigning to it.
     #[default]
     Exit,
     /// The entry version, version 0. Right for a front end whose parameter variables are
     /// ordinary locals that the callee may rebind: the caller's argument cannot change, and a
-    /// write through it is a field store on the entry version. R8 reuses parameter registers
-    /// in dex routinely, e.g. `iget-byte p0, p0, _quoteChar` before `return-void` in Jackson's
-    /// `UTF8JsonGenerator.writeBinary`, where the exit version gave the summary
-    /// `this <- this._quoteChar`.
+    /// write through it is a field store on the entry version. Reassigning a parameter, as in
+    /// `p0 = p0.f` before a return, then does not flow `p0.f` back to the caller's argument.
     Entry,
 }
 
@@ -152,8 +147,7 @@ impl Pipeline {
         self
     }
 
-    /// Sets [`Pipeline::param_write_back`], for a caller that knows which front end produced
-    /// the program.
+    /// Sets [`Pipeline::param_write_back`].
     #[inline]
     #[must_use]
     pub fn param_write_back(mut self, param_write_back: ParamWriteBack) -> Self {
