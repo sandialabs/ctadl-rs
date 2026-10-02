@@ -1,5 +1,10 @@
 # Things to improve - DO-NOT-MERGE
 
+The 50 APKs of the corpus are in `/Volumes/Shampoo/ct-bigapk/apks/`: the original 15, and 35 more
+small apps with native code (see "Small apps with native code"). The measurements below are under
+`/Volumes/Shampoo/ct-bigapk/small/`, and most before that section index the Dex-only imports in
+`small/r8-general/` rather than the APKs themselves.
+
 ## `locals` blowup on native code: `org.vi_server.androidudpbus` (2026-09-29)
 
 This app does not index in 15 minutes. It hit the timeout at 88 GiB, against a budget of about
@@ -624,7 +629,8 @@ shares of those. Greenbits also has 56 decisions (4%) in a cycle, and darkcoin 3
   `cpuinfo`", and iteration counts are comparable even though wall times are not (those runs went
   four at a time). `cpuinfo` falls from 1,316 iterations and 12.4 GB to 231 and 2.1 GB. `ceno`
   goes from 540 and 13.9 GB to 283 and 4.8 GB, and `darkcoin` from 606 and 29.7 GB to 423 and
-  9.9 GB. `cash.p.terminal` wasn't measured before; it is now the largest at 40.7 GB.
+  9.9 GB. `cash.p.terminal` wasn't measured before; it is now the largest at 40.7 GB. That is
+  its size, not a blowup; see "`cash.p.terminal`: big, not blowing up".
 
 The data is under `/Volumes/Shampoo/ct-bigapk/small/impossible-corpus/`: `RESULTS.md`, `table.md`,
 `ladder.log`, and per app `<pkg>/runs/entry/` (index log, census, typecheck) and
@@ -705,3 +711,275 @@ The fix's measurements are under `/Volumes/Shampoo/ct-bigapk/small/paramflow-ent
 - `reg-{base,entry,scoped}/`, `sarif-diff.txt`, `sarif-diff-scoped.txt`: the regression suite and
   its comparisons. `chess-repin-{base,scoped}/`: the chess case with the re-scoped sink.
 - `chess-app-ir.txt`: the chess app's IR dump, for the `Lt2/l;->F` and `Lx2/c;->y` bodies.
+
+## `cash.p.terminal`: big, not blowing up (2026-10-01)
+
+`cash.p.terminal` (Dex half) is the largest app in the corpus. On head (`a84d75e7`) it reaches
+a fixpoint in 390 s at 41.2 GB, in 637 iterations. It was the one large outlier left after
+"Across the corpus", so it was profiled with the timeout ladder.
+
+**Status:** not a blowup. Its cost is in line with its size. Recommendation 1's `cta_key` costs
+it 4 GB for nothing; see "Recommendations".
+
+### It costs what its size predicts
+
+- **Size.** 846,592 functions, 1.37 M Java call sites, 638 MB of IR: about 4x `greenbits`.
+- **Memory relative to IR.** Peak memory is 65x the IR. The rest of the corpus runs from 34x
+  (`ceno`) to 123x (`tinykeepass`), and `greenbits` is 70x. Per function it is 48 KB, against
+  `greenbits`' 61 KB.
+- **The contextual relations are negligible.** 192 k `context_locals` rows and 25 k decisions.
+  It has neither `cpuinfo`'s hubs nor `greenbits`' impossible decisions.
+
+### Memory is front-loaded, and marginal costs are flat
+
+Timeout ladder (10 to 240 s, 55 GiB guard, default `decision`):
+
+| Rung | scc 4 iterations | Peak | `locals` | `assign_like` | `edge_split` | `ext_dst` | Default containers |
+|---|---|---|---|---|---|---|---|
+| 10 s, 20 s | 0 (still in scc 1) | 16.1 GB | 3.3 M | 38.2 M | 0 | 0 | 3.6 GB |
+| 40 s | 2 | 24.7 GB | 8.5 M | 39.0 M | 40.2 M | 0 | 4.2 GB |
+| 80 s | 6 | 30.9 GB | 13.3 M | 39.9 M | 40.6 M | 15.3 M | 6.2 GB |
+| 160 s | 64 | 41.0 GB | 28.6 M | 41.8 M | 44.7 M | 27.3 M | 11.6 GB |
+| 240 s, no timeout | 637 (fixpoint) | 41.2-41.7 GB | 31.0 M | 42.3 M | 46.0 M | 28.8 M | 11.7 GB |
+
+- **Memory peaks by iteration 64.** The remaining ~570 iterations add 2 M `locals` rows and no
+  memory.
+- **Context-free relations cost the same per new row at every rung** (40→80 s, 80→160 s,
+  160→240 s):
+  - `locals`: 3.0, 1.5 and 1.8 µs
+  - `edge_split`: 0.6, 0.3 and 0.7 µs
+  - `ext_dst`: 0.5, 0.6 and 1.2 µs
+  - `locals_key`: 0.4, 0.2 and 0.3 µs
+  - `summary`: 3.3, 3.3 and 3.4 µs
+- **Only contextual rules get more expensive per row, on almost no rows.** That costs time, not
+  memory; see "Where the time goes".
+  - `critical_summary`: 0.8, 26 and 2,277 µs
+  - `establishes_direct`: 2.5, 14 and 3,436 µs
+  - `context_assign`: 39, 99 and 875 µs
+
+### Where the memory goes
+
+At the end of the fixpoint the footprint is 39.0 GB:
+
+- **Held before the fixpoint starts: 7.5-8 GB.** Facts, source info and interners. 6.9-8.7 GB
+  is still held after the index is saved and dropped.
+  - Loading the IR takes 3.8 GB, and SSA raises that to 5.2 GB.
+  - `facts.try_save` adds 2.3 GB (4.9 → 7.2 GB) that is never given back.
+- **scc 1 adds 7 GB, to 15 GB.**
+  - `assign_like` grows from 10.7 M to 38.2 M rows. The 27.5 M new rows are parameter edges,
+    two per `actual_param` row.
+  - `actual_param` has 13.8 M rows, about 10 per call site: arguments, returns and the globals
+    slot.
+  - This is linear in the number of call sites, not CHA fan-out.
+- **scc 4 adds 24 GB.**
+  - BYODS tries, 14.9 GB: `edge_split` 4.07, `assign_like` 3.09, `locals` 3.06,
+    `locals_key` 2.92 and `ext_dst` 1.77.
+  - Ascent's default containers, 11.7 GB:
+
+| Relation | Total | Row store | Indices |
+|---|---|---|---|
+| `cta_key` | 2.88 GB | 0.94 GB | `cta_key_indices_0_1_2` 1.11 GB, `cta_key_indices_0_1_2_3_4` 0.84 GB |
+| `call_target_assign_like` | 2.41 GB | 0.40 GB | `_indices_0_1_2` 0.79 GB, `_indices_0_1` 0.54 GB, `_indices_0_1_2_3` 0.36 GB, `_indices_0` 0.32 GB |
+| `reach_vp` | 2.34 GB | 0.81 GB | `reach_vp_indices_none` 0.81 GB, `reach_vp_indices_0_1_2` 0.73 GB |
+| `actual_param` | 1.56 GB | 0.54 GB | `actual_param_indices_none` 0.54 GB, `actual_param_indices_0_1_2` 0.48 GB |
+| `alias_of_formal` | 0.61 GB | 0.13 GB | `_indices_0_1` 0.35 GB, `_indices_0_1_2` 0.12 GB |
+
+- **`reach_vp` exists only to feed other rules.** It is a projection of `locals` that drives
+  `locals_key`, `locals_key_wild` and `locals_wild` through its delta. It is stored three times,
+  once as `_indices_none`, a full copy.
+- **`actual_param` outlives its only use.** Only scc 1's call-arg rule reads it, but it is held
+  through scc 4.
+
+### Recommendation 1's `cta_key` costs 4 GB and buys nothing here
+
+Head was rebuilt with `76982fc4` reverted:
+
+| Build | Peak | scc 4 | Call-target rule time | Join pairs |
+|---|---|---|---|---|
+| head, two runs | 41.2-41.7 GB | 187-216 s | 16.7-19.4 s | 8.8 M (keyed) |
+| head without `76982fc4` | 37.1 GB | 188 s | 20.7 s | 11.2 M, 79% prefix matches |
+
+- **Keying saves no time here.** The unkeyed join is barely wasted, unlike `cpuinfo`'s 0.6%.
+- **The results are unchanged.** Relation sizes are identical except `set_*` and
+  `context_summary_set`. Those also differ between two runs of head (the nondeterminism noted in
+  "`cpuinfo` blowup").
+- **`cta_key` is now a net memory loss on three apps.** On `cash.p.terminal`, `darkcoin` and
+  `greenbits` it costs memory and saves no time ("Beyond `cpuinfo`"). Only `cpuinfo` benefits,
+  and that was before the entry write-back shrank its `call_target_assign_like`.
+
+### Where the time goes
+
+Wall time is 341 s without `76982fc4`:
+
+| Phase | Time |
+|---|---|
+| Load the IR, SSA, codegen, save the facts | 57 s |
+| Path closure | 20 s |
+| scc 1 | 18 s |
+| scc 4 | 188 s |
+| Census and save | 47 s |
+
+Rule time is 161-189 s:
+
+- **The core propagation rules are about 45%.** They are the two `locals` rules over `ext_dst`
+  and `edge_split`, plus the rules that derive `ext_dst` and `edge_split`. They cost 0.4-0.8 µs
+  per row, which is normal.
+- **Joins that scan a total relation every iteration cost 25-39 s.** These are
+  `critical_summary` rule 1.2, `context_assign`, `establishes_direct` and `critical_reach`.
+  Rule 1.2 shows the pattern: Ascent drives it from `call_indices_2_total` and
+  `critical_summary_indices_0_total`, and probes the `locals` delta last. So every one of the
+  637 iterations walks the 2.9 M `call` rows to find a few new rows.
+- **The wildcard rules cost about 9 s and produce nothing on Java.** `assign_wild`,
+  `edge_split_wild`, `locals_wild` and `locals_key_wild` scan every `assign_like` or `reach_vp`
+  delta, but Java paths have no trailing offsets.
+
+### Recommendations
+
+None is needed for `cash.p.terminal` to finish. Each lowers the constant for every large app.
+
+1. **Turn off `cta_key` except where it pays: measured −4 GB.** Use the keyed join only at
+   high-fan-out vertices, or drop it. It is a net loss on three of the four apps measured.
+   Do this before moving it into a compact store.
+2. **Fold `reach_vp` into its consumers: up to −2.3 GB, estimated.** Derive `locals_key`,
+   `locals_key_wild` and `locals_wild` from the `locals` delta directly.
+3. **Free `actual_param` after scc 1: −1.6 GB, estimated.** One option is to generate the
+   call-arg edges in Rust before `ascent_run`.
+4. **Find the 2.3 GB `facts.try_save` keeps, and the 7-8 GB held through the index.** Not
+   investigated.
+5. **Reorder or key the scanning joins, and skip the wildcard rules when no path has an
+   offset.** Time only: 35-50 s of rule time.
+
+Recommendations 1-3 together come to about 8 GB, 20% of the peak. Only recommendation 1 was
+measured.
+
+### Data
+
+All output is under `/Volumes/Shampoo/ct-bigapk/small/cash-terminal/`:
+
+- `RESULTS.md`: a summary. `ladder.log`: time and peak memory for every run.
+- `bin/ctadl-a84d75e7`: the head binary. `bin/ctadl-norec1`, `bin/ctadl-norec1.diff`: head with
+  `76982fc4` reverted.
+- `run.sh`, `run2.sh` (takes `B=<binary>` and logs the driver's `[mem cp]` checkpoints),
+  `ladder.sh`: these index the r8-general `both` import.
+- `runs/{full,t10,t20,t40,t80,t160,t240,norec1-full}/index.err`: the full debug logs.
+- `marginal.txt` (from `../cpuinfo-blowup/marginal.py`), `mem-by-rung.txt`: marginal cost and
+  memory per rung. `idx-*.txt` (from `../greenbits-probe/idx.py`): the index breakdowns.
+- `ir-bytes.txt`: the size of the import's IR.
+
+## Small apps with native code: six kinds of blowup (2026-10-02)
+
+Every APK was imported whole, Dex and arm64 libraries, and indexed on head (`a84d75e7`) with an
+1800 s Ascent timeout under a 55 GiB guard. Apps that did not reach a fixpoint, and the
+over-budget ones that did, got a timeout ladder. The budget is 100x the IR (the sum of
+`ir-program.bitcode` over the app's imports).
+
+**Status:** 44 small apps measured: 22 over budget, 11 at 5x or more, 6 without a fixpoint. No
+fixes tried. The six large APKs were not indexed with native code; see "The large APKs".
+
+### The large APKs fail at import
+
+`darkcoin`'s import hit a 50 GiB cap. Ghidra finished `libsdklib.so` (38 MB) in 30 minutes and
+wrote 7.8 GB of compressed facts, and ctadl's lowering of those facts passed 50 GiB 10 minutes
+later. Lowering costs about 11x the facts (`udpbus`: 108 MB of facts, a 1.2 GB peak), and each of
+the other five has a larger library, from 45 MB (`greenbits`) to 156 MB (`libxul` in `ceno`). So
+the corpus was extended with small apps instead: the 35 permissively licensed F-Droid apps of at
+most 8 MB whose arm64 libraries total at most 4 MB.
+
+### Results
+
+| App | IR | Peak | Against budget | Result | Kind |
+|---|---|---|---|---|---|
+| `glxy` | 15.1 MB | 21.5 GB | 14.3x | fixpoint, 117 s | `locals` volume (`libgdx`) |
+| `reinstead` | 46.4 MB | 62 GB or more | 13.4x | guard, 1,610 s | SSA phi operands |
+| `retrodrawing` | 15.4 MB | 20.0 GB | 13.0x | fixpoint, 236 s | `locals` volume (`libgdx`) |
+| `avifview` | 51.7 MB | 59 GB or more | 11.5x | guard, 611 s | `locals` volume |
+| `AnarchRE` | 63.8 MB | 57.8 GB | 9.0x | timeout, 2,241 s | Native function pointers (SDL3) |
+| `halma` | 31.5 MB | 22.6 GB | 7.2x | fixpoint, 190 s | `locals` volume (`libgdx`) |
+| `bined` | 15.5 MB | 10.8 GB | 7.0x | fixpoint, 245 s | Summary growth |
+| `heartratemonitor` | 97.2 MB | 61 GB or more | 6.3x | guard, 299 s | Native function pointers (SQLite) |
+| `udpbus` | 28.2 MB | 15.8 GB | 5.6x | fixpoint, 173 s | `locals` volume (stack slots) |
+| `a2050` | 60.2 MB | 33.9 GB | 5.6x | fixpoint, 889 s | `locals` volume, wild relations |
+| `conscryptprovider` | 67.7 MB | 34.0 GB | 5.0x | timeout, 1,879 s | Wild relations |
+| `fir.tube` | 27.1 MB | 12.4 GB | 4.6x | fixpoint, 93 s | `locals` volume |
+| `dictionary.fork` | 32.0 MB | 9.4 GB | 2.9x | fixpoint, 321 s | Edge-delta join |
+| `termux.nix` | 38.5 MB | 9.7 GB | 2.5x | fixpoint, 831 s | Edge-delta join |
+| `scrcpy` | 113 MB | 20.7 GB | 1.8x | timeout, 2,068 s | Edge-delta join |
+
+The 29 other apps are at 1.6x or below. For a guard kill, the peak is the guard's last sample.
+
+### The six kinds
+
+1. **`locals` volume.** The four `locals` rules take 80-95% of rule time at 0.01-0.3 µs per row,
+   flat across the ladder: the cost is the number of rows (250-530 M). This is the stack-slot
+   mixing pool of "`locals` blowup". The three `libgdx` apps, two different builds of the
+   library, all peak at 20-23 GB, whatever the rest of the app is.
+2. **Edge-delta join: a rule whose cost per row grows.** In
+   `locals(f, v1, p1, a, p43) <-- edge_split(f, v2, key, rest, dst), locals(f, v2, key, a, p4)`,
+   the half driven by the `edge_split` delta costs 8-25x the half driven by the `locals` delta.
+   Edges that arrive late each enumerate every `locals` row at their source and rederive rows that
+   already exist.
+   - `termux.nix`: `locals` costs 0.5, 9.5, 81 and 173 µs per new row on successive rungs (40 s to
+     the fixpoint). The edge-delta rule takes 59, 144, 574 and 737 s; the `locals`-delta rule
+     stays at 8 s. Between 160 and 320 s `edge_split` triples, to 35.5 M rows, while `locals` gains
+     5 M. The peak is only 9.7 GB.
+   - `scrcpy`: 0.9, 1.1, 5.9, 11.2 and 22.0 µs per new row. Memory is flat at 14 GB after 40 s,
+     and it did 32 iterations in 2,049 s.
+   - Milder in `androidcrypt` (11x), `openarcade`, `aiyo`, `untracker` and `freezeyou` (3.6-8x).
+     In the volume apps the two halves cost the same.
+3. **Native function pointers mint decisions.** The context machinery of "`cpuinfo` blowup", on
+   p-code: an indirect call through a driver or VFS table resolves to every function stored into
+   such a table.
+   - `AnarchRE` (SDL3): 17,500 decisions, 16,359 of them in `SDL_EnterAppMainCallbacks` (280 k
+     tags, 40 B `call_target_assign_like` pairs per full re-derivation). After 640 s,
+     `context_locals` goes from 0.89 M to 8.4 M rows at 60.6 µs per new row. `establishes_via`
+     holds 66.7 M rows in 10.1 GB: `establishes_via_indices_0` has 63 keys and 2.25 GB, and
+     `establishes_via_indices_none` is another full copy at 1.61 GB.
+   - `heartratemonitor` (SQLite): at 80 s, 5,259 decisions, 17.2 M `context_locals` rows with 637 M
+     memberships, 29 M set unions and 42.9 M `cta_key` rows. The hubs are `FUN_0016e150` (1,495
+     blocks, likely `sqlite3VdbeExec`; 1.64 M tags) and `sqlite3_open_v2` (decision sets of 92).
+     Memory doubles every 20-40 s.
+4. **SSA phi operands.** `FUN_00142330` in `reinstead`'s `libmain.so` (1,027 blocks, 165 k
+   statements) gets 658,838 phis, all live, with 47.4 M operands: about 640 phis per block and 72
+   operands per phi. It is likely the embedded Lua interpreter loop. Pruning can't remove them.
+   They become 47.7 M `copy_edge` rows, 1.04 assignments per byte of IR against 0.02-0.03 in every
+   other app, and the index enters the fixpoint at 9 GB. At 640 s `locals` holds 509 M rows and
+   `ext_dst` 82 M.
+5. **Wild relations.** The offset-keyed relations of the wildcard match take most of Ascent's
+   default containers: in `conscryptprovider`, `edge_split_wild` (46 M rows, 7.6 GB) and
+   `assign_wild` (26 M, 3.8 GB) are 11.4 of 13.3 GB; in `a2050`, the wild relations and `ext_fml`
+   are 8.9 of 10.7 GB. On `conscryptprovider` the `ext_dst` rule driven by the `assign_wild` delta
+   rises from 0.3-0.9 to 15, 24 and 45 µs per new row.
+6. **Summary growth.** `bined` (82% Java): `summary` grows from 0.5 M to 5.8 M rows, `assign_like`
+   from 1.5 M to 14 M and `edge_split` from 3.2 M to 49 M, each at a flat cost per row.
+
+`reach_vp <-- locals delta` gets more expensive per row on every large app (`glxy` 6.7 to 25 µs,
+`conscryptprovider` 0.5 to 14.8 µs), since it visits every new `locals` row to find a few new
+`(f, v, p)`. This is recommendation 2 of "`cash.p.terminal`".
+
+### Next
+
+1. **Find what feeds the edge-delta join.** The aggregate profile can't say which functions the
+   late edges belong to, or where they come from (summary instantiation or call-target
+   resolution). The probe's `CTADL_FOCUS` dump, or a per-function `edge_split` census, on
+   `termux.nix` would show it.
+2. **Confirm the function-pointer mechanism.** Dump the decisions of `AnarchRE` and
+   `heartratemonitor` and check which indirect call sites mint them.
+3. **Bound phi operands at interpreter loops.** `FUN_00142330` is one function; check whether its
+   live variables are promoted stack slots (mem2reg) or registers.
+
+### Data
+
+All output is under `/Volumes/Shampoo/ct-bigapk/small/full-corpus/`:
+
+- `RESULTS.md`: a summary. `ladder.log`: time and peak memory for every run. `budget.py`,
+  `budget.txt`: the budget table.
+- `import.sh`, `index.sh`, `one.sh`, `imports.sh`, `indexes.sh`, `ladder-over.sh`,
+  `ladders-more.sh`: the harness. `order.txt` and `more.txt` list the apps.
+- `<pkg>/import/`: the import. `<pkg>/runs/<run>/index.err`: the full debug log of each run
+  (`full`, `t<N>`), with `rank.txt` from `../cpuinfo-blowup/rank.py`. `<pkg>/marginal.txt`
+  (from `../cpuinfo-blowup/marginal.py`): the ladder's marginal costs.
+- `ru.hugeping.reinstead/ssa-census-libmain.txt`, and the same for `heartratemonitor`'s libraries:
+  from `ctadl-import/examples/ssa_census.rs`.
+- `hashengineering.darkcoin.wallet/import-cap50/`: the failed import, with its 7.8 GB of facts.
+- `../more-picks.json`, `../fetch-more.py`, `../fetch-more.log`: the 35 new apps and their
+  download, each checked against the F-Droid index's sha256.
