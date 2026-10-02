@@ -246,7 +246,9 @@ pub fn index(
         );
         ssa::run_pipeline(
             &mut program_info.program,
-            ssa::Pipeline::index_default().prune(prune_unreachable_cfg_nodes),
+            ssa::Pipeline::index_default()
+                .prune(prune_unreachable_cfg_nodes)
+                .param_write_back(import.language.param_write_back()),
         );
         log::debug!(
             "[mem cp] after SSA transform: {:.1} MB",

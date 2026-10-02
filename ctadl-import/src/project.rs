@@ -1098,6 +1098,27 @@ impl ArtifactLanguage {
         }
     }
 
+    /// Which parameter versions SSA writes back to the formals, for IR from this language's
+    /// front end. See [`ctadl_ir::ssa::ParamWriteBack`].
+    pub fn param_write_back(self) -> ctadl_ir::ssa::ParamWriteBack {
+        use ctadl_ir::ssa::ParamWriteBack;
+        match self {
+            ArtifactLanguage::Jvm
+            | ArtifactLanguage::Jar
+            | ArtifactLanguage::Dex
+            | ArtifactLanguage::Apk
+            | ArtifactLanguage::Xapk => ParamWriteBack::Entry,
+            // A deficiency in the C front end, not a property of C: it lowers `*out = x` to
+            // `out = x` and `&v` to `v` (a pointer stands for its pointee), so out-parameters
+            // reach the caller only through the exit version. With `*p` lowered to `p.deref`
+            // and `&v` to an address, C could use `Entry` too.
+            ArtifactLanguage::C
+            | ArtifactLanguage::Lua
+            | ArtifactLanguage::Pcode
+            | ArtifactLanguage::Flowy => ParamWriteBack::Exit,
+        }
+    }
+
     /// Inverse of [`Self::name`]. `None` for anything else, which callers report as an error
     /// rather than silently dropping -- a scope naming a language that does not exist would
     /// otherwise admit nothing and look like an app with no cross-language flow.
