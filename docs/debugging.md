@@ -212,3 +212,52 @@ ORDER BY target."column1", idx."column1";
 cd ~/.local/state/ctadl/imports/ls/facts
 cat pcode_schema.sql | sqlite3 facts.db
 ```
+
+# Debugging Android apps
+
+The dev shell carries an emulator, adb, frida, jdb and a native lldb. The flake
+comments next to `androidDebugSdk` have the command sequences; these are the
+things that do not work the obvious way.
+
+- **The SDK is read-only.** It lives in the Nix store, so `sdkmanager --install`
+  fails. Add components to `androidDebugSdk` in `flake.nix` instead.
+- **jdb needs a debuggable app, even on the userdebug emulator image.** A release
+  APK gets `Not starting debugger since process cannot load the jdwp agent` in
+  logcat, `adb jdwp` lists nothing, and `jdb -attach` fails its handshake. Setting
+  `persist.debug.dalvik.vm.jdwp.enabled` does not help. Repack the APK instead:
+
+  ```
+  apktool d -o app app.apk
+  # add android:debuggable="true" to <application> in app/AndroidManifest.xml
+  apktool b -o app-unsigned.apk app
+  zipalign -p -f 4 app-unsigned.apk app-aligned.apk
+  keytool -genkeypair -keystore dbg.keystore -storepass android -keypass android \
+    -alias dbg -keyalg RSA -validity 10000 -dname CN=dbg
+  apksigner sign --ks dbg.keystore --ks-pass pass:android --out app-debug.apk app-aligned.apk
+  adb uninstall <pkg>; adb install app-debug.apk
+  ```
+
+  The `-p` matters for apps with native code: without it the install fails with
+  `Failed to extract native libraries`. The new signature means the original app
+  has to be uninstalled first. Frida needs none of this: after `adb root` it
+  works on any app.
+- **`am start -D` waits only until a debugger attaches.** Once jdb connects the
+  app runs on, so a breakpoint typed a few seconds later can miss startup code
+  like `onCreate`/`onResume`. Set it as jdb's first command.
+- **jdb only invokes methods from a thread stopped at an event.** After a plain
+  `suspend`, `print Foo.bar()` fails with `IncompatibleThreadStateException` or
+  `Name unknown`. Stop at a breakpoint first. A dotted nested class does not resolve:
+  `android.os.Build.VERSION.SDK_INT` gives `No static field or method with the
+  name VERSION`.
+- **jdb's thread and object ids change between sessions.** An id from one
+  `jdb -attach` is meaningless in the next, so script a single session rather than
+  re-attaching for each command.
+- **Use `android-lldb`, not the NDK's lldb or `lldb`.** The NDK's host lldb needs a
+  `libpython3.11.dylib` the Nix package leaves out, so it dies in dyld.
+  `/usr/bin/lldb` is an xcrun shim that cannot find Xcode inside the shell.
+  `android-lldb` is nixpkgs' lldb 21, which segfaults attaching to an Android
+  process while it loads modules in parallel; the wrapper runs
+  `settings set target.parallel-module-load false` for you. The device side is
+  `$ANDROID_LLDB_SERVER`.
+- **frida-server must match the host frida exactly.** `$FRIDA_SERVER` is the
+  matching build; do not download one by hand.
