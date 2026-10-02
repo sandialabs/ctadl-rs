@@ -92,7 +92,7 @@ answer: a library whose Java classes ship outside `classes.dex` (a bundled BD-J 
 feature-split dex) yields well-formed tables that match nothing, and no link is fabricated.
 
 Because the scan runs at import time, a library imported before this feature existed has no
-sidecar, and `--skip-existing` will not create one on a re-import. `--no-jni-registry` ignores the
+sidecar, and a re-import reuses it unchanged without creating one unless given `--force`. `--no-jni-registry` ignores the
 sidecar at index time, leaving the symbol convention alone.
 
 # How arguments are mapped

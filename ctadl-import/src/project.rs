@@ -269,7 +269,7 @@ pub struct ArtifactImport {
     pub image_base: Option<i64>,
     /// Hex-encoded SHA-256 content hash of the artifact, recorded once the import
     /// has successfully completed. Together with [`Self::artifact_path`] this lets
-    /// `import --skip-existing` decide whether a re-import is necessary. `None` for
+    /// `ctadl import` decide whether a re-import is necessary. `None` for
     /// older imports created before this field existed, or for an import that has
     /// not yet completed.
     #[serde(default)]
@@ -426,9 +426,9 @@ impl ArtifactImport {
 
     /// Path to the `RegisterNatives` tables recovered from this import, if it has any.
     ///
-    /// Written at *import* time, so `ctadl import --skip-existing` -- which reuses an unchanged
-    /// library's import directory -- will not create one for a library imported before this
-    /// existed. Re-import without `--skip-existing` to gain it.
+    /// Written at *import* time, so `ctadl import` -- which reuses an unchanged library's import
+    /// directory -- will not create one for a library imported before this existed. Re-import
+    /// with `--force` to gain it.
     pub fn jni_registry_path(&self) -> PathBuf {
         self.import_path().join(JNI_REGISTRY_FILE)
     }
@@ -477,8 +477,8 @@ impl ArtifactImport {
     }
 
     /// Records the artifact's content hash in the config and persists it. Call this
-    /// once an import has completed successfully so that a later `--skip-existing`
-    /// import can detect that the stored artifact is up to date.
+    /// once an import has completed successfully so that a later import can detect that
+    /// the stored artifact is up to date.
     ///
     /// # Errors
     ///
@@ -488,10 +488,14 @@ impl ArtifactImport {
         self.save()
     }
 
-    /// Returns true if an import named `name` already exists in the store, its
-    /// destination is present, and both the stored artifact path and content hash
-    /// match `artifact_path` and its current contents. When this holds, a re-import
-    /// would reproduce the same result and can be skipped.
+    /// Returns true if an import named `name` already exists in the store, ran to
+    /// completion, its destination is present, and both the stored artifact path and
+    /// content hash match `artifact_path` and its current contents. When this holds, a
+    /// re-import would reproduce the same result and can be skipped.
+    ///
+    /// Always false for a Ghidra Server repository (`ghidra://…`), which cannot be
+    /// hashed, and for an import with no recorded hash (one created before hashes were
+    /// recorded), since nothing proves either is unchanged.
     ///
     /// Returns `false` (rather than erroring) when no matching import config can be
     /// loaded, so the caller falls back to performing the import.
@@ -500,8 +504,6 @@ impl ArtifactImport {
     ///
     /// If the artifact path cannot be canonicalized or its contents cannot be hashed.
     pub fn is_up_to_date(name: &str, artifact_path: &Path) -> Result<bool, Error> {
-        // A Ghidra Server repository lives outside the filesystem and cannot be
-        // hashed, so we can never prove it is unchanged: always re-import.
         if is_ghidra_server_url(artifact_path) {
             return Ok(false);
         }
@@ -510,7 +512,9 @@ impl ArtifactImport {
             // No (readable) prior import: not up to date, so the caller imports.
             Err(_) => return Ok(false),
         };
-        if !config.destination_exists() {
+        // The hash is recorded only after a successful import, so it already implies
+        // completion; checking the mark as well costs nothing and does not lean on that.
+        if !config.is_complete() || !config.destination_exists() {
             return Ok(false);
         }
         let stored_hash = match &config.hash {
