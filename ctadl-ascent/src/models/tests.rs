@@ -245,6 +245,49 @@ mod modes {
         assert!(matches.propagations.is_empty());
     }
 
+    /// `skip-exclusive-callees` names the closure's roots, and they are skipped too.
+    #[test]
+    fn skip_exclusive_callees_records_roots() {
+        let matches = matches_of(
+            &["f", "g"],
+            vec![serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature_match", "name": "f"}],
+                "model": {"modes": ["skip-analysis", "skip-exclusive-callees"]},
+            })],
+        );
+        let f: std::collections::BTreeSet<_> = [facts::Str::from("f")].into_iter().collect();
+        assert_eq!(matches.skip_analysis, f);
+        assert_eq!(matches.skip_exclusive_callees, f);
+    }
+
+    /// Skipping the callees of a body that is still analyzed would summarize it over stubs.
+    #[test]
+    fn skip_exclusive_callees_requires_skip_analysis() {
+        let program_info = native_program(&["f"]);
+        let mut out = ProgramModelMatches::default();
+        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
+        let err = ingest
+            .encode_models(vec![serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature_match", "name": "f"}],
+                "model": {"modes": ["skip-exclusive-callees"]},
+            })])
+            .expect_err("skip-exclusive-callees alone is rejected");
+        let crate::error::Error::JsonModel(errors) = err else {
+            panic!("expected a JSON model error, got: {err}");
+        };
+        assert_eq!(errors.len(), 1);
+        assert!(
+            format!("{}", errors[0]).contains("requires 'skip-analysis'"),
+            "{}",
+            errors[0]
+        );
+        assert!(out.skip_analysis.is_empty());
+        assert!(out.skip_exclusive_callees.is_empty());
+    }
+
     /// An unknown mode errors. Ignoring it would produce a model file that loads clean and
     /// analyzes the body anyway -- the one failure this directive cannot afford.
     #[test]

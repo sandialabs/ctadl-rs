@@ -1429,9 +1429,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
 
     /// Records the functions a `modes` directive applies to.
     ///
-    /// `skip-analysis` is the one defined value: codegen never lowers the matched function's
-    /// body, so whatever the same generator's `propagation` list says is that function's entire
-    /// behaviour. Without it a model *adds* to the body-derived summary rather
+    /// `skip-analysis`: codegen never lowers the matched function's body, so whatever the same
+    /// generator's `propagation` list says is that function's entire behaviour. Without it a model *adds* to the body-derived summary rather
     /// than replacing it, which is what makes a hand-written model unable to cut a degenerate
     /// function down (see `docs/model-generators.md` §`modes`).
     ///
@@ -1439,6 +1438,11 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// same `self.methods[n]` set. A generator carrying `modes` and no `propagation` is legal and
     /// means "this function moves nothing" -- the honest model for a routine whose only job is
     /// control flow.
+    ///
+    /// `skip-exclusive-callees`, which requires `skip-analysis`: also skip every unnamed function
+    /// only the matched one reaches. For a statically linked library routine whose helpers have
+    /// no symbol a model could name, like libc++abi's demangler. Codegen computes the closure
+    /// per import ([`crate::codegen::exclusive_callees`]).
     fn visit_modes(&mut self, n: usize, value: &serde_json::Value) {
         let Some(items) = value.as_array() else {
             self.report_not_array(n, "modes");
@@ -1458,6 +1462,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             return;
         }
         let mut skip = false;
+        let mut exclusive = false;
         for item in items {
             let Some(text) = item.as_str() else {
                 self.add_json_error(crate::error::JsonModelError::FieldNotString {
@@ -1468,22 +1473,36 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             };
             match text {
                 "skip-analysis" => skip = true,
+                "skip-exclusive-callees" => exclusive = true,
                 other => self.add_json_error(crate::error::JsonModelError::UnexpectedField {
                     index: n,
                     field_name: "modes".to_string(),
                     message: format!(
-                        "unknown mode '{other}'; the defined value is 'skip-analysis'"
+                        "unknown mode '{other}'; the defined values are 'skip-analysis' and \
+                         'skip-exclusive-callees'"
                     ),
                 }),
             }
+        }
+        // Skipping a function's callees but analyzing its body would leave the body's calls
+        // pointing at stubs: a summary built from callees that propagate nothing.
+        if exclusive && !skip {
+            self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                index: n,
+                field_name: "modes".to_string(),
+                message: "'skip-exclusive-callees' requires 'skip-analysis'".to_string(),
+            });
+            return;
         }
         if !skip {
             return;
         }
         for func in matched_functions(&self.methods[n], self.index.vmt) {
-            self.out
-                .skip_analysis
-                .insert(facts::Str::from(func.as_str()));
+            let func = facts::Str::from(func.as_str());
+            if exclusive {
+                self.out.skip_exclusive_callees.insert(func.clone());
+            }
+            self.out.skip_analysis.insert(func);
         }
     }
 
