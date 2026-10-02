@@ -989,7 +989,7 @@ All output is under `/Volumes/Shampoo/ct-bigapk/small/full-corpus/`:
 
 Item 1 of "Next" above: what feeds the edge-delta join in `termux.nix` and the other apps of kind 2.
 
-**Status:** found, no fix tried. The late edges are summaries instantiated at static call sites,
+**Status:** fixed by recommendation 1; see "Result: a model for `__cxa_demangle`". The late edges are summaries instantiated at static call sites,
 and they nearly all come from one library function: libc++abi's Itanium demangler, which every app
 with the symptom links statically. Its recursive-descent parser functions get summaries that are
 near cross products of arg 0's paths, instantiated at dozens of recursive call sites.
@@ -1080,6 +1080,50 @@ two of the other kinds.
 3. **Measure the rejected pairs.** If most of the 99.9% of pairs that yield nothing fail the
    `concat` admissibility test, rather than rederiving existing rows, then splitting `edge_split`
    on the admissible extensions of `rest` would cut the enumeration without changing the result.
+
+### Result: a model for `__cxa_demangle` (2026-10-02)
+
+`__cxa_demangle` now has a default model (`native-index.jsonl`). It has the propagation
+`Arg0.deref -> Ret.deref`, `Arg0.deref -> Arg1.deref` and `Arg1.deref -> Ret.deref`, and the modes
+`skip-analysis` and the new `skip-exclusive-callees`. The new mode also skips every function that
+only the matched one reaches (`codegen::exclusive_callees`), computed per import from direct
+calls. A skipped function must have a Ghidra default name (`FUN_…`), since a function with a
+symbol could be called from another library, and must not be address-taken. The demangler's parse
+functions are mutually recursive, so the set is a greatest fixpoint: start from everything
+reachable, then drop any function with a caller outside the set.
+
+It skips 32-106 bodies per app. Every one is a `FUN_` between `__cxa_demangle` and `operator new`.
+Across the 16 apps that link the demangler, with an 1800 s timeout:
+
+| App | Before | After | |
+|---|---|---|---|
+| `termux.nix` | 812 s, 9.7 GB | 10 s, 2.3 GB | 83x |
+| `nfcgate` | 170 s, 8.6 GB | 23 s, 5.5 GB | 7.5x |
+| `dictionary.fork` | 314 s, 9.4 GB | 64 s, 6.3 GB | 4.9x |
+| `androidcrypt` | 35 s, 2.9 GB | 9 s, 1.7 GB | 3.8x |
+| `openarcade` | 29 s, 3.4 GB | 10 s, 2.6 GB | 3.0x |
+| 7 more small apps | 6-40 s | 2-22 s | 1.5-2.5x |
+| `a2050` | 862 s, 33.9 GB | 665 s, 30.6 GB | 1.3x |
+| `mmrl` | 82 s, 10.3 GB | 71 s, 9.7 GB | 1.2x |
+| `scrcpy` | timeout | timeout (50 iterations, was 32) | |
+| `conscryptprovider` | timeout | timeout (68 iterations, was 66) | |
+
+"Before" is the full-corpus run. "After" ran with the census probe on. In termux.nix the
+instantiation work fell from 15.2 B pairs to 2.4 M.
+
+Recommendation 2 is now the open question, and two apps answer it: the cross-product shape
+survives without the demangler, in other parsers.
+
+- **`conscryptprovider`:** a recursive cycle `FUN_0020c454 -> FUN_0020cd4c -> FUN_0020d8d0 ->
+  FUN_0020c454`, between `ASN1_item_d2i` and `ASN1_item_i2d`. This is BoringSSL's ASN.1 template
+  decoder, and it has summaries of 1.8-4.0 M rows and 35 B pairs.
+- **`scrcpy`:** BoringSSL's TLS parsing (`SSL_parse_client_hello`, `CBS_get_*_length_prefixed`,
+  called from 37-47 sites each). There is also an unnamed range after `__emutls_get_address`,
+  entered from `__gxx_personality_v0` and `__cxa_throw`. It looks like a stripped libunwind, which
+  the unwinder model can't match by name.
+
+Both apps peaked higher (38 and 47 GB) because they get further in the same time. Data:
+`/Volumes/Shampoo/ct-bigapk/small/demangle-model/RESULTS.md`.
 
 ### Data
 
