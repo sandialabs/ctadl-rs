@@ -504,8 +504,6 @@ impl ArtifactImport {
     ///
     /// If the artifact path cannot be canonicalized or its contents cannot be hashed.
     pub fn is_up_to_date(name: &str, artifact_path: &Path) -> Result<bool, Error> {
-        // A Ghidra Server repository lives outside the filesystem and cannot be
-        // hashed, so we can never prove it is unchanged: always re-import.
         if is_ghidra_server_url(artifact_path) {
             return Ok(false);
         }
