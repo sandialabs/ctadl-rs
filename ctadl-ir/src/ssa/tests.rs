@@ -184,7 +184,7 @@ fn program_h() -> Program {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
-        let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
+        let global_ref = VariableRef::new_var_ref(Variable::GlobalHeap);
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
                 AccessPath::without_fields(global_ref.clone()),
@@ -227,7 +227,7 @@ fn program_h_update() -> Program {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
-        let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
+        let global_ref = VariableRef::new_var_ref(Variable::GlobalHeap);
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::update(
                 AccessPath::without_fields(global_ref.clone()),
@@ -726,6 +726,44 @@ fn test_pipeline_tag() {
     assert_eq!(Pipeline::none().prune(true).tag(), "none");
 }
 
+/// Running the pipeline on several threads hands each thread whole functions, so it has to give
+/// the same program as running it on one.
+#[test]
+fn test_pipeline_threads_match_serial() {
+    let program = || {
+        let mut program = Program::default();
+        for _ in 0..16 {
+            program.functions.extend(program_f().functions.iter().cloned());
+            program.functions.extend(program_h().functions.iter().cloned());
+        }
+        program
+    };
+    // Phi placement walks a `HashSet`, so the order of a block's phis differs from run to run
+    // even on one thread. Sorting each run of phi lines takes that order out of the comparison.
+    let normalize = |p: &Program| {
+        let mut out: Vec<String> = Vec::new();
+        let mut phis: Vec<String> = Vec::new();
+        for line in p.to_string().lines() {
+            if line.starts_with("phi ") {
+                phis.push(line.to_string());
+                continue;
+            }
+            phis.sort();
+            out.append(&mut phis);
+            out.push(line.to_string());
+        }
+        phis.sort();
+        out.append(&mut phis);
+        out.join("\n")
+    };
+    let mut serial = program();
+    run_pipeline(&mut serial, Pipeline::index_default());
+    let mut parallel = program();
+    run_pipeline_with_threads(&mut parallel, Pipeline::index_default(), 4);
+    assert!(serial.to_string().contains("phi "), "SSA ran");
+    assert_eq!(normalize(&serial), normalize(&parallel));
+}
+
 /// Checks that `Pipeline::none()` really runs no passes.
 #[test]
 fn test_pipeline_none_is_identity() {
@@ -837,7 +875,7 @@ fn function_loop() -> FunctionData {
     f
 }
 
-type Placement = (BasicBlockIdx, ArcIntern<Variable>);
+type Placement = (BasicBlockIdx, Variable);
 
 /// Every phi in `f`, as (block, unversioned variable).
 fn phi_placements(f: &FunctionData) -> HashSet<Placement> {

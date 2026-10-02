@@ -447,7 +447,8 @@ pub struct IndexArgs {
     ///
     /// `1`, the default, runs the serial index engine. Any larger value runs the parallel
     /// engine on exactly that many threads. `0`, or `-j` with no value, uses every core the OS
-    /// reports. Both engines evaluate the same rules and derive the same relations.
+    /// reports. Both engines evaluate the same rules and derive the same relations. The IR
+    /// passes that run before the engine (SSA and its cleanups) use the same number of threads.
     #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
     pub jobs: Option<usize>,
 

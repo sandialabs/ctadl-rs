@@ -29,7 +29,6 @@ dataflow edges the def/use pair induced, minus the intermediate hop.
 */
 use std::collections::HashMap;
 
-use internment::ArcIntern;
 use smallvec::SmallVec;
 
 use crate::index::idx::Idx;
@@ -52,7 +51,7 @@ struct Pending {
     /// The def's right-hand side.
     sources: SmallVec<[Exp; 2]>,
     /// Variables read by `sources`; a write to any of these kills the entry.
-    src_vars: SmallVec<[ArcIntern<Variable>; 2]>,
+    src_vars: SmallVec<[Variable; 2]>,
 }
 
 /// Runs copy coalescing on one function, returning the number of fused copy
@@ -64,8 +63,8 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 
     // Def/use counts over the whole function. Only variables with exactly one
     // def and one use are candidates.
-    let mut defs: HashMap<ArcIntern<Variable>, u32> = HashMap::new();
-    let mut uses: HashMap<ArcIntern<Variable>, u32> = HashMap::new();
+    let mut defs: HashMap<Variable, u32> = HashMap::new();
+    let mut uses: HashMap<Variable, u32> = HashMap::new();
     for (_, block) in function.blocks.iter_enumerated() {
         for stmt in block.statements.iter() {
             for v in stmt.iter_src_var() {
@@ -82,7 +81,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
         }
     }
 
-    let is_candidate_var = |var: &ArcIntern<Variable>| {
+    let is_candidate_var = |var: &Variable| {
         matches!(var.as_ref(), Variable::Local(_))
             && defs.get(var) == Some(&1)
             && uses.get(var) == Some(&1)
@@ -90,7 +89,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 
     let mut removed = 0usize;
     for block in function.blocks.blocks_mut_preserves_cfg().iter_mut() {
-        let mut pending: HashMap<ArcIntern<Variable>, Pending> = HashMap::new();
+        let mut pending: HashMap<Variable, Pending> = HashMap::new();
         // Def statement positions that were fused and must be deleted.
         let mut dead: Vec<usize> = Vec::new();
 
@@ -149,7 +148,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
             // written by this statement. Calls may write through their
             // arguments (by-ref), so treat their reads as writes too.
             if !pending.is_empty() {
-                let mut written: SmallVec<[ArcIntern<Variable>; 4]> =
+                let mut written: SmallVec<[Variable; 4]> =
                     stmt.iter_dst_var().map(|v| v.variable.clone()).collect();
                 if matches!(stmt.kind, StatementKind::CallAssign { .. }) {
                     written.extend(stmt.iter_src_var().map(|v| v.variable.clone()));
@@ -165,7 +164,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                 && is_candidate_var(&dest.variable)
                 && !sources.is_empty()
             {
-                let mut src_vars: SmallVec<[ArcIntern<Variable>; 2]> = SmallVec::new();
+                let mut src_vars: SmallVec<[Variable; 2]> = SmallVec::new();
                 let mut ok = true;
                 for src in sources.iter() {
                     // Any source that reads a variable (a bare copy or an address expression)
@@ -226,7 +225,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 /// `t = y; use t` becomes `use y`.
 fn try_subst_exp(
     exp: &mut Exp,
-    pending: &mut HashMap<ArcIntern<Variable>, Pending>,
+    pending: &mut HashMap<Variable, Pending>,
     dead: &mut Vec<usize>,
 ) {
     let Exp::Variable(vref) = exp else {
@@ -253,7 +252,7 @@ fn try_subst_exp(
 /// field path is preserved, with its base variable rewritten to the def's source.
 fn try_subst_access_path(
     ap: &mut AccessPath,
-    pending: &mut HashMap<ArcIntern<Variable>, Pending>,
+    pending: &mut HashMap<Variable, Pending>,
     dead: &mut Vec<usize>,
 ) {
     if ap.base.version.is_some() {

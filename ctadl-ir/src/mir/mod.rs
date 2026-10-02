@@ -405,7 +405,7 @@ pub struct SourceInfo {
 }
 
 /// A variable name or parameter reference
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Variable {
     /// A global variable represents a heap for storing globals. This variable may only be written
@@ -417,11 +417,21 @@ pub enum Variable {
     Param(ParameterIdx),
 }
 
+// `VariableRef::variable` was an `ArcIntern<Variable>`, read through `as_ref()`. It is a plain
+// `Variable` now, because the shared refcount on popular variables such as `Local(0)` serialized
+// threads running passes on different functions. This keeps those call sites as they were.
+impl AsRef<Variable> for Variable {
+    #[inline]
+    fn as_ref(&self) -> &Variable {
+        self
+    }
+}
+
 /// A reference to a variable, possibly with version. Versions are computed by SSA conversion.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VariableRef {
-    pub variable: ArcIntern<Variable>,
+    pub variable: Variable,
     pub version: Option<u32>,
 }
 
@@ -839,7 +849,7 @@ impl VariableRef {
     }
 
     /// Creates a reference to the variable with no version
-    pub fn new_var_ref(variable: ArcIntern<Variable>) -> Self {
+    pub fn new_var_ref(variable: Variable) -> Self {
         VariableRef {
             variable,
             version: None,
