@@ -13,6 +13,7 @@
 //!     cargo xtask report-eval --apks <dir>
 
 mod android_icc;
+mod android_native;
 mod apk;
 mod assertions;
 mod baksmali;
@@ -80,7 +81,7 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let value = args.next().context("--frontend requires a value")?;
                 let names: Vec<&str> = value.split(',').filter(|s| !s.trim().is_empty()).collect();
                 if names.is_empty() {
-                    bail!("--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc");
+                    bail!("--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc, android-native");
                 }
                 let selected = frontends.get_or_insert_with(BTreeSet::new);
                 for name in names {
@@ -178,7 +179,8 @@ cargo xtask <task>
 Tasks:
   regression                 Run the source-sink taint regression suite.
     --frontend <f>           Only exercise frontend <f>: `pcode`, `jvm`, `dex`,
-                             `lua`, `jni`, `c` or `android-icc` (default: all). Accepts a
+                             `lua`, `jni`, `c`, `android-icc` or `android-native`
+                             (default: all). Accepts a
                              comma-separated list and may be repeated; unselected
                              frontends are skipped entirely, so their toolchains
                              are not needed. E.g. `--frontend pcode` runs the
@@ -187,7 +189,10 @@ Tasks:
                              source cases. `jni` is the two-import bridge cases,
                              which need the Java *and* Ghidra toolchains.
                              `android-icc` runs external DroidBench/ICC-Bench
-                             APK specs under `tests/android-icc`.
+                             APK specs under `tests/android-icc`, and
+                             `android-native` real apps with native code under
+                             `tests/android-native` (Ghidra and the Nix-fetched
+                             APKs in CTADL_ANDROID_NATIVE_APKS).
     --filter <name>          Only run cases whose name contains <name>.
                              Composes with --frontend.
     -j, --jobs <n>           Run <n> cases concurrently (default: one per core,

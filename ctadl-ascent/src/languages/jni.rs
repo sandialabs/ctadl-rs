@@ -205,7 +205,9 @@ legitimately has one per `native` declaration. So do unattributed table entries.
 - **Floating-point parameters may be mis-slotted.** On `arm64-v8a`, `x86_64` and hard-float
   targets, `float` and `double` arrive in FP registers. Without a recovered prototype, Ghidra may
   list them after the integer parameters rather than in declaration order, and `Typed` then maps
-  them to the wrong native indices. The count check cannot see this.
+  them to the wrong native indices. The count check cannot see this. Import gives Ghidra the exact
+  prototype of every native it can locate (see `ctadl_pcode::jni_signatures`), which rules this
+  out; it remains for a native imported without its Dex and not registered with `RegisterNatives`.
 - **The prototype check compares counts only.** The pcode frontend records `_` for every
   parameter type, so a mis-slotting that keeps the count right passes silently. Checking types
   needs the frontend to record them.
@@ -511,52 +513,9 @@ pub fn choose_layout(
 // Name mangling (JNI spec, "Resolving Native Method Names")
 // ---------------------------------------------------------------------------
 
-/// Mangles one component of a JNI symbol name.
-///
-/// Per the JNI spec: `/` becomes `_`, `_` becomes `_1`, `;` becomes `_2`, `[` becomes `_3`, ASCII
-/// alphanumerics pass through, and anything else becomes `_0` followed by four lowercase hex digits
-/// of its UTF-16 code unit (two escapes for a character outside the BMP, which is one surrogate
-/// pair).
-pub fn mangle_component(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '/' => out.push('_'),
-            '_' => out.push_str("_1"),
-            ';' => out.push_str("_2"),
-            '[' => out.push_str("_3"),
-            c if c.is_ascii_alphanumeric() => out.push(c),
-            c => {
-                let mut buf = [0u16; 2];
-                for unit in c.encode_utf16(&mut buf) {
-                    out.push_str(&format!("_0{:04x}", unit));
-                }
-            }
-        }
-    }
-    out
-}
-
-/// The *short* JNI symbol name: `Java_<class>_<method>`. `class_internal` is the internal form
-/// (`com/example/Crypto`), not the type descriptor.
-pub fn short_name(class_internal: &str, method: &str) -> String {
-    format!(
-        "Java_{}_{}",
-        mangle_component(class_internal),
-        mangle_component(method)
-    )
-}
-
-/// The *long* JNI symbol name: the short name, `__`, then the mangled parameter descriptor
-/// (parentheses and return type stripped, e.g. `Ljava/lang/String;` for
-/// `(Ljava/lang/String;)Ljava/lang/String;`).
-pub fn long_name(class_internal: &str, method: &str, param_descriptor: &str) -> String {
-    format!(
-        "{}__{}",
-        short_name(class_internal, method),
-        mangle_component(param_descriptor)
-    )
-}
+// Shared with the pcode frontend, which hands these names to Ghidra before it decompiles; see
+// `ctadl_pcode::jni_signatures`.
+pub use ctadl_pcode::jni_signatures::{long_name, mangle_component, short_name};
 
 /// Strips the `L...;` wrapper off a Java type descriptor, yielding the internal class name the
 /// mangler wants. A name that is not in descriptor form is returned unchanged.

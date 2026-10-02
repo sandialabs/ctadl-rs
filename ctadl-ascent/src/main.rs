@@ -930,6 +930,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             skip_existing,
             native_libs: !args.no_native_libs,
             native_abi: args.native_abi.as_deref(),
+            ..Default::default()
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote

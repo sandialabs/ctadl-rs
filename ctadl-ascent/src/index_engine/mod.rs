@@ -70,6 +70,32 @@ pub mod path_group;
 pub mod path_set;
 pub mod source_info;
 
+/// EXPERIMENT: counters on one rule's join, to tell pairs visited from pairs kept.
+pub(crate) mod probe {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    /// `call_target_assign_like` transitive rule: pairs out of the `(f, v2)` join ...
+    pub const CTA_PAIRS: usize = 0;
+    /// ... of which `substitute_prefix` matched ...
+    pub const CTA_PREFIX: usize = 1;
+    /// ... and of which the result is a program path (a head tuple, new or not).
+    pub const CTA_PATHS: usize = 2;
+    static COUNTS: [AtomicU64; 3] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
+    #[inline]
+    pub fn hit(i: usize) -> bool {
+        COUNTS[i].fetch_add(1, Ordering::Relaxed);
+        true
+    }
+    pub fn report() -> String {
+        let c = |i: usize| COUNTS[i].load(Ordering::Relaxed);
+        format!(
+            "cta probe: pairs={} prefix_match={} in_paths={}",
+            c(CTA_PAIRS),
+            c(CTA_PREFIX),
+            c(CTA_PATHS)
+        )
+    }
+}
+
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
 pub type FunctionSummary = (FunctionId, FormalIndex, Path, FormalIndex, Path);
@@ -955,6 +981,88 @@ impl LocalsProbe
     }
 }
 
+/// EXPERIMENT: where the `call_target_assign_like` transitive rule's join work goes. For each
+/// `(f, v)`, the tags held there times the `assign_like` edges reading `v` is the number of pairs
+/// the rule visits to re-derive everything at `v` once; summed per function and listed per
+/// variable, with the objects that reach the most vertices.
+fn cta_census(
+    cta: &dyn Rows<(FunctionId, FlowVariable, Path, CallTargetObject)>,
+    assign_like: &[(FunctionId, FlowVariable, Path, FlowVariable, Path)],
+    id_map: Option<&IdMap>,
+) -> String {
+    use std::fmt::Write as _;
+    let fname = |f: &FunctionId| {
+        id_map
+            .and_then(|m| m.get_function(*f))
+            .map(|f| f.0.to_string())
+            .unwrap_or_else(|| format!("#{}", f.id))
+    };
+    let mut tags: HashMap<(FunctionId, FlowVariable), usize> = HashMap::new();
+    let mut by_obj: HashMap<CallTargetObject, usize> = HashMap::new();
+    let mut by_path_len: HashMap<usize, usize> = HashMap::new();
+    let mut rows = cta.stream();
+    while let Some((f, v, p, o)) = rows.next() {
+        *tags.entry((*f, *v)).or_default() += 1;
+        *by_obj.entry(o.clone()).or_default() += 1;
+        *by_path_len.entry(p.len()).or_default() += 1;
+    }
+    let mut outdeg: HashMap<(FunctionId, FlowVariable), usize> = HashMap::new();
+    for (f, _, _, v2, _) in assign_like {
+        *outdeg.entry((*f, *v2)).or_default() += 1;
+    }
+    let mut per_fv: Vec<((FunctionId, FlowVariable), usize, usize)> = tags
+        .iter()
+        .map(|(k, t)| (*k, *t, outdeg.get(k).copied().unwrap_or(0)))
+        .collect();
+    per_fv.sort_by_key(|(_, t, d)| std::cmp::Reverse(t * d));
+    let mut per_f: HashMap<FunctionId, (usize, usize)> = HashMap::new();
+    for ((f, _), t, d) in &per_fv {
+        let e = per_f.entry(*f).or_default();
+        e.0 += t;
+        e.1 += t * d;
+    }
+    let total: usize = per_fv.iter().map(|(_, t, d)| t * d).sum();
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "cta census: rows={} (f,v)={} functions={} pairs per full re-derivation={} objects={}",
+        cta.len(),
+        tags.len(),
+        per_f.len(),
+        total,
+        by_obj.len()
+    );
+    let mut lens: Vec<_> = by_path_len.into_iter().collect();
+    lens.sort();
+    let _ = writeln!(out, "  rows by tag path length: {lens:?}");
+    let mut fs: Vec<_> = per_f.into_iter().collect();
+    fs.sort_by_key(|(_, (_, w))| std::cmp::Reverse(*w));
+    let _ = writeln!(out, "  top functions by tags x out-edges:");
+    for (f, (t, w)) in fs.iter().take(15) {
+        let _ = writeln!(out, "    pairs={w:>12} tags={t:>9}  {}", fname(f));
+    }
+    let _ = writeln!(out, "  top (f, v) by tags x out-edges:");
+    for ((f, v), t, d) in per_fv.iter().take(25) {
+        let _ = writeln!(
+            out,
+            "    pairs={:>12} tags={t:>7} out_edges={d:>7}  {v}  {}",
+            t * d,
+            fname(f)
+        );
+    }
+    let mut objs: Vec<_> = by_obj.into_iter().collect();
+    objs.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    let _ = writeln!(out, "  top objects by rows:");
+    for (o, n) in objs.iter().take(15) {
+        let name = match o {
+            CallTargetObject::FunctionId(f) => format!("fn {}", fname(f)),
+            other => format!("{other:?}"),
+        };
+        let _ = writeln!(out, "    rows={n:>9}  {name}");
+    }
+    out
+}
+
 fn dropped_compositions(
     context_assign: &dyn Rows<ContextAssignRow>,
     context_locals: &dyn Rows<ContextLocalsRow>,
@@ -1442,17 +1550,16 @@ ascent_source! {
 
     // Forward field propagation (context-free), as exact-key joins.
     //
-    // A local propagation step extends a reachability row `v2.p23 <- a.p4` across an edge
-    // `v1.p1 = v2.p2` whose source path `p2` is a prefix of `p23`, deriving `v1.(p1·rest)` for
-    // the `rest` after the prefix -- or, in the other direction, extends the formal side when
-    // the edge reads a longer path than the row holds. Joining that on `(f, v2)` alone and
-    // testing the prefix afterwards visits every edge at the vertex for every row at it: on a
-    // dense function that is hundreds of pairs per row, a derived path allocated for a tenth
-    // of them and a tenth of those admissible -- billions of pairs per iteration for millions
-    // of rows, and the fixpoint never arrives. So every path is split ONCE at each point it
-    // could match a prefix, the join is keyed on the split, and the extension is tested by
-    // lookup (`path_set`) rather than by building it. Every retrieved pair matches, and nothing
-    // is allocated for a pair that fails.
+    // A local propagation step extends a reachability row `v2.p23 <- a.p4` across an assignment
+    // edge `v1.p1 = v2.p2` whose source path `p2` is a prefix of `p23`, deriving `v1.(p1·rest)` for
+    // the `rest` after the prefix -- or, in the other direction, extends the formal side when the
+    // edge reads a longer path than the row holds. Joining that on `(f, v2)` alone and testing the
+    // prefix afterwards visits every edge at the vertex for every row at it: on a dense function
+    // that is hundreds of pairs per row, a derived path allocated for a tenth of them and a tenth
+    // of those admissible -- billions of pairs per iteration for millions of rows, and the fixpoint
+    // never arrives. So every path is split ONCE at each point it could match a prefix, the join is
+    // keyed on the split, and the extension is tested by lookup (`path_set`) rather than by
+    // building it. Every retrieved pair matches, and nothing is allocated for a pair that fails.
     //
     // A prefix may end in an offset that matches any offset (`match_prefix`'s arithmetic on its
     // last component), so each side carries a `wild` key beside its exact keys: the exact key
@@ -1983,13 +2090,53 @@ ascent_source! {
         call_target_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
         tag_closure_func(func_id);
 
-    call_target_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
-        // This results in large reduction on some test cases
-        tag_closure_func(func_id),
-        call_target_assign_like(func_id, v2, p_context, tgt),
-        assign_like(func_id, v1, p1, v2, p2),
-        if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-        paths(&p_new);
+    // Transitive propagation: a tag at `v2.p` crosses an edge `v1.p1 = v2.p2` whose source path
+    // `p2` is a prefix of `p`, giving a tag at `v1.(p1·rest)`. It is the destination side of the
+    // `locals` closure (`ext_dst`) and is keyed the same way: joined on `(f, v2)` alone and
+    // tested with `substitute_prefix` afterwards, it visited every edge at the vertex for every
+    // tag there, and on a receiver vertex of an instantiated summary (thousands of tags,
+    // twenty thousand out-edges) 98% of those pairs failed the prefix. So each tag's path is
+    // split once at every prefix, and the join retrieves only the edges that read that prefix.
+    // A seed path need not be admissible, hence `splits_any`; the result is, by `concat`.
+    // `tag_closure_func` gates the split: the transitive rule only runs in those functions.
+    relation cta_key(FunctionId, FlowVariable, Path, Path, CallTargetObject);
+    cta_key(f, v, key, rest, tgt) <--
+        call_target_assign_like(f, v, p, tgt),
+        tag_closure_func(f),
+        path_set(ps),
+        for (key, rest) in ps.splits_any(p).exact.iter();
+    relation cta_key_wild(FunctionId, FlowVariable, Path, Path, CallTargetObject);
+    cta_key_wild(f, v, key, rest, tgt) <--
+        call_target_assign_like(f, v, p, tgt),
+        tag_closure_func(f),
+        path_set(ps),
+        for (key, rest) in ps.splits_any(p).wild.iter();
+    // The step emits the new tag's exact keys itself. Split by the rules above, a tag would
+    // reach `cta_key` an iteration after it was derived, and a chain of edges would take two
+    // iterations per edge instead of one. (The wild keys, which only offset paths have, still
+    // take the extra iteration.) Every split re-emits the tag, and all but the first insert
+    // are no-ops.
+    call_target_assign_like(f, v1, p13, tgt), cta_key(f, v1, k13, r13, tgt) <--
+        cta_key(f, v2, key, rest, tgt),
+        assign_like(f, v1, p1, v2, key),
+        if probe::hit(probe::CTA_PAIRS),
+        if probe::hit(probe::CTA_PREFIX),
+        path_set(ps),
+        if let Some(p13) = ps.concat(p1, None, rest),
+        if probe::hit(probe::CTA_PATHS),
+        for (k13, r13) in ps.splits(&p13).exact.iter();
+    // The wild half: the tag path is `key.[n]·tail`, the edge reads `key.[m]` with `m != n`.
+    call_target_assign_like(f, v1, p13, tgt), cta_key(f, v1, k13, r13, tgt) <--
+        cta_key_wild(f, v2, key, rest, tgt),
+        assign_wild(f, v2, key, m, v1, p1),
+        if probe::hit(probe::CTA_PAIRS),
+        if let Some(n) = rest.head_offset(),
+        if n != *m,
+        if probe::hit(probe::CTA_PREFIX),
+        path_set(ps),
+        if let Some(p13) = ps.concat(p1, Some(n - *m), &rest.tail()),
+        if probe::hit(probe::CTA_PATHS),
+        for (k13, r13) in ps.splits(&p13).exact.iter();
 
     // Return-direction call-target propagation. Rule 2.1 pushes a caller's tag DOWN onto a
     // callee's formal; this is its missing twin, carrying a tag a callee holds on an
@@ -2199,7 +2346,7 @@ pub fn taint_index_with_config(
     );
     // The receiver access path of an indirect / virtual call is also a syntactic program path.
     // Registering it lets `call_target_assign_like` propagate a stored target across an SSA
-    // version of the receiver (the transitive rules gate on `paths(p_new)`). Without this, a
+    // version of the receiver (the transitive rules admit only a result in `paths`). Without this, a
     // second store into the same aggregate (`o.a = id; o.b = id; o.a(s)` or
     // `fps[0]=id; fps[1]=id; fps[0](s)`) creates a new receiver version whose call path was
     // never an `actual_param`, so the binding fails to reach the call and taint is dropped.
@@ -2338,6 +2485,9 @@ pub fn taint_index_with_config(
             prog.__locals_key_ind_common.len(),
             prog.__ext_dst_ind_common.len()
         );
+        // Rows, keys and approximate bytes of every relation and each of its indices; the BYODS
+        // stores print n/a here and report their own sizes below.
+        log::debug!("[idxsizes] index sizes:\n{}", prog.index_sizes_summary());
         log::debug!(
             "[mem cp] after relation census (nothing drained yet): {:.1} MB",
             phys_footprint_mb()
@@ -2358,6 +2508,16 @@ pub fn taint_index_with_config(
         // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
         log::debug!("{}", prog.__locals_ind_common.heap_report());
         log::debug!("{}", prog.__assign_like_ind_common.heap_report());
+        log::debug!("[byods] locals_key: {}", prog.__locals_key_ind_common.heap_report());
+        log::debug!("[byods] edge_split: {}", prog.__edge_split_ind_common.heap_report());
+        log::debug!("[byods] ext_dst: {}", prog.__ext_dst_ind_common.heap_report());
+        if let Some(dir) = std::env::var_os("CTADL_LOCALS_CENSUS") {
+            locals_census(
+                std::path::Path::new(&dir),
+                LocalsRows::census_rows(&prog.__locals_ind_common),
+                id_map,
+            );
+        }
         // The formatter reads these through the `Rows` trait, so this call is the same under `ascent!`
         // (plain `Vec`s) and `ascent_par!` (`boxcar::Vec`s, with lattices as
         // `boxcar::Vec<RwLock<..>>`): each field's own type selects the impl, and nothing is copied in
@@ -2381,6 +2541,11 @@ pub fn taint_index_with_config(
         // store by value so it drains (frees) as the output Vec fills — this reconstruction is the
         // run's peak, so a draining rebuild keeps the transient to ~1×.
         let assign_like_out = std::mem::take(&mut prog.__assign_like_ind_common).into_vec();
+        log::debug!("{}", probe::report());
+        log::debug!(
+            "{}",
+            cta_census(&prog.call_target_assign_like, &assign_like_out, id_map).trim_end()
+        );
 
         // `locals` lives in the trie (`__locals_ind_common`); its physical relation holds no
         // tuples, so the distinct subjects come from the store's `(F, V)` outer keys — the same
@@ -2873,5 +3038,128 @@ mod tests {
             Parallelism::Serial
         };
         assert_eq!(Parallelism::from_jobs(0), expected);
+    }
+}
+
+/// EXPERIMENT: aggregate the `locals` rows into TSVs under `dir`, to see what makes the relation
+/// big. Written for a `CTADL_INDEX_TIMEOUT_SECS` run; each file is sorted by count, descending.
+fn locals_census<'a>(
+    dir: &path::Path,
+    rows: impl Iterator<
+        Item = (
+            &'a FunctionId,
+            &'a FlowVariable,
+            &'a Path,
+            &'a FormalIndex,
+            &'a Path,
+        ),
+    >,
+    id_map: Option<&IdMap>,
+) {
+    use std::io::Write;
+    let fname = |f: &FunctionId| {
+        id_map
+            .and_then(|m| m.get_function(*f))
+            .map(|f| f.0.to_string())
+            .unwrap_or_else(|| format!("#{}", f.id))
+    };
+    let vname = |v: &FlowVariable| {
+        v.as_local()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| format!("{v}"))
+    };
+    let mut by_f: HashMap<FunctionId, usize> = HashMap::new();
+    let mut by_fv: HashMap<(FunctionId, FlowVariable), usize> = HashMap::new();
+    let mut by_src: HashMap<(FunctionId, FormalIndex, Path), usize> = HashMap::new();
+    let mut by_fp: HashMap<(FunctionId, Path), usize> = HashMap::new();
+    let mut by_p4: HashMap<Path, usize> = HashMap::new();
+    let mut lens: HashMap<(usize, usize), usize> = HashMap::new();
+    let mut n = 0usize;
+    for (f, v, p, a, p4) in rows {
+        n += 1;
+        *by_f.entry(*f).or_default() += 1;
+        *by_fv.entry((*f, *v)).or_default() += 1;
+        *by_src.entry((*f, *a, *p4)).or_default() += 1;
+        *by_fp.entry((*f, *p)).or_default() += 1;
+        *by_p4.entry(*p4).or_default() += 1;
+        *lens.entry((p.len(), p4.len())).or_default() += 1;
+    }
+    let _ = std::fs::create_dir_all(dir);
+    fn dump<K>(
+        dir: &path::Path,
+        name: &str,
+        header: &str,
+        m: HashMap<K, usize>,
+        top: usize,
+        fmt: impl Fn(&K) -> String,
+    ) {
+        let mut v: Vec<_> = m.into_iter().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut w = std::io::BufWriter::new(std::fs::File::create(dir.join(name)).unwrap());
+        writeln!(w, "rows\t{header}").unwrap();
+        for (k, c) in v.into_iter().take(top) {
+            writeln!(w, "{c}\t{}", fmt(&k)).unwrap();
+        }
+    }
+    log::info!(
+        "locals census: {n} rows, {} funcs, {} (f,v), {} (f,a,p4), {} (f,p), {} p4 -> {}",
+        by_f.len(),
+        by_fv.len(),
+        by_src.len(),
+        by_fp.len(),
+        by_p4.len(),
+        dir.display()
+    );
+    dump(dir, "by_func.tsv", "func", by_f, usize::MAX, |f| fname(f));
+    dump(dir, "by_fv.tsv", "func\tvar", by_fv, 20000, |(f, v)| {
+        format!("{}\t{}", fname(f), vname(v))
+    });
+    dump(
+        dir,
+        "by_src.tsv",
+        "func\tformal\tp4",
+        by_src,
+        20000,
+        |(f, a, p4)| format!("{}\t{:?}\t{}", fname(f), a, p4),
+    );
+    dump(dir, "by_fp.tsv", "func\tp", by_fp, 20000, |(f, p)| {
+        format!("{}\t{}", fname(f), p)
+    });
+    dump(dir, "by_p4.tsv", "p4", by_p4, 20000, |p| format!("{p}"));
+    dump(
+        dir,
+        "lens.tsv",
+        "len_p\tlen_p4",
+        lens,
+        usize::MAX,
+        |(a, b)| format!("{a}\t{b}"),
+    );
+}
+
+/// EXPERIMENT: rows for [`locals_census`]; serial engine only.
+trait LocalsRows {
+    fn census_rows(
+        &self,
+    ) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_>;
+}
+impl LocalsRows
+    for locals_trie::LocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path>
+{
+    fn census_rows(
+        &self,
+    ) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_>
+    {
+        Box::new(self.iter_rows())
+    }
+}
+impl LocalsRows
+    for c_locals_trie::CLocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path>
+{
+    fn census_rows(
+        &self,
+    ) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_>
+    {
+        log::warn!("locals census: serial engine only");
+        Box::new(std::iter::empty())
     }
 }

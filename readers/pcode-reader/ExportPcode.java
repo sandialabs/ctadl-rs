@@ -21,6 +21,7 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Writer;
+import java.nio.file.Files;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -31,6 +32,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,7 +41,9 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
+import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.DecompileResults;
@@ -63,6 +67,19 @@ import ghidra.program.model.data.Array;
 import ghidra.program.model.data.BooleanDataType;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeComponent;
+import ghidra.program.model.data.DoubleDataType;
+import ghidra.program.model.data.FloatDataType;
+import ghidra.program.model.data.FunctionDefinitionDataType;
+import ghidra.program.model.data.IntegerDataType;
+import ghidra.program.model.data.LongLongDataType;
+import ghidra.program.model.data.ParameterDefinitionImpl;
+import ghidra.program.model.data.PointerDataType;
+import ghidra.program.model.data.ShortDataType;
+import ghidra.program.model.data.SignedCharDataType;
+import ghidra.program.model.data.Undefined;
+import ghidra.program.model.data.UnsignedCharDataType;
+import ghidra.program.model.data.UnsignedShortDataType;
+import ghidra.program.model.data.VoidDataType;
 import ghidra.program.model.data.FunctionDefinition;
 import ghidra.program.model.data.ParameterDefinition;
 import ghidra.program.model.data.Pointer;
@@ -72,11 +89,13 @@ import ghidra.program.model.data.Union;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.DataIterator;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.MemoryAccessException;
 import ghidra.program.model.pcode.FunctionPrototype;
 import ghidra.program.model.pcode.HighConstant;
 import ghidra.program.model.pcode.HighFunction;
+import ghidra.program.model.pcode.HighFunctionDBUtil;
 import ghidra.program.model.pcode.HighGlobal;
 import ghidra.program.model.pcode.HighLocal;
 import ghidra.program.model.pcode.HighOther;
@@ -90,10 +109,12 @@ import ghidra.program.model.pcode.SequenceNumber;
 import ghidra.program.model.pcode.Varnode;
 import ghidra.program.model.pcode.VarnodeAST;
 import ghidra.program.model.symbol.ExternalReference;
+import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.symbol.SymbolTable;
+import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.ThunkReference;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.lang.Language;
@@ -1135,6 +1156,335 @@ class HighFunctionExporter {
 //	}
 //}
 
+/**
+ * Corrects function signatures before export, where Ghidra's own recovery is known to lose data
+ * flow. Every step only replaces a signature Ghidra guessed (source DEFAULT or ANALYSIS); one a user,
+ * DWARF, or a type library supplied is left alone.
+ *
+ * 1. JNI natives. A Java `native` method fixes its C implementation's prototype completely --
+ *    `JNIEnv *`, `jobject` or `jclass`, one C type per Java parameter, and the C type of the Java
+ *    return -- whereas the decompiler recovers only the parameters a body uses, misses arguments
+ *    passed on the stack, and often misses the return. The caller supplies what it knows about the
+ *    library's natives in a hints file (see {@link #readHints}); each named function gets the exact
+ *    prototype.
+ *
+ * 2. Thunk targets. A thunk (a PLT stub for an exported function the library also calls itself, for
+ *    instance) keeps the default signature, which returns nothing, and every caller that goes
+ *    through it loses the return value. A thunk's signature is its target's, so commit the
+ *    decompiler-recovered return type on each target whose own is still undefined.
+ *
+ * 3. Tail callers. A function that ends by jumping to another (`b target`) returns what that target
+ *    returns. The decompiler infers this for a 4-byte return value but not for an 8-byte one, so
+ *    such a wrapper decompiles to void. Commit the target's return type on each tail caller that
+ *    decompiles to void, repeating to a fixed point since a tail caller can itself be tail-called.
+ *
+ * Setting any part of a DEFAULT signature locks its parameter list as it stands, which is empty, so
+ * steps 2 and 3 commit the decompiled parameters first.
+ */
+class SignatureRecovery {
+
+	private static final int DECOMPILE_TIMEOUT_SECS = 60;
+	private static final int MAX_TAIL_CALL_PASSES = 5;
+
+	private final Program program;
+	private final TaskMonitor monitor;
+	private final Consumer<String> log;
+
+	SignatureRecovery(Program program, TaskMonitor monitor, Consumer<String> log) {
+		this.program = program;
+		this.monitor = monitor;
+		this.log = log;
+	}
+
+	/** Runs all three steps; `hints` may be null. */
+	void run(File hints) throws Exception {
+		if (hints != null) {
+			applyJniHints(readHints(hints));
+		}
+		recoverReturns();
+	}
+
+	// ---- 1. JNI natives -------------------------------------------------------------------
+
+	/** One function whose prototype a Java `native` declaration fixes. */
+	static final class Hint {
+		/** A symbol name, or null when {@link #offset} locates the function instead. */
+		final String symbol;
+		/** Offset of the function from the program's image base; used when `symbol` is null. */
+		final long offset;
+		/** The Java method descriptor, e.g. `(JI)[B`. */
+		final String descriptor;
+
+		Hint(String symbol, long offset, String descriptor) {
+			this.symbol = symbol;
+			this.offset = offset;
+			this.descriptor = descriptor;
+		}
+	}
+
+	/**
+	 * Reads a hints file: one tab-separated row per native implementation, either
+	 * `sym<TAB><symbol><TAB><descriptor>` or `off<TAB><hex offset from the image base><TAB><descriptor>`.
+	 * Blank lines and lines starting with `#` are ignored; so is any row this build does not
+	 * understand, so a newer writer does not break an older script.
+	 */
+	static List<Hint> readHints(File file) throws IOException {
+		List<Hint> hints = new ArrayList<>();
+		for (String line : Files.readAllLines(file.toPath())) {
+			if (line.isEmpty() || line.startsWith("#")) {
+				continue;
+			}
+			String[] cols = line.split("\t");
+			if (cols.length != 3 || cols[2].indexOf('(') != 0 || cols[2].indexOf(')') < 0) {
+				continue;
+			}
+			if (cols[0].equals("sym")) {
+				hints.add(new Hint(cols[1], 0, cols[2]));
+			}
+			else if (cols[0].equals("off")) {
+				hints.add(new Hint(null, Long.parseUnsignedLong(cols[1], 16), cols[2]));
+			}
+		}
+		return hints;
+	}
+
+	private static DataType jniType(char c) {
+		switch (c) {
+			case 'Z': return UnsignedCharDataType.dataType; // jboolean
+			case 'B': return SignedCharDataType.dataType; // jbyte
+			case 'C': return UnsignedShortDataType.dataType; // jchar
+			case 'S': return ShortDataType.dataType; // jshort
+			case 'I': return IntegerDataType.dataType; // jint
+			case 'J': return LongLongDataType.dataType; // jlong
+			case 'F': return FloatDataType.dataType; // jfloat
+			case 'D': return DoubleDataType.dataType; // jdouble
+			case 'V': return VoidDataType.dataType;
+			default: return new PointerDataType(VoidDataType.dataType); // jobject, jstring, arrays
+		}
+	}
+
+	/** The C types of the parameters in `desc`, or null if it is not a method descriptor. */
+	static List<DataType> jniParams(String desc) {
+		List<DataType> out = new ArrayList<>();
+		int end = desc.indexOf(')');
+		for (int i = 1; i < end; i++) {
+			char c = desc.charAt(i);
+			if (c == '[') {
+				while (i < end && desc.charAt(i) == '[') {
+					i++;
+				}
+				c = 'L';
+				if (i < end && desc.charAt(i) == 'L') {
+					i = desc.indexOf(';', i);
+				}
+			}
+			else if (c == 'L') {
+				i = desc.indexOf(';', i);
+			}
+			if (i < 0 || i >= end || "ZBCSIJFDL".indexOf(c) < 0) {
+				return null;
+			}
+			out.add(jniType(c));
+		}
+		return out;
+	}
+
+	private List<Function> targets(Hint h) {
+		List<Function> out = new ArrayList<>();
+		if (h.symbol == null) {
+			Function f = program.getFunctionManager()
+					.getFunctionAt(program.getImageBase().add(h.offset));
+			if (f != null) {
+				out.add(f);
+			}
+			return out;
+		}
+		// Mach-O prefixes every C symbol with an underscore.
+		for (String name : new String[] { h.symbol, "_" + h.symbol }) {
+			for (Symbol s : program.getSymbolTable().getGlobalSymbols(name)) {
+				Function f = program.getFunctionManager().getFunctionAt(s.getAddress());
+				if (f != null && !f.isExternal() && !out.contains(f)) {
+					out.add(f);
+				}
+			}
+		}
+		return out;
+	}
+
+	private static boolean guessed(Function f) {
+		SourceType src = f.getSignatureSource();
+		return src == SourceType.DEFAULT || src == SourceType.ANALYSIS;
+	}
+
+	private void applyJniHints(List<Hint> hints) {
+		DataType ptr = new PointerDataType(VoidDataType.dataType);
+		// A native can be hinted more than once -- by symbol and by `RegisterNatives` address,
+		// say -- so count functions, not hints, and apply each function's prototype once.
+		Map<Function, String> done = new HashMap<>();
+		int unmatched = 0, kept = 0, conflicts = 0, bad = 0;
+		for (Hint h : hints) {
+			List<DataType> params = jniParams(h.descriptor);
+			if (params == null) {
+				bad++;
+				continue;
+			}
+			List<Function> fs = targets(h);
+			if (fs.isEmpty()) {
+				// Expected: every native is hinted under both its long and short symbol names, and
+				// a hint can be for another library in the same APK.
+				unmatched++;
+				continue;
+			}
+			for (Function f : fs) {
+				String prior = done.get(f);
+				if (prior != null) {
+					if (!prior.equals(h.descriptor)) {
+						log.accept("signature recovery: " + f.getName() + " is hinted as both " + prior
+							+ " and " + h.descriptor + "; keeping the first");
+						conflicts++;
+					}
+					continue;
+				}
+				if (!guessed(f)) {
+					kept++;
+					continue;
+				}
+				FunctionDefinitionDataType sig = new FunctionDefinitionDataType(f.getName());
+				List<ParameterDefinition> ps = new ArrayList<>();
+				ps.add(new ParameterDefinitionImpl("env", ptr, "JNIEnv *"));
+				ps.add(new ParameterDefinitionImpl("self", ptr, "jobject or jclass"));
+				for (int k = 0; k < params.size(); k++) {
+					ps.add(new ParameterDefinitionImpl("arg" + k, params.get(k), null));
+				}
+				sig.setArguments(ps.toArray(new ParameterDefinition[0]));
+				sig.setReturnType(jniType(h.descriptor.charAt(h.descriptor.indexOf(')') + 1)));
+				ApplyFunctionSignatureCmd cmd =
+					new ApplyFunctionSignatureCmd(f.getEntryPoint(), sig, SourceType.ANALYSIS);
+				if (cmd.applyTo(program, monitor)) {
+					done.put(f, h.descriptor);
+				}
+				else {
+					log.accept("signature recovery: cannot apply JNI prototype to " + f.getName() + ": "
+						+ cmd.getStatusMsg());
+					bad++;
+				}
+			}
+		}
+		log.accept(String.format("signature recovery: JNI prototype applied to %d function(s) from %d "
+			+ "hint(s); %d hint(s) name no function here, %d trusted signature(s) kept, %d conflict(s), "
+			+ "%d failed", done.size(), hints.size(), unmatched, kept, conflicts, bad));
+	}
+
+	// ---- 2 and 3. Return values -----------------------------------------------------------
+
+	private static boolean undefinedReturn(Function f) {
+		DataType rt = f.getReturnType();
+		return rt == null || Undefined.isUndefined(rt) || f.getSignatureSource() == SourceType.DEFAULT;
+	}
+
+	private HighFunction decompile(DecompInterface ifc, Function f) {
+		DecompileResults res = ifc.decompileFunction(f, DECOMPILE_TIMEOUT_SECS, monitor);
+		return res == null ? null : res.getHighFunction();
+	}
+
+	private void commitReturn(Function f, HighFunction hf, DataType rt) throws Exception {
+		if (f.getSignatureSource() == SourceType.DEFAULT) {
+			HighFunctionDBUtil.commitParamsToDatabase(hf, true, HighFunctionDBUtil.ReturnCommitOption.NO_COMMIT,
+				SourceType.ANALYSIS);
+		}
+		f.setReturnType(rt, SourceType.ANALYSIS);
+	}
+
+	/** The known return type of the function `f` ends by jumping to, if any. */
+	private DataType tailCalleeReturn(Function f) {
+		for (Instruction i : program.getListing().getInstructions(f.getBody(), true)) {
+			FlowType ft = i.getFlowType();
+			if (!(ft.isCall() && ft.isTerminal()) && !(ft.isJump() && !ft.isConditional())) {
+				continue;
+			}
+			for (Address to : i.getFlows()) {
+				Function c = program.getFunctionManager().getFunctionAt(to);
+				if (c == null || c.equals(f)) {
+					continue;
+				}
+				if (c.isThunk()) {
+					c = c.getThunkedFunction(true);
+				}
+				if (c != null && !undefinedReturn(c) && !(c.getReturnType() instanceof VoidDataType)) {
+					return c.getReturnType();
+				}
+			}
+		}
+		return null;
+	}
+
+	private void recoverReturns() throws Exception {
+		Set<Function> thunkTargets = new LinkedHashSet<>();
+		for (Function f : program.getFunctionManager().getFunctions(true)) {
+			if (f.isThunk()) {
+				Function t = f.getThunkedFunction(true);
+				if (t != null && !t.isExternal()) {
+					thunkTargets.add(t);
+				}
+			}
+		}
+		int fromThunks = 0, fromTailCalls = 0;
+		DecompInterface ifc = new DecompInterface();
+		ifc.setOptions(new DecompileOptions());
+		ifc.openProgram(program);
+		try {
+			for (Function t : thunkTargets) {
+				monitor.checkCancelled();
+				if (!undefinedReturn(t) || !guessed(t)) {
+					continue;
+				}
+				HighFunction hf = decompile(ifc, t);
+				if (hf == null) {
+					continue;
+				}
+				DataType rt = hf.getFunctionPrototype().getReturnType();
+				if (rt == null || rt instanceof VoidDataType) {
+					continue;
+				}
+				// Commit a concrete integer for an `undefinedN`, so step 3 sees a known return.
+				if (Undefined.isUndefined(rt)) {
+					rt = AbstractIntegerDataType.getUnsignedDataType(rt.getLength(), program.getDataTypeManager());
+				}
+				commitReturn(t, hf, rt);
+				fromThunks++;
+			}
+			for (int pass = 0; pass < MAX_TAIL_CALL_PASSES; pass++) {
+				int changed = 0;
+				for (Function f : program.getFunctionManager().getFunctions(true)) {
+					monitor.checkCancelled();
+					if (f.isThunk() || f.isExternal() || !undefinedReturn(f) || !guessed(f)) {
+						continue;
+					}
+					DataType callee = tailCalleeReturn(f);
+					if (callee == null) {
+						continue;
+					}
+					HighFunction hf = decompile(ifc, f);
+					if (hf == null || !(hf.getFunctionPrototype().getReturnType() instanceof VoidDataType)) {
+						continue;
+					}
+					commitReturn(f, hf, callee);
+					changed++;
+				}
+				fromTailCalls += changed;
+				if (changed == 0) {
+					break;
+				}
+			}
+		}
+		finally {
+			ifc.dispose();
+		}
+		log.accept(String.format("signature recovery: %d of %d thunk targets given their return type, "
+			+ "%d tail callers given their target's", fromThunks, thunkTargets.size(), fromTailCalls));
+	}
+}
+
 public class ExportPcode extends GhidraScript {
 
 	File outputDirectory;
@@ -1152,6 +1502,13 @@ public class ExportPcode extends GhidraScript {
 			outputDirectory = new File(args[0]);
 		} else {
 			outputDirectory = askDirectory("Select Directory for Results", "OK");
+		}
+		// Optional second argument: a JNI signature hints file (see SignatureRecovery.readHints).
+		File hints = args.length >= 2 && !args[1].isEmpty() ? new File(args[1]) : null;
+		// Before anything is decompiled for export, so the facts reflect the corrected signatures.
+		// On a project opened read-only the changes are made in memory and never saved.
+		if (System.getenv("CTADL_NO_SIGNATURE_RECOVERY") == null) {
+			new SignatureRecovery(currentProgram, monitor, this::println).run(hints);
 		}
 
 		// System.setProperty("cpu.core.override", "10");
