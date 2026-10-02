@@ -1043,7 +1043,12 @@ fn cta_census(
     }
     let _ = writeln!(out, "  top (f, v) by tags x out-edges:");
     for ((f, v), t, d) in per_fv.iter().take(25) {
-        let _ = writeln!(out, "    pairs={:>12} tags={t:>7} out_edges={d:>7}  {v}  {}", t * d, fname(f));
+        let _ = writeln!(
+            out,
+            "    pairs={:>12} tags={t:>7} out_edges={d:>7}  {v}  {}",
+            t * d,
+            fname(f)
+        );
     }
     let mut objs: Vec<_> = by_obj.into_iter().collect();
     objs.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
@@ -1545,17 +1550,16 @@ ascent_source! {
 
     // Forward field propagation (context-free), as exact-key joins.
     //
-    // A local propagation step extends a reachability row `v2.p23 <- a.p4` across an edge
-    // `v1.p1 = v2.p2` whose source path `p2` is a prefix of `p23`, deriving `v1.(p1·rest)` for
-    // the `rest` after the prefix -- or, in the other direction, extends the formal side when
-    // the edge reads a longer path than the row holds. Joining that on `(f, v2)` alone and
-    // testing the prefix afterwards visits every edge at the vertex for every row at it: on a
-    // dense function that is hundreds of pairs per row, a derived path allocated for a tenth
-    // of them and a tenth of those admissible -- billions of pairs per iteration for millions
-    // of rows, and the fixpoint never arrives. So every path is split ONCE at each point it
-    // could match a prefix, the join is keyed on the split, and the extension is tested by
-    // lookup (`path_set`) rather than by building it. Every retrieved pair matches, and nothing
-    // is allocated for a pair that fails.
+    // A local propagation step extends a reachability row `v2.p23 <- a.p4` across an assignment
+    // edge `v1.p1 = v2.p2` whose source path `p2` is a prefix of `p23`, deriving `v1.(p1·rest)` for
+    // the `rest` after the prefix -- or, in the other direction, extends the formal side when the
+    // edge reads a longer path than the row holds. Joining that on `(f, v2)` alone and testing the
+    // prefix afterwards visits every edge at the vertex for every row at it: on a dense function
+    // that is hundreds of pairs per row, a derived path allocated for a tenth of them and a tenth
+    // of those admissible -- billions of pairs per iteration for millions of rows, and the fixpoint
+    // never arrives. So every path is split ONCE at each point it could match a prefix, the join is
+    // keyed on the split, and the extension is tested by lookup (`path_set`) rather than by
+    // building it. Every retrieved pair matches, and nothing is allocated for a pair that fails.
     //
     // A prefix may end in an offset that matches any offset (`match_prefix`'s arithmetic on its
     // last component), so each side carries a `wild` key beside its exact keys: the exact key
@@ -3041,7 +3045,15 @@ mod tests {
 /// big. Written for a `CTADL_INDEX_TIMEOUT_SECS` run; each file is sorted by count, descending.
 fn locals_census<'a>(
     dir: &path::Path,
-    rows: impl Iterator<Item = (&'a FunctionId, &'a FlowVariable, &'a Path, &'a FormalIndex, &'a Path)>,
+    rows: impl Iterator<
+        Item = (
+            &'a FunctionId,
+            &'a FlowVariable,
+            &'a Path,
+            &'a FormalIndex,
+            &'a Path,
+        ),
+    >,
     id_map: Option<&IdMap>,
 ) {
     use std::io::Write;
@@ -3052,7 +3064,9 @@ fn locals_census<'a>(
             .unwrap_or_else(|| format!("#{}", f.id))
     };
     let vname = |v: &FlowVariable| {
-        v.as_local().map(|n| n.to_string()).unwrap_or_else(|| format!("{v}"))
+        v.as_local()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| format!("{v}"))
     };
     let mut by_f: HashMap<FunctionId, usize> = HashMap::new();
     let mut by_fv: HashMap<(FunctionId, FlowVariable), usize> = HashMap::new();
@@ -3071,7 +3085,14 @@ fn locals_census<'a>(
         *lens.entry((p.len(), p4.len())).or_default() += 1;
     }
     let _ = std::fs::create_dir_all(dir);
-    fn dump<K>(dir: &path::Path, name: &str, header: &str, m: HashMap<K, usize>, top: usize, fmt: impl Fn(&K) -> String) {
+    fn dump<K>(
+        dir: &path::Path,
+        name: &str,
+        header: &str,
+        m: HashMap<K, usize>,
+        top: usize,
+        fmt: impl Fn(&K) -> String,
+    ) {
         let mut v: Vec<_> = m.into_iter().collect();
         v.sort_by(|a, b| b.1.cmp(&a.1));
         let mut w = std::io::BufWriter::new(std::fs::File::create(dir.join(name)).unwrap());
@@ -3082,27 +3103,62 @@ fn locals_census<'a>(
     }
     log::info!(
         "locals census: {n} rows, {} funcs, {} (f,v), {} (f,a,p4), {} (f,p), {} p4 -> {}",
-        by_f.len(), by_fv.len(), by_src.len(), by_fp.len(), by_p4.len(), dir.display()
+        by_f.len(),
+        by_fv.len(),
+        by_src.len(),
+        by_fp.len(),
+        by_p4.len(),
+        dir.display()
     );
     dump(dir, "by_func.tsv", "func", by_f, usize::MAX, |f| fname(f));
-    dump(dir, "by_fv.tsv", "func\tvar", by_fv, 20000, |(f, v)| format!("{}\t{}", fname(f), vname(v)));
-    dump(dir, "by_src.tsv", "func\tformal\tp4", by_src, 20000, |(f, a, p4)| format!("{}\t{:?}\t{}", fname(f), a, p4));
-    dump(dir, "by_fp.tsv", "func\tp", by_fp, 20000, |(f, p)| format!("{}\t{}", fname(f), p));
+    dump(dir, "by_fv.tsv", "func\tvar", by_fv, 20000, |(f, v)| {
+        format!("{}\t{}", fname(f), vname(v))
+    });
+    dump(
+        dir,
+        "by_src.tsv",
+        "func\tformal\tp4",
+        by_src,
+        20000,
+        |(f, a, p4)| format!("{}\t{:?}\t{}", fname(f), a, p4),
+    );
+    dump(dir, "by_fp.tsv", "func\tp", by_fp, 20000, |(f, p)| {
+        format!("{}\t{}", fname(f), p)
+    });
     dump(dir, "by_p4.tsv", "p4", by_p4, 20000, |p| format!("{p}"));
-    dump(dir, "lens.tsv", "len_p\tlen_p4", lens, usize::MAX, |(a, b)| format!("{a}\t{b}"));
+    dump(
+        dir,
+        "lens.tsv",
+        "len_p\tlen_p4",
+        lens,
+        usize::MAX,
+        |(a, b)| format!("{a}\t{b}"),
+    );
 }
 
 /// EXPERIMENT: rows for [`locals_census`]; serial engine only.
 trait LocalsRows {
-    fn census_rows(&self) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_>;
+    fn census_rows(
+        &self,
+    ) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_>;
 }
-impl LocalsRows for locals_trie::LocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path> {
-    fn census_rows(&self) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_> {
+impl LocalsRows
+    for locals_trie::LocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path>
+{
+    fn census_rows(
+        &self,
+    ) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_>
+    {
         Box::new(self.iter_rows())
     }
 }
-impl LocalsRows for c_locals_trie::CLocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path> {
-    fn census_rows(&self) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_> {
+impl LocalsRows
+    for c_locals_trie::CLocalsIndCommon<FunctionId, FlowVariable, Path, FormalIndex, Path>
+{
+    fn census_rows(
+        &self,
+    ) -> Box<dyn Iterator<Item = (&FunctionId, &FlowVariable, &Path, &FormalIndex, &Path)> + '_>
+    {
         log::warn!("locals census: serial engine only");
         Box::new(std::iter::empty())
     }
