@@ -127,6 +127,20 @@
 // `_Unwind_RaiseException` as `Unwind_RaiseException`. Capital `U` in the `_Unwind_*` family is
 // deliberate -- `signature_match` is exact, not case-folded.
 {"find":"methods","where":[{"constraint":"signature_match","names":["aeabi_unwind_cpp_pr0","aeabi_unwind_cpp_pr1","aeabi_unwind_cpp_pr2","gnu_unwind_frame","gnu_unwind_execute","gnu_unwind_pr_common","gnu_Unwind_Resume","gnu_Unwind_Resume_or_Rethrow","gnu_Unwind_RaiseException","gnu_Unwind_ForcedUnwind","gnu_Unwind_Backtrace","unwind_phase1","unwind_phase2","unwind_phase2_forced","Unwind_RaiseException","Unwind_Resume","Unwind_Resume_or_Rethrow","Unwind_ForcedUnwind","Unwind_DeleteException","Unwind_Backtrace","Unwind_Complete","Unwind_VRS_Get","Unwind_VRS_Set","Unwind_VRS_Pop","Unwind_GetLanguageSpecificData","Unwind_GetRegionStart","Unwind_GetDataRelBase","Unwind_GetTextRelBase","cxa_begin_cleanup","cxa_end_cleanup","cxa_type_match","cxa_call_unexpected"]}],"model":{"modes":["skip-analysis"]}}
+// ---- the C++ demangler ----
+// `__cxa_demangle(mangled, buf, n, status)` is libc++abi's Itanium demangler, linked statically
+// into every NDK library built with `c++_static`. Its body is a recursive-descent parser in an
+// anonymous namespace, so its dozens of functions have no symbols, only `FUN_…` names. Their
+// summaries are near cross products of the parser struct's paths, instantiated at every
+// recursive call site. In the 16 apps of the corpus that link it, that is 20-92% of the
+// edge-delta join's time (things-to-improve.md, "Edge-delta join: libc++abi's demangler").
+//
+// `skip-exclusive-callees` skips those helpers along with `__cxa_demangle` itself: every unnamed
+// function that only it reaches (`codegen::exclusive_callees`). The propagation is what the
+// function does. The demangled name is written into `buf`, or into a buffer `buf` was
+// realloc'ed into, and returned. So the name flows to both, and `buf`'s old contents reach the
+// return the way `realloc` keeps them. `*n` and `*status` are lengths and codes, not data.
+{"find":"methods","where":[{"constraint":"signature_match","names":["cxa_demangle"]}],"model":{"modes":["skip-analysis","skip-exclusive-callees"],"propagation":[{"input":"Argument(0).deref","output":"Return.deref"},{"input":"Argument(0).deref","output":"Argument(1).deref"},{"input":"Argument(1).deref","output":"Return.deref"}]}}
 // ---- deliberately absent ----
 // `qsort`/`heapsort`/`mergesort` used to carry `Argument(0).deref -> Argument(0).deref`, a
 // self-loop that derives nothing: the taint it would propagate is already at the vertex it
