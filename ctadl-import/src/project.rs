@@ -493,6 +493,10 @@ impl ArtifactImport {
     /// content hash match `artifact_path` and its current contents. When this holds, a
     /// re-import would reproduce the same result and can be skipped.
     ///
+    /// Always false for a Ghidra Server repository (`ghidra://…`), which cannot be
+    /// hashed, and for an import with no recorded hash (one created before hashes were
+    /// recorded), since nothing proves either is unchanged.
+    ///
     /// Returns `false` (rather than erroring) when no matching import config can be
     /// loaded, so the caller falls back to performing the import.
     ///
