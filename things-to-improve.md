@@ -961,7 +961,8 @@ The 29 other apps are at 1.6x or below. For a guard kill, the peak is the guard'
 1. **Find what feeds the edge-delta join.** The aggregate profile can't say which functions the
    late edges belong to, or where they come from (summary instantiation or call-target
    resolution). The probe's `CTADL_FOCUS` dump, or a per-function `edge_split` census, on
-   `termux.nix` would show it.
+   `termux.nix` would show it. Done: summary instantiation inside libc++abi's demangler; see
+   "Edge-delta join: libc++abi's demangler".
 2. **Confirm the function-pointer mechanism.** Dump the decisions of `AnarchRE` and
    `heartratemonitor` and check which indirect call sites mint them.
 3. **Bound phi operands at interpreter loops.** `FUN_00142330` is one function; check whether its
@@ -983,3 +984,119 @@ All output is under `/Volumes/Shampoo/ct-bigapk/small/full-corpus/`:
 - `hashengineering.darkcoin.wallet/import-cap50/`: the failed import, with its 7.8 GB of facts.
 - `../more-picks.json`, `../fetch-more.py`, `../fetch-more.log`: the 35 new apps and their
   download, each checked against the F-Droid index's sha256.
+
+## Edge-delta join: libc++abi's demangler (2026-10-02)
+
+Item 1 of "Next" above: what feeds the edge-delta join in `termux.nix` and the other apps of kind 2.
+
+**Status:** found, no fix tried. The late edges are summaries instantiated at static call sites,
+and they nearly all come from one library function: libc++abi's Itanium demangler, which every app
+with the symptom links statically. Its recursive-descent parser functions get summaries that are
+near cross products of arg 0's paths, instantiated at dozens of recursive call sites.
+
+### Method
+
+A probe (`CTADL_EDGE_CENSUS`, see "Data") runs after the fixpoint or timeout. It attributes every
+`assign_like` row to the rule that made it, with the callee for a summary instantiation. It then
+charges each of the row's exact `edge_split` keys `(f, v2, key)` with the `locals` rows at that
+key. That count, "pairs" below, is what the edge-delta half enumerates when the edge arrives. It
+uses the `locals` of the moment the census runs, so it overstates edges that arrived early. Even
+so, pairs cost a steady 22-40 ns each across rungs and apps, so the pair count is the rule's time.
+
+### Where the pairs come from
+
+`termux.nix`, at four rungs (run 4 at a time, so wall times are longer than in "Results" above):
+
+| Rung | Iterations | Edge-delta rule | Pairs | `assign_like` from static summaries | Their `edge_split` | `FUN_001afefc` summary rows |
+|---|---|---|---|---|---|---|
+| t40 | 34 | 28 s, 72% | 1.28 B | 0.74 M | 2.86 M | 4,276 |
+| t160 | 88 | 147 s, 88% | 4.72 B | 2.55 M | 9.72 M | 6,680 |
+| t320 | 101 | 599 s, 96% | 15.24 B | 8.56 M | 33.6 M | 117,482 |
+| fixpoint | 684 | 596 s, 95% | 15.24 B | 8.69 M | 33.9 M | 118,454 |
+
+- **Summary instantiation, not call-target resolution.** 99.97% of the pairs come from summaries
+  instantiated at static call sites. Resolved call sites contribute 24 k pairs, and seeded and
+  call-site edges 4 M.
+- **One callee.** Between t160 and the fixpoint, 98.1% of the new pairs come from instantiating
+  `FUN_001afefc`'s summary, whose rows grow from 6,680 to 118,454. It is instantiated in 8 callers:
+  itself at 40 call sites (75.5% of the new pairs), the others at 1-4 sites. All the late growth is
+  in iterations 89-101, which take about 450 of the 630 s. The 583 iterations after them take
+  almost nothing.
+- **The function is libc++abi's demangler.** `FUN_001afefc` and the other top-20 callees lie 2-73 KB
+  after `__cxa_demangle@001aa9b8` in `liblocal-socket.so`. That is termux's 844 KB JNI socket
+  helper, with libc++ and libc++abi linked in statically. The demangler is in an anonymous
+  namespace, so its functions have no symbols. Arg 0 is the parser: `.deref` and `.[8].deref` are
+  its `First` and `Last` cursors.
+- **The summary is a cross product.** The summary's 2,223 source paths are all under arg 0 (`.deref.[k]`,
+  `.deref.[k].deref`, `.deref.deref.[k].deref.[k]`, ...): every offset at which the parser reads
+  its input or its arena. Of its 668 destination paths, 47 take 2,100-2,304 of those sources each,
+  83% of the rows. At t160 only `First` and `Last` are such destinations. The other 45 arrive
+  later, all on the return value (the node the parse function builds): `ret.[-k].deref`,
+  `ret.deref.[-k].deref` and `ret.deref.deref.[-k].deref` for 15 values of `k` from 568 to 1048.
+  Each one brings its 2,100 sources at once, at every call site.
+- **Each edge enumerates the same rows.** At a call site, the 93,623 instantiated edges whose
+  source starts `.deref` all split at `call-arg(i, 0).deref`, where `locals` holds 2,100 rows: 197 M
+  pairs per site. Between t160 and the fixpoint the rule enumerates 10.5 B pairs, and `locals`
+  gains 6.4 M rows, so at most 0.06% of the pairs yield a new row. How many of the rest fail the
+  admissibility test in `concat` and how many rederive an existing row was not measured.
+
+### Every app with the symptom links the demangler
+
+| App | Library | Pairs | In the demangler | Edge-delta share of rule time |
+|---|---|---|---|---|
+| `termux.nix` | `liblocal-socket.so` | 15.2 B | 100% | 95% |
+| `dictionary.fork` | `libc++_shared.so` | 6.2 B | 99.9% | 76% |
+| `scrcpy` (t640, 29 iterations) | `libconscrypt_jni.so` | 21.8 B | 99.7% | 68%, plus 25% in the `locals`-delta half |
+| `androidcrypt` | `libveracrypt_crypto.so` | 0.6 B | 99.4% | 65% |
+| `untracker` | `libquickjs.so` | 0.45 B | 93.3% | 38% |
+
+"In the demangler" counts callees in the 128 KB after `__cxa_demangle`. Every top-20 callee lies
+within 0x1c560 bytes of it. In each app the hot callees have the same shape as in `termux.nix`:
+summaries of 5-150 k rows, instantiated at 5-15 call sites. `dictionary.fork`'s worst
+(`FUN_001cb5f8`, 144 k rows, 5 callers) gives 48% of its pairs.
+
+16 of the 44 indexed apps contain the demangler in an arm64 library (it has `itanium_demangle`
+strings). In all 16 the edge-delta rule takes 20-92% of rule time, with a median of about 44%. This
+includes `conscryptprovider` (49%) and `a2050` (40%), which "The six kinds" files under wild
+relations and `locals` volume. In the 25 apps without the demangler that have a profile, it takes at most 10%, except six
+over-budget apps of other kinds: four of `locals` volume, `bined` (summary growth) and `AnarchRE`
+(function pointers), at 21-37%. So kind 2 has one cause, and the same cause adds to the cost of
+two of the other kinds.
+
+### Recommendations
+
+1. **Don't analyze the demangler's internals.** It is libc++abi's own code, linked into any NDK
+   library built with `c++_static`, and it carries no app data flow worth tracking. Give
+   `__cxa_demangle` a model (the result comes from the mangled name and the output buffer) and
+   skip the functions only it reaches. By the attribution above, that removes 93-100% of the join
+   work in these five apps: about 595 of `termux.nix`'s 625 s of rule time. To find the functions,
+   use the call graph from `__cxa_demangle`, not the address window used here.
+2. **Then decide whether the cross-product shape needs a general fix.** Any recursive parser over
+   a state struct should produce the same shape: a summary where most of a formal's paths flow to
+   most of another's, instantiated at many recursive call sites. A collapsed summary row
+   ("everything under arg 0 reaches `ret.P`") would bound it without knowing the library, but it
+   needs a path representation for "everything under". Check first whether any app keeps the
+   shape once the demangler is gone.
+3. **Measure the rejected pairs.** If most of the 99.9% of pairs that yield nothing fail the
+   `concat` admissibility test, rather than rederiving existing rows, then splitting `edge_split`
+   on the admissible extensions of `rest` would cut the enumeration without changing the result.
+
+### Data
+
+All output is under `/Volumes/Shampoo/ct-bigapk/small/edge-delta/`:
+
+- `RESULTS.md`: a summary. `ladder.log`: time and peak memory for every run.
+- `bin/ctadl`: the probe, `a84d75e7` plus `bin/ctadl.diff` (uncommitted; worktree `src/`). It adds
+  `CTADL_EDGE_CENSUS=<dir>`, which writes `totals.tsv`, `by_function.tsv`, `by_callee.tsv`,
+  `by_caller_callee.tsv`, `hot_keys.tsv`, `summary.tsv` (every summary row) and `rows.tsv` (every
+  `assign_like` row, with its origin, callee, splits and pairs). Serial engine only.
+- `run.sh <pkg> <name> <timeout>`: indexes the `full-corpus` import with the census on.
+- `runs/com.termux.nix/{t40,t160,t320,full}/`: the ladder above, each with `index.err`, `rank.txt`
+  and `census/`. `runs/com.termux.nix/late-t160-full.txt`: output of `late.py t160 full`, the
+  per-function and per-callee growth between two rungs.
+- `runs/{com.annie.dictionary.fork,com.androidcrypt,me.zhanghai.android.untracker}/full/` and
+  `runs/invalid.lena.scrcpy/t640/`: the other apps.
+- `window.py <census>`, `window.txt`: the work share in the 128 KB after `__cxa_demangle`.
+- `demangler-scan.txt`: which arm64 libraries of each app contain the demangler.
+  `no-demangler.txt`: the edge-delta rule's share of rule time in the apps without it.
+- `lib/liblocal-socket.so`: termux's library, from the APK.
