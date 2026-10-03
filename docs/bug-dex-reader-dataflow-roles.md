@@ -1,6 +1,6 @@
 # Bug: `dex_reader`'s `DataFlow` gives the object register two different roles
 
-**Component:** `dex-reader` (`src/instructions.rs`), consumed by `ctadl-ascent/src/languages/dex/mod.rs`
+**Component:** `dex-reader` (`readers/dex-reader/src/instructions.rs`), consumed by `frontends/ctadl-dex/src/lib.rs`
 **Status:** open — present since the initial commit (`a3c69002`)
 **Severity:** finding 1 is latent (no wrong output today, blocks any second consumer);
 finding 2 is live (silently drops a real dataflow edge)
@@ -11,18 +11,18 @@ finding 2 is live (silently drops a real dataflow edge)
 ## Finding 1 — `iput-wide` reports the object register as a *destination*
 
 `Instruction::data_flow()` returns three register bags — `source`, `dest`, `ret`
-(`dex-reader/src/instructions.rs:1254`). For the `iput` family, Dex format 22c is
+(`readers/dex-reader/src/instructions.rs:1274`). For the `iput` family, Dex format 22c is
 `iput vA, vB, field@CCCC`: `vA` (plus `vA+1` when wide) is the **value stored**, `vB` is
 the **object written into**. `vB` is read, never written.
 
 The table disagrees with itself about `vB`:
 
 ```rust
-// dex-reader/src/instructions.rs:2692
+// readers/dex-reader/src/instructions.rs:2711
 IPut(f) | IPutBoolean(f) | IPutByte(f) | IPutChar(f) | IPutShort(f) | IPutObject(f) => {
     dataflow_source_sink_ret!([f.a, f.b], [], [])          // vB is a SOURCE
 }
-// dex-reader/src/instructions.rs:2695
+// readers/dex-reader/src/instructions.rs:2714
 IPutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg()], [f.b], [])  // vB is a DEST
 ```
 
@@ -42,7 +42,7 @@ table:
 
 1. **The one consumer ignores both fields for this opcode.**
    `dataflow_to_assign` handles all seven `IPut*` variants in one arm
-   (`ctadl-ascent/src/languages/dex/mod.rs:745-770`): it filters `f.b` back *out* of
+   (`frontends/ctadl-dex/src/lib.rs:795-820`): it filters `f.b` back *out* of
    `source` (`:758`), takes the object from `f.b` directly (`:761`), and never reads
    `dest` on this path. So the erroneous `dest` is discarded and the output is correct
    today.
@@ -50,7 +50,7 @@ table:
    fields are `Box<dyn DoubleEndedStreamingIterator>`. A unit test cannot compare two
    `DataFlow`s, and there are no tests of `data_flow()` anywhere in `dex-reader`; the
    only coverage is 9 tests of the *frontend's* translation in
-   `ctadl-ascent/src/languages/dex/tests.rs`, none of which exercise `iput-wide`.
+   `frontends/ctadl-dex/src/tests.rs`, none of which exercise `iput-wide`.
 3. **There is no invariant to assert against.** Dex has no pop/push table, so unlike
    CIL (whose `OpCode` carries `StackBehaviour`) there is no independent source of truth
    a property test could cross-check `data_flow()` against.
@@ -81,9 +81,9 @@ Same root cause, but this one is wrong *today*.
 The consumer recovers the value operands by removing the object register **by value**:
 
 ```rust
-// ctadl-ascent/src/languages/dex/mod.rs:756-760  (IPut* arm)
+// frontends/ctadl-dex/src/lib.rs:806-810  (IPut* arm)
 source.cloned().filter(|r| *r != f.b) ...
-// ctadl-ascent/src/languages/dex/mod.rs:822-826  (APut* arm)
+// frontends/ctadl-dex/src/lib.rs:872-877  (APut* arm)
 source.cloned().filter(|r| *r != f.b && *r != f.c) ...
 ```
 
@@ -117,7 +117,7 @@ ambiguous (finding 2). Two further symptoms of the same shape:
 
 - **`ret` is dead.** All 67 `dataflow_source_sink_ret!` invocations pass `[]` for it, and
   `dataflow_from_args` sets it empty; the sole consumer binds it as `ret: _`
-  (`ctadl-ascent/src/languages/dex/mod.rs:591`). The field costs a boxed empty iterator
+  (`frontends/ctadl-dex/src/lib.rs:665`). The field costs a boxed empty iterator
   per instruction and carries no information.
 - **Three heap allocations per instruction**, plus `RegSliceStream::new` copying the
   argument slice into a `Vec` at every call site, and a `streaming-iterator` dependency
@@ -138,12 +138,12 @@ Any of these would have caught finding 1:
 2. A table-level property test: for every store-family opcode, the object/array register
    appears in `source` and not in `dest`.
 3. A frontend test over `iput-wide` and `iput-object p0, p0, F` in
-   `ctadl-ascent/src/languages/dex/tests.rs` — neither shape is covered by the current 9.
+   `frontends/ctadl-dex/src/tests.rs` — neither shape is covered by the current 9.
 
 ## References
 
-- `dex-reader/src/instructions.rs:1254-1262` — `DataFlow`
-- `dex-reader/src/instructions.rs:2692-2695` — the inconsistent arms
-- `dex-reader/src/instructions.rs:2783-2785` — `APut*`, for contrast
-- `ctadl-ascent/src/languages/dex/mod.rs:581-600, 745-770, 813-834` — the sole consumer
+- `readers/dex-reader/src/instructions.rs:1274-1282` — `DataFlow`
+- `readers/dex-reader/src/instructions.rs:2711-2714` — the inconsistent arms
+- `readers/dex-reader/src/instructions.rs:2801-2804` — `APut*`, for contrast
+- `frontends/ctadl-dex/src/lib.rs:655-674, 795-820, 863-884` — the sole consumer
 - `docs/cil-frontend-plan.md` §2.1 — where this was first written up

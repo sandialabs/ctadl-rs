@@ -20,7 +20,7 @@ stand today:
 | Concern | Extension point | Java/Dex value |
 | --- | --- | --- |
 | Import dispatch | `ArtifactLanguage` + `cli::import` match | `Dex`, `Apk`, `Jar`, `Jvm` |
-| Frontend | `ctadl-ascent/src/languages/<lang>/` → `ProgramInfo` | `dex/`, `jvm/` |
+| Frontend | `frontends/ctadl-<lang>/src/` → `ProgramInfo` | `ctadl-dex`, `ctadl-jvm` |
 | Type hierarchy + method table | `VirtualMethodTable` variant | `Java { methods, hierarchy, natives }` |
 | Virtual call site | `CallStyle` variant | `JavaCall { receiver, cls, simple_name, descriptor }` |
 | Allocation site | `CallObject` variant | `JavaObject(JavaClass)` |
@@ -51,14 +51,14 @@ and the JSON model language all work on CIL with no changes.
 
 ## 1. Milestone M0 — fold `cil-reader` into the workspace
 
-`cil-reader/` is currently a nested Cargo workspace with its own lock file, an xtask
+`readers/cil-reader/` is currently a nested Cargo workspace with its own lock file, an xtask
 that needs nix + the .NET SDK, and a vendored (gitignored) Mono.Cecil checkout. The
 library itself has **zero dependencies** and its 166 tests run off 19 committed
 `.dll` fixtures with no .NET involved — so the useful half integrates cleanly and the
 Cecil-parity harness can stay behind.
 
-1. Move `cil-reader/crates/cil-reader` → `<root>/cil-reader/` as a plain package
-   (`version.workspace = true`, `edition = "2024"`), and `cil-reader/crates/cil-dump`
+1. Move `readers/cil-reader/crates/cil-reader` → `<root>/cil-reader/` as a plain package
+   (`version.workspace = true`, `edition = "2024"`), and `readers/cil-reader/crates/cil-dump`
    → `<root>/cil-dump/` (its `cli` feature is already off by default, and its manifest
    already anticipates "depending on cil-reader from an outer workspace").
 2. Add both to the root `[workspace] members`. Delete the nested `[workspace]` and
@@ -95,7 +95,7 @@ pub struct DataFlow {
 }
 ```
 
-Concrete problems, each visible in `languages/dex/mod.rs`:
+Concrete problems, each visible in `ctadl-dex/src/lib.rs`:
 
 1. **Three heap allocations per instruction**, plus `RegSliceStream` cloning the
    argument slice into a `Vec` for every call site. It also forces the
@@ -117,7 +117,7 @@ Concrete problems, each visible in `languages/dex/mod.rs`:
    about pop/push counts in Dex.
 5. **Untestable.** `DataFlow` derives nothing — no `Debug`, no `PartialEq`. There are
    no unit tests of `data_flow()` itself; the only coverage is 13 tests of the
-   *frontend's* translation in `languages/dex/tests.rs`.
+   *frontend's* translation in `ctadl-dex/src/tests.rs`.
 
 ### 2.2 What `jvm-reader`'s pattern gets wrong
 
@@ -127,13 +127,13 @@ Concrete problems, each visible in `languages/dex/mod.rs`:
 1. **Two representations for one thing.** Decode emits `Location::StackInput(depth)`
    / `StackOutput`; a later `normalize_stack_slots_for_method` pass *mutates* them
    into `Location::StackSlot(id)`. Every consumer must handle both, and
-   `languages/jvm`'s `convert_location_to_var_ref` has a `"Stack Local?"` bucket for
+   `ctadl-jvm`'s `convert_location_to_var_ref` has a `"Stack Local?"` bucket for
    the case that should be impossible.
 2. **Slot ids are stack depths, not definitions.** `StackSlot(n)` is the absolute
    depth the value sits at. Two unrelated values at depth 2 in different blocks get
    the same name, which merges flows that never merge.
 3. **Consequence: the frontend re-implements value numbering.** To answer "which
-   object does this `putfield` write to", `languages/jvm/mod.rs` carries
+   object does this `putfield` write to", `ctadl-jvm/src/lib.rs` carries
    `stack_aliases`, `dup_slot_pairs`, `last_aload_reg`, `note_assign_aliases`,
    `stack_slot_alias`, `aload_for_stack_slot`, `aload_register_before`,
    `resolve_object_var`, `field_object_base`, and `init_survivor_link` — roughly 200
@@ -353,7 +353,7 @@ Property tests over every method in every fixture:
 
 ## 4. Milestone M3 — the frontend, `ctadl-ascent/src/languages/cil/`
 
-Structurally a sibling of `languages/dex/mod.rs`: a `Context` with
+Structurally a sibling of `ctadl-dex/src/lib.rs`: a `Context` with
 `process(module, artifact_key, &mut Builders)` callable once per assembly and
 `finish(builders)` once, so a multi-assembly application lands in one `ProgramInfo`
 with one hierarchy — the same shape the Dex frontend uses for multiple
@@ -394,7 +394,7 @@ generic .NET code tractable. Keep the instantiation for display only.
 For each `TypeDef` from `module.all_types()` (includes nested):
 
 - `hierarchy[cls] = [base_type()] ++ interfaces()`, exactly as
-  `languages/dex/mod.rs` builds it from `superclass_idx` + `class_interfaces`.
+  `ctadl-dex/src/lib.rs` builds it from `superclass_idx` + `class_interfaces`.
 - `methods.push((cls, simple_name, descriptor, function_id))` for every declared
   method, body or not — the Dex frontend's comment on `natives` explains why a
   bodyless method still needs a row: without one, a virtual call to it resolves to
@@ -443,7 +443,7 @@ local `loc{n}`; `Value::Stack(id)` → local `s{id}`.
 **No aliasing heuristics.** Because `Origin` travels with every value, the frontend
 answers "what object does this `stfld` write to" by reading
 `Origin::Copy(Value::Arg(0))` off the receiver, rather than scanning the block
-backwards for an `ldarg` — the ~200 lines that `languages/jvm/mod.rs` spends on that
+backwards for an `ldarg` — the ~200 lines that `ctadl-jvm/src/lib.rs` spends on that
 question do not get written here.
 
 ### 4.5 Calls
@@ -479,7 +479,7 @@ These are not polish; they are where most real .NET taint lives.
 - **`newobj`** is allocation + constructor in one instruction: `New` then a `Ctor`
   call with the fresh object as receiver. This is strictly simpler than the JVM's
   `new` / `dup` / `invokespecial` sequence, and the `init_survivor_link` hack in
-  `languages/jvm/mod.rs` has no counterpart here.
+  `ctadl-jvm/src/lib.rs` has no counterpart here.
 - **Delegates.** `ldftn`/`ldvirtftn` push `Origin::FunctionPtr(method)`; the
   `newobj D::.ctor(object, native int)` that consumes it makes the delegate object
   carry that function pointer; `callvirt D::Invoke` is a `DelegateInvoke`. Map to
@@ -545,7 +545,7 @@ The additive change set, following Lua's precedent exactly:
 | `ctadl-ir/src/mir/visit/mod.rs` | visitor arm for `CilCall` |
 | `ctadl-ascent/src/facts.rs` | `CallTargetObject::CilClass`, `CallDispatchKey::Cil(name, desc)` |
 | `ctadl-ascent/src/facts/parquet.rs` | two tag bytes + encode/decode arms |
-| `ctadl-ascent/src/project.rs` | `ArtifactLanguage::Cil`, `ALL`, `name()`; bump `INDEX_FORMAT_VERSION` |
+| `ctadl-import/src/project.rs` | `ArtifactLanguage::Cil`, `ALL`, `name()`; bump `INDEX_FORMAT_VERSION` |
 | `ctadl-ascent/src/cli/mod.rs` | import dispatch arm |
 | `ctadl-ascent/src/codegen/mod.rs` | `ChaLanguage::Cil` (reuses `run_cha` unchanged), `CilCall` codegen arm mirroring `JavaCall`, `emit_callee_resolvents` arm, `InstantiationFinder` arm |
 | `ctadl-ascent/src/models/{mod,match_index,json,codegen}.rs` | VMT arms; `CIL_DEFAULT_MODELS` |
