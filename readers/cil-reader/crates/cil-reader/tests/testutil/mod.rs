@@ -3,6 +3,9 @@
 //! Analogue of `BaseTestFixture.GetAssemblyResourcePath`
 //! (`Test/Mono.Cecil.Tests/BaseTestFixture.cs:45-63`).
 
+// Each test binary compiles this module separately and uses only some helpers.
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 
 /// Path of a test assembly in the vendored Cecil resources.

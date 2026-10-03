@@ -92,7 +92,7 @@ pub(crate) struct SemanticsMaps {
     pub by_association: HashMap<MetadataToken, Vec<(u16, u32)>>,
 }
 
-fn get<'t, T>(slot: &'t Lazy<T>, build: impl FnOnce() -> Result<T>) -> Result<&'t T> {
+fn get<T>(slot: &Lazy<T>, build: impl FnOnce() -> Result<T>) -> Result<&T> {
     match slot.get_or_init(build) {
         Ok(v) => Ok(v),
         Err(e) => Err(e.clone()),
@@ -388,7 +388,7 @@ impl<'a> ModuleData<'a> {
                     range.length += 1;
                 }
             }
-            if table.len() != 0 {
+            if !table.is_empty() {
                 add_range(&mut ranges, owner, range);
             }
             Ok(ranges)
@@ -447,7 +447,7 @@ impl<'a> ModuleData<'a> {
                 range.length += 1;
             }
         }
-        if table.len() != 0 {
+        if !table.is_empty() {
             add_range(&mut ranges, owner, range);
         }
         Ok(ranges)

@@ -77,10 +77,8 @@ impl<'a> Metadata<'a> {
             row_counts,
             coded_sizes: [0; CODED_INDEX_COUNT],
         };
-        for i in 0..CODED_INDEX_COUNT {
-            // Safety of the transmute-free approach: enumerate the kinds.
-            let kind = CODED_INDEX_KINDS[i];
-            ctx.coded_sizes[i] = kind.size(|t| ctx.row_counts[t as usize]);
+        for (size, kind) in ctx.coded_sizes.iter_mut().zip(CODED_INDEX_KINDS) {
+            *size = kind.size(|t| ctx.row_counts[t as usize]);
         }
 
         // ComputeTableInformations: rows are laid out immediately after the

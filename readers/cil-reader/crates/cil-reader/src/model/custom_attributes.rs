@@ -619,7 +619,7 @@ fn read_element<'a>(
             value: CaValue::Boxed(Box::new(inner)),
         });
     }
-    let value = read_element_value(m, r, ty, resolver)?;
+    let value = read_element_value(r, ty)?;
     Ok(CaArgument {
         ty: ty.clone(),
         value,
@@ -627,12 +627,7 @@ fn read_element<'a>(
 }
 
 /// `ReadCustomAttributeElementValue` + `ReadPrimitiveValue`.
-fn read_element_value<'a>(
-    m: &ModuleData<'a>,
-    r: &mut SigReader<'a>,
-    ty: &CaType,
-    resolver: Option<EnumResolver<'_>>,
-) -> Result<CaValue<'a>> {
+fn read_element_value<'a>(r: &mut SigReader<'a>, ty: &CaType) -> Result<CaValue<'a>> {
     Ok(match ty {
         CaType::String => match r.utf8_string()? {
             Some(s) => CaValue::String(s),
@@ -647,7 +642,7 @@ fn read_element_value<'a>(
             }
             None => CaValue::Null,
         },
-        CaType::Enum { underlying, .. } => read_element_value(m, r, underlying, resolver)?,
+        CaType::Enum { underlying, .. } => read_element_value(r, underlying)?,
         CaType::Boolean => CaValue::Boolean(r.cur.u8()? == 1),
         CaType::Char => CaValue::Char(r.cur.u16()?),
         CaType::I1 => CaValue::I1(r.cur.i8()?),

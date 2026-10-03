@@ -7,8 +7,8 @@
 
 mod testutil;
 
-use cil_reader::model::custom_attributes::{CaArgument, CaType, CaValue, CustomAttribute};
-use cil_reader::model::{ElementType, TypeDef};
+use cil_reader::model::ElementType;
+use cil_reader::model::custom_attributes::{CaArgument, CaValue, CustomAttribute};
 use cil_reader::{MetadataToken, Module};
 use std::fmt::Write as _;
 use testutil::{read_fixture, read_resource};
