@@ -1,8 +1,8 @@
 [package]
 name = "cil-reader"
 version.workspace = true
-edition.workspace = true
-license.workspace = true
+edition = "2024"
+license = "MIT"
 description = "Read-only CIL (ECMA-335) metadata and bytecode reader, modeled on Mono.Cecil's reading API"
 
 [features]

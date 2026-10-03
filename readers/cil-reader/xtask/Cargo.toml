@@ -1,8 +1,8 @@
 [package]
-name = "xtask"
+name = "cil-xtask"
 version.workspace = true
-edition.workspace = true
-license.workspace = true
+edition = "2024"
+license = "MIT"
 publish = false
 
 [dependencies]
