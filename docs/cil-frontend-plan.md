@@ -62,7 +62,9 @@ and the JSON model language all work on CIL with no changes.
 > the flake builds them reproducibly as `packages.cil-fixtures`
 > (`$CIL_READER_FIXTURES`). The ported Cecil test suites need both, so they left
 > `cargo test` for the `cil:cecil-tests` check in `xtask regression`
-> (`xtask/src/cil/cecil_tests`).
+> (`xtask/src/cil/cecil_tests`). The parity rules (`xtask/src/cil/parity.rs`,
+> formerly `cil_dump::parity`) and the goldens (`xtask/cil-goldens`, formerly
+> `readers/cil-reader/tests/expected`) moved into xtask too.
 
 `readers/cil-reader/` is currently a nested Cargo workspace with its own lock file, an xtask
 that needs nix + the .NET SDK, and a vendored (gitignored) Mono.Cecil checkout. The

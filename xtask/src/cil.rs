@@ -12,15 +12,14 @@
 //! - `cil:read`          — every corpus assembly reads and dumps in full
 //!   without an error or a panic.
 //! - `cil:goldens`       — dumps of Cecil's committed assemblies match the
-//!   committed Cecil goldens (`readers/cil-reader/tests/expected`). Needs no
-//!   .NET.
+//!   committed Cecil goldens (`xtask/cil-goldens`). Needs no .NET.
 //! - `cil:cecil-compare` — dumps match a live run of CecilDump, head to head,
 //!   which also covers what has no golden: the fixtures (build outputs) and
 //!   the inputs too large to keep goldens for. Needs the
 //!   `cecil-dump` launcher (the flake's `cecilDump`, on PATH in the devshell
 //!   and the regression check); self-skips without it.
 //!
-//! The corpus, golden naming and comparison rules live in `cil_dump::parity`.
+//! The corpus, golden naming and comparison rules live in [`parity`].
 //! `cargo xtask cil bless` regenerates the goldens.
 //!
 //! Neither input is committed. Cecil comes from `--cecil-src`, else a
@@ -35,26 +34,27 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
-use cil_dump::parity::{self, CecilDump, Input, GOLDENS_DIR};
 
 use crate::regression::Outcome;
+use parity::{CecilDump, Input};
 
 mod cecil_tests;
+mod parity;
 
 /// Failing inputs listed per check before the rest are summarized as a count.
 const MAX_LISTED: usize = 10;
 
-/// Run every cil-reader check. `cil_dir` is the cil-reader directory (its
-/// goldens); `cecil` the Cecil checkout holding the corpus; `fixtures` the
-/// compiled fixtures.
+/// Run every cil-reader check. `goldens` is the committed goldens directory;
+/// `cecil` the Cecil checkout holding the corpus; `fixtures` the compiled
+/// fixtures.
 pub fn run_checks(
-    cil_dir: Option<&Path>,
+    goldens: Option<&Path>,
     cecil: Option<&Path>,
     fixtures: Option<&Path>,
     work: &Path,
 ) -> Result<Vec<(String, Outcome)>> {
-    let Some(cil_dir) = cil_dir else {
-        return Ok(skip_all("cil-reader directory not found; pass --cil-dir"));
+    let Some(goldens) = goldens else {
+        return Ok(skip_all("goldens directory not found; pass --cil-goldens"));
     };
     let Some(cecil) = cecil else {
         return Ok(skip_all(
@@ -89,7 +89,7 @@ pub fn run_checks(
         ("cil:read".to_string(), check_read(&inputs, &dumps)),
         (
             "cil:goldens".to_string(),
-            check_goldens(cil_dir, &inputs, &dumps)?,
+            check_goldens(goldens, &inputs, &dumps)?,
         ),
         (
             "cil:cecil-compare".to_string(),
@@ -133,11 +133,10 @@ fn check_read(inputs: &[Input], dumps: &[Result<String, String>]) -> Outcome {
 }
 
 fn check_goldens(
-    cil_dir: &Path,
+    goldens: &Path,
     inputs: &[Input],
     dumps: &[Result<String, String>],
 ) -> Result<Outcome> {
-    let goldens = cil_dir.join(GOLDENS_DIR);
     let mut failures = Vec::new();
     let mut compared = 0usize;
     for (input, dump) in inputs.iter().zip(dumps) {
@@ -274,18 +273,44 @@ fn parallel_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Ve
 /// Locate the cil-reader directory. With no override, look where it lives
 /// relative to the repo root (`cargo xtask`) or the nightly cwd.
 pub fn resolve_cil_dir(override_dir: Option<&Path>) -> Result<Option<PathBuf>> {
+    resolve_dir(
+        override_dir,
+        ["readers/cil-reader", "../readers/cil-reader"],
+        |p| p.join("crates/cil-reader/Cargo.toml").is_file(),
+    )
+    .with_context(|| "failed to canonicalize cil-reader directory")
+}
+
+/// Locate the committed goldens: `--cil-goldens`, else `xtask/cil-goldens`
+/// relative to the repo root (`cargo xtask`) or the nightly cwd.
+pub fn resolve_goldens(override_dir: Option<&Path>) -> Result<Option<PathBuf>> {
+    resolve_dir(
+        override_dir,
+        ["xtask/cil-goldens", "../xtask/cil-goldens"],
+        |p| p.is_dir(),
+    )
+    .with_context(|| "failed to canonicalize goldens directory")
+}
+
+/// `override_dir` if given, else the first of `candidates` that is `wanted`;
+/// canonicalized either way.
+fn resolve_dir(
+    override_dir: Option<&Path>,
+    candidates: [&str; 2],
+    wanted: impl Fn(&Path) -> bool,
+) -> Result<Option<PathBuf>> {
     if let Some(dir) = override_dir {
         return Ok(Some(std::fs::canonicalize(dir).with_context(|| {
             format!("failed to canonicalize {}", dir.display())
         })?));
     }
-    ["readers/cil-reader", "../readers/cil-reader"]
+    candidates
         .into_iter()
         .map(PathBuf::from)
-        .find(|p| p.join(GOLDENS_DIR).is_dir())
+        .find(|p| wanted(p))
         .map(|p| std::fs::canonicalize(&p))
         .transpose()
-        .with_context(|| "failed to canonicalize cil-reader directory")
+        .map_err(Into::into)
 }
 
 /// Locate the compiled fixtures: `--cil-fixtures`, else `$CIL_READER_FIXTURES`.
@@ -318,11 +343,11 @@ pub fn resolve_cecil_src(
 }
 
 /// `cargo xtask cil bless [filter]`: regenerate the committed goldens
-/// (`tests/expected`) from CecilDump. Needed after moving the flake's `cecil`
+/// (`xtask/cil-goldens`) from CecilDump. Needed after moving the flake's `cecil`
 /// pin or changing the dump format on both sides; review the diff before
 /// committing it. Only Cecil's own assemblies get goldens; see
 /// `Input::golden_name`.
-pub fn bless(cil_dir: &Path, cecil: &Path, filter: Option<&str>) -> Result<bool> {
+pub fn bless(goldens: &Path, cecil: &Path, filter: Option<&str>) -> Result<bool> {
     let cecil_dump = CecilDump::locate().with_context(|| {
         format!(
             "`cecil-dump` not on PATH and ${} unset; enter the dev shell or \
@@ -330,8 +355,7 @@ pub fn bless(cil_dir: &Path, cecil: &Path, filter: Option<&str>) -> Result<bool>
             parity::CECIL_DUMP_ENV
         )
     })?;
-    let goldens = cil_dir.join(GOLDENS_DIR);
-    std::fs::create_dir_all(&goldens)?;
+    std::fs::create_dir_all(goldens)?;
     let mut written = 0usize;
     let mut errors = 0usize;
     for input in parity::corpus(cecil, None) {

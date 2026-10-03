@@ -90,18 +90,18 @@ as `cil:cecil-tests` (sources in `xtask/src/cil/cecil_tests`), not under
 `cargo test`; the nightly `regression` flake check supplies both inputs.
 
 `cil:goldens` compares Cecil's own assemblies against the committed CecilDump
-output in `tests/expected`; `cil:cecil-compare` runs CecilDump live, head to
+output in `xtask/cil-goldens`; `cil:cecil-compare` runs CecilDump live, head to
 head, which also covers what has no golden: the fixtures (build outputs, whose
 bytes a golden would pin to one toolchain) and the inputs too large to keep
 goldens for. CecilDump
 (`tools/CecilDump`) compiles Cecil's sources in directly and needs no NuGet
 packages, so the root flake builds it offline as a cached derivation (`nix
 build .#cecil-dump`), and the devshell puts it on PATH as `cecil-dump`. The
-corpus, golden naming and comparison rules live in `cil_dump::parity`.
+corpus, golden naming and comparison rules live in `xtask/src/cil/parity.rs`.
 
 Regenerating committed artifacts:
 
 ```sh
-cargo xtask cil bless [--filter <name>]  # rewrite tests/expected from cecil-dump (after moving the cecil pin)
+cargo xtask cil bless [--filter <name>]  # rewrite xtask/cil-goldens from cecil-dump (after moving the cecil pin)
 cargo xtask cil codegen                  # regenerate the opcode table from Cecil's OpCodes.cs
 ```

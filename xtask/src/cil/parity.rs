@@ -1,11 +1,9 @@
 //! Cecil parity harness: the corpus, the committed goldens, and the
-//! Cecil-side dumper (`tools/CecilDump`).
+//! Cecil-side dumper (`readers/cil-reader/tools/CecilDump`).
 //!
-//! Used by the root workspace's xtask: the `cil:*` checks of `cargo xtask
-//! regression --frontend cil`, and `cargo xtask cil bless`, which writes the
-//! goldens those checks read.
+//! Shared by the `cil:*` checks of `cargo xtask regression --frontend cil` and
+//! by `cargo xtask cil bless`, which writes the goldens those checks read.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -26,9 +24,6 @@ pub const FIXTURES_TAG: &str = "fixtures";
 /// Environment variable naming the compiled fixtures directory; the dev shell
 /// and the flake checks set it to `cilFixtures`.
 pub const FIXTURES_ENV: &str = "CIL_READER_FIXTURES";
-
-/// Committed goldens (CecilDump output), relative to the cil-reader directory.
-pub const GOLDENS_DIR: &str = "tests/expected";
 
 /// Inputs that are not ECMA-335 CLI images (or intentionally malformed):
 /// reading them must FAIL. Relative to Cecil's main resource directory.
@@ -71,7 +66,7 @@ impl Input {
         format!("{}-{}", self.tag, self.name())
     }
 
-    /// File name of this input's golden under [`GOLDENS_DIR`], if it gets
+    /// File name of this input's golden in the goldens directory, if it gets
     /// one. Goldens are kept only for Cecil's committed assemblies: the
     /// fixtures are build outputs, so a golden would pin one toolchain's
     /// bytes (MVIDs and all). The live CecilDump comparison covers them, as
@@ -122,10 +117,10 @@ pub fn must_fail_inputs(cecil: &Path) -> Vec<PathBuf> {
 /// Full dump of an image with every section, as the goldens hold it. A panic
 /// inside the reader is reported as an error rather than unwinding.
 pub fn rust_dump(data: &[u8]) -> Result<String, String> {
-    let sections: Vec<crate::Section> = crate::ALL_SECTIONS.iter().map(|&(_, s)| s).collect();
+    let sections: Vec<cil_dump::Section> = cil_dump::ALL_SECTIONS.iter().map(|&(_, s)| s).collect();
     match std::panic::catch_unwind(|| -> cil_reader::Result<String> {
         let module = cil_reader::Module::read(data)?;
-        crate::dump(&module, &sections)
+        cil_dump::dump(&module, &sections)
     }) {
         Ok(Ok(dump)) => Ok(dump),
         Ok(Err(e)) => Err(e.to_string()),
@@ -153,8 +148,7 @@ pub const CECIL_DUMP_ENV: &str = "CECIL_DUMP";
 /// The Cecil side of the comparison: a command that takes an assembly path
 /// and prints its dump.
 pub struct CecilDump {
-    program: OsString,
-    args: Vec<OsString>,
+    program: PathBuf,
 }
 
 impl CecilDump {
@@ -164,29 +158,15 @@ impl CecilDump {
         let program = std::env::var_os(CECIL_DUMP_ENV)
             .map(PathBuf::from)
             .or_else(|| which("cecil-dump"))?;
-        Some(CecilDump {
-            program: program.into(),
-            args: Vec::new(),
-        })
-    }
-
-    /// A CecilDump.dll built by hand, run through `dotnet` on PATH.
-    pub fn from_dll(dll: &Path) -> Self {
-        CecilDump {
-            program: "dotnet".into(),
-            args: vec![dll.into()],
-        }
+        Some(CecilDump { program })
     }
 
     pub fn describe(&self) -> String {
-        let mut parts = vec![self.program.to_string_lossy().into_owned()];
-        parts.extend(self.args.iter().map(|a| a.to_string_lossy().into_owned()));
-        parts.join(" ")
+        self.program.display().to_string()
     }
 
     pub fn dump(&self, input: &Path) -> Result<String, String> {
         let output = Command::new(&self.program)
-            .args(&self.args)
             .arg(input)
             // Keep the first-run banner and telemetry notice off stdout,
             // which is the dump.

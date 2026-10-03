@@ -13,7 +13,8 @@ All `extern/cecil` file/line references below are pinned to that commit.
 
 - `cargo test`: 165 ported Cecil tests green (per-milestone gates below).
 - `cargo xtask regression`: 118/118 corpus files sweep clean; committed
-  goldens (1.8 MB, `tests/expected/`) match.
+  goldens (1.8 MB, `tests/expected/`, since moved to the root
+  `xtask/cil-goldens/`) match.
 - `cargo xtask compare`: **114/114 comparable corpus files byte-identical**
   to CecilDump (M6 acceptance). Only exclusion: `*.winmd` (Cecil applies
   WinRT projections — a declared non-goal). Five giants are compared live
@@ -126,7 +127,7 @@ crates/cil-dump/          # CLI: deterministic text dump of an image (used by te
 xtask/                    # cargo xtask: fixtures, regression, compare, bless, codegen
 tools/CecilDump/          # C# console app referencing extern/cecil, same dump format
 tests/fixtures/           # our compiled .il/.cs fixture binaries (committed)
-tests/expected/           # committed CecilDump outputs for the corpus (goldens)
+tests/expected/           # committed CecilDump outputs for the corpus (goldens; now root xtask/cil-goldens/)
 extern/cecil/             # vendored (nix-pinned, gitignored): source of truth + test resources
 ```
 

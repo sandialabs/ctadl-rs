@@ -584,14 +584,14 @@
                   # would self-skip here -- which is the one place the drift is
                   # meant to be caught.
                   # The `cil:*` checks read Cecil's test corpus (the pinned
-                  # input), cil-reader's goldens and the built fixtures, and diff
+                  # input), the Cecil goldens and the built fixtures, and diff
                   # against the `cecil-dump` that testEnv puts on PATH.
                   ${self.packages.${system}.default}/bin/xtask regression \
                     --frontend dex,jvm,pcode,lua,jni,c,android-icc,cil \
                     --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
                     --models-dir ${./ctadl-ascent/src/models} \
-                    --cil-dir ${./readers/cil-reader} \
+                    --cil-goldens ${./xtask/cil-goldens} \
                     --cecil-src ${cecil} \
                     --cil-fixtures ${cilFixtures}
 

@@ -127,9 +127,9 @@ pub struct Options {
     /// Directory holding the model generator schema and the model files checked
     /// against it. `None` auto-detects; see [`resolve_models_dir`].
     pub models_dir: Option<PathBuf>,
-    /// The cil-reader directory (goldens, fixtures). `None` auto-detects; see
-    /// [`cil::resolve_cil_dir`].
-    pub cil_dir: Option<PathBuf>,
+    /// The committed Cecil goldens. `None` auto-detects; see
+    /// [`cil::resolve_goldens`].
+    pub cil_goldens: Option<PathBuf>,
     /// The Cecil checkout whose test assemblies the `cil:*` checks read.
     /// `None` auto-detects; see [`cil::resolve_cecil_src`].
     pub cecil_src: Option<PathBuf>,
@@ -153,7 +153,7 @@ impl Default for Options {
             jvm_samples: None,
             dex_apk: None,
             models_dir: None,
-            cil_dir: None,
+            cil_goldens: None,
             cecil_src: None,
             cil_fixtures: None,
             jobs: None,
@@ -253,11 +253,13 @@ pub fn run(opts: &Options) -> Result<bool> {
     };
     let models_dir = resolve_models_dir(opts.models_dir.as_deref())?;
     let wants_cil = opts.frontends.contains(&Frontend::Cil);
-    let (cil_dir, cecil_src, cil_fixtures) = if wants_cil {
-        let cil_dir = cil::resolve_cil_dir(opts.cil_dir.as_deref())?;
+    let (cil_goldens, cecil_src, cil_fixtures) = if wants_cil {
+        let goldens = cil::resolve_goldens(opts.cil_goldens.as_deref())?;
+        // Only for a Cecil checkout cloned by hand into its `extern/cecil`.
+        let cil_dir = cil::resolve_cil_dir(None)?;
         let cecil = cil::resolve_cecil_src(opts.cecil_src.as_deref(), cil_dir.as_deref())?;
         let fixtures = cil::resolve_fixtures(opts.cil_fixtures.as_deref())?;
-        (cil_dir, cecil, fixtures)
+        (goldens, cecil, fixtures)
     } else {
         (None, None, None)
     };
@@ -288,7 +290,7 @@ pub fn run(opts: &Options) -> Result<bool> {
     // reports as a Skip rather than vanishing from the report.
     if wants_cil {
         tasks.push(Task::CilChecks {
-            cil_dir: cil_dir.as_deref(),
+            goldens: cil_goldens.as_deref(),
             cecil: cecil_src.as_deref(),
             fixtures: cil_fixtures.as_deref(),
         });
@@ -373,7 +375,7 @@ enum Task<'a> {
     },
     /// cil-reader's Cecil parity checks; see [`crate::cil`].
     CilChecks {
-        cil_dir: Option<&'a Path>,
+        goldens: Option<&'a Path>,
         cecil: Option<&'a Path>,
         fixtures: Option<&'a Path>,
     },
@@ -433,12 +435,12 @@ impl Task<'_> {
                 retain_filtered(results, opts)
             }
             Task::CilChecks {
-                cil_dir,
+                goldens,
                 cecil,
                 fixtures,
             } => {
                 let results = scratch_dir("cil")
-                    .and_then(|work| cil::run_checks(*cil_dir, *cecil, *fixtures, &work))
+                    .and_then(|work| cil::run_checks(*goldens, *cecil, *fixtures, &work))
                     .unwrap_or_else(|err| {
                         vec![("cil".to_string(), Outcome::Fail(format!("{err:#}")))]
                     });

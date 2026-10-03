@@ -122,9 +122,9 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let dir = args.next().context("--models-dir requires a value")?;
                 opts.models_dir = Some(PathBuf::from(dir));
             }
-            "--cil-dir" => {
-                let dir = args.next().context("--cil-dir requires a value")?;
-                opts.cil_dir = Some(PathBuf::from(dir));
+            "--cil-goldens" => {
+                let dir = args.next().context("--cil-goldens requires a value")?;
+                opts.cil_goldens = Some(PathBuf::from(dir));
             }
             "--cecil-src" => {
                 let dir = args.next().context("--cecil-src requires a value")?;
@@ -154,6 +154,7 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
         .next()
         .context("`cil` requires a command: bless or codegen")?;
     let mut cil_dir = None;
+    let mut goldens = None;
     let mut cecil_src = None;
     let mut filter = None;
     while let Some(arg) = args.next() {
@@ -161,6 +162,11 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
             "--cil-dir" => {
                 cil_dir = Some(PathBuf::from(
                     args.next().context("--cil-dir requires a value")?,
+                ));
+            }
+            "--cil-goldens" if command == "bless" => {
+                goldens = Some(PathBuf::from(
+                    args.next().context("--cil-goldens requires a value")?,
                 ));
             }
             "--cecil-src" => {
@@ -183,7 +189,11 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
     let cecil = cil::resolve_cecil_src(cecil_src.as_deref(), Some(&cil_dir))?
         .context("no Cecil checkout: pass --cecil-src or set CECIL_SRC (the dev shell does)")?;
     match command.as_str() {
-        "bless" => cil::bless(&cil_dir, &cecil, filter.as_deref()),
+        "bless" => {
+            let goldens = cil::resolve_goldens(goldens.as_deref())?
+                .context("goldens directory not found; pass --cil-goldens")?;
+            cil::bless(&goldens, &cecil, filter.as_deref())
+        }
         "codegen" => Ok(cil_codegen::run(&cecil, &cil_dir)),
         other => bail!("unknown `cil` command `{other}` (expected bless or codegen)"),
     }
@@ -278,8 +288,9 @@ Tasks:
                              (default: auto-detect `ctadl-ascent/src/models`).
                              The `models:*` checks self-skip when neither the
                              flag nor the default directory is present.
-    --cil-dir <dir>          The cil-reader directory, for its Cecil goldens
-                             (default: auto-detect `readers/cil-reader`).
+    --cil-goldens <dir>      The committed Cecil goldens that `cil:goldens`
+                             compares against (default: auto-detect
+                             `xtask/cil-goldens`).
     --cecil-src <dir>        Mono.Cecil checkout whose test assemblies the `cil:*`
                              checks read (default: a hand-cloned
                              `readers/cil-reader/extern/cecil`, else $CECIL_SRC,
@@ -294,9 +305,12 @@ Tasks:
 
   cil <command>              Regenerate cil-reader's committed artifacts from the
                              pinned Mono.Cecil (checking them is
-                             `regression --frontend cil`). Takes --cil-dir and
-                             --cecil-src as `regression` does.
-    bless [--filter <name>]  Rewrite readers/cil-reader/tests/expected from
+                             `regression --frontend cil`). Takes --cecil-src as
+                             `regression` does, and --cil-dir <dir>, the
+                             cil-reader directory (default: auto-detect
+                             `readers/cil-reader`).
+    bless [--filter <name>] [--cil-goldens <dir>]
+                             Rewrite xtask/cil-goldens (or <dir>) from
                              `cecil-dump` (on PATH in the dev shell). Needed after
                              moving the flake's `cecil` pin.
     codegen                  Regenerate cil-reader's opcode table from Cecil's

@@ -2,7 +2,7 @@
 //!
 //! **The format is the contract**: `tools/CecilDump` implements the same
 //! format on top of Mono.Cecil, and the root workspace's `cargo xtask
-//! regression --frontend cil` diffs the two (see [`parity`]).
+//! regression --frontend cil` diffs the two.
 //! Everything is ordered by metadata token; floats print as bit patterns;
 //! opaque blobs print as lowercase hex.
 
@@ -12,8 +12,6 @@ use cil_reader::model::{ConstantValue, Entity, ExceptionHandlerType, Module, Res
 use cil_reader::raw::{ModuleKind, Table, TargetArchitecture};
 use cil_reader::{MetadataToken, Result};
 use std::fmt::Write as _;
-
-pub mod parity;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Section {
