@@ -1,15 +1,12 @@
 //! Ported from Test/Mono.Cecil.Tests/NestedTypesTests.cs (read subset).
 //! Skipped: NestedTypeFullName (constructs definitions).
 
-mod testutil;
-
+use super::{read_fixture, read_resource, Test};
 use cil_reader::Module;
-use testutil::{read_fixture, read_resource};
 
 // Test/Mono.Cecil.Tests/NestedTypesTests.cs:12 (NestedTypes)
-#[test]
 fn nested_types() {
-    let data = read_fixture!("NestedTypes.cs.dll");
+    let data = read_fixture("NestedTypes.cs.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
 
@@ -30,9 +27,8 @@ fn nested_types() {
 }
 
 // Test/Mono.Cecil.Tests/NestedTypesTests.cs:38 (DirectNestedType)
-#[test]
 fn direct_nested_type() {
-    let data = read_fixture!("NestedTypes.cs.dll");
+    let data = read_fixture("NestedTypes.cs.dll");
     let module = Module::read(&data).unwrap();
     let bingo = module.get_type("Bingo").unwrap().unwrap();
     let get_fuel = bingo
@@ -50,9 +46,8 @@ fn direct_nested_type() {
 }
 
 // Test/Mono.Cecil.Tests/NestedTypesTests.cs:49 (NestedTypeWithOwnNamespace)
-#[test]
 fn nested_type_with_own_namespace() {
-    let data = read_resource!("bug-185.dll");
+    let data = read_resource("bug-185.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let foo_child = foo.nested_types().unwrap()[0];
@@ -64,3 +59,12 @@ fn nested_type_with_own_namespace() {
         "Foo/<IFoo<System.Byte[]>.Do>d__0"
     );
 }
+
+pub(super) const TESTS: &[Test] = &[
+    ("nested_types", nested_types),
+    ("direct_nested_type", direct_nested_type),
+    (
+        "nested_type_with_own_namespace",
+        nested_type_with_own_namespace,
+    ),
+];

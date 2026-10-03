@@ -13,11 +13,7 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # Mono.Cecil, the reference cil-reader is ported from and checked against.
-    # Its test assemblies are cil-reader's corpus, and `cecilDump` builds the
-    # Cecil side of the parity comparison from these sources. Pinned to the
-    # commit the committed goldens (readers/cil-reader/tests/expected) were
-    # blessed against; moving it means re-running `cargo xtask cil bless`.
+    # Mono.Cecil, for testing cil-reader.
     cecil = {
       url = "github:jbevain/cecil/882ca5eedda1e62eb41bd5869aeb15d8f1538e51";
       flake = false;
@@ -127,11 +123,16 @@
             '';
           };
 
-        # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled by
-        # readers/cil-reader/tools/build-fixtures.sh. Built here rather than
-        # committed; the tests and the `cil:*` checks find them through
-        # CIL_READER_FIXTURES. Offline (nothing references a NuGet package) and
-        # byte-for-byte reproducible.
+        # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled.
+        # The tests find them through CIL_READER_FIXTURES. Offline (nothing
+        # references a NuGet package) and byte-for-byte reproducible:
+        # - `.il`: the standalone CoreCLR ilasm, whose flag dialect is
+        #   `-dll -output=<file>` (not the Mono-style `/dll /out:` of Cecil's
+        #   harness). `-DET` makes the MVID and timestamp content-derived.
+        # - `.cs`: one generated csproj per source, matching Cecil's
+        #   RoslynCompilationService (library, Release, NET_CORE, assembly
+        #   named after the source). Deterministic, with no PDB, so no build
+        #   path leaks into the bytes.
         cilFixtures = pkgs.stdenvNoCC.mkDerivation {
           # `name` rather than pname/version: see cecilDump.
           name = "cil-fixtures-${builtins.substring 0 7 cecil.rev}";
@@ -149,19 +150,57 @@
           buildPhase = ''
             runHook preBuild
             export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
-            bash ${./readers/cil-reader/tools/build-fixtures.sh} ${cecil} "$out" "$TMPDIR/work"
+            mkdir -p "$out" work
+
+            for il in ${cecil}/Test/Resources/il/*.il; do
+              name=$(basename "$il")
+              ilasm -nologo -quiet -dll -DET "-output=$out/$name.dll" "$il" >/dev/null
+              echo "assembled $name.dll"
+            done
+
+            for cs in ${cecil}/Test/Resources/cs/*.cs; do
+              name=$(basename "$cs")
+              stem=''${name%.cs}
+              build=work/$stem
+              mkdir -p "$build"
+              cat >"$build/$stem.csproj" <<EOF
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net8.0</TargetFramework>
+                <AssemblyName>$stem</AssemblyName>
+                <DefineConstants>NET_CORE</DefineConstants>
+                <Optimize>true</Optimize>
+                <Deterministic>true</Deterministic>
+                <DebugType>none</DebugType>
+                <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+                <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+                <Nullable>disable</Nullable>
+                <LangVersion>latest</LangVersion>
+                <NoWarn>CS0169;CS0649;CS0067;CS0414;CS0659;CS0661</NoWarn>
+                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+              </PropertyGroup>
+              <ItemGroup>
+                <Compile Include="$cs" />
+              </ItemGroup>
+            </Project>
+            EOF
+              if ! (cd "$build" && dotnet build -c Release --nologo -v q >build.log 2>&1); then
+                cat "$build/build.log" >&2
+                exit 1
+              fi
+              cp "$build/bin/Release/$stem.dll" "$out/$name.dll"
+              echo "compiled $name.dll"
+            done
             runHook postBuild
           '';
           dontInstall = true;
         };
 
-        # CecilDump (readers/cil-reader/tools/CecilDump): the cil-dump text
-        # format rendered by Mono.Cecil, i.e. the Cecil side of the cil-reader
-        # parity checks (`cil:cecil-compare` in `xtask regression`) and what
-        # `xtask cil bless` writes the goldens from. Built here so it is cached
-        # rather than rebuilt by every run. The project compiles the pinned
-        # Cecil sources in directly and references no NuGet packages, so the
-        # restore needs no network and runs inside the sandbox as is.
+        # CecilDump (readers/cil-reader/tools/CecilDump): Mono.Cecil's rendering
+        # of an assembly in the cil-dump text format, the reference that
+        # cil-reader's output is compared against. The project compiles the
+        # pinned Cecil sources in directly and references no NuGet packages, so
+        # the restore needs no network and runs inside the sandbox as is.
         cecilDump = pkgs.stdenvNoCC.mkDerivation {
           # `name` rather than pname/version: MSBuild reads the environment as
           # properties, and a `version` variable lands as $(Version), which
@@ -619,42 +658,12 @@
                   "jvm-reader"
                 ];
             };
-
-            # cil-reader's tests, same arrangement. Nearly all of them read
-            # Cecil's test assemblies or the built fixtures, neither committed;
-            # a plain `cargo test` without them skips those. Here both are
-            # supplied, and CIL_READER_REQUIRE_INPUTS turns a missing one into a
-            # failure rather than a silent skip.
-            cil-reader-tests = naersk-lib.buildPackage {
-              src = ./.;
-              version = workspaceVersion;
-              name = "cil-reader-tests";
-              mode = "test";
-              CECIL_SRC = "${cecil}";
-              CIL_READER_FIXTURES = "${cilFixtures}";
-              CIL_READER_REQUIRE_INPUTS = "1";
-              cargoBuildOptions =
-                x:
-                x
-                ++ [
-                  "--package"
-                  "cil-reader"
-                ];
-              cargoTestOptions =
-                opts:
-                opts
-                ++ [
-                  "--package"
-                  "cil-reader"
-                ];
-            };
           in
           {
             inherit
               regression
               dex-reader-tests
               jvm-reader-tests
-              cil-reader-tests
               ;
           };
 

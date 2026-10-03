@@ -4,9 +4,11 @@
 //!
 //! The dump format is the contract: `cil-dump` renders an assembly with
 //! cil-reader, `tools/CecilDump` renders it with Mono.Cecil, and the two must
-//! be byte-identical. Four checks, sharing one in-process dump per input:
+//! be byte-identical. Five checks:
 //!
 //! - `cil:must-fail`     — non-CLI inputs (`text_file.txt`) are rejected.
+//! - `cil:cecil-tests`   — cil-reader's ports of Cecil's own test suites, which
+//!   read the same inputs; see [`cecil_tests`].
 //! - `cil:read`          — every corpus assembly reads and dumps in full
 //!   without an error or a panic.
 //! - `cil:goldens`       — dumps of Cecil's committed assemblies match the
@@ -36,6 +38,8 @@ use anyhow::{Context, Result};
 use cil_dump::parity::{self, CecilDump, Input, GOLDENS_DIR};
 
 use crate::regression::Outcome;
+
+mod cecil_tests;
 
 /// Failing inputs listed per check before the rest are summarized as a count.
 const MAX_LISTED: usize = 10;
@@ -78,6 +82,10 @@ pub fn run_checks(
 
     Ok(vec![
         ("cil:must-fail".to_string(), check_must_fail(cecil)),
+        (
+            "cil:cecil-tests".to_string(),
+            cecil_tests::run(cecil, fixtures),
+        ),
         ("cil:read".to_string(), check_read(&inputs, &dumps)),
         (
             "cil:goldens".to_string(),
@@ -108,7 +116,7 @@ fn check_must_fail(cecil: &Path) -> Outcome {
             Err(e) => failures.push(format!("{}: {e}", path.display())),
         }
     }
-    to_outcome(failures)
+    to_outcome(failures, "input(s)")
 }
 
 fn check_read(inputs: &[Input], dumps: &[Result<String, String>]) -> Outcome {
@@ -121,7 +129,7 @@ fn check_read(inputs: &[Input], dumps: &[Result<String, String>]) -> Outcome {
                 .map(|e| format!("{}: {e}", input.path.display()))
         })
         .collect();
-    to_outcome(failures)
+    to_outcome(failures, "input(s)")
 }
 
 fn check_goldens(
@@ -155,7 +163,7 @@ fn check_goldens(
             goldens.display()
         )));
     }
-    Ok(to_outcome(failures))
+    Ok(to_outcome(failures, "input(s)"))
 }
 
 fn check_cecil_compare(
@@ -194,7 +202,7 @@ fn check_cecil_compare(
             }
         }
     }
-    let mut outcome = to_outcome(failures);
+    let mut outcome = to_outcome(failures, "input(s)");
     if let Outcome::Fail(why) = &mut outcome {
         let _ = write!(
             why,
@@ -225,11 +233,11 @@ fn describe_diff(name: &str, expected_label: &str, expected: &str, actual: &str)
     msg
 }
 
-fn to_outcome(failures: Vec<String>) -> Outcome {
+fn to_outcome(failures: Vec<String>, what: &str) -> Outcome {
     if failures.is_empty() {
         return Outcome::Pass;
     }
-    let mut msg = format!("{} input(s) failed:", failures.len());
+    let mut msg = format!("{} {what} failed:", failures.len());
     for failure in failures.iter().take(MAX_LISTED) {
         let _ = write!(msg, "\n{failure}");
     }

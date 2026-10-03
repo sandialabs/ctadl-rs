@@ -6,16 +6,13 @@
 //! (read the running framework's corlib; PLAN.md pins corlib-sensitive tests
 //! to the mdb mscorlib fixture instead where they matter).
 
-mod testutil;
-
-use cil_reader::Module;
+use super::{read_fixture, read_resource, Test};
 use cil_reader::model::{TypeDefOrRef, TypeSig};
-use testutil::{read_fixture, read_resource};
+use cil_reader::Module;
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:15 (TypeLayout)
-#[test]
 fn type_layout() {
-    let data = read_fixture!("Layouts.cs.dll");
+    let data = read_fixture("Layouts.cs.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     assert!(foo.is_value_type().unwrap());
@@ -28,9 +25,8 @@ fn type_layout() {
 }
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:33 (SimpleInterfaces)
-#[test]
 fn simple_interfaces() {
-    let data = read_fixture!("types.il.dll");
+    let data = read_fixture("types.il.dll");
     let module = Module::read(&data).unwrap();
     let ibaz = module.get_type("IBaz").unwrap().unwrap();
     assert!(ibaz.has_interfaces().unwrap());
@@ -45,9 +41,8 @@ fn simple_interfaces() {
 }
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:52 (GenericTypeDefinition)
-#[test]
 fn generic_type_definition() {
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo`2").unwrap().unwrap();
     assert!(foo.has_generic_params().unwrap());
@@ -60,9 +55,8 @@ fn generic_type_definition() {
 }
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:74 (ConstrainedGenericType)
-#[test]
 fn constrained_generic_type() {
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let bongo_t = module.get_type("Bongo`1").unwrap().unwrap();
     let params = bongo_t.generic_params().unwrap();
@@ -76,9 +70,8 @@ fn constrained_generic_type() {
 }
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:93 (GenericBaseType)
-#[test]
 fn generic_base_type() {
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let child = module.get_type("Child`1").unwrap().unwrap();
     let base = child.base_type().unwrap().unwrap();
@@ -98,9 +91,8 @@ fn generic_base_type() {
 }
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:110 (GenericConstraintOnGenericParameter)
-#[test]
 fn generic_constraint_on_generic_parameter() {
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let duel = module.get_type("Duel`3").unwrap().unwrap();
     let params = duel.generic_params().unwrap();
@@ -121,9 +113,8 @@ fn generic_constraint_on_generic_parameter() {
 }
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:127 (GenericForwardBaseType)
-#[test]
 fn generic_forward_base_type() {
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let tamchild = module.get_type("TamChild").unwrap().unwrap();
     let base = tamchild.base_type().unwrap().unwrap();
@@ -145,9 +136,8 @@ fn generic_forward_base_type() {
 }
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:145 (TypeExtentingGenericOfSelf)
-#[test]
 fn type_extending_generic_of_self() {
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let rec_child = module.get_type("RecChild").unwrap().unwrap();
     let base = rec_child.base_type().unwrap().unwrap();
@@ -168,9 +158,8 @@ fn type_extending_generic_of_self() {
 }
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:177 (GenericInterfaceReference)
-#[test]
 fn generic_interface_reference() {
-    let data = read_resource!("gifaceref.exe");
+    let data = read_resource("gifaceref.exe");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Program").unwrap().unwrap();
     let iface = &ty.interfaces().unwrap()[0];
@@ -207,9 +196,8 @@ impl FromTokenTest for TypeDefOrRef<'_> {
 }
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:192 (UnboundGenericParameter)
-#[test]
 fn unbound_generic_parameter() {
-    let data = read_resource!("cscgpbug.dll");
+    let data = read_resource("cscgpbug.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("ListViewModel").unwrap().unwrap();
     let method = ty
@@ -227,9 +215,8 @@ fn unbound_generic_parameter() {
 }
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:238 (ExplicitThis)
-#[test]
 fn explicit_this() {
-    let data = read_fixture!("explicitthis.il.dll");
+    let data = read_fixture("explicitthis.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("MakeDecision").unwrap().unwrap();
     let method = ty
@@ -248,9 +235,8 @@ fn explicit_this() {
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:278 (SelfReferencingTypeRef): must load
 // without blowing the stack on the obfuscated self-referential TypeRef row.
-#[test]
 fn self_referencing_type_ref() {
-    let data = read_resource!("self-ref-typeref.dll");
+    let data = read_resource("self-ref-typeref.dll");
     let module = Module::read(&data).unwrap();
     for rid in 1..=module.metadata().row_count(cil_reader::raw::Table::TypeRef) {
         let tr = module.type_ref(rid).unwrap();
@@ -258,3 +244,24 @@ fn self_referencing_type_ref() {
         let _ = tr.scope_name().unwrap();
     }
 }
+
+pub(super) const TESTS: &[Test] = &[
+    ("type_layout", type_layout),
+    ("simple_interfaces", simple_interfaces),
+    ("generic_type_definition", generic_type_definition),
+    ("constrained_generic_type", constrained_generic_type),
+    ("generic_base_type", generic_base_type),
+    (
+        "generic_constraint_on_generic_parameter",
+        generic_constraint_on_generic_parameter,
+    ),
+    ("generic_forward_base_type", generic_forward_base_type),
+    (
+        "type_extending_generic_of_self",
+        type_extending_generic_of_self,
+    ),
+    ("generic_interface_reference", generic_interface_reference),
+    ("unbound_generic_parameter", unbound_generic_parameter),
+    ("explicit_this", explicit_this),
+    ("self_referencing_type_ref", self_referencing_type_ref),
+];

@@ -1,12 +1,10 @@
 //! Ported from Test/Mono.Cecil.Tests/SecurityDeclarationTests.cs (read
 //! subset). Skipped: DefineSecurityDeclarationByBlob (writes a module).
 
-mod testutil;
-
-use cil_reader::Module;
-use cil_reader::model::CaValue;
+use super::{read_resource, Test};
 use cil_reader::model::custom_attributes::SecurityDeclarationValue;
-use testutil::read_resource;
+use cil_reader::model::CaValue;
+use cil_reader::Module;
 
 // SecurityAction values.
 const DENY: u16 = 4;
@@ -25,9 +23,8 @@ sions.SecurityPermission, mscorlib, Version=1.0.0.0, Culture\
 gs=\"UnmanagedCode\"/>\r\n</PermissionSet>\r\n";
 
 // Test/Mono.Cecil.Tests/SecurityDeclarationTests.cs:18 (XmlSecurityDeclaration)
-#[test]
 fn xml_security_declaration() {
-    let data = read_resource!("decsec-xml.dll");
+    let data = read_resource("decsec-xml.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("SubLibrary").unwrap().unwrap();
 
@@ -45,9 +42,8 @@ fn xml_security_declaration() {
 }
 
 // Test/Mono.Cecil.Tests/SecurityDeclarationTests.cs:57 (XmlNet_1_1SecurityDeclaration)
-#[test]
 fn xml_net_1_1_security_declaration() {
-    let data = read_resource!("decsec1-xml.dll");
+    let data = read_resource("decsec1-xml.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("SubLibrary").unwrap().unwrap();
 
@@ -63,9 +59,8 @@ fn xml_net_1_1_security_declaration() {
 }
 
 // Test/Mono.Cecil.Tests/SecurityDeclarationTests.cs:130 (SecurityDeclarationWithoutAttributes)
-#[test]
 fn security_declaration_without_attributes() {
-    let data = read_resource!("empty-decsec-att.dll");
+    let data = read_resource("empty-decsec-att.dll");
     let module = Module::read(&data).unwrap();
     let ty = module
         .get_type("TestSecurityAction.ModalUITypeEditor")
@@ -98,9 +93,8 @@ fn security_declaration_without_attributes() {
 }
 
 // Test/Mono.Cecil.Tests/SecurityDeclarationTests.cs:152 (AttributeSecurityDeclaration)
-#[test]
 fn attribute_security_declaration() {
-    let data = read_resource!("decsec-att.dll");
+    let data = read_resource("decsec-att.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("SubLibrary").unwrap().unwrap();
 
@@ -126,3 +120,19 @@ fn attribute_security_declaration() {
         other => panic!("expected attribute declaration, got {other:?}"),
     }
 }
+
+pub(super) const TESTS: &[Test] = &[
+    ("xml_security_declaration", xml_security_declaration),
+    (
+        "xml_net_1_1_security_declaration",
+        xml_net_1_1_security_declaration,
+    ),
+    (
+        "security_declaration_without_attributes",
+        security_declaration_without_attributes,
+    ),
+    (
+        "attribute_security_declaration",
+        attribute_security_declaration,
+    ),
+];

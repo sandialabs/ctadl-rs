@@ -3,13 +3,11 @@
 //! Skipped: FieldRVAAlignment (round-trips through Write), UnattachedField
 //! (constructs definitions).
 
-mod testutil;
-
+use super::{read_fixture, read_resource, Test};
+use cil_reader::model::marshal::{native_type, MarshalInfo};
+use cil_reader::model::{ConstantValue, FieldDef, TypeDef, TypeSig};
 use cil_reader::Module;
 use cil_reader::TokenType;
-use cil_reader::model::marshal::{MarshalInfo, native_type};
-use cil_reader::model::{ConstantValue, FieldDef, TypeDef, TypeSig};
-use testutil::{read_fixture, read_resource};
 
 fn get_field<'a>(ty: &TypeDef<'a>, name: &str) -> FieldDef<'a> {
     ty.fields()
@@ -20,9 +18,8 @@ fn get_field<'a>(ty: &TypeDef<'a>, name: &str) -> FieldDef<'a> {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:13 (TypeDefField)
-#[test]
 fn type_def_field() {
-    let data = read_fixture!("Fields.cs.dll");
+    let data = read_fixture("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let types = module.types().unwrap();
     let ty = &types[1];
@@ -42,9 +39,8 @@ fn type_def_field() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:32 (PrimitiveTypes)
-#[test]
 fn primitive_types() {
-    let data = read_fixture!("Fields.cs.dll");
+    let data = read_fixture("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Baz").unwrap().unwrap();
     for (name, expected) in [
@@ -72,9 +68,8 @@ fn primitive_types() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:55 (VolatileField)
-#[test]
 fn volatile_field() {
-    let data = read_fixture!("Fields.cs.dll");
+    let data = read_fixture("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Bar").unwrap().unwrap();
     let fields = ty.fields().unwrap();
@@ -92,9 +87,8 @@ fn volatile_field() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:73 (FieldLayout)
-#[test]
 fn field_layout() {
-    let data = read_fixture!("Layouts.cs.dll");
+    let data = read_fixture("Layouts.cs.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let fields = foo.fields().unwrap();
@@ -108,9 +102,8 @@ fn field_layout() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:104 (FieldRVA)
-#[test]
 fn field_rva() {
-    let data = read_fixture!("Layouts.cs.dll");
+    let data = read_fixture("Layouts.cs.dll");
     let module = Module::read(&data).unwrap();
     let priv_impl = module
         .types()
@@ -135,9 +128,8 @@ fn field_rva() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:181 (GenericFieldDefinition)
-#[test]
 fn generic_field_definition() {
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let bar = module.get_type("Bar`1").unwrap().unwrap();
     assert!(bar.has_generic_params().unwrap());
@@ -152,9 +144,8 @@ fn generic_field_definition() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:202 (ArrayFields)
-#[test]
 fn array_fields() {
-    let data = read_fixture!("types.il.dll");
+    let data = read_fixture("types.il.dll");
     let module = Module::read(&data).unwrap();
     let types = module.get_type("Types").unwrap().unwrap();
 
@@ -190,9 +181,8 @@ fn array_fields() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:242 (EnumFieldsConstant)
-#[test]
 fn enum_fields_constant() {
-    let data = read_fixture!("Fields.cs.dll");
+    let data = read_fixture("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let pim = module.get_type("Pim").unwrap().unwrap();
     let field = get_field(&pim, "Pam");
@@ -203,9 +193,8 @@ fn enum_fields_constant() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:258 (StringAndClassConstant)
-#[test]
 fn string_and_class_constant() {
-    let data = read_fixture!("Fields.cs.dll");
+    let data = read_fixture("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let panpan = module.get_type("PanPan").unwrap().unwrap();
 
@@ -224,9 +213,8 @@ fn string_and_class_constant() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:277 (ObjectConstant)
-#[test]
 fn object_constant() {
-    let data = read_fixture!("Fields.cs.dll");
+    let data = read_fixture("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let panpan = module.get_type("PanPan").unwrap().unwrap();
     let field = get_field(&panpan, "obj");
@@ -235,9 +223,8 @@ fn object_constant() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:290 (NullPrimitiveConstant)
-#[test]
 fn null_primitive_constant() {
-    let data = read_fixture!("types.il.dll");
+    let data = read_fixture("types.il.dll");
     let module = Module::read(&data).unwrap();
     let fields = module.get_type("Fields").unwrap().unwrap();
     let field = get_field(&fields, "int32_nullref");
@@ -246,9 +233,8 @@ fn null_primitive_constant() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:302 (ArrayConstant)
-#[test]
 fn array_constant() {
-    let data = read_fixture!("Fields.cs.dll");
+    let data = read_fixture("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let panpan = module.get_type("PanPan").unwrap().unwrap();
     let field = get_field(&panpan, "ints");
@@ -257,9 +243,8 @@ fn array_constant() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:315 (ConstantCoalescing)
-#[test]
 fn constant_coalescing() {
-    let data = read_fixture!("types.il.dll");
+    let data = read_fixture("types.il.dll");
     let module = Module::read(&data).unwrap();
     let fields = module.get_type("Fields").unwrap().unwrap();
 
@@ -284,9 +269,8 @@ fn constant_coalescing() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:347 (NestedEnumOfGenericTypeDefinition)
-#[test]
 fn nested_enum_of_generic_type_definition() {
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let dang = module.get_type("Bongo`1/Dang").unwrap().unwrap();
     let field = get_field(&dang, "Ding");
@@ -296,9 +280,8 @@ fn nested_enum_of_generic_type_definition() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:364 (MarshalAsFixedStr)
-#[test]
 fn marshal_as_fixed_str() {
-    let data = read_resource!("marshal.dll");
+    let data = read_resource("marshal.dll");
     let module = Module::read(&data).unwrap();
     let boc = module.get_type("Boc").unwrap().unwrap();
     let field = get_field(&boc, "a");
@@ -310,9 +293,8 @@ fn marshal_as_fixed_str() {
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:381 (MarshalAsFixedArray)
-#[test]
 fn marshal_as_fixed_array() {
-    let data = read_resource!("marshal.dll");
+    let data = read_resource("marshal.dll");
     let module = Module::read(&data).unwrap();
     let boc = module.get_type("Boc").unwrap().unwrap();
     let field = get_field(&boc, "b");
@@ -331,9 +313,8 @@ fn marshal_as_fixed_array() {
 // Value blob is empty is "", not null — blob index 0 is the heap's
 // zero-length entry, not an absent blob (AssemblyReader.ReadConstantString
 // returns string.Empty for count == 0; a null string is ELEMENT_TYPE_CLASS).
-#[test]
 fn empty_string_constant() {
-    let data = read_resource!("Mono.Android.dll");
+    let data = read_resource("Mono.Android.dll");
     let module = Module::read(&data).unwrap();
     let parser = module
         .get_type("Org.XmlPull.V1.XmlPullParser")
@@ -346,3 +327,26 @@ fn empty_string_constant() {
         other => panic!("expected an empty string constant, got {other:?}"),
     }
 }
+
+pub(super) const TESTS: &[Test] = &[
+    ("type_def_field", type_def_field),
+    ("primitive_types", primitive_types),
+    ("volatile_field", volatile_field),
+    ("field_layout", field_layout),
+    ("field_rva", field_rva),
+    ("generic_field_definition", generic_field_definition),
+    ("array_fields", array_fields),
+    ("enum_fields_constant", enum_fields_constant),
+    ("string_and_class_constant", string_and_class_constant),
+    ("object_constant", object_constant),
+    ("null_primitive_constant", null_primitive_constant),
+    ("array_constant", array_constant),
+    ("constant_coalescing", constant_coalescing),
+    (
+        "nested_enum_of_generic_type_definition",
+        nested_enum_of_generic_type_definition,
+    ),
+    ("marshal_as_fixed_str", marshal_as_fixed_str),
+    ("marshal_as_fixed_array", marshal_as_fixed_array),
+    ("empty_string_constant", empty_string_constant),
+];

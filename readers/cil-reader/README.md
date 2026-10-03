@@ -69,8 +69,8 @@ their own; everything goes through the root `cargo xtask`. Everyday work needs
 only Rust (`nix develop` at the repo root, or any recent toolchain):
 
 ```sh
-cargo test -p cil-reader                    # ported Cecil test suites (also in `cargo test --workspace`)
-cargo xtask regression --frontend cil       # Cecil parity: cil:read, cil:goldens, cil:must-fail, cil:cecil-compare
+cargo test -p cil-reader                    # unit tests; needs no external inputs
+cargo xtask regression --frontend cil       # cil:must-fail, cil:cecil-tests, cil:read, cil:goldens, cil:cecil-compare
 cargo dump <assembly> [--sections a,b,c] [--no-il]   # from readers/cil-reader: the cil-dump CLI
 ```
 
@@ -81,14 +81,13 @@ No test inputs are committed:
   checkout you clone by hand into `extern/cecil` (gitignored) takes
   precedence.
 - **Fixtures** (Cecil's `.il`/`.cs` test sources, compiled): the flake's
-  `cil-fixtures` package builds them offline with `tools/build-fixtures.sh`,
-  using a .NET 8 SDK and the standalone CoreCLR `ilasm` (fetched by hash). The
-  build is byte-for-byte reproducible. The devshell exports the result as
-  `$CIL_READER_FIXTURES`.
+  `cil-fixtures` package builds them offline, using a .NET 8 SDK and the
+  standalone CoreCLR `ilasm` (fetched by hash). The build is byte-for-byte
+  reproducible. The devshell exports the result as `$CIL_READER_FIXTURES`.
 
-Tests whose input is missing skip, so a plain `cargo test` from a fresh clone
-stays green; the nightly `cil-reader-tests` flake check supplies both and
-runs them all.
+Since the ported Cecil test suites read both, they run in `xtask regression`
+as `cil:cecil-tests` (sources in `xtask/src/cil/cecil_tests`), not under
+`cargo test`; the nightly `regression` flake check supplies both inputs.
 
 `cil:goldens` compares Cecil's own assemblies against the committed CecilDump
 output in `tests/expected`; `cil:cecil-compare` runs CecilDump live, head to

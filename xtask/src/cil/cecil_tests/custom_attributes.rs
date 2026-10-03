@@ -5,13 +5,11 @@
 //! resolver for System.Security.AccessControl.AceFlags (Cecil resolves it via
 //! its assembly resolver; ours arrives with M7).
 
-mod testutil;
-
-use cil_reader::model::ElementType;
+use super::{read_fixture, read_resource, Test};
 use cil_reader::model::custom_attributes::{CaArgument, CaValue, CustomAttribute};
+use cil_reader::model::ElementType;
 use cil_reader::{MetadataToken, Module};
 use std::fmt::Write as _;
-use testutil::{read_fixture, read_resource};
 
 /// `CustomAttributesTests.GetAttribute`: first attribute whose type name
 /// starts with `name`.
@@ -100,9 +98,8 @@ fn pp_value(value: &CaValue<'_>, s: &mut String) {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:18 (StringArgumentOnType)
-#[test]
 fn string_argument_on_type() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let hamster = module.get_type("Hamster").unwrap().unwrap();
     let attrs = module.custom_attributes_of(hamster.token()).unwrap();
@@ -124,9 +121,8 @@ fn string_argument_on_type() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:38 (NullString)
-#[test]
 fn null_string() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Dentist", "Foo");
     let values = attribute.values().unwrap();
@@ -134,9 +130,8 @@ fn null_string() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:51 (Primitives1)
-#[test]
 fn primitives1() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Steven", "Foo");
     let args = attribute.values().unwrap().constructor_args;
@@ -150,9 +145,8 @@ fn primitives1() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:69 (Primitives2)
-#[test]
 fn primitives2() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Seagull", "Foo");
     let args = attribute.values().unwrap().constructor_args;
@@ -165,9 +159,8 @@ fn primitives2() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:87 (StringArgumentOnAssembly)
-#[test]
 fn string_argument_on_assembly() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = get_attribute(&module, module.assembly_token(), "Foo");
     let args = attribute.values().unwrap().constructor_args;
@@ -175,9 +168,8 @@ fn string_argument_on_assembly() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:100 (CharArray)
-#[test]
 fn char_array() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Rifle", "Foo");
     let args = attribute.values().unwrap().constructor_args;
@@ -195,9 +187,8 @@ fn char_array() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:125 (BoxedArguments)
-#[test]
 fn boxed_arguments() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Worm", "Foo");
     assert_eq!(
@@ -207,9 +198,8 @@ fn boxed_arguments() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:139 (BoxedArraysArguments)
-#[test]
 fn boxed_arrays_arguments() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Sheep", "Foo");
     assert_eq!(
@@ -219,9 +209,8 @@ fn boxed_arrays_arguments() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:153 (FieldsAndProperties)
-#[test]
 fn fields_and_properties() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Angola", "Foo");
     let values = attribute.values().unwrap();
@@ -269,9 +258,8 @@ fn fields_and_properties() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:182 (BoxedStringField)
-#[test]
 fn boxed_string_field() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "BoxedStringField", "Foo");
     let values = attribute.values().unwrap();
@@ -288,9 +276,8 @@ fn boxed_string_field() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:196 (TypeDefinitionEnum)
-#[test]
 fn type_definition_enum() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Zero", "Foo");
     let args = attribute.values().unwrap().constructor_args;
@@ -302,9 +289,8 @@ fn type_definition_enum() {
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:212 (TypeReferenceEnum) —
 // adapted: the AceFlags enum lives in System.Security.AccessControl, so its
 // underlying type comes from a test resolver until M7's assembly resolver.
-#[test]
 fn type_reference_enum() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Ace", "Foo");
 
@@ -326,9 +312,8 @@ fn type_reference_enum() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:229 (BoxedEnumReference)
-#[test]
 fn boxed_enum_reference() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Bzzz", "Foo");
 
@@ -360,9 +345,8 @@ fn boxed_enum_reference() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:256 (TypeOfTypeDefinition)
-#[test]
 fn typeof_type_definition() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Typed", "Foo");
     let args = attribute.values().unwrap().constructor_args;
@@ -372,9 +356,8 @@ fn typeof_type_definition() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:278 (TypeOfNestedTypeDefinition)
-#[test]
 fn typeof_nested_type_definition() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "NestedTyped", "Foo");
     let args = attribute.values().unwrap().constructor_args;
@@ -385,9 +368,8 @@ fn typeof_nested_type_definition() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:300 (FieldTypeOf)
-#[test]
 fn field_typeof() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Truc", "Foo");
     let values = attribute.values().unwrap();
@@ -402,9 +384,8 @@ fn field_typeof() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:320 (EscapedTypeName)
-#[test]
 fn escaped_type_name() {
-    let data = read_resource!("bug-185.dll");
+    let data = read_resource("bug-185.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let foo_do = foo
@@ -443,9 +424,8 @@ fn escaped_type_name() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:341 (FieldNullTypeOf)
-#[test]
 fn field_null_typeof() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Machin", "Foo");
     let values = attribute.values().unwrap();
@@ -460,9 +440,8 @@ fn field_null_typeof() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:358 (OpenGenericTypeOf)
-#[test]
 fn open_generic_typeof() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "OpenGeneric`2", "Foo");
     let args = attribute.values().unwrap().constructor_args;
@@ -474,9 +453,8 @@ fn open_generic_typeof() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:381 (ClosedGenericTypeOf)
-#[test]
 fn closed_generic_typeof() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "ClosedGeneric", "Foo");
     let args = attribute.values().unwrap().constructor_args;
@@ -490,9 +468,8 @@ fn closed_generic_typeof() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:404 (TypeOfArrayOfNestedClass)
-#[test]
 fn typeof_array_of_nested_class() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Parent", "Foo");
     let args = attribute.values().unwrap().constructor_args;
@@ -500,9 +477,8 @@ fn typeof_array_of_nested_class() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:427 (EmptyBlob)
-#[test]
 fn empty_blob() {
-    let data = read_fixture!("ca-empty-blob.il.dll");
+    let data = read_fixture("ca-empty-blob.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("CustomAttribute").unwrap().unwrap();
     let attrs = module.custom_attributes_of(ty.token()).unwrap();
@@ -512,9 +488,8 @@ fn empty_blob() {
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:437 (InterfaceImplementation)
 // — not Windows-only here: CoreCLR ilasm supports .interfaceimpl.
-#[test]
 fn interface_implementation() {
-    let data = read_fixture!("ca-iface-impl.il.dll");
+    let data = read_fixture("ca-iface-impl.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("FooType").unwrap().unwrap();
     let iface = ty
@@ -529,9 +504,8 @@ fn interface_implementation() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:452 (GenericParameterConstraint)
-#[test]
 fn generic_parameter_constraint_attribute() {
-    let data = read_resource!("GenericParameterConstraintAttributes.dll");
+    let data = read_resource("GenericParameterConstraintAttributes.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo.Library`1").unwrap().unwrap();
     let gp = &ty.generic_params().unwrap()[0];
@@ -546,9 +520,8 @@ fn generic_parameter_constraint_attribute() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:467 (GenericAttributeString)
-#[test]
 fn generic_attribute_string() {
-    let data = read_resource!("GenericAttributes.dll");
+    let data = read_resource("GenericAttributes.dll");
     let module = Module::read(&data).unwrap();
     let ty = module
         .get_type("WithGenericAttribute_OfString")
@@ -584,9 +557,8 @@ fn generic_attribute_string() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:498 (GenericAttributeInt)
-#[test]
 fn generic_attribute_int() {
-    let data = read_resource!("GenericAttributes.dll");
+    let data = read_resource("GenericAttributes.dll");
     let module = Module::read(&data).unwrap();
     let ty = module
         .get_type("WithGenericAttribute_OfInt")
@@ -609,9 +581,8 @@ fn generic_attribute_int() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:528 (ConstrainedGenericAttribute)
-#[test]
 fn constrained_generic_attribute() {
-    let data = read_resource!("GenericAttributes.dll");
+    let data = read_resource("GenericAttributes.dll");
     let module = Module::read(&data).unwrap();
     let ty = module
         .get_type("WithConstrainedGenericAttribute")
@@ -626,9 +597,8 @@ fn constrained_generic_attribute() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:541 (NullCharInString)
-#[test]
 fn null_char_in_string() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("NullCharInString").unwrap().unwrap();
     let attrs = module.custom_attributes_of(ty.token()).unwrap();
@@ -642,9 +612,8 @@ fn null_char_in_string() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:556 (OrderedAttributes)
-#[test]
 fn ordered_attributes() {
-    let data = read_resource!("ordered-attrs.exe");
+    let data = read_resource("ordered-attrs.exe");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Program").unwrap().unwrap();
     let method = ty
@@ -675,9 +644,8 @@ fn ordered_attributes() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:624 (BoxedEnumOnGenericArgumentOnType)
-#[test]
 fn boxed_enum_on_generic_argument_on_type() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module
         .get_type("BoxedValueEnumOnGenericType")
@@ -707,9 +675,8 @@ fn boxed_enum_on_generic_argument_on_type() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:645 (EnumOnGenericArgumentOnType)
-#[test]
 fn enum_on_generic_argument_on_type() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("ValueEnumOnGenericType").unwrap().unwrap();
     let attrs = module.custom_attributes_of(ty.token()).unwrap();
@@ -725,9 +692,8 @@ fn enum_on_generic_argument_on_type() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:665 (EnumOnGenericFieldOnType)
-#[test]
 fn enum_on_generic_field_on_type() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("FieldEnumOnGenericType").unwrap().unwrap();
     let attribute = &module.custom_attributes_of(ty.token()).unwrap()[0];
@@ -744,9 +710,8 @@ fn enum_on_generic_field_on_type() {
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:697 (EnumDeclaredInGenericTypeArray)
-#[test]
 fn enum_declared_in_generic_type_array() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module
         .get_type("WithAttributeUsingNestedEnumArray")
@@ -771,3 +736,60 @@ fn enum_declared_in_generic_type_array() {
     assert_eq!(items[0].value, CaValue::I4(0));
     assert_eq!(items[1].value, CaValue::I4(1));
 }
+
+pub(super) const TESTS: &[Test] = &[
+    ("string_argument_on_type", string_argument_on_type),
+    ("null_string", null_string),
+    ("primitives1", primitives1),
+    ("primitives2", primitives2),
+    ("string_argument_on_assembly", string_argument_on_assembly),
+    ("char_array", char_array),
+    ("boxed_arguments", boxed_arguments),
+    ("boxed_arrays_arguments", boxed_arrays_arguments),
+    ("fields_and_properties", fields_and_properties),
+    ("boxed_string_field", boxed_string_field),
+    ("type_definition_enum", type_definition_enum),
+    ("type_reference_enum", type_reference_enum),
+    ("boxed_enum_reference", boxed_enum_reference),
+    ("typeof_type_definition", typeof_type_definition),
+    (
+        "typeof_nested_type_definition",
+        typeof_nested_type_definition,
+    ),
+    ("field_typeof", field_typeof),
+    ("escaped_type_name", escaped_type_name),
+    ("field_null_typeof", field_null_typeof),
+    ("open_generic_typeof", open_generic_typeof),
+    ("closed_generic_typeof", closed_generic_typeof),
+    ("typeof_array_of_nested_class", typeof_array_of_nested_class),
+    ("empty_blob", empty_blob),
+    ("interface_implementation", interface_implementation),
+    (
+        "generic_parameter_constraint_attribute",
+        generic_parameter_constraint_attribute,
+    ),
+    ("generic_attribute_string", generic_attribute_string),
+    ("generic_attribute_int", generic_attribute_int),
+    (
+        "constrained_generic_attribute",
+        constrained_generic_attribute,
+    ),
+    ("null_char_in_string", null_char_in_string),
+    ("ordered_attributes", ordered_attributes),
+    (
+        "boxed_enum_on_generic_argument_on_type",
+        boxed_enum_on_generic_argument_on_type,
+    ),
+    (
+        "enum_on_generic_argument_on_type",
+        enum_on_generic_argument_on_type,
+    ),
+    (
+        "enum_on_generic_field_on_type",
+        enum_on_generic_field_on_type,
+    ),
+    (
+        "enum_declared_in_generic_type_array",
+        enum_declared_in_generic_type_array,
+    ),
+];

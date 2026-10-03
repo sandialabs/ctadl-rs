@@ -60,9 +60,9 @@ and the JSON model language all work on CIL with no changes.
 > {bless,codegen}`, and `vendor` was dropped in favor of the flake's pinned `cecil`
 > input (`$CECIL_SRC` in the dev shell). The fixture DLLs are no longer committed:
 > the flake builds them reproducibly as `packages.cil-fixtures`
-> (`$CIL_READER_FIXTURES`). Tests whose inputs are absent skip (step 4,
-> generalized); the nightly `cil-reader-tests` check supplies both and runs them
-> all.
+> (`$CIL_READER_FIXTURES`). The ported Cecil test suites need both, so they left
+> `cargo test` for the `cil:cecil-tests` check in `xtask regression`
+> (`xtask/src/cil/cecil_tests`).
 
 `readers/cil-reader/` is currently a nested Cargo workspace with its own lock file, an xtask
 that needs nix + the .NET SDK, and a vendored (gitignored) Mono.Cecil checkout. The

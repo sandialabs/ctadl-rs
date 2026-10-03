@@ -368,8 +368,8 @@ Mechanics:
   laziness is per-property rather than a module-wide mode, so each test runs
   once; an `all_types().for_each(force_everything)` "immediate" smoke pass over
   the corpus lives in the regression sweep instead.
-- Fixture location: a `testutil` helper resolves
-  `$CARGO_MANIFEST_DIR/../../extern/cecil/Test/Resources/assemblies/<name>`
+- Fixture location: a `read_resource` helper resolves
+  `<cecil>/Test/Resources/assemblies/<name>`
   (the analogue of `GetAssemblyResourcePath`, `BaseTestFixture.cs:45-63`).
 - Expected-IL strings are copied verbatim from the Cecil tests; `assert_code!`
   normalizes exactly like `BaseTestFixture.Normalize` (trim + CRLF→LF only —

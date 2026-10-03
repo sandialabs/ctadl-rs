@@ -8,15 +8,13 @@
 //! (probe the machine's framework installs), ResolveGenericParameter /
 //! CorlibPrimitive-style tests (construct references).
 
-mod testutil;
-
+use super::{cecil_root, read_fixture, read_resource, Test};
 use cil_reader::cil::RawOperand;
 use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader, ResolvedMember};
 use cil_reader::{MetadataToken, Module, TokenType};
-use testutil::{cecil_root, read_fixture, read_resource, require_cecil};
 
 fn loader() -> DirectoryLoader {
-    let cecil = cecil_root().expect("callers check require_cecil!");
+    let cecil = cecil_root();
     DirectoryLoader::new(vec![
         // The pinned corlib fixture.
         cecil.join("symbols/mdb/Test/Resources/assemblies"),
@@ -55,11 +53,9 @@ fn member_ref_operand(
 
 // Test/Mono.Cecil.Tests/ResolveTests.cs:16 (StringEmpty) — the reference
 // comes from hello.il.dll's `ldsfld System.String System.String::Empty`.
-#[test]
 fn string_empty() {
-    let data = read_fixture!("hello.il.dll");
+    let data = read_fixture("hello.il.dll");
     let module = Module::read(&data).unwrap();
-    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -82,11 +78,9 @@ fn string_empty() {
 // Test/Mono.Cecil.Tests/ResolveTests.cs:36 (StringSubstring analogue) —
 // overload selection: resolve Console::WriteLine(System.String) among the
 // many WriteLine overloads.
-#[test]
 fn console_write_line_overload() {
-    let data = read_fixture!("hello.il.dll");
+    let data = read_fixture("hello.il.dll");
     let module = Module::read(&data).unwrap();
-    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -115,11 +109,9 @@ fn console_write_line_overload() {
 // member on a generic instance resolves to the open definition. Adapted to an
 // in-module generic type because the net8-built fixture's List`1 lives in
 // System.Collections, outside the pinned-fixture universe.
-#[test]
 fn generic_instance_member_resolves_to_open_definition() {
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
-    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -136,11 +128,9 @@ fn generic_instance_member_resolves_to_open_definition() {
 
 // Test/Mono.Cecil.Tests/ResolveTests.cs:113 (ExportedTypeFromModule) — the
 // exported type Module.A.Foo forwards into moda.netmodule via a File row.
-#[test]
 fn exported_type_from_module() {
-    let data = read_resource!("mma.exe");
+    let data = read_resource("mma.exe");
     let module = Module::read(&data).unwrap();
-    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -159,30 +149,24 @@ fn exported_type_from_module() {
 
 // Test/Mono.Cecil.Tests/ResolveTests.cs:152 (TypeForwarderCircularity) —
 // TestClass forwards Loop1 → Loop2 → Loop1; Cecil throws, we error.
-#[test]
 fn type_forwarder_circularity() {
-    let data = read_resource!("TypeForwarderLoop1.dll");
+    let data = read_resource("TypeForwarderLoop1.dll");
     let module = Module::read(&data).unwrap();
-    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
     // Loop1 exports MyNamespace.MyType to Loop2, which forwards it back;
     // resolution must error rather than loop (Cecil throws).
-    assert!(
-        module
-            .resolve_type_name("MyNamespace", "MyType", &cache)
-            .is_err()
-    );
+    assert!(module
+        .resolve_type_name("MyNamespace", "MyType", &cache)
+        .is_err());
 }
 
 // Test/Mono.Cecil.Tests/ResolveTests.cs:191 (RectangularArrayResolveGetMethod)
 // — a Get method on a rectangular generic-parameter array resolves to null.
-#[test]
 fn rectangular_array_resolve_get_method() {
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
-    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -193,11 +177,9 @@ fn rectangular_array_resolve_get_method() {
 // Test/Mono.Cecil.Tests/ResolveTests.cs:214 (ResolveFunctionPointer) — a
 // function-pointer type resolves to null. Cecil reads it from a cppcli field
 // type; so do we.
-#[test]
 fn resolve_function_pointer() {
-    let data = read_resource!("cppcli.dll");
+    let data = read_resource("cppcli.dll");
     let module = Module::read(&data).unwrap();
-    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -216,11 +198,9 @@ fn resolve_function_pointer() {
 // In-module resolution needs no loader hits: Program's base type Object is a
 // TypeRef into the corlib fixture; a TypeRef to an in-module type resolves
 // without touching the cache.
-#[test]
 fn resolve_in_module_type() {
-    let data = read_resource!("mma.exe");
+    let data = read_resource("mma.exe");
     let module = Module::read(&data).unwrap();
-    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -233,3 +213,20 @@ fn resolve_in_module_type() {
         .expect("self-resolution");
     assert_eq!(resolved.ty, program);
 }
+
+pub(super) const TESTS: &[Test] = &[
+    ("string_empty", string_empty),
+    ("console_write_line_overload", console_write_line_overload),
+    (
+        "generic_instance_member_resolves_to_open_definition",
+        generic_instance_member_resolves_to_open_definition,
+    ),
+    ("exported_type_from_module", exported_type_from_module),
+    ("type_forwarder_circularity", type_forwarder_circularity),
+    (
+        "rectangular_array_resolve_get_method",
+        rectangular_array_resolve_get_method,
+    ),
+    ("resolve_function_pointer", resolve_function_pointer),
+    ("resolve_in_module_type", resolve_in_module_type),
+];

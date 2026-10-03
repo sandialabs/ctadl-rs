@@ -5,12 +5,10 @@
 //! running framework's corlib), UnattachedMethodBody/Add/Insert/Remove
 //! (ILProcessor, write side).
 
-mod testutil;
-
-use cil_reader::Module;
+use super::{normalize, read_fixture, read_resource, Test};
 use cil_reader::cil::{Code, RawOperand};
 use cil_reader::model::{MethodDef, TypeDef};
-use testutil::{normalize, read_fixture, read_resource};
+use cil_reader::Module;
 
 fn get_method<'a>(ty: &TypeDef<'a>, name: &str) -> MethodDef<'a> {
     ty.methods()
@@ -30,9 +28,8 @@ macro_rules! assert_code {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:14 (MultiplyMethod)
-#[test]
 fn multiply_method() {
-    let data = read_fixture!("hello.il.dll");
+    let data = read_fixture("hello.il.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let bar = get_method(&foo, "Bar");
@@ -55,9 +52,8 @@ fn multiply_method() {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:38 (PrintStringEmpty)
-#[test]
 fn print_string_empty() {
-    let data = read_fixture!("hello.il.dll");
+    let data = read_fixture("hello.il.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let print_empty = get_method(&foo, "PrintEmpty");
@@ -74,9 +70,8 @@ fn print_string_empty() {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:57 (Branch)
-#[test]
 fn branch() {
-    let data = read_resource!("libhello.dll");
+    let data = read_resource("libhello.dll");
     let module = Module::read(&data).unwrap();
     let lib = module.get_type("Library").unwrap().unwrap();
     let method = get_method(&lib, "GetHelloString");
@@ -96,9 +91,8 @@ fn branch() {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:79 (Switch)
-#[test]
 fn switch_test() {
-    let data = read_resource!("switch.exe");
+    let data = read_resource("switch.exe");
     let module = Module::read(&data).unwrap();
     let program = module.get_type("Program").unwrap().unwrap();
     let method = get_method(&program, "Main");
@@ -142,9 +136,8 @@ fn switch_test() {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:125 (MethodSpec)
-#[test]
 fn method_spec() {
-    let data = read_fixture!("methodspecs.il.dll");
+    let data = read_fixture("methodspecs.il.dll");
     let module = Module::read(&data).unwrap();
     let tamtam = module.get_type("Tamtam").unwrap().unwrap();
     let bar = get_method(&tamtam, "Bar");
@@ -161,9 +154,8 @@ fn method_spec() {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:143 (NestedTryCatchFinally)
-#[test]
 fn nested_try_catch_finally() {
-    let data = read_resource!("catch.exe");
+    let data = read_resource("catch.exe");
     let module = Module::read(&data).unwrap();
     let program = module.get_type("Program").unwrap().unwrap();
     let main = get_method(&program, "Main");
@@ -196,9 +188,8 @@ fn nested_try_catch_finally() {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:176 (FunctionPointersAndCallSites)
-#[test]
 fn function_pointers_and_call_sites() {
-    let data = read_resource!("fptr.exe");
+    let data = read_resource("fptr.exe");
     let module = Module::read(&data).unwrap();
     let types = module.types().unwrap();
     let ty = &types[0];
@@ -226,9 +217,8 @@ fn function_pointers_and_call_sites() {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:203 (ThisParameter)
-#[test]
 fn this_parameter() {
-    let data = read_fixture!("hello.il.dll");
+    let data = read_fixture("hello.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo").unwrap().unwrap();
     let method = get_method(&ty, "Gazonk");
@@ -251,9 +241,8 @@ fn this_parameter() {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:272 (FilterMaxStack)
-#[test]
 fn filter_max_stack() {
-    let data = read_fixture!("hello.il.dll");
+    let data = read_fixture("hello.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo").unwrap().unwrap();
     let method = get_method(&ty, "TestFilter");
@@ -262,9 +251,8 @@ fn filter_max_stack() {
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:284 (BranchOutsideMethod) — not
 // Windows-only here: CoreCLR ilasm assembles branch-out.il fine (PLAN.md §7).
-#[test]
 fn branch_outside_method() {
-    let data = read_fixture!("branch-out.il.dll");
+    let data = read_fixture("branch-out.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo").unwrap().unwrap();
     let method = get_method(&ty, "BranchOutside");
@@ -276,9 +264,8 @@ fn branch_outside_method() {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:303 (Iterator)
-#[test]
 fn iterator() {
-    let data = read_resource!("iterator.exe");
+    let data = read_resource("iterator.exe");
     let module = Module::read(&data).unwrap();
     let program = module.get_type("Program").unwrap().unwrap();
     let method = get_method(&program, "GetLittleArgs");
@@ -286,9 +273,8 @@ fn iterator() {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:312 (LoadString)
-#[test]
 fn load_string() {
-    let data = read_fixture!("CustomAttributes.cs.dll");
+    let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("FooAttribute").unwrap().unwrap();
     let get_fiou = get_method(&ty, "get_Fiou");
@@ -315,10 +301,9 @@ fn load_string() {
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:163 (TypeReferenceValueType) — deferred
 // from tests/types.rs; needs bodies.
-#[test]
 fn type_reference_value_type() {
     use cil_reader::model::TypeSig;
-    let data = read_fixture!("Methods.cs.dll");
+    let data = read_fixture("Methods.cs.dll");
     let module = Module::read(&data).unwrap();
     let baz = module.get_type("Baz").unwrap().unwrap();
     let method = get_method(&baz, "PrintAnswer");
@@ -348,10 +333,9 @@ fn type_reference_value_type() {
 
 // Test/Mono.Cecil.Tests/MethodTests.cs:178 (GenericInstanceMethod) — deferred
 // from tests/methods.rs.
-#[test]
 fn generic_instance_method() {
     use cil_reader::TokenType;
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("It").unwrap().unwrap();
     let method = get_method(&ty, "ReadPwow");
@@ -370,10 +354,9 @@ fn generic_instance_method() {
 
 // Test/Mono.Cecil.Tests/MethodTests.cs:200 (MethodRefDeclaredOnGenerics) —
 // deferred from tests/methods.rs.
-#[test]
 fn method_ref_declared_on_generics() {
     use cil_reader::TokenType;
-    let data = read_fixture!("Generics.cs.dll");
+    let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Tamtam").unwrap().unwrap();
 
@@ -404,9 +387,8 @@ fn method_ref_declared_on_generics() {
 // Test/Mono.Cecil.Tests/MethodTests.cs:144 (VarArgs) — body half deferred from
 // tests/methods.rs: call-site references to vararg methods render with the
 // sentinel.
-#[test]
 fn varargs_call_sites() {
-    let data = read_resource!("varargs.exe");
+    let data = read_resource("varargs.exe");
     let module = Module::read(&data).unwrap();
     let types = module.types().unwrap();
     let module_type = &types[0];
@@ -426,3 +408,28 @@ fn varargs_call_sites() {
     let formatted = body.format_instruction(call_at(0x0023)).unwrap();
     assert!(formatted.contains("...,"), "{formatted}");
 }
+
+pub(super) const TESTS: &[Test] = &[
+    ("multiply_method", multiply_method),
+    ("print_string_empty", print_string_empty),
+    ("branch", branch),
+    ("switch_test", switch_test),
+    ("method_spec", method_spec),
+    ("nested_try_catch_finally", nested_try_catch_finally),
+    (
+        "function_pointers_and_call_sites",
+        function_pointers_and_call_sites,
+    ),
+    ("this_parameter", this_parameter),
+    ("filter_max_stack", filter_max_stack),
+    ("branch_outside_method", branch_outside_method),
+    ("iterator", iterator),
+    ("load_string", load_string),
+    ("type_reference_value_type", type_reference_value_type),
+    ("generic_instance_method", generic_instance_method),
+    (
+        "method_ref_declared_on_generics",
+        method_ref_declared_on_generics,
+    ),
+    ("varargs_call_sites", varargs_call_sites),
+];

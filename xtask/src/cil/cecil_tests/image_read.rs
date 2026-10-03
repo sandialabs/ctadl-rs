@@ -2,19 +2,16 @@
 //! raw-layer assertions). Skipped here: WindowsRuntimeComponentAssembly
 //! (Windows-only in Cecil), LocallyScopedConstantArray (portable PDB, M8).
 
-mod testutil;
-
+use super::{read_resource, Test};
 use cil_reader::raw::heaps::GuidIndex;
 use cil_reader::raw::pe::module_attributes as attrs;
 use cil_reader::raw::pe::module_characteristics as mchar;
 use cil_reader::raw::tables::*;
-use cil_reader::raw::{ModuleKind, PeImage, TargetArchitecture, TargetRuntime, parse_runtime};
-use testutil::read_resource;
+use cil_reader::raw::{parse_runtime, ModuleKind, PeImage, TargetArchitecture, TargetRuntime};
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:17 (ImageSections)
-#[test]
 fn image_sections() {
-    let data = read_resource!("hello.exe");
+    let data = read_resource("hello.exe");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(image.sections.len(), 3);
     assert_eq!(image.sections[0].name, ".text");
@@ -23,35 +20,32 @@ fn image_sections() {
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:28 (ImageMetadataVersion)
-#[test]
 fn image_metadata_version() {
-    let data = read_resource!("hello.exe");
+    let data = read_resource("hello.exe");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(parse_runtime(image.runtime_version), TargetRuntime::Net2_0);
 
-    let data = read_resource!("hello1.exe");
+    let data = read_resource("hello1.exe");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(parse_runtime(image.runtime_version), TargetRuntime::Net1_1);
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:38 (ImageModuleKind)
-#[test]
 fn image_module_kind() {
     for (name, kind) in [
         ("hello.exe", ModuleKind::Console),
         ("libhello.dll", ModuleKind::Dll),
         ("hellow.exe", ModuleKind::Windows),
     ] {
-        let data = read_resource!(name);
+        let data = read_resource(name);
         let image = PeImage::parse(&data).unwrap();
         assert_eq!(image.kind, kind, "{name}");
     }
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:51 (MetadataHeaps)
-#[test]
 fn metadata_heaps() {
-    let data = read_resource!("hello.exe");
+    let data = read_resource("hello.exe");
     let image = PeImage::parse(&data).unwrap();
     let md = image.metadata().unwrap();
 
@@ -86,9 +80,8 @@ fn metadata_heaps() {
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:74 (TablesHeap)
-#[test]
 fn tables_heap() {
-    let data = read_resource!("hello.exe");
+    let data = read_resource("hello.exe");
     let image = PeImage::parse(&data).unwrap();
     let md = image.metadata().unwrap();
 
@@ -104,53 +97,47 @@ fn tables_heap() {
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:94 (X64Module)
-#[test]
 fn x64_module() {
-    let data = read_resource!("hello.x64.exe");
+    let data = read_resource("hello.x64.exe");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(image.architecture, TargetArchitecture::Amd64);
     assert_eq!(image.attributes, attrs::IL_ONLY);
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:103 (AnyCPU32BitPreferred)
-#[test]
 fn anycpu_32bit_preferred() {
-    let data = read_resource!("anycpu32bitpreferred.exe");
+    let data = read_resource("anycpu32bitpreferred.exe");
     let image = PeImage::parse(&data).unwrap();
     assert_ne!(image.characteristics & 0x0020, 0);
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:111 (X64ModuleTextOnlySection)
-#[test]
 fn x64_module_text_only_section() {
-    let data = read_resource!("hello.textonly.x64.exe");
+    let data = read_resource("hello.textonly.x64.exe");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(image.architecture, TargetArchitecture::Amd64);
     assert_eq!(image.attributes, attrs::IL_ONLY);
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:120 (IA64Module)
-#[test]
 fn ia64_module() {
-    let data = read_resource!("hello.ia64.exe");
+    let data = read_resource("hello.ia64.exe");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(image.architecture, TargetArchitecture::Ia64);
     assert_eq!(image.attributes, attrs::IL_ONLY);
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:129 (X86Module)
-#[test]
 fn x86_module() {
-    let data = read_resource!("hello.x86.exe");
+    let data = read_resource("hello.x86.exe");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(image.architecture, TargetArchitecture::I386);
     assert_eq!(image.attributes, attrs::IL_ONLY | attrs::REQUIRED_32_BIT);
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:138 (AnyCpuModule)
-#[test]
 fn anycpu_module() {
-    let data = read_resource!("hello.anycpu.exe");
+    let data = read_resource("hello.anycpu.exe");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(image.architecture, TargetArchitecture::I386);
     assert_eq!(image.attributes, attrs::IL_ONLY);
@@ -158,9 +145,8 @@ fn anycpu_module() {
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:147 (DelaySignedAssembly) — raw half;
 // the Assembly.Name.PublicKey assertions live in the module tests.
-#[test]
 fn delay_signed_assembly() {
-    let data = read_resource!("delay-signed.dll");
+    let data = read_resource("delay-signed.dll");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(image.attributes & attrs::STRONG_NAME_SIGNED, 0);
     assert_ne!(image.strong_name_directory.virtual_address, 0);
@@ -168,9 +154,8 @@ fn delay_signed_assembly() {
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:159 (WindowsPhoneNonSignedAssembly) — raw half.
-#[test]
 fn windows_phone_non_signed_assembly() {
-    let data = read_resource!("wp7.dll");
+    let data = read_resource("wp7.dll");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(image.attributes & attrs::STRONG_NAME_SIGNED, 0);
     assert_eq!(image.strong_name_directory.virtual_address, 0);
@@ -178,9 +163,8 @@ fn windows_phone_non_signed_assembly() {
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:170 (MetroAssembly)
-#[test]
 fn metro_assembly() {
-    let data = read_resource!("metro.exe");
+    let data = read_resource("metro.exe");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(
         image.dll_characteristics & mchar::APP_CONTAINER,
@@ -189,81 +173,64 @@ fn metro_assembly() {
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:196 (DeterministicAssembly)
-#[test]
 fn deterministic_assembly() {
-    let data = read_resource!("Deterministic.dll");
+    let data = read_resource("Deterministic.dll");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(image.debug_header.len(), 1);
-    assert!(
-        image
-            .debug_header
-            .iter()
-            .any(|e| e.debug_type == cil_reader::raw::pe::image_debug_type::DETERMINISTIC)
-    );
+    assert!(image
+        .debug_header
+        .iter()
+        .any(|e| e.debug_type == cil_reader::raw::pe::image_debug_type::DETERMINISTIC));
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:209 (Net471TargetingAssembly)
-#[test]
 fn net471_targeting_assembly() {
-    let data = read_resource!("net471.exe");
+    let data = read_resource("net471.exe");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(image.subsystem_major, 6);
     assert_eq!(image.subsystem_minor, 0);
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:232 (ExternalPdbDeterministicAssembly)
-#[test]
 fn external_pdb_deterministic_assembly() {
     use cil_reader::raw::pe::image_debug_type as idt;
-    let data = read_resource!("ExternalPdbDeterministic.dll");
+    let data = read_resource("ExternalPdbDeterministic.dll");
     let image = PeImage::parse(&data).unwrap();
     assert!(image.debug_header.len() >= 2);
-    assert!(
-        image
-            .debug_header
-            .iter()
-            .any(|e| e.debug_type == idt::CODE_VIEW)
-    );
-    assert!(
-        image
-            .debug_header
-            .iter()
-            .any(|e| e.debug_type == idt::DETERMINISTIC)
-    );
+    assert!(image
+        .debug_header
+        .iter()
+        .any(|e| e.debug_type == idt::CODE_VIEW));
+    assert!(image
+        .debug_header
+        .iter()
+        .any(|e| e.debug_type == idt::DETERMINISTIC));
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:253 (EmbeddedPdbDeterministicAssembly)
-#[test]
 fn embedded_pdb_deterministic_assembly() {
     use cil_reader::raw::pe::image_debug_type as idt;
-    let data = read_resource!("EmbeddedPdbDeterministic.dll");
+    let data = read_resource("EmbeddedPdbDeterministic.dll");
     let image = PeImage::parse(&data).unwrap();
     assert!(image.debug_header.len() >= 3);
-    assert!(
-        image
-            .debug_header
-            .iter()
-            .any(|e| e.debug_type == idt::CODE_VIEW)
-    );
-    assert!(
-        image
-            .debug_header
-            .iter()
-            .any(|e| e.debug_type == idt::DETERMINISTIC)
-    );
-    assert!(
-        image
-            .debug_header
-            .iter()
-            .any(|e| e.debug_type == idt::EMBEDDED_PORTABLE_PDB)
-    );
+    assert!(image
+        .debug_header
+        .iter()
+        .any(|e| e.debug_type == idt::CODE_VIEW));
+    assert!(image
+        .debug_header
+        .iter()
+        .any(|e| e.debug_type == idt::DETERMINISTIC));
+    assert!(image
+        .debug_header
+        .iter()
+        .any(|e| e.debug_type == idt::EMBEDDED_PORTABLE_PDB));
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:189 (winrtcomp raw half): subsystem
 // versions are plain header fields, readable without WinRT projections.
-#[test]
 fn winrt_component_subsystem() {
-    let data = read_resource!("winrtcomp.winmd");
+    let data = read_resource("winrtcomp.winmd");
     let image = PeImage::parse(&data).unwrap();
     assert_eq!(image.subsystem_major, 6);
     assert_eq!(image.subsystem_minor, 2);
@@ -271,16 +238,14 @@ fn winrt_component_subsystem() {
 
 // Test/Mono.Cecil.Tests/ModuleTests.cs:249 (BadImageFormat analogue): a text
 // file must fail cleanly, never panic.
-#[test]
 fn text_file_is_bad_image() {
-    let data = read_resource!("text_file.txt");
+    let data = read_resource("text_file.txt");
     assert!(PeImage::parse(&data).is_err());
 }
 
 // Smoke: raw row reads across every table of a real image.
-#[test]
 fn raw_rows_smoke() {
-    let data = read_resource!("hello.exe");
+    let data = read_resource("hello.exe");
     let image = PeImage::parse(&data).unwrap();
     let md = image.metadata().unwrap();
 
@@ -297,3 +262,36 @@ fn raw_rows_smoke() {
     let asm = md.row::<AssemblyRaw>(1).unwrap();
     assert_eq!(md.strings().get(asm.name).unwrap(), "hello");
 }
+
+pub(super) const TESTS: &[Test] = &[
+    ("image_sections", image_sections),
+    ("image_metadata_version", image_metadata_version),
+    ("image_module_kind", image_module_kind),
+    ("metadata_heaps", metadata_heaps),
+    ("tables_heap", tables_heap),
+    ("x64_module", x64_module),
+    ("anycpu_32bit_preferred", anycpu_32bit_preferred),
+    ("x64_module_text_only_section", x64_module_text_only_section),
+    ("ia64_module", ia64_module),
+    ("x86_module", x86_module),
+    ("anycpu_module", anycpu_module),
+    ("delay_signed_assembly", delay_signed_assembly),
+    (
+        "windows_phone_non_signed_assembly",
+        windows_phone_non_signed_assembly,
+    ),
+    ("metro_assembly", metro_assembly),
+    ("deterministic_assembly", deterministic_assembly),
+    ("net471_targeting_assembly", net471_targeting_assembly),
+    (
+        "external_pdb_deterministic_assembly",
+        external_pdb_deterministic_assembly,
+    ),
+    (
+        "embedded_pdb_deterministic_assembly",
+        embedded_pdb_deterministic_assembly,
+    ),
+    ("winrt_component_subsystem", winrt_component_subsystem),
+    ("text_file_is_bad_image", text_file_is_bad_image),
+    ("raw_rows_smoke", raw_rows_smoke),
+];

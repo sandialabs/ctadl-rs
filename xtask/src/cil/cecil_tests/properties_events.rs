@@ -2,15 +2,12 @@
 //! (read subsets). Skipped: UnattachedProperty/UnattachedEvent (construct
 //! definitions).
 
-mod testutil;
-
+use super::{read_fixture, Test};
 use cil_reader::Module;
-use testutil::read_fixture;
 
 // Test/Mono.Cecil.Tests/PropertyTests.cs:11 (AbstractMethod)
-#[test]
 fn property_abstract_method() {
-    let data = read_fixture!("Properties.cs.dll");
+    let data = read_fixture("Properties.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo").unwrap().unwrap();
     assert!(ty.has_properties().unwrap());
@@ -49,9 +46,8 @@ fn property_abstract_method() {
 }
 
 // Test/Mono.Cecil.Tests/PropertyTests.cs:59 (OtherMethod)
-#[test]
 fn property_other_method() {
-    let data = read_fixture!("others.il.dll");
+    let data = read_fixture("others.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Others").unwrap().unwrap();
     assert!(ty.has_properties().unwrap());
@@ -75,9 +71,8 @@ fn property_other_method() {
 }
 
 // Test/Mono.Cecil.Tests/PropertyTests.cs:90 (SetOnlyIndexer)
-#[test]
 fn set_only_indexer() {
-    let data = read_fixture!("Properties.cs.dll");
+    let data = read_fixture("Properties.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Bar").unwrap().unwrap();
     let indexer = ty
@@ -103,9 +98,8 @@ fn set_only_indexer() {
 }
 
 // Test/Mono.Cecil.Tests/PropertyTests.cs:104 (ReadSemanticsFirst)
-#[test]
 fn read_semantics_first() {
-    let data = read_fixture!("Properties.cs.dll");
+    let data = read_fixture("Properties.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Baz").unwrap().unwrap();
     let setter = ty
@@ -130,9 +124,8 @@ fn read_semantics_first() {
 }
 
 // Test/Mono.Cecil.Tests/EventTests.cs:14 (AbstractMethod)
-#[test]
 fn event_abstract_method() {
-    let data = read_fixture!("Events.cs.dll");
+    let data = read_fixture("Events.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo").unwrap().unwrap();
     assert!(ty.has_events().unwrap());
@@ -147,20 +140,17 @@ fn event_abstract_method() {
     );
 
     assert!(event.add_method().unwrap().unwrap().is_add_on().unwrap());
-    assert!(
-        event
-            .remove_method()
-            .unwrap()
-            .unwrap()
-            .is_remove_on()
-            .unwrap()
-    );
+    assert!(event
+        .remove_method()
+        .unwrap()
+        .unwrap()
+        .is_remove_on()
+        .unwrap());
 }
 
 // Test/Mono.Cecil.Tests/EventTests.cs:39 (OtherMethod)
-#[test]
 fn event_other_method() {
-    let data = read_fixture!("others.il.dll");
+    let data = read_fixture("others.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Others").unwrap().unwrap();
     assert!(ty.has_events().unwrap());
@@ -179,3 +169,12 @@ fn event_other_method() {
     assert_eq!(others[0].name().unwrap(), "dang_Handler");
     assert_eq!(others[1].name().unwrap(), "fang_Handler");
 }
+
+pub(super) const TESTS: &[Test] = &[
+    ("property_abstract_method", property_abstract_method),
+    ("property_other_method", property_other_method),
+    ("set_only_indexer", set_only_indexer),
+    ("read_semantics_first", read_semantics_first),
+    ("event_abstract_method", event_abstract_method),
+    ("event_other_method", event_other_method),
+];
