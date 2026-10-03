@@ -48,27 +48,8 @@ fn system_runtime() {
     assert_eq!(module.assembly_references().unwrap().len(), 1);
 }
 
-// Sanity: a delay-signed assembly exposes its full public key
-// (ImageReadTests.cs:147, model half).
-fn delay_signed_public_key() {
-    let data = read_resource("delay-signed.dll");
-    let module = Module::read(&data).unwrap();
-    let name = module.assembly_name().unwrap().unwrap();
-    assert!(!name.public_key.is_empty());
-}
-
-// wp7.dll (ImageReadTests.cs:159, model half): no public key.
-fn wp7_no_public_key() {
-    let data = read_resource("wp7.dll");
-    let module = Module::read(&data).unwrap();
-    let name = module.assembly_name().unwrap().unwrap();
-    assert!(name.public_key.is_empty());
-}
-
 pub(super) const TESTS: &[Test] = &[
     ("name", name),
     ("retargetable_full_name", retargetable_full_name),
     ("system_runtime", system_runtime),
-    ("delay_signed_public_key", delay_signed_public_key),
-    ("wp7_no_public_key", wp7_no_public_key),
 ];

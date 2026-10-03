@@ -226,8 +226,11 @@ impl<'a> Module<'a> {
         self.data.image.attributes
     }
 
+    /// `ModuleDefinition.Characteristics`: the PE optional header's
+    /// DllCharacteristics, not the COFF Characteristics.
+    #[allow(clippy::misnamed_getters, reason = "Cecil's name for this field")]
     pub fn characteristics(&self) -> u16 {
-        self.data.image.characteristics
+        self.data.image.dll_characteristics
     }
 
     pub fn runtime_version(&self) -> &'a str {

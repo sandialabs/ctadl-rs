@@ -1,6 +1,8 @@
-//! Ported from Test/Mono.Cecil.Tests/ImageReadTests.cs (read-relevant subset;
-//! raw-layer assertions). Skipped here: WindowsRuntimeComponentAssembly
-//! (Windows-only in Cecil), LocallyScopedConstantArray (portable PDB, M8).
+//! Ported from Test/Mono.Cecil.Tests/ImageReadTests.cs (read-relevant subset).
+//! Each assertion goes through the layer Cecil's does: `module.Image.*` and
+//! the heaps through [`PeImage`], anything on `ModuleDefinition` or the
+//! assembly through [`Module`]. Skipped here: LocallyScopedConstantArray
+//! (portable PDB, M8).
 
 use super::{read_resource, Test};
 use cil_reader::raw::heaps::GuidIndex;
@@ -8,6 +10,7 @@ use cil_reader::raw::pe::module_attributes as attrs;
 use cil_reader::raw::pe::module_characteristics as mchar;
 use cil_reader::raw::tables::*;
 use cil_reader::raw::{parse_runtime, ModuleKind, PeImage, TargetArchitecture, TargetRuntime};
+use cil_reader::Module;
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:17 (ImageSections)
 fn image_sections() {
@@ -143,21 +146,26 @@ fn anycpu_module() {
     assert_eq!(image.attributes, attrs::IL_ONLY);
 }
 
-// Test/Mono.Cecil.Tests/ImageReadTests.cs:147 (DelaySignedAssembly) — raw half;
-// the Assembly.Name.PublicKey assertions live in the module tests.
+// Test/Mono.Cecil.Tests/ImageReadTests.cs:147 (DelaySignedAssembly)
 fn delay_signed_assembly() {
     let data = read_resource("delay-signed.dll");
-    let image = PeImage::parse(&data).unwrap();
-    assert_eq!(image.attributes & attrs::STRONG_NAME_SIGNED, 0);
+    let module = Module::read(&data).unwrap();
+    let name = module.assembly_name().unwrap().unwrap();
+    assert!(!name.public_key.is_empty());
+    assert_eq!(module.attributes() & attrs::STRONG_NAME_SIGNED, 0);
+    let image = module.image();
     assert_ne!(image.strong_name_directory.virtual_address, 0);
     assert_ne!(image.strong_name_directory.size, 0);
 }
 
-// Test/Mono.Cecil.Tests/ImageReadTests.cs:159 (WindowsPhoneNonSignedAssembly) — raw half.
+// Test/Mono.Cecil.Tests/ImageReadTests.cs:159 (WindowsPhoneNonSignedAssembly)
 fn windows_phone_non_signed_assembly() {
     let data = read_resource("wp7.dll");
-    let image = PeImage::parse(&data).unwrap();
-    assert_eq!(image.attributes & attrs::STRONG_NAME_SIGNED, 0);
+    let module = Module::read(&data).unwrap();
+    let name = module.assembly_name().unwrap().unwrap();
+    assert!(name.public_key.is_empty());
+    assert_eq!(module.attributes() & attrs::STRONG_NAME_SIGNED, 0);
+    let image = module.image();
     assert_eq!(image.strong_name_directory.virtual_address, 0);
     assert_eq!(image.strong_name_directory.size, 0);
 }
@@ -165,17 +173,36 @@ fn windows_phone_non_signed_assembly() {
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:170 (MetroAssembly)
 fn metro_assembly() {
     let data = read_resource("metro.exe");
-    let image = PeImage::parse(&data).unwrap();
+    let module = Module::read(&data).unwrap();
     assert_eq!(
-        image.dll_characteristics & mchar::APP_CONTAINER,
+        module.characteristics() & mchar::APP_CONTAINER,
         mchar::APP_CONTAINER
     );
 }
 
-// Test/Mono.Cecil.Tests/ImageReadTests.cs:196 (DeterministicAssembly)
+// Test/Mono.Cecil.Tests/ImageReadTests.cs:183 (WindowsRuntimeComponentAssembly),
+// without projections, as Cecil's test reads it.
+fn windows_runtime_component_assembly() {
+    let data = read_resource("winrtcomp.winmd");
+    let module = Module::read(&data).unwrap();
+    assert!(module
+        .assembly_name()
+        .unwrap()
+        .unwrap()
+        .is_windows_runtime());
+    let image = module.image();
+    assert_eq!(image.subsystem_major, 6);
+    assert_eq!(image.subsystem_minor, 2);
+}
+
+// Test/Mono.Cecil.Tests/ImageReadTests.cs:196 (DeterministicAssembly).
+// `GetDebugHeader().Entries` has no model analogue; the raw debug directory
+// is what it wraps.
 fn deterministic_assembly() {
     let data = read_resource("Deterministic.dll");
-    let image = PeImage::parse(&data).unwrap();
+    let module = Module::read(&data).unwrap();
+    assert!(module.has_debug_header());
+    let image = module.image();
     assert_eq!(image.debug_header.len(), 1);
     assert!(image
         .debug_header
@@ -195,7 +222,9 @@ fn net471_targeting_assembly() {
 fn external_pdb_deterministic_assembly() {
     use cil_reader::raw::pe::image_debug_type as idt;
     let data = read_resource("ExternalPdbDeterministic.dll");
-    let image = PeImage::parse(&data).unwrap();
+    let module = Module::read(&data).unwrap();
+    assert!(module.has_debug_header());
+    let image = module.image();
     assert!(image.debug_header.len() >= 2);
     assert!(image
         .debug_header
@@ -211,7 +240,9 @@ fn external_pdb_deterministic_assembly() {
 fn embedded_pdb_deterministic_assembly() {
     use cil_reader::raw::pe::image_debug_type as idt;
     let data = read_resource("EmbeddedPdbDeterministic.dll");
-    let image = PeImage::parse(&data).unwrap();
+    let module = Module::read(&data).unwrap();
+    assert!(module.has_debug_header());
+    let image = module.image();
     assert!(image.debug_header.len() >= 3);
     assert!(image
         .debug_header
@@ -225,15 +256,6 @@ fn embedded_pdb_deterministic_assembly() {
         .debug_header
         .iter()
         .any(|e| e.debug_type == idt::EMBEDDED_PORTABLE_PDB));
-}
-
-// Test/Mono.Cecil.Tests/ImageReadTests.cs:189 (winrtcomp raw half): subsystem
-// versions are plain header fields, readable without WinRT projections.
-fn winrt_component_subsystem() {
-    let data = read_resource("winrtcomp.winmd");
-    let image = PeImage::parse(&data).unwrap();
-    assert_eq!(image.subsystem_major, 6);
-    assert_eq!(image.subsystem_minor, 2);
 }
 
 // Test/Mono.Cecil.Tests/ModuleTests.cs:249 (BadImageFormat analogue): a text
@@ -291,7 +313,10 @@ pub(super) const TESTS: &[Test] = &[
         "embedded_pdb_deterministic_assembly",
         embedded_pdb_deterministic_assembly,
     ),
-    ("winrt_component_subsystem", winrt_component_subsystem),
+    (
+        "windows_runtime_component_assembly",
+        windows_runtime_component_assembly,
+    ),
     ("text_file_is_bad_image", text_file_is_bad_image),
     ("raw_rows_smoke", raw_rows_smoke),
 ];

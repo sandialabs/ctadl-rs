@@ -138,7 +138,7 @@ Sections:
 - **Cecil:** parses it with `new Guid(...)` (`Mono.Cecil/AssemblyReader.cs:3772-3777`).
 - **Effect:** braced `{...}` and undashed "N"-format GUIDs print differently.
 
-**A14. `Module::characteristics()` returns the COFF Characteristics.** *Divergence.*
+**A14. `Module::characteristics()` returns the COFF Characteristics.** *Fixed;* the ported `MetroAssembly` test now covers it.
 - **Rust:** `model/module.rs:229-231`.
 - **Cecil:** `ModuleDefinition.Characteristics` is DllCharacteristics
   (`Mono.Cecil/ModuleDefinition.cs:605`).
