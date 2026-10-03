@@ -29,7 +29,7 @@ Sections:
 
 ## A. Wrong results on valid or realistic input
 
-**A1. Ptr tables give members the wrong declaring type.** *Bug, reproduced.*
+**A1. Ptr tables give members the wrong declaring type.** *Fixed:* `ModuleData::member_list_index` (`model/data.rs`) inverts the Ptr table before the range search; the `ptr-*.cs.dll` fixtures in `cil:cecil-compare` cover it.
 - **Rust:** `model/data.rs:165-184` (`member_declaring_type`), and the property
   and event equivalents at `model/handles.rs:1083-1093, 1183-1193`.
 - **What's wrong:** list ranges index into FieldPtr/MethodPtr/PropertyPtr/EventPtr,

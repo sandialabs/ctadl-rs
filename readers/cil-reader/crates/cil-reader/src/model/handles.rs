@@ -1081,8 +1081,12 @@ impl<'a> PropertyDef<'a> {
     }
 
     pub fn declaring_type(&self) -> Result<Option<TypeDef<'a>>> {
+        // Map ranges index PropertyPtr when it exists.
+        let Some(index) = self.m.member_list_index(Table::PropertyPtr, self.rid)? else {
+            return Ok(None);
+        };
         for (&type_rid, range) in self.m.properties_ranges()? {
-            if self.rid >= range.start && self.rid < range.start + range.length {
+            if index >= range.start && index < range.start + range.length {
                 return Ok(Some(TypeDef {
                     m: self.m,
                     rid: type_rid,
@@ -1181,8 +1185,12 @@ impl<'a> EventDef<'a> {
     }
 
     pub fn declaring_type(&self) -> Result<Option<TypeDef<'a>>> {
+        // Map ranges index EventPtr when it exists.
+        let Some(index) = self.m.member_list_index(Table::EventPtr, self.rid)? else {
+            return Ok(None);
+        };
         for (&type_rid, range) in self.m.events_ranges()? {
-            if self.rid >= range.start && self.rid < range.start + range.length {
+            if index >= range.start && index < range.start + range.length {
                 return Ok(Some(TypeDef {
                     m: self.m,
                     rid: type_rid,

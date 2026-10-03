@@ -76,6 +76,10 @@ pub(crate) struct LazyTables {
     /// GenericParam rid → (GenericParamConstraint rid, constraint token)
     /// (InitializeGenericConstraints).
     pub generic_constraints: Lazy<HashMap<u32, Vec<(u32, MetadataToken)>>>,
+    /// Field/Method/Property/Event rid → the FieldPtr/MethodPtr/PropertyPtr/
+    /// EventPtr row naming it, in that order. Only built when the Ptr table
+    /// exists, since member list columns then index the Ptr table.
+    pub ptr_inverses: [Lazy<HashMap<u32, u32>>; 4],
 }
 
 #[derive(Default)]
@@ -160,9 +164,50 @@ impl<'a> ModuleData<'a> {
             .1)
     }
 
+    /// The position of member `rid` in its owners' list columns: `rid` itself,
+    /// or, when `ptr_table` exists, the Ptr row that names it. `None` when no
+    /// Ptr row does, so no owner lists it.
+    ///
+    /// Cecil sets `DeclaringType` from the collection that read the member,
+    /// through the Ptr table; if two Ptr rows name the same member, the last
+    /// read wins, so the last row wins here too.
+    pub fn member_list_index(&self, ptr_table: Table, rid: u32) -> Result<Option<u32>> {
+        let slot = match ptr_table {
+            Table::FieldPtr => 0,
+            Table::MethodPtr => 1,
+            Table::PropertyPtr => 2,
+            Table::EventPtr => 3,
+            // No other list column goes through a Ptr table that has an
+            // inverse here.
+            _ => return Ok(Some(rid)),
+        };
+        let ptr_rows = self.md.row_count(ptr_table);
+        if ptr_rows == 0 {
+            return Ok(Some(rid));
+        }
+        let inverse = get(&self.lazy.ptr_inverses[slot], || {
+            let mut map = HashMap::new();
+            for ptr_rid in 1..=ptr_rows {
+                let target = match ptr_table {
+                    Table::FieldPtr => self.md.row::<FieldPtrRaw>(ptr_rid)?.field,
+                    Table::MethodPtr => self.md.row::<MethodPtrRaw>(ptr_rid)?.method,
+                    Table::PropertyPtr => self.md.row::<PropertyPtrRaw>(ptr_rid)?.property,
+                    _ => self.md.row::<EventPtrRaw>(ptr_rid)?.event,
+                };
+                map.insert(target, ptr_rid);
+            }
+            Ok(map)
+        })?;
+        Ok(inverse.get(&rid).copied())
+    }
+
     /// Reverse owner lookup by binary search over the member ranges
     /// (`MetadataSystem.BinaryRangeSearch`).
     pub fn member_declaring_type(&self, member_rid: u32, field: bool) -> Result<Option<u32>> {
+        let ptr_table = if field { Table::FieldPtr } else { Table::MethodPtr };
+        let Some(member_rid) = self.member_list_index(ptr_table, member_rid)? else {
+            return Ok(None);
+        };
         let ranges = self.type_member_ranges()?;
         let mut min = 0usize;
         let mut max = ranges.len().wrapping_sub(1);
