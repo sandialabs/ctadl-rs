@@ -52,8 +52,8 @@ scope by design), WinRT projections (out of scope).
 
 ### Cecil parity
 
-`cargo xtask compare` runs `cil-dump` and `tools/CecilDump` (the same dump
-format on top of Mono.Cecil) over the corpus of 100+ test assemblies:
+`cargo xtask regression --frontend cil` (root workspace) runs `cil-dump` and
+`tools/CecilDump` (the same dump format on top of Mono.Cecil) over the corpus of 100+ test assemblies:
 **114/114 comparable files are byte-identical**. Excluded: `*.winmd` (Cecil
 applies WinRT projections).
 
@@ -64,28 +64,45 @@ Cecil's expected values — expected-IL strings verbatim.
 
 ## Development
 
-Everyday work needs only Rust (`nix develop`, or any recent toolchain):
+The crates are members of the root ctadl workspace and have no task runner of
+their own; everything goes through the root `cargo xtask`. Everyday work needs
+only Rust (`nix develop` at the repo root, or any recent toolchain):
 
 ```sh
-cargo test                    # ported Cecil test suites
-cargo xtask regression        # full-read sweep + committed goldens over the corpus
-cargo run -p cil-dump -- <assembly> [--sections a,b,c] [--no-il]
+cargo test -p cil-reader                    # ported Cecil test suites (also in `cargo test --workspace`)
+cargo xtask regression --frontend cil       # Cecil parity: cil:read, cil:goldens, cil:must-fail, cil:cecil-compare
+cargo dump <assembly> [--sections a,b,c] [--no-il]   # from readers/cil-reader: the cil-dump CLI
 ```
 
-Vendored Cecil (`extern/cecil`, gitignored) provides the sources of truth and
-test resources. The commit is pinned in `flake.lock`, not by hand: the
-devshell exports `$CECIL_SRC` (a read-only store path) and `cargo xtask
-vendor` copies it into place — a copy rather than a symlink because
-`dotnet build` writes `obj/` next to `Mono.Cecil.csproj`. Every other xtask
-command runs it for you; `cargo test` needs it done first. A checkout you
-cloned yourself is detected and left alone.
+No test inputs are committed:
 
-Commands that regenerate committed artifacts need the .NET SDK from the
-devshell:
+- **Cecil** (the sources of truth and the test corpus): the root flake's
+  `cecil` input pins it, and the devshell exports it as `$CECIL_SRC`. A
+  checkout you clone by hand into `extern/cecil` (gitignored) takes
+  precedence.
+- **Fixtures** (Cecil's `.il`/`.cs` test sources, compiled): the flake's
+  `cil-fixtures` package builds them offline with `tools/build-fixtures.sh`,
+  using a .NET 8 SDK and the standalone CoreCLR `ilasm` (fetched by hash). The
+  build is byte-for-byte reproducible. The devshell exports the result as
+  `$CIL_READER_FIXTURES`.
+
+Tests whose input is missing skip, so a plain `cargo test` from a fresh clone
+stays green; the nightly `cil-reader-tests` flake check supplies both and
+runs them all.
+
+`cil:goldens` compares Cecil's own assemblies against the committed CecilDump
+output in `tests/expected`; `cil:cecil-compare` runs CecilDump live, head to
+head, which also covers what has no golden: the fixtures (build outputs, whose
+bytes a golden would pin to one toolchain) and the inputs too large to keep
+goldens for. CecilDump
+(`tools/CecilDump`) compiles Cecil's sources in directly and needs no NuGet
+packages, so the root flake builds it offline as a cached derivation (`nix
+build .#cecil-dump`), and the devshell puts it on PATH as `cecil-dump`. The
+corpus, golden naming and comparison rules live in `cil_dump::parity`.
+
+Regenerating committed artifacts:
 
 ```sh
-cargo xtask fixtures          # compile Cecil's .il/.cs test fixtures (ilasm + dotnet)
-cargo xtask compare [filter]  # cil-dump vs CecilDump, per-file diff
-cargo xtask bless             # regenerate tests/expected goldens from CecilDump
-cargo xtask codegen           # regenerate the opcode table from Cecil's OpCodes.cs
+cargo xtask cil bless [--filter <name>]  # rewrite tests/expected from cecil-dump (after moving the cecil pin)
+cargo xtask cil codegen                  # regenerate the opcode table from Cecil's OpCodes.cs
 ```

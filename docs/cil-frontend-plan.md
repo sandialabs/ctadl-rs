@@ -51,6 +51,19 @@ and the JSON model language all work on CIL with no changes.
 
 ## 1. Milestone M0 — fold `cil-reader` into the workspace
 
+> **Status: done, differently from steps 1–3 below.** The crates stayed in place:
+> `readers/cil-reader/crates/{cil-reader,cil-dump}` are root workspace members, and
+> the nested `[workspace]`, `Cargo.lock` and xtask are gone. The parity harness runs
+> nightly as `xtask regression --frontend cil` (`cil:*` checks) against a CecilDump
+> the flake builds offline as a cached derivation (`packages.cecil-dump`); the
+> nested xtask's artifact-regenerating commands became `cargo xtask cil
+> {bless,codegen}`, and `vendor` was dropped in favor of the flake's pinned `cecil`
+> input (`$CECIL_SRC` in the dev shell). The fixture DLLs are no longer committed:
+> the flake builds them reproducibly as `packages.cil-fixtures`
+> (`$CIL_READER_FIXTURES`). Tests whose inputs are absent skip (step 4,
+> generalized); the nightly `cil-reader-tests` check supplies both and runs them
+> all.
+
 `readers/cil-reader/` is currently a nested Cargo workspace with its own lock file, an xtask
 that needs nix + the .NET SDK, and a vendored (gitignored) Mono.Cecil checkout. The
 library itself has **zero dependencies** and its 166 tests run off 19 committed
