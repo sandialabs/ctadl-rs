@@ -5,6 +5,7 @@
 use super::{read_fixture, read_resource, Test};
 use cil_reader::model::marshal::{native_type, variant_type, MarshalInfo};
 use cil_reader::model::{ConstantValue, MethodDef, TypeDef};
+use cil_reader::raw::Guid;
 use cil_reader::Module;
 
 fn get_method<'a>(ty: &TypeDef<'a>, name: &str) -> MethodDef<'a> {
@@ -46,7 +47,7 @@ fn custom_marshaler() {
             managed_type,
             cookie,
         } => {
-            assert_eq!(guid, "");
+            assert_eq!(guid, Guid::default());
             assert_eq!(unmanaged_type, "");
             assert_eq!(managed_type, "Boc");
             assert_eq!(cookie, "nomnom");

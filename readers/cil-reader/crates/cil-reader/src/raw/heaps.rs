@@ -51,6 +51,148 @@ impl fmt::Display for Guid {
     }
 }
 
+impl Guid {
+    /// Builds a GUID from its fields, as .NET's `Guid(int, short, short,
+    /// byte[])` constructor does.
+    pub fn from_fields(a: u32, b: u16, c: u16, d: [u8; 8]) -> Guid {
+        let mut bytes = [0; 16];
+        bytes[0..4].copy_from_slice(&a.to_le_bytes());
+        bytes[4..6].copy_from_slice(&b.to_le_bytes());
+        bytes[6..8].copy_from_slice(&c.to_le_bytes());
+        bytes[8..].copy_from_slice(&d);
+        Guid(bytes)
+    }
+
+    /// Parses `s` as .NET's `new Guid(string)` does, or `None` where it
+    /// throws. It accepts the "N", "D", "B", "P" and "X" formats with
+    /// surrounding whitespace, and keeps .NET's leniencies: a group of a
+    /// "D"-shaped GUID may start with `+` and then `0x`, and an "X" GUID may
+    /// contain whitespace anywhere and truncates its 16-bit fields.
+    pub fn parse(s: &str) -> Option<Guid> {
+        let s = s.trim();
+        // Dispatch as Guid.TryParseGuid does: on the first character and
+        // whether there is a dash. Each format then checks its own length.
+        match s.as_bytes().first()? {
+            b'(' => parse_braced(s.as_bytes(), b'(', b')'),
+            b'{' if s.contains('-') => parse_braced(s.as_bytes(), b'{', b'}'),
+            b'{' => {
+                let s: Vec<u8> = s
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect::<String>()
+                    .into_bytes();
+                parse_x(&s)
+            }
+            _ if s.contains('-') => parse_d(s.as_bytes()),
+            _ => parse_n(s.as_bytes()),
+        }
+    }
+}
+
+/// .NET `Guid.TryParseHex`: an optional `+`, then an optional `0x`, then hex
+/// digits, of which at most `max_digits` may be significant. Like .NET, it
+/// accepts nothing at all after the prefixes as zero.
+fn guid_hex(mut s: &[u8], max_digits: usize) -> Option<u64> {
+    if let [b'+', rest @ ..] = s {
+        s = rest;
+    }
+    if let [b'0', x, rest @ ..] = s
+        && x | 0x20 == b'x'
+    {
+        s = rest;
+    }
+    let digits = &s[s.iter().take_while(|&&c| c == b'0').count()..];
+    if digits.len() > max_digits {
+        return None;
+    }
+    digits.iter().try_fold(0u64, |acc, &c| {
+        Some(acc << 4 | (c as char).to_digit(16)? as u64)
+    })
+}
+
+/// The 32 hex digits of the "N" format; no prefixes.
+fn parse_n(s: &[u8]) -> Option<Guid> {
+    if s.len() != 32 || !s.iter().all(u8::is_ascii_hexdigit) {
+        return None;
+    }
+    let hex = std::str::from_utf8(s).ok()?;
+    let v = u128::from_str_radix(hex, 16).ok()?;
+    let d = (v as u64).to_be_bytes();
+    Some(Guid::from_fields(
+        (v >> 96) as u32,
+        (v >> 80) as u16,
+        (v >> 64) as u16,
+        d,
+    ))
+}
+
+/// The "D" format, `dddddddd-dddd-dddd-dddd-dddddddddddd`; each group goes
+/// through [`guid_hex`], so it may carry `+` and `0x` prefixes.
+fn parse_d(s: &[u8]) -> Option<Guid> {
+    if s.len() != 36 || [8, 13, 18, 23].iter().any(|&i| s[i] != b'-') {
+        return None;
+    }
+    let a = guid_hex(&s[0..8], 8)? as u32;
+    let b = guid_hex(&s[9..13], 8)? as u16;
+    let c = guid_hex(&s[14..18], 8)? as u16;
+    let d_hi = guid_hex(&s[19..23], 8)? as u16;
+    let d_lo = guid_hex(&s[24..36], 16)?;
+    let mut d = [0; 8];
+    d[0..2].copy_from_slice(&d_hi.to_be_bytes());
+    d[2..].copy_from_slice(&d_lo.to_be_bytes()[2..]);
+    Some(Guid::from_fields(a, b, c, d))
+}
+
+/// The "B" and "P" formats: a "D" GUID between `open` and `close`.
+fn parse_braced(s: &[u8], open: u8, close: u8) -> Option<Guid> {
+    if s.len() != 38 || s[0] != open || s[37] != close {
+        return None;
+    }
+    parse_d(&s[1..37])
+}
+
+/// The "X" format, `{0xa,0xb,0xc,{0xd,0xd,0xd,0xd,0xd,0xd,0xd,0xd}}`, with
+/// whitespace already removed. Mirrors `Guid.TryParseExactX`: every number
+/// needs its `0x`, and goes through [`guid_hex`] after it (so `0x+1` and
+/// `0x0x1` pass); the 16-bit fields are truncated, not range-checked.
+fn parse_x(s: &[u8]) -> Option<Guid> {
+    let is_hex_prefix = |i: usize| s.len() > i + 1 && s[i] == b'0' && s[i + 1] | 0x20 == b'x';
+    // The number after the `0x` at `prefix`, up to `end`; returns it and the
+    // position of `end`.
+    let number = |prefix: usize, end: u8| -> Option<(u64, usize)> {
+        if !is_hex_prefix(prefix) {
+            return None;
+        }
+        let start = prefix + 2;
+        let len = s[start..].iter().position(|&c| c == end)?;
+        if len == 0 {
+            return None;
+        }
+        Some((guid_hex(&s[start..start + len], 8)?, start + len))
+    };
+    if s.first() != Some(&b'{') {
+        return None;
+    }
+    let (a, comma) = number(1, b',')?;
+    let (b, comma) = number(comma + 1, b',')?;
+    let (c, comma) = number(comma + 1, b',')?;
+    if s.get(comma + 1) != Some(&b'{') {
+        return None;
+    }
+    let mut d = [0; 8];
+    let mut sep = comma + 1;
+    for (i, byte) in d.iter_mut().enumerate() {
+        let (v, end) = number(sep + 1, if i < 7 { b',' } else { b'}' })?;
+        *byte = u8::try_from(v).ok()?;
+        sep = end;
+    }
+    // `sep` is the inner `}`; exactly one more `}` must end the string.
+    if s.len() != sep + 2 || s[sep + 1] != b'}' {
+        return None;
+    }
+    Some(Guid::from_fields(a as u32, b as u16, c as u16, d))
+}
+
 #[derive(Clone, Copy)]
 pub struct StringsHeap<'a> {
     pub(crate) data: &'a [u8],
@@ -184,5 +326,248 @@ impl<'a> GuidHeap<'a> {
         let mut g = [0u8; 16];
         g.copy_from_slice(&self.data[start..start + 16]);
         Ok(Guid(g))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `new Guid(s).ToString("d")` on .NET 8, or `None` where it throws.
+    const DOTNET: &[(&str, Option<&str>)] = &[
+        (
+            "11111111-2222-3333-4444-555555555555",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "AABBCCDD-EEFF-0011-2233-445566778899",
+            Some("aabbccdd-eeff-0011-2233-445566778899"),
+        ),
+        (
+            "{11111111-2222-3333-4444-555555555555}",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "(11111111-2222-3333-4444-555555555555)",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "11111111222233334444555555555555",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "{0x11111111,0x2222,0x3333,{0x44,0x44,0x55,0x55,0x55,0x55,0x55,0x55}}",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        (
+            "{ 0x11111111 , 0x2222,0x3333,{0x44,0x44,0x55,0x55,0x55,0x55,0x55,0x55}}",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "{0X11111111,0x2222,0x3333,{0x44,0x44,0x55,0x55,0x55,0x55,0x55,0x55}}",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "{0x011111111,0x2222,0x3333,{0x44,0x44,0x55,0x55,0x55,0x55,0x55,0x55}}",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "{0x,0x2222,0x3333,{0x44,0x44,0x55,0x55,0x55,0x55,0x55,0x55}}",
+            None,
+        ),
+        (
+            "  11111111-2222-3333-4444-555555555555  ",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "\t11111111-2222-3333-4444-555555555555\n",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        ("11111111-2222-3333-4444-55555555555", None),
+        ("11111111-2222-3333-4444-5555555555555", None),
+        ("1111111-2222-3333-4444-555555555555", None),
+        (
+            "+1111111-2222-3333-4444-555555555555",
+            Some("01111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "0x111111-2222-3333-4444-555555555555",
+            Some("00111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "11111111-+222-3333-4444-555555555555",
+            Some("11111111-0222-3333-4444-555555555555"),
+        ),
+        (
+            "11111111-2222-3333-+444-555555555555",
+            Some("11111111-2222-3333-0444-555555555555"),
+        ),
+        ("{11111111-2222-3333-4444-555555555555)", None),
+        ("{11111111-2222-3333-4444-555555555555", None),
+        ("1111111122223333444455555555555", None),
+        ("111111112222333344445555555555555", None),
+        ("+1111111222233334444555555555555", None),
+        ("0x111111222233334444555555555555", None),
+        ("1111111 -2222-3333-4444-555555555555", None),
+        ("11111111-2222-3333-4444-55555555555g", None),
+        ("garbage", None),
+        ("x", None),
+        (" ", None),
+        ("{}", None),
+        (
+            "11111111-0x22-3333-4444-555555555555",
+            Some("11111111-0022-3333-4444-555555555555"),
+        ),
+        (
+            "11111111-2222-3333-4444-+55555555555",
+            Some("11111111-2222-3333-4444-055555555555"),
+        ),
+        (
+            "11111111-2222-3333-4444-0x5555555555",
+            Some("11111111-2222-3333-4444-005555555555"),
+        ),
+        (
+            "11111111-2222-3333-0x44-555555555555",
+            Some("11111111-2222-3333-0044-555555555555"),
+        ),
+        ("11111111-2222-3333-44+4-555555555555", None),
+        (
+            "+0x11111-2222-3333-4444-555555555555",
+            Some("00011111-2222-3333-4444-555555555555"),
+        ),
+        ("0x+11111-2222-3333-4444-555555555555", None),
+        (
+            "11111111-2222-3333-4444-555555555555\u{a0}",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "\u{a0}11111111-2222-3333-4444-555555555555",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        ("{11111111-2222-3333-4444-555555555555}x", None),
+        ("{11111111222233334444555555555555}", None),
+        ("{+0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}", None),
+        ("{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0x1ff}}", None),
+        (
+            "{0x1,0x22222,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}",
+            Some("00000001-2222-0003-0405-060708090a0b"),
+        ),
+        (
+            "{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}} ",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        ("{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}x", None),
+        ("{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa}}", None),
+        ("{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc}}", None),
+        (
+            "{0x1 1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}",
+            Some("00000011-0002-0003-0405-060708090a0b"),
+        ),
+        (
+            "{0x0000000000001,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        (
+            "{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0x0000000000000b}}",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        (
+            "{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0x0b}}",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        ("{0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}", None),
+        ("(0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb})", None),
+        ("{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}", None),
+        ("{0xg,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}", None),
+        ("{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0x}}", None),
+        ("{1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}", None),
+        ("11111111-2222-3333-4444-55555555555\0", None),
+        (
+            "{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}\u{a0}",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        (
+            "{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,\u{a0}0xb}}",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        (
+            "{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0x0}}",
+            Some("00000001-0002-0003-0405-060708090a00"),
+        ),
+        (
+            "{0x+1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        (
+            "{0x0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        (
+            "{0x1,0x+2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        (
+            "{0x1,0x2,0x3,{0x+4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        (
+            "{0x1,0x2,0x3,{0x0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}",
+            Some("00000001-0002-0003-0405-060708090a0b"),
+        ),
+        (
+            "{0x111111111,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}",
+            None,
+        ),
+        (
+            "{0x1,0x222222222,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}",
+            None,
+        ),
+        (
+            "{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0x100000000}}",
+            None,
+        ),
+        ("11111111-0x+2-3333-4444-555555555555", None),
+        (
+            "11111111-+0x2-3333-4444-555555555555",
+            Some("11111111-0002-3333-4444-555555555555"),
+        ),
+        (
+            "11111111-2222-3333-4444-+0x555555555",
+            Some("11111111-2222-3333-4444-000555555555"),
+        ),
+        ("11111111-2222-3333-++44-555555555555", None),
+        ("11111111-2222-3333-+-44-555555555555", None),
+        ("11111111-2222-3333-4444-0x", None),
+        ("11111111-2222-3333-4444-+", None),
+        (
+            "11111111-2222-3333-4444-+00000000000",
+            Some("11111111-2222-3333-4444-000000000000"),
+        ),
+        ("0x-2222-3333-4444-555555555555", None),
+        (
+            "11111111-2222-3333-4444-555555555555",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        ("11111111 2222 3333 4444 555555555555", None),
+        (
+            "{11111111-2222-3333-4444-555555555555}",
+            Some("11111111-2222-3333-4444-555555555555"),
+        ),
+        (
+            "(+1111111-2222-3333-4444-555555555555)",
+            Some("01111111-2222-3333-4444-555555555555"),
+        ),
+    ];
+
+    #[test]
+    fn parse_matches_dotnet() {
+        for &(input, expected) in DOTNET {
+            let actual = Guid::parse(input).map(|g| g.to_string());
+            assert_eq!(actual.as_deref(), expected, "{input:?}");
+        }
     }
 }

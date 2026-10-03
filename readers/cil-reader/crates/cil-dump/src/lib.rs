@@ -336,13 +336,8 @@ fn format_marshal(info: &cil_reader::model::MarshalInfo<'_>) -> String {
             managed_type,
             cookie,
         } => {
-            // CecilDump prints the parsed Guid ("d" format) and the parsed
-            // managed type's FullName.
-            let guid = if guid.is_empty() {
-                "00000000-0000-0000-0000-000000000000".to_string()
-            } else {
-                guid.to_lowercase()
-            };
+            // The model's parsed GUID prints in .NET's "d" format, as is;
+            // the managed type prints as its parsed FullName, like CecilDump.
             let managed = cil_reader::model::ParsedType::parse(managed_type)
                 .map(|p| p.cecil_full_name())
                 .unwrap_or_default();

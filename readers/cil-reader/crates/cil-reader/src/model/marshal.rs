@@ -2,8 +2,9 @@
 //!
 //! Port of `SignatureReader.ReadMarshalInfo` (`AssemblyReader.cs:3736-3789`).
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::model::sig::SigReader;
+use crate::raw::Guid;
 
 /// Raw `NativeType` byte values (ECMA-335 II.23.4 + Cecil `NativeType`).
 pub mod native_type {
@@ -93,9 +94,10 @@ pub enum MarshalInfo<'a> {
     /// `NativeType.FixedSysString`.
     FixedSysString { size: i32 },
     /// `NativeType.CustomMarshaler`; `managed_type` is the serialized type
-    /// name (Cecil parses it with `TypeParser`).
+    /// name (Cecil parses it with `TypeParser`). `guid` is parsed as
+    /// `new Guid(string)` parses it, and is all zeros when the blob's is empty.
     CustomMarshaler {
-        guid: &'a str,
+        guid: Guid,
         unmanaged_type: &'a str,
         managed_type: &'a str,
         cookie: &'a str,
@@ -168,7 +170,14 @@ impl<'a> MarshalInfo<'a> {
                 MarshalInfo::FixedSysString { size }
             }
             native_type::CUSTOM_MARSHALER => {
-                let guid = r.utf8_string()?.unwrap_or("");
+                let at = r.cur.pos();
+                let guid = match r.utf8_string()? {
+                    None | Some("") => Guid::default(),
+                    Some(text) => Guid::parse(text).ok_or(Error::bad(
+                        at,
+                        "custom marshaler GUID not in a .NET Guid format",
+                    ))?,
+                };
                 let unmanaged_type = r.utf8_string()?.unwrap_or("");
                 let managed_type = r.utf8_string()?.unwrap_or("");
                 let cookie = r.utf8_string()?.unwrap_or("");

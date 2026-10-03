@@ -132,7 +132,7 @@ Sections:
 - **Effect:** junk parameter bytes, which obfuscators emit, make
   `PropertyDef::signature()` fail.
 
-**A13. The custom-marshaler GUID is kept as raw text.** *Divergence, reproduced.*
+**A13. The custom-marshaler GUID is kept as raw text.** *Fixed:* `Guid::parse` (`raw/heaps.rs`) mirrors `new Guid(string)`, checked against .NET 8 on 85 cases.
 - **Rust:** `model/marshal.rs:170-180`; `crates/cil-dump/src/lib.rs:341-345`
   only lowercases it.
 - **Cecil:** parses it with `new Guid(...)` (`Mono.Cecil/AssemblyReader.cs:3772-3777`).
