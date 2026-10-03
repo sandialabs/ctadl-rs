@@ -15,7 +15,7 @@ use testutil::read_resource;
 // Test/Mono.Cecil.Tests/ModuleTests.cs:25 (SingleModule)
 #[test]
 fn single_module() {
-    let data = read_resource("hello.exe");
+    let data = read_resource!("hello.exe");
     let module = Module::read(&data).unwrap();
     assert!(module.assembly_name().unwrap().is_some());
 }
@@ -23,7 +23,7 @@ fn single_module() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:36 (EntryPoint)
 #[test]
 fn entry_point() {
-    let data = read_resource("hello.exe");
+    let data = read_resource!("hello.exe");
     let module = Module::read(&data).unwrap();
     let entry_point = module.entry_point().unwrap().unwrap();
     assert_eq!(
@@ -36,12 +36,12 @@ fn entry_point() {
 // netmodules through the assembly; we read each file directly.
 #[test]
 fn multi_modules() {
-    let data = read_resource("mma.exe");
+    let data = read_resource!("mma.exe");
     let module = Module::read(&data).unwrap();
     assert_eq!(module.name().unwrap(), "mma.exe");
     assert_eq!(module.kind(), ModuleKind::Console);
 
-    let data = read_resource("moda.netmodule");
+    let data = read_resource!("moda.netmodule");
     let module = Module::read(&data).unwrap();
     assert_eq!(module.name().unwrap(), "moda.netmodule");
     assert_eq!(
@@ -50,7 +50,7 @@ fn multi_modules() {
     );
     assert_eq!(module.kind(), ModuleKind::NetModule);
 
-    let data = read_resource("modb.netmodule");
+    let data = read_resource!("modb.netmodule");
     let module = Module::read(&data).unwrap();
     assert_eq!(module.name().unwrap(), "modb.netmodule");
     assert_eq!(
@@ -63,7 +63,7 @@ fn multi_modules() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:76 (ModuleInformation)
 #[test]
 fn module_information() {
-    let data = read_resource("hello.exe");
+    let data = read_resource!("hello.exe");
     let module = Module::read(&data).unwrap();
     assert_eq!(module.name().unwrap(), "hello.exe");
     assert_eq!(
@@ -75,7 +75,7 @@ fn module_information() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:87 (AssemblyReferences)
 #[test]
 fn assembly_references() {
-    let data = read_resource("hello.exe");
+    let data = read_resource!("hello.exe");
     let module = Module::read(&data).unwrap();
     let refs = module.assembly_references().unwrap();
     assert_eq!(refs.len(), 1);
@@ -91,7 +91,7 @@ fn assembly_references() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:101 (ModuleReferences)
 #[test]
 fn module_references() {
-    let data = read_resource("pinvoke.exe");
+    let data = read_resource!("pinvoke.exe");
     let module = Module::read(&data).unwrap();
     let refs = module.module_references().unwrap();
     assert_eq!(refs.len(), 2);
@@ -102,7 +102,7 @@ fn module_references() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:111 (Types)
 #[test]
 fn types() {
-    let data = read_resource("hello.exe");
+    let data = read_resource!("hello.exe");
     let module = Module::read(&data).unwrap();
     let types = module.types().unwrap();
     assert_eq!(types.len(), 2);
@@ -131,7 +131,7 @@ fn types() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:123 (LinkedResource)
 #[test]
 fn linked_resource() {
-    let data = read_resource("libres.dll");
+    let data = read_resource!("libres.dll");
     let module = Module::read(&data).unwrap();
     let resources = module.resources().unwrap();
     let resource = resources
@@ -150,7 +150,7 @@ fn linked_resource() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:137 (EmbeddedResource)
 #[test]
 fn embedded_resource() {
-    let data = read_resource("libres.dll");
+    let data = read_resource!("libres.dll");
     let module = Module::read(&data).unwrap();
     let resources = module.resources().unwrap();
 
@@ -173,7 +173,7 @@ fn embedded_resource() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:163 (ExportedTypeFromNetModule)
 #[test]
 fn exported_type_from_net_module() {
-    let data = read_resource("mma.exe");
+    let data = read_resource!("mma.exe");
     let module = Module::read(&data).unwrap();
     assert!(module.has_exported_types());
     let exported: Vec<_> = module.exported_types().collect();
@@ -189,7 +189,7 @@ fn exported_type_from_net_module() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:229 (ModuleWithoutBlob)
 #[test]
 fn module_without_blob() {
-    let data = read_resource("noblob.dll");
+    let data = read_resource!("noblob.dll");
     let module = Module::read(&data).unwrap();
     // Cecil asserts Image.BlobHeap == null; the analogue here is an empty heap
     // and a module that still reads fine.
@@ -199,7 +199,7 @@ fn module_without_blob() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:237 (MixedModeModule)
 #[test]
 fn mixed_mode_module() {
-    let data = read_resource("cppcli.dll");
+    let data = read_resource!("cppcli.dll");
     let module = Module::read(&data).unwrap();
     let refs = module.module_references().unwrap();
     assert_eq!(refs.len(), 1);
@@ -209,14 +209,14 @@ fn mixed_mode_module() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:246 (OpenIrrelevantFile)
 #[test]
 fn open_irrelevant_file() {
-    let data = read_resource("text_file.txt");
+    let data = read_resource!("text_file.txt");
     assert!(Module::read(&data).is_err());
 }
 
 // Test/Mono.Cecil.Tests/ModuleTests.cs:252 (GetTypeNamespacePlusName)
 #[test]
 fn get_type_namespace_plus_name() {
-    let data = read_resource("moda.netmodule");
+    let data = read_resource!("moda.netmodule");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type_by("Module.A", "Foo").unwrap();
     assert!(ty.is_some());
@@ -225,7 +225,7 @@ fn get_type_namespace_plus_name() {
 // Test/Mono.Cecil.Tests/ModuleTests.cs:261 (GetNonExistentTypeRuntimeName)
 #[test]
 fn get_non_existent_type() {
-    let data = read_resource("libhello.dll");
+    let data = read_resource!("libhello.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("DoesNotExist").unwrap();
     assert!(ty.is_none());

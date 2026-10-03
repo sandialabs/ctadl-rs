@@ -20,7 +20,7 @@ fn get_method<'a>(ty: &TypeDef<'a>, name: &str) -> MethodDef<'a> {
 // Test/Mono.Cecil.Tests/ParameterTests.cs:11 (MarshalAsI4)
 #[test]
 fn marshal_as_i4() {
-    let data = read_resource("marshal.dll");
+    let data = read_resource!("marshal.dll");
     let module = Module::read(&data).unwrap();
     let bar = module.get_type("Bar").unwrap().unwrap();
     let pan = get_method(&bar, "Pan");
@@ -37,7 +37,7 @@ fn marshal_as_i4() {
 // Test/Mono.Cecil.Tests/ParameterTests.cs:30 (CustomMarshaler)
 #[test]
 fn custom_marshaler() {
-    let data = read_resource("marshal.dll");
+    let data = read_resource!("marshal.dll");
     let module = Module::read(&data).unwrap();
     let bar = module.get_type("Bar").unwrap().unwrap();
     let method = get_method(&bar, "PanPan");
@@ -62,7 +62,7 @@ fn custom_marshaler() {
 // Test/Mono.Cecil.Tests/ParameterTests.cs:53 (SafeArrayMarshaler)
 #[test]
 fn safe_array_marshaler() {
-    let data = read_resource("marshal.dll");
+    let data = read_resource!("marshal.dll");
     let module = Module::read(&data).unwrap();
     let bar = module.get_type("Bar").unwrap().unwrap();
     let pan = get_method(&bar, "PanPan");
@@ -77,7 +77,7 @@ fn safe_array_marshaler() {
 // Test/Mono.Cecil.Tests/ParameterTests.cs:68 (ArrayMarshaler)
 #[test]
 fn array_marshaler() {
-    let data = read_resource("marshal.dll");
+    let data = read_resource!("marshal.dll");
     let module = Module::read(&data).unwrap();
     let bar = module.get_type("Bar").unwrap().unwrap();
     let method = get_method(&bar, "PanPan");
@@ -119,7 +119,7 @@ fn array_marshaler() {
 // Test/Mono.Cecil.Tests/ParameterTests.cs:97 (ArrayMarshalerSized)
 #[test]
 fn array_marshaler_sized() {
-    let data = read_resource("marshal.dll");
+    let data = read_resource!("marshal.dll");
     let module = Module::read(&data).unwrap();
     let delegate_type = module.get_type("SomeMethod").unwrap().unwrap();
     let method = get_method(&delegate_type, "Invoke");
@@ -137,7 +137,7 @@ fn array_marshaler_sized() {
 // Test/Mono.Cecil.Tests/ParameterTests.cs:113 (NullableConstant)
 #[test]
 fn nullable_constant() {
-    let data = read_resource("nullable-constant.exe");
+    let data = read_resource!("nullable-constant.exe");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Program").unwrap().unwrap();
     let method = get_method(&ty, "Foo");
@@ -154,7 +154,7 @@ fn nullable_constant() {
 // Test/Mono.Cecil.Tests/ParameterTests.cs:130 (BoxedDefaultArgumentValue)
 #[test]
 fn boxed_default_argument_value() {
-    let data = read_resource("boxedoptarg.dll");
+    let data = read_resource!("boxedoptarg.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let method = get_method(&foo, "Bar");
@@ -178,7 +178,7 @@ fn generic_parameter_constant() {
 // Test/Mono.Cecil.Tests/ParameterTests.cs:252 (NullablePrimitiveParameterConstant)
 #[test]
 fn nullable_primitive_parameter_constant() {
-    let data = read_resource("nullable-parameter.dll");
+    let data = read_resource!("nullable-parameter.dll");
     let module = Module::read(&data).unwrap();
     let test = module.get_type("Test").unwrap().unwrap();
     let method = get_method(&test, "Foo");

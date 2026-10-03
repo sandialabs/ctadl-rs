@@ -27,7 +27,7 @@ gs=\"UnmanagedCode\"/>\r\n</PermissionSet>\r\n";
 // Test/Mono.Cecil.Tests/SecurityDeclarationTests.cs:18 (XmlSecurityDeclaration)
 #[test]
 fn xml_security_declaration() {
-    let data = read_resource("decsec-xml.dll");
+    let data = read_resource!("decsec-xml.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("SubLibrary").unwrap().unwrap();
 
@@ -47,7 +47,7 @@ fn xml_security_declaration() {
 // Test/Mono.Cecil.Tests/SecurityDeclarationTests.cs:57 (XmlNet_1_1SecurityDeclaration)
 #[test]
 fn xml_net_1_1_security_declaration() {
-    let data = read_resource("decsec1-xml.dll");
+    let data = read_resource!("decsec1-xml.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("SubLibrary").unwrap().unwrap();
 
@@ -65,7 +65,7 @@ fn xml_net_1_1_security_declaration() {
 // Test/Mono.Cecil.Tests/SecurityDeclarationTests.cs:130 (SecurityDeclarationWithoutAttributes)
 #[test]
 fn security_declaration_without_attributes() {
-    let data = read_resource("empty-decsec-att.dll");
+    let data = read_resource!("empty-decsec-att.dll");
     let module = Module::read(&data).unwrap();
     let ty = module
         .get_type("TestSecurityAction.ModalUITypeEditor")
@@ -100,7 +100,7 @@ fn security_declaration_without_attributes() {
 // Test/Mono.Cecil.Tests/SecurityDeclarationTests.cs:152 (AttributeSecurityDeclaration)
 #[test]
 fn attribute_security_declaration() {
-    let data = read_resource("decsec-att.dll");
+    let data = read_resource!("decsec-att.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("SubLibrary").unwrap().unwrap();
 

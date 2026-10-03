@@ -298,7 +298,7 @@ fn nested_enum_of_generic_type_definition() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:364 (MarshalAsFixedStr)
 #[test]
 fn marshal_as_fixed_str() {
-    let data = read_resource("marshal.dll");
+    let data = read_resource!("marshal.dll");
     let module = Module::read(&data).unwrap();
     let boc = module.get_type("Boc").unwrap().unwrap();
     let field = get_field(&boc, "a");
@@ -312,7 +312,7 @@ fn marshal_as_fixed_str() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:381 (MarshalAsFixedArray)
 #[test]
 fn marshal_as_fixed_array() {
-    let data = read_resource("marshal.dll");
+    let data = read_resource!("marshal.dll");
     let module = Module::read(&data).unwrap();
     let boc = module.get_type("Boc").unwrap().unwrap();
     let field = get_field(&boc, "b");
@@ -333,7 +333,7 @@ fn marshal_as_fixed_array() {
 // returns string.Empty for count == 0; a null string is ELEMENT_TYPE_CLASS).
 #[test]
 fn empty_string_constant() {
-    let data = read_resource("Mono.Android.dll");
+    let data = read_resource!("Mono.Android.dll");
     let module = Module::read(&data).unwrap();
     let parser = module
         .get_type("Org.XmlPull.V1.XmlPullParser")

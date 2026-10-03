@@ -170,7 +170,7 @@ fn type_extending_generic_of_self() {
 // Test/Mono.Cecil.Tests/TypeTests.cs:177 (GenericInterfaceReference)
 #[test]
 fn generic_interface_reference() {
-    let data = read_resource("gifaceref.exe");
+    let data = read_resource!("gifaceref.exe");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Program").unwrap().unwrap();
     let iface = &ty.interfaces().unwrap()[0];
@@ -209,7 +209,7 @@ impl FromTokenTest for TypeDefOrRef<'_> {
 // Test/Mono.Cecil.Tests/TypeTests.cs:192 (UnboundGenericParameter)
 #[test]
 fn unbound_generic_parameter() {
-    let data = read_resource("cscgpbug.dll");
+    let data = read_resource!("cscgpbug.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("ListViewModel").unwrap().unwrap();
     let method = ty
@@ -250,7 +250,7 @@ fn explicit_this() {
 // without blowing the stack on the obfuscated self-referential TypeRef row.
 #[test]
 fn self_referencing_type_ref() {
-    let data = read_resource("self-ref-typeref.dll");
+    let data = read_resource!("self-ref-typeref.dll");
     let module = Module::read(&data).unwrap();
     for rid in 1..=module.metadata().row_count(cil_reader::raw::Table::TypeRef) {
         let tr = module.type_ref(rid).unwrap();

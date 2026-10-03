@@ -13,16 +13,15 @@ mod testutil;
 use cil_reader::cil::RawOperand;
 use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader, ResolvedMember};
 use cil_reader::{MetadataToken, Module, TokenType};
-use std::path::PathBuf;
-use testutil::{cecil_resource, read_fixture, read_resource};
+use testutil::{cecil_root, read_fixture, read_resource, require_cecil};
 
 fn loader() -> DirectoryLoader {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let cecil = cecil_root().expect("callers check require_cecil!");
     DirectoryLoader::new(vec![
         // The pinned corlib fixture.
-        root.join("../../extern/cecil/symbols/mdb/Test/Resources/assemblies"),
+        cecil.join("symbols/mdb/Test/Resources/assemblies"),
         // The main corpus (netmodules, forwarder fixtures).
-        cecil_resource(""),
+        cecil.join("Test/Resources/assemblies"),
     ])
 }
 
@@ -60,6 +59,7 @@ fn member_ref_operand(
 fn string_empty() {
     let data = read_fixture("hello.il.dll");
     let module = Module::read(&data).unwrap();
+    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -86,6 +86,7 @@ fn string_empty() {
 fn console_write_line_overload() {
     let data = read_fixture("hello.il.dll");
     let module = Module::read(&data).unwrap();
+    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -118,6 +119,7 @@ fn console_write_line_overload() {
 fn generic_instance_member_resolves_to_open_definition() {
     let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
+    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -136,8 +138,9 @@ fn generic_instance_member_resolves_to_open_definition() {
 // exported type Module.A.Foo forwards into moda.netmodule via a File row.
 #[test]
 fn exported_type_from_module() {
-    let data = read_resource("mma.exe");
+    let data = read_resource!("mma.exe");
     let module = Module::read(&data).unwrap();
+    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -158,8 +161,9 @@ fn exported_type_from_module() {
 // TestClass forwards Loop1 → Loop2 → Loop1; Cecil throws, we error.
 #[test]
 fn type_forwarder_circularity() {
-    let data = read_resource("TypeForwarderLoop1.dll");
+    let data = read_resource!("TypeForwarderLoop1.dll");
     let module = Module::read(&data).unwrap();
+    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -178,6 +182,7 @@ fn type_forwarder_circularity() {
 fn rectangular_array_resolve_get_method() {
     let data = read_fixture("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
+    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -190,8 +195,9 @@ fn rectangular_array_resolve_get_method() {
 // type; so do we.
 #[test]
 fn resolve_function_pointer() {
-    let data = read_resource("cppcli.dll");
+    let data = read_resource!("cppcli.dll");
     let module = Module::read(&data).unwrap();
+    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 
@@ -212,8 +218,9 @@ fn resolve_function_pointer() {
 // without touching the cache.
 #[test]
 fn resolve_in_module_type() {
-    let data = read_resource("mma.exe");
+    let data = read_resource!("mma.exe");
     let module = Module::read(&data).unwrap();
+    require_cecil!();
     let loader = loader();
     let cache = AssemblyCache::new(&loader);
 

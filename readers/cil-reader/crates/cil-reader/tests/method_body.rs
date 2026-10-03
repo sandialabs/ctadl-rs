@@ -76,7 +76,7 @@ fn print_string_empty() {
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:57 (Branch)
 #[test]
 fn branch() {
-    let data = read_resource("libhello.dll");
+    let data = read_resource!("libhello.dll");
     let module = Module::read(&data).unwrap();
     let lib = module.get_type("Library").unwrap().unwrap();
     let method = get_method(&lib, "GetHelloString");
@@ -98,7 +98,7 @@ fn branch() {
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:79 (Switch)
 #[test]
 fn switch_test() {
-    let data = read_resource("switch.exe");
+    let data = read_resource!("switch.exe");
     let module = Module::read(&data).unwrap();
     let program = module.get_type("Program").unwrap().unwrap();
     let method = get_method(&program, "Main");
@@ -163,7 +163,7 @@ fn method_spec() {
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:143 (NestedTryCatchFinally)
 #[test]
 fn nested_try_catch_finally() {
-    let data = read_resource("catch.exe");
+    let data = read_resource!("catch.exe");
     let module = Module::read(&data).unwrap();
     let program = module.get_type("Program").unwrap().unwrap();
     let main = get_method(&program, "Main");
@@ -198,7 +198,7 @@ fn nested_try_catch_finally() {
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:176 (FunctionPointersAndCallSites)
 #[test]
 fn function_pointers_and_call_sites() {
-    let data = read_resource("fptr.exe");
+    let data = read_resource!("fptr.exe");
     let module = Module::read(&data).unwrap();
     let types = module.types().unwrap();
     let ty = &types[0];
@@ -278,7 +278,7 @@ fn branch_outside_method() {
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:303 (Iterator)
 #[test]
 fn iterator() {
-    let data = read_resource("iterator.exe");
+    let data = read_resource!("iterator.exe");
     let module = Module::read(&data).unwrap();
     let program = module.get_type("Program").unwrap().unwrap();
     let method = get_method(&program, "GetLittleArgs");
@@ -406,7 +406,7 @@ fn method_ref_declared_on_generics() {
 // sentinel.
 #[test]
 fn varargs_call_sites() {
-    let data = read_resource("varargs.exe");
+    let data = read_resource!("varargs.exe");
     let module = Module::read(&data).unwrap();
     let types = module.types().unwrap();
     let module_type = &types[0];

@@ -404,7 +404,7 @@ fn field_typeof() {
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:320 (EscapedTypeName)
 #[test]
 fn escaped_type_name() {
-    let data = read_resource("bug-185.dll");
+    let data = read_resource!("bug-185.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let foo_do = foo
@@ -531,7 +531,7 @@ fn interface_implementation() {
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:452 (GenericParameterConstraint)
 #[test]
 fn generic_parameter_constraint_attribute() {
-    let data = read_resource("GenericParameterConstraintAttributes.dll");
+    let data = read_resource!("GenericParameterConstraintAttributes.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo.Library`1").unwrap().unwrap();
     let gp = &ty.generic_params().unwrap()[0];
@@ -548,7 +548,7 @@ fn generic_parameter_constraint_attribute() {
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:467 (GenericAttributeString)
 #[test]
 fn generic_attribute_string() {
-    let data = read_resource("GenericAttributes.dll");
+    let data = read_resource!("GenericAttributes.dll");
     let module = Module::read(&data).unwrap();
     let ty = module
         .get_type("WithGenericAttribute_OfString")
@@ -586,7 +586,7 @@ fn generic_attribute_string() {
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:498 (GenericAttributeInt)
 #[test]
 fn generic_attribute_int() {
-    let data = read_resource("GenericAttributes.dll");
+    let data = read_resource!("GenericAttributes.dll");
     let module = Module::read(&data).unwrap();
     let ty = module
         .get_type("WithGenericAttribute_OfInt")
@@ -611,7 +611,7 @@ fn generic_attribute_int() {
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:528 (ConstrainedGenericAttribute)
 #[test]
 fn constrained_generic_attribute() {
-    let data = read_resource("GenericAttributes.dll");
+    let data = read_resource!("GenericAttributes.dll");
     let module = Module::read(&data).unwrap();
     let ty = module
         .get_type("WithConstrainedGenericAttribute")
@@ -644,7 +644,7 @@ fn null_char_in_string() {
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:556 (OrderedAttributes)
 #[test]
 fn ordered_attributes() {
-    let data = read_resource("ordered-attrs.exe");
+    let data = read_resource!("ordered-attrs.exe");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Program").unwrap().unwrap();
     let method = ty

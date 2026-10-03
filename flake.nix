@@ -542,8 +542,9 @@
             packages = [ testEnv ];
 
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
-            # The pinned Mono.Cecil checkout, which readers/cil-reader's `cargo
-            # xtask vendor` copies into extern/cecil.
+            # The pinned Mono.Cecil checkout: cil-reader's tests read its test
+            # corpus, and readers/cil-reader's `cargo xtask vendor` copies it
+            # into extern/cecil.
             CECIL_SRC = "${cecil}";
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
             # The debugging SDK, a superset of the regression one, so the

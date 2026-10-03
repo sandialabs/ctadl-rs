@@ -52,7 +52,7 @@ fn direct_nested_type() {
 // Test/Mono.Cecil.Tests/NestedTypesTests.cs:49 (NestedTypeWithOwnNamespace)
 #[test]
 fn nested_type_with_own_namespace() {
-    let data = read_resource("bug-185.dll");
+    let data = read_resource!("bug-185.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let foo_child = foo.nested_types().unwrap()[0];

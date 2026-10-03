@@ -147,7 +147,7 @@ fn simple_overrides() {
 // call-site half needs bodies (M4).
 #[test]
 fn varargs() {
-    let data = read_resource("varargs.exe");
+    let data = read_resource!("varargs.exe");
     let module = Module::read(&data).unwrap();
     let types = module.types().unwrap();
     let module_type = &types[0];
