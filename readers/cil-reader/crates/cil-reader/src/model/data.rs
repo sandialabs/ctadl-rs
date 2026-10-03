@@ -400,7 +400,9 @@ impl<'a> ModuleData<'a> {
             let mut map: HashMap<u32, Vec<(u32, MetadataToken)>> = HashMap::new();
             for (rid, row) in self.md.table::<GenericParamConstraintRaw>().rows() {
                 let row = row?;
-                map.entry(row.owner).or_default().push((rid, row.constraint));
+                map.entry(row.owner)
+                    .or_default()
+                    .push((rid, row.constraint));
             }
             Ok(map)
         })

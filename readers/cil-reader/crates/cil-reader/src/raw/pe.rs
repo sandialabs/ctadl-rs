@@ -325,10 +325,10 @@ impl<'a> PeImage<'a> {
             let start = md_off
                 .checked_add(offset)
                 .ok_or(Error::bad(cur.pos(), "stream offset overflow"))?;
-            let data = self
-                .data
-                .get(start..start + size)
-                .ok_or(Error::bad(start, "metadata stream extends past end of file"))?;
+            let data = self.data.get(start..start + size).ok_or(Error::bad(
+                start,
+                "metadata stream extends past end of file",
+            ))?;
             self.stream_headers.push(StreamHeader { name, data });
         }
         Ok(())

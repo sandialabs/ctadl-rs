@@ -128,9 +128,7 @@ impl CodedIndexKind {
                 _ => None,
             };
         }
-        self.tables()
-            .get(tag as usize)
-            .and_then(|t| t.token_type())
+        self.tables().get(tag as usize).and_then(|t| t.token_type())
     }
 
     /// Decodes a raw coded-index column value into a token.
@@ -152,6 +150,10 @@ impl CodedIndexKind {
     /// count fits in `16 - bits` bits.
     pub fn size(self, counter: impl Fn(Table) -> u32) -> u8 {
         let max = self.tables().iter().map(|&t| counter(t)).max().unwrap_or(0);
-        if max < (1u32 << (16 - self.bits())) { 2 } else { 4 }
+        if max < (1u32 << (16 - self.bits())) {
+            2
+        } else {
+            4
+        }
     }
 }

@@ -177,7 +177,10 @@ fn generic_interface_reference() {
     let TypeDefOrRef::Spec(spec) = iface.interface else {
         panic!("expected a generic instance interface")
     };
-    let TypeSig::GenericInst { ty: owner, args, .. } = spec.signature().unwrap() else {
+    let TypeSig::GenericInst {
+        ty: owner, args, ..
+    } = spec.signature().unwrap()
+    else {
         panic!("expected a generic instance signature")
     };
     assert_eq!(args.len(), 1);

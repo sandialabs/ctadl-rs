@@ -254,8 +254,10 @@ impl<'a> SigReader<'a> {
     /// `SignatureReader.ReadTypeSignature`.
     pub fn type_sig(&mut self) -> Result<TypeSig> {
         let b = self.cur.u8()?;
-        let etype = ElementType::from_byte(b)
-            .ok_or(Error::bad(self.cur.pos(), "unknown element type in signature"))?;
+        let etype = ElementType::from_byte(b).ok_or(Error::bad(
+            self.cur.pos(),
+            "unknown element type in signature",
+        ))?;
         self.type_sig_of(etype)
     }
 

@@ -18,7 +18,10 @@ mod regression;
 mod vendor;
 
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 fn main() -> ExitCode {
@@ -54,7 +57,9 @@ fn main() -> ExitCode {
             eprintln!("  fixtures    compile Cecil's .il/.cs test fixtures (needs nix devshell)");
             eprintln!("  regression  full-read sweep + golden dump diff over the corpus");
             eprintln!("  compare     cil-dump vs CecilDump side by side (needs nix devshell)");
-            eprintln!("  bless       regenerate tests/expected goldens from CecilDump (needs nix devshell)");
+            eprintln!(
+                "  bless       regenerate tests/expected goldens from CecilDump (needs nix devshell)"
+            );
             eprintln!("  vendor      copy Cecil from $CECIL_SRC (nix-pinned) into extern/cecil");
             ExitCode::FAILURE
         }

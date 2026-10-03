@@ -3,7 +3,13 @@
 /// SHA-1 (needed only to derive public-key tokens from full public keys, as
 /// `AssemblyNameReference.PublicKeyToken` does). Not for security use.
 pub(crate) fn sha1(data: &[u8]) -> [u8; 20] {
-    let mut h: [u32; 5] = [0x6745_2301, 0xefcd_ab89, 0x98ba_dcfe, 0x1032_5476, 0xc3d2_e1f0];
+    let mut h: [u32; 5] = [
+        0x6745_2301,
+        0xefcd_ab89,
+        0x98ba_dcfe,
+        0x1032_5476,
+        0xc3d2_e1f0,
+    ];
 
     let ml = (data.len() as u64) * 8;
     let mut msg = data.to_vec();

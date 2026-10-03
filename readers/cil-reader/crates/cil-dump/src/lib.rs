@@ -166,9 +166,20 @@ fn dump_resources(module: &Module<'_>, out: &mut String) -> Result<()> {
     out.push_str("[resources]\n");
     for r in module.resources()? {
         match &r {
-            Resource::Embedded { name, attributes, offset } => {
-                let size = module.resource_data(*offset).map(|d| d.len() as i64).unwrap_or(-1);
-                writeln!(out, "embedded name={name} flags=0x{attributes:08x} size={size}").unwrap();
+            Resource::Embedded {
+                name,
+                attributes,
+                offset,
+            } => {
+                let size = module
+                    .resource_data(*offset)
+                    .map(|d| d.len() as i64)
+                    .unwrap_or(-1);
+                writeln!(
+                    out,
+                    "embedded name={name} flags=0x{attributes:08x} size={size}"
+                )
+                .unwrap();
             }
             Resource::Linked {
                 name,
@@ -176,7 +187,11 @@ fn dump_resources(module: &Module<'_>, out: &mut String) -> Result<()> {
                 file,
                 ..
             } => {
-                writeln!(out, "linked name={name} flags=0x{attributes:08x} file={file}").unwrap();
+                writeln!(
+                    out,
+                    "linked name={name} flags=0x{attributes:08x} file={file}"
+                )
+                .unwrap();
             }
             Resource::AssemblyLinked {
                 name,
@@ -225,11 +240,7 @@ fn dump_types(module: &Module<'_>, out: &mut String) -> Result<()> {
     Ok(())
 }
 
-fn dump_generic_params(
-    _module: &Module<'_>,
-    ty: &TypeDef<'_>,
-    out: &mut String,
-) -> Result<()> {
+fn dump_generic_params(_module: &Module<'_>, ty: &TypeDef<'_>, out: &mut String) -> Result<()> {
     for gp in ty.generic_params()? {
         writeln!(
             out,
@@ -334,7 +345,9 @@ fn format_marshal(info: &cil_reader::model::MarshalInfo<'_>) -> String {
             let managed = cil_reader::model::ParsedType::parse(managed_type)
                 .map(|p| p.cecil_full_name())
                 .unwrap_or_default();
-            format!("custom(guid={guid},unmanaged={unmanaged_type},managed={managed},cookie={cookie})")
+            format!(
+                "custom(guid={guid},unmanaged={unmanaged_type},managed={managed},cookie={cookie})"
+            )
         }
         M::Simple { native } => format!("native(0x{native:02x})"),
     }
@@ -382,14 +395,23 @@ fn dump_methods(module: &Module<'_>, out: &mut String) -> Result<()> {
         }
         let method_ctx = method.generic_context()?;
         for over in method.overrides()? {
-            writeln!(out, "\toverride={}", operand_name_ctx(module, over, method_ctx)).unwrap();
+            writeln!(
+                out,
+                "\toverride={}",
+                operand_name_ctx(module, over, method_ctx)
+            )
+            .unwrap();
         }
         let sig = method.signature()?;
         let has_implicit_this = sig.has_this && !sig.explicit_this;
         for p in method.parameters()? {
             if p.token.is_some() {
                 // ParameterDefinition.Sequence: index+1 with an implicit this.
-                let seq = if has_implicit_this { p.index + 1 } else { p.index };
+                let seq = if has_implicit_this {
+                    p.index + 1
+                } else {
+                    p.index
+                };
                 write!(out, "\tparam {seq} name={}", p.name).unwrap();
                 write!(out, " flags=0x{:04x}", p.attributes).unwrap();
                 if let Some(c) = p.constant()? {
@@ -473,8 +495,12 @@ fn dump_events(module: &Module<'_>, out: &mut String) -> Result<()> {
                 .declaring_type()?
                 .map(|d| d.generic_context())
                 .unwrap_or_default();
-            write!(out, " type={}", t.full_name_ctx(ctx).unwrap_or_else(|_| "!error".into()))
-                .unwrap();
+            write!(
+                out,
+                " type={}",
+                t.full_name_ctx(ctx).unwrap_or_else(|_| "!error".into())
+            )
+            .unwrap();
         }
         if let Some(m) = event.add_method()? {
             write!(out, " add={}", tok(m.token())).unwrap();
@@ -514,10 +540,7 @@ fn dump_custom_attributes(module: &Module<'_>, out: &mut String) -> Result<()> {
             continue;
         };
         let parent = attr.parent()?;
-        if !parent
-            .token_type()
-            .is_some_and(|tt| VISIBLE.contains(&tt))
-        {
+        if !parent.token_type().is_some_and(|tt| VISIBLE.contains(&tt)) {
             continue;
         }
         let ctor = attr
@@ -679,18 +702,13 @@ fn dump_il(module: &Module<'_>, out: &mut String) -> Result<()> {
                     }
                     out.push_str(")\n");
                 }
-                _ => {
-                    match body.format_instruction(ins) {
-                        Ok(s) => writeln!(out, "\t{s}").unwrap(),
-                        Err(_) => writeln!(
-                            out,
-                            "\tIL_{:04x}: {} !error",
-                            ins.offset,
-                            ins.opcode.name()
-                        )
-                        .unwrap(),
+                _ => match body.format_instruction(ins) {
+                    Ok(s) => writeln!(out, "\t{s}").unwrap(),
+                    Err(_) => {
+                        writeln!(out, "\tIL_{:04x}: {} !error", ins.offset, ins.opcode.name())
+                            .unwrap()
                     }
-                }
+                },
             }
         }
         // The catch type is a TypeSpec in generic code, so it needs the
@@ -729,7 +747,9 @@ fn dump_il(module: &Module<'_>, out: &mut String) -> Result<()> {
 
 /// The default full-read sweep: touch everything that decodes lazily.
 pub fn sweep(module: &Module<'_>) -> Result<()> {
-    let _ = dump(module, &ALL_SECTIONS.iter().map(|&(_, s)| s).collect::<Vec<_>>())?;
+    let _ = dump(
+        module,
+        &ALL_SECTIONS.iter().map(|&(_, s)| s).collect::<Vec<_>>(),
+    )?;
     Ok(())
 }
-

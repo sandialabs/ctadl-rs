@@ -8,7 +8,8 @@ use std::path::PathBuf;
 /// Path of a test assembly in the vendored Cecil resources.
 pub fn cecil_resource(name: &str) -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    root.join("../../extern/cecil/Test/Resources/assemblies").join(name)
+    root.join("../../extern/cecil/Test/Resources/assemblies")
+        .join(name)
 }
 
 /// Path of a fixture we compiled ourselves (see `cargo xtask fixtures`).

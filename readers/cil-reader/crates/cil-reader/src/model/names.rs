@@ -184,8 +184,9 @@ pub(crate) fn sig_full_name(
         } => {
             sig_full_name(m, element, ctx, out)?;
             // ArrayType.Suffix: a single unsized dimension is a vector.
-            let is_vector =
-                dimensions.len() == 1 && dimensions[0].lower.is_none() && dimensions[0].upper.is_none();
+            let is_vector = dimensions.len() == 1
+                && dimensions[0].lower.is_none()
+                && dimensions[0].upper.is_none();
             if is_vector {
                 out.push_str("[]");
             } else {

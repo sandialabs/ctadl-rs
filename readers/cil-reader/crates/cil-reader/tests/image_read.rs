@@ -55,7 +55,10 @@ fn metadata_heaps() {
     let image = PeImage::parse(&data).unwrap();
     let md = image.metadata().unwrap();
 
-    assert_eq!(md.strings().get(cil_reader::raw::StringIndex(0)).unwrap(), "");
+    assert_eq!(
+        md.strings().get(cil_reader::raw::StringIndex(0)).unwrap(),
+        ""
+    );
     assert_eq!(
         md.strings().get(cil_reader::raw::StringIndex(1)).unwrap(),
         "<Module>"
@@ -76,7 +79,10 @@ fn metadata_heaps() {
         "c3bc2bd3-2576-4d00-a80e-465b5632415f"
     );
 
-    assert_eq!(md.blobs().get(cil_reader::raw::BlobIndex(0)).unwrap(), &[] as &[u8]);
+    assert_eq!(
+        md.blobs().get(cil_reader::raw::BlobIndex(0)).unwrap(),
+        &[] as &[u8]
+    );
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:74 (TablesHeap)
@@ -212,8 +218,18 @@ fn external_pdb_deterministic_assembly() {
     let data = read_resource("ExternalPdbDeterministic.dll");
     let image = PeImage::parse(&data).unwrap();
     assert!(image.debug_header.len() >= 2);
-    assert!(image.debug_header.iter().any(|e| e.debug_type == idt::CODE_VIEW));
-    assert!(image.debug_header.iter().any(|e| e.debug_type == idt::DETERMINISTIC));
+    assert!(
+        image
+            .debug_header
+            .iter()
+            .any(|e| e.debug_type == idt::CODE_VIEW)
+    );
+    assert!(
+        image
+            .debug_header
+            .iter()
+            .any(|e| e.debug_type == idt::DETERMINISTIC)
+    );
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:253 (EmbeddedPdbDeterministicAssembly)
@@ -223,8 +239,18 @@ fn embedded_pdb_deterministic_assembly() {
     let data = read_resource("EmbeddedPdbDeterministic.dll");
     let image = PeImage::parse(&data).unwrap();
     assert!(image.debug_header.len() >= 3);
-    assert!(image.debug_header.iter().any(|e| e.debug_type == idt::CODE_VIEW));
-    assert!(image.debug_header.iter().any(|e| e.debug_type == idt::DETERMINISTIC));
+    assert!(
+        image
+            .debug_header
+            .iter()
+            .any(|e| e.debug_type == idt::CODE_VIEW)
+    );
+    assert!(
+        image
+            .debug_header
+            .iter()
+            .any(|e| e.debug_type == idt::DETERMINISTIC)
+    );
     assert!(
         image
             .debug_header

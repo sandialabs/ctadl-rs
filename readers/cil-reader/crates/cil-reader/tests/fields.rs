@@ -6,9 +6,9 @@
 mod testutil;
 
 use cil_reader::Module;
+use cil_reader::TokenType;
 use cil_reader::model::marshal::{MarshalInfo, native_type};
 use cil_reader::model::{ConstantValue, FieldDef, TypeDef, TypeSig};
-use cil_reader::TokenType;
 use testutil::{read_fixture, read_resource};
 
 fn get_field<'a>(ty: &TypeDef<'a>, name: &str) -> FieldDef<'a> {
@@ -116,7 +116,11 @@ fn field_rva() {
         .types()
         .unwrap()
         .into_iter()
-        .find(|t| t.full_name().unwrap().contains("<PrivateImplementationDetails>"))
+        .find(|t| {
+            t.full_name()
+                .unwrap()
+                .contains("<PrivateImplementationDetails>")
+        })
         .expect("<PrivateImplementationDetails>");
 
     let fields = priv_impl.fields().unwrap();
@@ -162,8 +166,9 @@ fn array_fields() {
     assert!(dimensions[0].lower.is_none() && dimensions[0].upper.is_none());
     assert!(dimensions[1].lower.is_none() && dimensions[1].upper.is_none());
 
-    let TypeSig::Array { dimensions, .. } =
-        get_field(&types, "rank_two_low_bound_zero").field_type().unwrap()
+    let TypeSig::Array { dimensions, .. } = get_field(&types, "rank_two_low_bound_zero")
+        .field_type()
+        .unwrap()
     else {
         panic!("expected array")
     };
@@ -173,8 +178,9 @@ fn array_fields() {
     assert_eq!(dimensions[1].lower, Some(0));
     assert_eq!(dimensions[1].upper, None);
 
-    let TypeSig::Array { dimensions, .. } =
-        get_field(&types, "rank_one_low_bound_m1").field_type().unwrap()
+    let TypeSig::Array { dimensions, .. } = get_field(&types, "rank_one_low_bound_m1")
+        .field_type()
+        .unwrap()
     else {
         panic!("expected array")
     };
@@ -271,7 +277,10 @@ fn constant_coalescing() {
 
     let field = get_field(&fields, "int16_char");
     assert_eq!(field.field_type().unwrap(), TypeSig::I2);
-    assert_eq!(field.constant().unwrap(), Some(ConstantValue::Char('s' as u16)));
+    assert_eq!(
+        field.constant().unwrap(),
+        Some(ConstantValue::Char('s' as u16))
+    );
 }
 
 // Test/Mono.Cecil.Tests/FieldTests.cs:347 (NestedEnumOfGenericTypeDefinition)

@@ -46,7 +46,10 @@ fn retargetable_full_name() {
 fn system_runtime() {
     let data = read_resource("System.Runtime.dll");
     let module = Module::read(&data).unwrap();
-    assert_eq!(module.assembly_name().unwrap().unwrap().name, "System.Runtime");
+    assert_eq!(
+        module.assembly_name().unwrap().unwrap().name,
+        "System.Runtime"
+    );
     assert_eq!(module.assembly_references().unwrap().len(), 1);
 }
 

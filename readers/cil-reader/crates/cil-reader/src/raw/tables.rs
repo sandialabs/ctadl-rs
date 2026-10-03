@@ -286,13 +286,27 @@ macro_rules! col_size {
 }
 
 macro_rules! col_type {
-    (U16) => { u16 };
-    (U32) => { u32 };
-    (Str) => { StringIndex };
-    (Guid) => { GuidIndex };
-    (Blob) => { BlobIndex };
-    ((Tab $t:ident)) => { u32 };
-    ((Coded $c:ident)) => { MetadataToken };
+    (U16) => {
+        u16
+    };
+    (U32) => {
+        u32
+    };
+    (Str) => {
+        StringIndex
+    };
+    (Guid) => {
+        GuidIndex
+    };
+    (Blob) => {
+        BlobIndex
+    };
+    ((Tab $t:ident)) => {
+        u32
+    };
+    ((Coded $c:ident)) => {
+        MetadataToken
+    };
 }
 
 macro_rules! col_conv {

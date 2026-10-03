@@ -31,7 +31,10 @@ fn abstract_method() {
     assert_eq!(ty.methods().unwrap().len(), 2);
 
     let method = get_method(ty, "Bar");
-    assert_ne!(method.attributes().unwrap() & method_attributes::ABSTRACT, 0);
+    assert_ne!(
+        method.attributes().unwrap() & method_attributes::ABSTRACT,
+        0
+    );
 
     let params = method.parameters().unwrap();
     assert_eq!(params.len(), 1);
@@ -113,7 +116,10 @@ fn return_generic_instance_with_method_parameter() {
     };
     // Cecil: the instance argument is gazoo's own generic parameter.
     assert_eq!(args[0], TypeSig::MVar(0));
-    let name = gazoo.generic_params().unwrap()[0].name().unwrap().to_string();
+    let name = gazoo.generic_params().unwrap()[0]
+        .name()
+        .unwrap()
+        .to_string();
     assert!(gazoo.full_name().unwrap().contains(&format!("<{name}>")));
 }
 

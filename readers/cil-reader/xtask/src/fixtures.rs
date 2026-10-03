@@ -132,9 +132,8 @@ fn file_hash(path: &Path) -> u64 {
 }
 
 fn which(bin: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|p| p.join(bin).is_file())
-    })
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|p| p.join(bin).is_file()))
 }
 
 /// Downloads and extracts the standalone ilasm if not already cached under

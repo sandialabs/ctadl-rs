@@ -227,7 +227,12 @@ fn fields_and_properties() {
     let values = attribute.values().unwrap();
 
     assert_eq!(values.fields.len(), 2);
-    let argument = &values.fields.iter().find(|f| f.name == "Pan").unwrap().argument;
+    let argument = &values
+        .fields
+        .iter()
+        .find(|f| f.name == "Pan")
+        .unwrap()
+        .argument;
     let mut s = String::new();
     pp_argument(argument, &mut s);
     assert_eq!(
@@ -271,7 +276,12 @@ fn boxed_string_field() {
     let attribute = type_attr(&module, "BoxedStringField", "Foo");
     let values = attribute.values().unwrap();
     assert_eq!(values.fields.len(), 1);
-    let argument = &values.fields.iter().find(|f| f.name == "Pan").unwrap().argument;
+    let argument = &values
+        .fields
+        .iter()
+        .find(|f| f.name == "Pan")
+        .unwrap()
+        .argument;
     let mut s = String::new();
     pp_argument(argument, &mut s);
     assert_eq!(s, "(Object:(String:\"fiouuu\"))");
@@ -301,16 +311,18 @@ fn type_reference_enum() {
     // Without resolution the enum's underlying size is unknowable.
     assert!(attribute.values().is_err());
 
-    let resolver = |name: &str| {
-        (name == "System.Security.AccessControl.AceFlags").then_some(ElementType::U1)
-    };
+    let resolver =
+        |name: &str| (name == "System.Security.AccessControl.AceFlags").then_some(ElementType::U1);
     let args = attribute
         .values_with(Some(&resolver))
         .unwrap()
         .constructor_args;
     assert_eq!(args.len(), 1);
     assert_eq!(args[0].value, CaValue::U1(0x04));
-    assert_eq!(args[0].ty.full_name(), "System.Security.AccessControl.AceFlags");
+    assert_eq!(
+        args[0].ty.full_name(),
+        "System.Security.AccessControl.AceFlags"
+    );
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:229 (BoxedEnumReference)
@@ -320,9 +332,8 @@ fn boxed_enum_reference() {
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Bzzz", "Foo");
 
-    let resolver = |name: &str| {
-        (name == "System.Security.AccessControl.AceFlags").then_some(ElementType::U1)
-    };
+    let resolver =
+        |name: &str| (name == "System.Security.AccessControl.AceFlags").then_some(ElementType::U1);
     let values = attribute.values_with(Some(&resolver)).unwrap();
     assert_eq!(values.constructor_args.len(), 2);
 
@@ -337,7 +348,12 @@ fn boxed_enum_reference() {
     pp_argument(&values.constructor_args[1], &mut s);
     assert_eq!(s, "(Object:(String:null))");
 
-    let argument = &values.fields.iter().find(|f| f.name == "Pan").unwrap().argument;
+    let argument = &values
+        .fields
+        .iter()
+        .find(|f| f.name == "Pan")
+        .unwrap()
+        .argument;
     let mut s = String::new();
     pp_argument(argument, &mut s);
     assert_eq!(s, "(Object:(System.Security.AccessControl.AceFlags:4))");
@@ -362,7 +378,10 @@ fn typeof_nested_type_definition() {
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "NestedTyped", "Foo");
     let args = attribute.values().unwrap().constructor_args;
-    assert_eq!(args[0].value, CaValue::TypeName("FooAttribute/Token".into()));
+    assert_eq!(
+        args[0].value,
+        CaValue::TypeName("FooAttribute/Token".into())
+    );
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:300 (FieldTypeOf)
@@ -372,7 +391,12 @@ fn field_typeof() {
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Truc", "Foo");
     let values = attribute.values().unwrap();
-    let argument = &values.fields.iter().find(|f| f.name == "Chose").unwrap().argument;
+    let argument = &values
+        .fields
+        .iter()
+        .find(|f| f.name == "Chose")
+        .unwrap()
+        .argument;
     assert_eq!(argument.ty.full_name(), "System.Type");
     assert_eq!(argument.value, CaValue::TypeName("Typed".into()));
 }
@@ -425,7 +449,12 @@ fn field_null_typeof() {
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Machin", "Foo");
     let values = attribute.values().unwrap();
-    let argument = &values.fields.iter().find(|f| f.name == "Chose").unwrap().argument;
+    let argument = &values
+        .fields
+        .iter()
+        .find(|f| f.name == "Chose")
+        .unwrap()
+        .argument;
     assert_eq!(argument.ty.full_name(), "System.Type");
     assert_eq!(argument.value, CaValue::Null);
 }
@@ -521,7 +550,10 @@ fn generic_parameter_constraint_attribute() {
 fn generic_attribute_string() {
     let data = read_resource("GenericAttributes.dll");
     let module = Module::read(&data).unwrap();
-    let ty = module.get_type("WithGenericAttribute_OfString").unwrap().unwrap();
+    let ty = module
+        .get_type("WithGenericAttribute_OfString")
+        .unwrap()
+        .unwrap();
     let attrs = module.custom_attributes_of(ty.token()).unwrap();
     assert_eq!(attrs.len(), 1);
     let attribute = &attrs[0];
@@ -556,7 +588,10 @@ fn generic_attribute_string() {
 fn generic_attribute_int() {
     let data = read_resource("GenericAttributes.dll");
     let module = Module::read(&data).unwrap();
-    let ty = module.get_type("WithGenericAttribute_OfInt").unwrap().unwrap();
+    let ty = module
+        .get_type("WithGenericAttribute_OfInt")
+        .unwrap()
+        .unwrap();
     let attrs = module.custom_attributes_of(ty.token()).unwrap();
     let attribute = &attrs[0];
     assert_eq!(
@@ -632,7 +667,10 @@ fn ordered_attributes() {
     for (attr, (name, field_value)) in attrs.iter().zip(expectations) {
         assert_eq!(attr.attribute_type_name().unwrap(), name);
         let values = attr.values().unwrap();
-        assert_eq!(values.fields[0].argument.value, CaValue::String(field_value));
+        assert_eq!(
+            values.fields[0].argument.value,
+            CaValue::String(field_value)
+        );
     }
 }
 
@@ -641,7 +679,10 @@ fn ordered_attributes() {
 fn boxed_enum_on_generic_argument_on_type() {
     let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
-    let ty = module.get_type("BoxedValueEnumOnGenericType").unwrap().unwrap();
+    let ty = module
+        .get_type("BoxedValueEnumOnGenericType")
+        .unwrap()
+        .unwrap();
     let attrs = module.custom_attributes_of(ty.token()).unwrap();
     assert_eq!(attrs.len(), 1);
     let attribute = &attrs[0];
@@ -653,10 +694,16 @@ fn boxed_enum_on_generic_argument_on_type() {
     assert_eq!(values.constructor_args.len(), 2);
     let mut s = String::new();
     pp_argument(&values.constructor_args[0], &mut s);
-    assert_eq!(s, "(Object:(GenericWithEnum`1/OnGenericNumber<System.Int32>:0))");
+    assert_eq!(
+        s,
+        "(Object:(GenericWithEnum`1/OnGenericNumber<System.Int32>:0))"
+    );
     let mut s = String::new();
     pp_argument(&values.constructor_args[1], &mut s);
-    assert_eq!(s, "(Object:(GenericWithEnum`1/OnGenericNumber<System.String>:1))");
+    assert_eq!(
+        s,
+        "(Object:(GenericWithEnum`1/OnGenericNumber<System.String>:1))"
+    );
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:645 (EnumOnGenericArgumentOnType)

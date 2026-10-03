@@ -165,7 +165,11 @@ fn type_forwarder_circularity() {
 
     // Loop1 exports MyNamespace.MyType to Loop2, which forwards it back;
     // resolution must error rather than loop (Cecil throws).
-    assert!(module.resolve_type_name("MyNamespace", "MyType", &cache).is_err());
+    assert!(
+        module
+            .resolve_type_name("MyNamespace", "MyType", &cache)
+            .is_err()
+    );
 }
 
 // Test/Mono.Cecil.Tests/ResolveTests.cs:191 (RectangularArrayResolveGetMethod)

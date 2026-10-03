@@ -31,8 +31,22 @@ impl fmt::Display for Guid {
         write!(
             f,
             "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            b[3], b[2], b[1], b[0], b[5], b[4], b[7], b[6], b[8], b[9], b[10], b[11], b[12], b[13],
-            b[14], b[15]
+            b[3],
+            b[2],
+            b[1],
+            b[0],
+            b[5],
+            b[4],
+            b[7],
+            b[6],
+            b[8],
+            b[9],
+            b[10],
+            b[11],
+            b[12],
+            b[13],
+            b[14],
+            b[15]
         )
     }
 }
@@ -109,7 +123,10 @@ impl<'a> Utf16Str<'a> {
 impl fmt::Display for Utf16Str<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for c in char::decode_utf16(self.units()) {
-            f.write_str(c.unwrap_or(char::REPLACEMENT_CHARACTER).encode_utf8(&mut [0; 4]))?;
+            f.write_str(
+                c.unwrap_or(char::REPLACEMENT_CHARACTER)
+                    .encode_utf8(&mut [0; 4]),
+            )?;
         }
         Ok(())
     }

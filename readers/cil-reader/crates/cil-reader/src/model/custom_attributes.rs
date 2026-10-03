@@ -224,7 +224,12 @@ impl<'a> CustomAttribute<'a> {
                     m: self.m,
                     rid: ctor.rid(),
                 };
-                token_full_name(self.m, mr.class_token()?, GenericContext::default(), &mut out)?;
+                token_full_name(
+                    self.m,
+                    mr.class_token()?,
+                    GenericContext::default(),
+                    &mut out,
+                )?;
             }
             _ => return Err(Error::Unsupported("bad custom attribute constructor")),
         }
@@ -235,11 +240,7 @@ impl<'a> CustomAttribute<'a> {
     pub fn attribute_type_name(&self) -> Result<String> {
         let full = self.attribute_type_full_name()?;
         let base = full.split('<').next().unwrap_or(&full);
-        Ok(base
-            .rsplit(['.', '/'])
-            .next()
-            .unwrap_or(base)
-            .to_string())
+        Ok(base.rsplit(['.', '/']).next().unwrap_or(base).to_string())
     }
 
     pub fn values(&self) -> Result<CaValues<'a>> {
@@ -262,12 +263,9 @@ impl<'a> CustomAttribute<'a> {
         let params = self.constructor_param_types()?;
         for param in &params {
             let ty = self.ca_type_of_sig(param, resolver)?;
-            values.constructor_args.push(read_fixed_arg(
-                self.m,
-                &mut r,
-                &ty,
-                resolver,
-            )?);
+            values
+                .constructor_args
+                .push(read_fixed_arg(self.m, &mut r, &ty, resolver)?);
         }
 
         if !r.can_read_more() {
@@ -325,11 +323,7 @@ impl<'a> CustomAttribute<'a> {
 
     /// Maps a signature type to the CA-blob interpretation
     /// (`ReadCustomAttributeElementValue`'s dispatch).
-    fn ca_type_of_sig(
-        &self,
-        sig: &TypeSig,
-        resolver: Option<EnumResolver<'_>>,
-    ) -> Result<CaType> {
+    fn ca_type_of_sig(&self, sig: &TypeSig, resolver: Option<EnumResolver<'_>>) -> Result<CaType> {
         ca_type_of_sig(self.m, sig, resolver)
     }
 }
@@ -383,7 +377,9 @@ fn ca_type_of_sig(
         }
         other => {
             let _ = other;
-            return Err(Error::Unsupported("unsupported custom attribute argument type"));
+            return Err(Error::Unsupported(
+                "unsupported custom attribute argument type",
+            ));
         }
     })
 }
@@ -494,8 +490,8 @@ fn read_field_or_prop_type<'a>(
             let name = r
                 .utf8_string()?
                 .ok_or(Error::Unsupported("null enum type name"))?;
-            let parsed = ParsedType::parse(name)
-                .ok_or(Error::bad(0, "unparseable enum type name"))?;
+            let parsed =
+                ParsedType::parse(name).ok_or(Error::bad(0, "unparseable enum type name"))?;
             let full_name = parsed.cecil_full_name();
             // In-module first, then the resolver.
             let underlying = match resolve_parsed_in_module(m, &parsed)? {
@@ -644,8 +640,7 @@ fn read_element_value<'a>(
         },
         CaType::Type => match r.utf8_string()? {
             Some(s) => {
-                let parsed =
-                    ParsedType::parse(s).ok_or(Error::bad(0, "unparseable type name"))?;
+                let parsed = ParsedType::parse(s).ok_or(Error::bad(0, "unparseable type name"))?;
                 // Cecil resolves in-module definitions; the display name is
                 // the same either way.
                 CaValue::TypeName(parsed.cecil_full_name())

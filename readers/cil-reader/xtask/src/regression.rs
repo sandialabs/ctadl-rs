@@ -81,7 +81,9 @@ pub fn run(root: &Path, args: &[String]) -> ExitCode {
 
     // must-fail check
     for name in MUST_FAIL {
-        let path = root.join("extern/cecil/Test/Resources/assemblies").join(name);
+        let path = root
+            .join("extern/cecil/Test/Resources/assemblies")
+            .join(name);
         if let Ok(data) = std::fs::read(&path) {
             if cil_reader::Module::read(&data).is_ok() {
                 eprintln!("FAIL {name}: expected a BadImage error");

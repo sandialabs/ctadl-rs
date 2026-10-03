@@ -416,10 +416,9 @@ fn find_field<'c>(
             if field.name()? != name {
                 continue;
             }
-            let field_shape = rt.module.type_sig_full_name(
-                &field.field_type()?,
-                GenericContext::default(),
-            )?;
+            let field_shape = rt
+                .module
+                .type_sig_full_name(&field.field_type()?, GenericContext::default())?;
             if field_shape == shape {
                 return Ok(Some(ResolvedMember::Field(rt.module, field)));
             }

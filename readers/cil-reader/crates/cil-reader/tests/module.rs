@@ -26,7 +26,10 @@ fn entry_point() {
     let data = read_resource("hello.exe");
     let module = Module::read(&data).unwrap();
     let entry_point = module.entry_point().unwrap().unwrap();
-    assert_eq!(entry_point.full_name().unwrap(), "System.Void Program::Main()");
+    assert_eq!(
+        entry_point.full_name().unwrap(),
+        "System.Void Program::Main()"
+    );
 }
 
 // Test/Mono.Cecil.Tests/ModuleTests.cs:53 (MultiModules) — Cecil loads the
@@ -105,12 +108,22 @@ fn types() {
     assert_eq!(types.len(), 2);
     assert_eq!(types[0].full_name().unwrap(), "<Module>");
     assert_eq!(
-        module.get_type("<Module>").unwrap().unwrap().full_name().unwrap(),
+        module
+            .get_type("<Module>")
+            .unwrap()
+            .unwrap()
+            .full_name()
+            .unwrap(),
         "<Module>"
     );
     assert_eq!(types[1].full_name().unwrap(), "Program");
     assert_eq!(
-        module.get_type("Program").unwrap().unwrap().full_name().unwrap(),
+        module
+            .get_type("Program")
+            .unwrap()
+            .unwrap()
+            .full_name()
+            .unwrap(),
         "Program"
     );
 }

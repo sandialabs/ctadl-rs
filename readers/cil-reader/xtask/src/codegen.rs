@@ -37,11 +37,7 @@ pub fn run(root: &Path) -> ExitCode {
     let out_path = root.join("crates/cil-reader/src/cil/opcodes.rs");
     std::fs::create_dir_all(out_path.parent().unwrap()).unwrap();
     std::fs::write(&out_path, out).expect("write opcodes.rs");
-    println!(
-        "generated {} ({} opcodes)",
-        out_path.display(),
-        defs.len()
-    );
+    println!("generated {} ({} opcodes)", out_path.display(), defs.len());
     ExitCode::SUCCESS
 }
 
@@ -149,7 +145,9 @@ fn emit(codes: &[String], names: &[String], defs: &[OpDef]) -> String {
 
     // Code enum
     s.push_str("/// `Mono.Cecil.Cil.Code`: one variant per opcode, in Cecil order.\n");
-    s.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n#[repr(u16)]\npub enum Code {\n");
+    s.push_str(
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n#[repr(u16)]\npub enum Code {\n",
+    );
     for c in codes {
         writeln!(s, "    {c},").unwrap();
     }

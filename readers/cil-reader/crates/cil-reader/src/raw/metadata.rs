@@ -8,7 +8,9 @@ use crate::raw::coded::{CODED_INDEX_COUNT, CodedIndexKind};
 use crate::raw::cursor::Cur;
 use crate::raw::heaps::{BlobHeap, GuidHeap, StringsHeap, UserStringsHeap};
 use crate::raw::pe::PeImage;
-use crate::raw::tables::{RawRow, SizeCtx, TABLE_COUNT, Table, TableInfo, TableRef, table_row_size};
+use crate::raw::tables::{
+    RawRow, SizeCtx, TABLE_COUNT, Table, TableInfo, TableRef, table_row_size,
+};
 
 pub struct Metadata<'a> {
     pub(crate) strings_data: &'a [u8],

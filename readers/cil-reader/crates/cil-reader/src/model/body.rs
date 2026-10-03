@@ -97,9 +97,8 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
                 if body.local_var_token.token_type() != Some(TokenType::Signature) {
                     return Err(Error::bad(cur.pos(), "bad local variable token"));
                 }
-                let row = m
-                    .md
-                    .row::<crate::raw::tables::StandAloneSigRaw>(body.local_var_token.rid())?;
+                let row =
+                    m.md.row::<crate::raw::tables::StandAloneSigRaw>(body.local_var_token.rid())?;
                 let blob = m.md.blobs().get(row.signature)?;
                 body.variables = SigReader::new(blob).local_var_sig()?;
             }
@@ -115,10 +114,7 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
     Ok(body)
 }
 
-fn read_code<'a>(
-    body: &mut MethodBody<'a>,
-    cur: &mut crate::raw::cursor::Cur<'a>,
-) -> Result<()> {
+fn read_code<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cur<'a>) -> Result<()> {
     let data = cur.data();
     let start = cur.pos();
     // CodeReader.ReadCode: clamp out-of-range code sizes to zero.
@@ -134,7 +130,10 @@ fn read_code<'a>(
     Ok(())
 }
 
-fn read_sections<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cur<'a>) -> Result<()> {
+fn read_sections<'a>(
+    body: &mut MethodBody<'a>,
+    cur: &mut crate::raw::cursor::Cur<'a>,
+) -> Result<()> {
     // CodeReader.ReadSection: align to a 4-byte file-position boundary.
     cur.set_pos((cur.pos() + 3) & !3);
 
@@ -152,7 +151,15 @@ fn read_sections<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cu
             let try_len = cur.u8()? as u32;
             let handler_start = cur.u16()? as u32;
             let handler_len = cur.u8()? as u32;
-            read_handler(body, cur, ty as u32, try_start, try_len, handler_start, handler_len)?;
+            read_handler(
+                body,
+                cur,
+                ty as u32,
+                try_start,
+                try_len,
+                handler_start,
+                handler_len,
+            )?;
         }
     } else {
         cur.set_pos(cur.pos() - 1);
@@ -163,7 +170,15 @@ fn read_sections<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cu
             let try_len = cur.u32()?;
             let handler_start = cur.u32()?;
             let handler_len = cur.u32()?;
-            read_handler(body, cur, ty, try_start, try_len, handler_start, handler_len)?;
+            read_handler(
+                body,
+                cur,
+                ty,
+                try_start,
+                try_len,
+                handler_start,
+                handler_len,
+            )?;
         }
     }
 
@@ -285,7 +300,12 @@ impl<'a> MethodBody<'a> {
         Ok(out)
     }
 
-    fn write_instruction(&self, ins: &Ins<'a>, ctx: GenericContext, out: &mut String) -> Result<()> {
+    fn write_instruction(
+        &self,
+        ins: &Ins<'a>,
+        ctx: GenericContext,
+        out: &mut String,
+    ) -> Result<()> {
         out.push_str(&label(ins.offset));
         out.push_str(": ");
         out.push_str(ins.opcode.name());
@@ -431,7 +451,10 @@ impl<'a> MethodBody<'a> {
 
     /// Resolves a raw operand's tokens against the module, mirroring
     /// `ModuleDefinition.LookupToken` for instruction operands.
-    pub fn resolve_operand(&self, ins: &Ins<'a>) -> Result<Option<crate::model::module::Entity<'a>>> {
+    pub fn resolve_operand(
+        &self,
+        ins: &Ins<'a>,
+    ) -> Result<Option<crate::model::module::Entity<'a>>> {
         match &ins.operand {
             RawOperand::Token(token) => {
                 let module_shim = self.m;

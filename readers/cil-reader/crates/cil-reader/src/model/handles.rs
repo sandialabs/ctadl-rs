@@ -245,8 +245,7 @@ impl<'a> TypeDef<'a> {
             return Ok(false);
         }
         Ok(name == "Enum"
-            || (name == "ValueType"
-                && !(self.namespace()? == "System" && self.name()? == "Enum")))
+            || (name == "ValueType" && !(self.namespace()? == "System" && self.name()? == "Enum")))
     }
 
     pub fn is_enum(&self) -> Result<bool> {
@@ -289,11 +288,7 @@ impl<'a> TypeDef<'a> {
             .nested_maps()?
             .nested
             .get(&self.rid)
-            .map(|rids| {
-                rids.iter()
-                    .map(|&rid| TypeDef { m: self.m, rid })
-                    .collect()
-            })
+            .map(|rids| rids.iter().map(|&rid| TypeDef { m: self.m, rid }).collect())
             .unwrap_or_default())
     }
 
@@ -465,13 +460,11 @@ impl<'a> TypeRef<'a> {
     pub fn scope_name(&self) -> Result<String> {
         let scope = self.raw()?.scope;
         match scope.token_type() {
-            Some(TokenType::TypeRef) if scope.rid() != self.rid => {
-                TypeRef {
-                    m: self.m,
-                    rid: scope.rid(),
-                }
-                .scope_name()
+            Some(TokenType::TypeRef) if scope.rid() != self.rid => TypeRef {
+                m: self.m,
+                rid: scope.rid(),
             }
+            .scope_name(),
             Some(TokenType::AssemblyRef) => {
                 let row = self.m.md.row::<AssemblyRefRaw>(scope.rid())?;
                 Ok(self.m.md.strings().get(row.name)?.to_string())
@@ -628,14 +621,14 @@ impl<'a> FieldDef<'a> {
             TypeSig::CModReq { inner, .. } | TypeSig::CModOpt { inner, .. } => {
                 self.field_type_size(inner)?
             }
-            TypeSig::Named { token, .. }
-                if token.token_type() == Some(TokenType::TypeDef) =>
-            {
+            TypeSig::Named { token, .. } if token.token_type() == Some(TokenType::TypeDef) => {
                 let td = TypeDef {
                     m: self.m,
                     rid: token.rid(),
                 };
-                td.class_layout()?.map(|(_, size)| size as usize).unwrap_or(0)
+                td.class_layout()?
+                    .map(|(_, size)| size as usize)
+                    .unwrap_or(0)
             }
             _ => 0,
         })
@@ -968,7 +961,10 @@ impl<'a> MethodDef<'a> {
             };
             let row = self.m.md.row::<ParamRaw>(actual)?;
             if row.sequence == 0 {
-                return Ok(Some((MetadataToken::new(TokenType::Param, actual), row.flags)));
+                return Ok(Some((
+                    MetadataToken::new(TokenType::Param, actual),
+                    row.flags,
+                )));
             }
         }
         Ok(None)
@@ -1014,7 +1010,12 @@ impl<'a> MethodDef<'a> {
     }
 
     pub fn overrides(&self) -> Result<Vec<MetadataToken>> {
-        Ok(self.m.overrides()?.get(&self.rid).cloned().unwrap_or_default())
+        Ok(self
+            .m
+            .overrides()?
+            .get(&self.rid)
+            .cloned()
+            .unwrap_or_default())
     }
 
     /// PInvoke info (`MethodDefinition.PInvokeInfo`).

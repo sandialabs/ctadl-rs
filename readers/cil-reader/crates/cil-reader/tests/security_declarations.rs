@@ -4,8 +4,8 @@
 mod testutil;
 
 use cil_reader::Module;
-use cil_reader::model::custom_attributes::SecurityDeclarationValue;
 use cil_reader::model::CaValue;
+use cil_reader::model::custom_attributes::SecurityDeclarationValue;
 use testutil::read_resource;
 
 // SecurityAction values.
