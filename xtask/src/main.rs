@@ -16,6 +16,7 @@ mod android_icc;
 mod apk;
 mod assertions;
 mod baksmali;
+mod cil;
 mod dex;
 mod discovery;
 mod exec;
@@ -80,7 +81,7 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let value = args.next().context("--frontend requires a value")?;
                 let names: Vec<&str> = value.split(',').filter(|s| !s.trim().is_empty()).collect();
                 if names.is_empty() {
-                    bail!("--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc");
+                    bail!("--frontend requires at least one of: dex, jvm, pcode, lua, jni, c, android-icc, cil");
                 }
                 let selected = frontends.get_or_insert_with(BTreeSet::new);
                 for name in names {
@@ -115,6 +116,18 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
             "--models-dir" => {
                 let dir = args.next().context("--models-dir requires a value")?;
                 opts.models_dir = Some(PathBuf::from(dir));
+            }
+            "--cil-dir" => {
+                let dir = args.next().context("--cil-dir requires a value")?;
+                opts.cil_dir = Some(PathBuf::from(dir));
+            }
+            "--cecil-src" => {
+                let dir = args.next().context("--cecil-src requires a value")?;
+                opts.cecil_src = Some(PathBuf::from(dir));
+            }
+            "--cil-fixtures" => {
+                let dir = args.next().context("--cil-fixtures requires a value")?;
+                opts.cil_fixtures = Some(PathBuf::from(dir));
             }
             "-h" | "--help" => {
                 print_help();
@@ -178,8 +191,9 @@ cargo xtask <task>
 Tasks:
   regression                 Run the source-sink taint regression suite.
     --frontend <f>           Only exercise frontend <f>: `pcode`, `jvm`, `dex`,
-                             `lua`, `jni`, `c` or `android-icc` (default: all). Accepts a
-                             comma-separated list and may be repeated; unselected
+                             `lua`, `jni`, `c`, `android-icc` or `cil` (default:
+                             all). Accepts a comma-separated list and may be
+                             repeated; unselected
                              frontends are skipped entirely, so their toolchains
                              are not needed. E.g. `--frontend pcode` runs the
                              C/pcode cases and the Ghidra checks without any Java
@@ -187,7 +201,9 @@ Tasks:
                              source cases. `jni` is the two-import bridge cases,
                              which need the Java *and* Ghidra toolchains.
                              `android-icc` runs external DroidBench/ICC-Bench
-                             APK specs under `tests/android-icc`.
+                             APK specs under `tests/android-icc`. `cil` runs the
+                             cil-reader checks against Mono.Cecil (see
+                             --cecil-src).
     --filter <name>          Only run cases whose name contains <name>.
                              Composes with --frontend.
     -j, --jobs <n>           Run <n> cases concurrently (default: one per core,
@@ -215,6 +231,19 @@ Tasks:
                              (default: auto-detect `ctadl-ascent/src/models`).
                              The `models:*` checks self-skip when neither the
                              flag nor the default directory is present.
+    --cil-dir <dir>          The cil-reader directory, for its Cecil goldens
+                             (default: auto-detect `readers/cil-reader`).
+    --cecil-src <dir>        Mono.Cecil checkout whose test assemblies the `cil:*`
+                             checks read (default: a hand-cloned
+                             `readers/cil-reader/extern/cecil`, else $CECIL_SRC,
+                             which the dev shell sets). The checks self-skip
+                             without one.
+                             `cil:cecil-compare` also needs `cecil-dump` on PATH
+                             (or $CECIL_DUMP); the dev shell provides it.
+    --cil-fixtures <dir>     cil-reader's compiled fixtures (default:
+                             $CIL_READER_FIXTURES, which the dev shell sets to
+                             the flake's `cil-fixtures`). The `cil:*` checks
+                             self-skip without them.
 
   report-eval --apks <dir>   Run `ctadl report` over a directory of artifacts and
                              print a cross-app summary, keeping each app's JSON.

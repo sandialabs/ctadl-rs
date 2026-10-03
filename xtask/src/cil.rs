@@ -1,0 +1,309 @@
+//! cil-reader regression checks: Cecil parity over Mono.Cecil's own test
+//! corpus plus cil-reader's fixtures (Cecil's .il/.cs test sources, compiled
+//! by the flake's `cilFixtures`).
+//!
+//! The dump format is the contract: `cil-dump` renders an assembly with
+//! cil-reader, `tools/CecilDump` renders it with Mono.Cecil, and the two must
+//! be byte-identical. Four checks, sharing one in-process dump per input:
+//!
+//! - `cil:must-fail`     — non-CLI inputs (`text_file.txt`) are rejected.
+//! - `cil:read`          — every corpus assembly reads and dumps in full
+//!   without an error or a panic.
+//! - `cil:goldens`       — dumps of Cecil's committed assemblies match the
+//!   committed Cecil goldens (`readers/cil-reader/tests/expected`). Needs no
+//!   .NET.
+//! - `cil:cecil-compare` — dumps match a live run of CecilDump, head to head,
+//!   which also covers what has no golden: the fixtures (build outputs) and
+//!   the inputs too large to keep goldens for. Needs the
+//!   `cecil-dump` launcher (the flake's `cecilDump`, on PATH in the devshell
+//!   and the regression check); self-skips without it.
+//!
+//! The corpus, golden naming and comparison rules live in `cil_dump::parity`.
+//!
+//! Neither input is committed. Cecil comes from `--cecil-src`, else a
+//! checkout cloned by hand into `readers/cil-reader/extern/cecil`, else
+//! `$CECIL_SRC`; the fixtures from `--cil-fixtures`, else
+//! `$CIL_READER_FIXTURES`. The dev shell and the regression check set both
+//! variables; without both inputs the checks skip.
+
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+use anyhow::{Context, Result};
+use cil_dump::parity::{self, CecilDump, Input, GOLDENS_DIR};
+
+use crate::regression::Outcome;
+
+/// Failing inputs listed per check before the rest are summarized as a count.
+const MAX_LISTED: usize = 10;
+
+/// Run every cil-reader check. `cil_dir` is the cil-reader directory (its
+/// goldens); `cecil` the Cecil checkout holding the corpus; `fixtures` the
+/// compiled fixtures.
+pub fn run_checks(
+    cil_dir: Option<&Path>,
+    cecil: Option<&Path>,
+    fixtures: Option<&Path>,
+    work: &Path,
+) -> Result<Vec<(String, Outcome)>> {
+    let Some(cil_dir) = cil_dir else {
+        return Ok(skip_all("cil-reader directory not found; pass --cil-dir"));
+    };
+    let Some(cecil) = cecil else {
+        return Ok(skip_all(
+            "no Cecil checkout: pass --cecil-src or set CECIL_SRC (the devshell does)",
+        ));
+    };
+    let Some(fixtures) = fixtures else {
+        return Ok(skip_all(&format!(
+            "no compiled fixtures: pass --cil-fixtures or set {} (the devshell does; \
+             `nix build .#cil-fixtures` builds them)",
+            parity::FIXTURES_ENV
+        )));
+    };
+
+    let inputs = parity::corpus(cecil, Some(fixtures));
+    if !inputs.iter().any(|i| i.tag == parity::FIXTURES_TAG) {
+        anyhow::bail!("no assemblies under {}", fixtures.display());
+    }
+    // Rendered once and shared by `read`, `goldens` and `cecil-compare`.
+    let dumps = parallel_map(&inputs, |input| {
+        std::fs::read(&input.path)
+            .map_err(|e| format!("read: {e}"))
+            .and_then(|data| parity::rust_dump(&data))
+    });
+
+    Ok(vec![
+        ("cil:must-fail".to_string(), check_must_fail(cecil)),
+        ("cil:read".to_string(), check_read(&inputs, &dumps)),
+        (
+            "cil:goldens".to_string(),
+            check_goldens(cil_dir, &inputs, &dumps)?,
+        ),
+        (
+            "cil:cecil-compare".to_string(),
+            check_cecil_compare(&inputs, &dumps, work)?,
+        ),
+    ])
+}
+
+fn skip_all(why: &str) -> Vec<(String, Outcome)> {
+    vec![("cil".to_string(), Outcome::Skip(why.to_string()))]
+}
+
+fn check_must_fail(cecil: &Path) -> Outcome {
+    let mut failures = Vec::new();
+    for path in parity::must_fail_inputs(cecil) {
+        match std::fs::read(&path) {
+            Ok(data) if cil_reader::Module::read(&data).is_ok() => {
+                failures.push(format!(
+                    "{}: read succeeded, expected a BadImage error",
+                    path.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(e) => failures.push(format!("{}: {e}", path.display())),
+        }
+    }
+    to_outcome(failures)
+}
+
+fn check_read(inputs: &[Input], dumps: &[Result<String, String>]) -> Outcome {
+    let failures = inputs
+        .iter()
+        .zip(dumps)
+        .filter_map(|(input, dump)| {
+            dump.as_ref()
+                .err()
+                .map(|e| format!("{}: {e}", input.path.display()))
+        })
+        .collect();
+    to_outcome(failures)
+}
+
+fn check_goldens(
+    cil_dir: &Path,
+    inputs: &[Input],
+    dumps: &[Result<String, String>],
+) -> Result<Outcome> {
+    let goldens = cil_dir.join(GOLDENS_DIR);
+    let mut failures = Vec::new();
+    let mut compared = 0usize;
+    for (input, dump) in inputs.iter().zip(dumps) {
+        let Some(golden_name) = input.golden_name() else {
+            continue;
+        };
+        let golden_path = goldens.join(&golden_name);
+        if !golden_path.exists() {
+            continue;
+        }
+        // An unreadable input already fails `cil:read`; do not count it twice.
+        let Ok(dump) = dump else { continue };
+        compared += 1;
+        let golden = std::fs::read_to_string(&golden_path)
+            .with_context(|| format!("failed to read {}", golden_path.display()))?;
+        if golden != *dump {
+            failures.push(describe_diff(&golden_name, "golden", &golden, dump));
+        }
+    }
+    if compared == 0 {
+        return Ok(Outcome::Fail(format!(
+            "no goldens matched any corpus input under {}",
+            goldens.display()
+        )));
+    }
+    Ok(to_outcome(failures))
+}
+
+fn check_cecil_compare(
+    inputs: &[Input],
+    dumps: &[Result<String, String>],
+    work: &Path,
+) -> Result<Outcome> {
+    let Some(cecil_dump) = CecilDump::locate() else {
+        return Ok(Outcome::Skip(format!(
+            "`cecil-dump` not on PATH and ${} unset (the devshell provides it)",
+            parity::CECIL_DUMP_ENV
+        )));
+    };
+    let compared: Vec<(&Input, &String)> = inputs
+        .iter()
+        .zip(dumps)
+        .filter(|(input, _)| !parity::compare_skip(&input.name()))
+        .filter_map(|(input, dump)| dump.as_ref().ok().map(|d| (input, d)))
+        .collect();
+    let cecil_dumps = parallel_map(&compared, |(input, _)| cecil_dump.dump(&input.path));
+
+    // Both sides of every mismatch are kept, since a diff of a multi-megabyte
+    // dump is not something to reconstruct from the summary.
+    let diffs = work.join("cecil-compare");
+    let mut failures = Vec::new();
+    for ((input, rust), cecil) in compared.iter().zip(&cecil_dumps) {
+        let name = input.id();
+        match cecil {
+            Err(e) => failures.push(format!("{name}: {}", e.trim_end())),
+            Ok(cecil) if cecil == *rust => {}
+            Ok(cecil) => {
+                std::fs::create_dir_all(&diffs)?;
+                std::fs::write(diffs.join(format!("{name}.cecil")), cecil)?;
+                std::fs::write(diffs.join(format!("{name}.rust")), rust)?;
+                failures.push(describe_diff(&name, "cecil", cecil, rust));
+            }
+        }
+    }
+    let mut outcome = to_outcome(failures);
+    if let Outcome::Fail(why) = &mut outcome {
+        let _ = write!(
+            why,
+            "\nboth dumps of each mismatch are in {} (CecilDump: {})",
+            diffs.display(),
+            cecil_dump.describe()
+        );
+    }
+    Ok(outcome)
+}
+
+fn describe_diff(name: &str, expected_label: &str, expected: &str, actual: &str) -> String {
+    let (line, lines) = parity::first_divergence(expected, actual);
+    let mut msg = format!("{name}: differs at line {line}");
+    match lines {
+        Some((le, la)) => {
+            let _ = write!(msg, "\n  {expected_label}: {le}\n  rust: {la}");
+        }
+        None => {
+            let _ = write!(
+                msg,
+                " (line counts: {expected_label} {}, rust {})",
+                expected.lines().count(),
+                actual.lines().count()
+            );
+        }
+    }
+    msg
+}
+
+fn to_outcome(failures: Vec<String>) -> Outcome {
+    if failures.is_empty() {
+        return Outcome::Pass;
+    }
+    let mut msg = format!("{} input(s) failed:", failures.len());
+    for failure in failures.iter().take(MAX_LISTED) {
+        let _ = write!(msg, "\n{failure}");
+    }
+    if failures.len() > MAX_LISTED {
+        let _ = write!(msg, "\n... and {} more", failures.len() - MAX_LISTED);
+    }
+    Outcome::Fail(msg)
+}
+
+/// `items.map(f)` across the available cores, in order. CecilDump starts a
+/// .NET runtime per input, so a serial pass over ~120 inputs is most of this
+/// task's wall clock.
+fn parallel_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let jobs = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(items.len().max(1));
+    let next = AtomicUsize::new(0);
+    let results = Mutex::new(Vec::with_capacity(items.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..jobs {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(item) = items.get(index) else { break };
+                let result = f(item);
+                results.lock().unwrap().push((index, result));
+            });
+        }
+    });
+    let mut results = results.into_inner().unwrap();
+    results.sort_by_key(|(index, _)| *index);
+    results.into_iter().map(|(_, r)| r).collect()
+}
+
+/// Locate the cil-reader directory. With no override, look where it lives
+/// relative to the repo root (`cargo xtask`) or the nightly cwd.
+pub fn resolve_cil_dir(override_dir: Option<&Path>) -> Result<Option<PathBuf>> {
+    if let Some(dir) = override_dir {
+        return Ok(Some(std::fs::canonicalize(dir).with_context(|| {
+            format!("failed to canonicalize {}", dir.display())
+        })?));
+    }
+    ["readers/cil-reader", "../readers/cil-reader"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|p| p.join(GOLDENS_DIR).is_dir())
+        .map(|p| std::fs::canonicalize(&p))
+        .transpose()
+        .with_context(|| "failed to canonicalize cil-reader directory")
+}
+
+/// Locate the compiled fixtures: `--cil-fixtures`, else `$CIL_READER_FIXTURES`.
+pub fn resolve_fixtures(override_dir: Option<&Path>) -> Result<Option<PathBuf>> {
+    if let Some(dir) = override_dir {
+        return Ok(Some(std::fs::canonicalize(dir).with_context(|| {
+            format!("failed to canonicalize {}", dir.display())
+        })?));
+    }
+    Ok(std::env::var_os(parity::FIXTURES_ENV)
+        .map(PathBuf::from)
+        .filter(|d| d.is_dir()))
+}
+
+/// Locate the Cecil checkout: `--cecil-src`, else `extern/cecil` under the
+/// cil-reader directory, else `$CECIL_SRC`. A checkout cloned there by hand is
+/// a deliberate override of the pin, as it is for cil-reader's tests.
+pub fn resolve_cecil_src(
+    override_dir: Option<&Path>,
+    cil_dir: Option<&Path>,
+) -> Result<Option<PathBuf>> {
+    if let Some(dir) = override_dir {
+        return Ok(Some(std::fs::canonicalize(dir).with_context(|| {
+            format!("failed to canonicalize {}", dir.display())
+        })?));
+    }
+    let vendored = cil_dir.map(|d| d.join("extern/cecil"));
+    let pinned = std::env::var_os("CECIL_SRC").map(PathBuf::from);
+    Ok(vendored.into_iter().chain(pinned).find(|d| d.is_dir()))
+}

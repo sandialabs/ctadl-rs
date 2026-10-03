@@ -24,6 +24,7 @@ use anyhow::{bail, Context, Result};
 use crate::android_icc;
 use crate::apk;
 use crate::assertions;
+use crate::cil;
 use crate::dex;
 use crate::discovery::{self, Frontend, Kind, Packaging, TestCase};
 use crate::exec;
@@ -126,6 +127,15 @@ pub struct Options {
     /// Directory holding the model generator schema and the model files checked
     /// against it. `None` auto-detects; see [`resolve_models_dir`].
     pub models_dir: Option<PathBuf>,
+    /// The cil-reader directory (goldens, fixtures). `None` auto-detects; see
+    /// [`cil::resolve_cil_dir`].
+    pub cil_dir: Option<PathBuf>,
+    /// The Cecil checkout whose test assemblies the `cil:*` checks read.
+    /// `None` auto-detects; see [`cil::resolve_cecil_src`].
+    pub cecil_src: Option<PathBuf>,
+    /// The compiled cil-reader fixtures. `None` auto-detects; see
+    /// [`cil::resolve_fixtures`].
+    pub cil_fixtures: Option<PathBuf>,
     /// How many cases to run concurrently. `None` picks [`default_jobs`].
     pub jobs: Option<usize>,
     /// Build (and run) the release `ctadl` binary instead of the debug one.
@@ -143,6 +153,9 @@ impl Default for Options {
             jvm_samples: None,
             dex_apk: None,
             models_dir: None,
+            cil_dir: None,
+            cecil_src: None,
+            cil_fixtures: None,
             jobs: None,
             release: false,
         }
@@ -239,6 +252,15 @@ pub fn run(opts: &Options) -> Result<bool> {
         None
     };
     let models_dir = resolve_models_dir(opts.models_dir.as_deref())?;
+    let wants_cil = opts.frontends.contains(&Frontend::Cil);
+    let (cil_dir, cecil_src, cil_fixtures) = if wants_cil {
+        let cil_dir = cil::resolve_cil_dir(opts.cil_dir.as_deref())?;
+        let cecil = cil::resolve_cecil_src(opts.cecil_src.as_deref(), cil_dir.as_deref())?;
+        let fixtures = cil::resolve_fixtures(opts.cil_fixtures.as_deref())?;
+        (cil_dir, cecil, fixtures)
+    } else {
+        (None, None, None)
+    };
 
     // Assemble every independent unit of work, in report order. The pool below
     // preserves that order regardless of which worker finishes first.
@@ -261,6 +283,15 @@ pub fn run(opts: &Options) -> Result<bool> {
     }
     if ghidra_selected {
         tasks.push(Task::GhidraProject);
+    }
+    // Always queued when `cil` is selected, so a missing corpus or CecilDump
+    // reports as a Skip rather than vanishing from the report.
+    if wants_cil {
+        tasks.push(Task::CilChecks {
+            cil_dir: cil_dir.as_deref(),
+            cecil: cecil_src.as_deref(),
+            fixtures: cil_fixtures.as_deref(),
+        });
     }
     // Schema drift check on the model files ctadl ships. It reads three small
     // files and runs no external tool, so it is never gated on a frontend: the
@@ -340,6 +371,12 @@ enum Task<'a> {
     ApkChecks {
         apk: &'a Path,
     },
+    /// cil-reader's Cecil parity checks; see [`crate::cil`].
+    CilChecks {
+        cil_dir: Option<&'a Path>,
+        cecil: Option<&'a Path>,
+        fixtures: Option<&'a Path>,
+    },
     /// Hold the shipped model files to the published model generator schema.
     /// `None` means neither `--models-dir` nor the in-tree default was found,
     /// which reports as a Skip rather than vanishing from the report.
@@ -392,6 +429,18 @@ impl Task<'_> {
                     .and_then(|work| apk::run_checks(apk, &work))
                     .unwrap_or_else(|err| {
                         vec![("apk:import".to_string(), Outcome::Fail(format!("{err:#}")))]
+                    });
+                retain_filtered(results, opts)
+            }
+            Task::CilChecks {
+                cil_dir,
+                cecil,
+                fixtures,
+            } => {
+                let results = scratch_dir("cil")
+                    .and_then(|work| cil::run_checks(*cil_dir, *cecil, *fixtures, &work))
+                    .unwrap_or_else(|err| {
+                        vec![("cil".to_string(), Outcome::Fail(format!("{err:#}")))]
                     });
                 retain_filtered(results, opts)
             }

@@ -5205,6 +5205,8 @@ version = "0.1.3"
 dependencies = [
  "anyhow",
  "boon",
+ "cil-dump",
+ "cil-reader",
  "ctadl-ascent",
  "dex-reader",
  "json5",

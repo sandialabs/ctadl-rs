@@ -110,6 +110,9 @@ pub enum Frontend {
     Jni,
     /// External Android ICC benchmark APKs (DroidBench ICC / ICC-Bench style).
     AndroidIcc,
+    /// The cil-reader Cecil-parity checks; see [`crate::cil`]. No taint cases
+    /// yet: there is no CIL frontend in `ctadl import` to drive.
+    Cil,
 }
 
 impl Frontend {
@@ -121,6 +124,7 @@ impl Frontend {
         Frontend::Jni,
         Frontend::C,
         Frontend::AndroidIcc,
+        Frontend::Cil,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -132,6 +136,7 @@ impl Frontend {
             Frontend::Lua => "lua",
             Frontend::Jni => "jni",
             Frontend::AndroidIcc => "android-icc",
+            Frontend::Cil => "cil",
         }
     }
 }
@@ -148,8 +153,9 @@ impl FromStr for Frontend {
             "lua" => Ok(Frontend::Lua),
             "jni" => Ok(Frontend::Jni),
             "android-icc" | "icc" => Ok(Frontend::AndroidIcc),
+            "cil" => Ok(Frontend::Cil),
             other => {
-                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni, android-icc)")
+                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni, android-icc, cil)")
             }
         }
     }
@@ -674,6 +680,7 @@ mod tests {
         assert_eq!("dex".parse::<Frontend>().unwrap(), Frontend::Dex);
         assert_eq!("c".parse::<Frontend>().unwrap(), Frontend::C);
         assert_eq!("jni".parse::<Frontend>().unwrap(), Frontend::Jni);
+        assert_eq!("cil".parse::<Frontend>().unwrap(), Frontend::Cil);
         assert_eq!(
             "android-icc".parse::<Frontend>().unwrap(),
             Frontend::AndroidIcc

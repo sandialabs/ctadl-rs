@@ -31,6 +31,11 @@ jvm-reader = { path = "../readers/jvm-reader" }
 # real-world APK). dex-reader is workspace-excluded too, so its bin stays out of
 # the distro; only its library is pulled in here.
 dex-reader = { path = "../readers/dex-reader" }
+# The cil:* checks read Mono.Cecil's test corpus with cil-reader and diff the
+# dumps against CecilDump's; `cil-dump` holds the dump format and the parity
+# rules (corpus, goldens) shared with cil-reader's own xtask.
+cil-reader = { path = "../readers/cil-reader/crates/cil-reader" }
+cil-dump = { path = "../readers/cil-reader/crates/cil-dump" }
 # The Android checks read what `ctadl` wrote -- decoded manifests and index facts
 # such as `intent_pair.parquet` -- through the analyzer's own loaders rather than
 # re-implementing them. This is the one heavy dependency here: it builds the

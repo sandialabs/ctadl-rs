@@ -130,8 +130,9 @@
 
         # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled by
         # readers/cil-reader/tools/build-fixtures.sh. Built here rather than
-        # committed; the tests find them through CIL_READER_FIXTURES. Offline
-        # (nothing references a NuGet package) and byte-for-byte reproducible.
+        # committed; the tests and the `cil:*` checks find them through
+        # CIL_READER_FIXTURES. Offline (nothing references a NuGet package) and
+        # byte-for-byte reproducible.
         cilFixtures = pkgs.stdenvNoCC.mkDerivation {
           # `name` rather than pname/version: see cecilDump.
           name = "cil-fixtures-${builtins.substring 0 7 cecil.rev}";
@@ -157,10 +158,10 @@
 
         # CecilDump (readers/cil-reader/tools/CecilDump): the cil-dump text
         # format rendered by Mono.Cecil, i.e. the Cecil side of the cil-reader
-        # parity comparison. Built here so it is cached rather than rebuilt by
-        # every run. The project compiles the pinned Cecil sources in directly
-        # and references no NuGet packages, so the restore needs no network and
-        # runs inside the sandbox as is.
+        # parity checks (`cil:cecil-compare` in `xtask regression`). Built here
+        # so it is cached rather than rebuilt by every run. The project compiles
+        # the pinned Cecil sources in directly and references no NuGet packages,
+        # so the restore needs no network and runs inside the sandbox as is.
         cecilDump = pkgs.stdenvNoCC.mkDerivation {
           # `name` rather than pname/version: MSBuild reads the environment as
           # properties, and a `version` variable lands as $(Version), which
@@ -412,6 +413,8 @@
             jdk
             baksmali
             pkgs.ghidra-bin
+            # The `cil:cecil-compare` check's reference dumper.
+            cecilDump
           ];
         };
 
@@ -541,11 +544,17 @@
                   # no source tree, so point xtask at them explicitly or they
                   # would self-skip here -- which is the one place the drift is
                   # meant to be caught.
+                  # The `cil:*` checks read Cecil's test corpus (the pinned
+                  # input), cil-reader's goldens and the built fixtures, and diff
+                  # against the `cecil-dump` that testEnv puts on PATH.
                   ${self.packages.${system}.default}/bin/xtask regression \
-                    --frontend dex,jvm,pcode,lua,jni,c,android-icc \
+                    --frontend dex,jvm,pcode,lua,jni,c,android-icc,cil \
                     --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
-                    --models-dir ${./ctadl-ascent/src/models}
+                    --models-dir ${./ctadl-ascent/src/models} \
+                    --cil-dir ${./readers/cil-reader} \
+                    --cecil-src ${cecil} \
+                    --cil-fixtures ${cilFixtures}
 
                   mkdir -p "$out"
                 '';
@@ -659,9 +668,9 @@
             packages = [ testEnv ];
 
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
-            # The pinned Mono.Cecil checkout: cil-reader's tests read its test
-            # corpus, and readers/cil-reader's `cargo xtask vendor` copies it
-            # into extern/cecil.
+            # The pinned Mono.Cecil checkout: cil-reader's tests and the `cil:*`
+            # checks read its test corpus, and readers/cil-reader's `cargo xtask
+            # vendor` copies it into extern/cecil.
             CECIL_SRC = "${cecil}";
             # cil-reader's compiled fixtures, for the same consumers.
             CIL_READER_FIXTURES = "${cilFixtures}";
