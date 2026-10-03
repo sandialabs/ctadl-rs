@@ -619,9 +619,43 @@
                   "jvm-reader"
                 ];
             };
+
+            # cil-reader's tests, same arrangement. Nearly all of them read
+            # Cecil's test assemblies or the built fixtures, neither committed;
+            # a plain `cargo test` without them skips those. Here both are
+            # supplied, and CIL_READER_REQUIRE_INPUTS turns a missing one into a
+            # failure rather than a silent skip.
+            cil-reader-tests = naersk-lib.buildPackage {
+              src = ./.;
+              version = workspaceVersion;
+              name = "cil-reader-tests";
+              mode = "test";
+              CECIL_SRC = "${cecil}";
+              CIL_READER_FIXTURES = "${cilFixtures}";
+              CIL_READER_REQUIRE_INPUTS = "1";
+              cargoBuildOptions =
+                x:
+                x
+                ++ [
+                  "--package"
+                  "cil-reader"
+                ];
+              cargoTestOptions =
+                opts:
+                opts
+                ++ [
+                  "--package"
+                  "cil-reader"
+                ];
+            };
           in
           {
-            inherit regression dex-reader-tests jvm-reader-tests;
+            inherit
+              regression
+              dex-reader-tests
+              jvm-reader-tests
+              cil-reader-tests
+              ;
           };
 
         formatter = pkgs.nixfmt;

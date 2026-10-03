@@ -29,8 +29,10 @@ jobs:
 
       # All expensive/long-running regression logic lives in the flake checks
       # (checks.<system>.*): `regression` is the source-sink taint suite driven
-      # by the xtask harness, and `dex-reader-tests` / `jvm-reader-tests` run the
-      # workspace-excluded reader crates' tests. Add new expensive tests there,
+      # by the xtask harness (including the cil-reader vs Mono.Cecil parity
+      # checks), and `dex-reader-tests` / `jvm-reader-tests` / `cil-reader-tests`
+      # run the reader crates' tests -- cil-reader's against the pinned Cecil
+      # corpus, which plain `cargo test` lacks. Add new expensive tests there,
       # not in this YAML. The cheap fmt/clippy/unit checks run separately in the
       # `test` workflow. ubuntu-latest runners are x86_64-linux.
       - name: Run nightly regression tests
@@ -38,4 +40,5 @@ jobs:
           nix build --print-build-logs \
             '.#checks.x86_64-linux.regression' \
             '.#checks.x86_64-linux.dex-reader-tests' \
-            '.#checks.x86_64-linux.jvm-reader-tests'
+            '.#checks.x86_64-linux.jvm-reader-tests' \
+            '.#checks.x86_64-linux.cil-reader-tests'
