@@ -14,9 +14,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # Mono.Cecil, the reference cil-reader is ported from and checked against.
-    # Its test assemblies are cil-reader's corpus. Pinned to the commit the
-    # committed goldens (readers/cil-reader/tests/expected) were blessed
-    # against; moving it means re-running `cargo xtask bless` under
+    # Its test assemblies are cil-reader's corpus, and `cecilDump` builds the
+    # Cecil side of the parity comparison from these sources. Pinned to the
+    # commit the committed goldens (readers/cil-reader/tests/expected) were
+    # blessed against; moving it means re-running `cargo xtask bless` under
     # readers/cil-reader.
     cecil = {
       url = "github:jbevain/cecil/882ca5eedda1e62eb41bd5869aeb15d8f1538e51";
@@ -79,6 +80,45 @@
           exec ${ctadl-souffle.packages.${system}.ctadlPackages.ctadl-full}/bin/ctadl "$@"
         '';
         checksarif = pkgs.callPackage ./nix/sarif-multitool/checksarif.nix { };
+
+        # CecilDump (readers/cil-reader/tools/CecilDump): the cil-dump text
+        # format rendered by Mono.Cecil, i.e. the Cecil side of the cil-reader
+        # parity comparison. Built here so it is cached rather than rebuilt by
+        # every run. The project compiles the pinned Cecil sources in directly
+        # and references no NuGet packages, so the restore needs no network and
+        # runs inside the sandbox as is.
+        cecilDump = pkgs.stdenvNoCC.mkDerivation {
+          # `name` rather than pname/version: MSBuild reads the environment as
+          # properties, and a `version` variable lands as $(Version), which
+          # must be a NuGet version string.
+          name = "cecil-dump-${builtins.substring 0 7 cecil.rev}";
+          src = ./readers/cil-reader/tools/CecilDump;
+          nativeBuildInputs = [
+            pkgs.dotnet-sdk_8
+            pkgs.makeWrapper
+          ];
+          env = {
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+          };
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
+            dotnet build -c Release --nologo -p:UseAppHost=false -p:CecilSrc=${cecil} -o out
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/lib/cecil-dump" "$out/bin"
+            cp -R out/. "$out/lib/cecil-dump/"
+            makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/cecil-dump" \
+              --add-flags "$out/lib/cecil-dump/CecilDump.dll" \
+              --set DOTNET_NOLOGO 1 \
+              --set DOTNET_CLI_TELEMETRY_OPTOUT 1
+            runHook postInstall
+          '';
+        };
 
         # --- Nightly regression suite dependencies -------------------------
         # These are only forced when building `checks.<system>.{regression,nightly}`.
@@ -333,6 +373,8 @@
       in
       {
         packages.default = naersk-lib.buildPackage ./.;
+        # Exposed so `nix build .#cecil-dump` can warm the cache on its own.
+        packages.cecil-dump = cecilDump;
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
         # Run a wrapper around ctadl-ascent that lets Ghidra process pcode

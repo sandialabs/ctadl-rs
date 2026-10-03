@@ -1,4 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Cecil's sources are compiled straight into this executable rather than
+    project-referencing Mono.Cecil.csproj: that project pulls NuGet packages
+    (SourceLink, the net40 reference assemblies), while this one needs none,
+    so it restores and builds offline: inside the Nix sandbox, where the
+    root flake's `cecilDump` derivation builds it. NET_CORE matches what
+    Mono.Cecil.csproj defines for its netstandard2.0 target.
+
+    CecilSrc is the Cecil checkout; it defaults to the vendored extern/cecil.
+  -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
@@ -6,8 +16,21 @@
     <AssemblyName>CecilDump</AssemblyName>
     <RootNamespace>CecilDump</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <CecilSrc Condition="'$(CecilSrc)' == ''">$(MSBuildThisFileDirectory)../../extern/cecil</CecilSrc>
+    <DefineConstants>$(DefineConstants);NET_CORE</DefineConstants>
+    <!-- Cecil's ProjectInfo.cs carries the assembly attributes. -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../extern/cecil/Mono.Cecil.csproj" />
+    <Compile Include="Program.cs" />
+    <Compile Include="$(CecilSrc)/ProjectInfo.cs" />
+    <Compile Include="$(CecilSrc)/Mono/*.cs" />
+    <Compile Include="$(CecilSrc)/Mono.Cecil/*.cs" />
+    <Compile Include="$(CecilSrc)/Mono.Cecil.Cil/*.cs" />
+    <Compile Include="$(CecilSrc)/Mono.Cecil.Metadata/*.cs" />
+    <Compile Include="$(CecilSrc)/Mono.Cecil.PE/*.cs" />
+    <Compile Include="$(CecilSrc)/Mono.Collections.Generic/*.cs" />
+    <Compile Include="$(CecilSrc)/Mono.Security.Cryptography/*.cs" />
   </ItemGroup>
 </Project>
