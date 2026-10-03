@@ -3,3 +3,6 @@
 tools/CecilDump/bin
 tools/CecilDump/obj
 target/
+/extern/dnlib
+tools/PtrGen/bin
+tools/PtrGen/obj

@@ -18,6 +18,11 @@
       url = "github:jbevain/cecil/882ca5eedda1e62eb41bd5869aeb15d8f1538e51";
       flake = false;
     };
+    # dnlib, for cil-reader's Ptr-table fixtures (see ptrGen).
+    dnlib = {
+      url = "github:0xd4d/dnlib/9ab9b58ab31b99b3f6cdef36efec613fc11ddbe2";
+      flake = false;
+    };
   };
 
   outputs =
@@ -29,6 +34,7 @@
       ctadl-souffle,
       fenix,
       cecil,
+      dnlib,
     }:
     utils.lib.eachDefaultSystem (
       system:
@@ -123,6 +129,41 @@
             '';
           };
 
+        # PtrGen (readers/cil-reader/tools/PtrGen): rewrites a module with dnlib
+        # so its member tables go through FieldPtr/MethodPtr/ParamPtr/
+        # PropertyPtr/EventPtr, which neither Roslyn nor ilasm emit. Like
+        # cecilDump, it compiles the pinned dnlib sources in and needs no NuGet.
+        ptrGen = pkgs.stdenvNoCC.mkDerivation {
+          # `name` rather than pname/version: see cecilDump.
+          name = "ptr-gen-${builtins.substring 0 7 dnlib.rev}";
+          src = ./readers/cil-reader/tools/PtrGen;
+          nativeBuildInputs = [
+            pkgs.dotnet-sdk_8
+            pkgs.makeWrapper
+          ];
+          env = {
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+          };
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
+            dotnet build -c Release --nologo -p:UseAppHost=false -p:DnlibSrc=${dnlib} -o out
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/lib/ptr-gen" "$out/bin"
+            cp -R out/. "$out/lib/ptr-gen/"
+            makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/ptr-gen" \
+              --add-flags "$out/lib/ptr-gen/PtrGen.dll" \
+              --set DOTNET_NOLOGO 1 \
+              --set DOTNET_CLI_TELEMETRY_OPTOUT 1
+            runHook postInstall
+          '';
+        };
+
         # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled.
         # The tests find them through CIL_READER_FIXTURES. Offline (nothing
         # references a NuGet package) and byte-for-byte reproducible:
@@ -133,6 +174,8 @@
         #   RoslynCompilationService (library, Release, NET_CORE, assembly
         #   named after the source). Deterministic, with no PDB, so no build
         #   path leaks into the bytes.
+        # - `ptr-<name>.cs.dll`: each `.cs` fixture rewritten by ptrGen, so the
+        #   corpus has images with Ptr tables. dnlib's output is deterministic.
         cilFixtures = pkgs.stdenvNoCC.mkDerivation {
           # `name` rather than pname/version: see cecilDump.
           name = "cil-fixtures-${builtins.substring 0 7 cecil.rev}";
@@ -140,6 +183,7 @@
           nativeBuildInputs = [
             pkgs.dotnet-sdk_8
             ilasm
+            ptrGen
           ];
           env = {
             DOTNET_NOLOGO = "1";
@@ -190,6 +234,8 @@
               fi
               cp "$build/bin/Release/$stem.dll" "$out/$name.dll"
               echo "compiled $name.dll"
+              ptr-gen "$out/$name.dll" "$out/ptr-$name.dll"
+              echo "rewrote ptr-$name.dll"
             done
             runHook postBuild
           '';
@@ -492,6 +538,7 @@
         # Exposed so `nix build .#cecil-dump` can warm the cache on its own.
         packages.cecil-dump = cecilDump;
         packages.cil-fixtures = cilFixtures;
+        packages.ptr-gen = ptrGen;
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
         # Run a wrapper around ctadl-ascent that lets Ghidra process pcode

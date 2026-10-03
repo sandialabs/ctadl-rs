@@ -202,6 +202,25 @@ static class Program
         }
     }
 
+    // Fields and methods are reached through their declaring types, as
+    // properties and events are, and collected in rid order. Probing
+    // LookupToken by rid would not do: on a module whose types are not yet
+    // read, Cecil finds a member's owner by searching the TypeDef list ranges
+    // with the member's rid, which is wrong when FieldPtr/MethodPtr are
+    // present, and returns null for members it then fails to find.
+    static IEnumerable<T> MembersInRidOrder<T> (ModuleDefinition module, Func<TypeDefinition, IEnumerable<T>> members)
+        where T : IMetadataTokenProvider
+    {
+        var byRid = new SortedDictionary<uint, T> ();
+        try {
+            foreach (var ty in TypesInRidOrder (module))
+                foreach (var member in members (ty))
+                    byRid [member.MetadataToken.RID] = member;
+        } catch {
+        }
+        return byRid.Values;
+    }
+
     static void DumpTypes (ModuleDefinition module, StringBuilder o)
     {
         o.Append ("[types]\n");
@@ -224,15 +243,7 @@ static class Program
     static void DumpFields (ModuleDefinition module, StringBuilder o)
     {
         o.Append ("[fields]\n");
-        for (uint rid = 1; ; rid++) {
-            FieldDefinition field;
-            try {
-                field = module.LookupToken (new MetadataToken (TokenType.Field, rid)) as FieldDefinition;
-            } catch {
-                break;
-            }
-            if (field == null)
-                break;
+        foreach (var field in MembersInRidOrder (module, ty => ty.Fields)) {
             string fullName;
             try {
                 fullName = field.FullName;
@@ -299,15 +310,7 @@ static class Program
     static void DumpMethods (ModuleDefinition module, StringBuilder o)
     {
         o.Append ("[methods]\n");
-        for (uint rid = 1; ; rid++) {
-            MethodDefinition method;
-            try {
-                method = module.LookupToken (new MetadataToken (TokenType.Method, rid)) as MethodDefinition;
-            } catch {
-                break;
-            }
-            if (method == null)
-                break;
+        foreach (var method in MembersInRidOrder (module, ty => ty.Methods)) {
             string fullName;
             try {
                 fullName = method.FullName;
@@ -592,15 +595,7 @@ static class Program
     static void DumpIl (ModuleDefinition module, StringBuilder o)
     {
         o.Append ("[il]\n");
-        for (uint rid = 1; ; rid++) {
-            MethodDefinition method;
-            try {
-                method = module.LookupToken (new MetadataToken (TokenType.Method, rid)) as MethodDefinition;
-            } catch {
-                break;
-            }
-            if (method == null)
-                break;
+        foreach (var method in MembersInRidOrder (module, ty => ty.Methods)) {
             if (!method.HasBody || method.RVA == 0)
                 continue;
 

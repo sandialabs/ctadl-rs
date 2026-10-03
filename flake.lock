@@ -62,6 +62,23 @@
         "type": "github"
       }
     },
+    "dnlib": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780420039,
+        "narHash": "sha256-I3ctQmSJxgf7/poEkUEl1eUJJzvT8kgm5BMBqtdzXK0=",
+        "owner": "0xd4d",
+        "repo": "dnlib",
+        "rev": "9ab9b58ab31b99b3f6cdef36efec613fc11ddbe2",
+        "type": "github"
+      },
+      "original": {
+        "owner": "0xd4d",
+        "repo": "dnlib",
+        "rev": "9ab9b58ab31b99b3f6cdef36efec613fc11ddbe2",
+        "type": "github"
+      }
+    },
     "fenix": {
       "inputs": {
         "nixpkgs": [
@@ -528,6 +545,7 @@
       "inputs": {
         "cecil": "cecil",
         "ctadl-souffle": "ctadl-souffle",
+        "dnlib": "dnlib",
         "fenix": "fenix",
         "naersk": "naersk",
         "nixpkgs": "nixpkgs_5",
