@@ -13,6 +13,15 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Mono.Cecil, the reference cil-reader is ported from and checked against.
+    # Its test assemblies are cil-reader's corpus. Pinned to the commit the
+    # committed goldens (readers/cil-reader/tests/expected) were blessed
+    # against; moving it means re-running `cargo xtask bless` under
+    # readers/cil-reader.
+    cecil = {
+      url = "github:jbevain/cecil/882ca5eedda1e62eb41bd5869aeb15d8f1538e51";
+      flake = false;
+    };
   };
 
   outputs =
@@ -23,6 +32,7 @@
       naersk,
       ctadl-souffle,
       fenix,
+      cecil,
     }:
     utils.lib.eachDefaultSystem (
       system:
@@ -532,6 +542,9 @@
             packages = [ testEnv ];
 
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
+            # The pinned Mono.Cecil checkout, which readers/cil-reader's `cargo
+            # xtask vendor` copies into extern/cecil.
+            CECIL_SRC = "${cecil}";
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
             # The debugging SDK, a superset of the regression one, so the
             # emulator finds its system image through this.

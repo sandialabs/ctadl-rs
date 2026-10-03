@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "cecil": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1757609843,
+        "narHash": "sha256-RYqpxFY2d8Dml4FL3GO6dkyIZFxbzpnqZUNjE7RA7FQ=",
+        "owner": "jbevain",
+        "repo": "cecil",
+        "rev": "882ca5eedda1e62eb41bd5869aeb15d8f1538e51",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jbevain",
+        "repo": "cecil",
+        "rev": "882ca5eedda1e62eb41bd5869aeb15d8f1538e51",
+        "type": "github"
+      }
+    },
     "ctadl-souffle": {
       "inputs": {
         "flake-compat": "flake-compat",
@@ -509,6 +526,7 @@
     },
     "root": {
       "inputs": {
+        "cecil": "cecil",
         "ctadl-souffle": "ctadl-souffle",
         "fenix": "fenix",
         "naersk": "naersk",
