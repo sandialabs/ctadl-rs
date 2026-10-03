@@ -32,7 +32,7 @@ macro_rules! assert_code {
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:14 (MultiplyMethod)
 #[test]
 fn multiply_method() {
-    let data = read_fixture("hello.il.dll");
+    let data = read_fixture!("hello.il.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let bar = get_method(&foo, "Bar");
@@ -57,7 +57,7 @@ fn multiply_method() {
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:38 (PrintStringEmpty)
 #[test]
 fn print_string_empty() {
-    let data = read_fixture("hello.il.dll");
+    let data = read_fixture!("hello.il.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let print_empty = get_method(&foo, "PrintEmpty");
@@ -144,7 +144,7 @@ fn switch_test() {
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:125 (MethodSpec)
 #[test]
 fn method_spec() {
-    let data = read_fixture("methodspecs.il.dll");
+    let data = read_fixture!("methodspecs.il.dll");
     let module = Module::read(&data).unwrap();
     let tamtam = module.get_type("Tamtam").unwrap().unwrap();
     let bar = get_method(&tamtam, "Bar");
@@ -228,7 +228,7 @@ fn function_pointers_and_call_sites() {
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:203 (ThisParameter)
 #[test]
 fn this_parameter() {
-    let data = read_fixture("hello.il.dll");
+    let data = read_fixture!("hello.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo").unwrap().unwrap();
     let method = get_method(&ty, "Gazonk");
@@ -253,7 +253,7 @@ fn this_parameter() {
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:272 (FilterMaxStack)
 #[test]
 fn filter_max_stack() {
-    let data = read_fixture("hello.il.dll");
+    let data = read_fixture!("hello.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo").unwrap().unwrap();
     let method = get_method(&ty, "TestFilter");
@@ -264,7 +264,7 @@ fn filter_max_stack() {
 // Windows-only here: CoreCLR ilasm assembles branch-out.il fine (PLAN.md §7).
 #[test]
 fn branch_outside_method() {
-    let data = read_fixture("branch-out.il.dll");
+    let data = read_fixture!("branch-out.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo").unwrap().unwrap();
     let method = get_method(&ty, "BranchOutside");
@@ -288,7 +288,7 @@ fn iterator() {
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:312 (LoadString)
 #[test]
 fn load_string() {
-    let data = read_fixture("CustomAttributes.cs.dll");
+    let data = read_fixture!("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("FooAttribute").unwrap().unwrap();
     let get_fiou = get_method(&ty, "get_Fiou");
@@ -318,7 +318,7 @@ fn load_string() {
 #[test]
 fn type_reference_value_type() {
     use cil_reader::model::TypeSig;
-    let data = read_fixture("Methods.cs.dll");
+    let data = read_fixture!("Methods.cs.dll");
     let module = Module::read(&data).unwrap();
     let baz = module.get_type("Baz").unwrap().unwrap();
     let method = get_method(&baz, "PrintAnswer");
@@ -351,7 +351,7 @@ fn type_reference_value_type() {
 #[test]
 fn generic_instance_method() {
     use cil_reader::TokenType;
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("It").unwrap().unwrap();
     let method = get_method(&ty, "ReadPwow");
@@ -373,7 +373,7 @@ fn generic_instance_method() {
 #[test]
 fn method_ref_declared_on_generics() {
     use cil_reader::TokenType;
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Tamtam").unwrap().unwrap();
 

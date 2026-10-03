@@ -9,7 +9,7 @@ use testutil::{read_fixture, read_resource};
 // Test/Mono.Cecil.Tests/NestedTypesTests.cs:12 (NestedTypes)
 #[test]
 fn nested_types() {
-    let data = read_fixture("NestedTypes.cs.dll");
+    let data = read_fixture!("NestedTypes.cs.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
 
@@ -32,7 +32,7 @@ fn nested_types() {
 // Test/Mono.Cecil.Tests/NestedTypesTests.cs:38 (DirectNestedType)
 #[test]
 fn direct_nested_type() {
-    let data = read_fixture("NestedTypes.cs.dll");
+    let data = read_fixture!("NestedTypes.cs.dll");
     let module = Module::read(&data).unwrap();
     let bingo = module.get_type("Bingo").unwrap().unwrap();
     let get_fuel = bingo

@@ -10,7 +10,7 @@ use testutil::read_fixture;
 // Test/Mono.Cecil.Tests/PropertyTests.cs:11 (AbstractMethod)
 #[test]
 fn property_abstract_method() {
-    let data = read_fixture("Properties.cs.dll");
+    let data = read_fixture!("Properties.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo").unwrap().unwrap();
     assert!(ty.has_properties().unwrap());
@@ -51,7 +51,7 @@ fn property_abstract_method() {
 // Test/Mono.Cecil.Tests/PropertyTests.cs:59 (OtherMethod)
 #[test]
 fn property_other_method() {
-    let data = read_fixture("others.il.dll");
+    let data = read_fixture!("others.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Others").unwrap().unwrap();
     assert!(ty.has_properties().unwrap());
@@ -77,7 +77,7 @@ fn property_other_method() {
 // Test/Mono.Cecil.Tests/PropertyTests.cs:90 (SetOnlyIndexer)
 #[test]
 fn set_only_indexer() {
-    let data = read_fixture("Properties.cs.dll");
+    let data = read_fixture!("Properties.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Bar").unwrap().unwrap();
     let indexer = ty
@@ -105,7 +105,7 @@ fn set_only_indexer() {
 // Test/Mono.Cecil.Tests/PropertyTests.cs:104 (ReadSemanticsFirst)
 #[test]
 fn read_semantics_first() {
-    let data = read_fixture("Properties.cs.dll");
+    let data = read_fixture!("Properties.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Baz").unwrap().unwrap();
     let setter = ty
@@ -132,7 +132,7 @@ fn read_semantics_first() {
 // Test/Mono.Cecil.Tests/EventTests.cs:14 (AbstractMethod)
 #[test]
 fn event_abstract_method() {
-    let data = read_fixture("Events.cs.dll");
+    let data = read_fixture!("Events.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Foo").unwrap().unwrap();
     assert!(ty.has_events().unwrap());
@@ -160,7 +160,7 @@ fn event_abstract_method() {
 // Test/Mono.Cecil.Tests/EventTests.cs:39 (OtherMethod)
 #[test]
 fn event_other_method() {
-    let data = read_fixture("others.il.dll");
+    let data = read_fixture!("others.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Others").unwrap().unwrap();
     assert!(ty.has_events().unwrap());

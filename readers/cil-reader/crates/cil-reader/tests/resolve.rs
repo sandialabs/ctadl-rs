@@ -57,7 +57,7 @@ fn member_ref_operand(
 // comes from hello.il.dll's `ldsfld System.String System.String::Empty`.
 #[test]
 fn string_empty() {
-    let data = read_fixture("hello.il.dll");
+    let data = read_fixture!("hello.il.dll");
     let module = Module::read(&data).unwrap();
     require_cecil!();
     let loader = loader();
@@ -84,7 +84,7 @@ fn string_empty() {
 // many WriteLine overloads.
 #[test]
 fn console_write_line_overload() {
-    let data = read_fixture("hello.il.dll");
+    let data = read_fixture!("hello.il.dll");
     let module = Module::read(&data).unwrap();
     require_cecil!();
     let loader = loader();
@@ -117,7 +117,7 @@ fn console_write_line_overload() {
 // System.Collections, outside the pinned-fixture universe.
 #[test]
 fn generic_instance_member_resolves_to_open_definition() {
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     require_cecil!();
     let loader = loader();
@@ -180,7 +180,7 @@ fn type_forwarder_circularity() {
 // — a Get method on a rectangular generic-parameter array resolves to null.
 #[test]
 fn rectangular_array_resolve_get_method() {
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     require_cecil!();
     let loader = loader();

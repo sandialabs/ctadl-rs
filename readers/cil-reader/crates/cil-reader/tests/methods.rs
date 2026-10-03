@@ -23,7 +23,7 @@ fn get_method<'a>(ty: &TypeDef<'a>, name: &str) -> MethodDef<'a> {
 // Test/Mono.Cecil.Tests/MethodTests.cs:15 (AbstractMethod)
 #[test]
 fn abstract_method() {
-    let data = read_fixture("Methods.cs.dll");
+    let data = read_fixture!("Methods.cs.dll");
     let module = Module::read(&data).unwrap();
     let types = module.types().unwrap();
     let ty = &types[1];
@@ -50,7 +50,7 @@ fn abstract_method() {
 // Test/Mono.Cecil.Tests/MethodTests.cs:37 (SimplePInvoke)
 #[test]
 fn simple_pinvoke() {
-    let data = read_fixture("Methods.cs.dll");
+    let data = read_fixture!("Methods.cs.dll");
     let module = Module::read(&data).unwrap();
     let bar = module.get_type("Bar").unwrap().unwrap();
     let pan = get_method(&bar, "Pan");
@@ -67,7 +67,7 @@ fn simple_pinvoke() {
 // Test/Mono.Cecil.Tests/MethodTests.cs:53 (GenericMethodDefinition)
 #[test]
 fn generic_method_definition() {
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let baz = module.get_type("Baz").unwrap().unwrap();
     let gazonk = get_method(&baz, "Gazonk");
@@ -81,7 +81,7 @@ fn generic_method_definition() {
 #[test]
 fn return_generic_instance() {
     use cil_reader::model::TypeSig;
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let bar = module.get_type("Bar`1").unwrap().unwrap();
 
@@ -107,7 +107,7 @@ fn return_generic_instance() {
 #[test]
 fn return_generic_instance_with_method_parameter() {
     use cil_reader::model::TypeSig;
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let baz = module.get_type("Baz").unwrap().unwrap();
     let gazoo = get_method(&baz, "Gazoo");
@@ -126,7 +126,7 @@ fn return_generic_instance_with_method_parameter() {
 // Test/Mono.Cecil.Tests/MethodTests.cs:117 (SimpleOverrides)
 #[test]
 fn simple_overrides() {
-    let data = read_fixture("Interfaces.cs.dll");
+    let data = read_fixture!("Interfaces.cs.dll");
     let module = Module::read(&data).unwrap();
     let ibingo = module.get_type("IBingo").unwrap().unwrap();
     let ibingo_foo = get_method(&ibingo, "Foo");

@@ -2,7 +2,6 @@
 //!
 //! - `codegen`   — regenerate crates/cil-reader/src/cil/opcodes.rs from the
 //!   vendored Cecil sources (provably matching Cecil's opcode table).
-//! - `fixtures`  — build tests/fixtures from Cecil's .il/.cs test sources.
 //! - `regression` — full-read sweep + golden dump diff over the corpus.
 //! - `compare`   — run cil-dump vs CecilDump side by side.
 //! - `bless`     — regenerate goldens from CecilDump.
@@ -13,7 +12,6 @@ use std::process::ExitCode;
 
 mod codegen;
 mod compare;
-mod fixtures;
 mod regression;
 mod vendor;
 
@@ -30,7 +28,7 @@ fn main() -> ExitCode {
     let rest = &args[1.min(args.len())..];
 
     // Everything below reads Cecil's sources or test assemblies.
-    if let Some("codegen" | "fixtures" | "regression" | "compare" | "bless") = cmd
+    if let Some("codegen" | "regression" | "compare" | "bless") = cmd
         && let Err(e) = vendor::ensure(&root())
     {
         eprintln!("vendor: {e}");
@@ -39,14 +37,13 @@ fn main() -> ExitCode {
 
     match cmd {
         Some("codegen") => codegen::run(&root()),
-        Some("fixtures") => fixtures::run(&root()),
         Some("regression") => regression::run(&root(), rest),
         Some("compare") => compare::run(&root(), rest, false),
         Some("bless") => compare::run(&root(), rest, true),
         Some("vendor") => vendor::run(&root()),
         Some(other) => {
             eprintln!("unknown xtask command: {other}");
-            eprintln!("available: codegen, fixtures, regression, compare, bless, vendor");
+            eprintln!("available: codegen, regression, compare, bless, vendor");
             ExitCode::FAILURE
         }
         None => {
@@ -54,7 +51,6 @@ fn main() -> ExitCode {
             eprintln!();
             eprintln!("commands:");
             eprintln!("  codegen     regenerate opcodes.rs from Cecil's OpCodes.cs");
-            eprintln!("  fixtures    compile Cecil's .il/.cs test fixtures (needs nix devshell)");
             eprintln!("  regression  full-read sweep + golden dump diff over the corpus");
             eprintln!("  compare     cil-dump vs CecilDump side by side (needs nix devshell)");
             eprintln!(

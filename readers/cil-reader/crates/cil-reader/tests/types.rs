@@ -15,7 +15,7 @@ use testutil::{read_fixture, read_resource};
 // Test/Mono.Cecil.Tests/TypeTests.cs:15 (TypeLayout)
 #[test]
 fn type_layout() {
-    let data = read_fixture("Layouts.cs.dll");
+    let data = read_fixture!("Layouts.cs.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     assert!(foo.is_value_type().unwrap());
@@ -30,7 +30,7 @@ fn type_layout() {
 // Test/Mono.Cecil.Tests/TypeTests.cs:33 (SimpleInterfaces)
 #[test]
 fn simple_interfaces() {
-    let data = read_fixture("types.il.dll");
+    let data = read_fixture!("types.il.dll");
     let module = Module::read(&data).unwrap();
     let ibaz = module.get_type("IBaz").unwrap().unwrap();
     assert!(ibaz.has_interfaces().unwrap());
@@ -47,7 +47,7 @@ fn simple_interfaces() {
 // Test/Mono.Cecil.Tests/TypeTests.cs:52 (GenericTypeDefinition)
 #[test]
 fn generic_type_definition() {
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo`2").unwrap().unwrap();
     assert!(foo.has_generic_params().unwrap());
@@ -62,7 +62,7 @@ fn generic_type_definition() {
 // Test/Mono.Cecil.Tests/TypeTests.cs:74 (ConstrainedGenericType)
 #[test]
 fn constrained_generic_type() {
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let bongo_t = module.get_type("Bongo`1").unwrap().unwrap();
     let params = bongo_t.generic_params().unwrap();
@@ -78,7 +78,7 @@ fn constrained_generic_type() {
 // Test/Mono.Cecil.Tests/TypeTests.cs:93 (GenericBaseType)
 #[test]
 fn generic_base_type() {
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let child = module.get_type("Child`1").unwrap().unwrap();
     let base = child.base_type().unwrap().unwrap();
@@ -100,7 +100,7 @@ fn generic_base_type() {
 // Test/Mono.Cecil.Tests/TypeTests.cs:110 (GenericConstraintOnGenericParameter)
 #[test]
 fn generic_constraint_on_generic_parameter() {
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let duel = module.get_type("Duel`3").unwrap().unwrap();
     let params = duel.generic_params().unwrap();
@@ -123,7 +123,7 @@ fn generic_constraint_on_generic_parameter() {
 // Test/Mono.Cecil.Tests/TypeTests.cs:127 (GenericForwardBaseType)
 #[test]
 fn generic_forward_base_type() {
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let tamchild = module.get_type("TamChild").unwrap().unwrap();
     let base = tamchild.base_type().unwrap().unwrap();
@@ -147,7 +147,7 @@ fn generic_forward_base_type() {
 // Test/Mono.Cecil.Tests/TypeTests.cs:145 (TypeExtentingGenericOfSelf)
 #[test]
 fn type_extending_generic_of_self() {
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let rec_child = module.get_type("RecChild").unwrap().unwrap();
     let base = rec_child.base_type().unwrap().unwrap();
@@ -229,7 +229,7 @@ fn unbound_generic_parameter() {
 // Test/Mono.Cecil.Tests/TypeTests.cs:238 (ExplicitThis)
 #[test]
 fn explicit_this() {
-    let data = read_fixture("explicitthis.il.dll");
+    let data = read_fixture!("explicitthis.il.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("MakeDecision").unwrap().unwrap();
     let method = ty

@@ -166,7 +166,7 @@ fn boxed_default_argument_value() {
 // Test/Mono.Cecil.Tests/ParameterTests.cs:236 (GenericParameterConstant)
 #[test]
 fn generic_parameter_constant() {
-    let data = read_fixture("hello.il.dll");
+    let data = read_fixture!("hello.il.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let method = get_method(&foo, "GetState");

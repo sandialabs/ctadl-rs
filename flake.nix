@@ -81,6 +81,80 @@
         '';
         checksarif = pkgs.callPackage ./nix/sarif-multitool/checksarif.nix { };
 
+        # The standalone CoreCLR IL assembler, which cil-reader's `.il` fixtures
+        # are assembled with. It ships only as a NuGet package per runtime
+        # identifier -- a plain zip holding one native binary -- so it is
+        # fetched by hash rather than restored.
+        ilasm =
+          let
+            version = "10.0.11";
+            rid =
+              {
+                aarch64-darwin = "osx-arm64";
+                x86_64-darwin = "osx-x64";
+                x86_64-linux = "linux-x64";
+                aarch64-linux = "linux-arm64";
+              }
+              .${system};
+            hash =
+              {
+                osx-arm64 = "sha256-PspYHXxmIqjKPoomWcV8QCwuJJH2l5qi+WRLVoikrNw=";
+                osx-x64 = "sha256-y2bQ9Q53gOzHfibUFyPDLZdICY5UdPJz3UL9LbhOWh8=";
+                linux-x64 = "sha256-rurF5fJ8rh5M19yPfcFa1TohojXW3QBSNU79CF3/EoE=";
+                linux-arm64 = "sha256-MEXawy+UO90M79QL1EqCaM0l2Kq2utDWoE3q/mUPB2k=";
+              }
+              .${rid};
+          in
+          pkgs.stdenv.mkDerivation {
+            pname = "ilasm";
+            inherit version;
+            src = pkgs.fetchurl {
+              name = "runtime.${rid}.Microsoft.NETCore.ILAsm.${version}.nupkg";
+              url = "https://www.nuget.org/api/v2/package/runtime.${rid}.Microsoft.NETCore.ILAsm/${version}";
+              inherit hash;
+            };
+            nativeBuildInputs = [
+              pkgs.unzip
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.autoPatchelfHook ];
+            buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+              pkgs.stdenv.cc.cc.lib
+            ];
+            unpackPhase = ''
+              unzip -q "$src"
+            '';
+            installPhase = ''
+              install -Dm755 runtimes/${rid}/native/ilasm "$out/bin/ilasm"
+            '';
+          };
+
+        # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled by
+        # readers/cil-reader/tools/build-fixtures.sh. Built here rather than
+        # committed; the tests find them through CIL_READER_FIXTURES. Offline
+        # (nothing references a NuGet package) and byte-for-byte reproducible.
+        cilFixtures = pkgs.stdenvNoCC.mkDerivation {
+          # `name` rather than pname/version: see cecilDump.
+          name = "cil-fixtures-${builtins.substring 0 7 cecil.rev}";
+          dontUnpack = true;
+          nativeBuildInputs = [
+            pkgs.dotnet-sdk_8
+            ilasm
+          ];
+          env = {
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+            DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
+          };
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
+            bash ${./readers/cil-reader/tools/build-fixtures.sh} ${cecil} "$out" "$TMPDIR/work"
+            runHook postBuild
+          '';
+          dontInstall = true;
+        };
+
         # CecilDump (readers/cil-reader/tools/CecilDump): the cil-dump text
         # format rendered by Mono.Cecil, i.e. the Cecil side of the cil-reader
         # parity comparison. Built here so it is cached rather than rebuilt by
@@ -375,6 +449,7 @@
         packages.default = naersk-lib.buildPackage ./.;
         # Exposed so `nix build .#cecil-dump` can warm the cache on its own.
         packages.cecil-dump = cecilDump;
+        packages.cil-fixtures = cilFixtures;
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
         # Run a wrapper around ctadl-ascent that lets Ghidra process pcode
@@ -588,6 +663,8 @@
             # corpus, and readers/cil-reader's `cargo xtask vendor` copies it
             # into extern/cecil.
             CECIL_SRC = "${cecil}";
+            # cil-reader's compiled fixtures, for the same consumers.
+            CIL_READER_FIXTURES = "${cilFixtures}";
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
             # The debugging SDK, a superset of the regression one, so the
             # emulator finds its system image through this.

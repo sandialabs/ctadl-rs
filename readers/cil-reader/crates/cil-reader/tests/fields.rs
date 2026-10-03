@@ -22,7 +22,7 @@ fn get_field<'a>(ty: &TypeDef<'a>, name: &str) -> FieldDef<'a> {
 // Test/Mono.Cecil.Tests/FieldTests.cs:13 (TypeDefField)
 #[test]
 fn type_def_field() {
-    let data = read_fixture("Fields.cs.dll");
+    let data = read_fixture!("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let types = module.types().unwrap();
     let ty = &types[1];
@@ -44,7 +44,7 @@ fn type_def_field() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:32 (PrimitiveTypes)
 #[test]
 fn primitive_types() {
-    let data = read_fixture("Fields.cs.dll");
+    let data = read_fixture!("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Baz").unwrap().unwrap();
     for (name, expected) in [
@@ -74,7 +74,7 @@ fn primitive_types() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:55 (VolatileField)
 #[test]
 fn volatile_field() {
-    let data = read_fixture("Fields.cs.dll");
+    let data = read_fixture!("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Bar").unwrap().unwrap();
     let fields = ty.fields().unwrap();
@@ -94,7 +94,7 @@ fn volatile_field() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:73 (FieldLayout)
 #[test]
 fn field_layout() {
-    let data = read_fixture("Layouts.cs.dll");
+    let data = read_fixture!("Layouts.cs.dll");
     let module = Module::read(&data).unwrap();
     let foo = module.get_type("Foo").unwrap().unwrap();
     let fields = foo.fields().unwrap();
@@ -110,7 +110,7 @@ fn field_layout() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:104 (FieldRVA)
 #[test]
 fn field_rva() {
-    let data = read_fixture("Layouts.cs.dll");
+    let data = read_fixture!("Layouts.cs.dll");
     let module = Module::read(&data).unwrap();
     let priv_impl = module
         .types()
@@ -137,7 +137,7 @@ fn field_rva() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:181 (GenericFieldDefinition)
 #[test]
 fn generic_field_definition() {
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let bar = module.get_type("Bar`1").unwrap().unwrap();
     assert!(bar.has_generic_params().unwrap());
@@ -154,7 +154,7 @@ fn generic_field_definition() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:202 (ArrayFields)
 #[test]
 fn array_fields() {
-    let data = read_fixture("types.il.dll");
+    let data = read_fixture!("types.il.dll");
     let module = Module::read(&data).unwrap();
     let types = module.get_type("Types").unwrap().unwrap();
 
@@ -192,7 +192,7 @@ fn array_fields() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:242 (EnumFieldsConstant)
 #[test]
 fn enum_fields_constant() {
-    let data = read_fixture("Fields.cs.dll");
+    let data = read_fixture!("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let pim = module.get_type("Pim").unwrap().unwrap();
     let field = get_field(&pim, "Pam");
@@ -205,7 +205,7 @@ fn enum_fields_constant() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:258 (StringAndClassConstant)
 #[test]
 fn string_and_class_constant() {
-    let data = read_fixture("Fields.cs.dll");
+    let data = read_fixture!("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let panpan = module.get_type("PanPan").unwrap().unwrap();
 
@@ -226,7 +226,7 @@ fn string_and_class_constant() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:277 (ObjectConstant)
 #[test]
 fn object_constant() {
-    let data = read_fixture("Fields.cs.dll");
+    let data = read_fixture!("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let panpan = module.get_type("PanPan").unwrap().unwrap();
     let field = get_field(&panpan, "obj");
@@ -237,7 +237,7 @@ fn object_constant() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:290 (NullPrimitiveConstant)
 #[test]
 fn null_primitive_constant() {
-    let data = read_fixture("types.il.dll");
+    let data = read_fixture!("types.il.dll");
     let module = Module::read(&data).unwrap();
     let fields = module.get_type("Fields").unwrap().unwrap();
     let field = get_field(&fields, "int32_nullref");
@@ -248,7 +248,7 @@ fn null_primitive_constant() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:302 (ArrayConstant)
 #[test]
 fn array_constant() {
-    let data = read_fixture("Fields.cs.dll");
+    let data = read_fixture!("Fields.cs.dll");
     let module = Module::read(&data).unwrap();
     let panpan = module.get_type("PanPan").unwrap().unwrap();
     let field = get_field(&panpan, "ints");
@@ -259,7 +259,7 @@ fn array_constant() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:315 (ConstantCoalescing)
 #[test]
 fn constant_coalescing() {
-    let data = read_fixture("types.il.dll");
+    let data = read_fixture!("types.il.dll");
     let module = Module::read(&data).unwrap();
     let fields = module.get_type("Fields").unwrap().unwrap();
 
@@ -286,7 +286,7 @@ fn constant_coalescing() {
 // Test/Mono.Cecil.Tests/FieldTests.cs:347 (NestedEnumOfGenericTypeDefinition)
 #[test]
 fn nested_enum_of_generic_type_definition() {
-    let data = read_fixture("Generics.cs.dll");
+    let data = read_fixture!("Generics.cs.dll");
     let module = Module::read(&data).unwrap();
     let dang = module.get_type("Bongo`1/Dang").unwrap().unwrap();
     let field = get_field(&dang, "Ding");
