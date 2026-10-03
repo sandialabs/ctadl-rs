@@ -7,7 +7,7 @@
     root flake's `cecilDump` derivation builds it. NET_CORE matches what
     Mono.Cecil.csproj defines for its netstandard2.0 target.
 
-    CecilSrc is the Cecil checkout; it defaults to the vendored extern/cecil.
+    CecilSrc is the Cecil checkout; it defaults to a hand-cloned extern/cecil.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

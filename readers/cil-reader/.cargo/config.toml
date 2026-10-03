@@ -1,3 +1,2 @@
 [alias]
-xtask = "run --quiet --package cil-xtask --"
 dump = "run --quiet --package cil-dump --features cli --"

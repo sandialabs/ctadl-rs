@@ -2,7 +2,8 @@
 //! Cecil-side dumper (`tools/CecilDump`).
 //!
 //! Used by the root workspace's xtask: the `cil:*` checks of `cargo xtask
-//! regression --frontend cil`.
+//! regression --frontend cil`, and `cargo xtask cil bless`, which writes the
+//! goldens those checks read.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

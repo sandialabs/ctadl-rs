@@ -19,6 +19,7 @@
 //!   and the regression check); self-skips without it.
 //!
 //! The corpus, golden naming and comparison rules live in `cil_dump::parity`.
+//! `cargo xtask cil bless` regenerates the goldens.
 //!
 //! Neither input is committed. Cecil comes from `--cecil-src`, else a
 //! checkout cloned by hand into `readers/cil-reader/extern/cecil`, else
@@ -306,4 +307,50 @@ pub fn resolve_cecil_src(
     let vendored = cil_dir.map(|d| d.join("extern/cecil"));
     let pinned = std::env::var_os("CECIL_SRC").map(PathBuf::from);
     Ok(vendored.into_iter().chain(pinned).find(|d| d.is_dir()))
+}
+
+/// `cargo xtask cil bless [filter]`: regenerate the committed goldens
+/// (`tests/expected`) from CecilDump. Needed after moving the flake's `cecil`
+/// pin or changing the dump format on both sides; review the diff before
+/// committing it. Only Cecil's own assemblies get goldens; see
+/// `Input::golden_name`.
+pub fn bless(cil_dir: &Path, cecil: &Path, filter: Option<&str>) -> Result<bool> {
+    let cecil_dump = CecilDump::locate().with_context(|| {
+        format!(
+            "`cecil-dump` not on PATH and ${} unset; enter the dev shell or \
+             `nix build .#cecil-dump`",
+            parity::CECIL_DUMP_ENV
+        )
+    })?;
+    let goldens = cil_dir.join(GOLDENS_DIR);
+    std::fs::create_dir_all(&goldens)?;
+    let mut written = 0usize;
+    let mut errors = 0usize;
+    for input in parity::corpus(cecil, None) {
+        let name = input.name();
+        let Some(golden_name) = input.golden_name() else {
+            continue;
+        };
+        if parity::compare_skip(&name) {
+            continue;
+        }
+        if filter.is_some_and(|f| !name.contains(f)) {
+            continue;
+        }
+        match cecil_dump.dump(&input.path) {
+            Ok(dump) => {
+                std::fs::write(goldens.join(golden_name), dump)?;
+                written += 1;
+            }
+            Err(e) => {
+                eprintln!("ERROR {name}: {}", e.trim_end());
+                errors += 1;
+            }
+        }
+    }
+    println!(
+        "bless: wrote {written} golden(s) to {}, {errors} error(s)",
+        goldens.display()
+    );
+    Ok(errors == 0)
 }

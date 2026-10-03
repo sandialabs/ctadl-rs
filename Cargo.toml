@@ -16,7 +16,6 @@ members = [
     "readers/pcode-reader",
     "readers/cil-reader/crates/cil-reader",
     "readers/cil-reader/crates/cil-dump",
-    "readers/cil-reader/xtask",
     "immortal",
     "tailshare",
     "trie",

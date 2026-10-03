@@ -17,8 +17,7 @@
     # Its test assemblies are cil-reader's corpus, and `cecilDump` builds the
     # Cecil side of the parity comparison from these sources. Pinned to the
     # commit the committed goldens (readers/cil-reader/tests/expected) were
-    # blessed against; moving it means re-running `cargo xtask bless` under
-    # readers/cil-reader.
+    # blessed against; moving it means re-running `cargo xtask cil bless`.
     cecil = {
       url = "github:jbevain/cecil/882ca5eedda1e62eb41bd5869aeb15d8f1538e51";
       flake = false;
@@ -158,10 +157,11 @@
 
         # CecilDump (readers/cil-reader/tools/CecilDump): the cil-dump text
         # format rendered by Mono.Cecil, i.e. the Cecil side of the cil-reader
-        # parity checks (`cil:cecil-compare` in `xtask regression`). Built here
-        # so it is cached rather than rebuilt by every run. The project compiles
-        # the pinned Cecil sources in directly and references no NuGet packages,
-        # so the restore needs no network and runs inside the sandbox as is.
+        # parity checks (`cil:cecil-compare` in `xtask regression`) and what
+        # `xtask cil bless` writes the goldens from. Built here so it is cached
+        # rather than rebuilt by every run. The project compiles the pinned
+        # Cecil sources in directly and references no NuGet packages, so the
+        # restore needs no network and runs inside the sandbox as is.
         cecilDump = pkgs.stdenvNoCC.mkDerivation {
           # `name` rather than pname/version: MSBuild reads the environment as
           # properties, and a `version` variable lands as $(Version), which
@@ -668,9 +668,8 @@
             packages = [ testEnv ];
 
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
-            # The pinned Mono.Cecil checkout: cil-reader's tests and the `cil:*`
-            # checks read its test corpus, and readers/cil-reader's `cargo xtask
-            # vendor` copies it into extern/cecil.
+            # The pinned Mono.Cecil checkout: cil-reader's tests, the `cil:*`
+            # checks and `cargo xtask cil` read it.
             CECIL_SRC = "${cecil}";
             # cil-reader's compiled fixtures, for the same consumers.
             CIL_READER_FIXTURES = "${cilFixtures}";

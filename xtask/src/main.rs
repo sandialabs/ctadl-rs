@@ -1,9 +1,11 @@
 //! `cargo xtask` — developer task runner.
 //!
-//! Two tasks. `regression` ports the former bash harness (`nightly/tests.sh` and friends)
+//! Three tasks. `regression` ports the former bash harness (`nightly/tests.sh` and friends)
 //! for the source-sink taint regression tests, and is what CI runs. `report-eval` sweeps
 //! `ctadl report` across a directory of real apps and keeps the per-app JSON; it is a
-//! measurement tool rather than a check, and nothing depends on it passing.
+//! measurement tool rather than a check, and nothing depends on it passing. `cil`
+//! regenerates cil-reader's committed artifacts (goldens, opcode table) from
+//! Mono.Cecil.
 //!
 //! Usage:
 //!     cargo xtask regression
@@ -11,12 +13,14 @@
 //!     cargo xtask regression --filter <name>
 //!     cargo xtask regression --tests-dir <dir>
 //!     cargo xtask report-eval --apks <dir>
+//!     cargo xtask cil bless|codegen
 
 mod android_icc;
 mod apk;
 mod assertions;
 mod baksmali;
 mod cil;
+mod cil_codegen;
 mod dex;
 mod discovery;
 mod exec;
@@ -59,6 +63,7 @@ fn run() -> Result<bool> {
             let opts = parse_report_eval_args(args)?;
             report_eval::run(&opts)
         }
+        Some("cil") => run_cil(args),
         Some("-h" | "--help") | None => {
             print_help();
             Ok(true)
@@ -140,6 +145,48 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
         opts.frontends = selected;
     }
     Ok(opts)
+}
+
+/// `cargo xtask cil <command>`: regenerate cil-reader's committed artifacts
+/// from the pinned Mono.Cecil. Checking them is `regression --frontend cil`.
+fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
+    let command = args
+        .next()
+        .context("`cil` requires a command: bless or codegen")?;
+    let mut cil_dir = None;
+    let mut cecil_src = None;
+    let mut filter = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--cil-dir" => {
+                cil_dir = Some(PathBuf::from(
+                    args.next().context("--cil-dir requires a value")?,
+                ));
+            }
+            "--cecil-src" => {
+                cecil_src = Some(PathBuf::from(
+                    args.next().context("--cecil-src requires a value")?,
+                ));
+            }
+            "--filter" if command == "bless" => {
+                filter = Some(args.next().context("--filter requires a value")?);
+            }
+            "-h" | "--help" => {
+                print_help();
+                std::process::exit(0);
+            }
+            other => bail!("unknown argument `{other}` (try `xtask --help`)"),
+        }
+    }
+    let cil_dir = cil::resolve_cil_dir(cil_dir.as_deref())?
+        .context("cil-reader directory not found; pass --cil-dir")?;
+    let cecil = cil::resolve_cecil_src(cecil_src.as_deref(), Some(&cil_dir))?
+        .context("no Cecil checkout: pass --cecil-src or set CECIL_SRC (the dev shell does)")?;
+    match command.as_str() {
+        "bless" => cil::bless(&cil_dir, &cecil, filter.as_deref()),
+        "codegen" => Ok(cil_codegen::run(&cecil, &cil_dir)),
+        other => bail!("unknown `cil` command `{other}` (expected bless or codegen)"),
+    }
 }
 
 fn parse_report_eval_args(mut args: impl Iterator<Item = String>) -> Result<report_eval::Options> {
@@ -244,6 +291,16 @@ Tasks:
                              $CIL_READER_FIXTURES, which the dev shell sets to
                              the flake's `cil-fixtures`). The `cil:*` checks
                              self-skip without them.
+
+  cil <command>              Regenerate cil-reader's committed artifacts from the
+                             pinned Mono.Cecil (checking them is
+                             `regression --frontend cil`). Takes --cil-dir and
+                             --cecil-src as `regression` does.
+    bless [--filter <name>]  Rewrite readers/cil-reader/tests/expected from
+                             `cecil-dump` (on PATH in the dev shell). Needed after
+                             moving the flake's `cecil` pin.
+    codegen                  Regenerate cil-reader's opcode table from Cecil's
+                             OpCodes.cs.
 
   report-eval --apks <dir>   Run `ctadl report` over a directory of artifacts and
                              print a cross-app summary, keeping each app's JSON.

@@ -1,7 +1,8 @@
 // CecilDump: deterministic text dump of a CIL image on top of Mono.Cecil.
 //
-// The output format is the contract shared with crates/cil-dump; `cargo xtask
-// compare` diffs the two, and `cargo xtask bless` saves this side as the
+// The output format is the contract shared with crates/cil-dump; the root
+// `cargo xtask regression --frontend cil` diffs the two, and `cargo xtask cil
+// bless` saves this side as the
 // goldens in tests/expected/.
 //
 // Determinism notes:
