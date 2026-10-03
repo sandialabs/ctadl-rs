@@ -5,7 +5,7 @@ class-hierarchy analysis over the type graph, `CallStyle`-tagged virtual calls t
 feed CHA + hybrid inlining, field-sensitive lowering of member access, and a
 per-language default model file.
 
-The bytecode reader already exists: `cil-reader` (M0–M7 of its own `PLAN.md`, 166
+The bytecode reader already exists: `cil-reader` (M0–M7 of its original plan, 166
 tests green off committed fixtures, byte-identical to Mono.Cecil on 114/114 corpus
 files). What it does **not** have is the layer both other bytecode frontends depend
 on — a per-instruction dataflow view — so that is where this plan starts.

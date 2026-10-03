@@ -250,7 +250,8 @@ fn filter_max_stack() {
 }
 
 // Test/Mono.Cecil.Tests/MethodBodyTests.cs:284 (BranchOutsideMethod) — not
-// Windows-only here: CoreCLR ilasm assembles branch-out.il fine (PLAN.md §7).
+// Windows-only here: CoreCLR ilasm assembles branch-out.il fine
+// (Mono's ilasm does not, hence Cecil's OnlyOnWindows gate).
 fn branch_outside_method() {
     let data = read_fixture("branch-out.il.dll");
     let module = Module::read(&data).unwrap();

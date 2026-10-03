@@ -3,7 +3,7 @@
 //! Deferred to M4 (need method bodies): TypeReferenceValueType,
 //! GenericMultidimensionalArray — see tests/method_body.rs once it exists.
 //! Skipped: CorlibPrimitive/DeferredCorlibTypeDef/CorlibTypesMetadataType
-//! (read the running framework's corlib; PLAN.md pins corlib-sensitive tests
+//! (read the running framework's corlib; corlib-sensitive tests are pinned
 //! to the mdb mscorlib fixture instead where they matter).
 
 use super::{read_fixture, read_resource, Test};

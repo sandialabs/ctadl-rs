@@ -40,7 +40,7 @@ pub const NO_GOLDEN: &[&str] = &[
 
 /// Excluded from the CecilDump comparison: Cecil applies WinRT projections
 /// on Windows metadata (renamed types, virtual assembly refs); we read the
-/// raw metadata (PLAN.md non-goal).
+/// raw metadata (projections are a non-goal).
 pub fn compare_skip(name: &str) -> bool {
     name.ends_with(".winmd")
 }

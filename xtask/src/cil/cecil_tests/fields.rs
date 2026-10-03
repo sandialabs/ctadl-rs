@@ -309,7 +309,7 @@ fn marshal_as_fixed_array() {
 }
 
 // Not a Cecil port: parity bug found by bringing Mono.Android.dll into
-// the Cecil comparison (PLAN.md §5.3). An ELEMENT_TYPE_STRING constant whose
+// the Cecil comparison. An ELEMENT_TYPE_STRING constant whose
 // Value blob is empty is "", not null — blob index 0 is the heap's
 // zero-length entry, not an absent blob (AssemblyReader.ReadConstantString
 // returns string.Empty for count == 0; a null string is ELEMENT_TYPE_CLASS).

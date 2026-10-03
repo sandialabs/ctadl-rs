@@ -1,5 +1,5 @@
-//! Ported from Test/Mono.Cecil.Tests/ResolveTests.cs (read subset), adapted
-//! per PLAN.md: corlib-sensitive tests resolve against the pinned
+//! Ported from Test/Mono.Cecil.Tests/ResolveTests.cs (read subset), adapted:
+//! corlib-sensitive tests resolve against the pinned
 //! `symbols/mdb/.../mscorlib.dll` fixture instead of the running framework's
 //! corlib. References come from corpus assemblies rather than `typeof`
 //! imports (we have no import machinery — reading only).

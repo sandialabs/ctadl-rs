@@ -1,8 +1,9 @@
 # cil-reader
 
 A read-only CIL (ECMA-335) metadata + bytecode reader in Rust, modeled on
-Mono.Cecil's reading API. See [PLAN.md](PLAN.md) for the design and
-[recon.md](recon.md) for the survey of Cecil's reading surface.
+Mono.Cecil's reading API. It parses PE images carrying CLI metadata and
+exposes their tables, heaps, type graph and IL, with nothing decoded until
+it is touched.
 
 The reader takes a single `&[u8]` for the whole image and returns
 subslice-backed values wherever the format allows. Two layers are exposed:
@@ -28,9 +29,7 @@ for ty in module.types()? {
 }
 ```
 
-## Status
-
-Milestones M0–M7 of PLAN.md are complete:
+## What it reads
 
 - **PE + metadata**: headers (PE32/PE32+), sections, CLI header, BSJB root,
   all 58 table kinds, heaps, coded indices, per-image row sizing.
@@ -43,12 +42,11 @@ Milestones M0–M7 of PLAN.md are complete:
 - **Blobs**: custom-attribute values (typeof/boxed/enum/array forms),
   security declarations (2.0 + legacy XML encodings), the reflection
   type-name grammar (`model::ParsedType`).
-- **Resolution** (M7): `AssemblyCache` + `AssemblyLoader`/`DirectoryLoader`,
+- **Resolution**: `AssemblyCache` + `AssemblyLoader`/`DirectoryLoader`,
   `Module::resolve_type/resolve_member` with type forwarders and base-type
   walks.
 
-Not implemented: portable PDB (optional M8), everything write-side (out of
-scope by design), WinRT projections (out of scope).
+Not supported: portable PDB, anything write-side, and WinRT projections.
 
 ### Cecil parity
 
