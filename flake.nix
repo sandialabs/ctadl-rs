@@ -129,40 +129,51 @@
             '';
           };
 
-        # PtrGen (readers/cil-reader/tools/PtrGen): rewrites a module with dnlib
-        # so its member tables go through FieldPtr/MethodPtr/ParamPtr/
-        # PropertyPtr/EventPtr, which neither Roslyn nor ilasm emit. Like
-        # cecilDump, it compiles the pinned dnlib sources in and needs no NuGet.
-        ptrGen = pkgs.stdenvNoCC.mkDerivation {
-          # `name` rather than pname/version: see cecilDump.
-          name = "ptr-gen-${builtins.substring 0 7 dnlib.rev}";
-          src = ./readers/cil-reader/tools/PtrGen;
-          nativeBuildInputs = [
-            pkgs.dotnet-sdk_8
-            pkgs.makeWrapper
-          ];
-          env = {
-            DOTNET_NOLOGO = "1";
-            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
-            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+        # A dnlib-based fixture tool in readers/cil-reader/tools/<project>,
+        # wrapped as bin/<name>. Like cecilDump, it compiles the pinned dnlib
+        # sources in and needs no NuGet.
+        dnlibTool =
+          name: project:
+          pkgs.stdenvNoCC.mkDerivation {
+            # `name` rather than pname/version: see cecilDump.
+            name = "${name}-${builtins.substring 0 7 dnlib.rev}";
+            src = ./readers/cil-reader/tools + "/${project}";
+            nativeBuildInputs = [
+              pkgs.dotnet-sdk_8
+              pkgs.makeWrapper
+            ];
+            env = {
+              DOTNET_NOLOGO = "1";
+              DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+              DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+            };
+            buildPhase = ''
+              runHook preBuild
+              export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
+              dotnet build -c Release --nologo -p:UseAppHost=false -p:DnlibSrc=${dnlib} -o out
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p "$out/lib/${name}" "$out/bin"
+              cp -R out/. "$out/lib/${name}/"
+              makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/${name}" \
+                --add-flags "$out/lib/${name}/${project}.dll" \
+                --set DOTNET_NOLOGO 1 \
+                --set DOTNET_CLI_TELEMETRY_OPTOUT 1
+              runHook postInstall
+            '';
           };
-          buildPhase = ''
-            runHook preBuild
-            export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
-            dotnet build -c Release --nologo -p:UseAppHost=false -p:DnlibSrc=${dnlib} -o out
-            runHook postBuild
-          '';
-          installPhase = ''
-            runHook preInstall
-            mkdir -p "$out/lib/ptr-gen" "$out/bin"
-            cp -R out/. "$out/lib/ptr-gen/"
-            makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/ptr-gen" \
-              --add-flags "$out/lib/ptr-gen/PtrGen.dll" \
-              --set DOTNET_NOLOGO 1 \
-              --set DOTNET_CLI_TELEMETRY_OPTOUT 1
-            runHook postInstall
-          '';
-        };
+
+        # PtrGen: rewrites a module with dnlib so its member tables go through
+        # FieldPtr/MethodPtr/ParamPtr/PropertyPtr/EventPtr, which neither
+        # Roslyn nor ilasm emit.
+        ptrGen = dnlibTool "ptr-gen" "PtrGen";
+
+        # GapGen: writes small modules with metadata shapes that Roslyn and
+        # ilasm do not emit but obfuscators do, each reproducing one of the
+        # Cecil divergences in readers/cil-reader/gaps.md.
+        gapGen = dnlibTool "gap-gen" "GapGen";
 
         # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled.
         # The tests find them through CIL_READER_FIXTURES. Offline (nothing
@@ -176,6 +187,10 @@
         #   path leaks into the bytes.
         # - `ptr-<name>.cs.dll`: each `.cs` fixture rewritten by ptrGen, so the
         #   corpus has images with Ptr tables. dnlib's output is deterministic.
+        # - `gap-<name>.il.dll` and `gap-<name>.dll`: cil-reader's own fixtures,
+        #   repros of Cecil divergences (readers/cil-reader/gaps.md): the `.il`
+        #   sources in readers/cil-reader/fixtures, assembled as Cecil's are,
+        #   and the modules gapGen writes.
         cilFixtures = pkgs.stdenvNoCC.mkDerivation {
           # `name` rather than pname/version: see cecilDump.
           name = "cil-fixtures-${builtins.substring 0 7 cecil.rev}";
@@ -184,6 +199,7 @@
             pkgs.dotnet-sdk_8
             ilasm
             ptrGen
+            gapGen
           ];
           env = {
             DOTNET_NOLOGO = "1";
@@ -196,7 +212,7 @@
             export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
             mkdir -p "$out" work
 
-            for il in ${cecil}/Test/Resources/il/*.il; do
+            for il in ${cecil}/Test/Resources/il/*.il ${./readers/cil-reader/fixtures}/*.il; do
               name=$(basename "$il")
               ilasm -nologo -quiet -dll -DET "-output=$out/$name.dll" "$il" >/dev/null
               echo "assembled $name.dll"
@@ -237,6 +253,8 @@
               ptr-gen "$out/$name.dll" "$out/ptr-$name.dll"
               echo "rewrote ptr-$name.dll"
             done
+
+            gap-gen "$out"
             runHook postBuild
           '';
           dontInstall = true;
@@ -539,6 +557,7 @@
         packages.cecil-dump = cecilDump;
         packages.cil-fixtures = cilFixtures;
         packages.ptr-gen = ptrGen;
+        packages.gap-gen = gapGen;
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
         # Run a wrapper around ctadl-ascent that lets Ghidra process pcode
