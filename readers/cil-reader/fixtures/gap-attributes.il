@@ -25,6 +25,33 @@
 	.method public hidebysig specialname rtspecialname instance void .ctor (valuetype [mscorlib]System.Boolean a, valuetype [mscorlib]System.Int64 b) cil managed { ret }
 	.method public hidebysig specialname rtspecialname instance void .ctor (valuetype [mscorlib]System.Int32[] a) cil managed { ret }
 	.method public hidebysig specialname rtspecialname instance void .ctor (class [mscorlib]System.Type a) cil managed { ret }
+	.method public hidebysig specialname rtspecialname instance void .ctor (valuetype NotEnum a) cil managed { ret }
+	.method public hidebysig specialname rtspecialname instance void .ctor (valuetype ObjectEnum a) cil managed { ret }
+	.method public hidebysig specialname rtspecialname instance void .ctor (valuetype ArrayEnum a) cil managed { ret }
+}
+
+// Argument types Cecil refuses to read as enums: a struct is not an enum,
+// and an enum's underlying type must be a primitive.
+.class public sequential ansi sealed NotEnum extends [mscorlib]System.ValueType
+{
+	.field public int16 value__
+}
+
+.class public auto ansi sealed ObjectEnum extends [mscorlib]System.Enum
+{
+	.field public specialname rtspecialname object value__
+}
+
+.class public auto ansi sealed ArrayEnum extends [mscorlib]System.Enum
+{
+	.field public specialname rtspecialname int32[] value__
+}
+
+.class public auto ansi beforefieldinit NotEnums extends [mscorlib]System.Object
+{
+	.custom instance void Attr::.ctor (valuetype NotEnum) = ( 01 00 2A 00 00 00 )
+	.custom instance void Attr::.ctor (valuetype ObjectEnum) = ( 01 00 08 07 00 00 00 00 00 )
+	.custom instance void Attr::.ctor (valuetype ArrayEnum) = ( 01 00 01 00 00 00 07 00 00 00 00 00 )
 }
 
 .class public auto ansi beforefieldinit Uses extends [mscorlib]System.Object

@@ -236,7 +236,7 @@ Sections:
 of these too, but in .NET that is a catchable exception or a contained crash.
 In Rust it aborts the host process.
 
-**B1. `unreachable!()` panic in attribute decoding.** *Reproduced.*
+**B1. `unreachable!()` panic in attribute decoding.** *Fixed:* `enum_underlying_of_def` (`model/custom_attributes.rs`) checks `IsEnum`, and rejects an object or array underlying type, which Cecil's `ReadPrimitiveValue` throws on; `gap-attributes.il.dll` covers both.
 - **Rust:** `model/custom_attributes.rs:658`, reached via `:645`.
 - **Cause:** the "enum" is never checked to have base type `System.Enum`, so its
   first instance field is taken as the underlying type, and that can be

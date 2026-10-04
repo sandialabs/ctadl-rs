@@ -503,11 +503,22 @@ fn is_exported(m: &ModuleData<'_>, name: &str, namespace: &str) -> Result<bool> 
     Ok(false)
 }
 
+/// `ReadCustomAttributeEnum`: the type must be an enum, and its underlying
+/// type is read as `ReadCustomAttributeElementValue` reads it, where an
+/// object or array throws.
 fn enum_underlying_of_def(m: &ModuleData<'_>, ty: &TypeDef<'_>) -> Result<CaType> {
     use crate::model::handles::field_attributes;
+    if !ty.is_enum()? {
+        return Err(Error::Unsupported("custom attribute enum type is not an enum"));
+    }
     for field in ty.fields()? {
         if field.attributes()? & field_attributes::STATIC == 0 {
-            return ca_type_of_sig(m, &field.field_type()?, None);
+            return match ca_type_of_sig(m, &field.field_type()?, None)? {
+                CaType::Object | CaType::Array(_) => Err(Error::Unsupported(
+                    "enum underlying type is not a primitive",
+                )),
+                underlying => Ok(underlying),
+            };
         }
     }
     Err(Error::Unsupported("enum type has no instance field"))
