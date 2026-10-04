@@ -49,3 +49,17 @@ ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkA
 	IL_0001: call System.Void System.Object::.ctor()
 	IL_0006: nop
 	IL_0007: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x1b000001 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -

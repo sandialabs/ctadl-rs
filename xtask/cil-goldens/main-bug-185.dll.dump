@@ -30,10 +30,10 @@ public-key=-
 	base=System.Object
 	interface=IFunction`2<System.Byte[],System.Threading.Tasks.Task`1<T[]>>
 	generic-param 0 name=T flags=0x0004
-0x02000006=Foo/<IFoo<System.Byte[]>.Do>d__0 flags=0x00100103
+0x02000006=Foo/<IFoo<System.Byte[]>.Do>d__0 flags=0x00100103 valuetype
 	base=System.ValueType
 	interface=System.Runtime.CompilerServices.IAsyncStateMachine
-0x02000007=Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0 flags=0x00100103
+0x02000007=Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0 flags=0x00100103 valuetype
 	base=System.ValueType
 	interface=System.Runtime.CompilerServices.IAsyncStateMachine
 	generic-param 0 name=T flags=0x0004
@@ -213,3 +213,48 @@ ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute
 	IL_0006: ldarg.1
 	IL_0007: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]>::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
 	IL_000c: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x1b000001 -> bug-185.dll!0x02000002 IFoo`1
+0x1b000002 -> bug-185.dll!0x02000004 IFunction`2
+0x1b000003 -> bug-185.dll!0x02000007 Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0
+0x1b000004 -> -
+0x0a000001 -> bug-185.dll!0x06000001 System.Void IFoo`1::Do()
+0x0a000002 -> bug-185.dll!0x06000004 TResult IFunction`2::Apply(TArg)
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> bug-185.dll!0x04000004 System.Int32 Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::<>1__state
+0x0a000012 -> bug-185.dll!0x04000005 System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::<>t__builder
+0x0a000013 -> -
+0x0a000014 -> -
+0x0a000015 -> -
+0x0a000016 -> bug-185.dll!0x04000006 Function`1<T> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::<>4__this
+0x0a000017 -> bug-185.dll!0x04000007 System.Byte[] Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::b
+0x0a000018 -> -
+0x0a000019 -> -
+0x0a00001a -> -

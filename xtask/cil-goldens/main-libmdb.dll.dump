@@ -37,3 +37,11 @@ ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCom
 0x06000002 max-stack=8 init-locals=false code-size=2
 	IL_0000: nop
 	IL_0001: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -

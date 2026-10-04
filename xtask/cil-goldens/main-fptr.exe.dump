@@ -18,7 +18,7 @@ public-key=-
 [exported-types]
 [types]
 0x02000001=<Module> flags=0x00000000
-0x02000002=MakeDecision flags=0x00000101
+0x02000002=MakeDecision flags=0x00000101 valuetype
 	base=System.ValueType
 [fields]
 0x04000001=System.Boolean MakeDecision::Oscillate flags=0x0010
@@ -66,3 +66,9 @@ public-key=-
 	IL_0017: ret
 	IL_0018: ldftn System.Int32 <Module>::Negate(System.Int32)
 	IL_001e: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x1b000001 -> fptr_test.exe!0x02000002 MakeDecision
+0x0a000001 -> fptr_test.exe!0x06000004 method System.Int32 *(System.Int32) MakeDecision::Decide()
+0x0a000002 -> -

@@ -65,3 +65,24 @@ ca parent=0x02000002 ctor=System.Void Microsoft.FSharp.Core.CompilationMappingAt
 	IL_0002: call System.Int32 Program::fact(System.Int32)
 	IL_0007: call System.Void System.Console::WriteLine(System.Int32)
 	IL_000c: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> FSharp.Core.dll!0x0200001f Microsoft.FSharp.Core.FSharpInterfaceDataVersionAttribute
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> FSharp.Core.dll!0x02000020 Microsoft.FSharp.Core.CompilationMappingAttribute
+0x01000007 -> FSharp.Core.dll!0x02000003 Microsoft.FSharp.Core.SourceConstructFlags
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0a000001 -> FSharp.Core.dll!0x06000026 System.Void Microsoft.FSharp.Core.FSharpInterfaceDataVersionAttribute::.ctor(System.Int32,System.Int32,System.Int32)
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> FSharp.Core.dll!0x0600002e System.Void Microsoft.FSharp.Core.CompilationMappingAttribute::.ctor(Microsoft.FSharp.Core.SourceConstructFlags)
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -

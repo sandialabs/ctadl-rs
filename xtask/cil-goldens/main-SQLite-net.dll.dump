@@ -34,16 +34,16 @@ public-key=-
 	base=System.Exception
 0x02000003=SQLite.NotNullConstraintViolationException flags=0x00100001
 	base=SQLite.SQLiteException
-0x02000004=SQLite.SQLiteOpenFlags flags=0x00000101
+0x02000004=SQLite.SQLiteOpenFlags flags=0x00000101 valuetype enum
 	base=System.Enum
-0x02000005=SQLite.CreateFlags flags=0x00000101
+0x02000005=SQLite.CreateFlags flags=0x00000101 valuetype enum
 	base=System.Enum
 0x02000006=SQLite.SQLiteConnection flags=0x00000001
 	base=System.Object
 	interface=System.IDisposable
 0x02000007=SQLite.NotifyTableChangedEventArgs flags=0x00100001
 	base=System.EventArgs
-0x02000008=SQLite.NotifyTableChangedAction flags=0x00000101
+0x02000008=SQLite.NotifyTableChangedAction flags=0x00000101 valuetype enum
 	base=System.Enum
 0x02000009=SQLite.SQLiteConnectionString flags=0x00100001
 	base=System.Object
@@ -106,9 +106,9 @@ public-key=-
 	base=System.Object
 0x02000024=SQLite.NotNullConstraintViolationException/<>c__DisplayClass5_0 flags=0x00100103
 	base=System.Object
-0x02000025=SQLite.SQLiteConnection/IndexedColumn flags=0x0010010b
+0x02000025=SQLite.SQLiteConnection/IndexedColumn flags=0x0010010b valuetype
 	base=System.ValueType
-0x02000026=SQLite.SQLiteConnection/IndexInfo flags=0x0010010b
+0x02000026=SQLite.SQLiteConnection/IndexInfo flags=0x0010010b valuetype
 	base=System.ValueType
 0x02000027=SQLite.SQLiteConnection/ColumnInfo flags=0x00100002
 	base=System.Object
@@ -156,13 +156,13 @@ public-key=-
 0x02000039=SQLite.TableQuery`1/<>c flags=0x00102103
 	base=System.Object
 	generic-param 0 name=T flags=0x0000
-0x0200003a=SQLite.SQLite3/Result flags=0x00000102
+0x0200003a=SQLite.SQLite3/Result flags=0x00000102 valuetype enum
 	base=System.Enum
-0x0200003b=SQLite.SQLite3/ExtendedResult flags=0x00000102
+0x0200003b=SQLite.SQLite3/ExtendedResult flags=0x00000102 valuetype enum
 	base=System.Enum
-0x0200003c=SQLite.SQLite3/ConfigOption flags=0x00000102
+0x0200003c=SQLite.SQLite3/ConfigOption flags=0x00000102 valuetype enum
 	base=System.Enum
-0x0200003d=SQLite.SQLite3/ColType flags=0x00000102
+0x0200003d=SQLite.SQLite3/ColType flags=0x00000102 valuetype enum
 	base=System.Enum
 0x0200003e=SQLite.SQLiteAsyncConnection/<>c__DisplayClass11_0 flags=0x00100103
 	base=System.Object
@@ -10510,3 +10510,692 @@ ca parent=0x060001e4 ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 	IL_000b: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
 	IL_0010: ceq
 	IL_0012: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x01000012 -> -
+0x01000013 -> -
+0x01000014 -> -
+0x01000015 -> -
+0x01000016 -> -
+0x01000017 -> -
+0x01000018 -> -
+0x01000019 -> -
+0x0100001a -> -
+0x0100001b -> -
+0x0100001c -> -
+0x0100001d -> -
+0x0100001e -> -
+0x0100001f -> -
+0x01000020 -> -
+0x01000021 -> -
+0x01000022 -> -
+0x01000023 -> -
+0x01000024 -> -
+0x01000025 -> -
+0x01000026 -> -
+0x01000027 -> -
+0x01000028 -> -
+0x01000029 -> -
+0x0100002a -> -
+0x0100002b -> -
+0x0100002c -> -
+0x0100002d -> -
+0x0100002e -> -
+0x0100002f -> -
+0x01000030 -> -
+0x01000031 -> -
+0x01000032 -> -
+0x01000033 -> -
+0x01000034 -> -
+0x01000035 -> -
+0x01000036 -> -
+0x01000037 -> -
+0x01000038 -> -
+0x01000039 -> -
+0x0100003a -> -
+0x0100003b -> -
+0x0100003c -> -
+0x0100003d -> -
+0x0100003e -> -
+0x0100003f -> -
+0x01000040 -> System.Runtime.dll!0x02000008 System.Runtime.CompilerServices.IteratorStateMachineAttribute
+0x01000041 -> -
+0x01000042 -> -
+0x01000043 -> -
+0x01000044 -> -
+0x01000045 -> -
+0x01000046 -> -
+0x01000047 -> -
+0x01000048 -> -
+0x01000049 -> -
+0x0100004a -> -
+0x0100004b -> -
+0x0100004c -> -
+0x0100004d -> -
+0x0100004e -> -
+0x0100004f -> -
+0x01000050 -> -
+0x01000051 -> -
+0x01000052 -> -
+0x01000053 -> -
+0x01000054 -> -
+0x01000055 -> -
+0x01000056 -> -
+0x01000057 -> -
+0x01000058 -> -
+0x01000059 -> -
+0x0100005a -> -
+0x0100005b -> -
+0x0100005c -> -
+0x0100005d -> -
+0x0100005e -> -
+0x0100005f -> -
+0x01000060 -> -
+0x01000061 -> -
+0x01000062 -> -
+0x01000063 -> -
+0x01000064 -> -
+0x01000065 -> -
+0x01000066 -> -
+0x01000067 -> -
+0x01000068 -> -
+0x01000069 -> -
+0x0100006a -> -
+0x0100006b -> -
+0x0100006c -> -
+0x0100006d -> -
+0x0100006e -> -
+0x0100006f -> -
+0x01000070 -> -
+0x01000071 -> -
+0x01000072 -> -
+0x01000073 -> -
+0x01000074 -> -
+0x01000075 -> -
+0x01000076 -> -
+0x01000077 -> -
+0x01000078 -> -
+0x01000079 -> -
+0x0100007a -> -
+0x0100007b -> -
+0x1b000001 -> -
+0x1b000002 -> -
+0x1b000003 -> -
+0x1b000004 -> -
+0x1b000005 -> -
+0x1b000006 -> -
+0x1b000007 -> -
+0x1b000008 -> -
+0x1b000009 -> -
+0x1b00000a -> -
+0x1b00000b -> -
+0x1b00000c -> -
+0x1b00000d -> -
+0x1b00000e -> -
+0x1b00000f -> -
+0x1b000010 -> -
+0x1b000011 -> -
+0x1b000012 -> -
+0x1b000013 -> -
+0x1b000014 -> -
+0x1b000015 -> -
+0x1b000016 -> SQLite-net.dll!0x0200001c SQLite.TableQuery`1
+0x1b000017 -> -
+0x1b000018 -> -
+0x1b000019 -> -
+0x1b00001a -> -
+0x1b00001b -> -
+0x1b00001c -> -
+0x1b00001d -> -
+0x1b00001e -> -
+0x1b00001f -> -
+0x1b000020 -> -
+0x1b000021 -> -
+0x1b000022 -> -
+0x1b000023 -> -
+0x1b000024 -> -
+0x1b000025 -> -
+0x1b000026 -> -
+0x1b000027 -> -
+0x1b000028 -> -
+0x1b000029 -> -
+0x1b00002a -> -
+0x1b00002b -> -
+0x1b00002c -> -
+0x1b00002d -> SQLite-net.dll!0x02000036 SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1
+0x1b00002e -> -
+0x1b00002f -> -
+0x1b000030 -> SQLite-net.dll!0x0200001c SQLite.TableQuery`1
+0x1b000031 -> -
+0x1b000032 -> -
+0x1b000033 -> SQLite-net.dll!0x02000038 SQLite.TableQuery`1/CompileResult
+0x1b000034 -> -
+0x1b000035 -> SQLite-net.dll!0x0200001c SQLite.TableQuery`1
+0x1b000036 -> SQLite-net.dll!0x02000039 SQLite.TableQuery`1/<>c
+0x1b000037 -> -
+0x1b000038 -> -
+0x1b000039 -> -
+0x1b00003a -> -
+0x1b00003b -> -
+0x1b00003c -> -
+0x1b00003d -> -
+0x1b00003e -> -
+0x1b00003f -> -
+0x1b000040 -> -
+0x1b000041 -> -
+0x1b000042 -> SQLite-net.dll!0x02000043 SQLite.SQLiteAsyncConnection/<>c__DisplayClass17_0`1
+0x1b000043 -> -
+0x1b000044 -> SQLite-net.dll!0x02000044 SQLite.SQLiteAsyncConnection/<>c__DisplayClass18_0`1
+0x1b000045 -> SQLite-net.dll!0x02000045 SQLite.SQLiteAsyncConnection/<>c__DisplayClass19_0`1
+0x1b000046 -> SQLite-net.dll!0x02000046 SQLite.SQLiteAsyncConnection/<>c__DisplayClass20_0`1
+0x1b000047 -> -
+0x1b000048 -> -
+0x1b000049 -> SQLite-net.dll!0x0200001f SQLite.AsyncTableQuery`1
+0x1b00004a -> SQLite-net.dll!0x0200004c SQLite.SQLiteAsyncConnection/<>c__DisplayClass27_0`1
+0x1b00004b -> -
+0x1b00004c -> -
+0x1b00004d -> SQLite-net.dll!0x0200004d SQLite.SQLiteAsyncConnection/<>c__DisplayClass28_0`1
+0x1b00004e -> -
+0x1b00004f -> -
+0x1b000050 -> -
+0x1b000051 -> SQLite-net.dll!0x0200001f SQLite.AsyncTableQuery`1
+0x1b000052 -> -
+0x1b000053 -> SQLite-net.dll!0x0200004e SQLite.AsyncTableQuery`1/<>c__DisplayClass11_0
+0x1b000054 -> -
+0x1b000055 -> -
+0x1b000056 -> -
+0x1b000057 -> -
+0x1b000058 -> -
+0x1b000059 -> -
+0x1b00005a -> -
+0x1b00005b -> -
+0x1b00005c -> -
+0x1b00005d -> -
+0x1b00005e -> SQLite-net.dll!0x02000036 SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1
+0x1b00005f -> SQLite-net.dll!0x02000043 SQLite.SQLiteAsyncConnection/<>c__DisplayClass17_0`1
+0x1b000060 -> SQLite-net.dll!0x02000044 SQLite.SQLiteAsyncConnection/<>c__DisplayClass18_0`1
+0x1b000061 -> SQLite-net.dll!0x02000045 SQLite.SQLiteAsyncConnection/<>c__DisplayClass19_0`1
+0x1b000062 -> SQLite-net.dll!0x02000046 SQLite.SQLiteAsyncConnection/<>c__DisplayClass20_0`1
+0x1b000063 -> -
+0x1b000064 -> -
+0x1b000065 -> SQLite-net.dll!0x0200004c SQLite.SQLiteAsyncConnection/<>c__DisplayClass27_0`1
+0x1b000066 -> SQLite-net.dll!0x0200004d SQLite.SQLiteAsyncConnection/<>c__DisplayClass28_0`1
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> -
+0x0a000013 -> -
+0x0a000014 -> System.Runtime.dll!0x06000009 System.Void System.Runtime.CompilerServices.IteratorStateMachineAttribute::.ctor(System.Type)
+0x0a000015 -> -
+0x0a000016 -> -
+0x0a000017 -> -
+0x0a000018 -> -
+0x0a000019 -> -
+0x0a00001a -> -
+0x0a00001b -> -
+0x0a00001c -> -
+0x0a00001d -> -
+0x0a00001e -> -
+0x0a00001f -> -
+0x0a000020 -> -
+0x0a000021 -> -
+0x0a000022 -> -
+0x0a000023 -> -
+0x0a000024 -> -
+0x0a000025 -> -
+0x0a000026 -> -
+0x0a000027 -> -
+0x0a000028 -> -
+0x0a000029 -> -
+0x0a00002a -> -
+0x0a00002b -> -
+0x0a00002c -> -
+0x0a00002d -> -
+0x0a00002e -> -
+0x0a00002f -> -
+0x0a000030 -> -
+0x0a000031 -> -
+0x0a000032 -> -
+0x0a000033 -> -
+0x0a000034 -> -
+0x0a000035 -> -
+0x0a000036 -> -
+0x0a000037 -> -
+0x0a000038 -> -
+0x0a000039 -> -
+0x0a00003a -> -
+0x0a00003b -> -
+0x0a00003c -> -
+0x0a00003d -> -
+0x0a00003e -> -
+0x0a00003f -> -
+0x0a000040 -> -
+0x0a000041 -> -
+0x0a000042 -> -
+0x0a000043 -> -
+0x0a000044 -> -
+0x0a000045 -> -
+0x0a000046 -> -
+0x0a000047 -> -
+0x0a000048 -> -
+0x0a000049 -> -
+0x0a00004a -> -
+0x0a00004b -> -
+0x0a00004c -> -
+0x0a00004d -> -
+0x0a00004e -> -
+0x0a00004f -> -
+0x0a000050 -> -
+0x0a000051 -> -
+0x0a000052 -> -
+0x0a000053 -> -
+0x0a000054 -> -
+0x0a000055 -> -
+0x0a000056 -> -
+0x0a000057 -> -
+0x0a000058 -> -
+0x0a000059 -> -
+0x0a00005a -> -
+0x0a00005b -> -
+0x0a00005c -> -
+0x0a00005d -> -
+0x0a00005e -> -
+0x0a00005f -> -
+0x0a000060 -> SQLite-net.dll!0x060000da System.Void SQLite.TableQuery`1::.ctor(SQLite.SQLiteConnection)
+0x0a000061 -> -
+0x0a000062 -> SQLite-net.dll!0x060000dc SQLite.TableQuery`1<T> SQLite.TableQuery`1::Where(System.Linq.Expressions.Expression`1<System.Func`2<T,System.Boolean>>)
+0x0a000063 -> SQLite-net.dll!0x060000f3 T SQLite.TableQuery`1::First()
+0x0a000064 -> -
+0x0a000065 -> SQLite-net.dll!0x060000f4 T SQLite.TableQuery`1::FirstOrDefault()
+0x0a000066 -> -
+0x0a000067 -> -
+0x0a000068 -> -
+0x0a000069 -> -
+0x0a00006a -> -
+0x0a00006b -> -
+0x0a00006c -> -
+0x0a00006d -> -
+0x0a00006e -> -
+0x0a00006f -> -
+0x0a000070 -> -
+0x0a000071 -> -
+0x0a000072 -> -
+0x0a000073 -> -
+0x0a000074 -> -
+0x0a000075 -> -
+0x0a000076 -> -
+0x0a000077 -> -
+0x0a000078 -> -
+0x0a000079 -> -
+0x0a00007a -> -
+0x0a00007b -> -
+0x0a00007c -> -
+0x0a00007d -> -
+0x0a00007e -> -
+0x0a00007f -> -
+0x0a000080 -> -
+0x0a000081 -> -
+0x0a000082 -> -
+0x0a000083 -> -
+0x0a000084 -> -
+0x0a000085 -> -
+0x0a000086 -> -
+0x0a000087 -> -
+0x0a000088 -> -
+0x0a000089 -> -
+0x0a00008a -> -
+0x0a00008b -> -
+0x0a00008c -> -
+0x0a00008d -> -
+0x0a00008e -> -
+0x0a00008f -> -
+0x0a000090 -> -
+0x0a000091 -> -
+0x0a000092 -> -
+0x0a000093 -> -
+0x0a000094 -> -
+0x0a000095 -> -
+0x0a000096 -> -
+0x0a000097 -> -
+0x0a000098 -> -
+0x0a000099 -> -
+0x0a00009a -> -
+0x0a00009b -> -
+0x0a00009c -> -
+0x0a00009d -> -
+0x0a00009e -> -
+0x0a00009f -> -
+0x0a0000a0 -> -
+0x0a0000a1 -> -
+0x0a0000a2 -> -
+0x0a0000a3 -> -
+0x0a0000a4 -> -
+0x0a0000a5 -> -
+0x0a0000a6 -> -
+0x0a0000a7 -> -
+0x0a0000a8 -> -
+0x0a0000a9 -> -
+0x0a0000aa -> -
+0x0a0000ab -> -
+0x0a0000ac -> -
+0x0a0000ad -> -
+0x0a0000ae -> -
+0x0a0000af -> -
+0x0a0000b0 -> -
+0x0a0000b1 -> -
+0x0a0000b2 -> -
+0x0a0000b3 -> -
+0x0a0000b4 -> -
+0x0a0000b5 -> -
+0x0a0000b6 -> -
+0x0a0000b7 -> -
+0x0a0000b8 -> -
+0x0a0000b9 -> -
+0x0a0000ba -> -
+0x0a0000bb -> -
+0x0a0000bc -> -
+0x0a0000bd -> -
+0x0a0000be -> -
+0x0a0000bf -> -
+0x0a0000c0 -> -
+0x0a0000c1 -> -
+0x0a0000c2 -> -
+0x0a0000c3 -> -
+0x0a0000c4 -> -
+0x0a0000c5 -> -
+0x0a0000c6 -> -
+0x0a0000c7 -> -
+0x0a0000c8 -> -
+0x0a0000c9 -> SQLite-net.dll!0x060001a8 System.Void SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::.ctor(System.Int32)
+0x0a0000ca -> SQLite-net.dll!0x040000af SQLite.SQLiteCommand SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::<>4__this
+0x0a0000cb -> SQLite-net.dll!0x040000b1 SQLite.TableMapping SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::<>3__map
+0x0a0000cc -> -
+0x0a0000cd -> -
+0x0a0000ce -> -
+0x0a0000cf -> -
+0x0a0000d0 -> -
+0x0a0000d1 -> -
+0x0a0000d2 -> -
+0x0a0000d3 -> -
+0x0a0000d4 -> -
+0x0a0000d5 -> -
+0x0a0000d6 -> -
+0x0a0000d7 -> -
+0x0a0000d8 -> -
+0x0a0000d9 -> -
+0x0a0000da -> -
+0x0a0000db -> -
+0x0a0000dc -> -
+0x0a0000dd -> -
+0x0a0000de -> -
+0x0a0000df -> -
+0x0a0000e0 -> -
+0x0a0000e1 -> -
+0x0a0000e2 -> -
+0x0a0000e3 -> -
+0x0a0000e4 -> SQLite-net.dll!0x04000052 SQLite.SQLiteConnection SQLite.TableQuery`1::<Connection>k__BackingField
+0x0a0000e5 -> SQLite-net.dll!0x04000053 SQLite.TableMapping SQLite.TableQuery`1::<Table>k__BackingField
+0x0a0000e6 -> SQLite-net.dll!0x060000d6 System.Void SQLite.TableQuery`1::set_Connection(SQLite.SQLiteConnection)
+0x0a0000e7 -> SQLite-net.dll!0x060000d8 System.Void SQLite.TableQuery`1::set_Table(SQLite.TableMapping)
+0x0a0000e8 -> SQLite-net.dll!0x060000d5 SQLite.SQLiteConnection SQLite.TableQuery`1::get_Connection()
+0x0a0000e9 -> SQLite-net.dll!0x060000d7 SQLite.TableMapping SQLite.TableQuery`1::get_Table()
+0x0a0000ea -> SQLite-net.dll!0x060000d9 System.Void SQLite.TableQuery`1::.ctor(SQLite.SQLiteConnection,SQLite.TableMapping)
+0x0a0000eb -> SQLite-net.dll!0x04000054 System.Linq.Expressions.Expression SQLite.TableQuery`1::_where
+0x0a0000ec -> SQLite-net.dll!0x04000054 System.Linq.Expressions.Expression SQLite.TableQuery`1::_where
+0x0a0000ed -> SQLite-net.dll!0x0400005e System.Boolean SQLite.TableQuery`1::_deferred
+0x0a0000ee -> SQLite-net.dll!0x0400005e System.Boolean SQLite.TableQuery`1::_deferred
+0x0a0000ef -> SQLite-net.dll!0x04000055 System.Collections.Generic.List`1<SQLite.BaseTableQuery/Ordering> SQLite.TableQuery`1::_orderBys
+0x0a0000f0 -> -
+0x0a0000f1 -> SQLite-net.dll!0x04000055 System.Collections.Generic.List`1<SQLite.BaseTableQuery/Ordering> SQLite.TableQuery`1::_orderBys
+0x0a0000f2 -> SQLite-net.dll!0x04000056 System.Nullable`1<System.Int32> SQLite.TableQuery`1::_limit
+0x0a0000f3 -> SQLite-net.dll!0x04000056 System.Nullable`1<System.Int32> SQLite.TableQuery`1::_limit
+0x0a0000f4 -> SQLite-net.dll!0x04000057 System.Nullable`1<System.Int32> SQLite.TableQuery`1::_offset
+0x0a0000f5 -> SQLite-net.dll!0x04000057 System.Nullable`1<System.Int32> SQLite.TableQuery`1::_offset
+0x0a0000f6 -> SQLite-net.dll!0x04000058 SQLite.BaseTableQuery SQLite.TableQuery`1::_joinInner
+0x0a0000f7 -> SQLite-net.dll!0x04000058 SQLite.BaseTableQuery SQLite.TableQuery`1::_joinInner
+0x0a0000f8 -> SQLite-net.dll!0x04000059 System.Linq.Expressions.Expression SQLite.TableQuery`1::_joinInnerKeySelector
+0x0a0000f9 -> SQLite-net.dll!0x04000059 System.Linq.Expressions.Expression SQLite.TableQuery`1::_joinInnerKeySelector
+0x0a0000fa -> SQLite-net.dll!0x0400005a SQLite.BaseTableQuery SQLite.TableQuery`1::_joinOuter
+0x0a0000fb -> SQLite-net.dll!0x0400005a SQLite.BaseTableQuery SQLite.TableQuery`1::_joinOuter
+0x0a0000fc -> SQLite-net.dll!0x0400005b System.Linq.Expressions.Expression SQLite.TableQuery`1::_joinOuterKeySelector
+0x0a0000fd -> SQLite-net.dll!0x0400005b System.Linq.Expressions.Expression SQLite.TableQuery`1::_joinOuterKeySelector
+0x0a0000fe -> SQLite-net.dll!0x0400005c System.Linq.Expressions.Expression SQLite.TableQuery`1::_joinSelector
+0x0a0000ff -> SQLite-net.dll!0x0400005c System.Linq.Expressions.Expression SQLite.TableQuery`1::_joinSelector
+0x0a000100 -> SQLite-net.dll!0x0400005d System.Linq.Expressions.Expression SQLite.TableQuery`1::_selector
+0x0a000101 -> SQLite-net.dll!0x0400005d System.Linq.Expressions.Expression SQLite.TableQuery`1::_selector
+0x0a000102 -> SQLite-net.dll!0x060000db SQLite.TableQuery`1<U> SQLite.TableQuery`1::Clone()
+0x0a000103 -> SQLite-net.dll!0x060000e7 System.Void SQLite.TableQuery`1::AddWhere(System.Linq.Expressions.Expression)
+0x0a000104 -> -
+0x0a000105 -> SQLite-net.dll!0x060000eb SQLite.TableQuery`1/CompileResult<T> SQLite.TableQuery`1::CompileExpr(System.Linq.Expressions.Expression,System.Collections.Generic.List`1<System.Object>)
+0x0a000106 -> SQLite-net.dll!0x060001b6 System.String SQLite.TableQuery`1/CompileResult::get_CommandText()
+0x0a000107 -> SQLite-net.dll!0x060000df SQLite.TableQuery`1<T> SQLite.TableQuery`1::Skip(System.Int32)
+0x0a000108 -> SQLite-net.dll!0x060000de SQLite.TableQuery`1<T> SQLite.TableQuery`1::Take(System.Int32)
+0x0a000109 -> SQLite-net.dll!0x060000f3 T SQLite.TableQuery`1::First()
+0x0a00010a -> SQLite-net.dll!0x060000e6 SQLite.TableQuery`1<T> SQLite.TableQuery`1::AddOrderBy(System.Linq.Expressions.Expression`1<System.Func`2<T,U>>,System.Boolean)
+0x0a00010b -> -
+0x0a00010c -> -
+0x0a00010d -> -
+0x0a00010e -> -
+0x0a00010f -> SQLite-net.dll!0x060000d9 System.Void SQLite.TableQuery`1::.ctor(SQLite.SQLiteConnection,SQLite.TableMapping)
+0x0a000110 -> SQLite-net.dll!0x0400005a SQLite.BaseTableQuery SQLite.TableQuery`1::_joinOuter
+0x0a000111 -> SQLite-net.dll!0x0400005b System.Linq.Expressions.Expression SQLite.TableQuery`1::_joinOuterKeySelector
+0x0a000112 -> SQLite-net.dll!0x04000058 SQLite.BaseTableQuery SQLite.TableQuery`1::_joinInner
+0x0a000113 -> SQLite-net.dll!0x04000059 System.Linq.Expressions.Expression SQLite.TableQuery`1::_joinInnerKeySelector
+0x0a000114 -> SQLite-net.dll!0x0400005c System.Linq.Expressions.Expression SQLite.TableQuery`1::_joinSelector
+0x0a000115 -> -
+0x0a000116 -> SQLite-net.dll!0x040000b9 System.Func`2<SQLite.BaseTableQuery/Ordering,System.String> SQLite.TableQuery`1/<>c::<>9__36_0
+0x0a000117 -> SQLite-net.dll!0x040000b8 SQLite.TableQuery`1/<>c<T> SQLite.TableQuery`1/<>c::<>9
+0x0a000118 -> SQLite-net.dll!0x060001bd System.String SQLite.TableQuery`1/<>c::<GenerateCommand>b__36_0(SQLite.BaseTableQuery/Ordering)
+0x0a000119 -> -
+0x0a00011a -> -
+0x0a00011b -> -
+0x0a00011c -> -
+0x0a00011d -> -
+0x0a00011e -> -
+0x0a00011f -> -
+0x0a000120 -> -
+0x0a000121 -> -
+0x0a000122 -> SQLite-net.dll!0x060001b8 System.Object SQLite.TableQuery`1/CompileResult::get_Value()
+0x0a000123 -> SQLite-net.dll!0x060000ed System.String SQLite.TableQuery`1::CompileNullBinaryExpression(System.Linq.Expressions.BinaryExpression,SQLite.TableQuery`1/CompileResult<T>)
+0x0a000124 -> SQLite-net.dll!0x060000ee System.String SQLite.TableQuery`1::GetSqlName(System.Linq.Expressions.Expression)
+0x0a000125 -> SQLite-net.dll!0x060001ba System.Void SQLite.TableQuery`1/CompileResult::.ctor()
+0x0a000126 -> SQLite-net.dll!0x060001b7 System.Void SQLite.TableQuery`1/CompileResult::set_CommandText(System.String)
+0x0a000127 -> SQLite-net.dll!0x060001b9 System.Void SQLite.TableQuery`1/CompileResult::set_Value(System.Object)
+0x0a000128 -> -
+0x0a000129 -> -
+0x0a00012a -> -
+0x0a00012b -> -
+0x0a00012c -> SQLite-net.dll!0x040000ba System.Func`2<SQLite.TableQuery`1/CompileResult<T>,System.String> SQLite.TableQuery`1/<>c::<>9__38_0
+0x0a00012d -> SQLite-net.dll!0x060001be System.String SQLite.TableQuery`1/<>c::<CompileExpr>b__38_0(SQLite.TableQuery`1/CompileResult<T>)
+0x0a00012e -> -
+0x0a00012f -> -
+0x0a000130 -> SQLite-net.dll!0x060000ec System.Object SQLite.TableQuery`1::ConvertTo(System.Object,System.Type)
+0x0a000131 -> -
+0x0a000132 -> -
+0x0a000133 -> -
+0x0a000134 -> -
+0x0a000135 -> -
+0x0a000136 -> -
+0x0a000137 -> -
+0x0a000138 -> -
+0x0a000139 -> SQLite-net.dll!0x060000ea SQLite.SQLiteCommand SQLite.TableQuery`1::GenerateCommand(System.String)
+0x0a00013a -> SQLite-net.dll!0x060000dc SQLite.TableQuery`1<T> SQLite.TableQuery`1::Where(System.Linq.Expressions.Expression`1<System.Func`2<T,System.Boolean>>)
+0x0a00013b -> SQLite-net.dll!0x060000ef System.Int32 SQLite.TableQuery`1::Count()
+0x0a00013c -> -
+0x0a00013d -> SQLite-net.dll!0x060000f1 System.Collections.Generic.IEnumerator`1<T> SQLite.TableQuery`1::GetEnumerator()
+0x0a00013e -> SQLite-net.dll!0x060000f4 T SQLite.TableQuery`1::FirstOrDefault()
+0x0a00013f -> -
+0x0a000140 -> -
+0x0a000141 -> -
+0x0a000142 -> -
+0x0a000143 -> -
+0x0a000144 -> -
+0x0a000145 -> -
+0x0a000146 -> -
+0x0a000147 -> -
+0x0a000148 -> -
+0x0a000149 -> -
+0x0a00014a -> -
+0x0a00014b -> -
+0x0a00014c -> -
+0x0a00014d -> -
+0x0a00014e -> -
+0x0a00014f -> -
+0x0a000150 -> -
+0x0a000151 -> -
+0x0a000152 -> -
+0x0a000153 -> -
+0x0a000154 -> -
+0x0a000155 -> -
+0x0a000156 -> -
+0x0a000157 -> -
+0x0a000158 -> -
+0x0a000159 -> -
+0x0a00015a -> -
+0x0a00015b -> -
+0x0a00015c -> -
+0x0a00015d -> -
+0x0a00015e -> -
+0x0a00015f -> -
+0x0a000160 -> SQLite-net.dll!0x060001c9 System.Void SQLite.SQLiteAsyncConnection/<>c__DisplayClass17_0`1::.ctor()
+0x0a000161 -> SQLite-net.dll!0x0400011f SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass17_0`1::<>4__this
+0x0a000162 -> SQLite-net.dll!0x0400011e System.Object SQLite.SQLiteAsyncConnection/<>c__DisplayClass17_0`1::pk
+0x0a000163 -> SQLite-net.dll!0x060001ca T SQLite.SQLiteAsyncConnection/<>c__DisplayClass17_0`1::<GetAsync>b__0()
+0x0a000164 -> -
+0x0a000165 -> SQLite-net.dll!0x060001cb System.Void SQLite.SQLiteAsyncConnection/<>c__DisplayClass18_0`1::.ctor()
+0x0a000166 -> SQLite-net.dll!0x04000121 SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass18_0`1::<>4__this
+0x0a000167 -> SQLite-net.dll!0x04000120 System.Object SQLite.SQLiteAsyncConnection/<>c__DisplayClass18_0`1::pk
+0x0a000168 -> SQLite-net.dll!0x060001cc T SQLite.SQLiteAsyncConnection/<>c__DisplayClass18_0`1::<FindAsync>b__0()
+0x0a000169 -> SQLite-net.dll!0x060001cd System.Void SQLite.SQLiteAsyncConnection/<>c__DisplayClass19_0`1::.ctor()
+0x0a00016a -> SQLite-net.dll!0x04000123 SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass19_0`1::<>4__this
+0x0a00016b -> SQLite-net.dll!0x04000122 System.Linq.Expressions.Expression`1<System.Func`2<T,System.Boolean>> SQLite.SQLiteAsyncConnection/<>c__DisplayClass19_0`1::predicate
+0x0a00016c -> SQLite-net.dll!0x060001ce T SQLite.SQLiteAsyncConnection/<>c__DisplayClass19_0`1::<GetAsync>b__0()
+0x0a00016d -> SQLite-net.dll!0x060001cf System.Void SQLite.SQLiteAsyncConnection/<>c__DisplayClass20_0`1::.ctor()
+0x0a00016e -> SQLite-net.dll!0x04000125 SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass20_0`1::<>4__this
+0x0a00016f -> SQLite-net.dll!0x04000124 System.Linq.Expressions.Expression`1<System.Func`2<T,System.Boolean>> SQLite.SQLiteAsyncConnection/<>c__DisplayClass20_0`1::predicate
+0x0a000170 -> SQLite-net.dll!0x060001d0 T SQLite.SQLiteAsyncConnection/<>c__DisplayClass20_0`1::<FindAsync>b__0()
+0x0a000171 -> -
+0x0a000172 -> -
+0x0a000173 -> -
+0x0a000174 -> SQLite-net.dll!0x06000134 System.Void SQLite.AsyncTableQuery`1::.ctor(SQLite.TableQuery`1<T>)
+0x0a000175 -> SQLite-net.dll!0x060001db System.Void SQLite.SQLiteAsyncConnection/<>c__DisplayClass27_0`1::.ctor()
+0x0a000176 -> SQLite-net.dll!0x04000133 SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass27_0`1::<>4__this
+0x0a000177 -> SQLite-net.dll!0x04000131 System.String SQLite.SQLiteAsyncConnection/<>c__DisplayClass27_0`1::sql
+0x0a000178 -> SQLite-net.dll!0x04000132 System.Object[] SQLite.SQLiteAsyncConnection/<>c__DisplayClass27_0`1::args
+0x0a000179 -> -
+0x0a00017a -> SQLite-net.dll!0x060001dc T SQLite.SQLiteAsyncConnection/<>c__DisplayClass27_0`1::<ExecuteScalarAsync>b__0()
+0x0a00017b -> -
+0x0a00017c -> SQLite-net.dll!0x060001dd System.Void SQLite.SQLiteAsyncConnection/<>c__DisplayClass28_0`1::.ctor()
+0x0a00017d -> SQLite-net.dll!0x04000136 SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass28_0`1::<>4__this
+0x0a00017e -> SQLite-net.dll!0x04000134 System.String SQLite.SQLiteAsyncConnection/<>c__DisplayClass28_0`1::sql
+0x0a00017f -> SQLite-net.dll!0x04000135 System.Object[] SQLite.SQLiteAsyncConnection/<>c__DisplayClass28_0`1::args
+0x0a000180 -> -
+0x0a000181 -> SQLite-net.dll!0x060001de System.Collections.Generic.List`1<T> SQLite.SQLiteAsyncConnection/<>c__DisplayClass28_0`1::<QueryAsync>b__0()
+0x0a000182 -> -
+0x0a000183 -> -
+0x0a000184 -> SQLite-net.dll!0x04000062 SQLite.TableQuery`1<T> SQLite.AsyncTableQuery`1::_innerQuery
+0x0a000185 -> SQLite-net.dll!0x06000134 System.Void SQLite.AsyncTableQuery`1::.ctor(SQLite.TableQuery`1<T>)
+0x0a000186 -> SQLite-net.dll!0x060000e2 SQLite.TableQuery`1<T> SQLite.TableQuery`1::OrderBy(System.Linq.Expressions.Expression`1<System.Func`2<T,U>>)
+0x0a000187 -> SQLite-net.dll!0x060000e3 SQLite.TableQuery`1<T> SQLite.TableQuery`1::OrderByDescending(System.Linq.Expressions.Expression`1<System.Func`2<T,U>>)
+0x0a000188 -> SQLite-net.dll!0x060000e4 SQLite.TableQuery`1<T> SQLite.TableQuery`1::ThenBy(System.Linq.Expressions.Expression`1<System.Func`2<T,U>>)
+0x0a000189 -> SQLite-net.dll!0x060000e5 SQLite.TableQuery`1<T> SQLite.TableQuery`1::ThenByDescending(System.Linq.Expressions.Expression`1<System.Func`2<T,U>>)
+0x0a00018a -> SQLite-net.dll!0x06000141 System.Collections.Generic.List`1<T> SQLite.AsyncTableQuery`1::<ToListAsync>b__9_0()
+0x0a00018b -> -
+0x0a00018c -> SQLite-net.dll!0x06000142 System.Int32 SQLite.AsyncTableQuery`1::<CountAsync>b__10_0()
+0x0a00018d -> SQLite-net.dll!0x060001df System.Void SQLite.AsyncTableQuery`1/<>c__DisplayClass11_0::.ctor()
+0x0a00018e -> SQLite-net.dll!0x04000138 SQLite.AsyncTableQuery`1<T> SQLite.AsyncTableQuery`1/<>c__DisplayClass11_0::<>4__this
+0x0a00018f -> SQLite-net.dll!0x04000137 System.Int32 SQLite.AsyncTableQuery`1/<>c__DisplayClass11_0::index
+0x0a000190 -> SQLite-net.dll!0x060001e0 T SQLite.AsyncTableQuery`1/<>c__DisplayClass11_0::<ElementAtAsync>b__0()
+0x0a000191 -> -
+0x0a000192 -> -
+0x0a000193 -> SQLite-net.dll!0x06000143 T SQLite.AsyncTableQuery`1::<FirstAsync>b__12_0()
+0x0a000194 -> -
+0x0a000195 -> SQLite-net.dll!0x06000144 T SQLite.AsyncTableQuery`1::<FirstOrDefaultAsync>b__13_0()
+0x0a000196 -> -
+0x0a000197 -> -
+0x0a000198 -> -
+0x0a000199 -> -
+0x0a00019a -> -
+0x0a00019b -> -
+0x0a00019c -> -
+0x0a00019d -> -
+0x0a00019e -> -
+0x0a00019f -> -
+0x0a0001a0 -> -
+0x0a0001a1 -> -
+0x0a0001a2 -> -
+0x0a0001a3 -> -
+0x0a0001a4 -> -
+0x0a0001a5 -> -
+0x0a0001a6 -> -
+0x0a0001a7 -> -
+0x0a0001a8 -> -
+0x0a0001a9 -> -
+0x0a0001aa -> -
+0x0a0001ab -> SQLite-net.dll!0x040000ac System.Int32 SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::<>1__state
+0x0a0001ac -> -
+0x0a0001ad -> SQLite-net.dll!0x040000ae System.Int32 SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::<>l__initialThreadId
+0x0a0001ae -> SQLite-net.dll!0x060001ab System.Void SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::<>m__Finally1()
+0x0a0001af -> SQLite-net.dll!0x040000af SQLite.SQLiteCommand SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::<>4__this
+0x0a0001b0 -> SQLite-net.dll!0x040000b3 SQLitePCL.sqlite3_stmt SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::<stmt>5__2
+0x0a0001b1 -> SQLite-net.dll!0x040000b2 SQLite.TableMapping/Column[] SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::<cols>5__1
+0x0a0001b2 -> SQLite-net.dll!0x040000b0 SQLite.TableMapping SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::map
+0x0a0001b3 -> -
+0x0a0001b4 -> SQLite-net.dll!0x040000ad T SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::<>2__current
+0x0a0001b5 -> SQLite-net.dll!0x060001a9 System.Void SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::System.IDisposable.Dispose()
+0x0a0001b6 -> -
+0x0a0001b7 -> SQLite-net.dll!0x060001a8 System.Void SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::.ctor(System.Int32)
+0x0a0001b8 -> SQLite-net.dll!0x040000b1 SQLite.TableMapping SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::<>3__map
+0x0a0001b9 -> SQLite-net.dll!0x060001af System.Collections.Generic.IEnumerator`1<T> SQLite.SQLiteCommand/<ExecuteDeferredQuery>d__12`1::System.Collections.Generic.IEnumerable<T>.GetEnumerator()
+0x0a0001ba -> SQLite-net.dll!0x040000b6 System.String SQLite.TableQuery`1/CompileResult::<CommandText>k__BackingField
+0x0a0001bb -> SQLite-net.dll!0x040000b7 System.Object SQLite.TableQuery`1/CompileResult::<Value>k__BackingField
+0x0a0001bc -> SQLite-net.dll!0x060001bc System.Void SQLite.TableQuery`1/<>c::.ctor()
+0x0a0001bd -> -
+0x0a0001be -> SQLite-net.dll!0x0400011f SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass17_0`1::<>4__this
+0x0a0001bf -> SQLite-net.dll!0x0400011e System.Object SQLite.SQLiteAsyncConnection/<>c__DisplayClass17_0`1::pk
+0x0a0001c0 -> SQLite-net.dll!0x04000121 SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass18_0`1::<>4__this
+0x0a0001c1 -> SQLite-net.dll!0x04000120 System.Object SQLite.SQLiteAsyncConnection/<>c__DisplayClass18_0`1::pk
+0x0a0001c2 -> SQLite-net.dll!0x04000123 SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass19_0`1::<>4__this
+0x0a0001c3 -> SQLite-net.dll!0x04000122 System.Linq.Expressions.Expression`1<System.Func`2<T,System.Boolean>> SQLite.SQLiteAsyncConnection/<>c__DisplayClass19_0`1::predicate
+0x0a0001c4 -> SQLite-net.dll!0x04000125 SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass20_0`1::<>4__this
+0x0a0001c5 -> SQLite-net.dll!0x04000124 System.Linq.Expressions.Expression`1<System.Func`2<T,System.Boolean>> SQLite.SQLiteAsyncConnection/<>c__DisplayClass20_0`1::predicate
+0x0a0001c6 -> -
+0x0a0001c7 -> -
+0x0a0001c8 -> SQLite-net.dll!0x04000133 SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass27_0`1::<>4__this
+0x0a0001c9 -> SQLite-net.dll!0x04000131 System.String SQLite.SQLiteAsyncConnection/<>c__DisplayClass27_0`1::sql
+0x0a0001ca -> SQLite-net.dll!0x04000132 System.Object[] SQLite.SQLiteAsyncConnection/<>c__DisplayClass27_0`1::args
+0x0a0001cb -> SQLite-net.dll!0x04000136 SQLite.SQLiteAsyncConnection SQLite.SQLiteAsyncConnection/<>c__DisplayClass28_0`1::<>4__this
+0x0a0001cc -> SQLite-net.dll!0x04000134 System.String SQLite.SQLiteAsyncConnection/<>c__DisplayClass28_0`1::sql
+0x0a0001cd -> SQLite-net.dll!0x04000135 System.Object[] SQLite.SQLiteAsyncConnection/<>c__DisplayClass28_0`1::args
+0x0a0001ce -> SQLite-net.dll!0x060000e0 T SQLite.TableQuery`1::ElementAt(System.Int32)
+0x0a0001cf -> -

@@ -57,7 +57,14 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match dump(&module, &sections) {
+    let dir = std::path::Path::new(&path).parent().map(|d| {
+        if d.as_os_str().is_empty() {
+            std::path::Path::new(".")
+        } else {
+            d
+        }
+    });
+    match dump(&module, &sections, dir) {
         Ok(text) => {
             print!("{text}");
             ExitCode::SUCCESS

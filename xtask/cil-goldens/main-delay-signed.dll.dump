@@ -37,3 +37,10 @@ ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCom
 	IL_0000: ldarg.0
 	IL_0001: call System.Void System.Object::.ctor()
 	IL_0006: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -

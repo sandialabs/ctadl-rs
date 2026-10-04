@@ -176,3 +176,46 @@ ca parent=0x0600000a ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 	IL_0006: nop
 	IL_0007: nop
 	IL_0008: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x01000012 -> -
+0x01000013 -> -
+0x1b000001 -> GenericAttributes.dll!0x02000008 GenericAttribute`1
+0x1b000002 -> GenericAttributes.dll!0x02000008 GenericAttribute`1
+0x1b000003 -> GenericAttributes.dll!0x0200000b ConstrainedGenericAttribute`1
+0x1b000004 -> GenericAttributes.dll!0x02000008 GenericAttribute`1
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> GenericAttributes.dll!0x06000008 System.Void GenericAttribute`1::.ctor(T)
+0x0a00000e -> GenericAttributes.dll!0x06000008 System.Void GenericAttribute`1::.ctor(T)
+0x0a00000f -> GenericAttributes.dll!0x0600000d System.Void ConstrainedGenericAttribute`1::.ctor()
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> -
+0x0a000013 -> GenericAttributes.dll!0x04000004 T GenericAttribute`1::<P>k__BackingField

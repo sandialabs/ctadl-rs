@@ -21,16 +21,16 @@ public-key=-
 0x02000001=<Module> flags=0x00000000
 0x02000002=BreakpointTest.Portable.TestService flags=0x00100181
 	base=System.Object
-0x02000003=BreakpointTest.Portable.TestService/<DoSomething1>c__async0 flags=0x00100103
+0x02000003=BreakpointTest.Portable.TestService/<DoSomething1>c__async0 flags=0x00100103 valuetype
 	base=System.ValueType
 	interface=System.Runtime.CompilerServices.IAsyncStateMachine
-0x02000004=BreakpointTest.Portable.TestService/<DoSomething2>c__async1 flags=0x00100103
+0x02000004=BreakpointTest.Portable.TestService/<DoSomething2>c__async1 flags=0x00100103 valuetype
 	base=System.ValueType
 	interface=System.Runtime.CompilerServices.IAsyncStateMachine
-0x02000005=BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2 flags=0x00100103
+0x02000005=BreakpointTest.Portable.TestService/<MyAsyncAction2>c__async2 flags=0x00100103 valuetype
 	base=System.ValueType
 	interface=System.Runtime.CompilerServices.IAsyncStateMachine
-0x02000006=BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3 flags=0x00100103
+0x02000006=BreakpointTest.Portable.TestService/<MyAsyncAction1>c__async3 flags=0x00100103 valuetype
 	base=System.ValueType
 	interface=System.Runtime.CompilerServices.IAsyncStateMachine
 [fields]
@@ -378,3 +378,52 @@ ca parent=0x0600000c ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute
 	IL_0006: ldarg.1
 	IL_0007: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
 	IL_000c: ret
+[resolve]
+0x01000001 -> mscorlib.dll!0x02000178 System.Diagnostics.DebuggerStepThroughAttribute
+0x01000002 -> mscorlib.dll!0x020002c2 System.Runtime.CompilerServices.AsyncTaskMethodBuilder
+0x01000003 -> mscorlib.dll!0x02000522 System.Threading.Tasks.Task
+0x01000004 -> mscorlib.dll!0x020002c8 System.Runtime.CompilerServices.AsyncStateMachineAttribute
+0x01000005 -> mscorlib.dll!0x0200059b System.Type
+0x01000006 -> mscorlib.dll!0x020002ec System.Runtime.CompilerServices.CompilerGeneratedAttribute
+0x01000007 -> mscorlib.dll!0x020002d4 System.Runtime.CompilerServices.TaskAwaiter
+0x01000008 -> mscorlib.dll!0x02000198 System.Exception
+0x01000009 -> mscorlib.dll!0x0200017a System.Diagnostics.DebuggerHiddenAttribute
+0x0100000a -> mscorlib.dll!0x020002cc System.Runtime.CompilerServices.IAsyncStateMachine
+0x0100000b -> -
+0x0100000c -> mscorlib.dll!0x02000987 System.Object
+0x0100000d -> mscorlib.dll!0x020009ae System.ValueType
+0x0100000e -> mscorlib.dll!0x0200025f System.Reflection.AssemblyTitleAttribute
+0x0100000f -> mscorlib.dll!0x0200025e System.Reflection.AssemblyDescriptionAttribute
+0x01000010 -> mscorlib.dll!0x02000260 System.Reflection.AssemblyConfigurationAttribute
+0x01000011 -> mscorlib.dll!0x0200025d System.Reflection.AssemblyCompanyAttribute
+0x01000012 -> mscorlib.dll!0x0200025c System.Reflection.AssemblyProductAttribute
+0x01000013 -> mscorlib.dll!0x0200025a System.Reflection.AssemblyCopyrightAttribute
+0x01000014 -> mscorlib.dll!0x0200025b System.Reflection.AssemblyTrademarkAttribute
+0x01000015 -> mscorlib.dll!0x0200017c System.Diagnostics.DebuggableAttribute
+0x01000016 -> mscorlib.dll!0x0200017d System.Diagnostics.DebuggableAttribute/DebuggingModes
+0x01000017 -> mscorlib.dll!0x020002d1 System.Runtime.CompilerServices.RuntimeCompatibilityAttribute
+0x0a000001 -> mscorlib.dll!0x06000f65 System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor()
+0x0a000002 -> mscorlib.dll!0x06001dc0 System.Runtime.CompilerServices.AsyncTaskMethodBuilder System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Create()
+0x0a000003 -> mscorlib.dll!0x06001dc1 System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Start(TStateMachine&)
+0x0a000004 -> mscorlib.dll!0x06001dc5 System.Threading.Tasks.Task System.Runtime.CompilerServices.AsyncTaskMethodBuilder::get_Task()
+0x0a000005 -> mscorlib.dll!0x06001dea System.Void System.Runtime.CompilerServices.AsyncStateMachineAttribute::.ctor(System.Type)
+0x0a000006 -> mscorlib.dll!0x06001e3c System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor()
+0x0a000007 -> mscorlib.dll!0x06002daf System.Runtime.CompilerServices.TaskAwaiter System.Threading.Tasks.Task::GetAwaiter()
+0x0a000008 -> mscorlib.dll!0x06001e01 System.Boolean System.Runtime.CompilerServices.TaskAwaiter::get_IsCompleted()
+0x0a000009 -> mscorlib.dll!0x06001dc4 System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::AwaitUnsafeOnCompleted(TAwaiter&,TStateMachine&)
+0x0a00000a -> mscorlib.dll!0x06001e04 System.Void System.Runtime.CompilerServices.TaskAwaiter::GetResult()
+0x0a00000b -> mscorlib.dll!0x06001dc7 System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetException(System.Exception)
+0x0a00000c -> mscorlib.dll!0x06001dc6 System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetResult()
+0x0a00000d -> mscorlib.dll!0x06000f67 System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor()
+0x0a00000e -> mscorlib.dll!0x06001dc2 System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+0x0a00000f -> mscorlib.dll!0x06002e03 System.Threading.Tasks.Task System.Threading.Tasks.Task::Delay(System.Int32)
+0x0a000010 -> -
+0x0a000011 -> mscorlib.dll!0x06001abf System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String)
+0x0a000012 -> mscorlib.dll!0x06001abd System.Void System.Reflection.AssemblyDescriptionAttribute::.ctor(System.String)
+0x0a000013 -> mscorlib.dll!0x06001ac1 System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String)
+0x0a000014 -> mscorlib.dll!0x06001abb System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String)
+0x0a000015 -> mscorlib.dll!0x06001ab9 System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String)
+0x0a000016 -> mscorlib.dll!0x06001ab5 System.Void System.Reflection.AssemblyCopyrightAttribute::.ctor(System.String)
+0x0a000017 -> mscorlib.dll!0x06001ab7 System.Void System.Reflection.AssemblyTrademarkAttribute::.ctor(System.String)
+0x0a000018 -> mscorlib.dll!0x06000f6a System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes)
+0x0a000019 -> mscorlib.dll!0x06001df6 System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor()

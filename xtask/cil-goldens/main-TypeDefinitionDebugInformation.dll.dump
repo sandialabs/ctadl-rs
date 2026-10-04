@@ -22,7 +22,7 @@ public-key=-
 	base=System.Attribute
 0x02000003=System.Runtime.CompilerServices.RefSafetyRulesAttribute flags=0x00100100
 	base=System.Attribute
-0x02000004=TypeDefinitionDebugInformation.Enum flags=0x00000101
+0x02000004=TypeDefinitionDebugInformation.Enum flags=0x00000101 valuetype enum
 	base=System.Enum
 0x02000005=TypeDefinitionDebugInformation.Interface flags=0x001000a1
 [fields]
@@ -68,3 +68,33 @@ ca parent=0x02000003 ctor=System.Void System.AttributeUsageAttribute::.ctor(Syst
 	IL_0008: ldarg.1
 	IL_0009: stfld System.Int32 System.Runtime.CompilerServices.RefSafetyRulesAttribute::Version
 	IL_000e: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -

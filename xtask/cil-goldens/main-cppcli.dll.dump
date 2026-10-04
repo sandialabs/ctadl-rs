@@ -23,537 +23,537 @@ public-key=-
 [exported-types]
 [types]
 0x02000001=<Module> flags=0x00000000
-0x02000002=vc_attributes.YesNoMaybe flags=0x00100100
+0x02000002=vc_attributes.YesNoMaybe flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000003=vc_attributes.AccessType flags=0x00100100
+0x02000003=vc_attributes.AccessType flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000004=_EXCEPTION_DISPOSITION flags=0x00100100
+0x02000004=_EXCEPTION_DISPOSITION flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000005=_SID_NAME_USE flags=0x00100100
+0x02000005=_SID_NAME_USE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000006=_ACL_INFORMATION_CLASS flags=0x00100100
+0x02000006=_ACL_INFORMATION_CLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000007=_AUDIT_EVENT_TYPE flags=0x00100100
+0x02000007=_AUDIT_EVENT_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000008=_SECURITY_IMPERSONATION_LEVEL flags=0x00100100
+0x02000008=_SECURITY_IMPERSONATION_LEVEL flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000009=_TOKEN_TYPE flags=0x00100100
+0x02000009=_TOKEN_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200000a=_TOKEN_ELEVATION_TYPE flags=0x00100100
+0x0200000a=_TOKEN_ELEVATION_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200000b=_TOKEN_INFORMATION_CLASS flags=0x00100100
+0x0200000b=_TOKEN_INFORMATION_CLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200000c=_MANDATORY_LEVEL flags=0x00100100
+0x0200000c=_MANDATORY_LEVEL flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200000d=_PS_RATE_PHASE flags=0x00100100
+0x0200000d=_PS_RATE_PHASE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200000e=_JOBOBJECTINFOCLASS flags=0x00100100
+0x0200000e=_JOBOBJECTINFOCLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200000f=_LOGICAL_PROCESSOR_RELATIONSHIP flags=0x00100100
+0x0200000f=_LOGICAL_PROCESSOR_RELATIONSHIP flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000010=_PROCESSOR_CACHE_TYPE flags=0x00100100
+0x02000010=_PROCESSOR_CACHE_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000011=_SYSTEM_POWER_STATE flags=0x00100100
+0x02000011=_SYSTEM_POWER_STATE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000012=_DEVICE_POWER_STATE flags=0x00100100
+0x02000012=_DEVICE_POWER_STATE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000013=IMAGE_AUX_SYMBOL_TYPE flags=0x00100100
+0x02000013=IMAGE_AUX_SYMBOL_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000014=IMPORT_OBJECT_TYPE flags=0x00100100
+0x02000014=IMPORT_OBJECT_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000015=IMPORT_OBJECT_NAME_TYPE flags=0x00100100
+0x02000015=IMPORT_OBJECT_NAME_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000016=ReplacesCorHdrNumericDefines flags=0x00100100
+0x02000016=ReplacesCorHdrNumericDefines flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000017=_HEAP_INFORMATION_CLASS flags=0x00100100
+0x02000017=_HEAP_INFORMATION_CLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000018=_ACTIVATION_CONTEXT_INFO_CLASS flags=0x00100100
+0x02000018=_ACTIVATION_CONTEXT_INFO_CLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000019=_CM_SERVICE_NODE_TYPE flags=0x00100100
+0x02000019=_CM_SERVICE_NODE_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200001a=_CM_SERVICE_LOAD_TYPE flags=0x00100100
+0x0200001a=_CM_SERVICE_LOAD_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200001b=_CM_ERROR_CONTROL_TYPE flags=0x00100100
+0x0200001b=_CM_ERROR_CONTROL_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200001c=_TAPE_DRIVE_PROBLEM_TYPE flags=0x00100100
+0x0200001c=_TAPE_DRIVE_PROBLEM_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200001d=_TRANSACTION_OUTCOME flags=0x00100100
+0x0200001d=_TRANSACTION_OUTCOME flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200001e=_TRANSACTION_STATE flags=0x00100100
+0x0200001e=_TRANSACTION_STATE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200001f=_TRANSACTION_INFORMATION_CLASS flags=0x00100100
+0x0200001f=_TRANSACTION_INFORMATION_CLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000020=_TRANSACTIONMANAGER_INFORMATION_CLASS flags=0x00100100
+0x02000020=_TRANSACTIONMANAGER_INFORMATION_CLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000021=_RESOURCEMANAGER_INFORMATION_CLASS flags=0x00100100
+0x02000021=_RESOURCEMANAGER_INFORMATION_CLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000022=_ENLISTMENT_INFORMATION_CLASS flags=0x00100100
+0x02000022=_ENLISTMENT_INFORMATION_CLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000023=_KTMOBJECT_TYPE flags=0x00100100
+0x02000023=_KTMOBJECT_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000024=_MEMORY_RESOURCE_NOTIFICATION_TYPE flags=0x00100100
+0x02000024=_MEMORY_RESOURCE_NOTIFICATION_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000025=_PROC_THREAD_ATTRIBUTE_NUM flags=0x00100100
+0x02000025=_PROC_THREAD_ATTRIBUTE_NUM flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000026=_GET_FILEEX_INFO_LEVELS flags=0x00100100
+0x02000026=_GET_FILEEX_INFO_LEVELS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000027=_FINDEX_INFO_LEVELS flags=0x00100100
+0x02000027=_FINDEX_INFO_LEVELS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000028=_FINDEX_SEARCH_OPS flags=0x00100100
+0x02000028=_FINDEX_SEARCH_OPS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000029=_STREAM_INFO_LEVELS flags=0x00100100
+0x02000029=_STREAM_INFO_LEVELS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200002a=_COMPUTER_NAME_FORMAT flags=0x00100100
+0x0200002a=_COMPUTER_NAME_FORMAT flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200002b=_FILE_INFO_BY_HANDLE_CLASS flags=0x00100100
+0x0200002b=_FILE_INFO_BY_HANDLE_CLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200002c=_PRIORITY_HINT flags=0x00100100
+0x0200002c=_PRIORITY_HINT flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200002d=_FILE_ID_TYPE flags=0x00100100
+0x0200002d=_FILE_ID_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200002e=SYSNLS_FUNCTION flags=0x00100100
+0x0200002e=SYSNLS_FUNCTION flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200002f=SYSGEOTYPE flags=0x00100100
+0x0200002f=SYSGEOTYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000030=SYSGEOCLASS flags=0x00100100
+0x02000030=SYSGEOCLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000031=_NORM_FORM flags=0x00100100
+0x02000031=_NORM_FORM flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000032=_RPC_HTTP_REDIRECTOR_STAGE flags=0x00100100
+0x02000032=_RPC_HTTP_REDIRECTOR_STAGE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000033=RPC_ADDRESS_CHANGE_TYPE flags=0x00100100
+0x02000033=RPC_ADDRESS_CHANGE_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000034=_RPC_NOTIFICATION_TYPES flags=0x00100100
+0x02000034=_RPC_NOTIFICATION_TYPES flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000035=_RPC_ASYNC_EVENT flags=0x00100100
+0x02000035=_RPC_ASYNC_EVENT flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000036=tagExtendedErrorParamTypes flags=0x00100100
+0x02000036=tagExtendedErrorParamTypes flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000037=tagRpcLocalAddressFormat flags=0x00100100
+0x02000037=tagRpcLocalAddressFormat flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000038=tagRpcCallType flags=0x00100100
+0x02000038=tagRpcCallType flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000039=tagRpcCallClientLocality flags=0x00100100
+0x02000039=tagRpcCallClientLocality flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200003a=_RPC_NOTIFICATIONS flags=0x00100100
+0x0200003a=_RPC_NOTIFICATIONS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200003b=ASSOCCLASS flags=0x00100100
+0x0200003b=ASSOCCLASS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200003c=SHSTOCKICONID flags=0x00100100
+0x0200003c=SHSTOCKICONID flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200003d=_USER_MARSHAL_CB_TYPE flags=0x00100100
+0x0200003d=_USER_MARSHAL_CB_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200003e=_IDL_CS_CONVERT flags=0x00100100
+0x0200003e=_IDL_CS_CONVERT flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200003f=tagMEMCTX flags=0x00100100
+0x0200003f=tagMEMCTX flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000040=tagCLSCTX flags=0x00100100
+0x02000040=tagCLSCTX flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000041=tagMSHLFLAGS flags=0x00100100
+0x02000041=tagMSHLFLAGS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000042=tagMSHCTX flags=0x00100100
+0x02000042=tagMSHCTX flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000043=tagDVASPECT flags=0x00100100
+0x02000043=tagDVASPECT flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000044=tagSTGC flags=0x00100100
+0x02000044=tagSTGC flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000045=tagSTGMOVE flags=0x00100100
+0x02000045=tagSTGMOVE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000046=tagSTATFLAG flags=0x00100100
+0x02000046=tagSTATFLAG flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000047=VARENUM flags=0x00100100
+0x02000047=VARENUM flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000048=tagTYSPEC flags=0x00100100
+0x02000048=tagTYSPEC flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000049=_STORAGE_MEDIA_TYPE flags=0x00100100
+0x02000049=_STORAGE_MEDIA_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200004a=_STORAGE_BUS_TYPE flags=0x00100100
+0x0200004a=_STORAGE_BUS_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200004b=_STORAGE_QUERY_TYPE flags=0x00100100
+0x0200004b=_STORAGE_QUERY_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200004c=_STORAGE_PROPERTY_ID flags=0x00100100
+0x0200004c=_STORAGE_PROPERTY_ID flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200004d=_STORAGE_PORT_CODE_SET flags=0x00100100
+0x0200004d=_STORAGE_PORT_CODE_SET flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200004e=_STORAGE_IDENTIFIER_CODE_SET flags=0x00100100
+0x0200004e=_STORAGE_IDENTIFIER_CODE_SET flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200004f=_STORAGE_IDENTIFIER_TYPE flags=0x00100100
+0x0200004f=_STORAGE_IDENTIFIER_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000050=_STORAGE_ID_NAA_FORMAT flags=0x00100100
+0x02000050=_STORAGE_ID_NAA_FORMAT flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000051=_STORAGE_ASSOCIATION_TYPE flags=0x00100100
+0x02000051=_STORAGE_ASSOCIATION_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000052=_WRITE_CACHE_TYPE flags=0x00100100
+0x02000052=_WRITE_CACHE_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000053=_WRITE_CACHE_ENABLE flags=0x00100100
+0x02000053=_WRITE_CACHE_ENABLE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000054=_WRITE_CACHE_CHANGE flags=0x00100100
+0x02000054=_WRITE_CACHE_CHANGE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000055=_WRITE_THROUGH flags=0x00100100
+0x02000055=_WRITE_THROUGH flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000056=_MEDIA_TYPE flags=0x00100100
+0x02000056=_MEDIA_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000057=_PARTITION_STYLE flags=0x00100100
+0x02000057=_PARTITION_STYLE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000058=_DETECTION_TYPE flags=0x00100100
+0x02000058=_DETECTION_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000059=_BIN_TYPES flags=0x00100100
+0x02000059=_BIN_TYPES flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200005a=_ELEMENT_TYPE flags=0x00100100
+0x0200005a=_ELEMENT_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200005b=_CHANGER_DEVICE_PROBLEM_TYPE flags=0x00100100
+0x0200005b=_CHANGER_DEVICE_PROBLEM_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200005c=_SHRINK_VOLUME_REQUEST_TYPES flags=0x00100100
+0x0200005c=_SHRINK_VOLUME_REQUEST_TYPES flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200005d=_PRINTER_OPTION_FLAGS flags=0x00100100
+0x0200005d=_PRINTER_OPTION_FLAGS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200005e=tagREGCLS flags=0x00100100
+0x0200005e=tagREGCLS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200005f=tagEXTCONN flags=0x00100100
+0x0200005f=tagEXTCONN flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000060=tagBIND_FLAGS flags=0x00100100
+0x02000060=tagBIND_FLAGS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000061=tagMKSYS flags=0x00100100
+0x02000061=tagMKSYS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000062=tagMKREDUCE flags=0x00100100
+0x02000062=tagMKREDUCE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000063=tagSTGTY flags=0x00100100
+0x02000063=tagSTGTY flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000064=tagSTREAM_SEEK flags=0x00100100
+0x02000064=tagSTREAM_SEEK flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000065=tagLOCKTYPE flags=0x00100100
+0x02000065=tagLOCKTYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000066=tagADVF flags=0x00100100
+0x02000066=tagADVF flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000067=tagTYMED flags=0x00100100
+0x02000067=tagTYMED flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000068=tagDATADIR flags=0x00100100
+0x02000068=tagDATADIR flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000069=tagCALLTYPE flags=0x00100100
+0x02000069=tagCALLTYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200006a=tagSERVERCALL flags=0x00100100
+0x0200006a=tagSERVERCALL flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200006b=tagPENDINGTYPE flags=0x00100100
+0x0200006b=tagPENDINGTYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200006c=tagPENDINGMSG flags=0x00100100
+0x0200006c=tagPENDINGMSG flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200006d=tagEOLE_AUTHENTICATION_CAPABILITIES flags=0x00100100
+0x0200006d=tagEOLE_AUTHENTICATION_CAPABILITIES flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200006e=__MIDL___MIDL_itf_objidl_0000_0046_0001 flags=0x00100100
+0x0200006e=__MIDL___MIDL_itf_objidl_0000_0046_0001 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200006f=__MIDL___MIDL_itf_objidl_0000_0046_0002 flags=0x00100100
+0x0200006f=__MIDL___MIDL_itf_objidl_0000_0046_0002 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000070=tagDCOM_CALL_STATE flags=0x00100100
+0x02000070=tagDCOM_CALL_STATE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000071=tagApplicationType flags=0x00100100
+0x02000071=tagApplicationType flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000072=tagShutdownType flags=0x00100100
+0x02000072=tagShutdownType flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000073=_APTTYPE flags=0x00100100
+0x02000073=_APTTYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000074=_THDTYPE flags=0x00100100
+0x02000074=_THDTYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000075=tagCOINIT flags=0x00100100
+0x02000075=tagCOINIT flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000076=tagCOMSD flags=0x00100100
+0x02000076=tagCOMSD flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000077=tagSTDMSHLFLAGS flags=0x00100100
+0x02000077=tagSTDMSHLFLAGS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000078=tagCOWAIT_FLAGS flags=0x00100100
+0x02000078=tagCOWAIT_FLAGS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000079=tagDISCARDCACHE flags=0x00100100
+0x02000079=tagDISCARDCACHE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200007a=tagOLEGETMONIKER flags=0x00100100
+0x0200007a=tagOLEGETMONIKER flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200007b=tagOLEWHICHMK flags=0x00100100
+0x0200007b=tagOLEWHICHMK flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200007c=tagUSERCLASSTYPE flags=0x00100100
+0x0200007c=tagUSERCLASSTYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200007d=tagOLEMISC flags=0x00100100
+0x0200007d=tagOLEMISC flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200007e=tagOLECLOSE flags=0x00100100
+0x0200007e=tagOLECLOSE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200007f=tagOLERENDER flags=0x00100100
+0x0200007f=tagOLERENDER flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000080=tagOLEUPDATE flags=0x00100100
+0x02000080=tagOLEUPDATE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000081=tagOLELINKBIND flags=0x00100100
+0x02000081=tagOLELINKBIND flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000082=tagBINDSPEED flags=0x00100100
+0x02000082=tagBINDSPEED flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000083=tagOLECONTF flags=0x00100100
+0x02000083=tagOLECONTF flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000084=tagOLEVERBATTRIB flags=0x00100100
+0x02000084=tagOLEVERBATTRIB flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000085=tagSF_TYPE flags=0x00100100
+0x02000085=tagSF_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000086=tagTYPEKIND flags=0x00100100
+0x02000086=tagTYPEKIND flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000087=tagCALLCONV flags=0x00100100
+0x02000087=tagCALLCONV flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000088=tagFUNCKIND flags=0x00100100
+0x02000088=tagFUNCKIND flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000089=tagINVOKEKIND flags=0x00100100
+0x02000089=tagINVOKEKIND flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200008a=tagVARKIND flags=0x00100100
+0x0200008a=tagVARKIND flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200008b=tagTYPEFLAGS flags=0x00100100
+0x0200008b=tagTYPEFLAGS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200008c=tagFUNCFLAGS flags=0x00100100
+0x0200008c=tagFUNCFLAGS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200008d=tagVARFLAGS flags=0x00100100
+0x0200008d=tagVARFLAGS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200008e=tagDESCKIND flags=0x00100100
+0x0200008e=tagDESCKIND flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200008f=tagSYSKIND flags=0x00100100
+0x0200008f=tagSYSKIND flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000090=tagLIBFLAGS flags=0x00100100
+0x02000090=tagLIBFLAGS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000091=tagCHANGEKIND flags=0x00100100
+0x02000091=tagCHANGEKIND flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000092=tagDOMNodeType flags=0x00100100
+0x02000092=tagDOMNodeType flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000093=tagXMLEMEM_TYPE flags=0x00100100
+0x02000093=tagXMLEMEM_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000094=__MIDL_IMonikerProp_0001 flags=0x00100100
+0x02000094=__MIDL_IMonikerProp_0001 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000095=__MIDL_IBindStatusCallback_0001 flags=0x00100100
+0x02000095=__MIDL_IBindStatusCallback_0001 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000096=__MIDL_IBindStatusCallback_0002 flags=0x00100100
+0x02000096=__MIDL_IBindStatusCallback_0002 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000097=__MIDL_IBindStatusCallback_0003 flags=0x00100100
+0x02000097=__MIDL_IBindStatusCallback_0003 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000098=__MIDL_IBindStatusCallback_0004 flags=0x00100100
+0x02000098=__MIDL_IBindStatusCallback_0004 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000099=__MIDL_IBindStatusCallback_0005 flags=0x00100100
+0x02000099=__MIDL_IBindStatusCallback_0005 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200009a=__MIDL_IBindStatusCallback_0006 flags=0x00100100
+0x0200009a=__MIDL_IBindStatusCallback_0006 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200009b=tagBINDSTATUS flags=0x00100100
+0x0200009b=tagBINDSTATUS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200009c=__MIDL_ICodeInstall_0001 flags=0x00100100
+0x0200009c=__MIDL_ICodeInstall_0001 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200009d=__MIDL_IUri_0001 flags=0x00100100
+0x0200009d=__MIDL_IUri_0001 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200009e=__MIDL_IUri_0002 flags=0x00100100
+0x0200009e=__MIDL_IUri_0002 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200009f=tagBINDSTRING flags=0x00100100
+0x0200009f=tagBINDSTRING flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000a0=_tagPI_FLAGS flags=0x00100100
+0x020000a0=_tagPI_FLAGS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000a1=_tagOIBDG_FLAGS flags=0x00100100
+0x020000a1=_tagOIBDG_FLAGS flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000a2=_tagPARSEACTION flags=0x00100100
+0x020000a2=_tagPARSEACTION flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000a3=_tagPSUACTION flags=0x00100100
+0x020000a3=_tagPSUACTION flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000a4=_tagQUERYOPTION flags=0x00100100
+0x020000a4=_tagQUERYOPTION flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000a5=_tagINTERNETFEATURELIST flags=0x00100100
+0x020000a5=_tagINTERNETFEATURELIST flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000a6=__MIDL_IInternetSecurityManager_0001 flags=0x00100100
+0x020000a6=__MIDL_IInternetSecurityManager_0001 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000a7=__MIDL_IInternetSecurityManager_0002 flags=0x00100100
+0x020000a7=__MIDL_IInternetSecurityManager_0002 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000a8=__MIDL_IInternetSecurityManager_0003 flags=0x00100100
+0x020000a8=__MIDL_IInternetSecurityManager_0003 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000a9=tagURLZONE flags=0x00100100
+0x020000a9=tagURLZONE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000aa=tagURLTEMPLATE flags=0x00100100
+0x020000aa=tagURLTEMPLATE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000ab=__MIDL_IInternetZoneManager_0001 flags=0x00100100
+0x020000ab=__MIDL_IInternetZoneManager_0001 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000ac=__MIDL_IInternetZoneManager_0002 flags=0x00100100
+0x020000ac=__MIDL_IInternetZoneManager_0002 flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000ad=_URLZONEREG flags=0x00100100
+0x020000ad=_URLZONEREG flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000ae=PIDMSI_STATUS_VALUE flags=0x00100100
+0x020000ae=PIDMSI_STATUS_VALUE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000af=tagREGKIND flags=0x00100100
+0x020000af=tagREGKIND flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000b0=_SC_ACTION_TYPE flags=0x00100100
+0x020000b0=_SC_ACTION_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000b1=_SC_STATUS_TYPE flags=0x00100100
+0x020000b1=_SC_STATUS_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000b2=_SC_ENUM_TYPE flags=0x00100100
+0x020000b2=_SC_ENUM_TYPE flags=0x00100100 valuetype enum
 	base=System.Enum
 0x020000b3=OutlookKolabMAPIHelper.IMAPHelper flags=0x00100001
 	base=System.Object
-0x020000b4=_PV flags=0x00100110
+0x020000b4=_PV flags=0x00100110 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x020000b5=_SRow flags=0x00100108
+0x020000b5=_SRow flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=12
-0x020000b6=_SBinary flags=0x00100108
+0x020000b6=_SBinary flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x020000b7=_SRowSet flags=0x00100108
+0x020000b7=_SRowSet flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x020000b8=IMAPITable flags=0x00100188
+0x020000b8=IMAPITable flags=0x00100188 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000b9=IMAPIFolder flags=0x00100188
+0x020000b9=IMAPIFolder flags=0x00100188 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000ba=_GUID flags=0x00100108
+0x020000ba=_GUID flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x020000bb=tagSTATSTG flags=0x00100108
+0x020000bb=tagSTATSTG flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=72
-0x020000bc=IStream flags=0x00100188
+0x020000bc=IStream flags=0x00100188 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000bd=IAttach flags=0x00100188
+0x020000bd=IAttach flags=0x00100188 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000be=IUnknown flags=0x00100188
+0x020000be=IUnknown flags=0x00100188 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000bf=ISequentialStream flags=0x00100188
+0x020000bf=ISequentialStream flags=0x00100188 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000c0=_SPropValue flags=0x00100108
+0x020000c0=_SPropValue flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x020000c1=IMAPIProp flags=0x00100188
+0x020000c1=IMAPIProp flags=0x00100188 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000c2=_SPropProblemArray flags=0x00100108
+0x020000c2=_SPropProblemArray flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x020000c3=_TP_CALLBACK_ENVIRON flags=0x00100108
+0x020000c3=_TP_CALLBACK_ENVIRON flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=32
-0x020000c4=_TP_CALLBACK_ENVIRON/<unnamed-type-u> flags=0x00100112
+0x020000c4=_TP_CALLBACK_ENVIRON/<unnamed-type-u> flags=0x00100112 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000c5=_TP_CALLBACK_ENVIRON/<unnamed-type-u>/<unnamed-type-s> flags=0x0010010a
+0x020000c5=_TP_CALLBACK_ENVIRON/<unnamed-type-u>/<unnamed-type-s> flags=0x0010010a valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000c6=_ldiv_t flags=0x00100108
+0x020000c6=_ldiv_t flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x020000c7=tagTEXTMETRICW flags=0x00100108
+0x020000c7=tagTEXTMETRICW flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=60
-0x020000c8=tagMSG flags=0x00100108
+0x020000c8=tagMSG flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=28
-0x020000c9=HWND__ flags=0x00100108
+0x020000c9=HWND__ flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000ca=HDC__ flags=0x00100108
+0x020000ca=HDC__ flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000cb=tagRECT flags=0x00100108
+0x020000cb=tagRECT flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x020000cc=_SECURITY_ATTRIBUTES flags=0x00100108
+0x020000cc=_SECURITY_ATTRIBUTES flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=12
-0x020000cd=tagVARIANT flags=0x00100108
+0x020000cd=tagVARIANT flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x020000ce=tagVARIANT/$UnnamedClass$0x51b05a83$323$ flags=0x00100115
+0x020000ce=tagVARIANT/$UnnamedClass$0x51b05a83$323$ flags=0x00100115 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x020000cf=tagVARIANT/$UnnamedClass$0x51b05a83$323$/$UnnamedClass$0x51b05a83$324$ flags=0x0010010d
+0x020000cf=tagVARIANT/$UnnamedClass$0x51b05a83$323$/$UnnamedClass$0x51b05a83$324$ flags=0x0010010d valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x020000d0=tagVARIANT/$UnnamedClass$0x51b05a83$323$/$UnnamedClass$0x51b05a83$324$/$UnnamedClass$0x51b05a83$325$ flags=0x00100115
+0x020000d0=tagVARIANT/$UnnamedClass$0x51b05a83$323$/$UnnamedClass$0x51b05a83$324$/$UnnamedClass$0x51b05a83$325$ flags=0x00100115 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x020000d1=tagVARIANT/$UnnamedClass$0x51b05a83$323$/$UnnamedClass$0x51b05a83$324$/$UnnamedClass$0x51b05a83$325$/$UnnamedClass$0x51b05a83$326$ flags=0x0010010d
+0x020000d1=tagVARIANT/$UnnamedClass$0x51b05a83$323$/$UnnamedClass$0x51b05a83$324$/$UnnamedClass$0x51b05a83$325$/$UnnamedClass$0x51b05a83$326$ flags=0x0010010d valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x020000d2=tagPROPVARIANT flags=0x00100108
+0x020000d2=tagPROPVARIANT flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x020000d3=tagPROPVARIANT/$UnnamedClass$0x51b05a83$331$ flags=0x00100115
+0x020000d3=tagPROPVARIANT/$UnnamedClass$0x51b05a83$331$ flags=0x00100115 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x020000d4=tagPROPVARIANT/$UnnamedClass$0x51b05a83$331$/$UnnamedClass$0x51b05a83$332$ flags=0x0010010d
+0x020000d4=tagPROPVARIANT/$UnnamedClass$0x51b05a83$331$/$UnnamedClass$0x51b05a83$332$ flags=0x0010010d valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x020000d5=tagPROPVARIANT/$UnnamedClass$0x51b05a83$331$/$UnnamedClass$0x51b05a83$332$/$UnnamedClass$0x51b05a83$333$ flags=0x00100115
+0x020000d5=tagPROPVARIANT/$UnnamedClass$0x51b05a83$331$/$UnnamedClass$0x51b05a83$332$/$UnnamedClass$0x51b05a83$333$ flags=0x00100115 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x020000d6=<CppImplementationDetails>.$ArrayType$$$BY08$$CB_W flags=0x00100108
+0x020000d6=<CppImplementationDetails>.$ArrayType$$$BY08$$CB_W flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=18
-0x020000d7=<CppImplementationDetails>.$ArrayType$$$BY0O@$$CBD flags=0x00100108
+0x020000d7=<CppImplementationDetails>.$ArrayType$$$BY0O@$$CBD flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=14
-0x020000d8=<CrtImplementationDetails>.NativeDll flags=0x00100108
+0x020000d8=<CrtImplementationDetails>.NativeDll flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=1
-0x020000d9=<CrtImplementationDetails>.DefaultDomain flags=0x00100108
+0x020000d9=<CrtImplementationDetails>.DefaultDomain flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=1
-0x020000da=<CrtImplementationDetails>.ActivationContext flags=0x00100108
+0x020000da=<CrtImplementationDetails>.ActivationContext flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=12
-0x020000db=<CrtImplementationDetails>.LanguageSupport flags=0x00100108
+0x020000db=<CrtImplementationDetails>.LanguageSupport flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000dc=gcroot<System::String ^> flags=0x00100108
+0x020000dc=gcroot<System::String ^> flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000dd=HINSTANCE__ flags=0x00100108
+0x020000dd=HINSTANCE__ flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000de=tagACTCTXW flags=0x00100108
+0x020000de=tagACTCTXW flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=32
-0x020000df=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPBXXZ flags=0x00100108
+0x020000df=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPBXXZ flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=4
-0x020000e0=tm flags=0x00100108
+0x020000e0=tm flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=36
-0x020000e1=<CrtImplementationDetails>.Progress flags=0x00100108
+0x020000e1=<CrtImplementationDetails>.Progress flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=1
-0x020000e2=<CrtImplementationDetails>.Progress/State flags=0x00100102
+0x020000e2=<CrtImplementationDetails>.Progress/State flags=0x00100102 valuetype enum
 	base=System.Enum
-0x020000e3=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ flags=0x00100108
+0x020000e3=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=1
-0x020000e4=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ flags=0x00100108
+0x020000e4=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=1
-0x020000e5=__enative_startup_state flags=0x00100100
+0x020000e5=__enative_startup_state flags=0x00100100 valuetype enum
 	base=System.Enum
-0x020000e6=<CrtImplementationDetails>.TriBool flags=0x00100108
+0x020000e6=<CrtImplementationDetails>.TriBool flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=1
-0x020000e7=<CrtImplementationDetails>.TriBool/State flags=0x00100102
+0x020000e7=<CrtImplementationDetails>.TriBool/State flags=0x00100102 valuetype enum
 	base=System.Enum
-0x020000e8=tagTEXTMETRICA flags=0x00100108
+0x020000e8=tagTEXTMETRICA flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=56
-0x020000e9=<CppImplementationDetails>.$ArrayType$$$BY0CD@$$CBD flags=0x00100108
+0x020000e9=<CppImplementationDetails>.$ArrayType$$$BY0CD@$$CBD flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=35
-0x020000ea=<CppImplementationDetails>.$ArrayType$$$BY0CK@$$CB_W flags=0x00100108
+0x020000ea=<CppImplementationDetails>.$ArrayType$$$BY0CK@$$CB_W flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=84
-0x020000eb=<CppImplementationDetails>.$ArrayType$$$BY0DA@$$CB_W flags=0x00100108
+0x020000eb=<CppImplementationDetails>.$ArrayType$$$BY0DA@$$CB_W flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=96
-0x020000ec=<CrtImplementationDetails>.AtExitLock flags=0x00100108
+0x020000ec=<CrtImplementationDetails>.AtExitLock flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=1
-0x020000ed=localeinfo_struct flags=0x00100108
+0x020000ed=localeinfo_struct flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x020000ee=<CrtImplementationDetails>.ThisModule flags=0x00100108
+0x020000ee=<CrtImplementationDetails>.ThisModule flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=1
-0x020000ef=_EXCEPTION_POINTERS flags=0x00100108
+0x020000ef=_EXCEPTION_POINTERS flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
 [fields]
@@ -3681,3 +3681,146 @@ ca parent=0x020000ef ctor=System.Void Microsoft.VisualC.DebugInfoInPDBAttribute:
 	IL_0000: ldarg.0
 	IL_0001: call System.Void System.Object::.ctor()
 	IL_0006: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x01000012 -> -
+0x01000013 -> -
+0x01000014 -> -
+0x01000015 -> -
+0x01000016 -> -
+0x01000017 -> -
+0x01000018 -> -
+0x01000019 -> -
+0x0100001a -> -
+0x0100001b -> -
+0x0100001c -> -
+0x0100001d -> -
+0x0100001e -> -
+0x0100001f -> -
+0x01000020 -> -
+0x01000021 -> -
+0x01000022 -> -
+0x01000023 -> -
+0x01000024 -> -
+0x01000025 -> -
+0x01000026 -> -
+0x01000027 -> -
+0x01000028 -> -
+0x01000029 -> -
+0x0100002a -> -
+0x0100002b -> -
+0x0100002c -> -
+0x0100002d -> -
+0x0100002e -> -
+0x0100002f -> -
+0x01000030 -> -
+0x01000031 -> -
+0x01000032 -> -
+0x01000033 -> -
+0x01000034 -> -
+0x01000035 -> -
+0x01000036 -> -
+0x01000037 -> -
+0x01000038 -> -
+0x01000039 -> -
+0x0100003a -> -
+0x0100003b -> -
+0x0100003c -> -
+0x0100003d -> -
+0x0100003e -> -
+0x0100003f -> -
+0x01000040 -> -
+0x01000041 -> -
+0x01000042 -> -
+0x01000043 -> -
+0x01000044 -> -
+0x1b000001 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> -
+0x0a000013 -> -
+0x0a000014 -> -
+0x0a000015 -> -
+0x0a000016 -> -
+0x0a000017 -> -
+0x0a000018 -> -
+0x0a000019 -> -
+0x0a00001a -> -
+0x0a00001b -> -
+0x0a00001c -> -
+0x0a00001d -> -
+0x0a00001e -> -
+0x0a00001f -> -
+0x0a000020 -> -
+0x0a000021 -> -
+0x0a000022 -> -
+0x0a000023 -> -
+0x0a000024 -> -
+0x0a000025 -> -
+0x0a000026 -> -
+0x0a000027 -> -
+0x0a000028 -> -
+0x0a000029 -> -
+0x0a00002a -> -
+0x0a00002b -> -
+0x0a00002c -> -
+0x0a00002d -> -
+0x0a00002e -> -
+0x0a00002f -> -
+0x0a000030 -> -
+0x0a000031 -> -
+0x0a000032 -> -
+0x0a000033 -> -
+0x0a000034 -> -
+0x0a000035 -> -
+0x0a000036 -> -
+0x0a000037 -> -
+0x0a000038 -> -
+0x0a000039 -> -
+0x0a00003a -> -
+0x0a00003b -> -
+0x0a00003c -> -
+0x0a00003d -> -
+0x0a00003e -> -
+0x0a00003f -> -
+0x0a000040 -> -
+0x0a000041 -> -
+0x0a000042 -> -
+0x0a000043 -> -
+0x0a000044 -> -
+0x0a000045 -> -
+0x0a000046 -> -
+0x0a000047 -> -
+0x0a000048 -> -
+0x0a000049 -> -

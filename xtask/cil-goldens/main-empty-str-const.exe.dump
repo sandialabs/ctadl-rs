@@ -39,3 +39,16 @@ ca parent=0x02000002 ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 	IL_0007: call System.Boolean System.Int32::TryParse(System.String,System.Int32&)
 	IL_000c: pop
 	IL_000d: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -

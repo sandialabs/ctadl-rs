@@ -74,11 +74,7 @@ pub fn run_checks(
         anyhow::bail!("no assemblies under {}", fixtures.display());
     }
     // Rendered once and shared by `read`, `goldens` and `cecil-compare`.
-    let dumps = parallel_map(&inputs, |input| {
-        std::fs::read(&input.path)
-            .map_err(|e| format!("read: {e}"))
-            .and_then(|data| parity::rust_dump(&data))
-    });
+    let dumps = parallel_map(&inputs, |input| parity::rust_dump(&input.path));
 
     Ok(vec![
         ("cil:must-fail".to_string(), check_must_fail(cecil)),

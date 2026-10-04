@@ -9,10 +9,12 @@
 
 use cil_reader::cil::RawOperand;
 use cil_reader::model::custom_attributes::{CaArgument, CaValue};
+use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader, ResolvedMember, ResolvedType};
 use cil_reader::model::{ConstantValue, Entity, ExceptionHandlerType, Module, Resource, TypeDef};
 use cil_reader::raw::{ModuleKind, Table, TargetArchitecture};
-use cil_reader::{MetadataToken, Result};
+use cil_reader::{MetadataToken, Result, TokenType};
 use std::fmt::Write as _;
+use std::path::Path;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Section {
@@ -29,6 +31,7 @@ pub enum Section {
     Events,
     CustomAttributes,
     Il,
+    Resolve,
 }
 
 pub const ALL_SECTIONS: &[(&str, Section)] = &[
@@ -45,6 +48,7 @@ pub const ALL_SECTIONS: &[(&str, Section)] = &[
     ("events", Section::Events),
     ("custom-attributes", Section::CustomAttributes),
     ("il", Section::Il),
+    ("resolve", Section::Resolve),
 ];
 
 fn hex(bytes: &[u8]) -> String {
@@ -58,8 +62,10 @@ fn tok(t: MetadataToken) -> String {
     format!("0x{:08x}", t.raw())
 }
 
-/// Renders a dump of `module` for the selected sections.
-pub fn dump(module: &Module<'_>, sections: &[Section]) -> Result<String> {
+/// Renders a dump of `module` for the selected sections. `dir` is the
+/// directory [`Section::Resolve`] probes for referenced assemblies (the
+/// input's own); without one, that section is left out.
+pub fn dump(module: &Module<'_>, sections: &[Section], dir: Option<&Path>) -> Result<String> {
     let mut out = String::new();
     let has = |s: Section| sections.contains(&s);
 
@@ -126,7 +132,60 @@ pub fn dump(module: &Module<'_>, sections: &[Section]) -> Result<String> {
     if has(Section::Il) {
         dump_il(module, &mut out)?;
     }
+    if let (true, Some(dir)) = (has(Section::Resolve), dir) {
+        dump_resolve(module, dir, &mut out);
+    }
     Ok(out)
+}
+
+/// Every TypeRef, TypeSpec and MemberRef row, and the definition it resolves
+/// to through a [`DirectoryLoader`] over `dir`: `-` for none, `!error` for an
+/// error.
+fn dump_resolve(module: &Module<'_>, dir: &Path, out: &mut String) {
+    out.push_str("[resolve]\n");
+    let loader = DirectoryLoader::new(vec![dir.to_path_buf()]);
+    let cache = AssemblyCache::new(&loader);
+    let md = module.metadata();
+    let types = [
+        (TokenType::TypeRef, Table::TypeRef),
+        (TokenType::TypeSpec, Table::TypeSpec),
+    ]
+    .into_iter()
+    .flat_map(|(t, table)| (1..=md.row_count(table)).map(move |rid| MetadataToken::new(t, rid)));
+    for token in types {
+        let result = module.resolve_type(token, &cache).and_then(|r| {
+            r.map(|ResolvedType { module, ty }| definition(module, ty.token(), ty.full_name()))
+                .transpose()
+        });
+        writeln!(out, "{} -> {}", tok(token), resolution(result)).unwrap();
+    }
+    for rid in 1..=md.row_count(Table::MemberRef) {
+        let token = MetadataToken::new(TokenType::MemberRef, rid);
+        let result = module.resolve_member(token, &cache).and_then(|r| {
+            r.map(|member| match member {
+                ResolvedMember::Field(module, f) => definition(module, f.token(), f.full_name()),
+                ResolvedMember::Method(module, m) => definition(module, m.token(), m.full_name()),
+            })
+            .transpose()
+        });
+        writeln!(out, "{} -> {}", tok(token), resolution(result)).unwrap();
+    }
+}
+
+fn definition(
+    module: &Module<'_>,
+    token: MetadataToken,
+    full_name: Result<String>,
+) -> Result<String> {
+    Ok(format!("{}!{} {}", module.name()?, tok(token), full_name?))
+}
+
+fn resolution(result: Result<Option<String>>) -> String {
+    match result {
+        Ok(Some(definition)) => definition,
+        Ok(None) => "-".to_string(),
+        Err(_) => "!error".to_string(),
+    }
 }
 
 fn dump_module(module: &Module<'_>, out: &mut String) -> Result<()> {
@@ -224,10 +283,16 @@ fn dump_types(module: &Module<'_>, out: &mut String) -> Result<()> {
     for ty in module.all_types() {
         writeln!(
             out,
-            "{}={} flags=0x{:08x}",
+            "{}={} flags=0x{:08x}{}{}",
             tok(ty.token()),
             ty.full_name()?,
             ty.attributes()?,
+            if ty.is_value_type()? {
+                " valuetype"
+            } else {
+                ""
+            },
+            if ty.is_enum()? { " enum" } else { "" },
         )
         .unwrap();
         if let Some(base) = ty.base_type()? {
@@ -750,6 +815,7 @@ pub fn sweep(module: &Module<'_>) -> Result<()> {
     let _ = dump(
         module,
         &ALL_SECTIONS.iter().map(|&(_, s)| s).collect::<Vec<_>>(),
+        None,
     )?;
     Ok(())
 }

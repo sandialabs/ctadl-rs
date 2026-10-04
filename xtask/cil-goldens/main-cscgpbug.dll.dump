@@ -97,3 +97,20 @@ ca parent=0x06000008 ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 	IL_0002: call !0 ListViewModel::<>n__FabricatedMethod1()
 	IL_0007: stloc.0
 	IL_0008: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x1b000001 -> test.dll!0x02000002 BaseListViewModel`1
+0x1b000002 -> test.dll!0x02000002 BaseListViewModel`1
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> test.dll!0x04000001 T BaseListViewModel`1::<SelectedItem>k__BackingField
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> test.dll!0x06000003 System.Void BaseListViewModel`1::.ctor()
+0x0a000008 -> test.dll!0x06000001 T BaseListViewModel`1::get_SelectedItem()
+0x0a000009 -> test.dll!0x06000002 System.Void BaseListViewModel`1::set_SelectedItem(T)

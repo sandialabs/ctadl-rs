@@ -60,3 +60,10 @@ ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCom
 	IL_0000: ldarg.0
 	IL_0001: call System.Void System.Console::WriteLine(System.String)
 	IL_0006: ret
+[resolve]
+0x01000001 -> mscorlib.dll!0x02000987 System.Object
+0x01000002 -> mscorlib.dll!0x02000963 System.Console
+0x01000003 -> mscorlib.dll!0x020002d1 System.Runtime.CompilerServices.RuntimeCompatibilityAttribute
+0x0a000001 -> mscorlib.dll!0x06005b4a System.Void System.Object::.ctor()
+0x0a000002 -> mscorlib.dll!0x0600594a System.Void System.Console::WriteLine(System.String)
+0x0a000003 -> mscorlib.dll!0x06001df6 System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor()

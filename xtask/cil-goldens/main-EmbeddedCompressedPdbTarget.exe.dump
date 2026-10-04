@@ -738,3 +738,147 @@ ca parent=0x06000016 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute
 	.try IL_0007 to IL_0165 catch System.Exception handler IL_0165 to IL_017f
 0x06000016 max-stack=8 init-locals=false code-size=1
 	IL_0000: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x01000012 -> -
+0x01000013 -> -
+0x01000014 -> -
+0x01000015 -> -
+0x01000016 -> -
+0x01000017 -> -
+0x01000018 -> -
+0x01000019 -> -
+0x0100001a -> -
+0x0100001b -> -
+0x0100001c -> -
+0x0100001d -> -
+0x0100001e -> -
+0x0100001f -> -
+0x01000020 -> -
+0x01000021 -> -
+0x01000022 -> -
+0x01000023 -> -
+0x01000024 -> -
+0x01000025 -> -
+0x01000026 -> -
+0x01000027 -> -
+0x01000028 -> -
+0x01000029 -> -
+0x0100002a -> -
+0x0100002b -> -
+0x0100002c -> -
+0x0100002d -> -
+0x0100002e -> -
+0x0100002f -> -
+0x01000030 -> -
+0x01000031 -> -
+0x01000032 -> -
+0x01000033 -> -
+0x01000034 -> -
+0x01000035 -> -
+0x01000036 -> -
+0x01000037 -> -
+0x01000038 -> -
+0x01000039 -> -
+0x0100003a -> -
+0x1b000001 -> -
+0x1b000002 -> -
+0x1b000003 -> PdbTarget.exe!0x02000004 PdbTarget.Program/<Where>d__3`1
+0x1b000004 -> -
+0x1b000005 -> -
+0x1b000006 -> -
+0x1b000007 -> PdbTarget.exe!0x02000004 PdbTarget.Program/<Where>d__3`1
+0x1b000008 -> -
+0x1b000009 -> -
+0x1b00000a -> -
+0x1b00000b -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> -
+0x0a000013 -> -
+0x0a000014 -> -
+0x0a000015 -> -
+0x0a000016 -> -
+0x0a000017 -> -
+0x0a000018 -> -
+0x0a000019 -> -
+0x0a00001a -> -
+0x0a00001b -> -
+0x0a00001c -> -
+0x0a00001d -> -
+0x0a00001e -> -
+0x0a00001f -> -
+0x0a000020 -> -
+0x0a000021 -> -
+0x0a000022 -> PdbTarget.exe!0x0600000b System.Void PdbTarget.Program/<Where>d__3`1::.ctor(System.Int32)
+0x0a000023 -> PdbTarget.exe!0x0400000b System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1::<>3__enumerable
+0x0a000024 -> PdbTarget.exe!0x0400000d System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1::<>3__filter
+0x0a000025 -> -
+0x0a000026 -> -
+0x0a000027 -> -
+0x0a000028 -> -
+0x0a000029 -> -
+0x0a00002a -> -
+0x0a00002b -> -
+0x0a00002c -> -
+0x0a00002d -> -
+0x0a00002e -> -
+0x0a00002f -> -
+0x0a000030 -> -
+0x0a000031 -> PdbTarget.exe!0x04000007 System.Int32 PdbTarget.Program/<Where>d__3`1::<>1__state
+0x0a000032 -> -
+0x0a000033 -> PdbTarget.exe!0x04000009 System.Int32 PdbTarget.Program/<Where>d__3`1::<>l__initialThreadId
+0x0a000034 -> PdbTarget.exe!0x0600000e System.Void PdbTarget.Program/<Where>d__3`1::<>m__Finally1()
+0x0a000035 -> PdbTarget.exe!0x0400000a System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1::enumerable
+0x0a000036 -> PdbTarget.exe!0x0400000e System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1::<>s__1
+0x0a000037 -> PdbTarget.exe!0x0400000f T PdbTarget.Program/<Where>d__3`1::<item>5__2
+0x0a000038 -> PdbTarget.exe!0x0400000c System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1::filter
+0x0a000039 -> -
+0x0a00003a -> PdbTarget.exe!0x04000010 System.Boolean PdbTarget.Program/<Where>d__3`1::<f>5__3
+0x0a00003b -> PdbTarget.exe!0x04000008 T PdbTarget.Program/<Where>d__3`1::<>2__current
+0x0a00003c -> PdbTarget.exe!0x0600000c System.Void PdbTarget.Program/<Where>d__3`1::System.IDisposable.Dispose()
+0x0a00003d -> -
+0x0a00003e -> PdbTarget.exe!0x0600000b System.Void PdbTarget.Program/<Where>d__3`1::.ctor(System.Int32)
+0x0a00003f -> PdbTarget.exe!0x0400000b System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1::<>3__enumerable
+0x0a000040 -> PdbTarget.exe!0x0400000d System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1::<>3__filter
+0x0a000041 -> PdbTarget.exe!0x06000012 System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1::System.Collections.Generic.IEnumerable<T>.GetEnumerator()
+0x0a000042 -> -
+0x0a000043 -> -
+0x0a000044 -> -
+0x0a000045 -> -
+0x0a000046 -> -
+0x0a000047 -> -
+0x0a000048 -> -
+0x0a000049 -> -
+0x0a00004a -> -

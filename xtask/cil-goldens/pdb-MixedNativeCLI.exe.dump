@@ -20,13 +20,13 @@ public-key=-
 [exported-types]
 [types]
 0x02000001=<Module> flags=0x00000000
-0x02000002=<CppImplementationDetails>.$ArrayType$$$BY0BI@$$CBD flags=0x00100108
+0x02000002=<CppImplementationDetails>.$ArrayType$$$BY0BI@$$CBD flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=24
-0x02000003=_GUID flags=0x00100108
+0x02000003=_GUID flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x02000004=_EXCEPTION_POINTERS flags=0x00100108
+0x02000004=_EXCEPTION_POINTERS flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
 0x02000005=<CrtImplementationDetails>.ModuleLoadException flags=0x00102000
@@ -35,40 +35,40 @@ public-key=-
 	base=<CrtImplementationDetails>.ModuleLoadException
 0x02000007=<CrtImplementationDetails>.ModuleUninitializer flags=0x00000000
 	base=System.Collections.Stack
-0x02000008=__scrt_native_startup_state flags=0x00100100
+0x02000008=__scrt_native_startup_state flags=0x00100100 valuetype enum
 	base=System.Enum
-0x02000009=<CrtImplementationDetails>.TriBool flags=0x00100100
+0x02000009=<CrtImplementationDetails>.TriBool flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200000a=<CrtImplementationDetails>.Progress flags=0x00100100
+0x0200000a=<CrtImplementationDetails>.Progress flags=0x00100100 valuetype enum
 	base=System.Enum
-0x0200000b=IUnknown flags=0x00100188
+0x0200000b=IUnknown flags=0x00100188 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x0200000c=<CrtImplementationDetails>.LanguageSupport flags=0x00100108
+0x0200000c=<CrtImplementationDetails>.LanguageSupport flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x0200000d=gcroot<System::String ^> flags=0x00100108
+0x0200000d=gcroot<System::String ^> flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x0200000e=__s_GUID flags=0x00100108
+0x0200000e=__s_GUID flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=16
-0x0200000f=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ flags=0x00100108
+0x0200000f=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=1
-0x02000010=ICLRRuntimeHost flags=0x00100188
+0x02000010=ICLRRuntimeHost flags=0x00100188 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x02000011=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ flags=0x00100108
+0x02000011=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x02000012=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ flags=0x00100108
+0x02000012=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=1
-0x02000013=ICorRuntimeHost flags=0x00100188
+0x02000013=ICorRuntimeHost flags=0x00100188 valuetype
 	base=System.ValueType
 	layout packing=0 size=8
-0x02000014=<CrtImplementationDetails>.ThisModule flags=0x00100108
+0x02000014=<CrtImplementationDetails>.ThisModule flags=0x00100108 valuetype
 	base=System.ValueType
 	layout packing=0 size=1
 [fields]
@@ -1932,3 +1932,133 @@ ca parent=0x0600005a ctor=System.Void System.Runtime.ConstrainedExecution.PrePre
 	IL_0060: ret
 	.try IL_001f to IL_003d finally handler IL_003d to IL_0050
 	.try IL_0007 to IL_0052 finally handler IL_0052 to IL_0060
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x01000012 -> -
+0x01000013 -> -
+0x01000014 -> -
+0x01000015 -> -
+0x01000016 -> -
+0x01000017 -> -
+0x01000018 -> -
+0x01000019 -> -
+0x0100001a -> -
+0x0100001b -> -
+0x0100001c -> -
+0x0100001d -> -
+0x0100001e -> -
+0x0100001f -> -
+0x01000020 -> -
+0x01000021 -> -
+0x01000022 -> -
+0x01000023 -> -
+0x01000024 -> -
+0x01000025 -> -
+0x01000026 -> -
+0x01000027 -> -
+0x01000028 -> -
+0x01000029 -> -
+0x0100002a -> -
+0x0100002b -> -
+0x0100002c -> -
+0x0100002d -> -
+0x0100002e -> -
+0x0100002f -> -
+0x01000030 -> -
+0x01000031 -> -
+0x01000032 -> -
+0x01000033 -> -
+0x01000034 -> -
+0x01000035 -> -
+0x01000036 -> -
+0x01000037 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> -
+0x0a000013 -> -
+0x0a000014 -> -
+0x0a000015 -> -
+0x0a000016 -> -
+0x0a000017 -> -
+0x0a000018 -> -
+0x0a000019 -> -
+0x0a00001a -> -
+0x0a00001b -> -
+0x0a00001c -> -
+0x0a00001d -> -
+0x0a00001e -> -
+0x0a00001f -> -
+0x0a000020 -> -
+0x0a000021 -> -
+0x0a000022 -> -
+0x0a000023 -> -
+0x0a000024 -> -
+0x0a000025 -> -
+0x0a000026 -> -
+0x0a000027 -> -
+0x0a000028 -> -
+0x0a000029 -> -
+0x0a00002a -> -
+0x0a00002b -> -
+0x0a00002c -> -
+0x0a00002d -> -
+0x0a00002e -> -
+0x0a00002f -> -
+0x0a000030 -> -
+0x0a000031 -> -
+0x0a000032 -> -
+0x0a000033 -> -
+0x0a000034 -> -
+0x0a000035 -> -
+0x0a000036 -> -
+0x0a000037 -> -
+0x0a000038 -> -
+0x0a000039 -> -
+0x0a00003a -> -
+0x0a00003b -> -
+0x0a00003c -> -
+0x0a00003d -> -
+0x0a00003e -> -
+0x0a00003f -> -
+0x0a000040 -> -
+0x0a000041 -> -
+0x0a000042 -> -
+0x0a000043 -> -
+0x0a000044 -> -
+0x0a000045 -> -
+0x0a000046 -> -
+0x0a000047 -> -
+0x0a000048 -> -
+0x0a000049 -> -
+0x0a00004a -> -

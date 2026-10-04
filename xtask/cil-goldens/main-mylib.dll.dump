@@ -55,3 +55,26 @@ ca parent=0x02000003 ctor=System.Void Microsoft.FSharp.Core.CompilationMappingAt
 	IL_0015: callvirt !1 Microsoft.FSharp.Core.FSharpFunc`2<System.String,Microsoft.FSharp.Core.Unit>::Invoke(!0)
 	IL_001a: pop
 	IL_001b: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> FSharp.Core.dll!0x02000020 Microsoft.FSharp.Core.FSharpInterfaceDataVersionAttribute
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> FSharp.Core.dll!0x02000075 Microsoft.FSharp.Core.FSharpFunc`2
+0x01000007 -> FSharp.Core.dll!0x02000002 Microsoft.FSharp.Core.Unit
+0x01000008 -> FSharp.Core.dll!0x020000f7 Microsoft.FSharp.Core.PrintfFormat`5
+0x01000009 -> -
+0x0100000a -> FSharp.Core.dll!0x02000168 Microsoft.FSharp.Core.ExtraTopLevelOperators
+0x0100000b -> FSharp.Core.dll!0x020000f6 Microsoft.FSharp.Core.PrintfFormat`4
+0x0100000c -> FSharp.Core.dll!0x02000021 Microsoft.FSharp.Core.CompilationMappingAttribute
+0x0100000d -> FSharp.Core.dll!0x02000003 Microsoft.FSharp.Core.SourceConstructFlags
+0x1b000001 -> FSharp.Core.dll!0x020000f7 Microsoft.FSharp.Core.PrintfFormat`5
+0x1b000002 -> FSharp.Core.dll!0x02000075 Microsoft.FSharp.Core.FSharpFunc`2
+0x0a000001 -> FSharp.Core.dll!0x0600002b System.Void Microsoft.FSharp.Core.FSharpInterfaceDataVersionAttribute::.ctor(System.Int32,System.Int32,System.Int32)
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> FSharp.Core.dll!0x060003cf System.Void Microsoft.FSharp.Core.PrintfFormat`5::.ctor(System.String)
+0x0a000005 -> FSharp.Core.dll!0x0600064d T Microsoft.FSharp.Core.ExtraTopLevelOperators::PrintFormatLine(Microsoft.FSharp.Core.PrintfFormat`4<T,System.IO.TextWriter,Microsoft.FSharp.Core.Unit,Microsoft.FSharp.Core.Unit>)
+0x0a000006 -> FSharp.Core.dll!0x06000150 TResult Microsoft.FSharp.Core.FSharpFunc`2::Invoke(T)
+0x0a000007 -> FSharp.Core.dll!0x06000033 System.Void Microsoft.FSharp.Core.CompilationMappingAttribute::.ctor(Microsoft.FSharp.Core.SourceConstructFlags)

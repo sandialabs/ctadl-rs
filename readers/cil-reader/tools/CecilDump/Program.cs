@@ -6,9 +6,10 @@
 // goldens in xtask/cil-goldens/.
 //
 // Determinism notes:
-// - No assembly resolution: the resolver always fails, so anything that needs
-//   resolution (foreign enum CA arguments) prints `!unresolved` exactly like
-//   the Rust side, which has no resolver until M7.
+// - No assembly resolution outside [resolve]: the resolver always fails, so
+//   anything else that needs resolution (foreign enum CA arguments) prints
+//   `!unresolved`. [resolve] reads the image again with a resolver that probes
+//   only the input's own directory, as the Rust side's DirectoryLoader does.
 // - Floats print as bit patterns (IL float operands also print first as the
 //   test Formatter renders them); blobs as lowercase hex.
 
@@ -26,7 +27,7 @@ static class Program
     static readonly string[] AllSections = {
         "module", "assembly", "assembly-refs", "module-refs", "resources",
         "exported-types", "types", "fields", "methods", "properties", "events",
-        "custom-attributes", "il",
+        "custom-attributes", "il", "resolve",
     };
 
     static int Main (string [] args)
@@ -75,6 +76,7 @@ static class Program
             case "events": DumpEvents (module, o); break;
             case "custom-attributes": DumpCustomAttributes (module, o); break;
             case "il": DumpIl (module, o); break;
+            case "resolve": DumpResolve (path, o); break;
             default:
                 Console.Error.WriteLine ($"unknown section: {section}");
                 return 1;
@@ -92,6 +94,23 @@ static class Program
         public AssemblyDefinition Resolve (AssemblyNameReference name, ReaderParameters parameters)
             => throw new AssemblyResolutionException (name);
         public void Dispose () { }
+    }
+
+    // BaseAssemblyResolver's directory probing over the given directories and
+    // nothing else (no framework or GAC fallbacks); a miss is null rather than
+    // an exception, as the Rust side's loader returns None. DefaultAssemblyResolver
+    // caches by full name.
+    sealed class DirectoryResolver : DefaultAssemblyResolver
+    {
+        readonly string [] directories;
+
+        public DirectoryResolver (params string [] directories)
+        {
+            this.directories = directories;
+        }
+
+        public override AssemblyDefinition Resolve (AssemblyNameReference name, ReaderParameters parameters)
+            => SearchDirectory (name, directories, parameters);
     }
 
     static string Tok (MetadataToken token) => $"0x{token.ToUInt32 ():x8}";
@@ -226,7 +245,12 @@ static class Program
     {
         o.Append ("[types]\n");
         foreach (var ty in TypesInRidOrder (module)) {
-            o.Append ($"{Tok (ty.MetadataToken)}={ty.FullName} flags=0x{(uint) ty.Attributes:x8}\n");
+            o.Append ($"{Tok (ty.MetadataToken)}={ty.FullName} flags=0x{(uint) ty.Attributes:x8}");
+            if (ty.IsValueType)
+                o.Append (" valuetype");
+            if (ty.IsEnum)
+                o.Append (" enum");
+            o.Append ('\n');
             if (ty.BaseType != null)
                 o.Append ($"\tbase={ty.BaseType.FullName}\n");
             if (ty.HasLayoutInfo)
@@ -340,6 +364,53 @@ static class Program
                 o.Append ('\n');
             }
         }
+    }
+
+    // Every TypeRef, TypeSpec and MemberRef row, and the definition it
+    // resolves to: `-` for null, `!error` when resolution throws.
+    static void DumpResolve (string path, StringBuilder o)
+    {
+        o.Append ("[resolve]\n");
+        var directory = System.IO.Path.GetDirectoryName (System.IO.Path.GetFullPath (path));
+        var parameters = new ReaderParameters {
+            AssemblyResolver = new DirectoryResolver (directory),
+        };
+        using var module = ModuleDefinition.ReadModule (path, parameters);
+        var resolver = module.MetadataResolver;
+
+        var type_refs = module.GetTypeReferences ().ToArray ();
+        for (int i = 0; i < type_refs.Length; i++)
+            ResolveLine (new MetadataToken (TokenType.TypeRef, i + 1), () => resolver.Resolve (type_refs [i]), o);
+
+        var type_specs = module.Image.GetTableLength (Mono.Cecil.Metadata.Table.TypeSpec);
+        for (int rid = 1; rid <= type_specs; rid++) {
+            var token = new MetadataToken (TokenType.TypeSpec, rid);
+            ResolveLine (token, () => resolver.Resolve ((TypeReference) module.LookupToken (token)), o);
+        }
+
+        var member_refs = module.GetMemberReferences ().ToArray ();
+        for (int i = 0; i < member_refs.Length; i++) {
+            var token = new MetadataToken (TokenType.MemberRef, i + 1);
+            ResolveLine (token, () => member_refs [i] switch {
+                FieldReference field => resolver.Resolve (field),
+                MethodReference method => resolver.Resolve (method),
+                _ => null,
+            }, o);
+        }
+    }
+
+    static void ResolveLine (MetadataToken token, Func<IMemberDefinition> resolve, StringBuilder o)
+    {
+        string result;
+        try {
+            var definition = resolve ();
+            result = definition == null
+                ? "-"
+                : $"{((MemberReference) definition).Module.Name}!{Tok (definition.MetadataToken)} {definition.FullName}";
+        } catch {
+            result = "!error";
+        }
+        o.Append ($"{Tok (token)} -> {result}\n");
     }
 
     static string Safe (Func<string> f)

@@ -50,3 +50,9 @@ public-key=-
 	IL_001e: ldc.i4 4
 	IL_0023: call System.Void <Module>::Bar(System.String,...,System.Int32,System.Int32,System.Int32)
 	IL_0028: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x0a000001 -> -
+0x0a000002 -> varargs!0x06000001 System.Void <Module>::Foo()
+0x0a000003 -> varargs!0x06000002 System.Void <Module>::Bar(System.String)

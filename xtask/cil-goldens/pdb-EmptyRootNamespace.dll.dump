@@ -334,3 +334,86 @@ ca parent=0x06000013 ctor=System.Void System.ComponentModel.EditorBrowsableAttri
 	IL_0009: newobj System.Void Microsoft.VisualBasic.MyServices.Internal.ContextValue`1<T>::.ctor()
 	IL_000e: stfld Microsoft.VisualBasic.MyServices.Internal.ContextValue`1<T> My.MyProject/ThreadSafeObjectProvider`1<T>::m_Context
 	IL_0013: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x01000012 -> -
+0x01000013 -> -
+0x01000014 -> -
+0x01000015 -> -
+0x01000016 -> -
+0x01000017 -> -
+0x01000018 -> -
+0x01000019 -> -
+0x0100001a -> -
+0x0100001b -> -
+0x0100001c -> -
+0x0100001d -> -
+0x0100001e -> -
+0x0100001f -> -
+0x01000020 -> -
+0x1b000001 -> NoRoot.dll!0x02000007 My.MyProject/ThreadSafeObjectProvider`1
+0x1b000002 -> NoRoot.dll!0x02000007 My.MyProject/ThreadSafeObjectProvider`1
+0x1b000003 -> NoRoot.dll!0x02000007 My.MyProject/ThreadSafeObjectProvider`1
+0x1b000004 -> NoRoot.dll!0x02000007 My.MyProject/ThreadSafeObjectProvider`1
+0x1b000005 -> -
+0x1b000006 -> NoRoot.dll!0x02000007 My.MyProject/ThreadSafeObjectProvider`1
+0x1b000007 -> -
+0x1b000008 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> NoRoot.dll!0x06000013 System.Void My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a000013 -> NoRoot.dll!0x06000013 System.Void My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a000014 -> NoRoot.dll!0x06000013 System.Void My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a000015 -> NoRoot.dll!0x06000013 System.Void My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a000016 -> NoRoot.dll!0x06000012 T My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a000017 -> NoRoot.dll!0x06000012 T My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a000018 -> NoRoot.dll!0x06000012 T My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a000019 -> NoRoot.dll!0x06000012 T My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a00001a -> -
+0x0a00001b -> -
+0x0a00001c -> -
+0x0a00001d -> -
+0x0a00001e -> -
+0x0a00001f -> -
+0x0a000020 -> -
+0x0a000021 -> -
+0x0a000022 -> -
+0x0a000023 -> -
+0x0a000024 -> -
+0x0a000025 -> -
+0x0a000026 -> -
+0x0a000027 -> NoRoot.dll!0x04000006 Microsoft.VisualBasic.MyServices.Internal.ContextValue`1<T> My.MyProject/ThreadSafeObjectProvider`1::m_Context
+0x0a000028 -> -
+0x0a000029 -> -
+0x0a00002a -> -

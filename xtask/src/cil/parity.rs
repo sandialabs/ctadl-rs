@@ -114,13 +114,15 @@ pub fn must_fail_inputs(cecil: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Full dump of an image with every section, as the goldens hold it. A panic
-/// inside the reader is reported as an error rather than unwinding.
-pub fn rust_dump(data: &[u8]) -> Result<String, String> {
+/// Full dump of the image at `path` with every section, as the goldens hold
+/// it; `[resolve]` probes `path`'s directory. A panic inside the reader is
+/// reported as an error rather than unwinding.
+pub fn rust_dump(path: &Path) -> Result<String, String> {
+    let data = std::fs::read(path).map_err(|e| format!("read: {e}"))?;
     let sections: Vec<cil_dump::Section> = cil_dump::ALL_SECTIONS.iter().map(|&(_, s)| s).collect();
     match std::panic::catch_unwind(|| -> cil_reader::Result<String> {
-        let module = cil_reader::Module::read(data)?;
-        cil_dump::dump(&module, &sections)
+        let module = cil_reader::Module::read(&data)?;
+        cil_dump::dump(&module, &sections, path.parent())
     }) {
         Ok(Ok(dump)) => Ok(dump),
         Ok(Err(e)) => Err(e.to_string()),
