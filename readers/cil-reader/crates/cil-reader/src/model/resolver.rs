@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::model::handles::{FieldDef, MemberRefSig, MethodDef, TypeDef};
 use crate::model::module::Module;
 use crate::model::names::GenericContext;
+use crate::model::names::type_full_name;
 use crate::model::sig::{MethodSig, SigReader, TypeSig, calling_convention};
 use crate::raw::tables::*;
 use crate::token::{MetadataToken, TokenType};
@@ -341,16 +342,7 @@ fn find_type_in<'c>(
     for (i, (ns, name)) in chain.iter().enumerate() {
         current = match current {
             None => module.get_type_by(ns, name)?,
-            Some(ty) => {
-                let mut found = None;
-                for nested in ty.nested_types()? {
-                    if nested.name()? == name.as_str() {
-                        found = Some(nested);
-                        break;
-                    }
-                }
-                found
-            }
+            Some(ty) => ty.nested_type(&type_full_name(ns, name))?,
         };
         if current.is_none() {
             if i == 0 {

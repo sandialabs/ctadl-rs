@@ -331,6 +331,30 @@ impl<'a> TypeDef<'a> {
             .is_some_and(|v| !v.is_empty()))
     }
 
+    /// `GetNestedType`: the first nested type whose `TypeFullName`, its
+    /// namespace and name joined by a dot (or the name alone, with no
+    /// namespace), is `full_name`.
+    pub fn nested_type(&self, full_name: &str) -> Result<Option<TypeDef<'a>>> {
+        for nested in self.nested_types()? {
+            if nested.type_full_name_is(full_name)? {
+                return Ok(Some(nested));
+            }
+        }
+        Ok(None)
+    }
+
+    fn type_full_name_is(&self, full_name: &str) -> Result<bool> {
+        let (ns, name) = (self.namespace()?, self.name()?);
+        Ok(if ns.is_empty() {
+            name == full_name
+        } else {
+            full_name
+                .strip_prefix(ns)
+                .and_then(|rest| rest.strip_prefix('.'))
+                == Some(name)
+        })
+    }
+
     pub fn nested_types(&self) -> Result<Vec<TypeDef<'a>>> {
         Ok(self
             .m

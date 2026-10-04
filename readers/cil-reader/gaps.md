@@ -168,7 +168,7 @@ Sections:
   acknowledge this.
 - **Cecil:** resolves them to the corlib definitions.
 
-**A20. Nested types are matched by name only.**
+**A20. Nested types are matched by name only.** *Fixed:* `TypeDef::nested_type` (`model/handles.rs`) ports `GetNestedType`, and resolution, `get_type`, `ParsedType::resolve_in_module` and attribute enum lookup use it; `get_type` takes a leading `/` as part of a top-level name. `gap-resolve.dll` covers resolution, and `gap-resolve-lib.dll`'s attributes the enum lookups, where a reflection name `Outer+NsA.E` was unresolved before.
 - **Rust:** `model/resolver.rs:346-351`, `model/module.rs:445-453`,
   `model/typeparser.rs:107-115`, `model/custom_attributes.rs:447-449, 555-557`.
 - **Cecil:** compares namespace plus name (`Mono.Cecil/TypeDefinition.cs:619-634`).

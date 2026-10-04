@@ -106,14 +106,11 @@ impl ParsedType {
         let Some(mut ty) = module.get_type(&self.fullname)? else {
             return Ok(None);
         };
-        'nested: for nested_name in &self.nested_names {
-            for nested in ty.nested_types()? {
-                if nested.name()? == nested_name {
-                    ty = nested;
-                    continue 'nested;
-                }
-            }
-            return Ok(None);
+        for nested_name in &self.nested_names {
+            let Some(nested) = ty.nested_type(nested_name)? else {
+                return Ok(None);
+            };
+            ty = nested;
         }
         Ok(Some(ty))
     }

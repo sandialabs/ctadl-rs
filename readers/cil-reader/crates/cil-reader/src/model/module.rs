@@ -463,20 +463,22 @@ impl<'a> Module<'a> {
         Ok(self.method_def(token.rid()))
     }
 
-    /// `ModuleDefinition.GetType(fullName)`: nested types separated by `/`.
+    /// `ModuleDefinition.GetType(fullName)`: nested types separated by `/`,
+    /// each matched on its namespace and name (`GetNestedType`). A `/` at
+    /// the start is part of a top-level name.
     pub fn get_type(&self, full_name: &str) -> Result<Option<TypeDef<'_>>> {
-        if let Some((outer, rest)) = full_name.split_once('/') {
+        if let Some((outer, rest)) = full_name
+            .split_once('/')
+            .filter(|(outer, _)| !outer.is_empty())
+        {
             let Some(mut ty) = self.get_type(outer)? else {
                 return Ok(None);
             };
-            'segment: for segment in rest.split('/') {
-                for nested in ty.nested_types()? {
-                    if nested.name()? == segment {
-                        ty = nested;
-                        continue 'segment;
-                    }
-                }
-                return Ok(None);
+            for segment in rest.split('/') {
+                let Some(nested) = ty.nested_type(segment)? else {
+                    return Ok(None);
+                };
+                ty = nested;
             }
             return Ok(Some(ty));
         }

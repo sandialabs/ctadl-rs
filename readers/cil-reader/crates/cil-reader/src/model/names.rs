@@ -272,3 +272,13 @@ pub(crate) fn method_params_full_name(
     out.push(')');
     Ok(())
 }
+
+/// `TypeReference.TypeFullName`: the namespace and name joined by a dot, or
+/// the name alone with no namespace.
+pub(crate) fn type_full_name(namespace: &str, name: &str) -> String {
+    if namespace.is_empty() {
+        name.to_string()
+    } else {
+        format!("{namespace}.{name}")
+    }
+}

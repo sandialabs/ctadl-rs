@@ -311,7 +311,8 @@ static class Program {
     static AssemblyRefUser GapRef(string name) => new AssemblyRefUser($"gap-{name}", new Version(1, 0, 0, 0));
 
     // gaps.md A16-A22: the definitions gap-resolve.dll's references resolve
-    // to (cil-dump's [resolve] section probes the fixtures directory).
+    // to (cil-dump's [resolve] section probes the fixtures directory), and
+    // attribute arguments naming nested enums (A20).
     static (ModuleDef, Action<Metadata>) ResolveLib() {
         var mod = NewModule("resolve-lib");
         var cs = mod.CorLibTypes;
@@ -367,6 +368,31 @@ static class Program {
             outer.NestedTypes.Add(nested);
         }
         mod.ExportedTypes.Add(new ExportedTypeUser(mod, 0, "", "Missing", TypeAttributes.Forwarder, GapRef("resolve")));
+        // A20 in attribute arguments: an enum nested with a namespace, named
+        // by a TypeRef without the namespace (no match), and by a reflection
+        // name with it (a match).
+        var en = new TypeDefUser("NsA", "E", cs.GetTypeRef("System", "Enum")) {
+            Attributes = TypeAttributes.NestedPublic | TypeAttributes.Sealed,
+        };
+        en.Fields.Add(new FieldDefUser("value__", new FieldSig(cs.Int32),
+            FieldAttributes.Public | FieldAttributes.SpecialName | FieldAttributes.RTSpecialName));
+        outer.NestedTypes.Add(en);
+        var attr = new TypeDefUser("", "Attr", cs.GetTypeRef("System", "Attribute")) {
+            Attributes = TypeAttributes.Public | TypeAttributes.BeforeFieldInit,
+        };
+        mod.Types.Add(attr);
+        var outerRef = new TypeRefUser(mod, "", "Outer", new ModuleRefUser(mod, "placeholder"));
+        var byRef = Method(".ctor", MethodSig.CreateInstance(cs.Void, new ValueTypeSig(new TypeRefUser(mod, "", "E", outerRef))), Ctor);
+        var boxed = Method(".ctor", MethodSig.CreateInstance(cs.Void, cs.Object), Ctor);
+        attr.Methods.Add(byRef);
+        attr.Methods.Add(boxed);
+        var attributed = Class("Attributed");
+        attributed.CustomAttributes.Add(new CustomAttribute(byRef, new byte[] { 1, 0, 5, 0, 0, 0, 0, 0 }));
+        var enumName = Encoding.UTF8.GetBytes("Outer+NsA.E");
+        var blob = new List<byte> { 1, 0, 0x51, 0x55, (byte)enumName.Length };
+        blob.AddRange(enumName);
+        blob.AddRange(new byte[] { 5, 0, 0, 0, 0, 0 });
+        attributed.CustomAttributes.Add(new CustomAttribute(boxed, blob.ToArray()));
 
         // A21: two top-level types named Dup. Cecil's name lookup finds the
         // last, also when resolving a reference to the first.
@@ -378,7 +404,7 @@ static class Program {
         Add(uses, "Refs", MethodSig.CreateStatic(cs.Void)).Body.Instructions.Insert(0,
             OpCodes.Ldtoken.ToInstruction(new TypeSpecUser(new SZArraySig(new ClassSig(dup1)))));
 
-        return (mod, _ => { });
+        return (mod, md => Patch(md.TablesHeap.TypeRefTable, md.GetRid(outerRef), r => new RawTypeRefRow(ModuleScope, r.Name, r.Namespace)));
     }
 
     // gaps.md A16-A22, A26: references into gap-resolve-lib.dll whose

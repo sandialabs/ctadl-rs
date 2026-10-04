@@ -8,7 +8,7 @@
 use crate::error::{Error, Result};
 use crate::model::data::ModuleData;
 use crate::model::handles::{MemberRefSig, MethodDef, TypeDef, TypeRef};
-use crate::model::names::{GenericContext, sig_full_name, token_full_name};
+use crate::model::names::{GenericContext, sig_full_name, token_full_name, type_full_name};
 use crate::model::sig::{ElementType, SigReader, TypeSig};
 use crate::model::typeparser::ParsedType;
 use crate::raw::tables::*;
@@ -474,16 +474,7 @@ fn enum_underlying_of_token(
                 }
                 found
             }
-            Some(ty) => {
-                let mut found = None;
-                for nested in ty.nested_types()? {
-                    if nested.name()? == name {
-                        found = Some(nested);
-                        break;
-                    }
-                }
-                found
-            }
+            Some(ty) => ty.nested_type(&type_full_name(ns, name))?,
         };
         if current.is_none() {
             // MetadataResolver.GetType falls back to the exported types,
@@ -599,14 +590,11 @@ fn resolve_parsed_in_module<'a>(
     let Some(mut ty) = found else {
         return Ok(None);
     };
-    'nested: for nested_name in &parsed.nested_names {
-        for nested in ty.nested_types()? {
-            if nested.name()? == nested_name {
-                ty = nested;
-                continue 'nested;
-            }
-        }
-        return Ok(None);
+    for nested_name in &parsed.nested_names {
+        let Some(nested) = ty.nested_type(nested_name)? else {
+            return Ok(None);
+        };
+        ty = nested;
     }
     Ok(Some(ty))
 }
