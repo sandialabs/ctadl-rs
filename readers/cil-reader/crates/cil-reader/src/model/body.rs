@@ -337,8 +337,8 @@ impl<'a> MethodBody<'a> {
             RawOperand::U8(v) => write!(out, "{v}").unwrap(),
             RawOperand::I32(v) => write!(out, "{v}").unwrap(),
             RawOperand::I64(v) => write!(out, "{v}").unwrap(),
-            RawOperand::F32(v) => out.push_str(&format_float(*v as f64)),
-            RawOperand::F64(v) => out.push_str(&format_float(*v)),
+            RawOperand::F32(v) => out.push_str(&format_r4(*v)),
+            RawOperand::F64(v) => out.push_str(&format_r8(*v)),
             RawOperand::Target(t) => out.push_str(&label(*t)),
             RawOperand::Switch(targets) => {
                 out.push('(');
@@ -507,19 +507,79 @@ fn label(offset: u32) -> String {
     format!("IL_{offset:04x}")
 }
 
-/// Invariant-culture float formatting close to .NET's shortest round-trip.
-fn format_float(v: f64) -> String {
-    if v.is_nan() {
+/// `float.ToString(CultureInfo.InvariantCulture)`, as the Formatter prints
+/// an `ldc.r4` operand.
+fn format_r4(v: f32) -> String {
+    format_float(
+        v.is_nan(),
+        v.is_sign_negative(),
+        v.is_infinite(),
+        &format!("{:e}", v.abs()),
+        9,
+    )
+}
+
+/// `double.ToString(CultureInfo.InvariantCulture)`, as the Formatter prints
+/// an `ldc.r8` operand.
+fn format_r8(v: f64) -> String {
+    format_float(
+        v.is_nan(),
+        v.is_sign_negative(),
+        v.is_infinite(),
+        &format!("{:e}", v.abs()),
+        17,
+    )
+}
+
+/// .NET's general format with the shortest round-trip digits
+/// (`Number.FormatFloat` / `FormatGeneral`): `abs` is the magnitude in Rust's
+/// exponent form, whose digits are the same shortest round-trip ones.
+/// Exponent form is used when the decimal point would sit more than
+/// `round_trip_digits` (or the digit count, if greater) places right of
+/// the first digit, or more than 3 places left of it; the exponent has a
+/// sign and at least two digits. Negative zero keeps its sign.
+fn format_float(
+    nan: bool,
+    negative: bool,
+    infinite: bool,
+    abs: &str,
+    round_trip_digits: usize,
+) -> String {
+    if nan {
         return "NaN".to_string();
     }
-    if v.is_infinite() {
-        return if v > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    let sign = if negative { "-" } else { "" };
+    if infinite {
+        return format!("{sign}Infinity");
     }
-    if v == v.trunc() && v.abs() < 1e15 {
-        // .NET prints integral doubles without a decimal point.
-        return format!("{}", v as i64);
+    let (mantissa, exponent) = abs.split_once('e').expect("Rust's {:e} has an exponent");
+    let digits: String = mantissa.chars().filter(|&c| c != '.').collect();
+    let exponent: i32 = exponent
+        .parse()
+        .expect("Rust's {:e} exponent is an integer");
+    if digits == "0" {
+        return format!("{sign}0");
     }
-    format!("{v}")
+    // The value is 0.<digits> × 10^scale.
+    let scale = exponent + 1;
+    let count = digits.len() as i32;
+    if scale > count.max(round_trip_digits as i32) || scale < -3 {
+        let (first, rest) = digits.split_at(1);
+        let point = if rest.is_empty() { "" } else { "." };
+        let exponent_sign = if exponent < 0 { '-' } else { '+' };
+        return format!(
+            "{sign}{first}{point}{rest}E{exponent_sign}{:02}",
+            exponent.abs()
+        );
+    }
+    if scale <= 0 {
+        format!("{sign}0.{}{digits}", "0".repeat(-scale as usize))
+    } else if scale >= count {
+        format!("{sign}{digits}{}", "0".repeat((scale - count) as usize))
+    } else {
+        let (whole, fraction) = digits.split_at(scale as usize);
+        format!("{sign}{whole}.{fraction}")
+    }
 }
 
 // Add the outer-context-aware full names used by operand rendering.
@@ -613,4 +673,63 @@ fn write_generic_args(
     }
     out.push('>');
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_r4, format_r8};
+
+    // Each value as .NET 8 prints it (CecilDump on gap-formatter.il.dll).
+    #[test]
+    fn floats_print_as_dotnet_does() {
+        let singles: &[(u32, &str)] = &[
+            (0x3dcccccd, "0.1"),
+            (0x80000000, "-0"),
+            (0x3fc00000, "1.5"),
+            (0x3727c5ac, "1E-05"),
+            (0x38d1b717, "0.0001"),
+            (0x4b189680, "10000000"),
+            (0x4cbebc20, "100000000"),
+            (0x4b800000, "16777216"),
+            (0x4ceb79a3, "123456790"),
+            (0x7f7fffff, "3.4028235E+38"),
+            (0x00800000, "1.1754944E-38"),
+            (0x00000001, "1E-45"),
+            (0x7fc00000, "NaN"),
+            (0xffc00000, "NaN"),
+            (0x7f800000, "Infinity"),
+            (0xff800000, "-Infinity"),
+        ];
+        for &(bits, expected) in singles {
+            assert_eq!(format_r4(f32::from_bits(bits)), expected, "r4 0x{bits:08x}");
+        }
+        let doubles: &[(u64, &str)] = &[
+            (0x3fb999999999999a, "0.1"),
+            (0x8000000000000000, "-0"),
+            (0xbff4000000000000, "-1.25"),
+            (0x3ee4f8b588e368f1, "1E-05"),
+            (0x3f1a36e2eb1c432d, "0.0001"),
+            (0x3f202c9dedbc309d, "0.0001234"),
+            (0x42d6bcc41e900000, "100000000000000"),
+            (0x430c6bf526340000, "1000000000000000"),
+            (0x4341c37937e08000, "10000000000000000"),
+            (0x4376345785d8a000, "1E+17"),
+            (0x437b69b4ba630f35, "1.2345678901234568E+17"),
+            (0x4340000000000000, "9007199254740992"),
+            (0x7fefffffffffffff, "1.7976931348623157E+308"),
+            (0x0010000000000000, "2.2250738585072014E-308"),
+            (0x0000000000000001, "5E-324"),
+            (0x3fd3333333333334, "0.30000000000000004"),
+            (0x7ff8000000000000, "NaN"),
+            (0x7ff0000000000000, "Infinity"),
+            (0xfff0000000000000, "-Infinity"),
+        ];
+        for &(bits, expected) in doubles {
+            assert_eq!(
+                format_r8(f64::from_bits(bits)),
+                expected,
+                "r8 0x{bits:016x}"
+            );
+        }
+    }
 }

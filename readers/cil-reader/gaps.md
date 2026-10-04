@@ -42,7 +42,7 @@ Sections:
 - **Repro:** `model/synth/swap-Methods.cs.dll`.
 - **Fix idea:** invert the Ptr table before the range search.
 
-**A2. `MethodBody::formatted()` prints floats incorrectly.** *Bug, reproduced.*
+**A2. `MethodBody::formatted()` prints floats incorrectly.** *Fixed:* `format_r4`/`format_r8` (`model/body.rs`) lay out the shortest round-trip digits as .NET's general format does; `gap-formatter.il.dll` and the corpus's floats cover it in `cil:cecil-compare`.
 - **Rust:** `model/body.rs:340` widens f32 to f64; `model/body.rs:511-523`
   (`format_float`) has no exponent form and drops the sign of `-0`.
 - **Cecil:** `IConvertible.ToString(InvariantCulture)`
@@ -494,6 +494,8 @@ fixture: `addptr.py` in the evidence directory can generate one.
 
 **E2. cil-dump prints floats as bit patterns, and no ported Cecil test has an
 `ldc.r4` or `ldc.r8` expected-IL string.** That is how A2 went unnoticed.
+*Fixed:* both dumps print IL float operands as the Formatter renders them,
+then as bits.
 
 **E3. cil-dump has no security-declaration section.** Security parsing is
 covered only by 4 ported tests.
