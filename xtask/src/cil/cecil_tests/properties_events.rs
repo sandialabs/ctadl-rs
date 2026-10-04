@@ -81,17 +81,17 @@ fn set_only_indexer() {
         .into_iter()
         .find(|p| p.name().unwrap() == "Item")
         .unwrap();
-    let sig = indexer.signature().unwrap();
-    assert_eq!(sig.params.len(), 2);
+    let parameters = indexer.parameters().unwrap();
+    assert_eq!(parameters.len(), 2);
     assert_eq!(
         module
-            .type_sig_full_name(&sig.params[0], Default::default())
+            .type_sig_full_name(&parameters[0], Default::default())
             .unwrap(),
         "System.Int32"
     );
     assert_eq!(
         module
-            .type_sig_full_name(&sig.params[1], Default::default())
+            .type_sig_full_name(&parameters[1], Default::default())
             .unwrap(),
         "System.String"
     );

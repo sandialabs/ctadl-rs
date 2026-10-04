@@ -79,7 +79,7 @@ Sections:
 - **Example:** a getter shared by P1 and P2 shows up on both in the port, and
   only on P2 in Cecil.
 
-**A6. `PropertyDef::full_name` with no getter or setter prints the signature's parameters.** *Divergence.*
+**A6. `PropertyDef::full_name` with no getter or setter prints the signature's parameters.** *Fixed:* the new `PropertyDef::parameters` (`model/handles.rs`) mirrors Cecil's `Parameters`, and `full_name` uses it; `gap-semantics.il.dll` covers it.
 - **Rust:** `model/handles.rs:1150-1158`.
 - **Cecil:** prints `()` (`Mono.Cecil/PropertyDefinition.cs:111-123,196-214`).
 

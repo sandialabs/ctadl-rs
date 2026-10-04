@@ -1131,9 +1131,23 @@ impl<'a> PropertyDef<'a> {
         read_constant(self.m, self.token())
     }
 
-    /// `PropertyDefinition.FullName`: "<type> <declaring>::<name>(<params>)"
-    /// — actually Cecil renders "<type> <declaring>::<name>()" with parameters
-    /// for indexers.
+    /// `PropertyDefinition.Parameters`: the getter's parameter types, or the
+    /// setter's without the value; none without either. The signature's own
+    /// parameters do not count.
+    pub fn parameters(&self) -> Result<Vec<TypeSig>> {
+        if let Some(getter) = self.get_method()? {
+            return Ok(getter.signature()?.params);
+        }
+        if let Some(setter) = self.set_method()? {
+            let mut params = setter.signature()?.params;
+            params.pop();
+            return Ok(params);
+        }
+        Ok(Vec::new())
+    }
+
+    /// `PropertyDefinition.FullName`: "<type> <declaring>::<name>(<params>)",
+    /// with the [`parameters`](Self::parameters).
     pub fn full_name(&self) -> Result<String> {
         let sig = self.signature()?;
         let ctx = match self.declaring_type()? {
@@ -1149,19 +1163,7 @@ impl<'a> PropertyDef<'a> {
         }
         out.push_str(self.name()?);
         out.push('(');
-        // PropertyDefinition.Parameters mirrors the accessors (getter params,
-        // or setter params minus the value); the signature params are the
-        // fallback with no accessors.
-        let params: Vec<TypeSig> = if let Some(getter) = self.get_method()? {
-            getter.signature()?.params
-        } else if let Some(setter) = self.set_method()? {
-            let mut p = setter.signature()?.params;
-            p.pop();
-            p
-        } else {
-            sig.params
-        };
-        for (i, p) in params.iter().enumerate() {
+        for (i, p) in self.parameters()?.iter().enumerate() {
             if i > 0 {
                 out.push(',');
             }
