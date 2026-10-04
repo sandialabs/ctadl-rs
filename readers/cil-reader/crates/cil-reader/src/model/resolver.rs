@@ -270,12 +270,88 @@ impl<'s> Module<'s> {
         }
     }
 
-    /// A module-independent structural key for a signature type: its Cecil
-    /// full name rendered with an unbound generic context. Mirrors
-    /// `MetadataResolver.AreSame`, which compares names/positions but not
-    /// scopes.
+    /// A module-independent key for a signature type, equal for two types
+    /// exactly when `MetadataResolver.AreSame` holds: names and generic
+    /// positions, not scopes; arrays by rank alone.
     fn type_shape(&self, sig: &TypeSig) -> Result<String> {
-        self.type_sig_full_name(sig, GenericContext::default())
+        let mut out = String::new();
+        self.write_shape(sig, &mut out)?;
+        Ok(out)
+    }
+
+    fn write_shape(&self, sig: &TypeSig, out: &mut String) -> Result<()> {
+        match sig {
+            // AreSame(ArrayType) compares ranks, so bounds, and SZARRAY
+            // against a rank-1 ARRAY, do not matter.
+            TypeSig::SzArray(element) => {
+                self.write_shape(element, out)?;
+                out.push_str("[rank 1]");
+            }
+            TypeSig::Array {
+                element,
+                dimensions,
+            } => {
+                self.write_shape(element, out)?;
+                out.push_str(&format!("[rank {}]", dimensions.len()));
+            }
+            TypeSig::Ptr(inner) => {
+                self.write_shape(inner, out)?;
+                out.push('*');
+            }
+            TypeSig::ByRef(inner) => {
+                self.write_shape(inner, out)?;
+                out.push('&');
+            }
+            TypeSig::Pinned(inner) => {
+                self.write_shape(inner, out)?;
+                out.push_str(" pinned");
+            }
+            TypeSig::Sentinel(inner) => {
+                out.push_str("...");
+                self.write_shape(inner, out)?;
+            }
+            TypeSig::CModReq { modifier, inner } | TypeSig::CModOpt { modifier, inner } => {
+                self.write_shape(inner, out)?;
+                out.push_str(if matches!(sig, TypeSig::CModReq { .. }) {
+                    " modreq("
+                } else {
+                    " modopt("
+                });
+                self.write_token_shape(*modifier, out)?;
+                out.push(')');
+            }
+            TypeSig::GenericInst { ty, args, .. } => {
+                self.write_token_shape(*ty, out)?;
+                out.push('<');
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    self.write_shape(arg, out)?;
+                }
+                out.push('>');
+            }
+            TypeSig::Named { token, .. } => self.write_token_shape(*token, out)?,
+            // Primitives, generic parameters and function pointers: the full
+            // name, with unbound generic parameters.
+            _ => out.push_str(&self.type_sig_full_name(sig, GenericContext::default())?),
+        }
+        Ok(())
+    }
+
+    /// A TypeDefOrRef token's shape; a TypeSpec is the type it holds.
+    fn write_token_shape(&self, token: MetadataToken, out: &mut String) -> Result<()> {
+        if token.token_type() == Some(TokenType::TypeSpec) {
+            let row = self.metadata().row::<TypeSpecRaw>(token.rid())?;
+            let sig = SigReader::new(self.metadata().blobs().get(row.signature)?).type_sig()?;
+            return self.write_shape(&sig, out);
+        }
+        let named = TypeSig::Named {
+            token,
+            is_value_type: false,
+        };
+        out.push_str(&self.type_sig_full_name(&named, GenericContext::default())?);
+        Ok(())
     }
 }
 
@@ -562,9 +638,7 @@ fn find_field<'c>(
             if field.name()? != name {
                 continue;
             }
-            let field_shape = rt
-                .module
-                .type_sig_full_name(&field.field_type()?, GenericContext::default())?;
+            let field_shape = rt.module.type_shape(&field.field_type()?)?;
             if field_shape == shape {
                 return Ok(Some(ResolvedMember::Field(rt.module, field)));
             }
@@ -592,13 +666,13 @@ impl MethodShapes {
                 is_vararg = true;
                 break;
             }
-            param_shapes.push(module.type_sig_full_name(p, GenericContext::default())?);
+            param_shapes.push(module.type_shape(p)?);
         }
         Ok(MethodShapes {
             has_this: sig.has_this,
             is_vararg,
             generic_arity: sig.generic_arity,
-            return_shape: module.type_sig_full_name(&sig.return_type, GenericContext::default())?,
+            return_shape: module.type_shape(&sig.return_type)?,
             param_shapes,
         })
     }

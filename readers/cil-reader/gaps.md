@@ -153,7 +153,7 @@ Sections:
 - **Cecil:** returns null as soon as the declaring type has no fields or methods
   (`Mono.Cecil/MetadataResolver.cs:179-180, 228-229`).
 
-**A17. The resolver matches array types by full name.**
+**A17. The resolver matches array types by full name.** *Fixed:* members match on `type_shape` (`model/resolver.rs`), a key equal exactly when Cecil's `AreSame` holds; an array's is its rank. Cecil does not tell SZARRAY from a rank-1 ARRAY either, since both read as an `ArrayType` of `ElementType.Array`: `T[]` and `T[0...]` match. `gap-resolve.dll` covers it.
 - **Rust:** `model/resolver.rs:302-304, 441-458`.
 - **Cecil:** compares rank only, and uses the element type to tell SZARRAY from
   ARRAY (`Mono.Cecil/MetadataResolver.cs:385-393`).
