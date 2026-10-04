@@ -158,10 +158,24 @@ impl<'s> Module<'s> {
         visited: &mut Vec<String>,
     ) -> Result<Option<ResolvedType<'c>>> {
         match token.token_type() {
-            Some(TokenType::TypeDef) => Ok(self.type_def(token.rid()).map(|ty| ResolvedType {
-                module: self_module(self),
-                ty,
-            })),
+            Some(TokenType::TypeDef) => {
+                // Cecil resolves a definition like any reference, by name:
+                // of two top-level types with one name, either resolves to
+                // the last.
+                let Some(mut ty) = self.type_def(token.rid()) else {
+                    return Ok(None);
+                };
+                let mut chain = vec![(ty.namespace()?.to_string(), ty.name()?.to_string())];
+                while let Some(outer) = ty.declaring_type()? {
+                    if chain.len() > self.metadata().row_count(Table::TypeDef) as usize {
+                        return Err(Error::Unsupported("nested type cycle"));
+                    }
+                    chain.push((outer.namespace()?.to_string(), outer.name()?.to_string()));
+                    ty = outer;
+                }
+                chain.reverse();
+                find_type_in(self_module(self), &chain, cache, visited)
+            }
             Some(TokenType::TypeSpec) => {
                 // GetElementType down to a named element; FnPtr and generic
                 // parameters resolve to null in Cecil.

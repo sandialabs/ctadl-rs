@@ -489,14 +489,11 @@ impl<'a> Module<'a> {
         self.get_type_by(ns, name)
     }
 
-    /// `ModuleDefinition.GetType(namespace, name)` (top-level only).
+    /// `ModuleDefinition.GetType(namespace, name)` (top-level only). Of
+    /// several types with the same name, the last: Cecil's name cache keeps
+    /// the last one added.
     pub fn get_type_by(&self, namespace: &str, name: &str) -> Result<Option<TypeDef<'_>>> {
-        for t in self.all_types() {
-            if t.name()? == name && t.namespace()? == namespace && !t.is_nested()? {
-                return Ok(Some(t));
-            }
-        }
-        Ok(None)
+        top_level_type(self.m(), namespace, name)
     }
 
     /// `ModuleDefinition.HasTypeReference`.
@@ -609,4 +606,19 @@ impl<'a> Module<'a> {
             _ => None,
         })
     }
+}
+
+/// [`Module::get_type_by`] on the module's data.
+pub(crate) fn top_level_type<'a>(
+    m: &'a ModuleData<'a>,
+    namespace: &str,
+    name: &str,
+) -> Result<Option<TypeDef<'a>>> {
+    for rid in (1..=m.md.row_count(Table::TypeDef)).rev() {
+        let t = TypeDef { m, rid };
+        if t.name()? == name && t.namespace()? == namespace && !t.is_nested()? {
+            return Ok(Some(t));
+        }
+    }
+    Ok(None)
 }

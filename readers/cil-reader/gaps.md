@@ -175,7 +175,7 @@ Sections:
 - **Also:** `get_type` splits on a `/` at position 0, where Cecil requires
   `IndexOf('/') > 0`.
 
-**A21. Duplicate top-level type names resolve to the first match.**
+**A21. Duplicate top-level type names resolve to the first match.** *Fixed:* `get_type_by` (`model/module.rs`) takes the last, and attribute enum lookup goes through it; resolving a TypeDef goes by name too, as Cecil's `Resolve(TypeDefinition)` does, so a reference to the first of two resolves to the second. `gap-resolve.dll` and `gap-resolve-lib.dll` cover it.
 - **Rust:** `model/module.rs:464-471`.
 - **Cecil:** its name cache keeps the last one added
   (`Mono.Cecil/TypeDefinitionCollection.cs:73,91-97`). Obfuscated modules do

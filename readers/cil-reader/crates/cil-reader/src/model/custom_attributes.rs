@@ -8,6 +8,7 @@
 use crate::error::{Error, Result};
 use crate::model::data::ModuleData;
 use crate::model::handles::{MemberRefSig, MethodDef, TypeDef, TypeRef};
+use crate::model::module::top_level_type;
 use crate::model::names::{GenericContext, sig_full_name, token_full_name, type_full_name};
 use crate::model::sig::{ElementType, SigReader, TypeSig};
 use crate::model::typeparser::ParsedType;
@@ -463,17 +464,7 @@ fn enum_underlying_of_token(
         let ns = m.md.strings().get(row.namespace)?;
         let name = m.md.strings().get(row.name)?;
         current = match current {
-            None => {
-                let mut found = None;
-                for rid in 1..=m.md.row_count(Table::TypeDef) {
-                    let t = TypeDef { m, rid };
-                    if t.name()? == name && t.namespace()? == ns && !t.is_nested()? {
-                        found = Some(t);
-                        break;
-                    }
-                }
-                found
-            }
+            None => top_level_type(m, ns, name)?,
             Some(ty) => ty.nested_type(&type_full_name(ns, name))?,
         };
         if current.is_none() {
@@ -579,15 +570,7 @@ fn resolve_parsed_in_module<'a>(
     }
     // Find the top-level type.
     let (ns, name) = crate::model::typeparser::split_full_name(&parsed.fullname);
-    let mut found: Option<TypeDef<'a>> = None;
-    for rid in 1..=m.md.row_count(Table::TypeDef) {
-        let t = TypeDef { m, rid };
-        if t.name()? == name && t.namespace()? == ns && !t.is_nested()? {
-            found = Some(t);
-            break;
-        }
-    }
-    let Some(mut ty) = found else {
+    let Some(mut ty) = top_level_type(m, ns, name)? else {
         return Ok(None);
     };
     for nested_name in &parsed.nested_names {
