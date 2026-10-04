@@ -177,10 +177,7 @@ impl<'s> Module<'s> {
                 let row = self.metadata().row::<TypeSpecRaw>(token.rid())?;
                 let blob = self.metadata().blobs().get(row.signature)?;
                 let sig = SigReader::new(blob).type_sig()?;
-                return match element_token(&sig) {
-                    Some(element) => self.resolve_type(element, cache),
-                    None => Ok(None),
-                };
+                return self.resolve_type_sig(&sig, cache);
             }
             Some(TokenType::TypeRef) => TypeName::of_type_ref(module, token.rid())?,
             _ => return Ok(None),
@@ -196,10 +193,55 @@ impl<'s> Module<'s> {
         sig: &TypeSig,
         cache: &'c AssemblyCache<'_>,
     ) -> Result<Option<ResolvedType<'c>>> {
-        match element_token(sig) {
-            Some(token) => self.resolve_type(token, cache),
+        match element(sig) {
+            Some(Element::Token(token)) => self.resolve_type(token, cache),
+            Some(Element::Primitive(name)) => self.resolve_primitive(name, cache),
             None => Ok(None),
         }
+    }
+
+    /// Resolves the `TypeSystem` type for a primitive: in a core library,
+    /// its own `System` type (or the reference its exported type makes);
+    /// elsewhere, `System.<name>` in the first core-library reference, or in
+    /// `mscorlib` when there is none.
+    fn resolve_primitive<'c>(
+        &'c self,
+        name: &str,
+        cache: &'c AssemblyCache<'_>,
+    ) -> Result<Option<ResolvedType<'c>>> {
+        let module = self_module(self);
+        let md = self.metadata();
+        let corlib_name = |n: &str| CORE_LIBRARIES.contains(&n);
+        let is_core_library = self.assembly_name()?.is_some_and(|a| corlib_name(a.name))
+            && md.row_count(Table::AssemblyRef) == 0;
+        if is_core_library {
+            // CoreTypeSystem.LookupType: the first TypeDef row with the name,
+            // which Resolve then looks up by name like any reference.
+            for ty in self.all_types() {
+                if ty.name()? == name && ty.namespace()? == "System" {
+                    return self.resolve_type(ty.token(), cache);
+                }
+            }
+            for et in self.exported_types() {
+                if et.name()? == name && et.namespace()? == "System" {
+                    return TypeName::of_exported(module, et)?.resolve(cache, &mut Vec::new());
+                }
+            }
+            return Err(Error::Unsupported("core library type not found"));
+        }
+        let mut scope = Scope::AssemblyNamed("mscorlib".to_string());
+        for (rid, row) in md.table::<AssemblyRefRaw>().rows() {
+            if corlib_name(md.strings().get(row?.name)?) {
+                scope = Scope::Assembly(rid);
+                break;
+            }
+        }
+        TypeName {
+            module,
+            chain: vec![("System".to_string(), name.to_string())],
+            scope,
+        }
+        .resolve(cache, &mut Vec::new())
     }
 
     /// Resolves a namespace/name pair in this module, following type
@@ -378,23 +420,55 @@ fn self_module<'c, 's>(module: &'c Module<'s>) -> &'c Module<'c> {
     module
 }
 
-/// The named element a TypeSpec resolves through (`GetElementType` chains).
-fn element_token(sig: &TypeSig) -> Option<MetadataToken> {
-    match sig {
-        TypeSig::Named { token, .. } => Some(*token),
-        TypeSig::GenericInst { ty, .. } => Some(*ty),
+/// Assembly names Cecil takes for the core library (`Mixin.IsCoreLibrary`).
+const CORE_LIBRARIES: &[&str] = &[
+    "mscorlib",
+    "System.Runtime",
+    "System.Private.CoreLib",
+    "netstandard",
+];
+
+/// What a signature type resolves through (`GetElementType`): a named type,
+/// or a primitive, which Cecil reads as its `TypeSystem` type.
+enum Element {
+    Token(MetadataToken),
+    Primitive(&'static str),
+}
+
+fn element(sig: &TypeSig) -> Option<Element> {
+    Some(Element::Primitive(match sig {
+        TypeSig::Named { token, .. } | TypeSig::GenericInst { ty: token, .. } => {
+            return Some(Element::Token(*token));
+        }
         TypeSig::Ptr(inner)
         | TypeSig::ByRef(inner)
         | TypeSig::Pinned(inner)
         | TypeSig::SzArray(inner)
-        | TypeSig::Sentinel(inner) => element_token(inner),
-        TypeSig::Array { element, .. } => element_token(element),
-        TypeSig::CModReq { inner, .. } | TypeSig::CModOpt { inner, .. } => element_token(inner),
-        // FnPtr, Var/MVar and primitives resolve to null here (primitives
-        // would need corlib name lookup; Cecil goes through the TypeRef, which
-        // the signature carries only as an element type for named types).
-        _ => None,
-    }
+        | TypeSig::Sentinel(inner)
+        | TypeSig::Array { element: inner, .. }
+        | TypeSig::CModReq { inner, .. }
+        | TypeSig::CModOpt { inner, .. } => return element(inner),
+        TypeSig::Void => "Void",
+        TypeSig::Boolean => "Boolean",
+        TypeSig::Char => "Char",
+        TypeSig::I1 => "SByte",
+        TypeSig::U1 => "Byte",
+        TypeSig::I2 => "Int16",
+        TypeSig::U2 => "UInt16",
+        TypeSig::I4 => "Int32",
+        TypeSig::U4 => "UInt32",
+        TypeSig::I8 => "Int64",
+        TypeSig::U8 => "UInt64",
+        TypeSig::R4 => "Single",
+        TypeSig::R8 => "Double",
+        TypeSig::String => "String",
+        TypeSig::Object => "Object",
+        TypeSig::IntPtr => "IntPtr",
+        TypeSig::UIntPtr => "UIntPtr",
+        TypeSig::TypedByRef => "TypedReference",
+        // Function pointers and generic parameters resolve to null.
+        TypeSig::FnPtr(_) | TypeSig::Var(_) | TypeSig::MVar(_) => return None,
+    }))
 }
 
 /// A type reference as `MetadataResolver.Resolve` sees it: the module it was
@@ -412,6 +486,9 @@ enum Scope {
     Module,
     /// An AssemblyRef rid of the reference's module.
     Assembly(u32),
+    /// An assembly the module does not reference: the `mscorlib` Cecil
+    /// adds for a module with no core-library reference.
+    AssemblyNamed(String),
     ModuleRef(String),
     None,
 }
@@ -533,6 +610,10 @@ impl<'c> TypeName<'c> {
                     None => return Ok(None),
                 }
             }
+            Scope::AssemblyNamed(name) => match cache.assembly(name) {
+                Some(target) => target,
+                None => return Ok(None),
+            },
             Scope::ModuleRef(name) => match self.assembly_module(name, cache)? {
                 Some(target) => target,
                 None => return Ok(None),

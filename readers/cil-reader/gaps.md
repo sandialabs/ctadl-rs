@@ -163,7 +163,7 @@ Sections:
 **A18. The resolver ignores function-pointer calling conventions and HasThis.** *Fixed:* a function pointer's `type_shape` (`model/resolver.rs`) includes both, and its return and parameter types' shapes; `gap-resolve.dll` covers it.
 - **Cecil:** compares both (`Mono.Cecil/MetadataResolver.cs:359-383`).
 
-**A19. The resolver doesn't resolve primitive, string or object types, or arrays of them.**
+**A19. The resolver doesn't resolve primitive, string or object types, or arrays of them.** *Fixed:* `resolve_primitive` (`model/resolver.rs`) follows Cecil's `TypeSystem`: a core library's own `System` type (or exported type), else `System.<name>` in the first core-library reference, or in `mscorlib` when there is none. The corpus's `mscorlib.dll` covers a core library, and the `primitive_resolves_to_corlib` test (`xtask/src/cil/cecil_tests/resolve.rs`) another module.
 - **Rust:** `model/resolver.rs:314-329` (`element_token`). The code comments
   acknowledge this.
 - **Cecil:** resolves them to the corlib definitions.

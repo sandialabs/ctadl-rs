@@ -214,6 +214,37 @@ fn resolve_in_module_type() {
     assert_eq!(resolved.ty, program);
 }
 
+// gaps.md A19: a primitive resolves as Cecil's TypeSystem type, a reference
+// into the core library (TypeSystem.Int32.Resolve()). The corpus covers a
+// core library resolving its own primitives; this covers another module's.
+fn primitive_resolves_to_corlib() {
+    let data = read_fixture("hello.il.dll");
+    let module = Module::read(&data).unwrap();
+    let loader = loader();
+    let cache = AssemblyCache::new(&loader);
+
+    use cil_reader::model::TypeSig;
+    for (sig, expected) in [
+        (TypeSig::String, "System.String"),
+        (TypeSig::SzArray(Box::new(TypeSig::I4)), "System.Int32"),
+        (TypeSig::Ptr(Box::new(TypeSig::Void)), "System.Void"),
+    ] {
+        let resolved = module
+            .resolve_type_sig(&sig, &cache)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{expected} did not resolve"));
+        assert_eq!(resolved.ty.full_name().unwrap(), expected);
+        assert_eq!(
+            resolved.module.assembly_name().unwrap().unwrap().name,
+            "mscorlib"
+        );
+    }
+    assert!(module
+        .resolve_type_sig(&TypeSig::MVar(0), &cache)
+        .unwrap()
+        .is_none());
+}
+
 pub(super) const TESTS: &[Test] = &[
     ("string_empty", string_empty),
     ("console_write_line_overload", console_write_line_overload),
@@ -229,4 +260,5 @@ pub(super) const TESTS: &[Test] = &[
     ),
     ("resolve_function_pointer", resolve_function_pointer),
     ("resolve_in_module_type", resolve_in_module_type),
+    ("primitive_resolves_to_corlib", primitive_resolves_to_corlib),
 ];
