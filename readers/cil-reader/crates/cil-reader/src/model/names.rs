@@ -66,7 +66,7 @@ pub(crate) fn token_full_name(
 
 pub(crate) fn typedef_full_name(m: &ModuleData<'_>, rid: u32, out: &mut String) -> Result<()> {
     // TypeReference.FullName: nested types render as Declaring/Nested.
-    if let Some(&declaring) = m.nested_maps()?.reverse.get(&rid) {
+    if let Some(declaring) = m.declaring_type_rid(rid)? {
         typedef_full_name(m, declaring, out)?;
         out.push('/');
         // Nested type names ignore the namespace column in Cecil's rendering

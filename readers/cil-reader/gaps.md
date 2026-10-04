@@ -52,7 +52,7 @@ Sections:
 - **Fix idea:** format each width with its own shortest round-trip form, then
   apply .NET's "R" exponent rules.
 
-**A3. Types are nested whenever a NestedClass row exists, ignoring visibility.** *Divergence, reproduced.*
+**A3. Types are nested whenever a NestedClass row exists, ignoring visibility.** *Fixed:* `ModuleData::declaring_type_rid` (`model/data.rs`) requires a Nested* visibility, for names and `declaring_type` alike; `gap-nested-public.dll` covers it. A NestedClass self-loop on a non-nested type no longer recurses; B3 remains for nested ones.
 - **Rust:** `model/names.rs:67-75` (`typedef_full_name`) and
   `model/handles.rs:267-274` (`TypeDef::declaring_type`).
 - **Cecil:** only sets `DeclaringType` when the visibility is Nested*

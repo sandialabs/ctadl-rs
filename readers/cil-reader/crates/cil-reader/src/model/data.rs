@@ -204,7 +204,11 @@ impl<'a> ModuleData<'a> {
     /// Reverse owner lookup by binary search over the member ranges
     /// (`MetadataSystem.BinaryRangeSearch`).
     pub fn member_declaring_type(&self, member_rid: u32, field: bool) -> Result<Option<u32>> {
-        let ptr_table = if field { Table::FieldPtr } else { Table::MethodPtr };
+        let ptr_table = if field {
+            Table::FieldPtr
+        } else {
+            Table::MethodPtr
+        };
         let Some(member_rid) = self.member_list_index(ptr_table, member_rid)? else {
             return Ok(None);
         };
@@ -241,6 +245,19 @@ impl<'a> ModuleData<'a> {
             }
             Ok(maps)
         })
+    }
+
+    /// The enclosing type of TypeDef `rid`: its NestedClass row's, but only
+    /// for a nested visibility, as Cecil sets `DeclaringType`
+    /// (`MetadataReader.ReadType`).
+    pub fn declaring_type_rid(&self, rid: u32) -> Result<Option<u32>> {
+        let Some(&declaring) = self.nested_maps()?.reverse.get(&rid) else {
+            return Ok(None);
+        };
+        let flags = self.md.row::<TypeDefRaw>(rid)?.flags;
+        // VisibilityMask values 2-7 are the Nested* ones.
+        let visibility = flags & crate::model::handles::type_attributes::VISIBILITY_MASK;
+        Ok((visibility >= 2).then_some(declaring))
     }
 
     pub fn interfaces_map(&self) -> Result<&HashMap<u32, Vec<(u32, MetadataToken)>>> {

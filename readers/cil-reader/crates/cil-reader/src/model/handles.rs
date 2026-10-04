@@ -264,13 +264,12 @@ impl<'a> TypeDef<'a> {
         TypeDefOrRef::from_token(self.m, self.raw()?.extends)
     }
 
+    /// The enclosing type, for a type with a nested visibility.
     pub fn declaring_type(&self) -> Result<Option<TypeDef<'a>>> {
         Ok(self
             .m
-            .nested_maps()?
-            .reverse
-            .get(&self.rid)
-            .map(|&rid| TypeDef { m: self.m, rid }))
+            .declaring_type_rid(self.rid)?
+            .map(|rid| TypeDef { m: self.m, rid }))
     }
 
     pub fn has_nested_types(&self) -> Result<bool> {
