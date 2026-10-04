@@ -25,7 +25,8 @@ pub trait AssemblyLoader {
 }
 
 /// `BaseAssemblyResolver`'s directory probing: `<dir>/<name>.dll` then
-/// `<dir>/<name>.exe`.
+/// `<dir>/<name>.exe`, in each directory. A file that is not a CLI image is
+/// passed over, as `SearchDirectory` catches `BadImageFormatException`.
 pub struct DirectoryLoader {
     pub dirs: Vec<PathBuf>,
 }
@@ -41,7 +42,9 @@ impl AssemblyLoader for DirectoryLoader {
         for dir in &self.dirs {
             for ext in ["dll", "exe"] {
                 let path = dir.join(format!("{simple_name}.{ext}"));
-                if let Ok(data) = std::fs::read(&path) {
+                if let Ok(data) = std::fs::read(&path)
+                    && Module::read(&data).is_ok()
+                {
                     return Some(data);
                 }
             }

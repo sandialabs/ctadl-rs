@@ -245,6 +245,35 @@ fn primitive_resolves_to_corlib() {
         .is_none());
 }
 
+/// A fresh directory for a test's files, under the system temp directory.
+fn scratch_dir(test: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("cil-resolve-{}-{test}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+// gaps.md A23: BaseAssemblyResolver.SearchDirectory catches
+// BadImageFormatException and probes on, to the next extension and the next
+// directory, so a native or junk file named like the assembly does not hide
+// it.
+fn directory_loader_skips_bad_images() {
+    let dir = scratch_dir("bad-images");
+    let (first, second) = (dir.join("first"), dir.join("second"));
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    let junk = read_resource("text_file.txt");
+    std::fs::write(first.join("lib.dll"), &junk).unwrap();
+    std::fs::write(first.join("lib.exe"), &junk).unwrap();
+    std::fs::write(second.join("lib.dll"), read_resource("hello.exe")).unwrap();
+    let loader = DirectoryLoader::new(vec![first, second]);
+    let cache = AssemblyCache::new(&loader);
+    let module = cache
+        .assembly("lib")
+        .expect("the image in the second directory");
+    assert_eq!(module.assembly_name().unwrap().unwrap().name, "hello");
+}
+
 pub(super) const TESTS: &[Test] = &[
     ("string_empty", string_empty),
     ("console_write_line_overload", console_write_line_overload),
@@ -261,4 +290,8 @@ pub(super) const TESTS: &[Test] = &[
     ("resolve_function_pointer", resolve_function_pointer),
     ("resolve_in_module_type", resolve_in_module_type),
     ("primitive_resolves_to_corlib", primitive_resolves_to_corlib),
+    (
+        "directory_loader_skips_bad_images",
+        directory_loader_skips_bad_images,
+    ),
 ];

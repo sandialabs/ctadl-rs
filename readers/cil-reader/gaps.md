@@ -185,7 +185,7 @@ Sections:
 - **Rust:** `model/resolver.rs:355-360`.
 - **Cecil:** scans exported types (`Mono.Cecil/MetadataResolver.cs:134-157`).
 
-**A23. `DirectoryLoader` stops probing at the first file with the right name.**
+**A23. `DirectoryLoader` stops probing at the first file with the right name.** *Fixed:* it passes over a file that does not read as a CLI image (`model/resolver.rs`); the `directory_loader_skips_bad_images` test covers it, and a probe of both dumps over that layout confirmed Cecil's side.
 - **Rust:** `model/resolver.rs:38-126`. If that file is a native DLL, the miss is
   cached.
 - **Cecil:** catches `BadImageFormatException` and keeps probing
