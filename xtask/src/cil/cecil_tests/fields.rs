@@ -119,7 +119,7 @@ fn field_rva() {
     let fields = priv_impl.fields().unwrap();
     assert_eq!(fields.len(), 1);
     let field = &fields[0];
-    assert_ne!(field.rva().unwrap(), Some(0));
+    assert!(field.rva().unwrap().is_some());
     let value = field.initial_value().unwrap().expect("initial value");
     assert_eq!(value.len(), 16);
     for (i, chunk) in value.chunks_exact(4).enumerate() {

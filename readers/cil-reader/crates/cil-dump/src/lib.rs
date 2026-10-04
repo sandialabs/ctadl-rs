@@ -289,7 +289,7 @@ fn dump_fields(module: &Module<'_>, out: &mut String) -> Result<()> {
         if let Some(offset) = field.offset()? {
             write!(out, " offset={offset}").unwrap();
         }
-        if let Some(rva) = field.rva()?.filter(|&rva| rva != 0) {
+        if let Some(rva) = field.rva()? {
             let data = field.initial_value()?.unwrap_or(&[]);
             write!(out, " rva=0x{rva:08x} rva-data={}", hex(data)).unwrap();
         }

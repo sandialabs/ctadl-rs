@@ -118,7 +118,7 @@ Sections:
 - **Inconsistent:** the port's own `model/typeparser.rs:94-103` compares full
   names.
 
-**A11. `FieldDef::rva()` returns the raw table value.** *Divergence.*
+**A11. `FieldDef::rva()` returns the raw table value.** *Fixed:* `rva()` is `None` where Cecil's RVA is 0, and `field_type_size` sizes in-module generic instances; `gap-attributes.il.dll` and the C++/CLI corpus images cover it. Still open: sizing TypeRef'd valuetypes, which needs an assembly resolver (CecilDump runs without one).
 - **Rust:** `model/handles.rs:589-591`.
 - **Cecil:** reports 0 when it can't determine the field type's size
   (`Mono.Cecil/AssemblyReader.cs:1328-1345`).

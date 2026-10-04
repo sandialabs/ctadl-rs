@@ -638,8 +638,17 @@ impl<'a> FieldDef<'a> {
         Ok(self.m.field_layouts()?.get(&self.rid).copied())
     }
 
+    /// `FieldDefinition.RVA`: the FieldRVA row's RVA, or `None` where Cecil
+    /// reports 0: no row, an RVA of 0, or a field type of no known size
+    /// (`MetadataReader.ReadFieldRVA`).
     pub fn rva(&self) -> Result<Option<u32>> {
-        Ok(self.m.field_rvas()?.get(&self.rid).copied())
+        let Some(&rva) = self.m.field_rvas()?.get(&self.rid) else {
+            return Ok(None);
+        };
+        if rva == 0 || self.field_type_size(&self.field_type()?)? == 0 {
+            return Ok(None);
+        }
+        Ok(Some(rva))
     }
 
     /// The field's initial data (FieldRVA), sized by the field type
@@ -649,13 +658,7 @@ impl<'a> FieldDef<'a> {
         let Some(rva) = self.rva()? else {
             return Ok(None);
         };
-        if rva == 0 {
-            return Ok(None);
-        }
         let size = self.field_type_size(&self.field_type()?)?;
-        if size == 0 {
-            return Ok(None);
-        }
         // Cecil's GetFieldInitializeValue returns an empty array when the RVA
         // does not land in any section.
         Ok(Some(self.m.image.slice_at_rva(rva, size).unwrap_or(&[])))
@@ -684,7 +687,11 @@ impl<'a> FieldDef<'a> {
                     None => 0,
                 }
             }
-            TypeSig::Named { token, .. } if token.token_type() == Some(TokenType::TypeDef) => {
+            // A generic instance resolves to its generic type, as Cecil's
+            // GenericInstanceType.Resolve() does.
+            TypeSig::Named { token, .. } | TypeSig::GenericInst { ty: token, .. }
+                if token.token_type() == Some(TokenType::TypeDef) =>
+            {
                 let td = TypeDef {
                     m: self.m,
                     rid: token.rid(),
