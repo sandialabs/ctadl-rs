@@ -332,8 +332,25 @@ impl<'s> Module<'s> {
                 out.push('>');
             }
             TypeSig::Named { token, .. } => self.write_token_shape(*token, out)?,
-            // Primitives, generic parameters and function pointers: the full
-            // name, with unbound generic parameters.
+            // AreSame(FunctionPointerType) also compares HasThis and the
+            // calling convention, which the full name leaves out.
+            TypeSig::FnPtr(method) => {
+                out.push_str(&format!(
+                    "method(this={},cc=0x{:02x}) ",
+                    method.has_this, method.calling_convention
+                ));
+                self.write_shape(&method.return_type, out)?;
+                out.push_str(" *(");
+                for (i, param) in method.params.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    self.write_shape(param, out)?;
+                }
+                out.push(')');
+            }
+            // Primitives and generic parameters: the full name, with unbound
+            // generic parameters.
             _ => out.push_str(&self.type_sig_full_name(sig, GenericContext::default())?),
         }
         Ok(())

@@ -160,7 +160,7 @@ Sections:
 - **Effect:** the port misses `int32[0...,0...]` vs `int32[,]`, and wrongly
   equates `T[]` with a rank-1 ARRAY that has no bounds.
 
-**A18. The resolver ignores function-pointer calling conventions and HasThis.**
+**A18. The resolver ignores function-pointer calling conventions and HasThis.** *Fixed:* a function pointer's `type_shape` (`model/resolver.rs`) includes both, and its return and parameter types' shapes; `gap-resolve.dll` covers it.
 - **Cecil:** compares both (`Mono.Cecil/MetadataResolver.cs:359-383`).
 
 **A19. The resolver doesn't resolve primitive, string or object types, or arrays of them.**
