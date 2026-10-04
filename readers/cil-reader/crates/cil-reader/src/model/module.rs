@@ -11,6 +11,8 @@ use crate::token::{MetadataToken, TokenType};
 
 /// A loaded module (Cecil `ModuleDefinition`). Borrows the image bytes; all
 /// handles resolve through it.
+// Transparent so that `ModuleData::module` can view its data as the module.
+#[repr(transparent)]
 pub struct Module<'a> {
     pub(crate) data: ModuleData<'a>,
 }

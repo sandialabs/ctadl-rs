@@ -273,7 +273,7 @@ pub fn split_full_name(fullname: &str) -> (&str, &str) {
 /// C#'s `int.TryParse(s)` under the invariant culture (`NumberStyles.Integer`):
 /// optional white space around an optional sign and decimal digits, failing
 /// on overflow. Like .NET, trailing NULs are ignored.
-fn parse_int32(s: &str) -> Option<i32> {
+pub(crate) fn parse_int32(s: &str) -> Option<i32> {
     let is_white = |c: char| matches!(c, '\u{09}'..='\u{0d}' | ' ');
     let s = s.trim_end_matches('\0').trim_matches(is_white);
     let (negative, digits) = match s.strip_prefix('-') {

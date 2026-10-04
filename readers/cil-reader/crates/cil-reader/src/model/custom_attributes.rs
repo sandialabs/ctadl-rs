@@ -8,17 +8,32 @@
 use crate::error::{Error, Result};
 use crate::model::data::ModuleData;
 use crate::model::handles::{MemberRefSig, MethodDef, TypeDef, TypeRef};
-use crate::model::module::top_level_type;
-use crate::model::names::{GenericContext, sig_full_name, token_full_name, type_full_name};
+use crate::model::names::{GenericContext, sig_full_name, token_full_name};
+use crate::model::resolver::{AssemblyCache, AssemblyLoader};
 use crate::model::sig::{ElementType, SigReader, TypeSig};
 use crate::model::typeparser::ParsedType;
 use crate::raw::tables::*;
 use crate::token::{MetadataToken, TokenType};
 
-/// Resolves an enum's underlying primitive element type from its Cecil-style
-/// full name, for enums that live outside this module (Cecil uses its
-/// assembly resolver; pass one of these until M7's resolver lands).
-pub type EnumResolver<'r> = &'r dyn Fn(&str) -> Option<ElementType>;
+/// The error for an enum argument whose type resolves to nothing: Cecil's
+/// `ResolutionException`, which `CustomAttribute.Resolve` swallows, leaving
+/// the attribute with no arguments. Other errors propagate, as Cecil's
+/// exceptions do.
+pub const UNRESOLVED_ENUM: Error = Error::Unsupported("enum type not resolvable");
+
+/// Loads nothing. A throwing cache over it is Cecil with an assembly
+/// resolver that always throws.
+struct NoLoader;
+
+impl AssemblyLoader for NoLoader {
+    fn load_assembly(&self, _: &crate::model::module::AssemblyName<'_>) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn load_file(&self, _: &str) -> Option<Vec<u8>> {
+        None
+    }
+}
 
 /// The type of a custom-attribute argument (Cecil models these as
 /// `TypeReference`s; this is the closed set CA blobs can express).
@@ -244,13 +259,16 @@ impl<'a> CustomAttribute<'a> {
         Ok(base.rsplit(['.', '/']).next().unwrap_or(base).to_string())
     }
 
+    /// [`CustomAttribute::values_with`] resolving no assembly: an enum
+    /// argument defined in another assembly is an error.
     pub fn values(&self) -> Result<CaValues<'a>> {
-        self.values_with(None)
+        self.values_with(&AssemblyCache::throwing(&NoLoader))
     }
 
-    /// `ReadCustomAttributeSignature`, with an optional resolver for enums
-    /// defined outside this module.
-    pub fn values_with(&self, resolver: Option<EnumResolver<'_>>) -> Result<CaValues<'a>> {
+    /// `ReadCustomAttributeSignature`, resolving enum argument types through
+    /// `cache`. [`UNRESOLVED_ENUM`] is an enum type that resolved to
+    /// nothing.
+    pub fn values_with(&self, cache: &AssemblyCache<'_>) -> Result<CaValues<'a>> {
         let blob = self.blob()?;
         let mut values = CaValues::default();
         let mut r = SigReader::new(blob);
@@ -263,17 +281,17 @@ impl<'a> CustomAttribute<'a> {
 
         let params = self.constructor_param_types()?;
         for param in &params {
-            let ty = self.ca_type_of_sig(param, resolver)?;
+            let ty = self.ca_type_of_sig(param, cache)?;
             values
                 .constructor_args
-                .push(read_fixed_arg(self.m, &mut r, &ty, resolver)?);
+                .push(read_fixed_arg(self.m, &mut r, &ty, cache)?);
         }
 
         if !r.can_read_more() {
             return Ok(values);
         }
         let named = r.cur.u16()?;
-        read_named_args(self.m, &mut r, named, resolver, &mut values)?;
+        read_named_args(self.m, &mut r, named, cache, &mut values)?;
         Ok(values)
     }
 
@@ -324,16 +342,12 @@ impl<'a> CustomAttribute<'a> {
 
     /// Maps a signature type to the CA-blob interpretation
     /// (`ReadCustomAttributeElementValue`'s dispatch).
-    fn ca_type_of_sig(&self, sig: &TypeSig, resolver: Option<EnumResolver<'_>>) -> Result<CaType> {
-        ca_type_of_sig(self.m, sig, resolver)
+    fn ca_type_of_sig(&self, sig: &TypeSig, cache: &AssemblyCache<'_>) -> Result<CaType> {
+        ca_type_of_sig(self.m, sig, cache)
     }
 }
 
-fn ca_type_of_sig(
-    m: &ModuleData<'_>,
-    sig: &TypeSig,
-    resolver: Option<EnumResolver<'_>>,
-) -> Result<CaType> {
+fn ca_type_of_sig(m: &ModuleData<'_>, sig: &TypeSig, cache: &AssemblyCache<'_>) -> Result<CaType> {
     Ok(match sig.unwrap_modifiers() {
         TypeSig::Boolean => CaType::Boolean,
         TypeSig::Char => CaType::Char,
@@ -349,17 +363,17 @@ fn ca_type_of_sig(
         TypeSig::R8 => CaType::R8,
         TypeSig::String => CaType::String,
         TypeSig::Object => CaType::Object,
-        TypeSig::SzArray(inner) => CaType::Array(Box::new(ca_type_of_sig(m, inner, resolver)?)),
+        TypeSig::SzArray(inner) => CaType::Array(Box::new(ca_type_of_sig(m, inner, cache)?)),
         TypeSig::Named { token, .. } => {
             if let Some(primitive) = typeref_primitive(m, *token)? {
-                return ca_type_of_sig(m, &primitive, resolver);
+                return ca_type_of_sig(m, &primitive, cache);
             }
             let mut full_name = String::new();
             token_full_name(m, *token, GenericContext::default(), &mut full_name)?;
             if full_name == "System.Type" {
                 CaType::Type
             } else {
-                let underlying = enum_underlying_of_token(m, *token, &full_name, resolver)?;
+                let underlying = enum_underlying_of_token(m, *token, cache)?;
                 CaType::Enum {
                     full_name,
                     underlying: Box::new(underlying),
@@ -371,9 +385,7 @@ fn ca_type_of_sig(
             // underlying type (`ReadCustomAttributeElementValue`).
             let mut full_name = String::new();
             sig_full_name(m, sig, GenericContext::default(), &mut full_name)?;
-            let mut element_name = String::new();
-            token_full_name(m, *ty, GenericContext::default(), &mut element_name)?;
-            let underlying = enum_underlying_of_token(m, *ty, &element_name, resolver)?;
+            let underlying = enum_underlying_of_token(m, *ty, cache)?;
             CaType::Enum {
                 full_name,
                 underlying: Box::new(underlying),
@@ -401,119 +413,47 @@ fn typeref_primitive(m: &ModuleData<'_>, token: MetadataToken) -> Result<Option<
     .primitive()
 }
 
-/// Underlying primitive of an enum given its TypeDef/TypeRef token
-/// (`TypeDefinition.GetEnumUnderlyingType`: the first instance field's type).
+/// Underlying type of an enum argument given its TypeDef or TypeRef token:
+/// `ReadCustomAttributeEnum`'s `CheckedResolve`, which takes a definition as
+/// it is and resolves a reference with `MetadataResolver.Resolve`. A null
+/// result is [`UNRESOLVED_ENUM`]; resolution errors propagate, as Cecil's
+/// `AssemblyResolutionException` and `NotSupportedException` do.
 fn enum_underlying_of_token(
     m: &ModuleData<'_>,
     token: MetadataToken,
-    full_name: &str,
-    resolver: Option<EnumResolver<'_>>,
+    cache: &AssemblyCache<'_>,
 ) -> Result<CaType> {
     if token.token_type() == Some(TokenType::TypeDef) {
         let ty = TypeDef {
             m,
             rid: token.rid(),
         };
-        return enum_underlying_of_def(m, &ty);
+        return enum_underlying_of_def(m, &ty, cache);
     }
-    // Mirror Cecil's MetadataResolver.Resolve, and how CA reading treats its
-    // failures: an AssemblyResolutionException or NotSupportedException
-    // PROPAGATES out of CA reading, while a ResolutionException (Resolve
-    // returned null) is SWALLOWED into empty CA values.
-    let mut root = token;
-    let mut chain: Vec<u32> = Vec::new();
-    let scope = loop {
-        let row = m.md.row::<TypeRefRaw>(root.rid())?;
-        chain.push(root.rid());
-        if row.scope.token_type() == Some(TokenType::TypeRef) && row.scope.rid() != root.rid() {
-            root = row.scope;
-        } else {
-            break row.scope;
-        }
-    };
-    match scope.token_type() {
-        // Another assembly: only the resolver can answer.
-        Some(TokenType::AssemblyRef) => {
-            return match resolver.and_then(|r| r(full_name)) {
-                Some(et) => CaType::from_element_type(et),
-                None => Err(Error::Unsupported(
-                    "enum argument requires assembly resolution",
-                )),
-            };
-        }
-        // A module of this assembly, looked up by name; only this one is
-        // loaded. Without an assembly, Resolve returns null.
-        Some(TokenType::ModuleRef) => {
-            if m.md.row_count(Table::Assembly) == 0 {
-                return Err(Error::Unsupported("enum type not resolvable in module"));
-            }
-            let module_ref = m.md.row::<ModuleRefRaw>(scope.rid())?;
-            let module = m.md.row::<ModuleRaw>(1)?;
-            if m.md.strings().get(module_ref.name)? != m.md.strings().get(module.name)? {
-                return Err(Error::Unsupported("enum type in another module"));
-            }
-        }
-        // This module (or no scope, or a self-scoped row): look here.
-        _ => {}
+    match m.module().resolve_type(token, cache)? {
+        Some(resolved) => enum_underlying_of_def(&resolved.module.data, &resolved.ty, cache),
+        None => Err(UNRESOLVED_ENUM),
     }
-    // Find the TypeDef with the same name chain.
-    chain.reverse();
-    let mut current: Option<TypeDef<'_>> = None;
-    for (i, &tr_rid) in chain.iter().enumerate() {
-        let row = m.md.row::<TypeRefRaw>(tr_rid)?;
-        let ns = m.md.strings().get(row.namespace)?;
-        let name = m.md.strings().get(row.name)?;
-        current = match current {
-            None => top_level_type(m, ns, name)?,
-            Some(ty) => ty.nested_type(&type_full_name(ns, name))?,
-        };
-        if current.is_none() {
-            // MetadataResolver.GetType falls back to the exported types,
-            // whose Resolve() goes to another assembly or module. Resolving
-            // a nested reference resolves its declaring type first, so each
-            // level from the missing one down to the argument's type gets
-            // that fallback.
-            for &tr_rid in &chain[i..] {
-                let row = m.md.row::<TypeRefRaw>(tr_rid)?;
-                let strings = m.md.strings();
-                if is_exported(m, strings.get(row.name)?, strings.get(row.namespace)?)? {
-                    return Err(Error::Unsupported(
-                        "enum argument requires resolving an exported type",
-                    ));
-                }
-            }
-            return Err(Error::Unsupported("enum type not resolvable in module"));
-        }
-    }
-    match current {
-        Some(ty) => enum_underlying_of_def(m, &ty),
-        None => Err(Error::Unsupported("enum type not resolvable in module")),
-    }
-}
-
-/// Whether an ExportedType row has this name and namespace.
-fn is_exported(m: &ModuleData<'_>, name: &str, namespace: &str) -> Result<bool> {
-    let strings = m.md.strings();
-    for (_, row) in m.md.table::<ExportedTypeRaw>().rows() {
-        let row = row?;
-        if strings.get(row.name)? == name && strings.get(row.namespace)? == namespace {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// `ReadCustomAttributeEnum`: the type must be an enum, and its underlying
-/// type is read as `ReadCustomAttributeElementValue` reads it, where an
-/// object or array throws.
-fn enum_underlying_of_def(m: &ModuleData<'_>, ty: &TypeDef<'_>) -> Result<CaType> {
+/// type, read in the enum's module `m`, is read as
+/// `ReadCustomAttributeElementValue` reads it, where an object or array
+/// throws.
+fn enum_underlying_of_def(
+    m: &ModuleData<'_>,
+    ty: &TypeDef<'_>,
+    cache: &AssemblyCache<'_>,
+) -> Result<CaType> {
     use crate::model::handles::field_attributes;
     if !ty.is_enum()? {
-        return Err(Error::Unsupported("custom attribute enum type is not an enum"));
+        return Err(Error::Unsupported(
+            "custom attribute enum type is not an enum",
+        ));
     }
     for field in ty.fields()? {
         if field.attributes()? & field_attributes::STATIC == 0 {
-            return match ca_type_of_sig(m, &field.field_type()?, None)? {
+            return match ca_type_of_sig(m, &field.field_type()?, cache)? {
                 CaType::Object | CaType::Array(_) => Err(Error::Unsupported(
                     "enum underlying type is not a primitive",
                 )),
@@ -528,13 +468,13 @@ fn enum_underlying_of_def(m: &ModuleData<'_>, ty: &TypeDef<'_>) -> Result<CaType
 fn read_field_or_prop_type<'a>(
     m: &ModuleData<'a>,
     r: &mut SigReader<'a>,
-    resolver: Option<EnumResolver<'_>>,
+    cache: &AssemblyCache<'_>,
 ) -> Result<CaType> {
     let b = r.cur.u8()?;
     match ElementType::from_byte(b) {
         Some(ElementType::Boxed) => Ok(CaType::Object),
         Some(ElementType::SzArray) => Ok(CaType::Array(Box::new(read_field_or_prop_type(
-            m, r, resolver,
+            m, r, cache,
         )?))),
         Some(ElementType::Enum) => {
             let name = r
@@ -543,16 +483,16 @@ fn read_field_or_prop_type<'a>(
             let parsed =
                 ParsedType::parse(name).ok_or(Error::bad(0, "unparseable enum type name"))?;
             let full_name = parsed.cecil_full_name();
-            // In-module first, then the resolver.
-            let underlying = match resolve_parsed_in_module(m, &parsed)? {
-                Some(ty) => enum_underlying_of_def(m, &ty)?,
-                None => match resolver.and_then(|res| res(&full_name)) {
-                    Some(et) => CaType::from_element_type(et)?,
-                    None => {
-                        return Err(Error::Unsupported(
-                            "enum argument requires assembly resolution",
-                        ));
+            // TypeParser.ParseType: a definition in this module, else a
+            // reference that ReadCustomAttributeEnum resolves.
+            let module = m.module();
+            let underlying = match parsed.resolve_in_module(module)? {
+                Some(ty) => enum_underlying_of_def(m, &ty, cache)?,
+                None => match module.resolve_parsed_reference(&parsed, cache)? {
+                    Some(resolved) => {
+                        enum_underlying_of_def(&resolved.module.data, &resolved.ty, cache)?
                     }
+                    None => return Err(UNRESOLVED_ENUM),
                 },
             };
             Ok(CaType::Enum {
@@ -566,44 +506,17 @@ fn read_field_or_prop_type<'a>(
     }
 }
 
-fn resolve_parsed_in_module<'a>(
-    m: &'a ModuleData<'a>,
-    parsed: &ParsedType,
-) -> Result<Option<TypeDef<'a>>> {
-    // Inline version of ParsedType::resolve_in_module without needing &Module.
-    // As TypeParser.TryCurrentModule: a name qualified with an assembly is
-    // in this module only if that is this assembly's full name, exactly.
-    if let Some(assembly) = &parsed.assembly
-        && !assembly.is_empty()
-        && m.assembly_name()?.map(|name| name.full_name()).as_ref() != Some(assembly)
-    {
-        return Ok(None);
-    }
-    // Find the top-level type.
-    let (ns, name) = crate::model::typeparser::split_full_name(&parsed.fullname);
-    let Some(mut ty) = top_level_type(m, ns, name)? else {
-        return Ok(None);
-    };
-    for nested_name in &parsed.nested_names {
-        let Some(nested) = ty.nested_type(nested_name)? else {
-            return Ok(None);
-        };
-        ty = nested;
-    }
-    Ok(Some(ty))
-}
-
 /// `ReadCustomAttributeFixedArgument`.
 fn read_fixed_arg<'a>(
     m: &ModuleData<'a>,
     r: &mut SigReader<'a>,
     ty: &CaType,
-    resolver: Option<EnumResolver<'_>>,
+    cache: &AssemblyCache<'_>,
 ) -> Result<CaArgument<'a>> {
     if let CaType::Array(elem) = ty {
-        return read_fixed_array_arg(m, r, ty, elem, resolver);
+        return read_fixed_array_arg(m, r, ty, elem, cache);
     }
-    read_element(m, r, ty, resolver)
+    read_element(m, r, ty, cache)
 }
 
 fn read_fixed_array_arg<'a>(
@@ -611,7 +524,7 @@ fn read_fixed_array_arg<'a>(
     r: &mut SigReader<'a>,
     array_ty: &CaType,
     elem: &CaType,
-    resolver: Option<EnumResolver<'_>>,
+    cache: &AssemblyCache<'_>,
 ) -> Result<CaArgument<'a>> {
     let length = r.cur.u32()?;
     if length == 0xffff_ffff {
@@ -622,7 +535,7 @@ fn read_fixed_array_arg<'a>(
     }
     let mut items = Vec::with_capacity((length as usize).min(4096));
     for _ in 0..length {
-        items.push(read_element(m, r, elem, resolver)?);
+        items.push(read_element(m, r, elem, cache)?);
     }
     Ok(CaArgument {
         ty: array_ty.clone(),
@@ -635,15 +548,15 @@ fn read_element<'a>(
     m: &ModuleData<'a>,
     r: &mut SigReader<'a>,
     ty: &CaType,
-    resolver: Option<EnumResolver<'_>>,
+    cache: &AssemblyCache<'_>,
 ) -> Result<CaArgument<'a>> {
     if let CaType::Array(elem) = ty {
-        return read_fixed_array_arg(m, r, ty, elem, resolver);
+        return read_fixed_array_arg(m, r, ty, elem, cache);
     }
     if matches!(ty, CaType::Object) {
         // Boxed: the actual type precedes the value.
-        let inner_ty = read_field_or_prop_type(m, r, resolver)?;
-        let inner = read_element(m, r, &inner_ty, resolver)?;
+        let inner_ty = read_field_or_prop_type(m, r, cache)?;
+        let inner = read_element(m, r, &inner_ty, cache)?;
         return Ok(CaArgument {
             ty: CaType::Object,
             value: CaValue::Boxed(Box::new(inner)),
@@ -694,7 +607,7 @@ fn read_named_args<'a>(
     m: &ModuleData<'a>,
     r: &mut SigReader<'a>,
     count: u16,
-    resolver: Option<EnumResolver<'_>>,
+    cache: &AssemblyCache<'_>,
     values: &mut CaValues<'a>,
 ) -> Result<()> {
     for _ in 0..count {
@@ -702,11 +615,11 @@ fn read_named_args<'a>(
             return Ok(());
         }
         let kind = r.cur.u8()?;
-        let ty = read_field_or_prop_type(m, r, resolver)?;
+        let ty = read_field_or_prop_type(m, r, cache)?;
         let name = r
             .utf8_string()?
             .ok_or(Error::Unsupported("null named argument name"))?;
-        let argument = read_fixed_arg(m, r, &ty, resolver)?;
+        let argument = read_fixed_arg(m, r, &ty, cache)?;
         let named = CaNamedArgument { name, argument };
         match kind {
             0x53 => values.fields.push(named),
@@ -812,13 +725,10 @@ impl<'a> SecurityDeclaration<'a> {
 
     /// `ReadSecurityDeclarationSignature` — both encodings.
     pub fn value(&self) -> Result<SecurityDeclarationValue<'a>> {
-        self.value_with(None)
+        self.value_with(&AssemblyCache::throwing(&NoLoader))
     }
 
-    pub fn value_with(
-        &self,
-        resolver: Option<EnumResolver<'_>>,
-    ) -> Result<SecurityDeclarationValue<'a>> {
+    pub fn value_with(&self, cache: &AssemblyCache<'_>) -> Result<SecurityDeclarationValue<'a>> {
         let blob = self.blob()?;
         if blob.first() != Some(&b'.') {
             // Legacy XML: the blob is a UTF-16LE string.
@@ -845,7 +755,7 @@ impl<'a> SecurityDeclaration<'a> {
             r.cur.compressed_u32()?; // blob size
             let named = r.cur.compressed_u32()? as u16;
             let mut values = CaValues::default();
-            read_named_args(self.m, &mut r, named, resolver, &mut values)?;
+            read_named_args(self.m, &mut r, named, cache, &mut values)?;
             attributes.push(SecurityAttribute {
                 attribute_type: parsed.cecil_full_name(),
                 fields: values.fields,

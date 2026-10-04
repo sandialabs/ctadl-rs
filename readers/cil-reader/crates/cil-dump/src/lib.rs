@@ -8,8 +8,11 @@
 //! opaque blobs print as lowercase hex.
 
 use cil_reader::cil::RawOperand;
-use cil_reader::model::custom_attributes::{CaArgument, CaValue};
-use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader, ResolvedMember, ResolvedType};
+use cil_reader::model::AssemblyName;
+use cil_reader::model::custom_attributes::{CaArgument, CaValue, UNRESOLVED_ENUM};
+use cil_reader::model::resolver::{
+    AssemblyCache, AssemblyLoader, DirectoryLoader, ResolvedMember, ResolvedType,
+};
 use cil_reader::model::{ConstantValue, Entity, ExceptionHandlerType, Module, Resource, TypeDef};
 use cil_reader::raw::{ModuleKind, Table, TargetArchitecture};
 use cil_reader::{MetadataToken, Result, TokenType};
@@ -64,7 +67,8 @@ fn tok(t: MetadataToken) -> String {
 
 /// Renders a dump of `module` for the selected sections. `dir` is the
 /// directory [`Section::Resolve`] probes for referenced assemblies (the
-/// input's own); without one, that section is left out.
+/// input's own); without one, that section is left out. Custom attributes
+/// load the assembly's netmodules from it.
 pub fn dump(module: &Module<'_>, sections: &[Section], dir: Option<&Path>) -> Result<String> {
     let mut out = String::new();
     let has = |s: Section| sections.contains(&s);
@@ -127,7 +131,7 @@ pub fn dump(module: &Module<'_>, sections: &[Section], dir: Option<&Path>) -> Re
         dump_events(module, &mut out)?;
     }
     if has(Section::CustomAttributes) {
-        dump_custom_attributes(module, &mut out)?;
+        dump_custom_attributes(module, dir, &mut out)?;
     }
     if has(Section::Il) {
         dump_il(module, &mut out)?;
@@ -608,9 +612,28 @@ fn write_other_methods(methods: &[cil_reader::model::MethodDef<'_>], out: &mut S
     write!(out, " other={}", toks.join(",")).unwrap();
 }
 
-fn dump_custom_attributes(module: &Module<'_>, out: &mut String) -> Result<()> {
+/// CecilDump's assembly resolver outside `[resolve]`, which throws for
+/// every assembly; Cecil still reads an assembly's netmodules from its
+/// directory.
+struct NetmodulesOnly(DirectoryLoader);
+
+impl AssemblyLoader for NetmodulesOnly {
+    fn load_assembly(&self, _: &AssemblyName<'_>) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn load_file(&self, file_name: &str) -> Option<Vec<u8>> {
+        self.0.load_file(file_name)
+    }
+}
+
+fn dump_custom_attributes(module: &Module<'_>, dir: Option<&Path>, out: &mut String) -> Result<()> {
     use cil_reader::TokenType as TT;
     out.push_str("[custom-attributes]\n");
+    let loader = NetmodulesOnly(DirectoryLoader::new(
+        dir.into_iter().map(Path::to_path_buf).collect(),
+    ));
+    let cache = AssemblyCache::throwing(&loader);
     // Restricted to parents Cecil's object model can surface (a CA row may
     // legally hang off e.g. a TypeRef, which Cecil cannot reach); rids are
     // omitted because Cecil does not expose them.
@@ -639,7 +662,7 @@ fn dump_custom_attributes(module: &Module<'_>, out: &mut String) -> Result<()> {
             .constructor_full_name()
             .unwrap_or_else(|_| "!error".into());
         write!(out, "ca parent={} ctor={}", tok(parent), ctor).unwrap();
-        match attr.values() {
+        match attr.values_with(&cache) {
             Ok(values) => {
                 let mut s = String::new();
                 s.push('(');
@@ -660,11 +683,11 @@ fn dump_custom_attributes(module: &Module<'_>, out: &mut String) -> Result<()> {
                 }
                 write!(out, " args={s}").unwrap();
             }
-            // Cecil swallows ResolutionException (in-module resolve returned
+            // Cecil swallows ResolutionException (an enum type resolved to
             // null) while reading CA values and reports empty argument
             // collections (CustomAttribute.Resolve) — but an
             // AssemblyResolutionException propagates. Mirror both.
-            Err(cil_reader::Error::Unsupported("enum type not resolvable in module")) => {
+            Err(e) if e == UNRESOLVED_ENUM => {
                 write!(out, " args=()").unwrap();
             }
             Err(_) => {

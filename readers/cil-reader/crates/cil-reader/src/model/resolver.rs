@@ -11,6 +11,7 @@ use crate::model::module::{AssemblyName, Module};
 use crate::model::names::GenericContext;
 use crate::model::names::type_full_name;
 use crate::model::sig::{MethodSig, SigReader, TypeSig, calling_convention};
+use crate::model::typeparser::{ParsedType, parse_int32, split_full_name};
 use crate::raw::pe::{TargetRuntime, parse_runtime};
 use crate::raw::tables::*;
 use crate::token::{MetadataToken, TokenType};
@@ -87,13 +88,44 @@ struct CacheEntry {
 pub struct AssemblyCache<'l> {
     loader: &'l dyn AssemblyLoader,
     entries: UnsafeCell<HashMap<String, Box<CacheEntry>>>,
+    /// Whether resolving through an assembly the loader can't find is an
+    /// error rather than a null result.
+    throws_on_miss: bool,
 }
 
+/// The error resolution gives, from an [`AssemblyCache::throwing`] cache,
+/// for an assembly its loader can't find: Cecil's
+/// `AssemblyResolutionException`.
+pub const ASSEMBLY_NOT_RESOLVED: Error = Error::Unsupported("assembly not resolved");
+
 impl<'l> AssemblyCache<'l> {
+    /// A cache whose misses resolve to nothing, as an `IAssemblyResolver`
+    /// that returns null does.
     pub fn new(loader: &'l dyn AssemblyLoader) -> AssemblyCache<'l> {
         AssemblyCache {
             loader,
             entries: UnsafeCell::new(HashMap::new()),
+            throws_on_miss: false,
+        }
+    }
+
+    /// A cache whose misses are [`ASSEMBLY_NOT_RESOLVED`], as
+    /// `DefaultAssemblyResolver` throws `AssemblyResolutionException`.
+    /// Custom-attribute decoding tells this apart from a type that is not
+    /// found, as Cecil does.
+    pub fn throwing(loader: &'l dyn AssemblyLoader) -> AssemblyCache<'l> {
+        AssemblyCache {
+            throws_on_miss: true,
+            ..AssemblyCache::new(loader)
+        }
+    }
+
+    /// [`AssemblyCache::assembly`] for resolution: a miss is `None`, or an
+    /// error from a throwing cache.
+    fn resolve_assembly(&self, name: &AssemblyName<'_>) -> Result<Option<&Module<'_>>> {
+        match self.assembly(name) {
+            None if self.throws_on_miss => Err(ASSEMBLY_NOT_RESOLVED),
+            found => Ok(found),
         }
     }
 
@@ -226,11 +258,7 @@ impl<'s> Module<'s> {
         cache: &'c AssemblyCache<'_>,
     ) -> Result<Option<ResolvedType<'c>>> {
         let module = self_module(self);
-        let md = self.metadata();
-        let corlib_name = |n: &str| CORE_LIBRARIES.contains(&n);
-        let is_core_library = self.assembly_name()?.is_some_and(|a| corlib_name(a.name))
-            && md.row_count(Table::AssemblyRef) == 0;
-        if is_core_library {
+        if self.is_core_library()? {
             // CoreTypeSystem.LookupType: the first TypeDef row with the name,
             // which Resolve then looks up by name like any reference.
             for ty in self.all_types() {
@@ -245,19 +273,86 @@ impl<'s> Module<'s> {
             }
             return Err(Error::Unsupported("core library type not found"));
         }
-        let mut scope = Scope::Mscorlib;
-        for (rid, row) in md.table::<AssemblyRefRaw>().rows() {
-            if corlib_name(md.strings().get(row?.name)?) {
-                scope = Scope::Assembly(rid);
-                break;
-            }
-        }
         TypeName {
             module,
             chain: vec![("System".to_string(), name.to_string())],
+            scope: self.core_library_scope()?,
+        }
+        .resolve(cache, &mut Vec::new())
+    }
+
+    /// `Mixin.IsCoreLibrary(ModuleDefinition)`: an assembly with a core
+    /// library's name and no assembly references.
+    fn is_core_library(&self) -> Result<bool> {
+        Ok(self
+            .assembly_name()?
+            .is_some_and(|a| CORE_LIBRARIES.contains(&a.name))
+            && self.metadata().row_count(Table::AssemblyRef) == 0)
+    }
+
+    /// `TypeSystem.CoreLibrary`: the module itself for a core library, else
+    /// its first core-library reference, else the `mscorlib` reference Cecil
+    /// adds.
+    fn core_library_scope(&self) -> Result<Scope> {
+        if self.is_core_library()? {
+            return Ok(Scope::Module);
+        }
+        let md = self.metadata();
+        for (rid, row) in md.table::<AssemblyRefRaw>().rows() {
+            if CORE_LIBRARIES.contains(&md.strings().get(row?.name)?) {
+                return Ok(Scope::Assembly(rid));
+            }
+        }
+        Ok(Scope::Mscorlib)
+    }
+
+    /// Resolves a type named in a blob (a custom attribute's enum or
+    /// `typeof` argument) that `TypeParser.ParseType` did not find in this
+    /// module: its reference is scoped by `GetMetadataScope`, the core
+    /// library when the name has no assembly part, else the assembly it
+    /// names.
+    pub(crate) fn resolve_parsed_reference<'c>(
+        &'c self,
+        parsed: &ParsedType,
+        cache: &'c AssemblyCache<'_>,
+    ) -> Result<Option<ResolvedType<'c>>> {
+        let scope = match parsed.assembly.as_deref() {
+            None | Some("") => self.core_library_scope()?,
+            Some(assembly) => self.assembly_scope(&ParsedAssemblyName::parse(assembly)?)?,
+        };
+        let (ns, name) = split_full_name(&parsed.fullname);
+        let mut chain = vec![(ns.to_string(), name.to_string())];
+        // TypeParser.GetTypeReference: each nested name is a reference with
+        // no namespace, declared by the previous one.
+        chain.extend(
+            parsed
+                .nested_names
+                .iter()
+                .map(|n| (String::new(), n.clone())),
+        );
+        TypeName {
+            module: self_module(self),
+            chain,
             scope,
         }
         .resolve(cache, &mut Vec::new())
+    }
+
+    /// `TryGetAssemblyNameReference`: the first assembly reference equal to
+    /// `name` in name, version, culture and public key token, else `name`
+    /// itself.
+    fn assembly_scope(&self, name: &ParsedAssemblyName) -> Result<Scope> {
+        for rid in 1..=self.metadata().row_count(Table::AssemblyRef) {
+            let reference = self.assembly_reference(rid)?;
+            if reference.name == name.name
+                && reference.version == name.version
+                && reference.culture == name.culture
+                && reference.computed_public_key_token() == name.public_key_token
+            {
+                return Ok(Scope::Assembly(rid));
+            }
+        }
+        Ok(Scope::Reference(name.clone()))
     }
 
     /// Resolves a namespace/name pair in this module, following type
@@ -521,8 +616,85 @@ enum Scope {
     /// The `mscorlib` reference Cecil adds to a module with no
     /// core-library reference.
     Mscorlib,
+    /// An assembly named in a blob that no assembly reference matches.
+    Reference(ParsedAssemblyName),
     ModuleRef(String),
     None,
+}
+
+/// `AssemblyNameReference.Parse`: an assembly name as a type name in a blob
+/// spells it.
+#[derive(Clone)]
+struct ParsedAssemblyName {
+    name: String,
+    culture: String,
+    version: (u16, u16, u16, u16),
+    public_key_token: Vec<u8>,
+}
+
+impl ParsedAssemblyName {
+    /// The name, then `key=value` parts split on `,` and `=`. Keys match
+    /// ignoring case; unknown keys are skipped, and a part without exactly
+    /// one `=` is an error, as Cecil throws. Version components beyond a
+    /// `u16`, which metadata can't hold, are an error too.
+    fn parse(full_name: &str) -> Result<ParsedAssemblyName> {
+        let mut tokens = full_name.split(',');
+        let mut parsed = ParsedAssemblyName {
+            name: tokens.next().unwrap_or("").trim().to_string(),
+            culture: String::new(),
+            version: (0, 0, 0, 0),
+            public_key_token: Vec::new(),
+        };
+        for token in tokens {
+            let parts: Vec<&str> = token.trim().split('=').collect();
+            let [key, value] = parts[..] else {
+                return Err(Error::Unsupported("malformed assembly name"));
+            };
+            match key.to_lowercase().as_str() {
+                "version" => parsed.version = parse_version(value)?,
+                "culture" => {
+                    parsed.culture = if value == "neutral" { "" } else { value }.to_string();
+                }
+                "publickeytoken" if value != "null" => {
+                    parsed.public_key_token = (0..value.len() / 2)
+                        .map(|i| {
+                            value
+                                .get(i * 2..i * 2 + 2)
+                                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+                                .ok_or(Error::Unsupported("malformed public key token"))
+                        })
+                        .collect::<Result<_>>()?;
+                }
+                _ => {}
+            }
+        }
+        Ok(parsed)
+    }
+
+    fn as_name(&self) -> AssemblyName<'_> {
+        AssemblyName {
+            culture: &self.culture,
+            version: self.version,
+            public_key_token: &self.public_key_token,
+            ..AssemblyName::named(&self.name)
+        }
+    }
+}
+
+/// `new Version(string)` then `Mixin.CheckVersion`: two to four
+/// `int.Parse` components, missing ones zero.
+fn parse_version(s: &str) -> Result<(u16, u16, u16, u16)> {
+    let parts = s
+        .split('.')
+        .map(|p| parse_int32(p).and_then(|v| u16::try_from(v).ok()))
+        .collect::<Option<Vec<u16>>>()
+        .ok_or(Error::Unsupported("malformed assembly version"))?;
+    match parts[..] {
+        [a, b] => Ok((a, b, 0, 0)),
+        [a, b, c] => Ok((a, b, c, 0)),
+        [a, b, c, d] => Ok((a, b, c, d)),
+        _ => Err(Error::Unsupported("malformed assembly version")),
+    }
 }
 
 /// Exported types being resolved, by module address and rid: Cecil's
@@ -634,11 +806,17 @@ impl<'c> TypeName<'c> {
         let target = match &self.scope {
             Scope::None => return Ok(None),
             Scope::Module => self.module,
-            Scope::Assembly(rid) => match cache.assembly(&self.module.assembly_reference(*rid)?) {
+            Scope::Assembly(rid) => {
+                match cache.resolve_assembly(&self.module.assembly_reference(*rid)?)? {
+                    Some(target) => target,
+                    None => return Ok(None),
+                }
+            }
+            Scope::Mscorlib => match cache.resolve_assembly(&mscorlib_reference(self.module))? {
                 Some(target) => target,
                 None => return Ok(None),
             },
-            Scope::Mscorlib => match cache.assembly(&mscorlib_reference(self.module)) {
+            Scope::Reference(name) => match cache.resolve_assembly(&name.as_name())? {
                 Some(target) => target,
                 None => return Ok(None),
             },

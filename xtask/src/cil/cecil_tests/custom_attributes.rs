@@ -1,13 +1,15 @@
 //! Ported from Test/Mono.Cecil.Tests/CustomAttributesTests.cs (read subset).
 //!
 //! Skipped: DefineCustomAttributeFromBlob (writes a module).
-//! Adapted: TypeReferenceEnum/BoxedEnumReference use a test-supplied enum
-//! resolver for System.Security.AccessControl.AceFlags (Cecil resolves it via
-//! its assembly resolver; ours arrives with M7).
+//! Adapted: TypeReferenceEnum/BoxedEnumReference resolve
+//! System.Security.AccessControl.AceFlags through a loader that serves the
+//! mdb corpus's mscorlib.dll, which defines it, where Cecil's resolver finds
+//! the framework's.
 
-use super::{read_fixture, read_resource, Test};
+use super::{cecil_root, read_fixture, read_resource, Test};
 use cil_reader::model::custom_attributes::{CaArgument, CaValue, CustomAttribute};
-use cil_reader::model::ElementType;
+use cil_reader::model::resolver::{AssemblyCache, AssemblyLoader};
+use cil_reader::model::AssemblyName;
 use cil_reader::{MetadataToken, Module};
 use std::fmt::Write as _;
 
@@ -39,14 +41,7 @@ fn assert_argument(expected_type: &str, expected: &CaValue<'_>, argument: &CaArg
 // --- the tests' PrettyPrint, ported verbatim in behavior ---
 
 fn pretty_print(attr: &CustomAttribute<'_>) -> String {
-    pretty_print_with(attr, None)
-}
-
-fn pretty_print_with(
-    attr: &CustomAttribute<'_>,
-    resolver: Option<cil_reader::model::custom_attributes::EnumResolver<'_>>,
-) -> String {
-    let values = attr.values_with(resolver).unwrap();
+    let values = attr.values().unwrap();
     let mut s = String::from(".ctor (");
     for (i, arg) in values.constructor_args.iter().enumerate() {
         if i > 0 {
@@ -286,9 +281,23 @@ fn type_definition_enum() {
     assert_eq!(args[0].ty.full_name(), "Bingo");
 }
 
+/// Serves the mdb corpus's mscorlib.dll, which defines
+/// System.Security.AccessControl.AceFlags, for every assembly.
+struct Mscorlib;
+
+impl AssemblyLoader for Mscorlib {
+    fn load_assembly(&self, _: &AssemblyName<'_>) -> Option<Vec<u8>> {
+        std::fs::read(cecil_root().join("symbols/mdb/Test/Resources/assemblies/mscorlib.dll")).ok()
+    }
+
+    fn load_file(&self, _: &str) -> Option<Vec<u8>> {
+        None
+    }
+}
+
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:212 (TypeReferenceEnum) —
-// adapted: the AceFlags enum lives in System.Security.AccessControl, so its
-// underlying type comes from a test resolver until M7's assembly resolver.
+// adapted: the AceFlags enum lives in System.Security.AccessControl, which
+// the Mscorlib loader stands in for.
 fn type_reference_enum() {
     let data = read_fixture("CustomAttributes.cs.dll");
     let module = Module::read(&data).unwrap();
@@ -297,12 +306,8 @@ fn type_reference_enum() {
     // Without resolution the enum's underlying size is unknowable.
     assert!(attribute.values().is_err());
 
-    let resolver =
-        |name: &str| (name == "System.Security.AccessControl.AceFlags").then_some(ElementType::U1);
-    let args = attribute
-        .values_with(Some(&resolver))
-        .unwrap()
-        .constructor_args;
+    let cache = AssemblyCache::new(&Mscorlib);
+    let args = attribute.values_with(&cache).unwrap().constructor_args;
     assert_eq!(args.len(), 1);
     assert_eq!(args[0].value, CaValue::U1(0x04));
     assert_eq!(
@@ -317,9 +322,8 @@ fn boxed_enum_reference() {
     let module = Module::read(&data).unwrap();
     let attribute = type_attr(&module, "Bzzz", "Foo");
 
-    let resolver =
-        |name: &str| (name == "System.Security.AccessControl.AceFlags").then_some(ElementType::U1);
-    let values = attribute.values_with(Some(&resolver)).unwrap();
+    let cache = AssemblyCache::new(&Mscorlib);
+    let values = attribute.values_with(&cache).unwrap();
     assert_eq!(values.constructor_args.len(), 2);
 
     let mut s = String::new();

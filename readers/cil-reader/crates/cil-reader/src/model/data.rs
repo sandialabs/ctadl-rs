@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::error::{Error, Result};
+use crate::model::module::Module;
 use crate::raw::heaps::{BlobIndex, StringIndex};
 use crate::raw::metadata::Metadata;
 use crate::raw::pe::PeImage;
@@ -103,6 +104,13 @@ fn get<T>(slot: &Lazy<T>, build: impl FnOnce() -> Result<T>) -> Result<&T> {
 }
 
 impl<'a> ModuleData<'a> {
+    /// The module these data are, for the APIs that take one.
+    pub(crate) fn module(&self) -> &Module<'a> {
+        // SAFETY: Module is a repr(transparent) wrapper of ModuleData, so a
+        // reference to one is a valid reference to the other.
+        unsafe { &*std::ptr::from_ref(self).cast::<Module<'a>>() }
+    }
+
     /// TypeDef member list ranges, mirroring `MetadataReader.ReadListRange`:
     /// the length of a list column range comes from peeking the next row (or
     /// the target table length + 1 for the last row).
