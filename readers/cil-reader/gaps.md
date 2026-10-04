@@ -191,7 +191,7 @@ Sections:
 - **Cecil:** catches `BadImageFormatException` and keeps probing
   (`Mono.Cecil/BaseAssemblyResolver.cs:210-225`).
 
-**A24. `DirectoryLoader` accepts netmodules as assemblies.**
+**A24. `DirectoryLoader` accepts netmodules as assemblies.** *Fixed:* `AssemblyCache::assembly` (`model/resolver.rs`) gives `None` for a module without an assembly, and probing stops there, as Cecil's does; the `directory_loader_rejects_netmodules` test covers it, and a probe of both dumps confirmed Cecil's side.
 - **Cecil:** `ReadModule(file).Assembly` is null for a netmodule.
 
 **A25. `AssemblyCache` is keyed by simple name, and misses are not cached.**

@@ -89,11 +89,13 @@ impl<'l> AssemblyCache<'l> {
     }
 
     /// The module for `simple_name`, loading it on first use. `None` if the
-    /// loader can't find it or it isn't a valid image.
+    /// loader can't find it, or it isn't a valid image or an assembly's
+    /// (Cecil's `ReadModule(file).Assembly` is null for a netmodule).
     pub fn assembly(&self, simple_name: &str) -> Option<&Module<'_>> {
         self.entry(&format!("asm:{simple_name}"), || {
             self.loader.load_assembly(simple_name)
         })
+        .filter(|module| matches!(module.assembly_name(), Ok(Some(_))))
     }
 
     /// The module for a file name (netmodules).

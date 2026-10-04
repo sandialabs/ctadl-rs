@@ -274,6 +274,17 @@ fn directory_loader_skips_bad_images() {
     assert_eq!(module.assembly_name().unwrap().unwrap().name, "hello");
 }
 
+// gaps.md A24: a netmodule named like the assembly ends the search with
+// nothing, as ReadModule(file).Assembly is null for it.
+fn directory_loader_rejects_netmodules() {
+    let dir = scratch_dir("netmodules");
+    std::fs::write(dir.join("moda.dll"), read_resource("moda.netmodule")).unwrap();
+    std::fs::write(dir.join("moda.exe"), read_resource("hello.exe")).unwrap();
+    let loader = DirectoryLoader::new(vec![dir]);
+    let cache = AssemblyCache::new(&loader);
+    assert!(cache.assembly("moda").is_none());
+}
+
 pub(super) const TESTS: &[Test] = &[
     ("string_empty", string_empty),
     ("console_write_line_overload", console_write_line_overload),
@@ -293,5 +304,9 @@ pub(super) const TESTS: &[Test] = &[
     (
         "directory_loader_skips_bad_images",
         directory_loader_skips_bad_images,
+    ),
+    (
+        "directory_loader_rejects_netmodules",
+        directory_loader_rejects_netmodules,
     ),
 ];
