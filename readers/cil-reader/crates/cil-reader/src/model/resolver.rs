@@ -251,7 +251,11 @@ impl<'s> Module<'s> {
                     return Ok(None);
                 };
                 let name = mr.name()?;
+                // Cecil gives up before walking the bases when the declaring
+                // type has no members of the kind.
                 match mr.signature()? {
+                    MemberRefSig::Field(_) if !declaring.ty.has_fields()? => Ok(None),
+                    MemberRefSig::Method(_) if !declaring.ty.has_methods()? => Ok(None),
                     MemberRefSig::Field(field_sig) => {
                         let shape = self.type_shape(&field_sig)?;
                         find_field(declaring, name, &shape, cache)

@@ -148,7 +148,7 @@ Sections:
 - **Cecil:** sets `HasPublicKey = !public_key.IsNullOrEmpty()`
   (`Mono.Cecil/AssemblyNameReference.cs:83-91`).
 
-**A16. Field and method resolution walks base types even when the declaring type has no members of that kind.**
+**A16. Field and method resolution walks base types even when the declaring type has no members of that kind.** *Fixed:* `resolve_member` (`model/resolver.rs`) returns `None` first when the new `TypeDef::has_fields`/`has_methods` do not hold. Like Cecil's for a type not yet read, they count the raw range, deleted members (A28) included. `gap-resolve.dll` covers it.
 - **Rust:** `model/resolver.rs:407-429, 462-497`.
 - **Cecil:** returns null as soon as the declaring type has no fields or methods
   (`Mono.Cecil/MetadataResolver.cs:179-180, 228-229`).

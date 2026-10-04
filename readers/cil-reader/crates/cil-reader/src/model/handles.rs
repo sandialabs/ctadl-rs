@@ -389,6 +389,17 @@ impl<'a> TypeDef<'a> {
         Ok(self.m.class_layouts()?.get(&self.rid).copied())
     }
 
+    /// `HasFields` of a type Cecil has not read: whether its field range,
+    /// deleted fields included, is non-empty.
+    pub fn has_fields(&self) -> Result<bool> {
+        Ok(self.m.fields_range(self.rid)?.length > 0)
+    }
+
+    /// `HasMethods` of a type Cecil has not read, as [`TypeDef::has_fields`].
+    pub fn has_methods(&self) -> Result<bool> {
+        Ok(self.m.methods_range(self.rid)?.length > 0)
+    }
+
     /// The type's fields, without deleted ones (see [`FieldDef::is_deleted`]).
     pub fn fields(&self) -> Result<Vec<FieldDef<'a>>> {
         let range = self.m.fields_range(self.rid)?;
