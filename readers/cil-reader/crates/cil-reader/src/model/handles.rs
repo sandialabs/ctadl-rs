@@ -169,6 +169,46 @@ impl<'a> TypeDefOrRef<'a> {
         Ok(out)
     }
 
+    /// The namespace and name Cecil's `IsTypeOf` compares, where they can be
+    /// a plain type's: a TypeSpec reads as the type its signature names, and
+    /// a generic instance, pinned or sentinel type takes its element type's.
+    /// `None` for shapes whose name carries a suffix (arrays, pointers,
+    /// by-refs, modifiers) or that name no type (primitives, generic
+    /// parameters, function pointers).
+    pub fn type_of_name(&self) -> Result<Option<(&'a str, &'a str)>> {
+        let mut sig = match self {
+            TypeDefOrRef::Def(t) => return Ok(Some((t.namespace()?, t.name()?))),
+            TypeDefOrRef::Ref(t) => return Ok(Some((t.namespace()?, t.name()?))),
+            TypeDefOrRef::Spec(t) => t.signature()?,
+        };
+        // A TypeSpec can name another TypeSpec; bound the chain by the table.
+        for _ in 0..=self.m().md.row_count(Table::TypeSpec) {
+            let token = loop {
+                sig = match sig {
+                    TypeSig::Named { token, .. } | TypeSig::GenericInst { ty: token, .. } => {
+                        break token;
+                    }
+                    TypeSig::Pinned(inner) | TypeSig::Sentinel(inner) => *inner,
+                    _ => return Ok(None),
+                }
+            };
+            match TypeDefOrRef::from_token(self.m(), token)? {
+                Some(TypeDefOrRef::Spec(t)) => sig = t.signature()?,
+                Some(other) => return other.type_of_name(),
+                None => return Ok(None),
+            }
+        }
+        Err(Error::Unsupported("TypeSpec cycle"))
+    }
+
+    fn m(&self) -> &'a ModuleData<'a> {
+        match self {
+            TypeDefOrRef::Def(t) => t.m,
+            TypeDefOrRef::Ref(t) => t.m,
+            TypeDefOrRef::Spec(t) => t.m,
+        }
+    }
+
     pub fn as_def(&self) -> Option<TypeDef<'a>> {
         match self {
             TypeDefOrRef::Def(t) => Some(*t),
@@ -238,10 +278,8 @@ impl<'a> TypeDef<'a> {
         let Some(base) = self.base_type()? else {
             return Ok(false);
         };
-        let (ns, name) = match &base {
-            TypeDefOrRef::Def(t) => (t.namespace()?.to_string(), t.name()?.to_string()),
-            TypeDefOrRef::Ref(t) => (t.namespace()?.to_string(), t.name()?.to_string()),
-            TypeDefOrRef::Spec(_) => return Ok(false),
+        let Some((ns, name)) = base.type_of_name()? else {
+            return Ok(false);
         };
         if ns != "System" {
             return Ok(false);
@@ -254,12 +292,9 @@ impl<'a> TypeDef<'a> {
         let Some(base) = self.base_type()? else {
             return Ok(false);
         };
-        let (ns, name) = match &base {
-            TypeDefOrRef::Def(t) => (t.namespace()?, t.name()?),
-            TypeDefOrRef::Ref(t) => (t.namespace()?, t.name()?),
-            TypeDefOrRef::Spec(_) => return Ok(false),
-        };
-        Ok(ns == "System" && name == "Enum")
+        Ok(base
+            .type_of_name()?
+            .is_some_and(|(ns, name)| ns == "System" && name == "Enum"))
     }
 
     pub fn base_type(&self) -> Result<Option<TypeDefOrRef<'a>>> {

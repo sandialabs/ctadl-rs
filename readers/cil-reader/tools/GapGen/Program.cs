@@ -444,8 +444,8 @@ static class Program {
 
     // gaps.md A27: base types written as TypeSpecs. Cecil reads a TypeSpec
     // of a plain class or valuetype as that type, and names a generic
-    // instance or modified type after its element type, so all but the
-    // array count as value types or enums.
+    // instance after its element type, so those count as value types or
+    // enums; a modified or array type's name has a suffix, so it does not.
     static (ModuleDef, Action<Metadata>) BaseSpecs() {
         var mod = NewModule("base-specs");
         var cs = mod.CorLibTypes;

@@ -204,7 +204,7 @@ Sections:
 - **Cecil:** looks only in the assembly's own modules, so a ModuleRef naming
   the current module resolves to itself (`Mono.Cecil/MetadataResolver.cs:117-128`).
 
-**A27. `is_value_type` and `is_enum` return false when the base type is a TypeSpec.**
+**A27. `is_value_type` and `is_enum` return false when the base type is a TypeSpec.** *Fixed:* both compare `TypeDefOrRef::type_of_name` (`model/handles.rs`), the namespace and name Cecil's `IsTypeOf` sees, which a TypeSpec takes from the type it names, a generic instance from its element type; `gap-base-specs.dll` covers it.
 - **Rust:** `model/handles.rs:242, 258`.
 - **Cecil:** a TypeSpec wrapping a plain class or valuetype TypeRef still counts
   (`Mono.Cecil/AssemblyReader.cs:1198-1208`).
