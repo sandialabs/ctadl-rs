@@ -181,7 +181,7 @@ Sections:
   (`Mono.Cecil/TypeDefinitionCollection.cs:73,91-97`). Obfuscated modules do
   have duplicates.
 
-**A22. There is no exported-type fallback for nested types.**
+**A22. There is no exported-type fallback for nested types.** *Fixed:* type resolution (`TypeName` in `model/resolver.rs`) follows Cecil's `Resolve`, `GetType` and `GetTypeDefinition`: each level falls back to the exported type with its own name, and a nested reference resolves its declaring type first. `gap-resolve.dll` covers it. `ExportedType.Resolve`'s reentrancy guard now covers File implementations too, which B5 says were unguarded; no fixture has such a loop.
 - **Rust:** `model/resolver.rs:355-360`.
 - **Cecil:** scans exported types (`Mono.Cecil/MetadataResolver.cs:134-157`).
 

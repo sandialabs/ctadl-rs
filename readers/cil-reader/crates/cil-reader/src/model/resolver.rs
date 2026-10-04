@@ -6,7 +6,7 @@
 //! type-forwarder loop is an error (Cecil throws).
 
 use crate::error::{Error, Result};
-use crate::model::handles::{FieldDef, MemberRefSig, MethodDef, TypeDef};
+use crate::model::handles::{ExportedType, FieldDef, MemberRefSig, MethodDef, TypeDef};
 use crate::model::module::Module;
 use crate::model::names::GenericContext;
 use crate::model::names::type_full_name;
@@ -147,17 +147,8 @@ impl<'s> Module<'s> {
         token: MetadataToken,
         cache: &'c AssemblyCache<'_>,
     ) -> Result<Option<ResolvedType<'c>>> {
-        let mut visited = Vec::new();
-        self.resolve_type_inner(token, cache, &mut visited)
-    }
-
-    fn resolve_type_inner<'c>(
-        &'c self,
-        token: MetadataToken,
-        cache: &'c AssemblyCache<'_>,
-        visited: &mut Vec<String>,
-    ) -> Result<Option<ResolvedType<'c>>> {
-        match token.token_type() {
+        let module = self_module(self);
+        let name = match token.token_type() {
             Some(TokenType::TypeDef) => {
                 // Cecil resolves a definition like any reference, by name:
                 // of two top-level types with one name, either resolves to
@@ -174,7 +165,11 @@ impl<'s> Module<'s> {
                     ty = outer;
                 }
                 chain.reverse();
-                find_type_in(self_module(self), &chain, cache, visited)
+                TypeName {
+                    module,
+                    chain,
+                    scope: Scope::Module,
+                }
             }
             Some(TokenType::TypeSpec) => {
                 // GetElementType down to a named element; FnPtr and generic
@@ -182,57 +177,15 @@ impl<'s> Module<'s> {
                 let row = self.metadata().row::<TypeSpecRaw>(token.rid())?;
                 let blob = self.metadata().blobs().get(row.signature)?;
                 let sig = SigReader::new(blob).type_sig()?;
-                match element_token(&sig) {
-                    Some(element) => self.resolve_type_inner(element, cache, visited),
+                return match element_token(&sig) {
+                    Some(element) => self.resolve_type(element, cache),
                     None => Ok(None),
-                }
+                };
             }
-            Some(TokenType::TypeRef) => self.resolve_type_ref(token.rid(), cache, visited),
-            _ => Ok(None),
-        }
-    }
-
-    fn resolve_type_ref<'c>(
-        &'c self,
-        rid: u32,
-        cache: &'c AssemblyCache<'_>,
-        visited: &mut Vec<String>,
-    ) -> Result<Option<ResolvedType<'c>>> {
-        // Collect the nested-name chain (root first).
-        let mut chain: Vec<(String, String)> = Vec::new();
-        let mut current = rid;
-        let scope = loop {
-            let row = self.metadata().row::<TypeRefRaw>(current)?;
-            let ns = self.metadata().strings().get(row.namespace)?.to_string();
-            let name = self.metadata().strings().get(row.name)?.to_string();
-            chain.push((ns, name));
-            if row.scope.token_type() == Some(TokenType::TypeRef) && row.scope.rid() != current {
-                current = row.scope.rid();
-            } else {
-                break row.scope;
-            }
+            Some(TokenType::TypeRef) => TypeName::of_type_ref(module, token.rid())?,
+            _ => return Ok(None),
         };
-        chain.reverse();
-
-        let target: Option<&'c Module<'c>> = match scope.token_type() {
-            Some(TokenType::AssemblyRef) => {
-                let asm = self.metadata().row::<AssemblyRefRaw>(scope.rid())?;
-                let name = self.metadata().strings().get(asm.name)?;
-                cache.assembly(name)
-            }
-            Some(TokenType::ModuleRef) => {
-                let mr = self.metadata().row::<ModuleRefRaw>(scope.rid())?;
-                let name = self.metadata().strings().get(mr.name)?;
-                cache.file(name)
-            }
-            // Module scope (including the obfuscated self-referencing TypeRef
-            // case, whose scope Cecil treats as the module).
-            _ => Some(self_module(self)),
-        };
-        let Some(target) = target else {
-            return Ok(None);
-        };
-        find_type_in(target, &chain, cache, visited)
+        name.resolve(cache, &mut Vec::new())
     }
 
     /// Resolves a decoded signature type to its definition (`Resolve` on a
@@ -257,9 +210,12 @@ impl<'s> Module<'s> {
         name: &str,
         cache: &'c AssemblyCache<'_>,
     ) -> Result<Option<ResolvedType<'c>>> {
-        let chain = vec![(namespace.to_string(), name.to_string())];
-        let mut visited = Vec::new();
-        find_type_in(self_module(self), &chain, cache, &mut visited)
+        TypeName {
+            module: self_module(self),
+            chain: vec![(namespace.to_string(), name.to_string())],
+            scope: Scope::Module,
+        }
+        .resolve(cache, &mut Vec::new())
     }
 
     /// `MetadataResolver.Resolve(FieldReference/MethodReference)` for a
@@ -344,69 +300,213 @@ fn element_token(sig: &TypeSig) -> Option<MetadataToken> {
     }
 }
 
-/// `MetadataResolver.GetTypeDefinition` + exported-type (forwarder) handling.
-fn find_type_in<'c>(
+/// A type reference as `MetadataResolver.Resolve` sees it: the module it was
+/// read from, its names (outermost first) and the outermost type's scope,
+/// which Cecil's nested references share.
+struct TypeName<'c> {
     module: &'c Module<'c>,
-    chain: &[(String, String)],
-    cache: &'c AssemblyCache<'_>,
-    visited: &mut Vec<String>,
-) -> Result<Option<ResolvedType<'c>>> {
-    // Direct definition.
-    let mut current: Option<TypeDef<'c>> = None;
-    for (i, (ns, name)) in chain.iter().enumerate() {
-        current = match current {
-            None => module.get_type_by(ns, name)?,
-            Some(ty) => ty.nested_type(&type_full_name(ns, name))?,
-        };
-        if current.is_none() {
-            if i == 0 {
-                break; // fall through to exported types
+    chain: Vec<(String, String)>,
+    scope: Scope,
+}
+
+/// `IMetadataScope`, or null.
+#[derive(Clone)]
+enum Scope {
+    Module,
+    /// An AssemblyRef rid of the reference's module.
+    Assembly(u32),
+    ModuleRef(String),
+    None,
+}
+
+/// Exported types being resolved, by module address and rid: Cecil's
+/// `ExportedType.Resolve` reentrancy guard.
+type Resolving = Vec<(usize, u32)>;
+
+impl<'c> TypeName<'c> {
+    /// A TypeRef as Cecil reads it: a TypeRef scope makes it nested in that
+    /// TypeRef, and the outermost one's scope is the chain's.
+    fn of_type_ref(module: &'c Module<'c>, rid: u32) -> Result<TypeName<'c>> {
+        let md = module.metadata();
+        let mut chain = Vec::new();
+        let mut current = rid;
+        let scope = loop {
+            let row = md.row::<TypeRefRaw>(current)?;
+            chain.push((
+                md.strings().get(row.namespace)?.to_string(),
+                md.strings().get(row.name)?.to_string(),
+            ));
+            let token = row.scope;
+            let in_range = |table| (1..=md.row_count(table)).contains(&token.rid());
+            match token.token_type() {
+                Some(TokenType::TypeRef) if token.rid() != current && in_range(Table::TypeRef) => {
+                    if chain.len() > md.row_count(Table::TypeRef) as usize {
+                        return Err(Error::Unsupported("TypeRef scope cycle"));
+                    }
+                    current = token.rid();
+                }
+                // A TypeRef naming itself, or no TypeRef: Cecil scopes it to
+                // the module.
+                Some(TokenType::TypeRef) | Some(TokenType::Module) => break Scope::Module,
+                Some(TokenType::AssemblyRef) if in_range(Table::AssemblyRef) => {
+                    break Scope::Assembly(token.rid());
+                }
+                Some(TokenType::ModuleRef) if in_range(Table::ModuleRef) => {
+                    let row = md.row::<ModuleRefRaw>(token.rid())?;
+                    break Scope::ModuleRef(md.strings().get(row.name)?.to_string());
+                }
+                Some(TokenType::AssemblyRef) | Some(TokenType::ModuleRef) => break Scope::None,
+                _ => return Err(Error::Unsupported("unsupported ResolutionScope")),
             }
-            return Ok(None);
-        }
-    }
-    if let Some(ty) = current {
-        return Ok(Some(ResolvedType { module, ty }));
+        };
+        chain.reverse();
+        Ok(TypeName {
+            module,
+            chain,
+            scope,
+        })
     }
 
-    // Exported types: type forwarders re-export the root name to another
-    // assembly; nested chains follow the ExportedType parent links.
-    let (root_ns, root_name) = &chain[0];
-    for et in module.exported_types() {
-        if et.name()? != root_name.as_str()
-            || et.namespace()? != root_ns.as_str()
-            || et.declaring_type()?.is_some()
-        {
-            continue;
-        }
-        let imp = et.implementation()?;
-        match imp.token_type() {
-            Some(TokenType::AssemblyRef) => {
-                let asm = module.metadata().row::<AssemblyRefRaw>(imp.rid())?;
-                let name = module.metadata().strings().get(asm.name)?.to_string();
-                // Forwarder-loop guard (Cecil throws on circular forwarders).
-                let key = format!("{name}!{root_ns}.{root_name}");
-                if visited.contains(&key) {
-                    return Err(Error::Unsupported("type forwarder loop"));
+    /// `ExportedType.CreateReference`: the exported type's names, scoped by
+    /// the outermost one's implementation.
+    fn of_exported(module: &'c Module<'c>, et: ExportedType<'c>) -> Result<TypeName<'c>> {
+        let mut chain = Vec::new();
+        let mut current = et;
+        let implementation = loop {
+            chain.push((
+                current.namespace()?.to_string(),
+                current.name()?.to_string(),
+            ));
+            match current.declaring_type()? {
+                Some(outer)
+                    if chain.len() <= module.metadata().row_count(Table::ExportedType) as usize =>
+                {
+                    current = outer;
                 }
-                visited.push(key);
-                let Some(target) = cache.assembly(&name) else {
-                    return Ok(None);
-                };
-                return find_type_in(target, chain, cache, visited);
+                Some(_) => return Err(Error::Unsupported("ExportedType cycle")),
+                None => break current.implementation()?,
             }
+        };
+        chain.reverse();
+        let md = module.metadata();
+        let scope = match implementation.token_type() {
+            Some(TokenType::AssemblyRef) => Scope::Assembly(implementation.rid()),
+            // GetModuleReferenceFromFile: the module reference of the file's
+            // name.
             Some(TokenType::File) => {
-                let file = module.metadata().row::<FileRaw>(imp.rid())?;
-                let name = module.metadata().strings().get(file.name)?;
-                let Some(target) = cache.file(name) else {
-                    return Ok(None);
-                };
-                return find_type_in(target, chain, cache, visited);
+                let row = md.row::<FileRaw>(implementation.rid())?;
+                Scope::ModuleRef(md.strings().get(row.name)?.to_string())
             }
-            _ => continue,
+            _ => {
+                return Err(Error::Unsupported(
+                    "unsupported ExportedType implementation",
+                ));
+            }
+        };
+        Ok(TypeName {
+            module,
+            chain,
+            scope,
+        })
+    }
+
+    /// The declaring type's reference.
+    fn declaring(&self) -> TypeName<'c> {
+        TypeName {
+            module: self.module,
+            chain: self.chain[..self.chain.len() - 1].to_vec(),
+            scope: self.scope.clone(),
         }
     }
-    Ok(None)
+
+    /// `MetadataResolver.Resolve(TypeReference)`.
+    fn resolve(
+        &self,
+        cache: &'c AssemblyCache<'_>,
+        resolving: &mut Resolving,
+    ) -> Result<Option<ResolvedType<'c>>> {
+        let target = match &self.scope {
+            Scope::None => return Ok(None),
+            Scope::Module => self.module,
+            Scope::Assembly(rid) => {
+                let md = self.module.metadata();
+                let row = md.row::<AssemblyRefRaw>(*rid)?;
+                match cache.assembly(md.strings().get(row.name)?) {
+                    Some(target) => target,
+                    None => return Ok(None),
+                }
+            }
+            Scope::ModuleRef(name) => match cache.file(name) {
+                Some(target) => target,
+                None => return Ok(None),
+            },
+        };
+        self.get_type(target, cache, resolving)
+    }
+
+    /// `MetadataResolver.GetType`: the definition in `module`, else the
+    /// first exported type with the innermost name.
+    fn get_type(
+        &self,
+        module: &'c Module<'c>,
+        cache: &'c AssemblyCache<'_>,
+        resolving: &mut Resolving,
+    ) -> Result<Option<ResolvedType<'c>>> {
+        if let Some(found) = self.get_type_definition(module, cache, resolving)? {
+            return Ok(Some(found));
+        }
+        let (ns, name) = self.chain.last().unwrap();
+        for et in module.exported_types() {
+            if et.name()? == name.as_str() && et.namespace()? == ns.as_str() {
+                return resolve_exported(module, et, cache, resolving);
+            }
+        }
+        Ok(None)
+    }
+
+    /// `MetadataResolver.GetTypeDefinition`: a top-level type by name, or a
+    /// nested one in its resolved declaring type.
+    fn get_type_definition(
+        &self,
+        module: &'c Module<'c>,
+        cache: &'c AssemblyCache<'_>,
+        resolving: &mut Resolving,
+    ) -> Result<Option<ResolvedType<'c>>> {
+        let (ns, name) = self.chain.last().unwrap();
+        if self.chain.len() == 1 {
+            return Ok(module
+                .get_type_by(ns, name)?
+                .map(|ty| ResolvedType { module, ty }));
+        }
+        let Some(outer) = self.declaring().resolve(cache, resolving)? else {
+            return Ok(None);
+        };
+        Ok(outer
+            .ty
+            .nested_type(&type_full_name(ns, name))?
+            .map(|ty| ResolvedType {
+                module: outer.module,
+                ty,
+            }))
+    }
+}
+
+/// `ExportedType.Resolve`, which throws when it reenters itself.
+fn resolve_exported<'c>(
+    module: &'c Module<'c>,
+    et: ExportedType<'c>,
+    cache: &'c AssemblyCache<'_>,
+    resolving: &mut Resolving,
+) -> Result<Option<ResolvedType<'c>>> {
+    let key = (std::ptr::from_ref(module) as usize, et.token().rid());
+    if resolving.contains(&key) {
+        return Err(Error::Unsupported("exported type circularity"));
+    }
+    resolving.push(key);
+    let resolved =
+        TypeName::of_exported(module, et).and_then(|name| name.resolve(cache, resolving));
+    resolving.pop();
+    resolved
 }
 
 /// Field lookup with base-type walking (`MetadataResolver.GetField`).
