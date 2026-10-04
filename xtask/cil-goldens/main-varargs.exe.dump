@@ -12,7 +12,7 @@ hash-algorithm=0x00000000
 flags=0x00000000
 public-key=-
 [assembly-refs]
-0x23000001=mscorlib, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+0x23000001=mscorlib, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null flags=0x00000000
 [module-refs]
 [resources]
 [exported-types]

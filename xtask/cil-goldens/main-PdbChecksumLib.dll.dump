@@ -12,7 +12,7 @@ hash-algorithm=0x00008004
 flags=0x00000000
 public-key=-
 [assembly-refs]
-0x23000001=System.Runtime, Version=5.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000001=System.Runtime, Version=5.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
 [module-refs]
 [resources]
 [exported-types]

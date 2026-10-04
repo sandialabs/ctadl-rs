@@ -12,9 +12,9 @@ hash-algorithm=0x00008004
 flags=0x00000000
 public-key=-
 [assembly-refs]
-0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=969db8053d3322ac
-0x23000002=System.Data, Version=3.5.0.0, Culture=neutral, PublicKeyToken=969db8053d3322ac, Retargetable=Yes
-0x23000003=System, Version=3.5.0.0, Culture=neutral, PublicKeyToken=969db8053d3322ac, Retargetable=Yes
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=969db8053d3322ac flags=0x00000000
+0x23000002=System.Data, Version=3.5.0.0, Culture=neutral, PublicKeyToken=969db8053d3322ac, Retargetable=Yes flags=0x00000100
+0x23000003=System, Version=3.5.0.0, Culture=neutral, PublicKeyToken=969db8053d3322ac, Retargetable=Yes flags=0x00000100
 [module-refs]
 [resources]
 [exported-types]

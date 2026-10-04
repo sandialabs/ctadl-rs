@@ -9,7 +9,8 @@
 // - No assembly resolution: the resolver always fails, so anything that needs
 //   resolution (foreign enum CA arguments) prints `!unresolved` exactly like
 //   the Rust side, which has no resolver until M7.
-// - Floats print as bit patterns; blobs as lowercase hex.
+// - Floats print as bit patterns (IL float operands also print first as the
+//   test Formatter renders them); blobs as lowercase hex.
 
 using System;
 using System.Collections.Generic;
@@ -131,7 +132,7 @@ static class Program
     {
         o.Append ("[assembly-refs]\n");
         foreach (var r in module.AssemblyReferences)
-            o.Append ($"{Tok (r.MetadataToken)}={r.FullName}\n");
+            o.Append ($"{Tok (r.MetadataToken)}={r.FullName} flags=0x{(uint) r.Attributes:x8}\n");
     }
 
     static void DumpModuleRefs (ModuleDefinition module, StringBuilder o)
@@ -255,7 +256,7 @@ static class Program
                 o.Append ($" offset={field.Offset}");
             try {
                 if (field.RVA != 0)
-                    o.Append ($" rva-data={Hex (field.InitialValue)}");
+                    o.Append ($" rva=0x{(uint) field.RVA:x8} rva-data={Hex (field.InitialValue)}");
             } catch {
                 o.Append (" rva-data=!error");
             }
@@ -365,11 +366,16 @@ static class Program
                 o.Append ($" getter={Tok (p.GetMethod.MetadataToken)}");
             if (p.SetMethod != null)
                 o.Append ($" setter={Tok (p.SetMethod.MetadataToken)}");
+            if (p.HasOtherMethods)
+                o.Append ($" other={OtherMethods (p.OtherMethods)}");
             if (p.HasConstant)
                 o.Append ($" constant={FormatConstant (p.Constant)}");
             o.Append ('\n');
         }
     }
+
+    static string OtherMethods (IEnumerable<MethodDefinition> methods)
+        => string.Join (",", methods.Select (m => Tok (m.MetadataToken)));
 
     static void DumpEvents (ModuleDefinition module, StringBuilder o)
     {
@@ -388,6 +394,8 @@ static class Program
                 o.Append ($" remove={Tok (e.RemoveMethod.MetadataToken)}");
             if (e.InvokeMethod != null)
                 o.Append ($" fire={Tok (e.InvokeMethod.MetadataToken)}");
+            if (e.HasOtherMethods)
+                o.Append ($" other={OtherMethods (e.OtherMethods)}");
             o.Append ('\n');
         }
     }
@@ -675,11 +683,12 @@ static class Program
         case VariableDefinition variable:
             o.Append ($"V_{variable.Index}");
             break;
+        // The test Formatter's rendering, then the exact bits.
         case float f:
-            o.Append ($"r4:0x{(uint) BitConverter.SingleToInt32Bits (f):x8}");
+            o.Append ($"{Inv (f)} r4:0x{(uint) BitConverter.SingleToInt32Bits (f):x8}");
             break;
         case double d:
-            o.Append ($"r8:0x{(ulong) BitConverter.DoubleToInt64Bits (d):x16}");
+            o.Append ($"{Inv (d)} r8:0x{(ulong) BitConverter.DoubleToInt64Bits (d):x16}");
             break;
         case sbyte sb:
             o.Append (Inv (sb));

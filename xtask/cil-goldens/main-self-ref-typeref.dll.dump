@@ -12,9 +12,9 @@ hash-algorithm=0x00008004
 flags=0x00000000
 public-key=-
 [assembly-refs]
-0x23000001=System.Runtime, Version=4.2.1.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000002=System.Console, Version=4.1.1.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000003=System.Private.CoreLib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e
+0x23000001=System.Runtime, Version=4.2.1.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000002=System.Console, Version=4.1.1.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000003=System.Private.CoreLib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e flags=0x00000000
 [module-refs]
 [resources]
 [exported-types]

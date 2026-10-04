@@ -3,7 +3,8 @@
 //! **The format is the contract**: `tools/CecilDump` implements the same
 //! format on top of Mono.Cecil, and the root workspace's `cargo xtask
 //! regression --frontend cil` diffs the two.
-//! Everything is ordered by metadata token; floats print as bit patterns;
+//! Everything is ordered by metadata token; floats print as bit patterns (IL
+//! float operands also print first as the test Formatter renders them);
 //! opaque blobs print as lowercase hex.
 
 use cil_reader::cil::RawOperand;
@@ -71,7 +72,14 @@ pub fn dump(module: &Module<'_>, sections: &[Section]) -> Result<String> {
     if has(Section::AssemblyRefs) {
         out.push_str("[assembly-refs]\n");
         for r in module.assembly_references()? {
-            writeln!(out, "{}={}", tok(r.token), r.full_name()).unwrap();
+            writeln!(
+                out,
+                "{}={} flags=0x{:08x}",
+                tok(r.token),
+                r.full_name(),
+                r.attributes
+            )
+            .unwrap();
         }
     }
     if has(Section::ModuleRefs) {
@@ -281,8 +289,9 @@ fn dump_fields(module: &Module<'_>, out: &mut String) -> Result<()> {
         if let Some(offset) = field.offset()? {
             write!(out, " offset={offset}").unwrap();
         }
-        if let Some(data) = field.initial_value()? {
-            write!(out, " rva-data={}", hex(data)).unwrap();
+        if let Some(rva) = field.rva()?.filter(|&rva| rva != 0) {
+            let data = field.initial_value()?.unwrap_or(&[]);
+            write!(out, " rva=0x{rva:08x} rva-data={}", hex(data)).unwrap();
         }
         if let Some(constant) = field.constant()? {
             write!(out, " constant={}", format_constant(&constant)).unwrap();
@@ -464,6 +473,7 @@ fn dump_properties(module: &Module<'_>, out: &mut String) -> Result<()> {
         if let Some(s) = prop.set_method()? {
             write!(out, " setter={}", tok(s.token())).unwrap();
         }
+        write_other_methods(&prop.other_methods()?, out);
         if let Some(c) = prop.constant()? {
             write!(out, " constant={}", format_constant(&c)).unwrap();
         }
@@ -507,9 +517,18 @@ fn dump_events(module: &Module<'_>, out: &mut String) -> Result<()> {
         if let Some(m) = event.invoke_method()? {
             write!(out, " fire={}", tok(m.token())).unwrap();
         }
+        write_other_methods(&event.other_methods()?, out);
         out.push('\n');
     }
     Ok(())
+}
+
+fn write_other_methods(methods: &[cil_reader::model::MethodDef<'_>], out: &mut String) {
+    if methods.is_empty() {
+        return;
+    }
+    let toks: Vec<String> = methods.iter().map(|m| tok(m.token())).collect();
+    write!(out, " other={}", toks.join(",")).unwrap();
 }
 
 fn dump_custom_attributes(module: &Module<'_>, out: &mut String) -> Result<()> {
@@ -663,30 +682,21 @@ fn dump_il(module: &Module<'_>, out: &mut String) -> Result<()> {
             }
         };
         for ins in &body.instructions {
-            // Float operands print as bit patterns in the dump; switch
-            // targets outside the method print IL_END (Cecil's resolved
-            // Instruction[] holds nulls there); everything else uses the
-            // Formatter rendering.
+            // Float operands print as the Formatter renders them, then as bit
+            // patterns; switch targets outside the method print IL_END
+            // (Cecil's resolved Instruction[] holds nulls there); everything
+            // else uses the Formatter rendering.
+            let formatted = || {
+                body.format_instruction(ins).unwrap_or_else(|_| {
+                    format!("IL_{:04x}: {} !error", ins.offset, ins.opcode.name())
+                })
+            };
             match &ins.operand {
                 RawOperand::F32(v) => {
-                    writeln!(
-                        out,
-                        "\tIL_{:04x}: {} r4:0x{:08x}",
-                        ins.offset,
-                        ins.opcode.name(),
-                        v.to_bits()
-                    )
-                    .unwrap();
+                    writeln!(out, "\t{} r4:0x{:08x}", formatted(), v.to_bits()).unwrap();
                 }
                 RawOperand::F64(v) => {
-                    writeln!(
-                        out,
-                        "\tIL_{:04x}: {} r8:0x{:016x}",
-                        ins.offset,
-                        ins.opcode.name(),
-                        v.to_bits()
-                    )
-                    .unwrap();
+                    writeln!(out, "\t{} r8:0x{:016x}", formatted(), v.to_bits()).unwrap();
                 }
                 RawOperand::Switch(targets) => {
                     write!(out, "\tIL_{:04x}: {} (", ins.offset, ins.opcode.name()).unwrap();
@@ -698,13 +708,7 @@ fn dump_il(module: &Module<'_>, out: &mut String) -> Result<()> {
                     }
                     out.push_str(")\n");
                 }
-                _ => match body.format_instruction(ins) {
-                    Ok(s) => writeln!(out, "\t{s}").unwrap(),
-                    Err(_) => {
-                        writeln!(out, "\tIL_{:04x}: {} !error", ins.offset, ins.opcode.name())
-                            .unwrap()
-                    }
-                },
+                _ => writeln!(out, "\t{}", formatted()).unwrap(),
             }
         }
         // The catch type is a TypeSpec in generic code, so it needs the

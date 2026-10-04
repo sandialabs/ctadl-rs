@@ -8,7 +8,7 @@ module-attributes=0x00000001
 entry-point=-
 [assembly]
 [assembly-refs]
-0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
 [module-refs]
 [resources]
 [exported-types]

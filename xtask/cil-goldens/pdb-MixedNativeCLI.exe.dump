@@ -12,7 +12,7 @@ hash-algorithm=0x00008004
 flags=0x00000000
 public-key=-
 [assembly-refs]
-0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
 [module-refs]
 0x1a000001=KERNEL32.dll
 0x1a000002=
@@ -72,59 +72,59 @@ public-key=-
 	base=System.ValueType
 	layout packing=0 size=1
 [fields]
-0x04000001=<CppImplementationDetails>.$ArrayType$$$BY0BI@$$CBD modopt(System.Runtime.CompilerServices.IsConst) <Module>::??_C@_0BI@HDEIMHEA@In?5unmanaged?5function?4?6@ flags=0x0113 rva-data=496e20756e6d616e616765642066756e6374696f6e2e0a00
-0x04000002=System.UInt64 <Module>::?_OptionsStorage@?1??__local_stdio_printf_options@@YAPEA_KXZ@4_KA flags=0x0113 rva-data=0000000000000000
-0x04000003=method System.Int32 *() <Module>::__m2mep@?main@@$$HYAHXZ flags=0x0116 rva-data=0100000600000000
-0x04000004=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_cb2f6723_ab3a_11d2_9c40_00c04fa30a3e flags=0x0113 rva-data=23672fcb3aabd2119c4000c04fa30a3e
-0x04000005=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_cb2f6722_ab3a_11d2_9c40_00c04fa30a3e flags=0x0113 rva-data=22672fcb3aabd2119c4000c04fa30a3e
+0x04000001=<CppImplementationDetails>.$ArrayType$$$BY0BI@$$CBD modopt(System.Runtime.CompilerServices.IsConst) <Module>::??_C@_0BI@HDEIMHEA@In?5unmanaged?5function?4?6@ flags=0x0113 rva=0x000052c0 rva-data=496e20756e6d616e616765642066756e6374696f6e2e0a00
+0x04000002=System.UInt64 <Module>::?_OptionsStorage@?1??__local_stdio_printf_options@@YAPEA_KXZ@4_KA flags=0x0113 rva=0x0000b070 rva-data=0000000000000000
+0x04000003=method System.Int32 *() <Module>::__m2mep@?main@@$$HYAHXZ flags=0x0116 rva=0x0000b000 rva-data=0100000600000000
+0x04000004=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_cb2f6723_ab3a_11d2_9c40_00c04fa30a3e flags=0x0113 rva=0x00005310 rva-data=23672fcb3aabd2119c4000c04fa30a3e
+0x04000005=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_cb2f6722_ab3a_11d2_9c40_00c04fa30a3e flags=0x0113 rva=0x00005300 rva-data=22672fcb3aabd2119c4000c04fa30a3e
 0x04000006=System.Int32 <Module>::?Uninitialized@CurrentDomain@<CrtImplementationDetails>@@$$Q2HA flags=0x0013
-0x04000007=method System.Void *() <Module>::?A0xeb4f7d22.?Uninitialized$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1400000600000000
+0x04000007=method System.Void *() <Module>::?A0xeb4f7d22.?Uninitialized$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva=0x00005268 rva-data=1400000600000000
 0x04000008=<CrtImplementationDetails>.Progress <Module>::?InitializedNative@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A flags=0x0013
-0x04000009=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedNative$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1700000600000000
-0x0400000a=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_90f1a06c_7712_4762_86b5_7a5eba6bdb02 flags=0x0113 rva-data=6ca0f1901277624786b57a5eba6bdb02
-0x0400000b=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_90f1a06e_7712_4762_86b5_7a5eba6bdb02 flags=0x0113 rva-data=6ea0f1901277624786b57a5eba6bdb02
+0x04000009=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedNative$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva=0x00005280 rva-data=1700000600000000
+0x0400000a=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_90f1a06c_7712_4762_86b5_7a5eba6bdb02 flags=0x0113 rva=0x00005320 rva-data=6ca0f1901277624786b57a5eba6bdb02
+0x0400000b=__s_GUID modopt(System.Runtime.CompilerServices.IsConst) <Module>::_GUID_90f1a06e_7712_4762_86b5_7a5eba6bdb02 flags=0x0113 rva=0x00005330 rva-data=6ea0f1901277624786b57a5eba6bdb02
 0x0400000c=<CrtImplementationDetails>.Progress <Module>::?InitializedPerAppDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A flags=0x0013
-0x0400000d=System.Boolean <Module>::?Entered@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva-data=-
+0x0400000d=System.Boolean <Module>::?Entered@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva=0x0000b664 rva-data=-
 0x0400000e=<CrtImplementationDetails>.TriBool <Module>::?hasNative@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A flags=0x0113
-0x0400000f=System.Boolean <Module>::?InitializedPerProcess@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva-data=-
-0x04000010=System.Int32 <Module>::?Count@AllDomains@<CrtImplementationDetails>@@2HA flags=0x0113 rva-data=-
+0x0400000f=System.Boolean <Module>::?InitializedPerProcess@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva=0x0000b667 rva-data=-
+0x04000010=System.Int32 <Module>::?Count@AllDomains@<CrtImplementationDetails>@@2HA flags=0x0113 rva=0x0000b660 rva-data=-
 0x04000011=System.Int32 <Module>::?Initialized@CurrentDomain@<CrtImplementationDetails>@@$$Q2HA flags=0x0013
-0x04000012=System.Boolean <Module>::?InitializedNativeFromCCTOR@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva-data=-
+0x04000012=System.Boolean <Module>::?InitializedNativeFromCCTOR@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva=0x0000b666 rva-data=-
 0x04000013=System.Boolean <Module>::?IsDefaultDomain@CurrentDomain@<CrtImplementationDetails>@@$$Q2_NA flags=0x0013
 0x04000014=<CrtImplementationDetails>.Progress <Module>::?InitializedVtables@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A flags=0x0013
-0x04000015=System.Boolean <Module>::?InitializedNative@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva-data=-
+0x04000015=System.Boolean <Module>::?InitializedNative@DefaultDomain@<CrtImplementationDetails>@@2_NA flags=0x0113 rva=0x0000b665 rva-data=-
 0x04000016=<CrtImplementationDetails>.Progress <Module>::?InitializedPerProcess@CurrentDomain@<CrtImplementationDetails>@@$$Q2W4Progress@2@A flags=0x0013
 0x04000017=<CrtImplementationDetails>.TriBool <Module>::?hasPerProcess@DefaultDomain@<CrtImplementationDetails>@@0W4TriBool@2@A flags=0x0113
-0x04000018=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_z flags=0x0113 rva-data=0000000000000000
-0x04000019=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xi_vt_z flags=0x0113 rva-data=0000000000000000
-0x0400001a=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedPerProcess$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1800000600000000
-0x0400001b=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_ma_a flags=0x0113 rva-data=0000000000000000
-0x0400001c=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_ma_z flags=0x0113 rva-data=0000000000000000
-0x0400001d=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedPerAppDomain$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1900000600000000
-0x0400001e=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xi_vt_a flags=0x0113 rva-data=0000000000000000
-0x0400001f=method System.Void *() <Module>::?A0xeb4f7d22.?Initialized$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1300000600000000
-0x04000020=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_a flags=0x0113 rva-data=0000000000000000
-0x04000021=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedVtables$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1600000600000000
-0x04000022=method System.Void *() <Module>::?A0xeb4f7d22.?IsDefaultDomain$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva-data=1500000600000000
-0x04000023=method System.Int32 *(System.Void*) <Module>::__m2mep@?DoNothing@DefaultDomain@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva-data=0d00000600000000
-0x04000024=method System.Int32 *(System.Void*) <Module>::__m2mep@?_UninitializeDefaultDomain@LanguageSupport@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva-data=2200000600000000
-0x04000025=System.Int32** <Module>::__unep@?DoNothing@DefaultDomain@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva-data=1040004001000000
-0x04000026=System.Int32** <Module>::__unep@?_UninitializeDefaultDomain@LanguageSupport@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva-data=2040004001000000
-0x04000027=method System.Void *()* <Module>::?A0xdf32f105.__onexitbegin_m flags=0x0113 rva-data=-
-0x04000028=System.UInt64 <Module>::?A0xdf32f105.__exit_list_size flags=0x0113 rva-data=-
+0x04000018=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_z flags=0x0113 rva=0x000052a8 rva-data=0000000000000000
+0x04000019=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xi_vt_z flags=0x0113 rva=0x000052b8 rva-data=0000000000000000
+0x0400001a=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedPerProcess$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva=0x00005288 rva-data=1800000600000000
+0x0400001b=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_ma_a flags=0x0113 rva=0x00005258 rva-data=0000000000000000
+0x0400001c=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_ma_z flags=0x0113 rva=0x00005298 rva-data=0000000000000000
+0x0400001d=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedPerAppDomain$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva=0x00005290 rva-data=1900000600000000
+0x0400001e=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xi_vt_a flags=0x0113 rva=0x000052b0 rva-data=0000000000000000
+0x0400001f=method System.Void *() <Module>::?A0xeb4f7d22.?Initialized$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva=0x00005260 rva-data=1300000600000000
+0x04000020=<CppImplementationDetails>.$ArrayType$$$BY00Q6MPEBXXZ modopt(System.Runtime.CompilerServices.IsConst) <Module>::__xc_mp_a flags=0x0113 rva=0x000052a0 rva-data=0000000000000000
+0x04000021=method System.Void *() <Module>::?A0xeb4f7d22.?InitializedVtables$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva=0x00005278 rva-data=1600000600000000
+0x04000022=method System.Void *() <Module>::?A0xeb4f7d22.?IsDefaultDomain$initializer$@CurrentDomain@<CrtImplementationDetails>@@$$Q2P6MXXZEA flags=0x0113 rva=0x00005270 rva-data=1500000600000000
+0x04000023=method System.Int32 *(System.Void*) <Module>::__m2mep@?DoNothing@DefaultDomain@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva=0x0000b048 rva-data=0d00000600000000
+0x04000024=method System.Int32 *(System.Void*) <Module>::__m2mep@?_UninitializeDefaultDomain@LanguageSupport@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva=0x0000b058 rva-data=2200000600000000
+0x04000025=System.Int32** <Module>::__unep@?DoNothing@DefaultDomain@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva=0x00005340 rva-data=1040004001000000
+0x04000026=System.Int32** <Module>::__unep@?_UninitializeDefaultDomain@LanguageSupport@<CrtImplementationDetails>@@$$FCAJPEAX@Z flags=0x0116 rva=0x00005348 rva-data=2040004001000000
+0x04000027=method System.Void *()* <Module>::?A0xdf32f105.__onexitbegin_m flags=0x0113 rva=0x0000b7d0 rva-data=-
+0x04000028=System.UInt64 <Module>::?A0xdf32f105.__exit_list_size flags=0x0113 rva=0x0000b7c8 rva-data=-
 0x04000029=method System.Void *()* <Module>::__onexitend_app_domain flags=0x0013
 0x0400002a=System.Void* <Module>::?_lock@AtExitLock@<CrtImplementationDetails>@@$$Q0PEAXEA flags=0x0013
 0x0400002b=System.Int32 <Module>::?_ref_count@AtExitLock@<CrtImplementationDetails>@@$$Q0HA flags=0x0013
-0x0400002c=method System.Void *()* <Module>::?A0xdf32f105.__onexitend_m flags=0x0113 rva-data=-
+0x0400002c=method System.Void *()* <Module>::?A0xdf32f105.__onexitend_m flags=0x0113 rva=0x0000b7d8 rva-data=-
 0x0400002d=System.UInt64 <Module>::__exit_list_size_app_domain flags=0x0013
 0x0400002e=method System.Void *()* <Module>::__onexitbegin_app_domain flags=0x0013
-0x0400002f=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_z flags=0x0113 rva-data=00
+0x0400002f=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_z flags=0x0113 rva=0x00005230 rva-data=00
 0x04000030=__scrt_native_startup_state <Module>::__scrt_current_native_startup_state flags=0x0113
-0x04000031=System.Void* <Module>::__scrt_native_startup_lock flags=0x0113 rva-data=-
-0x04000032=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_a flags=0x0113 rva-data=00
-0x04000033=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_a flags=0x0113 rva-data=00
-0x04000034=System.UInt32 <Module>::__scrt_native_dllmain_reason flags=0x0113 rva-data=ffffffff
-0x04000035=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_z flags=0x0113 rva-data=00
+0x04000031=System.Void* <Module>::__scrt_native_startup_lock flags=0x0113 rva=0x0000b5f8 rva-data=-
+0x04000032=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_a flags=0x0113 rva=0x00005200 rva-data=00
+0x04000033=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AHXZ <Module>::__xi_a flags=0x0113 rva=0x00005218 rva-data=00
+0x04000034=System.UInt32 <Module>::__scrt_native_dllmain_reason flags=0x0113 rva=0x0000b020 rva-data=ffffffff
+0x04000035=<CppImplementationDetails>.$ArrayType$$$BY0A@P6AXXZ <Module>::__xc_z flags=0x0113 rva=0x00005210 rva-data=00
 0x04000036=System.Int32 _GUID::<alignment member> flags=0x0001
 0x04000037=System.Int64 _EXCEPTION_POINTERS::<alignment member> flags=0x0001
 0x04000038=System.String <CrtImplementationDetails>.ModuleLoadException::Nested flags=0x8056 constant=String:"A nested exception occurred after the primary exception that caused the C++ module to fail to load.

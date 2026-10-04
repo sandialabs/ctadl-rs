@@ -12,13 +12,13 @@ hash-algorithm=0x00008004
 flags=0x00000000
 public-key=-
 [assembly-refs]
-0x23000001=Windows, Version=255.255.255.255, Culture=neutral, PublicKeyToken=null
-0x23000002=System.Runtime, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000003=System.Collections, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000004=System.Runtime.InteropServices.WindowsRuntime, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000005=System.Diagnostics.Tools, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000006=System.Diagnostics.Debug, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000007=System.Runtime.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000001=Windows, Version=255.255.255.255, Culture=neutral, PublicKeyToken=null flags=0x00000200
+0x23000002=System.Runtime, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000003=System.Collections, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000004=System.Runtime.InteropServices.WindowsRuntime, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000005=System.Diagnostics.Tools, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000006=System.Diagnostics.Debug, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000007=System.Runtime.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
 [module-refs]
 [resources]
 [exported-types]

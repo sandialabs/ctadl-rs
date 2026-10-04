@@ -12,19 +12,19 @@ hash-algorithm=0x00008004
 flags=0x00000000
 public-key=-
 [assembly-refs]
-0x23000001=System.Runtime, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000002=System.Resources.ResourceManager, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000003=System.Collections, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000004=SQLitePCLRaw.core, Version=1.0.0.0, Culture=neutral, PublicKeyToken=1488e028ca7ab535
-0x23000005=System.Runtime.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000006=System.Linq.Expressions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000007=System.Reflection, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000008=System.Diagnostics.Debug, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x23000009=System.Threading.Tasks, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x2300000a=System.Linq, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x2300000b=SQLitePCLRaw.batteries_v2, Version=1.0.0.0, Culture=neutral, PublicKeyToken=8226ea5df37bcae9
-0x2300000c=System.Threading, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
-0x2300000d=System.Globalization, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+0x23000001=System.Runtime, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000002=System.Resources.ResourceManager, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000003=System.Collections, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000004=SQLitePCLRaw.core, Version=1.0.0.0, Culture=neutral, PublicKeyToken=1488e028ca7ab535 flags=0x00000000
+0x23000005=System.Runtime.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000006=System.Linq.Expressions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000007=System.Reflection, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000008=System.Diagnostics.Debug, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x23000009=System.Threading.Tasks, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x2300000a=System.Linq, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x2300000b=SQLitePCLRaw.batteries_v2, Version=1.0.0.0, Culture=neutral, PublicKeyToken=8226ea5df37bcae9 flags=0x00000000
+0x2300000c=System.Threading, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+0x2300000d=System.Globalization, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
 [module-refs]
 [resources]
 [exported-types]
@@ -2062,7 +2062,7 @@ ca parent=0x060001e4 ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 	IL_007a: ldarg.3
 	IL_007b: call System.Void SQLite.SQLiteConnection::set_StoreDateTimeAsTicks(System.Boolean)
 	IL_0080: ldarg.0
-	IL_0081: ldc.r8 r8:0x3fb999999999999a
+	IL_0081: ldc.r8 0.1 r8:0x3fb999999999999a
 	IL_008a: call System.TimeSpan System.TimeSpan::FromSeconds(System.Double)
 	IL_008f: call System.Void SQLite.SQLiteConnection::set_BusyTimeout(System.TimeSpan)
 	IL_0094: ldarg.0
