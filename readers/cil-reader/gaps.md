@@ -1,4 +1,4 @@
-# cil-reader vs Mono.Cecil: known gaps
+# cil-reader vs Mono.Cecil: known gaps - DO-NOT-MERGE
 
 Audit of `crates/cil-reader` against Cecil 882ca5e (`extern/cecil`), 2026-10-03.
 Paths are relative to `crates/cil-reader/src` unless noted; Cecil paths are
