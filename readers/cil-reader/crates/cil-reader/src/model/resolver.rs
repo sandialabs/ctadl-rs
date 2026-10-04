@@ -436,12 +436,48 @@ impl<'c> TypeName<'c> {
                     None => return Ok(None),
                 }
             }
-            Scope::ModuleRef(name) => match cache.file(name) {
+            Scope::ModuleRef(name) => match self.assembly_module(name, cache)? {
                 Some(target) => target,
                 None => return Ok(None),
             },
         };
         self.get_type(target, cache, resolving)
+    }
+
+    /// The module a ModuleRef scope names: the first of the assembly's
+    /// modules (`Assembly.Modules`: this one, then each File with metadata)
+    /// with that Module-table name. `None` outside an assembly; an error,
+    /// as Cecil throws, when a module file is missing or none has the name.
+    fn assembly_module(
+        &self,
+        name: &str,
+        cache: &'c AssemblyCache<'_>,
+    ) -> Result<Option<&'c Module<'c>>> {
+        if self.module.assembly_name()?.is_none() {
+            return Ok(None);
+        }
+        let md = self.module.metadata();
+        let mut modules = vec![self.module];
+        for (_, row) in md.table::<FileRaw>().rows() {
+            let row = row?;
+            if row.flags != 0 {
+                continue; // ContainsNoMetaData
+            }
+            let file = md.strings().get(row.name)?;
+            modules.push(
+                cache
+                    .file(file)
+                    .ok_or(Error::Unsupported("netmodule not found"))?,
+            );
+        }
+        for module in modules {
+            if module.name()? == name {
+                return Ok(Some(module));
+            }
+        }
+        Err(Error::Unsupported(
+            "module reference names no module of the assembly",
+        ))
     }
 
     /// `MetadataResolver.GetType`: the definition in `module`, else the

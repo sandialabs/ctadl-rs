@@ -199,7 +199,7 @@ Sections:
 - **Effect:** two versions with the same simple name collapse into one entry,
   and every miss probes the filesystem again.
 
-**A26. A ModuleRef scope is loaded through the loader.**
+**A26. A ModuleRef scope is loaded through the loader.** *Fixed:* `TypeName::assembly_module` (`model/resolver.rs`) looks only in the assembly's modules, as `Assembly.Modules` lists them: none outside an assembly, an error when a module file is missing or none has the name. The corpus's `modb.netmodule` and `gap-enum-scopes.dll` cover it. Still open: a netmodule read through a File has no link to its assembly, so its own ModuleRef scopes resolve to nothing, where Cecil searches the assembly.
 - **Rust:** `model/resolver.rs:208-212`.
 - **Cecil:** looks only in the assembly's own modules, so a ModuleRef naming
   the current module resolves to itself (`Mono.Cecil/MetadataResolver.cs:117-128`).
