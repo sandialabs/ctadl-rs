@@ -481,6 +481,57 @@ impl<'a> TypeRef<'a> {
         }
     }
 
+    /// The primitive this reference names, as Cecil's
+    /// `MetadataSystem.TryProcessPrimitiveTypeReference` gives it an element
+    /// type: a type in namespace `System`, whose scope (through any declaring
+    /// TypeRefs) is an assembly reference, named after a primitive. ilasm and
+    /// other non-Roslyn producers write `valuetype [mscorlib]System.Int32`.
+    pub fn primitive(&self) -> Result<Option<TypeSig>> {
+        if self.namespace()? != "System" {
+            return Ok(None);
+        }
+        // Follow declaring TypeRefs to the root scope, as Cecil's
+        // DeclaringType.Scope does; a cycle has no assembly scope.
+        let mut scope = self.raw()?.scope;
+        let mut current = self.rid;
+        for _ in 0..self.m.md.row_count(Table::TypeRef) {
+            if scope.token_type() != Some(TokenType::TypeRef) || scope.rid() == current {
+                break;
+            }
+            current = scope.rid();
+            scope = (TypeRef {
+                m: self.m,
+                rid: current,
+            })
+            .raw()?
+            .scope;
+        }
+        if scope.token_type() != Some(TokenType::AssemblyRef) {
+            return Ok(None);
+        }
+        Ok(Some(match self.name()? {
+            "Void" => TypeSig::Void,
+            "Boolean" => TypeSig::Boolean,
+            "Char" => TypeSig::Char,
+            "SByte" => TypeSig::I1,
+            "Byte" => TypeSig::U1,
+            "Int16" => TypeSig::I2,
+            "UInt16" => TypeSig::U2,
+            "Int32" => TypeSig::I4,
+            "UInt32" => TypeSig::U4,
+            "Int64" => TypeSig::I8,
+            "UInt64" => TypeSig::U8,
+            "Single" => TypeSig::R4,
+            "Double" => TypeSig::R8,
+            "String" => TypeSig::String,
+            "TypedReference" => TypeSig::TypedByRef,
+            "IntPtr" => TypeSig::IntPtr,
+            "UIntPtr" => TypeSig::UIntPtr,
+            "Object" => TypeSig::Object,
+            _ => return Ok(None),
+        }))
+    }
+
     pub fn declaring_type(&self) -> Result<Option<TypeRef<'a>>> {
         let scope = self.raw()?.scope;
         if scope.token_type() == Some(TokenType::TypeRef) && scope.rid() != self.rid {
@@ -621,6 +672,17 @@ impl<'a> FieldDef<'a> {
             TypeSig::Ptr(_) | TypeSig::FnPtr(_) => 8,
             TypeSig::CModReq { inner, .. } | TypeSig::CModOpt { inner, .. } => {
                 self.field_type_size(inner)?
+            }
+            TypeSig::Named { token, .. } if token.token_type() == Some(TokenType::TypeRef) => {
+                match (TypeRef {
+                    m: self.m,
+                    rid: token.rid(),
+                })
+                .primitive()?
+                {
+                    Some(primitive) => self.field_type_size(&primitive)?,
+                    None => 0,
+                }
             }
             TypeSig::Named { token, .. } if token.token_type() == Some(TokenType::TypeDef) => {
                 let td = TypeDef {

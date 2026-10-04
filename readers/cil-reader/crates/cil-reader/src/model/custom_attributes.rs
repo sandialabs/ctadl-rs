@@ -7,7 +7,7 @@
 
 use crate::error::{Error, Result};
 use crate::model::data::ModuleData;
-use crate::model::handles::{MemberRefSig, MethodDef, TypeDef};
+use crate::model::handles::{MemberRefSig, MethodDef, TypeDef, TypeRef};
 use crate::model::names::{GenericContext, sig_full_name, token_full_name};
 use crate::model::sig::{ElementType, SigReader, TypeSig};
 use crate::model::typeparser::ParsedType;
@@ -350,6 +350,9 @@ fn ca_type_of_sig(
         TypeSig::Object => CaType::Object,
         TypeSig::SzArray(inner) => CaType::Array(Box::new(ca_type_of_sig(m, inner, resolver)?)),
         TypeSig::Named { token, .. } => {
+            if let Some(primitive) = typeref_primitive(m, *token)? {
+                return ca_type_of_sig(m, &primitive, resolver);
+            }
             let mut full_name = String::new();
             token_full_name(m, *token, GenericContext::default(), &mut full_name)?;
             if full_name == "System.Type" {
@@ -382,6 +385,19 @@ fn ca_type_of_sig(
             ));
         }
     })
+}
+
+/// The primitive a TypeRef token names (`TypeRef::primitive`), which Cecil
+/// reads as that primitive rather than as an enum.
+fn typeref_primitive(m: &ModuleData<'_>, token: MetadataToken) -> Result<Option<TypeSig>> {
+    if token.token_type() != Some(TokenType::TypeRef) {
+        return Ok(None);
+    }
+    TypeRef {
+        m,
+        rid: token.rid(),
+    }
+    .primitive()
 }
 
 /// Underlying primitive of an enum given its TypeDef/TypeRef token

@@ -83,7 +83,7 @@ Sections:
 - **Rust:** `model/handles.rs:1150-1158`.
 - **Cecil:** prints `()` (`Mono.Cecil/PropertyDefinition.cs:111-123,196-214`).
 
-**A7. Primitives written as type references in an attribute constructor signature are treated as enums.** *Divergence, code reading.*
+**A7. Primitives written as type references in an attribute constructor signature are treated as enums.** *Fixed:* `TypeRef::primitive` (`model/handles.rs`) applies Cecil's mapping, and attribute decoding and `field_type_size` use it; `gap-attributes.il.dll` covers both.
 - **Rust:** `model/custom_attributes.rs:352-364`. A signature like
   `valuetype [mscorlib]System.Int32` or `class System.String` fails ("enum
   argument requires assembly resolution").
