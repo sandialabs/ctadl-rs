@@ -125,7 +125,7 @@ Sections:
 - **Also:** `field_type_size` only sizes TypeDefs in the same module, where Cecil
   resolves TypeRef'd and generic valuetypes too.
 
-**A12. Property signatures decode parameters Cecil never reads.** *Divergence.*
+**A12. Property signatures decode parameters Cecil never reads.** *Fixed:* `SigReader::property_sig` (`model/sig.rs`) reads the count and the type only, and `PropertySig` drops `params` (use `PropertyDef::parameters`); `gap-property-sigs.dll` covers it.
 - **Rust:** `model/sig.rs:407-425`.
 - **Cecil:** reads the count, discards it, and reads only the property type
   (`Mono.Cecil/AssemblyReader.cs:1552-1571`).

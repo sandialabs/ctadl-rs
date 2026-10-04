@@ -224,7 +224,6 @@ pub struct MethodSig {
 pub struct PropertySig {
     pub has_this: bool,
     pub property_type: TypeSig,
-    pub params: Vec<TypeSig>,
 }
 
 /// Reader over one signature blob (already length-stripped).
@@ -404,6 +403,9 @@ impl<'a> SigReader<'a> {
     }
 
     /// Property signature: 0x08 (| has_this) prefix, param count, type, params.
+    /// Like Cecil (`MetadataReader.ReadProperty`), the parameters are not
+    /// read: obfuscators put junk there, and `PropertyDef::parameters` comes
+    /// from the accessors.
     pub fn property_sig(&mut self) -> Result<PropertySig> {
         const PROPERTY_SIG: u8 = 0x8;
         let cc = self.cur.u8()?;
@@ -411,16 +413,11 @@ impl<'a> SigReader<'a> {
             return Err(Error::bad(self.cur.pos(), "not a property signature"));
         }
         let has_this = cc & 0x20 != 0;
-        let count = self.cur.compressed_u32()?;
+        let _count = self.cur.compressed_u32()?;
         let property_type = self.type_sig()?;
-        let mut params = Vec::with_capacity(count.min(64) as usize);
-        for _ in 0..count {
-            params.push(self.type_sig()?);
-        }
         Ok(PropertySig {
             has_this,
             property_type,
-            params,
         })
     }
 
