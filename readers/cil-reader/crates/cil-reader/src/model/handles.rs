@@ -3,6 +3,8 @@
 //! Everything resolves through the module; no object graph, no cycles
 //! (contrast `TypeDefinition`/`MethodDefinition` in Cecil).
 
+use std::borrow::Cow;
+
 use crate::error::{Error, Result};
 use crate::model::data::{ModuleData, Range};
 use crate::model::marshal::MarshalInfo;
@@ -1247,8 +1249,24 @@ pub struct GenericConstraint<'a> {
 }
 
 impl<'a> GenericParam<'a> {
-    pub fn name(&self) -> Result<&'a str> {
-        self.m.md.strings().get(self.raw()?.name)
+    /// `GenericParameter.Name`: the row's name, or `!n` (`!!n` for a
+    /// method's) by position in the owner's parameters when it is empty.
+    pub fn name(&self) -> Result<Cow<'a, str>> {
+        let name = self.m.md.strings().get(self.raw()?.name)?;
+        if !name.is_empty() {
+            return Ok(Cow::Borrowed(name));
+        }
+        let owner = self.owner()?;
+        let position = generic_params(self.m, owner)?
+            .iter()
+            .position(|gp| gp.rid == self.rid)
+            .unwrap_or(0);
+        let prefix = if owner.token_type() == Some(TokenType::Method) {
+            "!!"
+        } else {
+            "!"
+        };
+        Ok(Cow::Owned(format!("{prefix}{position}")))
     }
 
     pub fn number(&self) -> Result<u16> {

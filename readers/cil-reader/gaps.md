@@ -62,7 +62,7 @@ Sections:
 - **Knock-on:** this is also why a NestedClass self-loop crashes the port but
   not Cecil (B3).
 
-**A4. An empty GenericParam name renders as nothing instead of `!n`/`!!n`.** *Divergence, reproduced.*
+**A4. An empty GenericParam name renders as nothing instead of `!n`/`!!n`.** *Fixed:* full names fall back to the position (`model/names.rs`), and `GenericParam::name` returns a `Cow` with the same fallback; `gap-generic-names.dll` covers it.
 - **Rust:** `model/names.rs:121-130`, and the generic-param listing in
   `model/handles.rs`.
 - **Cecil:** `Mono.Cecil/GenericParameter.cs:104-110`.

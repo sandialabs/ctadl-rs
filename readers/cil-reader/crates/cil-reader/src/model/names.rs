@@ -125,7 +125,11 @@ fn generic_param_name(
         for range in ranges {
             if remaining < range.length {
                 let row = m.md.row::<GenericParamRaw>(range.start + remaining)?;
-                out.push_str(m.md.strings().get(row.name)?);
+                let name = m.md.strings().get(row.name)?;
+                if name.is_empty() {
+                    break;
+                }
+                out.push_str(name);
                 return Ok(());
             }
             remaining -= range.length;
