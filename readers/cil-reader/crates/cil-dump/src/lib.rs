@@ -342,6 +342,9 @@ fn dump_fields(module: &Module<'_>, out: &mut String) -> Result<()> {
         let Some(field) = module.field_def(rid) else {
             continue;
         };
+        if field.is_deleted().unwrap_or(false) {
+            continue; // as CecilDump, which reads members through their types
+        }
         let full_name = field.full_name().unwrap_or_else(|_| "!error".into());
         write!(
             out,
@@ -429,6 +432,9 @@ fn dump_methods(module: &Module<'_>, out: &mut String) -> Result<()> {
         let Some(method) = module.method_def(rid) else {
             continue;
         };
+        if method.is_deleted().unwrap_or(false) {
+            continue; // as CecilDump, which reads members through their types
+        }
         let full_name = method.full_name().unwrap_or_else(|_| "!error".into());
         write!(
             out,
@@ -523,6 +529,9 @@ fn dump_properties(module: &Module<'_>, out: &mut String) -> Result<()> {
         let Some(prop) = module.property_def(rid) else {
             continue;
         };
+        if prop.is_deleted().unwrap_or(false) {
+            continue; // as CecilDump, which reads members through their types
+        }
         let full_name = prop.full_name().unwrap_or_else(|_| "!error".into());
         write!(
             out,
@@ -553,6 +562,9 @@ fn dump_events(module: &Module<'_>, out: &mut String) -> Result<()> {
         let Some(event) = module.event_def(rid) else {
             continue;
         };
+        if event.is_deleted().unwrap_or(false) {
+            continue; // as CecilDump, which reads members through their types
+        }
         write!(
             out,
             "{}={} flags=0x{:04x}",
@@ -709,7 +721,7 @@ fn dump_il(module: &Module<'_>, out: &mut String) -> Result<()> {
         let Some(method) = module.method_def(rid) else {
             continue;
         };
-        if !method.has_body()? || method.rva()? == 0 {
+        if !method.has_body()? || method.rva()? == 0 || method.is_deleted().unwrap_or(false) {
             continue;
         }
         let body = match method.body() {

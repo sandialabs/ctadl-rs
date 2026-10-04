@@ -209,7 +209,7 @@ Sections:
 - **Cecil:** a TypeSpec wrapping a plain class or valuetype TypeRef still counts
   (`Mono.Cecil/AssemblyReader.cs:1198-1208`).
 
-**A28. Edit-and-continue `_Deleted` members are not filtered out.**
+**A28. Edit-and-continue `_Deleted` members are not filtered out.** *Fixed:* `TypeDef::fields`, `methods`, `properties` and `events` (`model/handles.rs`) leave out members whose `is_deleted` holds; `has_*` still count the raw ranges, as Cecil's reader does for a type not yet read. `gap-deleted.dll` covers it; see D9 for where Cecil goes wrong.
 - **Cecil:** skips SpecialName members named `_Deleted` (`IsDeleted`,
   `Mono.Cecil/AssemblyReader.cs:1757-1760`).
 
@@ -484,6 +484,13 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - A rank-0 ARRAY renders `T[]`; Cecil throws.
 - `Foo[` and a trailing `\` parse quietly; Cecil throws.
 - An empty type-name string gives `None`; Cecil returns null.
+
+**D9. A deleted method misreads the rest of its type's methods in Cecil.**
+- **Cecil:** `ReadMethod` returns on a deleted method before reading its
+  signature and parameter-list columns (`Mono.Cecil/AssemblyReader.cs:1779`),
+  so each later method of the type is read from the wrong offset.
+- **Rust:** reads each row in place and only leaves the method out.
+- **Fixture:** `gap-deleted.dll` puts its deleted method last in its type.
 
 ---
 

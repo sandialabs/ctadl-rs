@@ -217,6 +217,19 @@ impl<'a> TypeDefOrRef<'a> {
     }
 }
 
+/// `PropertyAttributes.SpecialName` and `EventAttributes.SpecialName`.
+const SPECIAL_NAME: u16 = 0x200;
+
+fn without_deleted<T>(members: Vec<T>, is_deleted: impl Fn(&T) -> Result<bool>) -> Result<Vec<T>> {
+    let mut kept = Vec::with_capacity(members.len());
+    for member in members {
+        if !is_deleted(&member)? {
+            kept.push(member);
+        }
+    }
+    Ok(kept)
+}
+
 /// `Mono.Cecil.TypeAttributes` masks used by predicates.
 pub mod type_attributes {
     pub const VISIBILITY_MASK: u32 = 0x7;
@@ -352,20 +365,28 @@ impl<'a> TypeDef<'a> {
         Ok(self.m.class_layouts()?.get(&self.rid).copied())
     }
 
+    /// The type's fields, without deleted ones (see [`FieldDef::is_deleted`]).
     pub fn fields(&self) -> Result<Vec<FieldDef<'a>>> {
         let range = self.m.fields_range(self.rid)?;
-        resolve_member_range(self.m, range, Table::FieldPtr, |rid| FieldDef {
-            m: self.m,
-            rid,
-        })
+        without_deleted(
+            resolve_member_range(self.m, range, Table::FieldPtr, |rid| FieldDef {
+                m: self.m,
+                rid,
+            })?,
+            FieldDef::is_deleted,
+        )
     }
 
+    /// The type's methods, without deleted ones (see [`MethodDef::is_deleted`]).
     pub fn methods(&self) -> Result<Vec<MethodDef<'a>>> {
         let range = self.m.methods_range(self.rid)?;
-        resolve_member_range(self.m, range, Table::MethodPtr, |rid| MethodDef {
-            m: self.m,
-            rid,
-        })
+        without_deleted(
+            resolve_member_range(self.m, range, Table::MethodPtr, |rid| MethodDef {
+                m: self.m,
+                rid,
+            })?,
+            MethodDef::is_deleted,
+        )
     }
 
     pub fn has_properties(&self) -> Result<bool> {
@@ -380,10 +401,13 @@ impl<'a> TypeDef<'a> {
         let Some(&range) = self.m.properties_ranges()?.get(&self.rid) else {
             return Ok(Vec::new());
         };
-        resolve_member_range(self.m, range, Table::PropertyPtr, |rid| PropertyDef {
-            m: self.m,
-            rid,
-        })
+        without_deleted(
+            resolve_member_range(self.m, range, Table::PropertyPtr, |rid| PropertyDef {
+                m: self.m,
+                rid,
+            })?,
+            PropertyDef::is_deleted,
+        )
     }
 
     pub fn has_events(&self) -> Result<bool> {
@@ -398,10 +422,13 @@ impl<'a> TypeDef<'a> {
         let Some(&range) = self.m.events_ranges()?.get(&self.rid) else {
             return Ok(Vec::new());
         };
-        resolve_member_range(self.m, range, Table::EventPtr, |rid| EventDef {
-            m: self.m,
-            rid,
-        })
+        without_deleted(
+            resolve_member_range(self.m, range, Table::EventPtr, |rid| EventDef {
+                m: self.m,
+                rid,
+            })?,
+            EventDef::is_deleted,
+        )
     }
 
     pub fn has_generic_params(&self) -> Result<bool> {
@@ -619,6 +646,13 @@ pub mod field_attributes {
 }
 
 impl<'a> FieldDef<'a> {
+    /// Cecil's `IsDeleted`: a SpecialName member named `_Deleted`, which
+    /// edit-and-continue leaves behind. Cecil reads it, but leaves it out of
+    /// its type's members.
+    pub fn is_deleted(&self) -> Result<bool> {
+        Ok(self.attributes()? & field_attributes::SPECIAL_NAME != 0 && self.name()? == "_Deleted")
+    }
+
     pub fn name(&self) -> Result<&'a str> {
         self.m.md.strings().get(self.raw()?.name)
     }
@@ -939,6 +973,13 @@ pub mod param_attributes {
 }
 
 impl<'a> MethodDef<'a> {
+    /// Cecil's `IsDeleted`: a SpecialName member named `_Deleted`, which
+    /// edit-and-continue leaves behind. Cecil reads it, but leaves it out of
+    /// its type's members.
+    pub fn is_deleted(&self) -> Result<bool> {
+        Ok(self.attributes()? & method_attributes::SPECIAL_NAME != 0 && self.name()? == "_Deleted")
+    }
+
     pub fn name(&self) -> Result<&'a str> {
         self.m.md.strings().get(self.raw()?.name)
     }
@@ -1180,6 +1221,13 @@ pub struct PInvokeInfo<'a> {
 }
 
 impl<'a> PropertyDef<'a> {
+    /// Cecil's `IsDeleted`: a SpecialName member named `_Deleted`, which
+    /// edit-and-continue leaves behind. Cecil reads it, but leaves it out of
+    /// its type's members.
+    pub fn is_deleted(&self) -> Result<bool> {
+        Ok(self.attributes()? & SPECIAL_NAME != 0 && self.name()? == "_Deleted")
+    }
+
     pub fn name(&self) -> Result<&'a str> {
         self.m.md.strings().get(self.raw()?.name)
     }
@@ -1282,6 +1330,13 @@ impl<'a> PropertyDef<'a> {
 }
 
 impl<'a> EventDef<'a> {
+    /// Cecil's `IsDeleted`: a SpecialName member named `_Deleted`, which
+    /// edit-and-continue leaves behind. Cecil reads it, but leaves it out of
+    /// its type's members.
+    pub fn is_deleted(&self) -> Result<bool> {
+        Ok(self.attributes()? & SPECIAL_NAME != 0 && self.name()? == "_Deleted")
+    }
+
     pub fn name(&self) -> Result<&'a str> {
         self.m.md.strings().get(self.raw()?.name)
     }
