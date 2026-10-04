@@ -143,7 +143,7 @@ Sections:
 - **Cecil:** `ModuleDefinition.Characteristics` is DllCharacteristics
   (`Mono.Cecil/ModuleDefinition.cs:605`).
 
-**A15. The HasPublicKey flag is not normalized.** *Divergence, reproduced.*
+**A15. The HasPublicKey flag is not normalized.** *Fixed:* `with_public_key_flag` (`model/module.rs`) derives it from the key, for the assembly and for references with the flag; `gap-key-no-flag.dll` and `gap-flag-no-key.dll` cover it.
 - **Rust:** `model/module.rs:258, 287` report the raw flag.
 - **Cecil:** sets `HasPublicKey = !public_key.IsNullOrEmpty()`
   (`Mono.Cecil/AssemblyNameReference.cs:83-91`).

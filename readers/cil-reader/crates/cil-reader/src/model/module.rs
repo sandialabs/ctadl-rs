@@ -129,6 +129,16 @@ pub enum Resource<'a> {
     },
 }
 
+/// `flags` with the PublicKey flag set exactly when `public_key` is
+/// non-empty, as Cecil's `AssemblyNameReference.PublicKey` setter leaves it.
+fn with_public_key_flag(flags: u32, public_key: &[u8]) -> u32 {
+    if public_key.is_empty() {
+        flags & !assembly_attributes::PUBLIC_KEY
+    } else {
+        flags | assembly_attributes::PUBLIC_KEY
+    }
+}
+
 impl<'a> Resource<'a> {
     pub fn name(&self) -> &'a str {
         match self {
@@ -249,6 +259,7 @@ impl<'a> Module<'a> {
         let row = self.data.md.row::<AssemblyRaw>(1)?;
         let strings = self.data.md.strings();
         let blobs = self.data.md.blobs();
+        let public_key = blobs.get(row.public_key)?;
         Ok(Some(AssemblyName {
             name: strings.get(row.name)?,
             culture: strings.get(row.culture)?,
@@ -258,8 +269,8 @@ impl<'a> Module<'a> {
                 row.build_number,
                 row.revision_number,
             ),
-            attributes: row.flags,
-            public_key: blobs.get(row.public_key)?,
+            attributes: with_public_key_flag(row.flags, public_key),
+            public_key,
             public_key_token: &[],
             hash: &[],
             hash_algorithm: row.hash_alg_id,
@@ -287,7 +298,13 @@ impl<'a> Module<'a> {
                         row.build_number,
                         row.revision_number,
                     ),
-                    attributes: row.flags,
+                    // Cecil sets PublicKey only when the flag is set, and the
+                    // setter then clears the flag if the key is empty.
+                    attributes: if has_key {
+                        with_public_key_flag(row.flags, key_or_token)
+                    } else {
+                        row.flags
+                    },
                     public_key: if has_key { key_or_token } else { &[] },
                     public_key_token: if has_key { &[] } else { key_or_token },
                     hash: blobs.get(row.hash_value)?,
