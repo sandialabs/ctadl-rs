@@ -10,7 +10,8 @@
 
 use super::{cecil_root, read_fixture, read_resource, Test};
 use cil_reader::cil::RawOperand;
-use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader, ResolvedMember};
+use cil_reader::model::resolver::{AssemblyCache, AssemblyLoader, DirectoryLoader, ResolvedMember};
+use cil_reader::model::AssemblyName;
 use cil_reader::{MetadataToken, Module, TokenType};
 
 fn loader() -> DirectoryLoader {
@@ -269,7 +270,7 @@ fn directory_loader_skips_bad_images() {
     let loader = DirectoryLoader::new(vec![first, second]);
     let cache = AssemblyCache::new(&loader);
     let module = cache
-        .assembly("lib")
+        .assembly(&AssemblyName::named("lib"))
         .expect("the image in the second directory");
     assert_eq!(module.assembly_name().unwrap().unwrap().name, "hello");
 }
@@ -282,7 +283,42 @@ fn directory_loader_rejects_netmodules() {
     std::fs::write(dir.join("moda.exe"), read_resource("hello.exe")).unwrap();
     let loader = DirectoryLoader::new(vec![dir]);
     let cache = AssemblyCache::new(&loader);
-    assert!(cache.assembly("moda").is_none());
+    assert!(cache.assembly(&AssemblyName::named("moda")).is_none());
+}
+
+// gaps.md A25: DefaultAssemblyResolver caches by full name, and an
+// IAssemblyResolver sees the whole reference, so two versions of one
+// assembly can resolve to two images.
+fn assembly_cache_keys_by_full_name() {
+    struct ByVersion;
+    impl AssemblyLoader for ByVersion {
+        fn load_assembly(&self, name: &AssemblyName<'_>) -> Option<Vec<u8>> {
+            match name.version.0 {
+                1 => Some(read_resource("hello.exe")),
+                2 => Some(read_resource("libhello.dll")),
+                _ => None,
+            }
+        }
+        fn load_file(&self, _: &str) -> Option<Vec<u8>> {
+            None
+        }
+    }
+    let loader = ByVersion;
+    let cache = AssemblyCache::new(&loader);
+    let version = |major| AssemblyName {
+        version: (major, 0, 0, 0),
+        ..AssemblyName::named("lib")
+    };
+    let name = |major| {
+        let module = cache.assembly(&version(major)).unwrap();
+        module.assembly_name().unwrap().unwrap().name
+    };
+    assert_eq!(name(1), "hello");
+    assert_eq!(name(2), "libhello");
+    assert!(std::ptr::eq(
+        cache.assembly(&version(1)).unwrap(),
+        cache.assembly(&version(1)).unwrap()
+    ));
 }
 
 pub(super) const TESTS: &[Test] = &[
@@ -308,5 +344,9 @@ pub(super) const TESTS: &[Test] = &[
     (
         "directory_loader_rejects_netmodules",
         directory_loader_rejects_netmodules,
+    ),
+    (
+        "assembly_cache_keys_by_full_name",
+        assembly_cache_keys_by_full_name,
     ),
 ];

@@ -7,26 +7,30 @@
 
 use crate::error::{Error, Result};
 use crate::model::handles::{ExportedType, FieldDef, MemberRefSig, MethodDef, TypeDef};
-use crate::model::module::Module;
+use crate::model::module::{AssemblyName, Module};
 use crate::model::names::GenericContext;
 use crate::model::names::type_full_name;
 use crate::model::sig::{MethodSig, SigReader, TypeSig, calling_convention};
+use crate::raw::pe::{TargetRuntime, parse_runtime};
 use crate::raw::tables::*;
 use crate::token::{MetadataToken, TokenType};
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Provides raw image bytes for assemblies (by simple name) and module files
-/// (by file name, for netmodules).
+/// Provides raw image bytes for assemblies (by reference, as Cecil's
+/// `IAssemblyResolver` gets them) and module files (by file name, for
+/// netmodules).
 pub trait AssemblyLoader {
-    fn load_assembly(&self, simple_name: &str) -> Option<Vec<u8>>;
+    fn load_assembly(&self, name: &AssemblyName<'_>) -> Option<Vec<u8>>;
     fn load_file(&self, file_name: &str) -> Option<Vec<u8>>;
 }
 
-/// `BaseAssemblyResolver`'s directory probing: `<dir>/<name>.dll` then
-/// `<dir>/<name>.exe`, in each directory. A file that is not a CLI image is
-/// passed over, as `SearchDirectory` catches `BadImageFormatException`.
+/// `BaseAssemblyResolver`'s directory probing by simple name:
+/// `<dir>/<name>.dll` then `<dir>/<name>.exe` (`.winmd` then `.dll` for a
+/// Windows Runtime reference), in each directory. A file that is not a CLI
+/// image is passed over, as `SearchDirectory` catches
+/// `BadImageFormatException`.
 pub struct DirectoryLoader {
     pub dirs: Vec<PathBuf>,
 }
@@ -38,10 +42,15 @@ impl DirectoryLoader {
 }
 
 impl AssemblyLoader for DirectoryLoader {
-    fn load_assembly(&self, simple_name: &str) -> Option<Vec<u8>> {
+    fn load_assembly(&self, name: &AssemblyName<'_>) -> Option<Vec<u8>> {
+        let extensions = if name.is_windows_runtime() {
+            ["winmd", "dll"]
+        } else {
+            ["dll", "exe"]
+        };
         for dir in &self.dirs {
-            for ext in ["dll", "exe"] {
-                let path = dir.join(format!("{simple_name}.{ext}"));
+            for ext in extensions {
+                let path = dir.join(format!("{}.{ext}", name.name));
                 if let Ok(data) = std::fs::read(&path)
                     && Module::read(&data).is_ok()
                 {
@@ -88,12 +97,14 @@ impl<'l> AssemblyCache<'l> {
         }
     }
 
-    /// The module for `simple_name`, loading it on first use. `None` if the
-    /// loader can't find it, or it isn't a valid image or an assembly's
-    /// (Cecil's `ReadModule(file).Assembly` is null for a netmodule).
-    pub fn assembly(&self, simple_name: &str) -> Option<&Module<'_>> {
-        self.entry(&format!("asm:{simple_name}"), || {
-            self.loader.load_assembly(simple_name)
+    /// The module for the assembly reference `name`, loading it on first
+    /// use; cached by full name, as `DefaultAssemblyResolver` caches. `None`
+    /// if the loader can't find it, or it isn't a valid image or an
+    /// assembly's (Cecil's `ReadModule(file).Assembly` is null for a
+    /// netmodule). A miss is not cached: Cecil's resolver throws on one.
+    pub fn assembly(&self, name: &AssemblyName<'_>) -> Option<&Module<'_>> {
+        self.entry(&format!("asm:{}", name.full_name()), || {
+            self.loader.load_assembly(name)
         })
         .filter(|module| matches!(module.assembly_name(), Ok(Some(_))))
     }
@@ -234,7 +245,7 @@ impl<'s> Module<'s> {
             }
             return Err(Error::Unsupported("core library type not found"));
         }
-        let mut scope = Scope::AssemblyNamed("mscorlib".to_string());
+        let mut scope = Scope::Mscorlib;
         for (rid, row) in md.table::<AssemblyRefRaw>().rows() {
             if corlib_name(md.strings().get(row?.name)?) {
                 scope = Scope::Assembly(rid);
@@ -425,6 +436,22 @@ fn self_module<'c, 's>(module: &'c Module<'s>) -> &'c Module<'c> {
     module
 }
 
+/// `CommonTypeSystem.GetCoreLibraryReference`'s fallback: mscorlib, of the
+/// module's runtime's version, with the ECMA key's token.
+fn mscorlib_reference(module: &Module<'_>) -> AssemblyName<'static> {
+    const TOKEN: &[u8] = &[0xb7, 0x7a, 0x5c, 0x56, 0x19, 0x34, 0xe0, 0x89];
+    let version = match parse_runtime(module.runtime_version()) {
+        TargetRuntime::Net1_0 | TargetRuntime::Net1_1 => (1, 0, 0, 0),
+        TargetRuntime::Net2_0 => (2, 0, 0, 0),
+        TargetRuntime::Net4_0 => (4, 0, 0, 0),
+    };
+    AssemblyName {
+        version,
+        public_key_token: TOKEN,
+        ..AssemblyName::named("mscorlib")
+    }
+}
+
 /// Assembly names Cecil takes for the core library (`Mixin.IsCoreLibrary`).
 const CORE_LIBRARIES: &[&str] = &[
     "mscorlib",
@@ -491,9 +518,9 @@ enum Scope {
     Module,
     /// An AssemblyRef rid of the reference's module.
     Assembly(u32),
-    /// An assembly the module does not reference: the `mscorlib` Cecil
-    /// adds for a module with no core-library reference.
-    AssemblyNamed(String),
+    /// The `mscorlib` reference Cecil adds to a module with no
+    /// core-library reference.
+    Mscorlib,
     ModuleRef(String),
     None,
 }
@@ -607,15 +634,11 @@ impl<'c> TypeName<'c> {
         let target = match &self.scope {
             Scope::None => return Ok(None),
             Scope::Module => self.module,
-            Scope::Assembly(rid) => {
-                let md = self.module.metadata();
-                let row = md.row::<AssemblyRefRaw>(*rid)?;
-                match cache.assembly(md.strings().get(row.name)?) {
-                    Some(target) => target,
-                    None => return Ok(None),
-                }
-            }
-            Scope::AssemblyNamed(name) => match cache.assembly(name) {
+            Scope::Assembly(rid) => match cache.assembly(&self.module.assembly_reference(*rid)?) {
+                Some(target) => target,
+                None => return Ok(None),
+            },
+            Scope::Mscorlib => match cache.assembly(&mscorlib_reference(self.module)) {
                 Some(target) => target,
                 None => return Ok(None),
             },

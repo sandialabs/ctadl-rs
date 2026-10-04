@@ -43,7 +43,23 @@ pub struct AssemblyName<'a> {
     pub token: MetadataToken,
 }
 
-impl AssemblyName<'_> {
+impl<'a> AssemblyName<'a> {
+    /// A reference by simple name alone: version 0.0.0.0, neutral culture,
+    /// no public key or token.
+    pub fn named(name: &'a str) -> AssemblyName<'a> {
+        AssemblyName {
+            name,
+            culture: "",
+            version: (0, 0, 0, 0),
+            attributes: 0,
+            public_key: &[],
+            public_key_token: &[],
+            hash: &[],
+            hash_algorithm: 0,
+            token: MetadataToken::new(TokenType::AssemblyRef, 0),
+        }
+    }
+
     pub fn is_retargetable(&self) -> bool {
         self.attributes & assembly_attributes::RETARGETABLE != 0
     }
@@ -286,40 +302,40 @@ impl<'a> Module<'a> {
     }
 
     pub fn assembly_references(&self) -> Result<Vec<AssemblyName<'a>>> {
+        (1..=self.data.md.row_count(Table::AssemblyRef))
+            .map(|rid| self.assembly_reference(rid))
+            .collect()
+    }
+
+    /// The AssemblyRef row `rid`.
+    pub fn assembly_reference(&self, rid: u32) -> Result<AssemblyName<'a>> {
         let strings = self.data.md.strings();
         let blobs = self.data.md.blobs();
-        self.data
-            .md
-            .table::<AssemblyRefRaw>()
-            .rows()
-            .map(|(rid, row)| {
-                let row = row?;
-                let key_or_token = blobs.get(row.public_key_or_token)?;
-                let has_key = row.flags & assembly_attributes::PUBLIC_KEY != 0;
-                Ok(AssemblyName {
-                    name: strings.get(row.name)?,
-                    culture: strings.get(row.culture)?,
-                    version: (
-                        row.major_version,
-                        row.minor_version,
-                        row.build_number,
-                        row.revision_number,
-                    ),
-                    // Cecil sets PublicKey only when the flag is set, and the
-                    // setter then clears the flag if the key is empty.
-                    attributes: if has_key {
-                        with_public_key_flag(row.flags, key_or_token)
-                    } else {
-                        row.flags
-                    },
-                    public_key: if has_key { key_or_token } else { &[] },
-                    public_key_token: if has_key { &[] } else { key_or_token },
-                    hash: blobs.get(row.hash_value)?,
-                    hash_algorithm: 0,
-                    token: MetadataToken::new(TokenType::AssemblyRef, rid),
-                })
-            })
-            .collect()
+        let row = self.data.md.row::<AssemblyRefRaw>(rid)?;
+        let key_or_token = blobs.get(row.public_key_or_token)?;
+        let has_key = row.flags & assembly_attributes::PUBLIC_KEY != 0;
+        Ok(AssemblyName {
+            name: strings.get(row.name)?,
+            culture: strings.get(row.culture)?,
+            version: (
+                row.major_version,
+                row.minor_version,
+                row.build_number,
+                row.revision_number,
+            ),
+            // Cecil sets PublicKey only when the flag is set, and the setter
+            // then clears the flag if the key is empty.
+            attributes: if has_key {
+                with_public_key_flag(row.flags, key_or_token)
+            } else {
+                row.flags
+            },
+            public_key: if has_key { key_or_token } else { &[] },
+            public_key_token: if has_key { &[] } else { key_or_token },
+            hash: blobs.get(row.hash_value)?,
+            hash_algorithm: 0,
+            token: MetadataToken::new(TokenType::AssemblyRef, rid),
+        })
     }
 
     pub fn module_references(&self) -> Result<Vec<ModuleRef<'a>>> {

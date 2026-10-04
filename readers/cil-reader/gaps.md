@@ -194,7 +194,7 @@ Sections:
 **A24. `DirectoryLoader` accepts netmodules as assemblies.** *Fixed:* `AssemblyCache::assembly` (`model/resolver.rs`) gives `None` for a module without an assembly, and probing stops there, as Cecil's does; the `directory_loader_rejects_netmodules` test covers it, and a probe of both dumps confirmed Cecil's side.
 - **Cecil:** `ReadModule(file).Assembly` is null for a netmodule.
 
-**A25. `AssemblyCache` is keyed by simple name, and misses are not cached.**
+**A25. `AssemblyCache` is keyed by simple name, and misses are not cached.** *Fixed:* `AssemblyLoader::load_assembly` and `AssemblyCache::assembly` (`model/resolver.rs`) take the reference's `AssemblyName`, and the cache keys by its full name; the `assembly_cache_keys_by_full_name` test covers it. Not caching a miss matches Cecil, whose `BaseAssemblyResolver` throws on one before `DefaultAssemblyResolver` can cache it. `DirectoryLoader` still probes by simple name, as `SearchDirectory` does, and now also probes `.winmd` for a Windows Runtime reference.
 - **Cecil:** keys by full name (`Mono.Cecil/DefaultAssemblyResolver.cs:30-34`).
 - **Effect:** two versions with the same simple name collapse into one entry,
   and every miss probes the filesystem again.
