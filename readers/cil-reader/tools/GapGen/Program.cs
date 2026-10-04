@@ -39,6 +39,10 @@ static class Program {
             ("enum-scopes", EnumScopes),
             ("key-no-flag", () => PublicKeys("key-no-flag", flag: false, key: Key)),
             ("flag-no-key", () => PublicKeys("flag-no-key", flag: true, key: Array.Empty<byte>())),
+            ("resolve-lib", ResolveLib),
+            ("resolve", Resolve),
+            ("base-specs", BaseSpecs),
+            ("deleted", Deleted),
         };
         foreach (var (name, build) in fixtures) {
             var (mod, patch) = build();
@@ -302,5 +306,192 @@ static class Program {
                 r.MajorVersion, r.MinorVersion, r.BuildNumber, r.RevisionNumber,
                 r.Flags | PublicKeyFlag, empty, r.Name, r.Locale, r.HashValue));
         });
+    }
+
+    static AssemblyRefUser GapRef(string name) => new AssemblyRefUser($"gap-{name}", new Version(1, 0, 0, 0));
+
+    // gaps.md A16-A22: the definitions gap-resolve.dll's references resolve
+    // to (cil-dump's [resolve] section probes the fixtures directory).
+    static (ModuleDef, Action<Metadata>) ResolveLib() {
+        var mod = NewModule("resolve-lib");
+        var cs = mod.CorLibTypes;
+        FieldDef Field(TypeDef t, string name, TypeSig type) {
+            var f = new FieldDefUser(name, new FieldSig(type), FieldAttributes.Public | FieldAttributes.Static);
+            t.Fields.Add(f);
+            return f;
+        }
+        MethodDef Add(TypeDef t, string name, MethodSig sig) {
+            var m = Method(name, sig, sig.HasThis ? Instance : Static);
+            t.Methods.Add(m);
+            return m;
+        }
+        TypeDef Class(string name, ITypeDefOrRef baseType = null) {
+            var t = NewClass(mod, "", name);
+            if (baseType != null)
+                t.BaseType = baseType;
+            mod.Types.Add(t);
+            return t;
+        }
+
+        // A16: Cecil gives up on a type with no fields (or methods) before
+        // walking its bases.
+        var @base = Class("Base");
+        Field(@base, "f", cs.Int32);
+        Add(@base, "M", MethodSig.CreateStatic(cs.Void));
+        Class("NoMembers", @base);
+        var other = Class("Other", @base);
+        Field(other, "g", cs.Int32);
+        Add(other, "N", MethodSig.CreateStatic(cs.Void));
+        // Its only field is deleted (A28), so Cecil sees none.
+        var deletedOnly = Class("DeletedOnly", @base);
+        Field(deletedOnly, "_Deleted", cs.Int32).Attributes |= FieldAttributes.SpecialName;
+
+        // A17, A18: array and function-pointer shapes.
+        var arrays = Class("Arrays");
+        Field(arrays, "F2", new ArraySig(cs.Int32, 2));
+        Field(arrays, "F1", new SZArraySig(cs.Int32));
+        Add(arrays, "M2", MethodSig.CreateStatic(cs.Void, new ArraySig(cs.Int32, 2)));
+        Add(arrays, "M1", MethodSig.CreateStatic(cs.Void, new SZArraySig(cs.Int32)));
+        Add(arrays, "MB", MethodSig.CreateStatic(cs.Void, new ArraySig(cs.Int32, 1u, new uint[0], new[] { 0 })));
+        var fnptrs = Class("FnPtrs");
+        Add(fnptrs, "P", MethodSig.CreateStatic(cs.Void, new FnPtrSig(MethodSig.CreateStatic(cs.Void, cs.Int32))));
+        Add(fnptrs, "Q", MethodSig.CreateStatic(cs.Void, new FnPtrSig(MethodSig.CreateInstance(cs.Void, cs.Int32))));
+
+        // A20, A22: nested types, one of them with a namespace; and a
+        // forwarder for a name Outer does not nest.
+        var outer = Class("Outer");
+        foreach (var (ns, name) in new[] { ("", "Inner"), ("NsA", "Inner2") }) {
+            var nested = new TypeDefUser(ns, name, cs.Object.TypeDefOrRef) {
+                Attributes = TypeAttributes.NestedPublic,
+            };
+            outer.NestedTypes.Add(nested);
+        }
+        mod.ExportedTypes.Add(new ExportedTypeUser(mod, 0, "", "Missing", TypeAttributes.Forwarder, GapRef("resolve")));
+
+        // A21: two top-level types named Dup. Cecil's name lookup finds the
+        // last, also when resolving a reference to the first.
+        var dup1 = Class("Dup");
+        Field(dup1, "first", cs.Int32);
+        var dup2 = Class("Dup");
+        Field(dup2, "second", cs.Int32);
+        var uses = Class("Uses");
+        Add(uses, "Refs", MethodSig.CreateStatic(cs.Void)).Body.Instructions.Insert(0,
+            OpCodes.Ldtoken.ToInstruction(new TypeSpecUser(new SZArraySig(new ClassSig(dup1)))));
+
+        return (mod, _ => { });
+    }
+
+    // gaps.md A16-A22, A26: references into gap-resolve-lib.dll whose
+    // resolution differs.
+    static (ModuleDef, Action<Metadata>) Resolve() {
+        var mod = NewModule("resolve");
+        var cs = mod.CorLibTypes;
+        var lib = GapRef("resolve-lib");
+        TypeRef Ref(string name, IResolutionScope scope = null, string ns = "") => new TypeRefUser(mod, ns, name, scope ?? lib);
+        var body = new List<Instruction>();
+        void Load(string type, string name, TypeSig fieldType) =>
+            body.Add(OpCodes.Ldsfld.ToInstruction(new MemberRefUser(mod, name, new FieldSig(fieldType), Ref(type))));
+        void Call(string type, string name, MethodSig sig) =>
+            body.Add(OpCodes.Call.ToInstruction(new MemberRefUser(mod, name, sig, Ref(type))));
+        void Token(ITypeDefOrRef type) => body.Add(OpCodes.Ldtoken.ToInstruction(type));
+
+        // A16
+        foreach (var type in new[] { "NoMembers", "Other", "DeletedOnly" }) {
+            Load(type, "f", cs.Int32);
+            Call(type, "M", MethodSig.CreateStatic(cs.Void));
+        }
+        // A17: rank decides; bounds and SZARRAY-vs-ARRAY do not.
+        var bounded2 = new ArraySig(cs.Int32, 2u, new uint[0], new[] { 0, 0 });
+        var bounded1 = new ArraySig(cs.Int32, 1u, new uint[0], new[] { 0 });
+        var unbounded1 = new ArraySig(cs.Int32, 1);
+        Load("Arrays", "F2", bounded2);
+        Load("Arrays", "F1", bounded1);
+        Call("Arrays", "M2", MethodSig.CreateStatic(cs.Void, bounded2));
+        Call("Arrays", "M2", MethodSig.CreateStatic(cs.Void, new SZArraySig(cs.Int32)));
+        Call("Arrays", "M1", MethodSig.CreateStatic(cs.Void, bounded1));
+        Call("Arrays", "M1", MethodSig.CreateStatic(cs.Void, unbounded1));
+        Call("Arrays", "MB", MethodSig.CreateStatic(cs.Void, new SZArraySig(cs.Int32)));
+        // A18: calling convention and HasThis decide.
+        Call("FnPtrs", "P", MethodSig.CreateStatic(cs.Void, new FnPtrSig(MethodSig.CreateStatic(cs.Void, cs.Int32))));
+        Call("FnPtrs", "P", MethodSig.CreateStatic(cs.Void, new FnPtrSig(new MethodSig(CallingConvention.C, 0, cs.Void, cs.Int32))));
+        Call("FnPtrs", "P", MethodSig.CreateStatic(cs.Void, new FnPtrSig(MethodSig.CreateInstance(cs.Void, cs.Int32))));
+        Call("FnPtrs", "Q", MethodSig.CreateStatic(cs.Void, new FnPtrSig(MethodSig.CreateInstance(cs.Void, cs.Int32))));
+        // A20: nested types match on namespace and name.
+        var outer = Ref("Outer");
+        foreach (var (ns, name) in new[] { ("", "Inner"), ("NsA", "Inner2"), ("", "Inner2"), ("NsB", "Inner") })
+            Token(new TypeRefUser(mod, ns, name, outer));
+        // A22: Outer does not nest Missing; the library forwards that name
+        // back here.
+        Token(new TypeRefUser(mod, "", "Missing", outer));
+        var missing = NewClass(mod, "", "Missing");
+        mod.Types.Add(missing);
+        // A21
+        Token(Ref("Dup"));
+        Load("Dup", "first", cs.Int32);
+        Load("Dup", "second", cs.Int32);
+        // A26: a module reference naming this module.
+        Token(Ref("Missing", new ModuleRefUser(mod, mod.Name)));
+
+        var refs = NewClass(mod, "", "Refs");
+        mod.Types.Add(refs);
+        // The body only holds the references; it is never run.
+        var use = Method("Use", MethodSig.CreateStatic(cs.Void), Static, body.ToArray());
+        use.Body.KeepOldMaxStack = true;
+        use.Body.MaxStack = 8;
+        refs.Methods.Add(use);
+        return (mod, _ => { });
+    }
+
+    // gaps.md A27: base types written as TypeSpecs. Cecil reads a TypeSpec
+    // of a plain class or valuetype as that type, and names a generic
+    // instance or modified type after its element type, so all but the
+    // array count as value types or enums.
+    static (ModuleDef, Action<Metadata>) BaseSpecs() {
+        var mod = NewModule("base-specs");
+        var cs = mod.CorLibTypes;
+        var valueType = cs.GetTypeRef("System", "ValueType");
+        var @enum = cs.GetTypeRef("System", "Enum");
+        var isConst = new TypeRefUser(mod, "System.Runtime.CompilerServices", "IsConst", cs.AssemblyRef);
+        var bases = new (string, TypeSig)[] {
+            ("ClassSpec", new ClassSig(valueType)),
+            ("ValueTypeSpec", new ValueTypeSig(valueType)),
+            ("EnumSpec", new ClassSig(@enum)),
+            ("GenericSpec", new GenericInstSig(new ClassSig(valueType), cs.Int32)),
+            ("ModReqSpec", new CModReqdSig(isConst, new ClassSig(valueType))),
+            ("ArraySpec", new SZArraySig(new ClassSig(valueType))),
+        };
+        foreach (var (name, sig) in bases) {
+            var t = new TypeDefUser("", name, new TypeSpecUser(sig)) {
+                Attributes = TypeAttributes.Public | TypeAttributes.Sealed,
+            };
+            mod.Types.Add(t);
+        }
+        return (mod, _ => { });
+    }
+
+    // gaps.md A28: SpecialName members named _Deleted, which edit-and-continue
+    // leaves behind. Cecil leaves them out of their type's members.
+    static (ModuleDef, Action<Metadata>) Deleted() {
+        var mod = NewModule("deleted");
+        var cs = mod.CorLibTypes;
+        var c = NewClass(mod, "", "C");
+        mod.Types.Add(c);
+        c.Fields.Add(new FieldDefUser("_Deleted", new FieldSig(cs.Int32), FieldAttributes.Public | FieldAttributes.SpecialName));
+        c.Fields.Add(new FieldDefUser("kept", new FieldSig(cs.Int32), FieldAttributes.Public));
+        var get = Method("get_P", MethodSig.CreateInstance(cs.Int32), Accessor, OpCodes.Ldc_I4_0.ToInstruction());
+        c.Methods.Add(get);
+        // Last of its type: Cecil skips a deleted method before reading the
+        // rest of its row, so it misreads the type's later methods.
+        c.Methods.Add(Method("_Deleted", MethodSig.CreateInstance(cs.Int32), Accessor, OpCodes.Ldc_I4_0.ToInstruction()));
+        c.Properties.Add(new PropertyDefUser("_Deleted", PropertySig.CreateInstance(cs.Int32), PropertyAttributes.SpecialName) { GetMethod = get });
+        c.Properties.Add(new PropertyDefUser("P", PropertySig.CreateInstance(cs.Int32)) { GetMethod = get });
+        var handler = new TypeRefUser(mod, "System", "EventHandler", cs.AssemblyRef);
+        c.Events.Add(new EventDefUser("_Deleted", handler, EventAttributes.SpecialName));
+        // Without SpecialName, the name alone does not delete a member.
+        var d = NewClass(mod, "", "D");
+        mod.Types.Add(d);
+        d.Fields.Add(new FieldDefUser("_Deleted", new FieldSig(cs.Int32), FieldAttributes.Public));
+        d.Methods.Add(Method("_Deleted", MethodSig.CreateStatic(cs.Void), Static));
+        return (mod, _ => { });
     }
 }
