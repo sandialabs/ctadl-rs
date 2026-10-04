@@ -24,7 +24,9 @@ pub struct ParsedType {
     /// Top-level `Namespace.Name`.
     pub fullname: String,
     pub nested_names: Vec<String>,
-    pub arity: u32,
+    /// The sum of the segments' arities, an `int` as in Cecil: a segment
+    /// may give a negative one, and the sum wraps.
+    pub arity: i32,
     pub specs: Vec<Spec>,
     pub generic_arguments: Vec<ParsedType>,
     /// The assembly part of a fully-qualified name.
@@ -128,12 +130,12 @@ impl Parser<'_> {
         }
 
         // TryGetArity: sum the arities encoded in each name segment.
-        let mut arity = 0;
+        let mut arity: i32 = 0;
         for name in std::iter::once(&ty.fullname).chain(&ty.nested_names) {
             if let Some(idx) = name.rfind('`')
-                && let Ok(n) = name[idx + 1..].parse::<u32>()
+                && let Some(n) = parse_int32(&name[idx + 1..])
             {
-                arity += n;
+                arity = arity.wrapping_add(n);
             }
         }
         ty.arity = arity;
@@ -224,7 +226,7 @@ impl Parser<'_> {
         specs
     }
 
-    fn parse_generic_arguments(&mut self, arity: u32) -> Vec<ParsedType> {
+    fn parse_generic_arguments(&mut self, arity: i32) -> Vec<ParsedType> {
         let mut args = Vec::new();
         if self.peek() != Some('[') {
             return args;
@@ -271,6 +273,29 @@ pub fn split_full_name(fullname: &str) -> (&str, &str) {
     }
 }
 
+/// C#'s `int.TryParse(s)` under the invariant culture (`NumberStyles.Integer`):
+/// optional white space around an optional sign and decimal digits, failing
+/// on overflow. Like .NET, trailing NULs are ignored.
+fn parse_int32(s: &str) -> Option<i32> {
+    let is_white = |c: char| matches!(c, '\u{09}'..='\u{0d}' | ' ');
+    let s = s.trim_end_matches('\0').trim_matches(is_white);
+    let (negative, digits) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let mut value: i64 = 0;
+    for b in digits.bytes() {
+        value = value * 10 + i64::from(b - b'0');
+        if value > i64::from(i32::MAX) + 1 {
+            return None;
+        }
+    }
+    i32::try_from(if negative { -value } else { value }).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +340,37 @@ mod tests {
     fn escaped_name() {
         let t = ParsedType::parse("Foo\\+Bar").unwrap();
         assert_eq!(t.fullname, "Foo+Bar");
+    }
+
+    // parse_int32 cases checked against .NET 8's int.TryParse; the type
+    // names against Cecil on gap-attributes.il.dll.
+    #[test]
+    fn arity_parses_as_int32() {
+        assert_eq!(parse_int32(" 1"), Some(1));
+        assert_eq!(parse_int32("1 "), Some(1));
+        assert_eq!(parse_int32("\t+1\n"), Some(1));
+        assert_eq!(parse_int32("-1"), Some(-1));
+        assert_eq!(parse_int32("01"), Some(1));
+        assert_eq!(parse_int32("1\0\0"), Some(1));
+        assert_eq!(parse_int32("1 \0"), Some(1));
+        assert_eq!(parse_int32("1\0 "), None);
+        assert_eq!(parse_int32("\u{a0}1"), None);
+        assert_eq!(parse_int32("2147483647"), Some(i32::MAX));
+        assert_eq!(parse_int32("-2147483648"), Some(i32::MIN));
+        assert_eq!(parse_int32("2147483648"), None);
+        assert_eq!(parse_int32("4294967297"), None);
+        assert_eq!(parse_int32(""), None);
+        assert_eq!(parse_int32("-"), None);
+        assert_eq!(parse_int32("1 1"), None);
+        assert_eq!(parse_int32("+-1"), None);
+
+        let t = ParsedType::parse("A` 1[[System.Int32]]").unwrap();
+        assert_eq!(t.cecil_full_name(), "A` 1<System.Int32>");
+        let t = ParsedType::parse("A`-1+B`2[[System.Int32]]").unwrap();
+        assert_eq!(t.arity, 1);
+        assert_eq!(t.cecil_full_name(), "A`-1/B`2<System.Int32>");
+        let t = ParsedType::parse("A`4294967297+B`1[[System.Int32]]").unwrap();
+        assert_eq!(t.arity, 1);
     }
 
     #[test]

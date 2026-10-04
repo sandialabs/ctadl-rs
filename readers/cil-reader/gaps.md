@@ -218,7 +218,7 @@ Sections:
 - **Cecil:** prints no operand (`Mono.Cecil/MethodDefinition.cs:522-549`).
 - **Affects:** both `formatted()` and cil-dump.
 
-**A30. Type-name arity parsing doesn't match C# `int.TryParse`.** *Divergence, reproduced.*
+**A30. Type-name arity parsing doesn't match C# `int.TryParse`.** *Fixed:* `parse_int32` (`model/typeparser.rs`) ports it (checked against .NET 8), and `ParsedType::arity` is an `i32` summed with wrapping, as Cecil's `int`; `gap-attributes.il.dll` covers it. This also removes B10's add-overflow panic.
 - **Rust:** `model/typeparser.rs:130-143`.
 - **Cecil:** accepts surrounding whitespace and a leading minus sign.
 - **Example:** ``A` 1[[System.Int32]]`` gives ``A` 1<System.Int32>`` in Cecil and
