@@ -415,31 +415,47 @@ fn enum_underlying_of_token(
         };
         return enum_underlying_of_def(m, &ty);
     }
-    if let Some(et) = resolver.and_then(|r| r(full_name)) {
-        return CaType::from_element_type(et);
-    }
-    // Mirror Cecil's MetadataResolver dichotomy: a TypeRef scoped to another
-    // assembly needs the resolver (AssemblyResolutionException, which
-    // PROPAGATES out of CA reading); a module-scoped TypeRef (self-referencing
-    // scope, netmodule refs) resolves in-module — and a miss there is a
-    // ResolutionException, which Cecil SWALLOWS into empty CA values.
+    // Mirror Cecil's MetadataResolver.Resolve, and how CA reading treats its
+    // failures: an AssemblyResolutionException or NotSupportedException
+    // PROPAGATES out of CA reading, while a ResolutionException (Resolve
+    // returned null) is SWALLOWED into empty CA values.
     let mut root = token;
     let mut chain: Vec<u32> = Vec::new();
-    loop {
+    let scope = loop {
         let row = m.md.row::<TypeRefRaw>(root.rid())?;
         chain.push(root.rid());
         if row.scope.token_type() == Some(TokenType::TypeRef) && row.scope.rid() != root.rid() {
             root = row.scope;
         } else {
-            if row.scope.token_type() == Some(TokenType::AssemblyRef) {
-                return Err(Error::Unsupported(
-                    "enum argument requires assembly resolution",
-                ));
-            }
-            break;
+            break row.scope;
         }
+    };
+    match scope.token_type() {
+        // Another assembly: only the resolver can answer.
+        Some(TokenType::AssemblyRef) => {
+            return match resolver.and_then(|r| r(full_name)) {
+                Some(et) => CaType::from_element_type(et),
+                None => Err(Error::Unsupported(
+                    "enum argument requires assembly resolution",
+                )),
+            };
+        }
+        // A module of this assembly, looked up by name; only this one is
+        // loaded. Without an assembly, Resolve returns null.
+        Some(TokenType::ModuleRef) => {
+            if m.md.row_count(Table::Assembly) == 0 {
+                return Err(Error::Unsupported("enum type not resolvable in module"));
+            }
+            let module_ref = m.md.row::<ModuleRefRaw>(scope.rid())?;
+            let module = m.md.row::<ModuleRaw>(1)?;
+            if m.md.strings().get(module_ref.name)? != m.md.strings().get(module.name)? {
+                return Err(Error::Unsupported("enum type in another module"));
+            }
+        }
+        // This module (or no scope, or a self-scoped row): look here.
+        _ => {}
     }
-    // Module-scoped: find the TypeDef with the same name chain.
+    // Find the TypeDef with the same name chain.
     chain.reverse();
     let mut current: Option<TypeDef<'_>> = None;
     for (i, &tr_rid) in chain.iter().enumerate() {
@@ -470,7 +486,20 @@ fn enum_underlying_of_token(
             }
         };
         if current.is_none() {
-            let _ = i;
+            // MetadataResolver.GetType falls back to the exported types,
+            // whose Resolve() goes to another assembly or module. Resolving
+            // a nested reference resolves its declaring type first, so each
+            // level from the missing one down to the argument's type gets
+            // that fallback.
+            for &tr_rid in &chain[i..] {
+                let row = m.md.row::<TypeRefRaw>(tr_rid)?;
+                let strings = m.md.strings();
+                if is_exported(m, strings.get(row.name)?, strings.get(row.namespace)?)? {
+                    return Err(Error::Unsupported(
+                        "enum argument requires resolving an exported type",
+                    ));
+                }
+            }
             return Err(Error::Unsupported("enum type not resolvable in module"));
         }
     }
@@ -478,6 +507,18 @@ fn enum_underlying_of_token(
         Some(ty) => enum_underlying_of_def(m, &ty),
         None => Err(Error::Unsupported("enum type not resolvable in module")),
     }
+}
+
+/// Whether an ExportedType row has this name and namespace.
+fn is_exported(m: &ModuleData<'_>, name: &str, namespace: &str) -> Result<bool> {
+    let strings = m.md.strings();
+    for (_, row) in m.md.table::<ExportedTypeRaw>().rows() {
+        let row = row?;
+        if strings.get(row.name)? == name && strings.get(row.namespace)? == namespace {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn enum_underlying_of_def(m: &ModuleData<'_>, ty: &TypeDef<'_>) -> Result<CaType> {

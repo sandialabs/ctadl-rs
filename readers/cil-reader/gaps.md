@@ -104,7 +104,7 @@ Sections:
   `EditorBrowsable`, and `SecurityPermission Flags=` all fail as a whole.
   Parity holds only because CecilDump turns resolution off.
 
-**A9. Enum resolution in attributes ignores ExportedType forwarding.** *Divergence, reproduced.*
+**A9. Enum resolution in attributes ignores ExportedType forwarding.** *Fixed:* `enum_underlying_of_token` (`model/custom_attributes.rs`) falls back to the exported types, resolves a ModuleRef scope only when it names this module, and asks the resolver only for assembly-scoped names; `gap-enum-scopes.dll` covers it. A ModuleRef naming a sibling netmodule is an error, where Cecil would load that netmodule from disk.
 - **Rust:** `model/custom_attributes.rs:405-464`.
 - **Cecil:** falls back to `module.ExportedTypes` (`Mono.Cecil/MetadataResolver.cs:134-160`).
 - **Effect:** Rust prints `args=()`; Cecil prints `args=!unresolved`.
