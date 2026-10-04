@@ -537,22 +537,13 @@ fn resolve_parsed_in_module<'a>(
     parsed: &ParsedType,
 ) -> Result<Option<TypeDef<'a>>> {
     // Inline version of ParsedType::resolve_in_module without needing &Module.
+    // As TypeParser.TryCurrentModule: a name qualified with an assembly is
+    // in this module only if that is this assembly's full name, exactly.
     if let Some(assembly) = &parsed.assembly
         && !assembly.is_empty()
+        && m.assembly_name()?.map(|name| name.full_name()).as_ref() != Some(assembly)
     {
-        // Names qualified with a foreign assembly are not in-module. Compare
-        // against this assembly's simple name (full-name comparison would
-        // need the public key token; the simple name is enough here).
-        let self_name = if m.md.row_count(Table::Assembly) != 0 {
-            let row = m.md.row::<AssemblyRaw>(1)?;
-            m.md.strings().get(row.name)?.to_string()
-        } else {
-            String::new()
-        };
-        let assembly_simple = assembly.split(',').next().unwrap_or("").trim();
-        if assembly_simple != self_name {
-            return Ok(None);
-        }
+        return Ok(None);
     }
     // Find the top-level type.
     let (ns, name) = crate::model::typeparser::split_full_name(&parsed.fullname);

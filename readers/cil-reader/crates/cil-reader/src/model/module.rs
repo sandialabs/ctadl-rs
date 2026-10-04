@@ -129,6 +129,35 @@ pub enum Resource<'a> {
     },
 }
 
+impl<'a> ModuleData<'a> {
+    /// `Module::assembly_name`.
+    pub(crate) fn assembly_name(&self) -> Result<Option<AssemblyName<'a>>> {
+        if self.md.row_count(Table::Assembly) == 0 {
+            return Ok(None);
+        }
+        let row = self.md.row::<AssemblyRaw>(1)?;
+        let strings = self.md.strings();
+        let blobs = self.md.blobs();
+        let public_key = blobs.get(row.public_key)?;
+        Ok(Some(AssemblyName {
+            name: strings.get(row.name)?,
+            culture: strings.get(row.culture)?,
+            version: (
+                row.major_version,
+                row.minor_version,
+                row.build_number,
+                row.revision_number,
+            ),
+            attributes: with_public_key_flag(row.flags, public_key),
+            public_key,
+            public_key_token: &[],
+            hash: &[],
+            hash_algorithm: row.hash_alg_id,
+            token: MetadataToken::new(TokenType::Assembly, 1),
+        }))
+    }
+}
+
 /// `flags` with the PublicKey flag set exactly when `public_key` is
 /// non-empty, as Cecil's `AssemblyNameReference.PublicKey` setter leaves it.
 fn with_public_key_flag(flags: u32, public_key: &[u8]) -> u32 {
@@ -253,29 +282,7 @@ impl<'a> Module<'a> {
 
     /// The assembly manifest, if this module has one.
     pub fn assembly_name(&self) -> Result<Option<AssemblyName<'a>>> {
-        if self.data.md.row_count(Table::Assembly) == 0 {
-            return Ok(None);
-        }
-        let row = self.data.md.row::<AssemblyRaw>(1)?;
-        let strings = self.data.md.strings();
-        let blobs = self.data.md.blobs();
-        let public_key = blobs.get(row.public_key)?;
-        Ok(Some(AssemblyName {
-            name: strings.get(row.name)?,
-            culture: strings.get(row.culture)?,
-            version: (
-                row.major_version,
-                row.minor_version,
-                row.build_number,
-                row.revision_number,
-            ),
-            attributes: with_public_key_flag(row.flags, public_key),
-            public_key,
-            public_key_token: &[],
-            hash: &[],
-            hash_algorithm: row.hash_alg_id,
-            token: MetadataToken::new(TokenType::Assembly, 1),
-        }))
+        self.data.assembly_name()
     }
 
     pub fn assembly_references(&self) -> Result<Vec<AssemblyName<'a>>> {

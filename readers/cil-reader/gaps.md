@@ -112,7 +112,7 @@ Sections:
   looks in the named netmodule. The resolver is also consulted before the
   module-scope check (`:402`).
 
-**A10. A 0x55 enum name qualified with the current assembly matches on simple name only.** *Divergence, reproduced.*
+**A10. A 0x55 enum name qualified with the current assembly matches on simple name only.** *Fixed:* `resolve_parsed_in_module` (`model/custom_attributes.rs`) compares the assembly's full name exactly, as `ParsedType::resolve_in_module` already did; `gap-attributes.il.dll` covers it.
 - **Rust:** `model/custom_attributes.rs:524-540`.
 - **Cecil:** requires an exact full-name match (`Mono.Cecil/TypeParser.cs:394-403`).
 - **Inconsistent:** the port's own `model/typeparser.rs:94-103` compares full
