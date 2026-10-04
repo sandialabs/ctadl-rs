@@ -213,7 +213,7 @@ Sections:
 - **Cecil:** skips SpecialName members named `_Deleted` (`IsDeleted`,
   `Mono.Cecil/AssemblyReader.cs:1757-1760`).
 
-**A29. Out-of-range `ldarg`/`ldloc` operands print a value.** *Divergence, reproduced.*
+**A29. Out-of-range `ldarg`/`ldloc` operands print a value.** *Fixed:* `MethodBody::names_arg_or_local` (`model/body.rs`) drops the operand as Cecil's null one is; `gap-formatter.il.dll` covers it.
 - **Rust:** `model/body.rs:359-375` prints `ldarg.s 5` or `ldloc.s V_3`.
 - **Cecil:** prints no operand (`Mono.Cecil/MethodDefinition.cs:522-549`).
 - **Affects:** both `formatted()` and cil-dump.

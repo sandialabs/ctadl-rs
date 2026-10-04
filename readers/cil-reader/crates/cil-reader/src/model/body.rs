@@ -317,11 +317,34 @@ impl<'a> MethodBody<'a> {
         {
             return Ok(());
         }
+        // Likewise for arguments and locals that do not exist.
+        if !self.names_arg_or_local(&ins.operand)? {
+            return Ok(());
+        }
         if !matches!(ins.operand, RawOperand::None) {
             out.push(' ');
             self.write_operand(ins, ctx, out)?;
         }
         Ok(())
+    }
+
+    /// False for an argument or local operand past the signature's
+    /// parameters or the locals, which Cecil's `MethodBody.GetParameter` and
+    /// `GetVariable` resolve to null. With `this`, argument 0 is `this`.
+    fn names_arg_or_local(&self, operand: &RawOperand<'_>) -> Result<bool> {
+        Ok(match *operand {
+            RawOperand::Var(index) => (index as usize) < self.variables.len(),
+            RawOperand::Arg(index) => {
+                let sig = self.method().signature()?;
+                let index = index as usize;
+                if sig.has_this {
+                    index == 0 || index - 1 < sig.params.len()
+                } else {
+                    index < sig.params.len()
+                }
+            }
+            _ => true,
+        })
     }
 
     fn is_instruction_offset(&self, offset: u32) -> bool {
