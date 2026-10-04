@@ -1,5 +1,4 @@
-// Custom-attribute blobs and field data that depend on how types are named
-// (gaps.md A7, A10, A11, A30).
+// Custom-attribute blobs and field data that depend on how types are named.
 
 .assembly extern mscorlib { .publickeytoken = (B7 7A 5C 56 19 34 E0 89) .ver 4:0:0:0 }
 .assembly 'gap-attributes' { .ver 1:2:3:4 }
@@ -18,7 +17,7 @@
 	.method public hidebysig specialname rtspecialname instance void .ctor () cil managed { ret }
 	// Primitives written as type references, as ilasm and other
 	// non-Roslyn producers do: Cecil maps a System TypeRef with an
-	// assembly scope to the primitive (A7).
+	// assembly scope to the primitive.
 	.method public hidebysig specialname rtspecialname instance void .ctor (valuetype [mscorlib]System.Int32 a) cil managed { ret }
 	.method public hidebysig specialname rtspecialname instance void .ctor (class [mscorlib]System.String a) cil managed { ret }
 	.method public hidebysig specialname rtspecialname instance void .ctor (class [mscorlib]System.Object a) cil managed { ret }
@@ -64,7 +63,7 @@
 
 	// A named argument of enum type 0x55, its type name qualified with
 	// this assembly: Cecil takes the current module only on an exact
-	// full-name match (A10).
+	// full-name match.
 	// "Bingo"
 	.custom instance void Attr::.ctor () = ( 01 00 01 00 53 55 05 42 69 6E 67 6F 05 46 69 65 6C 64 02 04 )
 	// "Bingo, gap-attributes, Version=1.2.3.4, Culture=neutral, PublicKeyToken=null"
@@ -84,7 +83,7 @@
 .class public auto ansi beforefieldinit TypeNames extends [mscorlib]System.Object
 {
 	// typeof names whose arity C#'s int.TryParse reads: surrounding
-	// whitespace and a sign (A30).
+	// whitespace and a sign.
 	// "A` 1[[System.Int32]]"
 	.custom instance void Attr::.ctor (class [mscorlib]System.Type) = ( 01 00 14 41 60 20 31 5B 5B 53 79 73 74 65 6D 2E 49 6E 74 33 32 5D 5D 00 00 )
 	// "A`1 [[System.Int32]]"
@@ -100,7 +99,7 @@
 }
 
 // Field data is sized by the field type; Cecil reports RVA 0 when it
-// cannot size it (A7, A11).
+// cannot size it.
 .class public sequential ansi sealed beforefieldinit NoLayout extends [mscorlib]System.ValueType
 {
 	.field public int32 x

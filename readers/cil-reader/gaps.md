@@ -8,6 +8,11 @@ Evidence (repro DLLs, cil-dump vs cecil-dump diffs, probe crates, and the
 long-form per-area reports `raw.md`, `il.md`, `sig.md`, `ca.md`, `model.md`) is
 in `/Volumes/Shampoo/cil-reader-gaps-2026-10-03/review/`.
 
+This file is not merged, so nothing that is merged may point at it. Fixtures
+(`fixtures/*.il`, `tools/GapGen`, the `cilFixtures` derivation) and tests
+describe the behavior they check in their own words. They never cite a gap
+number (A1, B3, ...) or `gaps.md`.
+
 What matches (verified): all table column layouts, the 14 coded indices, heap
 sizing and decoding, PE32/PE32+ headers, the 219-opcode table, tiny and fat
 bodies, EH sections, operand decoding, every signature element type,

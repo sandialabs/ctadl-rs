@@ -1,6 +1,6 @@
 // GapGen <outdir>: writes gap-<name>.dll, small modules with metadata shapes
 // that neither Roslyn nor ilasm emit but obfuscators and other writers do,
-// for comparing cil-reader against Cecil (see readers/cil-reader/gaps.md).
+// for comparing cil-reader against Cecil.
 // The .il fixtures in readers/cil-reader/fixtures cover what ilasm can
 // express.
 //
@@ -88,7 +88,7 @@ static class Program {
 
     static void Patch<T>(MDTable<T> table, uint rid, Func<T, T> f) where T : struct => table[rid] = f(table[rid]);
 
-    // gaps.md A3: a NestedClass row for a type whose visibility is not
+    // A NestedClass row for a type whose visibility is not
     // Nested*. Cecil only sets DeclaringType for nested visibilities, so
     // Inner and its members are named as top-level.
     static (ModuleDef, Action<Metadata>) NestedPublic() {
@@ -123,7 +123,7 @@ static class Program {
                 r.Name, r.Namespace, r.Extends, r.FieldList, r.MethodList)));
     }
 
-    // gaps.md A4: generic parameters with empty names, as obfuscators leave
+    // Generic parameters with empty names, as obfuscators leave
     // them. Cecil names them !n / !!n by position.
     static (ModuleDef, Action<Metadata>) GenericNames() {
         var mod = NewModule("generic-names");
@@ -171,7 +171,7 @@ static class Program {
         });
     }
 
-    // gaps.md A12: property signatures whose parameters are junk. Cecil
+    // Property signatures whose parameters are junk. Cecil
     // reads the parameter count, ignores it, and reads only the type.
     static (ModuleDef, Action<Metadata>) PropertySigs() {
         var mod = NewModule("property-sigs");
@@ -206,7 +206,7 @@ static class Program {
         });
     }
 
-    // gaps.md A9: custom-attribute enum arguments whose TypeRef is scoped to
+    // Custom-attribute enum arguments whose TypeRef is scoped to
     // this module, to nothing, or to a module reference. Cecil resolves a
     // module-scoped or unscoped name through the module's exported types
     // too, and a module reference only in the assembly's modules of that
@@ -277,7 +277,7 @@ static class Program {
         "2f25d87dba6fc90ffd598ed4da35e44c398c454307e8e33b8426143daec9f596" +
         "836f97c8f74750e5975c64e2189f45def46b2a2b1247adc3652bf5c308055da9");
 
-    // gaps.md A15: a PublicKey flag that disagrees with the key. Cecil
+    // A PublicKey flag that disagrees with the key. Cecil
     // derives HasPublicKey from the key, for the assembly and its
     // references.
     static (ModuleDef, Action<Metadata>) PublicKeys(string name, bool flag, byte[] key) {
@@ -310,9 +310,9 @@ static class Program {
 
     static AssemblyRefUser GapRef(string name) => new AssemblyRefUser($"gap-{name}", new Version(1, 0, 0, 0));
 
-    // gaps.md A16-A22: the definitions gap-resolve.dll's references resolve
-    // to (cil-dump's [resolve] section probes the fixtures directory), and
-    // attribute arguments naming nested enums (A20).
+    // The definitions gap-resolve.dll's references resolve to (cil-dump's
+    // [resolve] section probes the fixtures directory), and attribute
+    // arguments naming nested enums.
     static (ModuleDef, Action<Metadata>) ResolveLib() {
         var mod = NewModule("resolve-lib");
         var cs = mod.CorLibTypes;
@@ -334,7 +334,7 @@ static class Program {
             return t;
         }
 
-        // A16: Cecil gives up on a type with no fields (or methods) before
+        // Cecil gives up on a type with no fields (or methods) before
         // walking its bases.
         var @base = Class("Base");
         Field(@base, "f", cs.Int32);
@@ -343,11 +343,11 @@ static class Program {
         var other = Class("Other", @base);
         Field(other, "g", cs.Int32);
         Add(other, "N", MethodSig.CreateStatic(cs.Void));
-        // Its only field is deleted (A28), so Cecil sees none.
+        // Its only field is deleted, so Cecil sees none.
         var deletedOnly = Class("DeletedOnly", @base);
         Field(deletedOnly, "_Deleted", cs.Int32).Attributes |= FieldAttributes.SpecialName;
 
-        // A17, A18: array and function-pointer shapes.
+        // Array and function-pointer shapes.
         var arrays = Class("Arrays");
         Field(arrays, "F2", new ArraySig(cs.Int32, 2));
         Field(arrays, "F1", new SZArraySig(cs.Int32));
@@ -358,7 +358,7 @@ static class Program {
         Add(fnptrs, "P", MethodSig.CreateStatic(cs.Void, new FnPtrSig(MethodSig.CreateStatic(cs.Void, cs.Int32))));
         Add(fnptrs, "Q", MethodSig.CreateStatic(cs.Void, new FnPtrSig(MethodSig.CreateInstance(cs.Void, cs.Int32))));
 
-        // A20, A22: nested types, one of them with a namespace; and a
+        // Nested types, one of them with a namespace; and a
         // forwarder for a name Outer does not nest.
         var outer = Class("Outer");
         foreach (var (ns, name) in new[] { ("", "Inner"), ("NsA", "Inner2") }) {
@@ -368,7 +368,7 @@ static class Program {
             outer.NestedTypes.Add(nested);
         }
         mod.ExportedTypes.Add(new ExportedTypeUser(mod, 0, "", "Missing", TypeAttributes.Forwarder, GapRef("resolve")));
-        // A20 in attribute arguments: an enum nested with a namespace, named
+        // Nested types in attribute arguments: an enum nested with a namespace, named
         // by a TypeRef without the namespace (no match), and by a reflection
         // name with it (a match).
         var en = new TypeDefUser("NsA", "E", cs.GetTypeRef("System", "Enum")) {
@@ -394,7 +394,7 @@ static class Program {
         blob.AddRange(new byte[] { 5, 0, 0, 0, 0, 0 });
         attributed.CustomAttributes.Add(new CustomAttribute(boxed, blob.ToArray()));
 
-        // A21: two top-level types named Dup. Cecil's name lookup finds the
+        // Two top-level types named Dup. Cecil's name lookup finds the
         // last, also when resolving a reference to the first.
         var dup1 = Class("Dup");
         Field(dup1, "first", cs.Int32);
@@ -407,8 +407,8 @@ static class Program {
         return (mod, md => Patch(md.TablesHeap.TypeRefTable, md.GetRid(outerRef), r => new RawTypeRefRow(ModuleScope, r.Name, r.Namespace)));
     }
 
-    // gaps.md A16-A22, A26: references into gap-resolve-lib.dll whose
-    // resolution differs.
+    // References into gap-resolve-lib.dll that Cecil resolves differently
+    // from a name-only lookup.
     static (ModuleDef, Action<Metadata>) Resolve() {
         var mod = NewModule("resolve");
         var cs = mod.CorLibTypes;
@@ -421,12 +421,12 @@ static class Program {
             body.Add(OpCodes.Call.ToInstruction(new MemberRefUser(mod, name, sig, Ref(type))));
         void Token(ITypeDefOrRef type) => body.Add(OpCodes.Ldtoken.ToInstruction(type));
 
-        // A16
+        // Types with no fields or methods of their own: no base-type walk.
         foreach (var type in new[] { "NoMembers", "Other", "DeletedOnly" }) {
             Load(type, "f", cs.Int32);
             Call(type, "M", MethodSig.CreateStatic(cs.Void));
         }
-        // A17: rank decides; bounds and SZARRAY-vs-ARRAY do not.
+        // Arrays: rank decides; bounds and SZARRAY-vs-ARRAY do not.
         var bounded2 = new ArraySig(cs.Int32, 2u, new uint[0], new[] { 0, 0 });
         var bounded1 = new ArraySig(cs.Int32, 1u, new uint[0], new[] { 0 });
         var unbounded1 = new ArraySig(cs.Int32, 1);
@@ -437,25 +437,25 @@ static class Program {
         Call("Arrays", "M1", MethodSig.CreateStatic(cs.Void, bounded1));
         Call("Arrays", "M1", MethodSig.CreateStatic(cs.Void, unbounded1));
         Call("Arrays", "MB", MethodSig.CreateStatic(cs.Void, new SZArraySig(cs.Int32)));
-        // A18: calling convention and HasThis decide.
+        // Function pointers: calling convention and HasThis decide.
         Call("FnPtrs", "P", MethodSig.CreateStatic(cs.Void, new FnPtrSig(MethodSig.CreateStatic(cs.Void, cs.Int32))));
         Call("FnPtrs", "P", MethodSig.CreateStatic(cs.Void, new FnPtrSig(new MethodSig(CallingConvention.C, 0, cs.Void, cs.Int32))));
         Call("FnPtrs", "P", MethodSig.CreateStatic(cs.Void, new FnPtrSig(MethodSig.CreateInstance(cs.Void, cs.Int32))));
         Call("FnPtrs", "Q", MethodSig.CreateStatic(cs.Void, new FnPtrSig(MethodSig.CreateInstance(cs.Void, cs.Int32))));
-        // A20: nested types match on namespace and name.
+        // Nested types match on namespace and name.
         var outer = Ref("Outer");
         foreach (var (ns, name) in new[] { ("", "Inner"), ("NsA", "Inner2"), ("", "Inner2"), ("NsB", "Inner") })
             Token(new TypeRefUser(mod, ns, name, outer));
-        // A22: Outer does not nest Missing; the library forwards that name
+        // Outer does not nest Missing; the library forwards that name
         // back here.
         Token(new TypeRefUser(mod, "", "Missing", outer));
         var missing = NewClass(mod, "", "Missing");
         mod.Types.Add(missing);
-        // A21
+        // Dup: the reference to the first resolves to the last.
         Token(Ref("Dup"));
         Load("Dup", "first", cs.Int32);
         Load("Dup", "second", cs.Int32);
-        // A26: a module reference naming this module.
+        // A module reference naming this module.
         Token(Ref("Missing", new ModuleRefUser(mod, mod.Name)));
 
         var refs = NewClass(mod, "", "Refs");
@@ -468,7 +468,7 @@ static class Program {
         return (mod, _ => { });
     }
 
-    // gaps.md A27: base types written as TypeSpecs. Cecil reads a TypeSpec
+    // Base types written as TypeSpecs. Cecil reads a TypeSpec
     // of a plain class or valuetype as that type, and names a generic
     // instance after its element type, so those count as value types or
     // enums; a modified or array type's name has a suffix, so it does not.
@@ -495,7 +495,7 @@ static class Program {
         return (mod, _ => { });
     }
 
-    // gaps.md A28: SpecialName members named _Deleted, which edit-and-continue
+    // SpecialName members named _Deleted, which edit-and-continue
     // leaves behind. Cecil leaves them out of their type's members.
     static (ModuleDef, Action<Metadata>) Deleted() {
         var mod = NewModule("deleted");

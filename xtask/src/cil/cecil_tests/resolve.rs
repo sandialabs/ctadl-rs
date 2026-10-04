@@ -215,7 +215,7 @@ fn resolve_in_module_type() {
     assert_eq!(resolved.ty, program);
 }
 
-// gaps.md A19: a primitive resolves as Cecil's TypeSystem type, a reference
+// A primitive resolves as Cecil's TypeSystem type, a reference
 // into the core library (TypeSystem.Int32.Resolve()). The corpus covers a
 // core library resolving its own primitives; this covers another module's.
 fn primitive_resolves_to_corlib() {
@@ -254,7 +254,7 @@ fn scratch_dir(test: &str) -> std::path::PathBuf {
     dir
 }
 
-// gaps.md A23: BaseAssemblyResolver.SearchDirectory catches
+// BaseAssemblyResolver.SearchDirectory catches
 // BadImageFormatException and probes on, to the next extension and the next
 // directory, so a native or junk file named like the assembly does not hide
 // it.
@@ -275,7 +275,7 @@ fn directory_loader_skips_bad_images() {
     assert_eq!(module.assembly_name().unwrap().unwrap().name, "hello");
 }
 
-// gaps.md A24: a netmodule named like the assembly ends the search with
+// A netmodule named like the assembly ends the search with
 // nothing, as ReadModule(file).Assembly is null for it.
 fn directory_loader_rejects_netmodules() {
     let dir = scratch_dir("netmodules");
@@ -286,7 +286,7 @@ fn directory_loader_rejects_netmodules() {
     assert!(cache.assembly(&AssemblyName::named("moda")).is_none());
 }
 
-// gaps.md A25: DefaultAssemblyResolver caches by full name, and an
+// DefaultAssemblyResolver caches by full name, and an
 // IAssemblyResolver sees the whole reference, so two versions of one
 // assembly can resolve to two images.
 fn assembly_cache_keys_by_full_name() {

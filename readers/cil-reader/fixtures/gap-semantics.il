@@ -1,5 +1,5 @@
-// Property and event accessors as Cecil associates them (gaps.md A5), and
-// property names without accessors (A6).
+// Property and event accessors as Cecil associates them, and property
+// names without accessors.
 
 .assembly extern mscorlib { .publickeytoken = (B7 7A 5C 56 19 34 E0 89) .ver 4:0:0:0 }
 .assembly 'gap-semantics' { }

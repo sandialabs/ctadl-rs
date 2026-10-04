@@ -171,8 +171,8 @@
         ptrGen = dnlibTool "ptr-gen" "PtrGen";
 
         # GapGen: writes small modules with metadata shapes that Roslyn and
-        # ilasm do not emit but obfuscators do, each reproducing one of the
-        # Cecil divergences in readers/cil-reader/gaps.md.
+        # ilasm do not emit but obfuscators do, each reproducing a divergence
+        # from Cecil.
         gapGen = dnlibTool "gap-gen" "GapGen";
 
         # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled.
@@ -188,9 +188,9 @@
         # - `ptr-<name>.cs.dll`: each `.cs` fixture rewritten by ptrGen, so the
         #   corpus has images with Ptr tables. dnlib's output is deterministic.
         # - `gap-<name>.il.dll` and `gap-<name>.dll`: cil-reader's own fixtures,
-        #   repros of Cecil divergences (readers/cil-reader/gaps.md): the `.il`
-        #   sources in readers/cil-reader/fixtures, assembled as Cecil's are,
-        #   and the modules gapGen writes.
+        #   repros of divergences from Cecil: the `.il` sources in
+        #   readers/cil-reader/fixtures, assembled as Cecil's are, and the
+        #   modules gapGen writes.
         cilFixtures = pkgs.stdenvNoCC.mkDerivation {
           # `name` rather than pname/version: see cecilDump.
           name = "cil-fixtures-${builtins.substring 0 7 cecil.rev}";
