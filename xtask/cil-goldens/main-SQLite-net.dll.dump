@@ -11199,3 +11199,16 @@ ca parent=0x060001e4 ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 0x0a0001cd -> SQLite-net.dll!0x04000135 System.Object[] SQLite.SQLiteAsyncConnection/<>c__DisplayClass28_0`1::args
 0x0a0001ce -> SQLite-net.dll!0x060000e0 T SQLite.TableQuery`1::ElementAt(System.Int32)
 0x0a0001cf -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+ca parent=0x0200000a ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x0200000b ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x0200000c ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x0200000d ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x0200000e ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x0200000f ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x02000010 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x02000011 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x02000012 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x02000013 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x02000014 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()

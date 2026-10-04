@@ -9,7 +9,7 @@
 
 use cil_reader::cil::RawOperand;
 use cil_reader::model::AssemblyName;
-use cil_reader::model::custom_attributes::{CaArgument, CaValue, UNRESOLVED_ENUM};
+use cil_reader::model::custom_attributes::{CaArgument, CaValue, CustomAttribute, UNRESOLVED_ENUM};
 use cil_reader::model::resolver::{
     AssemblyCache, AssemblyLoader, DirectoryLoader, ResolvedMember, ResolvedType,
 };
@@ -35,6 +35,7 @@ pub enum Section {
     CustomAttributes,
     Il,
     Resolve,
+    CustomAttributesResolved,
 }
 
 pub const ALL_SECTIONS: &[(&str, Section)] = &[
@@ -52,6 +53,10 @@ pub const ALL_SECTIONS: &[(&str, Section)] = &[
     ("custom-attributes", Section::CustomAttributes),
     ("il", Section::Il),
     ("resolve", Section::Resolve),
+    (
+        "custom-attributes-resolved",
+        Section::CustomAttributesResolved,
+    ),
 ];
 
 fn hex(bytes: &[u8]) -> String {
@@ -67,8 +72,8 @@ fn tok(t: MetadataToken) -> String {
 
 /// Renders a dump of `module` for the selected sections. `dir` is the
 /// directory [`Section::Resolve`] probes for referenced assemblies (the
-/// input's own); without one, that section is left out. Custom attributes
-/// load the assembly's netmodules from it.
+/// input's own); without one, it and [`Section::CustomAttributesResolved`]
+/// are left out. Custom attributes load the assembly's netmodules from it.
 pub fn dump(module: &Module<'_>, sections: &[Section], dir: Option<&Path>) -> Result<String> {
     let mut out = String::new();
     let has = |s: Section| sections.contains(&s);
@@ -138,6 +143,9 @@ pub fn dump(module: &Module<'_>, sections: &[Section], dir: Option<&Path>) -> Re
     }
     if let (true, Some(dir)) = (has(Section::Resolve), dir) {
         dump_resolve(module, dir, &mut out);
+    }
+    if let (true, Some(dir)) = (has(Section::CustomAttributesResolved), dir) {
+        dump_custom_attributes_resolved(module, dir, &mut out)?;
     }
     Ok(out)
 }
@@ -628,15 +636,44 @@ impl AssemblyLoader for NetmodulesOnly {
 }
 
 fn dump_custom_attributes(module: &Module<'_>, dir: Option<&Path>, out: &mut String) -> Result<()> {
-    use cil_reader::TokenType as TT;
     out.push_str("[custom-attributes]\n");
     let loader = NetmodulesOnly(DirectoryLoader::new(
         dir.into_iter().map(Path::to_path_buf).collect(),
     ));
     let cache = AssemblyCache::throwing(&loader);
-    // Restricted to parents Cecil's object model can surface (a CA row may
-    // legally hang off e.g. a TypeRef, which Cecil cannot reach); rids are
-    // omitted because Cecil does not expose them.
+    for attr in visible_attributes(module)? {
+        writeln!(out, "{}", attribute_line(&attr, &cache)?).unwrap();
+    }
+    Ok(())
+}
+
+/// The custom attributes whose line changes when their enum arguments'
+/// assemblies resolve through a [`DirectoryLoader`] over `dir`, as
+/// `[resolve]`'s do, with that line.
+fn dump_custom_attributes_resolved(
+    module: &Module<'_>,
+    dir: &Path,
+    out: &mut String,
+) -> Result<()> {
+    out.push_str("[custom-attributes-resolved]\n");
+    let netmodules = NetmodulesOnly(DirectoryLoader::new(vec![dir.to_path_buf()]));
+    let unresolved = AssemblyCache::throwing(&netmodules);
+    let loader = DirectoryLoader::new(vec![dir.to_path_buf()]);
+    let cache = AssemblyCache::new(&loader);
+    for attr in visible_attributes(module)? {
+        let line = attribute_line(&attr, &cache)?;
+        if line != attribute_line(&attr, &unresolved)? {
+            writeln!(out, "{line}").unwrap();
+        }
+    }
+    Ok(())
+}
+
+/// The custom attributes in rid order, restricted to parents Cecil's object
+/// model can surface (a CA row may legally hang off e.g. a TypeRef, which
+/// Cecil cannot reach).
+fn visible_attributes<'m>(module: &'m Module<'m>) -> Result<Vec<CustomAttribute<'m>>> {
+    use cil_reader::TokenType as TT;
     const VISIBLE: &[TT] = &[
         TT::Module,
         TT::Assembly,
@@ -650,53 +687,62 @@ fn dump_custom_attributes(module: &Module<'_>, dir: Option<&Path>, out: &mut Str
         TT::GenericParam,
         TT::GenericParamConstraint,
     ];
+    let mut attributes = Vec::new();
     for rid in 1..=module.metadata().row_count(Table::CustomAttribute) {
         let Some(attr) = module.custom_attribute(rid) else {
             continue;
         };
-        let parent = attr.parent()?;
-        if !parent.token_type().is_some_and(|tt| VISIBLE.contains(&tt)) {
-            continue;
+        if attr
+            .parent()?
+            .token_type()
+            .is_some_and(|tt| VISIBLE.contains(&tt))
+        {
+            attributes.push(attr);
         }
-        let ctor = attr
-            .constructor_full_name()
-            .unwrap_or_else(|_| "!error".into());
-        write!(out, "ca parent={} ctor={}", tok(parent), ctor).unwrap();
-        match attr.values_with(&cache) {
-            Ok(values) => {
-                let mut s = String::new();
-                s.push('(');
-                for (i, arg) in values.constructor_args.iter().enumerate() {
-                    if i > 0 {
-                        s.push_str(", ");
-                    }
-                    pp_argument(arg, &mut s);
-                }
-                s.push(')');
-                for f in &values.fields {
-                    write!(s, " field {}=", f.name).unwrap();
-                    pp_argument(&f.argument, &mut s);
-                }
-                for p in &values.properties {
-                    write!(s, " property {}=", p.name).unwrap();
-                    pp_argument(&p.argument, &mut s);
-                }
-                write!(out, " args={s}").unwrap();
-            }
-            // Cecil swallows ResolutionException (an enum type resolved to
-            // null) while reading CA values and reports empty argument
-            // collections (CustomAttribute.Resolve) — but an
-            // AssemblyResolutionException propagates. Mirror both.
-            Err(e) if e == UNRESOLVED_ENUM => {
-                write!(out, " args=()").unwrap();
-            }
-            Err(_) => {
-                write!(out, " args=!unresolved blob={}", hex(attr.blob()?)).unwrap();
-            }
-        }
-        out.push('\n');
     }
-    Ok(())
+    Ok(attributes)
+}
+
+/// An attribute's parent, constructor and arguments, read through `cache`;
+/// rids are omitted because Cecil does not expose them.
+fn attribute_line(attr: &CustomAttribute<'_>, cache: &AssemblyCache<'_>) -> Result<String> {
+    let ctor = attr
+        .constructor_full_name()
+        .unwrap_or_else(|_| "!error".into());
+    let mut out = format!("ca parent={} ctor={}", tok(attr.parent()?), ctor);
+    match attr.values_with(cache) {
+        Ok(values) => {
+            let mut s = String::new();
+            s.push('(');
+            for (i, arg) in values.constructor_args.iter().enumerate() {
+                if i > 0 {
+                    s.push_str(", ");
+                }
+                pp_argument(arg, &mut s);
+            }
+            s.push(')');
+            for f in &values.fields {
+                write!(s, " field {}=", f.name).unwrap();
+                pp_argument(&f.argument, &mut s);
+            }
+            for p in &values.properties {
+                write!(s, " property {}=", p.name).unwrap();
+                pp_argument(&p.argument, &mut s);
+            }
+            write!(out, " args={s}").unwrap();
+        }
+        // Cecil swallows ResolutionException (an enum type resolved to
+        // null) while reading CA values and reports empty argument
+        // collections (CustomAttribute.Resolve) — but an
+        // AssemblyResolutionException propagates. Mirror both.
+        Err(e) if e == UNRESOLVED_ENUM => {
+            write!(out, " args=()").unwrap();
+        }
+        Err(_) => {
+            write!(out, " args=!unresolved blob={}", hex(attr.blob()?)).unwrap();
+        }
+    }
+    Ok(out)
 }
 
 fn pp_argument(arg: &CaArgument<'_>, s: &mut String) {

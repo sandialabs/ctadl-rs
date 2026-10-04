@@ -43,6 +43,9 @@ static class Program {
             ("resolve", Resolve),
             ("base-specs", BaseSpecs),
             ("deleted", Deleted),
+            ("enum-moved", EnumMoved),
+            ("enum-lib", EnumLib),
+            ("enums", Enums),
         };
         foreach (var (name, build) in fixtures) {
             var (mod, patch) = build();
@@ -405,6 +408,120 @@ static class Program {
             OpCodes.Ldtoken.ToInstruction(new TypeSpecUser(new SZArraySig(new ClassSig(dup1)))));
 
         return (mod, md => Patch(md.TablesHeap.TypeRefTable, md.GetRid(outerRef), r => new RawTypeRefRow(ModuleScope, r.Name, r.Namespace)));
+    }
+
+    static TypeDefUser NewEnum(ModuleDef mod, string ns, string name, TypeSig underlying,
+        TypeAttributes visibility = TypeAttributes.Public) {
+        var en = new TypeDefUser(ns, name, mod.CorLibTypes.GetTypeRef("System", "Enum")) {
+            Attributes = visibility | TypeAttributes.Sealed,
+        };
+        en.Fields.Add(new FieldDefUser("value__", new FieldSig(underlying),
+            FieldAttributes.Public | FieldAttributes.SpecialName | FieldAttributes.RTSpecialName));
+        return en;
+    }
+
+    // The target of gap-enum-lib.dll's forwarder.
+    static (ModuleDef, Action<Metadata>) EnumMoved() {
+        var mod = NewModule("enum-moved");
+        mod.Types.Add(NewEnum(mod, "Lib", "Moved", mod.CorLibTypes.SByte));
+        return (mod, _ => { });
+    }
+
+    // Enums that gap-enums.dll's attribute arguments name from another
+    // assembly, and the shapes Cecil reads them through: an underlying type
+    // that is a TypeRef to a primitive or to another assembly's enum, a
+    // nested enum, a struct, and forwarders to an assembly in the fixtures
+    // directory and to one that is not.
+    static (ModuleDef, Action<Metadata>) EnumLib() {
+        var mod = NewModule("enum-lib");
+        var cs = mod.CorLibTypes;
+        mod.Types.Add(NewEnum(mod, "Lib", "Small", cs.Byte));
+        mod.Types.Add(NewEnum(mod, "Lib", "Wide", cs.Int64));
+        mod.Types.Add(NewEnum(mod, "Lib", "ByRef", new ValueTypeSig(cs.GetTypeRef("System", "Int16"))));
+        mod.Types.Add(NewEnum(mod, "Lib", "Chained",
+            new ValueTypeSig(new TypeRefUser(mod, "Lib", "Moved", GapRef("enum-moved")))));
+        var outer = NewClass(mod, "Lib", "Outer");
+        outer.NestedTypes.Add(NewEnum(mod, "", "Inner", cs.UInt16, TypeAttributes.NestedPublic));
+        mod.Types.Add(outer);
+        var notEnum = new TypeDefUser("Lib", "NotEnum", cs.GetTypeRef("System", "ValueType")) {
+            Attributes = TypeAttributes.Public | TypeAttributes.Sealed,
+        };
+        notEnum.Fields.Add(new FieldDefUser("value__", new FieldSig(cs.Int32), FieldAttributes.Public));
+        mod.Types.Add(notEnum);
+        mod.ExportedTypes.Add(new ExportedTypeUser(mod, 0, "Lib", "Moved", TypeAttributes.Forwarder, GapRef("enum-moved")));
+        mod.ExportedTypes.Add(new ExportedTypeUser(mod, 0, "Lib", "Gone", TypeAttributes.Forwarder, GapRef("absent")));
+        return (mod, _ => { });
+    }
+
+    // Attribute arguments whose enum types live in gap-enum-lib.dll: named
+    // by TypeRefs in constructor signatures, and boxed with their types
+    // named in the blob (0x55), with the assembly part matching the
+    // reference, naming it otherwise, missing, or malformed. Without
+    // assembly resolution none of them read; with it, the arguments read
+    // as far as the fixtures directory has the types.
+    static (ModuleDef, Action<Metadata>) Enums() {
+        var mod = NewModule("enums");
+        var cs = mod.CorLibTypes;
+        var lib = GapRef("enum-lib");
+        TypeRef Ref(string name, IResolutionScope scope = null) => new TypeRefUser(mod, "Lib", name, scope ?? lib);
+        var attr = new TypeDefUser("", "Attr", cs.GetTypeRef("System", "Attribute")) {
+            Attributes = TypeAttributes.Public | TypeAttributes.BeforeFieldInit,
+        };
+        mod.Types.Add(attr);
+        var uses = NewClass(mod, "", "Uses");
+        mod.Types.Add(uses);
+
+        var refs = new (ITypeDefOrRef, byte[])[] {
+            (Ref("Small"), new byte[] { 7 }),
+            (Ref("Wide"), new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }),
+            (Ref("ByRef"), new byte[] { 1, 2 }),
+            (Ref("Chained"), new byte[] { 0xfe }),
+            (new TypeRefUser(mod, "", "Inner", Ref("Outer")), new byte[] { 1, 2 }),
+            (Ref("NotEnum"), new byte[] { 1, 2, 3, 4 }),
+            (Ref("Moved"), new byte[] { 0xfd }),
+            (Ref("Gone"), new byte[] { 1, 2, 3, 4 }),
+            (Ref("Nowhere"), new byte[] { 1, 2, 3, 4 }),
+            (Ref("X", new AssemblyRefUser("gap-absent", new Version(1, 0, 0, 0))), new byte[] { 1, 2, 3, 4 }),
+        };
+        foreach (var (type, value) in refs) {
+            var ctor = Method(".ctor", MethodSig.CreateInstance(cs.Void, new ValueTypeSig(type)), Ctor);
+            attr.Methods.Add(ctor);
+            var blob = new List<byte> { 1, 0 };
+            blob.AddRange(value);
+            blob.AddRange(new byte[] { 0, 0 });
+            uses.CustomAttributes.Add(new CustomAttribute(ctor, blob.ToArray()));
+        }
+
+        var boxed = Method(".ctor", MethodSig.CreateInstance(cs.Void, cs.Object), Ctor);
+        attr.Methods.Add(boxed);
+        var names = new (string, byte[])[] {
+            ("Lib.Small, gap-enum-lib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null", new byte[] { 7 }),
+            // Version 1.0 is 1.0.0.0, so this matches the reference too.
+            ("Lib.Small, gap-enum-lib, Version=1.0", new byte[] { 7 }),
+            // No reference matches version 0.0.0.0: the parsed name scopes it.
+            ("Lib.Small, gap-enum-lib", new byte[] { 7 }),
+            ("Lib.Wide, gap-enum-lib, Version=1.0.0.0", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }),
+            ("Lib.Outer+Inner, gap-enum-lib, Version=1.0.0.0", new byte[] { 1, 2 }),
+            ("Lib.Chained, gap-enum-lib, Version=1.0.0.0", new byte[] { 0xfe }),
+            ("Lib.Moved, gap-enum-lib, Version=1.0.0.0", new byte[] { 0xfd }),
+            ("Lib.NotEnum, gap-enum-lib, Version=1.0.0.0", new byte[] { 1, 2, 3, 4 }),
+            ("Lib.Nowhere, gap-enum-lib, Version=1.0.0.0", new byte[] { 1, 2, 3, 4 }),
+            // No assembly part: the core library, mscorlib, scopes it.
+            ("Lib.Small", new byte[] { 7 }),
+            ("Lib.Small, gap-enum-lib, Version=x", new byte[] { 7 }),
+            ("Lib.Small, gap-enum-lib, Culture", new byte[] { 7 }),
+        };
+        foreach (var (name, value) in names) {
+            var bytes = Encoding.UTF8.GetBytes(name);
+            if (bytes.Length >= 0x80)
+                throw new InvalidOperationException($"name too long for a 1-byte length: {name}");
+            var blob = new List<byte> { 1, 0, 0x51, 0x55, (byte)bytes.Length };
+            blob.AddRange(bytes);
+            blob.AddRange(value);
+            blob.AddRange(new byte[] { 0, 0 });
+            uses.CustomAttributes.Add(new CustomAttribute(boxed, blob.ToArray()));
+        }
+        return (mod, _ => { });
     }
 
     // References into gap-resolve-lib.dll that Cecil resolves differently

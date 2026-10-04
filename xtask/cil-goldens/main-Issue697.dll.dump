@@ -445,3 +445,13 @@ ca parent=0x0600001b ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 0x0a00000d -> -
 0x0a00000e -> -
 0x0a00000f -> -
+[custom-attributes-resolved]
+ca parent=0x04000001 ctor=System.Void System.Diagnostics.DebuggerBrowsableAttribute::.ctor(System.Diagnostics.DebuggerBrowsableState) args=()
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+ca parent=0x04000004 ctor=System.Void System.Diagnostics.DebuggerBrowsableAttribute::.ctor(System.Diagnostics.DebuggerBrowsableState) args=()
+ca parent=0x04000005 ctor=System.Void System.Diagnostics.DebuggerBrowsableAttribute::.ctor(System.Diagnostics.DebuggerBrowsableState) args=()
+ca parent=0x04000006 ctor=System.Void System.Diagnostics.DebuggerBrowsableAttribute::.ctor(System.Diagnostics.DebuggerBrowsableState) args=()
+ca parent=0x04000007 ctor=System.Void System.Diagnostics.DebuggerBrowsableAttribute::.ctor(System.Diagnostics.DebuggerBrowsableState) args=()
+ca parent=0x04000008 ctor=System.Void System.Diagnostics.DebuggerBrowsableAttribute::.ctor(System.Diagnostics.DebuggerBrowsableState) args=()
+ca parent=0x04000009 ctor=System.Void System.Diagnostics.DebuggerBrowsableAttribute::.ctor(System.Diagnostics.DebuggerBrowsableState) args=()
+ca parent=0x0400000a ctor=System.Void System.Diagnostics.DebuggerBrowsableAttribute::.ctor(System.Diagnostics.DebuggerBrowsableState) args=()

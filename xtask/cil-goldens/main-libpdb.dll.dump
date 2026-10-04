@@ -49,3 +49,5 @@ ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.c
 0x0a000002 -> -
 0x0a000003 -> -
 0x0a000004 -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()

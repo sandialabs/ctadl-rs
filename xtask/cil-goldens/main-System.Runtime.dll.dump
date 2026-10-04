@@ -181,3 +181,12 @@ ca parent=0x02000009 ctor=System.Void System.AttributeUsageAttribute::.ctor(Syst
 0x0a000011 -> -
 0x0a000012 -> -
 0x0a000013 -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+ca parent=0x02000003 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x02000004 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x02000005 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x02000006 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x02000007 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x02000008 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+ca parent=0x02000009 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()

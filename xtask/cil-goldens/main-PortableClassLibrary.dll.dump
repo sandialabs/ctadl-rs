@@ -178,3 +178,5 @@ ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 0x0a00001b -> -
 0x0a00001c -> -
 0x0a00001d -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()

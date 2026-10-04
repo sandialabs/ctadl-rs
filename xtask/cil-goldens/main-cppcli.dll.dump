@@ -3824,3 +3824,11 @@ ca parent=0x020000ef ctor=System.Void Microsoft.VisualC.DebugInfoInPDBAttribute:
 0x0a000047 -> -
 0x0a000048 -> -
 0x0a000049 -> -
+[custom-attributes-resolved]
+ca parent=0x06000019 ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=()
+ca parent=0x0600001d ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=()
+ca parent=0x0600001e ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=()
+ca parent=0x0600001f ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=()
+ca parent=0x06000043 ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=()
+ca parent=0x06000044 ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=()
+ca parent=0x06000045 ctor=System.Void System.Runtime.ConstrainedExecution.ReliabilityContractAttribute::.ctor(System.Runtime.ConstrainedExecution.Consistency,System.Runtime.ConstrainedExecution.Cer) args=()

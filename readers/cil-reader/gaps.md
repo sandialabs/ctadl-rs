@@ -98,7 +98,7 @@ Sections:
   0 for such fields, so they get no `initial_value`.
 - **Who emits this:** ilasm and other non-Roslyn producers.
 
-**A8. Attributes with framework-enum arguments always fail through the public API.** *Design gap.*
+**A8. Attributes with framework-enum arguments always fail through the public API.** *Fixed:* `values_with` and `value_with` (`model/custom_attributes.rs`) take an `AssemblyCache`, and enum types resolve as `ReadCustomAttributeEnum` resolves them: signature types through `Module::resolve_type`, 0x55 names with `GetMetadataScope`'s scope (`Module::resolve_parsed_reference`), the underlying type in the enum's own module. `AssemblyCache::throwing` models a resolver that throws; `values()` uses one that loads nothing. Both dumps' `[custom-attributes-resolved]` section reads attributes with the fixtures directory's assemblies; `gap-enums.dll`, `gap-enum-lib.dll` and `gap-enum-moved.dll` cover it, as do the corpus's FSharp.Core and mdb images.
 - **Rust:** `EnumResolver` (`model/custom_attributes.rs:17-20`) receives only a
   type name, without the AssemblyRef scope or the 0x55 assembly qualifier, so it
   can't pick the right assembly.
@@ -513,4 +513,4 @@ then as bits.
 covered only by 4 ported tests.
 
 **E4. Nothing exercises the public API with an enum resolver (A8), or
-`FieldDef::rva()` (A11).**
+`FieldDef::rva()` (A11).** *Fixed:* `[custom-attributes-resolved]` and the ported `TypeReferenceEnum` and `BoxedEnumReference` tests cover the first, `gap-attributes.il.dll` the second.

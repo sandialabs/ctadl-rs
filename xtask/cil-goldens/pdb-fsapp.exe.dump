@@ -86,3 +86,7 @@ ca parent=0x02000002 ctor=System.Void Microsoft.FSharp.Core.CompilationMappingAt
 0x0a000006 -> -
 0x0a000007 -> -
 0x0a000008 -> -
+[custom-attributes-resolved]
+ca parent=0x04000001 ctor=System.Void System.Diagnostics.DebuggerBrowsableAttribute::.ctor(System.Diagnostics.DebuggerBrowsableState) args=()
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+ca parent=0x02000002 ctor=System.Void Microsoft.FSharp.Core.CompilationMappingAttribute::.ctor(Microsoft.FSharp.Core.SourceConstructFlags) args=((Microsoft.FSharp.Core.SourceConstructFlags:7))

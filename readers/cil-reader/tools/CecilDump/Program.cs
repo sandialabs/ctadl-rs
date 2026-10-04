@@ -6,10 +6,11 @@
 // goldens in xtask/cil-goldens/.
 //
 // Determinism notes:
-// - No assembly resolution outside [resolve]: the resolver always fails, so
-//   anything else that needs resolution (foreign enum CA arguments) prints
-//   `!unresolved`. [resolve] reads the image again with a resolver that probes
-//   only the input's own directory, as the Rust side's DirectoryLoader does.
+// - No assembly resolution outside [resolve] and [custom-attributes-resolved]:
+//   the resolver always fails, so anything else that needs resolution
+//   (foreign enum CA arguments) prints `!unresolved`. Those two sections read
+//   the image again with a resolver that probes only the input's own
+//   directory, as the Rust side's DirectoryLoader does.
 // - Floats print as bit patterns (IL float operands also print first as the
 //   test Formatter renders them); blobs as lowercase hex.
 
@@ -27,7 +28,7 @@ static class Program
     static readonly string[] AllSections = {
         "module", "assembly", "assembly-refs", "module-refs", "resources",
         "exported-types", "types", "fields", "methods", "properties", "events",
-        "custom-attributes", "il", "resolve",
+        "custom-attributes", "il", "resolve", "custom-attributes-resolved",
     };
 
     static int Main (string [] args)
@@ -77,6 +78,7 @@ static class Program
             case "custom-attributes": DumpCustomAttributes (module, o); break;
             case "il": DumpIl (module, o); break;
             case "resolve": DumpResolve (path, o); break;
+            case "custom-attributes-resolved": DumpCustomAttributesResolved (module, path, o); break;
             default:
                 Console.Error.WriteLine ($"unknown section: {section}");
                 return 1;
@@ -474,6 +476,55 @@ static class Program
     static void DumpCustomAttributes (ModuleDefinition module, StringBuilder o)
     {
         o.Append ("[custom-attributes]\n");
+        foreach (var (parent, attr) in SortedAttributes (module))
+            o.Append (AttributeLine (parent, attr)).Append ('\n');
+    }
+
+    // The custom attributes whose line changes when their enum arguments'
+    // assemblies resolve from the input's directory, as [resolve]'s do, with
+    // that line. `module` is the image read without resolution; attributes
+    // read their arguments once, so the resolved ones come from a second read.
+    static void DumpCustomAttributesResolved (ModuleDefinition module, string path, StringBuilder o)
+    {
+        o.Append ("[custom-attributes-resolved]\n");
+        var directory = System.IO.Path.GetDirectoryName (System.IO.Path.GetFullPath (path));
+        var parameters = new ReaderParameters {
+            AssemblyResolver = new DirectoryResolver (directory),
+        };
+        using var resolving = ModuleDefinition.ReadModule (path, parameters);
+        ReadAsDumped (module);
+        ReadAsDumped (resolving);
+        var unresolved = SortedAttributes (module);
+        var resolved = SortedAttributes (resolving);
+        for (int i = 0; i < resolved.Count; i++) {
+            var line = AttributeLine (resolved [i].parent, resolved [i].attr);
+            if (line != AttributeLine (unresolved [i].parent, unresolved [i].attr))
+                o.Append (line).Append ('\n');
+        }
+    }
+
+    // Reads `module` as the sections before [custom-attributes] do. What
+    // Cecil reads depends on the order: in an image with Ptr tables, a
+    // MethodDef attribute constructor looked up before its type's members
+    // are read comes back null.
+    static void ReadAsDumped (ModuleDefinition module)
+    {
+        var scratch = new StringBuilder ();
+        DumpModule (module, scratch);
+        DumpAssembly (module, scratch);
+        DumpAssemblyRefs (module, scratch);
+        DumpModuleRefs (module, scratch);
+        DumpResources (module, scratch);
+        DumpExportedTypes (module, scratch);
+        DumpTypes (module, scratch);
+        DumpFields (module, scratch);
+        DumpMethods (module, scratch);
+        DumpProperties (module, scratch);
+        DumpEvents (module, scratch);
+    }
+
+    static List<(MetadataToken parent, CustomAttribute attr)> SortedAttributes (ModuleDefinition module)
+    {
         // Walk the raw table via GetCustomAttributes? Cecil exposes attributes
         // per provider; recover rid order through the read-order token.
         var attributes = new List<(MetadataToken parent, CustomAttribute attr)> ();
@@ -481,26 +532,26 @@ static class Program
         // The CustomAttribute table is sorted by its HasCustomAttribute coded
         // parent index, so sorting collected attributes by that key (stably)
         // recovers rid order.
-        var sorted = attributes
+        return attributes
             .Select ((entry, index) => (entry, index))
             .OrderBy (x => CodedParentKey (x.entry.parent))
             .ThenBy (x => x.index)
             .Select (x => x.entry)
             .ToList ();
-        foreach (var (parent, attr) in sorted) {
-            o.Append ($"ca parent={Tok (parent)} ctor={Safe (() => attr.Constructor.FullName)}");
-            string args;
-            try {
-                args = FormatAttributeArgs (attr);
-            } catch {
-                args = null;
-            }
-            if (args != null)
-                o.Append ($" args={args}");
-            else
-                o.Append ($" args=!unresolved blob={Hex (attr.GetBlob ())}");
-            o.Append ('\n');
+    }
+
+    static string AttributeLine (MetadataToken parent, CustomAttribute attr)
+    {
+        var line = $"ca parent={Tok (parent)} ctor={Safe (() => attr.Constructor.FullName)}";
+        string args;
+        try {
+            args = FormatAttributeArgs (attr);
+        } catch {
+            args = null;
         }
+        return args != null
+            ? $"{line} args={args}"
+            : $"{line} args=!unresolved blob={Hex (attr.GetBlob ())}";
     }
 
     static ulong CodedParentKey (MetadataToken token)

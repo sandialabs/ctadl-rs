@@ -78,3 +78,6 @@ ca parent=0x02000003 ctor=System.Void Microsoft.FSharp.Core.CompilationMappingAt
 0x0a000005 -> FSharp.Core.dll!0x0600064d T Microsoft.FSharp.Core.ExtraTopLevelOperators::PrintFormatLine(Microsoft.FSharp.Core.PrintfFormat`4<T,System.IO.TextWriter,Microsoft.FSharp.Core.Unit,Microsoft.FSharp.Core.Unit>)
 0x0a000006 -> FSharp.Core.dll!0x06000150 TResult Microsoft.FSharp.Core.FSharpFunc`2::Invoke(T)
 0x0a000007 -> FSharp.Core.dll!0x06000033 System.Void Microsoft.FSharp.Core.CompilationMappingAttribute::.ctor(Microsoft.FSharp.Core.SourceConstructFlags)
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+ca parent=0x02000003 ctor=System.Void Microsoft.FSharp.Core.CompilationMappingAttribute::.ctor(Microsoft.FSharp.Core.SourceConstructFlags) args=((Microsoft.FSharp.Core.SourceConstructFlags:7))
