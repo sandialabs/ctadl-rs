@@ -721,17 +721,25 @@ pub(crate) fn read_constant<'a>(
     }))
 }
 
-fn other_methods<'a>(m: &'a ModuleData<'a>, owner: MetadataToken) -> Result<Vec<MethodDef<'a>>> {
-    Ok(m.semantics()?
-        .by_association
-        .get(&owner)
-        .map(|list| {
-            list.iter()
-                .filter(|&&(attrs, _)| attrs & method_semantics::OTHER != 0)
-                .map(|&(_, rid)| MethodDef { m, rid })
-                .collect()
-        })
-        .unwrap_or_default())
+/// The methods of property or event `owner` with exactly the `semantics`
+/// attributes, as Cecil attaches them (`MetadataReader.ReadAllSemantics`):
+/// only the declaring type's methods count, in method order, each by its
+/// last MethodSemantics row. An accessor takes the last of them.
+fn semantic_methods<'a>(
+    m: &'a ModuleData<'a>,
+    owner: MetadataToken,
+    declaring: Option<TypeDef<'a>>,
+    semantics: u16,
+) -> Result<Vec<MethodDef<'a>>> {
+    let Some(declaring) = declaring else {
+        return Ok(Vec::new());
+    };
+    let by_method = &m.semantics()?.by_method;
+    Ok(declaring
+        .methods()?
+        .into_iter()
+        .filter(|method| by_method.get(&method.rid) == Some(&(semantics, owner)))
+        .collect())
 }
 
 fn marshal_blob<'a>(m: &'a ModuleData<'a>, owner: MetadataToken) -> Result<Option<&'a [u8]>> {
@@ -1097,17 +1105,12 @@ impl<'a> PropertyDef<'a> {
         Ok(None)
     }
 
-    fn accessor(&self, mask: u16) -> Result<Option<MethodDef<'a>>> {
-        Ok(self
-            .m
-            .semantics()?
-            .by_association
-            .get(&self.token())
-            .and_then(|list| {
-                list.iter()
-                    .find(|&&(attrs, _)| attrs & mask != 0)
-                    .map(|&(_, rid)| MethodDef { m: self.m, rid })
-            }))
+    fn accessor(&self, semantics: u16) -> Result<Option<MethodDef<'a>>> {
+        Ok(self.semantic_methods(semantics)?.pop())
+    }
+
+    fn semantic_methods(&self, semantics: u16) -> Result<Vec<MethodDef<'a>>> {
+        semantic_methods(self.m, self.token(), self.declaring_type()?, semantics)
     }
 
     pub fn get_method(&self) -> Result<Option<MethodDef<'a>>> {
@@ -1118,9 +1121,9 @@ impl<'a> PropertyDef<'a> {
         self.accessor(method_semantics::SETTER)
     }
 
-    /// Methods attached with `Other` semantics, in MethodSemantics row order.
+    /// Methods attached with `Other` semantics, in method order.
     pub fn other_methods(&self) -> Result<Vec<MethodDef<'a>>> {
-        other_methods(self.m, self.token())
+        self.semantic_methods(method_semantics::OTHER)
     }
 
     pub fn has_constant(&self) -> Result<bool> {
@@ -1203,17 +1206,12 @@ impl<'a> EventDef<'a> {
         Ok(None)
     }
 
-    fn accessor(&self, mask: u16) -> Result<Option<MethodDef<'a>>> {
-        Ok(self
-            .m
-            .semantics()?
-            .by_association
-            .get(&self.token())
-            .and_then(|list| {
-                list.iter()
-                    .find(|&&(attrs, _)| attrs & mask != 0)
-                    .map(|&(_, rid)| MethodDef { m: self.m, rid })
-            }))
+    fn accessor(&self, semantics: u16) -> Result<Option<MethodDef<'a>>> {
+        Ok(self.semantic_methods(semantics)?.pop())
+    }
+
+    fn semantic_methods(&self, semantics: u16) -> Result<Vec<MethodDef<'a>>> {
+        semantic_methods(self.m, self.token(), self.declaring_type()?, semantics)
     }
 
     pub fn add_method(&self) -> Result<Option<MethodDef<'a>>> {
@@ -1228,9 +1226,9 @@ impl<'a> EventDef<'a> {
         self.accessor(method_semantics::FIRE)
     }
 
-    /// Methods attached with `Other` semantics, in MethodSemantics row order.
+    /// Methods attached with `Other` semantics, in method order.
     pub fn other_methods(&self) -> Result<Vec<MethodDef<'a>>> {
-        other_methods(self.m, self.token())
+        self.semantic_methods(method_semantics::OTHER)
     }
 }
 

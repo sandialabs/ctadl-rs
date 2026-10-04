@@ -69,7 +69,7 @@ Sections:
 - **Example:** obfuscators blank these names. The port prints
   ``G`1<>::M<>(!!0,)``; Cecil prints ``G`1<!0>::M<!!0>(!!0,!0)``.
 
-**A5. Property and event accessors are associated differently.** *Divergence, code reading.*
+**A5. Property and event accessors are associated differently.** *Fixed:* `semantic_methods` (`model/handles.rs`) walks the declaring type's methods in order, each by its last MethodSemantics row with an exact flag value; `gap-semantics.il.dll` covers it. An accessor in another type, or combined flags, attach to nothing; Cecil throws on both when it reads that method's semantics, so they are not in the fixture.
 - **Rust:** `model/handles.rs:723-734, 1095-1106, 1195-1206`. The first
   MethodSemantics row whose flags overlap wins, and the method can come from any
   type.

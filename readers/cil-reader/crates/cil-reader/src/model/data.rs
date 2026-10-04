@@ -90,10 +90,9 @@ pub(crate) struct NestedMaps {
 
 #[derive(Default)]
 pub(crate) struct SemanticsMaps {
-    /// Method rid → (attributes, association token).
+    /// Method rid → (attributes, association token), from the method's last
+    /// MethodSemantics row, as Cecil keeps one.
     pub by_method: HashMap<u32, (u16, MetadataToken)>,
-    /// Association token (Event/Property) → (attributes, method rid) list.
-    pub by_association: HashMap<MetadataToken, Vec<(u16, u32)>>,
 }
 
 fn get<T>(slot: &Lazy<T>, build: impl FnOnce() -> Result<T>) -> Result<&T> {
@@ -397,10 +396,6 @@ impl<'a> ModuleData<'a> {
                 let row = row?;
                 maps.by_method
                     .insert(row.method, (row.semantics, row.association));
-                maps.by_association
-                    .entry(row.association)
-                    .or_default()
-                    .push((row.semantics, row.method));
             }
             Ok(maps)
         })
