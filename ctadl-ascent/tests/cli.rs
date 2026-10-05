@@ -832,6 +832,96 @@ const ANDROID_COMPONENT_NAME: &str = "package android.content; public class Comp
 const ANDROID_SERVICE_CONNECTION: &str =
     "package android.content; public interface ServiceConnection {}";
 
+/// Imports the C fixture `<stem>.c`, indexes and queries it with `<stem>.json`, and returns the
+/// names of the sink functions the tainted-path results reach.
+fn c_sinks_reached(stem: &str) -> std::collections::BTreeSet<String> {
+    use ctadl_ascent::codegen::CallResolutionStrategy;
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    let import_name = format!("test_{stem}_c");
+    let import = ArtifactImport::try_create(
+        &import_name,
+        ArtifactLanguage::C,
+        &c_fixture(&format!("{stem}.c")),
+    )
+    .unwrap();
+    cli::import(&import, cli::ImportOptions::default()).unwrap();
+    let project = AnalysisProject::try_create(
+        &format!("{import_name}_proj"),
+        &[&import_name],
+        SubImports::All,
+    )
+    .unwrap();
+    let models = vec![c_fixture(&format!("{stem}.json"))];
+    cli::index(
+        &project,
+        &[],
+        &models,
+        false,
+        cli::IndexOptions {
+            strategy: CallResolutionStrategy::default(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let out_dir = tempdir().unwrap();
+    let sarif = out_dir.path().join("out.sarif");
+    cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sarif).unwrap()).unwrap();
+    doc["runs"][0]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| {
+            r["ruleId"]
+                .as_str()
+                .is_some_and(|id| id.contains("tainted-path"))
+                && r["kind"].as_str() == Some("fail")
+        })
+        .flat_map(|r| r["properties"]["sinkFunctions"].as_array().unwrap())
+        .filter_map(|f| f.as_str().map(str::to_string))
+        .collect()
+}
+
+/// `funcptrmulti.c`: an indirect call that resolves to two targets enters both of them.
+#[test]
+fn test_cli_query_c_funcptr_with_two_targets() {
+    run_store_test(|| {
+        assert_eq!(
+            c_sinks_reached("funcptrmulti"),
+            ["sink_a", "sink_b"].map(String::from).into()
+        );
+    });
+}
+
+/// `funcptr2down.c`: an indirect call through a struct field whose target was installed two
+/// frames down reaches the sinks inside both targets, and not the one in the sibling field.
+#[test]
+fn test_cli_query_c_funcptr_stored_two_frames_down() {
+    run_store_test(|| {
+        assert_eq!(
+            c_sinks_reached("funcptr2down"),
+            ["sink_strips", "sink_tiles"].map(String::from).into()
+        );
+    });
+}
+
+/// `funcptrthrough.c`: a call target crosses an indirect call both ways -- installed inside a
+/// function reached through a pointer, and handed to one -- and not into the uncalled sibling field.
+#[test]
+fn test_cli_query_c_funcptr_through_indirect_call() {
+    run_store_test(|| {
+        assert_eq!(
+            c_sinks_reached("funcptrthrough"),
+            ["sink_down", "sink_down_formal", "sink_up"]
+                .map(String::from)
+                .into()
+        );
+    });
+}
+
 /// Writes an APK built from `(entry name, contents)` pairs into `dir`, and returns its
 /// path. Enough of an APK for the import path: a ZIP whose entry names are what the Dex
 /// and native-library passes look for.
