@@ -242,7 +242,7 @@ impl<'a> Module<'a> {
         })
     }
 
-    fn m(&self) -> &ModuleData<'a> {
+    pub(crate) fn m(&self) -> &ModuleData<'a> {
         &self.data
     }
 

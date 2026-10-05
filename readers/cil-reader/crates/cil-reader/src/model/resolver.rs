@@ -10,7 +10,7 @@ use crate::model::handles::{ExportedType, FieldDef, MemberRefSig, MethodDef, Typ
 use crate::model::module::{AssemblyName, Module};
 use crate::model::names::GenericContext;
 use crate::model::names::type_full_name;
-use crate::model::sig::{MethodSig, SigReader, TypeSig, calling_convention};
+use crate::model::sig::{MethodSig, TypeSig, calling_convention};
 use crate::model::typeparser::{ParsedType, parse_int32, split_full_name};
 use crate::raw::pe::{TargetRuntime, parse_runtime};
 use crate::raw::tables::*;
@@ -220,12 +220,7 @@ impl<'s> Module<'s> {
                 }
             }
             Some(TokenType::TypeSpec) => {
-                // GetElementType down to a named element; FnPtr and generic
-                // parameters resolve to null in Cecil.
-                let row = self.metadata().row::<TypeSpecRaw>(token.rid())?;
-                let blob = self.metadata().blobs().get(row.signature)?;
-                let sig = SigReader::new(blob).type_sig()?;
-                return self.resolve_type_sig(&sig, cache);
+                return self.resolve_type_sig(&self.m().type_spec_sig(token.rid(), 0)?, cache);
             }
             Some(TokenType::TypeRef) => TypeName::of_type_ref(module, token.rid())?,
             _ => return Ok(None),
@@ -241,10 +236,22 @@ impl<'s> Module<'s> {
         sig: &TypeSig,
         cache: &'c AssemblyCache<'_>,
     ) -> Result<Option<ResolvedType<'c>>> {
-        match element(sig) {
-            Some(Element::Token(token)) => self.resolve_type(token, cache),
-            Some(Element::Primitive(name)) => self.resolve_primitive(name, cache),
-            None => Ok(None),
+        // GetElementType down to a named element; FnPtr and generic
+        // parameters resolve to null in Cecil. An element that is a TypeSpec
+        // continues with that TypeSpec's signature, below the element's
+        // level, so a cycle of TypeSpecs ends at the nesting limit.
+        let mut found = element(sig, 1);
+        loop {
+            found = match found {
+                Some((Element::Token(token), level))
+                    if token.token_type() == Some(TokenType::TypeSpec) =>
+                {
+                    element(&self.m().type_spec_sig(token.rid(), level)?, level + 1)
+                }
+                Some((Element::Token(token), _)) => return self.resolve_type(token, cache),
+                Some((Element::Primitive(name), _)) => return self.resolve_primitive(name, cache),
+                None => return Ok(None),
+            };
         }
     }
 
@@ -428,63 +435,66 @@ impl<'s> Module<'s> {
     /// positions, not scopes; arrays by rank alone.
     fn type_shape(&self, sig: &TypeSig) -> Result<String> {
         let mut out = String::new();
-        self.write_shape(sig, &mut out)?;
+        self.write_shape(sig, 0, &mut out)?;
         Ok(out)
     }
 
-    fn write_shape(&self, sig: &TypeSig, out: &mut String) -> Result<()> {
+    /// Writes the shape of `sig`, a node below `depth` enclosing levels.
+    fn write_shape(&self, sig: &TypeSig, depth: u32, out: &mut String) -> Result<()> {
+        // This node's level; its tokens' TypeSpecs and its children are below it.
+        let level = depth + 1;
         match sig {
             // AreSame(ArrayType) compares ranks, so bounds, and SZARRAY
             // against a rank-1 ARRAY, do not matter.
             TypeSig::SzArray(element) => {
-                self.write_shape(element, out)?;
+                self.write_shape(element, level, out)?;
                 out.push_str("[rank 1]");
             }
             TypeSig::Array {
                 element,
                 dimensions,
             } => {
-                self.write_shape(element, out)?;
+                self.write_shape(element, level, out)?;
                 out.push_str(&format!("[rank {}]", dimensions.len()));
             }
             TypeSig::Ptr(inner) => {
-                self.write_shape(inner, out)?;
+                self.write_shape(inner, level, out)?;
                 out.push('*');
             }
             TypeSig::ByRef(inner) => {
-                self.write_shape(inner, out)?;
+                self.write_shape(inner, level, out)?;
                 out.push('&');
             }
             TypeSig::Pinned(inner) => {
-                self.write_shape(inner, out)?;
+                self.write_shape(inner, level, out)?;
                 out.push_str(" pinned");
             }
             TypeSig::Sentinel(inner) => {
                 out.push_str("...");
-                self.write_shape(inner, out)?;
+                self.write_shape(inner, level, out)?;
             }
             TypeSig::CModReq { modifier, inner } | TypeSig::CModOpt { modifier, inner } => {
-                self.write_shape(inner, out)?;
+                self.write_shape(inner, level, out)?;
                 out.push_str(if matches!(sig, TypeSig::CModReq { .. }) {
                     " modreq("
                 } else {
                     " modopt("
                 });
-                self.write_token_shape(*modifier, out)?;
+                self.write_token_shape(*modifier, level, out)?;
                 out.push(')');
             }
             TypeSig::GenericInst { ty, args, .. } => {
-                self.write_token_shape(*ty, out)?;
+                self.write_token_shape(*ty, level, out)?;
                 out.push('<');
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         out.push(',');
                     }
-                    self.write_shape(arg, out)?;
+                    self.write_shape(arg, level, out)?;
                 }
                 out.push('>');
             }
-            TypeSig::Named { token, .. } => self.write_token_shape(*token, out)?,
+            TypeSig::Named { token, .. } => self.write_token_shape(*token, level, out)?,
             // AreSame(FunctionPointerType) also compares HasThis and the
             // calling convention, which the full name leaves out.
             TypeSig::FnPtr(method) => {
@@ -492,13 +502,13 @@ impl<'s> Module<'s> {
                     "method(this={},cc=0x{:02x}) ",
                     method.has_this, method.calling_convention
                 ));
-                self.write_shape(&method.return_type, out)?;
+                self.write_shape(&method.return_type, level, out)?;
                 out.push_str(" *(");
                 for (i, param) in method.params.iter().enumerate() {
                     if i > 0 {
                         out.push(',');
                     }
-                    self.write_shape(param, out)?;
+                    self.write_shape(param, level, out)?;
                 }
                 out.push(')');
             }
@@ -509,12 +519,12 @@ impl<'s> Module<'s> {
         Ok(())
     }
 
-    /// A TypeDefOrRef token's shape; a TypeSpec is the type it holds.
-    fn write_token_shape(&self, token: MetadataToken, out: &mut String) -> Result<()> {
+    /// A TypeDefOrRef token's shape, for a token of a node at level `depth`;
+    /// a TypeSpec is the type it holds.
+    fn write_token_shape(&self, token: MetadataToken, depth: u32, out: &mut String) -> Result<()> {
         if token.token_type() == Some(TokenType::TypeSpec) {
-            let row = self.metadata().row::<TypeSpecRaw>(token.rid())?;
-            let sig = SigReader::new(self.metadata().blobs().get(row.signature)?).type_sig()?;
-            return self.write_shape(&sig, out);
+            let sig = self.m().type_spec_sig(token.rid(), depth)?;
+            return self.write_shape(&sig, depth, out);
         }
         let named = TypeSig::Named {
             token,
@@ -562,40 +572,45 @@ enum Element {
     Primitive(&'static str),
 }
 
-fn element(sig: &TypeSig) -> Option<Element> {
-    Some(Element::Primitive(match sig {
-        TypeSig::Named { token, .. } | TypeSig::GenericInst { ty: token, .. } => {
-            return Some(Element::Token(*token));
-        }
-        TypeSig::Ptr(inner)
-        | TypeSig::ByRef(inner)
-        | TypeSig::Pinned(inner)
-        | TypeSig::SzArray(inner)
-        | TypeSig::Sentinel(inner)
-        | TypeSig::Array { element: inner, .. }
-        | TypeSig::CModReq { inner, .. }
-        | TypeSig::CModOpt { inner, .. } => return element(inner),
-        TypeSig::Void => "Void",
-        TypeSig::Boolean => "Boolean",
-        TypeSig::Char => "Char",
-        TypeSig::I1 => "SByte",
-        TypeSig::U1 => "Byte",
-        TypeSig::I2 => "Int16",
-        TypeSig::U2 => "UInt16",
-        TypeSig::I4 => "Int32",
-        TypeSig::U4 => "UInt32",
-        TypeSig::I8 => "Int64",
-        TypeSig::U8 => "UInt64",
-        TypeSig::R4 => "Single",
-        TypeSig::R8 => "Double",
-        TypeSig::String => "String",
-        TypeSig::Object => "Object",
-        TypeSig::IntPtr => "IntPtr",
-        TypeSig::UIntPtr => "UIntPtr",
-        TypeSig::TypedByRef => "TypedReference",
-        // Function pointers and generic parameters resolve to null.
-        TypeSig::FnPtr(_) | TypeSig::Var(_) | TypeSig::MVar(_) => return None,
-    }))
+/// The element type of `sig`, a node at level `level`, and the level of the
+/// node it is (or whose token it is).
+fn element(sig: &TypeSig, level: u32) -> Option<(Element, u32)> {
+    Some((
+        Element::Primitive(match sig {
+            TypeSig::Named { token, .. } | TypeSig::GenericInst { ty: token, .. } => {
+                return Some((Element::Token(*token), level));
+            }
+            TypeSig::Ptr(inner)
+            | TypeSig::ByRef(inner)
+            | TypeSig::Pinned(inner)
+            | TypeSig::SzArray(inner)
+            | TypeSig::Sentinel(inner)
+            | TypeSig::Array { element: inner, .. }
+            | TypeSig::CModReq { inner, .. }
+            | TypeSig::CModOpt { inner, .. } => return element(inner, level + 1),
+            TypeSig::Void => "Void",
+            TypeSig::Boolean => "Boolean",
+            TypeSig::Char => "Char",
+            TypeSig::I1 => "SByte",
+            TypeSig::U1 => "Byte",
+            TypeSig::I2 => "Int16",
+            TypeSig::U2 => "UInt16",
+            TypeSig::I4 => "Int32",
+            TypeSig::U4 => "UInt32",
+            TypeSig::I8 => "Int64",
+            TypeSig::U8 => "UInt64",
+            TypeSig::R4 => "Single",
+            TypeSig::R8 => "Double",
+            TypeSig::String => "String",
+            TypeSig::Object => "Object",
+            TypeSig::IntPtr => "IntPtr",
+            TypeSig::UIntPtr => "UIntPtr",
+            TypeSig::TypedByRef => "TypedReference",
+            // Function pointers and generic parameters resolve to null.
+            TypeSig::FnPtr(_) | TypeSig::Var(_) | TypeSig::MVar(_) => return None,
+        }),
+        level,
+    ))
 }
 
 /// A type reference as `MetadataResolver.Resolve` sees it: the module it was

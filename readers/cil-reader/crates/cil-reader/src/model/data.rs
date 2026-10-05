@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 
 use crate::error::{Error, Result};
 use crate::model::module::Module;
+use crate::model::sig::{SigReader, TypeSig};
 use crate::raw::heaps::{BlobIndex, StringIndex};
 use crate::raw::metadata::Metadata;
 use crate::raw::pe::PeImage;
@@ -109,6 +110,13 @@ impl<'a> ModuleData<'a> {
         // SAFETY: Module is a repr(transparent) wrapper of ModuleData, so a
         // reference to one is a valid reference to the other.
         unsafe { &*std::ptr::from_ref(self).cast::<Module<'a>>() }
+    }
+
+    /// TypeSpec `rid`'s signature, for a token met at signature level `depth`
+    /// (see [`SigReader::below`]).
+    pub(crate) fn type_spec_sig(&self, rid: u32, depth: u32) -> Result<TypeSig> {
+        let row = self.md.row::<TypeSpecRaw>(rid)?;
+        SigReader::below(self.md.blobs().get(row.signature)?, depth).type_sig()
     }
 
     /// TypeDef member list ranges, mirroring `MetadataReader.ReadListRange`:

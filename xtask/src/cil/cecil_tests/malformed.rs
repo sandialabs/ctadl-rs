@@ -4,8 +4,9 @@
 
 use super::{read_fixture, read_resource, Test};
 use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader};
+use cil_reader::model::sig::MAX_TYPE_SIG_DEPTH;
 use cil_reader::raw::pe::PeImage;
-use cil_reader::raw::tables::{NestedClassRaw, Table};
+use cil_reader::raw::tables::{NestedClassRaw, Table, TypeSpecRaw};
 use cil_reader::{Entity, Error, MetadataToken, Module, TokenType};
 
 /// File offset of the `#~` (or `#-`) stream, from the metadata root's
@@ -65,6 +66,13 @@ fn type_ref<'m>(module: &'m Module<'_>, rid: u32) -> cil_reader::model::TypeRef<
     match module.lookup_token(MetadataToken::new(TokenType::TypeRef, rid)) {
         Ok(Some(Entity::TypeRef(t))) => t,
         _ => panic!("TypeRef {rid}"),
+    }
+}
+
+fn type_spec<'m>(module: &'m Module<'_>, rid: u32) -> cil_reader::model::TypeSpec<'m> {
+    match module.lookup_token(MetadataToken::new(TokenType::TypeSpec, rid)) {
+        Ok(Some(Entity::TypeSpec(t))) => t,
+        _ => panic!("TypeSpec {rid}"),
     }
 }
 
@@ -191,8 +199,102 @@ fn exported_type_nesting() {
     assert_eq!(second.scope_name().unwrap(), scope);
 }
 
+/// SQLite-net.dll's TypeSpecs whose signatures have room for `class
+/// TypeSpec<rid>`, with the file offset of each signature.
+fn roomy_type_specs(data: &[u8]) -> Vec<(u32, usize)> {
+    let module = Module::read(data).unwrap();
+    let md = module.metadata();
+    (1..=md.row_count(Table::TypeSpec))
+        .filter_map(|rid| {
+            let blob = md
+                .blobs()
+                .get(md.row::<TypeSpecRaw>(rid).unwrap().signature)
+                .unwrap();
+            // A one-byte length prefix, and room for the longest signature.
+            (3..0x80)
+                .contains(&blob.len())
+                .then(|| (rid, blob.as_ptr() as usize - data.as_ptr() as usize))
+        })
+        .collect()
+}
+
+/// Rewrites the signature at file offset `at`, and its length prefix.
+fn set_signature(data: &mut [u8], at: usize, sig: &[u8]) {
+    data[at - 1] = sig.len() as u8;
+    data[at..at + sig.len()].copy_from_slice(sig);
+}
+
+/// `class TypeSpec<rid>`: CLASS, then the TypeDefOrRef coded index
+/// (TypeSpec's tag is 2), compressed.
+fn class_of_type_spec(rid: u32) -> Vec<u8> {
+    let index = rid << 2 | 2;
+    let mut sig = vec![0x12];
+    if index < 0x80 {
+        sig.push(index as u8);
+    } else {
+        sig.extend(u16::try_from(index | 0x8000).unwrap().to_be_bytes());
+    }
+    sig
+}
+
+fn is_too_deep<T>(result: cil_reader::Result<T>) -> bool {
+    matches!(
+        result,
+        Err(Error::BadImage {
+            reason: "type signature nested too deeply",
+            ..
+        })
+    )
+}
+
+// A TypeSpec naming a TypeSpec: Cecil reads the named one's signature at
+// that point of the first's, so the chain nests like one signature, and a
+// TypeSpec naming itself recurses until Cecil's stack overflows. Each one
+// in a chain counts as a level toward the nesting limit.
+fn type_spec_chains() {
+    let original = read_resource("SQLite-net.dll");
+    let specs = roomy_type_specs(&original);
+    let loader = DirectoryLoader::new(Vec::new());
+    let cache = AssemblyCache::new(&loader);
+
+    let (rid, at) = specs[0];
+    let mut data = original.clone();
+    set_signature(&mut data, at, &class_of_type_spec(rid));
+    let module = Module::read(&data).unwrap();
+    assert!(is_too_deep(type_spec(&module, rid).full_name()));
+    let token = MetadataToken::new(TokenType::TypeSpec, rid);
+    assert!(is_too_deep(module.resolve_type(token, &cache)));
+
+    // `length` TypeSpecs, each naming the next, the last int32.
+    let chain = |length: usize| {
+        let mut data = original.clone();
+        let links = &specs[..length];
+        for pair in links.windows(2) {
+            set_signature(&mut data, pair[0].1, &class_of_type_spec(pair[1].0));
+        }
+        set_signature(&mut data, links[length - 1].1, &[0x08]);
+        data
+    };
+    let limit = MAX_TYPE_SIG_DEPTH as usize;
+    let token = MetadataToken::new(TokenType::TypeSpec, specs[0].0);
+
+    let data = chain(limit);
+    let module = Module::read(&data).unwrap();
+    assert_eq!(
+        type_spec(&module, specs[0].0).full_name().unwrap(),
+        "System.Int32"
+    );
+    assert!(module.resolve_type(token, &cache).is_ok());
+
+    let data = chain(limit + 1);
+    let module = Module::read(&data).unwrap();
+    assert!(is_too_deep(type_spec(&module, specs[0].0).full_name()));
+    assert!(is_too_deep(module.resolve_type(token, &cache)));
+}
+
 pub(super) const TESTS: &[Test] = &[
     ("nested_class_cycles", nested_class_cycles),
     ("type_ref_scope_cycles", type_ref_scope_cycles),
     ("exported_type_nesting", exported_type_nesting),
+    ("type_spec_chains", type_spec_chains),
 ];

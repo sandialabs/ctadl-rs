@@ -48,14 +48,24 @@ pub(crate) fn token_full_name(
     ctx: GenericContext,
     out: &mut String,
 ) -> Result<()> {
+    token_name(m, token, ctx, 0, out)
+}
+
+/// [`token_full_name`] for a token of a signature node at level `depth`
+/// (see [`SigReader::below`](crate::model::sig::SigReader::below)).
+fn token_name(
+    m: &ModuleData<'_>,
+    token: MetadataToken,
+    ctx: GenericContext,
+    depth: u32,
+    out: &mut String,
+) -> Result<()> {
     match token.token_type() {
         Some(TokenType::TypeDef) => typedef_full_name(m, token.rid(), out),
         Some(TokenType::TypeRef) => typeref_full_name(m, token.rid(), out),
         Some(TokenType::TypeSpec) => {
-            let row = m.md.row::<TypeSpecRaw>(token.rid())?;
-            let blob = m.md.blobs().get(row.signature)?;
-            let sig = crate::model::sig::SigReader::new(blob).type_sig()?;
-            sig_full_name(m, &sig, ctx, out)
+            let sig = m.type_spec_sig(token.rid(), depth)?;
+            sig_name(m, &sig, ctx, depth, out)
         }
         _ => {
             out.push_str("<invalid>");
@@ -173,6 +183,19 @@ pub(crate) fn sig_full_name(
     ctx: GenericContext,
     out: &mut String,
 ) -> Result<()> {
+    sig_name(m, sig, ctx, 0, out)
+}
+
+/// [`sig_full_name`] for a node below `depth` enclosing levels.
+fn sig_name(
+    m: &ModuleData<'_>,
+    sig: &TypeSig,
+    ctx: GenericContext,
+    depth: u32,
+    out: &mut String,
+) -> Result<()> {
+    // This node's level; its tokens' TypeSpecs and its children are below it.
+    let level = depth + 1;
     match sig {
         TypeSig::Void => out.push_str("System.Void"),
         TypeSig::Boolean => out.push_str("System.Boolean"),
@@ -192,26 +215,26 @@ pub(crate) fn sig_full_name(
         TypeSig::IntPtr => out.push_str("System.IntPtr"),
         TypeSig::UIntPtr => out.push_str("System.UIntPtr"),
         TypeSig::TypedByRef => out.push_str("System.TypedReference"),
-        TypeSig::Named { token, .. } => token_full_name(m, *token, ctx, out)?,
+        TypeSig::Named { token, .. } => token_name(m, *token, ctx, level, out)?,
         TypeSig::Ptr(inner) => {
-            sig_full_name(m, inner, ctx, out)?;
+            sig_name(m, inner, ctx, level, out)?;
             out.push('*');
         }
         TypeSig::ByRef(inner) => {
-            sig_full_name(m, inner, ctx, out)?;
+            sig_name(m, inner, ctx, level, out)?;
             out.push('&');
         }
         // PinnedType and SentinelType add no suffix in Cecil.
-        TypeSig::Pinned(inner) | TypeSig::Sentinel(inner) => sig_full_name(m, inner, ctx, out)?,
+        TypeSig::Pinned(inner) | TypeSig::Sentinel(inner) => sig_name(m, inner, ctx, level, out)?,
         TypeSig::SzArray(inner) => {
-            sig_full_name(m, inner, ctx, out)?;
+            sig_name(m, inner, ctx, level, out)?;
             out.push_str("[]");
         }
         TypeSig::Array {
             element,
             dimensions,
         } => {
-            sig_full_name(m, element, ctx, out)?;
+            sig_name(m, element, ctx, level, out)?;
             // ArrayType.Suffix: a single unsized dimension is a vector.
             let is_vector = dimensions.len() == 1
                 && dimensions[0].lower.is_none()
@@ -240,37 +263,37 @@ pub(crate) fn sig_full_name(
             }
         }
         TypeSig::GenericInst { ty, args, .. } => {
-            token_full_name(m, *ty, ctx, out)?;
+            token_name(m, *ty, ctx, level, out)?;
             out.push('<');
             for (i, a) in args.iter().enumerate() {
                 if i > 0 {
                     out.push(',');
                 }
-                sig_full_name(m, a, ctx, out)?;
+                sig_name(m, a, ctx, level, out)?;
             }
             out.push('>');
         }
         TypeSig::Var(n) => generic_param_name(m, ctx, *n, false, out)?,
         TypeSig::MVar(n) => generic_param_name(m, ctx, *n, true, out)?,
         TypeSig::CModReq { modifier, inner } => {
-            sig_full_name(m, inner, ctx, out)?;
+            sig_name(m, inner, ctx, level, out)?;
             out.push_str(" modreq(");
-            token_full_name(m, *modifier, ctx, out)?;
+            token_name(m, *modifier, ctx, level, out)?;
             out.push(')');
         }
         TypeSig::CModOpt { modifier, inner } => {
-            sig_full_name(m, inner, ctx, out)?;
+            sig_name(m, inner, ctx, level, out)?;
             out.push_str(" modopt(");
-            token_full_name(m, *modifier, ctx, out)?;
+            token_name(m, *modifier, ctx, level, out)?;
             out.push(')');
         }
         TypeSig::FnPtr(func) => {
             // FunctionPointerType.FullName: name ("method") + " " + ret + " *"
             // + params.
             out.push_str("method ");
-            sig_full_name(m, &func.return_type, ctx, out)?;
+            sig_name(m, &func.return_type, ctx, level, out)?;
             out.push_str(" *");
-            method_params_full_name(m, func, ctx, out)?;
+            params_name(m, func, ctx, level, out)?;
         }
     }
     Ok(())
@@ -284,6 +307,17 @@ pub(crate) fn method_params_full_name(
     ctx: GenericContext,
     out: &mut String,
 ) -> Result<()> {
+    params_name(m, sig, ctx, 0, out)
+}
+
+/// [`method_params_full_name`] for parameters below `depth` enclosing levels.
+fn params_name(
+    m: &ModuleData<'_>,
+    sig: &MethodSig,
+    ctx: GenericContext,
+    depth: u32,
+    out: &mut String,
+) -> Result<()> {
     out.push('(');
     for (i, p) in sig.params.iter().enumerate() {
         if i > 0 {
@@ -292,7 +326,7 @@ pub(crate) fn method_params_full_name(
         if p.is_sentinel() {
             out.push_str("...,");
         }
-        sig_full_name(m, p, ctx, out)?;
+        sig_name(m, p, ctx, depth, out)?;
     }
     out.push(')');
     Ok(())

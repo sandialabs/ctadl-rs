@@ -229,7 +229,9 @@ pub struct PropertySig {
 /// How deeply type signatures may nest: each `ptr`, `[]`, modifier, generic
 /// argument or function-pointer parameter is a level. Decoding and every walk
 /// over a [`TypeSig`] (rendering, resolution, `Clone`, `Drop`) recurse once per
-/// level, so this bounds their stack use.
+/// level, so this bounds their stack use. A walk that follows a TypeSpec token
+/// reads that TypeSpec's signature one level below the token, as Cecil's
+/// reader does, so chains of TypeSpecs count toward the same bound.
 pub const MAX_TYPE_SIG_DEPTH: u32 = 64;
 
 /// Reader over one signature blob (already length-stripped).
@@ -247,6 +249,16 @@ impl<'a> SigReader<'a> {
             cur: Cur::new(blob),
             end: blob.len(),
             depth: 0,
+        }
+    }
+
+    /// A reader for the blob of a TypeSpec whose token belongs to a signature
+    /// node at level `depth`, counting the root as 1 (0 for a token outside
+    /// any signature). The TypeSpec's root is then at `depth + 1`.
+    pub(crate) fn below(blob: &'a [u8], depth: u32) -> SigReader<'a> {
+        SigReader {
+            depth,
+            ..SigReader::new(blob)
         }
     }
 
