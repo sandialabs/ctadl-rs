@@ -554,15 +554,21 @@ impl<'a> TypeRef<'a> {
     }
 
     /// The scope's display name (assembly ref name, module ref name, module
-    /// name, or the declaring TypeRef's scope for nested references).
+    /// name, or the outermost declaring TypeRef's scope for nested
+    /// references). Cecil's `Scope` recurses through `DeclaringType`, and
+    /// overflows its stack on a cycle; here a cycle is an error.
     pub fn scope_name(&self) -> Result<String> {
-        let scope = self.raw()?.scope;
-        match scope.token_type() {
-            Some(TokenType::TypeRef) if scope.rid() != self.rid => TypeRef {
-                m: self.m,
-                rid: scope.rid(),
+        let mut outermost = *self;
+        let mut steps = 0;
+        while let Some(declaring) = outermost.declaring_type()? {
+            steps += 1;
+            if steps == self.m.md.row_count(Table::TypeRef) {
+                return Err(Error::Unsupported("TypeRef scope cycle"));
             }
-            .scope_name(),
+            outermost = declaring;
+        }
+        let scope = outermost.raw()?.scope;
+        match scope.token_type() {
             Some(TokenType::AssemblyRef) => {
                 let row = self.m.md.row::<AssemblyRefRaw>(scope.rid())?;
                 Ok(self.m.md.strings().get(row.name)?.to_string())
@@ -1730,9 +1736,17 @@ impl<'a> ExportedType<'a> {
         Ok(self.raw()?.implementation)
     }
 
+    /// The exported type this one is nested in. Cecil reads the table in
+    /// order and takes the declaring type from the rows already read, so it
+    /// throws on one nested in itself or in a later row; so does this.
     pub fn declaring_type(&self) -> Result<Option<ExportedType<'a>>> {
         let imp = self.implementation()?;
         if imp.token_type() == Some(TokenType::ExportedType) && imp.rid() != 0 {
+            if imp.rid() >= self.rid {
+                return Err(Error::Unsupported(
+                    "exported type nested in itself or a later row",
+                ));
+            }
             Ok(Some(ExportedType {
                 m: self.m,
                 rid: imp.rid(),
@@ -1742,26 +1756,37 @@ impl<'a> ExportedType<'a> {
         }
     }
 
+    /// This type and the types it is nested in, innermost first.
+    pub(crate) fn nesting(&self) -> Result<Vec<ExportedType<'a>>> {
+        let mut chain = vec![*self];
+        while let Some(declaring) = chain[chain.len() - 1].declaring_type()? {
+            chain.push(declaring);
+        }
+        Ok(chain)
+    }
+
     pub fn full_name(&self) -> Result<String> {
         // ExportedType.FullName: nested exported types render Declaring/Nested.
         let mut out = String::new();
-        if let Some(declaring) = self.declaring_type()? {
-            out.push_str(&declaring.full_name()?);
-            out.push('/');
+        for (i, et) in self.nesting()?.iter().rev().enumerate() {
+            if i > 0 {
+                out.push('/');
+            }
+            let ns = et.namespace()?;
+            if !ns.is_empty() {
+                out.push_str(ns);
+                out.push('.');
+            }
+            out.push_str(et.name()?);
         }
-        let ns = self.namespace()?;
-        if !ns.is_empty() {
-            out.push_str(ns);
-            out.push('.');
-        }
-        out.push_str(self.name()?);
         Ok(out)
     }
 
     /// The scope's display name (file name or assembly-ref name), walking up
     /// through nested exported types.
     pub fn scope_name(&self) -> Result<&'a str> {
-        let imp = self.implementation()?;
+        let outermost = self.nesting()?.pop().expect("nesting includes self");
+        let imp = outermost.implementation()?;
         match imp.token_type() {
             Some(TokenType::File) => {
                 let row = self.m.md.row::<FileRaw>(imp.rid())?;
@@ -1771,11 +1796,6 @@ impl<'a> ExportedType<'a> {
                 let row = self.m.md.row::<AssemblyRefRaw>(imp.rid())?;
                 self.m.md.strings().get(row.name)
             }
-            Some(TokenType::ExportedType) => ExportedType {
-                m: self.m,
-                rid: imp.rid(),
-            }
-            .scope_name(),
             _ => Err(Error::Unsupported("bad ExportedType implementation")),
         }
     }

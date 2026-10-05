@@ -748,24 +748,13 @@ impl<'c> TypeName<'c> {
     /// `ExportedType.CreateReference`: the exported type's names, scoped by
     /// the outermost one's implementation.
     fn of_exported(module: &'c Module<'c>, et: ExportedType<'c>) -> Result<TypeName<'c>> {
-        let mut chain = Vec::new();
-        let mut current = et;
-        let implementation = loop {
-            chain.push((
-                current.namespace()?.to_string(),
-                current.name()?.to_string(),
-            ));
-            match current.declaring_type()? {
-                Some(outer)
-                    if chain.len() <= module.metadata().row_count(Table::ExportedType) as usize =>
-                {
-                    current = outer;
-                }
-                Some(_) => return Err(Error::Unsupported("ExportedType cycle")),
-                None => break current.implementation()?,
-            }
-        };
-        chain.reverse();
+        let nesting = et.nesting()?;
+        let implementation = nesting[nesting.len() - 1].implementation()?;
+        let chain = nesting
+            .iter()
+            .rev()
+            .map(|et| Ok((et.namespace()?.to_string(), et.name()?.to_string())))
+            .collect::<Result<Vec<_>>>()?;
         let md = module.metadata();
         let scope = match implementation.token_type() {
             Some(TokenType::AssemblyRef) => Scope::Assembly(implementation.rid()),

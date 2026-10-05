@@ -5,7 +5,7 @@
 //! `IMethodSignature.MethodSignatureFullName` and
 //! `IGenericInstance.GenericInstanceFullName`.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::model::data::ModuleData;
 use crate::model::sig::{MethodSig, TypeSig};
 use crate::raw::tables::*;
@@ -64,41 +64,66 @@ pub(crate) fn token_full_name(
     }
 }
 
+/// Writes `Declaring/Nested` names, outermost first.
+fn push_nested_names<'n>(
+    names: impl DoubleEndedIterator<Item = (&'n str, &'n str)>,
+    out: &mut String,
+) {
+    for (i, (ns, name)) in names.rev().enumerate() {
+        if i > 0 {
+            out.push('/');
+        }
+        if !ns.is_empty() {
+            out.push_str(ns);
+            out.push('.');
+        }
+        out.push_str(name);
+    }
+}
+
 pub(crate) fn typedef_full_name(m: &ModuleData<'_>, rid: u32, out: &mut String) -> Result<()> {
     // TypeReference.FullName: nested types render as Declaring/Nested.
-    if let Some(declaring) = m.declaring_type_rid(rid)? {
-        typedef_full_name(m, declaring, out)?;
-        out.push('/');
-        // Nested type names ignore the namespace column in Cecil's rendering
-        // only insofar as TypeFullName still applies; nested types normally
-        // have an empty namespace, but a non-empty one is still printed.
+    // Nested type names ignore the namespace column in Cecil's rendering only
+    // insofar as TypeFullName still applies; nested types normally have an
+    // empty namespace, but a non-empty one is still printed. Cecil recurses
+    // through DeclaringType, and overflows its stack on a NestedClass cycle;
+    // here a chain longer than the TypeDef table is an error.
+    let mut names = Vec::new();
+    let mut current = Some(rid);
+    while let Some(rid) = current {
+        if names.len() == m.md.row_count(Table::TypeDef) as usize {
+            return Err(Error::Unsupported("nested type cycle"));
+        }
+        let row = m.md.row::<TypeDefRaw>(rid)?;
+        names.push((
+            m.md.strings().get(row.namespace)?,
+            m.md.strings().get(row.name)?,
+        ));
+        current = m.declaring_type_rid(rid)?;
     }
-    let row = m.md.row::<TypeDefRaw>(rid)?;
-    let ns = m.md.strings().get(row.namespace)?;
-    let name = m.md.strings().get(row.name)?;
-    if !ns.is_empty() {
-        out.push_str(ns);
-        out.push('.');
-    }
-    out.push_str(name);
+    push_nested_names(names.into_iter(), out);
     Ok(())
 }
 
 pub(crate) fn typeref_full_name(m: &ModuleData<'_>, rid: u32, out: &mut String) -> Result<()> {
-    let row = m.md.row::<TypeRefRaw>(rid)?;
     // A TypeRef scope of TypeRef kind means "nested inside" (unless it points
     // at itself — obfuscated modules do that, `AssemblyReader.cs:1134-1142`).
-    if row.scope.token_type() == Some(TokenType::TypeRef) && row.scope.rid() != rid {
-        typeref_full_name(m, row.scope.rid(), out)?;
-        out.push('/');
+    // Cecil overflows its stack on a longer cycle, as with NestedClass.
+    let mut names = Vec::new();
+    let mut current = Some(rid);
+    while let Some(rid) = current {
+        if names.len() == m.md.row_count(Table::TypeRef) as usize {
+            return Err(Error::Unsupported("TypeRef scope cycle"));
+        }
+        let row = m.md.row::<TypeRefRaw>(rid)?;
+        names.push((
+            m.md.strings().get(row.namespace)?,
+            m.md.strings().get(row.name)?,
+        ));
+        current = (row.scope.token_type() == Some(TokenType::TypeRef) && row.scope.rid() != rid)
+            .then_some(row.scope.rid());
     }
-    let ns = m.md.strings().get(row.namespace)?;
-    let name = m.md.strings().get(row.name)?;
-    if !ns.is_empty() {
-        out.push_str(ns);
-        out.push('.');
-    }
-    out.push_str(name);
+    push_nested_names(names.into_iter(), out);
     Ok(())
 }
 

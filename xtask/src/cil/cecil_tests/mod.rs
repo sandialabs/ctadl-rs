@@ -3,9 +3,10 @@
 //! test assemblies or the compiled fixtures, neither of which a checkout has,
 //! so they live here rather than under `cargo test`.
 //!
-//! Each module ports one Cecil test class. A test is a plain `fn()` that
-//! panics on failure, listed in its module's `TESTS`; the check runs them all
-//! and reports each panic. Analogue of `BaseTestFixture`
+//! Each module ports one Cecil test class, except `malformed`, which covers
+//! input Cecil cannot read. A test is a plain `fn()` that panics on failure,
+//! listed in its module's `TESTS`; the check runs them all and reports each
+//! panic. Analogue of `BaseTestFixture`
 //! (`Test/Mono.Cecil.Tests/BaseTestFixture.cs`): [`read_resource`] and
 //! [`read_fixture`] read an input by name and panic if it is missing.
 
@@ -16,6 +17,7 @@ mod assembly;
 mod custom_attributes;
 mod fields;
 mod image_read;
+mod malformed;
 mod method_body;
 mod methods;
 mod module;
@@ -41,6 +43,7 @@ const SUITES: &[(&str, &[Test])] = &[
     ("custom_attributes", custom_attributes::TESTS),
     ("fields", fields::TESTS),
     ("image_read", image_read::TESTS),
+    ("malformed", malformed::TESTS),
     ("method_body", method_body::TESTS),
     ("methods", methods::TESTS),
     ("module", module::TESTS),
