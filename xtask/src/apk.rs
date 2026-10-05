@@ -12,8 +12,8 @@
 //!
 //! Moving them here changes what is actually asserted, for the better. The old tests called
 //! `ctadl_ascent::cli::import` and friends as a library, so nothing between `main.rs` and the
-//! library was covered -- `--skip-existing`, for one, is decided entirely in `main.rs` and had no
-//! test at all. These drive the shipped `ctadl` binary and assert against the store it writes and
+//! library was covered -- skipping an up-to-date re-import, for one, is decided entirely in
+//! `main.rs` and had no test at all. These drive the shipped `ctadl` binary and assert against the store it writes and
 //! the SARIF it emits, so the argument wiring, the exit status, and the on-disk layout are all in
 //! scope.
 //!
@@ -48,7 +48,7 @@ pub const CHECKS: &[&str] = &[
     "apk:model-check",
     "apk:report",
     "apk:report-invariants",
-    "apk:skip-existing",
+    "apk:reimport",
     "apk:manifest-and-intents",
 ];
 
@@ -99,8 +99,8 @@ pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
 
     // Positional, and in the order [`CHECKS`] names them -- the checks share a store, so the
     // order is part of the arrangement rather than a presentation choice. `apk:model-check` runs
-    // before `apk:skip-existing` because it wants the store exactly as the first import left it,
-    // and `apk:skip-existing` re-imports. `apk:manifest-and-intents` runs last because it indexes,
+    // before `apk:reimport` because it wants the store exactly as the first import left it,
+    // and `apk:reimport` re-imports. `apk:manifest-and-intents` runs last because it indexes,
     // which writes the project `apk:model-check` asserts is absent.
     let outcomes = [
         to_outcome(check_import(work, &state, &store, &apk)),
@@ -108,7 +108,7 @@ pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
         to_outcome(check_model_check(work, &state, &store)),
         to_outcome(check_report(work, &state, &store)),
         to_outcome(check_report_invariants(work, &state)),
-        to_outcome(check_skip_existing(work, &state, &store, &apk)),
+        to_outcome(check_reimport(work, &state, &store, &apk)),
         to_outcome(check_manifest_and_intents(work, &state, &store)),
     ];
     Ok(CHECKS
@@ -151,8 +151,8 @@ fn check_import(work: &Path, state: &Path, store: &Path, apk: &Path) -> Result<(
         config["artifact_path"],
         apk.display()
     );
-    // Recorded by `main.rs` after a successful import, and what `--skip-existing` reads.
-    // `apk:skip-existing` pins what it is *for*; this pins that it is written at all.
+    // Recorded by `main.rs` after a successful import, and what a re-import reads to skip.
+    // `apk:reimport` pins what it is *for*; this pins that it is written at all.
     ensure!(
         config["hash"].as_str().is_some_and(|h| !h.is_empty()),
         "import config records no artifact hash: {}",
@@ -761,24 +761,24 @@ fn report_json(work: &Path, state: &Path) -> Result<Value> {
         .with_context(|| format!("`ctadl report --format json` emitted invalid JSON:\n{text}"))
 }
 
-/// `--skip-existing` skips a re-import of an unchanged artifact, and only of an unchanged one.
+/// A re-import skips an unchanged artifact, and only an unchanged one, unless `--force` is given.
 ///
-/// Both halves are asserted, because either alone is satisfied by a bug. A flag that always
-/// skips passes the first; a flag that never skips passes the second. What distinguishes them is
-/// the recorded content hash, so the negative half is produced by falsifying exactly that: the
+/// Every half is asserted, because any one alone is satisfied by a bug. Always skipping passes
+/// the first; never skipping passes the second and third. What distinguishes the first two is the
+/// recorded content hash, so the changed case is produced by falsifying exactly that: the
 /// artifact and its path are untouched and only the stored hash is wrong, which is the state a
 /// changed artifact leaves behind.
 ///
 /// The observable is the program bitcode's modification time. A skipped import does no work, so
 /// it cannot rewrite it; a performed import always does.
-fn check_skip_existing(work: &Path, state: &Path, store: &Path, apk: &Path) -> Result<()> {
+fn check_reimport(work: &Path, state: &Path, store: &Path, apk: &Path) -> Result<()> {
     let program = program_path(store);
     let before = modified(&program)?;
 
-    import(work, state, apk, &["--skip-existing"])?;
+    import(work, state, apk, &[])?;
     ensure!(
         modified(&program)? == before,
-        "a --skip-existing re-import of an unchanged artifact rewrote {}",
+        "a re-import of an unchanged artifact rewrote {}",
         program.display()
     );
 
@@ -790,17 +790,25 @@ fn check_skip_existing(work: &Path, state: &Path, store: &Path, apk: &Path) -> R
     std::fs::write(&path, serde_json::to_vec(&config)?)
         .with_context(|| format!("writing {}", path.display()))?;
 
-    import(work, state, apk, &["--skip-existing"])?;
+    import(work, state, apk, &[])?;
+    let reimported = modified(&program)?;
     ensure!(
-        modified(&program)? != before,
-        "a --skip-existing re-import skipped an artifact whose recorded hash does not match, \
-         leaving {} untouched",
+        reimported != before,
+        "a re-import skipped an artifact whose recorded hash does not match, leaving {} untouched",
         program.display()
     );
     // And the import it performed recorded the true hash again, so the next one can skip.
     ensure!(
         read_config(store)?["hash"] == real_hash,
         "the re-import did not record the artifact's hash"
+    );
+
+    // `--force` re-imports even though the recorded hash now matches.
+    import(work, state, apk, &["--force"])?;
+    ensure!(
+        modified(&program)? != reimported,
+        "a --force re-import of an unchanged artifact left {} untouched",
+        program.display()
     );
     Ok(())
 }

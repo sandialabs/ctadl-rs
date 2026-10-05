@@ -226,6 +226,34 @@ fn the_completion_mark_is_written_last_and_cleared_by_a_re_import() {
     );
 }
 
+/// An import is up to date only when it finished, its artifact path matches, and the recorded
+/// hash still matches the artifact's contents. `ctadl import` skips exactly those unless forced.
+#[test]
+fn only_a_finished_import_of_unchanged_contents_is_up_to_date() {
+    store();
+    let dir = tempfile::tempdir().unwrap();
+    let mut import = write_import("up_to_date", dir.path());
+    let artifact = import.artifact_path.clone();
+    // No hash recorded yet: nothing proves the artifact is unchanged.
+    assert!(!ArtifactImport::is_up_to_date("up_to_date", &artifact).unwrap());
+
+    import = ArtifactImport::load_by_name("up_to_date").unwrap();
+    import.record_artifact_hash().unwrap();
+    assert!(ArtifactImport::is_up_to_date("up_to_date", &artifact).unwrap());
+
+    // The same hash, but the completion mark is gone, as when a re-import dies part way.
+    let mut unfinished = ArtifactImport::load_by_name("up_to_date").unwrap();
+    unfinished.status = None;
+    unfinished.save().unwrap();
+    assert!(!ArtifactImport::is_up_to_date("up_to_date", &artifact).unwrap());
+    ArtifactImport::mark_complete("up_to_date").unwrap();
+    assert!(ArtifactImport::is_up_to_date("up_to_date", &artifact).unwrap());
+
+    // Changed contents at the same path.
+    std::fs::write(&artifact, b"a different dex").unwrap();
+    assert!(!ArtifactImport::is_up_to_date("up_to_date", &artifact).unwrap());
+}
+
 /// [`load_vmt`] reads the same table [`load_import`] does, without the program. The fixture is a
 /// Lua VMT with one row per column, so an empty-vs-empty comparison cannot pass by accident.
 #[test]
