@@ -427,11 +427,21 @@ pub fn index(
         "[mem cp] after facts.try_save: {:.1} MB",
         phys_footprint_mb()
     );
+    // The native front ends deal in pointers, and every pointer may be dereferenced, so the
+    // index admits `<path>.deref` for every program path (see `compute_paths`). Decided from the
+    // imports' languages, not from whether some dereference happens to survive SSA.
+    let deref_paths = project.iter_imports().filter_map(Result::ok).any(|import| {
+        matches!(
+            import.language,
+            ArtifactLanguage::C | ArtifactLanguage::Pcode
+        )
+    });
     let config = crate::index_engine::IndexConfig {
         alias_rule,
         hybrid_context,
         context_join,
         parallelism,
+        deref_paths,
     };
     log::info!("indexing (computing the flow relation)");
     let result = taint_index_with_config(facts, config, Some(&sites));

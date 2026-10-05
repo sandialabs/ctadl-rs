@@ -1,0 +1,19 @@
+{
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "names": ["source", "wrap", "width_of"] }],
+      "model": { "sources": [{ "kind": "smear", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "names": ["source_buf"] }],
+      "model": { "sources": [{ "kind": "smear", "port": "Return", "saturating": true }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature", "pattern": "^sink_.*" }],
+      "model": { "sinks": [{ "kind": "smear", "port": "Argument(0)" }] }
+    }
+  ]
+}
