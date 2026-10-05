@@ -1,0 +1,14 @@
+{
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "names": ["source"] }],
+      "model": { "sources": [{ "kind": "t", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature", "pattern": "^sink_.*" }],
+      "model": { "sinks": [{ "kind": "t", "port": "Argument(0)" }] }
+    }
+  ]
+}
