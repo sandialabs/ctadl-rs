@@ -226,10 +226,17 @@ pub struct PropertySig {
     pub property_type: TypeSig,
 }
 
+/// How deeply type signatures may nest: each `ptr`, `[]`, modifier, generic
+/// argument or function-pointer parameter is a level. Decoding and every walk
+/// over a [`TypeSig`] (rendering, resolution, `Clone`, `Drop`) recurse once per
+/// level, so this bounds their stack use.
+pub const MAX_TYPE_SIG_DEPTH: u32 = 64;
+
 /// Reader over one signature blob (already length-stripped).
 pub struct SigReader<'a> {
     pub(crate) cur: Cur<'a>,
     end: usize,
+    depth: u32,
 }
 
 impl<'a> SigReader<'a> {
@@ -239,6 +246,7 @@ impl<'a> SigReader<'a> {
         SigReader {
             cur: Cur::new(blob),
             end: blob.len(),
+            depth: 0,
         }
     }
 
@@ -250,8 +258,23 @@ impl<'a> SigReader<'a> {
         Ok(CodedIndexKind::TypeDefOrRef.decode(self.cur.compressed_u32()?))
     }
 
-    /// `SignatureReader.ReadTypeSignature`.
+    /// `SignatureReader.ReadTypeSignature`, failing past
+    /// [`MAX_TYPE_SIG_DEPTH`] levels where Cecil would recurse until its stack
+    /// overflows.
     pub fn type_sig(&mut self) -> Result<TypeSig> {
+        if self.depth == MAX_TYPE_SIG_DEPTH {
+            return Err(Error::bad(
+                self.cur.pos(),
+                "type signature nested too deeply",
+            ));
+        }
+        self.depth += 1;
+        let sig = self.type_sig_at_depth();
+        self.depth -= 1;
+        sig
+    }
+
+    fn type_sig_at_depth(&mut self) -> Result<TypeSig> {
         let b = self.cur.u8()?;
         let etype = ElementType::from_byte(b).ok_or(Error::bad(
             self.cur.pos(),
@@ -464,5 +487,97 @@ impl<'a> SigReader<'a> {
         Ok(Some(std::str::from_utf8(bytes).map_err(|_| {
             Error::bad(self.cur.pos(), "invalid UTF-8 string in blob")
         })?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const I4: u8 = ElementType::I4 as u8;
+
+    /// `levels` levels of one nesting kind around `int32`: `prefix` opens a
+    /// level and `suffix` closes it.
+    fn nested(prefix: &[u8], suffix: &[u8], levels: u32) -> Vec<u8> {
+        let mut blob = prefix.repeat(levels as usize - 1);
+        blob.push(I4);
+        blob.extend(suffix.repeat(levels as usize - 1));
+        blob
+    }
+
+    /// Each nesting kind: pointer, szarray, rank-1 array, modopt, a generic
+    /// instance's argument and a function pointer's return type.
+    fn each_kind(levels: u32) -> Vec<(&'static str, Vec<u8>)> {
+        vec![
+            ("ptr", nested(&[0x0f], &[], levels)),
+            ("szarray", nested(&[0x1d], &[], levels)),
+            ("array", nested(&[0x14], &[0x01, 0x00, 0x00], levels)),
+            ("modopt", nested(&[0x20, 0x08], &[], levels)),
+            (
+                "genericinst",
+                nested(&[0x15, 0x12, 0x08, 0x01], &[], levels),
+            ),
+            ("fnptr", nested(&[0x1b, 0x00, 0x00], &[], levels)),
+        ]
+    }
+
+    fn is_too_deep(r: Result<TypeSig>) -> bool {
+        matches!(
+            r,
+            Err(Error::BadImage {
+                reason: "type signature nested too deeply",
+                ..
+            })
+        )
+    }
+
+    #[test]
+    fn nesting_up_to_the_limit_decodes() {
+        for (kind, blob) in each_kind(MAX_TYPE_SIG_DEPTH) {
+            assert!(SigReader::new(&blob).type_sig().is_ok(), "{kind}");
+        }
+    }
+
+    #[test]
+    fn nesting_past_the_limit_is_an_error() {
+        for (kind, blob) in each_kind(MAX_TYPE_SIG_DEPTH + 1) {
+            assert!(is_too_deep(SigReader::new(&blob).type_sig()), "{kind}");
+        }
+    }
+
+    #[test]
+    fn a_deep_blob_is_an_error_not_a_stack_overflow() {
+        let blob = nested(&[0x0f], &[], 100_000);
+        assert!(is_too_deep(SigReader::new(&blob).type_sig()));
+    }
+
+    #[test]
+    fn siblings_each_get_the_full_depth() {
+        // A method whose return type and two parameters each nest to the limit.
+        let deep = nested(&[0x0f], &[], MAX_TYPE_SIG_DEPTH);
+        let mut blob = vec![0x00, 0x02];
+        for _ in 0..3 {
+            blob.extend(&deep);
+        }
+        let sig = SigReader::new(&blob).method_sig().unwrap();
+        assert_eq!(sig.params.len(), 2);
+    }
+
+    #[test]
+    fn signatures_at_the_limit_fit_a_small_stack() {
+        // A debug build needs about 430 KB here; release about 80 KB.
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                for (kind, blob) in each_kind(MAX_TYPE_SIG_DEPTH) {
+                    let sig = SigReader::new(&blob).type_sig().unwrap();
+                    let copy = sig.clone();
+                    assert_eq!(sig, copy, "{kind}");
+                    assert!(!format!("{sig:?}").is_empty());
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
