@@ -57,7 +57,7 @@ Sections:
 - **Fix idea:** format each width with its own shortest round-trip form, then
   apply .NET's "R" exponent rules.
 
-**A3. Types are nested whenever a NestedClass row exists, ignoring visibility.** *Fixed:* `ModuleData::declaring_type_rid` (`model/data.rs`) requires a Nested* visibility, for names and `declaring_type` alike; `gap-nested-public.dll` covers it. A NestedClass self-loop on a non-nested type no longer recurses; B3 remains for nested ones.
+**A3. Types are nested whenever a NestedClass row exists, ignoring visibility.** *Fixed:* `ModuleData::declaring_type_rid` (`model/data.rs`) requires a Nested* visibility, for names and `declaring_type` alike; `gap-nested-public.dll` covers it. A NestedClass self-loop on a non-nested type no longer recurses; B3 covers nested ones.
 - **Rust:** `model/names.rs:67-75` (`typedef_full_name`) and
   `model/handles.rs:267-274` (`TypeDef::declaring_type`).
 - **Cecil:** only sets `DeclaringType` when the visibility is Nested*
@@ -251,13 +251,13 @@ In Rust it aborts the host process.
 - **Fix:** add the `IsEnum` check. That also stops the port from silently
   accepting non-enum structs that Cecil rejects.
 
-**B2. Deeply nested signatures overflow the stack.** *Fixed:* `SigReader::type_sig` (`model/sig.rs`) fails past `MAX_TYPE_SIG_DEPTH` = 64 levels, which bounds every walk over a `TypeSig` too; the `sig::tests` unit tests cover each nesting kind. Release builds use 0.8-1.1 KB of stack per level and debug builds 5-6.6 KB, almost all in the decoder; the deepest real signature in the corpus and the .NET 8 framework is 7 levels. Cecil reads past 64 until its own stack overflows, so between the two the port errs where Cecil does not; no fixture covers that, as `cil:cecil-compare` would differ. Measurements are in `/Volumes/Shampoo/b2-depth-2026-10-04/`. cil-dump's `[methods]` used to lose the whole dump when a method's signature failed to decode; that method now prints `params=!error`. Still open: a `Named` TypeSpec token is rendered or resolved by decoding that spec's blob afresh, so a long acyclic chain of TypeSpecs recurses once per spec, bounded only by the TypeSpec table (B3 has the cyclic case).
+**B2. Deeply nested signatures overflow the stack.** *Fixed:* `SigReader::type_sig` (`model/sig.rs`) fails past `MAX_TYPE_SIG_DEPTH` = 64 levels, which bounds every walk over a `TypeSig` too; the `sig::tests` unit tests cover each nesting kind. Release builds use 0.8-1.1 KB of stack per level and debug builds 5-6.6 KB, almost all in the decoder; the deepest real signature in the corpus and the .NET 8 framework is 7 levels. Cecil reads past 64 until its own stack overflows, so between the two the port errs where Cecil does not; no fixture covers that, as `cil:cecil-compare` would differ. Measurements are in `/Volumes/Shampoo/b2-depth-2026-10-04/`. cil-dump's `[methods]` used to lose the whole dump when a method's signature failed to decode; that method now prints `params=!error`. A TypeSpec token's signature is read one level below the token, as Cecil reads it in place (`SigReader::below`, `ModuleData::type_spec_sig`), so rendering, member shapes and `resolve_type` count a chain of TypeSpecs toward the same 64 levels; `resolve_type` follows the chain in a loop. No signature in the corpus or the .NET 8 framework names a TypeSpec (`/Volumes/Shampoo/b3-2026-10-04/logs/specprobe.txt`). `malformed::type_spec_chains` (`cil:cecil-tests`) covers 64- and 65-long chains.
 - **Rust:** `model/sig.rs:255-331` and `model/names.rs:141-248`, plus the
   recursive `Drop` of the `Box<TypeSig>` chain.
 - **Example:** a 10 KB blob of `0x0f` bytes aborts the process.
 - **Fix:** a depth limit.
 
-**B3. Cycles in name rendering overflow the stack.** *Reproduced.*
+**B3. Cycles in name rendering overflow the stack.** *Fixed:* `typedef_full_name`, `typeref_full_name` (`model/names.rs`), `TypeRef::scope_name` and `ExportedType::full_name`/`scope_name` (`model/handles.rs`) walk their chains in a loop, and a NestedClass or TypeRef chain longer than its table is an error; `ExportedType::declaring_type` errs on a self or forward reference, as Cecil throws, so its chains are acyclic. A self-referential TypeSpec ends at the depth limit (B2). Cecil overflows its stack on the other cycles, so no fixture can cover them: the `malformed` suite of `cil:cecil-tests` patches corpus images in memory, and the evidence repros `nestcycle.dll`, `trefcycle.dll` and `ca/typeref-cycle.dll` now dump in full (`/Volumes/Shampoo/b3-2026-10-04/logs/repro-*.txt`).
 - NestedClass self-loops or cycles: `model/names.rs:67-85`. Cecil survives
   these because of A3.
 - TypeRef scope cycles: `model/names.rs:87-103` and
