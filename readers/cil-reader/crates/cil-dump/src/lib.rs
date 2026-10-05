@@ -490,9 +490,14 @@ fn dump_methods(module: &Module<'_>, out: &mut String) -> Result<()> {
             )
             .unwrap();
         }
-        let sig = method.signature()?;
+        // Parameter rows are numbered by the signature's parameters, so an
+        // undecodable signature leaves only this method without them.
+        let (Ok(sig), Ok(params)) = (method.signature(), method.parameters()) else {
+            out.push_str("\tparams=!error\n");
+            continue;
+        };
         let has_implicit_this = sig.has_this && !sig.explicit_this;
-        for p in method.parameters()? {
+        for p in params {
             if p.token.is_some() {
                 // ParameterDefinition.Sequence: index+1 with an implicit this.
                 let seq = if has_implicit_this {
