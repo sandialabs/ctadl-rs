@@ -1021,6 +1021,20 @@ fn test_cli_query_c_pointer_model() {
     });
 }
 
+/// `funcptrthrough.c`: a call target crosses an indirect call both ways -- installed inside a
+/// function reached through a pointer, and handed to one -- and not into the uncalled sibling field.
+#[test]
+fn test_cli_query_c_funcptr_through_indirect_call() {
+    run_store_test(|| {
+        assert_eq!(
+            c_sinks_reached("funcptrthrough", &[]),
+            ["sink_down", "sink_down_formal", "sink_up"]
+                .map(String::from)
+                .into()
+        );
+    });
+}
+
 /// Writes an APK built from `(entry name, contents)` pairs into `dir`, and returns its
 /// path. Enough of an APK for the import path: a ZIP whose entry names are what the Dex
 /// and native-library passes look for.
