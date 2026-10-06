@@ -63,11 +63,14 @@ pub(crate) fn compile_mir(mir: &AscentMir, is_ascent_run: bool) -> proc_macro2::
    for i in 0..mir.sccs.len() {
       for (rule_ind, _rule) in mir.sccs[i].rules.iter().enumerate() {
          let name = rule_time_field_name(i, rule_ind);
+         let counts = rule_counts_field_name(i, rule_ind);
          rule_time_fields.push(quote! {
             pub #name: std::time::Duration,
+            pub #counts: (u64, u64),
          });
          rule_time_fields_defaults.push(quote! {
             #name: std::time::Duration::ZERO,
+            #counts: (0, 0),
          });
       }
    }
@@ -468,6 +471,37 @@ fn rule_time_field_name(scc_ind: usize, rule_ind: usize) -> Ident {
    Ident::new(&format!("rule{}_{}_duration", scc_ind, rule_ind), Span::call_site())
 }
 
+// ctadl patch: per rule variant, (head rows derived, head rows that were new), accumulated over
+// the run. A rule that derives many rows and inserts few is doing redundant work; see
+// "Finding Unproductive Datalog Rules" in recipes.md. Counted only under `measure_rule_times`.
+fn rule_counts_field_name(scc_ind: usize, rule_ind: usize) -> Ident {
+   Ident::new(&format!("rule{}_{}_counts", scc_ind, rule_ind), Span::call_site())
+}
+
+/// The counter arrays an SCC's rules bump, read back as `(derived, inserted)` for rule `i`.
+fn rule_counts_read(mir: &AscentMir, i: usize) -> proc_macro2::TokenStream {
+   if mir.is_parallel {
+      quote! {(
+         __rule_derived[#i].load(std::sync::atomic::Ordering::Relaxed),
+         __rule_inserted[#i].load(std::sync::atomic::Ordering::Relaxed)
+      )}
+   } else {
+      quote! {(__rule_derived[#i], __rule_inserted[#i])}
+   }
+}
+
+fn rule_counts_bump(mir: &AscentMir, which: &str, i: usize) -> proc_macro2::TokenStream {
+   if !mir.config.include_rule_times {
+      return quote! {};
+   }
+   let arr = Ident::new(which, Span::call_site());
+   if mir.is_parallel {
+      quote! { #arr[#i].fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
+   } else {
+      quote! { #arr[#i] += 1; }
+   }
+}
+
 fn compile_mir_scc(mir: &AscentMir, scc_ind: usize) -> proc_macro2::TokenStream {
    let scc = &mir.sccs[scc_ind];
    let mut move_total_to_delta = vec![];
@@ -569,7 +603,7 @@ fn compile_mir_scc(mir: &AscentMir, scc_ind: usize) -> proc_macro2::TokenStream 
 
    for (i, rule) in scc.rules.iter().enumerate() {
       let msg = mir_rule_summary(rule);
-      let rule_compiled = compile_mir_rule(rule, scc, mir);
+      let rule_compiled = compile_mir_rule(rule, scc, mir, i);
       let rule_time_field = rule_time_field_name(scc_ind, i);
       let (before_rule_var, update_rule_time_field) = if mir.config.include_rule_times {
          (
@@ -621,8 +655,67 @@ fn compile_mir_scc(mir: &AscentMir, scc_ind: usize) -> proc_macro2::TokenStream 
       quote! {__changed.load(std::sync::atomic::Ordering::Relaxed)}
    };
 
+   // ctadl patch: the per-rule counters (see `rule_counts_field_name`), and with CTADL_ITER_LOG
+   // set, one stderr line per iteration of a looping SCC plus one per rule active in it:
+   //   [iter] scc 4 iter 9: 4.512s
+   //   [iter]   r3 derived=1203391 inserted=8121 time=1.203s
+   // `rN` is the rule's position in the SCC, the order `scc_times_summary` lists them in.
+   let n_rules = scc.rules.len();
+   let (counters_def, counters_store, iter_log_def, iter_log_code) = if mir.config.include_rule_times {
+      let counters_def = if mir.is_parallel {
+         quote! {
+            let __rule_derived: [std::sync::atomic::AtomicU64; #n_rules] =
+               std::array::from_fn(|_| std::sync::atomic::AtomicU64::new(0));
+            let __rule_inserted: [std::sync::atomic::AtomicU64; #n_rules] =
+               std::array::from_fn(|_| std::sync::atomic::AtomicU64::new(0));
+         }
+      } else {
+         quote! {
+            let mut __rule_derived = [0u64; #n_rules];
+            let mut __rule_inserted = [0u64; #n_rules];
+         }
+      };
+      let stores = (0..n_rules).map(|i| {
+         let field = rule_counts_field_name(scc_ind, i);
+         let read = rule_counts_read(mir, i);
+         quote! {{ let (d, n) = #read; _self.#field.0 += d; _self.#field.1 += n; }}
+      });
+      let iter_rules = (0..n_rules).map(|i| {
+         let time_field = rule_time_field_name(scc_ind, i);
+         let read = rule_counts_read(mir, i);
+         quote! {{
+            let (d, n) = #read;
+            let t = _self.#time_field;
+            let (pd, pn, pt) = __iter_prev[#i];
+            if d > pd || t - pt >= std::time::Duration::from_millis(1) {
+               eprintln!("[iter]   r{} derived={} inserted={} time={:?}", #i, d - pd, n - pn, t - pt);
+            }
+            __iter_prev[#i] = (d, n, t);
+         }}
+      });
+      (
+         counters_def,
+         quote! { #(#stores)* },
+         quote! {
+            let __iter_log = ::std::env::var_os("CTADL_ITER_LOG").is_some();
+            let mut __iter_prev = [(0u64, 0u64, std::time::Duration::ZERO); #n_rules];
+            let mut __iter_start = ::ascent::internal::Instant::now();
+         },
+         quote! {
+            if __iter_log {
+               eprintln!("[iter] scc {} iter {}: {:?}", #scc_ind, _self.scc_iters[#scc_ind], __iter_start.elapsed());
+               #(#iter_rules)*
+               __iter_start = ::ascent::internal::Instant::now();
+            }
+         },
+      )
+   } else {
+      (quote! {}, quote! {}, quote! {}, quote! {})
+   };
+
    let evaluate_rules_loop = if scc.is_looping {
       quote! {
+         #iter_log_def
          #[allow(unused_assignments, unused_variables)]
          loop {
             #changed_var_def_code
@@ -634,6 +727,7 @@ fn compile_mir_scc(mir: &AscentMir, scc_ind: usize) -> proc_macro2::TokenStream 
             #(#unfreeze_code)*
             #(#shift_delta_to_total_new_to_delta)*
             _self.scc_iters[#scc_ind] += 1;
+            #iter_log_code
             if !#check_changed_code {break;}
             __check_break_conditions!(#(#shift_delta_to_total_new_to_delta)*);
          }
@@ -661,9 +755,11 @@ fn compile_mir_scc(mir: &AscentMir, scc_ind: usize) -> proc_macro2::TokenStream 
       // define variables for delta and new versions of dynamic relations in the scc
       // move total versions of dynamic indices to delta
       #(#move_total_to_delta)*
+      #counters_def
 
       #evaluate_rules_loop
 
+      #counters_store
       #(#move_total_to_field)*
    }
 }
@@ -768,9 +864,11 @@ fn compile_scc_times_summary_body(mir: &AscentMir) -> proc_macro2::TokenStream {
          });
          for (rule_ind, rule) in mir.sccs[i].rules.iter().enumerate() {
             let rule_time_field = rule_time_field_name(i, rule_ind);
+            let counts_field = rule_counts_field_name(i, rule_ind);
             let rule_summary = mir_rule_summary(rule);
             res.push(quote! {
-               writeln!(&mut res, "  rule {}\n    time: {:?}", #rule_summary, self.#rule_time_field).unwrap();
+               writeln!(&mut res, "  rule {}\n    time: {:?}\n    derived: {} inserted: {}", #rule_summary,
+                  self.#rule_time_field, self.#counts_field.0, self.#counts_field.1).unwrap();
             });
          }
          res.push(quote! {
@@ -908,8 +1006,8 @@ fn compile_cond_clause(cond: &CondClause, body: proc_macro2::TokenStream) -> pro
    }
 }
 
-fn compile_mir_rule(rule: &MirRule, scc: &MirScc, mir: &AscentMir) -> proc_macro2::TokenStream {
-   let head_update_code = head_update_code(rule, scc, mir);
+fn compile_mir_rule(rule: &MirRule, scc: &MirScc, mir: &AscentMir, rule_ind: usize) -> proc_macro2::TokenStream {
+   let head_update_code = head_update_code(rule, scc, mir, rule_ind);
 
    const MAX_PAR_ITERS: usize = 2;
 
@@ -1175,13 +1273,17 @@ fn compile_mir_rule_inner(
    }
 }
 
-fn head_update_code(rule: &MirRule, scc: &MirScc, mir: &AscentMir) -> proc_macro2::TokenStream {
+fn head_update_code(rule: &MirRule, scc: &MirScc, mir: &AscentMir, rule_ind: usize) -> proc_macro2::TokenStream {
    let mut add_rows = vec![];
 
+   // ctadl patch: every head row is counted as derived, and as inserted when it changes the
+   // relation (a new row, or a lattice row that grew). A rule with two head clauses counts each.
+   let bump_derived = rule_counts_bump(mir, "__rule_derived", rule_ind);
+   let bump_inserted = rule_counts_bump(mir, "__rule_inserted", rule_ind);
    let set_changed_true_code = if !mir.is_parallel {
-      quote! { __changed = true; }
+      quote! { __changed = true; #bump_inserted }
    } else {
-      quote! { __changed.store(true, std::sync::atomic::Ordering::Relaxed);}
+      quote! { __changed.store(true, std::sync::atomic::Ordering::Relaxed); #bump_inserted }
    };
 
    for hcl in rule.head_clause.iter() {
@@ -1283,6 +1385,7 @@ fn head_update_code(rule: &MirRule, scc: &MirScc, mir: &AscentMir) -> proc_macro
       if !hcl.rel.is_lattice {
          let add_row = quote_spanned! {hcl.span=>
             let __new_row: #row_type = #new_row_tuple;
+            #bump_derived
 
             if !::ascent::internal::RelFullIndexRead::contains_key(&#head_rel_full_index_expr_total, &__new_row) &&
                !::ascent::internal::RelFullIndexRead::contains_key(&#head_rel_full_index_expr_delta, &__new_row) {
@@ -1317,6 +1420,7 @@ fn head_update_code(rule: &MirRule, scc: &MirScc, mir: &AscentMir) -> proc_macro
          let add_row = if !mir.is_parallel {
             quote_spanned! {hcl.span=>
                let __new_row: #row_type = #new_row_tuple;
+               #bump_derived
                let __lattice_key = #lattice_key_tuple;
                if let Some(mut __existing_ind) = #head_lat_full_index_var_name_new.index_get(&__lattice_key)
                   .or_else(|| #head_lat_full_index_var_name_delta.index_get(&__lattice_key))
@@ -1340,6 +1444,7 @@ fn head_update_code(rule: &MirRule, scc: &MirScc, mir: &AscentMir) -> proc_macro
          } else {
             quote_spanned! {hcl.span=> // mir.is_parallel:
                let __new_row: #row_type = #new_row_tuple;
+               #bump_derived
                let __lattice_key = #lattice_key_tuple;
                let __existing_ind_in_new = #head_lat_full_index_var_name_new.get_cloned(&__lattice_key);
                let __new_has_ind = __existing_ind_in_new.is_some();
