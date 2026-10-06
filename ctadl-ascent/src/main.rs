@@ -11,6 +11,8 @@ use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
 
+mod big_alloc;
+
 /// ctadl: import artifacts, index programs, and run/query analyses.
 #[derive(Debug, Parser)]
 #[command(name = "ctadl", version, about)]
@@ -595,6 +597,7 @@ pub struct GoArgs {
 }
 
 fn main() -> anyhow::Result<()> {
+    big_alloc::init();
     ctadl_ascent::init();
     let cli = Cli::parse();
 
