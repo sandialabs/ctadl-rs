@@ -5605,3 +5605,30 @@ fn the_other_statement_expression_positions_and_the_call_shapes_are_unchanged() 
     let (s, si) = get_summary(prog).unwrap();
     check_flow_in(&s, &si, "f", 1, "", 0, ".[1].deref.f");
 }
+
+// ============================================================================
+// Library models: the shipped native defaults, applied as `ctadl index -m` applies them.
+// ============================================================================
+
+#[test_log::test]
+fn malloc_size_does_not_taint_the_buffer() {
+    // `n` sizes the allocation; it is not the buffer's contents. A byte written through the
+    // result is still followed out of it, with no model saying `Return.deref` exists.
+    let src = r"
+        void *malloc(unsigned long n);
+        char size_only(int n) { char *b = malloc(n); return b[0]; }
+        char written(char c) { char *b = malloc(16); b[0] = c; return b[0]; }";
+    let native_defaults: std::path::PathBuf = [
+        env!("CARGO_MANIFEST_DIR"),
+        "../../ctadl-ascent/src/models/defaults/native-index.jsonl",
+    ]
+    .iter()
+    .collect();
+    let (summary, si) = get_summary_with_models(
+        program_from_files(&[("alloc.c", src)]).0,
+        &[native_defaults],
+    )
+    .unwrap();
+    check_does_not_return_param_in(&summary, &si, "size_only", 0, "");
+    check_returns_param_in(&summary, &si, "written", 0, "");
+}
