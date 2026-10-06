@@ -207,12 +207,14 @@ fn read_handler(
         4 => ExceptionHandlerType::Fault,
         _ => return Err(Error::bad(cur.pos(), "invalid exception handler type")),
     };
+    // Cecil adds each length to its start as an unchecked int, so an end
+    // past 2^32 wraps.
     let mut handler = ExceptionHandler {
         handler_type,
         try_start,
-        try_end: try_start + try_len,
+        try_end: try_start.wrapping_add(try_len),
         handler_start,
-        handler_end: handler_start + handler_len,
+        handler_end: handler_start.wrapping_add(handler_len),
         catch_type: None,
         filter_start: None,
     };
@@ -776,5 +778,20 @@ mod tests {
         let h = &handlers[0];
         assert_eq!((h.try_start, h.try_end), (1, 4));
         assert_eq!((h.handler_start, h.handler_end), (4, 9));
+    }
+
+    // A fat clause whose start plus length passes 2^32 ends where the sum
+    // wraps to.
+    #[test]
+    fn handler_ends_wrap() {
+        let mut data = vec![0x41, 28, 0, 0];
+        for field in [2, 0xffff_ffff, 2, 0xffff_fff0, 0x20, 0] {
+            data.extend(u32::to_le_bytes(field));
+        }
+        let mut handlers = Vec::new();
+        read_sections(&mut handlers, &mut Cur::at(&data, 0)).unwrap();
+        let h = &handlers[0];
+        assert_eq!((h.try_start, h.try_end), (0xffff_ffff, 1));
+        assert_eq!((h.handler_start, h.handler_end), (0xffff_fff0, 0x10));
     }
 }
