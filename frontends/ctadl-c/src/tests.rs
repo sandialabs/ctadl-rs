@@ -5098,14 +5098,14 @@ fn a_record_tag_is_not_a_type_name() {
 fn a_global_function_pointer_callee_is_not_a_cast() {
     // The other half of "`A` is a variable, not a type": a file-scope function pointer is
     // not in the scope tree, so what saves this one is that `hook` is not a type name
-    // anywhere in the unit. It lands as a direct call to `hook` -- a name, the same one
-    // the unparenthesized spelling produces; that is deliberate, see
-    // `a_bare_global_callee_is_still_a_name`.
+    // anywhere in the unit. It is a call through `hook`, as the unparenthesized spelling
+    // is (`a_call_through_a_global_function_pointer_is_indirect`).
     let src = r"
         void (*hook)(int);
         void fire(int x) { (hook)(x); }";
     let (prog, dump) = program_from_string(src);
-    check_has_direct_call(&prog, "fire", "hook");
+    assert!(direct_calls_in(&prog, "fire").is_empty(), "{dump}");
+    assert!(check_match(&dump, "funcptr-call"), "{dump}");
     assert!(
         function_named(&prog, "(hook)").is_none(),
         "the parentheses are not part of the name\n{dump}"
@@ -5452,22 +5452,84 @@ fn a_call_through_a_field_of_a_local_or_parameter_is_unchanged() {
 }
 
 #[test_log::test]
-fn a_bare_global_callee_is_still_a_name() {
-    // The other side, and why the rule is the PATH: a plain `f(1)` and a call through a
-    // global function POINTER are both spelled as a bare identifier, and the frontend
-    // cannot tell them apart (`plain` is only declared). Both keep resolving by name, so a
-    // taint model naming `hook` still matches.
+fn a_call_through_a_global_function_pointer_is_indirect() {
+    // `hook` and `plain` are both bare global names; the unit's declarations tell them
+    // apart: `hook` is a variable, so both spellings call through it.
     let src = r"
         void (*hook)(int);
         void plain(int x);
-        void fire(int x) { hook(x); plain(x); }";
+        void fire(int x) { hook(x); (*hook)(x); plain(x); }";
     let (prog, dump) = program_from_string(src);
-    check_has_direct_call(&prog, "fire", "hook");
-    check_has_direct_call(&prog, "fire", "plain");
-    assert!(
-        check_no_match(&dump, "funcptr-call"),
-        "a bare global name is still a direct call\n{dump}"
+    let callees: Vec<String> = direct_calls_in(&prog, "fire")
+        .into_iter()
+        .flat_map(|(edges, _)| edges)
+        .collect();
+    assert_eq!(callees, vec!["plain".to_string()], "{dump}");
+    assert_eq!(
+        dump.matches("funcptr-call").count(),
+        2,
+        "both spellings call through `hook`\n{dump}"
     );
+    let _strict = super::force_error_on_ast();
+    super::parse_c_program(src).expect("not a frontend gap");
+}
+
+#[test_log::test]
+fn taint_crosses_a_call_through_a_global_function_pointer() {
+    // End to end: `set` installs `id` in the global, `fire` calls through it.
+    let src = r"
+        int id(int p) { return p; }
+        int (*hook)(int);
+        void set(void) { hook = id; }
+        int fire(int x) { set(); return hook(x); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "fire", 0, "");
+}
+
+#[test_log::test]
+fn taint_crosses_a_call_through_an_extern_function_pointer() {
+    // libtiff's error handler: the unit that calls through the pointer only declares it
+    // `extern`; another unit defines it and installs the handler it is passed.
+    let lib = r"
+        int (*hook)(int);
+        void set_hook(int (*h)(int)) { hook = h; }";
+    let app = r"
+        extern int (*hook)(int);
+        void set_hook(int (*h)(int));
+        int id(int p) { return p; }
+        int fire(int x) { set_hook(id); return (*hook)(x); }";
+    let (prog, dump) = program_from_files(&[("lib.c", lib), ("app.c", app)]);
+    assert!(function_named(&prog, "hook").is_none(), "{dump}");
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "fire", 0, "");
+}
+
+#[test_log::test]
+fn a_function_pointer_in_another_unit_does_not_hide_a_function() {
+    // Per-unit evidence: `a.c`'s static variable `hook` says nothing about `b.c`'s `hook`.
+    let a = r"
+        static void (*hook)(int);
+        void arm(void (*h)(int)) { hook = h; }";
+    let b = r"
+        void hook(int x);
+        void fire(int x) { hook(x); }";
+    let (prog, _dump) = program_from_files(&[("a.c", a), ("b.c", b)]);
+    check_has_direct_call(&prog, "fire", "hook");
+}
+
+#[test_log::test]
+fn a_function_declared_through_a_function_typedef_is_called_directly() {
+    // `fn_t id;` declares the function `id`, spelled like a variable; its definition decides.
+    let src = r"
+        typedef int fn_t(int);
+        fn_t id;
+        int fire(int x) { return id(x); }
+        int id(int p) { return p; }";
+    let (prog, dump) = program_from_string(src);
+    check_has_direct_call(&prog, "fire", "id");
+    assert!(check_no_match(&dump, "funcptr-call"), "{dump}");
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "fire", 0, "");
 }
 
 #[test_log::test]
