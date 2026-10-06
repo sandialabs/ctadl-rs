@@ -281,7 +281,7 @@ In Rust it aborts the host process.
   (`model/custom_attributes.rs:358,471`). Reproduced.
 - Long runs of `0x1d`/`0x51` tags recurse once per byte (`:486-488, 613-616`).
 
-**B8. Each MoreSects section recurses once.** *Reproduced.*
+**B8. Each MoreSects section recurses once.** *Fixed:* `read_sections` (`model/body.rs`) loops; the `many_sections_read_in_turn` unit test reads 200,000 sections, and the evidence repros `ms_*.dll` and `moresects_deep.dll` now dump as CecilDump does, which overflows its stack at 200,000 (`/Volumes/Shampoo/b8-b12-b13-2026-10-06/logs/`).
 - **Rust:** `model/body.rs:185-187`.
 - **Effect:** a debug build aborts at about 20k empty sections, i.e. 80 KB of
   input.
@@ -304,11 +304,11 @@ In Rust it aborts the host process.
   (`model/data.rs:124, 315`).
 - **Fix:** use `checked_mul` and validate each table's end.
 
-**B12. RVA resolution can overflow `u32`.** *Reproduced; panics in debug, wraps in release.*
+**B12. RVA resolution can overflow `u32`.** *Fixed:* `Section::contains_rva` and `Section::file_offset` (`raw/pe.rs`) wrap, as Cecil's unchecked uints do, so a section whose end wraps contains no RVA; the `raw::pe` unit tests cover both.
 - **Rust:** `raw/pe.rs:179, 185`.
 - **Reachable from:** method RVAs, FieldRVA, and the resources directory.
 
-**B13. EH clause end offsets can overflow `u32`.** *Reproduced.*
+**B13. EH clause end offsets can overflow `u32`.** *Fixed:* `read_handler` (`model/body.rs`) wraps the sum, as Cecil's int addition does; the `handler_ends_wrap` unit test covers it. The evidence repros `eh_fat_overflow.dll` and `eh_handler_fat_overflow.dll` now print the clause with `IL_END` for the start that is not an instruction, where Cecil fails the body; C12 (c) covers that.
 - **Rust:** `model/body.rs:210, 212` (`try_start + try_len`,
   `handler_start + handler_len`).
 
