@@ -229,7 +229,7 @@ fn exported_type_nesting() {
     );
     let module = Module::read(&data).unwrap();
     let second = module.exported_types().nth(1).unwrap();
-    let name = second.namespace().unwrap().to_string() + "." + second.name().unwrap();
+    let name = second.namespace().unwrap().to_string() + "." + &second.name().unwrap();
     let name = name.trim_start_matches('.');
     assert_eq!(second.full_name().unwrap(), format!("{}/{name}", names[0]));
     assert_eq!(second.scope_name().unwrap(), scope);

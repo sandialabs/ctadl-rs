@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::raw::cursor::Cur;
+use std::borrow::Cow;
 use std::fmt;
 
 /// Index into the `#Strings` heap.
@@ -199,14 +200,16 @@ pub struct StringsHeap<'a> {
 }
 
 impl<'a> StringsHeap<'a> {
-    /// Reads the zero-terminated UTF-8 string at `index`.
+    /// Reads the zero-terminated UTF-8 string at `index`. Invalid UTF-8
+    /// decodes as Cecil's `Encoding.UTF8.GetString` decodes it, each maximal
+    /// invalid subsequence becoming U+FFFD.
     ///
     /// Cecil (`StringHeap.Read`) returns the empty string for index 0 and for
     /// out-of-range indices; we mirror the former but report the latter.
-    pub fn get(&self, index: StringIndex) -> Result<&'a str> {
+    pub fn get(&self, index: StringIndex) -> Result<Cow<'a, str>> {
         let idx = index.0 as usize;
         if idx == 0 {
-            return Ok("");
+            return Ok(Cow::Borrowed(""));
         }
         if idx >= self.data.len() {
             return Err(Error::IndexOutOfRange {
@@ -217,7 +220,7 @@ impl<'a> StringsHeap<'a> {
         }
         let rest = &self.data[idx..];
         let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
-        std::str::from_utf8(&rest[..end]).map_err(|_| Error::bad(idx, "invalid UTF-8 in #Strings"))
+        Ok(String::from_utf8_lossy(&rest[..end]))
     }
 }
 
@@ -332,6 +335,18 @@ impl<'a> GuidHeap<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strings_decode_invalid_utf8_as_dotnet_does() {
+        // "Caf\u{e9}", then an encoded surrogate.
+        let data = b"\0Caf\xc3\xa9\0T\xed\xa0\x80x\0";
+        let heap = StringsHeap { data };
+        let get = |i| heap.get(StringIndex(i)).unwrap();
+        assert!(matches!(get(1), Cow::Borrowed("Caf\u{e9}")));
+        // An index into the middle of a sequence starts at its continuation.
+        assert_eq!(get(5), "\u{fffd}");
+        assert_eq!(get(7), "T\u{fffd}\u{fffd}\u{fffd}x");
+    }
 
     /// `new Guid(s).ToString("d")` on .NET 8, or `None` where it throws.
     const DOTNET: &[(&str, Option<&str>)] = &[

@@ -642,14 +642,14 @@ impl<'a> crate::model::handles::MemberRef<'a> {
                 out.push(' ');
                 self.declaring_full_name(outer, &mut out)?;
                 out.push_str("::");
-                out.push_str(self.name()?);
+                out.push_str(&self.name()?);
             }
             MemberRefSig::Method(sig) => {
                 sig_full_name(self.m, &sig.return_type, ctx, &mut out)?;
                 out.push(' ');
                 self.declaring_full_name(outer, &mut out)?;
                 out.push_str("::");
-                out.push_str(self.name()?);
+                out.push_str(&self.name()?);
                 method_params_full_name(self.m, &sig, ctx, &mut out)?;
             }
         }
@@ -678,7 +678,7 @@ impl<'a> crate::model::handles::MethodSpec<'a> {
                     crate::model::names::typedef_full_name(self.m, decl.rid(), &mut out)?;
                     out.push_str("::");
                 }
-                out.push_str(m.name()?);
+                out.push_str(&m.name()?);
                 write_generic_args(self.m, &args, outer, &mut out)?;
                 method_params_full_name(self.m, &sig, ctx, &mut out)?;
             }
@@ -695,7 +695,7 @@ impl<'a> crate::model::handles::MethodSpec<'a> {
                 out.push(' ');
                 mr.declaring_full_name(outer, &mut out)?;
                 out.push_str("::");
-                out.push_str(mr.name()?);
+                out.push_str(&mr.name()?);
                 write_generic_args(self.m, &args, outer, &mut out)?;
                 method_params_full_name(self.m, &sig, ctx, &mut out)?;
             }

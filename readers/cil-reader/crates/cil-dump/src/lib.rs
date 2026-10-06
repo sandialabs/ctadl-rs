@@ -114,7 +114,7 @@ pub fn dump(module: &Module<'_>, sections: &[Section], dir: Option<&Path>) -> Re
                 "{}={} scope={} flags=0x{:08x}",
                 tok(et.token()),
                 et.full_name()?,
-                et.scope_name().unwrap_or("!error"),
+                et.scope_name().unwrap_or("!error".into()),
                 et.attributes()?,
             )
             .unwrap();

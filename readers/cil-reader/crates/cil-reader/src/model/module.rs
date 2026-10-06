@@ -8,6 +8,7 @@ use crate::raw::heaps::Guid;
 use crate::raw::pe::{ModuleKind, PeImage, TargetArchitecture};
 use crate::raw::tables::*;
 use crate::token::{MetadataToken, TokenType};
+use std::borrow::Cow;
 
 /// A loaded module (Cecil `ModuleDefinition`). Borrows the image bytes; all
 /// handles resolve through it.
@@ -30,8 +31,8 @@ pub mod assembly_attributes {
 /// table). Cecil `AssemblyNameDefinition`/`AssemblyNameReference`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssemblyName<'a> {
-    pub name: &'a str,
-    pub culture: &'a str,
+    pub name: Cow<'a, str>,
+    pub culture: Cow<'a, str>,
     /// (major, minor, build, revision)
     pub version: (u16, u16, u16, u16),
     pub attributes: u32,
@@ -50,8 +51,8 @@ impl<'a> AssemblyName<'a> {
     /// no public key or token.
     pub fn named(name: &'a str) -> AssemblyName<'a> {
         AssemblyName {
-            name,
-            culture: "",
+            name: Cow::Borrowed(name),
+            culture: Cow::Borrowed(""),
             version: (0, 0, 0, 0),
             attributes: 0,
             public_key: &[],
@@ -92,7 +93,7 @@ impl<'a> AssemblyName<'a> {
     /// `AssemblyNameReference.FullName`.
     pub fn full_name(&self) -> String {
         let mut s = String::new();
-        s.push_str(self.name);
+        s.push_str(&self.name);
         s.push_str(", Version=");
         let (a, b, c, d) = self.version;
         s.push_str(&format!("{a}.{b}.{c}.{d}"));
@@ -100,7 +101,7 @@ impl<'a> AssemblyName<'a> {
         s.push_str(if self.culture.is_empty() {
             "neutral"
         } else {
-            self.culture
+            &self.culture
         });
         s.push_str(", PublicKeyToken=");
         let token = self.computed_public_key_token();
@@ -129,19 +130,19 @@ pub mod manifest_resource_attributes {
 /// `AssemblyLinkedResource`).
 pub enum Resource<'a> {
     Embedded {
-        name: &'a str,
+        name: Cow<'a, str>,
         attributes: u32,
         /// Offset into the CLI resources directory.
         offset: u32,
     },
     Linked {
-        name: &'a str,
+        name: Cow<'a, str>,
         attributes: u32,
-        file: &'a str,
+        file: Cow<'a, str>,
         hash: &'a [u8],
     },
     AssemblyLinked {
-        name: &'a str,
+        name: Cow<'a, str>,
         attributes: u32,
         assembly: AssemblyName<'a>,
     },
@@ -187,7 +188,7 @@ fn with_public_key_flag(flags: u32, public_key: &[u8]) -> u32 {
 }
 
 impl<'a> Resource<'a> {
-    pub fn name(&self) -> &'a str {
+    pub fn name(&self) -> &str {
         match self {
             Resource::Embedded { name, .. }
             | Resource::Linked { name, .. }
@@ -210,9 +211,9 @@ impl<'a> Resource<'a> {
 }
 
 /// A module reference (Cecil `ModuleReference`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleRef<'a> {
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub token: MetadataToken,
 }
 
@@ -255,7 +256,7 @@ impl<'a> Module<'a> {
     }
 
     /// The module name from the Module table.
-    pub fn name(&self) -> Result<&'a str> {
+    pub fn name(&self) -> Result<Cow<'a, str>> {
         let row = self.data.md.row::<ModuleRaw>(1)?;
         self.data.md.strings().get(row.name)
     }

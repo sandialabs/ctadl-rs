@@ -15,6 +15,7 @@ use crate::model::typeparser::{ParsedType, parse_int32, split_full_name};
 use crate::raw::pe::{TargetRuntime, parse_runtime};
 use crate::raw::tables::*;
 use crate::token::{MetadataToken, TokenType};
+use std::borrow::Cow;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -293,7 +294,7 @@ impl<'s> Module<'s> {
     fn is_core_library(&self) -> Result<bool> {
         Ok(self
             .assembly_name()?
-            .is_some_and(|a| CORE_LIBRARIES.contains(&a.name))
+            .is_some_and(|a| CORE_LIBRARIES.contains(&a.name.as_ref()))
             && self.metadata().row_count(Table::AssemblyRef) == 0)
     }
 
@@ -306,7 +307,7 @@ impl<'s> Module<'s> {
         }
         let md = self.metadata();
         for (rid, row) in md.table::<AssemblyRefRaw>().rows() {
-            if CORE_LIBRARIES.contains(&md.strings().get(row?.name)?) {
+            if CORE_LIBRARIES.contains(&md.strings().get(row?.name)?.as_ref()) {
                 return Ok(Scope::Assembly(rid));
             }
         }
@@ -418,11 +419,11 @@ impl<'s> Module<'s> {
                     MemberRefSig::Method(_) if !declaring.ty.has_methods()? => Ok(None),
                     MemberRefSig::Field(field_sig) => {
                         let shape = self.type_shape(&field_sig)?;
-                        find_field(declaring, name, &shape, cache)
+                        find_field(declaring, &name, &shape, cache)
                     }
                     MemberRefSig::Method(method_sig) => {
                         let shapes = MethodShapes::of(self, &method_sig)?;
-                        find_method(declaring, name, &shapes, cache)
+                        find_method(declaring, &name, &shapes, cache)
                     }
                 }
             }
@@ -688,7 +689,7 @@ impl ParsedAssemblyName {
 
     fn as_name(&self) -> AssemblyName<'_> {
         AssemblyName {
-            culture: &self.culture,
+            culture: Cow::Borrowed(&self.culture),
             version: self.version,
             public_key_token: &self.public_key_token,
             ..AssemblyName::named(&self.name)
@@ -854,7 +855,7 @@ impl<'c> TypeName<'c> {
             let file = md.strings().get(row.name)?;
             modules.push(
                 cache
-                    .file(file)
+                    .file(&file)
                     .ok_or(Error::Unsupported("netmodule not found"))?,
             );
         }

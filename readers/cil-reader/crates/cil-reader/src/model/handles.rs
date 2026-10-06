@@ -148,8 +148,8 @@ impl<'a> TypeDefOrRef<'a> {
 
     pub fn name(&self) -> Result<String> {
         match self {
-            TypeDefOrRef::Def(t) => t.name().map(str::to_string),
-            TypeDefOrRef::Ref(t) => t.name().map(str::to_string),
+            TypeDefOrRef::Def(t) => t.name().map(Cow::into_owned),
+            TypeDefOrRef::Ref(t) => t.name().map(Cow::into_owned),
             TypeDefOrRef::Spec(t) => t.name(),
         }
     }
@@ -175,7 +175,7 @@ impl<'a> TypeDefOrRef<'a> {
     /// `None` for shapes whose name carries a suffix (arrays, pointers,
     /// by-refs, modifiers) or that name no type (primitives, generic
     /// parameters, function pointers).
-    pub fn type_of_name(&self) -> Result<Option<(&'a str, &'a str)>> {
+    pub fn type_of_name(&self) -> Result<Option<(Cow<'a, str>, Cow<'a, str>)>> {
         let mut sig = match self {
             TypeDefOrRef::Def(t) => return Ok(Some((t.namespace()?, t.name()?))),
             TypeDefOrRef::Ref(t) => return Ok(Some((t.namespace()?, t.name()?))),
@@ -247,11 +247,11 @@ pub mod type_attributes {
 }
 
 impl<'a> TypeDef<'a> {
-    pub fn name(&self) -> Result<&'a str> {
+    pub fn name(&self) -> Result<Cow<'a, str>> {
         self.m.md.strings().get(self.raw()?.name)
     }
 
-    pub fn namespace(&self) -> Result<&'a str> {
+    pub fn namespace(&self) -> Result<Cow<'a, str>> {
         self.m.md.strings().get(self.raw()?.namespace)
     }
 
@@ -349,9 +349,9 @@ impl<'a> TypeDef<'a> {
             name == full_name
         } else {
             full_name
-                .strip_prefix(ns)
+                .strip_prefix(&*ns)
                 .and_then(|rest| rest.strip_prefix('.'))
-                == Some(name)
+                == Some(&*name)
         })
     }
 
@@ -534,11 +534,11 @@ pub struct InterfaceImpl<'a> {
 }
 
 impl<'a> TypeRef<'a> {
-    pub fn name(&self) -> Result<&'a str> {
+    pub fn name(&self) -> Result<Cow<'a, str>> {
         self.m.md.strings().get(self.raw()?.name)
     }
 
-    pub fn namespace(&self) -> Result<&'a str> {
+    pub fn namespace(&self) -> Result<Cow<'a, str>> {
         self.m.md.strings().get(self.raw()?.namespace)
     }
 
@@ -612,7 +612,7 @@ impl<'a> TypeRef<'a> {
         if scope.token_type() != Some(TokenType::AssemblyRef) {
             return Ok(None);
         }
-        Ok(Some(match self.name()? {
+        Ok(Some(match &*self.name()? {
             "Void" => TypeSig::Void,
             "Boolean" => TypeSig::Boolean,
             "Char" => TypeSig::Char,
@@ -694,7 +694,7 @@ impl<'a> FieldDef<'a> {
         Ok(self.attributes()? & field_attributes::SPECIAL_NAME != 0 && self.name()? == "_Deleted")
     }
 
-    pub fn name(&self) -> Result<&'a str> {
+    pub fn name(&self) -> Result<Cow<'a, str>> {
         self.m.md.strings().get(self.raw()?.name)
     }
 
@@ -732,7 +732,7 @@ impl<'a> FieldDef<'a> {
             typedef_full_name(self.m, decl.rid, &mut out)?;
             out.push_str("::");
         }
-        out.push_str(self.name()?);
+        out.push_str(&self.name()?);
         Ok(out)
     }
 
@@ -961,7 +961,7 @@ pub struct Parameter<'a> {
     pub(crate) m: &'a ModuleData<'a>,
     /// 0-based position in the parameter list.
     pub index: usize,
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub attributes: u16,
     /// The Param row token, if a row exists for this parameter.
     pub token: Option<MetadataToken>,
@@ -1021,7 +1021,7 @@ impl<'a> MethodDef<'a> {
         Ok(self.attributes()? & method_attributes::SPECIAL_NAME != 0 && self.name()? == "_Deleted")
     }
 
-    pub fn name(&self) -> Result<&'a str> {
+    pub fn name(&self) -> Result<Cow<'a, str>> {
         self.m.md.strings().get(self.raw()?.name)
     }
 
@@ -1045,7 +1045,7 @@ impl<'a> MethodDef<'a> {
         let attrs = self.attributes()?;
         Ok(attrs & method_attributes::RT_SPECIAL_NAME != 0
             && attrs & method_attributes::SPECIAL_NAME != 0
-            && matches!(self.name()?, ".ctor" | ".cctor"))
+            && matches!(&*self.name()?, ".ctor" | ".cctor"))
     }
 
     /// `MethodDefinition.HasBody` (`MethodDefinition.cs:139-148`): not
@@ -1117,7 +1117,7 @@ impl<'a> MethodDef<'a> {
             .map(|(i, ty)| Parameter {
                 m: self.m,
                 index: i,
-                name: "",
+                name: Cow::Borrowed(""),
                 attributes: 0,
                 token: None,
                 param_type: ty,
@@ -1187,7 +1187,7 @@ impl<'a> MethodDef<'a> {
             typedef_full_name(self.m, decl.rid, &mut out)?;
             out.push_str("::");
         }
-        out.push_str(self.name()?);
+        out.push_str(&self.name()?);
         method_params_full_name(self.m, &sig, ctx, &mut out)?;
         Ok(out)
     }
@@ -1254,11 +1254,11 @@ impl<'a> MethodDef<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PInvokeInfo<'a> {
     pub attributes: u16,
-    pub entry_point: &'a str,
-    pub module: &'a str,
+    pub entry_point: Cow<'a, str>,
+    pub module: Cow<'a, str>,
 }
 
 impl<'a> PropertyDef<'a> {
@@ -1269,7 +1269,7 @@ impl<'a> PropertyDef<'a> {
         Ok(self.attributes()? & SPECIAL_NAME != 0 && self.name()? == "_Deleted")
     }
 
-    pub fn name(&self) -> Result<&'a str> {
+    pub fn name(&self) -> Result<Cow<'a, str>> {
         self.m.md.strings().get(self.raw()?.name)
     }
 
@@ -1357,7 +1357,7 @@ impl<'a> PropertyDef<'a> {
             typedef_full_name(self.m, decl.rid, &mut out)?;
             out.push_str("::");
         }
-        out.push_str(self.name()?);
+        out.push_str(&self.name()?);
         out.push('(');
         for (i, p) in self.parameters()?.iter().enumerate() {
             if i > 0 {
@@ -1378,7 +1378,7 @@ impl<'a> EventDef<'a> {
         Ok(self.attributes()? & SPECIAL_NAME != 0 && self.name()? == "_Deleted")
     }
 
-    pub fn name(&self) -> Result<&'a str> {
+    pub fn name(&self) -> Result<Cow<'a, str>> {
         self.m.md.strings().get(self.raw()?.name)
     }
 
@@ -1454,7 +1454,7 @@ impl<'a> GenericParam<'a> {
     pub fn name(&self) -> Result<Cow<'a, str>> {
         let name = self.m.md.strings().get(self.raw()?.name)?;
         if !name.is_empty() {
-            return Ok(Cow::Borrowed(name));
+            return Ok(name);
         }
         let owner = self.owner()?;
         let position = generic_params(self.m, owner)?
@@ -1508,7 +1508,7 @@ pub enum MemberRefSig {
 }
 
 impl<'a> MemberRef<'a> {
-    pub fn name(&self) -> Result<&'a str> {
+    pub fn name(&self) -> Result<Cow<'a, str>> {
         self.m.md.strings().get(self.raw()?.name)
     }
 
@@ -1551,7 +1551,7 @@ impl<'a> MemberRef<'a> {
                 // Global function imported from another module: Cecil models
                 // the declaring type as ModuleRef; render its name.
                 let row = self.m.md.row::<ModuleRefRaw>(class.rid())?;
-                out.push_str(self.m.md.strings().get(row.name)?);
+                out.push_str(&self.m.md.strings().get(row.name)?);
                 Ok(())
             }
             _ => Err(Error::Unsupported("unsupported MemberRef parent")),
@@ -1611,14 +1611,14 @@ impl<'a> MemberRef<'a> {
                 out.push(' ');
                 self.declaring_full_name(ctx, &mut out)?;
                 out.push_str("::");
-                out.push_str(self.name()?);
+                out.push_str(&self.name()?);
             }
             MemberRefSig::Method(sig) => {
                 sig_full_name(self.m, &sig.return_type, ctx, &mut out)?;
                 out.push(' ');
                 self.declaring_full_name(ctx, &mut out)?;
                 out.push_str("::");
-                out.push_str(self.name()?);
+                out.push_str(&self.name()?);
                 method_params_full_name(self.m, &sig, ctx, &mut out)?;
             }
         }
@@ -1658,7 +1658,7 @@ impl<'a> MethodSpec<'a> {
                     typedef_full_name(self.m, decl.rid, &mut out)?;
                     out.push_str("::");
                 }
-                out.push_str(m.name()?);
+                out.push_str(&m.name()?);
                 generic_args_full_name(self.m, &args, ctx, &mut out)?;
                 method_params_full_name(self.m, &sig, ctx, &mut out)?;
             }
@@ -1675,7 +1675,7 @@ impl<'a> MethodSpec<'a> {
                 out.push(' ');
                 mr.declaring_full_name(ctx, &mut out)?;
                 out.push_str("::");
-                out.push_str(mr.name()?);
+                out.push_str(&mr.name()?);
                 generic_args_full_name(self.m, &args, ctx, &mut out)?;
                 method_params_full_name(self.m, &sig, ctx, &mut out)?;
             }
@@ -1724,11 +1724,11 @@ pub mod exported_type_attributes {
 }
 
 impl<'a> ExportedType<'a> {
-    pub fn name(&self) -> Result<&'a str> {
+    pub fn name(&self) -> Result<Cow<'a, str>> {
         self.m.md.strings().get(self.raw()?.name)
     }
 
-    pub fn namespace(&self) -> Result<&'a str> {
+    pub fn namespace(&self) -> Result<Cow<'a, str>> {
         self.m.md.strings().get(self.raw()?.namespace)
     }
 
@@ -1782,17 +1782,17 @@ impl<'a> ExportedType<'a> {
             }
             let ns = et.namespace()?;
             if !ns.is_empty() {
-                out.push_str(ns);
+                out.push_str(&ns);
                 out.push('.');
             }
-            out.push_str(et.name()?);
+            out.push_str(&et.name()?);
         }
         Ok(out)
     }
 
     /// The scope's display name (file name or assembly-ref name), walking up
     /// through nested exported types.
-    pub fn scope_name(&self) -> Result<&'a str> {
+    pub fn scope_name(&self) -> Result<Cow<'a, str>> {
         let outermost = self.nesting()?.pop().expect("nesting includes self");
         let imp = outermost.implementation()?;
         match imp.token_type() {

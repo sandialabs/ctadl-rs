@@ -47,6 +47,7 @@ static class Program {
             ("enum-moved", EnumMoved),
             ("enum-lib", EnumLib),
             ("enums", Enums),
+            ("utf8-names", Utf8Names),
         };
         foreach (var (name, build) in fixtures) {
             var (mod, patch) = build();
@@ -663,5 +664,38 @@ static class Program {
         d.Fields.Add(new FieldDefUser("_Deleted", new FieldSig(cs.Int32), FieldAttributes.Public));
         d.Methods.Add(Method("_Deleted", MethodSig.CreateStatic(cs.Void), Static));
         return (mod, _ => { });
+    }
+
+    static UTF8String Bytes(params byte[] b) => new UTF8String(b);
+
+    // #Strings entries that are not valid UTF-8. Cecil decodes them with
+    // Encoding.UTF8, which turns each maximal invalid subsequence into
+    // U+FFFD.
+    static (ModuleDef, Action<Metadata>) Utf8Names() {
+        var mod = NewModule("utf8-names");
+        var cs = mod.CorLibTypes;
+        // A namespace with a byte that never starts a sequence, and a name
+        // with an encoded surrogate (ED A0 80).
+        var t = new TypeDefUser(Bytes(0x4e, 0xff), Bytes(0x54, 0xed, 0xa0, 0x80, 0x78), cs.Object.TypeDefOrRef) {
+            Attributes = TypeAttributes.Public | TypeAttributes.BeforeFieldInit,
+        };
+        mod.Types.Add(t);
+        // A field named with an overlong encoding of NUL, of a type whose
+        // TypeRef name is a sequence cut short by the end of the string.
+        var missing = new TypeRefUser(mod, "System", Bytes(0x58, 0xe2, 0x82), cs.AssemblyRef);
+        t.Fields.Add(new FieldDefUser(Bytes(0xc0, 0x80), new FieldSig(new ClassSig(missing)), FieldAttributes.Public));
+        t.Methods.Add(new MethodDefUser(Bytes(0x4d, 0x80), MethodSig.CreateStatic(cs.Void), Impl, Static) {
+            Body = new CilBody { Instructions = { OpCodes.Ret.ToInstruction() } },
+        });
+        // A name whose index points into the middle of a string: past the C3
+        // of the e-acute in "Caf\u00e9", at its continuation byte A9. Create,
+        // unlike Add, gives the string its final offset at once.
+        var mid = NewClass(mod, "", "Mid");
+        mod.Types.Add(mid);
+        return (mod, md => {
+            var cafe = md.StringsHeap.Create(new UTF8String("Caf\u00e9"));
+            Patch(md.TablesHeap.TypeDefTable, md.GetRid(mid), r =>
+                new RawTypeDefRow(r.Flags, cafe + 4, r.Namespace, r.Extends, r.FieldList, r.MethodList));
+        });
     }
 }

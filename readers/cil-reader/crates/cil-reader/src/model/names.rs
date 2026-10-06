@@ -75,14 +75,15 @@ fn token_name(
 }
 
 /// Writes `Declaring/Nested` names, outermost first.
-fn push_nested_names<'n>(
-    names: impl DoubleEndedIterator<Item = (&'n str, &'n str)>,
+fn push_nested_names<S: AsRef<str>>(
+    names: impl DoubleEndedIterator<Item = (S, S)>,
     out: &mut String,
 ) {
     for (i, (ns, name)) in names.rev().enumerate() {
         if i > 0 {
             out.push('/');
         }
+        let (ns, name) = (ns.as_ref(), name.as_ref());
         if !ns.is_empty() {
             out.push_str(ns);
             out.push('.');
@@ -164,7 +165,7 @@ fn generic_param_name(
                 if name.is_empty() {
                     break;
                 }
-                out.push_str(name);
+                out.push_str(&name);
                 return Ok(());
             }
             remaining -= range.length;
