@@ -270,7 +270,7 @@ In Rust it aborts the host process.
 - **Rust:** `model/resolver.rs:189-199` guards only against direct self-loops.
 - **Same loop:** `enum_underlying_of_token` (`model/custom_attributes.rs:410-425`).
 
-**B5. File-forwarding loops in the resolver are unguarded.**
+**B5. File-forwarding loops in the resolver are unguarded.** *Fixed:* `resolve_exported` (`model/resolver.rs`) guards against reentering an exported type whatever its implementation, as A22 notes; `malformed::exported_type_file_loop` (`cil:cecil-tests`) covers a File naming the assembly's own module, and overflows the stack with the guard removed (`/Volumes/Shampoo/b5-b10-2026-10-06/logs/`).
 - **Rust:** `model/resolver.rs:392-398`.
 
 **B6. A type that inherits from itself hangs member lookup.** *Reproduced; Cecil hangs too.*
@@ -291,7 +291,7 @@ In Rust it aborts the host process.
 - **Rust:** `model/sig.rs:347-357` pushes `rank` dimensions, and rank can be up
   to 0x3FFFFFFF.
 
-**B10. Type-name arity overflows or over-allocates.** *Reproduced.*
+**B10. Type-name arity overflows or over-allocates.** *Fixed:* A30 removed the add-overflow panic. `ParsedType::parse` (`model/typeparser.rs`) now returns `None` past `MAX_ARGUMENTS` = 65535 generic arguments in all, the most a type can have (GenericParam's Number is a `u16`); an arity with no argument list costs nothing, so ``A`2000000000`` still parses as Cecil's does. Counting per type was not enough, since ``A`65535[[`` repeated multiplied it (1.8 KB of name took 1.7 GB). The 65535 levels this allows used to overflow the stack in parsing, `cecil_full_name` and the derived `Drop`, `Clone`, `PartialEq` and `Debug`; all now loop. Cecil adds empty arguments one at a time, so it effectively hangs on ``A`2000000000[``, and it overflows its stack on deep nesting. The `typeparser::tests` unit tests cover each case. Measurements are in `/Volumes/Shampoo/b5-b10-2026-10-06/logs/`.
 - **Rust:** `model/typeparser.rs:130-143, 227-244`.
 - ``A`4294967295+B`1`` panics on add overflow in debug builds.
 - ``A`2000000000[`` tries to allocate about 256 GB.
