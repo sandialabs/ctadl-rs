@@ -1159,6 +1159,57 @@ fn switch_fallthrough_flows_to_return() {
 }
 
 #[test_log::test]
+fn a_case_label_inside_an_if_is_entered_from_the_switch() {
+    // `case -1:` labels the `if`'s body; after `return 0` it is reachable only from the
+    // switch.
+    let src = r"
+        int pick(int a, int v) {
+            switch (a) {
+            case 1:
+                return 0;
+                if (a)
+            case -1:
+                    return v;
+            }
+            return 0;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn statements_after_a_case_labelled_if_body_follow_the_if() {
+    // libtiff's tiffcmp.c `CheckShortTag`: tree-sitter puts `g = v2;` inside the `case`
+    // label, but the `if` body is `return 1;` alone, so `g = v2` runs when `v1 != v2`.
+    let src = r"
+        int g;
+        int check(int a, int v1, int v2) {
+            switch (a) { case 1: if (v1 == v2) case -1: return 1; g = v2; }
+            return 0;
+        }";
+    let _strict = super::force_error_on_ast();
+    let (prog, _, dump) = super::parse_c_program(src).expect("not a frontend gap");
+    let (s, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&s, &si, "check", 2, ".g");
+    let _ = dump;
+}
+
+#[test_log::test]
+fn the_tail_of_a_case_two_bodies_deep_is_lowered_once() {
+    // `g = v` follows the outer `if`, and is lowered there only.
+    let src = r"
+        int g;
+        void f(int a, int b, int v) {
+            switch (a) { case 1: if (b) if (v) case 2: return; g = v; }
+        }";
+    let (prog, dump) = program_from_string(src);
+    check_writes_to(&prog, "$globals.g", 1);
+    let (s, si) = get_summary(prog).unwrap();
+    check_param_into_global_in(&s, &si, "f", 2, ".g");
+    let _ = dump;
+}
+
+#[test_log::test]
 fn break_exits_loop_flows_to_return() {
     // `break` inside a loop must ingest; the taint assigned before the `break` still
     // reaches the return.
