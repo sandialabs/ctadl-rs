@@ -5129,6 +5129,85 @@ fn a_cast_shaped_call_is_not_a_frontend_gap() {
     super::parse_c_program(src).expect("a cast written as a call is not a frontend gap");
 }
 
+// ---------------------------------------------------------------------------------------
+// `(T) -1`, `(T) *p`, `(T) &x`: tree-sitter reads a cast whose operand starts with `-`, `+`,
+// `*` or `&` as a binary expression with `(T)` on the left, unless a tighter operator
+// follows (`(T) - x * y` is a cast).
+// ---------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn a_cast_of_a_signed_operand_reads_no_type_name() {
+    // `(T) -1` is not `T - 1`: no global named `T` is read.
+    let src = r"
+        typedef long tmsize_t;
+        long lit(void) { return (tmsize_t) -1; }
+        long neg(long x) { return (tmsize_t) - x; }
+        long pos(long x, long y) { return (tmsize_t) + x - y; }";
+    let (prog, dump) = program_from_string(src);
+    assert!(
+        check_no_match(&dump, "$globals"),
+        "a type name is not a global\n{dump}"
+    );
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "neg", 0, "");
+    check_returns_param_in(&s, &si, "pos", 0, "");
+    check_returns_param_in(&s, &si, "pos", 1, "");
+}
+
+#[test_log::test]
+fn a_cast_of_a_dereference_reads_the_pointee() {
+    // `(T) *p + q` is `(T)(*p) + q`, not `T * p + q`.
+    let src = r"
+        typedef long T;
+        long first(long *p, long q) { return (T) *p + q; }";
+    let (prog, dump) = program_from_string(src);
+    assert!(check_no_match(&dump, "$globals"), "{dump}");
+    check_loads(&prog, "@p0.deref");
+    let s = get_summary(prog).unwrap().0;
+    check_returns_param(&s, 0, ".deref");
+    check_does_not_return_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn a_cast_of_an_element_address_is_the_address() {
+    // tiff2pdf's `TIFFReadEncodedStrip(.., (tdata_t) &buffer[off], ..)`: the callee fills
+    // the caller's buffer.
+    let src = r"
+        typedef char *tdata_t;
+        void fill(char *d, char v) { d[0] = v; }
+        void at(char *buf, int off, char v) { fill((tdata_t) &buf[off], v); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow_in(&s, &si, "at", 2, "", 0, ".deref");
+}
+
+#[test_log::test]
+fn a_cast_of_a_scalars_address_is_its_cell() {
+    // `get((T) &w, v)` writes `w`, as `get(&w, v)` does.
+    let src = r"
+        typedef long *lp;
+        void get(long *out, long v) { *out = v; }
+        long f(long v) { long w = 0; get((lp) &w, v); return w; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn a_parenthesized_variable_minus_one_is_a_subtraction() {
+    // Only a type name makes `(x) - 1` a cast: not a parameter, a global, or a local that
+    // shadows a typedef.
+    let src = r"
+        typedef long T;
+        long g;
+        long param(long x) { return (x) - 1; }
+        long global(void) { return (g) - 1; }
+        long shadow(long v) { long T = v; return (T) - 1; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "param", 0, "");
+    check_returns_global_in(&s, &si, "global", ".g");
+    check_returns_param_in(&s, &si, "shadow", 0, "");
+}
+
 #[test_log::test]
 fn a_statement_expression_callee_is_an_indirect_call() {
     // A macro can expand to a GNU statement expression in callee position,
