@@ -5,5 +5,5 @@ pub mod decoder;
 #[rustfmt::skip]
 pub mod opcodes;
 
-pub use decoder::{Ins, InstructionDecoder, RawOperand, SwitchTargets};
+pub use decoder::{Ins, InstructionDecoder, RawOperand, SwitchTargets, UNDEFINED};
 pub use opcodes::{Code, FlowControl, OpCode, OpCodeType, OperandType, StackBehaviour};

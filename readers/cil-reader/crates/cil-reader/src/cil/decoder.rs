@@ -4,7 +4,9 @@
 //! Port of the operand-decoding half of `CodeReader.ReadCode`/`ReadOperand`
 //! (`Mono.Cecil.Cil/CodeReader.cs:141-221`).
 
-use crate::cil::opcodes::{self, Code, OpCode, OperandType};
+use crate::cil::opcodes::{
+    self, Code, FlowControl, OpCode, OpCodeType, OperandType, StackBehaviour,
+};
 use crate::error::{Error, Result};
 use crate::raw::cursor::Cur;
 use crate::token::MetadataToken;
@@ -63,6 +65,29 @@ impl SwitchTargets<'_> {
     }
 }
 
+/// What Cecil reads an undefined opcode inside its opcode tables as: the
+/// `default(OpCode)` its `OneByteOpCode`/`TwoBytesOpCode` arrays hold there.
+/// Every field is 0, so it is `nop` with an `InlineBrTarget` operand, and
+/// decoding carries on after that operand. No real opcode has an `op1` of 0,
+/// so [`OpCode::is_undefined`] tells it apart.
+pub const UNDEFINED: OpCode = OpCode {
+    code: Code::Nop,
+    op1: 0,
+    op2: 0,
+    flow_control: FlowControl::Branch,
+    opcode_type: OpCodeType::Annotation,
+    operand_type: OperandType::InlineBrTarget,
+    stack_pop: StackBehaviour::Pop0,
+    stack_push: StackBehaviour::Pop0,
+};
+
+impl OpCode {
+    /// Whether this is [`UNDEFINED`], read from a byte that names no opcode.
+    pub fn is_undefined(self) -> bool {
+        self.op1 == 0
+    }
+}
+
 /// One decoded instruction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ins<'a> {
@@ -86,19 +111,19 @@ impl<'a> InstructionDecoder<'a> {
     fn decode_one(&mut self) -> Result<Ins<'a>> {
         let offset = self.cur.pos() as u32;
         let b = self.cur.u8()?;
+        // CodeReader.ReadOpCode indexes Cecil's tables directly: a hole reads
+        // as UNDEFINED, and a byte past the end throws.
         let opcode = if b != 0xfe {
             opcodes::ONE_BYTE
                 .get(b as usize)
-                .copied()
-                .flatten()
                 .ok_or(Error::bad(offset as usize, "invalid opcode"))?
+                .unwrap_or(UNDEFINED)
         } else {
             let b2 = self.cur.u8()?;
             opcodes::TWO_BYTE
                 .get(b2 as usize)
-                .copied()
-                .flatten()
                 .ok_or(Error::bad(offset as usize, "invalid two-byte opcode"))?
+                .unwrap_or(UNDEFINED)
         };
 
         let operand = match opcode.operand_type {
@@ -162,5 +187,46 @@ impl<'a> Iterator for InstructionDecoder<'a> {
             return None;
         }
         Some(self.decode_one())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decode(code: &[u8]) -> Vec<Result<Ins<'_>>> {
+        InstructionDecoder::new(code).collect()
+    }
+
+    #[test]
+    fn table_holes_read_as_nop_with_a_branch_operand() {
+        // 0x24 and FE 08 are holes, each followed by ret: one branches back
+        // to itself, the other to the ret.
+        for (code, target) in [
+            (&[0x24, 0xfb, 0xff, 0xff, 0xff, 0x2a][..], 0),
+            (&[0xfe, 0x08, 0, 0, 0, 0, 0x2a], 6),
+        ] {
+            let ins: Vec<_> = decode(code).into_iter().map(|i| i.unwrap()).collect();
+            assert_eq!(ins.len(), 2);
+            assert!(ins[0].opcode.is_undefined());
+            assert_eq!(ins[0].opcode.name(), "nop");
+            assert_eq!(ins[0].operand, RawOperand::Target(target));
+            assert_eq!(ins[1].opcode.code, Code::Ret);
+            assert!(!ins[1].opcode.is_undefined());
+        }
+    }
+
+    #[test]
+    fn no_defined_opcode_is_undefined() {
+        for op in opcodes::ONE_BYTE.iter().chain(&opcodes::TWO_BYTE).flatten() {
+            assert!(!op.is_undefined(), "{}", op.name());
+        }
+    }
+
+    #[test]
+    fn bytes_past_the_tables_are_errors() {
+        for code in [&[0xe1][..], &[0xfd], &[0xff], &[0xfe, 0x1f], &[0xfe, 0xff]] {
+            assert!(decode(code)[0].is_err(), "{code:x?}");
+        }
     }
 }
