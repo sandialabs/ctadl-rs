@@ -1613,12 +1613,16 @@ ascent_source! {
     locals_key(f, v, key, rest, p) <--
         reach_vp(f, v, p),
         path_set(ps),
-        for (key, rest) in &ps.splits(p).exact;
+        for (key, rest) in ps.splits(p).exact.iter().filter(|(_, rest)| !rest.is_empty());
     relation locals_key_wild(FunctionId, FlowVariable, Path, Path, Path);
     locals_key_wild(f, v, key, rest, p) <--
         reach_vp(f, v, p),
         path_set(ps),
         for (key, rest) in &ps.splits(p).wild;
+    //
+    // The split `(p, [])` is left out. With it, the destination side reads an edge `v1.p1 = v2.p`
+    // against `v2.p` and derives `v1.p1` reached from whatever `v2.p` is, which is exactly what
+    // the formal side derives from the same edge split `(p, [])`: every such row was derived twice.
     // A `locals` path ending in an offset, keyed without it, for the wild match.
     relation locals_wild(FunctionId, FlowVariable, Path, i64, Path);
     locals_wild(f, v, key, m, p) <--
