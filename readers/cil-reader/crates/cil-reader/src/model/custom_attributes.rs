@@ -14,6 +14,7 @@ use crate::model::sig::{ElementType, SigReader, TypeSig};
 use crate::model::typeparser::ParsedType;
 use crate::raw::tables::*;
 use crate::token::{MetadataToken, TokenType};
+use std::borrow::Cow;
 
 /// The error for an enum argument whose type resolves to nothing: Cecil's
 /// `ResolutionException`, which `CustomAttribute.Resolve` swallows, leaving
@@ -145,7 +146,7 @@ pub enum CaValue<'a> {
     U8(u64),
     R4(f32),
     R8(f64),
-    String(&'a str),
+    String(Cow<'a, str>),
     /// A `typeof(...)` argument: the Cecil-style full name of the type.
     TypeName(String),
     /// A boxed (System.Object-typed) argument.
@@ -161,7 +162,7 @@ pub struct CaArgument<'a> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CaNamedArgument<'a> {
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub argument: CaArgument<'a>,
 }
 
@@ -481,7 +482,7 @@ fn read_field_or_prop_type<'a>(
                 .utf8_string()?
                 .ok_or(Error::Unsupported("null enum type name"))?;
             let parsed =
-                ParsedType::parse(name).ok_or(Error::bad(0, "unparseable enum type name"))?;
+                ParsedType::parse(&name).ok_or(Error::bad(0, "unparseable enum type name"))?;
             let full_name = parsed.cecil_full_name();
             // TypeParser.ParseType: a definition in this module, else a
             // reference that ReadCustomAttributeEnum resolves.
@@ -578,7 +579,7 @@ fn read_element_value<'a>(r: &mut SigReader<'a>, ty: &CaType) -> Result<CaValue<
         },
         CaType::Type => match r.utf8_string()? {
             Some(s) => {
-                let parsed = ParsedType::parse(s).ok_or(Error::bad(0, "unparseable type name"))?;
+                let parsed = ParsedType::parse(&s).ok_or(Error::bad(0, "unparseable type name"))?;
                 // Cecil resolves in-module definitions; the display name is
                 // the same either way.
                 CaValue::TypeName(parsed.cecil_full_name())
@@ -751,7 +752,7 @@ impl<'a> SecurityDeclaration<'a> {
                 .utf8_string()?
                 .ok_or(Error::Unsupported("null security attribute type"))?;
             let parsed =
-                ParsedType::parse(name).ok_or(Error::bad(0, "unparseable security attribute"))?;
+                ParsedType::parse(&name).ok_or(Error::bad(0, "unparseable security attribute"))?;
             r.cur.compressed_u32()?; // blob size
             let named = r.cur.compressed_u32()? as u16;
             let mut values = CaValues::default();

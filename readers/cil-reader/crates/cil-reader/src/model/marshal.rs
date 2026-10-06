@@ -5,6 +5,7 @@
 use crate::error::{Error, Result};
 use crate::model::sig::SigReader;
 use crate::raw::Guid;
+use std::borrow::Cow;
 
 /// Raw `NativeType` byte values (ECMA-335 II.23.4 + Cecil `NativeType`).
 pub mod native_type {
@@ -98,9 +99,9 @@ pub enum MarshalInfo<'a> {
     /// `new Guid(string)` parses it, and is all zeros when the blob's is empty.
     CustomMarshaler {
         guid: Guid,
-        unmanaged_type: &'a str,
-        managed_type: &'a str,
-        cookie: &'a str,
+        unmanaged_type: Cow<'a, str>,
+        managed_type: Cow<'a, str>,
+        cookie: Cow<'a, str>,
     },
 }
 
@@ -171,16 +172,16 @@ impl<'a> MarshalInfo<'a> {
             }
             native_type::CUSTOM_MARSHALER => {
                 let at = r.cur.pos();
-                let guid = match r.utf8_string()? {
+                let guid = match r.utf8_string()?.as_deref() {
                     None | Some("") => Guid::default(),
                     Some(text) => Guid::parse(text).ok_or(Error::bad(
                         at,
                         "custom marshaler GUID not in a .NET Guid format",
                     ))?,
                 };
-                let unmanaged_type = r.utf8_string()?.unwrap_or("");
-                let managed_type = r.utf8_string()?.unwrap_or("");
-                let cookie = r.utf8_string()?.unwrap_or("");
+                let unmanaged_type = r.utf8_string()?.unwrap_or_default();
+                let managed_type = r.utf8_string()?.unwrap_or_default();
+                let cookie = r.utf8_string()?.unwrap_or_default();
                 MarshalInfo::CustomMarshaler {
                     guid,
                     unmanaged_type,

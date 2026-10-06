@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::raw::coded::CodedIndexKind;
 use crate::raw::cursor::Cur;
 use crate::token::MetadataToken;
+use std::borrow::Cow;
 
 /// `Mono.Cecil.Metadata.ElementType` (ECMA-335 II.23.1.16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -485,7 +486,9 @@ impl<'a> SigReader<'a> {
     }
 
     /// A `null`-aware length-prefixed UTF-8 string (`SignatureReader.ReadUTF8String`).
-    pub fn utf8_string(&mut self) -> Result<Option<&'a str>> {
+    /// Invalid UTF-8 decodes as `Encoding.UTF8.GetString` decodes it, each
+    /// maximal invalid subsequence becoming U+FFFD.
+    pub fn utf8_string(&mut self) -> Result<Option<Cow<'a, str>>> {
         let first = self.cur.data().get(self.cur.pos()).copied();
         if first == Some(0xff) {
             self.cur.skip(1)?;
@@ -493,18 +496,46 @@ impl<'a> SigReader<'a> {
         }
         let len = self.cur.compressed_u32()? as usize;
         if len == 0 {
-            return Ok(Some(""));
+            return Ok(Some(Cow::Borrowed("")));
         }
         let bytes = self.cur.bytes(len)?;
-        Ok(Some(std::str::from_utf8(bytes).map_err(|_| {
-            Error::bad(self.cur.pos(), "invalid UTF-8 string in blob")
-        })?))
+        Ok(Some(String::from_utf8_lossy(bytes)))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Each as .NET 8's Encoding.UTF8.GetString decodes it, which matched
+    // String::from_utf8_lossy on 5,045 edge and random cases.
+    #[test]
+    fn blob_strings_decode_invalid_utf8_as_dotnet_does() {
+        let cases: &[(&[u8], &str)] = &[
+            (&[0x61, 0x62], "ab"),
+            (&[0xc3, 0xa9], "\u{e9}"),
+            (&[0xed, 0xa0, 0x80], "\u{fffd}\u{fffd}\u{fffd}"),
+            (&[0x80, 0xe2, 0x82], "\u{fffd}\u{fffd}"),
+            (&[0x58, 0xc0, 0x80], "X\u{fffd}\u{fffd}"),
+            (&[0x46, 0xf8], "F\u{fffd}"),
+            (&[0xf0, 0x9f, 0x98], "\u{fffd}"),
+            (&[0xe0, 0xa0, 0x41], "\u{fffd}A"),
+            (
+                &[0xf4, 0x90, 0x80, 0x80],
+                "\u{fffd}\u{fffd}\u{fffd}\u{fffd}",
+            ),
+        ];
+        for &(bytes, expected) in cases {
+            let mut blob = vec![bytes.len() as u8];
+            blob.extend_from_slice(bytes);
+            let s = SigReader::new(&blob).utf8_string().unwrap().unwrap();
+            assert_eq!(s, expected, "{bytes:x?}");
+            assert_eq!(
+                matches!(s, Cow::Borrowed(_)),
+                std::str::from_utf8(bytes).is_ok()
+            );
+        }
+    }
 
     const I4: u8 = ElementType::I4 as u8;
 

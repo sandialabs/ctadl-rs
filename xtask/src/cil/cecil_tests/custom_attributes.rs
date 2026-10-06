@@ -110,7 +110,7 @@ fn string_argument_on_type() {
     assert_eq!(values.constructor_args.len(), 1);
     assert_argument(
         "System.String",
-        &CaValue::String("bar"),
+        &CaValue::String("bar".into()),
         &values.constructor_args[0],
     );
 }
@@ -159,7 +159,7 @@ fn string_argument_on_assembly() {
     let module = Module::read(&data).unwrap();
     let attribute = get_attribute(&module, module.assembly_token(), "Foo");
     let args = attribute.values().unwrap().constructor_args;
-    assert_argument("System.String", &CaValue::String("bingo"), &args[0]);
+    assert_argument("System.String", &CaValue::String("bingo".into()), &args[0]);
 }
 
 // Test/Mono.Cecil.Tests/CustomAttributesTests.cs:100 (CharArray)
@@ -541,21 +541,21 @@ fn generic_attribute_string() {
     let values = attribute.values().unwrap();
     assert_argument(
         "System.String",
-        &CaValue::String("t"),
+        &CaValue::String("t".into()),
         &values.constructor_args[0],
     );
     assert_eq!(values.fields.len(), 1);
     assert_eq!(values.fields[0].name, "F");
     assert_argument(
         "System.String",
-        &CaValue::String("f"),
+        &CaValue::String("f".into()),
         &values.fields[0].argument,
     );
     assert_eq!(values.properties.len(), 1);
     assert_eq!(values.properties[0].name, "P");
     assert_argument(
         "System.String",
-        &CaValue::String("p"),
+        &CaValue::String("p".into()),
         &values.properties[0].argument,
     );
 }
@@ -608,7 +608,7 @@ fn null_char_in_string() {
     let attrs = module.custom_attributes_of(ty.token()).unwrap();
     assert_eq!(attrs.len(), 1);
     let args = attrs[0].values().unwrap().constructor_args;
-    let CaValue::String(value) = args[0].value else {
+    let CaValue::String(value) = &args[0].value else {
         panic!("expected string")
     };
     assert_eq!(value.chars().count(), 8);
@@ -642,7 +642,7 @@ fn ordered_attributes() {
         let values = attr.values().unwrap();
         assert_eq!(
             values.fields[0].argument.value,
-            CaValue::String(field_value)
+            CaValue::String(field_value.into())
         );
     }
 }
