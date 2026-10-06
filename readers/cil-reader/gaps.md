@@ -327,12 +327,12 @@ In Rust it aborts the host process.
 For each of these, Cecil returns an empty, zero or lossy value, or skips the
 bad part, where the port returns `Err`. Sometimes that fails the whole image.
 
-**C1. Invalid UTF-8 in `#Strings` is an error.**
+**C1. Invalid UTF-8 in `#Strings` is an error.** *Fixed:* `StringsHeap::get` (`raw/heaps.rs`) returns a `Cow` from `String::from_utf8_lossy`, which replaces what `Encoding.UTF8.GetString` replaces (see C2), and the name accessors and the structs that hold names follow; `gap-utf8-names.dll` covers it, an index into the middle of a sequence included.
 - **Rust:** `raw/heaps.rs:286`.
 - **Cecil:** substitutes U+FFFD (`Mono.Cecil.Metadata/StringHeap.cs:57`).
 - **Fix needs:** a `Cow` return type.
 
-**C2. Invalid UTF-8 in blob strings is an error.** *Reproduced.*
+**C2. Invalid UTF-8 in blob strings is an error.** *Fixed:* `SigReader::utf8_string` (`model/sig.rs`) returns a `Cow` from `String::from_utf8_lossy`, whose replacements matched .NET 8's `Encoding.UTF8.GetString` on 5,045 edge and random byte strings (`/Volumes/Shampoo/c7-c2-2026-10-06/utf8/`); `gap-utf8.il.dll` covers attribute strings, names and a typeof name. Roslyn's encoding of lone surrogates is still unverified, but they now decode as Cecil decodes them either way.
 - **Rust:** `model/sig.rs:456-470`.
 - **Affects:** attribute strings, `typeof` names, enum names, named-argument
   names, security attribute names, and marshaler strings. One bad string fails
@@ -357,13 +357,14 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Cecil:** returns empty values, and its signature readers read across the
   whole heap.
 
-**C7. Undefined opcodes fail the whole method body.** *Reproduced.*
+**C7. Undefined opcodes fail the whole method body.** *Fixed:* a hole in the opcode tables decodes as `UNDEFINED` (`cil/decoder.rs`), Cecil's `default(OpCode)`, which `OpCode::is_undefined` tells apart; `gap-opcodes.il.dll` covers it. A byte past the end of the tables, where Cecil throws, no longer fails the body: `MethodBody::decode_error` (`model/body.rs`) gives where decoding stopped, and the instructions before it, the locals and the EH clauses read as usual. `formatted()` fails there; cil-dump prints the partial body, where CecilDump prints `!error`, so `malformed::opcode_past_the_tables` (`cil:cecil-tests`) covers it instead of a fixture.
 - **Rust:** `cil/decoder.rs:89-102`.
 - **Cecil:** decodes the byte as `nop` with a 4-byte branch operand and
   continues. Obfuscators rely on this.
 
 **C8. An operand that runs past `code_size` fails the body.**
 - **Cecil:** reads past the end and continues.
+- **Since C7:** the body keeps the instructions before it, with `decode_error` set.
 
 **C9. Code that ends exactly at end of file.**
 - **Rust:** `model/body.rs:122` uses `>`, so it decodes the code.
