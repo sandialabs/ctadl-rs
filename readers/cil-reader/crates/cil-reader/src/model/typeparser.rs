@@ -33,20 +33,24 @@ pub struct ParsedType {
     pub assembly: Option<String>,
 }
 
-/// The most generic parameters a type can have: GenericParam's Number
-/// column is a `u16`. A name with a larger arity names no type, and Cecil
-/// would add that many empty arguments one at a time.
-const MAX_ARITY: i32 = u16::MAX as i32;
+/// The most generic arguments a name may have in all, nested ones
+/// included. A type has at most `u16::MAX` generic parameters, since
+/// GenericParam's Number column is a `u16`. Past the end of the input each
+/// argument is an empty name, which Cecil adds one at a time, so without
+/// a bound a short name could ask for billions of them.
+const MAX_ARGUMENTS: i32 = u16::MAX as i32;
 
 struct Parser<'s> {
     chars: Vec<char>,
     position: usize,
+    /// Generic arguments parsed so far, against [`MAX_ARGUMENTS`].
+    arguments: i32,
     _s: std::marker::PhantomData<&'s ()>,
 }
 
 impl ParsedType {
-    /// `None` for an empty name, where Cecil returns null, or for one whose
-    /// arity is over [`MAX_ARITY`].
+    /// `None` for an empty name, where Cecil returns null, or for one with
+    /// more than [`MAX_ARGUMENTS`] generic arguments.
     pub fn parse(fullname: &str) -> Option<ParsedType> {
         if fullname.is_empty() {
             return None;
@@ -54,6 +58,7 @@ impl ParsedType {
         let mut parser = Parser {
             chars: fullname.chars().collect(),
             position: 0,
+            arguments: 0,
             _s: std::marker::PhantomData,
         };
         parser.parse_type(true)
@@ -144,9 +149,6 @@ impl Parser<'_> {
         }
         ty.arity = arity;
 
-        if arity > MAX_ARITY {
-            return None;
-        }
         if arity > 0 {
             ty.generic_arguments = self.parse_generic_arguments(arity)?;
         }
@@ -238,6 +240,10 @@ impl Parser<'_> {
         if self.peek() != Some('[') {
             return Some(args);
         }
+        if arity > MAX_ARGUMENTS - self.arguments {
+            return None;
+        }
+        self.arguments += arity;
         self.try_parse('[');
         for _ in 0..arity {
             let fq_argument = self.try_parse('[');
@@ -381,9 +387,9 @@ mod tests {
     }
 
     // A truncated name keeps an empty argument per arity, as Cecil's does,
-    // up to the most a type can have.
+    // up to the most a name may have in all.
     #[test]
-    fn arity_is_capped() {
+    fn arguments_are_capped() {
         let t = ParsedType::parse("A`3[").unwrap();
         assert_eq!(t.generic_arguments, vec![ParsedType::default(); 3]);
         let t = ParsedType::parse("A`65535[").unwrap();
@@ -392,6 +398,15 @@ mod tests {
         assert_eq!(ParsedType::parse("A`2000000000["), None);
         assert_eq!(ParsedType::parse("A`65535+B`1["), None);
         assert_eq!(ParsedType::parse("A`1[[B`2000000000[]]]"), None);
+        // Nested arguments count toward the same total.
+        let t = ParsedType::parse("A`2[[B`65533[]]]").unwrap();
+        assert_eq!(t.generic_arguments[0].generic_arguments.len(), 65533);
+        assert_eq!(ParsedType::parse("A`2[[B`65534[]]]"), None);
+        assert_eq!(ParsedType::parse(&"A`65535[[".repeat(2)), None);
+        // An arity with no arguments to parse costs nothing.
+        let t = ParsedType::parse("A`2000000000").unwrap();
+        assert_eq!(t.arity, 2_000_000_000);
+        assert!(t.generic_arguments.is_empty());
     }
 
     #[test]
