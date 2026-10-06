@@ -266,7 +266,7 @@ In Rust it aborts the host process.
 - ExportedType self or forward references: `model/handles.rs:1514-1562`. Cecil
   throws instead.
 
-**B4. A TypeRef scope cycle makes the resolver loop forever and use unbounded memory.** *Reproduced: 3.9 GB in 3 s.*
+**B4. A TypeRef scope cycle makes the resolver loop forever and use unbounded memory.** *Fixed:* `TypeName::of_type_ref` (`model/resolver.rs`) treats a TypeRef chain longer than its table as a cycle and errs, and attribute enum lookup now resolves through `Module::resolve_type`, so it stops at the same check. `malformed::type_ref_scope_cycles` and `malformed::attribute_enum_scope_cycle` (`cil:cecil-tests`) cover both paths. The evidence repro `trefcycle.dll` now fails at once with a 1.5 MB peak, and a run with the check removed passes 2 GiB (`/Volumes/Shampoo/b4-2026-10-06/logs/`). Cecil overflows its stack here instead.
 - **Rust:** `model/resolver.rs:189-199` guards only against direct self-loops.
 - **Same loop:** `enum_underlying_of_token` (`model/custom_attributes.rs:410-425`).
 
