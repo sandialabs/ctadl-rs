@@ -74,6 +74,10 @@ which = "6"
 elsa = "1.11"
 immortal = { path = "../immortal" }
 
+# `phys_footprint_mb` on Windows reads the process's commit charge through `GetProcessMemoryInfo`.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+
 [dev-dependencies]
 test-log = "0.2.19"
 # Building the split APKs of an app bundle (native-only, resource-only) as test fixtures.
