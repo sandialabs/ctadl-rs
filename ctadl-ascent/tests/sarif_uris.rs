@@ -159,7 +159,12 @@ fn locations_carry_a_base_the_run_defines() {
             "uriBaseId {base} resolves to {root}, which is not a directory URI"
         );
         // Resolving the URI against its base has to land on the file that was imported.
-        let path = PathBuf::from(root.trim_start_matches("file://")).join(&uri);
+        // Through `Url`, not by stripping `file://`: on Windows that leaves `/C:/...`.
+        let path = url::Url::parse(root)
+            .ok()
+            .and_then(|u| u.to_file_path().ok())
+            .unwrap_or_else(|| panic!("uriBaseId {base} is not a file URI: {root}"))
+            .join(&uri);
         assert!(path.is_file(), "{root} + {uri} is not a file ({path:?})");
     }
 }
