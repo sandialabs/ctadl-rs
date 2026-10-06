@@ -229,7 +229,7 @@ Sections:
 - **Example:** ``A` 1[[System.Int32]]`` gives ``A` 1<System.Int32>`` in Cecil and
   ``A` 1[][]`` in the port.
 
-**A31. A vararg MemberRef with a MethodDef parent resolves `!!n` to the method's declared names.** *Medium confidence.*
+**A31. A vararg MemberRef with a MethodDef parent resolves `!!n` to the method's declared names.** *Fixed:* `MemberRef::sig_context` (`model/handles.rs`) takes the declaring type's context only, as Cecil reads the signature against a new `MethodReference`; `gap-methoddef-parent.dll` covers it. Only a generic MethodDef shows it, which C# rejects (CS0224) and ilasm 10.0.11 cannot emit a call to (it writes a TypeRef parent and a truncated signature); evidence is in `/Volumes/Shampoo/a31-2026-10-06/`. See D10 for how the same reading changes Cecil's resolution.
 - **Rust:** `model/handles.rs:1363-1367`.
 - **Cecil:** prints unbound `!!n`. Very rare.
 
@@ -496,6 +496,18 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
   so each later method of the type is read from the wrong offset.
 - **Rust:** reads each row in place and only leaves the method out.
 - **Fixture:** `gap-deleted.dll` puts its deleted method last in its type.
+
+**D10. Cecil does not resolve a vararg MemberRef whose signature has `!!n`.**
+- **Cecil:** reading `!!n` against the new `MethodReference` adds generic
+  parameters to it (`CheckGenericContext`), so `GetMethod` skips the
+  non-generic vararg method on `HasGenericParameters`
+  (`Mono.Cecil/MetadataResolver.cs:276-280`). A generic method passing a `T`
+  through `__arglist` makes Roslyn emit this, e.g.
+  `R::V(System.Int32,...,!!0)`. Cecil also never resolves a call to a generic
+  vararg method, whose calling convention `IsVarArg` does not match.
+- **Rust:** resolves both to the method.
+- **Fixture:** none; `cil:cecil-compare` would differ. Repros are
+  `roslyn.dll` and `a31c.dll` in `/Volumes/Shampoo/a31-2026-10-06/`.
 
 ---
 
