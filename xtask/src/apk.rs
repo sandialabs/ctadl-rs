@@ -341,9 +341,9 @@ const REPORT_SECTIONS: &[&str] = &[
 /// instruction, and every other assertion here would still pass. The three sum to
 /// `REPORT_VIRTUAL_SITES`, which the invariants check independently.
 const REPORT_DISPATCH_SITES: &[(&str, u64)] = &[
-    ("virtual", 82_375),
-    ("interface", 23_129),
-    ("super", 1_636),
+    ("virtual", 78_106),
+    ("interface", 21_532),
+    ("super", 1_625),
     ("unknown", 0),
 ];
 
