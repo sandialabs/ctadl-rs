@@ -147,6 +147,41 @@ fn type_ref_scope_cycles() {
     assert_eq!(own.scope_name().unwrap(), module.name().unwrap());
 }
 
+// An attribute argument whose enum type is a TypeRef in a scope cycle.
+// Cecil's MetadataResolver follows the cycle until its stack overflows.
+fn attribute_enum_scope_cycle() {
+    let mut data = read_fixture("CustomAttributes.cs.dll");
+    let (ace_flags, other) = {
+        let module = Module::read(&data).unwrap();
+        let rids = 1..=module.metadata().row_count(Table::TypeRef);
+        let named = |name: &str| {
+            rids.clone()
+                .find(|&rid| type_ref(&module, rid).full_name().unwrap() == name)
+                .unwrap()
+        };
+        (
+            named("System.Security.AccessControl.AceFlags"),
+            named("System.Object"),
+        )
+    };
+    patch_column(&mut data, Table::TypeRef, ace_flags, 0, coded(other, 2, 3));
+    patch_column(&mut data, Table::TypeRef, other, 0, coded(ace_flags, 2, 3));
+    let module = Module::read(&data).unwrap();
+    let ty = module.get_type("Ace").unwrap().unwrap();
+    let attribute = module
+        .custom_attributes_of(ty.token())
+        .unwrap()
+        .into_iter()
+        .find(|a| a.attribute_type_name().unwrap().starts_with("Foo"))
+        .unwrap();
+    let loader = DirectoryLoader::new(Vec::new());
+    let cache = AssemblyCache::new(&loader);
+    assert!(is_unsupported(
+        attribute.values_with(&cache),
+        "TypeRef scope cycle"
+    ));
+}
+
 // Cecil reads ExportedType rows in order, taking a nested one's declaring
 // type from the rows before it, and throws on one nested in itself or in a
 // later row.
@@ -295,6 +330,7 @@ fn type_spec_chains() {
 pub(super) const TESTS: &[Test] = &[
     ("nested_class_cycles", nested_class_cycles),
     ("type_ref_scope_cycles", type_ref_scope_cycles),
+    ("attribute_enum_scope_cycle", attribute_enum_scope_cycle),
     ("exported_type_nesting", exported_type_nesting),
     ("type_spec_chains", type_spec_chains),
 ];
