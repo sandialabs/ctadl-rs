@@ -1341,6 +1341,15 @@ macro_rules! call_arg {
     };
 }
 
+/// Whether the call-target transitive rule joins on `cta_key` (S11), the default. An experiment
+/// switch for S12 in things-to-improve.md: `CTADL_CTA_UNKEYED=1` runs the unkeyed join S11
+/// replaced instead, joined on `(f, v2)` and tested with `substitute_prefix`. It has no wild half,
+/// so it is only meaningful on programs without offset paths (JVM and Dex).
+fn keyed_cta() -> bool {
+    static KEYED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *KEYED.get_or_init(|| std::env::var_os("CTADL_CTA_UNKEYED").is_none())
+}
+
 /// Creates a data flow graph for taint analysis.
 /// Reads this process's current physical footprint (macOS `phys_footprint`, the same number
 /// Activity Monitor's "Memory" column and `footprint(1)` report) in MB. Used for the
@@ -1610,6 +1619,10 @@ ascent_source! {
     // Held in the `locals` store: same shape, `(f, v, key)` probed exactly, `(rest, p)` leaves.
     #[ds($crate::index_engine::locals_trie)]
     relation locals_key(FunctionId, FlowVariable, Path, Path, Path);
+    //
+    // The split `(p, [])` is left out. With it, the destination side reads an edge `v1.p1 = v2.p`
+    // against `v2.p` and derives `v1.p1` reached from whatever `v2.p` is, which is exactly what
+    // the formal side derives from the same edge split `(p, [])`: every such row was derived twice.
     locals_key(f, v, key, rest, p) <--
         reach_vp(f, v, p),
         path_set(ps),
@@ -1619,10 +1632,6 @@ ascent_source! {
         reach_vp(f, v, p),
         path_set(ps),
         for (key, rest) in &ps.splits(p).wild;
-    //
-    // The split `(p, [])` is left out. With it, the destination side reads an edge `v1.p1 = v2.p`
-    // against `v2.p` and derives `v1.p1` reached from whatever `v2.p` is, which is exactly what
-    // the formal side derives from the same edge split `(p, [])`: every such row was derived twice.
     // A `locals` path ending in an offset, keyed without it, for the wild match.
     relation locals_wild(FunctionId, FlowVariable, Path, i64, Path);
     locals_wild(f, v, key, m, p) <--
@@ -2137,15 +2146,26 @@ ascent_source! {
     relation cta_key(FunctionId, FlowVariable, Path, Path, CallTargetObject);
     cta_key(f, v, key, rest, tgt) <--
         call_target_assign_like(f, v, p, tgt),
+        if keyed_cta(),
         tag_closure_func(f),
         path_set(ps),
         for (key, rest) in ps.splits_any(p).exact.iter();
     relation cta_key_wild(FunctionId, FlowVariable, Path, Path, CallTargetObject);
     cta_key_wild(f, v, key, rest, tgt) <--
         call_target_assign_like(f, v, p, tgt),
+        if keyed_cta(),
         tag_closure_func(f),
         path_set(ps),
         for (key, rest) in ps.splits_any(p).wild.iter();
+    // The unkeyed rule this replaced, kept behind `CTADL_CTA_UNKEYED` to measure S12 (see
+    // `keyed_cta`). With the switch on, `cta_key` stays empty and so do the keyed rules below.
+    call_target_assign_like(f, v1, p_new, tgt) <--
+        tag_closure_func(f),
+        if !keyed_cta(),
+        call_target_assign_like(f, v2, p_context, tgt),
+        assign_like(f, v1, p1, v2, p2),
+        if let Some(p_new) = p_context.substitute_prefix(p2, p1),
+        paths(&p_new);
     // The step emits the new tag's exact keys itself. Split by the rules above, a tag would
     // reach `cta_key` an iteration after it was derived, and a chain of edges would take two
     // iterations per edge instead of one. (The wild keys, which only offset paths have, still
