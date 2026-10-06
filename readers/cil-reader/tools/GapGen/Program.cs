@@ -35,6 +35,7 @@ static class Program {
         var fixtures = new (string, Func<(ModuleDef, Action<Metadata>)>)[] {
             ("nested-public", NestedPublic),
             ("generic-names", GenericNames),
+            ("methoddef-parent", MethodDefParent),
             ("property-sigs", PropertySigs),
             ("enum-scopes", EnumScopes),
             ("key-no-flag", () => PublicKeys("key-no-flag", flag: false, key: Key)),
@@ -172,6 +173,32 @@ static class Program {
                 Patch(md.TablesHeap.GenericParamTable, md.GetRid(gp), r =>
                     new RawGenericParamRow(r.Number, r.Flags, r.Owner, 0, r.Kind));
         });
+    }
+
+    // A MemberRef whose parent is a generic MethodDef, the form of a
+    // vararg call to a MethodDef. Cecil reads its signature against a new
+    // MethodReference, so !0 takes the declaring type's name and !!0 stays
+    // unbound. (A vararg generic method is left out: ECMA and C# forbid it,
+    // and Cecil does not resolve calls to one.)
+    static (ModuleDef, Action<Metadata>) MethodDefParent() {
+        var mod = NewModule("methoddef-parent");
+        var cs = mod.CorLibTypes;
+        var g = NewClass(mod, "", "G`1");
+        g.GenericParameters.Add(new GenericParamUser(0, GenericParamAttributes.NonVariant, "X"));
+        mod.Types.Add(g);
+        var var0 = new GenericVar(0, g);
+        var mvar0 = new GenericMVar(0);
+
+        var v = Method("V", MethodSig.CreateStaticGeneric(1, cs.Void, mvar0, var0), Static);
+        v.GenericParameters.Add(new GenericParamUser(0, GenericParamAttributes.NonVariant, "T"));
+        g.Methods.Add(v);
+
+        var mref = new MemberRefUser(mod, "V", MethodSig.CreateStatic(cs.Void, mvar0, var0), v);
+        g.Methods.Add(Method("Caller", MethodSig.CreateStatic(cs.Void), Static,
+            OpCodes.Ldnull.ToInstruction(),
+            OpCodes.Ldnull.ToInstruction(),
+            OpCodes.Call.ToInstruction(mref)));
+        return (mod, _ => { });
     }
 
     // Property signatures whose parameters are junk. Cecil

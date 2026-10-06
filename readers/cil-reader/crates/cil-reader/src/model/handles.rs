@@ -1585,11 +1585,19 @@ impl<'a> MemberRef<'a> {
                     _ => GenericContext::default(),
                 }
             }
-            Some(TokenType::Method) => MethodDef {
+            // A vararg call to a MethodDef: Cecil reads the signature against
+            // a new MethodReference (`ReadMethodMemberReference`), so Vars
+            // resolve against the method's declaring type and MVars stay
+            // unbound.
+            Some(TokenType::Method) => match (MethodDef {
                 m: self.m,
                 rid: class.rid(),
-            }
-            .generic_context()?,
+            })
+            .declaring_type()?
+            {
+                Some(t) => GenericContext::for_type(t.token()),
+                None => GenericContext::default(),
+            },
             _ => GenericContext::default(),
         })
     }
