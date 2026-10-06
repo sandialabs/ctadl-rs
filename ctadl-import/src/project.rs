@@ -243,6 +243,14 @@ pub fn import_format_version_beside<P: AsRef<Path>>(path: P) -> Option<String> {
     Some(value.get("version")?.as_str()?.to_string())
 }
 
+/// Whether a stored directory is an absolute path written down by an older build, rather than one
+/// relative to the store root. `has_root` and not `is_absolute`: a store written on macOS or Linux
+/// and copied to Windows carries `/Volumes/...`, which Windows does not call absolute (it has no
+/// drive), yet it is no more relative to this store than `C:\...` would be. On Unix the two agree.
+fn written_absolute(dir: &Path) -> bool {
+    dir.has_root()
+}
+
 /// Represents our local import of an artifact
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub struct ArtifactImport {
@@ -365,7 +373,7 @@ impl ArtifactImport {
         // An absolute directory here was written by a build that recorded where the store
         // happened to live, so it would send a copied store back to the original. The layout is
         // fixed, so the name says what the directory is.
-        if result.import_dir.is_absolute() {
+        if written_absolute(&result.import_dir) {
             result.import_dir = StorePaths::relative_import_dir(&result.name);
         }
         // Refuse a stale import here rather than letting the caller hit an opaque `bitcode` error
@@ -762,7 +770,7 @@ impl AnalysisProject {
             .err_context(|| format!("deserializing config: '{}'", path.display()))?;
         // See [`ArtifactImport::load`]: an absolute directory came from a build that wrote down
         // where the store was, and would pin a copied store to the original location.
-        if result.project_dir.is_absolute() {
+        if written_absolute(&result.project_dir) {
             result.project_dir = StorePaths::relative_project_dir(&result.name);
         }
         Ok(result)
