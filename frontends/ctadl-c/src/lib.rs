@@ -823,6 +823,10 @@ struct Context<'a> {
     /// the macro-suppression idiom `(free)(p)` quiet. Read through
     /// [`Context::names_a_value`].
     declared_functions: HashSet<String>,
+    /// Names this unit declares at file scope as variables, `extern` included. A call
+    /// `hook(v)` through one calls the function pointer it holds; see
+    /// [`Context::collect_call`]. Per unit: another unit's `static` variable says nothing here.
+    global_variables: HashSet<String>,
     /// `ERROR` nodes already reported as unparsable constructs, by `Node::id`, so one
     /// syntax error draws one warning. See [`Context::report_unparsable_construct`].
     reported_parse_errors: HashSet<usize>,
@@ -1098,6 +1102,7 @@ fn lower_units(
             struct_layouts: std::mem::take(&mut registries[index].struct_layouts),
             type_names: type_names.clone(),
             declared_functions: declared_functions.clone(),
+            global_variables: std::mem::take(&mut registries[index].global_variables),
             unit_key: if record_spans {
                 unit.artifact_key().map(|key| (key, unit.source.len()))
             } else {
@@ -1500,16 +1505,29 @@ fn declarator_member_name<'s>(decl: Node<'_>, source: &'s str) -> Option<(&'s st
 }
 
 /// What a translation unit's declarations say about names, collected by
-/// [`collect_registry`] before any function is lowered. The record layouts stay per unit;
-/// the two name sets are unioned across the import by [`lower_units`], because units share
-/// the headers the input did not expand: a name one unit uses as a type (`u_int`) is a type
-/// in a unit that only casts to it, and a prototype in one unit says what the name is in
-/// all of them.
+/// [`collect_registry`] before any function is lowered. The record layouts and global
+/// variables stay per unit; the other two name sets are unioned across the import by
+/// [`lower_units`], because units share the headers the input did not expand: a name one
+/// unit uses as a type (`u_int`) is a type in a unit that only casts to it, and a prototype
+/// in one unit says what the name is in all of them.
 #[derive(Debug, Default)]
 struct UnitRegistry {
     struct_layouts: HashMap<String, Vec<MemberSlot>>,
     type_names: HashSet<String>,
     declared_functions: HashSet<String>,
+    global_variables: HashSet<String>,
+}
+
+/// Is this node outside every function body?
+fn at_file_scope(node: Node<'_>) -> bool {
+    let mut ancestor = node.parent();
+    while let Some(n) = ancestor {
+        if matches!(n.kind(), "compound_statement" | "function_definition") {
+            return false;
+        }
+        ancestor = n.parent();
+    }
+    true
 }
 
 /// Fill `registry` from the subtree under `node`, in one walk: record layouts (a tagged
@@ -1530,12 +1548,20 @@ fn collect_registry(source: &str, node: Node<'_>, registry: &mut UnitRegistry) {
     if node.kind() == "declaration" {
         // A prototype, `int zzz(int);`. Only function-shaped declarators count:
         // `void (*fp)(int);` declares a variable, and `function_head` says no to it.
+        let file_scope = at_file_scope(node);
         let mut dcursor = node.walk();
         for declarator in node.children_by_field_name("declarator", &mut dcursor) {
             if let Some(head) = function_head(declarator) {
                 registry
                     .declared_functions
                     .insert(to_str(&head.name, source).to_string());
+            } else if file_scope
+                && let (Some(name), nearest) = declarator_shape(declarator)
+                && nearest != "function_declarator"
+            {
+                registry
+                    .global_variables
+                    .insert(to_str(&name, source).to_string());
             }
         }
     }
@@ -4137,9 +4163,14 @@ impl<'a> Context<'a> {
         // A GNU statement expression in callee position produces a VALUE, and calling a
         // value is calling through it. The access path cannot say so -- the value node may
         // resolve to a bare global path, exactly the shape of a global callee that IS a
-        // name (see `a_bare_global_callee_is_still_a_name`) -- so ask the construct itself;
-        // left as a name, an empty-bodied function would be invented per call site.
-        let callee_is_a_value = is_statement_expression(func_node);
+        // name -- so ask the construct itself; left as a name, an empty-bodied function
+        // would be invented per call site. Likewise a global the unit declares as a
+        // variable (`void (*hook)(int);`): `hook(v)` calls what it holds. A defined function
+        // wins: `fn_t f;` declares a function through a typedef, spelled like a variable.
+        let callee_is_a_value = is_statement_expression(func_node)
+            || (func_node.kind() == "identifier"
+                && self.global_variables.contains(func_name)
+                && !self.functions.contains_key(func_name));
 
         // Direct or indirect, decided by what the callee *resolved to*, not how it was
         // spelled: a name is a direct call; a location holding a function pointer is a call
@@ -4170,12 +4201,11 @@ impl<'a> Context<'a> {
             }
             // A global's access path is `$globals.<name>.<fields>`, so the base being the
             // globals object says nothing about whether the callee is a name -- the PATH
-            // does. `$globals.hook` IS the object `hook` and stays name-resolved (see
-            // `a_bare_global_callee_is_still_a_name`); anything past that leading segment
+            // does. `$globals.f` alone is the name `f`; anything past that leading segment
             // is a location *inside* the object, reached by a load -- a function pointer a
             // file-scope object holds, not a function. The second disjunct reaches the
-            // same conclusion from the construct, for the one shape whose path cannot say
-            // it: see `callee_is_a_value`.
+            // same conclusion from the construct and the unit's declarations, for the shapes
+            // whose path cannot say it: see `callee_is_a_value`.
             Variable::GlobalHeap if access_path.fields.len() > 1 || callee_is_a_value => {
                 log::debug!("This is an Indirect GLOBAL call: {func_name}");
                 let callee = self.emit_loads(program, scope_view, access_path);
