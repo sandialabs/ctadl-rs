@@ -1689,6 +1689,22 @@ ascent_source! {
     critical_reach(g, n2, p2, f, insn, n, p) <--
         locals(g, arg, p, n2, p2),
         critical_arg(g, arg, p, f, insn, n);
+    // ... and through a frame that only forwards the object (`forward(im) { draw(im); }`, `draw`
+    // calling `im->put`): `locals` holds only paths the frame touches, so it meets `arg` at a
+    // prefix of `p`; extend that row by the rest. Also derives 1.2's `critical_summary` there.
+    relation critical_arg_prefix(
+        FunctionId, FlowVariable, Path, Path, FunctionId, InsnId, FormalIndex, Path
+    );
+    critical_arg_prefix(g, arg, key, rest, f, insn, n, p) <--
+        critical_arg(g, arg, p, f, insn, n),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p).exact,
+        if !rest.is_empty();
+    critical_reach(g, n2, p2r, f, insn, n, p), critical_summary(g, n2, p2r) <--
+        locals(g, arg, key, n2, p2),
+        critical_arg_prefix(g, arg, key, rest, f, insn, n, p),
+        path_set(ps),
+        if let Some(p2r) = ps.concat(p2, None, rest);
     establishes_via(f, d, g, insn, up) <--
         critical_reach(g, n2, p2, f, insn, n, p),
         resolvent(g, n2, p2, obj, up),
