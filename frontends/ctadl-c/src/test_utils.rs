@@ -594,11 +594,29 @@ pub(crate) fn check_no_match(prog_str: &str, needle: &str) -> bool {
 pub(crate) fn get_summary(
     program: Program,
 ) -> Result<(Vec<FunctionSummary>, IndexSourceInfo), Error> {
+    get_summary_with_models(program, &[])
+}
+
+/// [`get_summary`] with propagation model files applied, as `ctadl index -m FILE` applies them.
+pub(crate) fn get_summary_with_models(
+    program: Program,
+    models: &[std::path::PathBuf],
+) -> Result<(Vec<FunctionSummary>, IndexSourceInfo), Error> {
+    use ctadl_ascent::models::{ImportScope, ProgramMatchIndex, ProgramModelMatches};
     let mut program_info = ProgramInfo {
         program,
         ..Default::default()
     };
     program_info.program.verify()?;
+    let mut matches = ProgramModelMatches::default();
+    {
+        let scope = ImportScope::new(ctadl_ascent::project::ArtifactLanguage::C, "test");
+        let match_index = ProgramMatchIndex::new(&program_info, scope);
+        for model in models {
+            ctadl_ascent::models::try_load_models(&match_index, model, &mut matches)
+                .expect("model file loads");
+        }
+    }
     let mut facts = IndexFacts::default();
     ssa::transform_program(&mut program_info.program, true);
     let mut source_info = IndexSourceInfo::default();
@@ -608,8 +626,15 @@ pub(crate) fn get_summary(
         &mut source_info,
         CallResolutionStrategy::Mixed,
         Default::default(),
-        &Default::default(),
+        &matches,
     );
+    ctadl_ascent::codegen::model_matches::codegen_model_matches(
+        &matches,
+        &[],
+        &mut facts,
+        &mut source_info,
+    )
+    .expect("model facts generate");
     let result = taint_index(facts);
     Ok((result.summary, source_info))
 }
