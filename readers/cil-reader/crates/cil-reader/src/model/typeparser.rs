@@ -19,7 +19,11 @@ pub enum Spec {
 }
 
 /// A parsed reflection type name (Cecil `TypeParser.Type`).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// A name can nest generic arguments as deep as [`MAX_ARGUMENTS`], so
+/// parsing, `cecil_full_name`, `Clone`, `PartialEq`, `Debug` and `Drop` walk
+/// the arguments in a loop rather than recursing once per level.
+#[derive(Default)]
 pub struct ParsedType {
     /// Top-level `Namespace.Name`.
     pub fullname: String,
@@ -67,21 +71,57 @@ impl ParsedType {
     /// Renders the Cecil `TypeReference.FullName` this parsed name would
     /// produce (nested via `/`, generic instances via `<...>`, then specs).
     pub fn cecil_full_name(&self) -> String {
-        let mut s = self.fullname.clone();
-        for nested in &self.nested_names {
-            s.push('/');
-            s.push_str(nested);
-        }
-        if !self.generic_arguments.is_empty() {
-            s.push('<');
-            for (i, arg) in self.generic_arguments.iter().enumerate() {
-                if i > 0 {
-                    s.push(',');
+        let mut s = String::new();
+        let _ = self.visit(
+            |visit| -> std::result::Result<(), std::convert::Infallible> {
+                match visit {
+                    Visit::Open(ty) => {
+                        s.push_str(&ty.fullname);
+                        for nested in &ty.nested_names {
+                            s.push('/');
+                            s.push_str(nested);
+                        }
+                        if !ty.generic_arguments.is_empty() {
+                            s.push('<');
+                        }
+                    }
+                    Visit::Between => s.push(','),
+                    Visit::Close(ty) => {
+                        if !ty.generic_arguments.is_empty() {
+                            s.push('>');
+                        }
+                        ty.push_specs(&mut s);
+                    }
                 }
-                s.push_str(&arg.cecil_full_name());
+                Ok(())
+            },
+        );
+        s
+    }
+
+    /// Visits this type and its generic arguments in order, without
+    /// recursing.
+    fn visit<E>(
+        &self,
+        mut f: impl FnMut(Visit<'_>) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
+        let mut pending = vec![Visit::Open(self)];
+        while let Some(visit) = pending.pop() {
+            if let Visit::Open(ty) = visit {
+                pending.push(Visit::Close(ty));
+                for (i, argument) in ty.generic_arguments.iter().enumerate().rev() {
+                    pending.push(Visit::Open(argument));
+                    if i > 0 {
+                        pending.push(Visit::Between);
+                    }
+                }
             }
-            s.push('>');
+            f(visit)?;
         }
+        Ok(())
+    }
+
+    fn push_specs(&self, s: &mut String) {
         for spec in &self.specs {
             match spec {
                 Spec::Ptr => s.push('*'),
@@ -99,7 +139,18 @@ impl ParsedType {
                 }
             }
         }
-        s
+    }
+
+    /// A copy of everything but the generic arguments.
+    fn shallow_clone(&self) -> ParsedType {
+        ParsedType {
+            fullname: self.fullname.clone(),
+            nested_names: self.nested_names.clone(),
+            arity: self.arity,
+            specs: self.specs.clone(),
+            generic_arguments: Vec::with_capacity(self.generic_arguments.len()),
+            assembly: self.assembly.clone(),
+        }
     }
 
     /// Resolves the (element) type to an in-module TypeDef, mirroring
@@ -128,35 +179,170 @@ impl ParsedType {
     }
 }
 
+/// A step of [`ParsedType::visit`].
+#[derive(Clone, Copy)]
+enum Visit<'a> {
+    /// A type, before its generic arguments.
+    Open(&'a ParsedType),
+    /// Between two generic arguments.
+    Between,
+    /// A type, after its generic arguments.
+    Close(&'a ParsedType),
+}
+
+impl Clone for ParsedType {
+    fn clone(&self) -> ParsedType {
+        // Each type being copied, with its copy so far.
+        let mut open = vec![(self, self.shallow_clone())];
+        loop {
+            let (source, copy) = open.last().unwrap();
+            let source: &ParsedType = source;
+            if let Some(argument) = source.generic_arguments.get(copy.generic_arguments.len()) {
+                open.push((argument, argument.shallow_clone()));
+                continue;
+            }
+            let (_, done) = open.pop().unwrap();
+            match open.last_mut() {
+                Some((_, parent)) => parent.generic_arguments.push(done),
+                None => return done,
+            }
+        }
+    }
+}
+
+impl PartialEq for ParsedType {
+    fn eq(&self, other: &ParsedType) -> bool {
+        let mut pending = vec![(self, other)];
+        while let Some((a, b)) = pending.pop() {
+            if a.fullname != b.fullname
+                || a.nested_names != b.nested_names
+                || a.arity != b.arity
+                || a.specs != b.specs
+                || a.assembly != b.assembly
+                || a.generic_arguments.len() != b.generic_arguments.len()
+            {
+                return false;
+            }
+            pending.extend(a.generic_arguments.iter().zip(&b.generic_arguments));
+        }
+        true
+    }
+}
+
+impl Eq for ParsedType {}
+
+/// What the derived `Debug` prints, without `{:#?}`'s layout.
+impl std::fmt::Debug for ParsedType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.visit(|visit| match visit {
+            Visit::Open(ty) => write!(
+                f,
+                "ParsedType {{ fullname: {:?}, nested_names: {:?}, arity: {:?}, specs: {:?}, \
+                 generic_arguments: [",
+                ty.fullname, ty.nested_names, ty.arity, ty.specs
+            ),
+            Visit::Between => f.write_str(", "),
+            Visit::Close(ty) => write!(f, "], assembly: {:?} }}", ty.assembly),
+        })
+    }
+}
+
+impl Drop for ParsedType {
+    fn drop(&mut self) {
+        let mut pending = std::mem::take(&mut self.generic_arguments);
+        while let Some(mut ty) = pending.pop() {
+            pending.append(&mut ty.generic_arguments);
+        }
+    }
+}
+
+/// A type whose generic arguments [`Parser::parse_type`] is reading.
+struct OpenType {
+    ty: ParsedType,
+    fq_name: bool,
+    /// Whether the argument being read is wrapped in `[...]`, which makes
+    /// it a fully-qualified name.
+    fq_argument: bool,
+}
+
 impl Parser<'_> {
+    /// `TypeParser.ParseType`, which recurses into each generic argument;
+    /// this keeps the types whose arguments it is reading on a stack.
     fn parse_type(&mut self, fq_name: bool) -> Option<ParsedType> {
-        let mut ty = ParsedType {
-            fullname: self.parse_part(),
-            ..Default::default()
-        };
+        let mut open: Vec<OpenType> = Vec::new();
+        let mut fq_name = fq_name;
+        loop {
+            let mut ty = self.parse_name();
+            // ParseGenericArguments: an argument list opens with `[`.
+            if ty.arity > 0 && self.peek() == Some('[') {
+                if ty.arity > MAX_ARGUMENTS - self.arguments {
+                    return None;
+                }
+                self.arguments += ty.arity;
+                self.try_parse('[');
+                let fq_argument = self.try_parse('[');
+                open.push(OpenType {
+                    ty,
+                    fq_name,
+                    fq_argument,
+                });
+                fq_name = fq_argument;
+                continue;
+            }
+            // `ty` has all its arguments: read its specs and assembly name,
+            // and add it to the type it is an argument of, closing that
+            // type in turn once it has its last.
+            loop {
+                ty.specs = self.parse_specs();
+                if fq_name {
+                    ty.assembly = Some(self.parse_assembly_name());
+                }
+                let Some(parent) = open.last_mut() else {
+                    return Some(ty);
+                };
+                parent.ty.generic_arguments.push(ty);
+                if parent.fq_argument {
+                    self.try_parse(']');
+                }
+                self.try_parse(',');
+                self.skip_whitespace();
+                if parent.ty.generic_arguments.len() < parent.ty.arity as usize {
+                    parent.fq_argument = self.try_parse('[');
+                    fq_name = parent.fq_argument;
+                    break;
+                }
+                self.try_parse(']');
+                let parent = open.pop().unwrap();
+                (ty, fq_name) = (parent.ty, parent.fq_name);
+            }
+        }
+    }
+
+    /// A type's name, its nested names and their arity.
+    fn parse_name(&mut self) -> ParsedType {
+        let fullname = self.parse_part();
+        let mut nested_names = Vec::new();
         while self.try_parse('+') {
-            ty.nested_names.push(self.parse_part());
+            nested_names.push(self.parse_part());
         }
 
         // TryGetArity: sum the arities encoded in each name segment.
         let mut arity: i32 = 0;
-        for name in std::iter::once(&ty.fullname).chain(&ty.nested_names) {
+        for name in std::iter::once(&fullname).chain(&nested_names) {
             if let Some(idx) = name.rfind('`')
                 && let Some(n) = parse_int32(&name[idx + 1..])
             {
                 arity = arity.wrapping_add(n);
             }
         }
-        ty.arity = arity;
-
-        if arity > 0 {
-            ty.generic_arguments = self.parse_generic_arguments(arity)?;
+        ParsedType {
+            fullname,
+            nested_names,
+            arity,
+            specs: Vec::new(),
+            generic_arguments: Vec::new(),
+            assembly: None,
         }
-        ty.specs = self.parse_specs();
-        if fq_name {
-            ty.assembly = Some(self.parse_assembly_name());
-        }
-        Some(ty)
     }
 
     fn peek(&self) -> Option<char> {
@@ -233,29 +419,6 @@ impl Parser<'_> {
             }
         }
         specs
-    }
-
-    fn parse_generic_arguments(&mut self, arity: i32) -> Option<Vec<ParsedType>> {
-        let mut args = Vec::new();
-        if self.peek() != Some('[') {
-            return Some(args);
-        }
-        if arity > MAX_ARGUMENTS - self.arguments {
-            return None;
-        }
-        self.arguments += arity;
-        self.try_parse('[');
-        for _ in 0..arity {
-            let fq_argument = self.try_parse('[');
-            args.push(self.parse_type(fq_argument)?);
-            if fq_argument {
-                self.try_parse(']');
-            }
-            self.try_parse(',');
-            self.skip_whitespace();
-        }
-        self.try_parse(']');
-        Some(args)
     }
 
     fn parse_assembly_name(&mut self) -> String {
@@ -407,6 +570,46 @@ mod tests {
         let t = ParsedType::parse("A`2000000000").unwrap();
         assert_eq!(t.arity, 2_000_000_000);
         assert!(t.generic_arguments.is_empty());
+    }
+
+    // As deep as the argument budget allows, on a 2 MB stack.
+    #[test]
+    fn deep_nesting_does_not_recurse() {
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(|| {
+                let levels = MAX_ARGUMENTS as usize;
+                let t = ParsedType::parse(&"A`1[[".repeat(levels)).unwrap();
+                assert_eq!(
+                    t.cecil_full_name(),
+                    "A`1<".repeat(levels) + &">".repeat(levels)
+                );
+                let copy = t.clone();
+                assert_eq!(copy, t);
+                assert!(format!("{t:?}").starts_with("ParsedType { fullname: \"A`1\""));
+                assert_eq!(ParsedType::parse(&"A`1[[".repeat(levels + 1)), None);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn debug_matches_the_derived_format() {
+        let t = ParsedType::parse("N.A`2+B[[C, c],D*][], a").unwrap();
+        assert_eq!(
+            format!("{t:?}"),
+            "ParsedType { fullname: \"N.A`2\", nested_names: [\"B\"], arity: 2, specs: [SzArray], \
+             generic_arguments: [\
+             ParsedType { fullname: \"C\", nested_names: [], arity: 0, specs: [], \
+             generic_arguments: [], assembly: Some(\"c\") }, \
+             ParsedType { fullname: \"D\", nested_names: [], arity: 0, specs: [Ptr], \
+             generic_arguments: [], assembly: None }], \
+             assembly: Some(\"a\") }"
+        );
+        assert_eq!(t.cecil_full_name(), "N.A`2/B<C,D*>[]");
+        assert_eq!(t.clone(), t);
+        assert_ne!(t, ParsedType::parse("N.A`2+B[[C, c],D][], a").unwrap());
     }
 
     #[test]
