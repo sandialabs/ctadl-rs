@@ -650,21 +650,36 @@ fn declarator_shape(declarator: Node<'_>) -> (Option<Node<'_>>, &'static str) {
     }
 }
 
-/// Scalar locals and parameters whose address is taken (`&x`), by name. Arrays, functions,
-/// records held by value and globals already name their own storage.
+/// Scalar locals and parameters whose address is taken (`&x`, or `(T) &x` when `T` is in
+/// `type_names`), by name. Arrays, functions, records held by value and globals already name
+/// their own storage.
 fn addr_taken_scalars(
     params: Node<'_>,
     body: Node<'_>,
     source: &str,
     struct_layouts: &HashMap<String, Vec<MemberSlot>>,
+    type_names: &HashSet<String>,
 ) -> HashSet<String> {
-    fn taken<'s>(node: Node<'_>, source: &'s str, out: &mut HashSet<&'s str>) {
-        if node.kind() == "pointer_expression"
-            && node
-                .child_by_field_name("operator")
-                .is_some_and(|op| to_str(&op, source) == "&")
-            && let Some(mut arg) = node.child_by_field_name("argument")
-        {
+    fn taken<'s>(
+        node: Node<'_>,
+        source: &'s str,
+        type_names: &HashSet<String>,
+        out: &mut HashSet<&'s str>,
+    ) {
+        let operand = match node.kind() {
+            "pointer_expression"
+                if node
+                    .child_by_field_name("operator")
+                    .is_some_and(|op| to_str(&op, source) == "&") =>
+            {
+                node.child_by_field_name("argument")
+            }
+            "binary_expression" => cast_shaped_binary(node, source)
+                .filter(|(name, op, _)| *op == "&" && type_names.contains(*name))
+                .map(|(_, _, operand)| operand),
+            _ => None,
+        };
+        if let Some(mut arg) = operand {
             while arg.kind() == "parenthesized_expression" {
                 match first_named_child(arg) {
                     Some(inner) => arg = inner,
@@ -681,7 +696,7 @@ fn addr_taken_scalars(
                 child.kind(),
                 "function_definition" | "sizeof_expression" | "alignof_expression"
             ) {
-                taken(child, source, out);
+                taken(child, source, type_names, out);
             }
         }
     }
@@ -727,7 +742,7 @@ fn addr_taken_scalars(
         }
     }
     let mut names = HashSet::new();
-    taken(body, source, &mut names);
+    taken(body, source, type_names, &mut names);
     if names.is_empty() {
         return HashSet::new();
     }
@@ -798,14 +813,15 @@ struct Context<'a> {
     /// tree-sitter produced -- a use in any declaration counts, which is the only evidence
     /// for a typedef living in an unexpanded system header (`u_char`, `uid_t`). Exists to
     /// tell a cast from a call: `(width_t)(x)` parses as a `call_expression` through a
-    /// parenthesized callee, the exact shape of a genuine `(fp)(x)`. Read only by
-    /// [`Context::cast_shaped_call`]. A record TAG is deliberately not recorded:
+    /// parenthesized callee, the exact shape of a genuine `(fp)(x)`. Read by
+    /// [`Context::cast_shaped_call`], and likewise by [`Context::cast_prefix`] for
+    /// `(T) -1`, which parses as a subtraction. A record TAG is deliberately not recorded:
     /// `struct stat` is a type, but bare `stat` is the function.
     type_names: HashSet<String>,
     /// Names the unit declares as functions without defining them (prototypes). The positive
     /// evidence that `(zzz)(x)` is a call, symmetric to `type_names`' cast evidence; it keeps
-    /// the macro-suppression idiom `(free)(p)` quiet. Read only by
-    /// [`Context::cast_shaped_call`].
+    /// the macro-suppression idiom `(free)(p)` quiet. Read through
+    /// [`Context::names_a_value`].
     declared_functions: HashSet<String>,
     /// `ERROR` nodes already reported as unparsable constructs, by `Node::id`, so one
     /// syntax error draws one warning. See [`Context::report_unparsable_construct`].
@@ -1608,6 +1624,37 @@ fn first_named_child(node: Node<'_>) -> Option<Node<'_>> {
     let mut cursor = node.walk();
     node.named_children(&mut cursor)
         .find(|child| child.kind() != "comment")
+}
+
+/// `(name) OP operand` with `OP` one of `-`, `+`, `*`, `&`: the shape tree-sitter gives a cast
+/// whose operand starts with a unary operator that is also binary (`(tmsize_t) -1`). It takes
+/// that reading only when no tighter operator follows (`(T) - x * y` parses as a cast), so
+/// `operand` is the whole operand of `OP`. Whether `name` is a type is the caller's question;
+/// see [`Context::cast_prefix`].
+fn cast_shaped_binary<'t, 's>(
+    node: Node<'t>,
+    source: &'s str,
+) -> Option<(&'s str, &'s str, Node<'t>)> {
+    if node.kind() != "binary_expression" {
+        return None;
+    }
+    let left = node.child_by_field_name("left")?;
+    if left.kind() != "parenthesized_expression" {
+        return None;
+    }
+    let name = first_named_child(left)?;
+    if !matches!(name.kind(), "identifier" | "type_identifier") {
+        return None;
+    }
+    let op = to_str(&node.child_by_field_name("operator")?, source);
+    if !matches!(op, "-" | "+" | "*" | "&") {
+        return None;
+    }
+    Some((
+        to_str(&name, source),
+        op,
+        node.child_by_field_name("right")?,
+    ))
 }
 
 /// Is this `type_identifier` a name that is a *type*?
@@ -3288,6 +3335,16 @@ impl<'a> Context<'a> {
             }
             // COMPOUND NODES: Flatten children first, then generate a temp.
             "binary_expression" => {
+                if let Some((op, operand)) = self.cast_prefix(node, source, scope_view) {
+                    let is_deref = op == "*";
+                    return match op {
+                        "*" | "&" => self.flatten_pointer_operator(
+                            program, is_deref, operand, source, scope_view,
+                        ),
+                        // `-x` and `+x` carry `x`, as the `unary_expression` arm does.
+                        _ => self.flatten_expr(program, operand, source, scope_view),
+                    };
+                }
                 let operator = node
                     .child_by_field_name("operator")
                     .expect("always has an operator");
@@ -3320,8 +3377,6 @@ impl<'a> Context<'a> {
                 node.child_by_field_name("right").expect("always a right"),
                 node.child_by_field_name("operator"),
             ),
-            // `*e` loads the memory at `e`, exactly as `e[0]` (`deref_location`). `&x` is a
-            // cell's variable, `&a[i]` an element address, `&*e` is `e`; else the operand.
             "pointer_expression" => {
                 let arg = node
                     .child_by_field_name("argument")
@@ -3329,35 +3384,7 @@ impl<'a> Context<'a> {
                 let is_deref = node
                     .child_by_field_name("operator")
                     .is_some_and(|op| to_str(&op, source) == "*");
-                if is_deref {
-                    let ap = self.deref_location(program, arg, source, scope_view)?;
-                    return Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)));
-                }
-                let operand = unparenthesized_callee(arg);
-                if operand.kind() == "identifier" && self.cells.contains(to_str(&operand, source)) {
-                    let cell = self.build_access_path(
-                        to_str(&operand, source),
-                        Default::default(),
-                        scope_view,
-                        &mut program[scope_view.fidx].locals,
-                    );
-                    if cell.fields.len() == 1 && cell.fields.first().is_some_and(is_deref_field) {
-                        self.cell_vars.insert(cell.base.clone());
-                        return Ok(Exp::Variable(cell.base));
-                    }
-                }
-                if operand.kind() == "pointer_expression"
-                    && operand
-                        .child_by_field_name("operator")
-                        .is_some_and(|op| to_str(&op, source) == "*")
-                    && let Some(inner) = operand.child_by_field_name("argument")
-                {
-                    return self.flatten_expr(program, inner, source, scope_view);
-                }
-                if let Some(addr) = self.flatten_address_of(program, arg, source, scope_view)? {
-                    return Ok(Exp::access_path(addr));
-                }
-                self.flatten_expr(program, arg, source, scope_view)
+                self.flatten_pointer_operator(program, is_deref, arg, source, scope_view)
             }
             "subscript_expression" => self.flatten_subscript(program, node, source, scope_view),
             // `(width_t)(x)` is a cast that tree-sitter could only read as a call; when it is
@@ -3816,6 +3843,47 @@ impl<'a> Context<'a> {
         )))
     }
 
+    /// `*e` loads the memory at `e`, exactly as `e[0]` (`deref_location`). `&x` is a cell's
+    /// variable, `&a[i]` an element address, `&*e` is `e`; else the operand.
+    fn flatten_pointer_operator(
+        &mut self,
+        program: &mut Program,
+        is_deref: bool,
+        arg: Node<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<Exp, Error> {
+        if is_deref {
+            let ap = self.deref_location(program, arg, source, scope_view)?;
+            return Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)));
+        }
+        let operand = unparenthesized_callee(arg);
+        if operand.kind() == "identifier" && self.cells.contains(to_str(&operand, source)) {
+            let cell = self.build_access_path(
+                to_str(&operand, source),
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            );
+            if cell.fields.len() == 1 && cell.fields.first().is_some_and(is_deref_field) {
+                self.cell_vars.insert(cell.base.clone());
+                return Ok(Exp::Variable(cell.base));
+            }
+        }
+        if operand.kind() == "pointer_expression"
+            && operand
+                .child_by_field_name("operator")
+                .is_some_and(|op| to_str(&op, source) == "*")
+            && let Some(inner) = operand.child_by_field_name("argument")
+        {
+            return self.flatten_expr(program, inner, source, scope_view);
+        }
+        if let Some(addr) = self.flatten_address_of(program, arg, source, scope_view)? {
+            return Ok(Exp::access_path(addr));
+        }
+        self.flatten_expr(program, arg, source, scope_view)
+    }
+
     fn flatten_update_expression(
         &mut self,
         program: &mut Program,
@@ -3925,13 +3993,7 @@ impl<'a> Context<'a> {
             return Ok(None);
         }
         let name = to_str(&inner, source);
-        if self
-            .scope_tree
-            .find_variable(scope_view.sidx, name)
-            .is_some()
-            || self.functions.contains_key(name)
-            || self.declared_functions.contains(name)
-        {
+        if self.names_a_value(name, scope_view) {
             return Ok(None);
         }
         let operands = node.child_by_field_name("arguments");
@@ -3985,6 +4047,30 @@ impl<'a> Context<'a> {
             value = Some(self.flatten_expr(program, child, source, scope_view)?);
         }
         Ok(value.expect("cast_shaped_call rejects an empty operand list"))
+    }
+
+    /// Positive evidence that `name` is a value, not a type: a variable in scope (which may
+    /// shadow a typedef), a function any unit defines, or a prototype.
+    fn names_a_value(&self, name: &str, scope_view: &ScopeView) -> bool {
+        self.scope_tree
+            .find_variable(scope_view.sidx, name)
+            .is_some()
+            || self.functions.contains_key(name)
+            || self.declared_functions.contains(name)
+    }
+
+    /// Is this binary expression a cast tree-sitter misread, `(T) -1` as `(T) - 1`? Yes when
+    /// it has [`cast_shaped_binary`]'s shape, the name is used as a type, and nothing says it
+    /// is a value. Returns the prefix operator and its operand.
+    fn cast_prefix<'t>(
+        &self,
+        node: Node<'t>,
+        source: &'a str,
+        scope_view: &ScopeView,
+    ) -> Option<(&'a str, Node<'t>)> {
+        let (name, op, operand) = cast_shaped_binary(node, source)?;
+        (self.type_names.contains(name) && !self.names_a_value(name, scope_view))
+            .then_some((op, operand))
     }
 
     /*
@@ -4257,7 +4343,13 @@ impl<'a> Context<'a> {
         // Union-typed locals are function-scoped.
         self.union_vars.clear();
         // Address-taken scalars live in memory; copy each such parameter into its cell.
-        self.cells = addr_taken_scalars(head.params, body_node, source, &self.struct_layouts);
+        self.cells = addr_taken_scalars(
+            head.params,
+            body_node,
+            source,
+            &self.struct_layouts,
+            &self.type_names,
+        );
         self.cell_vars.clear();
         let cell_params: Vec<(ParameterIdx, String)> = self
             .param_names
