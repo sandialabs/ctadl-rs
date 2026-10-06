@@ -1346,7 +1346,8 @@ macro_rules! call_arg {
 /// Activity Monitor's "Memory" column and `footprint(1)` report) in MB. Used for the
 /// `[mem cp]` derivation checkpoints so we can attribute the pre-fixpoint memory spike to the
 /// individual transient buffers in-process (an external sampler can't see sub-second phases).
-/// Returns -1.0 on non-macOS or on error.
+/// Windows reports its closest equivalent, the commit charge (see the Windows version below).
+/// Returns -1.0 on other platforms or on error.
 #[cfg(target_os = "macos")]
 pub(crate) fn phys_footprint_mb() -> f64 {
     // SAFETY: `proc_pid_rusage` fills a caller-provided `rusage_info_v2` for our own pid. The C
@@ -1367,7 +1368,37 @@ pub(crate) fn phys_footprint_mb() -> f64 {
         }
     }
 }
-#[cfg(not(target_os = "macos"))]
+/// The Windows `phys_footprint_mb`: this process's commit charge (`PrivateUsage`, Task Manager's
+/// "Commit size") in MB. Like macOS's footprint it counts private memory whether it is resident or
+/// paged out, and it is the quantity a Job Object memory cap (`scripts/memguard.ps1`) limits, so a
+/// `[mem cp]` checkpoint reads on the same scale as the guard.
+#[cfg(windows)]
+pub(crate) fn phys_footprint_mb() -> f64 {
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    let mut counters = PROCESS_MEMORY_COUNTERS_EX {
+        cb: size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: `GetCurrentProcess` returns a pseudo-handle that needs no closing. `counters` is a
+    // live, writable `PROCESS_MEMORY_COUNTERS_EX`, and `cb` tells the call its size; the API takes
+    // the `_EX` struct through a `PROCESS_MEMORY_COUNTERS` pointer, of which it is a prefix-extension.
+    let ok = unsafe {
+        GetProcessMemoryInfo(
+            GetCurrentProcess(),
+            (&raw mut counters).cast::<PROCESS_MEMORY_COUNTERS>(),
+            counters.cb,
+        )
+    };
+    if ok != 0 {
+        counters.PrivateUsage as f64 / (1024.0 * 1024.0)
+    } else {
+        -1.0
+    }
+}
+#[cfg(not(any(target_os = "macos", windows)))]
 pub(crate) fn phys_footprint_mb() -> f64 {
     -1.0
 }

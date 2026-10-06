@@ -1178,6 +1178,7 @@ dependencies = [
  "trie",
  "url",
  "which",
+ "windows-sys 0.61.2",
  "zip 0.6.6",
 ]
 
