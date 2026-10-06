@@ -862,6 +862,10 @@ fn dump_il(module: &Module<'_>, out: &mut String) -> Result<()> {
                 _ => writeln!(out, "\t{}", formatted()).unwrap(),
             }
         }
+        // Cecil fails the body here, and CecilDump prints `!error` for it.
+        if let Some((offset, _)) = &body.decode_error {
+            writeln!(out, "\tIL_{offset:04x}: !error").unwrap();
+        }
         // The catch type is a TypeSpec in generic code, so it needs the
         // method's generic context to print parameter names rather than
         // !0/!!0 (Cecil's Formatter does).

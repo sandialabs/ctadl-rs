@@ -1,6 +1,7 @@
 //! Malformed metadata that Cecil cannot read: its reader overflows its stack
-//! or throws, where cil-reader returns an error. No compiler emits these
-//! shapes, so each test patches rows of a corpus image in memory.
+//! or throws, where cil-reader returns an error or reads what it can. No
+//! compiler emits these shapes, so each test patches a corpus image in
+//! memory.
 
 use super::{cecil_root, read_fixture, read_resource, Test};
 use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader};
@@ -354,6 +355,37 @@ fn type_spec_chains() {
     assert!(is_too_deep(module.resolve_type(token, &cache)));
 }
 
+// A byte past the end of the opcode tables, where CodeReader.ReadOpCode
+// throws: the body keeps the instructions before it, its locals and its
+// exception handler.
+fn opcode_past_the_tables() {
+    let mut data = read_resource("PdbTarget.exe");
+    // Dispose of a compiler-generated iterator: a fat body with one local
+    // and a try/finally, whose instruction at IL_000e is ldloc.0.
+    let rid = 0x0c;
+    let code = {
+        let module = Module::read(&data).unwrap();
+        let method = module.method_def(rid).unwrap();
+        assert_eq!(method.body().unwrap().instructions[7].offset, 0x0e);
+        let image = PeImage::parse(&data).unwrap();
+        // The 12-byte fat header precedes the code.
+        image.resolve_rva(method.rva().unwrap()).unwrap() + 12
+    };
+    for byte in [0xe1, 0xff] {
+        data[code + 0x0e] = byte;
+        let module = Module::read(&data).unwrap();
+        let body = module.method_def(rid).unwrap().body().unwrap();
+        assert_eq!(body.instructions.len(), 7);
+        assert!(matches!(
+            body.decode_error,
+            Some((0x0e, Error::BadImage { .. }))
+        ));
+        assert_eq!(body.variables.len(), 1);
+        assert_eq!(body.exception_handlers.len(), 1);
+        assert!(body.formatted().is_err());
+    }
+}
+
 pub(super) const TESTS: &[Test] = &[
     ("nested_class_cycles", nested_class_cycles),
     ("type_ref_scope_cycles", type_ref_scope_cycles),
@@ -361,4 +393,5 @@ pub(super) const TESTS: &[Test] = &[
     ("exported_type_nesting", exported_type_nesting),
     ("exported_type_file_loop", exported_type_file_loop),
     ("type_spec_chains", type_spec_chains),
+    ("opcode_past_the_tables", opcode_past_the_tables),
 ];

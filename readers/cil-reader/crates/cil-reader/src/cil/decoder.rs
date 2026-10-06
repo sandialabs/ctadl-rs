@@ -108,6 +108,11 @@ impl<'a> InstructionDecoder<'a> {
         }
     }
 
+    /// Offset of the next instruction to decode.
+    pub fn offset(&self) -> u32 {
+        self.cur.pos() as u32
+    }
+
     fn decode_one(&mut self) -> Result<Ins<'a>> {
         let offset = self.cur.pos() as u32;
         let b = self.cur.u8()?;

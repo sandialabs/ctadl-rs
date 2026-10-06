@@ -47,6 +47,12 @@ pub struct MethodBody<'a> {
     pub local_var_token: MetadataToken,
     pub variables: Vec<TypeSig>,
     pub instructions: Vec<Ins<'a>>,
+    /// Where decoding stopped, when the code has an instruction that does
+    /// not decode, such as a byte past the end of the opcode tables: its
+    /// offset, and why. `instructions` holds the ones before it, and the
+    /// locals and exception handlers are read as usual. Cecil fails the
+    /// whole body there.
+    pub decode_error: Option<(u32, Error)>,
     pub exception_handlers: Vec<ExceptionHandler>,
 }
 
@@ -73,6 +79,7 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
         local_var_token: MetadataToken::ZERO,
         variables: Vec::new(),
         instructions: Vec::new(),
+        decode_error: None,
         exception_handlers: Vec::new(),
     };
 
@@ -82,7 +89,7 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
             // tiny
             body.code_size = (flags >> 2) as u32;
             body.max_stack = 8;
-            read_code(&mut body, &mut cur)?;
+            read_code(&mut body, &mut cur);
         }
         0x3 => {
             // fat
@@ -103,7 +110,7 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
                 body.variables = SigReader::new(blob).local_var_sig()?;
             }
 
-            read_code(&mut body, &mut cur)?;
+            read_code(&mut body, &mut cur);
 
             if fat_flags & 0x8 != 0 {
                 read_sections(&mut body.exception_handlers, &mut cur)?;
@@ -114,7 +121,7 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
     Ok(body)
 }
 
-fn read_code<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cur<'a>) -> Result<()> {
+fn read_code<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cur<'a>) {
     let data = cur.data();
     let start = cur.pos();
     // CodeReader.ReadCode: clamp out-of-range code sizes to zero.
@@ -123,11 +130,19 @@ fn read_code<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cur<'a
         code_size = 0;
     }
     let code = &data[start..start + code_size];
-    for ins in InstructionDecoder::new(code) {
-        body.instructions.push(ins?);
+    let mut decoder = InstructionDecoder::new(code);
+    loop {
+        let offset = decoder.offset();
+        match decoder.next() {
+            None => break,
+            Some(Ok(ins)) => body.instructions.push(ins),
+            Some(Err(e)) => {
+                body.decode_error = Some((offset, e));
+                break;
+            }
+        }
     }
     cur.set_pos(start + code_size);
-    Ok(())
 }
 
 /// Reads the data sections that follow the code. Cecil's `ReadSection`
@@ -240,8 +255,12 @@ impl<'a> MethodBody<'a> {
     }
 
     /// The `Formatter.FormatMethodBody` rendering, tabs and all — the format
-    /// Cecil's expected-IL test strings use.
+    /// Cecil's expected-IL test strings use. A body whose code did not all
+    /// decode fails with its `decode_error`, as Cecil has no body to format.
     pub fn formatted(&self) -> Result<String> {
+        if let Some((_, e)) = &self.decode_error {
+            return Err(e.clone());
+        }
         let mut out = String::new();
         let ctx = self.generic_context()?;
 
