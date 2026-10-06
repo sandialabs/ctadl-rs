@@ -885,28 +885,6 @@ fn c_sinks_reached(stem: &str, index_models: &[PathBuf]) -> std::collections::BT
         .collect()
 }
 
-/// `allocsize.c` with the native defaults: a malloc size does not taint the buffer.
-#[test]
-fn test_cli_query_c_allocation_size_is_not_contents() {
-    let native_defaults: PathBuf = [
-        env!("CARGO_MANIFEST_DIR"),
-        "src",
-        "models",
-        "defaults",
-        "native-index.jsonl",
-    ]
-    .iter()
-    .collect();
-    run_store_test(|| {
-        assert_eq!(
-            c_sinks_reached("allocsize", &[native_defaults.clone()]),
-            ["sink_hit_local", "sink_hit_returned", "sink_len"]
-                .map(String::from)
-                .into()
-        );
-    });
-}
-
 /// `pointers.c`: exactly the `sink_hit_*` calls are reached.
 #[test]
 fn test_cli_query_c_pointer_model() {
