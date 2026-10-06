@@ -33,6 +33,11 @@ pub struct ParsedType {
     pub assembly: Option<String>,
 }
 
+/// The most generic parameters a type can have: GenericParam's Number
+/// column is a `u16`. A name with a larger arity names no type, and Cecil
+/// would add that many empty arguments one at a time.
+const MAX_ARITY: i32 = u16::MAX as i32;
+
 struct Parser<'s> {
     chars: Vec<char>,
     position: usize,
@@ -40,6 +45,8 @@ struct Parser<'s> {
 }
 
 impl ParsedType {
+    /// `None` for an empty name, where Cecil returns null, or for one whose
+    /// arity is over [`MAX_ARITY`].
     pub fn parse(fullname: &str) -> Option<ParsedType> {
         if fullname.is_empty() {
             return None;
@@ -49,7 +56,7 @@ impl ParsedType {
             position: 0,
             _s: std::marker::PhantomData,
         };
-        Some(parser.parse_type(true))
+        parser.parse_type(true)
     }
 
     /// Renders the Cecil `TypeReference.FullName` this parsed name would
@@ -117,7 +124,7 @@ impl ParsedType {
 }
 
 impl Parser<'_> {
-    fn parse_type(&mut self, fq_name: bool) -> ParsedType {
+    fn parse_type(&mut self, fq_name: bool) -> Option<ParsedType> {
         let mut ty = ParsedType {
             fullname: self.parse_part(),
             ..Default::default()
@@ -137,14 +144,17 @@ impl Parser<'_> {
         }
         ty.arity = arity;
 
+        if arity > MAX_ARITY {
+            return None;
+        }
         if arity > 0 {
-            ty.generic_arguments = self.parse_generic_arguments(arity);
+            ty.generic_arguments = self.parse_generic_arguments(arity)?;
         }
         ty.specs = self.parse_specs();
         if fq_name {
             ty.assembly = Some(self.parse_assembly_name());
         }
-        ty
+        Some(ty)
     }
 
     fn peek(&self) -> Option<char> {
@@ -223,15 +233,15 @@ impl Parser<'_> {
         specs
     }
 
-    fn parse_generic_arguments(&mut self, arity: i32) -> Vec<ParsedType> {
+    fn parse_generic_arguments(&mut self, arity: i32) -> Option<Vec<ParsedType>> {
         let mut args = Vec::new();
         if self.peek() != Some('[') {
-            return args;
+            return Some(args);
         }
         self.try_parse('[');
         for _ in 0..arity {
             let fq_argument = self.try_parse('[');
-            args.push(self.parse_type(fq_argument));
+            args.push(self.parse_type(fq_argument)?);
             if fq_argument {
                 self.try_parse(']');
             }
@@ -239,7 +249,7 @@ impl Parser<'_> {
             self.skip_whitespace();
         }
         self.try_parse(']');
-        args
+        Some(args)
     }
 
     fn parse_assembly_name(&mut self) -> String {
@@ -368,6 +378,20 @@ mod tests {
         assert_eq!(t.cecil_full_name(), "A`-1/B`2<System.Int32>");
         let t = ParsedType::parse("A`4294967297+B`1[[System.Int32]]").unwrap();
         assert_eq!(t.arity, 1);
+    }
+
+    // A truncated name keeps an empty argument per arity, as Cecil's does,
+    // up to the most a type can have.
+    #[test]
+    fn arity_is_capped() {
+        let t = ParsedType::parse("A`3[").unwrap();
+        assert_eq!(t.generic_arguments, vec![ParsedType::default(); 3]);
+        let t = ParsedType::parse("A`65535[").unwrap();
+        assert_eq!(t.generic_arguments.len(), 65535);
+        assert_eq!(ParsedType::parse("A`65536["), None);
+        assert_eq!(ParsedType::parse("A`2000000000["), None);
+        assert_eq!(ParsedType::parse("A`65535+B`1["), None);
+        assert_eq!(ParsedType::parse("A`1[[B`2000000000[]]]"), None);
     }
 
     #[test]
