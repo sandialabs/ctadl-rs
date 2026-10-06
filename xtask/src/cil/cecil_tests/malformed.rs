@@ -2,11 +2,11 @@
 //! or throws, where cil-reader returns an error. No compiler emits these
 //! shapes, so each test patches rows of a corpus image in memory.
 
-use super::{read_fixture, read_resource, Test};
+use super::{cecil_root, read_fixture, read_resource, Test};
 use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader};
 use cil_reader::model::sig::MAX_TYPE_SIG_DEPTH;
 use cil_reader::raw::pe::PeImage;
-use cil_reader::raw::tables::{NestedClassRaw, Table, TypeSpecRaw};
+use cil_reader::raw::tables::{ModuleRaw, NestedClassRaw, Table, TypeSpecRaw};
 use cil_reader::{Entity, Error, MetadataToken, Module, TokenType};
 
 /// File offset of the `#~` (or `#-`) stream, from the metadata root's
@@ -234,6 +234,33 @@ fn exported_type_nesting() {
     assert_eq!(second.scope_name().unwrap(), scope);
 }
 
+// An exported type whose File names the assembly's own module: resolving
+// it finds the module, misses the type there, and comes back to the same
+// exported type, which ExportedType.Resolve throws on.
+fn exported_type_file_loop() {
+    let mut data = read_resource("mma.exe");
+    let (file, own_name) = {
+        let module = Module::read(&data).unwrap();
+        let foo = module
+            .exported_types()
+            .find(|et| et.full_name().unwrap() == "Module.A.Foo")
+            .unwrap();
+        let implementation = foo.implementation().unwrap();
+        assert_eq!(implementation.token_type(), Some(TokenType::File));
+        let own_name = module.metadata().row::<ModuleRaw>(1).unwrap().name.0;
+        (implementation.rid(), own_name)
+    };
+    // Name is the File table's second column, after the 4-byte Flags.
+    patch_column(&mut data, Table::File, file, 4, own_name as u16);
+    let module = Module::read(&data).unwrap();
+    let loader = DirectoryLoader::new(vec![cecil_root().join("Test/Resources/assemblies")]);
+    let cache = AssemblyCache::new(&loader);
+    assert!(is_unsupported(
+        module.resolve_type_name("Module.A", "Foo", &cache),
+        "exported type circularity"
+    ));
+}
+
 /// SQLite-net.dll's TypeSpecs whose signatures have room for `class
 /// TypeSpec<rid>`, with the file offset of each signature.
 fn roomy_type_specs(data: &[u8]) -> Vec<(u32, usize)> {
@@ -332,5 +359,6 @@ pub(super) const TESTS: &[Test] = &[
     ("type_ref_scope_cycles", type_ref_scope_cycles),
     ("attribute_enum_scope_cycle", attribute_enum_scope_cycle),
     ("exported_type_nesting", exported_type_nesting),
+    ("exported_type_file_loop", exported_type_file_loop),
     ("type_spec_chains", type_spec_chains),
 ];
