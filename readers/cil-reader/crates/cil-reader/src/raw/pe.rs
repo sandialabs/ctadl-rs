@@ -109,6 +109,24 @@ pub struct Section {
     pub pointer_to_raw_data: u32,
 }
 
+// Cecil's Image does this arithmetic as unchecked uints, so a header whose
+// sums pass 2^32 wraps rather than failing.
+impl Section {
+    /// Whether `rva` falls in the section's raw data
+    /// (`Image.GetSectionAtVirtualAddress`).
+    pub fn contains_rva(&self, rva: u32) -> bool {
+        rva >= self.virtual_address
+            && rva < self.virtual_address.wrapping_add(self.size_of_raw_data)
+    }
+
+    /// The file offset of `rva`, which the section contains
+    /// (`Image.ResolveVirtualAddressInSection`).
+    pub fn file_offset(&self, rva: u32) -> u32 {
+        rva.wrapping_add(self.pointer_to_raw_data)
+            .wrapping_sub(self.virtual_address)
+    }
+}
+
 /// One entry of the PE debug directory (`Mono.Cecil.ImageDebugDirectory` +
 /// its raw data).
 #[derive(Debug, Clone)]
@@ -176,13 +194,11 @@ impl<'a> PeImage<'a> {
         let section = self
             .section_at_rva(rva)
             .ok_or(Error::bad(rva as usize, "rva outside any section"))?;
-        Ok((rva - section.virtual_address + section.pointer_to_raw_data) as usize)
+        Ok(section.file_offset(rva) as usize)
     }
 
     pub fn section_at_rva(&self, rva: u32) -> Option<&Section> {
-        self.sections
-            .iter()
-            .find(|s| rva >= s.virtual_address && rva < s.virtual_address + s.size_of_raw_data)
+        self.sections.iter().find(|s| s.contains_rva(rva))
     }
 
     /// Returns the `size`-byte slice starting at `rva`.
@@ -421,4 +437,37 @@ fn read_aligned_string<'a>(cur: &mut Cur<'a>, max: usize) -> Result<&'a str> {
 // Small helper so read_aligned_string can re-slice the original buffer.
 fn cur_data<'a>(cur: &Cur<'a>) -> &'a [u8] {
     cur.data()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Section;
+
+    fn section(virtual_address: u32, size_of_raw_data: u32, pointer_to_raw_data: u32) -> Section {
+        Section {
+            name: ".text".into(),
+            virtual_address,
+            virtual_size: size_of_raw_data,
+            size_of_raw_data,
+            pointer_to_raw_data,
+        }
+    }
+
+    // A section whose end passes 2^32 wraps, and so contains no RVA.
+    #[test]
+    fn section_end_wraps() {
+        let s = section(0xffff_f000, 0x2000, 0x200);
+        assert!(!s.contains_rva(0xffff_f000));
+        assert!(!s.contains_rva(0x800));
+        assert!(section(0xffff_f000, 0xfff, 0x200).contains_rva(0xffff_fffe));
+    }
+
+    // A file offset that passes 2^32 wraps.
+    #[test]
+    fn file_offset_wraps() {
+        let s = section(0x2000, 0x1000, 0xffff_ff00);
+        assert!(s.contains_rva(0x2100));
+        assert_eq!(s.file_offset(0x2100), 0);
+        assert_eq!(s.file_offset(0x2000), 0xffff_ff00);
+    }
 }
