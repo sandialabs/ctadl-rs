@@ -1800,6 +1800,96 @@ fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
 /// A label the parse *recovery* holds IS still collected: plenty of well-formed code lowers
 /// out of a damaged body, and dropping its labels would break its `goto`s. Its block goes
 /// unentered, which [`finalize_terminators`] knows not to charge to the frontend.
+/// The `case` labels of a switch body that are not its direct arms (`case 1: if (c) case 2:
+/// s;`), outside any nested switch.
+fn nested_case_labels<'t>(body: Node<'t>) -> Vec<Node<'t>> {
+    fn walk<'t>(node: Node<'t>, out: &mut Vec<Node<'t>>) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "switch_statement" {
+                continue;
+            }
+            if child.kind() == "case_statement" {
+                out.push(child);
+            }
+            walk(child, out);
+        }
+    }
+    let mut out = Vec::new();
+    let mut cursor = body.walk();
+    for arm in body.children(&mut cursor) {
+        if arm.kind() != "switch_statement" {
+            walk(arm, &mut out);
+        }
+    }
+    out
+}
+
+/// The key a nested `case` label's block is registered under in `label_blocks`; `<...>`
+/// cannot collide with a C label.
+fn case_label_key(case: Node<'_>) -> String {
+    format!("<case {}>", case.id())
+}
+
+/// Is this statement the whole body of an `if`, `else`, loop or label, rather than one of a
+/// sequence of statements?
+fn is_single_statement_body(stmt: Node<'_>) -> bool {
+    stmt.parent().is_some_and(|parent| {
+        matches!(
+            parent.kind(),
+            "if_statement"
+                | "else_clause"
+                | "while_statement"
+                | "for_statement"
+                | "do_statement"
+                | "labeled_statement"
+        )
+    })
+}
+
+/// The statements of a `case` label, its value excluded.
+fn case_statements(case: Node<'_>) -> Vec<Node<'_>> {
+    let value_id = case.child_by_field_name("value").map(|v| v.id());
+    let mut cursor = case.walk();
+    case.children(&mut cursor)
+        .filter(|n| n.is_named() && n.kind() != "comment" && Some(n.id()) != value_id)
+        .collect()
+}
+
+/// Statements tree-sitter put inside a `case` label that is the body of `stmt`. Its
+/// `case_statement` takes every following statement, but `if (c) case 1: s1; s2;` has the
+/// body `case 1: s1;`; `s2` follows the `if`. Empty for a `stmt` that is itself a body: the
+/// tail follows the outermost statement.
+fn misgrouped_case_tail(stmt: Node<'_>) -> Vec<Node<'_>> {
+    if is_single_statement_body(stmt) {
+        return Vec::new();
+    }
+    let mut node = stmt;
+    loop {
+        let body = match node.kind() {
+            "if_statement" => match node.child_by_field_name("alternative") {
+                Some(alternative) => first_named_child(alternative),
+                None => node.child_by_field_name("consequence"),
+            },
+            "while_statement" | "for_statement" => node.child_by_field_name("body"),
+            "labeled_statement" => {
+                let mut cursor = node.walk();
+                node.named_children(&mut cursor)
+                    .filter(|n| n.kind() != "comment")
+                    .last()
+            }
+            _ => None,
+        };
+        match body {
+            Some(case) if case.kind() == "case_statement" => {
+                return case_statements(case).into_iter().skip(1).collect();
+            }
+            Some(inner) => node = inner,
+            None => return Vec::new(),
+        }
+    }
+}
+
 fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
     if node.kind() == "labeled_statement"
         && let Some(label) = node.child_by_field_name("label")
@@ -2257,20 +2347,23 @@ impl<'a> Context<'a> {
             if !child.is_named() || child.kind() == "comment" {
                 continue; // we skip , ( comments, stuff like that...
             }
-            if diverged {
-                // The previous statement diverged yet siblings remain: unreachable by
-                // fall-through, but a `goto` label among them (the `out:` cleanup idiom) is
-                // still reachable through its jump edge and must lower. Keep walking in a
-                // fresh unlinked block, exactly as `walk_goto` does.
-                scope_view = add_block(
-                    program,
-                    &scope_view,
-                    &mut self.scope_tree,
-                    false,
-                    &format!("after_diverge::{}", get_line_num(&child)),
-                )?;
+            // `if (c) case 1: s1; s2;`: `s2` follows the `if` (see `misgrouped_case_tail`).
+            for stmt in std::iter::once(child).chain(misgrouped_case_tail(child)) {
+                if diverged {
+                    // The previous statement diverged yet siblings remain: unreachable by
+                    // fall-through, but a `goto` label among them (the `out:` cleanup idiom)
+                    // is still reachable through its jump edge and must lower. Keep walking
+                    // in a fresh unlinked block, exactly as `walk_goto` does.
+                    scope_view = add_block(
+                        program,
+                        &scope_view,
+                        &mut self.scope_tree,
+                        false,
+                        &format!("after_diverge::{}", get_line_num(&stmt)),
+                    )?;
+                }
+                diverged = self.walk_statement(source, program, &mut scope_view, stmt)?;
             }
-            diverged = self.walk_statement(source, program, &mut scope_view, child)?;
         }
 
         Ok((scope_view, diverged))
@@ -2422,6 +2515,11 @@ impl<'a> Context<'a> {
             // `L: return x;` at the tail of a compound doesn't leave a dangling block.
             "labeled_statement" => {
                 return self.walk_labeled_statement(source, program, scope_view, child);
+            }
+            // A `case` label below a switch's arms: `walk_switch` gave it a block. Any other
+            // `case` (outside a switch, parse-recovery debris) takes the catch-all.
+            "case_statement" if self.label_blocks.contains_key(&case_label_key(child)) => {
+                return self.walk_nested_case(source, program, scope_view, child);
             }
             // A syntax error in statement position: a problem in the analyzed source,
             // not a gap in this frontend. This is the position in which tree-sitter's
@@ -2867,8 +2965,12 @@ impl<'a> Context<'a> {
             .children(&mut cursor)
             .filter(|n| n.kind() == "case_statement")
             .collect();
+        // Labels deeper in the body (`case 1: if (c) case 2: s;`) are entered like goto
+        // labels: a block each, reached from the switch; `walk_nested_case` falls into it.
+        let nested = nested_case_labels(body);
         let has_default = arms
             .iter()
+            .chain(&nested)
             .any(|a| a.child_by_field_name("value").is_none());
 
         // One block per arm, created up front so each arm can fall through to the
@@ -2891,6 +2993,18 @@ impl<'a> Context<'a> {
         // switch and the "value matched no case" path).
         for sv in &arm_svs {
             link_blocks(program, &*scope_view, sv, false)?;
+        }
+        for case in &nested {
+            let label_sv = add_block(
+                program,
+                &*scope_view,
+                &mut self.scope_tree,
+                false,
+                format!("nested_case(of)::{}", get_line_num(case)).as_str(),
+            )?;
+            link_blocks(program, &*scope_view, &label_sv, false)?;
+            self.label_blocks
+                .insert(case_label_key(*case), label_sv.blidx);
         }
         if !has_default {
             link_blocks(program, &*scope_view, &continuation, false)?;
@@ -3042,6 +3156,38 @@ impl<'a> Context<'a> {
             .filter(|n| n.is_named() && n.id() != label_id)
             .collect();
         for stmt in inner {
+            if self.walk_statement(source, program, scope_view, stmt)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// `case v: <stmts>` below a switch's arms, e.g. as an `if` body: falls into the block
+    /// `walk_switch` created for it, like a goto label. As a body it holds only its first
+    /// statement; the rest are lowered after the enclosing statement (see
+    /// [`misgrouped_case_tail`]).
+    fn walk_nested_case(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        child: Node<'_>,
+    ) -> Result<bool, Error> {
+        let blidx = *self
+            .label_blocks
+            .get(&case_label_key(child))
+            .expect("nested case block pre-created in walk_switch");
+        self.walked_label_blocks.insert(blidx);
+        let mut label_sv = scope_view.clone();
+        label_sv.blidx = blidx;
+        link_blocks(program, scope_view, &label_sv, false)?;
+        *scope_view = label_sv;
+        let mut stmts = case_statements(child);
+        if is_single_statement_body(child) {
+            stmts.truncate(1);
+        }
+        for stmt in stmts {
             if self.walk_statement(source, program, scope_view, stmt)? {
                 return Ok(true);
             }
