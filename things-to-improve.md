@@ -7,10 +7,10 @@ index the Dex-only imports in `small/r8-general/`; M7-M8 index whole APKs again.
 
 The document has four parts:
 
-- **Problems** (P1-P23): each problem found, what causes it and where it shows up.
-- **Solutions** (S1-S28): each fix tried or proposed, which problems it applies to, and whether it
+- **Problems** (P1-P27): each problem found, what causes it and where it shows up.
+- **Solutions** (S1-S33): each fix tried or proposed, which problems it applies to, and whether it
   is done, rejected or undecided.
-- **Measurements** (M1-M8): the investigations, in the order they were done, with their tables.
+- **Measurements** (M1-M10): the investigations, in the order they were done, with their tables.
 - **Data**: where every investigation's output is, and the experiment switches.
 
 ## Status at a glance
@@ -36,10 +36,14 @@ The document has four parts:
 | P17. Call-target tags are stored many times | S12, S13 | Open; S12 measured |
 | P18. `reach_vp` is stored three times | S24 | Open |
 | P19. `actual_param` outlives its only use | S25 | Open |
-| P20. Memory held around the fixpoint | S26 | Open, not investigated |
+| P20. Memory held around the fixpoint | S26, S33 | Open; the transient is located (M10) |
 | P21. Joins that scan a whole relation every iteration | S27 | Open |
 | P22. The regression suite hid a lost flow | S28 done | Fixed |
 | P23. Nondeterminism | none | Open |
+| P24. S10's clones store every arm of the merged method | S29 done | Fixed |
+| P25. Small merged classes stay merged at CHA-resolved sites | S30 | Open; precision only |
+| P26. Plain relations are sized in powers of two | S32 | Open |
+| P27. Two rules derive every plain-copy `locals` row | S31 done | Fixed |
 
 # Problems
 
@@ -345,6 +349,42 @@ cost 14.6 µs per new row.
 to avoid (see the comment above `reach_vp`): 0.9 µs per new row, rising to 87.7 µs. Elsewhere the
 join is not mostly wasted: 34% of pairs match on `darkcoin`, 79% on `cash.p.terminal`.
 
+### P24. S10's clones store every arm of the merged method
+
+**Seen in:** `org.schabi.newpipe`, `com.noto`. **Measured in:** M9. **Solutions:** S29 (done).
+
+S10 lowers a switching method once per class id and narrows only the switch, so each clone keeps
+every other id's arm as unreachable blocks. A class with n ids stores the merged body n times,
+and the body itself grows with n, so the cost is quadratic in the ids (up to `MAX_IDS`, 64).
+M2 saw this on `cpuinfo` (598 k to 2.2 M assignments) and it was left alone because the import
+time didn't change.
+
+- **On NewPipe it is 39% of the program.** 1,671 merged methods hold 108,616 instructions; their
+  9,451 clones hold 1,140,297, exactly ids × the original for every method. That is 43% of the
+  imported IR in 11% of the functions. The largest is a Compose resources lambda,
+  `ImageResourcesKt$$ExternalSyntheticLambda0;->invoke`: 30 ids × 2,648 instructions.
+- **The fixpoint never sees it.** The index prunes unreachable blocks before SSA, so the dead
+  arms cost the import, the stored program (`ir-program.bitcode`, 112 MB on NewPipe, 3.4x
+  `com.noto` for 1.65x the dex) and the index's load (521 MB), not the Datalog.
+- **It inflates `ctadl report`.** The report counts the imported IR, dead arms included: 214 k of
+  NewPipe's 528 k call sites, and 2.9 M of its 6.5 M CHA edges, could never execute.
+- **It weakens the cleanup passes.** Dead-temp elimination and copy coalescing run before SSA's
+  prune, so a temporary read only in a dead arm survived them.
+
+### P25. Small merged classes stay merged at CHA-resolved sites
+
+**Seen in:** `org.schabi.newpipe`. **Measured in:** M9. **Solutions:** S30. Precision only.
+
+S10 keeps `C` and its union methods for objects built with an id the import can't determine, and
+a class hierarchy answer can't tell `C`'s own method from its overrides in `C$r8id<k>`. So a site
+resolved by CHA reaches the union and every clone. Under the default policy that happens only
+when the targets fit the CHA threshold (4), that is for classes with 2 or 3 ids; larger classes
+go to hybrid inlining, where the call-target tags pick the clone. On NewPipe, 1,018 call sites
+reach a clone, every one also reaches the union, and every one has 3 or 4 targets (734 and 284).
+There the split gains nothing, since the union's summary already holds every clone's flows. The
+cost is small: 2,218 of 317 k call edges (0.7%) go to a clone. Measured on the call graph of a
+25 s rung, before S29.
+
 ## Memory and time constants
 
 ### P17. Call-target tags are stored many times
@@ -399,6 +439,29 @@ to 5.2 GB. `facts.try_save` adds 2.3 GB (4.9 → 7.2 GB) that is never given bac
   `edge_split_wild`, `locals_wild` and `locals_key_wild` scan every `assign_like` or `reach_vp`
   delta, but Java paths have no trailing offsets.
 
+### P26. Plain relations are sized in powers of two
+
+**Seen in:** every app measured in M10. **Measured in:** M10. **Solutions:** S32.
+
+A plain relation's row store, and each `_indices_none` copy of it, is a `Vec` that grows by
+doubling, so it holds up to twice what its rows need. `actual_param` is exactly 64 MiB for
+1.11 M rows (`de.danoeh.antennapod`) and for 1.36 M rows (`com.keylesspalace.tusky`), and
+`alias_of_formal` is exactly 8 MiB on `com.noto`. The input relations never grow after seeding, so
+their slack is never used. A doubling also holds the old and the new buffer at once, which may be
+part of P20's transient peak; the probe in M10 is meant to say.
+
+### P27. Two rules derive every plain-copy `locals` row
+
+**Seen in:** `com.noto`, `org.schabi.newpipe` (every app). **Measured in:** M9, M10.
+**Solutions:** S31 (done, uncommitted).
+
+`locals` is extended on two sides: the destination side (`ext_dst`, through `locals_key`) and the
+formal side (`edge_split`). `Path::prefix_keys` hands both every split of a path, including
+`(p, [])`. For that split both sides derive the same row from the same edge, and every path has
+it, including the whole-variable path `[]`. So nearly every row reached across a plain copy was
+derived twice, and `ext_dst` stored an expanded edge for each duplicate. On NewPipe's first six
+iterations the destination-side rule derived 1.27 M rows of which 522 were new.
+
 ## Tooling
 
 ### P22. The regression suite hid a lost flow
@@ -434,7 +497,7 @@ skipping strict offset check").
 | S9. Confirm the function-pointer mechanism | P5 | Undecided, investigation |
 | S10. Split R8 class-merged classes at import | P9 | Done (`a7d716e8`) |
 | S11. Key the call-target transitive rule (`cta_key`) | P16 | Done (`76982fc4`); causes P17 |
-| S12. Turn off `cta_key` except where it pays | P17 | Undecided; measured −4 GB |
+| S12. Turn off `cta_key` except where it pays | P17 | Undecided; measured −4 GB, and −0.24 GB on Tusky |
 | S13. Store call-target tags compactly | P17 | Undecided |
 | S14. Bound decision-set churn | P15 | Rejected |
 | S15. Change the hybrid context mode | P9, P15 | Rejected |
@@ -448,9 +511,14 @@ skipping strict offset check").
 | S23. A Jackson model | P10, P14 | Rejected |
 | S24. Fold `reach_vp` into its consumers | P18 | Undecided; est. −2.3 GB |
 | S25. Free `actual_param` after scc 1 | P19 | Undecided; est. −1.6 GB |
-| S26. Find the memory held around the fixpoint | P20 | Undecided, not investigated |
+| S26. Find the memory held around the fixpoint | P20 | Undecided; the transient part done (M10) |
 | S27. Reorder scanning joins; skip wildcard rules without offsets | P21, P6 | Undecided |
 | S28. Make the suite fail on a lost flow | P22 | Done (`31594e08`) |
+| S29. Prune each R8 clone at import | P24 | Done (uncommitted) |
+| S30. Leave out a merged class's union methods when no site needs them | P25 | Undecided |
+| S31. Leave the `(p, [])` split out of `locals_key` | P27 | Done (uncommitted) |
+| S32. Size input relations exactly | P26 | Undecided |
+| S33. Size the BYODS stores' outer maps before the fixpoint | P20 | Undecided |
 
 ### S1. Dead-phi pass
 
@@ -561,6 +629,9 @@ Construction sites with a known id allocate the subclass. The `synthetic` flag i
 since `final` is what makes the split sound. It bumps `IMPORT_FORMAT_VERSION` to 10. See M2 and
 M3.
 
+Until S29 each clone also kept every other id's arm (P24). Small classes stay merged at sites
+resolved by CHA (P25).
+
 ### S11. Key the call-target transitive rule on the path prefix (`cta_key`)
 
 **Applies to:** P16. **Status:** done (`76982fc4`). Fixes P16 on `cpuinfo`, but is a net memory
@@ -579,6 +650,11 @@ S10 it cuts `cpuinfo`'s time by 30%. See M2, M3 and M6.
 Use the keyed join only at high-fan-out vertices, or revert S11. S11 is a net loss on three of the
 four apps measured, and the one that benefits (`cpuinfo`) was measured before S16 shrank its
 `call_target_assign_like`. Do this before S13.
+
+On Tusky (M10), with `CTADL_CTA_UNKEYED=1` against the same binary: peak 3.41 to 3.17 GB,
+relations 2,187 to 1,964 MB (`cta_key` held 784 k rows, 222 MB), scc 4 30.9 to 27.6 s in the same
+265 iterations, and the same 460,563 `call_target_assign_like` rows. The index and a query's
+4,848 results are the same. A third app where keying saves no time and costs memory.
 
 ### S13. Store call-target tags compactly
 
@@ -703,6 +779,9 @@ One option is to generate the call-arg edges in Rust before `ascent_run`.
 
 Find the 2.3 GB `facts.try_save` keeps, and the 7-8 GB held through the index.
 
+The transient above the fixpoint is located (M10, `CTADL_BIG_ALLOC_MB`): it is hash tables
+growing in scc 4, the BYODS stores' outer maps among them. See S33.
+
 ### S27. Reorder or key the scanning joins, and skip the wildcard rules when no path has an offset
 
 **Applies to:** P21, and P6's cost on Java-only imports. **Status:** undecided. Time only: 35-50 s
@@ -718,6 +797,76 @@ measured.
 A pcode case with no source-to-sink flow is now a FAIL on every platform, not a SKIP on Darwin.
 It hasn't been seen catching the `example` loss: with the `CTADL_MEM2REG` switch removed,
 reproducing it needs an `exact` build.
+
+### S29. Prune each R8 clone at import
+
+**Applies to:** P24. **Status:** done, uncommitted. Measured in M9.
+
+`split_merged` (`ctadl-dex/src/lib.rs`) runs `ctadl_ir::ssa::prune_unreachable_nodes`, made
+public for it, on each clone right after lowering it. That is the pass the index already runs
+before SSA, so a clone now stores only its own arm.
+
+- **NewPipe:** `ir-program.bitcode` 112.4 to 74.9 MB (-33%); the import's peak 1.35 to 1.05 GB;
+  the index's loaded IR 521 to 360 MB, and 752 to 669 MB after SSA.
+- **`com.noto`:** 33.2 to 31.9 MB.
+- **Results are unchanged.** `com.noto` indexed to a fixpoint from both imports gives the same
+  1,482 query results, with the same locations, labels and taint paths; only the instruction ids
+  differ, because ids are numbered across the program and the dead arms no longer use any. The
+  index loses 154 `assign` and 24 `actual_param` rows, all in 120 and 21 clones: with the dead
+  arms gone first, dead-temp elimination and coalescing remove a little more. NewPipe's input
+  facts lose 1,871 `assign` and 553 `actual_param` rows; `paths` gains 29 (not traced).
+- **It moves the `ctadl report` counts**, which counted the dead arms: `com.noto`'s total sites
+  191,861 to 181,441 and CHA edges 2,221,922 to 2,141,436. The constants in `xtask/src/apk.rs`
+  are re-pinned. Imports made before S29 still load and index the same way; they are just bigger.
+- **The import log** now says how many clones it made (`switching methods cloned into N
+  clones`). The old line called the number of switching methods "methods cloned per id".
+
+### S30. Leave out a merged class's union methods when no site needs them
+
+**Applies to:** P25. **Status:** undecided.
+
+When every construction site of `C` has a known id, nothing is allocated as `C` itself, so a
+virtual call can't reach `C`'s union methods. Leave them out of the CHA targets, or don't emit
+them. Needs a soundness check for `super` calls into `C` and for reflection. Small gain: 1,018
+sites on NewPipe.
+
+### S31. Leave the `(p, [])` split out of `locals_key`
+
+**Applies to:** P27. **Status:** done, uncommitted. Measured in M9 and M10.
+
+`locals_key` filters out the split whose `rest` is empty (`index_engine/mod.rs`, above the rule),
+so only the formal side derives a row across a whole-path match. The contextual rules
+(`ctx_ext_dst`) join the same `locals_key`, so they lose the duplicate too.
+
+- **`com.noto`, to a fixpoint:** scc 4 22.0 to 15.0 s in the same 270 iterations; `locals_key`
+  2.04 to 0.65 M rows, `ext_dst` 2.10 to 0.84 M; relations 1,824 to 1,587 MB; peak 2.98 to
+  2.63 GB.
+- **Results are unchanged on `com.noto`.** Every index file is the same except `assign.parquet`,
+  which has the same 2,807,241 rows but cannot be compared as text, because interned names are
+  numbered in load order. A query with 26 sources and 555 sinks gives the same 1,482 results,
+  traces included.
+- **NewPipe, 25 s rung:** 6 to 49 iterations of scc 4 (about 0.18 s each, down from 2-4 s), and
+  `reach_vp` 1.39 to 2.06 M rows. The destination-side rule went from 0.04% new rows to 55%.
+  It still hits the 4 GB cap without a timeout.
+
+### S32. Size input relations exactly
+
+**Applies to:** P26. **Status:** undecided.
+
+Seed the input relations (`actual_param`, `formal_param`, `alias_of_formal`, `call`, ...) with
+their final length, or shrink them once seeded. Saves up to half of each; on the apps in M10
+`actual_param` alone is 195 MB with its two indices.
+
+### S33. Size the BYODS stores' outer maps before the fixpoint
+
+**Applies to:** P20. **Status:** undecided.
+
+A hashbrown table that grows allocates the new table before it frees the old one, so near the end
+of scc 4 each doubling of a large map briefly holds 1.5 times its size. The outer `(f, v)` maps of
+the `locals`-shaped stores are the largest that grow (114 to 228 MB on Tusky). Their key counts
+are bounded before the fixpoint starts: `edge_split`'s by the distinct `(f, v2)` of `assign_like`,
+`locals`' by the variables. Reserving them up front removes their late doublings. It would not
+remove the last, unidentified 100 MB growth (M10).
 
 # Measurements
 
@@ -1240,6 +1389,88 @@ work fell from 15.2 B pairs to 2.4 M. `scrcpy` and `conscryptprovider` peaked hi
 47 GB) because they get further in the same time; they still have P4, in BoringSSL. Data:
 `/Volumes/Shampoo/ct-bigapk/small/demangle-model/RESULTS.md`.
 
+## M9. `org.schabi.newpipe`: R8 clones (2026-10-05)
+
+**Problems:** P24, P25. **Solutions:** S29, S30.
+
+NewPipe 0.29.1 (F-Droid build 1015, 11.5 MB, Dex only) on a Windows machine with 7.9 GB of RAM,
+under a 4 GB cap (`scripts/memguard.ps1`, a Job Object limit on committed memory). Its dex is
+1.65x `com.noto`'s and it has 1.6x the functions (82,480), but its imported IR was 3.4x.
+
+**Timeout ladder** (before S29; `CTADL_INDEX_TIMEOUT_SECS`, 4 GB cap):
+
+| Rung | Result | scc 4 iterations | Peak | Wall |
+|---|---|---|---|---|
+| 10 s | timed out | 3 | 3.01 GB | 41 s |
+| 20 s | timed out | 8 | 3.72 GB | 51 s |
+| 25 s | timed out | 9 | 3.76 GB | 62 s |
+| 30 s, 40 s, none | cap hit, no profile | | 4.09 GB | 52-68 s |
+
+The index enters the fixpoint at 738 MB, so the cap is hit in the fixpoint, not at load. It is
+not a blowup by the IR-to-memory ratio (about 30x the IR at 25 s); it is a big app for 4 GB.
+
+**The R8 split** (from `ctadl inspect app --dump-ir`): 955 merged classes split into 4,889 ids;
+1,671 switching methods, 9,451 clones. Every clone's size is exactly ids × the merged method's,
+which is P24. The call graph of the 25 s rung gave P25.
+
+**S29**, the same app imported before and after, each indexed by one binary (which also carried
+S31, uncommitted, the same on both sides):
+
+| | Before | After |
+|---|---|---|
+| `ir-program.bitcode` | 112.4 MB | 74.9 MB |
+| Import peak | 1.35 GB | 1.05 GB |
+| Index: loaded IR, after SSA | 521 MB, 752 MB | 360 MB, 669 MB |
+| Input `assign` rows | 1,357,084 | 1,355,213 |
+| `ctadl report` call sites, CHA edges | 527,841, 6,546,459 | 313,926, 3,670,162 |
+
+On `com.noto`, indexed to a fixpoint, the query results are the same (S29).
+
+## M10. Tusky and AntennaPod: what is the same everywhere (2026-10-06)
+
+**Problems:** P17, P20, P26, P27. **Solutions:** S29, S31.
+
+Two more F-Droid apps, Dex only, on the machine and cap of M9, with S29 and S31 and the per-rule
+counters in the vendored Ascent macro (each rule's rows derived and rows new):
+`com.keylesspalace.tusky` 32.2 (Kotlin coroutines; 7.6 MB of dex, 13.8 MB of native code not
+imported) and `de.danoeh.antennapod` 3.12.2 (mostly Java; 13.2 MB of dex). Both reach a fixpoint
+under 4 GB, and neither is a blowup: the peak is 87x and 57x the imported IR.
+
+| App | Functions | Merged classes (ids, clones) | IR | Enters fixpoint | Returns | Peak | scc 4 | Wall |
+|---|---|---|---|---|---|---|---|---|
+| Tusky | 55,497 | 1,117 (5,775, 9,235) | 38.8 MB | 631 MB | 2,847 MB | 3.39 GB | 265 it, 20.3 s | 46 s |
+| AntennaPod | 77,404 | 3 (34, 50) | 53.0 MB | 606 MB | 2,489 MB | 3.00 GB | 381 it, 15.0 s | 40 s |
+
+- **Merged suspend lambdas are not hubs any more.** Tusky has as many merged classes as NewPipe
+  and finishes in 46 s.
+- **NewPipe's flow graph is denser, not bigger.** AntennaPod has nearly as many functions and
+  more dex, but 3.47 M `assign_like` rows at its fixpoint against NewPipe's 4.86 M at 25 s.
+- **The transient above the fixpoint is the same on every app (P20):** peak minus what scc 4
+  returns is 546 MB on `com.noto`, 583 MB on AntennaPod, 624 MB on Tusky and about 700 MB on
+  NewPipe. That, not the settled size, is what puts NewPipe over 4 GB. The allocations refused at
+  the cap were single requests of 96 and 100 MiB.
+- **About a quarter of derivations are duplicates.** 76% (Tusky), 80% (AntennaPod) and 72%
+  (NewPipe at 25 s) of derived rows are new. The worst are the call-target transitive rule
+  (41-45% new) and the separate `cta_key` rule (8-12% new: the transitive step already emits most
+  keys), but they cost 0.06-1.8 s. The `locals` rule driven by `edge_split` totals is 44-48% new,
+  which is ordinary semi-naive overlap.
+- **Call-target tags are 20% of Tusky's relations (P17):** `cta_key` 222 MB and
+  `call_target_assign_like` 202 MB of 2,162 MB.
+- **The same constants everywhere:** `actual_param` 195 MB with its two indices (P19), and
+  `reach_vp_none` 50 MB (P18), both sized in powers of two (P26).
+
+**Where the transient goes (P20).** Tusky with `CTADL_BIG_ALLOC_MB=64`, a `profiling` build
+(symbols cost it about 1.35 GB of commit, so it ran under a 6 GB cap). The live heap peaks at
+3,213 MB, about 360 MB above what scc 4 returns, and the rest of the 624 MB is the Windows heap
+keeping freed memory. Inside scc 4 the large allocations are all hash tables growing: 11 of
+114-228 MB, 1.8 GB in all, among them the outer `(f, v)` maps of the `edge_split` and `locals`
+stores. Each growth holds the old table beside the new one (S33). The peak itself is a 100 MiB
+table growth at the end of scc 4, inlined into `run_timeout`, so its relation is not named: the
+same 104,857,616-byte request NewPipe was refused at the cap. After scc 4 the large allocations
+are the parquet encoders' column buffers (128 MB at most).
+
+**S12 on Tusky:** see S12. Keying saves no time and costs 240 MB of peak.
+
 # Data
 
 ## Experiment switches
@@ -1254,6 +1485,12 @@ work fell from 15.2 B pairs to 2.4 M. `scrcpy` and `conscryptprovider` peaked hi
   both.
 - `CTADL_DECISION_CENSUS`, `CTADL_FOCUS` and `CTADL_EDGE_CENSUS` are probe-only (uncommitted); see
   M4 and M8 below.
+- Uncommitted, from M9 and M10: the vendored Ascent macro counts each rule's rows derived and new
+  (`derived: N inserted: M` under each rule in the scc summary), and `CTADL_ITER_LOG=1` prints a
+  line per iteration of a looping scc with the rules active in it. `CTADL_BIG_ALLOC_MB=<n>` logs
+  every allocation of at least n MB with the live heap and a backtrace (`ctadl-ascent/src/big_alloc.rs`;
+  build with `--profile profiling` for symbols). `CTADL_CTA_UNKEYED=1` runs the call-target join
+  S11 replaced (S12; JVM and Dex only).
 
 ## M1: `androidudpbus`
 
@@ -1412,3 +1649,31 @@ All output is under `/Volumes/Shampoo/ct-bigapk/small/edge-delta/`:
 - `lib/liblocal-socket.so`: termux's library, from the APK.
 
 S6's measurements: `/Volumes/Shampoo/ct-bigapk/small/demangle-model/RESULTS.md`.
+
+## M9: `org.schabi.newpipe`
+
+On the Windows machine, under `C:\Users\timlo\ctadl-rs\tmp\` (not on Shampoo):
+
+- `apks/org.schabi.newpipe_1015.apk`: the APK, from `https://f-droid.org/repo/`.
+- `blowup-newpipe/`: the import and the ladder before S29. `t<N>.log` and `baseline.log` are the
+  rungs (debug logs, each ending with the `[memguard]` line); `ir.txt` is the IR dump,
+  `clone_methods.txt` the per-method clone sizes, `fid.tsv` and `call.txt` the call graph of the
+  25 s rung.
+- `r8prune-newpipe/`, `r8prune-noto/`: the imports after S29, their `ctadl report` JSON
+  (`report-old.json`, `report-new.json`) and the sorted index dumps compared with the ones before.
+- `blowup-noto/`: `com.noto`'s import before S29, its index, `broad-model.json` (the query model)
+  and `q-exp.sarif`.
+- Scripts in `scripts/` (uncommitted): `memguard.ps1` (the cap), `blowup-ladder.ps1` (the
+  ladder) and `blowup-rank.py` (the ranking).
+
+## M10: Tusky and AntennaPod
+
+Also on the Windows machine: `tmp/apks/com.keylesspalace.tusky_142.apk` and
+`tmp/apks/de.danoeh.antennapod_3120295.apk` (from `https://f-droid.org/repo/`), and
+`tmp/blowup-tusky/`, `tmp/blowup-antennapod/` (each `import.log` and `baseline.log`, the debug
+log with the per-rule counters and `CTADL_ITER_LOG` lines). `scripts/blowup-rank.py` prints the
+counters as "derived" and "new".
+
+- `tmp/blowup-tusky/probe.log`: the `CTADL_BIG_ALLOC_MB=64` run (`target/profiling/ctadl.exe`).
+- `tmp/blowup-tusky/s12-{keyed,unkeyed}.log`, `s12-*-index/`, `dump-*/`, `q-*.sarif`: S12 on Tusky,
+  the two indexes, their sorted dumps and the queries (`../blowup-noto/broad-model.json`).
