@@ -1320,6 +1320,24 @@ fn taint_flows_through_funcptr_in_struct() {
 }
 
 #[test_log::test]
+fn taint_flows_through_funcptr_in_struct_via_forwarder() {
+    // The struct form, one frame further down: `fwd` only passes `o` on, so the target has to
+    // climb through a frame that never touches `.op` to resolve `call`'s indirect call.
+    let src = r"
+        int id(int p) { return p; }
+        struct S { int (*op)(int); };
+        int call(struct S *s, int b) { return s->op(b); }
+        int fwd(struct S *s, int b) { return call(s, b); }
+        int wrap(int a, int b) {
+            struct S o;
+            o.op = id;
+            return fwd(&o, b);
+        }";
+    let (summary, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&summary, &si, "wrap", 1, "");
+}
+
+#[test_log::test]
 fn aggregate_initializer_list_lowers_to_element_stores() {
     // An aggregate brace initializer lowers to per-element stores at successive element
     // addresses -- the same offset + `deref` shape a subscript read resolves to -- so
