@@ -106,7 +106,7 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
             read_code(&mut body, &mut cur)?;
 
             if fat_flags & 0x8 != 0 {
-                read_sections(&mut body, &mut cur)?;
+                read_sections(&mut body.exception_handlers, &mut cur)?;
             }
         }
         _ => return Err(Error::bad(start, "invalid method body header")),
@@ -130,67 +130,70 @@ fn read_code<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cur<'a
     Ok(())
 }
 
-fn read_sections<'a>(
-    body: &mut MethodBody<'a>,
-    cur: &mut crate::raw::cursor::Cur<'a>,
+/// Reads the data sections that follow the code. Cecil's `ReadSection`
+/// recurses once per MoreSects section; this loops, with the same result.
+fn read_sections(
+    handlers: &mut Vec<ExceptionHandler>,
+    cur: &mut crate::raw::cursor::Cur<'_>,
 ) -> Result<()> {
-    // CodeReader.ReadSection: align to a 4-byte file-position boundary.
-    cur.set_pos((cur.pos() + 3) & !3);
-
     const FAT_FORMAT: u8 = 0x40;
     const MORE_SECTS: u8 = 0x80;
 
-    let flags = cur.u8()?;
-    if flags & FAT_FORMAT == 0 {
-        // small: count byte / 12, then 2 reserved bytes
-        let count = (cur.u8()? / 12) as usize;
-        cur.skip(2)?;
-        for _ in 0..count {
-            let ty = cur.u16()? & 0x7;
-            let try_start = cur.u16()? as u32;
-            let try_len = cur.u8()? as u32;
-            let handler_start = cur.u16()? as u32;
-            let handler_len = cur.u8()? as u32;
-            read_handler(
-                body,
-                cur,
-                ty as u32,
-                try_start,
-                try_len,
-                handler_start,
-                handler_len,
-            )?;
-        }
-    } else {
-        cur.set_pos(cur.pos() - 1);
-        let count = ((cur.i32()? >> 8) / 24) as usize;
-        for _ in 0..count {
-            let ty = cur.u32()? & 0x7;
-            let try_start = cur.u32()?;
-            let try_len = cur.u32()?;
-            let handler_start = cur.u32()?;
-            let handler_len = cur.u32()?;
-            read_handler(
-                body,
-                cur,
-                ty,
-                try_start,
-                try_len,
-                handler_start,
-                handler_len,
-            )?;
-        }
-    }
+    loop {
+        // CodeReader.ReadSection: align to a 4-byte file-position boundary.
+        cur.set_pos((cur.pos() + 3) & !3);
 
-    if flags & MORE_SECTS != 0 {
-        read_sections(body, cur)?;
+        let flags = cur.u8()?;
+        if flags & FAT_FORMAT == 0 {
+            // small: count byte / 12, then 2 reserved bytes
+            let count = (cur.u8()? / 12) as usize;
+            cur.skip(2)?;
+            for _ in 0..count {
+                let ty = cur.u16()? & 0x7;
+                let try_start = cur.u16()? as u32;
+                let try_len = cur.u8()? as u32;
+                let handler_start = cur.u16()? as u32;
+                let handler_len = cur.u8()? as u32;
+                read_handler(
+                    handlers,
+                    cur,
+                    ty as u32,
+                    try_start,
+                    try_len,
+                    handler_start,
+                    handler_len,
+                )?;
+            }
+        } else {
+            cur.set_pos(cur.pos() - 1);
+            let count = ((cur.i32()? >> 8) / 24) as usize;
+            for _ in 0..count {
+                let ty = cur.u32()? & 0x7;
+                let try_start = cur.u32()?;
+                let try_len = cur.u32()?;
+                let handler_start = cur.u32()?;
+                let handler_len = cur.u32()?;
+                read_handler(
+                    handlers,
+                    cur,
+                    ty,
+                    try_start,
+                    try_len,
+                    handler_start,
+                    handler_len,
+                )?;
+            }
+        }
+
+        if flags & MORE_SECTS == 0 {
+            return Ok(());
+        }
     }
-    Ok(())
 }
 
-fn read_handler<'a>(
-    body: &mut MethodBody<'a>,
-    cur: &mut crate::raw::cursor::Cur<'a>,
+fn read_handler(
+    handlers: &mut Vec<ExceptionHandler>,
+    cur: &mut crate::raw::cursor::Cur<'_>,
     ty: u32,
     try_start: u32,
     try_len: u32,
@@ -218,7 +221,7 @@ fn read_handler<'a>(
         ExceptionHandlerType::Filter => handler.filter_start = Some(cur.u32()?),
         _ => cur.skip(4)?,
     }
-    body.exception_handlers.push(handler);
+    handlers.push(handler);
     Ok(())
 }
 
@@ -700,7 +703,8 @@ fn write_generic_args(
 
 #[cfg(test)]
 mod tests {
-    use super::{format_r4, format_r8};
+    use super::{format_r4, format_r8, read_sections};
+    use crate::raw::cursor::Cur;
 
     // Each value as .NET 8 prints it (CecilDump on gap-formatter.il.dll).
     #[test]
@@ -754,5 +758,23 @@ mod tests {
                 "r8 0x{bits:016x}"
             );
         }
+    }
+
+    // Each MoreSects section is read in turn, however many there are: a
+    // chain of 200,000 empty small sections, then one with a clause.
+    #[test]
+    fn many_sections_read_in_turn() {
+        const SECTIONS: usize = 200_000;
+        let mut data = [0x80, 0, 0, 0].repeat(SECTIONS);
+        data.extend([0x01, 12, 0, 0]);
+        data.extend([2, 0, 1, 0, 3, 4, 0, 5, 0, 0, 0, 0]);
+        let mut handlers = Vec::new();
+        let mut cur = Cur::at(&data, 0);
+        read_sections(&mut handlers, &mut cur).unwrap();
+        assert_eq!(cur.pos(), data.len());
+        assert_eq!(handlers.len(), 1);
+        let h = &handlers[0];
+        assert_eq!((h.try_start, h.try_end), (1, 4));
+        assert_eq!((h.handler_start, h.handler_end), (4, 9));
     }
 }
