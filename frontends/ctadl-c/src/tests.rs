@@ -1160,8 +1160,7 @@ fn switch_fallthrough_flows_to_return() {
 
 #[test_log::test]
 fn a_case_label_inside_an_if_is_entered_from_the_switch() {
-    // `case -1:` labels the `if`'s body; after `return 0` it is reachable only from the
-    // switch.
+    // After `return 0`, `case -1:` is reachable only from the switch.
     let src = r"
         int pick(int a, int v) {
             switch (a) {
@@ -1179,8 +1178,7 @@ fn a_case_label_inside_an_if_is_entered_from_the_switch() {
 
 #[test_log::test]
 fn statements_after_a_case_labelled_if_body_follow_the_if() {
-    // libtiff's tiffcmp.c `CheckShortTag`: tree-sitter puts `g = v2;` inside the `case`
-    // label, but the `if` body is `return 1;` alone, so `g = v2` runs when `v1 != v2`.
+    // tiffcmp.c's `CHECK`: `g = v2` follows the `if`, so it runs when `v1 != v2`.
     let src = r"
         int g;
         int check(int a, int v1, int v2) {
@@ -2707,8 +2705,7 @@ fn static_local_flows() {
 
 #[test_log::test]
 fn addr_of_local_write_through_taints_pointee() {
-    // Writing through a local's address writes the pointee: `x` is address-taken, so the
-    // same-block alias lowers `*p = src` to `store x.deref := src`.
+    // `*p = src` after a same-block `p = &x` stores `x.deref`.
     let src = r"
         int f() {
             int x = 0;
@@ -2723,7 +2720,7 @@ fn addr_of_local_write_through_taints_pointee() {
 
 #[test_log::test]
 fn addr_of_local_read_through_resolves_pointee() {
-    // Reading through the alias loads `x`'s cell: `int y = *p;` is `load x.deref`.
+    // `int y = *p;` loads `x.deref`.
     let src = r"
         int f() {
             int x = source();
@@ -2737,8 +2734,7 @@ fn addr_of_local_read_through_resolves_pointee() {
 
 #[test_log::test]
 fn addr_of_alias_does_not_cross_basic_blocks() {
-    // The alias is confined to its block: after the branch, `*p = src` stores to `p.deref`;
-    // `p` and `x` are each written once.
+    // The alias is per block: after the branch, `*p = src` stores to `p.deref`.
     let src = r"
         int f(int c) {
             int x = 0;
@@ -2755,7 +2751,7 @@ fn addr_of_alias_does_not_cross_basic_blocks() {
         1,
         "only `int x = 0` should write x; the post-if `*p = src` must not resolve to x across a block boundary"
     );
-    check_writes_to(&prog, "p", 1); // `int *p = &x` only: a store through `p` is not a write to it
+    check_writes_to(&prog, "p", 1); // `int *p = &x` only
 }
 
 #[test_log::test]
@@ -5149,8 +5145,7 @@ fn a_record_tag_is_not_a_type_name() {
 fn a_global_function_pointer_callee_is_not_a_cast() {
     // The other half of "`A` is a variable, not a type": a file-scope function pointer is
     // not in the scope tree, so what saves this one is that `hook` is not a type name
-    // anywhere in the unit. It is a call through `hook`, as the unparenthesized spelling
-    // is (`a_call_through_a_global_function_pointer_is_indirect`).
+    // anywhere in the unit. It calls through `hook`, as `hook(x)` does.
     let src = r"
         void (*hook)(int);
         void fire(int x) { (hook)(x); }";
@@ -5181,9 +5176,7 @@ fn a_cast_shaped_call_is_not_a_frontend_gap() {
 }
 
 // ---------------------------------------------------------------------------------------
-// `(T) -1`, `(T) *p`, `(T) &x`: tree-sitter reads a cast whose operand starts with `-`, `+`,
-// `*` or `&` as a binary expression with `(T)` on the left, unless a tighter operator
-// follows (`(T) - x * y` is a cast).
+// `(T) -1`, `(T) *p`, `(T) &x`: casts tree-sitter parses as binary expressions.
 // ---------------------------------------------------------------------------------------
 
 #[test_log::test]
@@ -5222,8 +5215,7 @@ fn a_cast_of_a_dereference_reads_the_pointee() {
 
 #[test_log::test]
 fn a_cast_of_an_element_address_is_the_address() {
-    // tiff2pdf's `TIFFReadEncodedStrip(.., (tdata_t) &buffer[off], ..)`: the callee fills
-    // the caller's buffer.
+    // tiff2pdf's `(tdata_t) &buffer[off]`: the callee fills the caller's buffer.
     let src = r"
         typedef char *tdata_t;
         void fill(char *d, char v) { d[0] = v; }
@@ -5245,8 +5237,7 @@ fn a_cast_of_a_scalars_address_is_its_cell() {
 
 #[test_log::test]
 fn a_parenthesized_variable_minus_one_is_a_subtraction() {
-    // Only a type name makes `(x) - 1` a cast: not a parameter, a global, or a local that
-    // shadows a typedef.
+    // `(x) - 1` is a cast only for a type name, not a parameter, global or shadowing local.
     let src = r"
         typedef long T;
         long g;
@@ -5504,8 +5495,7 @@ fn a_call_through_a_field_of_a_local_or_parameter_is_unchanged() {
 
 #[test_log::test]
 fn a_call_through_a_global_function_pointer_is_indirect() {
-    // `hook` and `plain` are both bare global names; the unit's declarations tell them
-    // apart: `hook` is a variable, so both spellings call through it.
+    // `hook` is a declared variable, so both spellings call through it.
     let src = r"
         void (*hook)(int);
         void plain(int x);
@@ -5539,8 +5529,7 @@ fn taint_crosses_a_call_through_a_global_function_pointer() {
 
 #[test_log::test]
 fn taint_crosses_a_call_through_an_extern_function_pointer() {
-    // libtiff's error handler: the unit that calls through the pointer only declares it
-    // `extern`; another unit defines it and installs the handler it is passed.
+    // libtiff's error handler: declared `extern` here, defined and installed in another unit.
     let lib = r"
         int (*hook)(int);
         void set_hook(int (*h)(int)) { hook = h; }";

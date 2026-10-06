@@ -612,7 +612,7 @@ fn push_element(fields: &mut ThinVec<PathSegment>, index: Option<i64>) {
     }
 }
 
-/// The local holding an address-taken parameter's value; `<...>` cannot collide with a C name.
+/// Local holding an address-taken parameter's value; `<...>` is not a C name.
 fn cell_local_name(param: &str) -> String {
     format!("<cell {param}>")
 }
@@ -623,7 +623,7 @@ fn in_cell(mut fields: ThinVec<PathSegment>) -> ThinVec<PathSegment> {
     fields
 }
 
-/// A declarator's name and the declarator kind nearest it (what the variable is), or `""`.
+/// A declarator's name and its nearest declarator kind, or `""`.
 fn declarator_shape(declarator: Node<'_>) -> (Option<Node<'_>>, &'static str) {
     let mut node = declarator;
     let mut nearest = "";
@@ -650,9 +650,7 @@ fn declarator_shape(declarator: Node<'_>) -> (Option<Node<'_>>, &'static str) {
     }
 }
 
-/// Scalar locals and parameters whose address is taken (`&x`, or `(T) &x` when `T` is in
-/// `type_names`), by name. Arrays, functions, records held by value and globals already name
-/// their own storage.
+/// Scalar locals and parameters whose address is taken (`&x`, `(T) &x`).
 fn addr_taken_scalars(
     params: Node<'_>,
     body: Node<'_>,
@@ -788,8 +786,7 @@ struct Context<'a> {
     /// making all members one access path. Populated from `union_specifier`-typed local
     /// declarations; reset per function.
     union_vars: HashSet<VariableRef>,
-    /// Address-taken scalars of the current function (`addr_taken_scalars`): the variable is
-    /// the address and its value is at `.deref`, so a callee's `*out = v` reaches `x`.
+    /// Address-taken scalars of the current function; each one's value is at `.deref`.
     cells: HashSet<String>,
     /// Cell variables `&x` produced in the current function.
     cell_vars: HashSet<VariableRef>,
@@ -814,18 +811,15 @@ struct Context<'a> {
     /// for a typedef living in an unexpanded system header (`u_char`, `uid_t`). Exists to
     /// tell a cast from a call: `(width_t)(x)` parses as a `call_expression` through a
     /// parenthesized callee, the exact shape of a genuine `(fp)(x)`. Read by
-    /// [`Context::cast_shaped_call`], and likewise by [`Context::cast_prefix`] for
-    /// `(T) -1`, which parses as a subtraction. A record TAG is deliberately not recorded:
-    /// `struct stat` is a type, but bare `stat` is the function.
+    /// [`Context::cast_shaped_call`] and [`Context::cast_prefix`]. A record TAG is
+    /// deliberately not recorded: `struct stat` is a type, but bare `stat` is the function.
     type_names: HashSet<String>,
     /// Names the unit declares as functions without defining them (prototypes). The positive
     /// evidence that `(zzz)(x)` is a call, symmetric to `type_names`' cast evidence; it keeps
     /// the macro-suppression idiom `(free)(p)` quiet. Read through
     /// [`Context::names_a_value`].
     declared_functions: HashSet<String>,
-    /// Names this unit declares at file scope as variables, `extern` included. A call
-    /// `hook(v)` through one calls the function pointer it holds; see
-    /// [`Context::collect_call`]. Per unit: another unit's `static` variable says nothing here.
+    /// This unit's file-scope variables, `extern` included; `hook(v)` calls through one.
     global_variables: HashSet<String>,
     /// `ERROR` nodes already reported as unparsable constructs, by `Node::id`, so one
     /// syntax error draws one warning. See [`Context::report_unparsable_construct`].
@@ -1505,11 +1499,11 @@ fn declarator_member_name<'s>(decl: Node<'_>, source: &'s str) -> Option<(&'s st
 }
 
 /// What a translation unit's declarations say about names, collected by
-/// [`collect_registry`] before any function is lowered. The record layouts and global
-/// variables stay per unit; the other two name sets are unioned across the import by
-/// [`lower_units`], because units share the headers the input did not expand: a name one
-/// unit uses as a type (`u_int`) is a type in a unit that only casts to it, and a prototype
-/// in one unit says what the name is in all of them.
+/// [`collect_registry`] before any function is lowered. Layouts and globals stay per unit;
+/// the other two are unioned across the import by [`lower_units`], because units share
+/// the headers the input did not expand: a name one unit uses as a type (`u_int`) is a type
+/// in a unit that only casts to it, and a prototype in one unit says what the name is in
+/// all of them.
 #[derive(Debug, Default)]
 struct UnitRegistry {
     struct_layouts: HashMap<String, Vec<MemberSlot>>,
@@ -1652,11 +1646,7 @@ fn first_named_child(node: Node<'_>) -> Option<Node<'_>> {
         .find(|child| child.kind() != "comment")
 }
 
-/// `(name) OP operand` with `OP` one of `-`, `+`, `*`, `&`: the shape tree-sitter gives a cast
-/// whose operand starts with a unary operator that is also binary (`(tmsize_t) -1`). It takes
-/// that reading only when no tighter operator follows (`(T) - x * y` parses as a cast), so
-/// `operand` is the whole operand of `OP`. Whether `name` is a type is the caller's question;
-/// see [`Context::cast_prefix`].
+/// `(name) OP operand`, `OP` one of `- + * &`: tree-sitter's parse of a cast like `(T) -1`.
 fn cast_shaped_binary<'t, 's>(
     node: Node<'t>,
     source: &'s str,
@@ -1751,8 +1741,7 @@ fn is_statement_expression(node: Node<'_>) -> bool {
 /// (`void f(char **)`), or parse debris. That is not the same as "there is no parameter":
 /// see [`Context::collect_params`], which still owns the slot.
 ///
-/// Every parameter is `ByVal`: a write through a pointer is a non-empty path and still flows
-/// out (`isout`); reassigning the pointer does not.
+/// Every parameter is `ByVal`; writes through a pointer still flow out (`isout`).
 fn param_head(declarator: Node<'_>) -> (Option<Node<'_>>, ParameterType) {
     let mut node = declarator;
     let mut name = None;
@@ -1788,20 +1777,7 @@ fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
     n.utf8_text(source.as_bytes()).unwrap().trim()
 }
 
-/// The `goto` labels of the function whose body is `node`, in tree order, so
-/// `lower_function` can pre-create a block for each and a forward `goto L` resolves.
-///
-/// A nested `function_definition` is not descended into -- a label's scope is the function
-/// containing it, and the definition query lowers the nested one as a function of its own,
-/// with its own label blocks. A `sizeof`/`_Alignof` operand is not descended into either:
-/// it is unevaluated, `flatten_expr` never walks inside it, and `goto` into an unevaluated
-/// operand is not C. Either block would only ever be an empty orphan.
-///
-/// A label the parse *recovery* holds IS still collected: plenty of well-formed code lowers
-/// out of a damaged body, and dropping its labels would break its `goto`s. Its block goes
-/// unentered, which [`finalize_terminators`] knows not to charge to the frontend.
-/// The `case` labels of a switch body that are not its direct arms (`case 1: if (c) case 2:
-/// s;`), outside any nested switch.
+/// `case` labels below a switch's arms (`if (c) case 2: s;`), outside nested switches.
 fn nested_case_labels<'t>(body: Node<'t>) -> Vec<Node<'t>> {
     fn walk<'t>(node: Node<'t>, out: &mut Vec<Node<'t>>) {
         let mut cursor = node.walk();
@@ -1825,14 +1801,12 @@ fn nested_case_labels<'t>(body: Node<'t>) -> Vec<Node<'t>> {
     out
 }
 
-/// The key a nested `case` label's block is registered under in `label_blocks`; `<...>`
-/// cannot collide with a C label.
+/// `label_blocks` key for a nested `case`; `<...>` is not a C label.
 fn case_label_key(case: Node<'_>) -> String {
     format!("<case {}>", case.id())
 }
 
-/// Is this statement the whole body of an `if`, `else`, loop or label, rather than one of a
-/// sequence of statements?
+/// Is `stmt` the sole body of an `if`, `else`, loop or label?
 fn is_single_statement_body(stmt: Node<'_>) -> bool {
     stmt.parent().is_some_and(|parent| {
         matches!(
@@ -1856,10 +1830,7 @@ fn case_statements(case: Node<'_>) -> Vec<Node<'_>> {
         .collect()
 }
 
-/// Statements tree-sitter put inside a `case` label that is the body of `stmt`. Its
-/// `case_statement` takes every following statement, but `if (c) case 1: s1; s2;` has the
-/// body `case 1: s1;`; `s2` follows the `if`. Empty for a `stmt` that is itself a body: the
-/// tail follows the outermost statement.
+/// `s2` of `if (c) case 1: s1; s2;`, which follows the `if`; empty if `stmt` is a body.
 fn misgrouped_case_tail(stmt: Node<'_>) -> Vec<Node<'_>> {
     if is_single_statement_body(stmt) {
         return Vec::new();
@@ -1890,6 +1861,18 @@ fn misgrouped_case_tail(stmt: Node<'_>) -> Vec<Node<'_>> {
     }
 }
 
+/// The `goto` labels of the function whose body is `node`, in tree order, so
+/// `lower_function` can pre-create a block for each and a forward `goto L` resolves.
+///
+/// A nested `function_definition` is not descended into -- a label's scope is the function
+/// containing it, and the definition query lowers the nested one as a function of its own,
+/// with its own label blocks. A `sizeof`/`_Alignof` operand is not descended into either:
+/// it is unevaluated, `flatten_expr` never walks inside it, and `goto` into an unevaluated
+/// operand is not C. Either block would only ever be an empty orphan.
+///
+/// A label the parse *recovery* holds IS still collected: plenty of well-formed code lowers
+/// out of a damaged body, and dropping its labels would break its `goto`s. Its block goes
+/// unentered, which [`finalize_terminators`] knows not to charge to the frontend.
 fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
     if node.kind() == "labeled_statement"
         && let Some(label) = node.child_by_field_name("label")
@@ -2350,10 +2333,7 @@ impl<'a> Context<'a> {
             // `if (c) case 1: s1; s2;`: `s2` follows the `if` (see `misgrouped_case_tail`).
             for stmt in std::iter::once(child).chain(misgrouped_case_tail(child)) {
                 if diverged {
-                    // The previous statement diverged yet siblings remain: unreachable by
-                    // fall-through, but a `goto` label among them (the `out:` cleanup idiom)
-                    // is still reachable through its jump edge and must lower. Keep walking
-                    // in a fresh unlinked block, exactly as `walk_goto` does.
+                    // A later `goto` label is still reachable: walk on in a fresh block.
                     scope_view = add_block(
                         program,
                         &scope_view,
@@ -2516,8 +2496,7 @@ impl<'a> Context<'a> {
             "labeled_statement" => {
                 return self.walk_labeled_statement(source, program, scope_view, child);
             }
-            // A `case` label below a switch's arms: `walk_switch` gave it a block. Any other
-            // `case` (outside a switch, parse-recovery debris) takes the catch-all.
+            // Nested `case` (see `walk_switch`); stray ones take the catch-all.
             "case_statement" if self.label_blocks.contains_key(&case_label_key(child)) => {
                 return self.walk_nested_case(source, program, scope_view, child);
             }
@@ -2965,8 +2944,7 @@ impl<'a> Context<'a> {
             .children(&mut cursor)
             .filter(|n| n.kind() == "case_statement")
             .collect();
-        // Labels deeper in the body (`case 1: if (c) case 2: s;`) are entered like goto
-        // labels: a block each, reached from the switch; `walk_nested_case` falls into it.
+        // Nested labels (`if (c) case 2: s;`) get a block each, like goto labels.
         let nested = nested_case_labels(body);
         let has_default = arms
             .iter()
@@ -3163,10 +3141,7 @@ impl<'a> Context<'a> {
         Ok(false)
     }
 
-    /// `case v: <stmts>` below a switch's arms, e.g. as an `if` body: falls into the block
-    /// `walk_switch` created for it, like a goto label. As a body it holds only its first
-    /// statement; the rest are lowered after the enclosing statement (see
-    /// [`misgrouped_case_tail`]).
+    /// A nested `case`: falls into its block from `walk_switch`, like a goto label.
     fn walk_nested_case(
         &mut self,
         source: &'a str,
@@ -3184,6 +3159,7 @@ impl<'a> Context<'a> {
         link_blocks(program, scope_view, &label_sv, false)?;
         *scope_view = label_sv;
         let mut stmts = case_statements(child);
+        // As a body it holds one statement; see `misgrouped_case_tail`.
         if is_single_statement_body(child) {
             stmts.truncate(1);
         }
@@ -4015,8 +3991,7 @@ impl<'a> Context<'a> {
         )))
     }
 
-    /// `*e` loads the memory at `e`, exactly as `e[0]` (`deref_location`). `&x` is a cell's
-    /// variable, `&a[i]` an element address, `&*e` is `e`; else the operand.
+    /// `*e` reads as `e[0]` (`deref_location`); `&e` is a cell, an element address, or `e`.
     fn flatten_pointer_operator(
         &mut self,
         program: &mut Program,
@@ -4221,8 +4196,7 @@ impl<'a> Context<'a> {
         Ok(value.expect("cast_shaped_call rejects an empty operand list"))
     }
 
-    /// Positive evidence that `name` is a value, not a type: a variable in scope (which may
-    /// shadow a typedef), a function any unit defines, or a prototype.
+    /// Is `name` a value: a variable in scope, a defined function or a prototype?
     fn names_a_value(&self, name: &str, scope_view: &ScopeView) -> bool {
         self.scope_tree
             .find_variable(scope_view.sidx, name)
@@ -4231,9 +4205,7 @@ impl<'a> Context<'a> {
             || self.declared_functions.contains(name)
     }
 
-    /// Is this binary expression a cast tree-sitter misread, `(T) -1` as `(T) - 1`? Yes when
-    /// it has [`cast_shaped_binary`]'s shape, the name is used as a type, and nothing says it
-    /// is a value. Returns the prefix operator and its operand.
+    /// A cast misparsed as `(T) - 1`, if `T` is a type and not a value: the operator and operand.
     fn cast_prefix<'t>(
         &self,
         node: Node<'t>,
@@ -4310,9 +4282,8 @@ impl<'a> Context<'a> {
         // value is calling through it. The access path cannot say so -- the value node may
         // resolve to a bare global path, exactly the shape of a global callee that IS a
         // name -- so ask the construct itself; left as a name, an empty-bodied function
-        // would be invented per call site. Likewise a global the unit declares as a
-        // variable (`void (*hook)(int);`): `hook(v)` calls what it holds. A defined function
-        // wins: `fn_t f;` declares a function through a typedef, spelled like a variable.
+        // would be invented per call site.
+        // A global variable callee is a value too, unless a function of that name is defined.
         let callee_is_a_value = is_statement_expression(func_node)
             || (func_node.kind() == "identifier"
                 && self.global_variables.contains(func_name)
@@ -4349,9 +4320,8 @@ impl<'a> Context<'a> {
             // globals object says nothing about whether the callee is a name -- the PATH
             // does. `$globals.f` alone is the name `f`; anything past that leading segment
             // is a location *inside* the object, reached by a load -- a function pointer a
-            // file-scope object holds, not a function. The second disjunct reaches the
-            // same conclusion from the construct and the unit's declarations, for the shapes
-            // whose path cannot say it: see `callee_is_a_value`.
+            // file-scope object holds, not a function. `callee_is_a_value` covers the shapes
+            // whose path cannot say it.
             Variable::GlobalHeap if access_path.fields.len() > 1 || callee_is_a_value => {
                 log::debug!("This is an Indirect GLOBAL call: {func_name}");
                 let callee = self.emit_loads(program, scope_view, access_path);
@@ -4859,8 +4829,7 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// The location `*e` names: `e`'s value plus `deref`, exactly as `e[0]`. `*p++` lowers the
-    /// update and uses `p`; `*(T *)K` is the object at constant address `K`.
+    /// The location `*e` names, as `e[0]`; `*(T *)K` is the object at address `K`.
     fn deref_location(
         &mut self,
         program: &mut Program,
