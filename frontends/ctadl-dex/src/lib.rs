@@ -623,6 +623,11 @@ impl Context {
                 fdat,
                 &merged::narrowed(&switches, id),
             )?;
+            // The narrowed switch leaves every other id's arm unreachable. Without this each
+            // clone stores the whole merged body, so a class with n ids stores it n times over
+            // (39% of the IR of `org.schabi.newpipe`). The index would prune the same blocks
+            // before SSA anyway; doing it here keeps them out of the stored program.
+            ctadl_ir::ssa::prune_unreachable_nodes(fdat);
             if let VirtualMethodTable::Java {
                 methods, hierarchy, ..
             } = &mut builders.vmt

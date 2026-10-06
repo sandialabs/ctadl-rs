@@ -399,7 +399,10 @@ fn transform_with(
 /// This is how a caller satisfies the reachability precondition of [`transform`]. Dominators
 /// are only defined for blocks the start block reaches, so an unreachable block left in place
 /// is a panic later, not a wrong answer.
-fn prune_unreachable_nodes(function: &mut FunctionData) {
+///
+/// Public so a front end can prune a function it knows to be mostly dead before storing it: the
+/// dex front end's clones of R8 class-merged methods, each of which keeps one arm of a switch.
+pub fn prune_unreachable_nodes(function: &mut FunctionData) {
     let reachable_indices = reachable(&function.blocks);
     if reachable_indices.len() == function.blocks.num_nodes() {
         return;

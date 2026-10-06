@@ -133,11 +133,15 @@ impl MergedClasses {
         }
         this.sites.retain(|_, s| !s.is_empty());
         log::info!(
-            "merged classes: {} split into {} ids, {} methods cloned per id, {} construction sites \
-             in {} methods",
+            "merged classes: {} split into {} ids, {} switching methods cloned into {} clones, {} \
+             construction sites in {} methods",
             this.classes.len(),
             this.classes.values().map(|c| c.ids.len()).sum::<usize>(),
             this.classes.values().map(|c| c.switched.len()).sum::<usize>(),
+            this.classes
+                .values()
+                .map(|c| c.ids.len() * c.switched.len())
+                .sum::<usize>(),
             this.sites.values().map(|s| s.len()).sum::<usize>(),
             this.sites.len(),
         );
