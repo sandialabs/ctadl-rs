@@ -337,16 +337,20 @@ impl<'a> PeImage<'a> {
         let stream_count = cur.u16()?;
 
         for _ in 0..stream_count {
-            let offset = cur.u32()? as usize;
-            let size = cur.u32()? as usize;
+            let at = cur.pos();
+            // ImageReader.ReadMetadataStream: the offset is added to the
+            // root's file offset in unchecked uint arithmetic.
+            let start = (md_off as u32).wrapping_add(cur.u32()?) as usize;
+            let size = cur.u32()?;
             let name = read_aligned_string(&mut cur, 16)?;
-            let start = md_off
-                .checked_add(offset)
-                .ok_or(Error::bad(cur.pos(), "stream offset overflow"))?;
-            let data = self.data.get(start..start + size).ok_or(Error::bad(
-                start,
-                "metadata stream extends past end of file",
-            ))?;
+            // ReadHeapData reads with BinaryReader.ReadBytes((int) size),
+            // which throws on a negative count and otherwise stops at the
+            // end of the file.
+            if size > i32::MAX as u32 {
+                return Err(Error::bad(at, "metadata stream size past 2^31"));
+            }
+            let rest = self.data.get(start..).unwrap_or(&[]);
+            let data = &rest[..(size as usize).min(rest.len())];
             self.stream_headers.push(StreamHeader { name, data });
         }
         Ok(())

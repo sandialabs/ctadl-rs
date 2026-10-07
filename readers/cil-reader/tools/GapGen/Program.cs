@@ -62,6 +62,24 @@ static class Program {
             mod.Write(path, opts);
             Console.WriteLine($"wrote {path}");
         }
+        // Modules whose metadata root is patched once written.
+        var images = new (string, Func<ModuleDef>, Action<byte[]>)[] {
+            ("streams", () => Layout("streams"), Streams),
+        };
+        foreach (var (name, build, patch) in images) {
+            var mod = build();
+            var opts = new ModuleWriterOptions(mod);
+            opts.PEHeadersOptions.TimeDateStamp = 0;
+            AddEmptyStream(opts, "#XS");
+            AddEmptyStream(opts, "#YS");
+            var bytes = new MemoryStream();
+            mod.Write(bytes, opts);
+            var image = bytes.ToArray();
+            patch(image);
+            var path = Path.Combine(args[0], $"gap-{name}.dll");
+            File.WriteAllBytes(path, image);
+            Console.WriteLine($"wrote {path}");
+        }
         // One module in several tables-stream layouts.
         var layouts = new (string, Action<ModuleWriterOptions>)[] {
             ("enc", o => o.MetadataOptions.TablesHeapOptions.UseENC = true),
@@ -777,4 +795,72 @@ static class Program {
                 new RawTypeDefRow(r.Flags, cafe + 4, r.Namespace, r.Extends, r.FieldList, r.MethodList));
         });
     }
+
+    // Stream headers and a version string that Cecil reads where a strict
+    // reader rejects the image: a junk stream that starts past the end of
+    // the file, a #US whose size runs past it (Cecil reads to the end of
+    // the file), a stream name with a byte that is not ASCII, and a version
+    // string ending in one. Cecil decodes names and the version byte by
+    // byte, as Latin-1.
+    static void Streams(byte[] image) {
+        var root = MetadataRoot(image);
+        foreach (var (at, name) in StreamHeaders(image, root)) {
+            switch (name) {
+            case "#XS":
+                WriteU32(image, at, 0x7000_0000);
+                WriteU32(image, at + 4, 0x100);
+                break;
+            case "#US":
+                WriteU32(image, at + 4, 0x0100_0000);
+                break;
+            case "#YS":
+                image[at + 9] = 0xff;
+                break;
+            }
+        }
+        // "v4.0.30319" and its padding: end it with an e-acute.
+        var version = Encoding.ASCII.GetString(image, root + 16, 10);
+        if (version != "v4.0.30319" || image[root + 16 + 10] != 0)
+            throw new InvalidOperationException($"unexpected version {version}");
+        image[root + 16 + 10] = 0xe9;
+    }
+
+    // The file offset of the metadata root, from the PE headers.
+    static int MetadataRoot(byte[] image) {
+        int pe = ReadI32(image, 0x3c);
+        int sections = BitConverter.ToUInt16(image, pe + 6);
+        int optional = pe + 24;
+        int optionalSize = BitConverter.ToUInt16(image, pe + 20);
+        bool pe32Plus = BitConverter.ToUInt16(image, optional) == 0x20b;
+        int cli = RvaToOffset(image, ReadI32(image, optional + (pe32Plus ? 224 : 208)), optional + optionalSize, sections);
+        return RvaToOffset(image, ReadI32(image, cli + 8), optional + optionalSize, sections);
+    }
+
+    static int RvaToOffset(byte[] image, int rva, int sectionTable, int sections) {
+        for (int i = 0; i < sections; i++) {
+            int at = sectionTable + 40 * i;
+            int va = ReadI32(image, at + 12), size = ReadI32(image, at + 16), raw = ReadI32(image, at + 20);
+            if (rva >= va && rva < va + size)
+                return rva - va + raw;
+        }
+        throw new InvalidOperationException($"rva {rva:x} outside any section");
+    }
+
+    // Each stream header's file offset and name.
+    static List<(int, string)> StreamHeaders(byte[] image, int root) {
+        var headers = new List<(int, string)>();
+        int at = root + 16 + ReadI32(image, root + 12) + 2;
+        int count = BitConverter.ToUInt16(image, at);
+        at += 2;
+        for (int i = 0; i < count; i++) {
+            int name = at + 8, end = Array.IndexOf(image, (byte)0, name);
+            headers.Add((at, Encoding.ASCII.GetString(image, name, end - name)));
+            at = name + ((end - name + 4) & ~3);
+        }
+        return headers;
+    }
+
+    static int ReadI32(byte[] image, int at) => BitConverter.ToInt32(image, at);
+
+    static void WriteU32(byte[] image, int at, uint value) => BitConverter.GetBytes(value).CopyTo(image, at);
 }
