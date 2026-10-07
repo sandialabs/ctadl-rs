@@ -5,10 +5,13 @@
 //! memory.
 
 use super::{cecil_root, read_fixture, read_resource, Test};
+use cil_reader::model::custom_attributes::MAX_ATTRIBUTE_DEPTH;
 use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader};
 use cil_reader::model::sig::MAX_TYPE_SIG_DEPTH;
 use cil_reader::raw::pe::PeImage;
-use cil_reader::raw::tables::{ModuleRaw, NestedClassRaw, Table, TypeDefRaw, TypeSpecRaw};
+use cil_reader::raw::tables::{
+    CustomAttributeRaw, FieldRaw, ModuleRaw, NestedClassRaw, Table, TypeDefRaw, TypeSpecRaw,
+};
 use cil_reader::{Entity, Error, MetadataToken, Module, TokenType};
 
 /// File offset of the `#~` (or `#-`) stream, from the metadata root's
@@ -275,6 +278,150 @@ fn base_type_cycles() {
             module.resolve_member(member, &cache),
             "base type cycle"
         ));
+    }
+}
+
+/// Runs `test` on a thread with a 1 MiB stack, half Rust's default, so a
+/// test of nesting at the limit also checks that it fits.
+fn on_small_stack(test: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(test)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+fn is_nested_too_deeply<T>(result: cil_reader::Result<T>) -> bool {
+    matches!(
+        result,
+        Err(Error::BadImage {
+            reason: "custom attribute argument nested too deeply",
+            ..
+        })
+    )
+}
+
+// An enum whose underlying type is itself, directly or through another
+// enum. Cecil's ReadCustomAttributeEnum reads the underlying type's value
+// as an enum's in turn, until its stack overflows.
+fn attribute_enum_underlying_cycles() {
+    // Field's Signature column, after Flags and Name.
+    const SIGNATURE: usize = 4;
+    let original = read_fixture("CustomAttributes.cs.dll");
+    let module = Module::read(&original).unwrap();
+    let fields_of = |name: &str| module.get_type(name).unwrap().unwrap().fields().unwrap();
+    // Each enum's value__, and one of its literals, typed as the enum.
+    let enums = ["Bingo", "GenericWithEnum`1/OnGenericNumber"].map(|name| {
+        let fields = fields_of(name);
+        let value = fields[0].token().rid();
+        let literal = fields[1].token().rid();
+        let typed_as_enum = module
+            .metadata()
+            .row::<FieldRaw>(literal)
+            .unwrap()
+            .signature
+            .0;
+        (value, typed_as_enum as u16)
+    });
+    // FooAttribute(Bingo).
+    let attribute = (1..=module.metadata().row_count(Table::CustomAttribute))
+        .find(|&rid| {
+            let values = module.custom_attribute(rid).unwrap().values();
+            values.is_ok_and(|v| {
+                v.constructor_args
+                    .first()
+                    .is_some_and(|arg| arg.ty.full_name() == "Bingo")
+            })
+        })
+        .unwrap();
+    let (bingo, other) = (enums[0], enums[1]);
+    let self_typed = {
+        let mut data = original.clone();
+        patch_column(&mut data, Table::Field, bingo.0, SIGNATURE, bingo.1);
+        data
+    };
+    let each_other = {
+        let mut data = original.clone();
+        patch_column(&mut data, Table::Field, bingo.0, SIGNATURE, other.1);
+        patch_column(&mut data, Table::Field, other.0, SIGNATURE, bingo.1);
+        data
+    };
+    for data in [self_typed, each_other] {
+        on_small_stack(move || {
+            let module = Module::read(&data).unwrap();
+            let values = module.custom_attribute(attribute).unwrap().values();
+            assert!(is_nested_too_deeply(values));
+        });
+    }
+}
+
+// Arrays of arrays, and boxed values of boxed values, as deep as an
+// argument may nest and one level deeper. Cecil reads each level of both
+// recursively, without bound.
+fn attribute_argument_nesting() {
+    // CustomAttribute's Value column, after Parent and Type.
+    const VALUE: usize = 4;
+    let original = read_fixture("CustomAttributes.cs.dll");
+    let module = Module::read(&original).unwrap();
+    let attributes = 1..=module.metadata().row_count(Table::CustomAttribute);
+    let row = |rid| module.metadata().row::<CustomAttributeRaw>(rid).unwrap();
+    let blob = |rid| module.custom_attribute(rid).unwrap().blob().unwrap();
+    // An attribute whose constructor has no parameters, and the largest blob.
+    let target = attributes
+        .clone()
+        .find(|&rid| blob(rid) == [1, 0, 0, 0])
+        .unwrap();
+    let largest = attributes.max_by_key(|&rid| blob(rid).len()).unwrap();
+    let room = blob(largest).len();
+    let at = blob(largest).as_ptr() as usize - original.as_ptr() as usize;
+    let mut redirected = original.clone();
+    patch_column(
+        &mut redirected,
+        Table::CustomAttribute,
+        target,
+        VALUE,
+        row(largest).value.0 as u16,
+    );
+
+    // One named field `A` of `type`, then `value`.
+    let named = |ty: &[u8], value: &[u8]| {
+        let mut bytes = vec![0x01, 0x00, 0x01, 0x00, 0x53];
+        bytes.extend(ty);
+        bytes.extend([0x01, b'A']);
+        bytes.extend(value);
+        assert!(bytes.len() <= room);
+        let mut data = redirected.clone();
+        data[at..at + bytes.len()].copy_from_slice(&bytes);
+        data
+    };
+    let limit = MAX_ATTRIBUTE_DEPTH as usize;
+    // `levels` arrays of int32, each of length 1, around 7.
+    let arrays = |levels: usize| {
+        let mut ty = vec![0x1d; levels];
+        ty.push(0x08);
+        let mut value = [1, 0, 0, 0].repeat(levels);
+        value.extend([7, 0, 0, 0]);
+        named(&ty, &value)
+    };
+    // `levels` boxes around the int32 7: the field's own type is object.
+    let boxes = |levels: usize| {
+        let mut value = vec![0x51; levels - 1];
+        value.extend([0x08, 7, 0, 0, 0]);
+        named(&[0x51], &value)
+    };
+    for (kind, at_limit, past_limit) in [
+        ("arrays", arrays(limit), arrays(limit + 1)),
+        ("boxes", boxes(limit), boxes(limit + 1)),
+    ] {
+        on_small_stack(move || {
+            let module = Module::read(&at_limit).unwrap();
+            let values = module.custom_attribute(target).unwrap().values();
+            assert_eq!(values.unwrap().fields.len(), 1, "{kind}");
+            let module = Module::read(&past_limit).unwrap();
+            let values = module.custom_attribute(target).unwrap().values();
+            assert!(is_nested_too_deeply(values), "{kind}");
+        });
     }
 }
 
@@ -554,6 +701,11 @@ pub(super) const TESTS: &[Test] = &[
     ("member_lists_out_of_range", member_lists_out_of_range),
     ("type_ref_scope_cycles", type_ref_scope_cycles),
     ("base_type_cycles", base_type_cycles),
+    (
+        "attribute_enum_underlying_cycles",
+        attribute_enum_underlying_cycles,
+    ),
+    ("attribute_argument_nesting", attribute_argument_nesting),
     ("attribute_enum_scope_cycle", attribute_enum_scope_cycle),
     ("exported_type_nesting", exported_type_nesting),
     ("exported_type_file_loop", exported_type_file_loop),

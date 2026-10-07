@@ -22,6 +22,21 @@ use std::borrow::Cow;
 /// exceptions do.
 pub const UNRESOLVED_ENUM: Error = Error::Unsupported("enum type not resolvable");
 
+/// How deeply a custom-attribute argument may nest: each array, boxed value,
+/// and enum whose underlying type is an enum is a level. Decoding recurses
+/// once per level, so this bounds its stack use; Cecil's reader recurses the
+/// same way, without bound. An enum that is its own underlying type, directly
+/// or through others, ends here.
+pub const MAX_ATTRIBUTE_DEPTH: u32 = 64;
+
+/// Fails an argument `depth` levels deep, past [`MAX_ATTRIBUTE_DEPTH`].
+fn check_depth(depth: u32) -> Result<()> {
+    if depth > MAX_ATTRIBUTE_DEPTH {
+        return Err(Error::bad(0, "custom attribute argument nested too deeply"));
+    }
+    Ok(())
+}
+
 /// Loads nothing. A throwing cache over it is Cecil with an assembly
 /// resolver that always throws.
 struct NoLoader;
@@ -282,10 +297,10 @@ impl<'a> CustomAttribute<'a> {
 
         let params = self.constructor_param_types()?;
         for param in &params {
-            let ty = self.ca_type_of_sig(param, cache)?;
+            let ty = ca_type_of_sig(self.m, param, cache, 0)?;
             values
                 .constructor_args
-                .push(read_fixed_arg(self.m, &mut r, &ty, cache)?);
+                .push(read_fixed_arg(self.m, &mut r, &ty, cache, 0)?);
         }
 
         if !r.can_read_more() {
@@ -340,15 +355,17 @@ impl<'a> CustomAttribute<'a> {
             None => params,
         })
     }
-
-    /// Maps a signature type to the CA-blob interpretation
-    /// (`ReadCustomAttributeElementValue`'s dispatch).
-    fn ca_type_of_sig(&self, sig: &TypeSig, cache: &AssemblyCache<'_>) -> Result<CaType> {
-        ca_type_of_sig(self.m, sig, cache)
-    }
 }
 
-fn ca_type_of_sig(m: &ModuleData<'_>, sig: &TypeSig, cache: &AssemblyCache<'_>) -> Result<CaType> {
+/// Maps a signature type, `depth` levels deep, to the CA-blob interpretation
+/// (`ReadCustomAttributeElementValue`'s dispatch).
+fn ca_type_of_sig(
+    m: &ModuleData<'_>,
+    sig: &TypeSig,
+    cache: &AssemblyCache<'_>,
+    depth: u32,
+) -> Result<CaType> {
+    check_depth(depth)?;
     Ok(match sig.unwrap_modifiers() {
         TypeSig::Boolean => CaType::Boolean,
         TypeSig::Char => CaType::Char,
@@ -364,17 +381,19 @@ fn ca_type_of_sig(m: &ModuleData<'_>, sig: &TypeSig, cache: &AssemblyCache<'_>) 
         TypeSig::R8 => CaType::R8,
         TypeSig::String => CaType::String,
         TypeSig::Object => CaType::Object,
-        TypeSig::SzArray(inner) => CaType::Array(Box::new(ca_type_of_sig(m, inner, cache)?)),
+        TypeSig::SzArray(inner) => {
+            CaType::Array(Box::new(ca_type_of_sig(m, inner, cache, depth + 1)?))
+        }
         TypeSig::Named { token, .. } => {
             if let Some(primitive) = typeref_primitive(m, *token)? {
-                return ca_type_of_sig(m, &primitive, cache);
+                return ca_type_of_sig(m, &primitive, cache, depth);
             }
             let mut full_name = String::new();
             token_full_name(m, *token, GenericContext::default(), &mut full_name)?;
             if full_name == "System.Type" {
                 CaType::Type
             } else {
-                let underlying = enum_underlying_of_token(m, *token, cache)?;
+                let underlying = enum_underlying_of_token(m, *token, cache, depth + 1)?;
                 CaType::Enum {
                     full_name,
                     underlying: Box::new(underlying),
@@ -386,7 +405,7 @@ fn ca_type_of_sig(m: &ModuleData<'_>, sig: &TypeSig, cache: &AssemblyCache<'_>) 
             // underlying type (`ReadCustomAttributeElementValue`).
             let mut full_name = String::new();
             sig_full_name(m, sig, GenericContext::default(), &mut full_name)?;
-            let underlying = enum_underlying_of_token(m, *ty, cache)?;
+            let underlying = enum_underlying_of_token(m, *ty, cache, depth + 1)?;
             CaType::Enum {
                 full_name,
                 underlying: Box::new(underlying),
@@ -414,7 +433,8 @@ fn typeref_primitive(m: &ModuleData<'_>, token: MetadataToken) -> Result<Option<
     .primitive()
 }
 
-/// Underlying type of an enum argument given its TypeDef or TypeRef token:
+/// Underlying type, `depth` levels deep, of an enum argument given its
+/// TypeDef or TypeRef token:
 /// `ReadCustomAttributeEnum`'s `CheckedResolve`, which takes a definition as
 /// it is and resolves a reference with `MetadataResolver.Resolve`. A null
 /// result is [`UNRESOLVED_ENUM`]; resolution errors propagate, as Cecil's
@@ -423,28 +443,30 @@ fn enum_underlying_of_token(
     m: &ModuleData<'_>,
     token: MetadataToken,
     cache: &AssemblyCache<'_>,
+    depth: u32,
 ) -> Result<CaType> {
     if token.token_type() == Some(TokenType::TypeDef) {
         let ty = TypeDef {
             m,
             rid: token.rid(),
         };
-        return enum_underlying_of_def(m, &ty, cache);
+        return enum_underlying_of_def(m, &ty, cache, depth);
     }
     match m.module().resolve_type(token, cache)? {
-        Some(resolved) => enum_underlying_of_def(&resolved.module.data, &resolved.ty, cache),
+        Some(resolved) => enum_underlying_of_def(&resolved.module.data, &resolved.ty, cache, depth),
         None => Err(UNRESOLVED_ENUM),
     }
 }
 
 /// `ReadCustomAttributeEnum`: the type must be an enum, and its underlying
-/// type, read in the enum's module `m`, is read as
+/// type, read `depth` levels deep in the enum's module `m`, is read as
 /// `ReadCustomAttributeElementValue` reads it, where an object or array
 /// throws.
 fn enum_underlying_of_def(
     m: &ModuleData<'_>,
     ty: &TypeDef<'_>,
     cache: &AssemblyCache<'_>,
+    depth: u32,
 ) -> Result<CaType> {
     use crate::model::handles::field_attributes;
     if !ty.is_enum()? {
@@ -454,7 +476,7 @@ fn enum_underlying_of_def(
     }
     for field in ty.fields()? {
         if field.attributes()? & field_attributes::STATIC == 0 {
-            return match ca_type_of_sig(m, &field.field_type()?, cache)? {
+            return match ca_type_of_sig(m, &field.field_type()?, cache, depth)? {
                 CaType::Object | CaType::Array(_) => Err(Error::Unsupported(
                     "enum underlying type is not a primitive",
                 )),
@@ -465,17 +487,22 @@ fn enum_underlying_of_def(
     Err(Error::Unsupported("enum type has no instance field"))
 }
 
-/// `ReadCustomAttributeFieldOrPropType`.
+/// `ReadCustomAttributeFieldOrPropType`, for a type `depth` levels deep.
 fn read_field_or_prop_type<'a>(
     m: &ModuleData<'a>,
     r: &mut SigReader<'a>,
     cache: &AssemblyCache<'_>,
+    depth: u32,
 ) -> Result<CaType> {
+    check_depth(depth)?;
     let b = r.cur.u8()?;
     match ElementType::from_byte(b) {
         Some(ElementType::Boxed) => Ok(CaType::Object),
         Some(ElementType::SzArray) => Ok(CaType::Array(Box::new(read_field_or_prop_type(
-            m, r, cache,
+            m,
+            r,
+            cache,
+            depth + 1,
         )?))),
         Some(ElementType::Enum) => {
             let name = r
@@ -488,11 +515,14 @@ fn read_field_or_prop_type<'a>(
             // reference that ReadCustomAttributeEnum resolves.
             let module = m.module();
             let underlying = match parsed.resolve_in_module(module)? {
-                Some(ty) => enum_underlying_of_def(m, &ty, cache)?,
+                Some(ty) => enum_underlying_of_def(m, &ty, cache, depth + 1)?,
                 None => match module.resolve_parsed_reference(&parsed, cache)? {
-                    Some(resolved) => {
-                        enum_underlying_of_def(&resolved.module.data, &resolved.ty, cache)?
-                    }
+                    Some(resolved) => enum_underlying_of_def(
+                        &resolved.module.data,
+                        &resolved.ty,
+                        cache,
+                        depth + 1,
+                    )?,
                     None => return Err(UNRESOLVED_ENUM),
                 },
             };
@@ -507,17 +537,18 @@ fn read_field_or_prop_type<'a>(
     }
 }
 
-/// `ReadCustomAttributeFixedArgument`.
+/// `ReadCustomAttributeFixedArgument`, for an argument `depth` levels deep.
 fn read_fixed_arg<'a>(
     m: &ModuleData<'a>,
     r: &mut SigReader<'a>,
     ty: &CaType,
     cache: &AssemblyCache<'_>,
+    depth: u32,
 ) -> Result<CaArgument<'a>> {
     if let CaType::Array(elem) = ty {
-        return read_fixed_array_arg(m, r, ty, elem, cache);
+        return read_fixed_array_arg(m, r, ty, elem, cache, depth);
     }
-    read_element(m, r, ty, cache)
+    read_element(m, r, ty, cache, depth)
 }
 
 fn read_fixed_array_arg<'a>(
@@ -526,6 +557,7 @@ fn read_fixed_array_arg<'a>(
     array_ty: &CaType,
     elem: &CaType,
     cache: &AssemblyCache<'_>,
+    depth: u32,
 ) -> Result<CaArgument<'a>> {
     let length = r.cur.u32()?;
     if length == 0xffff_ffff {
@@ -536,7 +568,7 @@ fn read_fixed_array_arg<'a>(
     }
     let mut items = Vec::with_capacity((length as usize).min(4096));
     for _ in 0..length {
-        items.push(read_element(m, r, elem, cache)?);
+        items.push(read_element(m, r, elem, cache, depth + 1)?);
     }
     Ok(CaArgument {
         ty: array_ty.clone(),
@@ -544,20 +576,22 @@ fn read_fixed_array_arg<'a>(
     })
 }
 
-/// `ReadCustomAttributeElement`.
+/// `ReadCustomAttributeElement`, for an element `depth` levels deep.
 fn read_element<'a>(
     m: &ModuleData<'a>,
     r: &mut SigReader<'a>,
     ty: &CaType,
     cache: &AssemblyCache<'_>,
+    depth: u32,
 ) -> Result<CaArgument<'a>> {
+    check_depth(depth)?;
     if let CaType::Array(elem) = ty {
-        return read_fixed_array_arg(m, r, ty, elem, cache);
+        return read_fixed_array_arg(m, r, ty, elem, cache, depth);
     }
     if matches!(ty, CaType::Object) {
         // Boxed: the actual type precedes the value.
-        let inner_ty = read_field_or_prop_type(m, r, cache)?;
-        let inner = read_element(m, r, &inner_ty, cache)?;
+        let inner_ty = read_field_or_prop_type(m, r, cache, depth + 1)?;
+        let inner = read_element(m, r, &inner_ty, cache, depth + 1)?;
         return Ok(CaArgument {
             ty: CaType::Object,
             value: CaValue::Boxed(Box::new(inner)),
@@ -616,11 +650,11 @@ fn read_named_args<'a>(
             return Ok(());
         }
         let kind = r.cur.u8()?;
-        let ty = read_field_or_prop_type(m, r, cache)?;
+        let ty = read_field_or_prop_type(m, r, cache, 0)?;
         let name = r
             .utf8_string()?
             .ok_or(Error::Unsupported("null named argument name"))?;
-        let argument = read_fixed_arg(m, r, &ty, cache)?;
+        let argument = read_fixed_arg(m, r, &ty, cache, 0)?;
         let named = CaNamedArgument { name, argument };
         match kind {
             0x53 => values.fields.push(named),
