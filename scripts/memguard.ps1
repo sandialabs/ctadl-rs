@@ -14,12 +14,20 @@
   can read above the cap: Windows counts the request that was refused. The same summary is
   appended to -LogFile, which also gets the child's stdout and stderr.
 
+  With MEMGUARD_SAMPLE_MS=<n> set, it also appends a line every n ms with the child's committed
+  memory, `[memsample] t=12.3s commit=2048 MB`, between the child's own lines. With ctadl's
+  CTADL_ITER_LOG on, that gives a memory reading for each iteration of a looping scc.
+  (A PowerShell session that already loaded an older copy of this script's type must be
+  restarted to load this one.)
+
 .EXAMPLE
   scripts/memguard.ps1 -LimitGB 4 -LogFile run.log -- target/release/ctadl.exe index noto
 #>
 # A plain (non-advanced) param block, so everything after the two named options -- including
 # arguments that look like switches, such as python's `-c` -- lands in $args untouched.
 param([double] $LimitGB, [string] $LogFile)
+# An environment variable rather than a parameter: any parameter here would also bind positionally.
+$SampleMs = [int]$env:MEMGUARD_SAMPLE_MS
 $Command = $args
 if (-not $LimitGB -or -not $LogFile -or -not $Command) {
     throw 'usage: memguard.ps1 -LimitGB <gb> -LogFile <path> <command> [args...]'
@@ -73,12 +81,16 @@ public static class MemGuard {
     [DllImport("kernel32")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
     [DllImport("kernel32")] static extern bool GetExitCodeProcess(IntPtr h, out uint code);
     [DllImport("kernel32")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32")] static extern bool WriteFile(IntPtr h, byte[] b, int n, out int w, IntPtr o);
+    [StructLayout(LayoutKind.Sequential)]
+    struct PMC_EX { public int cb, PageFaultCount; public UIntPtr PeakWS, WS, a, b, c, d, PagefileUsage, PeakPagefileUsage, PrivateUsage; }
+    [DllImport("kernel32")] static extern bool K32GetProcessMemoryInfo(IntPtr p, out PMC_EX c, int cb);
 
     const uint CREATE_SUSPENDED = 0x4, STARTF_USESTDHANDLES = 0x100;
     const uint LIMIT_JOB_MEMORY = 0x200, LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 
     // Returns { exitCode, peakJobBytes }.
-    public static ulong[] Run(string cmdLine, ulong limitBytes, string logPath, string dir) {
+    public static ulong[] Run(string cmdLine, ulong limitBytes, string logPath, string dir, uint sampleMs) {
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
         var lim = new EXTENDED_LIMIT();
         lim.Basic.LimitFlags = LIMIT_JOB_MEMORY | LIMIT_KILL_ON_JOB_CLOSE;
@@ -99,7 +111,19 @@ public static class MemGuard {
         if (!AssignProcessToJobObject(job, pi.hProcess))
             throw new Exception("AssignProcessToJobObject failed: " + Marshal.GetLastWin32Error());
         ResumeThread(pi.hThread);
-        WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
+        if (sampleMs == 0) WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
+        else {
+            // One "[memsample]" line per period, appended to the log between the child's own
+            // lines, so each can be placed against the [iter] and [mem cp] lines around it.
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (WaitForSingleObject(pi.hProcess, sampleMs) == 0x102 /* WAIT_TIMEOUT */) {
+                PMC_EX c; c.cb = Marshal.SizeOf(typeof(PMC_EX));
+                if (!K32GetProcessMemoryInfo(pi.hProcess, out c, c.cb)) continue;
+                var line = System.Text.Encoding.UTF8.GetBytes(string.Format(
+                    "[memsample] t={0:F1}s commit={1} MB\n", sw.Elapsed.TotalSeconds, (ulong)c.PrivateUsage >> 20));
+                int w; WriteFile(log, line, line.Length, out w, IntPtr.Zero);
+            }
+        }
 
         uint code; GetExitCodeProcess(pi.hProcess, out code);
         EXTENDED_LIMIT q;
@@ -123,7 +147,7 @@ $LogFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPa
 $ErrorActionPreference = 'Stop'
 
 $sw = [Diagnostics.Stopwatch]::StartNew()
-$r = [MemGuard]::Run($cmdLine, $limit, $LogFile, $here)
+$r = [MemGuard]::Run($cmdLine, $limit, $LogFile, $here, [uint32]$SampleMs)
 $sw.Stop()
 
 $peakGB = $r[1] / 1GB
