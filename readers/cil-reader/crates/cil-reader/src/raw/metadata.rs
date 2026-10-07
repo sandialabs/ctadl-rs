@@ -1,7 +1,9 @@
 //! The metadata system: streams located, row counts read, per-image row sizes
 //! and column offsets computed.
 //!
-//! Port of `ImageReader.ReadMetadata`/`ReadTableHeap`/`ComputeTableInformations`.
+//! Port of `ImageReader.ReadMetadata`/`ReadTableHeap`/`ComputeTableInformations`,
+//! except where Cecil and the CLR lay the tables out differently: there the
+//! CLR's reading wins (see `from_image`).
 
 use crate::error::{Error, Result};
 use crate::raw::coded::{CODED_INDEX_COUNT, CodedIndexKind};
@@ -40,11 +42,21 @@ impl<'a> Metadata<'a> {
         let mut us_data: &[u8] = &[];
         let mut guid_data: &[u8] = &[];
         let mut tables_data: Option<&[u8]> = None;
+        let mut enc_tables = false;
+        let mut minimal_delta = false;
         let mut pdb_data = None;
 
         for stream in &image.stream_headers {
+            // The CLR's read-write metadata, which opens `#-` tables, finds
+            // `#JTD` with `_stricmp`.
+            if stream.name.eq_ignore_ascii_case("#JTD") {
+                minimal_delta = true;
+            }
             match stream.name {
-                "#~" | "#-" => tables_data = Some(stream.data),
+                "#~" | "#-" => {
+                    tables_data = Some(stream.data);
+                    enc_tables = stream.name == "#-";
+                }
                 "#Strings" => strings_data = stream.data,
                 "#Blob" => blob_data = stream.data,
                 "#GUID" => guid_data = stream.data,
@@ -71,14 +83,29 @@ impl<'a> Metadata<'a> {
                 *count = cur.u32()?;
             }
         }
+        // CMiniMdSchema::LoadFrom: with EXTRA_DATA, a u32 follows the row
+        // counts. Cecil does not skip it, and reads every table 4 bytes early.
+        if heap_sizes & 0x40 != 0 {
+            cur.skip(4)?;
+        }
 
+        // An EnC minimal delta (a `#JTD` stream) read through `#-` tables:
+        // CMiniMdRW::InitOnMem calls InitWithLargeTables, which makes every
+        // index 4 bytes. The read-only metadata that opens `#~` tables
+        // ignores `#JTD`, as Cecil always does.
+        let all_4_byte_columns = enc_tables && minimal_delta;
         let mut ctx = SizeCtx {
             heap_sizes,
             row_counts,
             coded_sizes: [0; CODED_INDEX_COUNT],
+            all_4_byte_columns,
         };
         for (size, kind) in ctx.coded_sizes.iter_mut().zip(CODED_INDEX_KINDS) {
-            *size = kind.size(|t| ctx.row_counts[t as usize]);
+            *size = if all_4_byte_columns {
+                4
+            } else {
+                kind.size(|t| ctx.row_counts[t as usize])
+            };
         }
 
         // ComputeTableInformations: rows are laid out immediately after the

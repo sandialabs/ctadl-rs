@@ -1,6 +1,7 @@
 // GapGen <outdir>: writes gap-<name>.dll, small modules with metadata shapes
 // that neither Roslyn nor ilasm emit but obfuscators and other writers do,
-// for comparing cil-reader against Cecil.
+// for comparing cil-reader against Cecil. Layouts that Cecil misreads and
+// the CLR reads go in <outdir>/clr, which that comparison does not scan.
 // The .il fixtures in readers/cil-reader/fixtures cover what ilasm can
 // express.
 //
@@ -61,7 +62,85 @@ static class Program {
             mod.Write(path, opts);
             Console.WriteLine($"wrote {path}");
         }
+        // One module in several tables-stream layouts.
+        var layouts = new (string, Action<ModuleWriterOptions>)[] {
+            ("enc", o => o.MetadataOptions.TablesHeapOptions.UseENC = true),
+            // #JTD with #~ tables: the CLR's read-only metadata ignores it,
+            // as Cecil does.
+            ("jtd-compressed", o => AddEmptyStream(o, "#JTD")),
+            // HeapSizes' ExtraData bit: a u32 after the row counts, which
+            // Cecil reads as the start of the Module table.
+            ("clr/extra-data", o => o.MetadataOptions.TablesHeapOptions.ExtraData = 0x0BADF00D),
+            // #JTD with #- tables: the CLR makes every index 4 bytes, where
+            // Cecil sizes them from HeapSizes and the row counts.
+            ("clr/minimal-delta", o => MinimalDelta(o, "#JTD")),
+            ("clr/minimal-delta-case", o => MinimalDelta(o, "#jtd")),
+        };
+        foreach (var (name, layout) in layouts) {
+            var dir = Path.Combine(args[0], Path.GetDirectoryName(name));
+            var stem = Path.GetFileName(name);
+            Directory.CreateDirectory(dir);
+            var mod = Layout(stem);
+            var opts = new ModuleWriterOptions(mod);
+            opts.PEHeadersOptions.TimeDateStamp = 0;
+            layout(opts);
+            var path = Path.Combine(dir, $"gap-{stem}.dll");
+            mod.Write(path, opts);
+            Console.WriteLine($"wrote {path}");
+        }
         return 0;
+    }
+
+    static void MinimalDelta(ModuleWriterOptions opts, string name) {
+        opts.MetadataOptions.TablesHeapOptions.UseENC = true;
+        // Leaves HeapSizes' size bits clear: only #JTD makes the indexes 4
+        // bytes.
+        opts.MetadataOptions.TablesHeapOptions.ForceBigColumns = true;
+        AddEmptyStream(opts, name);
+    }
+
+    // Right after the tables stream. dnlib puts custom heaps last, and a
+    // stream that starts at the end of the metadata fails the CLR's loader.
+    static void AddEmptyStream(ModuleWriterOptions opts, string name) =>
+        opts.MetadataOptions.MetadataHeapsAdded += (_, e) => e.Heaps.Insert(1, new EmptyHeap(name));
+
+    // A stream with no data, which only marks the metadata.
+    sealed class EmptyHeap : HeapBase {
+        readonly string name;
+        public EmptyHeap(string name) => this.name = name;
+        public override string Name => name;
+        public override uint GetRawLength() => 0;
+        protected override void WriteToImpl(DataWriter writer) { }
+    }
+
+    // A module that uses each heap and coded index kind the layouts change:
+    // strings, user strings, blobs, a GUID, TypeRefs, a MemberRef, a nested
+    // type and a custom attribute. L.C.Run() returns "run:cctor".
+    static ModuleDef Layout(string name) {
+        var mod = NewModule(name);
+        var cs = mod.CorLibTypes;
+        var c = NewClass(mod, "L", "C");
+        mod.Types.Add(c);
+        var s = new FieldDefUser("S", new FieldSig(cs.String), FieldAttributes.Public | FieldAttributes.Static);
+        c.Fields.Add(s);
+        var cctor = Method(".cctor", MethodSig.CreateStatic(cs.Void),
+            MethodAttributes.Private | MethodAttributes.HideBySig | MethodAttributes.Static
+                | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
+            OpCodes.Ldstr.ToInstruction("cctor"), OpCodes.Stsfld.ToInstruction(s));
+        c.Methods.Add(cctor);
+        var concat = new MemberRefUser(mod, "Concat", MethodSig.CreateStatic(cs.String, cs.String, cs.String),
+            cs.String.TypeDefOrRef);
+        c.Methods.Add(Method("Run", MethodSig.CreateStatic(cs.String), Static,
+            OpCodes.Ldstr.ToInstruction("run:"), OpCodes.Ldsfld.ToInstruction(s), OpCodes.Call.ToInstruction(concat)));
+        var nested = new TypeDefUser("", "N", cs.Object.TypeDefOrRef) {
+            Attributes = TypeAttributes.NestedPublic,
+        };
+        c.NestedTypes.Add(nested);
+        nested.Fields.Add(new FieldDefUser("x", new FieldSig(cs.Int64), FieldAttributes.Public));
+        var obsolete = new TypeRefUser(mod, "System", "ObsoleteAttribute", cs.AssemblyRef);
+        var obsoleteCtor = new MemberRefUser(mod, ".ctor", MethodSig.CreateInstance(cs.Void, cs.String), obsolete);
+        c.CustomAttributes.Add(new CustomAttribute(obsoleteCtor, new[] { new CAArgument(cs.String, "old") }));
+        return mod;
     }
 
     // A library module named gap-<name>, referencing mscorlib 4.0, with an

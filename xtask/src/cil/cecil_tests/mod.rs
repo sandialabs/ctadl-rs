@@ -14,6 +14,7 @@
 #![allow(clippy::disallowed_names)]
 
 mod assembly;
+mod clr_layouts;
 mod custom_attributes;
 mod fields;
 mod image_read;
@@ -40,6 +41,7 @@ type Test = (&'static str, fn());
 
 const SUITES: &[(&str, &[Test])] = &[
     ("assembly", assembly::TESTS),
+    ("clr_layouts", clr_layouts::TESTS),
     ("custom_attributes", custom_attributes::TESTS),
     ("fields", fields::TESTS),
     ("image_read", image_read::TESTS),

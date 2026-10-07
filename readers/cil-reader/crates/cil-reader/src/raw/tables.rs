@@ -236,21 +236,32 @@ pub struct SizeCtx {
     pub heap_sizes: u8,
     pub row_counts: [u32; TABLE_COUNT],
     pub coded_sizes: [u8; CODED_INDEX_COUNT],
+    /// Every heap, table and coded index is 4 bytes, whatever `heap_sizes`
+    /// and the row counts say: the CLR's `m_fAll4ByteColumns`, set for an
+    /// EnC minimal delta.
+    pub all_4_byte_columns: bool,
 }
 
 impl SizeCtx {
+    fn heap_index_size(&self, bit: u8) -> u8 {
+        if self.all_4_byte_columns || self.heap_sizes & bit != 0 {
+            4
+        } else {
+            2
+        }
+    }
     pub fn str_size(&self) -> u8 {
-        if self.heap_sizes & 0x1 != 0 { 4 } else { 2 }
+        self.heap_index_size(0x1)
     }
     pub fn guid_size(&self) -> u8 {
-        if self.heap_sizes & 0x2 != 0 { 4 } else { 2 }
+        self.heap_index_size(0x2)
     }
     pub fn blob_size(&self) -> u8 {
-        if self.heap_sizes & 0x4 != 0 { 4 } else { 2 }
+        self.heap_index_size(0x4)
     }
     /// `Image.GetTableIndexSize`: 2 bytes iff row count < 65536.
     pub fn table_index_size(&self, table: Table) -> u8 {
-        if self.row_counts[table as usize] < 65536 {
+        if !self.all_4_byte_columns && self.row_counts[table as usize] < 65536 {
             2
         } else {
             4

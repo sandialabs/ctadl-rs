@@ -455,7 +455,7 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
   (`Mono.Cecil/AssemblyNameReference.cs:111-127`).
 - **Rust:** always uses SHA-1 (`model/module.rs:61-72`), which matches the CLR.
 
-**D3. HeapSizes flag 0x40 and the `#JTD` stream are ignored.**
+**D3. HeapSizes flag 0x40 and the `#JTD` stream are ignored.** *Fixed:* `Metadata::from_image` (`raw/metadata.rs`) reads them as CoreCLR does. With 0x40 it skips the u32 after the row counts (`CMiniMdSchema::LoadFrom`). A `#JTD` stream, whose name the CLR matches case-insensitively, makes every index 4 bytes with `#-` tables (`CMiniMdRW::InitWithLargeTables`, `SizeCtx::all_4_byte_columns`), and changes nothing with `#~` tables, which the CLR opens read-only. Mono widens both; the port follows the CLR. GapGen writes one module in each layout. .NET 8 loads and runs them all, and fails the `#-` image once its `#JTD` is renamed. CecilDump throws on the three it misreads. Those live in the fixtures' `clr/` directory, which `cil:cecil-compare` does not scan, and `clr_layouts` (`cil:cecil-tests`) checks that each dumps as `gap-enc.dll` does. `gap-enc.dll` and `gap-jtd-compressed.dll` are compared with Cecil. Evidence is in `/Volumes/Shampoo/d3-2026-10-06/`.
 - **Rust:** `raw/metadata.rs:63-73`.
 - **Both readers are wrong:** the CLR reads an extra u32 when 0x40 is set, so
   Cecil and the port both misplace every table by 4 bytes. This is a known
