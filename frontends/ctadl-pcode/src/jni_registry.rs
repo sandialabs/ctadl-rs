@@ -333,6 +333,27 @@ pub fn scan_import(
     .save(import)
 }
 
+/// Each `RegisterNatives` entry in an ELF image: the offsets from the image base of its function --
+/// the pointer itself, then the target of a branch veneer there, if any -- and its descriptor.
+///
+/// For [`crate::jni_signatures::from_registry`], which runs before Ghidra, so there is no function
+/// map yet to resolve the addresses through. Empty for anything [`scan_bytes`] does not read.
+pub(crate) fn registered_functions(data: &[u8]) -> Vec<(Vec<u64>, String)> {
+    let Some(scan) = scan_bytes(data) else {
+        return Vec::new();
+    };
+    scan.entries
+        .into_iter()
+        .map(|raw| {
+            let mut offsets = vec![raw.fn_addr.wrapping_sub(scan.load_bias)];
+            if let Some(target) = raw.veneer_target {
+                offsets.push(target.wrapping_sub(scan.load_bias));
+            }
+            (offsets, raw.descriptor)
+        })
+        .collect()
+}
+
 /// One `JNINativeMethod` as it sits in the library, before an IR function is attached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RawEntry {

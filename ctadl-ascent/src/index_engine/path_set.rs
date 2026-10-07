@@ -128,7 +128,7 @@ fn eq_path<'a>(path: &Path, segs: impl Iterator<Item = Seg<'a>>) -> bool {
 }
 
 /// The splits of one admissible path, computed once: see [`PathSet::splits`].
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Splits {
     /// Every component-wise split `(key, rest)`, from `([], p)` to `(p, [])`.
     pub exact: Vec<(Path, Path)>,
@@ -178,6 +178,20 @@ impl PathSet {
     pub fn splits(&self, p: &Path) -> &Splits {
         static NONE: std::sync::LazyLock<Splits> = std::sync::LazyLock::new(Splits::default);
         self.splits.get(p).unwrap_or(&NONE)
+    }
+
+    /// The splits of any `p`, admissible or not: a lookup when it is, computed otherwise. For a
+    /// rule whose input paths are not all admissible (a stored call target's seed path), but
+    /// whose output is gated on membership anyway.
+    #[inline]
+    pub fn splits_any(&self, p: &Path) -> std::borrow::Cow<'_, Splits> {
+        match self.splits.get(p) {
+            Some(s) => std::borrow::Cow::Borrowed(s),
+            None => std::borrow::Cow::Owned(Splits {
+                exact: p.prefix_keys(),
+                wild: p.prefix_keys_wild(),
+            }),
+        }
     }
 
     pub fn len(&self) -> usize {

@@ -24,3 +24,5 @@ GEMINI.md
 .windsurfrules
 .aider*
 .github/copilot-instructions.md
+/jvm-reader/target
+/tmp

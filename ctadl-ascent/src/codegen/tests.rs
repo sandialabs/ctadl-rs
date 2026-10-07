@@ -1603,3 +1603,130 @@ mod super_resolution {
         assert!(report.totals().balanced());
     }
 }
+
+/// A one-block function that directly calls each of `callees` and takes the address of each of
+/// `address_of`. For the `skip-exclusive-callees` closure, which reads only the call graph.
+fn calling(name: &str, callees: &[&str], address_of: &[&str]) -> FunctionData {
+    let mut f = FunctionData {
+        name: name.to_string(),
+        return_type: ReturnType { arity: 0 },
+        ..Default::default()
+    };
+    let mut fb = FunctionBuilder::new(&mut f);
+    let body = fb.add_block();
+    let mut b = fb.at_block(body);
+    for callee in callees {
+        let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec![callee.to_string()]);
+        b.create_call(CallStyle::DirectCall { call_edges }, vec![], vec![]);
+    }
+    for target in address_of {
+        let p = b.new_local_var("p");
+        b.create_assign(
+            p,
+            [Exp::ObjectRef(CallObject::FunctionPtr((*target).into()))],
+        );
+    }
+    b.create_ret(vec![]);
+    f
+}
+
+fn exclusive_of(functions: Vec<FunctionData>, roots: &[&str]) -> Vec<String> {
+    let mut program = Program::default();
+    for f in functions {
+        program.functions.push(f);
+    }
+    let roots = roots.iter().map(|r| Str::from(*r)).collect();
+    exclusive_callees(&program, &roots)
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// The demangler's shape: a root over a mutually recursive core with a leaf. Every function the
+/// root alone reaches is in, the cycle included, and the root is not.
+#[test]
+fn exclusive_callees_takes_a_recursive_core() {
+    let got = exclusive_of(
+        vec![
+            calling("root", &["FUN_a"], &[]),
+            calling("FUN_a", &["FUN_b", "FUN_leaf"], &[]),
+            calling("FUN_b", &["FUN_a", "FUN_b"], &[]),
+            calling("FUN_leaf", &[], &[]),
+        ],
+        &["root"],
+    );
+    assert_eq!(got, ["FUN_a", "FUN_b", "FUN_leaf"]);
+}
+
+/// A function some other caller reaches keeps its body, and so does everything that only
+/// reaches it through it. `FUN_shared` stands for a libc++ helper the demangler shares.
+#[test]
+fn exclusive_callees_keeps_what_others_call() {
+    let got = exclusive_of(
+        vec![
+            calling("root", &["FUN_a", "FUN_shared"], &[]),
+            calling("FUN_a", &[], &[]),
+            calling("FUN_shared", &["FUN_under_shared"], &[]),
+            calling("FUN_under_shared", &[], &[]),
+            calling("app", &["FUN_shared"], &[]),
+        ],
+        &["root"],
+    );
+    assert_eq!(got, ["FUN_a"]);
+}
+
+/// The guards: a function with a symbol could be called by name from another import, and an
+/// address-taken one through a pointer. Neither is skipped, and neither is looked through.
+#[test]
+fn exclusive_callees_keeps_named_and_address_taken() {
+    let got = exclusive_of(
+        vec![
+            calling("root", &["named", "FUN_ptr", "FUN_a"], &["FUN_ptr"]),
+            calling("named", &["FUN_under_named"], &[]),
+            calling("FUN_under_named", &[], &[]),
+            calling("FUN_ptr", &[], &[]),
+            calling("FUN_a", &[], &[]),
+        ],
+        &["root"],
+    );
+    assert_eq!(got, ["FUN_a"]);
+}
+
+/// Through codegen: the closure's bodies are dropped and counted apart from the roots.
+#[test]
+fn exclusive_callees_bodies_contribute_no_facts() {
+    let mut program = Program::default();
+    program.functions.push(calling("root", &["FUN_a"], &[]));
+    program.functions.push(calling("FUN_a", &["FUN_b"], &[]));
+    program.functions.push(calling("FUN_b", &[], &[]));
+    program.functions.push(calling("app", &["root"], &[]));
+    let program_info = ProgramInfo {
+        program,
+        source_info: Default::default(),
+        vmt: Default::default(),
+    };
+    let mut facts = IndexFacts::default();
+    let mut source_info = IndexSourceInfo::default();
+    let roots: BTreeSet<Str> = [Str::from("root")].into_iter().collect();
+    let report = codegen_program(
+        program_info,
+        &mut facts,
+        &mut source_info,
+        CallResolutionStrategy::Mixed,
+        Default::default(),
+        &crate::models::ProgramModelMatches {
+            skip_analysis: roots.clone(),
+            skip_exclusive_callees: roots,
+            ..Default::default()
+        },
+    );
+    assert_eq!(report.skipped_bodies, 3);
+    assert_eq!(report.skipped_exclusive_callees, 2);
+    // Only `app`'s call survives: the three skipped bodies made none.
+    let root_id = source_info
+        .sites
+        .get_function_id(fx::Function("root".into()))
+        .unwrap();
+    assert_eq!(facts.call.len(), 1);
+    assert_eq!(facts.call[0].1, root_id);
+}

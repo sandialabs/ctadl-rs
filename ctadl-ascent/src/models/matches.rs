@@ -309,6 +309,11 @@ pub struct ProgramModelMatches {
     /// derived from those bodies exists to begin with -- the model's own `propagation` rows
     /// become the function's whole behaviour.
     pub skip_analysis: BTreeSet<facts::Str>,
+    /// Functions a `modes: ["skip-analysis", "skip-exclusive-callees"]` generator matched: the
+    /// roots of a call-graph closure. Codegen extends each import's skip set from them with
+    /// every unnamed function that only they reach (see
+    /// [`crate::codegen::exclusive_callees`]). Always a subset of `skip_analysis`.
+    pub skip_exclusive_callees: BTreeSet<facts::Str>,
     /// Matched bridge sides, parallel to the scanned specs.
     pub bridges: BridgeMatches,
     /// Signatures a `find: "dispatch"` generator matched. Index time, and the second field
@@ -364,6 +369,7 @@ impl ProgramModelMatches {
             && self.endpoints.is_empty()
             && self.access_paths.is_empty()
             && self.skip_analysis.is_empty()
+            && self.skip_exclusive_callees.is_empty()
             && self.bridges.is_empty()
             && self.dispatch.is_empty()
             && self.closure_shaped.is_empty()

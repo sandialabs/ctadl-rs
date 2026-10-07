@@ -11,6 +11,8 @@ use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
 
+mod big_alloc;
+
 /// ctadl: import artifacts, index programs, and run/query analyses.
 #[derive(Debug, Parser)]
 #[command(name = "ctadl", version, about)]
@@ -595,6 +597,7 @@ pub struct GoArgs {
 }
 
 fn main() -> anyhow::Result<()> {
+    big_alloc::init();
     ctadl_ascent::init();
     let cli = Cli::parse();
 
@@ -930,6 +933,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             skip_existing,
             native_libs: !args.no_native_libs,
             native_abi: args.native_abi.as_deref(),
+            ..Default::default()
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote

@@ -103,10 +103,19 @@ jni bridge: 14 native method(s): 12 linked (9 registered, 0 from summary, 1 prot
 `registered`, `from summary` and `prototype mismatch` each count a subset of `linked`: the links
 that came from a `RegisterNatives` table, the ones whose implementation came from a `--summary`
 project (below), and the ones whose native prototype, as the disassembler recovered it, does not
-fit the Java descriptor. Each mismatch gets its own warning; the usual fix is to build the library
-with `-g` and re-import. On a 32-bit ABI (`armeabi-v7a`, `x86`) a `long` or `double` argument
+fit the Java descriptor. Each mismatch gets its own warning. On a 32-bit ABI (`armeabi-v7a`, `x86`) a `long` or `double` argument
 recovered as two parameters is not a mismatch: the bridge maps it to both. For the per-method
 pairings, run with `RUST_LOG=warn,ctadl_ascent::languages::jni=debug`.
+
+Mismatches are rare, because import does not leave a native's prototype to the disassembler's
+guess. A Java declaration fixes it completely (`JNIEnv *`, `jobject` or `jclass`, one C type per
+Java parameter, the C type of the Java return), so before Ghidra decompiles a library, CTADL tells
+it the prototype of every native it can locate: those the APK's Dex declares, by `Java_…` symbol,
+and those in the library's own `RegisterNatives` tables, by address. The hints are kept in the
+import directory as `jni-signatures.tsv`. A library imported on its own, without its Dex, gets only
+the second kind; import the APK, or build the library with `-g`, to fix the rest. The same step
+also recovers return values the decompiler drops across PLT stubs and tail calls, for every native
+import. `CTADL_NO_SIGNATURE_RECOVERY=1` switches all of it off, for an A/B.
 
 Two flags switch it off, for an A/B of what it contributes: `--no-jni-registry` links by symbol
 name alone, and `--no-jni-bridge` disables the pass entirely (and implies the first). Use
