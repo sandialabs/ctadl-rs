@@ -291,8 +291,8 @@ impl<'a> Module<'a> {
         self.data.image.dll_characteristics
     }
 
-    pub fn runtime_version(&self) -> &'a str {
-        self.data.image.runtime_version
+    pub fn runtime_version(&self) -> &str {
+        &self.data.image.runtime_version
     }
 
     pub fn has_debug_header(&self) -> bool {

@@ -6,6 +6,7 @@
 use crate::error::{Error, Result};
 use crate::raw::cursor::Cur;
 use crate::raw::metadata::Metadata;
+use std::borrow::Cow;
 
 /// `Mono.Cecil.ModuleKind` (writes aside, `NetModule` is decided at the model
 /// layer by the absence of an Assembly row).
@@ -166,7 +167,8 @@ pub struct PeImage<'a> {
     /// CLI header flags (`ModuleAttributes`).
     pub attributes: u32,
     pub entry_point_token: u32,
-    pub runtime_version: &'a str,
+    /// The metadata version string, as Latin-1.
+    pub runtime_version: Cow<'a, str>,
     pub metadata_directory: DataDirectory,
     pub debug_directory: DataDirectory,
     pub resources_directory: DataDirectory,
@@ -178,9 +180,10 @@ pub struct PeImage<'a> {
     pub(crate) stream_headers: Vec<StreamHeader<'a>>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct StreamHeader<'a> {
-    pub name: &'a str,
+    /// The name, as Latin-1.
+    pub name: Cow<'a, str>,
     pub data: &'a [u8],
 }
 
@@ -286,7 +289,7 @@ impl<'a> PeImage<'a> {
             sections,
             attributes: 0,
             entry_point_token: 0,
-            runtime_version: "",
+            runtime_version: Cow::Borrowed(""),
             metadata_directory: DataDirectory::default(),
             debug_directory,
             resources_directory: DataDirectory::default(),
@@ -329,8 +332,7 @@ impl<'a> PeImage<'a> {
             .iter()
             .position(|&b| b == 0)
             .unwrap_or(version_len);
-        self.runtime_version = std::str::from_utf8(&version_bytes[..end])
-            .map_err(|_| Error::bad(md_off, "invalid metadata version string"))?;
+        self.runtime_version = latin1(&version_bytes[..end]);
         cur.skip(2)?; // Flags
         let stream_count = cur.u16()?;
 
@@ -417,7 +419,7 @@ fn read_data_directory(cur: &mut Cur<'_>) -> Result<DataDirectory> {
 
 /// `ImageReader.ReadAlignedString`: reads up to `max` bytes until NUL, then
 /// aligns the cursor to the next 4-byte boundary.
-fn read_aligned_string<'a>(cur: &mut Cur<'a>, max: usize) -> Result<&'a str> {
+fn read_aligned_string<'a>(cur: &mut Cur<'a>, max: usize) -> Result<Cow<'a, str>> {
     let start = cur.pos();
     let mut read = 0;
     while read < max {
@@ -430,8 +432,15 @@ fn read_aligned_string<'a>(cur: &mut Cur<'a>, max: usize) -> Result<&'a str> {
     let aligned = (read + 4) & !3;
     cur.skip(aligned - consumed)?;
     let mut end = Cur::at(cur_data(cur), start);
-    let bytes = end.bytes(read)?;
-    std::str::from_utf8(bytes).map_err(|_| Error::bad(start, "invalid stream name"))
+    Ok(latin1(end.bytes(read)?))
+}
+
+/// Decodes `bytes` as Latin-1, as Cecil does by casting each byte to `char`.
+fn latin1(bytes: &[u8]) -> Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(s) if s.is_ascii() => Cow::Borrowed(s),
+        _ => Cow::Owned(bytes.iter().map(|&b| char::from(b)).collect()),
+    }
 }
 
 // Small helper so read_aligned_string can re-slice the original buffer.

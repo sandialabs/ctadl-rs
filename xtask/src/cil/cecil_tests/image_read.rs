@@ -26,11 +26,11 @@ fn image_sections() {
 fn image_metadata_version() {
     let data = read_resource("hello.exe");
     let image = PeImage::parse(&data).unwrap();
-    assert_eq!(parse_runtime(image.runtime_version), TargetRuntime::Net2_0);
+    assert_eq!(parse_runtime(&image.runtime_version), TargetRuntime::Net2_0);
 
     let data = read_resource("hello1.exe");
     let image = PeImage::parse(&data).unwrap();
-    assert_eq!(parse_runtime(image.runtime_version), TargetRuntime::Net1_1);
+    assert_eq!(parse_runtime(&image.runtime_version), TargetRuntime::Net1_1);
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:38 (ImageModuleKind)

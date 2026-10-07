@@ -52,7 +52,7 @@ impl<'a> Metadata<'a> {
             if stream.name.eq_ignore_ascii_case("#JTD") {
                 minimal_delta = true;
             }
-            match stream.name {
+            match stream.name.as_ref() {
                 "#~" | "#-" => {
                     tables_data = Some(stream.data);
                     enc_tables = stream.name == "#-";
