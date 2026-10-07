@@ -204,19 +204,12 @@ impl<'a> StringsHeap<'a> {
     /// decodes as Cecil's `Encoding.UTF8.GetString` decodes it, each maximal
     /// invalid subsequence becoming U+FFFD.
     ///
-    /// Cecil (`StringHeap.Read`) returns the empty string for index 0 and for
-    /// out-of-range indices; we mirror the former but report the latter.
+    /// Index 0 and out-of-range indices yield the empty string, as in Cecil's
+    /// `StringHeap.Read`.
     pub fn get(&self, index: StringIndex) -> Result<Cow<'a, str>> {
         let idx = index.0 as usize;
-        if idx == 0 {
+        if idx == 0 || idx >= self.data.len() {
             return Ok(Cow::Borrowed(""));
-        }
-        if idx >= self.data.len() {
-            return Err(Error::IndexOutOfRange {
-                kind: "#Strings",
-                index: index.0,
-                max: self.data.len() as u32,
-            });
         }
         let rest = &self.data[idx..];
         let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
@@ -349,6 +342,15 @@ mod tests {
         // An index into the middle of a sequence starts at its continuation.
         assert_eq!(get(5), "\u{fffd}");
         assert_eq!(get(7), "T\u{fffd}\u{fffd}\u{fffd}x");
+    }
+
+    #[test]
+    fn strings_out_of_range_read_empty() {
+        let heap = StringsHeap { data: b"\0A\0" };
+        assert_eq!(heap.get(StringIndex(1)).unwrap(), "A");
+        assert_eq!(heap.get(StringIndex(3)).unwrap(), "");
+        assert_eq!(heap.get(StringIndex(u32::MAX)).unwrap(), "");
+        assert_eq!(StringsHeap { data: b"" }.get(StringIndex(1)).unwrap(), "");
     }
 
     // Cecil's bounds check is `(index - 1) + 16 > length`.
