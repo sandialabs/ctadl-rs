@@ -312,10 +312,13 @@ pub struct GuidHeap<'a> {
 }
 
 impl<'a> GuidHeap<'a> {
-    /// Reads the 1-based GUID at `index`; index 0 yields the zero GUID
-    /// (mirroring `GuidHeap.Read`).
+    /// Reads the 1-based GUID at `index`, as Cecil's `GuidHeap.Read` does.
+    /// Index 0 yields the zero GUID, and so does an index past the heap by
+    /// Cecil's bounds check, which adds `index - 1` where it means
+    /// `(index - 1) * 16`. An index that passes that check but not the real
+    /// one is an error, where Cecil's copy throws.
     pub fn get(&self, index: GuidIndex) -> Result<Guid> {
-        if index.0 == 0 {
+        if index.0 == 0 || (index.0 as usize - 1) + 16 > self.data.len() {
             return Ok(Guid([0; 16]));
         }
         let start = (index.0 as usize - 1) * 16;
@@ -346,6 +349,25 @@ mod tests {
         // An index into the middle of a sequence starts at its continuation.
         assert_eq!(get(5), "\u{fffd}");
         assert_eq!(get(7), "T\u{fffd}\u{fffd}\u{fffd}x");
+    }
+
+    // Cecil's bounds check is `(index - 1) + 16 > length`.
+    #[test]
+    fn guid_indexes_past_the_heap() {
+        let data: Vec<u8> = (1..=32).collect();
+        let heap = GuidHeap { data: &data };
+        assert_eq!(heap.get(GuidIndex(2)).unwrap().0[0], 17);
+        assert_eq!(heap.get(GuidIndex(0)).unwrap(), Guid([0; 16]));
+        // Past the heap by Cecil's check: the zero GUID.
+        assert_eq!(heap.get(GuidIndex(18)).unwrap(), Guid([0; 16]));
+        assert_eq!(heap.get(GuidIndex(u32::MAX)).unwrap(), Guid([0; 16]));
+        // Within it by Cecil's check, past it in fact: Cecil's copy throws.
+        assert!(heap.get(GuidIndex(3)).is_err());
+        assert!(heap.get(GuidIndex(17)).is_err());
+        assert_eq!(
+            GuidHeap { data: &[] }.get(GuidIndex(1)).unwrap(),
+            Guid([0; 16])
+        );
     }
 
     /// `new Guid(s).ToString("d")` on .NET 8, or `None` where it throws.
