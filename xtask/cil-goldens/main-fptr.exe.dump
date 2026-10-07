@@ -32,6 +32,7 @@ public-key=-
 [properties]
 [events]
 [custom-attributes]
+[security-declarations]
 [il]
 0x06000001 max-stack=5 init-locals=true code-size=7
 	IL_0000: ldarg 0

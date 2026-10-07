@@ -23,6 +23,7 @@ embedded name=res.resources flags=0x00000001 size=204
 [properties]
 [events]
 [custom-attributes]
+[security-declarations]
 [il]
 [resolve]
 [custom-attributes-resolved]

@@ -72,6 +72,7 @@ ca parent=0x06000007 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute
 ca parent=0x06000008 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x0600000b ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
 [il]
 0x06000001 max-stack=2 init-locals=true code-size=21
 	local 0=Program/<GetLittleArgs>d__0

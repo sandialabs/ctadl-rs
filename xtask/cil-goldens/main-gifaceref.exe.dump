@@ -61,6 +61,7 @@ ca parent=0x06000006 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute
 ca parent=0x06000007 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x06000009 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
 [il]
 0x06000001 max-stack=2 init-locals=true code-size=20
 	local 0=Program/<GetEnumerator>d__0

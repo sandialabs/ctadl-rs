@@ -58,6 +58,7 @@ ca parent=0x06000004 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute
 ca parent=0x06000006 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x06000007 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x06000008 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=7
 	IL_0000: ldc.i4.0

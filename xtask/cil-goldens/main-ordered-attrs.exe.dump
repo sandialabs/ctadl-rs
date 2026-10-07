@@ -77,6 +77,7 @@ ca parent=0x0600000b ctor=System.Void BAttribute::.ctor() args=() field Value=(S
 ca parent=0x0600000d ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Foo.A1")
 ca parent=0x0600000d ctor=System.Void AAttribute::.ctor() args=() field Value=(String:"Foo.A2")
 ca parent=0x0600000e ctor=System.Void BAttribute::.ctor() args=() field Value=(String:"Bar.A")
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=8
 	IL_0000: ldarg.0

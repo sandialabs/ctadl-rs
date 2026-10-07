@@ -32,6 +32,13 @@ public-key=-
 [events]
 [custom-attributes]
 ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[security-declarations]
+sec parent=0x20000001 action=8 attr=System.Security.Permissions.PermissionSetAttribute property XML=(String:"<PermissionSet class="System.Security.PermissionSet"\r\nversion="1">\r\n<IPermission class="System.Security.Permissions.SecurityPermission, mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"\r\nversion="1"\r\nFlags="Execution"/>\r\n</PermissionSet>\r\n")
+sec parent=0x20000001 action=10 attr=System.Security.Permissions.PermissionSetAttribute property XML=(String:"<PermissionSet class="System.Security.PermissionSet"\r\nversion="1">\r\n<IPermission class="System.Security.Permissions.SecurityPermission, mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"\r\nversion="1"\r\nFlags="SkipVerification"/>\r\n</PermissionSet>\r\n")
+sec parent=0x20000001 action=9 attr=System.Security.Permissions.PermissionSetAttribute property XML=(String:"<PermissionSet class="System.Security.PermissionSet"\r\nversion="1">\r\n<IPermission class="System.Security.Permissions.SecurityPermission, mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"\r\nversion="1"\r\nUnrestricted="true"/>\r\n</PermissionSet>\r\n")
+sec parent=0x06000002 action=2 attr=System.Security.Permissions.PermissionSetAttribute property XML=(String:"<PermissionSet class="System.Security.PermissionSet"\r\nversion="1">\r\n<IPermission class="System.Security.Permissions.SecurityPermission, mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"\r\nversion="1"\r\nFlags="UnmanagedCode"/>\r\n</PermissionSet>\r\n")
+sec parent=0x06000002 action=3 attr=System.Security.Permissions.PermissionSetAttribute property XML=(String:"<PermissionSet class="System.Security.PermissionSet"\r\nversion="1">\r\n<IPermission class="System.Security.Permissions.SecurityPermission, mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"\r\nversion="1"\r\nFlags="UnmanagedCode"/>\r\n</PermissionSet>\r\n")
+sec parent=0x02000003 action=4 attr=System.Security.Permissions.PermissionSetAttribute property XML=(String:"<PermissionSet class="System.Security.PermissionSet"\r\nversion="1">\r\n<IPermission class="System.Security.Permissions.SecurityPermission, mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"\r\nversion="1"\r\nFlags="UnmanagedCode"/>\r\n</PermissionSet>\r\n")
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=7
 	IL_0000: ldarg.0

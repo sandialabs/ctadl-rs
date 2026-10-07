@@ -29,6 +29,7 @@ public-key=0024000004800000940000000602000000240000525341310004000001000100c9931
 [custom-attributes]
 ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
 ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=2
 	IL_0000: nop

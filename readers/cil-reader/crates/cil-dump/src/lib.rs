@@ -5,11 +5,15 @@
 //! regression --frontend cil` diffs the two.
 //! Everything is ordered by metadata token; floats print as bit patterns (IL
 //! float operands also print first as the test Formatter renders them);
-//! opaque blobs print as lowercase hex.
+//! opaque blobs print as lowercase hex; attribute strings print escaped, so
+//! every record is one line.
 
 use cil_reader::cil::RawOperand;
 use cil_reader::model::AssemblyName;
-use cil_reader::model::custom_attributes::{CaArgument, CaValue, CustomAttribute, UNRESOLVED_ENUM};
+use cil_reader::model::custom_attributes::{
+    CaArgument, CaNamedArgument, CaValue, CustomAttribute, SecurityDeclarationValue,
+    UNRESOLVED_ENUM,
+};
 use cil_reader::model::resolver::{
     AssemblyCache, AssemblyLoader, DirectoryLoader, ResolvedMember, ResolvedType,
 };
@@ -33,6 +37,7 @@ pub enum Section {
     Properties,
     Events,
     CustomAttributes,
+    SecurityDeclarations,
     Il,
     Resolve,
     CustomAttributesResolved,
@@ -51,6 +56,7 @@ pub const ALL_SECTIONS: &[(&str, Section)] = &[
     ("properties", Section::Properties),
     ("events", Section::Events),
     ("custom-attributes", Section::CustomAttributes),
+    ("security-declarations", Section::SecurityDeclarations),
     ("il", Section::Il),
     ("resolve", Section::Resolve),
     (
@@ -137,6 +143,9 @@ pub fn dump(module: &Module<'_>, sections: &[Section], dir: Option<&Path>) -> Re
     }
     if has(Section::CustomAttributes) {
         dump_custom_attributes(module, dir, &mut out)?;
+    }
+    if has(Section::SecurityDeclarations) {
+        dump_security_declarations(module, dir, &mut out)?;
     }
     if has(Section::Il) {
         dump_il(module, &mut out)?;
@@ -726,14 +735,7 @@ fn attribute_line(attr: &CustomAttribute<'_>, cache: &AssemblyCache<'_>) -> Resu
                 pp_argument(arg, &mut s);
             }
             s.push(')');
-            for f in &values.fields {
-                write!(s, " field {}=", f.name).unwrap();
-                pp_argument(&f.argument, &mut s);
-            }
-            for p in &values.properties {
-                write!(s, " property {}=", p.name).unwrap();
-                pp_argument(&p.argument, &mut s);
-            }
+            write_named_args(&values.fields, &values.properties, &mut s);
             write!(out, " args={s}").unwrap();
         }
         // Cecil swallows ResolutionException (an enum type resolved to
@@ -748,6 +750,69 @@ fn attribute_line(attr: &CustomAttribute<'_>, cache: &AssemblyCache<'_>) -> Resu
         }
     }
     Ok(out)
+}
+
+/// The DeclSecurity rows in rid order: parent, action, then each security
+/// attribute's type and named arguments. Cecil surfaces a legacy XML
+/// declaration as a `PermissionSetAttribute` with an `XML` property, and
+/// does not swallow an enum it cannot resolve, so any error prints the blob.
+fn dump_security_declarations(
+    module: &Module<'_>,
+    dir: Option<&Path>,
+    out: &mut String,
+) -> Result<()> {
+    out.push_str("[security-declarations]\n");
+    let loader = NetmodulesOnly(DirectoryLoader::new(
+        dir.into_iter().map(Path::to_path_buf).collect(),
+    ));
+    let cache = AssemblyCache::throwing(&loader);
+    for rid in 1..=module.metadata().row_count(Table::DeclSecurity) {
+        let Some(decl) = module.security_declaration(rid) else {
+            continue;
+        };
+        write!(
+            out,
+            "sec parent={} action={}",
+            tok(decl.parent()?),
+            decl.action()?
+        )
+        .unwrap();
+        match decl.value_with(&cache) {
+            Ok(SecurityDeclarationValue::Attributes(attributes)) => {
+                for a in &attributes {
+                    write!(out, " attr={}", a.attribute_type).unwrap();
+                    write_named_args(&a.fields, &a.properties, out);
+                }
+            }
+            Ok(SecurityDeclarationValue::Xml(xml)) => {
+                out.push_str(
+                    " attr=System.Security.Permissions.PermissionSetAttribute property XML=(String:",
+                );
+                push_quoted(&xml, out);
+                out.push(')');
+            }
+            Err(_) => {
+                write!(out, " !unresolved blob={}", hex(decl.blob()?)).unwrap();
+            }
+        }
+        out.push('\n');
+    }
+    Ok(())
+}
+
+fn write_named_args(
+    fields: &[CaNamedArgument<'_>],
+    properties: &[CaNamedArgument<'_>],
+    s: &mut String,
+) {
+    for f in fields {
+        write!(s, " field {}=", f.name).unwrap();
+        pp_argument(&f.argument, s);
+    }
+    for p in properties {
+        write!(s, " property {}=", p.name).unwrap();
+        pp_argument(&p.argument, s);
+    }
 }
 
 fn pp_argument(arg: &CaArgument<'_>, s: &mut String) {
@@ -771,7 +836,7 @@ fn pp_value(value: &CaValue<'_>, s: &mut String) {
             }
             s.push('}');
         }
-        CaValue::String(v) => write!(s, "\"{v}\"").unwrap(),
+        CaValue::String(v) => push_quoted(v, s),
         CaValue::Char(c) => write!(s, "char:0x{c:04x}").unwrap(),
         CaValue::Boxed(inner) => pp_argument(inner, s),
         CaValue::Boolean(b) => s.push_str(if *b { "True" } else { "False" }),
@@ -787,6 +852,23 @@ fn pp_value(value: &CaValue<'_>, s: &mut String) {
         CaValue::R8(v) => write!(s, "r8:0x{:016x}", v.to_bits()).unwrap(),
         CaValue::TypeName(name) => write!(s, "typeof({name})").unwrap(),
     }
+}
+
+/// `v` in double quotes, with `\` and control characters escaped as
+/// CecilDump escapes them.
+fn push_quoted(v: &str, s: &mut String) {
+    s.push('"');
+    for c in v.chars() {
+        match c {
+            '\\' => s.push_str("\\\\"),
+            '\r' => s.push_str("\\r"),
+            '\n' => s.push_str("\\n"),
+            '\t' => s.push_str("\\t"),
+            c if c < ' ' || c == '\x7f' => write!(s, "\\x{:02x}", c as u32).unwrap(),
+            c => s.push(c),
+        }
+    }
+    s.push('"');
 }
 
 fn dump_il(module: &Module<'_>, out: &mut String) -> Result<()> {

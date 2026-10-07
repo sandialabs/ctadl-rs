@@ -33,6 +33,13 @@ public-key=-
 [custom-attributes]
 ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
 ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[security-declarations]
+sec parent=0x06000001 action=2 attr=System.Security.Permissions.SecurityPermissionAttribute property UnmanagedCode=(Boolean:True)
+sec parent=0x06000001 action=3 attr=System.Security.Permissions.SecurityPermissionAttribute property UnmanagedCode=(Boolean:True)
+sec parent=0x20000001 action=10 attr=System.Security.Permissions.SecurityPermissionAttribute property SkipVerification=(Boolean:True)
+sec parent=0x20000001 action=8 attr=System.Security.Permissions.SecurityPermissionAttribute property Execution=(Boolean:True)
+sec parent=0x20000001 action=9 !unresolved blob=2e01808453797374656d2e53656375726974792e5065726d697373696f6e732e53656375726974795065726d697373696f6e4174747269627574652c206d73636f726c69622c2056657273696f6e3d322e302e302e302c2043756c747572653d6e65757472616c2c205075626c69634b6579546f6b656e3d62373761356335363139333465303839808d0154557f53797374656d2e53656375726974792e5065726d697373696f6e732e53656375726974795065726d697373696f6e466c61672c206d73636f726c69622c2056657273696f6e3d322e302e302e302c2043756c747572653d6e65757472616c2c205075626c69634b6579546f6b656e3d6237376135633536313933346530383905466c616773ff3f0000
+sec parent=0x02000003 action=4 attr=System.Security.Permissions.SecurityPermissionAttribute property UnmanagedCode=(Boolean:True)
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=2
 	IL_0000: ldc.i4.1

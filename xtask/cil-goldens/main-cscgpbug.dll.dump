@@ -47,6 +47,7 @@ ca parent=0x06000002 ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 ca parent=0x06000006 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
 ca parent=0x06000007 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
 ca parent=0x06000008 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+[security-declarations]
 [il]
 0x06000001 max-stack=1 init-locals=true code-size=11
 	local 0=T

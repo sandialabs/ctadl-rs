@@ -35,6 +35,7 @@ ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttri
 ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyInformationalVersionAttribute::.ctor(System.String) args=((String:"1.0.0"))
 ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"TypeForwarderLoop2"))
 ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"TypeForwarderLoop2"))
+[security-declarations]
 [il]
 [resolve]
 0x01000001 -> -

@@ -118,6 +118,7 @@ ca parent=0x06000011 ctor=System.Void System.ComponentModel.EditorBrowsableAttri
 ca parent=0x06000012 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x06000013 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x06000013 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=7
 	IL_0000: ldarg.0

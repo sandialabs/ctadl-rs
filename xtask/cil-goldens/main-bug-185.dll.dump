@@ -79,6 +79,7 @@ ca parent=0x02000006 ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 ca parent=0x02000007 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
 ca parent=0x06000008 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
 [il]
 0x06000002 max-stack=2 init-locals=true code-size=48
 	local 0=Foo/<IFoo<System.Byte[]>.Do>d__0

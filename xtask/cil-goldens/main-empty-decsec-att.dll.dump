@@ -33,6 +33,8 @@ public-key=-
 ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
 ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
 ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+[security-declarations]
+sec parent=0x06000001 action=6 attr=System.Security.Permissions.SecurityPermissionAttribute
 [il]
 0x06000001 max-stack=2 init-locals=true code-size=13
 	local 0=System.Drawing.Design.UITypeEditorEditStyle

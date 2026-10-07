@@ -39,6 +39,7 @@ ca parent=0x20000001 ctor=System.Void Microsoft.FSharp.Core.FSharpInterfaceDataV
 ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETStandard,Version=v2.0")) property FrameworkDisplayName=(String:"")
 ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100030100000000
 ca parent=0x02000003 ctor=System.Void Microsoft.FSharp.Core.CompilationMappingAttribute::.ctor(Microsoft.FSharp.Core.SourceConstructFlags) args=!unresolved blob=0100070000000000
+[security-declarations]
 [il]
 0x06000001 max-stack=4 init-locals=true code-size=28
 	local 0=Microsoft.FSharp.Core.FSharpFunc`2<System.String,Microsoft.FSharp.Core.Unit>

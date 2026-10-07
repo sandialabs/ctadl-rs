@@ -23,6 +23,7 @@ entry-point=-
 [properties]
 [events]
 [custom-attributes]
+[security-declarations]
 [il]
 0x06000001 max-stack=1 init-locals=true code-size=11
 	local 0=System.String

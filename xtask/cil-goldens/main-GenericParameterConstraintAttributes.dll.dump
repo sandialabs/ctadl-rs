@@ -64,6 +64,7 @@ ca parent=0x02000002 ctor=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::
 ca parent=0x2a000002 ctor=System.Void System.Runtime.CompilerServices.NullableAttribute::.ctor(System.Byte) args=((U1:2))
 ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
 ca parent=0x02000003 ctor=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() args=()
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=8
 	IL_0000: ldarg.0

@@ -42,6 +42,7 @@ ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.ComVisibleA
 ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.GuidAttribute::.ctor(System.String) args=((String:"8cdabfc0-d52c-43c7-876f-ab5b9d55f564"))
 ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"1.0.0.0"))
 ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETFramework,Version=v4.7.1")) property FrameworkDisplayName=(String:".NET Framework 4.7.1")
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=2
 	IL_0000: nop

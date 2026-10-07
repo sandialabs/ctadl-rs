@@ -456,10 +456,9 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Rust:** always uses SHA-1 (`model/module.rs:61-72`), which matches the CLR.
 
 **D3. HeapSizes flag 0x40 and the `#JTD` stream are ignored.** *Fixed:* `Metadata::from_image` (`raw/metadata.rs`) reads them as CoreCLR does. With 0x40 it skips the u32 after the row counts (`CMiniMdSchema::LoadFrom`). A `#JTD` stream, whose name the CLR matches case-insensitively, makes every index 4 bytes with `#-` tables (`CMiniMdRW::InitWithLargeTables`, `SizeCtx::all_4_byte_columns`), and changes nothing with `#~` tables, which the CLR opens read-only. Mono widens both; the port follows the CLR. GapGen writes one module in each layout. .NET 8 loads and runs them all, and fails the `#-` image once its `#JTD` is renamed. CecilDump throws on the three it misreads. Those live in the fixtures' `clr/` directory, which `cil:cecil-compare` does not scan, and `clr_layouts` (`cil:cecil-tests`) checks that each dumps as `gap-enc.dll` does. `gap-enc.dll` and `gap-jtd-compressed.dll` are compared with Cecil. Evidence is in `/Volumes/Shampoo/d3-2026-10-06/`.
-- **Rust:** `raw/metadata.rs:63-73`.
-- **Both readers are wrong:** the CLR reads an extra u32 when 0x40 is set, so
-  Cecil and the port both misplace every table by 4 bytes. This is a known
-  anti-Cecil trick.
+- **Cecil:** reads the tables 4 bytes early when 0x40 is set, and sizes
+  indexes from HeapSizes and the row counts whatever `#JTD` says. Both are
+  known anti-Cecil tricks.
 
 **D4. Formatter labels at offset ≥ 0x10000.**
 - **Cecil:** keeps only the low 4 hex digits (`IL_0003`).
@@ -514,8 +513,10 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 
 ## E. Test-coverage gaps
 
-**E1. No corpus file has Ptr tables.** That is how A1 went unnoticed. Add a
-fixture: `addptr.py` in the evidence directory can generate one.
+**E1. No corpus file has Ptr tables.** That is how A1 went unnoticed.
+*Fixed:* PtrGen (`tools/PtrGen`) rewrites each `.cs` fixture as
+`ptr-<name>.cs.dll`, whose member tables go through FieldPtr, MethodPtr,
+ParamPtr, PropertyPtr and EventPtr, and `cil:cecil-compare` covers them.
 
 **E2. cil-dump prints floats as bit patterns, and no ported Cecil test has an
 `ldc.r4` or `ldc.r8` expected-IL string.** That is how A2 went unnoticed.
@@ -523,7 +524,11 @@ fixture: `addptr.py` in the evidence directory can generate one.
 then as bits.
 
 **E3. cil-dump has no security-declaration section.** Security parsing is
-covered only by 4 ported tests.
+covered only by 4 ported tests. *Fixed:* both dumps print
+`[security-declarations]`: each DeclSecurity row's parent, action and
+attributes, a legacy XML declaration as Cecil's `PermissionSetAttribute` with
+an `XML` property, and the blob when Cecil throws. The corpus's `decsec-*`
+images cover both encodings in `cil:goldens` and `cil:cecil-compare`.
 
 **E4. Nothing exercises the public API with an enum resolver (A8), or
 `FieldDef::rva()` (A11).** *Fixed:* `[custom-attributes-resolved]` and the ported `TypeReferenceEnum` and `BoxedEnumReference` tests cover the first, `gap-attributes.il.dll` the second.

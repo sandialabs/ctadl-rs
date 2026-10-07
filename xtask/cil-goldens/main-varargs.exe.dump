@@ -27,6 +27,7 @@ public-key=-
 [properties]
 [events]
 [custom-attributes]
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=true code-size=10
 	local 0=System.ArgIterator

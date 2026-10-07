@@ -28,6 +28,7 @@ public-key=-
 [events]
 [custom-attributes]
 ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Boolean,System.Boolean) args=((Boolean:False), (Boolean:True))
+[security-declarations]
 [il]
 0x06000001 max-stack=1 init-locals=true code-size=11
 	IL_0000: ldstr "Hello world of Cecil !"

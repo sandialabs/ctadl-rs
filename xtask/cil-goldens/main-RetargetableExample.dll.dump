@@ -43,6 +43,7 @@ ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCopyrightAttribu
 ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTrademarkAttribute::.ctor(System.String) args=((String:""))
 ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.ComVisibleAttribute::.ctor(System.Boolean) args=((Boolean:False))
 ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.GuidAttribute::.ctor(System.String) args=((String:"3746790f-00e8-4cf7-8e6f-08f845bae5a2"))
+[security-declarations]
 [il]
 0x06000001 max-stack=1 init-locals=true code-size=12
 	local 0=System.Data.UpdateRowSource

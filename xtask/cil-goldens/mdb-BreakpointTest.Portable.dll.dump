@@ -91,6 +91,7 @@ ca parent=0x02000006 ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 ca parent=0x06000008 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x0600000c ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
 [il]
 0x06000001 max-stack=3 init-locals=true code-size=33
 	local 0=BreakpointTest.Portable.TestService/<DoSomething1>c__async0

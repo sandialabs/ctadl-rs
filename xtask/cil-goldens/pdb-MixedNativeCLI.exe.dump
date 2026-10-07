@@ -433,6 +433,10 @@ ca parent=0x06000058 ctor=System.Void System.Security.SecurityCriticalAttribute:
 ca parent=0x06000059 ctor=System.Void System.Security.SecuritySafeCriticalAttribute::.ctor() args=()
 ca parent=0x0600005a ctor=System.Void System.Security.SecurityCriticalAttribute::.ctor() args=()
 ca parent=0x0600005a ctor=System.Void System.Runtime.ConstrainedExecution.PrePrepareMethodAttribute::.ctor() args=()
+[security-declarations]
+sec parent=0x20000001 action=8 attr=System.Security.Permissions.SecurityPermissionAttribute property SkipVerification=(Boolean:True)
+sec parent=0x06000002 action=3 attr=System.Security.Permissions.SecurityPermissionAttribute property UnmanagedCode=(Boolean:True)
+sec parent=0x06000041 action=3 attr=System.Security.Permissions.SecurityPermissionAttribute property UnmanagedCode=(Boolean:True)
 [il]
 0x06000001 max-stack=1 init-locals=false code-size=17
 	IL_0000: ldstr "In managed function."

@@ -468,6 +468,14 @@ impl<'a> Module<'a> {
             .then(|| crate::model::custom_attributes::CustomAttribute { m: self.m(), rid })
     }
 
+    pub fn security_declaration(
+        &self,
+        rid: u32,
+    ) -> Option<crate::model::custom_attributes::SecurityDeclaration<'_>> {
+        (rid >= 1 && rid <= self.data.md.row_count(Table::DeclSecurity))
+            .then(|| crate::model::custom_attributes::SecurityDeclaration { m: self.m(), rid })
+    }
+
     pub fn field_def(&self, rid: u32) -> Option<FieldDef<'_>> {
         (rid >= 1 && rid <= self.data.md.row_count(Table::Field))
             .then(|| FieldDef { m: self.m(), rid })

@@ -102,6 +102,7 @@ ca parent=0x0600000d ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute
 ca parent=0x0600000e ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x0600000f ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
 ca parent=0x06000010 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=20
 	IL_0000: nop

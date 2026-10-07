@@ -12,7 +12,8 @@
 //   the image again with a resolver that probes only the input's own
 //   directory, as the Rust side's DirectoryLoader does.
 // - Floats print as bit patterns (IL float operands also print first as the
-//   test Formatter renders them); blobs as lowercase hex.
+//   test Formatter renders them); blobs as lowercase hex; attribute strings
+//   escaped, so every record is one line.
 
 using System;
 using System.Collections.Generic;
@@ -28,7 +29,7 @@ static class Program
     static readonly string[] AllSections = {
         "module", "assembly", "assembly-refs", "module-refs", "resources",
         "exported-types", "types", "fields", "methods", "properties", "events",
-        "custom-attributes", "il", "resolve", "custom-attributes-resolved",
+        "custom-attributes", "security-declarations", "il", "resolve", "custom-attributes-resolved",
     };
 
     static int Main (string [] args)
@@ -76,6 +77,7 @@ static class Program
             case "properties": DumpProperties (module, o); break;
             case "events": DumpEvents (module, o); break;
             case "custom-attributes": DumpCustomAttributes (module, o); break;
+            case "security-declarations": DumpSecurityDeclarations (module, o); break;
             case "il": DumpIl (module, o); break;
             case "resolve": DumpResolve (path, o); break;
             case "custom-attributes-resolved": DumpCustomAttributesResolved (module, path, o); break;
@@ -642,15 +644,78 @@ static class Program
             PpArgument (attr.ConstructorArguments [i], s);
         }
         s.Append (')');
-        foreach (var f in attr.Fields) {
+        AppendNamedArgs (attr.Fields, attr.Properties, s);
+        return s.ToString ();
+    }
+
+    // The declarations in DeclSecurity rid order, which sorting by the
+    // HasDeclSecurity coded parent recovers: parent, action, then each
+    // security attribute. Resolving a declaration does not swallow an enum
+    // that fails to resolve, as attributes do, so any exception prints the
+    // blob.
+    static void DumpSecurityDeclarations (ModuleDefinition module, StringBuilder o)
+    {
+        o.Append ("[security-declarations]\n");
+        var declarations = new List<(MetadataToken parent, SecurityDeclaration decl)> ();
+        void Add (ISecurityDeclarationProvider provider)
+        {
+            if (provider == null || !provider.HasSecurityDeclarations)
+                return;
+            foreach (var decl in provider.SecurityDeclarations)
+                declarations.Add ((provider.MetadataToken, decl));
+        }
+
+        foreach (var ty in TypesInRidOrder (module)) {
+            Add (ty);
+            foreach (var m in ty.Methods)
+                Add (m);
+        }
+        Add (module.Assembly);
+
+        // HasDeclSecurity tag order: TypeDef, MethodDef, Assembly.
+        static ulong Key (MetadataToken token)
+        {
+            uint tag = token.TokenType switch {
+                TokenType.TypeDef => 0,
+                TokenType.Method => 1,
+                _ => 2,
+            };
+            return ((ulong) token.RID << 2) | tag;
+        }
+
+        var sorted = declarations
+            .Select ((entry, index) => (entry, index))
+            .OrderBy (x => Key (x.entry.parent))
+            .ThenBy (x => x.index)
+            .Select (x => x.entry);
+        foreach (var (parent, decl) in sorted) {
+            o.Append ($"sec parent={Tok (parent)} action={(ushort) decl.Action}");
+            string attributes;
+            try {
+                var s = new StringBuilder ();
+                foreach (var a in decl.SecurityAttributes) {
+                    s.Append ($" attr={a.AttributeType.FullName}");
+                    AppendNamedArgs (a.Fields, a.Properties, s);
+                }
+                attributes = s.ToString ();
+            } catch {
+                attributes = $" !unresolved blob={Hex (decl.GetBlob ())}";
+            }
+            o.Append (attributes).Append ('\n');
+        }
+    }
+
+    static void AppendNamedArgs (IEnumerable<CustomAttributeNamedArgument> fields,
+        IEnumerable<CustomAttributeNamedArgument> properties, StringBuilder s)
+    {
+        foreach (var f in fields) {
             s.Append ($" field {f.Name}=");
             PpArgument (f.Argument, s);
         }
-        foreach (var p in attr.Properties) {
+        foreach (var p in properties) {
             s.Append ($" property {p.Name}=");
             PpArgument (p.Argument, s);
         }
-        return s.ToString ();
     }
 
     static void PpArgument (CustomAttributeArgument argument, StringBuilder s)
@@ -711,7 +776,7 @@ static class Program
             return;
         }
         switch (value) {
-        case string str: s.Append ($"\"{str}\""); break;
+        case string str: AppendQuoted (str, s); break;
         case char c: s.Append ($"char:0x{(ushort) c:x4}"); break;
         case bool b: s.Append (b ? "True" : "False"); break;
         case float f: s.Append ($"r4:0x{(uint) BitConverter.SingleToInt32Bits (f):x8}"); break;
@@ -720,6 +785,28 @@ static class Program
         case IFormattable formattable: s.Append (Inv (formattable)); break;
         default: s.Append (value.ToString ()); break;
         }
+    }
+
+    // `value` in double quotes, with `\` and control characters escaped as
+    // cil-dump escapes them.
+    static void AppendQuoted (string value, StringBuilder s)
+    {
+        s.Append ('"');
+        foreach (var c in value) {
+            switch (c) {
+            case '\\': s.Append ("\\\\"); break;
+            case '\r': s.Append ("\\r"); break;
+            case '\n': s.Append ("\\n"); break;
+            case '\t': s.Append ("\\t"); break;
+            default:
+                if (c < ' ' || c == '\x7f')
+                    s.Append ($"\\x{(int) c:x2}");
+                else
+                    s.Append (c);
+                break;
+            }
+        }
+        s.Append ('"');
     }
 
     static void DumpIl (ModuleDefinition module, StringBuilder o)

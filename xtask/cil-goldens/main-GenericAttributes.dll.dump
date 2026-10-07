@@ -95,6 +95,7 @@ ca parent=0x02000008 ctor=System.Void System.Runtime.CompilerServices.NullableCo
 ca parent=0x02000008 ctor=System.Void System.Runtime.CompilerServices.NullableAttribute::.ctor(System.Byte) args=((U1:0))
 ca parent=0x06000009 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
 ca parent=0x0600000a ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=8
 	IL_0000: ldarg.0

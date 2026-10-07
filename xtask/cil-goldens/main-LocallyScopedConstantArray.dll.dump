@@ -37,6 +37,7 @@ ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttri
 ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyInformationalVersionAttribute::.ctor(System.String) args=((String:"1.0.0"))
 ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"LocallyScopedConstantArray"))
 ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"LocallyScopedConstantArray"))
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=2
 	IL_0000: nop

@@ -245,6 +245,7 @@ ca parent=0x0600001f ctor=System.Void System.ComponentModel.EditorBrowsableAttri
 ca parent=0x06000024 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
 ca parent=0x06000027 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
 ca parent=0x06000028 ctor=System.Void System.STAThreadAttribute::.ctor() args=()
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=9
 	IL_0000: ldarg.0

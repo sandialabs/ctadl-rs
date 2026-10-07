@@ -31,6 +31,7 @@ public-key=-
 [events]
 [custom-attributes]
 ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=7
 	IL_0000: ldarg.0

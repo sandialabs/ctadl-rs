@@ -54,6 +54,7 @@ ca parent=0x02000002 ctor=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::
 ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
 ca parent=0x02000003 ctor=System.Void Microsoft.CodeAnalysis.EmbeddedAttribute::.ctor() args=()
 ca parent=0x02000003 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=!unresolved blob=010002000000020054020d416c6c6f774d756c7469706c6500540209496e6865726974656400
+[security-declarations]
 [il]
 0x06000001 max-stack=8 init-locals=false code-size=8
 	IL_0000: ldarg.0

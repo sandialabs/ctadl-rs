@@ -1730,6 +1730,8 @@ ca parent=0x020000ee ctor=System.Void Microsoft.VisualC.DebugInfoInPDBAttribute:
 ca parent=0x020000ef ctor=System.Void System.Runtime.CompilerServices.NativeCppClassAttribute::.ctor() args=()
 ca parent=0x020000ef ctor=System.Void Microsoft.VisualC.MiscellaneousBitsAttribute::.ctor(System.Int32) args=((I4:65))
 ca parent=0x020000ef ctor=System.Void Microsoft.VisualC.DebugInfoInPDBAttribute::.ctor() args=()
+[security-declarations]
+sec parent=0x20000001 action=8 attr=System.Security.Permissions.SecurityPermissionAttribute property SkipVerification=(Boolean:True) attr=System.Security.Permissions.SecurityPermissionAttribute property UnmanagedCode=(Boolean:True)
 [il]
 0x06000001 max-stack=2 init-locals=false code-size=17
 	local 0=System.Boolean
