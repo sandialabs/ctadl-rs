@@ -128,19 +128,23 @@ impl<'a> ModuleData<'a> {
             let count = table.len();
             let field_ptr = self.md.row_count(Table::FieldPtr);
             let method_ptr = self.md.row_count(Table::MethodPtr);
-            // When Ptr tables exist, list columns index into them.
+            // When Ptr tables exist, list columns index into them. A table
+            // of u32::MAX rows cannot hold its last one, so saturating loses
+            // nothing.
             let field_end = if field_ptr != 0 {
                 field_ptr
             } else {
                 self.md.row_count(Table::Field)
-            } + 1;
+            }
+            .saturating_add(1);
             let method_end = if method_ptr != 0 {
                 method_ptr
             } else {
                 self.md.row_count(Table::Method)
-            } + 1;
+            }
+            .saturating_add(1);
 
-            let mut ranges = Vec::with_capacity(count as usize);
+            let mut ranges = Vec::with_capacity(table.rows_present() as usize);
             let mut prev: Option<(u32, u32)> = None;
             for rid in 1..=count {
                 let row = table.row(rid)?;
@@ -399,8 +403,9 @@ impl<'a> ModuleData<'a> {
             ptr_rows
         } else {
             self.md.row_count(target)
-        } + 1;
-        let mut map = HashMap::with_capacity(count as usize);
+        }
+        .saturating_add(1);
+        let mut map = HashMap::with_capacity(table.rows_present() as usize);
         let mut prev: Option<(u32, u32)> = None;
         for rid in 1..=count {
             let row = table.row(rid)?;

@@ -414,7 +414,8 @@ impl<'a> Module<'a> {
 
     pub fn exported_types(&self) -> impl ExactSizeIterator<Item = ExportedType<'_>> {
         let m = self.m();
-        (1..self.data.md.row_count(Table::ExportedType) + 1).map(move |rid| ExportedType { m, rid })
+        (0..self.data.md.row_count(Table::ExportedType))
+            .map(move |i| ExportedType { m, rid: i + 1 })
     }
 
     /// Top-level (non-nested) types, in rid order (Cecil `Module.Types`).
@@ -432,7 +433,7 @@ impl<'a> Module<'a> {
     /// in rid order).
     pub fn all_types(&self) -> impl ExactSizeIterator<Item = TypeDef<'_>> {
         let m = self.m();
-        (1..self.data.md.row_count(Table::TypeDef) + 1).map(move |rid| TypeDef { m, rid })
+        (0..self.data.md.row_count(Table::TypeDef)).map(move |i| TypeDef { m, rid: i + 1 })
     }
 
     pub fn type_def(&self, rid: u32) -> Option<TypeDef<'_>> {

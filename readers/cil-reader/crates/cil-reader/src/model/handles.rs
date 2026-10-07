@@ -491,7 +491,9 @@ impl<'a> TypeDef<'a> {
 /// (`MetadataReader.ReadPointers`), without the rids that name no member:
 /// the part of the range past the table it indexes, and a Ptr row naming
 /// rid 0 or a rid past the member table. Cecil reads those at the wrong
-/// offset, as whatever bytes are there.
+/// offset, as whatever bytes are there. A range into rows the header claims
+/// but the tables stream does not hold is an error, as Cecil throws reading
+/// them; it fails before making a handle for each.
 fn resolve_member_range<'a, H>(
     m: &'a ModuleData<'a>,
     range: Range,
@@ -506,8 +508,11 @@ fn resolve_member_range<'a, H>(
     };
     let ptr_rows = m.md.row_count(ptr_table);
     let target_rows = m.md.row_count(target);
-    let indexed_rows = if ptr_rows != 0 { ptr_rows } else { target_rows };
-    let end = (range.start + range.length).min(indexed_rows + 1);
+    let indexed = if ptr_rows != 0 { ptr_table } else { target };
+    let end = (range.start + range.length).min(m.md.row_count(indexed).saturating_add(1));
+    if end > m.md.rows_present(indexed).saturating_add(1) {
+        return Err(Error::bad(0, "member list runs past the tables stream"));
+    }
     let mut out = Vec::with_capacity(range.length.min(4096) as usize);
     for rid in range.start..end {
         let actual = if ptr_rows != 0 {
@@ -1117,7 +1122,8 @@ impl<'a> MethodDef<'a> {
                 ptr_rows
             } else {
                 self.m.md.row_count(Table::Param)
-            }) + 1
+            })
+            .saturating_add(1)
         } else {
             table.row(self.rid + 1)?.param_list
         };

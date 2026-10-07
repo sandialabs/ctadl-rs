@@ -714,6 +714,12 @@ impl<'a, R: RawRow> TableRef<'a, R> {
         self.info.rows == 0
     }
 
+    /// [`Metadata::rows_present`](super::metadata::Metadata::rows_present)
+    /// of this table.
+    pub fn rows_present(&self) -> u32 {
+        self.md.rows_present(R::TABLE)
+    }
+
     /// Reads the row with 1-based id `rid`. O(1): `offset + row_size * (rid-1)`.
     pub fn row(&self, rid: u32) -> Result<R> {
         if rid == 0 || rid > self.info.rows {
@@ -723,7 +729,9 @@ impl<'a, R: RawRow> TableRef<'a, R> {
                 max: self.info.rows,
             });
         }
-        let pos = self.info.offset as usize + self.info.row_size as usize * (rid as usize - 1);
+        let pos = u64::from(self.info.offset) + u64::from(self.info.row_size) * u64::from(rid - 1);
+        // Past the stream on any target, so the read fails.
+        let pos = usize::try_from(pos).unwrap_or(usize::MAX);
         let mut cur = Cur::at(self.md.tables_data, pos);
         R::read(self.md.size_ctx(), &mut cur)
     }
@@ -743,23 +751,23 @@ impl<'a, R: RawRow> TableRef<'a, R> {
 
 pub struct RowIter<'a, R: RawRow> {
     table: TableRef<'a, R>,
-    next: u32,
+    /// Wider than a rid, to pass a table of u32::MAX rows.
+    next: u64,
 }
 
 impl<'a, R: RawRow> Iterator for RowIter<'a, R> {
     type Item = (u32, Result<R>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.next > self.table.info.rows {
-            return None;
-        }
-        let rid = self.next;
+        let rid = u32::try_from(self.next)
+            .ok()
+            .filter(|&rid| rid <= self.table.info.rows)?;
         self.next += 1;
         Some((rid, self.table.row(rid)))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = (self.table.info.rows + 1 - self.next) as usize;
+        let n = (u64::from(self.table.info.rows) + 1 - self.next) as usize;
         (n, Some(n))
     }
 }

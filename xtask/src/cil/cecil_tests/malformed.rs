@@ -10,7 +10,8 @@ use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader};
 use cil_reader::model::sig::MAX_TYPE_SIG_DEPTH;
 use cil_reader::raw::pe::PeImage;
 use cil_reader::raw::tables::{
-    CustomAttributeRaw, FieldRaw, ModuleRaw, NestedClassRaw, Table, TypeDefRaw, TypeSpecRaw,
+    CustomAttributeRaw, FieldRaw, ModuleRaw, NestedClassRaw, PropertyMapRaw, Table, TypeDefRaw,
+    TypeSpecRaw,
 };
 use cil_reader::{Entity, Error, MetadataToken, Module, TokenType};
 
@@ -425,6 +426,63 @@ fn attribute_argument_nesting() {
     }
 }
 
+/// Overwrites the row count of `table`, which must be present, in the
+/// header of the `#~` stream (ECMA-335 II.24.2.6).
+fn patch_row_count(data: &mut [u8], table: Table, count: u32) {
+    let header = tables_stream_offset(data);
+    let valid = u64::from_le_bytes(data[header + 8..header + 16].try_into().unwrap());
+    let bit = 1u64 << table as u32;
+    assert!(valid & bit != 0, "{table:?} present");
+    let at = header + 24 + 4 * (valid & (bit - 1)).count_ones() as usize;
+    data[at..at + 4].copy_from_slice(&count.to_le_bytes());
+}
+
+// A row count whose table runs past the end of the `#~` stream, here past
+// 4 GiB: 2^30 rows of 4 bytes. The image reads, as Cecil reads it, and so
+// do the tables before; the rows past the stream, which are every row of
+// the tables after, fail to read. Cecil's table offsets wrap at 4 GiB, so
+// it reads the tables after at the offsets they would have without it.
+fn row_counts_past_the_stream() {
+    let mut data = read_fixture("Properties.cs.dll");
+    let claimed = 1 << 30;
+    patch_row_count(&mut data, Table::PropertyMap, claimed);
+    let module = Module::read(&data).unwrap();
+    let maps = module.metadata().table::<PropertyMapRaw>();
+    assert_eq!(maps.len(), claimed);
+    assert!(maps.rows_present() < 0x1000);
+    for ty in module.all_types() {
+        assert!(ty.full_name().is_ok());
+        assert!(ty.methods().is_ok());
+    }
+    let ty = module.get_type("Foo").unwrap().unwrap();
+    assert!(ty.properties().is_err());
+    assert!(module.property_def(1).unwrap().name().is_err());
+
+    // As many TypeDef rows as a rid can name: counting them overflows
+    // nothing.
+    let mut data = read_fixture("Fields.cs.dll");
+    patch_row_count(&mut data, Table::TypeDef, u32::MAX);
+    let module = Module::read(&data).unwrap();
+    assert_eq!(module.all_types().len(), u32::MAX as usize);
+    let rows = module.metadata().table::<TypeDefRaw>().rows();
+    assert_eq!(rows.len(), u32::MAX as usize);
+
+    // A Field table that claims more rows than the stream holds, and so
+    // the last type's field list: that list fails, before a handle is made
+    // for each of the rows claimed.
+    let mut data = read_fixture("Fields.cs.dll");
+    patch_row_count(&mut data, Table::Field, 0xffff);
+    let module = Module::read(&data).unwrap();
+    let last = module.all_types().last().unwrap();
+    assert!(matches!(
+        last.fields(),
+        Err(Error::BadImage {
+            reason: "member list runs past the tables stream",
+            ..
+        })
+    ));
+}
+
 // Two TypeRefs scoped to each other. Cecil's FullName and Scope follow
 // DeclaringType until its stack overflows. A TypeRef scoped to itself is
 // one obfuscators write, and Cecil scopes it to the module.
@@ -706,6 +764,7 @@ pub(super) const TESTS: &[Test] = &[
         attribute_enum_underlying_cycles,
     ),
     ("attribute_argument_nesting", attribute_argument_nesting),
+    ("row_counts_past_the_stream", row_counts_past_the_stream),
     ("attribute_enum_scope_cycle", attribute_enum_scope_cycle),
     ("exported_type_nesting", exported_type_nesting),
     ("exported_type_file_loop", exported_type_file_loop),

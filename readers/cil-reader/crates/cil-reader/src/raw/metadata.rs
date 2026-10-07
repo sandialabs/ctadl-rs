@@ -109,8 +109,12 @@ impl<'a> Metadata<'a> {
         }
 
         // ComputeTableInformations: rows are laid out immediately after the
-        // header, present tables in id order.
-        let mut offset = cur.pos() as u32;
+        // header, present tables in id order. Row counts are not checked
+        // against the stream, as Cecil does not check them: a row past its
+        // end fails to read. Cecil's offsets wrap at 4 GiB; these do not,
+        // and a table that starts past 4 GiB gets offset u32::MAX, which
+        // no row can be read at.
+        let mut offset = cur.pos() as u64;
         let mut tables = [TableInfo::default(); TABLE_COUNT];
         for (i, info) in tables.iter_mut().enumerate() {
             if valid & (1u64 << i) == 0 {
@@ -120,13 +124,11 @@ impl<'a> Metadata<'a> {
                 .ok_or(Error::bad(cur.pos(), "unknown table id in Valid bitvector"))?;
             let row_size = table_row_size(table, &ctx);
             *info = TableInfo {
-                offset,
+                offset: u32::try_from(offset).unwrap_or(u32::MAX),
                 rows: ctx.row_counts[i],
                 row_size,
             };
-            offset = offset
-                .checked_add(row_size.wrapping_mul(ctx.row_counts[i]))
-                .ok_or(Error::bad(offset as usize, "table data overflow"))?;
+            offset += u64::from(row_size) * u64::from(ctx.row_counts[i]);
         }
 
         Ok(Metadata {
@@ -180,6 +182,16 @@ impl<'a> Metadata<'a> {
 
     pub fn table_info(&self, table: Table) -> TableInfo {
         self.tables[table as usize]
+    }
+
+    /// How many of `table`'s rows lie within the tables stream. The header
+    /// can claim more, and reading one past these fails; this bounds what is
+    /// sized from the row count.
+    pub fn rows_present(&self, table: Table) -> u32 {
+        let info = self.tables[table as usize];
+        let room = (self.tables_data.len() as u64).saturating_sub(info.offset.into());
+        let fit = room / u64::from(info.row_size.max(1));
+        info.rows.min(u32::try_from(fit).unwrap_or(u32::MAX))
     }
 
     /// Typed accessor for a metadata table.
