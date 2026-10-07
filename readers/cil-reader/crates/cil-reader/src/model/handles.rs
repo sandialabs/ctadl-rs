@@ -355,13 +355,21 @@ impl<'a> TypeDef<'a> {
         })
     }
 
+    /// The types whose NestedClass row names this one, without rids that name
+    /// no TypeDef row: `ReadNestedTypes` drops the null that
+    /// `GetTypeDefinition` returns past the table, and throws on rid 0.
     pub fn nested_types(&self) -> Result<Vec<TypeDef<'a>>> {
         Ok(self
             .m
             .nested_maps()?
             .nested
             .get(&self.rid)
-            .map(|rids| rids.iter().map(|&rid| TypeDef { m: self.m, rid }).collect())
+            .map(|rids| {
+                rids.iter()
+                    .filter(|&&rid| self.m.is_type_def_rid(rid))
+                    .map(|&rid| TypeDef { m: self.m, rid })
+                    .collect()
+            })
             .unwrap_or_default())
     }
 

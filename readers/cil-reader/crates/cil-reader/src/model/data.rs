@@ -161,22 +161,23 @@ impl<'a> ModuleData<'a> {
         })
     }
 
-    pub fn fields_range(&self, type_rid: u32) -> Result<Range> {
-        Ok(self
-            .type_member_ranges()?
-            .get(type_rid as usize - 1)
+    /// The member ranges of TypeDef `type_rid`; empty for a rid that names no
+    /// row.
+    fn member_ranges_of(&self, type_rid: u32) -> Result<(Range, Range)> {
+        let ranges = self.type_member_ranges()?;
+        Ok(type_rid
+            .checked_sub(1)
+            .and_then(|i| ranges.get(i as usize))
             .copied()
-            .unwrap_or_default()
-            .0)
+            .unwrap_or_default())
+    }
+
+    pub fn fields_range(&self, type_rid: u32) -> Result<Range> {
+        Ok(self.member_ranges_of(type_rid)?.0)
     }
 
     pub fn methods_range(&self, type_rid: u32) -> Result<Range> {
-        Ok(self
-            .type_member_ranges()?
-            .get(type_rid as usize - 1)
-            .copied()
-            .unwrap_or_default()
-            .1)
+        Ok(self.member_ranges_of(type_rid)?.1)
     }
 
     /// The position of member `rid` in its owners' list columns: `rid` itself,
@@ -262,13 +263,23 @@ impl<'a> ModuleData<'a> {
         })
     }
 
+    /// Whether `rid` names a TypeDef row: not 0, and not past the table.
+    pub fn is_type_def_rid(&self, rid: u32) -> bool {
+        (1..=self.md.row_count(Table::TypeDef)).contains(&rid)
+    }
+
     /// The enclosing type of TypeDef `rid`: its NestedClass row's, but only
     /// for a nested visibility, as Cecil sets `DeclaringType`
-    /// (`MetadataReader.ReadType`).
+    /// (`MetadataReader.ReadType`). An enclosing rid past the TypeDef table
+    /// is none, as `GetTypeDefinition` returns null there; so is rid 0, where
+    /// Cecil throws.
     pub fn declaring_type_rid(&self, rid: u32) -> Result<Option<u32>> {
         let Some(&declaring) = self.nested_maps()?.reverse.get(&rid) else {
             return Ok(None);
         };
+        if !self.is_type_def_rid(declaring) {
+            return Ok(None);
+        }
         let flags = self.md.row::<TypeDefRaw>(rid)?.flags;
         // VisibilityMask values 2-7 are the Nested* ones.
         let visibility = flags & crate::model::handles::type_attributes::VISIBILITY_MASK;

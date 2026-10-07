@@ -1,5 +1,6 @@
-//! Malformed metadata that Cecil cannot read: its reader overflows its stack
-//! or throws, where cil-reader returns an error or reads what it can. No
+//! Malformed metadata that Cecil cannot read: its reader overflows its stack,
+//! hangs or throws, where cil-reader returns an error or reads what it can;
+//! and some that Cecil reads only partly, next to a variant it throws on. No
 //! compiler emits these shapes, so each test patches a corpus image in
 //! memory.
 
@@ -81,6 +82,14 @@ fn is_unsupported<T>(result: cil_reader::Result<T>, what: &str) -> bool {
     matches!(result, Err(Error::Unsupported(w)) if w == what)
 }
 
+/// The NestedClass row whose nested type is `nested`.
+fn nested_class_row(module: &Module<'_>, nested: u32) -> u32 {
+    let table = module.metadata().table::<NestedClassRaw>();
+    (1..=table.len())
+        .find(|&rid| table.row(rid).unwrap().nested_class == nested)
+        .unwrap()
+}
+
 // A type nested in itself, or two nested in each other. Cecil's FullName
 // follows DeclaringType until its stack overflows.
 fn nested_class_cycles() {
@@ -91,13 +100,10 @@ fn nested_class_cycles() {
     let baz = bar.nested_types().unwrap()[0];
     let (bar, baz) = (bar.token().rid(), baz.token().rid());
     // The NestedClass row of each, whose second column is the enclosing type.
-    let row_of = |nested: u32| {
-        let table = module.metadata().table::<NestedClassRaw>();
-        (1..=table.len())
-            .find(|&rid| table.row(rid).unwrap().nested_class == nested)
-            .unwrap()
-    };
-    let (bar_row, baz_row) = (row_of(bar), row_of(baz));
+    let (bar_row, baz_row) = (
+        nested_class_row(&module, bar),
+        nested_class_row(&module, baz),
+    );
 
     let mut data = original.clone();
     patch_column(&mut data, Table::NestedClass, baz_row, 2, baz as u16);
@@ -116,6 +122,38 @@ fn nested_class_cycles() {
             type_def(&module, rid).full_name(),
             "nested type cycle"
         ));
+    }
+}
+
+// A NestedClass row naming rid 0 or a rid past the TypeDef table, as its
+// nested or its enclosing type. Cecil's GetTypeDefinition returns null past
+// the table, so ReadNestedTypes drops the type and DeclaringType is null;
+// at rid 0 it throws. Neither names a type here.
+fn nested_class_rids_out_of_range() {
+    let original = read_fixture("NestedTypes.cs.dll");
+    let module = Module::read(&original).unwrap();
+    let foo = module.get_type("Foo").unwrap().unwrap();
+    let bar = foo.nested_types().unwrap()[0].token().rid();
+    let row = nested_class_row(&module, bar);
+    let past = module.metadata().row_count(Table::TypeDef) + 1;
+
+    for enclosing in [0, past] {
+        let mut data = original.clone();
+        patch_column(&mut data, Table::NestedClass, row, 2, enclosing as u16);
+        let module = Module::read(&data).unwrap();
+        let bar = type_def(&module, bar);
+        assert!(bar.declaring_type().unwrap().is_none());
+        assert_eq!(bar.full_name().unwrap(), "Bar");
+        assert!(bar.fields().is_ok());
+    }
+
+    for nested in [0, past] {
+        let mut data = original.clone();
+        patch_column(&mut data, Table::NestedClass, row, 0, nested as u16);
+        let module = Module::read(&data).unwrap();
+        let foo = module.get_type("Foo").unwrap().unwrap();
+        assert!(foo.nested_types().unwrap().is_empty());
+        assert_eq!(type_def(&module, bar).full_name().unwrap(), "Bar");
     }
 }
 
@@ -388,6 +426,10 @@ fn opcode_past_the_tables() {
 
 pub(super) const TESTS: &[Test] = &[
     ("nested_class_cycles", nested_class_cycles),
+    (
+        "nested_class_rids_out_of_range",
+        nested_class_rids_out_of_range,
+    ),
     ("type_ref_scope_cycles", type_ref_scope_cycles),
     ("attribute_enum_scope_cycle", attribute_enum_scope_cycle),
     ("exported_type_nesting", exported_type_nesting),
