@@ -157,6 +157,90 @@ fn nested_class_rids_out_of_range() {
     }
 }
 
+/// Every member of every type, by name; each list and name must read.
+fn member_names(module: &Module<'_>) -> Vec<Vec<String>> {
+    module
+        .all_types()
+        .map(|ty| {
+            let fields = ty.fields().unwrap().into_iter().map(|f| f.name());
+            let methods = ty.methods().unwrap().into_iter().map(|m| m.name());
+            let properties = ty.properties().unwrap().into_iter().map(|p| p.name());
+            let events = ty.events().unwrap().into_iter().map(|e| e.name());
+            fields
+                .chain(methods)
+                .chain(properties)
+                .chain(events)
+                .map(|name| name.unwrap().into_owned())
+                .collect()
+        })
+        .collect()
+}
+
+// Member lists that run past the table they index, and Ptr rows naming
+// rid 0 or a rid past the member table. Cecil reads those rows at the
+// wrong offset, as whatever bytes are there; here they name no member.
+fn member_lists_out_of_range() {
+    // TypeDef's FieldList column, after Flags, Name, Namespace and Extends.
+    const FIELD_LIST: usize = 10;
+    let original = read_fixture("Fields.cs.dll");
+    let module = Module::read(&original).unwrap();
+    let fields = module.metadata().row_count(Table::Field);
+    let types = module.metadata().row_count(Table::TypeDef);
+    // The last type with fields, whose list the one after it ends.
+    let last = (1..types)
+        .rev()
+        .find(|&rid| type_def(&module, rid).has_fields().unwrap())
+        .unwrap();
+    let mut data = original.clone();
+    patch_column(
+        &mut data,
+        Table::TypeDef,
+        last + 1,
+        FIELD_LIST,
+        (fields + 10) as u16,
+    );
+    let module = Module::read(&data).unwrap();
+    member_names(&module);
+    let tail = type_def(&module, last).fields().unwrap();
+    assert_eq!(tail.last().unwrap().token().rid(), fields);
+    assert!(type_def(&module, last + 1).fields().unwrap().is_empty());
+
+    let original = read_fixture("ptr-Fields.cs.dll");
+    let before = member_names(&Module::read(&original).unwrap());
+    let fields = Module::read(&original)
+        .unwrap()
+        .metadata()
+        .row_count(Table::Field);
+    let mut data = original.clone();
+    patch_column(&mut data, Table::FieldPtr, 1, 0, 0);
+    patch_column(&mut data, Table::FieldPtr, 2, 0, (fields + 1) as u16);
+    let after = member_names(&Module::read(&data).unwrap());
+    let count = |names: &Vec<Vec<String>>| names.iter().map(Vec::len).sum::<usize>();
+    assert_eq!(count(&after), count(&before) - 2);
+
+    // PropertyMap's PropertyList column, after the TypeDef index.
+    let original = read_fixture("Properties.cs.dll");
+    let module = Module::read(&original).unwrap();
+    let properties = module.metadata().row_count(Table::Property);
+    let maps = module.metadata().row_count(Table::PropertyMap);
+    let mut data = original.clone();
+    patch_column(
+        &mut data,
+        Table::PropertyMap,
+        maps,
+        2,
+        (properties + 10) as u16,
+    );
+    let module = Module::read(&data).unwrap();
+    member_names(&module);
+    let with_properties: Vec<_> = module
+        .all_types()
+        .filter(|ty| !ty.properties().unwrap().is_empty())
+        .collect();
+    let tail = with_properties.last().unwrap().properties().unwrap();
+    assert_eq!(tail.last().unwrap().token().rid(), properties);
+}
+
 // Two TypeRefs scoped to each other. Cecil's FullName and Scope follow
 // DeclaringType until its stack overflows. A TypeRef scoped to itself is
 // one obfuscators write, and Cecil scopes it to the module.
@@ -430,6 +514,7 @@ pub(super) const TESTS: &[Test] = &[
         "nested_class_rids_out_of_range",
         nested_class_rids_out_of_range,
     ),
+    ("member_lists_out_of_range", member_lists_out_of_range),
     ("type_ref_scope_cycles", type_ref_scope_cycles),
     ("attribute_enum_scope_cycle", attribute_enum_scope_cycle),
     ("exported_type_nesting", exported_type_nesting),

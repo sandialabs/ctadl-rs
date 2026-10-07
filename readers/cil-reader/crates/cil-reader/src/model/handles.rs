@@ -488,29 +488,41 @@ impl<'a> TypeDef<'a> {
 }
 
 /// Resolves a member range through an optional Ptr indirection table
-/// (`MetadataReader.ReadPointers`).
+/// (`MetadataReader.ReadPointers`), without the rids that name no member:
+/// the part of the range past the table it indexes, and a Ptr row naming
+/// rid 0 or a rid past the member table. Cecil reads those at the wrong
+/// offset, as whatever bytes are there.
 fn resolve_member_range<'a, H>(
     m: &'a ModuleData<'a>,
     range: Range,
     ptr_table: Table,
     make: impl Fn(u32) -> H,
 ) -> Result<Vec<H>> {
+    let target = match ptr_table {
+        Table::FieldPtr => Table::Field,
+        Table::MethodPtr => Table::Method,
+        Table::EventPtr => Table::Event,
+        _ => Table::Property,
+    };
+    let ptr_rows = m.md.row_count(ptr_table);
+    let target_rows = m.md.row_count(target);
+    let indexed_rows = if ptr_rows != 0 { ptr_rows } else { target_rows };
+    let end = (range.start + range.length).min(indexed_rows + 1);
     let mut out = Vec::with_capacity(range.length.min(4096) as usize);
-    let has_ptr = m.md.row_count(ptr_table) != 0;
-    for rid in range.iter() {
-        let actual = if has_ptr {
+    for rid in range.start..end {
+        let actual = if ptr_rows != 0 {
             match ptr_table {
                 Table::FieldPtr => m.md.row::<FieldPtrRaw>(rid)?.field,
                 Table::MethodPtr => m.md.row::<MethodPtrRaw>(rid)?.method,
-                Table::ParamPtr => m.md.row::<ParamPtrRaw>(rid)?.param,
                 Table::EventPtr => m.md.row::<EventPtrRaw>(rid)?.event,
-                Table::PropertyPtr => m.md.row::<PropertyPtrRaw>(rid)?.property,
-                _ => rid,
+                _ => m.md.row::<PropertyPtrRaw>(rid)?.property,
             }
         } else {
             rid
         };
-        out.push(make(actual));
+        if (1..=target_rows).contains(&actual) {
+            out.push(make(actual));
+        }
     }
     Ok(out)
 }
