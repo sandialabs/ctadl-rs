@@ -273,10 +273,10 @@ In Rust it aborts the host process.
 **B5. File-forwarding loops in the resolver are unguarded.** *Fixed:* `resolve_exported` (`model/resolver.rs`) guards against reentering an exported type whatever its implementation, as A22 notes; `malformed::exported_type_file_loop` (`cil:cecil-tests`) covers a File naming the assembly's own module, and overflows the stack with the guard removed (`/Volumes/Shampoo/b5-b10-2026-10-06/logs/`).
 - **Rust:** `model/resolver.rs:392-398`.
 
-**B6. A type that inherits from itself hangs member lookup.** *Reproduced; Cecil hangs too.*
+**B6. A type that inherits from itself hangs member lookup.** *Fixed:* `find_field` and `find_method` (`model/resolver.rs`) record each type the base walk reaches, by module and rid, and fail with "base type cycle" on reaching one again, so a cycle through other modules ends too. `malformed::base_type_cycles` (`cil:cecil-tests`) covers a type that is its own base and two that are each other's; with the check removed it hangs. The evidence repro `basecycle.dll` now dumps, with `!error` for that MemberRef (`/Volumes/Shampoo/b-open-2026-10-07/`). Cecil hangs.
 - **Rust:** `model/resolver.rs:414-427, 469-495`.
 
-**B7. Attribute decoding recurses without bound.**
+**B7. Attribute decoding recurses without bound.** *Fixed:* each array, boxed value, and enum whose underlying type is an enum is a level, and an argument past `MAX_ATTRIBUTE_DEPTH` = 64 levels is an error (`model/custom_attributes.rs`), so an enum cycle ends there too. The deepest argument in the .NET 8 framework, Cecil's corpus and the fixtures nests 5 levels, in `CustomAttributes.cs`. Before, 5.9 KB of `0x1d` tags overflowed the 8 MB main thread of a debug build, and as many `0x51` tags a 2 MiB thread. `malformed::attribute_enum_underlying_cycles` and `malformed::attribute_argument_nesting` (`cil:cecil-tests`) cover both enum cycles, and arrays and boxes at the limit and past it, on a 1 MiB stack. Cecil recurses the same way without bound (its stack overflows on the enum cycle), so between the two the port errs past 64 levels where Cecil reads on. Evidence is in `/Volumes/Shampoo/b-open-2026-10-07/`.
 - An enum whose `value__` field has the enum's own type recurses forever
   (`model/custom_attributes.rs:358,471`). Reproduced.
 - Long runs of `0x1d`/`0x51` tags recurse once per byte (`:486-488, 613-616`).
@@ -287,7 +287,7 @@ In Rust it aborts the host process.
   input.
 - **Fix:** make it a loop; output doesn't change.
 
-**B9. An 8-byte array signature can allocate gigabytes.** *Reproduced: 8 GB.*
+**B9. An 8-byte array signature can allocate gigabytes.** *Fixed:* `SigReader` (`model/sig.rs`) fails on a rank past `MAX_ARRAY_RANK` = 65535, so cil-dump prints that member's signature as `!error`; the `sig::tests` unit tests cover ranks at and past the limit. The CLR loads no type past rank 32 (`MAX_RANK`), and the largest rank in the .NET 8 framework, Cecil's corpus and the fixtures is 4. Cecil has the same loop, so it allocates the 8 GB too; between the two, the port errs past rank 65535 where Cecil reads on. The evidence repro `b9-rank.dll` peaked past the 8 GiB cap before and at 1 MB after (`/Volumes/Shampoo/b-open-2026-10-07/`).
 - **Rust:** `model/sig.rs:347-357` pushes `rank` dimensions, and rank can be up
   to 0x3FFFFFFF.
 
@@ -297,7 +297,7 @@ In Rust it aborts the host process.
 - ``A`2000000000[`` tries to allocate about 256 GB.
 - **Fix:** cap the arity at the remaining input length.
 
-**B11. Table row counts are never validated against the `#~` stream.**
+**B11. Table row counts are never validated against the `#~` stream.** *Fixed, lazily as Cecil reads:* row counts are still not checked against the stream, and a row past its end fails to read. `Metadata::from_image` (`raw/metadata.rs`) sums table offsets without overflow, and a table starting past 4 GiB gets an offset no row can be read at, where Cecil's offsets wrap (so Cecil reads the tables after a table of exactly 4 GiB in place, and the port does not). The maps sized from a row count take `Metadata::rows_present`, the rows within the stream, and a member list into rows past them is an error (`resolve_member_range`, `model/handles.rs`), as Cecil throws reading one. Counts of `u32::MAX` rows, which the wrapping sum used to reject, no longer overflow `all_types`, `exported_types`, `RowIter` or the end of the last member and parameter list. `malformed::row_counts_past_the_stream` (`cil:cecil-tests`) covers a 2^30-row PropertyMap (2 GB before), a `u32::MAX`-row TypeDef table, and a Field table claiming more rows than the stream holds (4 GB of handles before, at 2^28 rows). A sweep of five hostile counts over every table of three fixtures (225 images) found no panic or runaway allocation in cil-dump or a walk of the API. Still as Cecil: `all_types()` yields every TypeDef row the header claims, so a walk over 2^28 claimed types takes minutes. Evidence and the sweep are in `/Volumes/Shampoo/b-open-2026-10-07/`.
 - **Rust:** `raw/metadata.rs:100-102` uses `wrapping_mul`, which defeats the
   overflow check, and there is no check that each table ends inside the stream.
 - **Effect:** the model sizes allocations from raw row counts
@@ -312,7 +312,7 @@ In Rust it aborts the host process.
 - **Rust:** `model/body.rs:210, 212` (`try_start + try_len`,
   `handler_start + handler_len`).
 
-**B14. Rid-0 and out-of-range handles.** *Reproduced.*
+**B14. Rid-0 and out-of-range handles.** *Fixed:* `nested_types()` and `declaring_type_rid` (`model/handles.rs`, `model/data.rs`) leave out NestedClass rids of 0 or past the TypeDef table, as `ReadNestedTypes` drops the null `GetTypeDefinition` returns past it (Cecil throws at rid 0), so a type whose enclosing rid is out of range has its plain name; `HasNestedTypes` still counts the raw mapping, as Cecil's does. The member ranges of a rid that names no row are empty. `resolve_member_range` ends a member list at the end of the table it indexes and drops a Ptr row naming rid 0 or a member past its table, where Cecil reads those rows at the wrong offset. `malformed::nested_class_rids_out_of_range` and `malformed::member_lists_out_of_range` (`cil:cecil-tests`) cover each shape; repros are in `/Volumes/Shampoo/b-open-2026-10-07/`.
 - A NestedClass row with index 0 produces `TypeDef{rid:0}`. Its `fields()` and
   `methods()` then panic in `model/data.rs:148,158` with a subtraction overflow.
 - `nested_types()`, `declaring_type()` and `resolve_member_range`
@@ -428,8 +428,8 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Rust:** `model/data.rs:113-122, 310-314` and `model/handles.rs:899-905` end
   the last range at the Ptr table's length.
 - **Cecil:** uses the target table's length (`Mono.Cecil/AssemblyReader.cs:991-992`).
-- **Also:** a start beyond the Ptr table is an error in Rust; Cecil falls back
-  to direct table reads.
+- **Also:** a start beyond the Ptr table gives an empty list in Rust (since
+  B14); Cecil falls back to direct table reads.
 
 **C19. Small module-level differences.**
 - **Param rows:** a sequence number past the parameter count is ignored (Cecil
