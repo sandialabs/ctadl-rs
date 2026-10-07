@@ -223,17 +223,45 @@ pub struct BlobHeap<'a> {
 }
 
 impl<'a> BlobHeap<'a> {
-    /// Returns the blob at `index` as a subslice (Cecil `BlobHeap.GetView`).
-    ///
-    /// Index 0 (and, like Cecil, out-of-range indices) yields the empty blob.
+    /// Returns the blob at `index` as a subslice, as Cecil's `BlobHeap.Read`
+    /// does: index 0, an out-of-range index, or a length that runs past the
+    /// heap yields the empty blob. Cecil reads raw blobs (keys, hashes, and
+    /// `GetBlob` of attributes and security declarations) this way.
     pub fn get(&self, index: BlobIndex) -> Result<&'a [u8]> {
+        let (start, len) = self.span(index)?;
+        Ok(self.data[start..].get(..len).unwrap_or(&[]))
+    }
+
+    /// Returns the blob at `index` for a signature reader. Cecil's
+    /// `SignatureReader` reads the whole heap from the blob's start, so a
+    /// length that runs past the heap gives the rest of the heap.
+    pub fn view(&self, index: BlobIndex) -> Result<&'a [u8]> {
+        let (start, len) = self.span(index)?;
+        let rest = &self.data[start..];
+        Ok(&rest[..len.min(rest.len())])
+    }
+
+    /// Returns the blob at `index`, or an error when its length runs past
+    /// the heap, where Cecil's readers that slice by the length
+    /// (`ReadConstantString`, `ReadUnicodeStringBlob`) throw.
+    pub fn get_exact(&self, index: BlobIndex) -> Result<&'a [u8]> {
+        let (start, len) = self.span(index)?;
+        self.data[start..]
+            .get(..len)
+            .ok_or(Error::bad(start, "blob extends past the #Blob heap"))
+    }
+
+    /// The start of the blob at `index` and its length as written, which may
+    /// run past the heap. Index 0 and out-of-range indices give an empty
+    /// blob, as in Cecil's `BlobHeap.Read` and `GetView`.
+    fn span(&self, index: BlobIndex) -> Result<(usize, usize)> {
         let idx = index.0 as usize;
         if idx == 0 || idx >= self.data.len() {
-            return Ok(&[]);
+            return Ok((self.data.len(), 0));
         }
         let mut cur = Cur::at(self.data, idx);
         let len = cur.compressed_u32()? as usize;
-        cur.bytes(len)
+        Ok((cur.pos(), len))
     }
 }
 
@@ -351,6 +379,26 @@ mod tests {
         assert_eq!(heap.get(StringIndex(3)).unwrap(), "");
         assert_eq!(heap.get(StringIndex(u32::MAX)).unwrap(), "");
         assert_eq!(StringsHeap { data: b"" }.get(StringIndex(1)).unwrap(), "");
+    }
+
+    // The blob at 2 claims 0x7f bytes, where the heap has 2 left.
+    #[test]
+    fn overlong_blobs() {
+        let heap = BlobHeap {
+            data: b"\0\x03\x7f\x06\x08",
+        };
+        assert_eq!(heap.get(BlobIndex(1)).unwrap(), b"\x7f\x06\x08");
+        assert_eq!(heap.view(BlobIndex(1)).unwrap(), b"\x7f\x06\x08");
+        assert_eq!(heap.get(BlobIndex(2)).unwrap(), b"");
+        assert_eq!(heap.view(BlobIndex(2)).unwrap(), b"\x06\x08");
+        assert!(heap.get_exact(BlobIndex(2)).is_err());
+        assert_eq!(heap.get_exact(BlobIndex(1)).unwrap(), b"\x7f\x06\x08");
+        for get in [BlobHeap::get, BlobHeap::view, BlobHeap::get_exact] {
+            assert_eq!(get(&heap, BlobIndex(0)).unwrap(), b"");
+            assert_eq!(get(&heap, BlobIndex(5)).unwrap(), b"");
+        }
+        // A length prefix cut off by the heap's end still fails.
+        assert!(BlobHeap { data: b"\0\xc0" }.view(BlobIndex(1)).is_err());
     }
 
     // Cecil's bounds check is `(index - 1) + 16 > length`.

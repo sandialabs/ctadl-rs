@@ -12,6 +12,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using dnlib.DotNet;
@@ -49,6 +50,7 @@ static class Program {
             ("enum-lib", EnumLib),
             ("enums", Enums),
             ("utf8-names", Utf8Names),
+            ("heap-indexes", HeapIndexes),
         };
         foreach (var (name, build) in fixtures) {
             var (mod, patch) = build();
@@ -823,6 +825,52 @@ static class Program {
         if (version != "v4.0.30319" || image[root + 16 + 10] != 0)
             throw new InvalidOperationException($"unexpected version {version}");
         image[root + 16 + 10] = 0xe9;
+    }
+
+    // Heap indexes past their heaps, and blobs whose length runs past the
+    // #Blob heap. Cecil reads an out-of-range #Strings index as "", and a
+    // #GUID index past the heap as the zero GUID. It reads a raw blob (a
+    // public key) whose length runs past the heap as empty, and a signature
+    // from the blob's start through the rest of the heap.
+    static (ModuleDef, Action<Metadata>) HeapIndexes() {
+        var mod = NewModule("heap-indexes");
+        var cs = mod.CorLibTypes;
+        mod.Assembly.PublicKey = new PublicKey(Key);
+        var c = NewClass(mod, "", "C");
+        mod.Types.Add(c);
+        var unnamed = new FieldDefUser("Unnamed", new FieldSig(cs.Int32), FieldAttributes.Public);
+        var sig = new FieldDefUser("Sig", new FieldSig(cs.String), FieldAttributes.Public);
+        var constant = new FieldDefUser("K", new FieldSig(cs.Int32),
+            FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal | FieldAttributes.HasDefault) {
+            Constant = new ConstantUser(7),
+        };
+        foreach (var f in new[] { unnamed, sig, constant })
+            c.Fields.Add(f);
+        var obsolete = new TypeRefUser(mod, "System", "ObsoleteAttribute", cs.AssemblyRef);
+        var ctor = new MemberRefUser(mod, ".ctor", MethodSig.CreateInstance(cs.Void), obsolete);
+        c.CustomAttributes.Add(new CustomAttribute(ctor));
+
+        return (mod, md => {
+            Patch(md.TablesHeap.ModuleTable, 1, r => new RawModuleRow(r.Generation, r.Name, 9, r.EncId, r.EncBaseId));
+            Patch(md.TablesHeap.FieldTable, md.GetRid(unnamed), r => new RawFieldRow(r.Flags, 0xfff0, r.Signature));
+            // Each blob's first two bytes are the length 0x3fff, which the
+            // index one past the blob's own one-byte length reads.
+            uint Overlong(params byte[] rest) {
+                var blob = new byte[] { 0xbf, 0xff }.Concat(rest).ToArray();
+                return md.BlobHeap.Add(blob) + 1;
+            }
+            Patch(md.TablesHeap.FieldTable, md.GetRid(sig), r =>
+                new RawFieldRow(r.Flags, r.Name, Overlong(0x06, 0x08)));
+            var k = md.TablesHeap.ConstantTable;
+            for (uint rid = 1; rid <= k.Rows; rid++)
+                Patch(k, rid, r => new RawConstantRow(r.Type, r.Padding, r.Parent, Overlong(0x2a, 0, 0, 0)));
+            var ca = md.TablesHeap.CustomAttributeTable;
+            for (uint rid = 1; rid <= ca.Rows; rid++)
+                Patch(ca, rid, r => new RawCustomAttributeRow(r.Parent, r.Type, Overlong(0x01, 0x00, 0x00, 0x00)));
+            Patch(md.TablesHeap.AssemblyTable, 1, r => new RawAssemblyRow(r.HashAlgId,
+                r.MajorVersion, r.MinorVersion, r.BuildNumber, r.RevisionNumber,
+                r.Flags, Overlong(1, 2, 3, 4), r.Name, r.Locale));
+        });
     }
 
     // The file offset of the metadata root, from the PE headers.

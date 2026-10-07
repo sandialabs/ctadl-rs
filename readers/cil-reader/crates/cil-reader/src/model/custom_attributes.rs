@@ -215,6 +215,8 @@ impl<'a> CustomAttribute<'a> {
         Ok(self.raw()?.constructor)
     }
 
+    /// The raw blob, as Cecil's `GetBlob` reads it: empty when its length
+    /// runs past the heap.
     pub fn blob(&self) -> Result<&'a [u8]> {
         self.m.md.blobs().get(self.raw()?.value)
     }
@@ -285,7 +287,8 @@ impl<'a> CustomAttribute<'a> {
     /// `cache`. [`UNRESOLVED_ENUM`] is an enum type that resolved to
     /// nothing.
     pub fn values_with(&self, cache: &AssemblyCache<'_>) -> Result<CaValues<'a>> {
-        let blob = self.blob()?;
+        // Read as a signature, which `blob()` (Cecil's `GetBlob`) is not.
+        let blob = self.m.md.blobs().view(self.raw()?.value)?;
         let mut values = CaValues::default();
         let mut r = SigReader::new(blob);
         if !r.can_read_more() {
@@ -334,7 +337,7 @@ impl<'a> CustomAttribute<'a> {
                 let class = mr.class_token()?;
                 let args = if class.token_type() == Some(TokenType::TypeSpec) {
                     let row = self.m.md.row::<TypeSpecRaw>(class.rid())?;
-                    let spec_blob = self.m.md.blobs().get(row.signature)?;
+                    let spec_blob = self.m.md.blobs().view(row.signature)?;
                     match SigReader::new(spec_blob).type_sig()? {
                         TypeSig::GenericInst { args, .. } => Some(args),
                         _ => None,
@@ -754,6 +757,8 @@ impl<'a> SecurityDeclaration<'a> {
         Ok(self.raw()?.parent)
     }
 
+    /// The raw blob, as Cecil's `GetBlob` reads it: empty when its length
+    /// runs past the heap.
     pub fn blob(&self) -> Result<&'a [u8]> {
         self.m.md.blobs().get(self.raw()?.permission_set)
     }
@@ -764,9 +769,12 @@ impl<'a> SecurityDeclaration<'a> {
     }
 
     pub fn value_with(&self, cache: &AssemblyCache<'_>) -> Result<SecurityDeclarationValue<'a>> {
-        let blob = self.blob()?;
+        let index = self.raw()?.permission_set;
+        let blob = self.m.md.blobs().view(index)?;
         if blob.first() != Some(&b'.') {
-            // Legacy XML: the blob is a UTF-16LE string.
+            // Legacy XML: the blob is a UTF-16LE string, which
+            // `ReadUnicodeStringBlob` slices by the blob's length.
+            let blob = self.m.md.blobs().get_exact(index)?;
             let units: Vec<u16> = blob
                 .chunks_exact(2)
                 .map(|c| u16::from_le_bytes([c[0], c[1]]))

@@ -675,7 +675,7 @@ impl<'a> TypeRef<'a> {
 
 impl<'a> TypeSpec<'a> {
     pub fn signature(&self) -> Result<TypeSig> {
-        let blob = self.m.md.blobs().get(self.raw()?.signature)?;
+        let blob = self.m.md.blobs().view(self.raw()?.signature)?;
         SigReader::new(blob).type_sig()
     }
 
@@ -736,7 +736,7 @@ impl<'a> FieldDef<'a> {
     }
 
     pub fn field_type(&self) -> Result<TypeSig> {
-        let blob = self.m.md.blobs().get(self.raw()?.signature)?;
+        let blob = self.m.md.blobs().view(self.raw()?.signature)?;
         SigReader::new(blob).field_sig()
     }
 
@@ -898,13 +898,13 @@ pub(crate) fn read_constant<'a>(
             // ReadConstantString: UTF-16 bytes. An empty blob (index 0 is the
             // heap's zero-length entry, not an absent blob) is "", not null —
             // a null string constant is ELEMENT_TYPE_CLASS, handled above.
-            let blob = m.md.blobs().get(blob_index)?;
+            let blob = m.md.blobs().get_exact(blob_index)?;
             ConstantValue::String(Utf16Str {
                 bytes: &blob[..blob.len() & !1],
             })
         }
         _ => {
-            let blob = m.md.blobs().get(blob_index)?;
+            let blob = m.md.blobs().view(blob_index)?;
             let mut cur = crate::raw::cursor::Cur::new(blob);
             match et {
                 Some(ElementType::Boolean) => ConstantValue::Boolean(cur.u8()? == 1),
@@ -950,7 +950,7 @@ fn marshal_blob<'a>(m: &'a ModuleData<'a>, owner: MetadataToken) -> Result<Optio
     let Some(&blob_index) = m.field_marshals()?.get(&owner) else {
         return Ok(None);
     };
-    Ok(Some(m.md.blobs().get(blob_index)?))
+    Ok(Some(m.md.blobs().view(blob_index)?))
 }
 
 /// `Mono.Cecil.MethodAttributes` masks.
@@ -1086,7 +1086,7 @@ impl<'a> MethodDef<'a> {
     }
 
     pub fn signature(&self) -> Result<MethodSig> {
-        let blob = self.m.md.blobs().get(self.raw()?.signature)?;
+        let blob = self.m.md.blobs().view(self.raw()?.signature)?;
         SigReader::new(blob).method_sig()
     }
 
@@ -1304,7 +1304,7 @@ impl<'a> PropertyDef<'a> {
     }
 
     pub fn signature(&self) -> Result<PropertySig> {
-        let blob = self.m.md.blobs().get(self.raw()?.ty)?;
+        let blob = self.m.md.blobs().view(self.raw()?.ty)?;
         SigReader::new(blob).property_sig()
     }
 
@@ -1544,7 +1544,7 @@ impl<'a> MemberRef<'a> {
     }
 
     pub fn signature(&self) -> Result<MemberRefSig> {
-        let blob = self.m.md.blobs().get(self.raw()?.signature)?;
+        let blob = self.m.md.blobs().view(self.raw()?.signature)?;
         const FIELD_SIG: u8 = 0x6;
         if blob.first() == Some(&FIELD_SIG) {
             let mut r = SigReader::new(blob);
@@ -1604,7 +1604,7 @@ impl<'a> MemberRef<'a> {
             Some(TokenType::TypeDef) => GenericContext::for_type(class),
             Some(TokenType::TypeSpec) => {
                 let row = self.m.md.row::<TypeSpecRaw>(class.rid())?;
-                let blob = self.m.md.blobs().get(row.signature)?;
+                let blob = self.m.md.blobs().view(row.signature)?;
                 match SigReader::new(blob).type_sig() {
                     Ok(TypeSig::GenericInst { ty, .. }) => GenericContext::for_type(ty),
                     Ok(TypeSig::Array { .. }) | Ok(TypeSig::SzArray(_)) => outer,
@@ -1659,7 +1659,7 @@ impl<'a> MethodSpec<'a> {
     }
 
     pub fn generic_args(&self) -> Result<Vec<TypeSig>> {
-        let blob = self.m.md.blobs().get(self.raw()?.instantiation)?;
+        let blob = self.m.md.blobs().view(self.raw()?.instantiation)?;
         SigReader::new(blob).method_spec_sig()
     }
 
@@ -1730,7 +1730,7 @@ fn generic_args_full_name(
 
 impl<'a> StandAloneSig<'a> {
     pub fn blob(&self) -> Result<&'a [u8]> {
-        self.m.md.blobs().get(self.raw()?.signature)
+        self.m.md.blobs().view(self.raw()?.signature)
     }
 
     /// The signature decoded as a call site (for `calli`).

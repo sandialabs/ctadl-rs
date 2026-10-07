@@ -106,7 +106,7 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
                 }
                 let row =
                     m.md.row::<crate::raw::tables::StandAloneSigRaw>(body.local_var_token.rid())?;
-                let blob = m.md.blobs().get(row.signature)?;
+                let blob = m.md.blobs().view(row.signature)?;
                 body.variables = SigReader::new(blob).local_var_sig()?;
             }
 
@@ -426,7 +426,7 @@ impl<'a> MethodBody<'a> {
                     .m
                     .md
                     .row::<crate::raw::tables::StandAloneSigRaw>(token.rid())?;
-                let blob = self.m.md.blobs().get(row.signature)?;
+                let blob = self.m.md.blobs().view(row.signature)?;
                 let sig = SigReader::new(blob).method_sig()?;
                 sig_full_name(self.m, &sig.return_type, ctx, out)?;
                 method_params_full_name(self.m, &sig, ctx, out)?;

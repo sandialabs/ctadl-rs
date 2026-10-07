@@ -116,7 +116,7 @@ impl<'a> ModuleData<'a> {
     /// (see [`SigReader::below`]).
     pub(crate) fn type_spec_sig(&self, rid: u32, depth: u32) -> Result<TypeSig> {
         let row = self.md.row::<TypeSpecRaw>(rid)?;
-        SigReader::below(self.md.blobs().get(row.signature)?, depth).type_sig()
+        SigReader::below(self.md.blobs().view(row.signature)?, depth).type_sig()
     }
 
     /// TypeDef member list ranges, mirroring `MetadataReader.ReadListRange`:
