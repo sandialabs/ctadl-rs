@@ -3,14 +3,16 @@
 The 50 APKs of the corpus are in `/Volumes/Shampoo/ct-bigapk/apks/`: the original 15, and 35 more
 small apps with native code (see "M7. Small apps with native code"). The measurements are under
 `/Volumes/Shampoo/ct-bigapk/small/`. M1 indexes `androidudpbus` and two other apps whole; M2-M6
-index the Dex-only imports in `small/r8-general/`; M7-M8 index whole APKs again.
+index the Dex-only imports in `small/r8-general/`; M7-M8 index whole APKs again. M9-M11 run on a
+Windows machine with 7.9 GB of RAM: M11 is a second corpus of ten F-Droid apps, Dex only, in
+`tmp/corpus2/`.
 
 The document has four parts:
 
-- **Problems** (P1-P27): each problem found, what causes it and where it shows up.
-- **Solutions** (S1-S33): each fix tried or proposed, which problems it applies to, and whether it
+- **Problems** (P1-P29): each problem found, what causes it and where it shows up.
+- **Solutions** (S1-S35): each fix tried or proposed, which problems it applies to, and whether it
   is done, rejected or undecided.
-- **Measurements** (M1-M10): the investigations, in the order they were done, with their tables.
+- **Measurements** (M1-M11): the investigations, in the order they were done, with their tables.
 - **Data**: where every investigation's output is, and the experiment switches.
 
 ## Status at a glance
@@ -44,6 +46,8 @@ The document has four parts:
 | P25. Small merged classes stay merged at CHA-resolved sites | S30 | Open; precision only |
 | P26. Plain relations are sized in powers of two | S32 | Open |
 | P27. Two rules derive every plain-copy `locals` row | S31 done | Fixed |
+| P28. The globals slot of every call in a large static initializer | S34 | Open |
+| P29. Rhino's interpreter loop in the hybrid context | S35 | Open |
 
 # Problems
 
@@ -385,12 +389,54 @@ There the split gains nothing, since the union's summary already holds every clo
 cost is small: 2,218 of 317 k call edges (0.7%) go to a clone. Measured on the call graph of a
 25 s rung, before S29.
 
+### P28. The globals slot of every call in a large static initializer
+
+**Seen in:** `eu.siacs.conversations` (jemoji), `org.sufficientlysecure.keychain`. **Measured in:**
+M11. **Solutions:** S34.
+
+- **Every call passes the global heap.** Codegen gives each call site an argument in the
+  `GLOBALS_INDEX` slot and writes the version after the call back to the globals formal
+  (`codegen/mod.rs`, "pass globals"). In a `<clinit>` that sets hundreds of static fields and makes
+  a call or more per field, each call's globals argument is reached by every one of those fields:
+  the rows are calls × fields.
+- **Conversations: jemoji's generated emoji classes.** `EmojiPersonActivity.<clinit>` sets 698
+  constants and makes 2,093 calls. Each of the 2,093 `call-arg(site, -32768)` is reached at 699
+  paths, `.<EmojiPersonActivity;->X>` for every constant `X`, all from one source,
+  `.<EmojiManager;->EMOJI_UNICODE_TO_EMOJI>.[]`: 1.46 M rows in one function. The 468 jemoji
+  functions hold 5.24 M of the 7.79 M `locals` rows, and globals call-args 5.63 M (72%).
+- **The rows arrive late and at once.** At iteration 74 scc 4 is at 3.37 GB and nearly settled;
+  then a five-iteration cascade (M11) adds 5.16 M rows each to `ext_dst`, `locals`, `reach_vp`,
+  `locals_key` and `ext_dst` again. Under 4 GB the run dies in iteration 76; under 6 GB it
+  converges at 4.83 GB, with `reach_vp` (586 MB), `locals` (538 MB) and `ext_dst` (11 M rows,
+  508 MB) its largest relations.
+- **OpenKeychain has the same shape with sources for paths.** `OperationResult$LogType.<clinit>`,
+  an enum of about 520 constants, has 520 globals call-args, each reached from about 519 sources
+  (one per constant's field): 271 k rows. With BouncyCastle's PQC `Utils.<clinit>` (154 k),
+  globals call-args are 1.08 M of OpenKeychain's 3.98 M `locals` rows (27%). It still reaches a
+  fixpoint under 4 GB.
+- **Not checked:** why a call sees fields written after it as well as before (every call-arg in
+  `EmojiPersonActivity.<clinit>` has all 699 paths), and whether the callees (`Emoji.<init>`,
+  list builders) read globals at all.
+
+### P29. Rhino's interpreter loop in the hybrid context
+
+**Seen in:** `com.github.libretube`; Rhino is also in `org.schabi.newpipe`, whose rungs (M9) stopped
+before it showed. **Measured in:** M11. **Solutions:** S35.
+
+`org.mozilla.javascript.Interpreter.interpretLoop` holds 1,428,830 of LibreTube's 1,645,565
+`context_locals` rows (87%): 118 decisions, 13 distinct sets of up to 47 decisions, and 62.5 M
+memberships. `doCallByteCode` adds 106 k. `context_locals` is 42% the size of `locals` here, and
+0-4% in every other app of M10 and M11. The same function also holds 1.44 M of the 3.95 M `locals`
+rows. `reach_vp <-- context_locals` derives 4.1 M rows, 0.3% of them new. It is P3's interpreter
+loop on the JVM side, with P15's decision-set churn. LibreTube still converges under 4 GB
+(3.76 GB, 467 iterations).
+
 ## Memory and time constants
 
 ### P17. Call-target tags are stored many times
 
-**Seen in:** `greenbits`, `cash.p.terminal`, `darkcoin`, `heartratemonitor`. **Measured in:** M3,
-M4, M6. **Solutions:** S12, S13.
+**Seen in:** `greenbits`, `cash.p.terminal`, `darkcoin`, `heartratemonitor`, `at.bitfire.davdroid`,
+`com.amaze.filemanager`. **Measured in:** M3, M4, M6, M10, M11. **Solutions:** S12, S13.
 
 `call_target_assign_like` is stored five times: the row store plus four indices, one of which
 repeats the whole row. S11's `cta_key` is stored three times. At `greenbits`' 320 s rung the two
@@ -398,6 +444,10 @@ held 17.0 GB, and accounted for 17 of the 30 GB the footprint grew from 10 s to 
 tries, `locals` and `assign_like` take 37 and 67 B/row; these take 294 and 192 B/row. `cta_key`
 is a net memory loss on `cash.p.terminal` (4 GB), `darkcoin` (44 M rows, 18.0 → 27.2 GB) and
 `greenbits` (8 GB), and saves no time on any of them.
+
+In M11 the call-target tags are what put DAVx⁵ and Amaze over 4 GB. In DAVx⁵ they are its two
+largest relations, `cta_key` 634 MB and `call_target_assign_like` 572 MB: 31% of what scc 4
+returns (Tusky: 20%). In Amaze they are 851 MB (24%).
 
 ### P18. `reach_vp` is stored three times
 
@@ -419,7 +469,12 @@ Only scc 1's call-arg rule reads `actual_param`, but it is held through scc 4: 1
 
 ### P20. Memory held around the fixpoint
 
-**Seen in:** `cash.p.terminal`. **Measured in:** M6. **Solutions:** S26.
+**Seen in:** `cash.p.terminal`, every app of M10 and M11. **Measured in:** M6, M10, M11.
+**Solutions:** S26, S33.
+
+In M11 the transient (peak minus what scc 4 returns) is 579-686 MB on the six apps that converge
+under 4 GB, and about 980 MB on K-9 (under 6 GB). K-9 is already at 3.1 GB of commit after scc 4's
+first iteration, against 1.9 GB for DAVx⁵.
 
 7.5-8 GB (facts, source info and interners) is held before the fixpoint starts, and 6.9-8.7 GB is
 still held after the index is saved and dropped. Loading the IR takes 3.8 GB, and SSA raises that
@@ -519,6 +574,8 @@ skipping strict offset check").
 | S31. Leave the `(p, [])` split out of `locals_key` | P27 | Done (uncommitted) |
 | S32. Size input relations exactly | P26 | Undecided |
 | S33. Size the BYODS stores' outer maps before the fixpoint | P20 | Undecided |
+| S34. Bound the globals slot at calls | P28 | Undecided, not started |
+| S35. Keep interpreter loops out of hybrid inlining | P29 | Undecided, not started |
 
 ### S1. Dead-phi pass
 
@@ -867,6 +924,26 @@ the `locals`-shaped stores are the largest that grow (114 to 228 MB on Tusky). T
 are bounded before the fixpoint starts: `edge_split`'s by the distinct `(f, v2)` of `assign_like`,
 `locals`' by the variables. Reserving them up front removes their late doublings. It would not
 remove the last, unidentified 100 MB growth (M10).
+
+### S34. Bound the globals slot at calls
+
+**Applies to:** P28. **Status:** undecided, not started.
+
+Two directions, not yet told apart by a measurement. Pass the globals slot only at calls whose
+callee can read or write globals (its summary or model says so); the constructors and list
+builders called in a generated `<clinit>` are likely not among them, but that is not checked.
+Or give the global heap a version per static-field write, so that a call sees only the fields
+written before it, which would at least halve the rows. Either way the check is
+`eu.siacs.conversations`: jemoji's 5.24 M rows, and its 4.83 GB peak.
+
+### S35. Keep interpreter loops out of hybrid inlining
+
+**Applies to:** P29. **Status:** undecided, not started.
+
+Resolve the calls of a function with CHA once it holds more than some number of decisions, as
+S5 would bound phi operands at native interpreter loops. Rhino's `interpretLoop` has 118. The
+check is LibreTube's `context_locals` (1.65 M rows) and whatever flows through Rhino in the
+regression suite.
 
 # Measurements
 
@@ -1471,6 +1548,70 @@ are the parquet encoders' column buffers (128 MB at most).
 
 **S12 on Tusky:** see S12. Keying saves no time and costs 240 MB of peak.
 
+## M11. A second corpus: ten F-Droid apps (2026-10-07)
+
+**Problems:** P17, P20, P28, P29. **Solutions:** S34, S35.
+
+Ten apps not in the corpus before, from F-Droid's index, Dex only (Ghidra off, as in M9 and M10),
+chosen by dex size from the zip directory: 8.3-14.0 MB of dex, against NewPipe's 11.4, Tusky's 7.7
+and AntennaPod's 13.2. Same machine as M10, the binary at `9f012422`, the same 4 GB cap, then 6 GB
+for the four that hit it. Each app was imported, indexed once with no timeout, and laddered with
+`CTADL_INDEX_TIMEOUT_SECS` if it hit the cap. The apps that hit it were also run with
+`CTADL_ITER_LOG` under a cap that samples commit every 250 ms, so that each iteration has a
+memory reading (`MEMGUARD_SAMPLE_MS` in `scripts/memguard.ps1`).
+
+| App | Functions | IR | Enters fixpoint | Returns | Peak | scc 4 | Wall | Under 4 GB |
+|---|---|---|---|---|---|---|---|---|
+| `net.gsantner.markor` 2.16.1 | 74,716 | 47.7 MB | 412 MB | 2,276 MB | 2.80 GB | 512 it, 18.0 s | 42 s | fixpoint |
+| `org.sufficientlysecure.keychain` 6.0.4 | 60,127 | 48.9 MB | 558 MB | 2,923 MB | 3.42 GB | 395 it, 21.2 s | 46 s | fixpoint |
+| `com.github.libretube` 32.1 | 57,537 | 57.4 MB | 569 MB | 3,220 MB | 3.76 GB | 467 it, 26.0 s | 53 s | fixpoint |
+| `org.breezyweather` 6.2.2 | 58,192 | 38.0 MB | 623 MB | 3,316 MB | 3.83 GB | 646 it, 29.1 s | 57 s | fixpoint |
+| `com.oriondev.moneywallet` 4.0.5.10 | 88,222 | 56.4 MB | 603 MB | 3,307 MB | 3.90 GB | 311 it, 31.0 s | 77-85 s | fixpoint |
+| `me.ash.reader` 0.16.2 | 70,618 | 68.3 MB | 707 MB | 3,111 MB | 3.65 GB | 447 it, 47.1 s | 100 s | fixpoint |
+| `com.amaze.filemanager` 3.11.3 | 73,117 | 55.0 MB | 632 MB | 3,596 MB | 4.16 GB | 502 it, 63.5 s | 121 s | cap, iteration 214 |
+| `at.bitfire.davdroid` 4.5.20 | 50,591 | 55.0 MB | 576 MB | 3,943 MB | 4.47 GB | 479 it, 95.7 s | 150 s | cap, iteration 43 |
+| `eu.siacs.conversations` 2.20.4 | 53,189 | 51.0 MB | 562 MB | 4,336 MB | 4.83 GB | 245 it, 94.8 s | 161 s | cap, iteration 76 |
+| `com.fsck.k9` 23.1 | 78,035 | 89.8 MB | 737 MB | 4,287 MB | 5.27 GB | 353 it, 123.8 s | 264 s | cap, iteration 3 |
+
+The last four rows are the 6 GB runs, with the iteration log on; on this machine they page, so
+their times are inflated. With about 0.6 GB of RAM free during a run, times differ by up to 2x
+between runs of the same index (DAVx⁵'s SSA took 6 s in one run and 13 s in another); only
+differences larger than that are read here.
+
+- **Four apps over 4 GB, three kinds.** K-9 is big: the largest IR (89.8 MB), 5.5 M `edge_split`
+  and 5.4 M `assign_like` rows after scc 4's first iteration, 3.1 GB of commit by then, and a
+  peak 59x its IR, within the range of the rest. DAVx⁵ and Amaze are tipped over by call-target
+  tags (P17): growth spread over hundreds of iterations, no rule ever adding 500 k rows in one,
+  and the last request a 98-100 MiB table growth. Conversations is the only blowup (P28).
+- **Conversations' cascade** (the rule with the most rows inserted in each iteration, from the
+  iteration log):
+
+  | Iteration | Rule | Inserted | Commit |
+  |---|---|---|---|
+  | 74 | (settled: every rule under 10 k) | | 3.37 GB |
+  | 75 | `ext_dst <-- locals_key delta, assign_like` | 5,166,402 | 3.5 GB |
+  | 76 | `locals <-- ext_dst delta, locals` | 5,161,458 | the 4 GB cap |
+  | 77 | `reach_vp <-- locals delta` | 5,161,770 | (6 GB run) |
+  | 78 | `locals_key <-- reach_vp delta` | 5,162,349 | |
+  | 79 | `ext_dst <-- locals_key delta, assign_like` | 5,162,217 | |
+  | 80 | `locals <-- ext_dst delta, locals` | 2,075 | |
+
+  Under 4 GB the request refused is 104,857,616 bytes, the same 100 MiB growth as in M10.
+- **LibreTube's contexts (P29):** `context_locals` is 0.42 of `locals` against 0.00-0.04 in the
+  other nine. LibreTube has the lowest share of new rows (55%), mostly from
+  `reach_vp <-- context_locals`.
+- **The common profile is M10's.** In the six apps that converge under 4 GB, the largest stores
+  are `edge_split` (419-475 MB), `assign_like` (330-363 MB) and `locals` (223-263 MB).
+  `edge_split` is built whole in scc 4's first iteration (3.4-4.5 M rows at 0.6-1.5 µs each).
+  55-78% of derived rows are new, and the call-target transitive rule is 39-44% new. The
+  transient is 579-686 MB (P20).
+- **Time outside the rules.** scc 4 spends 20-25% of its time outside its rules at a fixpoint
+  (Read You: 47.1 s, of which 37.5 s in rules), and 40-50% in its first iteration, when the
+  3.4-5.5 M rows of `edge_split` move from delta to total.
+- **After the fixpoint.** Converting `assign_like` to a vector, dropping the program and saving
+  take 4-13 s together. One MoneyWallet run took 17 s for the first two of those; its rerun took
+  5 s, so that was the machine paging.
+
 # Data
 
 ## Experiment switches
@@ -1491,6 +1632,9 @@ are the parquet encoders' column buffers (128 MB at most).
   every allocation of at least n MB with the live heap and a backtrace (`ctadl-ascent/src/big_alloc.rs`;
   build with `--profile profiling` for symbols). `CTADL_CTA_UNKEYED=1` runs the call-target join
   S11 replaced (S12; JVM and Dex only).
+- From M11: `MEMGUARD_SAMPLE_MS=<n>` makes `scripts/memguard.ps1` write a
+  `[memsample] t=... commit=... MB` line into the log every n ms, between the child's lines; with
+  `CTADL_ITER_LOG` it gives the memory of each iteration.
 
 ## M1: `androidudpbus`
 
@@ -1677,3 +1821,20 @@ counters as "derived" and "new".
 - `tmp/blowup-tusky/probe.log`: the `CTADL_BIG_ALLOC_MB=64` run (`target/profiling/ctadl.exe`).
 - `tmp/blowup-tusky/s12-{keyed,unkeyed}.log`, `s12-*-index/`, `dump-*/`, `q-*.sarif`: S12 on Tusky,
   the two indexes, their sorted dumps and the queries (`../blowup-noto/broad-model.json`).
+
+## M11: the second corpus
+
+On the Windows machine, under `C:\Users\timlo\ctadl-rs\tmp\` (not on Shampoo):
+
+- `apks/<pkg>_<versionCode>.apk`: the ten APKs, from `https://f-droid.org/repo/`. `corpus2/fetch.log`
+  lists each with its version and sha256, checked against `corpus2/index-v2.json` (F-Droid's index
+  on 2026-10-07). `corpus2/dexsize.py` reads an APK's dex size from its zip directory with range
+  requests; `corpus2/fetch.py` downloads and checks.
+- `corpus2/runs/<pkg>/`: `import.log`, `baseline.log` (4 GB, no timeout), `t<N>.log` (the rungs),
+  `iterlog.log` (4 GB with `CTADL_ITER_LOG` and commit samples), `cap6.log` (the same at 6 GB) and
+  `state/` (the import and the last index). `census-cap6/` (Conversations) and `census-census/`
+  (OpenKeychain, LibreTube, Breezy Weather) are `CTADL_LOCALS_CENSUS` dumps.
+- `corpus2/run-corpus.ps1` (import and baseline), `ladders.ps1` (rungs), `sampled.ps1` (iteration
+  log with samples; `$env:CENSUS` adds the census), `iters.py <log> <rung log>` (per-iteration commit and top rules, with rule names
+  from a rung's scc summary), `phases.py <logs>` (time per index phase).
+- Conversations' 5 s rung is missing: an edit to `memguard.ps1` mid-ladder broke it.
