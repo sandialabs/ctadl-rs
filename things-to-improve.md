@@ -9,9 +9,9 @@ Windows machine with 7.9 GB of RAM: M11 is a second corpus of ten F-Droid apps, 
 
 The document has four parts:
 
-- **Problems** (P1-P29): each problem found, what causes it and where it shows up.
+- **Problems** (P1-P30): each problem found, what causes it and where it shows up.
 - **Solutions** (S1-S35): each fix tried or proposed, which problems it applies to, and whether it
-  is done, rejected or undecided.
+  is done, rejected or undecided. An entry merged into another keeps its number and a pointer.
 - **Measurements** (M1-M11): the investigations, in the order they were done, with their tables.
 - **Data**: where every investigation's output is, and the experiment switches.
 
@@ -20,7 +20,7 @@ The document has four parts:
 | Problem | Solutions | Status |
 |---|---|---|
 | P1. The stack is a mixing pool | S3 done, S4 | Partly fixed: 5x over budget remains |
-| P2. Unpruned SSA | S1 superseded, S2 done | Fixed |
+| P2. Unpruned SSA | S2 done | Fixed |
 | P3. Live phi operands at interpreter loops | S5 | Open |
 | P4. Recursive parsers give cross-product summaries | S6 done, S7, S8 | Fixed for the demangler; open for BoringSSL |
 | P5. Native function pointers mint decisions | S9 | Open |
@@ -30,15 +30,15 @@ The document has four parts:
 | P9. R8-merged Kotlin lambdas are dispatch hubs | S10 done, S15 rejected | Fixed |
 | P10. Reused parameter registers written back to the formals | S16 done | Fixed for JVM bytecode |
 | P11. The C front end treats a pointer as its pointee | S17 | Open |
-| P12. Call-target tags skip casts and type tests | S18, S19, S21 | Open; precision only |
-| P13. Receiver tags reach CHA overrides they can't dispatch to | S18, S19, S20, S21 | Open; precision only |
-| P14. Computed values carry call-target tags | S18, S19, S21, S22 | Open; precision only |
-| P15. Decision-set churn in `context_locals` | S14 rejected, S15 rejected | Mitigated by S10 and S16 |
+| P12. Call-target tags skip casts and type tests | S18, S21 | Open; precision only |
+| P13. Receiver tags reach CHA overrides they can't dispatch to | S18, S20, S21 | Open; precision only |
+| P14. Computed values carry call-target tags | S18, S21, S22 | Open; precision only |
+| P15. Decision-set churn in `context_locals` | S14 (reopened for P29), S15 rejected | Mitigated by S10 and S16 |
 | P16. The unkeyed call-target join | S11 done | Fixed, but S11 causes P17 |
 | P17. Call-target tags are stored many times | S12, S13 | Open; S12 measured |
 | P18. `reach_vp` is stored three times | S24 | Open |
 | P19. `actual_param` outlives its only use | S25 | Open |
-| P20. Memory held around the fixpoint | S26, S33 | Open; the transient is located (M10) |
+| P20. Memory held around the fixpoint | S26 | Open |
 | P21. Joins that scan a whole relation every iteration | S27 | Open |
 | P22. The regression suite hid a lost flow | S28 done | Fixed |
 | P23. Nondeterminism | none | Open |
@@ -47,7 +47,8 @@ The document has four parts:
 | P26. Plain relations are sized in powers of two | S32 | Open |
 | P27. Two rules derive every plain-copy `locals` row | S31 done | Fixed |
 | P28. The globals slot of every call in a large static initializer | S34 | Open |
-| P29. Rhino's interpreter loop in the hybrid context | S35 | Open |
+| P29. Rhino's interpreter loop in the hybrid context | S14 | Open |
+| P30. The transient at the end of scc 4 | S33 | Open; located (M10) |
 
 # Problems
 
@@ -88,10 +89,13 @@ S4.
   Of those, 1,697 go to functions defined in the library (132 of them to `memcpy`) and 17 through
   function pointers. Calls are only 28% of all escapes, though; the rest are frame addresses
   stored to memory (3,118) or copied (1,291) inside the function.
+- **The same shape on the JVM: the globals slot (P28).** There one pseudo-variable, the global
+  heap passed at every call, mixes every static field, and S34's version per field write is S3's
+  idea applied to globals.
 
 ### P2. Unpruned SSA
 
-**Seen in:** `androidudpbus`. **Measured in:** M1. **Solutions:** S1 (superseded), S2 (done).
+**Seen in:** `androidudpbus`. **Measured in:** M1. **Solutions:** S2 (done).
 
 `ctadl-ir/src/ssa/mod.rs` placed phis with minimal Cytron SSA and no liveness pruning.
 `libudphub` got 5.19 M phis, of which 1.1% were live. The phis took the statement count from 880k
@@ -106,6 +110,10 @@ all live, with 47.4 M operands: about 640 phis per block and 72 operands per phi
 embedded Lua interpreter loop. Pruning (S2) can't remove them. They become 47.7 M `copy_edge`
 rows, 1.04 assignments per byte of IR against 0.02-0.03 in every other app, and the index enters
 the fixpoint at 9 GB. At 640 s `locals` holds 509 M rows and `ext_dst` 82 M.
+
+Interpreter loops show up in three problems with three different mechanisms: phis here, decisions
+at a native bytecode loop (P5, likely `sqlite3VdbeExec`) and decisions at Rhino's JVM loop (P29).
+A fix for one does not touch the others.
 
 ### P4. Recursive parsers give cross-product summaries (the edge-delta join)
 
@@ -161,11 +169,13 @@ resolves to every function stored into such a table.
   Memory doubles every 20-40 s.
 
 The mechanism is not confirmed: nobody has yet checked which indirect call sites mint these
-decisions.
+decisions. `heartratemonitor`'s hub is an interpreter loop that mints decisions, as Rhino's is in
+P29; if S9 finds the same mechanism, the two belong together.
 
 ### P6. Wild relations
 
-**Seen in:** `conscryptprovider`, `a2050`. **Measured in:** M7. **Solutions:** S27 (for Java only).
+**Seen in:** `conscryptprovider`, `a2050`; the cost without the rows in every Java app
+(`cash.p.terminal`). **Measured in:** M6, M7. **Solutions:** S27 (for Java only).
 
 The offset-keyed relations of the wildcard match take most of Ascent's default containers. In
 `conscryptprovider`, `edge_split_wild` (46 M rows, 7.6 GB) and `assign_wild` (26 M, 3.8 GB) are
@@ -173,6 +183,10 @@ The offset-keyed relations of the wildcard match take most of Ascent's default c
 `conscryptprovider` the `ext_dst` rule driven by the `assign_wild` delta rises from 0.3-0.9 to 15,
 24 and 45 µs per new row. Both apps also have P4 (49% and 40% of rule time in the edge-delta
 rule).
+
+**On Java the wildcard rules cost about 9 s and produce nothing** (`cash.p.terminal`).
+`assign_wild`, `edge_split_wild`, `locals_wild` and `locals_key_wild` scan every `assign_like` or
+`reach_vp` delta, but Java paths have no trailing offsets. (Moved here from P21.)
 
 ### P7. Summary growth
 
@@ -271,7 +285,7 @@ the caller's pointer.
 ### P12. Call-target tags skip casts and type tests
 
 **Seen in:** every Dex app with more than a few hundred decisions. **Measured in:** M4, M5.
-**Solutions:** S18, S19, S21.
+**Solutions:** S18, S21.
 
 After S16, 3-5% of decisions are still impossible. None loses a flow; each adds a context the
 program can't reach, and the decisions that context passes down. Those can produce false flows,
@@ -297,7 +311,7 @@ the value through unchanged, so the tag follows it.
 ### P13. Receiver tags reach CHA overrides they can't dispatch to
 
 **Seen in:** every Dex app; the dominant cause in small apps (70-89% of impossible decisions).
-**Measured in:** M4, M5. **Solutions:** S18, S19, S20, S21.
+**Measured in:** M4, M5. **Solutions:** S18, S20, S21.
 
 Every view model's constructor in `greenbits` calls `invoke-virtual {p0},
 GreenViewModel;->bootstrap()`. CHA resolves that site to three `bootstrap`s. Rules 2.1 and 2.2
@@ -311,8 +325,8 @@ subclasses × overrides decisions. 18% of impossible-decision roots across the c
 
 ### P14. Computed values carry call-target tags
 
-**Seen in:** `greenbits`, `cash.p.terminal`. **Measured in:** M4, M5. **Solutions:** S18, S19,
-S21, S22.
+**Seen in:** `greenbits`, `cash.p.terminal`. **Measured in:** M4, M5. **Solutions:** S18, S21,
+S22.
 
 `locals` and `assign_like` are value-flow relations: a value computed from `x` counts as coming
 from `x`. Rule 1.1 asks `locals` which formal paths reach the receiver of a critical call, and
@@ -333,7 +347,8 @@ critical paths included `gen._quoteChar` (a `byte`), `gen._outputTail` (an `int`
 ### P15. Decision-set churn in `context_locals`
 
 **Seen in:** `cpuinfo`, `greenbits` (both before their fixes). **Measured in:** M2, M4.
-**Solutions:** S14 (rejected), S15 (rejected); P9's and P10's fixes remove what drives it.
+**Solutions:** S14 (rejected here, reopened for P29), S15 (rejected); P9's and P10's fixes remove
+what drives it.
 
 `context_locals` is a lattice relation, and its decision sets grow one decision at a time. In
 `cpuinfo`, 221 M unions grew a set for 39 M rows, about 6 updates per row, and every update sends
@@ -421,15 +436,16 @@ M11. **Solutions:** S34.
 ### P29. Rhino's interpreter loop in the hybrid context
 
 **Seen in:** `com.github.libretube`; Rhino is also in `org.schabi.newpipe`, whose rungs (M9) stopped
-before it showed. **Measured in:** M11. **Solutions:** S35.
+before it showed. **Measured in:** M11. **Solutions:** S14.
 
 `org.mozilla.javascript.Interpreter.interpretLoop` holds 1,428,830 of LibreTube's 1,645,565
 `context_locals` rows (87%): 118 decisions, 13 distinct sets of up to 47 decisions, and 62.5 M
 memberships. `doCallByteCode` adds 106 k. `context_locals` is 42% the size of `locals` here, and
 0-4% in every other app of M10 and M11. The same function also holds 1.44 M of the 3.95 M `locals`
 rows. `reach_vp <-- context_locals` derives 4.1 M rows, 0.3% of them new. It is P3's interpreter
-loop on the JVM side, with P15's decision-set churn. LibreTube still converges under 4 GB
-(3.76 GB, 467 iterations).
+loop on the JVM side, with P15's decision-set churn, but the mechanism is decisions, not P3's
+phis; P5's SQLite hub is the closer relative. LibreTube still converges under 4 GB (3.76 GB, 467
+iterations).
 
 ## Memory and time constants
 
@@ -469,30 +485,38 @@ Only scc 1's call-arg rule reads `actual_param`, but it is held through scc 4: 1
 
 ### P20. Memory held around the fixpoint
 
-**Seen in:** `cash.p.terminal`, every app of M10 and M11. **Measured in:** M6, M10, M11.
-**Solutions:** S26, S33.
-
-In M11 the transient (peak minus what scc 4 returns) is 579-686 MB on the six apps that converge
-under 4 GB, and about 980 MB on K-9 (under 6 GB). K-9 is already at 3.1 GB of commit after scc 4's
-first iteration, against 1.9 GB for DAVx⁵.
+**Seen in:** `cash.p.terminal`. **Measured in:** M6. **Solutions:** S26.
 
 7.5-8 GB (facts, source info and interners) is held before the fixpoint starts, and 6.9-8.7 GB is
 still held after the index is saved and dropped. Loading the IR takes 3.8 GB, and SSA raises that
 to 5.2 GB. `facts.try_save` adds 2.3 GB (4.9 → 7.2 GB) that is never given back.
 
+The transient peak inside the fixpoint, once part of this problem, is P30.
+
+### P30. The transient at the end of scc 4
+
+**Seen in:** every app of M10 and M11. **Measured in:** M10, M11. **Solutions:** S33.
+(Split out of P20.)
+
+The peak sits above what scc 4 returns by the same amount on every app: 546 MB on `com.noto`,
+583 MB on AntennaPod, 624 MB on Tusky and about 700 MB on NewPipe (M10), and 579-686 MB on the six
+M11 apps that converge under 4 GB. It is what puts NewPipe over 4 GB. In M10 it is hash tables
+growing in scc 4, each holding its old table beside the new one, among them the outer `(f, v)` maps
+of the `edge_split` and `locals` stores; the last, a 100 MiB growth, is not named. It grows with
+the app: about 980 MB on K-9 (M11, under 6 GB), which is already at 3.1 GB of commit after scc 4's
+first iteration, against 1.9 GB for DAVx⁵.
+
 ### P21. Joins that scan a whole relation every iteration
 
 **Seen in:** `cash.p.terminal`. **Measured in:** M6. **Solutions:** S27.
 
-- **Scanning joins cost 25-39 s.** `critical_summary` rule 1.2, `context_assign`,
-  `establishes_direct` and `critical_reach`. Rule 1.2 shows the pattern: Ascent drives it from
-  `call_indices_2_total` and `critical_summary_indices_0_total`, and probes the `locals` delta
-  last. So every one of the 637 iterations walks the 2.9 M `call` rows to find a few new rows.
-  These rules get more expensive per row on almost no rows: `critical_summary` 0.8, 26 and
-  2,277 µs, `establishes_direct` 2.5, 14 and 3,436 µs, `context_assign` 39, 99 and 875 µs.
-- **The wildcard rules cost about 9 s and produce nothing on Java.** `assign_wild`,
-  `edge_split_wild`, `locals_wild` and `locals_key_wild` scan every `assign_like` or `reach_vp`
-  delta, but Java paths have no trailing offsets.
+**Scanning joins cost 25-39 s.** `critical_summary` rule 1.2, `context_assign`,
+`establishes_direct` and `critical_reach`. Rule 1.2 shows the pattern: Ascent drives it from
+`call_indices_2_total` and `critical_summary_indices_0_total`, and probes the `locals` delta last.
+So every one of the 637 iterations walks the 2.9 M `call` rows to find a few new rows. These rules
+get more expensive per row on almost no rows: `critical_summary` 0.8, 26 and 2,277 µs,
+`establishes_direct` 2.5, 14 and 3,436 µs, `context_assign` 39, 99 and 875 µs. (The wildcard rules'
+cost on Java, once here, is in P6.)
 
 ### P26. Plain relations are sized in powers of two
 
@@ -502,8 +526,8 @@ A plain relation's row store, and each `_indices_none` copy of it, is a `Vec` th
 doubling, so it holds up to twice what its rows need. `actual_param` is exactly 64 MiB for
 1.11 M rows (`de.danoeh.antennapod`) and for 1.36 M rows (`com.keylesspalace.tusky`), and
 `alias_of_formal` is exactly 8 MiB on `com.noto`. The input relations never grow after seeding, so
-their slack is never used. A doubling also holds the old and the new buffer at once, which may be
-part of P20's transient peak; the probe in M10 is meant to say.
+their slack is never used. A doubling also holds the old and the new buffer at once, but the
+probe in M10 found P30's transient in hash tables, not in these `Vec`s.
 
 ### P27. Two rules derive every plain-copy `locals` row
 
@@ -541,7 +565,7 @@ skipping strict offset check").
 
 | Solution | Problems | Status |
 |---|---|---|
-| S1. Dead-phi pass | P2 | Superseded by S2 |
+| S1. (Merged into S2) | P2 | Merged into S2 |
 | S2. Pruned SSA | P2 | Done (`2b90a98b`) |
 | S3. Stack-slot promotion (mem2reg), `window:8` | P1 | Done (`31594e08`) |
 | S4. Promote escaped slots and spill around escapes | P1 | Undecided, not started |
@@ -554,42 +578,42 @@ skipping strict offset check").
 | S11. Key the call-target transitive rule (`cta_key`) | P16 | Done (`76982fc4`); causes P17 |
 | S12. Turn off `cta_key` except where it pays | P17 | Undecided; measured −4 GB, and −0.24 GB on Tusky |
 | S13. Store call-target tags compactly | P17 | Undecided |
-| S14. Bound decision-set churn | P15 | Rejected |
+| S14. Bound decision-set churn | P15, P29 | Rejected for P15; reopened for P29, never measured |
 | S15. Change the hybrid context mode | P9, P15 | Rejected |
 | S16. Write back entry versions for JVM bytecode | P10 | Done (`8cea6bca`, `b6503b05`) |
 | S17. Lower C pointer accesses to `.deref`, then use `Entry` for C | P11 | Undecided |
 | S18. Filter call-target tags by static type | P12, P13, P14 | Undecided |
-| S19. Check decisions against the formal's declared type | P12, P13, P14 | Undecided |
+| S19. (Merged into S18) | P12, P13, P14 | Merged into S18 |
 | S20. Check receiver dispatch at CHA sites | P13 | Undecided |
 | S21. Only mint decisions that can resolve a critical call | P12, P13, P14 | Undecided |
 | S22. Build critical summaries from identity flows only | P14 | Undecided |
 | S23. A Jackson model | P10, P14 | Rejected |
 | S24. Fold `reach_vp` into its consumers | P18 | Undecided; est. −2.3 GB |
 | S25. Free `actual_param` after scc 1 | P19 | Undecided; est. −1.6 GB |
-| S26. Find the memory held around the fixpoint | P20 | Undecided; the transient part done (M10) |
+| S26. Find the memory held around the fixpoint | P20 | Undecided |
 | S27. Reorder scanning joins; skip wildcard rules without offsets | P21, P6 | Undecided |
 | S28. Make the suite fail on a lost flow | P22 | Done (`31594e08`) |
 | S29. Prune each R8 clone at import | P24 | Done (uncommitted) |
 | S30. Leave out a merged class's union methods when no site needs them | P25 | Undecided |
 | S31. Leave the `(p, [])` split out of `locals_key` | P27 | Done (uncommitted) |
 | S32. Size input relations exactly | P26 | Undecided |
-| S33. Size the BYODS stores' outer maps before the fixpoint | P20 | Undecided |
+| S33. Size the BYODS stores' outer maps before the fixpoint | P30 | Undecided |
 | S34. Bound the globals slot at calls | P28 | Undecided, not started |
-| S35. Keep interpreter loops out of hybrid inlining | P29 | Undecided, not started |
+| S35. (Merged into S14) | P29 | Merged into S14 |
 
-### S1. Dead-phi pass
+### S1. Merged into S2
 
-**Applies to:** P2. **Status:** superseded by S2.
-
-An experimental pass (`CTADL_DEAD_PHIS=1`, in WIP commit `fd5130f4`) cut `androidudpbus`'s assign
-edges from 14.6 M to 1.09 M. The index then finished, in 875 s at 49.8 GB: still about 18x over
-budget, because of P1.
+A dead-phi pass, superseded by pruned SSA; its measurement is in S2.
 
 ### S2. Pruned SSA
 
 **Applies to:** P2. **Status:** done (`2b90a98b`).
 
 `androidudpbus` finishes in 849 s at 52.0 GB, about 18x over budget. P1 remains.
+
+It superseded a dead-phi pass (formerly S1; `CTADL_DEAD_PHIS=1`, in WIP commit `fd5130f4`), which
+cut `androidudpbus`'s assign edges from 14.6 M to 1.09 M; the index then finished in 875 s at
+49.8 GB, still about 18x over budget because of P1.
 
 ### S3. Stack-slot promotion (mem2reg), `window:8` by default
 
@@ -722,11 +746,21 @@ the way `locals_key` is held.
 
 ### S14. Bound decision-set churn
 
-**Applies to:** P15. **Status:** rejected.
+**Applies to:** P15, P29. **Status:** rejected for P15; reopened for P29, never measured.
 
-`bounded:k` and `spill:k` cap the churn. Not needed for `cpuinfo` after S10: it mints 7.2 k
-decisions and `context_locals` holds 1.1 M rows. Not a fix for `greenbits` either: `--hybrid-context
-none` shows the context-free closure does not converge on its own (see S15). Never measured.
+`--hybrid-context bounded:k` and `spill:k` cap the churn: a set that would grow past `k`
+decisions widens to ⊤, and under `spill:k` a ⊤ row leaves the contextual closure for the
+context-free one (`HybridContext` in `index_engine/mod.rs`). Not needed for `cpuinfo` after S10:
+it mints 7.2 k decisions and `context_locals` holds 1.1 M rows. Not a fix for `greenbits` either:
+`--hybrid-context none` shows the context-free closure does not converge on its own (see S15).
+
+**Reopened for P29** (formerly S35, "keep interpreter loops out of hybrid inlining"). Rhino's
+`interpretLoop` has 13 decision sets of up to 47, so `bounded:k` or `spill:k` with `k` below that
+would do most of what resolving its calls with CHA would, with no new code. The bound is global,
+not per function, so the check is both LibreTube's `context_locals` (1.65 M rows, 87% in
+`interpretLoop`) and what it costs the other apps and the regression suite. A per-function bound
+(CHA once a function holds more than some number of decisions) is the fallback if the global one
+costs too much elsewhere.
 
 ### S15. Change the hybrid context mode
 
@@ -769,17 +803,17 @@ shrinks both the call-target relations (P17's memory) and the decisions.
   `.implements`) and the static type of each vertex, and drop a tag wherever
   `target <: declared type` fails. A `check-cast` should narrow the same way; that is the part
   that addresses P12.
+- Cheaper variant (formerly S19): apply the same subtype test only where a decision is minted,
+  in rules 2.1/2.2, against the formal's declared type at that path. One filter covers all the
+  remaining impossible decisions, with the inputs `typecheck.py` already uses (the method
+  signature, field types in the path, and `.super`/`.implements`), keeping `Object`,
+  array-element and framework cases as the script does. It drops the decisions but not the tags,
+  so the full filter or S20 is still more precise.
 
-### S19. Check decisions against the formal's declared type
+### S19. Merged into S18
 
-**Applies to:** P12, P13, P14. **Status:** undecided, not implemented.
-
-Only mint a decision when the target is a subtype of the formal's declared type at that path:
-S18's filter, applied in rules 2.1/2.2 rather than to every tag. One filter covers all the
-remaining impossible decisions. The inputs are what `typecheck.py` already uses: the method
-signature, field types in the path, and `.super`/`.implements`. It keeps `Object`, array-element
-and framework cases, as the script does. It drops the decisions but not the tags, so S18 or S20
-is still more precise.
+Checking decisions against the formal's declared type is S18's filter applied in rules 2.1/2.2
+only; it is S18's cheaper variant.
 
 ### S20. Check receiver dispatch at CHA sites
 
@@ -836,8 +870,7 @@ One option is to generate the call-arg edges in Rust before `ascent_run`.
 
 Find the 2.3 GB `facts.try_save` keeps, and the 7-8 GB held through the index.
 
-The transient above the fixpoint is located (M10, `CTADL_BIG_ALLOC_MB`): it is hash tables
-growing in scc 4, the BYODS stores' outer maps among them. See S33.
+The transient above the fixpoint is a separate problem now, P30, with S33.
 
 ### S27. Reorder or key the scanning joins, and skip the wildcard rules when no path has an offset
 
@@ -912,11 +945,12 @@ so only the formal side derives a row across a whole-path match. The contextual 
 
 Seed the input relations (`actual_param`, `formal_param`, `alias_of_formal`, `call`, ...) with
 their final length, or shrink them once seeded. Saves up to half of each; on the apps in M10
-`actual_param` alone is 195 MB with its two indices.
+`actual_param` alone is 195 MB with its two indices, but S25 would free `actual_param` after scc 1
+altogether, so with S25 the saving is in the other input relations.
 
 ### S33. Size the BYODS stores' outer maps before the fixpoint
 
-**Applies to:** P20. **Status:** undecided.
+**Applies to:** P30. **Status:** undecided.
 
 A hashbrown table that grows allocates the new table before it frees the old one, so near the end
 of scc 4 each doubling of a large map briefly holds 1.5 times its size. The outer `(f, v)` maps of
@@ -933,17 +967,14 @@ Two directions, not yet told apart by a measurement. Pass the globals slot only 
 callee can read or write globals (its summary or model says so); the constructors and list
 builders called in a generated `<clinit>` are likely not among them, but that is not checked.
 Or give the global heap a version per static-field write, so that a call sees only the fields
-written before it, which would at least halve the rows. Either way the check is
+written before it, which would at least halve the rows; that is S3's mem2reg idea (P1) applied
+to the global heap. Either way the check is
 `eu.siacs.conversations`: jemoji's 5.24 M rows, and its 4.83 GB peak.
 
-### S35. Keep interpreter loops out of hybrid inlining
+### S35. Merged into S14
 
-**Applies to:** P29. **Status:** undecided, not started.
-
-Resolve the calls of a function with CHA once it holds more than some number of decisions, as
-S5 would bound phi operands at native interpreter loops. Rhino's `interpretLoop` has 118. The
-check is LibreTube's `context_locals` (1.65 M rows) and whatever flows through Rhino in the
-regression suite.
+Keeping interpreter loops out of hybrid inlining (P29) is S14's bound on decision sets, which
+already exists as `--hybrid-context bounded:k` and `spill:k`; see S14.
 
 # Measurements
 
@@ -1245,7 +1276,7 @@ receiver 1,092 (18%), caller cast 2,030 (34%), other 2,826 (47%), no root reache
 
 ## M6. `cash.p.terminal`: big, not blowing up (2026-10-01)
 
-**Problems:** P16, P17, P18, P19, P20, P21, P23. **Solutions:** S12, S24-S27.
+**Problems:** P6, P16, P17, P18, P19, P20, P21, P23. **Solutions:** S12, S24-S27.
 
 `cash.p.terminal` (Dex half) is the largest app in the corpus. On head (`a84d75e7`) it reaches a
 fixpoint in 390 s at 41.2 GB, in 637 iterations. It was the one large outlier left after M5, so it
@@ -1505,7 +1536,7 @@ On `com.noto`, indexed to a fixpoint, the query results are the same (S29).
 
 ## M10. Tusky and AntennaPod: what is the same everywhere (2026-10-06)
 
-**Problems:** P17, P20, P26, P27. **Solutions:** S29, S31.
+**Problems:** P17, P26, P27, P30. **Solutions:** S29, S31.
 
 Two more F-Droid apps, Dex only, on the machine and cap of M9, with S29 and S31 and the per-rule
 counters in the vendored Ascent macro (each rule's rows derived and rows new):
@@ -1522,7 +1553,7 @@ under 4 GB, and neither is a blowup: the peak is 87x and 57x the imported IR.
   and finishes in 46 s.
 - **NewPipe's flow graph is denser, not bigger.** AntennaPod has nearly as many functions and
   more dex, but 3.47 M `assign_like` rows at its fixpoint against NewPipe's 4.86 M at 25 s.
-- **The transient above the fixpoint is the same on every app (P20):** peak minus what scc 4
+- **The transient above the fixpoint is the same on every app (P30):** peak minus what scc 4
   returns is 546 MB on `com.noto`, 583 MB on AntennaPod, 624 MB on Tusky and about 700 MB on
   NewPipe. That, not the settled size, is what puts NewPipe over 4 GB. The allocations refused at
   the cap were single requests of 96 and 100 MiB.
@@ -1536,7 +1567,7 @@ under 4 GB, and neither is a blowup: the peak is 87x and 57x the imported IR.
 - **The same constants everywhere:** `actual_param` 195 MB with its two indices (P19), and
   `reach_vp_none` 50 MB (P18), both sized in powers of two (P26).
 
-**Where the transient goes (P20).** Tusky with `CTADL_BIG_ALLOC_MB=64`, a `profiling` build
+**Where the transient goes (P30).** Tusky with `CTADL_BIG_ALLOC_MB=64`, a `profiling` build
 (symbols cost it about 1.35 GB of commit, so it ran under a 6 GB cap). The live heap peaks at
 3,213 MB, about 360 MB above what scc 4 returns, and the rest of the 624 MB is the Windows heap
 keeping freed memory. Inside scc 4 the large allocations are all hash tables growing: 11 of
@@ -1550,7 +1581,7 @@ are the parquet encoders' column buffers (128 MB at most).
 
 ## M11. A second corpus: ten F-Droid apps (2026-10-07)
 
-**Problems:** P17, P20, P28, P29. **Solutions:** S34, S35.
+**Problems:** P17, P28, P29, P30. **Solutions:** S14, S34.
 
 Ten apps not in the corpus before, from F-Droid's index, Dex only (Ghidra off, as in M9 and M10),
 chosen by dex size from the zip directory: 8.3-14.0 MB of dex, against NewPipe's 11.4, Tusky's 7.7
@@ -1604,7 +1635,7 @@ differences larger than that are read here.
   are `edge_split` (419-475 MB), `assign_like` (330-363 MB) and `locals` (223-263 MB).
   `edge_split` is built whole in scc 4's first iteration (3.4-4.5 M rows at 0.6-1.5 µs each).
   55-78% of derived rows are new, and the call-target transitive rule is 39-44% new. The
-  transient is 579-686 MB (P20).
+  transient is 579-686 MB (P30).
 - **Time outside the rules.** scc 4 spends 20-25% of its time outside its rules at a fixpoint
   (Read You: 47.1 s, of which 37.5 s in rules), and 40-50% in its first iteration, when the
   3.4-5.5 M rows of `edge_split` move from delta to total.
@@ -1616,7 +1647,7 @@ differences larger than that are read here.
 
 ## Experiment switches
 
-- In commit `fd5130f4` (WIP): `CTADL_DEAD_PHIS=1` turns on the dead-phi pass (S1), and
+- In commit `fd5130f4` (WIP): `CTADL_DEAD_PHIS=1` turns on the dead-phi pass (formerly S1, now in S2), and
   `CTADL_LOCALS_CENSUS=<dir>` writes the `locals` breakdown.
 - `CTADL_MEM2REG=exact|window:N|above` (removed in `31594e08`): the escape policy for S3.
 - `CTADL_INDEX_TIMEOUT_SECS`: the timeout for a ladder rung.
