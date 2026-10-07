@@ -17,7 +17,7 @@ use crate::raw::tables::*;
 use crate::token::{MetadataToken, TokenType};
 use std::borrow::Cow;
 use std::cell::UnsafeCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// Provides raw image bytes for assemblies (by reference, as Cecil's
@@ -942,7 +942,9 @@ fn find_field<'c>(
     cache: &'c AssemblyCache<'_>,
 ) -> Result<Option<ResolvedMember<'c>>> {
     let mut current = Some(declaring);
+    let mut walked = HashSet::new();
     while let Some(rt) = current {
+        walk_once(&mut walked, rt)?;
         for field in rt.ty.fields()? {
             if field.name()? != name {
                 continue;
@@ -995,7 +997,9 @@ fn find_method<'c>(
     cache: &'c AssemblyCache<'_>,
 ) -> Result<Option<ResolvedMember<'c>>> {
     let mut current = Some(declaring);
+    let mut walked = HashSet::new();
     while let Some(rt) = current {
+        walk_once(&mut walked, rt)?;
         for method in rt.ty.methods()? {
             if method.name()? != name {
                 continue;
@@ -1023,6 +1027,19 @@ fn find_method<'c>(
         current = base_of(rt, cache)?;
     }
     Ok(None)
+}
+
+/// Records `rt` as a type the base walk has reached, failing if it has
+/// already: a type that is its own base, directly or through others, in
+/// this module or another. Cecil's `GetField` and `GetMethod` follow such a
+/// cycle forever.
+fn walk_once(walked: &mut HashSet<(usize, u32)>, rt: ResolvedType<'_>) -> Result<()> {
+    let module = std::ptr::from_ref(rt.module).addr();
+    if walked.insert((module, rt.ty.token().rid())) {
+        Ok(())
+    } else {
+        Err(Error::Unsupported("base type cycle"))
+    }
 }
 
 fn base_of<'c>(

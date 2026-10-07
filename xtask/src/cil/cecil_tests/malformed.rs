@@ -8,7 +8,7 @@ use super::{cecil_root, read_fixture, read_resource, Test};
 use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader};
 use cil_reader::model::sig::MAX_TYPE_SIG_DEPTH;
 use cil_reader::raw::pe::PeImage;
-use cil_reader::raw::tables::{ModuleRaw, NestedClassRaw, Table, TypeSpecRaw};
+use cil_reader::raw::tables::{ModuleRaw, NestedClassRaw, Table, TypeDefRaw, TypeSpecRaw};
 use cil_reader::{Entity, Error, MetadataToken, Module, TokenType};
 
 /// File offset of the `#~` (or `#-`) stream, from the metadata root's
@@ -239,6 +239,43 @@ fn member_lists_out_of_range() {
         .collect();
     let tail = with_properties.last().unwrap().properties().unwrap();
     assert_eq!(tail.last().unwrap().token().rid(), properties);
+}
+
+// A type that is its own base, directly or through another, and a member
+// reference to it that names no member: Cecil's GetMethod and GetField
+// walk the bases until they find the member, so they never return.
+fn base_type_cycles() {
+    // TypeDef's Extends column, after Flags, Name and Namespace; TypeDef's
+    // tag is 0. MemberRef's Name column follows its Class.
+    const EXTENDS: usize = 8;
+    const NAME: usize = 2;
+    let original = read_fixture("Generics.cs.dll");
+    let module = Module::read(&original).unwrap();
+    let rid_of = |name: &str| module.get_type(name).unwrap().unwrap().token().rid();
+    let (parent, tamtam) = (rid_of("Parent`1"), rid_of("Tamtam"));
+    // Parent`1<T>::.ctor(), renamed after the type, which has no such method.
+    let member = MetadataToken::new(TokenType::MemberRef, 0x13);
+    let unknown = module.metadata().row::<TypeDefRaw>(parent).unwrap().name.0;
+    let loader = DirectoryLoader::new(Vec::new());
+    let cache = AssemblyCache::new(&loader);
+    assert!(module.resolve_member(member, &cache).unwrap().is_some());
+
+    let mut renamed = original.clone();
+    patch_column(&mut renamed, Table::MemberRef, 0x13, NAME, unknown as u16);
+    for bases in [
+        vec![(parent, parent)],
+        vec![(parent, tamtam), (tamtam, parent)],
+    ] {
+        let mut data = renamed.clone();
+        for (rid, base) in bases {
+            patch_column(&mut data, Table::TypeDef, rid, EXTENDS, coded(base, 2, 0));
+        }
+        let module = Module::read(&data).unwrap();
+        assert!(is_unsupported(
+            module.resolve_member(member, &cache),
+            "base type cycle"
+        ));
+    }
 }
 
 // Two TypeRefs scoped to each other. Cecil's FullName and Scope follow
@@ -516,6 +553,7 @@ pub(super) const TESTS: &[Test] = &[
     ),
     ("member_lists_out_of_range", member_lists_out_of_range),
     ("type_ref_scope_cycles", type_ref_scope_cycles),
+    ("base_type_cycles", base_type_cycles),
     ("attribute_enum_scope_cycle", attribute_enum_scope_cycle),
     ("exported_type_nesting", exported_type_nesting),
     ("exported_type_file_loop", exported_type_file_loop),
