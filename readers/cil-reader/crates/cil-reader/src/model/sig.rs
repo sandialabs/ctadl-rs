@@ -235,6 +235,12 @@ pub struct PropertySig {
 /// reader does, so chains of TypeSpecs count toward the same bound.
 pub const MAX_TYPE_SIG_DEPTH: u32 = 64;
 
+/// The largest rank an ARRAY signature may have. Its dimensions take no
+/// bytes past the sizes and bounds, so a rank of up to 0x1FFFFFFF would
+/// otherwise cost 16 bytes each, and a comma each in the full name; Cecil
+/// allocates them all too. The CLR loads no type past rank 32 (`MAX_RANK`).
+pub const MAX_ARRAY_RANK: u32 = 65535;
+
 /// Reader over one signature blob (already length-stripped).
 pub struct SigReader<'a> {
     pub(crate) cur: Cur<'a>,
@@ -369,6 +375,9 @@ impl<'a> SigReader<'a> {
     fn array_sig(&mut self) -> Result<TypeSig> {
         let element = self.type_sig()?;
         let rank = self.cur.compressed_u32()?;
+        if rank > MAX_ARRAY_RANK {
+            return Err(Error::bad(self.cur.pos(), "array rank too large"));
+        }
         let num_sizes = self.cur.compressed_u32()?;
         let mut sizes = Vec::with_capacity(num_sizes.min(64) as usize);
         for _ in 0..num_sizes {
@@ -379,7 +388,7 @@ impl<'a> SigReader<'a> {
         for _ in 0..num_low_bounds {
             low_bounds.push(self.cur.compressed_i32()?);
         }
-        let mut dimensions = Vec::with_capacity(rank.min(64) as usize);
+        let mut dimensions = Vec::with_capacity(rank as usize);
         for i in 0..rank as usize {
             let lower = low_bounds.get(i).copied();
             // Cecil: `upper = lower + (int) sizes [i] - 1` — C# nullable
@@ -592,6 +601,42 @@ mod tests {
     fn a_deep_blob_is_an_error_not_a_stack_overflow() {
         let blob = nested(&[0x0f], &[], 100_000);
         assert!(is_too_deep(SigReader::new(&blob).type_sig()));
+    }
+
+    /// `int32[,...]`: an ARRAY of `rank`, without sizes or bounds.
+    fn array_of_rank(rank: u32) -> Vec<u8> {
+        let mut blob = vec![0x14, I4];
+        blob.extend(match rank {
+            0..0x80 => vec![rank as u8],
+            0x80..0x4000 => (rank as u16 | 0x8000).to_be_bytes().to_vec(),
+            _ => (rank | 0xc000_0000).to_be_bytes().to_vec(),
+        });
+        blob.extend([0x00, 0x00]);
+        blob
+    }
+
+    #[test]
+    fn array_ranks_up_to_the_limit_decode() {
+        for rank in [1, 32, 0x3fff, MAX_ARRAY_RANK] {
+            let sig = SigReader::new(&array_of_rank(rank)).type_sig().unwrap();
+            let TypeSig::Array { dimensions, .. } = sig else {
+                panic!("not an array");
+            };
+            assert_eq!(dimensions.len(), rank as usize);
+        }
+    }
+
+    #[test]
+    fn array_ranks_past_the_limit_are_an_error() {
+        for rank in [MAX_ARRAY_RANK + 1, 0x1fff_ffff] {
+            assert!(matches!(
+                SigReader::new(&array_of_rank(rank)).type_sig(),
+                Err(Error::BadImage {
+                    reason: "array rank too large",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]
