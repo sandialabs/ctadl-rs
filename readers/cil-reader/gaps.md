@@ -340,19 +340,19 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Possibly realistic:** Roslyn may write lone surrogates such as `"\uD800"`
   as `ED A0 80`. That encoding is unverified.
 
-**C3. A stream header pointing past the end of the file rejects the image.** *Reproduced.*
+**C3. A stream header pointing past the end of the file rejects the image.** *Fixed:* `read_metadata_root` (`raw/pe.rs`) adds the offset with wrapping and truncates the stream at the end of the file, as `ReadHeapData`'s `ReadBytes` does; a size of 2^31 or more is still an error, where Cecil's `(int)` cast throws. `gap-streams.dll` covers a junk stream past the end and a `#US` whose size runs past it. Evidence is in `/Volumes/Shampoo/c3-c6-2026-10-07/`.
 - **Rust:** `raw/pe.rs:328-331`; this applies to unknown stream names too.
 - **Cecil:** truncates (`Mono.Cecil.PE/ImageReader.cs:409-417`).
 
-**C4. A non-UTF-8 stream name or metadata version string rejects the image.** *Reproduced.*
+**C4. A non-UTF-8 stream name or metadata version string rejects the image.** *Fixed:* both decode as Latin-1 (`latin1`, `raw/pe.rs`), so `PeImage::runtime_version` is a `Cow` and `Module::runtime_version` borrows from the module; `gap-streams.dll` covers both.
 - **Rust:** `raw/pe.rs:316, 418`.
 - **Cecil:** decodes them as Latin-1.
 
-**C5. An out-of-range `#GUID` index is an error.** *Reproduced.*
+**C5. An out-of-range `#GUID` index is an error.** *Fixed:* `GuidHeap::get` (`raw/heaps.rs`) gives the zero GUID where Cecil's check does, `(index - 1) + 16 > length`; an index that passes that check but lies past the heap is still an error, where Cecil's copy throws. `gap-heap-indexes.dll` and the `guid_indexes_past_the_heap` unit test cover it.
 - **Rust:** `raw/heaps.rs:385`.
 - **Cecil:** returns a zero GUID. Note that Cecil's own bounds check is buggy.
 
-**C6. An out-of-range `#Strings` index and an overlong `#Blob` length are errors.**
+**C6. An out-of-range `#Strings` index and an overlong `#Blob` length are errors.** *Fixed:* `StringsHeap::get` (`raw/heaps.rs`) gives `""`. A blob is read three ways, as Cecil reads it: `BlobHeap::get` (`BlobHeap.Read`: keys, hashes, and `blob()` of attributes and security declarations) gives an overlong blob as empty; `view` (`SignatureReader`: every signature, constants, marshal info, and attribute and security decoding) gives the rest of the heap; `get_exact` keeps the error for a string constant and a legacy XML permission set, where Cecil slices by the length and throws. `gap-heap-indexes.dll` and the `heaps` unit tests cover it. An unterminated last string still reads to the end of the heap, where Cecil throws.
 - **Rust:** `raw/heaps.rs:277-283, 305-306`.
 - **Cecil:** returns empty values, and its signature readers read across the
   whole heap.
@@ -471,7 +471,9 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 
 **D6. Raw-layer nits.**
 - An absent heap still uses its large-index flag; Cecil uses 2.
-- Stream names are capped at 16 bytes, where ECMA allows 32.
+- Stream names are capped at 16 bytes, where ECMA allows 32. A name of 16
+  bytes with no NUL moves the port 20 bytes on, where Cecil's
+  `ReadAlignedString` moves 19, so the stream headers after it differ.
 - RVA lookup uses SizeOfRawData, as Cecil does.
 - Debug data past end of file comes back empty; Cecil truncates it.
 - Section names are decoded as lossy UTF-8; Cecil uses Latin-1.
