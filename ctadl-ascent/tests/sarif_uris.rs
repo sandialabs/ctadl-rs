@@ -14,7 +14,9 @@
 //! every frontend has.
 
 use ctadl_ascent::cli;
-use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, init_store_path};
+use ctadl_ascent::project::{
+    AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports, init_store_path,
+};
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -76,7 +78,8 @@ fn query_source_tree(case: &str) -> Value {
         ArtifactImport::try_create(case, ArtifactLanguage::Lua, &tree).expect("import args");
     cli::import(&import, cli::ImportOptions::default()).expect("importing lua");
 
-    let project = AnalysisProject::try_create(case, &[case.to_string()]).expect("project");
+    let project =
+        AnalysisProject::try_create(case, &[case.to_string()], SubImports::All).expect("project");
     cli::index(&project, &[], &[], false, cli::IndexOptions::default()).expect("indexing");
 
     let query_models = dir.join(format!("{case}-query.json"));

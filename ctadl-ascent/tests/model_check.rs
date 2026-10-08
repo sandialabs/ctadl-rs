@@ -10,7 +10,7 @@ use std::io::Write as _;
 use ctadl_ascent::cli;
 use ctadl_ascent::facts::TaintDirection;
 use ctadl_ascent::models::ImportScope;
-use ctadl_ascent::project::AnalysisProject;
+use ctadl_ascent::project::{AnalysisProject, SubImports};
 use ctadl_ascent::query_engine::formatter::{SarifProfile, format_model_check_sarif};
 use ctadl_ir::mir::ProgramInfo;
 use tempfile::NamedTempFile;
@@ -316,7 +316,7 @@ fn the_check_is_reported_as_sarif() {
     // `format_model_check_sarif` requires a project handle, but only uses the
     // project name, so an empty-imports ephemeral project is sufficient.
     let project_name = "test_project";
-    let project = AnalysisProject::ephemeral(project_name, &[] as &[&str]);
+    let project = AnalysisProject::ephemeral(project_name, &[] as &[&str], SubImports::All);
 
     let successful =
         format_model_check_sarif(&project, out.path(), SarifProfile::Machine, &diagnostics)

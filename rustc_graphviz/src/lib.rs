@@ -703,7 +703,7 @@ where
         }
 
         if let Some(s) = g.node_shape(n) {
-            write!(text, "[shape={}]", &s.to_dot_string()).unwrap();
+            write!(text, "[shape={}]", s.to_dot_string()).unwrap();
         }
 
         for (name, value) in g.node_attrs(n) {

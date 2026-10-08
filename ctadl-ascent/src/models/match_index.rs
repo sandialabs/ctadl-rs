@@ -23,6 +23,8 @@ IR are both dropped before the next import is loaded. Owning the strings would b
 across the import loop, which is exactly what streaming exists not to need.
 */
 
+use std::collections::BTreeSet;
+
 use hashbrown::hash_map::HashMap;
 
 use ctadl_ir::ProgramInfo;
@@ -63,12 +65,139 @@ pub struct ProgramMatchIndex<'p> {
     /// what [`matched_functions`](super::json::matched_functions)`(&All)` enumerates for this
     /// frontend, so a top-level `not X` can be materialized to `universe \ X`.
     pub(crate) universe: UniverseSet<&'p str>,
+    /// What a `find: "dispatch"` generator matches: the distinct static signatures the
+    /// program's Java call sites name. `None` unless some loaded generator asked for them,
+    /// because collecting them costs a pass over every statement.
+    ///
+    /// Unlike the method universe above, this contains types the app never declares. The
+    /// method universe is built from VMT `methods`, i.e. implementations, and about half of an
+    /// app's interface sites name a type that is not among them -- `java.util.Iterator` has no
+    /// row there, so `find: methods` cannot name it. The keys of the call sites do, by
+    /// construction.
+    pub(crate) dispatch: Option<DispatchUniverse<'p>>,
+}
+
+/// The distinct signature keys of a program's Java call sites, owned.
+///
+/// Separate from [`ProgramMatchIndex`] because the index borrows every string it matches on and
+/// these are composed rather than read out of the IR. A caller builds this beside the
+/// `ProgramInfo` and hands it to [`ProgramMatchIndex::new_with_dispatch`].
+#[derive(Default, Debug)]
+pub struct DispatchKeys {
+    /// `Lcls;->name(desc)` per distinct key -- the same spelling a `JavaMethod` id uses, so
+    /// `qualified-id` matching works unchanged.
+    ids: Vec<String>,
+    /// The three components of each key, parallel to [`Self::ids`].
+    parts: Vec<(String, String, String)>,
+}
+
+impl DispatchKeys {
+    /// Collects every distinct `(cls, simple_name, descriptor)` a `JavaCall` in `program`
+    /// names. Sorted, so the matching that reads it does not depend on statement order.
+    pub fn from_program(program: &ctadl_ir::mir::Program) -> Self {
+        use ctadl_ir::mir::StatementKind;
+        use ctadl_ir::mir::call::CallStyle;
+        let mut keys: BTreeSet<(String, String, String)> = BTreeSet::new();
+        for func in program.functions.iter() {
+            for block in func.blocks.iter() {
+                for stmt in block.statements.iter() {
+                    let StatementKind::CallAssign {
+                        style:
+                            CallStyle::JavaCall {
+                                cls,
+                                simple_name,
+                                descriptor,
+                                ..
+                            },
+                        ..
+                    } = &stmt.kind
+                    else {
+                        continue;
+                    };
+                    keys.insert((
+                        cls.to_string(),
+                        simple_name.to_string(),
+                        descriptor.to_string(),
+                    ));
+                }
+            }
+        }
+        let ids = keys
+            .iter()
+            .map(|(cls, name, desc)| format!("{cls}->{name}{desc}"))
+            .collect();
+        Self {
+            ids,
+            parts: keys.into_iter().collect(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.ids.len()
+    }
+}
+
+/// The signature keys of a program's Java call sites, indexed the way the `where` evaluator
+/// reads them. Each map mirrors the shape of the method universe's, so no constraint
+/// implementation has to know which universe it is narrowing: the values are canonical key ids
+/// where the method maps' values are function fq-names.
+pub(crate) struct DispatchUniverse<'p> {
+    pub(crate) by_name: HashMap<&'p str, Vec<&'p str>>,
+    pub(crate) by_parent: HashMap<&'p str, Vec<&'p str>>,
+    pub(crate) by_signature: HashMap<&'p str, Vec<&'p str>>,
+    pub(crate) by_qualified_id: HashMap<&'p str, Vec<&'p str>>,
+    /// Key id -> its `(cls, simple_name, descriptor)`, so a match can be turned back into the
+    /// triple codegen keys on.
+    pub(crate) parts: HashMap<&'p str, (&'p str, &'p str, &'p str)>,
+    /// Every key id, always [`UniverseSet::Explicit`], so a top-level `not` can complement.
+    pub(crate) universe: UniverseSet<&'p str>,
+}
+
+impl<'p> DispatchUniverse<'p> {
+    fn new(keys: &'p DispatchKeys) -> Self {
+        let mut by_name: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
+        let mut by_parent: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
+        let mut by_signature: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
+        let mut by_qualified_id: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
+        let mut parts: HashMap<&'p str, (&'p str, &'p str, &'p str)> = HashMap::new();
+        for (id, (cls, name, desc)) in keys.ids.iter().zip(keys.parts.iter()) {
+            let (id, cls, name, desc) = (id.as_str(), cls.as_str(), name.as_str(), desc.as_str());
+            by_name.entry(name).or_default().push(id);
+            by_parent.entry(cls).or_default().push(id);
+            by_signature.entry(desc).or_default().push(id);
+            by_qualified_id.entry(id).or_default().push(id);
+            parts.insert(id, (cls, name, desc));
+        }
+        Self {
+            by_name,
+            by_parent,
+            by_signature,
+            by_qualified_id,
+            parts,
+            universe: keys.ids.iter().map(|s| s.as_str()).collect(),
+        }
+    }
 }
 
 impl<'p> ProgramMatchIndex<'p> {
     /// Indexes `program_info`'s metadata for matching. `scope` identifies the import it came
     /// from; pass [`ImportScope::unknown`] when there is none.
     pub fn new(program_info: &'p ProgramInfo, scope: ImportScope) -> Self {
+        Self::new_with_dispatch(program_info, scope, None)
+    }
+
+    /// [`Self::new`], plus the dispatch universe a `find: "dispatch"` generator matches
+    /// against. Pass `None` when no loaded generator uses that form; the dispatch constraints
+    /// then match nothing rather than costing a pass over every statement.
+    pub fn new_with_dispatch(
+        program_info: &'p ProgramInfo,
+        scope: ImportScope,
+        dispatch_keys: Option<&'p DispatchKeys>,
+    ) -> Self {
         let vmt = &program_info.vmt;
         let mut program_method_names: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
         let mut program_method_parents: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
@@ -238,7 +367,13 @@ impl<'p> ProgramMatchIndex<'p> {
             program_method_qualified_ids,
             program_functions,
             universe,
+            dispatch: dispatch_keys.map(DispatchUniverse::new),
         }
+    }
+
+    /// The `(cls, simple_name, descriptor)` a matched dispatch key id stands for.
+    pub(crate) fn dispatch_parts(&self, id: &str) -> Option<(&'p str, &'p str, &'p str)> {
+        self.dispatch.as_ref()?.parts.get(id).copied()
     }
 
     /// The virtual method table this index was built from.

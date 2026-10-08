@@ -144,7 +144,7 @@ fn ephemeral_expands_one_level_so_the_bundle_list_must_be_flat() {
     flat.sub_imports = vec!["flat__split".to_string(), "flat__split__lib".to_string()];
     flat.save().unwrap();
     assert_eq!(
-        AnalysisProject::ephemeral("p", &["flat"]).imports,
+        AnalysisProject::ephemeral("p", &["flat"], SubImports::All).imports,
         ["flat", "flat__split", "flat__split__lib"]
     );
 
@@ -154,7 +154,7 @@ fn ephemeral_expands_one_level_so_the_bundle_list_must_be_flat() {
     nested.sub_imports = vec!["flat__split".to_string()];
     nested.save().unwrap();
     assert_eq!(
-        AnalysisProject::ephemeral("p", &["nested"]).imports,
+        AnalysisProject::ephemeral("p", &["nested"], SubImports::All).imports,
         ["nested", "flat__split"],
         "expansion is one level deep, so a nested list drops the library"
     );

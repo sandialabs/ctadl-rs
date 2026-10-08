@@ -56,7 +56,7 @@ fn configs_are_store_relative_and_survive_a_copy() {
 
     let import = ArtifactImport::try_create("copy_app", ArtifactLanguage::Jar, &artifact).unwrap();
     fs::write(import.program_path(), b"program").unwrap();
-    let project = AnalysisProject::try_create("copy_proj", &["copy_app"]).unwrap();
+    let project = AnalysisProject::try_create("copy_proj", &["copy_app"], SubImports::All).unwrap();
 
     // What the config records is relative to the root...
     assert_eq!(import.import_dir, Path::new("imports").join("copy_app"));

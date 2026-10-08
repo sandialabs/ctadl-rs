@@ -71,7 +71,8 @@ use ascent::internal::{
 };
 use rustc_hash::FxHasher;
 
-use super::hybrid_set::{HybridSet, SMALL_THRESHOLD};
+use super::hybrid_set::SMALL_THRESHOLD;
+use super::path_group::PathGroup;
 
 // The store keys are trusted ids derived from the program, so we hash them with
 // the fast, deterministic `FxHasher` instead of the DoS-resistant SipHash the
@@ -152,16 +153,17 @@ pub fn hb_bytes(capacity: usize, elem: usize) -> usize {
 // A single `(F,V)` group's leaves.
 // ---------------------------------------------------------------------------
 
-/// The leaves of one `(F,V)` group, held in a [`HybridSet`].
+/// The leaves of one `(F,V)` group, held in a [`PathGroup`] keyed on `P`.
 ///
-/// A `HybridSet` is a two-word structure. While the group holds at most [`SMALL_THRESHOLD`]
-/// leaves it probes linearly over its bare element slots. That is by far the common case: 67
-/// to 100% of the groups hold exactly *one* leaf, in every store we have measured, whatever
-/// the largest group in it was. Above the threshold it switches to Swiss probing, which
-/// keeps the per-iteration delta->total merge at O(delta) instead of re-copying the whole
-/// accumulated group every round. Being two words rather than three saves 8 B on *every* entry
-/// of the forward map, whether or not that entry ever gets promoted.
-type Group<P, M, Fp> = HybridSet<(P, M, Fp)>;
+/// While the group holds at most [`SMALL_THRESHOLD`] leaves it is one two-word
+/// [`super::hybrid_set::HybridSet`] over the whole leaf, probing linearly over its bare element
+/// slots. That is by far the common case: 67 to 100% of the groups hold exactly *one* leaf, in
+/// every store we have measured, whatever the largest group in it was. Above the threshold the
+/// leaves move into a map from `P` to the `(M, Fp)` pairs at that path, so that the exact
+/// `0_1_2` probe the local propagation rules make is one lookup rather than a scan of the group, and
+/// the per-iteration delta->total merge stays O(delta) instead of re-copying the whole
+/// accumulated group every round.
+type Group<P, M, Fp> = PathGroup<P, M, Fp>;
 
 // ---------------------------------------------------------------------------
 // Physical `rel!` storage. It stores no tuples, since all the data lives in the
@@ -323,10 +325,6 @@ where
             large_groups: 0,
             group_hist: Vec::new(),
         };
-        // Groups are unordered, so counting distinct `P` needs a scratch set rather than a run
-        // count. We use one set and clear it per group, which keeps the report to a single
-        // extra allocation.
-        let mut ps: Set<&P> = Set::default();
         for group in self.fwd.values() {
             r.leaf_elems += group.len();
             r.max_group = r.max_group.max(group.len());
@@ -343,11 +341,7 @@ where
                 r.large_groups += 1;
             }
             r.fwd_bytes += group.heap_bytes();
-            ps.clear();
-            for (p, _, _) in group.iter() {
-                ps.insert(p);
-            }
-            r.p_entries += ps.len();
+            r.p_entries += group.num_paths();
         }
         for vs in self.fidx.values() {
             r.fidx_vs += vs.len();
@@ -357,12 +351,12 @@ where
     }
 
     #[inline]
-    fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
+    pub(crate) fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
         // `(P,M,Fp)` are cheap to clone: 8-byte handles plus an i16. Cloning them lets us skip
         // a borrow-key helper.
         self.fwd
             .get(&(f.clone(), v.clone()))
-            .is_some_and(|group| group.contains(&(p.clone(), m.clone(), fp.clone())))
+            .is_some_and(|group| group.contains(p, m, fp))
     }
 
     /// Insert a full tuple. Returns true if it was new to *this* store.
@@ -788,9 +782,7 @@ where
     #[inline]
     fn index_get(&'a self, key: &(F, V)) -> Option<Self::IteratorType> {
         let group = self.0.fwd.get(key)?;
-        Some(DynIter::new(move || {
-            group.iter().map(|(p, m, fp)| (p, m, fp))
-        }))
+        Some(DynIter::new(move || group.iter()))
     }
     #[inline]
     fn len_estimate(&self) -> usize {
@@ -812,7 +804,7 @@ where
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
         Box::new(self.0.fwd.iter().map(|((f, v), group)| {
-            let it = DynIter::new(move || group.iter().map(|(p, m, fp)| (p, m, fp)));
+            let it = DynIter::new(move || group.iter());
             ((f, v), it)
         }))
     }
@@ -829,26 +821,16 @@ where
 {
     type Key = (F, V, P);
     type Value = (&'a M, &'a Fp);
-    type IteratorType = DynIter<'a, Self::Value>;
+    // The concrete iterator, not a boxed one: this is the probe the local propagation rules make
+    // once per derived row, and a box plus an `Rc` per probe was a measurable share of it.
+    type IteratorType = super::path_group::Get<'a, P, M, Fp>;
     #[inline]
     fn index_get(&'a self, key: &(F, V, P)) -> Option<Self::IteratorType> {
         let group = self.0.fwd.get(&(key.0.clone(), key.1.clone()))?;
-        let p = key.2.clone();
-        // A group is a set, not a sorted run, so the leaves carrying this `P` are scattered.
-        // This view therefore filters rather than slicing a range. The one scan up front is
-        // what lets us return `None` for a `P` the group does not hold, which cuts the caller's
-        // whole join. Without it, a miss would hand the planner a `Some` that it has to drive
-        // to exhaustion. The scan costs O(group), it stops at the first match, and the median
-        // group holds a single leaf.
-        if !group.iter().any(|(pp, _, _)| *pp == p) {
-            return None;
-        }
-        Some(DynIter::new(move || {
-            let p = p.clone();
-            group
-                .iter()
-                .filter_map(move |(pp, m, fp)| (*pp == p).then_some((m, fp)))
-        }))
+        // `PathGroup::get` answers `None` for a `P` the group does not hold, which cuts the
+        // caller's whole join; a miss must not hand the planner a `Some` it has to drive to
+        // exhaustion. On a large group the probe is one hash lookup (see `path_group`).
+        group.get(&key.2)
     }
     #[inline]
     fn len_estimate(&self) -> usize {

@@ -270,7 +270,7 @@ fn load_is_not_a_copy() {
         vec![Statement::new_kind(StatementKind::load(
             v("x", 2),
             v("y", 1),
-            FieldPath::symbol("f"),
+            FieldRef::symbol("f"),
         ))],
         vec![read(v("x", 2))],
     );

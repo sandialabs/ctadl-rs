@@ -157,7 +157,7 @@ impl Reader {
         DefaultDecoder: DecodeColumns<T>,
     {
         let file = File::open(&self.path)
-            .map_err(Error::Io)
+            .map_err(Error::from)
             .err_context(|| format!("opening parquet file: {}", self.path.display()))?;
         let rdr = ParquetRecordBatchReaderBuilder::try_new(file)
             .and_then(|b| b.build())
@@ -195,7 +195,7 @@ impl Writer {
             .map_err(Error::Arrow)?;
 
         let file = File::create(&self.path)
-            .map_err(Error::Io)
+            .map_err(Error::from)
             .err_context(|| format!("creating parquet file: {}", self.path.display()))?;
         let props = WriterProperties::builder()
             .set_compression(Compression::SNAPPY)
@@ -518,7 +518,7 @@ macro_rules! impl_encode_newtype {
     };
 }
 
-// Custom encoding for Path since it's now VecDeque<mir::FieldAccess> instead of Str
+// Custom encoding for Path since it's now VecDeque<mir::OffsetAccess> instead of Str
 impl EncodeColumn<facts::Path> for DefaultEncoder {
     #[inline]
     fn encode_column(name: &str, col: Vec<facts::Path>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
@@ -1106,6 +1106,40 @@ impl DecodeColumn<facts::TaintDirection> for DefaultDecoder {
             .map(|s| match s {
                 true => facts::TaintDirection::Forward,
                 false => facts::TaintDirection::Backward,
+            })
+    }
+}
+
+impl EncodeColumn<facts::IntentPairKind> for DefaultEncoder {
+    #[inline]
+    fn encode_column(
+        name: &str,
+        col: Vec<facts::IntentPairKind>,
+    ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
+        <Self as EncodeColumn<u8>>::encode_column(
+            name,
+            col.into_iter()
+                .map(|kind| match kind {
+                    facts::IntentPairKind::Explicit => 0,
+                    facts::IntentPairKind::Implicit => 1,
+                })
+                .collect_vec(),
+        )
+    }
+}
+
+impl DecodeColumn<facts::IntentPairKind> for DefaultDecoder {
+    #[inline]
+    fn into_decode_array(
+        name: &str,
+        batch: &RecordBatch,
+    ) -> impl IntoIterator<Item = facts::IntentPairKind> {
+        <Self as DecodeColumn<u8>>::into_decode_array(name, batch)
+            .into_iter()
+            .map(|tag| match tag {
+                0 => facts::IntentPairKind::Explicit,
+                1 => facts::IntentPairKind::Implicit,
+                _ => panic!("bad encoding of IntentPairKind"),
             })
     }
 }

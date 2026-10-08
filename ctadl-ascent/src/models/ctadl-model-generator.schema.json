@@ -395,7 +395,7 @@
           "find": {
             "description": "The SUT element to match on",
             "type": "string",
-            "enum": ["methods", "variables", "fields", "callsites"]
+            "enum": ["methods", "variables", "fields", "callsites", "dispatch"]
           },
           "in": {
             "description": "Scopes this generator to some of the project's imports. Omit to apply it to every one.",
@@ -451,6 +451,15 @@
               },
               "bridge": {
                 "$ref": "#/$defs/bridge-model"
+              },
+              "closure_shaped": {
+                "description": "find: dispatch only. Marks the matched signatures as closure-shaped -- arbitrary code behind a one-method interface, which is what hybrid inlining is for. A note for `ctadl report`, not a resolution rule: nothing resolves differently for being on this list. It exists because the structural single-abstract-method test cannot see an interface the import does not declare, and a framework name is something an obfuscator cannot touch.",
+                "type": "boolean"
+              },
+              "resolve": {
+                "description": "find: dispatch only. 'inline' sends every site of the matched signature to hybrid inlining regardless of the CHA threshold, except a site with exactly one target, which stays exact. For a signature whose bodies must stay reachable but whose target set is too wide for CHA. Index time only.",
+                "type": "string",
+                "enum": ["inline"]
               },
               "access_paths": {
                 "description": "Access paths that occur nowhere in the IR, declared by hand so the indexer registers them. The escape hatch for composition across a bridge: a pathful bridge composes with its callee's derived summary only where the summary's endpoints land exactly on the port's to-path, and flows needing deeper residues nobody declared are dropped, silently. Each entry uses the same grammar as a port's trailing path, e.g. '.next.next.next'.",

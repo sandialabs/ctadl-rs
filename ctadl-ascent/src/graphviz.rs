@@ -1,5 +1,6 @@
 use rustc_graphviz as dot;
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
@@ -56,6 +57,17 @@ impl Cone {
     }
 }
 
+/// Numbers each distinct vertex in first-seen order, yielding the ordinals the graphs use as
+/// DOT node identifiers.
+fn number_vertices<N: Ord>(vertices: impl IntoIterator<Item = N>) -> BTreeMap<N, usize> {
+    let mut ids = BTreeMap::new();
+    for v in vertices {
+        let next = ids.len();
+        ids.entry(v).or_insert(next);
+    }
+    ids
+}
+
 /// A wrapper around the (oriented) taint edges to implement Graphviz traits.
 pub struct TaintGraphViz<'a> {
     /// Every node, mapped to its cone membership. Also the node set for the walk.
@@ -67,6 +79,8 @@ pub struct TaintGraphViz<'a> {
     /// Declared sink vertices (drawn as ellipses).
     sinks: &'a BTreeSet<TaintNode>,
     id_map: &'a crate::facts::IdMap,
+    /// Collision-free DOT ids, covering the nodes and every edge endpoint.
+    node_ids: BTreeMap<TaintNode, usize>,
 }
 
 impl<'a> TaintGraphViz<'a> {
@@ -77,12 +91,20 @@ impl<'a> TaintGraphViz<'a> {
         sinks: &'a BTreeSet<TaintNode>,
         id_map: &'a crate::facts::IdMap,
     ) -> Self {
+        let node_ids = number_vertices(
+            node_cone.keys().copied().chain(
+                edges
+                    .iter()
+                    .flat_map(|e| [(e.0, e.1, e.2), (e.3, e.4, e.5)]),
+            ),
+        );
         Self {
             node_cone,
             edges,
             sources,
             sinks,
             id_map,
+            node_ids,
         }
     }
 
@@ -105,12 +127,7 @@ impl<'a> dot::Labeller<'a> for TaintGraphViz<'a> {
     }
 
     fn node_id(&'a self, n: &Self::Node) -> dot::Id<'a> {
-        let s = self.node_to_string(&n.0, &n.1, &n.2);
-        let safe_id = s
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-            .collect::<String>();
-        dot::Id::new(format!("node_{}", safe_id)).unwrap()
+        dot::Id::new(format!("n{}", self.node_ids[n])).unwrap()
     }
 
     fn node_label(&self, n: &Self::Node) -> dot::LabelText<'a> {
@@ -211,10 +228,32 @@ pub fn render_taint_graph<W: Write>(
     dot::render(&graph, writer)
 }
 
+/// An index-graph vertex: `(function, variable, access-path)`.
+pub type IndexVertex = (FunctionId, FlowVariable, Path);
+
+/// One row of the `assign` relation: the assignment `dst = src` inside `function`, drawn as the
+/// edge `src -> dst`.
+pub type AssignRow = (FunctionId, FlowVariable, Path, FlowVariable, Path);
+
+/// Orders two index-graph vertices by what they denote, so a rendering is reproducible.
+pub fn index_vertex_cmp(a: &IndexVertex, b: &IndexVertex) -> Ordering {
+    a.0.cmp(&b.0)
+        .then_with(|| a.1.content_cmp(&b.1))
+        .then_with(|| a.2.cmp(&b.2))
+}
+
+/// Orders two `assign` rows by their drawn edge: destination vertex first, then source.
+pub fn index_edge_cmp(a: &AssignRow, b: &AssignRow) -> Ordering {
+    index_vertex_cmp(&(a.0, a.1, a.2), &(b.0, b.1, b.2))
+        .then_with(|| index_vertex_cmp(&(a.0, a.3, a.4), &(b.0, b.3, b.4)))
+}
+
 pub struct IndexGraphViz<'a> {
-    nodes: Vec<(FunctionId, FlowVariable, Path)>,
-    edges: &'a [(FunctionId, FlowVariable, Path, FlowVariable, Path)],
+    nodes: Vec<IndexVertex>,
+    edges: &'a [AssignRow],
     id_map: &'a crate::facts::IdMap,
+    /// Collision-free DOT ids, covering the nodes and every edge endpoint.
+    node_ids: BTreeMap<IndexVertex, usize>,
 }
 
 impl<'a> IndexGraphViz<'a> {
@@ -244,12 +283,7 @@ impl<'a> dot::Labeller<'a> for IndexGraphViz<'a> {
     }
 
     fn node_id(&'a self, n: &Self::Node) -> dot::Id<'a> {
-        let s = self.node_to_string(&n.0, &n.1, &n.2);
-        let safe_id = s
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-            .collect::<String>();
-        dot::Id::new(format!("node_{}", safe_id)).unwrap()
+        dot::Id::new(format!("n{}", self.node_ids[n])).unwrap()
     }
 
     fn node_label(&self, n: &Self::Node) -> dot::LabelText<'a> {
@@ -282,8 +316,11 @@ impl<'a> dot::GraphWalk<'a> for IndexGraphViz<'a> {
     }
 }
 
+/// Renders the index (assign-like) graph as Graphviz DOT.
+///
+/// Nodes come out in [`index_vertex_cmp`] order. Edges come out in slice order.
 pub fn render_index_graph<W: Write>(
-    assign_like: &[(FunctionId, FlowVariable, Path, FlowVariable, Path)],
+    assign_like: &[AssignRow],
     id_map: &crate::facts::IdMap,
     writer: &mut W,
 ) -> std::io::Result<()> {
@@ -292,10 +329,20 @@ pub fn render_index_graph<W: Write>(
         nodes.insert((*func_id, *dst_var, *dst_path));
         nodes.insert((*func_id, *src_var, *src_path));
     }
+    let mut nodes: Vec<IndexVertex> = nodes.into_iter().collect();
+    nodes.sort_unstable_by(index_vertex_cmp);
+    let node_ids = number_vertices(
+        nodes.iter().copied().chain(
+            assign_like
+                .iter()
+                .flat_map(|e| [(e.0, e.1, e.2), (e.0, e.3, e.4)]),
+        ),
+    );
     let graph = IndexGraphViz {
-        nodes: nodes.into_iter().collect(),
+        nodes,
         edges: assign_like,
         id_map,
+        node_ids,
     };
     dot::render(&graph, writer)
 }
@@ -407,5 +454,39 @@ mod tests {
         // Source is a diamond, sink an ellipse — sanity-check role shapes survive.
         assert!(dot.contains("diamond"), "expected a source diamond\n{dot}");
         assert!(dot.contains("ellipse"), "expected a sink ellipse\n{dot}");
+    }
+
+    /// Extracts the DOT identifier from each node declaration line, in order.
+    fn declared_node_ids(dot: &str) -> Vec<&str> {
+        dot.lines()
+            .filter(|l| l.contains("label=") && !l.contains("->"))
+            .filter_map(|l| l.trim().split('[').next())
+            .collect()
+    }
+
+    /// Two vertices whose labels differ only in punctuation must still get distinct DOT
+    /// ids. `.a.b` and `.a_b` are distinct access paths, but sanitizing the label into
+    /// DOT's identifier alphabet mapped both to `local_t__a_b`, and graphviz then drew
+    /// them as one node owning both incident edges.
+    #[test]
+    fn node_ids_survive_labels_that_differ_only_in_punctuation() {
+        let mut ids = IdMap::new();
+        let f = ids.get_or_add_function(Function::from(Str::from("foo")));
+        let (t, src) = (local("t"), local("src"));
+        let (dots, under) = (Path::parse(".a.b").unwrap(), Path::parse(".a_b").unwrap());
+        assert_ne!(dots, under, "the two paths must denote distinct vertices");
+
+        let assign_like = vec![
+            (f, t, dots, src, Path::empty()),
+            (f, t, under, src, Path::empty()),
+        ];
+        let mut out = Vec::new();
+        render_index_graph(&assign_like, &ids, &mut out).unwrap();
+        let dot = String::from_utf8(out).unwrap();
+
+        let node_ids = declared_node_ids(&dot);
+        assert_eq!(node_ids.len(), 3, "expected 3 declared nodes\n{dot}");
+        let distinct: BTreeSet<_> = node_ids.iter().collect();
+        assert_eq!(distinct.len(), 3, "node ids collided: {node_ids:?}\n{dot}");
     }
 }

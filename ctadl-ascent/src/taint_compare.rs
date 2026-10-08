@@ -13,7 +13,7 @@
 use ctadl_ir::{ProgramInfo, ssa};
 
 use crate::codegen::model_matches::codegen_model_matches;
-use crate::codegen::{CallResolutionStrategy, codegen_program};
+use crate::codegen::{CallPolicy, CallResolutionStrategy, codegen_program};
 use crate::error::Error;
 use crate::facts::TaintDirection;
 use crate::index_engine::source_info::IndexSourceInfo;
@@ -67,9 +67,9 @@ fn analyze_parsed_flows(
     model_path: impl AsRef<std::path::Path>,
 ) -> Result<Vec<StaticFlow>, Error> {
     if has_error {
-        return Err(Error::TreeSitterParse(
+        return Err(Error::Import(ctadl_import::Error::TreeSitterParse(
             "tree-sitter reported a parse error in the input program".to_owned(),
-        ));
+        )));
     }
     let mut program_info = ProgramInfo {
         program,
@@ -98,8 +98,8 @@ fn analyze_parsed_flows(
         &mut index_facts,
         &mut source_info,
         CallResolutionStrategy::Mixed,
-        // The harness analyses every function body; nothing is model-skipped.
-        &Default::default(),
+        CallPolicy::default(),
+        &model_matches,
     );
     // No bridge specs: the harness models a single translation unit, with no cross-language
     // (JNI-style) linking to resolve.
@@ -109,6 +109,9 @@ fn analyze_parsed_flows(
         IndexConfig::default(),
         Some(&source_info.sites),
     );
+    // The call graph the query runs on, as `ctadl query` builds it: codegen's calls plus every
+    // call the index fixpoint resolved (function pointers, virtual dispatch).
+    let final_call = index_result.final_call(&index_facts.call);
 
     // 4. Build query endpoints (sources + sinks) from the matched model.
     let built = build_query_endpoints(
@@ -116,6 +119,7 @@ fn analyze_parsed_flows(
         &index_facts,
         &source_info.sites,
         &index_result.assign_like,
+        &final_call,
     );
     let endpoints = built.endpoints;
     let mut formal_params = index_facts.formal_param.clone();
@@ -147,7 +151,7 @@ fn analyze_parsed_flows(
     let query_facts = QueryFacts {
         formal_param: formal_params,
         actual_param: index_facts.actual_param,
-        call: index_facts.call,
+        call: final_call,
         assign: index_result.assign_like,
         paths: index_result.paths,
         external_function: index_result.external_function,

@@ -1,0 +1,16 @@
+[package]
+name = "ctadl-jvm"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+ctadl-import = { path = "../../ctadl-import", features = ["jvm"] }
+ctadl-ir = { path = "../../ctadl-ir", features = ["serde"] }
+hashbrown = "0.16"
+jvm-reader = { path = "../../readers/jvm-reader" }
+log = "0.4"
+smallvec = "1"
+source-info = { path = "../../source-info", features = ["serde"] }
+
+[lints]
+workspace = true

@@ -45,6 +45,7 @@ use crate::index_engine::locals_trie::hb_bytes;
 // Reuse two shared helpers from `locals_trie`: the boxed iterator we can clone, and the no-op
 // write target for view indices.
 use crate::index_engine::locals_trie::{DynIter, NoopWrite};
+use crate::index_engine::path_group::PathGroup;
 
 type Map<K, V> = hashbrown::HashMap<K, V, rustc_hash::FxBuildHasher>;
 
@@ -150,21 +151,17 @@ where
     Vs: Clone + Eq + Hash,
     Ps: Clone + Eq + Hash,
 {
-    /// Forward map: `(F, Vsrc)` -> its `(Vdst, Pdst, Psrc)` leaves. It serves the `0_3` probe, and
-    /// serves the `0_1_2_3_4` existence index by membership scan or by a full walk.
+    /// Forward map: `(F, Vsrc)` -> its leaves, keyed by `Psrc` and carrying `(Vdst, Pdst)`. It
+    /// serves the `0_3` probe by iterating a group, the `0_3_4` probe by looking `Psrc` up in it,
+    /// and the `0_1_2_3_4` existence index by membership.
     ///
-    /// The leaf container is a `Vec`, which dedups by linear scan, and deliberately **not** a
-    /// `HashSet`. Keyed on `(F, Vsrc)`, `assign_like` fans out to fewer than 2 leaves per group on
-    /// average; we measured 1.85 on binary targets. A whole hashbrown table per group costs about
-    /// 108 B to hold 1 or 2 leaves — hashbrown's smallest table is 4 buckets, each holding a 24 B
-    /// leaf, plus a control byte per bucket and the group mirror — which is far more than the
-    /// full-tuple index it is meant to replace. A trie with `HashSet` leaves measured *larger*
-    /// than Ascent's default storage. A `Vec` stores a singleton or tiny group in a few dozen
-    /// bytes.
-    ///
-    /// Dedup costs O(group size), but groups are tiny, so it is cheap in practice. The
-    /// max-group-size `WARN` in [`AssignTrie::heap_report`] guards that assumption.
-    fwd: Map<(F, Vs), Vec<(Vd, Pd, Ps)>>,
+    /// A group is a [`PathGroup`]: two words wide and one allocation while it is small, which
+    /// is the overwhelmingly common case (keyed on `(F, Vsrc)`, `assign_like` fans out to fewer
+    /// than 2 leaves per group on average; we measured 1.85 on binary targets), and a map from
+    /// source path to leaves once it grows past the small threshold, so that the exact-path
+    /// probe and dedup stay O(1) on the dense groups a summary instantiation creates (tens of
+    /// thousands of edges at one call-argument vertex).
+    fwd: Map<(F, Vs), PathGroup<Ps, Vd, Pd>>,
     len: usize,
 }
 
@@ -189,34 +186,30 @@ where
     fn contains(&self, f: &F, vd: &Vd, pd: &Pd, vs: &Vs, ps: &Ps) -> bool {
         self.fwd
             .get(&(f.clone(), vs.clone()))
-            .is_some_and(|leaves| {
-                let probe = (vd.clone(), pd.clone(), ps.clone());
-                leaves.contains(&probe)
-            })
+            .is_some_and(|group| group.contains(ps, vd, pd))
     }
 
     /// Insert a full tuple `(F, Vd, Pd, Vs, Ps)`. Returns true if it was new to *this* store.
     fn insert(&mut self, key: &(F, Vd, Pd, Vs, Ps)) -> bool {
         let (f, vd, pd, vs, ps) = key;
-        let leaves = self.fwd.entry((f.clone(), vs.clone())).or_default();
-        let leaf = (vd.clone(), pd.clone(), ps.clone());
-        if leaves.contains(&leaf) {
-            false
-        } else {
-            leaves.push(leaf);
+        let group = self.fwd.entry((f.clone(), vs.clone())).or_default();
+        if group.insert((ps.clone(), vd.clone(), pd.clone())) {
             self.len += 1;
             true
+        } else {
+            false
         }
     }
 
     /// Merge `from` into `self`, taking the union. The delta->total move uses this.
     fn absorb(&mut self, from: &mut Self) {
-        for (key, leaves) in from.fwd.drain() {
-            let dst = self.fwd.entry(key).or_default();
-            for leaf in leaves {
-                if !dst.contains(&leaf) {
-                    dst.push(leaf);
-                    self.len += 1;
+        use hashbrown::hash_map::Entry;
+        for (key, group) in from.fwd.drain() {
+            match self.fwd.entry(key) {
+                Entry::Occupied(e) => self.len += e.into_mut().merge(group),
+                Entry::Vacant(e) => {
+                    self.len += group.len();
+                    e.insert(group);
                 }
             }
         }
@@ -240,19 +233,12 @@ where
         // hot group would flag O(N^2) behaviour.
         let mut trie = hb_bytes(
             self.fwd.capacity(),
-            sz_key + std::mem::size_of::<Vec<(Vd, Pd, Ps)>>(),
+            sz_key + std::mem::size_of::<PathGroup<Ps, Vd, Pd>>(),
         );
         let mut max_group = 0usize;
-        for leaves in self.fwd.values() {
-            trie += leaves.capacity() * sz_leaf;
-            max_group = max_group.max(leaves.len());
-        }
-        if max_group > 4096 {
-            log::warn!(
-                "assign_like_trie: largest (F,Vsrc) group has {} leaves; linear leaf dedup is \
-                 O(group size) and may be slow for such groups",
-                max_group
-            );
+        for group in self.fwd.values() {
+            trie += group.heap_bytes();
+            max_group = max_group.max(group.len());
         }
         // What the default storage would hold for the same `len` rows: the physical Vec, at
         // `sz_full` each; the full index, whose `RelFullIndexType` is roughly a
@@ -296,9 +282,9 @@ where
     /// full-relation copy here lowers the peak footprint directly.
     pub fn into_vec(mut self) -> Vec<(F, Vd, Pd, Vs, Ps)> {
         let mut out = Vec::with_capacity(self.len);
-        for ((f, vs), leaves) in self.fwd.drain() {
-            for (vd, pd, ps) in leaves {
-                out.push((f.clone(), vd.clone(), pd, vs.clone(), ps));
+        for ((f, vs), group) in self.fwd.drain() {
+            for (ps, vd, pd) in group {
+                out.push((f.clone(), vd, pd, vs.clone(), ps));
             }
         }
         out
@@ -316,10 +302,7 @@ where
     fn from_rows(rows: Vec<(F, Vd, Pd, Vs, Ps)>) -> Self {
         let mut store = Self::default();
         for (f, vd, pd, vs, ps) in rows {
-            let leaves = store.fwd.entry((f, vs)).or_default();
-            let leaf = (vd, pd, ps);
-            if !leaves.contains(&leaf) {
-                leaves.push(leaf);
+            if store.fwd.entry((f, vs)).or_default().insert((ps, vd, pd)) {
                 store.len += 1;
             }
         }
@@ -484,6 +467,8 @@ macro_rules! marker {
 }
 
 marker!(To03, View03, NoopWrite<(F, Vs), (Vd, Pd, Ps)>, _rel => NoopWrite::default());
+marker!(To034, View034, NoopWrite<(F, Vs, Ps), (Vd, Pd)>, _rel => NoopWrite::default());
+marker!(ToNone, ViewNone, NoopWrite<(), (F, Vd, Pd, Vs, Ps)>, _rel => NoopWrite::default());
 marker!(ToFull, ViewFull, FullWrite<'a, F, Vd, Pd, Vs, Ps>, rel => FullWrite(rel));
 
 pub struct View03<'a, F, Vd, Pd, Vs, Ps>(&'a AssignTrie<F, Vd, Pd, Vs, Ps>)
@@ -500,6 +485,118 @@ where
     Pd: Clone + Eq + Hash,
     Vs: Clone + Eq + Hash,
     Ps: Clone + Eq + Hash;
+pub struct View034<'a, F, Vd, Pd, Vs, Ps>(&'a AssignTrie<F, Vd, Pd, Vs, Ps>)
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash;
+pub struct ViewNone<'a, F, Vd, Pd, Vs, Ps>(&'a AssignTrie<F, Vd, Pd, Vs, Ps>)
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash;
+
+// ---- 0_3_4: (F, Vsrc, Psrc) -> (Vdst, Pdst), the exact-path probe --------------
+impl<'a, F, Vd, Pd, Vs, Ps> RelIndexRead<'a> for View034<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = (F, Vs, Ps);
+    type Value = (&'a Vd, &'a Pd);
+    type IteratorType = crate::index_engine::path_group::Get<'a, Ps, Vd, Pd>;
+    #[inline]
+    fn index_get(&'a self, key: &(F, Vs, Ps)) -> Option<Self::IteratorType> {
+        let group = self.0.fwd.get(&(key.0.clone(), key.1.clone()))?;
+        // A miss must be `None`, not an empty iterator: `None` cuts the caller's join.
+        group.get(&key.2)
+    }
+    #[inline]
+    fn len_estimate(&self) -> usize {
+        self.0.len()
+    }
+}
+impl<'a, F, Vd, Pd, Vs, Ps> RelIndexReadAll<'a> for View034<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = (&'a F, &'a Vs, &'a Ps);
+    type Value = (&'a Vd, &'a Pd);
+    type ValueIteratorType = DynIter<'a, Self::Value>;
+    type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
+    #[inline]
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        Box::new(self.0.fwd.iter().flat_map(|((f, vs), group)| {
+            let mut byp: Map<&'a Ps, Vec<(&'a Vd, &'a Pd)>> = Map::default();
+            for (ps, vd, pd) in group.iter() {
+                byp.entry(ps).or_default().push((vd, pd));
+            }
+            byp.into_iter().map(move |(ps, vps)| {
+                let it = DynIter::new(move || vps.clone().into_iter());
+                ((f, vs, ps), it)
+            })
+        }))
+    }
+}
+
+// ---- none: every row ----------------------------------------------------------
+impl<'a, F, Vd, Pd, Vs, Ps> RelIndexRead<'a> for ViewNone<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = ();
+    type Value = (&'a F, &'a Vd, &'a Pd, &'a Vs, &'a Ps);
+    type IteratorType = DynIter<'a, Self::Value>;
+    #[inline]
+    fn index_get(&'a self, _key: &()) -> Option<Self::IteratorType> {
+        let c = self.0;
+        Some(DynIter::new(move || {
+            c.fwd.iter().flat_map(|((f, vs), group)| {
+                group.iter().map(move |(ps, vd, pd)| (f, vd, pd, vs, ps))
+            })
+        }))
+    }
+    #[inline]
+    fn len_estimate(&self) -> usize {
+        1
+    }
+    #[inline]
+    fn is_empty(&'a self) -> bool {
+        self.0.is_empty()
+    }
+}
+impl<'a, F, Vd, Pd, Vs, Ps> RelIndexReadAll<'a> for ViewNone<'a, F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    type Key = ();
+    type Value = (&'a F, &'a Vd, &'a Pd, &'a Vs, &'a Ps);
+    type ValueIteratorType = DynIter<'a, Self::Value>;
+    type AllIteratorType = std::iter::Once<((), Self::ValueIteratorType)>;
+    #[inline]
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        std::iter::once(((), RelIndexRead::index_get(self, &()).unwrap()))
+    }
+}
 
 // ---- 0_3: (F, Vsrc) -> (Vdst, Pdst, Psrc) ---------------------------------
 impl<'a, F, Vd, Pd, Vs, Ps> RelIndexRead<'a> for View03<'a, F, Vd, Pd, Vs, Ps>
@@ -515,9 +612,9 @@ where
     type IteratorType = DynIter<'a, Self::Value>;
     #[inline]
     fn index_get(&'a self, key: &(F, Vs)) -> Option<Self::IteratorType> {
-        let leaves = self.0.fwd.get(key)?;
+        let group = self.0.fwd.get(key)?;
         Some(DynIter::new(move || {
-            leaves.iter().map(|(vd, pd, ps)| (vd, pd, ps))
+            group.iter().map(|(ps, vd, pd)| (vd, pd, ps))
         }))
     }
     #[inline]
@@ -539,8 +636,8 @@ where
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(self.0.fwd.iter().map(|((f, vs), leaves)| {
-            let it = DynIter::new(move || leaves.iter().map(|(vd, pd, ps)| (vd, pd, ps)));
+        Box::new(self.0.fwd.iter().map(|((f, vs), group)| {
+            let it = DynIter::new(move || group.iter().map(|(ps, vd, pd)| (vd, pd, ps)));
             ((f, vs), it)
         }))
     }
@@ -599,10 +696,10 @@ where
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(self.0.fwd.iter().flat_map(|((f, vs), leaves)| {
-            leaves
+        Box::new(self.0.fwd.iter().flat_map(|((f, vs), group)| {
+            group
                 .iter()
-                .map(move |(vd, pd, ps)| ((f, vd, pd, vs, ps), std::iter::once(&())))
+                .map(move |(ps, vd, pd)| ((f, vd, pd, vs, ps), std::iter::once(&())))
         }))
     }
 }
@@ -664,6 +761,18 @@ macro_rules! assign_like_trie_rel_ind {
     };
     ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, par, $args:tt, [0, 3], $key:ty, $val:ty) => {
         $crate::index_engine::c_assign_like_trie::CTo03<$f, $vd, $pd, $vs, $ps>
+    };
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, ser, $args:tt, [0, 3, 4], $key:ty, $val:ty) => {
+        $crate::index_engine::assign_like_trie::To034<$f, $vd, $pd, $vs, $ps>
+    };
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, par, $args:tt, [0, 3, 4], $key:ty, $val:ty) => {
+        $crate::index_engine::c_assign_like_trie::CTo034<$f, $vd, $pd, $vs, $ps>
+    };
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, ser, $args:tt, [], $key:ty, $val:ty) => {
+        $crate::index_engine::assign_like_trie::ToNone<$f, $vd, $pd, $vs, $ps>
+    };
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, par, $args:tt, [], $key:ty, $val:ty) => {
+        $crate::index_engine::c_assign_like_trie::CToNone<$f, $vd, $pd, $vs, $ps>
     };
 }
 pub use assign_like_trie_rel_ind as rel_ind;

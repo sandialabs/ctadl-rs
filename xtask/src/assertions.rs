@@ -43,6 +43,37 @@ pub fn read_expected_native_lines(config: &Path) -> Result<Vec<i64>> {
     read_optional_lines(config, "expected_native_lines")
 }
 
+/// The Android ABI a JNI case's library is built for: the `native_abi` key, `arm64-v8a` when
+/// absent. `x86` selects the 32-bit x86 toolchain.
+pub fn read_native_abi(config: &Path) -> Result<String> {
+    let value = read_config(config)?;
+    match value.get("native_abi") {
+        None => Ok("arm64-v8a".to_string()),
+        Some(abi) => abi
+            .as_str()
+            .map(str::to_string)
+            .with_context(|| format!("`native_abi` in {} is not a string", config.display())),
+    }
+}
+
+/// The native slot layout a JNI case's library must get when its debug info is stripped: the
+/// `untyped_native_layout` key. Present only on the cases that also run stripped.
+pub fn read_untyped_native_layout(config: &Path) -> Result<Option<String>> {
+    let value = read_config(config)?;
+    match value.get("untyped_native_layout") {
+        None => Ok(None),
+        Some(layout) => layout
+            .as_str()
+            .map(|s| Some(s.to_string()))
+            .with_context(|| {
+                format!(
+                    "`untyped_native_layout` in {} is not a string",
+                    config.display()
+                )
+            }),
+    }
+}
+
 /// Read an optional array of source line numbers from a test config, treating a missing key
 /// as an empty claim.
 fn read_optional_lines(config: &Path, key: &str) -> Result<Vec<i64>> {

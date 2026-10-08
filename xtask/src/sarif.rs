@@ -35,7 +35,7 @@ static VALIDATOR: OnceLock<Option<PathBuf>> = OnceLock::new();
 /// SARIF validation is in play.
 ///
 /// A missing `checksarif` is not fatal. It is a .NET tool that only the Nix
-/// environments supply (`nix develop .#regression`, and the `regression` check),
+/// environments supply (`nix develop`, and the `regression` check),
 /// and a developer without it should still be able to run the suite -- so the
 /// checks are skipped, loudly, rather than failing every case. CI runs inside
 /// those environments, so the gate is enforced where it matters.
@@ -45,7 +45,7 @@ pub fn preflight() {
         Some(path) => println!("Validating emitted SARIF with {}", path.display()),
         None => eprintln!(
             "warning: `{CHECKSARIF}` not found on PATH; emitted SARIF will not be validated.\n\
-             warning: enter the regression dev shell (`nix develop .#regression`) to enable it."
+             warning: enter the dev shell (`nix develop`) to enable it."
         ),
     }
     // First (and only) writer; a later worker reading it back sees this value.

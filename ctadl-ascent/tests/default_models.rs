@@ -88,6 +88,8 @@ fn java_program() -> ProgramInfo {
         VirtualMethodTable::Java {
             methods,
             hierarchy: Default::default(),
+            interfaces: Default::default(),
+            abstract_methods: Default::default(),
             natives: Default::default(),
         },
         &[

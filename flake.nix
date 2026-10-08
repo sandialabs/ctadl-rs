@@ -83,6 +83,76 @@
         };
         jdk = pkgs.temurin-bin-17;
 
+        # --- Android app debugging (dev shell only) --------------------------
+        # A superset of `androidSdk` for poking at running apps: platform-tools
+        # (adb), the cmdline-tools (sdkmanager/avdmanager), the emulator with a
+        # host-native Google APIs system image (a userdebug-style image, so
+        # `adb root` works and frida-server can run), and the NDK (lldb,
+        # lldb-server, simpleperf). It is its own composition so the
+        # regression check does not pay for the emulator, image and NDK.
+        #
+        # The SDK is read-only in the store, so `sdkmanager --install` cannot
+        # add to it; change this list instead. AVDs live in ~/.android/avd:
+        #   avdmanager create avd -n dbg -k "system-images;android-34;google_apis;arm64-v8a"
+        #   emulator -avd dbg -no-window -no-audio &
+        #
+        # Frida works on any app on this image after `adb root`. JDWP (jdb) does
+        # not: ART only loads the agent into an app built debuggable, so a
+        # release APK has to be repacked with `apktool`, its <application>
+        # given android:debuggable="true", then `zipalign -p` (page-aligning
+        # its native libs) and `apksigner` with any key.
+        androidDebugAbi = if pkgs.stdenv.hostPlatform.isAarch64 then "arm64-v8a" else "x86_64";
+        androidDebugSdk = pkgs.androidenv.composeAndroidPackages {
+          buildToolsVersions = [ "30.0.2" ];
+          platformVersions = [
+            "30"
+            "34"
+          ];
+          includeEmulator = true;
+          includeSystemImages = true;
+          systemImageTypes = [ "google_apis" ];
+          abiVersions = [ androidDebugAbi ];
+          includeNDK = true;
+        };
+
+        # Native (JNI) debugging pairs the NDK's device-side lldb-server with
+        # a host lldb. The NDK's own host lldb does not start from the store:
+        # it wants a libpython3.11.dylib the NDK package leaves out. So the
+        # host side is nixpkgs' lldb, under its own name because it carries an
+        # Android-only setting: lldb 21 segfaults attaching to an Android
+        # process unless modules load one at a time, hence the -O.
+        #   adb push $ANDROID_LLDB_SERVER /data/local/tmp/ && adb shell chmod 755 /data/local/tmp/lldb-server
+        #   adb shell '/data/local/tmp/lldb-server platform --server --listen unix-abstract:///data/local/tmp/dbg.sock &'
+        #   android-lldb -o 'platform select remote-android' \
+        #     -o 'platform connect unix-abstract-connect:///data/local/tmp/dbg.sock' -o 'process attach -p <pid>'
+        androidLldbArch = if androidDebugAbi == "arm64-v8a" then "aarch64" else "x86_64";
+        androidLldb = pkgs.writeShellScriptBin "android-lldb" ''
+          exec ${pkgs.lldb}/bin/lldb -O 'settings set target.parallel-module-load false' "$@"
+        '';
+
+        # frida-server must match the host's frida version exactly, so fetch the
+        # one that goes with `frida-python` rather than leaving it to a manual
+        # download. Push it with
+        #   adb root && adb push $FRIDA_SERVER /data/local/tmp/frida-server
+        #   adb shell 'chmod 755 /data/local/tmp/frida-server && /data/local/tmp/frida-server &'
+        fridaVersion = pkgs.python3Packages.frida-python.version;
+        fridaServer =
+          let
+            arch = if androidDebugAbi == "arm64-v8a" then "arm64" else "x86_64";
+          in
+          pkgs.runCommand "frida-server-${fridaVersion}-android-${arch}"
+            {
+              src = pkgs.fetchurl {
+                url = "https://github.com/frida/frida/releases/download/${fridaVersion}/frida-server-${fridaVersion}-android-${arch}.xz";
+                hash = "sha256-CdH62GeyfWlWKnkon0xBLoWGf104q3KHcDbtNeQiMCE=";
+              };
+              nativeBuildInputs = [ pkgs.xz ];
+            }
+            ''
+              xz -dc "$src" > "$out"
+              chmod 755 "$out"
+            '';
+
         # baksmali, the reference smali disassembler, used as ground truth for
         # the dex-reader `dex:baksmali` regression check. nixpkgs has no smali
         # package, so we fetch the pinned 3.0.9 "fat" jar (the same version the
@@ -103,6 +173,24 @@
         # derivations stay named after it; see the root Cargo.toml.
         workspaceVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
 
+        # The readers' source: the workspace root plus the two readers, not the
+        # whole tree, so that editing the rest of the repo does not rebuild
+        # them. The root manifest still lists every member, which cargo would
+        # fail to load, so `preBuild` cuts `members` down to the two readers;
+        # naersk runs it in its dependency pass too.
+        readersSrc = pkgs.lib.fileset.toSource {
+          root = ./.;
+          fileset = pkgs.lib.fileset.unions [
+            ./Cargo.toml
+            ./Cargo.lock
+            ./readers/dex-reader
+            ./readers/jvm-reader
+          ];
+        };
+        readersPreBuild = ''
+          sed -z -i 's|members *= *\[[^]]*\]|members = ["readers/dex-reader", "readers/jvm-reader"]|' Cargo.toml
+        '';
+
         # `dex-reader` is the DEX dumper the linemap step of the DEX regression
         # tests runs. It is an *example* of the dex-reader crate, not a bin, so
         # that a plain `cargo build` -- which is what packages.default runs --
@@ -111,8 +199,8 @@
         #
         # Two details of the target selection:
         #
-        # - The src is the whole workspace, not ./dex-reader. dex-reader is a
-        #   workspace member now, and a member cannot be built alone: its
+        # - The src is `readersSrc` below, not ./readers/dex-reader. dex-reader
+        #   is a workspace member, and a member cannot be built alone: its
         #   `version.workspace = true` needs the root manifest.
         # - `--lib` rides along with `--examples` for naersk's sake. naersk
         #   builds dependencies in a first pass over a stub source tree, which
@@ -124,28 +212,46 @@
         # naersk installs whatever cargo reports as an executable, and an
         # example is one, so this lands at $out/bin/dex-reader as before.
         dex-reader = naersk-lib.buildPackage {
-          src = ./.;
+          src = readersSrc;
+          preBuild = readersPreBuild;
           version = workspaceVersion;
           name = "dex-reader";
           release = false;
-          cargoBuildOptions = x: x ++ [ "--package" "dex-reader" "--lib" "--examples" ];
+          cargoBuildOptions =
+            x:
+            x
+            ++ [
+              "--package"
+              "dex-reader"
+              "--lib"
+              "--examples"
+            ];
         };
 
         # `jvm-reader` is the same arrangement for the JVM E2E linemap step.
         jvm-reader = naersk-lib.buildPackage {
-          src = ./.;
+          src = readersSrc;
+          preBuild = readersPreBuild;
           version = workspaceVersion;
           name = "jvm-reader";
           release = false;
-          cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" "--lib" "--examples" ];
+          cargoBuildOptions =
+            x:
+            x
+            ++ [
+              "--package"
+              "jvm-reader"
+              "--lib"
+              "--examples"
+            ];
         };
 
         # The external toolchain the regression scripts expect on PATH
         # (dex-reader, jvm-reader, javac, dx, gcc/addr2line, ghidra, jq,
-        # python3). Deliberately excludes this repo's own package so that
-        # `devShells.regression` can be used to run parts of the suite against a
-        # locally built ctadl/xtask; the `regression` check adds the Nix-built
-        # package on top.
+        # python3). Deliberately excludes this repo's own package so that the
+        # dev shell can be used to run parts of the suite against a locally
+        # built ctadl/xtask; the `regression` check adds the Nix-built package
+        # on top.
         testEnv = pkgs.buildEnv {
           name = "ctadl-nightly-test-env";
           # The cc-wrapper and binutils-wrapper both ship a few overlapping
@@ -171,6 +277,10 @@
             # Where it is not cross (x86_64 Linux) it collapses to the native
             # gcc, which is the right linker there anyway.
             pkgs.pkgsCross.gnu64.stdenv.cc
+            # The 32-bit x86 toolchain (`i686-unknown-linux-gnu-` prefixed, so it
+            # claims no `cc` either), for the JNI cases that need a 32-bit
+            # library: the ABI on which a `long` arrives split in two.
+            pkgs.pkgsCross.gnu32.stdenv.cc
             pkgs.binutils
             dex-reader
             jvm-reader
@@ -180,6 +290,27 @@
             pkgs.ghidra-bin
           ];
         };
+
+        # The DroidBench ICC APKs the `android-icc` regression specs name, fetched
+        # at the commit the specs pin instead of being committed to this repo.
+        # xtask finds them through CTADL_ANDROID_ICC_APKS, which the dev shell
+        # and the regression check both set; without it those cases SKIP.
+        droidbenchIccApks =
+          let
+            rev = "a57fa6f42f278591695672f1aa8b37c275139370";
+            apk = name: hash: {
+              name = "${name}.apk";
+              path = pkgs.fetchurl {
+                url = "https://raw.githubusercontent.com/secure-software-engineering/DroidBench/${rev}/apk/InterComponentCommunication/${name}.apk";
+                inherit hash;
+              };
+            };
+          in
+          pkgs.linkFarm "droidbench-icc-apks" [
+            (apk "ActivityCommunication2" "sha256-KyJvdF2BdCccHox9k+op/GbzEbeHKGmQ6op/HOrxvcA=")
+            (apk "ActivityCommunication5" "sha256-MVtam+x1OU2TUN2PBaJnULM2PlC/jBawvLwPdS05FVw=")
+            (apk "ComponentNotInManifest1" "sha256-MHB8889dYdMwcUE6GJIcpkWTWEExEd/6iUna+ArFrHc=")
+          ];
 
         # The distributable `ctadl` binaries, one per released target. What each
         # one is, why it cannot just be `packages.default`, and which builder
@@ -276,6 +407,7 @@
                   # stale binary, but the Nix sandbox has no source tree or cargo.
                   # Point it at the ctadl that ships in packages.default instead.
                   export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
+                  export CTADL_ANDROID_ICC_APKS="${droidbenchIccApks}"
                   # The `models:*` checks hold the model files ctadl ships to
                   # `ctadl-model-generator.schema.json`. Both live in the
                   # ctadl-ascent crate, outside ./nightly, and this sandbox has
@@ -283,7 +415,8 @@
                   # would self-skip here -- which is the one place the drift is
                   # meant to be caught.
                   ${self.packages.${system}.default}/bin/xtask regression \
-                    --jvm-samples ${./jvm-reader/tests/sample} \
+                    --frontend dex,jvm,pcode,lua,jni,c,android-icc \
+                    --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
                     --models-dir ${./ctadl-ascent/src/models}
 
@@ -309,8 +442,20 @@
               version = workspaceVersion;
               name = "dex-reader-tests";
               mode = "test";
-              cargoBuildOptions = x: x ++ [ "--package" "dex-reader" ];
-              cargoTestOptions = opts: opts ++ [ "--package" "dex-reader" ];
+              cargoBuildOptions =
+                x:
+                x
+                ++ [
+                  "--package"
+                  "dex-reader"
+                ];
+              cargoTestOptions =
+                opts:
+                opts
+                ++ [
+                  "--package"
+                  "dex-reader"
+                ];
             };
 
             # jvm-reader's unit tests, same arrangement -- and, like dex-reader's,
@@ -323,8 +468,20 @@
               version = workspaceVersion;
               name = "jvm-reader-tests";
               mode = "test";
-              cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" ];
-              cargoTestOptions = opts: opts ++ [ "--package" "jvm-reader" ];
+              cargoBuildOptions =
+                x:
+                x
+                ++ [
+                  "--package"
+                  "jvm-reader"
+                ];
+              cargoTestOptions =
+                opts:
+                opts
+                ++ [
+                  "--package"
+                  "jvm-reader"
+                ];
             };
           in
           {
@@ -332,6 +489,10 @@
           };
 
         formatter = pkgs.nixfmt;
+        # One shell for everything: the day-to-day Rust/Nix tooling plus the
+        # external toolchain the regression suite needs (ghidra, the Android
+        # SDK, a JDK, dex-reader/jvm-reader, ...). `cargo xtask regression`
+        # runs straight from here.
         devShells.default =
           with pkgs;
           mkShell {
@@ -346,7 +507,11 @@
               cargo-expand
               sarif-tools
               cargo-flamegraph
-              (python3.withPackages (ps: [ ps.pyarrow ]))
+              (python3.withPackages (ps: [
+                ps.pyarrow
+                # The frida Python API, for scripting hooks with structured results.
+                ps.frida-python
+              ]))
               ctadl-souffle-wrapper
               parquet-tools
               graphviz
@@ -356,24 +521,35 @@
               pkg-config
               bzip2
               ghidra-bin
-            ];
-            RUST_SRC_PATH = rustPlatform.rustLibSrc;
-          };
-
-          # nix develop .#regression
-          devShells.regression = pkgs.mkShell {
-            buildInputs = with pkgs; [
-              nil
-              nixd
+              # Android app debugging; see androidDebugSdk above. jdb comes
+              # with the JDK in testEnv.
+              frida-tools
+              apktool
+              jadx
+              scrcpy
+              androidLldb
             ];
             packages = [ testEnv ];
 
+            RUST_SRC_PATH = rustPlatform.rustLibSrc;
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
-            ANDROID_SDK_ROOT = "${androidSdk.androidsdk}/libexec/android-sdk";
-            RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
+            # The debugging SDK, a superset of the regression one, so the
+            # emulator finds its system image through this.
+            ANDROID_SDK_ROOT = "${androidDebugSdk.androidsdk}/libexec/android-sdk";
+            ANDROID_HOME = "${androidDebugSdk.androidsdk}/libexec/android-sdk";
+            ANDROID_NDK_ROOT = "${androidDebugSdk.androidsdk}/libexec/android-sdk/ndk-bundle";
+            FRIDA_SERVER = "${fridaServer}";
+            CTADL_ANDROID_ICC_APKS = "${droidbenchIccApks}";
 
+            # The debugging SDK's bin/ (adb, emulator, avdmanager, ...) goes
+            # ahead of testEnv's, which carries the regression SDK's adb too.
+            # The NDK's toolchain stays off PATH, where its clang would shadow
+            # the stdenv's; ANDROID_LLDB_SERVER names the binary to push for
+            # `android-lldb`, and simpleperf is under $ANDROID_NDK_ROOT/simpleperf.
             shellHook = ''
-              export PATH="${androidSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"
+              export PATH="${androidDebugSdk.androidsdk}/bin:${androidDebugSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"
+              ANDROID_LLDB_SERVER=$(echo "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*/lib/clang/*/lib/linux/${androidLldbArch}/lldb-server)
+              export ANDROID_LLDB_SERVER
             '';
           };
       }

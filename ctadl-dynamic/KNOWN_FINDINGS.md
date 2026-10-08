@@ -108,7 +108,7 @@ The C frontend already *detected* indirect calls (emitting `funcptr-call`, pushi
 variable wasn't recorded, so indirect-call resolution had nothing to follow to the call site.
 Two changes closed it:
 
-- **Frontend** (`ctadl-ascent/src/languages/tree_sitter/mod.rs`): the variable-declarator query
+- **Frontend** (`frontends/ctadl-c/src/lib.rs`): the variable-declarator query
   gained a `function_declarator` arm for parenthesized pointer declarators, so a
   function-pointer declaration `int (*fp)(int)` captures the pointer variable name (fixes the
   local forms `05`/`07`/`08`).
@@ -152,7 +152,7 @@ compare against the moment the frontend learns to ingest it (the harness will th
   int (*fps[2])(int) = { id, id };  // ERR 78 — this is what masked F2 until element-assignment
   ```
 - **Fix:** `walk_declaration` in
-  [`ctadl-ascent/src/languages/tree_sitter_c/mod.rs`](../ctadl-ascent/src/languages/tree_sitter_c/mod.rs)
+  [`frontends/ctadl-c/src/lib.rs`](../frontends/ctadl-c/src/lib.rs)
   intercepts a value node of kind `initializer_list` and routes it to `collect_initializer_list`,
   which **desugars the brace element-wise into the assignments it stands for** — no new IR, no new
   taint rule, just the existing subscript-/field-/funcptr-store lowering:
@@ -211,7 +211,7 @@ compare against the moment the frontend learns to ingest it (the harness will th
   ingested fine, so the gap was specific to the empty-statement body. (`goto` and labels
   generally worked — added in `d1ccd07`; this was the one residual form.)
 - **Fix:** `walk_statement`'s `expression_statement` arm in
-  [`ctadl-ascent/src/languages/tree_sitter/mod.rs`](../ctadl-ascent/src/languages/tree_sitter/mod.rs)
+  [`frontends/ctadl-c/src/lib.rs`](../frontends/ctadl-c/src/lib.rs)
   now reads the **named** child instead of `child(0)`. The null statement parses as an
   `expression_statement` whose only child is the anonymous `;` token, so it now has no named child
   and lowers to a no-op (nothing emitted, control falls through unchanged) rather than handing the
@@ -234,7 +234,7 @@ compare against the moment the frontend learns to ingest it (the harness will th
 - **Was:** a declaration like `int a[3];` failed with
   `ERR 78: Unsupported expression type: array_declarator` — the statement walker had no
   `array_declarator` arm, so it routed to `flatten_expr`, which had no case for it.
-- **Fix:** `walk_declaration` in `ctadl-ascent/src/languages/tree_sitter/mod.rs` now handles
+- **Fix:** `walk_declaration` in `frontends/ctadl-c/src/lib.rs` now handles
   `array_declarator` (alongside `pointer_declarator`/`function_declarator`). (Same commit also
   added `goto` lowering.)
 - **Verified resolved by:** [`cases/18_array_subscript`](cases/18_array_subscript/) now reports
@@ -250,7 +250,7 @@ compare against the moment the frontend learns to ingest it (the harness will th
   switch_statement` — the statement walker in `mod.rs` had no `switch_statement` arm, so it fell
   through to `flatten_expr`, which had no case for it.
 - **Fix:** `walk_switch` in
-  [`ctadl-ascent/src/languages/tree_sitter/mod.rs`](../ctadl-ascent/src/languages/tree_sitter/mod.rs)
+  [`frontends/ctadl-c/src/lib.rs`](../frontends/ctadl-c/src/lib.rs)
   lowers a `switch` path-insensitively, the same way `if` is lowered — the entry block branches
   non-deterministically to every `case`/`default` arm, arms fall through to the next unless a
   `break` redirects to the switch continuation. `break`/`continue` resolve against per-construct

@@ -1,0 +1,76 @@
+{
+  // The library is built for 32-bit x86, where a `long` can arrive split in two.
+  "native_abi": "x86",
+  // Also run the case with the library's debug info stripped, and check that the bridge chose
+  // this layout for it. The `-g` build must choose `Typed`.
+  "untyped_native_layout": "SplitWide",
+  // The source call and the native call. The flow comes back to the Java sink (line 39) only
+  // when Ghidra recovered the native's return value, which it does from DWARF alone, so the
+  // stripped build's flow ends at the native sink on `keep` instead.
+  "expected_lines": [
+    37,
+    38
+  ],
+  // `return keep((jint)(data >> 32) + used);` -- `keep` is handed the high word of the `long`
+  // only.
+  "expected_native_lines": [
+    32
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "source",
+          "parent": "LJniWide;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "UserInput",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "sink",
+          "parent": "LJniWide;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "TaintedData",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "keep"
+          ]
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "TaintedData",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}
