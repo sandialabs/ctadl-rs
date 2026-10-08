@@ -1,0 +1,6 @@
+{
+  "name": "CPP_121_overload_with_copy_ctor",
+  "description": "C++ same-arity overloads (spec 024, FR-2), POSITIVE: `Box(int)` + `Box(Box*)` + `Box(const Box&)` all at arity 1. The copy constructor's key (`Box::Box#copy`, spec 022) is not a member of the arity group, so it must keep winning for `Box b(a)` while `Box c(&a)` resolves by argument shape to `Box::Box#1(Box*)`. Both bodies write w from a.v. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

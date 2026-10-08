@@ -1,0 +1,7 @@
+{
+  "name": "CPP_122_overload_ambiguous_scalars",
+  "description": "C++ same-arity overloads (spec 024, FR-3), NEGATIVE at runtime, EXPECTED PRECISION GAP: `Box(int)` + `Box(long)` with `Box b(source()); sink(b.getw())`. The two differ only in a scalar parameter type, and this slice does not type scalar expressions, so both candidates' parameters and the argument are all `Other` -- the frontend cannot decide. It emits ONE construction with both keys as targets (the multi-target DirectCall a virtual call already emits), a sound superset of the one C++ selects. C++ runs `Box(int)`, so w stays 0 (d=none) while CTADL also reports the long body's `w = (int)x` (s=flow). This is the declared price of soundness over the pre-024 chimera, which agreed here only because the non-carrying body happened to come first; the positive half of the shape (`sink(b.get())`) still agrees. s=flow d=none precision-disagree.",
+  "label": "Test",
+  "expect_flow": false,
+  "precision_gap": "overload-ambiguous-scalars"
+}

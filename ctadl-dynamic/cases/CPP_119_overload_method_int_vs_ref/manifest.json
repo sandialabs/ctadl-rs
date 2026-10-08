@@ -1,0 +1,6 @@
+{
+  "name": "CPP_119_overload_method_int_vs_ref",
+  "description": "C++ same-arity overloads (spec 024, FR-2), POSITIVE: `set(int)` + `set(Box&)` on one class and `b.set(a); sink(b.getw())`. Both definitions used to lower into one `Box::set`, so the reference overload's parameter was never bound and its `w = o.v` flow was lost -- s=none against DFSan's d=flow. They are now `Box::set#1(int)` / `Box::set#1(Box&)` and the dispatch resolves by argument shape: `a` names a known Box object, which only the `Box&` parameter accepts. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

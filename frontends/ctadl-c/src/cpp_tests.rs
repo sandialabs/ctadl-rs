@@ -3598,3 +3598,436 @@ fn c_assignment_subscript_and_call_are_untouched() {
     check_func_loads(&prog, "main", "a.deref");
     check_func_assign_or_update(&prog, "main", "s.v", ["#1"]);
 }
+
+/* ----------------------------------------------------------------------------------------
+Spec 024 (`same-arity-overloads`): two definitions of one name at one arity are two
+functions, and a call reaches the one(s) its arguments can mean.
+---------------------------------------------------------------------------------------- */
+
+#[test_log::test]
+fn cpp_same_arity_ctors_are_two_functions() {
+    // FR-1: `Box(int)` and `Box(Box*)` share a name AND an arity. Keyed by arity alone they got
+    // the single name `Box::Box`, so the second `lower_function` ran against the first's
+    // `FunctionIdx` and appended its parameters to it -- one chimera with `(this, x, this, o)`
+    // and two concatenated bodies. Each definition now gets a signature-mangled key of its own
+    // and exactly its own two parameters (`this` + one), and each body writes its own member.
+    let src = r"
+        struct Box {
+            int v;
+            int w;
+            Box(int x) : v(x), w(0) {}
+            Box(Box* o) : v(0), w(o->v) {}
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::Box#1(int)",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    // A pointer parameter is `ByRef` (writes through it reach the caller's object), a plain
+    // `int` is `ByVal` -- the modes `param_head` always computed; only the *key* is new.
+    check_func_params(
+        &prog,
+        "Box::Box#1(Box*)",
+        &[ParameterType::ByRef, ParameterType::ByRef],
+    );
+    check_func_assign_or_update(&prog, "Box::Box#1(int)", "@p0.v", ["@p1"]);
+    check_func_loads(&prog, "Box::Box#1(Box*)", "@p1.v");
+    // The merged chimera is gone: nothing is lowered under the bare name or the arity-only key.
+    assert!(
+        function_named(&prog, "Box::Box").is_none()
+            && function_named(&prog, "Box::Box#1").is_none(),
+        "neither definition may keep a key that the other could also claim\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_same_arity_methods_and_free_functions_are_two_functions() {
+    // FR-1, the method and free-function shapes: `set(int)`/`set(Box&)` on a class become
+    // `Box::set#1(int)`/`Box::set#1(Box&)`, and free `f(int)`/`f(Box*)` become
+    // `f#1(int)`/`f#1(Box*)`. A reference parameter and an int parameter are distinct keys
+    // because their written types differ, which is the whole of the naming rule.
+    let src = r"
+        struct Box {
+            int v;
+            int w;
+            void set(int x) { v = x; }
+            void set(Box& o) { w = o.v; }
+        };
+        int f(int x) { return x + 1; }
+        int f(Box* p) { return p->v; }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::set#1(int)",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_params(
+        &prog,
+        "Box::set#1(Box&)",
+        &[ParameterType::ByRef, ParameterType::ByRef],
+    );
+    check_func_assign_or_update(&prog, "Box::set#1(int)", "@p0.v", ["@p1"]);
+    check_func_loads(&prog, "Box::set#1(Box&)", "@p1.v");
+    check_func_params(&prog, "f#1(int)", &[ParameterType::ByVal]);
+    check_func_params(&prog, "f#1(Box*)", &[ParameterType::ByRef]);
+    check_func_loads(&prog, "f#1(Box*)", "@p0.v");
+}
+
+#[test_log::test]
+fn cpp_namespaced_same_arity_functions_are_two_functions() {
+    // FR-1: a namespaced free function is keyed by its qualified name, so two same-arity
+    // definitions there are `ns::f#1(int)` / `ns::f#1(Box*)` -- the qualification and the
+    // signature mangling compose, exactly as the qualification and the arity mangling do.
+    let src = r"
+        struct Box { int v; };
+        namespace ns {
+            int f(int x) { return x + 1; }
+            int f(Box* p) { return p->v; }
+        }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(&prog, "ns::f#1(int)", &[ParameterType::ByVal]);
+    check_func_params(&prog, "ns::f#1(Box*)", &[ParameterType::ByRef]);
+    check_func_loads(&prog, "ns::f#1(Box*)", "@p0.v");
+}
+
+#[test_log::test]
+fn cpp_singleton_arity_groups_keep_their_keys() {
+    // FR-1 / FR-5: the key changes ONLY where one arity holds several definitions. A name
+    // overloaded across two arities with one definition each keeps the arity-only keys it has
+    // had since spec 007/010 (`id#1`/`id#2`, `Box::Box#1`/`Box::Box#2`), and a name with a
+    // single definition keeps its bare name -- so no existing edge is renamed.
+    let src = r"
+        struct Box {
+            int v;
+            Box(int x) : v(x) {}
+            Box(int x, int y) : v(x + y) {}
+            int get() { return v; }
+        };
+        int id(int x) { return x; }
+        int id(int x, int y) { return y; }";
+    let prog = program_from_cpp_string(src).0;
+    for name in ["id#1", "id#2", "Box::Box#1", "Box::Box#2", "Box::get"] {
+        assert!(
+            function_named(&prog, name).is_some(),
+            "a singleton arity group must keep the key {name:?}\n{prog}"
+        );
+    }
+    // Nothing acquired a signature: a signature-mangled key always contains a `(`.
+    assert!(
+        prog.functions
+            .functions
+            .raw
+            .iter()
+            .all(|f| !f.name.contains('(')),
+        "no name whose arity groups are all singletons may be signature-mangled\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_ctor_call_resolves_by_argument_shape() {
+    // FR-2, the constructor shape (dynamic case CPP_118/CPP_120): `Box b(&a)` passes a pointer
+    // to a known `Box`, which only the `Box*` parameter accepts, so the construction is a
+    // SINGLE edge to `Box::Box#1(Box*)`. The `int` candidate is not a target -- that is what
+    // keeps the negative (`sink(b.get())`, where the pointer body writes the constant 0) from
+    // reporting a flow.
+    let src = r"
+        struct Box {
+            int v;
+            int w;
+            Box(int x) : v(x), w(0) {}
+            Box(Box* o) : v(0), w(o->v) {}
+        };
+        int main() {
+            Box a(1);
+            Box b(&a);
+            return 0;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    let ctor_calls: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(callees, _)| callees)
+        .collect();
+    assert_eq!(
+        ctor_calls,
+        vec![
+            vec!["Box::Box#1(int)".to_string()],
+            vec!["Box::Box#1(Box*)".to_string()],
+        ],
+        "each construction must reach exactly the one overload its argument can mean\n{prog}"
+    );
+    check_direct_call_arg0(&prog, "main", "Box::Box#1(Box*)", "b");
+}
+
+#[test_log::test]
+fn cpp_method_call_resolves_by_argument_shape() {
+    // FR-2, the method shape (dynamic case CPP_119) and its scalar mirror: `b.set(a)` passes a
+    // known `Box` OBJECT, which only the `Box&` parameter accepts, while `b.set(source())`
+    // passes a shape the frontend cannot name -- and the only candidate that accepts an
+    // unclassifiable argument is the `int` one. Each is one target, not two.
+    let src = r"
+        int source();
+        struct Box {
+            int v;
+            int w;
+            void set(int x) { v = x; }
+            void set(Box& o) { w = o.v; }
+        };
+        int main() {
+            Box a;
+            Box b;
+            b.set(a);
+            b.set(source());
+            return 0;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    let targets: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(callees, _)| callees)
+        .filter(|callees| callees.iter().any(|c| c.starts_with("Box::set")))
+        .collect();
+    assert_eq!(
+        targets,
+        vec![
+            vec!["Box::set#1(Box&)".to_string()],
+            vec!["Box::set#1(int)".to_string()],
+        ],
+        "an object argument selects the reference overload and a scalar one the int \
+         overload\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_pointer_shaped_arguments_resolve_to_the_pointer_overload() {
+    // FR-2: every spelling of "a pointer to a known class" resolves the same way -- `&a`, a
+    // `Box*` local, a `Box*` parameter, and `new Box`. The free-function shape (dynamic probe
+    // `p6d`) proves the same resolution runs on the ordinary call path, not just at a
+    // construction.
+    let src = r"
+        struct Box { int v; };
+        int f(int x) { return x + 1; }
+        int f(Box* p) { return p->v; }
+        int via_param(Box* q) { return f(q); }
+        int main() {
+            Box a;
+            Box* p = &a;
+            int r = f(&a) + f(p) + f(new Box) + via_param(p);
+            return r;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    for (caller, n) in [("main", 3), ("via_param", 1)] {
+        let to_ptr = direct_calls_in(&prog, caller)
+            .iter()
+            .filter(|(callees, _)| callees == &vec!["f#1(Box*)".to_string()])
+            .count();
+        assert_eq!(
+            to_ptr, n,
+            "every pointer-shaped argument in {caller:?} must select `f#1(Box*)`\n{prog}"
+        );
+    }
+    assert!(
+        !direct_calls_in(&prog, "main")
+            .iter()
+            .any(|(callees, _)| callees.iter().any(|c| c == "f#1(int)")),
+        "no pointer-shaped argument may cross-resolve to the int overload\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_object_shaped_arguments_see_through_a_dereference() {
+    // FR-2: `*p` through a `Box*` is the OBJECT the pointer names, so it selects the `Box&`
+    // overload -- while `p` itself selects the `Box*` one. The two shapes are read off the same
+    // neutral maps, so one spelling cannot drift from the other.
+    let src = r"
+        struct Box {
+            int v;
+            int w;
+            void set(Box* o) { v = o->v; }
+            void set(Box& o) { w = o.v; }
+        };
+        int main() {
+            Box a;
+            Box* p = &a;
+            Box b;
+            b.set(p);
+            b.set(*p);
+            return 0;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    let targets: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .iter()
+        .map(|(callees, _)| callees.clone())
+        .collect();
+    assert_eq!(
+        targets,
+        vec![
+            vec!["Box::set#1(Box*)".to_string()],
+            vec!["Box::set#1(Box&)".to_string()],
+        ],
+        "a pointer selects the pointer overload and its dereference the reference one\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_ambiguous_scalar_overloads_are_one_call_with_two_edges() {
+    // FR-3 (dynamic case CPP_122): `Box(int)` and `Box(long)` differ only in a scalar type, and
+    // this slice does not type scalar expressions -- so `Box b(source())` could mean either.
+    // The construction is ONE call statement whose target list holds BOTH keys (the multi-target
+    // `DirectCall` a virtual call already emits), which is a sound superset of the one C++
+    // selects, rather than a guess at whichever body happened to be defined first.
+    let src = r"
+        int source();
+        struct Box {
+            int v;
+            int w;
+            Box(int x) : v(x), w(0) {}
+            Box(long x) : v(0), w((int)x) {}
+        };
+        int main() {
+            Box b(source());
+            return 0;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    let ctor: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(callees, _)| callees)
+        .filter(|callees| callees.iter().any(|c| c.starts_with("Box::Box")))
+        .collect();
+    assert_eq!(
+        ctor.len(),
+        1,
+        "an ambiguous construction is one call, not one per candidate\n{prog}"
+    );
+    assert_eq!(
+        ctor[0],
+        vec![
+            "Box::Box#1(int)".to_string(),
+            "Box::Box#1(long)".to_string()
+        ],
+        "both candidates must be edges of that one call\n{prog}"
+    );
+    // Both bodies exist as functions of their own, so each edge reaches a real body.
+    check_func_assign_or_update(&prog, "Box::Box#1(int)", "@p0.v", ["@p1"]);
+    check_func_assign_or_update(&prog, "Box::Box#1(long)", "@p0.w", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_copy_ctor_still_wins_over_a_same_arity_sibling() {
+    // FR-2 (dynamic case CPP_121): the copy constructor's key (`Box::Box#copy`, spec 022) is not
+    // a member of the arity group at all, so `Box b(a)` must still reach it while `Box c(&a)`
+    // resolves by shape to `Box::Box#1(Box*)` -- three one-argument constructors, three
+    // functions, three distinct edges.
+    let src = r"
+        struct Box {
+            int v;
+            int w;
+            Box(int x) : v(x), w(0) {}
+            Box(Box* o) : v(0), w(o->v) {}
+            Box(const Box& o) : v(0), w(o.v) {}
+        };
+        int main() {
+            Box a(1);
+            Box b(a);
+            Box c(&a);
+            return 0;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "main", "Box::Box#1(int)", ["a", "#1"]);
+    check_direct_call_arg0(&prog, "main", "Box::Box#copy", "b");
+    check_direct_call_arg0(&prog, "main", "Box::Box#1(Box*)", "c");
+    // The copy constructor keeps its own parameters and its own body, and is keyed apart from
+    // the arity group rather than joining it.
+    check_func_loads(&prog, "Box::Box#copy", "@p1.v");
+    assert!(
+        function_named(&prog, "Box::Box#1(constBox&)").is_none(),
+        "the copy constructor must not also be signature-mangled into the arity group\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_byvalue_class_parameter_is_copied_on_a_multi_target_call() {
+    // FR-3, second half: the by-value-class-argument record (spec 022 FR-3) is consulted PER
+    // target, so a parameter that is by value on a candidate of a multi-target call still gets
+    // its copy. Here `take(int)` and `take(Box)` are one arity and the argument is an object, so
+    // the `Box` candidate is selected and its by-value parameter copy-constructs -- and the copy
+    // is emitted exactly once.
+    let src = r"
+        struct Box {
+            int v;
+            Box(int x) : v(x) {}
+            Box(const Box& o) : v(o.v) {}
+        };
+        int take(int x) { return x; }
+        int take(Box b) { return b.v; }
+        int main() {
+            Box a(1);
+            int r = take(a);
+            return r;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    let copies = direct_calls_in(&prog, "main")
+        .iter()
+        .filter(|(callees, _)| callees.iter().any(|c| c == "Box::Box#copy"))
+        .count();
+    assert_eq!(
+        copies, 1,
+        "a by-value class argument gets exactly one copy, however many targets the call \
+         has\n{prog}"
+    );
+    check_has_direct_call(&prog, "main", "take#1(Box)");
+}
+
+#[test_log::test]
+fn c_same_named_prototypes_and_definitions_are_unchanged() {
+    // FR-5 / Principle II: for C the `overloads` map stays empty, so the mangler is the identity
+    // and `overload_targets` returns the single bare name -- a C program with repeated
+    // prototypes of one function has exactly the one function and the one edge it always had,
+    // and no name acquires an arity or a signature.
+    let src = r"
+        int f(int x);
+        int f(int x);
+        int f(int x) { return x + 1; }
+        int main() {
+            int r = f(1);
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    check_func_params(&prog, "f", &[ParameterType::ByVal]);
+    let calls = direct_calls_in(&prog, "main");
+    assert_eq!(calls.len(), 1, "{prog}");
+    assert_eq!(calls[0].0, vec!["f".to_string()], "{prog}");
+    assert!(
+        prog.functions
+            .functions
+            .raw
+            .iter()
+            .all(|fun| !fun.name.contains('#') && !fun.name.contains('(')),
+        "no C name may be arity- or signature-mangled\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_derived_object_matches_a_base_parameter() {
+    // FR-2, the derived-for-base half of the shape rule: a `Derived` object can mean a `Base&`
+    // parameter, so `take(d)` selects the reference overload even though the argument's class is
+    // not literally `Base` -- the match walks the neutral base chain (`class_is_a`), which is
+    // plain equality for every base-less class and for all of C.
+    let src = r"
+        struct Base { int v; };
+        struct Derived : Base { int w; };
+        int take(int x) { return x; }
+        int take(Base& b) { return b.v; }
+        int main() {
+            Derived d;
+            int r = take(d);
+            return r;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "main", "take#1(Base&)");
+    assert!(
+        !direct_calls_in(&prog, "main")
+            .iter()
+            .any(|(callees, _)| callees.iter().any(|c| c == "take#1(int)")),
+        "a derived object must not cross-resolve to the int overload\n{prog}"
+    );
+}

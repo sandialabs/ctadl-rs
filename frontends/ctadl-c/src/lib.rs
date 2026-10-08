@@ -838,33 +838,38 @@ struct GrammarHooks {
     /// member-wise copy *is* the value copy the existing lowering already performs.
     ///
     /// Called from both call paths ([`Context::collect_call`] and [`Context::dispatch_call`])
-    /// with the **resolved callee name** and the call's `argument_list`, so the hook can index
-    /// the neutral [`Context::byval_class_params`] record by explicit-argument position. Driven
-    /// entirely by that map plus [`Context::classes`]/[`Context::local_types`], all empty for C —
-    /// so no language branch, and no C call is ever touched.
+    /// with the call's **resolved candidate targets** and its `argument_list`, so the hook can
+    /// index the neutral [`Context::byval_class_params`] record by explicit-argument position. The
+    /// record is consulted **per target**, so a parameter that is by value on any candidate of a
+    /// multi-target call still gets its copy (spec 024 FR-3) — an ordinary single-target call
+    /// passes a one-element slice and behaves exactly as before. Driven entirely by that map plus
+    /// [`Context::classes`]/[`Context::local_types`], all empty for C — so no language branch, and
+    /// no C call is ever touched.
     copy_args: for<'a, 't> fn(
         &mut Context<'a>,
         &mut Program,
         &mut ScopeView,
         &'a str,
-        &str,
+        &[String],
         Node<'t>,
         &mut ThinVec<Exp>,
     ) -> anyhow::Result<(), Error>,
     /// Populate the neutral arity-overload map that becomes every unit's
     /// [`Context::overloads`] — *before* any function is registered or lowered. C has no
-    /// overloading, so its hook is a no-op (the map stays empty and [`Context::overload_name`]
-    /// is the identity). C++ uses it to scan every `function_definition` (free, namespaced, and
-    /// member), grouping by IR base name and recording each definition's explicit-parameter
-    /// arity, so the mangler can tell — at all four touchpoints, definition-side and call-side
-    /// alike — which names are overloaded. [`lower_units`] runs it over every unit first, ahead
+    /// overloading, so its hook is a no-op (the map stays empty and
+    /// [`Context::overload_def_name`] is the identity). C++ uses it to scan every
+    /// `function_definition` (free, namespaced, and member), grouping by IR base name and
+    /// recording each definition's explicit-parameter arity **and written signature**, so the
+    /// mangler can tell — at all four touchpoints, definition-side and call-side alike — which
+    /// names are overloaded and which definitions of one name are distinct functions
+    /// ([`OverloadSig`]). [`lower_units`] runs it over every unit first, ahead
     /// of [`collect_definitions`] (which registers a definition under its mangled name) and of
     /// `collect_aux`, so the map is complete before the first name is registered. A plain
     /// function rather than a `Context` method because no context exists yet at that point.
     collect_overloads: for<'t> fn(
         &str,
         Node<'t>,
-        &mut HashMap<String, HashSet<usize>>,
+        &mut HashMap<String, Vec<OverloadSig>>,
     ) -> anyhow::Result<(), Error>,
     /// Lower a C++ `delete p;` — destroying a heap object runs its destructor(s) (spec 016).
     /// The shared `delete_expression` arm calls this and then yields a throwaway temp for the
@@ -968,8 +973,8 @@ impl GrammarHooks {
         construct: |_ctx, _source, _program, _scope_view, _node, _class| Ok(false),
         // C passes an argument by copying its value, which is exactly what the collected
         // argument expression already is: nothing runs at a C argument, so this is a no-op.
-        copy_args: |_ctx, _program, _scope_view, _source, _callee, _args_node, _args| Ok(()),
-        // C has no overloading: the `overloads` map stays empty and `overload_name` is the
+        copy_args: |_ctx, _program, _scope_view, _source, _callees, _args_node, _args| Ok(()),
+        // C has no overloading: the `overloads` map stays empty and `overload_def_name` is the
         // identity, so every C (and every non-overloaded) name is registered/resolved bare.
         collect_overloads: |_source, _root, _overloads| Ok(()),
         // C has no definitions the shared pass cannot own: no methods, no namespaces.
@@ -1054,10 +1059,17 @@ struct Context<'a> {
     /// iff its arity set has **≥2** members; those are lowered — and their calls resolved —
     /// under an arity-mangled name (`f#1`, `f#2`, `Box::area#0`) so a call reaches exactly the
     /// arity-matching overload. Populated **only** by the C++ `collect_overloads` hook
-    /// (`cpp::cpp_discover_overloads`); **empty for C**, so [`Self::overload_name`] is the
+    /// (`cpp::cpp_discover_overloads`); **empty for C**, so [`Self::overload_def_name`] is the
     /// identity there and the C path — and every non-overloaded C++ name — is unchanged. Never
     /// branched on: the four touchpoints just consult it through the neutral mangler.
-    overloads: HashMap<String, HashSet<usize>>,
+    overloads: HashMap<String, Vec<OverloadSig>>,
+    /// The subset of [`Self::local_types`]'s names whose declarator made them a **pointer** to
+    /// their class (`Box* p`, `Box* p = new Box`), rather than an object of it (`Box b`, `Box& r`).
+    /// `local_types` records the class either way — that is what makes `p->m(…)` and `b.m(…)` both
+    /// dispatch — so this is the one bit that tells an [`ArgShape::Pointer`] argument from an
+    /// [`ArgShape::Object`] one when picking among same-arity overloads (spec 024). Function-local
+    /// like `local_types` (cleared per body) and empty for C, where no local is ever class-typed.
+    local_pointers: HashSet<String>,
     /// Which of a defined function's **explicit** parameters are class objects passed **by
     /// value** — `byval_class_params[<IR name>][i]` is `Some(class)` when explicit parameter `i`
     /// of that function is declared `Class p` (no pointer, no reference), and `None` otherwise.
@@ -1206,18 +1218,182 @@ impl TranslationUnit {
     }
 }
 
-/// The neutral overload mangler behind [`Context::overload_name`], usable before any context
-/// exists: [`collect_definitions`] registers a definition under the name this yields. If
-/// `base` names an **overloaded** entity — present in `overloads` with **≥2** distinct
-/// arities — the arity-mangled IR name `base#arity`; otherwise `base` unchanged.
+/// The **written type** of one declared parameter, as overload discovery recorded it: enough to
+/// key a definition apart from a same-name, same-arity sibling, and to say what shape of argument
+/// that position accepts — without re-reading the definition's tree at a call site.
+///
+/// Neutral data. C has no overloading, so the discovery hook records nothing for a C definition
+/// and no C name is ever asked about.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ParamType {
+    /// The `type:` field as written, whitespace removed (`int`, `Box`, `ns::Box`,
+    /// `unsignedlonglong`) — the name [`Context::classes`] is asked about.
+    name: String,
+    /// The `*` / `&` / `[]` decoration the declarator adds, with the parameter **name** dropped
+    /// (`Box* p` → `*`, `const Box& b` → `&`, `int x` → the empty string).
+    decoration: String,
+    /// The whole parameter type as written, whitespace removed (`int`, `Box*`, `constBox&`) — one
+    /// component of the signature that keys the definition.
+    text: String,
+}
+
+/// One definition in an overload set: its explicit arity and its written parameter types.
+///
+/// [`GrammarHooks::collect_overloads`] records one of these per *definition*, so a name whose
+/// arity group holds several of them is a name that needs a key per definition rather than one
+/// key per arity ([`mangle_overload`], spec 024).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OverloadSig {
+    /// The number of explicit parameters — the count a call site's explicit-argument count
+    /// matches (a method's implicit `this` is not one of them).
+    arity: usize,
+    /// The parameter type list as written with whitespace removed, comma-joined (`int`, `Box*`,
+    /// `Box&,int`) — what keys this definition apart from a same-arity sibling.
+    sig: String,
+    /// Those types, one per position, for deciding which arguments can mean this definition.
+    params: Vec<ParamType>,
+}
+
+/// What the frontend can know about the **shape** of a call argument — and of the parameter that
+/// could receive it: the three-valued classification that picks among same-arity overloads
+/// (spec 024 FR-2).
+///
+/// Deliberately coarse. It is read off the neutral [`Context::local_types`] /
+/// [`Context::local_pointers`] / [`Context::classes`] maps and a parameter's written type, never
+/// from a model of C++ conversions, so two candidates whose parameters are both [`Self::Other`]
+/// (`int` vs `long`) are *both* kept — which is what makes an undecidable call a sound
+/// multi-target edge instead of a guess (Principle I). Those maps are empty for C, so every C
+/// argument is `Other` and every C call keeps the single candidate its name always had.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ArgShape {
+    /// A known class **object**: a local or parameter of class type, a reference bound to one,
+    /// `*p` through a `C*`, `*this`. A `C`, `C&` or `const C&` parameter accepts it.
+    Object(String),
+    /// A **pointer** to a known class: `&obj`, a `C*` local or parameter, `this`, `new C`. A `C*`
+    /// parameter accepts it.
+    Pointer(String),
+    /// Anything else — a scalar, a call's result, arithmetic, or any shape the maps cannot name.
+    Other,
+}
+
+/// `s` with every whitespace character removed — how a written type becomes a signature
+/// component, so one spelling of a type is one key however it was laid out (`const Box &` and
+/// `const Box&` are both `constBox&`).
+fn without_whitespace(s: &str) -> String {
+    s.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// The decoration a parameter's declarator adds to its type, with the parameter **name** dropped:
+/// `Box* p` → `*`, `const Box& b` → `&`, `int a[]` → `[]`, `void (*fp)(int)` → `(*)(int)`,
+/// `int x` → the empty string.
+///
+/// Structural, so it is grammar-neutral: every token of the declarator is kept except the
+/// identifiers that name things, which is exactly the part that is not type. (tree-sitter spells
+/// a reference parameter `(reference_declarator (identifier))` with the `&` as an unnamed token
+/// and *no* `declarator` field, so this walks all children rather than following fields.)
+fn declarator_decoration(decl: Node<'_>, source: &str, out: &mut String) {
+    if matches!(decl.kind(), "identifier" | "field_identifier") {
+        return;
+    }
+    let mut cursor = decl.walk();
+    let children: Vec<Node<'_>> = decl.children(&mut cursor).collect();
+    if children.is_empty() {
+        out.push_str(&without_whitespace(to_str(&decl, source)));
+        return;
+    }
+    for child in children {
+        declarator_decoration(child, source, out);
+    }
+}
+
+/// The written type of one `parameter_declaration`: its `type:` field, the qualifiers and other
+/// children written alongside it, and whatever decoration its declarator adds — all with
+/// whitespace removed.
+fn param_type(pd: Node<'_>, source: &str) -> ParamType {
+    let declarator = pd.child_by_field_name("declarator");
+    let name = pd
+        .child_by_field_name("type")
+        .map(|t| without_whitespace(to_str(&t, source)))
+        .unwrap_or_default();
+    let mut decoration = String::new();
+    if let Some(d) = declarator {
+        declarator_decoration(d, source, &mut decoration);
+    }
+    // The type as written: every child but the declarator contributes its own text (the `const`
+    // of `const Box&` among them); the declarator contributes only its decoration.
+    let mut text = String::new();
+    let mut cursor = pd.walk();
+    for child in pd.children(&mut cursor) {
+        if Some(child.id()) == declarator.map(|d| d.id()) {
+            text.push_str(&decoration);
+        } else {
+            text.push_str(&without_whitespace(to_str(&child, source)));
+        }
+    }
+    ParamType {
+        name,
+        decoration,
+        text,
+    }
+}
+
+/// The written types of a `parameter_list`'s explicit parameters, in order.
+///
+/// One [`ParamType`] per `parameter_declaration`, so the list's length is the **arity** a call
+/// site's explicit-argument count matches: a method's implicit `this` is never in the list, and
+/// punctuation and any variadic / `void` marker are ignored (both out of scope for overloading),
+/// so an ordinary `f(int, int)` yields 2. Every place that needs a definition's IR name computes
+/// it from the same `parameter_list` node, so a definition's signature is the same string
+/// wherever it is asked for.
+fn param_types(param_list: Node<'_>, source: &str) -> Vec<ParamType> {
+    let mut cursor = param_list.walk();
+    let pds: Vec<Node<'_>> = param_list
+        .children(&mut cursor)
+        .filter(|c| c.kind() == "parameter_declaration")
+        .collect();
+    pds.into_iter().map(|pd| param_type(pd, source)).collect()
+}
+
+/// The signature that keys a definition apart from its same-arity siblings: its written parameter
+/// types, comma-joined (`int`, `Box*`, `Box&,int`).
+fn signature_text(params: &[ParamType]) -> String {
+    params
+        .iter()
+        .map(|p| p.text.as_str())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The neutral overload mangler behind [`Context::overload_def_name`], usable before any context
+/// exists: [`collect_definitions`] registers a definition under the name this yields.
+///
+/// Two rules, in this order:
+/// - a `base` whose arity-`arity` group holds **several** definitions (`Box(int)` and `Box(Box*)`,
+///   both arity 1) needs a key per *definition*, so it gets `base#arity(<sig>)` — then nothing is
+///   ever lowered into a sibling's `FunctionIdx` (spec 024 FR-1);
+/// - otherwise the key is what it has always been: `base#arity` when `base` is overloaded across
+///   **≥2** arities, and `base` unchanged when it is not.
+///
+/// So every name whose arity group is a singleton keeps exactly the key it had — which is every
+/// name in C (the map is empty there, and this is the identity) and every pre-spec-024 C++
+/// overload set. `sig` is consulted only by the first rule.
 fn mangle_overload(
-    overloads: &HashMap<String, HashSet<usize>>,
+    overloads: &HashMap<String, Vec<OverloadSig>>,
     base: &str,
     arity: usize,
+    sig: &str,
 ) -> String {
-    match overloads.get(base) {
-        Some(arities) if arities.len() >= 2 => format!("{base}#{arity}"),
-        _ => base.to_string(),
+    let Some(sigs) = overloads.get(base) else {
+        return base.to_string();
+    };
+    if sigs.iter().filter(|s| s.arity == arity).count() >= 2 {
+        return format!("{base}#{arity}({sig})");
+    }
+    let arities: HashSet<usize> = sigs.iter().map(|s| s.arity).collect();
+    if arities.len() >= 2 {
+        format!("{base}#{arity}")
+    } else {
+        base.to_string()
     }
 }
 
@@ -1241,6 +1417,7 @@ impl Context<'_> {
             current_method_class: None,
             reference_aliases: HashMap::default(),
             overloads: HashMap::default(),
+            local_pointers: HashSet::default(),
             byval_class_params: HashMap::default(),
             subclasses: HashMap::default(),
             dtor_frames: Vec::new(),
@@ -1258,16 +1435,179 @@ impl Context<'_> {
         }
     }
 
-    /// The neutral overload mangler consulted at all four overloading touchpoints (free- and
-    /// method-function registration, free-call and method-dispatch edges). If `base` names an
-    /// **overloaded** entity — present in [`Self::overloads`] with **≥2** distinct arities — it
-    /// returns the arity-mangled IR name `base#arity`; otherwise it returns `base` unchanged.
-    /// Because [`Self::overloads`] is empty for C (and holds a single arity for every
-    /// non-overloaded C++ name), this is the **identity** for all of C and for every ordinary
-    /// non-overloaded call — so wiring it into a touchpoint changes only genuinely overloaded
-    /// names, and never introduces a language branch. See [`mangle_overload`].
-    fn overload_name(&self, base: &str, arity: usize) -> String {
-        mangle_overload(&self.overloads, base, arity)
+    /// The IR name a **definition** is registered and lowered under: the neutral mangler applied
+    /// to that definition's own `parameter_list`, so a definition sharing its name *and* arity
+    /// with a sibling gets a key of its own and the two are never lowered into one function
+    /// (spec 024 FR-1).
+    ///
+    /// Because [`Self::overloads`] is empty for C — and holds a single signature for every
+    /// non-overloaded C++ name — this is the **identity** for all of C and for every ordinary
+    /// non-overloaded definition, so it changes only genuinely overloaded names and never
+    /// introduces a language branch. See [`mangle_overload`].
+    fn overload_def_name(&self, base: &str, params: Node<'_>, source: &str) -> String {
+        let types = param_types(params, source);
+        mangle_overload(&self.overloads, base, types.len(), &signature_text(&types))
+    }
+
+    /// The IR names a **call** of `base` with `arity` explicit arguments of shapes `shapes` can
+    /// reach: one target when the frontend can tell which definition is meant, and every candidate
+    /// it cannot rule out when it cannot (spec 024 FR-2/FR-3).
+    ///
+    /// A name with at most one definition of that arity yields exactly the single key
+    /// [`mangle_overload`] gives it — the identity for all of C and for every pre-spec-024
+    /// overload set, so no existing edge is renamed or multiplied. With several, each candidate's
+    /// parameters are classified from its recorded signature and kept when every position can
+    /// accept the argument there ([`Self::shapes_match`]); when that leaves nothing — the frontend
+    /// could not classify some argument — every candidate of the arity is returned, which
+    /// over-approximates rather than guesses (Principle I).
+    fn overload_targets(&self, base: &str, arity: usize, shapes: &[ArgShape]) -> Vec<String> {
+        let Some(sigs) = self.overloads.get(base) else {
+            return vec![base.to_string()];
+        };
+        let group: Vec<&OverloadSig> = sigs.iter().filter(|s| s.arity == arity).collect();
+        if group.len() < 2 {
+            let sig = group.first().map_or("", |s| s.sig.as_str());
+            return vec![mangle_overload(&self.overloads, base, arity, sig)];
+        }
+        let matching: Vec<&OverloadSig> = group
+            .iter()
+            .copied()
+            .filter(|s| self.shapes_match(&s.params, shapes))
+            .collect();
+        let chosen = if matching.is_empty() {
+            &group
+        } else {
+            &matching
+        };
+        chosen
+            .iter()
+            .map(|s| format!("{base}#{arity}({})", s.sig))
+            .collect()
+    }
+
+    /// Whether a call whose arguments have shapes `args` can mean a definition whose parameters
+    /// are `params`: every position agrees, an `Object(C)` / `Pointer(C)` parameter also accepting
+    /// a **derived** class's object / pointer. An arity mismatch never matches (the candidate list
+    /// is already filtered by arity, so this only guards a malformed record).
+    fn shapes_match(&self, params: &[ParamType], args: &[ArgShape]) -> bool {
+        params.len() == args.len()
+            && params
+                .iter()
+                .zip(args)
+                .all(|(p, a)| match (self.param_shape(p), a) {
+                    (ArgShape::Other, ArgShape::Other) => true,
+                    (ArgShape::Object(want), ArgShape::Object(got))
+                    | (ArgShape::Pointer(want), ArgShape::Pointer(got)) => {
+                        self.class_is_a(got, &want)
+                    }
+                    _ => false,
+                })
+    }
+
+    /// The shape of argument a declared parameter accepts, from its written type: `C`, `C&` and
+    /// `const C&` take an [`ArgShape::Object`], `C*` takes an [`ArgShape::Pointer`], and anything
+    /// whose type is not a class this unit knows — every scalar, and all of C — is
+    /// [`ArgShape::Other`]. A shape this slice does not model (`C**`, `C&&`, `C[]`) is `Other`
+    /// too, so it matches only an argument the frontend could not classify either.
+    fn param_shape(&self, p: &ParamType) -> ArgShape {
+        if !self.classes.contains_key(&p.name) {
+            return ArgShape::Other;
+        }
+        match p.decoration.as_str() {
+            "" | "&" => ArgShape::Object(p.name.clone()),
+            "*" => ArgShape::Pointer(p.name.clone()),
+            _ => ArgShape::Other,
+        }
+    }
+
+    /// Whether `sub` **is a** `base`: the same class, or a transitive subclass of it. Walks the
+    /// neutral [`Self::classes`] base lists (empty for C and for every base-less class, so this is
+    /// plain equality there). A `seen` guard bounds a malformed hierarchy.
+    fn class_is_a(&self, sub: &str, base: &str) -> bool {
+        let mut stack = vec![sub.to_string()];
+        let mut seen: HashSet<String> = HashSet::default();
+        while let Some(c) = stack.pop() {
+            if !seen.insert(c.clone()) {
+                continue;
+            }
+            if c == base {
+                return true;
+            }
+            if let Some(info) = self.classes.get(&c) {
+                stack.extend(info.bases.iter().cloned());
+            }
+        }
+        false
+    }
+
+    /// The [`ArgShape`] of one call-argument expression — what the frontend can know about what it
+    /// names (spec 024 FR-2).
+    ///
+    /// Driven only by the neutral [`Self::local_types`] / [`Self::local_pointers`] /
+    /// [`Self::classes`] maps, all empty for C, so every C argument is [`ArgShape::Other`] and no
+    /// C call's single candidate is ever reconsidered. Recognized: a class-typed local or
+    /// parameter (an object, or a pointer when that is how it was declared), `&obj`, `*p`, `this`,
+    /// `new C`, and a parenthesized form of any of them. Everything else is `Other`.
+    fn arg_shape(&self, node: Node<'_>, source: &str) -> ArgShape {
+        match node.kind() {
+            "identifier" => self.named_shape(to_str(&node, source)),
+            // The implicit receiver is a pointer to the enclosing object; `*this` goes through
+            // the `pointer_expression` arm below and comes out an object.
+            "this" => match &self.current_method_class {
+                Some(class) => ArgShape::Pointer(class.clone()),
+                None => ArgShape::Other,
+            },
+            "parenthesized_expression" => first_named_child(node)
+                .map_or(ArgShape::Other, |inner| self.arg_shape(inner, source)),
+            // `&obj` is a pointer to the object and `*p` is the object a pointer names; the two
+            // share a node kind, so the operator token decides which.
+            "pointer_expression" => {
+                let op = node
+                    .child_by_field_name("operator")
+                    .map(|o| to_str(&o, source));
+                let inner = node
+                    .child_by_field_name("argument")
+                    .map_or(ArgShape::Other, |a| self.arg_shape(a, source));
+                match (op, inner) {
+                    (Some("&"), ArgShape::Object(c)) => ArgShape::Pointer(c),
+                    (Some("*"), ArgShape::Pointer(c)) => ArgShape::Object(c),
+                    _ => ArgShape::Other,
+                }
+            }
+            // `new C(…)` yields a pointer to a fresh object of the allocated class.
+            "new_expression" => node
+                .child_by_field_name("type")
+                .map(|t| to_str(&t, source))
+                .filter(|name| self.classes.contains_key(*name))
+                .map_or(ArgShape::Other, |name| ArgShape::Pointer(name.to_string())),
+            _ => ArgShape::Other,
+        }
+    }
+
+    /// The shape of the value a **name** holds: a class-typed local or parameter is an object, or
+    /// a pointer to one when its declarator said so ([`Self::local_pointers`]). A name neither map
+    /// knows — every C name — is [`ArgShape::Other`].
+    fn named_shape(&self, name: &str) -> ArgShape {
+        match self.local_types.get(name) {
+            Some(class) if self.local_pointers.contains(name) => ArgShape::Pointer(class.clone()),
+            Some(class) => ArgShape::Object(class.clone()),
+            None => ArgShape::Other,
+        }
+    }
+
+    /// The shapes of a call's explicit arguments, in order: [`Self::arg_shape`] over the named
+    /// children of an `argument_list` — exactly the list [`Self::collect_arguments`] lowers, so
+    /// the shapes line up with the argument expressions by position.
+    fn arg_shapes(&self, arg_list: Node<'_>, source: &str) -> Vec<ArgShape> {
+        let mut cursor = arg_list.walk();
+        let nodes: Vec<Node<'_>> = arg_list
+            .children(&mut cursor)
+            .filter(|c| c.is_named())
+            .collect();
+        nodes
+            .into_iter()
+            .map(|c| self.arg_shape(c, source))
+            .collect()
     }
 
     /// Compile a tree-sitter query against this context's grammar, so a tree produced by
@@ -1486,7 +1826,7 @@ fn lower_units(
     // Overloads first (C++ only; C's hook records nothing): an overloaded name's definitions
     // are registered under their arity-mangled names, so the mangler must know every arity
     // before `collect_definitions` names anything.
-    let mut overloads: HashMap<String, HashSet<usize>> = HashMap::default();
+    let mut overloads: HashMap<String, Vec<OverloadSig>> = HashMap::default();
     for (unit, tree) in units.iter().zip(&trees) {
         (hooks.collect_overloads)(&unit.source, tree.root_node(), &mut overloads)?;
     }
@@ -1600,7 +1940,7 @@ fn collect_definitions<'a>(
     source: &'a str,
     tree: &Tree,
     query: &Query,
-    overloads: &HashMap<String, HashSet<usize>>,
+    overloads: &HashMap<String, Vec<OverloadSig>>,
     hooks: GrammarHooks,
     defs: &mut Vec<Definition<'a>>,
 ) -> Result<(), Error> {
@@ -1631,13 +1971,17 @@ fn collect_definitions<'a>(
             ))?;
             continue;
         };
+        // The name it is registered under: the neutral mangler over this definition's own
+        // signature, so a same-name, same-arity sibling never shares its function (spec 024).
+        let types = param_types(head.params, source);
         defs.push(Definition {
             unit,
             id: def_node.id(),
             name: mangle_overload(
                 overloads,
                 to_str(&head.name, source),
-                param_arity(head.params),
+                types.len(),
+                &signature_text(&types),
             ),
             text: to_str(&def_node, source),
         });
@@ -3129,6 +3473,8 @@ impl<'a> Context<'a> {
                             && let Some(leaf) = declarator_leaf_ident(inner, source)
                         {
                             self.local_types.insert(leaf.to_string(), class.clone());
+                            // A reference names the object itself, never a pointer to it.
+                            note_pointer(&mut self.local_pointers, leaf, false);
                         }
                         continue;
                     }
@@ -3170,6 +3516,14 @@ impl<'a> Context<'a> {
                 // `p->m(…)` (whose receiver is the identifier `p`) would not dispatch.
                 let key = declarator_leaf_ident(decl_ident, source).unwrap_or(var_name);
                 self.local_types.insert(key.to_string(), class.clone());
+                // Whether the declarator made it a *pointer* to the class (`Box* p`) or an object
+                // of it (`Box b`, `Box& r`) — the one bit that tells an argument's shape apart
+                // when a call has to pick among same-arity overloads (spec 024).
+                note_pointer(
+                    &mut self.local_pointers,
+                    key,
+                    declarator_is_pointer(decl_ident),
+                );
                 // A class-typed **value** local (`Widget w;` / `Widget w = other;`) is a stack
                 // (automatic) object: record it in the enclosing scope's destructor frame so its
                 // destructor runs at scope exit (spec 017). Only a bare `identifier` declarator is a
@@ -4063,6 +4417,14 @@ impl<'a> Context<'a> {
                     // belong to the function about to be walked.
                     if let Some(class) = declared_class(&self.classes, decl, source) {
                         self.local_types.insert(pn.to_string(), class);
+                        // `Box* p` is a pointer parameter, `Box b` / `Box& b` an object one —
+                        // which is what decides whether passing it on can mean a `C*` overload
+                        // or a `C`/`C&` one (spec 024).
+                        note_pointer(
+                            &mut self.local_pointers,
+                            pn,
+                            declarator_is_pointer(declarator),
+                        );
                     }
                 }
                 // An abstract declarator names nothing, so nothing in the body can read this
@@ -5142,25 +5504,37 @@ impl<'a> Context<'a> {
         // static-type resolution *plus* every override in the static type's subclass subtree
         // ([`Self::cha_targets`]), a sound superset of the single dynamically-selected override.
         // `virtual_methods`/`subclasses` are empty for C and non-polymorphic C++, so this stays a
-        // single-target static edge there (no language branch). Each target is arity-mangled by
-        // the explicit-argument count (`b.f(x, y)` -> `Box::f#2`); a non-overloaded name stays
-        // bare (the `methods`/`returns_self`/`virtual_methods` sets are keyed by the bare method
-        // name, an overload-set property, so only the callee *string* changes).
+        // single-target static edge there (no language branch). Each target is then resolved
+        // among the same-name definitions of the call's arity by the *shapes* of its arguments
+        // (`b.set(a)` with `set(int)`/`set(Box&)` -> `Box::set#1(Box&)`; `b.f(x, y)` ->
+        // `Box::f#2`); a name with at most one definition of that arity stays exactly the key it
+        // has today (the `methods`/`returns_self`/`virtual_methods` sets are keyed by the bare
+        // method name, an overload-set property, so only the callee *strings* change).
         let bases: Vec<String> = if self.method_is_virtual(&recv.class, method) {
             self.cha_targets(&recv.class, &defining_class, method)
         } else {
             vec![format!("{defining_class}::{method}")]
         };
+        // The argument shapes that pick among same-arity overloads (spec 024). A shape with no
+        // argument *node* to read — an assignment operator's right-hand side — is `Other`, which
+        // selects every candidate of the arity rather than guessing one.
+        let shapes: Vec<ArgShape> = match arg_list {
+            Some(arg_node) => self.arg_shapes(arg_node, source),
+            None => vec![ArgShape::Other; explicit_args.len()],
+        };
         let targets: ThinVec<String> = bases
             .iter()
-            .map(|b| self.overload_name(b, explicit_args.len()))
+            .flat_map(|b| self.overload_targets(b, explicit_args.len(), &shapes))
             .collect();
         // The by-value-class-argument copy (spec 022 FR-3), keyed on the **static** resolution —
         // the signature every CHA target overrides, so which override runs cannot change whether
         // a parameter is by value. C never reaches here (its `dispatch_call` returns `None`
         // before this), and the hook is a no-op for it regardless.
-        let static_target =
-            self.overload_name(&format!("{defining_class}::{method}"), explicit_args.len());
+        let static_targets = self.overload_targets(
+            &format!("{defining_class}::{method}"),
+            explicit_args.len(),
+            &shapes,
+        );
         if let Some(arg_node) = arg_list {
             let copy_args = self.hooks.copy_args;
             copy_args(
@@ -5168,7 +5542,7 @@ impl<'a> Context<'a> {
                 program,
                 scope_view,
                 source,
-                &static_target,
+                &static_targets,
                 arg_node,
                 &mut explicit_args,
             )?;
@@ -5351,25 +5725,33 @@ impl<'a> Context<'a> {
         let arg_node = node.child_by_field_name("arguments").expect("always has");
         let mut args = self.collect_arguments(program, arg_node, source, scope_view)?;
 
-        // Resolve an overloaded free callee to its arity-matching overload by the number of
-        // explicit arguments (`id(a, b)` -> the `id#2` edge); a non-overloaded callee (all of
-        // C, and every C++ name with a single arity) stays bare via the identity mangler. Then
-        // a call names the definition the *caller's* file holds when several files define
+        // Resolve an overloaded free callee by the number of explicit arguments (`id(a, b)` ->
+        // the `id#2` edge) and, among same-arity definitions, by the *shapes* of those arguments
+        // (`f(&a)` with `f(int)`/`f(Box*)` -> `f#1(Box*)`); a callee with at most one definition
+        // of that arity (all of C, and every C++ name whose arity group is a singleton) stays
+        // exactly the one key the identity mangler gives it. Several candidates come back only
+        // when the frontend cannot decide, and then the call reaches them all (spec 024 FR-3).
+        // Then a call names the definition the *caller's* file holds when several files define
         // that name; `resolve_reference` is the identity function for every other name. Only
         // the `DirectCall` (`GlobalHeap`) arm below consults this; a funcptr call ignores it.
-        let callee = self.resolve_reference(&self.overload_name(func_name, args.len()));
+        let shapes = self.arg_shapes(arg_node, source);
+        let callees: Vec<String> = self
+            .overload_targets(func_name, args.len(), &shapes)
+            .iter()
+            .map(|target| self.resolve_reference(target))
+            .collect();
 
         // Whatever the language runs at an argument on the way in — for C++, the copy
         // constructor a **by-value class parameter** invokes on the object passed to it. The
-        // hook is keyed on the resolved callee, so it can only fire for a definition this unit
-        // recorded a by-value class parameter for; C's hook is a no-op, so the arguments below
-        // are exactly the ones collected above on the C path.
+        // hook is keyed on the resolved candidates, so it can only fire for a definition this
+        // unit recorded a by-value class parameter for; C's hook is a no-op, so the arguments
+        // below are exactly the ones collected above on the C path.
         let copy_args = self.hooks.copy_args;
         copy_args(
-            self, program, scope_view, source, &callee, arg_node, &mut args,
+            self, program, scope_view, source, &callees, arg_node, &mut args,
         )?;
 
-        let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec![callee]);
+        let call_edges = CallEdges::Explicit(callees.into_iter().collect());
 
         // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
         // dereference form `(*op_func)(...)` wraps the pointer in a
@@ -5520,10 +5902,10 @@ impl<'a> Context<'a> {
                 log::debug!("skipping a repeated definition of `{written}`");
                 continue;
             }
-            // The name it was registered under: arity-mangled when the name is overloaded
-            // (C++ only; the identity for C), then whatever `plan_definitions` decided for a
-            // name several definitions claim.
-            let mangled = self.overload_name(written, param_arity(head.params));
+            // The name it was registered under: arity- and signature-mangled when the name is
+            // overloaded (C++ only; the identity for C), then whatever `plan_definitions` decided
+            // for a name several definitions claim.
+            let mangled = self.overload_def_name(written, head.params, source);
             let func_name = self.unit_plan.name_of(def_node.id(), &mangled).to_string();
             let return_is_void = returns_void(return_type, head.returns_pointer, source);
             self.lower_function(
@@ -5588,6 +5970,7 @@ impl<'a> Context<'a> {
         // resolution (set for an instance *or* static method body — a static method has a class
         // context but no `this`, so its unqualified static-member names still resolve).
         self.local_types.clear();
+        self.local_pointers.clear();
         self.reference_aliases.clear();
         self.current_method_class = class_context.map(str::to_string);
         // Address-of aliases are function-local and confined to a straight-line block.
@@ -6287,19 +6670,6 @@ fn debug_print_tree(
 /// discovered and lowered by the C++ `collect_aux` hook, so the shared loop uses this to
 /// skip them and avoid double-lowering. C trees contain no `field_declaration_list`, so
 /// this returns `false` for every C definition and the C path is unaffected.
-/// The **arity** of a `parameter_list` — the number of explicit `parameter_declaration`
-/// children (a method's implicit `this` is never in the list, so this is the count the call
-/// site's explicit-argument count matches). Used to key the neutral overload map and to
-/// mangle an overloaded definition's IR name. Ignores punctuation and any variadic/`void`
-/// marker (out of scope for arity-overloading), so an ordinary `f(int, int)` counts 2.
-fn param_arity(param_list: Node<'_>) -> usize {
-    let mut cursor = param_list.walk();
-    param_list
-        .children(&mut cursor)
-        .filter(|c| c.kind() == "parameter_declaration")
-        .count()
-}
-
 fn is_class_member_definition(node: Node<'_>) -> bool {
     let mut cur = node.parent();
     while let Some(n) = cur {
@@ -6348,6 +6718,20 @@ fn is_namespaced_definition(node: Node<'_>) -> bool {
 ///
 /// Takes the map rather than `&Context` so a caller already holding a mutable borrow of a
 /// *different* `Context` field can still ask (`collect_params` holds one on `param_names`).
+/// Record whether the class-typed name `name` holds a **pointer** to its class or an object of
+/// it, in [`Context::local_pointers`] — kept in step with [`Context::local_types`] at every place
+/// a name is bound to a class, so a name rebound in an inner scope never keeps a stale bit.
+///
+/// Takes the set rather than `&mut Context` for the same reason [`declared_class`] takes its map:
+/// the callers already hold a borrow of a *different* `Context` field.
+fn note_pointer(local_pointers: &mut HashSet<String>, name: &str, is_pointer: bool) {
+    if is_pointer {
+        local_pointers.insert(name.to_string());
+    } else {
+        local_pointers.remove(name);
+    }
+}
+
 fn declared_class(
     classes: &HashMap<String, ClassInfo>,
     node: Node<'_>,
@@ -6358,6 +6742,23 @@ fn declared_class(
         .map(|t| to_str(&t, source))
         .filter(|name| classes.contains_key(*name))
         .map(str::to_string)
+}
+
+/// Whether a declarator names a **pointer** to its declared type (`Box* p`), descending through
+/// the wrappers that do not change that (an `init_declarator`'s declarator, parentheses). A bare
+/// name (`Box b`), a C++ reference (`Box& r`) and an array are not pointers.
+///
+/// Structural and grammar-neutral, and asked only where a declared type already resolved to a
+/// known class — so it is never consulted on the C path, where `classes` is empty.
+fn declarator_is_pointer(decl: Node<'_>) -> bool {
+    match decl.kind() {
+        "pointer_declarator" => true,
+        "init_declarator" | "parenthesized_declarator" => decl
+            .child_by_field_name("declarator")
+            .or_else(|| decl.named_child(0))
+            .is_some_and(declarator_is_pointer),
+        _ => false,
+    }
 }
 
 fn declarator_leaf_ident<'s>(decl: Node<'_>, source: &'s str) -> Option<&'s str> {

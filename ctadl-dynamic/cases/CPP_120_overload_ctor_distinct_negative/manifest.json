@@ -1,0 +1,6 @@
+{
+  "name": "CPP_120_overload_ctor_distinct_negative",
+  "description": "C++ same-arity overloads (spec 024, FR-2), NEGATIVE: CPP_118's `Box(int)` + `Box(Box*)` with `Box b(&a); sink(b.get())`. `Box b(&a)` runs the pointer overload, which sets v to the constant 0, so v is untainted at runtime. The precision guard on shape resolution: it fails (s=flow) if the construction stops picking the one candidate `&a` can mean and reaches every candidate of the arity, since the int body writes v from its argument. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

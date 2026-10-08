@@ -24,15 +24,14 @@
 use ctadl_ir::mir::{CallEdges, CallStyle, Exp, Program, Statement, StatementKind, VariableRef};
 use ctadl_ir::{PathSegment, ThinVec, thin_vec};
 use hashbrown::hash_map::HashMap;
-use hashbrown::hash_set::HashSet;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, QueryCursor};
 
 use super::{
-    ClassInfo, Context, GrammarHooks, MatchExtractor, RawPath, ScopeView, TranslationUnit, VarKind,
-    compile_query_for, declarator_leaf_ident, declared_class, function_declarator_of,
-    is_class_member_definition, is_namespaced_definition, lower_units, param_arity, returns_void,
-    to_str, unparenthesize,
+    ArgShape, ClassInfo, Context, GrammarHooks, MatchExtractor, OverloadSig, ParamType, RawPath,
+    ScopeView, TranslationUnit, VarKind, compile_query_for, declarator_leaf_ident, declared_class,
+    function_declarator_of, is_class_member_definition, is_namespaced_definition, lower_units,
+    mangle_overload, param_types, returns_void, signature_text, to_str, unparenthesize,
 };
 use ctadl_import::error::Error;
 
@@ -267,11 +266,12 @@ fn enclosing_class_qualified_name(node: Node<'_>, source: &str) -> Option<String
     None
 }
 
-/// The IR **base name** and explicit **arity** of a `function_definition`, for overload
+/// The IR **base name** and written **parameter types** of a `function_definition`, for overload
 /// discovery — or `None` if it is not a name this slice overloads (a destructor, or an
-/// unrecognized declarator shape). It mirrors *exactly* the naming the registration/call
-/// touchpoints use, so the recorded arity set keys the same string the mangler is later
-/// asked about:
+/// unrecognized declarator shape). The types' length is the explicit arity, and their
+/// [`signature_text`] is what keys a definition apart from a same-name, same-arity sibling
+/// (spec 024). It mirrors *exactly* the naming the registration/call touchpoints use, so the
+/// recorded signatures key the same string the mangler is later asked about:
 /// - a free function (`identifier` name) at file scope → the bare `f`; inside a namespace →
 ///   the qualified `ns::f`;
 /// - an inline **constructor** (an `identifier`-named member equal to the enclosing class's
@@ -345,11 +345,11 @@ fn is_copy_ctor_params(params: Node<'_>, simple_class: &str, source: &str) -> bo
     }
 }
 
-fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
+fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, Vec<ParamType>)> {
     let declr = fdef.child_by_field_name("declarator")?;
     let (func_declr, _) = function_declarator_of(declr)?;
     let params = func_declr.child_by_field_name("parameters")?;
-    let arity = param_arity(params);
+    let ptypes = param_types(params, source);
     let name_node = func_declr.child_by_field_name("declarator")?;
     match name_node.kind() {
         // A free function, or an inline constructor / identifier-named member.
@@ -369,9 +369,9 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
                     // single-arity names, each lowered under its own `FunctionIdx`, instead of
                     // one name with one arity holding two bodies (spec 022 FR-1).
                     if is_copy_ctor_params(params, simple, source) {
-                        return Some((copy_ctor_name(&class), arity));
+                        return Some((copy_ctor_name(&class), ptypes));
                     }
-                    return Some((format!("{class}::{class}"), arity));
+                    return Some((format!("{class}::{class}"), ptypes));
                 }
                 return None;
             }
@@ -380,12 +380,12 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
                 enclosing_namespace_prefix(fdef, source),
                 to_str(&name_node, source)
             );
-            Some((base, arity))
+            Some((base, ptypes))
         }
         // An inline method: qualify the enclosing class, then `Class::method`.
         "field_identifier" => {
             let class = enclosing_class_qualified_name(fdef, source)?;
-            Some((format!("{class}::{}", to_str(&name_node, source)), arity))
+            Some((format!("{class}::{}", to_str(&name_node, source)), ptypes))
         }
         // An inline **operator** method (`Acc& operator=(int){…}`): a method whose name is the
         // normalized operator spelling, keyed `Class::operator=` exactly as discovery keys it
@@ -398,7 +398,7 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
                     "{class}::{}",
                     operator_method_name(to_str(&name_node, source))
                 ),
-                arity,
+                ptypes,
             ))
         }
         // An out-of-line method `Class::m`, or an out-of-line constructor `Box::Box` (name ==
@@ -419,9 +419,9 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
             // the same distinct key its inline form does, so either spelling lowers to the one
             // `Class::Class#copy` a construction calls.
             if scope_s == name_s && is_copy_ctor_params(params, scope_s, source) {
-                return Some((copy_ctor_name(scope_s), arity));
+                return Some((copy_ctor_name(scope_s), ptypes));
             }
-            Some((format!("{scope_s}::{name_s}"), arity))
+            Some((format!("{scope_s}::{name_s}"), ptypes))
         }
         _ => None,
     }
@@ -431,19 +431,26 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
 /// implementation, run by `lower_units` over every unit before any function is registered. It
 /// scans every `function_definition` (free, namespaced, inline-method, out-of-line-method),
 /// computes each one's IR base name and explicit-parameter arity via [`overload_base_name`],
-/// and records the arity into `overloads`, which every unit's [`Context::overloads`] then
-/// holds. A base name that ends up with **≥2**
-/// distinct arities is thereby marked overloaded, so [`Context::overload_name`] mangles it
+/// and records one [`OverloadSig`] per definition into `overloads`, which every unit's
+/// [`Context::overloads`] then holds. A base name that ends up with **≥2**
+/// distinct arities is thereby marked overloaded, so [`Context::overload_def_name`] mangles it
 /// (`id#1`/`id#2`, `Box::f#1`/`Box::f#2`) at every touchpoint; a single-arity name stays bare.
+/// A base name with **several definitions of one arity** (`Box(int)` and `Box(Box*)`) is marked
+/// further: each gets the signature-mangled key `base#arity(<sig>)`, so two definitions are two
+/// functions and a call site can choose between them by argument shape (spec 024).
 /// Constructors are **included** (spec 010): a class's ctors are keyed on `Class::Class`, so a
 /// class with ctors of ≥2 arities gets `Box::Box#1`/`Box::Box#2` and a construction resolves to
 /// the matching one; a single-ctor class keeps the bare `Class::Class` and is unchanged. Inert
 /// for C: no C tree contains any of the shapes matched here, so nothing is recorded and the map
 /// stays empty.
+///
+/// A signature is recorded **once** per base name however many units declare it, so a header's
+/// `static inline` included twice is still one definition of one signature — exactly as the text
+/// dedup in `plan_definitions` treats it — and its arity group does not look shared.
 fn cpp_discover_overloads(
     source: &str,
     root: Node<'_>,
-    overloads: &mut HashMap<String, HashSet<usize>>,
+    overloads: &mut HashMap<String, Vec<OverloadSig>>,
 ) -> anyhow::Result<(), Error> {
     let query = compile_query_for(
         &tree_sitter_cpp::LANGUAGE.into(),
@@ -453,8 +460,13 @@ fn cpp_discover_overloads(
     let mut it = cursor.matches(&query, root, source.as_bytes());
     while let Some(m) = it.next() {
         let extract = MatchExtractor::new(&query, m);
-        if let Some((base, arity)) = overload_base_name(extract.get("def")?, source) {
-            overloads.entry(base).or_default().insert(arity);
+        if let Some((base, params)) = overload_base_name(extract.get("def")?, source) {
+            let arity = params.len();
+            let sig = signature_text(&params);
+            let sigs = overloads.entry(base).or_default();
+            if !sigs.iter().any(|s| s.arity == arity && s.sig == sig) {
+                sigs.push(OverloadSig { arity, sig, params });
+            }
         }
     }
     Ok(())
@@ -990,13 +1002,15 @@ fn cpp_collect_methods<'a>(
     // Phase 2a: register a function index for every method, so a method calling another
     // method (or a top-level body calling one) resolves it regardless of definition order.
     // An **overloaded** method or constructor (`Box::f#1`/`Box::f#2`, `Box::Box#1`/`Box::Box#2`)
-    // reserves a distinct `FunctionIdx` per arity via the neutral mangler; a non-overloaded
+    // reserves a distinct `FunctionIdx` per arity via the neutral mangler — and per *signature*
+    // where one arity has several definitions (`Box::Box#1(int)` / `Box::Box#1(Box*)`), so no two
+    // definitions ever share a function (spec 024 FR-1); a non-overloaded
     // method and a single-arity constructor stay bare — the same `Class::method` / `Class::Class`
     // string a `recv.m(…)` dispatch and the `construct` hook build. (Spec 010 lifted the
     // constructor exclusion, so a class with ctors of ≥2 arities mangles them here too.)
     for md in &methods {
         let base = format!("{}::{}", md.class, md.name);
-        let qualified = ctx.overload_name(&base, param_arity(md.params));
+        let qualified = ctx.overload_def_name(&base, md.params, source);
         ctx.functions
             .entry(qualified)
             .or_insert_with(|| program.new_function());
@@ -1009,7 +1023,7 @@ fn cpp_collect_methods<'a>(
     // but **no** `this` (spec 015), so its declared params number from 0 like a free function.
     for md in methods {
         let base = format!("{}::{}", md.class, md.name);
-        let qualified = ctx.overload_name(&base, param_arity(md.params));
+        let qualified = ctx.overload_def_name(&base, md.params, source);
         ctx.lower_function(
             source,
             program,
@@ -1089,7 +1103,7 @@ fn cpp_collect_namespaced_functions<'a>(
             // non-overloaded namespaced function stays bare-qualified (identity mangler), so
             // the existing namespace cases are unchanged.
             let base = format!("{}{}", enclosing_namespace_prefix(def, source), fname);
-            let qualified = ctx.overload_name(&base, param_arity(params));
+            let qualified = ctx.overload_def_name(&base, params, source);
             let void = returns_void(def.child_by_field_name("type"), returns_pointer, source);
             ns_fns.push(NsFn {
                 qualified,
@@ -1155,7 +1169,7 @@ fn cpp_discover_byval_class_params(
     while let Some(m) = it.next() {
         let extract = MatchExtractor::new(&query, m);
         let def = extract.get("def")?;
-        let Some((base, arity)) = overload_base_name(def, source) else {
+        let Some((base, ptypes)) = overload_base_name(def, source) else {
             continue;
         };
         let Some(params) = def
@@ -1176,7 +1190,15 @@ fn cpp_discover_byval_class_params(
             })
             .collect();
         if byval.iter().any(Option::is_some) {
-            found.push((ctx.overload_name(&base, arity), byval));
+            found.push((
+                mangle_overload(
+                    &ctx.overloads,
+                    &base,
+                    ptypes.len(),
+                    &signature_text(&ptypes),
+                ),
+                byval,
+            ));
         }
     }
     drop(it);
@@ -1198,30 +1220,42 @@ fn cpp_discover_byval_class_params(
 /// Everything else is left alone: a class **without** a user copy constructor keeps the existing
 /// value copy (its implicit member-wise copy *is* that copy), a by-reference or pointer parameter
 /// records nothing so never copies, and an argument that is not a named object of the parameter's
-/// class (a temporary, a literal, a derived object) is out of this slice's scope. `callee` is the
-/// already-resolved IR name, so a call whose target this unit did not define finds no record.
-/// Inert for C: `byval_class_params` is empty there, so the first lookup misses.
+/// class (a temporary, a literal, a derived object) is out of this slice's scope. `callees` are
+/// the call's already-resolved candidate targets, so a call whose targets this unit did not define
+/// finds no record. A position is copied when **any** candidate takes it by value (spec 024 FR-3):
+/// one copy per argument, so a multi-target call emits exactly what a single-target one does.
+/// Inert for C: `byval_class_params` is empty there, so every lookup misses.
 fn cpp_copy_args<'a>(
     ctx: &mut Context<'a>,
     program: &mut Program,
     scope_view: &mut ScopeView,
     source: &'a str,
-    callee: &str,
+    callees: &[String],
     arg_list: Node<'_>,
     args: &mut ThinVec<Exp>,
 ) -> anyhow::Result<(), Error> {
-    let Some(byval) = ctx.byval_class_params.get(callee).cloned() else {
+    let records: Vec<Vec<Option<String>>> = callees
+        .iter()
+        .filter_map(|callee| ctx.byval_class_params.get(callee).cloned())
+        .collect();
+    if records.is_empty() {
         return Ok(());
-    };
+    }
     let mut cursor = arg_list.walk();
     let arg_nodes: Vec<Node<'_>> = arg_list
         .children(&mut cursor)
         .filter(|c| c.is_named())
         .collect();
     for (i, arg) in args.iter_mut().enumerate() {
-        let (Some(Some(class)), Some(node)) = (byval.get(i), arg_nodes.get(i)) else {
+        // The class this position is taken by value as, on the first candidate that takes it
+        // that way — one copy per argument however many targets the call has.
+        let class = records
+            .iter()
+            .find_map(|byval| byval.get(i).cloned().flatten());
+        let (Some(class), Some(node)) = (class, arg_nodes.get(i)) else {
             continue;
         };
+        let class = &class;
         if !ctx
             .classes
             .get(class)
@@ -1241,6 +1275,7 @@ fn cpp_copy_args<'a>(
             class,
             &obj,
             thin_vec![arg.clone()],
+            &[ArgShape::Object(class.clone())],
             true,
         );
         let ap = ctx.build_access_path(
@@ -1338,7 +1373,12 @@ fn cpp_try_construct<'a>(
     // Recover the object's name and the constructor argument nodes, by form. `copy` says the
     // construction is a **copy construction** from a same-class object, which calls the class's
     // copy constructor `Class::Class#copy` rather than the arity-resolved `Class::Class`.
-    let (obj_node, args, copy): (Node<'_>, ThinVec<Exp>, bool) = match declr.kind() {
+    // `shapes` is what the arguments can *mean*, read off the syntax before any of them is
+    // lowered — and before the object itself is registered, so `Box b(&a)` classifies `a`
+    // (spec 024 FR-2). An empty `shapes` goes with a copy construction, which resolves by key.
+    let (obj_node, args, shapes, copy): (Node<'_>, ThinVec<Exp>, Vec<ArgShape>, bool) = match declr
+        .kind()
+    {
         // Most-vexing-parse direct init: `Box b(args)`.
         "function_declarator" => {
             let Some(obj_node) = declr
@@ -1366,11 +1406,15 @@ fn cpp_try_construct<'a>(
             let copy = has_copy_ctor
                 && pds.len() == 1
                 && mvp_arg_names_class_object(ctx, source, pds[0], class);
+            let shapes: Vec<ArgShape> = pds
+                .iter()
+                .map(|pd| mvp_arg_shape(ctx, source, *pd))
+                .collect();
             let mut args: ThinVec<Exp> = ThinVec::new();
             for pd in pds {
                 args.push(reconstruct_mvp_arg(ctx, source, program, scope_view, pd)?);
             }
-            (obj_node, args, copy)
+            (obj_node, args, shapes, copy)
         }
         // Copy/brace init: `Box b = Box(args)` / `Box b{args}`.
         "init_declarator" => {
@@ -1396,8 +1440,9 @@ fn cpp_try_construct<'a>(
                     let arg_list = value
                         .child_by_field_name("arguments")
                         .expect("call_expression always has arguments");
+                    let shapes = ctx.arg_shapes(arg_list, source);
                     let args = ctx.collect_arguments(program, arg_list, source, scope_view)?;
-                    (obj_node, args, false)
+                    (obj_node, args, shapes, false)
                 }
                 // Copy initialization from an object: `Box b = a`. The value is the bare
                 // identifier `a`; when it names an object of this class and the class declares a
@@ -1407,7 +1452,7 @@ fn cpp_try_construct<'a>(
                 // is exactly the implicit member-wise copy (spec 022 FR-2).
                 "identifier" if has_copy_ctor && names_class_object(ctx, source, value, class) => {
                     let arg = ctx.flatten_expr(program, value, source, scope_view)?;
-                    (obj_node, thin_vec![arg], true)
+                    (obj_node, thin_vec![arg], Vec::new(), true)
                 }
                 "initializer_list" => {
                     let mut lcursor = value.walk();
@@ -1419,11 +1464,15 @@ fn cpp_try_construct<'a>(
                     let copy = has_copy_ctor
                         && elems.len() == 1
                         && names_class_object(ctx, source, elems[0], class);
+                    let shapes: Vec<ArgShape> = elems
+                        .iter()
+                        .map(|elem| ctx.arg_shape(*elem, source))
+                        .collect();
                     let mut args: ThinVec<Exp> = ThinVec::new();
                     for elem in elems {
                         args.push(ctx.flatten_expr(program, elem, source, scope_view)?);
                     }
-                    (obj_node, args, copy)
+                    (obj_node, args, shapes, copy)
                 }
                 // Direct init `Box b(a, b)` whose arguments are **not** all type-like — e.g.
                 // one is a literal (`Box b(0, source())`). Because a literal cannot be a
@@ -1433,8 +1482,9 @@ fn cpp_try_construct<'a>(
                 // is MVP-mangled and handled by the `function_declarator` arm above.) Collect
                 // the arguments exactly as a call's argument list.
                 "argument_list" => {
+                    let shapes = ctx.arg_shapes(value, source);
                     let args = ctx.collect_arguments(program, value, source, scope_view)?;
-                    (obj_node, args, false)
+                    (obj_node, args, shapes, false)
                 }
                 _ => return Ok(false),
             }
@@ -1443,9 +1493,27 @@ fn cpp_try_construct<'a>(
     };
 
     emit_construction(
-        ctx, source, program, scope_view, class, obj_node, args, copy,
+        ctx, source, program, scope_view, class, obj_node, args, &shapes, copy,
     );
     Ok(true)
+}
+
+/// The [`ArgShape`] of one most-vexing-parse constructor argument — [`Context::arg_shape`] for
+/// the spelling `Box b(p)` gives its argument, where tree-sitter has shredded `p` into a
+/// `parameter_declaration` of type `p` with no declarator (see [`reconstruct_mvp_arg`]).
+///
+/// Only that one shape can be an object or a pointer to one: the argument is a bare name, so its
+/// shape is what the neutral maps say that name holds. Any other `parameter_declaration` spells
+/// something the maps cannot classify — `Box b(source())` is a call (an
+/// `abstract_function_declarator`), `Box b(int x)` is a function declaration — and is
+/// [`ArgShape::Other`], which is what makes an undecided call a multi-target edge.
+fn mvp_arg_shape(ctx: &Context<'_>, source: &str, pd: Node<'_>) -> ArgShape {
+    if pd.child_by_field_name("declarator").is_some() {
+        return ArgShape::Other;
+    }
+    pd.child_by_field_name("type")
+        .filter(|t| matches!(t.kind(), "type_identifier" | "identifier"))
+        .map_or(ArgShape::Other, |t| ctx.named_shape(to_str(&t, source)))
 }
 
 /// Whether `node` is an expression naming a **known object of exactly `class`** — a local, a
@@ -1551,11 +1619,13 @@ fn reconstruct_mvp_arg<'a>(
 /// being `ByRef`, exactly as for an ordinary method receiver). The void constructor's
 /// result goes to a throwaway temp, as method-call lowering already does.
 ///
-/// The ctor edge is arity-resolved (spec 010): the callee name is
-/// `overload_name("Class::Class", <explicit-arg-count>)`, so a class with ctors of ≥2 arities
-/// resolves the construction to the ctor with exactly that many parameters (`Box::Box#1` vs
-/// `Box::Box#2`); a single-ctor class keeps the bare `Class::Class` (identity mangler), so
-/// every existing construction is byte-for-byte unchanged.
+/// The ctor edge is arity-resolved (spec 010) and then shape-resolved among the ctors of that
+/// arity (spec 024): the callee names are
+/// `overload_targets("Class::Class", <explicit-arg-count>, <arg shapes>)`, so a class with ctors
+/// of ≥2 arities resolves the construction to the ctor with exactly that many parameters
+/// (`Box::Box#1` vs `Box::Box#2`) and a class with two ctors of one arity to the one its
+/// arguments can mean (`Box::Box#1(Box*)` for `Box b(&a)`); a single-ctor class keeps the bare
+/// `Class::Class` (identity mangler), so every existing construction is byte-for-byte unchanged.
 fn emit_construction<'a>(
     ctx: &mut Context<'a>,
     source: &'a str,
@@ -1564,6 +1634,7 @@ fn emit_construction<'a>(
     class: &str,
     obj_node: Node<'_>,
     ctor_args: ThinVec<Exp>,
+    arg_shapes: &[ArgShape],
     copy: bool,
 ) {
     let obj_name = to_str(&obj_node, source);
@@ -1578,7 +1649,9 @@ fn emit_construction<'a>(
     if let Some(frame) = ctx.dtor_frames.last_mut() {
         frame.push((obj_name.to_string(), class.to_string()));
     }
-    emit_ctor_call(ctx, program, scope_view, class, obj_name, ctor_args, copy);
+    emit_ctor_call(
+        ctx, program, scope_view, class, obj_name, ctor_args, arg_shapes, copy,
+    );
 }
 
 /// Emit the constructor `DirectCall Class::Class#<arity>(&obj, args…)` for an **already-
@@ -1586,7 +1659,10 @@ fn emit_construction<'a>(
 /// constructor's `this.<member>` writes land in the object; the void result goes to a
 /// throwaway temp. The callee name is arity-resolved via the neutral mangler (spec 010), so a
 /// class with ctors of ≥2 arities resolves to the matching `Box::Box#1`/`Box::Box#2` and a
-/// single-ctor class keeps the bare `Class::Class`. Shared by stack construction
+/// single-ctor class keeps the bare `Class::Class`. Where one arity has **several** constructors
+/// (`Box(int)` and `Box(Box*)`), `arg_shapes` picks the one the arguments can mean —
+/// `Box::Box#1(Box*)` for `Box b(&a)` — and, when they can mean more than one, every candidate
+/// becomes a target of the one construction edge (spec 024). Shared by stack construction
 /// ([`emit_construction`]) and heap `new` ([`lower_new_expression`]).
 fn emit_ctor_call(
     ctx: &mut Context<'_>,
@@ -1595,6 +1671,7 @@ fn emit_ctor_call(
     class: &str,
     obj_name: &str,
     ctor_args: ThinVec<Exp>,
+    arg_shapes: &[ArgShape],
     copy: bool,
 ) {
     // The object under construction is the by-ref arg 0, so resolve it to its location. A
@@ -1611,20 +1688,24 @@ fn emit_ctor_call(
     let mut args: ThinVec<Exp> = thin_vec![recv];
     args.extend(ctor_args);
 
-    // A **copy** construction calls the copy constructor's own key, which no arity can name;
-    // every other construction resolves by arity as before (spec 010). `copy` is only ever
-    // `true` for a class that declares a copy constructor, so a class without one is unchanged.
-    let qualified = if copy {
-        copy_ctor_name(class)
+    // A **copy** construction calls the copy constructor's own key, which no arity or signature
+    // can name — so it keeps winning over a same-arity sibling (spec 022, 024 FR-2); every other
+    // construction resolves by arity, then by argument shape among the constructors of that arity
+    // (spec 010, 024). `copy` is only ever `true` for a class that declares a copy constructor,
+    // so a class without one is unchanged.
+    let targets: ThinVec<String> = if copy {
+        thin_vec![copy_ctor_name(class)]
     } else {
-        ctx.overload_name(&format!("{class}::{class}"), arity)
+        ctx.overload_targets(&format!("{class}::{class}"), arity, arg_shapes)
+            .into_iter()
+            .collect()
     };
     let temp = ctx.allocator.next_temp();
     let ret = VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
     program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
         StatementKind::CallAssign {
             style: CallStyle::DirectCall {
-                call_edges: CallEdges::Explicit(thin_vec![qualified]),
+                call_edges: CallEdges::Explicit(targets),
             },
             rets: thin_vec![ret],
             args,
@@ -1664,6 +1745,13 @@ fn lower_new_expression<'a>(
 
     // The constructor arguments: a parenthesized `argument_list` (`new Box(source())`) or a
     // braced `initializer_list` (`new Box{source()}`); absent for `new Box`/`new Box()`.
+    // The shapes are read off the syntax first (they do not depend on the lowering), so the
+    // constructor edge below can pick among same-arity constructors (spec 024).
+    let arg_shapes: Vec<ArgShape> = new_expr
+        .child_by_field_name("arguments")
+        .filter(|args| matches!(args.kind(), "argument_list" | "initializer_list"))
+        .map(|args| ctx.arg_shapes(args, source))
+        .unwrap_or_default();
     let ctor_args: ThinVec<Exp> = match new_expr.child_by_field_name("arguments") {
         Some(args) if args.kind() == "argument_list" => {
             ctx.collect_arguments(program, args, source, scope_view)?
@@ -1697,9 +1785,19 @@ fn lower_new_expression<'a>(
         .get(alloc_type)
         .is_some_and(|info| info.has_ctor)
     {
-        // Heap `new Type(args)` resolves by arity as it always has: copy-constructing from an
-        // object (`new Box(a)`) is a form this slice does not cover, so `copy` is `false`.
-        emit_ctor_call(ctx, program, scope_view, alloc_type, &obj, ctor_args, false);
+        // Heap `new Type(args)` resolves by arity as it always has, and then by argument shape
+        // among the constructors of that arity: copy-constructing from an object (`new Box(a)`)
+        // is a form this slice does not cover, so `copy` is `false`.
+        emit_ctor_call(
+            ctx,
+            program,
+            scope_view,
+            alloc_type,
+            &obj,
+            ctor_args,
+            &arg_shapes,
+            false,
+        );
     }
     // Returned as a `RawPath` (not lowered to loads): the caller binds the pointer local to
     // this object as an *alias*, so it must keep naming the object's storage.

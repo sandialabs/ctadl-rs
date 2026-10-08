@@ -1,0 +1,6 @@
+{
+  "name": "CPP_118_overload_ctor_int_vs_ptr",
+  "description": "C++ same-arity overloads (spec 024, FR-2), POSITIVE: `Box(int)` + `Box(Box*)` and `Box b(&a); sink(b.getw())`. The two definitions used to share one key and one FunctionIdx (the arity mangler keys only on the argument count), so the pointer body's parameter was never bound and its taint was dropped -- s=none against DFSan's d=flow. Each definition now gets its own key (`Box::Box#1(int)` / `Box::Box#1(Box*)`) and the construction resolves by argument shape: `&a` is a pointer to a known Box, which only the `Box*` parameter accepts. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
