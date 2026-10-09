@@ -385,7 +385,15 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 **C12. Malformed EH clauses.** *Reproduced.*
 - (a) Kinds 3, 5, 6 or 7: Rust errors; Cecil labels them `fault`.
 - (b) A fat section size ≥ 0x800000: Rust computes a huge count; Cecil reads 0
-  handlers.
+  handlers. *Fixed:* `read_sections` (`model/body.rs`) clamps the count at
+  zero, so a MoreSects section is read from right after the 4-byte header, as
+  Cecil reads it; `gap-eh-sections.dll` and the
+  `negative_fat_sizes_read_no_clauses` unit test cover it. Before, the port
+  read clauses until the input ran out or a kind was invalid, and failed the
+  whole body. ECMA makes the size unsigned, so Cecil misreads a section this
+  large too, but such a size implies at least 349,525 clauses in one method,
+  past what the CLR's JIT is believed to compile (65,534, unverified).
+  Evidence is in `/Volumes/Shampoo/c12b-2026-10-09/`.
 - (c) A start that isn't on an instruction: Rust prints `IL_END`; Cecil errors.
 - (d) An EH section on an empty body: Rust prints `IL_END` labels; Cecil errors.
 - (e) Catch token 0 or out of range: Rust prints the raw token; Cecil prints
