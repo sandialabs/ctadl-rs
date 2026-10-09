@@ -181,7 +181,10 @@ fn read_sections(
             }
         } else {
             cur.set_pos(cur.pos() - 1);
-            let count = ((cur.i32()? >> 8) / 24) as usize;
+            // Cecil reads the flags and the 24-bit size as one int32, so a
+            // size of 0x800000 or more gives a negative count, and no
+            // clauses.
+            let count = ((cur.i32()? >> 8) / 24).max(0) as usize;
             for _ in 0..count {
                 let ty = cur.u32()? & 0x7;
                 let try_start = cur.u32()?;
@@ -812,5 +815,22 @@ mod tests {
         let h = &handlers[0];
         assert_eq!((h.try_start, h.try_end), (0xffff_ffff, 1));
         assert_eq!((h.handler_start, h.handler_end), (0xffff_fff0, 0x10));
+    }
+
+    // A fat size of 0x800000 or more reads no clauses, and a MoreSects
+    // section after it starts right after its 4-byte header.
+    #[test]
+    fn negative_fat_sizes_read_no_clauses() {
+        for size in [0x80_0000u32, 0xff_ffe8, 0xff_ffff] {
+            let mut data = u32::to_le_bytes(0xc1 | size << 8).to_vec();
+            data.extend([0x01, 16, 0, 0]);
+            data.extend([2, 0, 1, 0, 3, 4, 0, 5, 0, 0, 0, 0]);
+            let mut handlers = Vec::new();
+            let mut cur = Cur::at(&data, 0);
+            read_sections(&mut handlers, &mut cur).unwrap();
+            assert_eq!(cur.pos(), data.len());
+            assert_eq!(handlers.len(), 1);
+            assert_eq!((handlers[0].try_start, handlers[0].try_end), (1, 4));
+        }
     }
 }

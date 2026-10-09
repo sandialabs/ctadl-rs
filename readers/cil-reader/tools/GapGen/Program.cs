@@ -64,9 +64,11 @@ static class Program {
             mod.Write(path, opts);
             Console.WriteLine($"wrote {path}");
         }
-        // Modules whose metadata root is patched once written.
+        // Modules whose bytes are patched once written: the metadata root,
+        // or method bodies.
         var images = new (string, Func<ModuleDef>, Action<byte[]>)[] {
             ("streams", () => Layout("streams"), Streams),
+            ("eh-sections", EhSections, EhSectionHeaders),
         };
         foreach (var (name, build, patch) in images) {
             var mod = build();
@@ -871,6 +873,92 @@ static class Program {
                 r.MajorVersion, r.MinorVersion, r.BuildNumber, r.RevisionNumber,
                 r.Flags, Overlong(1, 2, 3, 4), r.Name, r.Locale));
         });
+    }
+
+    // Methods with two try/finally clauses each, whose exception-handling
+    // section EhSectionHeaders rewrites. Each body starts with ldc.i4 of its
+    // own marker, which finds it in the written image.
+    static readonly (string, uint)[] EhMethods = {
+        ("Kept", 0x5ec7_0001),
+        ("Negative", 0x5ec7_0002),
+        ("MinusOne", 0x5ec7_0003),
+        ("NegativeThenSmall", 0x5ec7_0004),
+    };
+
+    static ModuleDef EhSections() {
+        var mod = NewModule("eh-sections");
+        var cs = mod.CorLibTypes;
+        var c = NewClass(mod, "", "C");
+        mod.Types.Add(c);
+        foreach (var (name, marker) in EhMethods) {
+            var m = new MethodDefUser(name, MethodSig.CreateStatic(cs.Void), Impl, Static) { Body = new CilBody() };
+            var ins = m.Body.Instructions;
+            var ret = OpCodes.Ret.ToInstruction();
+            var try2 = OpCodes.Nop.ToInstruction();
+            ins.Add(OpCodes.Ldc_I4.ToInstruction((int)marker));
+            ins.Add(OpCodes.Pop.ToInstruction());
+            for (int i = 0; i < 2; i++) {
+                var tryStart = i == 0 ? OpCodes.Nop.ToInstruction() : try2;
+                var handler = OpCodes.Endfinally.ToInstruction();
+                ins.Add(tryStart);
+                ins.Add(OpCodes.Leave_S.ToInstruction(i == 0 ? try2 : ret));
+                ins.Add(handler);
+                m.Body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Finally) {
+                    TryStart = tryStart, TryEnd = handler,
+                    HandlerStart = handler, HandlerEnd = i == 0 ? try2 : ret,
+                });
+            }
+            ins.Add(ret);
+            c.Methods.Add(m);
+        }
+        return mod;
+    }
+
+    // A fat section's header is a flags byte and a 24-bit size, which Cecil
+    // reads as one int32 and shifts right: a size of 0x800000 or more is
+    // negative, and its clause count, size / 24, is too. Cecil reads no
+    // clauses for it, and reads a following section (MoreSects) from right
+    // after the 4-byte header. Kept is left as dnlib wrote it; Negative's
+    // size is 0x800000 and MinusOne's 0xffffe8, a count of -1; and
+    // NegativeThenSmall's 0x800000 header is followed by a small section
+    // holding its first clause.
+    static void EhSectionHeaders(byte[] image) {
+        const uint fat = 0x41, moreSects = 0x80;
+        foreach (var (name, marker) in EhMethods) {
+            var ldc = new byte[] { 0x20 }.Concat(BitConverter.GetBytes(marker)).ToArray();
+            int code = IndexOf(image, ldc);
+            if (code < 0 || IndexOf(image, ldc, code + 1) >= 0)
+                throw new InvalidOperationException($"{name}: marker not found exactly once");
+            // The 12-byte fat header precedes the code, and the section
+            // follows it at the next 4-byte boundary.
+            int header = code - 12;
+            if ((image[header] & 0x3) != 0x3 || (image[header] & 0x8) == 0)
+                throw new InvalidOperationException($"{name}: no fat header with sections");
+            int section = (code + ReadI32(image, header + 4) + 3) & ~3;
+            if (image[section] != 0x01 || image[section + 1] != 4 + 2 * 12)
+                throw new InvalidOperationException($"{name}: expected a small section of two clauses");
+            var first = image.Skip(section + 4).Take(12).ToArray();
+            switch (name) {
+            case "Negative":
+                WriteU32(image, section, fat | 0x80_0000u << 8);
+                break;
+            case "MinusOne":
+                WriteU32(image, section, fat | 0xff_ffe8u << 8);
+                break;
+            case "NegativeThenSmall":
+                WriteU32(image, section, fat | moreSects | 0x80_0000u << 8);
+                new byte[] { 0x01, 4 + 12, 0, 0 }.CopyTo(image, section + 4);
+                first.CopyTo(image, section + 8);
+                break;
+            }
+        }
+    }
+
+    static int IndexOf(byte[] image, byte[] pattern, int from = 0) {
+        for (int i = from; i + pattern.Length <= image.Length; i++)
+            if (image.AsSpan(i, pattern.Length).SequenceEqual(pattern))
+                return i;
+        return -1;
     }
 
     // The file offset of the metadata root, from the PE headers.
