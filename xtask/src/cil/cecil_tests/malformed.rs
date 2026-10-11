@@ -750,6 +750,79 @@ fn opcode_past_the_tables() {
     }
 }
 
+// Operand tokens that CodeReader reads as null, which the Formatter prints
+// no operand for: `gap-operand-tokens.dll` has rid 0, rids past each table
+// and tables LookupToken does not read, and cecil-compare covers how they
+// print. Here, `resolve_operand` gives `None` for them too, and a field or
+// method in no type's member list, which LookupField and LookupMethod do
+// not find, is null as well. CecilDump lists members through their types,
+// so it leaves such a member out where cil-dump lists it, and only this
+// test covers it.
+fn operand_tokens_not_found() {
+    let original = read_fixture("gap-operand-tokens.dll");
+    let module = Module::read(&original).unwrap();
+    // C's M, whose operands are all patched, then N, an ldtoken of C.
+    let (m, n) = (module.method_def(1).unwrap(), module.method_def(2).unwrap());
+    assert_eq!(m.name().unwrap(), "M");
+    let body = m.body().unwrap();
+    let formatted = body.formatted().unwrap();
+    let operands: Vec<_> = body.instructions[2..]
+        .iter()
+        .filter(|ins| !matches!(ins.opcode.name(), "pop" | "ldnull" | "ret"))
+        .collect();
+    assert_eq!(operands.len(), 14);
+    for ins in operands {
+        let rendered = body.format_instruction(ins).unwrap();
+        assert!(rendered.ends_with(ins.opcode.name()), "{rendered}");
+        assert!(formatted.contains(&rendered));
+        assert!(body.resolve_operand(ins).unwrap().is_none());
+    }
+    let body = n.body().unwrap();
+    assert_eq!(
+        body.format_instruction(&body.instructions[0]).unwrap(),
+        "IL_0000: ldtoken C"
+    );
+    assert!(matches!(
+        body.resolve_operand(&body.instructions[0]),
+        Ok(Some(Entity::TypeDef(_)))
+    ));
+
+    // TypeDef's FieldList and MethodList columns, after Flags, Name,
+    // Namespace and Extends. Starting both lists of <Module> and C at 2
+    // leaves F and M in neither, and N's ldtoken is pointed at M.
+    const FIELD_LIST: usize = 10;
+    const METHOD_LIST: usize = 12;
+    let ldtoken_operand = {
+        let image = PeImage::parse(&original).unwrap();
+        // A tiny header's byte, then ldtoken's.
+        image.resolve_rva(n.rva().unwrap()).unwrap() + 2
+    };
+    let mut data = original.clone();
+    for rid in [1, 2] {
+        patch_column(&mut data, Table::TypeDef, rid, FIELD_LIST, 2);
+        patch_column(&mut data, Table::TypeDef, rid, METHOD_LIST, 2);
+    }
+    let method_m = MetadataToken::new(TokenType::Method, 1);
+    data[ldtoken_operand..ldtoken_operand + 4].copy_from_slice(&method_m.raw().to_le_bytes());
+    let module = Module::read(&data).unwrap();
+    assert!(module
+        .lookup_token(MetadataToken::new(TokenType::Field, 1))
+        .unwrap()
+        .is_none());
+    assert!(module.lookup_token(method_m).unwrap().is_none());
+    let n = module.method_def(2).unwrap();
+    assert_eq!(n.declaring_type().unwrap().unwrap().name().unwrap(), "C");
+    let body = n.body().unwrap();
+    assert_eq!(
+        body.format_instruction(&body.instructions[0]).unwrap(),
+        "IL_0000: ldtoken"
+    );
+    assert!(body
+        .resolve_operand(&body.instructions[0])
+        .unwrap()
+        .is_none());
+}
+
 pub(super) const TESTS: &[Test] = &[
     ("nested_class_cycles", nested_class_cycles),
     (
@@ -770,4 +843,5 @@ pub(super) const TESTS: &[Test] = &[
     ("exported_type_file_loop", exported_type_file_loop),
     ("type_spec_chains", type_spec_chains),
     ("opcode_past_the_tables", opcode_past_the_tables),
+    ("operand_tokens_not_found", operand_tokens_not_found),
 ];

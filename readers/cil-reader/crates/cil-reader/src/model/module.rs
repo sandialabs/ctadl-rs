@@ -603,37 +603,52 @@ impl<'a> Module<'a> {
 
     /// `ModuleDefinition.LookupToken` for the 7 supported token kinds.
     pub fn lookup_token(&self, token: MetadataToken) -> Result<Option<Entity<'_>>> {
-        let rid = token.rid();
-        if rid == 0 {
-            return Ok(None);
-        }
-        let m = self.m();
-        let in_range = |table: Table| rid <= self.data.md.row_count(table);
-        Ok(match token.token_type() {
-            Some(TokenType::TypeDef) if in_range(Table::TypeDef) => {
-                Some(Entity::TypeDef(TypeDef { m, rid }))
-            }
-            Some(TokenType::TypeRef) if in_range(Table::TypeRef) => {
-                Some(Entity::TypeRef(TypeRef { m, rid }))
-            }
-            Some(TokenType::TypeSpec) if in_range(Table::TypeSpec) => {
-                Some(Entity::TypeSpec(TypeSpec { m, rid }))
-            }
-            Some(TokenType::Field) if in_range(Table::Field) => {
-                Some(Entity::Field(FieldDef { m, rid }))
-            }
-            Some(TokenType::Method) if in_range(Table::Method) => {
-                Some(Entity::Method(MethodDef { m, rid }))
-            }
-            Some(TokenType::MemberRef) if in_range(Table::MemberRef) => {
-                Some(Entity::MemberRef(MemberRef { m, rid }))
-            }
-            Some(TokenType::MethodSpec) if in_range(Table::MethodSpec) => {
-                Some(Entity::MethodSpec(MethodSpec { m, rid }))
-            }
-            _ => None,
-        })
+        lookup_token(self.m(), token)
     }
+}
+
+/// [`Module::lookup_token`] on the module's data: `None` where Cecil's
+/// `LookupToken` gives null — rid 0, a rid past its table, another table,
+/// or a field or method in no type's member list.
+pub(crate) fn lookup_token<'a>(
+    m: &'a ModuleData<'a>,
+    token: MetadataToken,
+) -> Result<Option<Entity<'a>>> {
+    let rid = token.rid();
+    if rid == 0 {
+        return Ok(None);
+    }
+    let in_range = |table: Table| rid <= m.md.row_count(table);
+    Ok(match token.token_type() {
+        Some(TokenType::TypeDef) if in_range(Table::TypeDef) => {
+            Some(Entity::TypeDef(TypeDef { m, rid }))
+        }
+        Some(TokenType::TypeRef) if in_range(Table::TypeRef) => {
+            Some(Entity::TypeRef(TypeRef { m, rid }))
+        }
+        Some(TokenType::TypeSpec) if in_range(Table::TypeSpec) => {
+            Some(Entity::TypeSpec(TypeSpec { m, rid }))
+        }
+        // LookupField and LookupMethod find the member through its
+        // declaring type.
+        Some(TokenType::Field)
+            if in_range(Table::Field) && m.member_declaring_type(rid, true)?.is_some() =>
+        {
+            Some(Entity::Field(FieldDef { m, rid }))
+        }
+        Some(TokenType::Method)
+            if in_range(Table::Method) && m.member_declaring_type(rid, false)?.is_some() =>
+        {
+            Some(Entity::Method(MethodDef { m, rid }))
+        }
+        Some(TokenType::MemberRef) if in_range(Table::MemberRef) => {
+            Some(Entity::MemberRef(MemberRef { m, rid }))
+        }
+        Some(TokenType::MethodSpec) if in_range(Table::MethodSpec) => {
+            Some(Entity::MethodSpec(MethodSpec { m, rid }))
+        }
+        _ => None,
+    })
 }
 
 /// [`Module::get_type_by`] on the module's data.

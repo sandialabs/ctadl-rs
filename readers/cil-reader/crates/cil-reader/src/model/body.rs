@@ -8,8 +8,10 @@ use crate::cil::decoder::{Ins, InstructionDecoder, RawOperand};
 use crate::error::{Error, Result};
 use crate::model::data::ModuleData;
 use crate::model::handles::{MemberRefSig, MethodDef};
+use crate::model::module::{Entity, lookup_token};
 use crate::model::names::{GenericContext, method_params_full_name, sig_full_name};
 use crate::model::sig::{SigReader, TypeSig};
+use crate::raw::tables::Table;
 use crate::token::{MetadataToken, TokenType};
 use std::fmt::Write as _;
 
@@ -344,8 +346,9 @@ impl<'a> MethodBody<'a> {
         {
             return Ok(());
         }
-        // Likewise for arguments and locals that do not exist.
-        if !self.names_arg_or_local(&ins.operand)? {
+        // Likewise for arguments and locals that do not exist, and for
+        // tokens Cecil looks up as null.
+        if !self.names_arg_or_local(&ins.operand)? || !self.resolves_token(&ins.operand)? {
             return Ok(());
         }
         if !matches!(ins.operand, RawOperand::None) {
@@ -370,6 +373,17 @@ impl<'a> MethodBody<'a> {
                     index < sig.params.len()
                 }
             }
+            _ => true,
+        })
+    }
+
+    /// False for a token operand that `CodeReader.ReadOperand` reads as
+    /// null: one `LookupToken` does not find, or a call site whose rid is
+    /// past the StandAloneSig table (`ReadCallSite`).
+    fn resolves_token(&self, operand: &RawOperand<'_>) -> Result<bool> {
+        Ok(match *operand {
+            RawOperand::Token(token) => lookup_token(self.m, token)?.is_some(),
+            RawOperand::CallSite(token) => token.rid() <= self.m.md.row_count(Table::StandAloneSig),
             _ => true,
         })
     }
@@ -435,121 +449,37 @@ impl<'a> MethodBody<'a> {
                 method_params_full_name(self.m, &sig, ctx, out)?;
             }
             RawOperand::Token(token) => {
-                self.write_token_operand(*token, ctx, out)?;
+                if let Some(entity) = lookup_token(self.m, *token)? {
+                    write_entity(entity, ctx, out)?;
+                }
             }
         }
         Ok(())
     }
 
-    fn write_token_operand(
-        &self,
-        token: MetadataToken,
-        ctx: GenericContext,
-        out: &mut String,
-    ) -> Result<()> {
-        use crate::model::handles::{MemberRef, MethodSpec, TypeSpec};
-        match token.token_type() {
-            Some(TokenType::TypeDef) => {
-                crate::model::names::typedef_full_name(self.m, token.rid(), out)
-            }
-            Some(TokenType::TypeRef) => {
-                crate::model::names::typeref_full_name(self.m, token.rid(), out)
-            }
-            Some(TokenType::TypeSpec) => {
-                let spec = TypeSpec {
-                    m: self.m,
-                    rid: token.rid(),
-                };
-                out.push_str(&spec.full_name_ctx(ctx)?);
-                Ok(())
-            }
-            Some(TokenType::Field) => {
-                let field = crate::model::handles::FieldDef {
-                    m: self.m,
-                    rid: token.rid(),
-                };
-                out.push_str(&field.full_name()?);
-                Ok(())
-            }
-            Some(TokenType::Method) => {
-                let method = MethodDef {
-                    m: self.m,
-                    rid: token.rid(),
-                };
-                out.push_str(&method.full_name()?);
-                Ok(())
-            }
-            Some(TokenType::MemberRef) => {
-                let mr = MemberRef {
-                    m: self.m,
-                    rid: token.rid(),
-                };
-                out.push_str(&mr.full_name_with_outer(ctx)?);
-                Ok(())
-            }
-            Some(TokenType::MethodSpec) => {
-                let ms = MethodSpec {
-                    m: self.m,
-                    rid: token.rid(),
-                };
-                out.push_str(&ms.full_name_with_outer(ctx)?);
-                Ok(())
-            }
-            _ => Err(Error::Unsupported("unsupported token operand")),
-        }
-    }
-
     /// Resolves a raw operand's tokens against the module, mirroring
-    /// `ModuleDefinition.LookupToken` for instruction operands.
-    pub fn resolve_operand(
-        &self,
-        ins: &Ins<'a>,
-    ) -> Result<Option<crate::model::module::Entity<'a>>> {
-        match &ins.operand {
-            RawOperand::Token(token) => {
-                let module_shim = self.m;
-                // Reuse the lookup logic through a temporary Module-like path:
-                let rid = token.rid();
-                if rid == 0 {
-                    return Ok(None);
-                }
-                use crate::model::handles as h;
-                use crate::model::module::Entity;
-                Ok(match token.token_type() {
-                    Some(TokenType::TypeDef) => Some(Entity::TypeDef(h::TypeDef {
-                        m: module_shim,
-                        rid,
-                    })),
-                    Some(TokenType::TypeRef) => Some(Entity::TypeRef(h::TypeRef {
-                        m: module_shim,
-                        rid,
-                    })),
-                    Some(TokenType::TypeSpec) => Some(Entity::TypeSpec(h::TypeSpec {
-                        m: module_shim,
-                        rid,
-                    })),
-                    Some(TokenType::Field) => Some(Entity::Field(h::FieldDef {
-                        m: module_shim,
-                        rid,
-                    })),
-                    Some(TokenType::Method) => Some(Entity::Method(h::MethodDef {
-                        m: module_shim,
-                        rid,
-                    })),
-                    Some(TokenType::MemberRef) => Some(Entity::MemberRef(h::MemberRef {
-                        m: module_shim,
-                        rid,
-                    })),
-                    Some(TokenType::MethodSpec) => Some(Entity::MethodSpec(h::MethodSpec {
-                        m: module_shim,
-                        rid,
-                    })),
-                    _ => None,
-                })
-            }
+    /// `ModuleDefinition.LookupToken` for instruction operands: `None` for a
+    /// token Cecil reads as a null operand.
+    pub fn resolve_operand(&self, ins: &Ins<'a>) -> Result<Option<Entity<'a>>> {
+        match ins.operand {
+            RawOperand::Token(token) => lookup_token(self.m, token),
             _ => Ok(None),
         }
     }
+}
+
+/// The operand's `FullName`, as the Formatter prints a member or type.
+fn write_entity(entity: Entity<'_>, ctx: GenericContext, out: &mut String) -> Result<()> {
+    match entity {
+        Entity::TypeDef(t) => crate::model::names::typedef_full_name(t.m, t.rid, out)?,
+        Entity::TypeRef(t) => crate::model::names::typeref_full_name(t.m, t.rid, out)?,
+        Entity::TypeSpec(t) => out.push_str(&t.full_name_ctx(ctx)?),
+        Entity::Field(f) => out.push_str(&f.full_name()?),
+        Entity::Method(m) => out.push_str(&m.full_name()?),
+        Entity::MemberRef(m) => out.push_str(&m.full_name_with_outer(ctx)?),
+        Entity::MethodSpec(m) => out.push_str(&m.full_name_with_outer(ctx)?),
+    }
+    Ok(())
 }
 
 /// `Formatter.FormatLabel`.

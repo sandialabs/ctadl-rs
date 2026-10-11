@@ -69,6 +69,7 @@ static class Program {
         var images = new (string, Func<ModuleDef>, Action<byte[]>)[] {
             ("streams", () => Layout("streams"), Streams),
             ("eh-sections", EhSections, EhSectionHeaders),
+            ("operand-tokens", OperandTokens, OperandTokenRows),
         };
         foreach (var (name, build, patch) in images) {
             var mod = build();
@@ -951,6 +952,94 @@ static class Program {
                 first.CopyTo(image, section + 8);
                 break;
             }
+        }
+    }
+
+    // The tokens OperandTokenRows writes over the operands of M, after its
+    // marker, in order. Cecil's LookupToken gives null for rid 0, for a rid
+    // past its table and for a table it does not look up, and ReadCallSite
+    // for a StandAloneSig rid past its table; the Formatter and CecilDump
+    // then print no operand.
+    const uint OperandMarker = 0x70c3_0001;
+    static readonly uint[] OperandTokenValues = {
+        0x0200_0000, // TypeDef rid 0
+        0x0200_ffff, // past each table
+        0x0100_ffff,
+        0x1b00_ffff,
+        0x0400_ffff,
+        0x0600_ffff,
+        0x0a00_ffff,
+        0x2b00_ffff,
+        0x0000_0001, // Module
+        0x2300_0001, // AssemblyRef
+        0x7000_0001, // a user string
+        0x0400_ffff, // ldsfld
+        0x0600_ffff, // call
+        0x1100_ffff, // calli
+    };
+
+    // M: ldc.i4 of the marker, then one ldtoken of C for each token above
+    // but the last three, an ldsfld, a call, and a calli, each followed by
+    // a pop where it leaves a value. N, after them, keeps an ldtoken of C.
+    static ModuleDef OperandTokens() {
+        var mod = NewModule("operand-tokens");
+        var cs = mod.CorLibTypes;
+        var c = NewClass(mod, "", "C");
+        mod.Types.Add(c);
+        var f = new FieldDefUser("F", new FieldSig(cs.Int32), FieldAttributes.Public | FieldAttributes.Static);
+        c.Fields.Add(f);
+        var n = new MethodDefUser("N", MethodSig.CreateStatic(cs.Void), Impl, Static) { Body = new CilBody() };
+        n.Body.Instructions.Add(OpCodes.Ldtoken.ToInstruction(c));
+        n.Body.Instructions.Add(OpCodes.Pop.ToInstruction());
+        n.Body.Instructions.Add(OpCodes.Ret.ToInstruction());
+        var m = new MethodDefUser("M", MethodSig.CreateStatic(cs.Void), Impl, Static) { Body = new CilBody() };
+        var ins = m.Body.Instructions;
+        ins.Add(OpCodes.Ldc_I4.ToInstruction((int)OperandMarker));
+        ins.Add(OpCodes.Pop.ToInstruction());
+        for (int i = 0; i < OperandTokenValues.Length - 3; i++) {
+            ins.Add(OpCodes.Ldtoken.ToInstruction(c));
+            ins.Add(OpCodes.Pop.ToInstruction());
+        }
+        ins.Add(OpCodes.Ldsfld.ToInstruction(f));
+        ins.Add(OpCodes.Pop.ToInstruction());
+        ins.Add(OpCodes.Call.ToInstruction(n));
+        ins.Add(OpCodes.Ldnull.ToInstruction());
+        ins.Add(OpCodes.Calli.ToInstruction(MethodSig.CreateStatic(cs.Void)));
+        ins.Add(OpCodes.Ret.ToInstruction());
+        c.Methods.Add(m);
+        c.Methods.Add(n);
+        return mod;
+    }
+
+    static void OperandTokenRows(byte[] image) {
+        var ldc = new byte[] { 0x20 }.Concat(BitConverter.GetBytes(OperandMarker)).ToArray();
+        int at = IndexOf(image, ldc);
+        if (at < 0 || IndexOf(image, ldc, at + 1) >= 0)
+            throw new InvalidOperationException("M: marker not found exactly once");
+        at += 5 + 1; // past ldc.i4 and pop
+        int i = 0;
+        foreach (var token in OperandTokenValues) {
+            // ldtoken, ldsfld and call take one opcode byte; calli is
+            // preceded by ldnull. Each is followed by pop but the last two.
+            byte op = i < OperandTokenValues.Length - 3 ? (byte)0xd0
+                : i == OperandTokenValues.Length - 3 ? (byte)0x7e
+                : i == OperandTokenValues.Length - 2 ? (byte)0x28
+                : (byte)0x29;
+            if (op == 0x29) {
+                if (image[at] != 0x14)
+                    throw new InvalidOperationException("M: expected ldnull before calli");
+                at++;
+            }
+            if (image[at] != op)
+                throw new InvalidOperationException($"M: expected opcode 0x{op:x2} at operand {i}");
+            WriteU32(image, at + 1, token);
+            at += 5;
+            if (op == 0xd0 || op == 0x7e) {
+                if (image[at] != 0x26)
+                    throw new InvalidOperationException($"M: expected pop after operand {i}");
+                at++;
+            }
+            i++;
         }
     }
 
