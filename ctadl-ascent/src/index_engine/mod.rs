@@ -1645,12 +1645,17 @@ ascent_source! {
         callee_info(func_id, _, v, p_call, _),
         locals(func_id, v, p_call, n, p_n);
 
-    // 1.2: Propagate Critical Summary (context-free) up the stack.
-    critical_summary(caller_func_id, n, p_n) <--
+    // 1.2: Propagate Critical Summary (context-free) up the stack. The caller may pass only a
+    // prefix `key` of the callee's path (`fwd(s) { call(s); }` never touches `s->op`), so the
+    // argument is matched at every split `p_tgt = key · rest` and `rest` is put back on.
+    critical_summary(caller_func_id, n, p_nr) <--
         call(caller_func_id, caller_insn_id, tgt),
         critical_summary(tgt, n_tgt, p_tgt),
         let arg = call_arg!(*caller_insn_id, *n_tgt),
-        locals(caller_func_id, arg, p_tgt, n, p_n);
+        path_set(ps),
+        for (key, rest) in &ps.splits(p_tgt).exact,
+        locals(caller_func_id, arg, key, n, p_n),
+        if let Some(p_nr) = ps.concat(p_n, None, rest);
 
     // 2.1: Base Resolvent. A stored call target locally reaches a critical summary, so
     // instantiate the resolvent in the parameters of the summary. The target is carried
@@ -1680,15 +1685,20 @@ ascent_source! {
     // skytube. Materializing the call-arg rows of `locals` instead was 59 M rows on launcher
     // (41% of `locals`); keying the filter by the vertex needs nothing new
     // (`docs/context-assign-fix-candidates.md`).
-    relation critical_arg(FunctionId, FlowVariable, Path, FunctionId, InsnId, FormalIndex);
-    critical_arg(g, arg, p, f, insn, n) <--
+    // Keyed by every split `p = key · rest`, as in 1.2: the caller may reach only a prefix.
+    relation critical_arg(FunctionId, FlowVariable, Path, Path, Path, FunctionId, InsnId, FormalIndex);
+    critical_arg(g, arg, *key, *rest, *p, f, insn, n) <--
         critical_summary(f, n, p),
         call(g, insn, f),
-        let arg = call_arg!(*insn, *n);
+        let arg = call_arg!(*insn, *n),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p).exact;
     relation critical_reach(FunctionId, FormalIndex, Path, FunctionId, InsnId, FormalIndex, Path);
-    critical_reach(g, n2, p2, f, insn, n, p) <--
-        locals(g, arg, p, n2, p2),
-        critical_arg(g, arg, p, f, insn, n);
+    critical_reach(g, n2, p2r, f, insn, n, p) <--
+        locals(g, arg, key, n2, p2),
+        critical_arg(g, arg, key, rest, p, f, insn, n),
+        path_set(ps),
+        if let Some(p2r) = ps.concat(p2, None, rest);
     establishes_via(f, d, g, insn, up) <--
         critical_reach(g, n2, p2, f, insn, n, p),
         resolvent(g, n2, p2, obj, up),

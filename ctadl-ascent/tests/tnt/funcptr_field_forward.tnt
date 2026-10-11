@@ -1,0 +1,34 @@
+// A call target stored in a struct field must resolve when an intermediate frame (`fwd`) only
+// passes the struct along and never touches `.op`.
+def id(x): 1
+where summaries [return <- x]
+{
+start:
+  return x;
+}
+
+def call(s, b): 1
+where summaries [return </- b]
+{
+start:
+  f = s.op;
+  t = f(b);
+  return t;
+}
+
+def fwd(s, b): 1
+where summaries [return </- b]
+{
+start:
+  t = call(s, b);
+  return t;
+}
+
+def wrap(a, b): 1
+where summaries [return <- b]
+{
+start:
+  o.op = ptr<id>;
+  t = fwd(o, b);
+  return t;
+}
