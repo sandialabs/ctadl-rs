@@ -10,8 +10,8 @@ use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader};
 use cil_reader::model::sig::MAX_TYPE_SIG_DEPTH;
 use cil_reader::raw::pe::PeImage;
 use cil_reader::raw::tables::{
-    CustomAttributeRaw, FieldRaw, ModuleRaw, NestedClassRaw, PropertyMapRaw, Table, TypeDefRaw,
-    TypeSpecRaw,
+    CustomAttributeRaw, FieldRaw, GenericParamConstraintRaw, InterfaceImplRaw, ModuleRaw,
+    NestedClassRaw, PropertyMapRaw, Table, TypeDefRaw, TypeSpecRaw,
 };
 use cil_reader::{Entity, Error, MetadataToken, Module, TokenType};
 
@@ -852,6 +852,49 @@ fn dump_survives_bad_values() {
     );
 }
 
+// InterfaceImpl and GenericParamConstraint types of rid 0, past their
+// table, and with the TypeDefOrRef tag 3, which names no table. Cecil's
+// LookupToken is null for each, and the entry stays with a null type; it
+// used to fail the type's whole list. CecilDump dereferences the null, so
+// only this test covers it.
+fn null_interfaces_and_constraints() {
+    let sections: Vec<_> = cil_dump::ALL_SECTIONS.iter().map(|&(_, s)| s).collect();
+    // Each row's second column, after Class or Owner.
+    for value in [coded(0, 2, 0), coded(0x3fff, 2, 1), coded(1, 2, 3)] {
+        let mut data = read_fixture("Interfaces.cs.dll");
+        patch_column(&mut data, Table::InterfaceImpl, 1, 2, value);
+        let module = Module::read(&data).unwrap();
+        let class = module.metadata().row::<InterfaceImplRaw>(1).unwrap().class;
+        let interfaces = type_def(&module, class).interfaces().unwrap();
+        let patched = interfaces.iter().find(|i| i.token.rid() == 1).unwrap();
+        assert!(patched.interface.is_none());
+        let text = cil_dump::dump(&module, &sections, None).unwrap();
+        assert!(text.contains("\tinterface=-\n"));
+
+        let mut data = read_fixture("Generics.cs.dll");
+        patch_column(&mut data, Table::GenericParamConstraint, 1, 2, value);
+        let module = Module::read(&data).unwrap();
+        let owner = module
+            .metadata()
+            .row::<GenericParamConstraintRaw>(1)
+            .unwrap()
+            .owner;
+        let types = module.all_types().flat_map(|t| t.generic_params().unwrap());
+        let methods = module
+            .all_types()
+            .flat_map(|t| t.methods().unwrap())
+            .flat_map(|m| m.generic_params().unwrap());
+        let gp = types
+            .chain(methods)
+            .find(|gp| gp.token().rid() == owner)
+            .unwrap();
+        let constraints = gp.constraints().unwrap();
+        assert!(constraints[0].constraint.is_none());
+        let text = cil_dump::dump(&module, &sections, None).unwrap();
+        assert!(text.contains("\t\tconstraint=-\n"));
+    }
+}
+
 pub(super) const TESTS: &[Test] = &[
     ("nested_class_cycles", nested_class_cycles),
     (
@@ -874,4 +917,8 @@ pub(super) const TESTS: &[Test] = &[
     ("opcode_past_the_tables", opcode_past_the_tables),
     ("operand_tokens_not_found", operand_tokens_not_found),
     ("dump_survives_bad_values", dump_survives_bad_values),
+    (
+        "null_interfaces_and_constraints",
+        null_interfaces_and_constraints,
+    ),
 ];

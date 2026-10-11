@@ -500,7 +500,7 @@ fn interface_implementation() {
         .interfaces()
         .unwrap()
         .into_iter()
-        .find(|i| i.interface.full_name().unwrap() == "IFoo")
+        .find(|i| i.interface.unwrap().full_name().unwrap() == "IFoo")
         .unwrap();
     let attrs = module.custom_attributes_of(iface.token).unwrap();
     assert_eq!(attrs.len(), 1);

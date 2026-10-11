@@ -34,7 +34,7 @@ fn simple_interfaces() {
     assert_eq!(interfaces.len(), 2);
     let names: Vec<String> = interfaces
         .iter()
-        .map(|i| i.interface.full_name().unwrap())
+        .map(|i| i.interface.unwrap().full_name().unwrap())
         .collect();
     assert!(names.contains(&"IBar".to_string()));
     assert!(names.contains(&"IFoo".to_string()));
@@ -65,8 +65,14 @@ fn constrained_generic_type() {
     assert!(t.has_constraints().unwrap());
     let constraints = t.constraints().unwrap();
     assert_eq!(constraints.len(), 2);
-    assert_eq!(constraints[0].constraint.full_name().unwrap(), "Zap");
-    assert_eq!(constraints[1].constraint.full_name().unwrap(), "IZoom");
+    assert_eq!(
+        constraints[0].constraint.unwrap().full_name().unwrap(),
+        "Zap"
+    );
+    assert_eq!(
+        constraints[1].constraint.unwrap().full_name().unwrap(),
+        "IZoom"
+    );
 }
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:93 (GenericBaseType)
@@ -103,11 +109,19 @@ fn generic_constraint_on_generic_parameter() {
     let t3_constraints = params[2].constraints().unwrap();
     // T2's constraint is T1, T3's is T2 (each rendered via the owner context).
     assert_eq!(
-        t2_constraints[0].constraint.full_name_ctx(ctx).unwrap(),
+        t2_constraints[0]
+            .constraint
+            .unwrap()
+            .full_name_ctx(ctx)
+            .unwrap(),
         params[0].name().unwrap()
     );
     assert_eq!(
-        t3_constraints[0].constraint.full_name_ctx(ctx).unwrap(),
+        t3_constraints[0]
+            .constraint
+            .unwrap()
+            .full_name_ctx(ctx)
+            .unwrap(),
         params[1].name().unwrap()
     );
 }
@@ -163,7 +177,7 @@ fn generic_interface_reference() {
     let module = Module::read(&data).unwrap();
     let ty = module.get_type("Program").unwrap().unwrap();
     let iface = &ty.interfaces().unwrap()[0];
-    let TypeDefOrRef::Spec(spec) = iface.interface else {
+    let Some(TypeDefOrRef::Spec(spec)) = iface.interface else {
         panic!("expected a generic instance interface")
     };
     let TypeSig::GenericInst {

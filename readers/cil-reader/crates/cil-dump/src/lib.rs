@@ -17,7 +17,10 @@ use cil_reader::model::custom_attributes::{
 use cil_reader::model::resolver::{
     AssemblyCache, AssemblyLoader, DirectoryLoader, ResolvedMember, ResolvedType,
 };
-use cil_reader::model::{ConstantValue, Entity, ExceptionHandlerType, Module, Resource, TypeDef};
+use cil_reader::model::{
+    ConstantValue, Entity, ExceptionHandlerType, GenericContext, Module, Resource, TypeDef,
+    TypeDefOrRef,
+};
 use cil_reader::raw::{ModuleKind, Table, TargetArchitecture};
 use cil_reader::{MetadataToken, Result, TokenType};
 use std::fmt::Write as _;
@@ -320,7 +323,7 @@ fn dump_types(module: &Module<'_>, out: &mut String) -> Result<()> {
             writeln!(out, "\tlayout packing={packing} size={size}").unwrap();
         }
         for iface in ty.interfaces()? {
-            let name = or_error(iface.interface.full_name_ctx(ty.generic_context()));
+            let name = type_or_none(iface.interface, ty.generic_context());
             writeln!(out, "\tinterface={name}").unwrap();
         }
         dump_generic_params(module, &ty, out)?;
@@ -339,7 +342,7 @@ fn dump_generic_params(_module: &Module<'_>, ty: &TypeDef<'_>, out: &mut String)
         )
         .unwrap();
         for c in gp.constraints()? {
-            let name = or_error(c.constraint.full_name_ctx(ty.generic_context()));
+            let name = type_or_none(c.constraint, ty.generic_context());
             writeln!(out, "\t\tconstraint={name}").unwrap();
         }
     }
@@ -382,6 +385,11 @@ fn dump_fields(module: &Module<'_>, out: &mut String) -> Result<()> {
 /// its record that value rather than the dump the rest of it.
 fn or_error(value: Result<String>) -> String {
     value.unwrap_or_else(|_| "!error".into())
+}
+
+/// A type's full name, `-` for none (Cecil's null), `!error` when it fails.
+fn type_or_none(ty: Option<TypeDefOrRef<'_>>, ctx: GenericContext) -> String {
+    ty.map_or_else(|| "-".into(), |t| or_error(t.full_name_ctx(ctx)))
 }
 
 /// ` name` for a flag that holds, ` name=!error` for one that fails to read.

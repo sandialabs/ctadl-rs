@@ -114,6 +114,22 @@ pub enum TypeDefOrRef<'a> {
 }
 
 impl<'a> TypeDefOrRef<'a> {
+    /// The type `token` names as `GetTypeDefOrRef` looks it up: none for
+    /// rid 0, a rid past its table, or a token of another table, where
+    /// Cecil's `LookupToken` is null.
+    pub(crate) fn lookup(m: &'a ModuleData<'a>, token: MetadataToken) -> Option<TypeDefOrRef<'a>> {
+        let table = match token.token_type()? {
+            TokenType::TypeDef => Table::TypeDef,
+            TokenType::TypeRef => Table::TypeRef,
+            TokenType::TypeSpec => Table::TypeSpec,
+            _ => return None,
+        };
+        if !(1..=m.md.row_count(table)).contains(&token.rid()) {
+            return None;
+        }
+        TypeDefOrRef::from_token(m, token).ok().flatten()
+    }
+
     pub(crate) fn from_token(
         m: &'a ModuleData<'a>,
         token: MetadataToken,
@@ -381,15 +397,13 @@ impl<'a> TypeDef<'a> {
         let Some(list) = self.m.interfaces_map()?.get(&self.rid) else {
             return Ok(Vec::new());
         };
-        list.iter()
-            .map(|&(rid, token)| {
-                Ok(InterfaceImpl {
-                    token: MetadataToken::new(TokenType::InterfaceImpl, rid),
-                    interface: TypeDefOrRef::from_token(self.m, token)?
-                        .ok_or(Error::Unsupported("null interface token"))?,
-                })
+        Ok(list
+            .iter()
+            .map(|&(rid, token)| InterfaceImpl {
+                token: MetadataToken::new(TokenType::InterfaceImpl, rid),
+                interface: TypeDefOrRef::lookup(self.m, token),
             })
-            .collect()
+            .collect())
     }
 
     /// `(packing_size, class_size)` from the ClassLayout table.
@@ -555,7 +569,9 @@ fn generic_params<'a>(
 #[derive(Clone, Copy, PartialEq)]
 pub struct InterfaceImpl<'a> {
     pub token: MetadataToken,
-    pub interface: TypeDefOrRef<'a>,
+    /// None where Cecil's `InterfaceType` is null: a token of rid 0, past
+    /// its table, or of another table.
+    pub interface: Option<TypeDefOrRef<'a>>,
 }
 
 impl<'a> TypeRef<'a> {
@@ -1467,7 +1483,9 @@ pub mod generic_param_attributes {
 #[derive(Clone, Copy, PartialEq)]
 pub struct GenericConstraint<'a> {
     pub token: MetadataToken,
-    pub constraint: TypeDefOrRef<'a>,
+    /// None where Cecil's `ConstraintType` is null (see
+    /// [`InterfaceImpl::interface`]).
+    pub constraint: Option<TypeDefOrRef<'a>>,
 }
 
 impl<'a> GenericParam<'a> {
@@ -1511,15 +1529,13 @@ impl<'a> GenericParam<'a> {
         let Some(list) = self.m.generic_constraints()?.get(&self.rid) else {
             return Ok(Vec::new());
         };
-        list.iter()
-            .map(|&(rid, token)| {
-                Ok(GenericConstraint {
-                    token: MetadataToken::new(TokenType::GenericParamConstraint, rid),
-                    constraint: TypeDefOrRef::from_token(self.m, token)?
-                        .ok_or(Error::Unsupported("null constraint token"))?,
-                })
+        Ok(list
+            .iter()
+            .map(|&(rid, token)| GenericConstraint {
+                token: MetadataToken::new(TokenType::GenericParamConstraint, rid),
+                constraint: TypeDefOrRef::lookup(self.m, token),
             })
-            .collect()
+            .collect())
     }
 }
 
