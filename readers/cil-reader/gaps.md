@@ -413,7 +413,7 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Rust:** `interfaces()` and `constraints()` (`model/handles.rs:307-308, 1271-1272`).
 - **Cecil:** yields a null type.
 
-**C15. A TypeRef whose scope is TypeRef rid 0 fails the whole name.**
+**C15. A TypeRef whose scope is TypeRef rid 0 fails the whole name.** *Fixed:* `ModuleData::typeref_declaring_rid` (`model/data.rs`) gives no declaring TypeRef for a scope of rid 0 or past the TypeRef table, as `GetTypeReference` returns null there, and full names, `TypeRef::declaring_type` and `TypeRef::primitive` use it; `gap-typeref-scopes.dll` covers it. cil-dump used to fail the whole dump on such a reference. A sweep of 2,893 table-cell mutations found it (`/Volumes/Shampoo/whole-image-2026-10-11/`).
 - **Rust:** `model/names.rs:91-94`.
 - **Cecil:** prints the plain name.
 
