@@ -410,6 +410,39 @@ fn varargs_call_sites() {
     assert!(formatted.contains("...,"), "{formatted}");
 }
 
+// Not ported. Each method in gap-code-sizes.dll ends in an ldc.i4 whose
+// operand runs past the code size: CodeReader reads it from the bytes after
+// the code, and reads the exception-handling section from the end of it.
+fn operand_past_the_code() {
+    let data = read_fixture("gap-code-sizes.dll");
+    let module = Module::read(&data).unwrap();
+    let c = module.get_type("C").unwrap().unwrap();
+    assert_code!(
+        r#"
+	.locals init (System.Int32 V_0)
+	IL_0000: ldc.i4 -1059192831
+	IL_0005: pop
+	IL_0006: ret
+	IL_0007: ldc.i4 267390960
+"#,
+        get_method(&c, "Overrun")
+    );
+    assert_code!(
+        r#"
+	.locals init (System.Int32 V_0)
+	IL_0000: ldc.i4 -1059192830
+	IL_0005: pop
+	IL_0006: nop
+	IL_0007: leave.s IL_000a
+	IL_0009: endfinally
+	IL_000a: ret
+	IL_000b: ldc.i4 267390960
+	.try IL_0006 to IL_0009 finally handler IL_0009 to IL_000a
+"#,
+        get_method(&c, "OverrunThenSection")
+    );
+}
+
 pub(super) const TESTS: &[Test] = &[
     ("multiply_method", multiply_method),
     ("print_string_empty", print_string_empty),
@@ -433,4 +466,5 @@ pub(super) const TESTS: &[Test] = &[
         method_ref_declared_on_generics,
     ),
     ("varargs_call_sites", varargs_call_sites),
+    ("operand_past_the_code", operand_past_the_code),
 ];

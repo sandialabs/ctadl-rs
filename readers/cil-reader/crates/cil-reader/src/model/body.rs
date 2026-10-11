@@ -134,9 +134,13 @@ fn read_code<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cur<'a
     if start + code_size > data.len() {
         code_size = 0;
     }
-    let code = &data[start..start + code_size];
-    let mut decoder = InstructionDecoder::new(code);
-    loop {
+    // An instruction that starts inside the code but whose operand runs
+    // past its end reads the operand from the bytes after it, as Cecil's
+    // reader does, and is the last; the sections are read from the end of
+    // that operand.
+    let mut decoder = InstructionDecoder::new(&data[start..]);
+    let mut end = start + code_size;
+    while (decoder.offset() as usize) < code_size {
         let offset = decoder.offset();
         match decoder.next() {
             None => break,
@@ -146,8 +150,9 @@ fn read_code<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cur<'a
                 break;
             }
         }
+        end = end.max(start + decoder.offset() as usize);
     }
-    cur.set_pos(start + code_size);
+    cur.set_pos(end);
 }
 
 /// Reads the data sections that follow the code. Cecil's `ReadSection`

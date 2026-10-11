@@ -72,6 +72,7 @@ static class Program {
             ("eh-sections", EhSections, EhSectionHeaders),
             ("operand-tokens", OperandTokens, OperandTokenRows),
             ("local-tokens", LocalTokens, LocalTokenValues),
+            ("code-sizes", CodeSizes, CodeSizeValues),
         };
         foreach (var (name, build, patch) in images) {
             var mod = build();
@@ -1149,6 +1150,70 @@ static class Program {
                 WriteU32(image, token, 0x0200_ffff);
                 break;
             }
+        }
+    }
+
+    // Methods that end in an unreachable ldc.i4 of OverrunOperand, whose
+    // code size CodeSizeValues cuts so that the operand runs past it. Each
+    // body starts with ldc.i4 of its own marker and has a local, so its
+    // header is fat. Section has a try/finally.
+    const int OverrunOperand = 0x0ff0_0ff0;
+    static readonly (string, uint)[] CodeSizeMethods = {
+        ("Overrun", 0xc0de_0001),
+        ("OverrunThenSection", 0xc0de_0002),
+    };
+
+    static ModuleDef CodeSizes() {
+        var mod = NewModule("code-sizes");
+        var cs = mod.CorLibTypes;
+        var c = NewClass(mod, "", "C");
+        mod.Types.Add(c);
+        foreach (var (name, marker) in CodeSizeMethods) {
+            var m = new MethodDefUser(name, MethodSig.CreateStatic(cs.Void), Impl, Static) { Body = new CilBody() };
+            m.Body.Variables.Add(new Local(cs.Int32));
+            var ins = m.Body.Instructions;
+            ins.Add(OpCodes.Ldc_I4.ToInstruction((int)marker));
+            ins.Add(OpCodes.Pop.ToInstruction());
+            var ret = OpCodes.Ret.ToInstruction();
+            if (name == "OverrunThenSection") {
+                var tryStart = OpCodes.Nop.ToInstruction();
+                var handler = OpCodes.Endfinally.ToInstruction();
+                ins.Add(tryStart);
+                ins.Add(OpCodes.Leave_S.ToInstruction(ret));
+                ins.Add(handler);
+                m.Body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Finally) {
+                    TryStart = tryStart, TryEnd = handler,
+                    HandlerStart = handler, HandlerEnd = ret,
+                });
+            }
+            ins.Add(ret);
+            ins.Add(OpCodes.Ldc_I4.ToInstruction(OverrunOperand));
+            c.Methods.Add(m);
+        }
+        return mod;
+    }
+
+    // Cecil's CodeReader reads the last operand from the bytes after the
+    // code, stops there, and aligns from the end of that operand to read
+    // the sections. Overrun's code size ends 2 bytes into the operand.
+    // OverrunThenSection's ends at the 4-byte boundary before the code's
+    // real end (its operand's start, if the end is on one), so a reader
+    // that aligns from the cut size reads the section 4 bytes early.
+    static void CodeSizeValues(byte[] image) {
+        var last = new byte[] { 0x20 }.Concat(BitConverter.GetBytes(OverrunOperand)).ToArray();
+        foreach (var (name, marker) in CodeSizeMethods) {
+            var ldc = new byte[] { 0x20 }.Concat(BitConverter.GetBytes(marker)).ToArray();
+            int code = IndexOf(image, ldc);
+            if (code < 0 || IndexOf(image, ldc, code + 1) >= 0)
+                throw new InvalidOperationException($"{name}: marker not found exactly once");
+            int header = code - 12;
+            if ((image[header] & 0x3) != 0x3)
+                throw new InvalidOperationException($"{name}: no fat header");
+            int end = code + ReadI32(image, header + 4);
+            if (!image.AsSpan(end - 5, 5).SequenceEqual(last))
+                throw new InvalidOperationException($"{name}: code does not end in the overrun ldc.i4");
+            int cut = name == "Overrun" ? 2 : end % 4 == 0 ? 4 : end % 4;
+            WriteU32(image, header + 4, (uint)(end - cut - code));
         }
     }
 
