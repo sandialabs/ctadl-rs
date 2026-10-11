@@ -71,6 +71,7 @@ static class Program {
             ("streams", () => Layout("streams"), Streams),
             ("eh-sections", EhSections, EhSectionHeaders),
             ("operand-tokens", OperandTokens, OperandTokenRows),
+            ("local-tokens", LocalTokens, LocalTokenValues),
         };
         foreach (var (name, build, patch) in images) {
             var mod = build();
@@ -1088,6 +1089,66 @@ static class Program {
                 at++;
             }
             i++;
+        }
+    }
+
+    // Methods with an int32 and a string local, whose local-variable token
+    // LocalTokenValues rewrites. Cecil's ReadVariables reads the
+    // StandAloneSig row of the token's rid whatever its table, and a rid
+    // past that table gives no locals, so ldloc.0 and stloc.0 have no
+    // operand. Each body starts with ldc.i4 of its own marker.
+    static readonly (string, uint)[] LocalMethods = {
+        ("Kept", 0x10ca_0001),
+        ("TypeDefTable", 0x10ca_0002),
+        ("PastTable", 0x10ca_0003),
+        ("TypeDefPastTable", 0x10ca_0004),
+    };
+
+    static ModuleDef LocalTokens() {
+        var mod = NewModule("local-tokens");
+        var cs = mod.CorLibTypes;
+        var c = NewClass(mod, "", "C");
+        mod.Types.Add(c);
+        foreach (var (name, marker) in LocalMethods) {
+            var m = new MethodDefUser(name, MethodSig.CreateStatic(cs.Void), Impl, Static) { Body = new CilBody() };
+            var i = new Local(cs.Int32);
+            var str = new Local(cs.String);
+            m.Body.Variables.Add(i);
+            m.Body.Variables.Add(str);
+            var ins = m.Body.Instructions;
+            ins.Add(OpCodes.Ldc_I4.ToInstruction((int)marker));
+            ins.Add(OpCodes.Stloc.ToInstruction(i));
+            ins.Add(OpCodes.Ldloc.ToInstruction(i));
+            ins.Add(OpCodes.Pop.ToInstruction());
+            ins.Add(OpCodes.Ldnull.ToInstruction());
+            ins.Add(OpCodes.Stloc.ToInstruction(str));
+            ins.Add(OpCodes.Ret.ToInstruction());
+            c.Methods.Add(m);
+        }
+        return mod;
+    }
+
+    static void LocalTokenValues(byte[] image) {
+        foreach (var (name, marker) in LocalMethods) {
+            var ldc = new byte[] { 0x20 }.Concat(BitConverter.GetBytes(marker)).ToArray();
+            int code = IndexOf(image, ldc);
+            if (code < 0 || IndexOf(image, ldc, code + 1) >= 0)
+                throw new InvalidOperationException($"{name}: marker not found exactly once");
+            // The fat header's last field, right before the code.
+            int token = code - 4;
+            if ((image[code - 12] & 0x3) != 0x3 || image[token + 3] != 0x11)
+                throw new InvalidOperationException($"{name}: no fat header with a StandAloneSig token");
+            switch (name) {
+            case "TypeDefTable":
+                image[token + 3] = 0x02;
+                break;
+            case "PastTable":
+                WriteU32(image, token, 0x1100_ffff);
+                break;
+            case "TypeDefPastTable":
+                WriteU32(image, token, 0x0200_ffff);
+                break;
+            }
         }
     }
 

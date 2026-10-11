@@ -105,12 +105,12 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
             body.local_var_token = MetadataToken(cur.u32()?);
             body.init_locals = fat_flags & 0x10 != 0;
 
-            if body.local_var_token.rid() != 0 {
-                if body.local_var_token.token_type() != Some(TokenType::Signature) {
-                    return Err(Error::bad(cur.pos(), "bad local variable token"));
-                }
-                let row =
-                    m.md.row::<crate::raw::tables::StandAloneSigRaw>(body.local_var_token.rid())?;
+            // MetadataReader.ReadVariables reads the StandAloneSig row of the
+            // token's rid whatever its table, and a rid past that table
+            // gives no locals.
+            let rid = body.local_var_token.rid();
+            if rid != 0 && rid <= m.md.row_count(Table::StandAloneSig) {
+                let row = m.md.row::<crate::raw::tables::StandAloneSigRaw>(rid)?;
                 let blob = m.md.blobs().view(row.signature)?;
                 body.variables = SigReader::new(blob).local_var_sig()?;
             }
