@@ -362,7 +362,7 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Cecil:** decodes the byte as `nop` with a 4-byte branch operand and
   continues. Obfuscators rely on this.
 
-**C8. An operand that runs past `code_size` fails the body.**
+**C8. An operand that runs past `code_size` fails the body.** *Fixed:* `read_code` (`model/body.rs`) decodes from the rest of the image, stops after the instruction that reaches `code_size`, and reads the sections from the end of its operand, as `CodeReader.ReadCode` does; `gap-code-sizes.dll` covers it, a try/finally whose section the cut size would misalign included, and `method_body::operand_past_the_code` (`cil:cecil-tests`) checks `formatted()` on it. An operand past the end of the file is still a `decode_error`, where Cecil throws. Evidence is in `/Volumes/Shampoo/c8-c11-c12a-2026-10-11/`.
 - **Cecil:** reads past the end and continues.
 - **Since C7:** the body keeps the instructions before it, with `decode_error` set.
 
@@ -376,14 +376,18 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Cecil:** prints no operand.
 - **Also:** `resolve_operand` returns `Some` for a rid past the end of the table.
 
-**C11. The local-variable token is handled more strictly.**
+**C11. The local-variable token is handled more strictly.** *Fixed:* `read_body` (`model/body.rs`) reads the StandAloneSig row of the token's rid whatever its table, and no locals for a rid past that table, as `ReadVariables` does; `gap-local-tokens.dll` covers both, and before the fix printed `!error` for its three patched bodies.
 - **Rust:** `model/body.rs:96-104` errors on a token that isn't a signature
   token, or a rid out of range.
 - **Cecil:** ignores the token type, and treats an out-of-range rid as having
   no locals.
 
 **C12. Malformed EH clauses.** *Reproduced.*
-- (a) Kinds 3, 5, 6 or 7: Rust errors; Cecil labels them `fault`.
+- (a) Kinds 3, 5, 6 or 7: Rust errors; Cecil labels them `fault`. *Fixed:*
+  `ExceptionHandlerType::Other` (`model/body.rs`) keeps the kind, read as a
+  finally clause is; `formatted()` prints the number, as the Formatter's
+  `ToString()` does, and cil-dump `fault`, as CecilDump does.
+  `gap-eh-sections.dll` covers each kind.
 - (b) A fat section size ≥ 0x800000: Rust computes a huge count; Cecil reads 0
   handlers. *Fixed:* `read_sections` (`model/body.rs`) clamps the count at
   zero, so a MoreSects section is read from right after the 4-byte header, as
