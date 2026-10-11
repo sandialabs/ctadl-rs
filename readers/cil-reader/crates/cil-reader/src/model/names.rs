@@ -117,9 +117,9 @@ pub(crate) fn typedef_full_name(m: &ModuleData<'_>, rid: u32, out: &mut String) 
 }
 
 pub(crate) fn typeref_full_name(m: &ModuleData<'_>, rid: u32, out: &mut String) -> Result<()> {
-    // A TypeRef scope of TypeRef kind means "nested inside" (unless it points
-    // at itself — obfuscated modules do that, `AssemblyReader.cs:1134-1142`).
-    // Cecil overflows its stack on a longer cycle, as with NestedClass.
+    // A TypeRef scope of TypeRef kind means "nested inside", unless it names
+    // no other TypeRef row (see `typeref_declaring_rid`). Cecil overflows its
+    // stack on a longer cycle, as with NestedClass.
     let mut names = Vec::new();
     let mut current = Some(rid);
     while let Some(rid) = current {
@@ -131,8 +131,7 @@ pub(crate) fn typeref_full_name(m: &ModuleData<'_>, rid: u32, out: &mut String) 
             m.md.strings().get(row.namespace)?,
             m.md.strings().get(row.name)?,
         ));
-        current = (row.scope.token_type() == Some(TokenType::TypeRef) && row.scope.rid() != rid)
-            .then_some(row.scope.rid());
+        current = m.typeref_declaring_rid(rid, row.scope);
     }
     push_nested_names(names.into_iter(), out);
     Ok(())

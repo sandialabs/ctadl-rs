@@ -51,6 +51,7 @@ static class Program {
             ("enums", Enums),
             ("utf8-names", Utf8Names),
             ("heap-indexes", HeapIndexes),
+            ("typeref-scopes", TypeRefScopes),
         };
         foreach (var (name, build) in fixtures) {
             var (mod, patch) = build();
@@ -828,6 +829,41 @@ static class Program {
         if (version != "v4.0.30319" || image[root + 16 + 10] != 0)
             throw new InvalidOperationException($"unexpected version {version}");
         image[root + 16 + 10] = 0xe9;
+    }
+
+    // TypeRefs whose ResolutionScope is a TypeRef rid of 0 or past the
+    // TypeRef table. Cecil's GetTypeReference finds no row there, so the
+    // reference has no declaring type, is scoped to this module, and is
+    // named by its own namespace and name.
+    static (ModuleDef, Action<Metadata>) TypeRefScopes() {
+        var mod = NewModule("typeref-scopes");
+        var cs = mod.CorLibTypes;
+        var lib = new AssemblyRefUser("Lib", new Version(1, 0, 0, 0));
+        var outer = new TypeRefUser(mod, "Lib", "Outer", lib);
+        var zero = new TypeRefUser(mod, "", "InnerZero", outer);
+        var past = new TypeRefUser(mod, "Ns", "InnerPast", outer);
+        var nested = new TypeRefUser(mod, "", "Deeper", past);
+
+        var uses = new TypeDefUser("", "Uses", past) {
+            Attributes = TypeAttributes.Public | TypeAttributes.BeforeFieldInit,
+        };
+        mod.Types.Add(uses);
+        foreach (var (name, tr) in new[] { ("zero", zero), ("past", past), ("nested", nested) })
+            uses.Fields.Add(new FieldDefUser(name, new FieldSig(new ClassSig(tr)), FieldAttributes.Public));
+        uses.Methods.Add(Method("Tokens", MethodSig.CreateStatic(cs.Void), Static,
+            OpCodes.Ldtoken.ToInstruction(zero),
+            OpCodes.Pop.ToInstruction(),
+            OpCodes.Ldtoken.ToInstruction(past),
+            OpCodes.Pop.ToInstruction(),
+            OpCodes.Ldtoken.ToInstruction(nested),
+            OpCodes.Pop.ToInstruction()));
+
+        // TypeRef's tag in ResolutionScope is 3; 0x3fff is the largest rid
+        // a 2-byte coded index holds.
+        return (mod, md => {
+            Patch(md.TablesHeap.TypeRefTable, md.GetRid(zero), r => new RawTypeRefRow((0 << 2) | 3, r.Name, r.Namespace));
+            Patch(md.TablesHeap.TypeRefTable, md.GetRid(past), r => new RawTypeRefRow((0x3fff << 2) | 3, r.Name, r.Namespace));
+        });
     }
 
     // Heap indexes past their heaps, and blobs whose length runs past the

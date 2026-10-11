@@ -290,6 +290,18 @@ impl<'a> ModuleData<'a> {
         Ok((visibility >= 2).then_some(declaring))
     }
 
+    /// The TypeRef that TypeRef `rid`, whose ResolutionScope is `scope`,
+    /// is nested in (`MetadataReader.ReadTypeReference`): none for a scope
+    /// that is not a TypeRef, names `rid` itself (which obfuscated modules
+    /// write, and Cecil scopes to the module), or names rid 0 or a rid past
+    /// the TypeRef table, where `GetTypeReference` returns null.
+    pub fn typeref_declaring_rid(&self, rid: u32, scope: MetadataToken) -> Option<u32> {
+        (scope.token_type() == Some(TokenType::TypeRef)
+            && scope.rid() != rid
+            && (1..=self.md.row_count(Table::TypeRef)).contains(&scope.rid()))
+        .then_some(scope.rid())
+    }
+
     pub fn interfaces_map(&self) -> Result<&HashMap<u32, Vec<(u32, MetadataToken)>>> {
         get(&self.lazy.interfaces, || {
             let mut map: HashMap<u32, Vec<(u32, MetadataToken)>> = HashMap::new();

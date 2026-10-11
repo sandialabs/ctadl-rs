@@ -623,10 +623,10 @@ impl<'a> TypeRef<'a> {
         let mut scope = self.raw()?.scope;
         let mut current = self.rid;
         for _ in 0..self.m.md.row_count(Table::TypeRef) {
-            if scope.token_type() != Some(TokenType::TypeRef) || scope.rid() == current {
+            let Some(declaring) = self.m.typeref_declaring_rid(current, scope) else {
                 break;
-            }
-            current = scope.rid();
+            };
+            current = declaring;
             scope = (TypeRef {
                 m: self.m,
                 rid: current,
@@ -662,14 +662,10 @@ impl<'a> TypeRef<'a> {
 
     pub fn declaring_type(&self) -> Result<Option<TypeRef<'a>>> {
         let scope = self.raw()?.scope;
-        if scope.token_type() == Some(TokenType::TypeRef) && scope.rid() != self.rid {
-            Ok(Some(TypeRef {
-                m: self.m,
-                rid: scope.rid(),
-            }))
-        } else {
-            Ok(None)
-        }
+        Ok(self
+            .m
+            .typeref_declaring_rid(self.rid, scope)
+            .map(|rid| TypeRef { m: self.m, rid }))
     }
 }
 
