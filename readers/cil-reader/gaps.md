@@ -370,7 +370,7 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Rust:** `model/body.rs:122` uses `>`, so it decodes the code.
 - **Cecil:** uses `<=`, so the code is clamped to empty.
 
-**C10. Unresolvable operand tokens print `!error`.** *Reproduced.*
+**C10. Unresolvable operand tokens print `!error`.** *Fixed:* `lookup_token` (`model/module.rs`) is `None` wherever Cecil's `LookupToken` is null (rid 0, a rid past its table, another table, and a field or method in no type's member list, which `LookupField`/`LookupMethod` do not find), and `Module::lookup_token`, `resolve_operand` and the Formatter all go through it; a call site past the StandAloneSig table is null too (`ReadCallSite`). The Formatter, and so cil-dump, print no operand for these. `gap-operand-tokens.dll` covers each kind, and before the fix printed `!error` for all 14 of its operands. `malformed::operand_tokens_not_found` (`cil:cecil-tests`) covers `resolve_operand` and the orphan members, which CecilDump leaves out of its member lists where cil-dump does not. A call site of rid 0, which Cecil reads from the row before the table, still prints `!error`. Evidence is in `/Volumes/Shampoo/c10-2026-10-11/`.
 - **Cases:** rid 0, a rid out of range, or an unsupported table.
 - **Rust:** `model/body.rs:376-450`. In `formatted()` the whole rendering fails.
 - **Cecil:** prints no operand.
