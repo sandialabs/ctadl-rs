@@ -823,6 +823,35 @@ fn operand_tokens_not_found() {
         .is_none());
 }
 
+// Blobs at index 0, which Cecil's SignatureReader reads from the start of
+// the #Blob heap, past the empty blob's end, giving whatever the bytes
+// there decode to. The reader fails that one value instead, and cil-dump
+// prints `!error` for it and dumps the rest, where it used to fail the
+// whole dump: a constant, a parameter's marshal info, and a base type's
+// TypeSpec signature, which `is_value_type` and `is_enum` read too.
+fn dump_survives_bad_values() {
+    let sections: Vec<_> = cil_dump::ALL_SECTIONS.iter().map(|&(_, s)| s).collect();
+    let dump = |data: &[u8]| {
+        let module = Module::read(data).unwrap();
+        cil_dump::dump(&module, &sections, None).unwrap()
+    };
+    // Constant: Type (1 byte and a pad byte), Parent, then Value.
+    let mut data = read_fixture("Fields.cs.dll");
+    patch_column(&mut data, Table::Constant, 1, 4, 0);
+    assert!(dump(&data).contains(" constant=!error"));
+    // FieldMarshal: Parent, then NativeType.
+    let mut data = read_fixture("Methods.cs.dll");
+    patch_column(&mut data, Table::FieldMarshal, 1, 2, 0);
+    assert!(dump(&data).contains(" marshal=!error"));
+    // Generics.cs's first TypeSpec is the base type of Child`1.
+    let mut data = read_fixture("Generics.cs.dll");
+    patch_column(&mut data, Table::TypeSpec, 1, 0, 0);
+    let text = dump(&data);
+    assert!(
+        text.contains("=Child`1 flags=0x00100000 valuetype=!error enum=!error\n\tbase=!error\n")
+    );
+}
+
 pub(super) const TESTS: &[Test] = &[
     ("nested_class_cycles", nested_class_cycles),
     (
@@ -844,4 +873,5 @@ pub(super) const TESTS: &[Test] = &[
     ("type_spec_chains", type_spec_chains),
     ("opcode_past_the_tables", opcode_past_the_tables),
     ("operand_tokens_not_found", operand_tokens_not_found),
+    ("dump_survives_bad_values", dump_survives_bad_values),
 ];

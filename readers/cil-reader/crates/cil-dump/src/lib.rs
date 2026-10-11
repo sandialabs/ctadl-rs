@@ -306,29 +306,22 @@ fn dump_types(module: &Module<'_>, out: &mut String) -> Result<()> {
             out,
             "{}={} flags=0x{:08x}{}{}",
             tok(ty.token()),
-            ty.full_name()?,
+            or_error(ty.full_name()),
             ty.attributes()?,
-            if ty.is_value_type()? {
-                " valuetype"
-            } else {
-                ""
-            },
-            if ty.is_enum()? { " enum" } else { "" },
+            flag("valuetype", ty.is_value_type()),
+            flag("enum", ty.is_enum()),
         )
         .unwrap();
         if let Some(base) = ty.base_type()? {
-            writeln!(out, "\tbase={}", base.full_name_ctx(ty.generic_context())?).unwrap();
+            let name = or_error(base.full_name_ctx(ty.generic_context()));
+            writeln!(out, "\tbase={name}").unwrap();
         }
         if let Some((packing, size)) = ty.class_layout()? {
             writeln!(out, "\tlayout packing={packing} size={size}").unwrap();
         }
         for iface in ty.interfaces()? {
-            writeln!(
-                out,
-                "\tinterface={}",
-                iface.interface.full_name_ctx(ty.generic_context())?
-            )
-            .unwrap();
+            let name = or_error(iface.interface.full_name_ctx(ty.generic_context()));
+            writeln!(out, "\tinterface={name}").unwrap();
         }
         dump_generic_params(module, &ty, out)?;
     }
@@ -346,12 +339,8 @@ fn dump_generic_params(_module: &Module<'_>, ty: &TypeDef<'_>, out: &mut String)
         )
         .unwrap();
         for c in gp.constraints()? {
-            writeln!(
-                out,
-                "\t\tconstraint={}",
-                c.constraint.full_name_ctx(ty.generic_context())?
-            )
-            .unwrap();
+            let name = or_error(c.constraint.full_name_ctx(ty.generic_context()));
+            writeln!(out, "\t\tconstraint={name}").unwrap();
         }
     }
     Ok(())
@@ -382,15 +371,41 @@ fn dump_fields(module: &Module<'_>, out: &mut String) -> Result<()> {
             let data = field.initial_value()?.unwrap_or(&[]);
             write!(out, " rva=0x{rva:08x} rva-data={}", hex(data)).unwrap();
         }
-        if let Some(constant) = field.constant()? {
-            write!(out, " constant={}", format_constant(&constant)).unwrap();
-        }
-        if let Some(marshal) = field.marshal_info()? {
-            write!(out, " marshal={}", format_marshal(&marshal)).unwrap();
-        }
+        write_optional(out, "constant", field.constant(), format_constant);
+        write_optional(out, "marshal", field.marshal_info(), format_marshal);
         out.push('\n');
     }
     Ok(())
+}
+
+/// A value that fails to read prints as `!error`, so that a bad value costs
+/// its record that value rather than the dump the rest of it.
+fn or_error(value: Result<String>) -> String {
+    value.unwrap_or_else(|_| "!error".into())
+}
+
+/// ` name` for a flag that holds, ` name=!error` for one that fails to read.
+fn flag(name: &str, value: Result<bool>) -> String {
+    match value {
+        Ok(true) => format!(" {name}"),
+        Ok(false) => String::new(),
+        Err(_) => format!(" {name}=!error"),
+    }
+}
+
+/// ` key=value` for a value that is present, ` key=!error` for one that
+/// fails to read.
+fn write_optional<T>(
+    out: &mut String,
+    key: &str,
+    value: Result<Option<T>>,
+    format: impl Fn(&T) -> String,
+) {
+    match value {
+        Ok(Some(v)) => write!(out, " {key}={}", format(&v)).unwrap(),
+        Ok(None) => {}
+        Err(_) => write!(out, " {key}=!error").unwrap(),
+    }
 }
 
 fn format_constant(c: &ConstantValue<'_>) -> String {
@@ -516,12 +531,8 @@ fn dump_methods(module: &Module<'_>, out: &mut String) -> Result<()> {
                 };
                 write!(out, "\tparam {seq} name={}", p.name).unwrap();
                 write!(out, " flags=0x{:04x}", p.attributes).unwrap();
-                if let Some(c) = p.constant()? {
-                    write!(out, " constant={}", format_constant(&c)).unwrap();
-                }
-                if let Some(marshal) = p.marshal_info()? {
-                    write!(out, " marshal={}", format_marshal(&marshal)).unwrap();
-                }
+                write_optional(out, "constant", p.constant(), format_constant);
+                write_optional(out, "marshal", p.marshal_info(), format_marshal);
                 out.push('\n');
             }
         }
@@ -574,9 +585,7 @@ fn dump_properties(module: &Module<'_>, out: &mut String) -> Result<()> {
             write!(out, " setter={}", tok(s.token())).unwrap();
         }
         write_other_methods(&prop.other_methods()?, out);
-        if let Some(c) = prop.constant()? {
-            write!(out, " constant={}", format_constant(&c)).unwrap();
-        }
+        write_optional(out, "constant", prop.constant(), format_constant);
         out.push('\n');
     }
     Ok(())
