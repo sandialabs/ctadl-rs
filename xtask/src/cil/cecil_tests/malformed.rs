@@ -823,12 +823,13 @@ fn operand_tokens_not_found() {
         .is_none());
 }
 
-// Blobs at index 0, which Cecil's SignatureReader reads from the start of
-// the #Blob heap, past the empty blob's end, giving whatever the bytes
-// there decode to. The reader fails that one value instead, and cil-dump
-// prints `!error` for it and dumps the rest, where it used to fail the
-// whole dump: a constant, a parameter's marshal info, and a base type's
-// TypeSpec signature, which `is_value_type` and `is_enum` read too.
+// Values that fail to read, where cil-dump used to fail the whole dump and
+// now prints `!error` for the value and dumps the rest. First, blobs at
+// index 0, which Cecil's SignatureReader reads from the start of the #Blob
+// heap, past the empty blob's end, giving whatever the bytes there decode
+// to, where the reader fails the one value: a constant, a parameter's
+// marshal info, and a base type's TypeSpec signature, which `is_value_type`
+// and `is_enum` read too.
 fn dump_survives_bad_values() {
     let sections: Vec<_> = cil_dump::ALL_SECTIONS.iter().map(|&(_, s)| s).collect();
     let dump = |data: &[u8]| {
@@ -850,6 +851,23 @@ fn dump_survives_bad_values() {
     assert!(
         text.contains("=Child`1 flags=0x00100000 valuetype=!error enum=!error\n\tbase=!error\n")
     );
+
+    // Rows Cecil throws on too. A field with an RVA whose signature does
+    // not decode, so its size is unknown: CecilDump catches this one and
+    // prints the same. Field: Flags, Name, then Signature.
+    let mut data = read_fixture("gap-attributes.il.dll");
+    patch_column(&mut data, Table::Field, 14, 4, 0);
+    assert!(dump(&data).contains(" rva-data=!error"));
+    // A MethodImpl whose body is a MemberRef, which Cecil does not support.
+    // MethodImpl: Class, then MethodBody, a MethodDefOrRef index.
+    let mut data = read_fixture("Generics.cs.dll");
+    patch_column(&mut data, Table::MethodImpl, 1, 2, coded(1, 1, 1));
+    assert!(dump(&data).contains("\toverride=!error\n"));
+    // An ImplMap whose ImportScope is rid 0. ImplMap: MappingFlags,
+    // MemberForwarded, ImportName, then ImportScope.
+    let mut data = read_fixture("Methods.cs.dll");
+    patch_column(&mut data, Table::ImplMap, 1, 6, 0);
+    assert!(dump(&data).contains(" pinvoke=!error"));
 }
 
 // InterfaceImpl and GenericParamConstraint types of rid 0, past their

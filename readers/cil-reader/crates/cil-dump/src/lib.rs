@@ -370,9 +370,18 @@ fn dump_fields(module: &Module<'_>, out: &mut String) -> Result<()> {
         if let Some(offset) = field.offset()? {
             write!(out, " offset={offset}").unwrap();
         }
-        if let Some(rva) = field.rva()? {
-            let data = field.initial_value()?.unwrap_or(&[]);
-            write!(out, " rva=0x{rva:08x} rva-data={}", hex(data)).unwrap();
+        // CecilDump reads RVA and InitialValue before writing either, and
+        // prints only `rva-data=!error` when one fails.
+        let rva = field.rva().and_then(|rva| {
+            rva.map(|rva| Ok((rva, field.initial_value()?.unwrap_or(&[]))))
+                .transpose()
+        });
+        match rva {
+            Ok(Some((rva, data))) => {
+                write!(out, " rva=0x{rva:08x} rva-data={}", hex(data)).unwrap();
+            }
+            Ok(None) => {}
+            Err(_) => out.push_str(" rva-data=!error"),
         }
         write_optional(out, "constant", field.constant(), format_constant);
         write_optional(out, "marshal", field.marshal_info(), format_marshal);
@@ -494,14 +503,12 @@ fn dump_methods(module: &Module<'_>, out: &mut String) -> Result<()> {
         if semantics != 0 {
             write!(out, " semantics=0x{semantics:04x}").unwrap();
         }
-        if let Some(pinvoke) = method.pinvoke_info()? {
-            write!(
-                out,
-                " pinvoke=({},{},0x{:04x})",
+        write_optional(out, "pinvoke", method.pinvoke_info(), |pinvoke| {
+            format!(
+                "({},{},0x{:04x})",
                 pinvoke.module, pinvoke.entry_point, pinvoke.attributes
             )
-            .unwrap();
-        }
+        });
         out.push('\n');
         for gp in method.generic_params()? {
             writeln!(
@@ -514,13 +521,18 @@ fn dump_methods(module: &Module<'_>, out: &mut String) -> Result<()> {
             .unwrap();
         }
         let method_ctx = method.generic_context()?;
-        for over in method.overrides()? {
-            writeln!(
-                out,
-                "\toverride={}",
-                operand_name_ctx(module, over, method_ctx)
-            )
-            .unwrap();
+        match method.overrides() {
+            Ok(overrides) => {
+                for over in overrides {
+                    writeln!(
+                        out,
+                        "\toverride={}",
+                        operand_name_ctx(module, over, method_ctx)
+                    )
+                    .unwrap();
+                }
+            }
+            Err(_) => out.push_str("\toverride=!error\n"),
         }
         // Parameter rows are numbered by the signature's parameters, so an
         // undecodable signature leaves only this method without them.
