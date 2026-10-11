@@ -920,6 +920,10 @@ static class Program {
         ("Negative", 0x5ec7_0002),
         ("MinusOne", 0x5ec7_0003),
         ("NegativeThenSmall", 0x5ec7_0004),
+        ("Kind3", 0x5ec7_0005),
+        ("Kind5", 0x5ec7_0006),
+        ("Kind6", 0x5ec7_0007),
+        ("Kind7", 0x5ec7_0008),
     };
 
     static ModuleDef EhSections() {
@@ -958,7 +962,9 @@ static class Program {
     // after the 4-byte header. Kept is left as dnlib wrote it; Negative's
     // size is 0x800000 and MinusOne's 0xffffe8, a count of -1; and
     // NegativeThenSmall's 0x800000 header is followed by a small section
-    // holding its first clause.
+    // holding its first clause. KindN's first clause has kind N, which
+    // Cecil's ExceptionHandlerType does not name; Cecil reads it as it reads
+    // a finally clause, and CecilDump prints it as a fault.
     static void EhSectionHeaders(byte[] image) {
         const uint fat = 0x41, moreSects = 0x80;
         foreach (var (name, marker) in EhMethods) {
@@ -986,6 +992,12 @@ static class Program {
                 WriteU32(image, section, fat | moreSects | 0x80_0000u << 8);
                 new byte[] { 0x01, 4 + 12, 0, 0 }.CopyTo(image, section + 4);
                 first.CopyTo(image, section + 8);
+                break;
+            case "Kind3":
+            case "Kind5":
+            case "Kind6":
+            case "Kind7":
+                image[section + 4] = (byte)(name[4] - '0');
                 break;
             }
         }

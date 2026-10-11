@@ -994,7 +994,10 @@ fn dump_il(module: &Module<'_>, out: &mut String) -> Result<()> {
                     format!("filter {}", label_or_end(h.filter_start.unwrap_or(0)))
                 }
                 ExceptionHandlerType::Finally => "finally".to_string(),
-                ExceptionHandlerType::Fault => "fault".to_string(),
+                // CecilDump prints every other kind as a fault.
+                ExceptionHandlerType::Fault | ExceptionHandlerType::Other(_) => {
+                    "fault".to_string()
+                }
             };
             writeln!(
                 out,

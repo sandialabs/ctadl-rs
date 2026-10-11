@@ -17,12 +17,15 @@ use std::fmt::Write as _;
 
 /// `Mono.Cecil.Cil.ExceptionHandlerType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
 pub enum ExceptionHandlerType {
-    Catch = 0,
-    Filter = 1,
-    Finally = 2,
-    Fault = 4,
+    Catch,
+    Filter,
+    Finally,
+    Fault,
+    /// A kind the enum does not name: 3, 5, 6 or 7. Cecil casts the low
+    /// three bits of the clause's flags to the enum whatever they are, and
+    /// reads such a clause as it reads a finally or fault one.
+    Other(u8),
 }
 
 /// One exception handler, with instruction boundaries kept as offsets.
@@ -225,7 +228,7 @@ fn read_handler(
         1 => ExceptionHandlerType::Filter,
         2 => ExceptionHandlerType::Finally,
         4 => ExceptionHandlerType::Fault,
-        _ => return Err(Error::bad(cur.pos(), "invalid exception handler type")),
+        _ => ExceptionHandlerType::Other(ty as u8),
     };
     // Cecil adds each length to its start as an unchecked int, so an end
     // past 2^32 wraps.
@@ -306,6 +309,9 @@ impl<'a> MethodBody<'a> {
                 ExceptionHandlerType::Filter => "filter".to_string(),
                 ExceptionHandlerType::Finally => "finally".to_string(),
                 ExceptionHandlerType::Fault => "fault".to_string(),
+                // The Formatter lowercases the enum's ToString(), which is
+                // the number for a value the enum does not name.
+                ExceptionHandlerType::Other(kind) => kind.to_string(),
             };
             writeln!(
                 out,
@@ -657,7 +663,7 @@ fn write_generic_args(
 
 #[cfg(test)]
 mod tests {
-    use super::{format_r4, format_r8, read_sections};
+    use super::{ExceptionHandlerType, format_r4, format_r8, read_sections};
     use crate::raw::cursor::Cur;
 
     // Each value as .NET 8 prints it (CecilDump on gap-formatter.il.dll).
@@ -761,6 +767,30 @@ mod tests {
             assert_eq!(cur.pos(), data.len());
             assert_eq!(handlers.len(), 1);
             assert_eq!((handlers[0].try_start, handlers[0].try_end), (1, 4));
+        }
+    }
+
+    // A clause whose kind the enum does not name keeps its value, and its
+    // last four bytes are skipped as a finally clause's are. Only the low
+    // three bits of the flags count.
+    #[test]
+    fn unnamed_handler_kinds_are_kept() {
+        for (flags, kind) in [(3u16, 3u8), (5, 5), (6, 6), (7, 7), (0xfff3, 3)] {
+            let mut data = vec![0x01, 4 + 2 * 12, 0, 0];
+            data.extend(u16::to_le_bytes(flags));
+            data.extend([1, 0, 3, 4, 0, 5, 0xff, 0xff, 0xff, 0xff]);
+            data.extend([2, 0, 1, 0, 3, 4, 0, 5, 0, 0, 0, 0]);
+            let mut handlers = Vec::new();
+            let mut cur = Cur::at(&data, 0);
+            read_sections(&mut handlers, &mut cur).unwrap();
+            assert_eq!(cur.pos(), data.len());
+            assert_eq!(handlers.len(), 2);
+            let h = &handlers[0];
+            assert_eq!(h.handler_type, ExceptionHandlerType::Other(kind));
+            assert_eq!((h.try_start, h.try_end), (1, 4));
+            assert_eq!((h.handler_start, h.handler_end), (4, 9));
+            assert_eq!((h.catch_type, h.filter_start), (None, None));
+            assert_eq!(handlers[1].handler_type, ExceptionHandlerType::Finally);
         }
     }
 }
