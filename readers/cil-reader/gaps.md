@@ -409,7 +409,7 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Same shape:** `FieldDef::initial_value` (`model/handles.rs:609`) truncates
   the same way.
 
-**C14. Null tokens in interfaces and constraints are errors.**
+**C14. Null tokens in interfaces and constraints are errors.** *Fixed:* `InterfaceImpl::interface` and `GenericConstraint::constraint` (`model/handles.rs`) are `Option`s from `TypeDefOrRef::lookup`, none where Cecil's `LookupToken` is null: rid 0, a rid past its table, or the TypeDefOrRef tag 3. The entry and its token stay. cil-dump prints a null type as `-`; CecilDump dereferences it, so `malformed::null_interfaces_and_constraints` (`cil:cecil-tests`) covers it instead of a fixture.
 - **Rust:** `interfaces()` and `constraints()` (`model/handles.rs:307-308, 1271-1272`).
 - **Cecil:** yields a null type.
 
@@ -446,6 +446,8 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
   whatever the token type.
 - **`has_type_reference(Some(""))`:** Rust requires an empty scope; Cecil
   treats an empty scope as "any".
+
+**C20. cil-dump fails the whole dump when one value fails to read.** *Fixed:* each value that fails prints `!error` (` key=!error` for optional values and flags) and the dump goes on. That covers type full names, base types, interfaces, constraints, the valuetype and enum flags, constants, marshal info, a field's RVA data (` rva-data=!error`, as CecilDump prints it), overrides, and P/Invoke info. Dumps of valid images do not change. A sweep that wrote 0x0000, 0x00ff and 0xffff over each table cell of 11 fixtures (2,893 images) found 102 that lost the whole dump, 24 of which CecilDump dumps. Besides C14 and C15, the causes were blob index 0 in a Constant's Value, a FieldMarshal's NativeType or a TypeSpec's signature. Cecil's SignatureReader reads those from the start of the #Blob heap, past the empty blob's end, while the port fails the one value, as C17 recommends. All 102 now dump. `malformed::dump_survives_bad_values` (`cil:cecil-tests`) covers each kind; the sweep is in `/Volumes/Shampoo/whole-image-2026-10-11/`.
 
 ---
 
