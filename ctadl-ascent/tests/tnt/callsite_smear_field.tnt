@@ -7,9 +7,8 @@ def width_of(p): 1
 where summaries [return <- p.width]
 {
 s:
-  w = p.width;
   x = source(S);
-  r = w, x;
+  r = p.width, x;
   return r;
 }
 
