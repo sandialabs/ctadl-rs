@@ -790,6 +790,75 @@ mod tests {
         );
     }
 
+    /// Facts for a plain source on `base` and a sink on `dst`, joined by the single edge
+    /// `dst = base.<read>`; also returns `base` and `dst`.
+    fn plain_source_through(read: &str) -> (QueryFacts, FlowVariable, FlowVariable) {
+        let f = 0u32;
+        let base = FlowVariable::local("base".into());
+        let dst = FlowVariable::local("dst".into());
+        let read = Path::parse(read).unwrap();
+        let facts = QueryFacts {
+            assign: vec![(FunctionId::new(f), dst, Path::empty(), base, read)],
+            paths: vec![(Path::empty(),), (read,)],
+            endpoints: vec![(source(f, base, false),), (sink(f, dst),)],
+            ..Default::default()
+        };
+        (facts, base, dst)
+    }
+
+    /// Whether the closure engine's `taint` holds `var` at the empty path, seeded by an endpoint
+    /// of `direction`.
+    fn closure_taints(result: &QueryResult, var: FlowVariable, direction: TaintDirection) -> bool {
+        result
+            .taint
+            .iter()
+            .any(|(_, _, v, p, ep)| *v == var && p.is_empty() && ep.direction == direction)
+    }
+
+    /// An assign whose source path ends in an offset, `dst = base.[8]`, computes an address from
+    /// the value of `base` -- C's `&base[2]`, pcode's `PTRADD` -- so a taint on that value reaches
+    /// `dst`, from a plain source too. Contrast `saturating_source_reaches_offset_read`, whose
+    /// edge reads a field `.field`, where a plain source rightly stops. Both engines agree. The
+    /// end-to-end version is `test_cli_query_c_pointer_value_through_offset` in `tests/cli.rs`.
+    #[test]
+    fn plain_source_value_reaches_offset_address() {
+        let (facts, base, dst) = plain_source_through(".[8]");
+        assert!(
+            !taint_search(facts.clone(), None).taint_edge.is_empty(),
+            "search: a tainted value must reach an address computed from it"
+        );
+        let closure = super::super::taint_analysis_datalog(facts, None);
+        assert!(
+            closure_taints(&closure, dst, TaintDirection::Forward),
+            "closure: the source's taint must reach the address computed from it"
+        );
+        assert!(
+            closure_taints(&closure, base, TaintDirection::Backward),
+            "closure: the sink's demand must reach the value the address is computed from"
+        );
+    }
+
+    /// The boundary of `plain_source_value_reaches_offset_address`: `dst = base.[8].deref` reads
+    /// the memory at that address, and a plain taint on the pointer value says nothing about the
+    /// memory it points at. Only a saturating source reaches this.
+    #[test]
+    fn plain_source_value_does_not_reach_offset_pointee() {
+        let (facts, base, dst) = plain_source_through(".[8].deref");
+        assert!(
+            taint_search(facts.clone(), None).taint_edge.is_empty(),
+            "search: a tainted pointer value must not taint the memory it points at"
+        );
+        let closure = super::super::taint_analysis_datalog(facts, None);
+        assert!(
+            !closure_taints(&closure, dst, TaintDirection::Forward),
+            "closure: a tainted pointer value must not taint the memory it points at"
+        );
+        assert!(
+            !closure_taints(&closure, base, TaintDirection::Backward),
+            "closure: a demand on the memory must not reach the pointer value"
+        );
+    }
+
     #[test]
     fn activity_get_intent_lifecycle_bridge_reaches_sink() {
         let sender = FunctionId::new(1);
