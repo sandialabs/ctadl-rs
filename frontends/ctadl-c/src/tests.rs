@@ -19,9 +19,10 @@ A non-constant index (`a[n]`) has no offset to name, so it lowers to a bare `der
 offset at all -- the very path `a[0]` produces, which is how the two may-alias.
 See `nonconstant_subscript_may_alias_constant`.
 
-One consequence remains unfixed and is pinned elsewhere: `nightly/tests/c/ptrarith.c`
-(XFAIL as `C:ptrarith` in the xtask suite) needs the binary `+` in `*(p + 2)` to lower
-to an offset address too, which it does not yet.
+A sum with a literal is the same offset where C says it is an address: `*(a + 2)` is `a[2]`
+and `(a + 1)[1]` is `a[2]` (`constant_pointer_offset_deref_is_a_subscript`). Elsewhere the
+untyped parse cannot tell `p + 2` from integer arithmetic, so `q = p + 2` and `p += 2` still
+lower as a merge of the operands and lose the offset.
 */
 
 use ctadl_ir::ParameterType::ByVal;
@@ -892,7 +893,7 @@ fn implicit_return() {
     get_summary(program_from_string(src).0).expect("Verify probably bonked");
 }
 
-//TODO_JDB:  I don't think i handled *(p+1) = f; or (p+1)->f()
+//TODO_JDB:  I don't think i handled (p+1)->f(). (*(p+1) = f is: constant_pointer_offset_deref_is_a_subscript)
 
 #[test_log::test]
 fn simple_else() {
@@ -2557,6 +2558,46 @@ fn nonconstant_subscript_may_alias_constant() {
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn constant_pointer_offset_deref_is_a_subscript() {
+    // `*(a + 2)` is `a[2]`: the literal is pointer arithmetic on the address, so the store
+    // lands on `.[2].deref`, not on `a[0]` (`nightly/tests/c/ptrarith.c`). `2 + a` and
+    // `a - 1` are the other spellings C allows.
+    let src = r"
+        void plus(int *a, int src)  { *(a + 2) = src; }
+        void rplus(int *a, int src) { *(2 + a) = src; }
+        void minus(int *a, int src) { *(a - 1) = src; }
+        int load(int *a)            { return *(a + 2); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow_in(&s, &si, "plus", 1, "", 0, ".[2].deref");
+    check_no_flow_in(&s, &si, "plus", 1, "", 0, ".deref");
+    check_flow_in(&s, &si, "rplus", 1, "", 0, ".[2].deref");
+    check_flow_in(&s, &si, "minus", 1, "", 0, ".[-1].deref");
+    check_returns_param_in(&s, &si, "load", 0, ".[2].deref");
+    check_does_not_return_param_in(&s, &si, "load", 0, ".deref");
+}
+
+#[test_log::test]
+fn constant_pointer_offset_subscript_base_sums() {
+    // `(a + 1)[1]` is `a[2]`, and `(a + 1)[0]` is `a[1]`.
+    let src = r"
+        void two(int *a, int src) { (a + 1)[1] = src; }
+        void one(int *a, int src) { (a + 1)[0] = src; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow_in(&s, &si, "two", 1, "", 0, ".[2].deref");
+    check_flow_in(&s, &si, "one", 1, "", 0, ".[1].deref");
+}
+
+#[test_log::test]
+fn a_dereferenced_cast_of_minus_one_is_not_pointer_arithmetic() {
+    // `*((lp) - 1)` dereferences a cast of -1; `lp` is a type, not a pointer to offset.
+    let src = r"
+        typedef long *lp;
+        long f(void) { return *((lp) - 1); }";
+    let (_prog, dump) = program_from_string(src);
+    assert!(check_no_match(&dump, "$globals"), "{dump}");
 }
 
 #[test_log::test]

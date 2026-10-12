@@ -563,6 +563,11 @@ fn constant_index(exp: &Exp) -> Option<i64> {
     let Exp::Str(text) = exp else {
         return None;
     };
+    integer_literal(text)
+}
+
+/// The value of an integer literal's source text, as [`constant_index`] reads it.
+fn integer_literal(text: &str) -> Option<i64> {
     let text = text.trim();
     let digits = text.trim_end_matches(['u', 'U', 'l', 'L']);
     let (radix, digits) = match digits.strip_prefix(['-', '+']) {
@@ -4217,6 +4222,45 @@ impl<'a> Context<'a> {
             .then_some((op, operand))
     }
 
+    /// `e + K`, `K + e` or `e - K`, `K` an integer literal, read as an address: `e` and the
+    /// element offset (`-K` for a subtraction).
+    ///
+    /// Only a caller that knows `node` is an address may ask -- the operand of `*`, or a
+    /// subscript's base. There, one operand of the sum is the pointer and a literal is not, so
+    /// the literal is pointer arithmetic. Anywhere else `x + 2` may be integer arithmetic,
+    /// which the untyped parse cannot tell apart, and it still lowers as a merge of its
+    /// operands ([`Self::flatten_binary`]).
+    fn constant_pointer_offset<'t>(
+        &self,
+        node: Node<'t>,
+        source: &'a str,
+        scope_view: &ScopeView,
+    ) -> Option<(Node<'t>, i64)> {
+        let node = unparenthesized_callee(node);
+        if node.kind() != "binary_expression"
+            || self.cast_prefix(node, source, scope_view).is_some()
+        {
+            return None;
+        }
+        let left = node.child_by_field_name("left")?;
+        let right = node.child_by_field_name("right")?;
+        let literal = |operand: Node<'_>| {
+            let operand = unparenthesized_callee(operand);
+            (operand.kind() == "number_literal")
+                .then(|| integer_literal(to_str(&operand, source)))
+                .flatten()
+        };
+        match to_str(&node.child_by_field_name("operator")?, source) {
+            "+" => match (literal(left), literal(right)) {
+                (None, Some(k)) => Some((left, k)),
+                (Some(k), None) => Some((right, k)),
+                _ => None,
+            },
+            "-" if literal(left).is_none() => Some((left, literal(right)?.checked_neg()?)),
+            _ => None,
+        }
+    }
+
     /*
     Call expression always 'assign' into a temp variable, that way the collect_assignment can be consistent
      */
@@ -4743,12 +4787,12 @@ impl<'a> Context<'a> {
                 Ok(base)
             }
             "subscript_expression" => {
-                let base = self.flatten_lvalue(
-                    program,
-                    node.child_by_field_name("argument").unwrap(),
-                    source,
-                    scope_view,
-                )?;
+                let argument = node.child_by_field_name("argument").unwrap();
+                // `(a + K)[N]` is `a[K + N]`.
+                let (argument, offset) = self
+                    .constant_pointer_offset(argument, source, scope_view)
+                    .unwrap_or((argument, 0));
+                let base = self.flatten_lvalue(program, argument, source, scope_view)?;
                 let index = self.flatten_expr(
                     program,
                     node.child_by_field_name("index").unwrap(),
@@ -4756,9 +4800,14 @@ impl<'a> Context<'a> {
                     scope_view,
                 )?;
                 // `a[N]` is `*(a + N)`: the index is pointer arithmetic on the address and the
-                // element itself is the memory read/written there (see `DEREF_FIELD`).
+                // element itself is the memory read/written there (see `DEREF_FIELD`). A
+                // non-constant `N` reads as 0 (see `push_element`).
                 let mut ap = base;
-                push_element(&mut ap.fields, constant_index(&index));
+                let index = match constant_index(&index) {
+                    Some(n) => offset.checked_add(n),
+                    None => Some(offset),
+                };
+                push_element(&mut ap.fields, index);
                 Ok(ap)
             }
             // A GNU statement expression in lvalue position -- a macro expansion like
@@ -4838,6 +4887,12 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
     ) -> Result<RawPath, Error> {
         let mut operand = unparenthesized_callee(arg);
+        // `*(a + K)` is `a[K]`, and resolves as the subscript does.
+        if let Some((pointer, offset)) = self.constant_pointer_offset(operand, source, scope_view) {
+            let mut ap = self.flatten_lvalue(program, pointer, source, scope_view)?;
+            push_element(&mut ap.fields, Some(offset));
+            return Ok(ap);
+        }
         if operand.kind() == "update_expression" {
             self.flatten_update_expression(program, operand, source, scope_view)?;
             operand = operand
