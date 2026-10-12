@@ -107,7 +107,8 @@ type TaintVertex = (FunctionId, FlowVariable, Path);
 
 /// The implicit taint dataflow graph: edges are computed on demand from indexed
 /// program tables, never materialized. Edge expansion covers direct assigns
-/// with path substitution, field-alias back-flow from loads, the backward copy
+/// with path substitution, address computations off a tainted value,
+/// field-alias back-flow from loads, the backward copy
 /// hop that carries object identity (see [`ObjectScope`]), and formal/actual
 /// call-boundary steps.
 pub struct TaintSearchGraph {
@@ -124,6 +125,12 @@ pub struct TaintSearchGraph {
     /// any offset `q` off a saturating base `a` taints the load's destination
     /// `x`, regardless of whether `q` matches the tainted path.
     loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>>,
+    /// Address computations `dst.dp = src.(k·[n])` -- edges whose source path
+    /// ends in an offset -- indexed by source and keyed by the path `k` before
+    /// the offset: `(f, src) -> [(k, dst, dp)]`. The address depends on the
+    /// value at `src.k`, so a taint on that value reaches `dst.dp`; the direct
+    /// `assign_by_src` step only carries taint that lies under the offset.
+    addrs_by_src: HashMap<(FunctionId, FlowVariable), Vec<(Path, FlowVariable, Path)>>,
     /// `formal_param`, keyed by `(function, formal variable)`.
     formal_ty: HashMap<(FunctionId, FlowVariable), FormalType>,
     /// Call sites indexed by callee, for formal-to-actual (function exit) steps.
@@ -165,7 +172,15 @@ impl TaintSearchGraph {
             HashMap::default();
         let mut loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>> =
             HashMap::default();
+        let mut addrs_by_src: HashMap<(FunctionId, FlowVariable), Vec<(Path, FlowVariable, Path)>> =
+            HashMap::default();
         for (f, dst, dp, src, sp) in &facts.assign {
+            if let Some((key, _)) = sp.split_trailing_offset() {
+                addrs_by_src
+                    .entry((*f, *src))
+                    .or_default()
+                    .push((key, *dst, *dp));
+            }
             assign_by_src
                 .entry((*f, *src))
                 .or_default()
@@ -226,6 +241,7 @@ impl TaintSearchGraph {
             assign_by_src,
             loads_by_dst,
             loads_by_src,
+            addrs_by_src,
             formal_ty,
             callers_by_callee,
             callee_by_site,
@@ -264,6 +280,18 @@ impl LazySuccessors for TaintSearchGraph {
                         ObjectScope::All
                     };
                     out.push(((f, *dst, p2, level, scope2), FlowEdge::Intra));
+                }
+            }
+        }
+
+        // Address computation: `dst.dp = src.(p·[n])` -- C's `&a[2]`, pcode's
+        // `PTRADD` -- is an address computed from the value at `src.p`, so a
+        // taint on that value is a taint on the address. A fresh derivation, so
+        // `All`.
+        if let Some(addrs) = self.addrs_by_src.get(&(f, v)) {
+            for (key, dst, dp) in addrs {
+                if *key == p && self.paths.contains(dp) {
+                    out.push(((f, *dst, *dp, level, ObjectScope::All), FlowEdge::Intra));
                 }
             }
         }
