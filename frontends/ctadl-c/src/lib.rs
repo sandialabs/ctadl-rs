@@ -523,18 +523,6 @@ impl UnitPlan {
 /// out of the C identifier space, so it can never collide with a real source-level field.
 const UNION_FIELD: &str = "$union";
 
-/// Field name for the *memory* an address names -- the dereference itself. An `Offset(N)`
-/// in a path only moves an address; every access that touches memory ends in this symbol,
-/// so `a[3]` is the path `a.[3].deref`.
-///
-/// Splitting the offset from the dereference is what makes element addresses composable:
-/// offsets are summed when paths meet (`facts::Path::from_accesses`), so a callee's write at
-/// `.[1].deref` through `&a[1]` (the address `a.[1]`) lands on `a.[2].deref`, where a
-/// caller's `a[2]` reads. The name and shape are the pcode frontend's. This is the only
-/// dereference field the frontend emits: a non-constant index lowers to it with no offset,
-/// so `a[n]` and `a[0]` are one path (see [`push_element`]).
-const DEREF_FIELD: &str = "deref";
-
 /// The field of the globals object naming the object at a compile-time constant address:
 /// `((struct s *)0)->f` becomes `$globals.<address 0>.f`. A global rather than a fresh temp
 /// per site because two casts of the same constant designate the same object in C. Keyed on
@@ -545,13 +533,6 @@ fn literal_address_path(constant: &str) -> RawPath {
     let mut fields = ThinVec::with_capacity(1);
     fields.push(PathSegment::symbol(format!("<address {constant}>")));
     RawPath::new(VariableRef::new_global(), fields)
-}
-
-/// True for the synthetic dereference field ([`DEREF_FIELD`]) -- the memory at an address, as
-/// opposed to a struct member. Taking the address of such an access (`&a[i]`) drops this field,
-/// leaving the address itself.
-fn is_deref_field(seg: &PathSegment) -> bool {
-    matches!(seg, PathSegment::Symbol(s) if &**s == DEREF_FIELD)
 }
 
 /// The compile-time value of a lowered subscript index, if it has one. Only an integer literal
@@ -598,7 +579,7 @@ fn deref_of_pointee(pointee: &AccessPath) -> Option<RawPath> {
         .cloned()
         .map(PathSegment::from)
         .collect();
-    fields.push(PathSegment::symbol(DEREF_FIELD));
+    fields.push(PathSegment::deref());
     Some(RawPath::new(pointee.base.clone(), fields))
 }
 
@@ -611,9 +592,9 @@ fn push_element(fields: &mut ThinVec<PathSegment>, index: Option<i64>) {
     match index {
         Some(n) if n != 0 => {
             fields.push(PathSegment::offset(n));
-            fields.push(PathSegment::symbol(DEREF_FIELD));
+            fields.push(PathSegment::deref());
         }
-        Some(_) | None => fields.push(PathSegment::symbol(DEREF_FIELD)),
+        Some(_) | None => fields.push(PathSegment::deref()),
     }
 }
 
@@ -4017,7 +3998,7 @@ impl<'a> Context<'a> {
                 scope_view,
                 &mut program[scope_view.fidx].locals,
             );
-            if cell.fields.len() == 1 && cell.fields.first().is_some_and(is_deref_field) {
+            if cell.fields.len() == 1 && cell.fields.first().is_some_and(PathSegment::is_deref) {
                 self.cell_vars.insert(cell.base.clone());
                 return Ok(Exp::Variable(cell.base));
             }
@@ -4660,7 +4641,7 @@ impl<'a> Context<'a> {
             // pcode frontend does.
             let mut fields = target.fields.clone();
             if fields.iter().all(PathSegment::is_offset) {
-                fields.push(PathSegment::symbol(DEREF_FIELD));
+                fields.push(PathSegment::deref());
             }
             let mut stmts = Vec::new();
             let allocator = &mut self.allocator;
@@ -4707,7 +4688,7 @@ impl<'a> Context<'a> {
                 // `emit_loads` materializes, returning the residual base + offsets.
                 // (`flatten_lvalue` of a subscript always ends in a dereference.)
                 match ap.fields.pop() {
-                    Some(seg) if is_deref_field(&seg) => {}
+                    Some(seg) if seg.is_deref() => {}
                     _ => return Ok(None),
                 }
                 Ok(Some(self.emit_loads(program, scope_view, ap)))
