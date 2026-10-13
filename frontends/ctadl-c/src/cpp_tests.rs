@@ -5021,3 +5021,39 @@ fn cpp_non_dependent_unknown_receiver_is_not_dispatched_by_name() {
         "{prog}"
     );
 }
+
+// ---- Spec 044: qualified member calls and constructor forms ------------------------------------
+
+#[test_log::test]
+fn cpp_qualified_base_call_is_a_non_virtual_this_call() {
+    // FR-1: `Base::set(x)` in an override calls exactly `Base::set` on `this`, no CHA.
+    let src = r"
+        struct Base { int v; virtual void set(int x) { v = x; } virtual ~Base() {} };
+        struct D : Base { void set(int x) override { Base::set(x); } };";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "D::set", "Base::set", ["@p0", "@p1"]);
+}
+
+#[test_log::test]
+fn cpp_static_member_called_through_an_object() {
+    // FR-2: `s.id(x)` with a static `id` is `S::id(x)`, no receiver.
+    let src = r"
+        struct S { static int id(int x) { return x; } };
+        int f(int p) { S s; return s.id(p); }";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "f", "S::id", ["@p0"]);
+}
+
+#[test_log::test]
+fn cpp_delegating_and_inherited_constructors() {
+    // FR-3/FR-4: `S(int x) : S(x, 0)` constructs this through `S(int, int)`; `D d(x)` with
+    // `using Base::Base;` constructs through `Base(int)`.
+    let src = r"
+        struct S { int v; int w; S(int x, int y) : v(x), w(y) {} S(int x) : S(x, 0) {} };
+        struct Base { int v; Base(int x) : v(x) {} };
+        struct D : Base { using Base::Base; };
+        void f(int p) { D d(p); }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "S::S#1", "S::S#2");
+    check_has_direct_call(&prog, "f", "Base::Base");
+}

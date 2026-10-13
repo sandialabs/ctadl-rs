@@ -893,6 +893,9 @@ struct ClassInfo {
     /// `obs->m()` and `hs[i]->m()` dispatch on them; they are never operator operands. Empty
     /// for C.
     member_pointers: Vec<(String, String)>,
+    /// Bases whose constructors the class inherits (`using Base::Base;`, spec 044): a
+    /// construction no own constructor of its arity takes reaches theirs. Empty for C.
+    inherited_ctors: Vec<String>,
 }
 
 /// The object a C++ instance-method receiver resolves to: the access-path expression to
@@ -6543,6 +6546,70 @@ impl<'a> Context<'a> {
         }))
     }
 
+    /// The static member function `C::m` of `class` or a base, if one is defined (spec 044).
+    fn static_method_target(&self, class: &str, method: &str) -> Option<String> {
+        let mut stack = vec![class.to_string()];
+        let mut seen: HashSet<String> = HashSet::default();
+        while let Some(c) = stack.pop() {
+            if !seen.insert(c.clone()) {
+                continue;
+            }
+            let base = format!("{c}::{method}");
+            if self.overloads.contains_key(&base) || self.functions.contains_key(&base) {
+                return Some(base);
+            }
+            if let Some(info) = self.classes.get(&c) {
+                stack.extend(info.bases.iter().cloned());
+            }
+        }
+        None
+    }
+
+    /// `obj.m(args)` where `m` is a static member function: the direct call `C::m(args)`, with no
+    /// receiver (spec 044). `None`, emitting nothing more, when `m` is not one.
+    #[allow(clippy::too_many_arguments)]
+    fn static_call_via_object(
+        &mut self,
+        program: &mut Program,
+        call_node: Node<'_>,
+        class: &str,
+        method: &str,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+        temp_name: String,
+    ) -> Result<Option<DispatchOut>, Error> {
+        let Some(base) = self.static_method_target(class, method) else {
+            return Ok(None);
+        };
+        let arg_node = call_node
+            .child_by_field_name("arguments")
+            .expect("call_expression always has arguments");
+        let shapes = self.arg_shapes(arg_node, source);
+        let args = self.collect_arguments(program, arg_node, source, scope_view)?;
+        let targets: ThinVec<String> = self
+            .overload_targets(&base, args.len(), &shapes)
+            .into_iter()
+            .collect();
+        let ret =
+            VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name));
+        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+            StatementKind::CallAssign {
+                style: CallStyle::DirectCall {
+                    call_edges: CallEdges::Explicit(targets),
+                },
+                rets: ctadl_ir::thin_vec![ret.clone()],
+                args,
+            },
+        ));
+        self.emit_post_call_copies(program, scope_view);
+        Ok(Some(DispatchOut {
+            value: Exp::Variable(ret),
+            aliased: None,
+            location: None,
+            returns_object: None,
+        }))
+    }
+
     /// The receiver of an unqualified call `m(args)` inside a member function (spec 035): `this`,
     /// when the enclosing class or a base declares an instance method `m`, the function has an
     /// implicit `this`, and no local or parameter shadows `m`. A class's members hide outer
@@ -6704,7 +6771,16 @@ impl<'a> Context<'a> {
         // non-virtual override (a derived redefinition) win by static type. The base chain is
         // empty for C and base-less classes, so this is a plain own-class lookup there.
         if self.resolve_method_class(&recv.class, method).is_none() {
-            return Ok(None);
+            // A static member function called through an object, `s.id(x)` (spec 044).
+            return self.static_call_via_object(
+                program,
+                call_node,
+                &recv.class,
+                method,
+                source,
+                scope_view,
+                temp_name,
+            );
         }
         let arg_node = call_node
             .child_by_field_name("arguments")

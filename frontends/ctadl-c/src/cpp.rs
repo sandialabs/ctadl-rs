@@ -839,6 +839,21 @@ fn cpp_collect_methods<'a>(
             .collect();
         for (child, templated) in children {
             match child.kind() {
+                // `using Base::Base;` inherits the base's constructors (spec 044).
+                "using_declaration" => {
+                    let mut uc = child.walk();
+                    if let Some(target) = child
+                        .named_children(&mut uc)
+                        .find(|n| n.kind() == "qualified_identifier")
+                    {
+                        let name = template_erased_name(target, source);
+                        if let Some((base, ctor)) = name.rsplit_once("::")
+                            && base.rsplit("::").next() == Some(ctor)
+                        {
+                            info.inherited_ctors.push(base.to_string());
+                        }
+                    }
+                }
                 "field_declaration" => {
                     // A `static` data member (`static int total;`) is a class-scoped **global**,
                     // not a per-object field: record it in `static_members` too so an unqualified
@@ -1072,6 +1087,9 @@ fn cpp_collect_methods<'a>(
         }
         if let Some(brace) = body.child(0) {
             class_anchor.insert(qualified_name.clone(), brace);
+        }
+        if !info.inherited_ctors.is_empty() {
+            info.has_ctor = true;
         }
         ctx.classes.insert(qualified_name, info);
     }
@@ -2176,8 +2194,27 @@ fn emit_ctor_edge(
     // construction resolves by arity, then by argument shape among the constructors of that arity
     // (spec 010, 024). `copy` is only ever `true` for a class that declares a copy constructor,
     // so a class without one is unchanged.
+    // A class inheriting its base's constructors (`using Base::Base;`) with no constructor of
+    // its own taking this many arguments constructs through the base's (spec 044).
+    let own_arity = ctx
+        .overloads
+        .get(&format!("{class}::{class}"))
+        .is_some_and(|sigs| sigs.iter().any(|sig| sig.arity == arity));
+    let inherited: Vec<String> = ctx
+        .classes
+        .get(class)
+        .map(|info| info.inherited_ctors.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|base| ctx.class_named_in(class, &base))
+        .collect();
     let targets: ThinVec<String> = if copy {
         thin_vec![copy_ctor_name(class)]
+    } else if !own_arity && !inherited.is_empty() {
+        inherited
+            .iter()
+            .flat_map(|base| ctx.overload_targets(&format!("{base}::{base}"), arity, arg_shapes))
+            .collect()
     } else {
         ctx.overload_targets(&format!("{class}::{class}"), arity, arg_shapes)
             .into_iter()
@@ -2683,6 +2720,26 @@ fn cpp_emit_member_inits<'a>(
         .unwrap_or_default();
     let has_ctor =
         |ctx: &Context<'_>, class: &str| ctx.classes.get(class).is_some_and(|info| info.has_ctor);
+    // A delegating constructor, `S(int x) : S(x, 0)`, runs the target constructor on this object,
+    // which does all the initializing (spec 044).
+    if let Some(class) = ctx.current_method_class.clone() {
+        let simple = simple_class_name(&class).to_string();
+        if let Some((_, init)) = member_inits
+            .iter()
+            .find(|(name, _)| *name == simple || *name == class)
+        {
+            let this = RawPath::new(VariableRef::new_parameter(0u32.into()), ThinVec::new());
+            return construct_subobject(
+                ctx,
+                program,
+                scope_view,
+                source,
+                &class,
+                this,
+                init_args(*init),
+            );
+        }
+    }
     for base in &bases {
         let init = member_inits
             .iter()
@@ -3825,6 +3882,9 @@ fn implicit_member_call<'a>(
     ) else {
         return Ok(None);
     };
+    if callee.kind() == "qualified_identifier" {
+        return qualified_member_call(ctx, program, callee, args_node, source, scope_view);
+    }
     if callee.kind() != "identifier" {
         return Ok(None);
     }
@@ -3868,6 +3928,63 @@ fn implicit_member_call<'a>(
     let args = ctx.collect_arguments(program, args_node, source, scope_view)?;
     let targets: ThinVec<String> = ctx
         .overload_targets(&base, args.len(), &shapes)
+        .into_iter()
+        .collect();
+    let temp = ctx.allocator.next_temp();
+    let ret = VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
+    program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+        StatementKind::CallAssign {
+            style: CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(targets),
+            },
+            rets: thin_vec![ret.clone()],
+            args,
+        },
+    ));
+    Ok(Some(Exp::Variable(ret)))
+}
+
+/// `Base::m(args)` inside a member function of a class derived from `Base` (or of `Base`
+/// itself): a call of exactly that method on `this`, with no virtual dispatch (spec 044). The
+/// usual way an override extends its base. Declines for a static member function (the ordinary
+/// qualified call lowers it), and outside member functions.
+fn qualified_member_call<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    callee: Node<'_>,
+    args_node: Node<'_>,
+    source: &'a str,
+    scope_view: &mut ScopeView,
+) -> anyhow::Result<Option<Exp>, Error> {
+    let Some(current) = ctx.current_method_class.clone() else {
+        return Ok(None);
+    };
+    let has_this = ctx
+        .param_names
+        .get(scope_view.func_name.as_str())
+        .and_then(|names| names.iter().next())
+        .is_some_and(|first| *first == "this");
+    if !has_this {
+        return Ok(None);
+    }
+    let full = template_erased_name(callee, source);
+    let Some((class_part, method)) = full.rsplit_once("::") else {
+        return Ok(None);
+    };
+    let Some(class) = ctx.class_named_in(&current, class_part) else {
+        return Ok(None);
+    };
+    if !ctx.class_is_a(&current, &class) {
+        return Ok(None);
+    }
+    let Some((defining, _)) = ctx.resolve_method_class(&class, method) else {
+        return Ok(None);
+    };
+    let shapes = ctx.arg_shapes(args_node, source);
+    let mut args: ThinVec<Exp> = thin_vec![Exp::Variable(VariableRef::new_parameter(0u32.into()))];
+    args.extend(ctx.collect_arguments(program, args_node, source, scope_view)?);
+    let targets: ThinVec<String> = ctx
+        .overload_targets(&format!("{defining}::{method}"), args.len() - 1, &shapes)
         .into_iter()
         .collect();
     let temp = ctx.allocator.next_temp();

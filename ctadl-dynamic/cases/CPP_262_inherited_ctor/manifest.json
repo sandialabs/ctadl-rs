@@ -1,0 +1,6 @@
+{
+  "name": "CPP_262_inherited_ctor",
+  "description": "C++ qualified calls and constructor forms (spec 044), POSITIVE: inheriting constructors. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

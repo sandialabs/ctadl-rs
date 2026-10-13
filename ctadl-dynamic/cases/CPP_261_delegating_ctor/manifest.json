@@ -1,0 +1,6 @@
+{
+  "name": "CPP_261_delegating_ctor",
+  "description": "C++ qualified calls and constructor forms (spec 044), POSITIVE: delegating constructor S(int) -> S(int, int). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

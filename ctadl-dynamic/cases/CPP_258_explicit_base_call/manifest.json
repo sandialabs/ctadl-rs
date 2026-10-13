@@ -1,0 +1,6 @@
+{
+  "name": "CPP_258_explicit_base_call",
+  "description": "C++ qualified calls and constructor forms (spec 044), POSITIVE: D::set calls Base::set(x). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

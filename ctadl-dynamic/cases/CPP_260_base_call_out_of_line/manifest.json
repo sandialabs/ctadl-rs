@@ -1,0 +1,6 @@
+{
+  "name": "CPP_260_base_call_out_of_line",
+  "description": "C++ qualified calls and constructor forms (spec 044), POSITIVE: D::setup calls Base::init(x). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_259_static_via_object",
+  "description": "C++ qualified calls and constructor forms (spec 044), POSITIVE: `sink(s.id(source()))`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

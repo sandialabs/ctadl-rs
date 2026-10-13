@@ -1,0 +1,6 @@
+{
+  "name": "CPP_264_delegating_ctor_negative",
+  "description": "C++ qualified calls and constructor forms (spec 044), NEGATIVE: delegating constructor with the argument in the other member. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

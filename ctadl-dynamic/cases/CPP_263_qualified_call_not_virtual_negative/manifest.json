@@ -1,0 +1,6 @@
+{
+  "name": "CPP_263_qualified_call_not_virtual_negative",
+  "description": "C++ qualified calls and constructor forms (spec 044), NEGATIVE: Base::set(x) from D::f with D::set overriding. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}
