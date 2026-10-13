@@ -1,0 +1,6 @@
+{
+  "name": "CPP_175_free_operator_scalar_left",
+  "description": "C++ free operators (spec 032), POSITIVE: `2 * s` with a free operator*(int, const S&). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

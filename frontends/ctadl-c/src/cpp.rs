@@ -391,15 +391,17 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, Vec<Param
         // normalized operator spelling, keyed `Class::operator=` exactly as discovery keys it
         // (spec 023). Its arity joins the class's overload set like any other method's, so two
         // `operator()`s of different arity mangle to `Class::operator()#1`/`#2`.
+        // A free operator (`S operator+(const S&, const S&)`, spec 032) is keyed like a free
+        // function: its normalized spelling, namespace-qualified.
         "operator_name" => {
-            let class = enclosing_class_qualified_name(fdef, source)?;
-            Some((
-                format!(
-                    "{class}::{}",
-                    operator_method_name(to_str(&name_node, source))
-                ),
-                ptypes,
-            ))
+            let name = operator_method_name(to_str(&name_node, source));
+            match enclosing_class_qualified_name(fdef, source) {
+                Some(class) => Some((format!("{class}::{name}"), ptypes)),
+                None => Some((
+                    format!("{}{name}", enclosing_namespace_prefix(fdef, source)),
+                    ptypes,
+                )),
+            }
         }
         // An out-of-line method `Class::m`, or an out-of-line constructor `Box::Box` (name ==
         // scope) — both keyed on `scope::name`, exactly as registration builds them.
@@ -1130,6 +1132,7 @@ fn cpp_collect_methods<'a>(
     }
 
     cpp_collect_namespaced_functions(ctx, source, root, program, global_sidx)?;
+    cpp_collect_free_operators(ctx, source, root, program, global_sidx)?;
     Ok(())
 }
 
@@ -1221,6 +1224,80 @@ fn cpp_collect_namespaced_functions<'a>(
             f.void,
             f.params,
             f.body,
+            None,
+            false,
+            &[],
+        )?;
+    }
+    Ok(())
+}
+
+/// Discover and lower **free operators** (spec 032): a `function_definition` outside any class
+/// whose declarator names an `operator_name` (`S operator+(const S& a, const S& b)`). Each is keyed
+/// by [`overload_base_name`] -- its normalized spelling, namespace-qualified and overload-mangled
+/// like any free function -- which is the name [`free_operator_call`] resolves. The shared
+/// definition pass leaves these alone ([`cpp_aux_owns_definition`]: the name is no `identifier`),
+/// so they used to be dropped. An out-of-line member operator (`S::operator+`) names a
+/// `qualified_identifier` and is method discovery's.
+fn cpp_collect_free_operators<'a>(
+    ctx: &mut Context<'a>,
+    source: &'a str,
+    root: Node<'_>,
+    program: &mut Program,
+    global_sidx: usize,
+) -> anyhow::Result<(), Error> {
+    let query = ctx.compile_query(
+        r#"
+        (function_definition
+            declarator: (_) @decl
+            body: (compound_statement) @body) @def
+        "#,
+    );
+    let mut defs: Vec<(String, Node<'_>, Node<'_>, bool)> = Vec::new();
+    {
+        let mut cursor = QueryCursor::new();
+        let mut it = cursor.matches(&query, root, source.as_bytes());
+        while let Some(m) = it.next() {
+            let extract = MatchExtractor::new(&query, m);
+            let def = extract.get("def")?;
+            if is_class_member_definition(def) {
+                continue;
+            }
+            let Some((func_declr, returns_pointer)) = function_declarator_of(extract.get("decl")?)
+            else {
+                continue;
+            };
+            let (Some(name_node), Some(params)) = (
+                func_declr.child_by_field_name("declarator"),
+                func_declr.child_by_field_name("parameters"),
+            ) else {
+                continue;
+            };
+            if name_node.kind() != "operator_name" {
+                continue;
+            }
+            let Some((base, _)) = overload_base_name(def, source) else {
+                continue;
+            };
+            let qualified = ctx.overload_def_name(&base, params, source);
+            let void = returns_void(def.child_by_field_name("type"), returns_pointer, source);
+            defs.push((qualified, params, extract.get("body")?, void));
+        }
+    }
+    for (qualified, _, _, _) in &defs {
+        ctx.functions
+            .entry(qualified.clone())
+            .or_insert_with(|| program.new_function());
+    }
+    for (qualified, params, body, void) in defs {
+        ctx.lower_function(
+            source,
+            program,
+            global_sidx,
+            &qualified,
+            void,
+            params,
+            body,
             None,
             false,
             &[],
@@ -2565,12 +2642,23 @@ fn cpp_operator_call<'a>(
                 return Ok(None);
             };
             let method = format!("operator{}", to_str(&op, source));
-            member_operator_call(
+            if let Some(value) = member_operator_call(
                 ctx,
                 program,
                 left,
                 &method,
                 &[right],
+                false,
+                source,
+                scope_view,
+            )? {
+                return Ok(Some(value));
+            }
+            free_operator_call(
+                ctx,
+                program,
+                &method,
+                &[left, right],
                 false,
                 source,
                 scope_view,
@@ -2589,7 +2677,12 @@ fn cpp_operator_call<'a>(
                 return Ok(None);
             }
             let method = format!("operator{op}");
-            member_operator_call(ctx, program, arg, &method, &[], false, source, scope_view)
+            if let Some(value) =
+                member_operator_call(ctx, program, arg, &method, &[], false, source, scope_view)?
+            {
+                return Ok(Some(value));
+            }
+            free_operator_call(ctx, program, &method, &[arg], false, source, scope_view)
         }
         // `++a` is `a.operator++()`; `a++` is `a.operator++(0)`, the dummy `int` that tells the
         // postfix overload apart (spec 031).
@@ -2602,7 +2695,12 @@ fn cpp_operator_call<'a>(
             };
             let postfix = op.start_byte() > arg.start_byte();
             let method = format!("operator{}", to_str(&op, source));
-            member_operator_call(ctx, program, arg, &method, &[], postfix, source, scope_view)
+            if let Some(value) =
+                member_operator_call(ctx, program, arg, &method, &[], postfix, source, scope_view)?
+            {
+                return Ok(Some(value));
+            }
+            free_operator_call(ctx, program, &method, &[arg], postfix, source, scope_view)
         }
         "call_expression" => {
             // `f(args)` where `f` names an object, not a function: the call operator. A callee
@@ -2850,6 +2948,66 @@ fn member_operator_call<'a>(
     Ok(out.map(|o| o.value))
 }
 
+/// Lower an operator on a class object as a call of a **free** `operator<op>` (spec 032), when
+/// the unit defines one of that arity: `a + b` is `operator+(a, b)`, `-a` is `operator-(a)`, and a
+/// postfix `a++` passes the dummy `0`. Declines -- before evaluating anything -- unless some
+/// operand is a class object (a built-in operator on scalars or pointers is never rewritten) and
+/// a free operator of that name and arity exists. Same-arity candidates resolve by the operands'
+/// shapes ([`Context::overload_targets`]). Only file-scope operators are candidates: a namespaced
+/// one would be found by argument-dependent lookup, which is not modeled.
+fn free_operator_call<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    method: &str,
+    operands: &[Node<'_>],
+    dummy_int: bool,
+    source: &'a str,
+    scope_view: &mut ScopeView,
+) -> anyhow::Result<Option<Exp>, Error> {
+    if !operands
+        .iter()
+        .any(|operand| operand_class(ctx, *operand, source, scope_view).is_some())
+    {
+        return Ok(None);
+    }
+    let arity = operands.len() + usize::from(dummy_int);
+    if !ctx
+        .overloads
+        .get(method)
+        .is_some_and(|sigs| sigs.iter().any(|sig| sig.arity == arity))
+    {
+        return Ok(None);
+    }
+    let mut shapes: Vec<ArgShape> = operands
+        .iter()
+        .map(|operand| ctx.arg_shape(*operand, source))
+        .collect();
+    let mut args: ThinVec<Exp> = ThinVec::new();
+    for operand in operands {
+        args.push(ctx.flatten_expr(program, *operand, source, scope_view)?);
+    }
+    if dummy_int {
+        shapes.push(ArgShape::Other);
+        args.push(Exp::new_str("0"));
+    }
+    let targets: ThinVec<String> = ctx
+        .overload_targets(method, arity, &shapes)
+        .into_iter()
+        .collect();
+    let temp = ctx.allocator.next_temp();
+    let ret = VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
+    program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+        StatementKind::CallAssign {
+            style: CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(targets),
+            },
+            rets: thin_vec![ret.clone()],
+            args,
+        },
+    ));
+    Ok(Some(Exp::Variable(ret)))
+}
+
 /// The method name of the subscript operator, `a[i]`.
 const SUBSCRIPT_OP: &str = "operator[]";
 /// The method name of the call operator, `f(args)`.
@@ -3006,6 +3164,18 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     // with the object as the arg-0 receiver. Declines for every operand that is not a known class
     // object, so the built-in lowering stands for all of C and for every scalar/array/pointer.
     operator_call: cpp_operator_call,
+    arrow_operator: |ctx, program, object, source, scope_view| {
+        member_operator_call(
+            ctx,
+            program,
+            object,
+            "operator->",
+            &[],
+            false,
+            source,
+            scope_view,
+        )
+    },
 };
 
 /// Parse the C++ source in `source` into a CTADL IR program.

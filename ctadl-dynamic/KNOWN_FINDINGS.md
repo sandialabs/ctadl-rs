@@ -14,7 +14,7 @@ frontend ingestion gaps — and tracks their disposition.
 | initializer_list (`{...}`) not ingested | frontend | 31, 34–36 | ✅ resolved (spec 019) |
 | labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (spec 018) |
 | F3 — a non-constant subscript reads/writes only element 0 | soundness | 37, CPP_133 | ❌ **open** (IR path model) |
-| F4 — a field path composed across a call is never admissible | soundness | 38, CPP_161 | ❌ **open** (codegen `paths` gate) |
+| F4 — a field path composed across a call is never admissible | soundness | 38, CPP_161, CPP_179 | ❌ **open** (codegen `paths` gate) |
 | F5 — `(p + 1)->f` and `arr[1].f` lower to different paths | soundness | 39 | ❌ **open** (C pointer model) |
 
 F2 and the two frontend findings above were surfaced by the **broadened M7 generator** (it threads
@@ -50,8 +50,8 @@ field from the manifest **and** mark the entry below RESOLVED.
 
 ## F4 — A field path composed across a call is never admissible (OPEN)
 
-- **Status:** **open**, allowlisted as `known_gap: "F4"` on cases `38` (C) and `CPP_161` (C++
-  member-object receivers). Found 2026-10-13 while adding member-object receivers (spec 030).
+- **Status:** **open**, allowlisted as `known_gap: "F4"` on cases `38` (C), `CPP_161` (C++
+  member-object receivers) and `CPP_179` (`operator->`). Found 2026-10-13 while adding member-object receivers (spec 030).
 - **What:** taint lives at a path only if that path is in the `paths` gate. Codegen seeds the
   gate with syntactic paths and composes them along a **load chain within one basic block**
   (`cap_path` in `codegen/mod.rs`: `t = load o.in; u = load t.v` yields `.in.v`).
@@ -62,7 +62,9 @@ field from the manifest **and** mark the entry below RESOLVED.
   o.in = i;            /* i.v tainted */
   sink(get(o.in));     /* get reads p.v: needs o.in.v -- s=none, d=flow */
   ```
-  The same program with `sink(o.in.v)` agrees, because the read spells `.in.v` in-block. In C++
+  The same program with `sink(o.in.v)` agrees, because the read spells `.in.v` in-block. A
+  **getter returning a member pointer** fails the same way (`w.get()->v`, with `get` returning
+  `p`: needs `w.p.v`, `.p` read in the callee), as does an overloaded `operator->` (CPP_179). In C++
   this hits every method call on a member object whose result depends on a member the callee
   reads: `o.in.set(s); sink(o.in.get())`, `in.get()` inside a method, a member object's
   destructor reading its own fields.

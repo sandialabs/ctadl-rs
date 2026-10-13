@@ -1,0 +1,6 @@
+{
+  "name": "CPP_177_free_operators_by_class_negative",
+  "description": "C++ free operators (spec 032), NEGATIVE: free operator+ for A and B; `b1 + b2` resolves to B's (returns 0) only. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

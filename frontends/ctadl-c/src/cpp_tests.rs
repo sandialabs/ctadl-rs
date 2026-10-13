@@ -4491,3 +4491,52 @@ fn cpp_operator_chain_dispatches_on_the_returned_receiver() {
         "{prog}"
     );
 }
+
+// ---- Spec 032: free operators and operator-> --------------------------------------------------
+
+#[test_log::test]
+fn cpp_free_operator_is_lowered_and_called() {
+    // FR-1/FR-2: a free `operator+` is lowered under its spelling, and `a + b` on objects calls
+    // it with both operands; scalars keep the built-in `+`.
+    let src = r"
+        struct S { int v; };
+        int operator+(const S& a, const S& b) { return a.v + b.v; }
+        int f(int x) { S a; S b; return (a + b) + (x + 1); }";
+    let prog = program_from_cpp_string(src).0;
+    assert!(function_named(&prog, "operator+").is_some(), "{prog}");
+    check_direct_call(&prog, "f", "operator+", ["a", "b"]);
+    assert_eq!(direct_calls_in(&prog, "f").len(), 1, "{prog}");
+}
+
+#[test_log::test]
+fn cpp_free_operators_resolve_by_operand_class() {
+    // FR-2: same-arity free operators for two classes are two functions, and each use reaches
+    // the one its operands can mean.
+    let src = r"
+        struct A { int v; }; struct B { int v; };
+        int operator+(const A& x, const A& y) { return x.v; }
+        int operator+(const B& x, const B& y) { return y.v; }
+        int f() { A a; B b; return (a + a) + (b + b); }";
+    let prog = program_from_cpp_string(src).0;
+    let calls = direct_calls_in(&prog, "f");
+    assert_eq!(calls.len(), 2, "{prog}");
+    assert!(
+        calls
+            .iter()
+            .all(|(targets, _)| targets.len() == 1 && targets[0].starts_with("operator+#2(")),
+        "each use resolves to one signature-keyed operator\n{prog}"
+    );
+    assert_ne!(calls[0].0, calls[1].0, "{prog}");
+}
+
+#[test_log::test]
+fn cpp_overloaded_arrow_reads_through_the_returned_pointer() {
+    // FR-3: `w->v` on an object whose class declares `operator->` loads `v` from what
+    // `w.operator->()` returns.
+    let src = r"
+        struct In { int v; };
+        struct P { In* p; In* operator->() { return p; } };
+        int f() { P w; return w->v; }";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "f", "P::operator->", ["w"]);
+}

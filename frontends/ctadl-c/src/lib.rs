@@ -1099,6 +1099,17 @@ struct GrammarHooks {
         &'a str,
         &mut ScopeView,
     ) -> anyhow::Result<Option<Exp>, Error>,
+    /// The pointer an overloaded `operator->` yields for `object` in `object->f`, or `None` for
+    /// the built-in `->` (spec 032). C++ answers `object.operator->()` when `object` is an object
+    /// whose class declares one, so `w->f` reads `f` through what that operator returns. C has no
+    /// operator overloading; its hook always declines.
+    arrow_operator: for<'a, 't> fn(
+        &mut Context<'a>,
+        &mut Program,
+        Node<'t>,
+        &'a str,
+        &mut ScopeView,
+    ) -> anyhow::Result<Option<Exp>, Error>,
 }
 
 impl GrammarHooks {
@@ -1138,6 +1149,8 @@ impl GrammarHooks {
         // C has no operator overloading: every assignment, subscript and call is the built-in
         // operator, so this always declines and the three arms lower exactly as they always did.
         operator_call: |_ctx, _program, _node, _source, _scope_view| Ok(None),
+        // Nor an overloaded `->`: every `p->f` is the built-in member access.
+        arrow_operator: |_ctx, _program, _object, _source, _scope_view| Ok(None),
     };
 }
 
@@ -7065,7 +7078,23 @@ impl<'a> Context<'a> {
                 } else {
                     argument
                 };
-                let mut base = self.flatten_lvalue(program, argument, source, scope_view)?;
+                // C++ `w->f` on an object whose class declares `operator->` reads `f` through the
+                // pointer that operator returns (spec 032); the hook declines every built-in `->`.
+                let overloaded_arrow = if node
+                    .child_by_field_name("operator")
+                    .is_some_and(|op| to_str(&op, source) == "->")
+                {
+                    let arrow_operator = self.hooks.arrow_operator;
+                    arrow_operator(self, program, argument, source, scope_view)?
+                } else {
+                    None
+                };
+                let mut base = match overloaded_arrow {
+                    Some(Exp::Variable(pointer)) => RawPath::new(pointer, ThinVec::new()),
+                    Some(Exp::AccessPath(pointer)) => raw_path_of(&pointer),
+                    Some(_) => self.dead_temp_path(program, scope_view),
+                    None => self.flatten_lvalue(program, argument, source, scope_view)?,
+                };
                 // `p->` with the member name missing: tree-sitter inserted the
                 // `field_identifier`, so it quotes to the empty string and cannot be a path
                 // segment. Appending nothing would silently alias the whole access to `p`, so

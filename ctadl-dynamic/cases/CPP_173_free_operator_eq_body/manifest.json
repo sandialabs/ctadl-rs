@@ -1,0 +1,6 @@
+{
+  "name": "CPP_173_free_operator_eq_body",
+  "description": "C++ free operators (spec 032), POSITIVE: `a == b` runs the free operator== which sinks a.v. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

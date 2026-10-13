@@ -1,0 +1,6 @@
+{
+  "name": "CPP_178_scalar_plus_untouched_negative",
+  "description": "C++ free operators (spec 032), NEGATIVE: `x + y` on ints with a free operator+(S, S) that returns source(). s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

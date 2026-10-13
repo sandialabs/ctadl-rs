@@ -1,0 +1,6 @@
+{
+  "name": "CPP_176_free_operators_by_class",
+  "description": "C++ free operators (spec 032), POSITIVE: free operator+ for A (returns x.v) and B (returns 0); `a1 + a2` resolves to A's. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

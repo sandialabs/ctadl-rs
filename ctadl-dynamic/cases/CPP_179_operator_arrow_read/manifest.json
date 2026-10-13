@@ -1,0 +1,7 @@
+{
+  "name": "CPP_179_operator_arrow_read",
+  "description": "C++ free operators (spec 032), POSITIVE: `w->v` through an overloaded operator-> returning w.p -- correctly lowered, blocked by F4 (the path .p.v is composed across the call). Allowlisted as known_gap F4.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F4"
+}

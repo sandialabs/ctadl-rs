@@ -1,0 +1,6 @@
+{
+  "name": "CPP_174_free_operator_writes_operand",
+  "description": "C++ free operators (spec 032), POSITIVE: `s << source()` with a free operator<<(S&, int) storing s.v. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
