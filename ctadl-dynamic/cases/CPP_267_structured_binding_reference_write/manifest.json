@@ -1,0 +1,6 @@
+{
+  "name": "CPP_267_structured_binding_reference_write",
+  "description": "C++ structured bindings (spec 045), POSITIVE: reference structured binding written through. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

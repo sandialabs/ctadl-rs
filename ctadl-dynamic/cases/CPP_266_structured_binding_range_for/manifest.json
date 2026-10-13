@@ -1,0 +1,6 @@
+{
+  "name": "CPP_266_structured_binding_range_for",
+  "description": "C++ structured bindings (spec 045), POSITIVE: range-for with a structured binding over an array of P. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -5057,3 +5057,27 @@ fn cpp_delegating_and_inherited_constructors() {
     check_has_direct_call(&prog, "S::S#1", "S::S#2");
     check_has_direct_call(&prog, "f", "Base::Base");
 }
+
+// ---- Spec 045: structured bindings -------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_structured_binding_binds_members_in_order() {
+    // FR-1: `auto [x, y] = p` copies `p.a` and `p.b`; `auto& [r, s] = p` aliases them.
+    let src = r"
+        struct P { int a; int b; };
+        int f(P& p, int v) { auto [x, y] = p; auto& [r, s] = p; s = v; return y; }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_loads(&prog, "f", "@p0.b");
+    check_func_assign_or_update(&prog, "f", "@p0.b", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_structured_binding_in_range_for() {
+    // FR-2: `for (auto& [k, v] : arr)` aliases the element's members.
+    let src = r"
+        struct P { int a; int b; };
+        void f(P* arr, int x) { for (auto& [k, v] : arr) v = x; }";
+    let prog = program_from_cpp_string(src).0;
+    let text = format!("{}", function_named(&prog, "f").unwrap());
+    assert!(text.contains(".b := @p1"), "{prog}");
+}

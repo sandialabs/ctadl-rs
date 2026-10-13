@@ -1,0 +1,6 @@
+{
+  "name": "CPP_268_structured_binding_distinct_negative",
+  "description": "C++ structured bindings (spec 045), NEGATIVE: `auto [x, y] = p; sink(y)` with only p.a tainted. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

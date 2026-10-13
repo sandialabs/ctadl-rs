@@ -1,0 +1,6 @@
+{
+  "name": "CPP_265_structured_binding_value",
+  "description": "C++ structured bindings (spec 045), POSITIVE: `auto [x, y] = p; sink(x)` with p.a tainted. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

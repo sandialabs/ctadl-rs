@@ -884,6 +884,8 @@ fn cpp_collect_methods<'a>(
                             info.members.insert(name.to_string());
                             if is_static {
                                 info.static_members.insert(name.to_string());
+                            } else if !info.member_order.iter().any(|m| m == name) {
+                                info.member_order.push(name.to_string());
                             }
                             if let Some(class) = &object_class {
                                 if declr.kind() == "field_identifier" {

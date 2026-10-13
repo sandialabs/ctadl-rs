@@ -1,0 +1,6 @@
+{
+  "name": "CPP_270_structured_binding_from_call",
+  "description": "C++ structured bindings (spec 045), POSITIVE: `auto [x, y] = make(source()); sink(y)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

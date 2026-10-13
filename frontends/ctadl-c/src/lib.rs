@@ -896,6 +896,9 @@ struct ClassInfo {
     /// Bases whose constructors the class inherits (`using Base::Base;`, spec 044): a
     /// construction no own constructor of its arity takes reaches theirs. Empty for C.
     inherited_ctors: Vec<String>,
+    /// The non-static data members in declaration order (spec 045): what a structured binding
+    /// `auto [a, b] = obj` binds, by position. Empty for C.
+    member_order: Vec<String>,
 }
 
 /// The object a C++ instance-method receiver resolves to: the access-path expression to
@@ -3919,6 +3922,16 @@ impl<'a> Context<'a> {
                     let inner = nest_decl
                         .child_by_field_name("declarator")
                         .expect("double declarators on inits");
+                    // A C++17 structured binding, `auto [a, b] = e` (spec 045); the node never
+                    // occurs under the C grammar.
+                    if let Some((binding, by_ref)) = structured_binding(inner)
+                        && let Some(value) = nest_decl.child_by_field_name("value")
+                    {
+                        self.walk_structured_binding(
+                            source, program, scope_view, binding, by_ref, value,
+                        )?;
+                        continue;
+                    }
                     // A C++ reference local (`T& r = x`) aliases its referent rather than
                     // copying it; `reference_declarator` only occurs under the C++ grammar,
                     // so this is inert for C.
@@ -4042,6 +4055,102 @@ impl<'a> Context<'a> {
                     self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
                 }
             };
+        }
+        Ok(())
+    }
+
+    /// Lower `auto [a, b] = e;` / `auto& [a, b] = e;` (spec 045): the bound object's location
+    /// (its value in a temp, for a computed `e`), then [`Self::bind_structured`].
+    fn walk_structured_binding(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        binding: Node<'_>,
+        by_ref: bool,
+        value: Node<'_>,
+    ) -> Result<(), Error> {
+        let class = (!self.is_pointer_like(value, source, scope_view))
+            .then(|| self.object_class_of(value, source, scope_view))
+            .flatten()
+            .or_else(|| {
+                // An object a function returns by value (spec 041).
+                (value.kind() == "call_expression")
+                    .then(|| self.call_returns_object(value, source))
+                    .flatten()
+            });
+        let object = match value.kind() {
+            "identifier"
+            | "field_expression"
+            | "subscript_expression"
+            | "pointer_expression"
+            | "parenthesized_expression"
+            | "this" => self.flatten_lvalue(program, value, source, scope_view)?,
+            _ => match self.flatten_expr(program, value, source, scope_view)? {
+                Exp::Variable(v) => RawPath::new(v, ThinVec::new()),
+                Exp::AccessPath(ap) => raw_path_of(&ap),
+                other => {
+                    let temp = self.allocator.next_temp();
+                    let target = self.build_access_path(
+                        &temp,
+                        Default::default(),
+                        scope_view,
+                        &mut program[scope_view.fidx].locals,
+                    );
+                    self.add_assign_to_program(program, scope_view, &target, &other, None);
+                    target
+                }
+            },
+        };
+        self.bind_structured(program, source, scope_view, binding, by_ref, object, class)
+    }
+
+    /// Bind each name of a structured binding to its part of `object` (spec 045): the i-th data
+    /// member of `class` in declaration order, or -- with no known class -- the i-th element. A
+    /// reference binding aliases that location; a value binding is a local loaded from it.
+    #[allow(clippy::too_many_arguments)]
+    fn bind_structured(
+        &mut self,
+        program: &mut Program,
+        source: &str,
+        scope_view: &ScopeView,
+        binding: Node<'_>,
+        by_ref: bool,
+        object: RawPath,
+        class: Option<String>,
+    ) -> Result<(), Error> {
+        let members: Vec<String> = class
+            .as_ref()
+            .and_then(|class| self.classes.get(class))
+            .map(|info| info.member_order.clone())
+            .unwrap_or_default();
+        let mut cursor = binding.walk();
+        let names: Vec<Node<'_>> = binding
+            .named_children(&mut cursor)
+            .filter(|n| n.kind() == "identifier")
+            .collect();
+        for (index, name) in names.into_iter().enumerate() {
+            let name = to_str(&name, source);
+            let mut location = object.clone();
+            match members.get(index) {
+                Some(member) => location.fields.push(PathSegment::symbol(member.as_str())),
+                None => push_element(&mut location.fields, Some(index as i64)),
+            }
+            if by_ref {
+                self.reference_aliases.insert(name.to_string(), location);
+                continue;
+            }
+            self.reference_aliases.remove(name);
+            self.scope_tree
+                .add_variable(scope_view.sidx, name.to_string(), VarKind::Local);
+            let target = self.build_access_path(
+                name,
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            );
+            let value = Exp::access_path(self.emit_loads(program, scope_view, location));
+            self.add_assign_to_program(program, scope_view, &target, &value, None);
         }
         Ok(())
     }
@@ -4392,8 +4501,48 @@ impl<'a> Context<'a> {
         declarator: Node<'_>,
         element: Result<RawPath, Exp>,
     ) -> Result<(), Error> {
+        // `for (auto& [k, v] : arr)`: bind the names to the element's members (spec 045).
+        if let Some((binding, by_ref)) = structured_binding(declarator) {
+            let element_class = loop_node.child_by_field_name("right").and_then(|right| {
+                self.is_pointer_like(right, source, head)
+                    .then(|| self.object_class_of(right, source, head))
+                    .flatten()
+            });
+            match element {
+                Ok(location) => {
+                    self.bind_structured(
+                        program,
+                        source,
+                        head,
+                        binding,
+                        by_ref,
+                        location,
+                        element_class,
+                    )?;
+                }
+                Err(value) => {
+                    let mut cursor = binding.walk();
+                    let names: Vec<Node<'_>> = binding
+                        .named_children(&mut cursor)
+                        .filter(|n| n.kind() == "identifier")
+                        .collect();
+                    for name in names {
+                        let name = to_str(&name, source);
+                        self.scope_tree
+                            .add_variable(head.sidx, name.to_string(), VarKind::Local);
+                        let target = self.build_access_path(
+                            name,
+                            Default::default(),
+                            head,
+                            &mut program[head.fidx].locals,
+                        );
+                        self.add_assign_to_program(program, head, &target, &value, None);
+                    }
+                }
+            }
+            return Ok(());
+        }
         let Some(name) = declarator_leaf_ident(declarator, source) else {
-            // A structured binding (`auto [k, v] : m`) has no single name to bind.
             return unexpected_ast(format!(
                 "range-for variable of kind {} is not bound",
                 declarator.kind()
@@ -8401,6 +8550,19 @@ fn scope_prefixes(func_name: &str) -> Vec<String> {
         end = idx;
     }
     prefixes
+}
+
+/// The `structured_binding_declarator` a declarator is, or wraps in a reference (`auto& [a, b]`),
+/// and whether it binds by reference (spec 045). C has no such declarator.
+fn structured_binding(declarator: Node<'_>) -> Option<(Node<'_>, bool)> {
+    match declarator.kind() {
+        "structured_binding_declarator" => Some((declarator, false)),
+        "reference_declarator" => declarator
+            .named_child(0)
+            .filter(|inner| inner.kind() == "structured_binding_declarator")
+            .map(|inner| (inner, true)),
+        _ => None,
+    }
 }
 
 /// The name a type or callee node spells, with every C++ template argument list dropped:
