@@ -2150,9 +2150,14 @@ fn lower_new_expression<'a>(
         .get(alloc_type)
         .is_some_and(|info| info.has_ctor)
     {
-        // Heap `new Type(args)` resolves by arity as it always has, and then by argument shape
-        // among the constructors of that arity: copy-constructing from an object (`new Box(a)`)
-        // is a form this slice does not cover, so `copy` is `false`.
+        // Heap `new Type(args)` resolves by arity, and then by argument shape among the
+        // constructors of that arity. `new Box(a)` from an object of the class runs the copy
+        // constructor, as a declaration's `Box b(a)` does (spec 039).
+        let copy = ctx
+            .classes
+            .get(alloc_type)
+            .is_some_and(|info| info.has_copy_ctor)
+            && matches!(arg_shapes.as_slice(), [ArgShape::Object(c)] if ctx.class_is_a(c, alloc_type));
         emit_ctor_call(
             ctx,
             program,
@@ -2161,7 +2166,7 @@ fn lower_new_expression<'a>(
             &obj,
             ctor_args,
             &arg_shapes,
-            false,
+            copy,
         );
     }
     // Returned as a `RawPath` (not lowered to loads): the caller binds the pointer local to

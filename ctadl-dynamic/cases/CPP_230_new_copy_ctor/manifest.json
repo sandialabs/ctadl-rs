@@ -1,0 +1,6 @@
+{
+  "name": "CPP_230_new_copy_ctor",
+  "description": "C++ new copy construction (spec 039), POSITIVE: `B* p = new B(a); sink(p->v)` with a copy ctor copying v. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

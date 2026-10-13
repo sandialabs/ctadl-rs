@@ -4849,3 +4849,23 @@ fn cpp_object_array_element_is_a_receiver() {
         "{prog}"
     );
 }
+
+// ---- Spec 039: `new` from an object copy-constructs ------------------------------------------
+
+#[test_log::test]
+fn cpp_new_from_an_object_runs_the_copy_constructor() {
+    // `new B(a)` with `a` a `B` (or a subclass) calls `B::B#copy`; `new B(1)` keeps `B::B`.
+    let src = r"
+        struct B { int v; B(int x) : v(x) {} B(const B& o) : v(o.v) {} };
+        void f() { B a(1); B* p = new B(a); B* q = new B(2); }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "f", "B::B#copy");
+    assert_eq!(
+        direct_calls_in(&prog, "f")
+            .iter()
+            .filter(|(t, _)| t == &["B::B".to_string()])
+            .count(),
+        2,
+        "the declaration and `new B(2)` use the int constructor\n{prog}"
+    );
+}

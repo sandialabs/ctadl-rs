@@ -1,0 +1,6 @@
+{
+  "name": "CPP_231_new_copy_ctor_negative",
+  "description": "C++ new copy construction (spec 039), NEGATIVE: `new B(a)` with a copy ctor zeroing v. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}
