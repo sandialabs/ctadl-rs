@@ -1256,6 +1256,11 @@ struct Context<'a> {
     /// `ns::` prefixes of its IR name (spec 037). Empty for every C function, whose names have
     /// no `::`.
     lookup_prefixes: Vec<String>,
+    /// Copies to make after every call the current function makes, as `(destination, source)`
+    /// (spec 040): a C++ method that creates a closure capturing `this` stores that closure's
+    /// slot back into its object, since any call may run the closure. Set by the
+    /// `function_scan` hook, reset per function; empty for C.
+    post_call_copies: Vec<(RawPath, RawPath)>,
     /// Overloaded-by-arity names: an IR **base name** (a free function's bare/qualified name
     /// `f` / `ns::f`, or a method's qualified `Class::method`) mapped to the set of explicit
     /// **arities** (parameter counts, `this` excluded) defined under it. A name is *overloaded*
@@ -1630,6 +1635,7 @@ impl Context<'_> {
             using_namespaces: Vec::new(),
             using_aliases: HashMap::default(),
             lookup_prefixes: Vec::new(),
+            post_call_copies: Vec::new(),
             overloads: HashMap::default(),
             local_pointers: HashSet::default(),
             byval_class_params: HashMap::default(),
@@ -4953,6 +4959,11 @@ impl<'a> Context<'a> {
             let mut fields = ThinVec::with_capacity(field_path.len() + 1);
             fields.push(PathSegment::symbol(name_pre_scope));
             fields.append(&mut field_path);
+            // Inside a C++ lambda that captured `this`, the object is in its slot (spec 040).
+            if let Some(slot) = self.captured_globals.get("this") {
+                fields.insert(0, PathSegment::symbol(slot.as_str()));
+                return RawPath::new(VariableRef::new_global(), fields);
+            }
             return RawPath::new(VariableRef::new_parameter(0u32.into()), fields);
         } else {
             name = name_pre_scope.to_string();
@@ -6296,6 +6307,46 @@ impl<'a> Context<'a> {
         })
     }
 
+    /// Emit [`Self::post_call_copies`] after a call (spec 040). Nothing for C.
+    fn emit_post_call_copies(&mut self, program: &mut Program, scope_view: &ScopeView) {
+        for (dst, src) in self.post_call_copies.clone() {
+            let value = Exp::access_path(self.emit_loads(program, scope_view, src));
+            self.add_assign_to_program(program, scope_view, &dst, &value, None);
+        }
+    }
+
+    /// The receiver of an unqualified call `m(args)` inside a C++ lambda that captured `this`
+    /// (spec 040): the enclosing object, loaded from its slot and written back after the call.
+    fn captured_this_receiver(
+        &mut self,
+        program: &mut Program,
+        method: &str,
+        scope_view: &ScopeView,
+    ) -> Option<RecvObj> {
+        let class = self.current_method_class.clone()?;
+        if !self.captured_globals.contains_key("this")
+            || self
+                .scope_tree
+                .find_variable(scope_view.sidx, method)
+                .is_some()
+            || self.resolve_method_class(&class, method).is_none()
+        {
+            return None;
+        }
+        let location = self.build_access_path(
+            "this",
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
+        let exp = Exp::access_path(self.emit_loads(program, scope_view, location.clone()));
+        Some(RecvObj {
+            exp,
+            class,
+            write_back: Some(location),
+        })
+    }
+
     /// Try to lower `call_node` as a C++ instance-method call — `recv.method(args)`, including
     /// a chained receiver (`recv.a(args).b(args2)`). Returns `None` if it is not an instance-
     /// method call (a plain function call, or a function-pointer *member* call like `s.fp(x)`);
@@ -6330,12 +6381,16 @@ impl<'a> Context<'a> {
                 };
                 (recv, to_str(&field_node, source))
             }
-            // C++'s implicit `this->m(args)` (spec 035).
+            // C++'s implicit `this->m(args)` (spec 035), also inside a lambda that captured
+            // `this` (spec 040).
             "identifier" => {
                 let method = to_str(&func_node, source);
                 match self.implicit_this_receiver(method, scope_view) {
                     Some(recv) => (recv, method),
-                    None => return Ok(None),
+                    None => match self.captured_this_receiver(program, method, scope_view) {
+                        Some(recv) => (recv, method),
+                        None => return Ok(None),
+                    },
                 }
             }
             _ => return Ok(None),
@@ -6464,6 +6519,7 @@ impl<'a> Context<'a> {
         if let Some(location) = &recv.write_back {
             self.add_assign_to_program(program, scope_view, location, &recv.exp, None);
         }
+        self.emit_post_call_copies(program, scope_view);
 
         // A receiver-returning method makes the call's result an alias to the receiver
         // object. Register the result temp as an alias of that object so `Class& r = call`
@@ -6884,6 +6940,7 @@ impl<'a> Context<'a> {
             },
             self.cur_span,
         ));
+        self.emit_post_call_copies(program, scope_view);
         //we return the temp_name, so that the assignment expression for the actual int x = foo() gets the result of foo()
         Ok(Exp::Variable(
             self.build_access_path(
@@ -7016,6 +7073,7 @@ impl<'a> Context<'a> {
         self.local_pointers.clear();
         self.reference_aliases.clear();
         self.captured_globals.clear();
+        self.post_call_copies.clear();
         self.lookup_prefixes = scope_prefixes(func_name);
         self.current_method_class = class_context.map(str::to_string);
         // Address-of aliases are function-local and confined to a straight-line block.

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_234_lambda_implicit_this",
+  "description": "C++ lambdas capturing this (spec 040), POSITIVE: `[&]() { v = x; }` in a method. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

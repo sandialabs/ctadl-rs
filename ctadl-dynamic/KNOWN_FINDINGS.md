@@ -14,7 +14,7 @@ frontend ingestion gaps — and tracks their disposition.
 | initializer_list (`{...}`) not ingested | frontend | 31, 34–36 | ✅ resolved (spec 019) |
 | labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (spec 018) |
 | F3 — a non-constant subscript reads/writes only element 0 | soundness | 37, CPP_133 | ❌ **open** (IR path model) |
-| F4 — a field path composed across a call is never admissible | soundness | 38, CPP_161, CPP_179, CPP_229 | ❌ **open** (codegen `paths` gate) |
+| F4 — a field path composed across a call is never admissible | soundness | 38, CPP_161, CPP_179, CPP_229, CPP_237 | ❌ **open** (codegen `paths` gate) |
 | F5 — `(p + 1)->f` and `arr[1].f` lower to different paths | soundness | 39 | ❌ **open** (C pointer model) |
 | F6 — a `static` local does not persist across calls | soundness | 40 | ❌ **open** (C frontend) |
 

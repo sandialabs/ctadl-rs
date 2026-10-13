@@ -4869,3 +4869,31 @@ fn cpp_new_from_an_object_runs_the_copy_constructor() {
         "the declaration and `new B(2)` use the int constructor\n{prog}"
     );
 }
+
+// ---- Spec 040: lambdas capturing `this` -------------------------------------------------------
+
+#[test_log::test]
+fn cpp_lambda_capturing_this_uses_the_object_slot() {
+    // FR-1/FR-2: `[this]` copies the object into the lambda's slot, the body's members resolve
+    // through it, and the method stores the slot back into its object after its calls.
+    let src = r"
+        struct S { int v; void run(int x) { auto f = [this, x]() { v = x; }; f(); } };";
+    let prog = program_from_cpp_string(src).0;
+    let lambda = prog
+        .functions
+        .functions
+        .raw
+        .iter()
+        .find(|fun| fun.name.starts_with("lambda@"))
+        .map(|fun| format!("{fun}"))
+        .unwrap_or_default();
+    assert!(
+        lambda.contains(" this>"),
+        "members go through the slot\n{prog}"
+    );
+    let run = format!("{}", function_named(&prog, "S::run").unwrap());
+    assert!(
+        run.contains("this>") && run.contains("assign @p0 ="),
+        "the slot is filled and copied back\n{prog}"
+    );
+}

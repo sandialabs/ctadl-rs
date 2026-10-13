@@ -1,0 +1,6 @@
+{
+  "name": "CPP_233_lambda_this_read",
+  "description": "C++ lambdas capturing this (spec 040), POSITIVE: `[this]() { sink(v); }`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -2869,6 +2869,79 @@ fn capture_slot(
     }
 }
 
+/// The class whose member function encloses `lambda`, if any: an inline method's class, or the
+/// class an out-of-line definition names (spec 040).
+fn lambda_class(ctx: &Context<'_>, lambda: Node<'_>, source: &str) -> Option<String> {
+    let mut cur = lambda.parent();
+    while let Some(n) = cur {
+        if n.kind() == "function_definition" {
+            if let Some(class) = enclosing_class_qualified_name(n, source) {
+                return ctx.class_named(&class);
+            }
+            let declarator = n.child_by_field_name("declarator")?;
+            let (func_declr, _) = function_declarator_of(declarator)?;
+            let name = func_declr.child_by_field_name("declarator")?;
+            if name.kind() != "qualified_identifier" {
+                return None;
+            }
+            let full = template_erased_name(name, source);
+            let (class, _) = full.rsplit_once("::")?;
+            return ctx.class_named(class);
+        }
+        cur = n.parent();
+    }
+    None
+}
+
+/// Whether `lambda` captures `this` (spec 040): `[this]` / `[*this]`, or a default capture whose
+/// body names `this` or a non-static data member of the enclosing class that no enclosing body
+/// declares.
+fn captures_this(ctx: &Context<'_>, lambda: Node<'_>, source: &str) -> bool {
+    let Some(spec) = lambda.child_by_field_name("captures") else {
+        return false;
+    };
+    let mut c = spec.walk();
+    let mut default = false;
+    for child in spec.children(&mut c) {
+        match child.kind() {
+            "this" => return true,
+            "lambda_default_capture" => default = true,
+            _ => {}
+        }
+    }
+    let (true, Some(body)) = (default, lambda.child_by_field_name("body")) else {
+        return false;
+    };
+    let members = lambda_class(ctx, lambda, source)
+        .and_then(|class| ctx.classes.get(&class))
+        .map(|info| info.members.clone())
+        .unwrap_or_default();
+    let mut declared = declared_names(body, source);
+    let mut scope = enclosing_body(lambda);
+    while let Some(b) = scope {
+        declared.extend(declared_names(b, source));
+        scope = enclosing_body(b);
+    }
+    let mut stack = vec![body];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "this"
+            || (n.kind() == "identifier"
+                && members.contains(to_str(&n, source))
+                && !declared.contains(to_str(&n, source)))
+        {
+            return true;
+        }
+        let mut c = n.walk();
+        stack.extend(n.named_children(&mut c));
+    }
+    false
+}
+
+/// The slot a lambda's captured `this` lives in.
+fn this_slot(lambda: Node<'_>) -> String {
+    format!("<val {} this>", lambda.start_byte())
+}
+
 /// The C++ `lambda_expr` hook: creating the closure copies each by-value capture into its slot
 /// (an init-capture's expression, evaluated here), and the closure is a pointer to the lambda's
 /// function (spec 034).
@@ -2902,6 +2975,21 @@ fn cpp_lambda_expr<'a>(
         );
         ctx.add_assign_to_program(program, scope_view, &target, &value, None);
     }
+    // A captured `this` is the enclosing object, copied into the lambda's slot (spec 040).
+    if captures_this(ctx, node, source) {
+        let ap = ctx.build_access_path(
+            "this",
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
+        let value = Exp::access_path(ctx.emit_loads(program, scope_view, ap));
+        let target = RawPath::new(
+            VariableRef::new_global(),
+            thin_vec![PathSegment::symbol(this_slot(node).as_str())],
+        );
+        ctx.add_assign_to_program(program, scope_view, &target, &value, None);
+    }
     Ok(Some(Exp::ObjectRef(CallObject::FunctionPtr(
         lambda_name(node).into(),
     ))))
@@ -2921,6 +3009,10 @@ fn cpp_function_scan<'a>(
     if let Some(owner) = body.parent()
         && owner.kind() == "lambda_expression"
     {
+        if captures_this(ctx, owner, source) {
+            ctx.captured_globals
+                .insert("this".to_string(), this_slot(owner));
+        }
         for (name, capture) in lambda_captures(owner, source) {
             if let Some(slot) = capture_slot(owner, &name, &capture, source) {
                 // A captured object keeps its class, so `b.m()` in the body dispatches.
@@ -2936,6 +3028,24 @@ fn cpp_function_scan<'a>(
     let mut shared: Vec<String> = Vec::new();
     let mut stack = vec![body];
     while let Some(n) = stack.pop() {
+        // A closure in this body that captures `this` may write the object through its slot;
+        // store the slot back into the object after every call (spec 040).
+        if n.kind() == "lambda_expression"
+            && enclosing_body(n).is_some_and(|b| b.id() == body.id())
+            && captures_this(ctx, n, source)
+        {
+            let this = ctx.build_access_path(
+                "this",
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            );
+            let slot = RawPath::new(
+                VariableRef::new_global(),
+                thin_vec![PathSegment::symbol(this_slot(n).as_str())],
+            );
+            ctx.post_call_copies.push((this, slot));
+        }
         if n.kind() == "lambda_expression" {
             for (name, capture) in lambda_captures(n, source) {
                 if matches!(capture, Capture::Ref)
@@ -3074,7 +3184,7 @@ fn cpp_collect_lambdas<'a>(
     global_sidx: usize,
 ) -> anyhow::Result<(), Error> {
     let query = ctx.compile_query("(lambda_expression) @lambda");
-    let mut lambdas: Vec<(String, Node<'_>, Node<'_>, bool)> = Vec::new();
+    let mut lambdas: Vec<(String, Node<'_>, Node<'_>, bool, Option<String>)> = Vec::new();
     {
         let mut cursor = QueryCursor::new();
         let mut it = cursor.matches(&query, root, source.as_bytes());
@@ -3090,20 +3200,24 @@ fn cpp_collect_lambdas<'a>(
                 .child_by_field_name("declarator")
                 .and_then(|d| d.child_by_field_name("parameters"))
                 .unwrap_or(anchor);
+            // A lambda inside a member function resolves members through the enclosing class
+            // (spec 040); it has no `this` parameter of its own.
+            let class = lambda_class(ctx, lambda, source);
             lambdas.push((
                 lambda_name(lambda),
                 params,
                 body,
                 !lambda_returns_value(body),
+                class,
             ));
         }
     }
-    for (name, _, _, _) in &lambdas {
+    for (name, _, _, _, _) in &lambdas {
         ctx.functions
             .entry(name.clone())
             .or_insert_with(|| program.new_function());
     }
-    for (name, params, body, void) in lambdas {
+    for (name, params, body, void, class) in lambdas {
         ctx.lower_function(
             source,
             program,
@@ -3112,7 +3226,7 @@ fn cpp_collect_lambdas<'a>(
             void,
             params,
             body,
-            None,
+            class.as_deref(),
             false,
             &[],
         )?;

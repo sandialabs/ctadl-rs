@@ -1,0 +1,6 @@
+{
+  "name": "CPP_236_lambda_this_distinct_negative",
+  "description": "C++ lambdas capturing this (spec 040), NEGATIVE: `[this, x]() { w = 0; v = x; }` then sink(s.w). s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

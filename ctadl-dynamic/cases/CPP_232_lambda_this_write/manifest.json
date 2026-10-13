@@ -1,0 +1,6 @@
+{
+  "name": "CPP_232_lambda_this_write",
+  "description": "C++ lambdas capturing this (spec 040), POSITIVE: a [this] lambda writing a member, called in the method. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

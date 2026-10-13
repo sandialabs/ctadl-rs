@@ -1,0 +1,6 @@
+{
+  "name": "CPP_235_lambda_this_arrow",
+  "description": "C++ lambdas capturing this (spec 040), POSITIVE: `[this, x]() { this->v = x; }`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
