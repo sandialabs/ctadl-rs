@@ -165,9 +165,8 @@ pub type Symbol = ArcIntern<str>;
 /// Keeping the offset apart from the dereference is what makes element addresses composable:
 /// offsets are summed when paths meet, so a callee's write at `.[1].deref` through `&a[1]`
 /// (the address `a.[1]`) lands on `a.[2].deref`, where a caller's `a[2]` reads. The analysis
-/// keys on this spelling too (the index admits `<path>.deref` for native imports, and the
-/// query engine's saturating read treats `.deref` as "the whole pointee"), so a front end that
-/// needs a pointer-like field should use this one rather than minting its own.
+/// gives this field meaning, so a front end that needs a pointer-like field should use this one
+/// rather than minting its own.
 pub const DEREF_FIELD: &str = "deref";
 
 /// A newtype wrapper for u64 representing a numeric offset in field access

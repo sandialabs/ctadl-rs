@@ -320,8 +320,8 @@ pub struct IndexConfig {
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
-    /// Admits `<path>.deref` for every program path. The native front ends (C, pcode) deal in
-    /// pointers, and every pointer may be dereferenced. See `compute_paths`.
+    /// When set, every program path `p` also admits `p.deref`, as if a loaded summary mentioned
+    /// `.deref`.
     pub deref_paths: bool,
 }
 
@@ -1321,16 +1321,8 @@ fn compute_alias_of_formal(
 /// fixpoint, run BEFORE the main ascent, so the main program takes `paths` as a plain input
 /// and can also hold it as a [`PathSet`] for lookups that never build a path.
 ///
-/// With `deref_paths` (a native front end: every pointer may be dereferenced), `deref`
-/// ([`DEREF_FIELD`](ctadl_ir::mir::DEREF_FIELD)) is also a model path, so every program path
-/// gains its `.deref` extension exactly as it would under a loaded summary that mentions
-/// `.deref`. The flow through a pointer stored in a field needs
-/// that compound path: the store `o->p = b` carries `b`'s pointee only onto `p.deref`, which
-/// no single frame spells (the reader loads `o->p`, and a callee dereferences its own formal).
-/// With no propagation model loaded there was nothing to concatenate, so an index built
-/// without models silently lost that flow, while loading any summary that happened to
-/// mention `.deref`, even for an unrelated function, brought it back. Front ends without
-/// pointers (Java, Lua) leave the flag off and are unchanged.
+/// With `deref_paths`, `deref` ([`DEREF_FIELD`](ctadl_ir::mir::DEREF_FIELD)) is also a model
+/// path, so every program path gains its `.deref` extension.
 fn compute_paths(
     program_paths: Vec<(Path,)>,
     mut model_paths: Vec<(Path,)>,

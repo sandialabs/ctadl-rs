@@ -173,8 +173,7 @@ fn saturating_read(q: &Path, p: &Path) -> bool {
     }
 }
 
-/// A call's return vertex: its incoming summary edges derive the result from the
-/// arguments, they do not copy a reference, so the object hop must not cross them.
+/// True for a call's return vertex.
 fn is_call_return(v: &FlowVariable) -> bool {
     v.as_call_arg()
         .and_then(|c| CallArgId::try_from(c).ok())
@@ -230,6 +229,8 @@ impl TaintSearchGraph {
                 && sp.is_empty()
                 && dst.as_formal().is_none()
                 && dst != src
+                // A call's return is derived from the arguments by summary edges, not a copied
+                // reference, so the object hop must not cross it.
                 && !is_call_return(dst)
             {
                 copies_by_dst.entry((*f, *dst)).or_default().push(*src);
@@ -339,15 +340,14 @@ impl LazySuccessors for TaintSearchGraph {
             }
         }
 
-        // Saturating vertex-level read: any subfield/offset read off a
-        // saturating vertex is tainted, regardless of the tainted path `p` and
-        // without the materialized-paths gate. For every load `x = v.q` off
-        // this vertex, taint the destination `x` (at the empty path) and keep it
-        // `Saturating`, so saturation fills the whole access-path subtree
-        // (recursively). This is what reconnects `@p1_0.[8].deref` to the
-        // saturating `@p1_0`. Plain nodes get no such edges, so precise sources
-        // (e.g. `getenv`) keep their path-sensitive behavior and cannot
-        // over-taint.
+        // Saturating vertex-level read: a subfield/offset read off a saturating vertex
+        // within `p`'s subtree (or of a pointer to it; see `saturating_read`) is tainted,
+        // without the materialized-paths gate. For every load `x = v.q` off this vertex,
+        // taint the destination `x` (at the empty path) and keep it `Saturating`, so
+        // saturation fills the whole access-path subtree (recursively). This is what
+        // reconnects `@p1_0.[8].deref` to the saturating `@p1_0`. Plain nodes get no such
+        // edges, so precise sources (e.g. `getenv`) keep their path-sensitive behavior and
+        // cannot over-taint.
         if level == TaintLevel::Saturating {
             if let Some(loads) = self.loads_by_src.get(&(f, v)) {
                 for (dst, q) in loads {
