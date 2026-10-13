@@ -1,0 +1,6 @@
+{
+  "name": "CPP_202_implicit_static_call",
+  "description": "C++ implicit member calls (spec 035), POSITIVE: `v = id(x)` with `static int id(int)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

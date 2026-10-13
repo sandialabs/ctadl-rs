@@ -1,0 +1,6 @@
+{
+  "name": "CPP_208_implicit_call_arity_negative",
+  "description": "C++ implicit member calls (spec 035), NEGATIVE: g(int) returns 0, g() returns v; f() calls g(1). s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

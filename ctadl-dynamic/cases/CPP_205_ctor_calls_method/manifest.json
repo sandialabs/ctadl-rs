@@ -1,0 +1,6 @@
+{
+  "name": "CPP_205_ctor_calls_method",
+  "description": "C++ implicit member calls (spec 035), POSITIVE: `S(int x) { set(x); }`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

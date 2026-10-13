@@ -4686,3 +4686,54 @@ fn cpp_lambda_implicit_capture_excludes_its_own_names() {
     let f = format!("{}", function_named(&prog, "f").unwrap());
     assert!(!f.contains("<ref "), "the outer y is not captured\n{prog}");
 }
+
+// ---- Spec 035: implicit member calls -----------------------------------------------------------
+
+#[test_log::test]
+fn cpp_unqualified_method_call_dispatches_on_this() {
+    // FR-1: `get()` inside a method is `this->get()`; a virtual one dispatches by CHA.
+    let src = r"
+        struct Base { int v; virtual int get() { return v; } int twice() { return get() + get(); }
+                      virtual ~Base() {} };
+        struct D : Base { int get() { return 0; } };";
+    let prog = program_from_cpp_string(src).0;
+    let calls = direct_calls_in(&prog, "Base::twice");
+    assert_eq!(calls.len(), 2, "{prog}");
+    for (targets, args) in calls {
+        assert!(
+            targets.contains(&"Base::get".to_string()) && targets.contains(&"D::get".to_string()),
+            "CHA over the subtree\n{prog}"
+        );
+        assert_eq!(args.len(), 1, "the receiver is this\n{prog}");
+    }
+}
+
+#[test_log::test]
+fn cpp_unqualified_static_member_call_is_qualified() {
+    // FR-2: a static member function called unqualified is `Class::m(args)`, with no receiver.
+    let src = r"
+        struct S { int v; static int id(int x) { return x; } void set(int x) { v = id(x); } };";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "S::set", "S::id", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_local_shadowing_a_method_is_not_a_member_call() {
+    // A local named like a method shadows it: `get()` on a local functor calls its
+    // `operator()`, not `S::get`.
+    let src = r"
+        struct F { int operator()() { return 0; } };
+        struct S { int get() { return 1; } int f() { F get; return get(); } };";
+    let prog = program_from_cpp_string(src).0;
+    let calls = direct_calls_in(&prog, "S::f");
+    assert!(
+        !calls.iter().any(|(t, _)| t.contains(&"S::get".to_string())),
+        "{prog}"
+    );
+    assert!(
+        calls
+            .iter()
+            .any(|(t, _)| t.contains(&"F::operator()".to_string())),
+        "{prog}"
+    );
+}

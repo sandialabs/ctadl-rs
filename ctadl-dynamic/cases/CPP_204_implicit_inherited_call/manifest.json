@@ -1,0 +1,6 @@
+{
+  "name": "CPP_204_implicit_inherited_call",
+  "description": "C++ implicit member calls (spec 035), POSITIVE: D::twice calls B::get. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

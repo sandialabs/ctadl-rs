@@ -1,0 +1,6 @@
+{
+  "name": "CPP_201_implicit_this_call",
+  "description": "C++ implicit member calls (spec 035), POSITIVE: `int twice() { return get() + get(); }`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

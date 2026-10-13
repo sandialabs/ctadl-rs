@@ -1,0 +1,6 @@
+{
+  "name": "CPP_207_implicit_call_distinct_negative",
+  "description": "C++ implicit member calls (spec 035), NEGATIVE: `int f() { return getw(); }` with only v tainted. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

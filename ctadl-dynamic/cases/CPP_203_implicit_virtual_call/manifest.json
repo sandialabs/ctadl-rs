@@ -1,0 +1,6 @@
+{
+  "name": "CPP_203_implicit_virtual_call",
+  "description": "C++ implicit member calls (spec 035), POSITIVE: Base::twice calls get(), overridden by D. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -3225,6 +3225,9 @@ fn cpp_operator_call<'a>(
             if let Some(object) = construct_temporary(ctx, program, node, source, scope_view)? {
                 return Ok(Some(object));
             }
+            if let Some(value) = implicit_member_call(ctx, program, node, source, scope_view)? {
+                return Ok(Some(value));
+            }
             let Some(class) = operand_class(ctx, callee, source, scope_view) else {
                 return Ok(None);
             };
@@ -3360,6 +3363,104 @@ fn construct_temporary<'a>(
     Ok(Some(Exp::access_path(
         ctx.emit_loads(program, scope_view, path),
     )))
+}
+
+/// `m(args)` inside a member function, where `m` names a member function of the enclosing class
+/// or a base and no local or parameter shadows it (spec 035). A class's members hide outer
+/// names, so this is C++'s implicit `this->m(args)`: an instance method dispatches on `this`
+/// (CHA when virtual), exactly as `this->m(args)` does. A static member function is the direct
+/// call `Class::m(args)`. Anything else declines, so every C call, and every C++ call outside a
+/// member function, lowers as before.
+fn implicit_member_call<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    call: Node<'_>,
+    source: &'a str,
+    scope_view: &mut ScopeView,
+) -> anyhow::Result<Option<Exp>, Error> {
+    let (Some(callee), Some(args_node)) = (
+        call.child_by_field_name("function"),
+        call.child_by_field_name("arguments"),
+    ) else {
+        return Ok(None);
+    };
+    if callee.kind() != "identifier" {
+        return Ok(None);
+    }
+    let name = to_str(&callee, source);
+    let Some(class) = ctx.current_method_class.clone() else {
+        return Ok(None);
+    };
+    if ctx
+        .scope_tree
+        .find_variable(scope_view.sidx, name)
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let has_this = ctx
+        .param_names
+        .get(scope_view.func_name.as_str())
+        .and_then(|names| names.iter().next())
+        .is_some_and(|first| *first == "this");
+    if has_this && ctx.resolve_method_class(&class, name).is_some() {
+        let recv = super::RecvObj {
+            exp: Exp::Variable(VariableRef::new_parameter(0u32.into())),
+            class,
+            write_back: None,
+        };
+        let args = ctx.collect_arguments(program, args_node, source, scope_view)?;
+        let temp = ctx.allocator.next_temp();
+        let out = ctx.emit_method_call(
+            program,
+            scope_view,
+            source,
+            &recv,
+            name,
+            args,
+            Some(args_node),
+            temp,
+        )?;
+        return Ok(out.map(|o| o.value));
+    }
+    // A static member function of the class or a base: `Class::m`.
+    let mut stack = vec![class];
+    let mut seen = std::collections::HashSet::new();
+    let mut owner = None;
+    while let Some(c) = stack.pop() {
+        if !seen.insert(c.clone()) {
+            continue;
+        }
+        let base = format!("{c}::{name}");
+        if ctx.overloads.contains_key(&base) || ctx.functions.contains_key(&base) {
+            owner = Some(base);
+            break;
+        }
+        if let Some(info) = ctx.classes.get(&c) {
+            stack.extend(info.bases.iter().cloned());
+        }
+    }
+    let Some(base) = owner else {
+        return Ok(None);
+    };
+    let shapes = ctx.arg_shapes(args_node, source);
+    let args = ctx.collect_arguments(program, args_node, source, scope_view)?;
+    let targets: ThinVec<String> = ctx
+        .overload_targets(&base, args.len(), &shapes)
+        .into_iter()
+        .collect();
+    let temp = ctx.allocator.next_temp();
+    let ret = VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
+    program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+        StatementKind::CallAssign {
+            style: CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(targets),
+            },
+            rets: thin_vec![ret.clone()],
+            args,
+        },
+    ));
+    Ok(Some(Exp::Variable(ret)))
 }
 
 /// The operand of a cast the C++ grammar spells as a call, or `None` for any other call.

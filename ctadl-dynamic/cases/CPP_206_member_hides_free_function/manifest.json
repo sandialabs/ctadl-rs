@@ -1,0 +1,6 @@
+{
+  "name": "CPP_206_member_hides_free_function",
+  "description": "C++ implicit member calls (spec 035), POSITIVE: free get() returns 0; member get() returns v. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
