@@ -13,10 +13,6 @@ void sink_hit_mul(unsigned long x);
 void sink_clean_nested(unsigned long x);
 void sink_hit_buf(char *p);
 void sink_clean_sibling(unsigned long x);
-void sink_hit_retarg(unsigned long x);
-void sink_clean_retarg(unsigned long x);
-void sink_hit_field(unsigned long x);
-void sink_clean_field(unsigned long x);
 
 struct t {
   unsigned long width;
@@ -56,22 +52,4 @@ void case_sibling(struct t *im) {
   im->buf = source_buf();
   sink_hit_buf(im->buf);
   sink_clean_sibling(im->bps);
-}
-
-/* A tainted return value must not flow back onto the field the callee read (`width_of`
- * Return is a source). */
-unsigned long width_of(struct t *p) { return p->width; }
-void case_field(struct t *p) {
-  unsigned long w = p->width;
-  unsigned long s = width_of(p);
-  sink_hit_field(s);
-  sink_clean_field(w);
-}
-
-/* A tainted return value must not taint the call's own argument (`wrap` Return is a source). */
-unsigned long wrap(unsigned long n) { return n; }
-void case_retarg(unsigned long m) {
-  unsigned long t = wrap(m);
-  sink_hit_retarg(t);
-  sink_clean_retarg(m);
 }

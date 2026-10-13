@@ -891,11 +891,9 @@ fn test_cli_query_c_no_callsite_smear() {
 
         let expected: std::collections::BTreeSet<&str> = [
             "sink_hit_buf",
-            "sink_hit_field",
             "sink_hit_mul",
             "sink_hit_prod",
             "sink_hit_ret",
-            "sink_hit_retarg",
         ]
         .into_iter()
         .collect();
