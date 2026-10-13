@@ -1,0 +1,6 @@
+{
+  "name": "CPP_251_member_array_of_objects",
+  "description": "C++ pointer members / new / namespaced bases (spec 042), POSITIVE: `B items[2]; items[0].set(x)` inside Bag::fill. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

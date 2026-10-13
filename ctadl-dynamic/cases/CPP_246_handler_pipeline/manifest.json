@@ -1,0 +1,6 @@
+{
+  "name": "CPP_246_handler_pipeline",
+  "description": "C++ pointer members / new / namespaced bases (spec 042), POSITIVE: virtual handler pipeline over a member array of base pointers in namespace http. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

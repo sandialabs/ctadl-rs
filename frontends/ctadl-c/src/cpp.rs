@@ -114,8 +114,12 @@ fn base_class_names(specifier: Node<'_>, source: &str) -> Vec<String> {
         }
         let mut cc = child.walk();
         for b in child.children(&mut cc) {
-            if b.kind() == "type_identifier" {
-                bases.push(to_str(&b, source).to_string());
+            // `Base`, `ns::Base`, or a template instance `Base<T>` (spec 042).
+            if matches!(
+                b.kind(),
+                "type_identifier" | "qualified_identifier" | "template_type"
+            ) {
+                bases.push(template_erased_name(b, source));
             }
         }
     }
@@ -530,6 +534,33 @@ fn by_value_class_type(def: Node<'_>, source: &str) -> Option<String> {
         .map(|t| template_erased_name(t, source))
 }
 
+/// Resolve each class's written base names to the classes they name, from the derived class's
+/// own scope (spec 042): `struct Logger : Handler` inside `namespace http` derives from
+/// `http::Handler`. Without it a namespaced hierarchy had no subclass edges, so virtual calls
+/// reached only the static type's method.
+fn resolve_base_names(ctx: &mut Context<'_>) {
+    let resolved: Vec<(String, Vec<String>)> = ctx
+        .classes
+        .iter()
+        .map(|(class, info)| {
+            let bases = info
+                .bases
+                .iter()
+                .map(|base| {
+                    ctx.class_named_in(class, base)
+                        .unwrap_or_else(|| base.clone())
+                })
+                .collect();
+            (class.clone(), bases)
+        })
+        .collect();
+    for (class, bases) in resolved {
+        if let Some(info) = ctx.classes.get_mut(&class) {
+            info.bases = bases;
+        }
+    }
+}
+
 /// Record the class each free function returns by value, by its base IR name (spec 041).
 fn collect_function_returns(ctx: &mut Context<'_>, source: &str, root: Node<'_>) {
     let query =
@@ -839,10 +870,16 @@ fn cpp_collect_methods<'a>(
                             if is_static {
                                 info.static_members.insert(name.to_string());
                             }
-                            if let Some(class) = &object_class
-                                && declr.kind() == "field_identifier"
-                            {
-                                info.member_objects.push((name.to_string(), class.clone()));
+                            if let Some(class) = &object_class {
+                                if declr.kind() == "field_identifier" {
+                                    info.member_objects.push((name.to_string(), class.clone()));
+                                } else if matches!(
+                                    declr.kind(),
+                                    "pointer_declarator" | "array_declarator"
+                                ) {
+                                    // A pointer to, or an array of, class objects (spec 042).
+                                    info.member_pointers.push((name.to_string(), class.clone()));
+                                }
                             }
                             if let Some(init) = default_value {
                                 nsdmis
@@ -1048,8 +1085,9 @@ fn cpp_collect_methods<'a>(
     // chain here (not just direct bases) makes it transitive even though a base `ClassInfo` may
     // still hold only its own members. `bases` is empty for every C and base-less class, so this
     // adds nothing there. Done before phase 2b lowers the bodies, which read `members`.
-    flatten_inherited_members(ctx);
     collect_type_aliases(ctx, source, root);
+    resolve_base_names(ctx);
+    flatten_inherited_members(ctx);
 
     // Build the subclass hierarchy (reverse of `bases`) now that every class is known, so a
     // virtual call lowered in phase 2b — or in a later top-level body — can walk a static type's
@@ -3333,9 +3371,11 @@ fn operand_class(
     source: &str,
     scope_view: &ScopeView,
 ) -> Option<String> {
-    match node.kind() {
+    if ctx.is_pointer_like(node, source, scope_view) {
         // A pointer is not an object: `p + 1` is pointer arithmetic whatever `p` points to.
-        "identifier" if ctx.local_pointers.contains(to_str(&node, source)) => None,
+        return None;
+    }
+    match node.kind() {
         "this" => None,
         "parenthesized_expression" => {
             operand_class(ctx, super::first_named_child(node)?, source, scope_view)
@@ -3420,6 +3460,46 @@ fn cpp_operator_call<'a>(
         }
         "compound_literal_expression" => {
             construct_temporary(ctx, program, node, source, scope_view)
+        }
+        // `new T(args)` as an expression (spec 042): the synthetic heap object, whose path the
+        // pointer aliases. Array and placement `new` yield a fresh object of their own after
+        // their operands are evaluated.
+        "new_expression" => {
+            if let Some(object) = lower_new_expression(ctx, source, program, scope_view, node)? {
+                return Ok(Some(Exp::Variable(object.base)));
+            }
+            let mut cursor = node.walk();
+            let operands: Vec<Node<'_>> = node
+                .named_children(&mut cursor)
+                .filter(|n| {
+                    matches!(
+                        n.kind(),
+                        "argument_list" | "initializer_list" | "new_declarator"
+                    )
+                })
+                .collect();
+            for operand in operands {
+                let mut c = operand.walk();
+                let inner: Vec<Node<'_>> = operand
+                    .named_children(&mut c)
+                    .filter(|n| n.kind() != "comment")
+                    .collect();
+                for expr in inner {
+                    if expr.kind() != "new_declarator" {
+                        ctx.flatten_expr(program, expr, source, scope_view)?;
+                    }
+                }
+            }
+            let object = ctx.allocator.next_temp();
+            ctx.scope_tree
+                .add_variable(scope_view.sidx, object.clone(), VarKind::Local);
+            let path = ctx.build_access_path(
+                &object,
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            );
+            Ok(Some(Exp::Variable(path.base)))
         }
         // `a <op> b` with `a` an object: `a.operator<op>(b)` (spec 031).
         "binary_expression" => {

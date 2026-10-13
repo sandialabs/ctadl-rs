@@ -4938,3 +4938,44 @@ fn cpp_function_pointer_member_is_called_through() {
     let f = format!("{}", function_named(&prog, "f").unwrap());
     assert!(f.contains("ptr<id>"), "{prog}");
 }
+
+// ---- Spec 042: pointer members, `new` anywhere, namespaced bases --------------------------------
+
+#[test_log::test]
+fn cpp_pointer_member_is_a_receiver_but_not_an_operand() {
+    // FR-1: `obs->notify(v)` dispatches (CHA, through a namespaced base), and `hs[i]->f()` on
+    // a member array of pointers too; `p + k` on a pointer member stays pointer arithmetic.
+    let src = r"
+        namespace ns { struct Obs { virtual void notify(int v) {} virtual ~Obs() {} }; }
+        struct Store : public ns::Obs { int last; void notify(int v) override { last = v; } };
+        struct V { int v; int operator+(int x) { return x; } };
+        struct S {
+            ns::Obs* obs; ns::Obs* hs[2]; V* p;
+            void set(int v) { obs->notify(v); hs[1]->notify(v); }
+            V* at(int k) { return p + k; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    let calls = direct_calls_in(&prog, "S::set");
+    assert_eq!(calls.len(), 2, "{prog}");
+    for (targets, _) in &calls {
+        assert!(
+            targets.contains(&"ns::Obs::notify".to_string())
+                && targets.contains(&"Store::notify".to_string()),
+            "CHA through the namespaced base\n{prog}"
+        );
+    }
+    assert!(direct_calls_in(&prog, "S::at").is_empty(), "{prog}");
+}
+
+#[test_log::test]
+fn cpp_new_is_an_expression() {
+    // FR-2: `new` outside a declaration -- a member initializer, an assignment -- allocates
+    // and constructs the object.
+    let src = r"
+        struct Impl { int s; Impl() : s(0) {} };
+        struct F { Impl* p; F() : p(new Impl()) {} };
+        void g() { Impl* q; q = new Impl(); int* a = new int[4]; }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "F::F", "Impl::Impl");
+    check_has_direct_call(&prog, "g", "Impl::Impl");
+}

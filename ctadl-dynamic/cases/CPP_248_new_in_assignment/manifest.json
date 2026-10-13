@@ -1,0 +1,6 @@
+{
+  "name": "CPP_248_new_in_assignment",
+  "description": "C++ pointer members / new / namespaced bases (spec 042), POSITIVE: `B* p; p = new B(source()); sink(p->get())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

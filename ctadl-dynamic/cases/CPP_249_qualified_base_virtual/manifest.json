@@ -1,0 +1,6 @@
+{
+  "name": "CPP_249_qualified_base_virtual",
+  "description": "C++ pointer members / new / namespaced bases (spec 042), POSITIVE: D : public ns::Base, call through ns::Base&. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

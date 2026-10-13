@@ -1,0 +1,6 @@
+{
+  "name": "CPP_250_pointer_member_arith_negative",
+  "description": "C++ pointer members / new / namespaced bases (spec 042), NEGATIVE: p + k with p a V* member and V::operator+ returning source(). s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_247_pimpl",
+  "description": "C++ pointer members / new / namespaced bases (spec 042), POSITIVE: pimpl: `Facade() : p(new Impl())`, store/load through p. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

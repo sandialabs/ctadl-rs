@@ -888,6 +888,11 @@ struct ClassInfo {
     /// `x.m().n()` dispatches `n` on it. Resolved through [`Context::class_named`] at use. Empty
     /// for C.
     returns_object: HashMap<String, String>,
+    /// Members that hold a **pointer** to a class object, or an array of them or of objects
+    /// (`Observer* obs`, `Handler* hs[2]`, `Item items[4]`), as `(member, class)` (spec 042).
+    /// `obs->m()` and `hs[i]->m()` dispatch on them; they are never operator operands. Empty
+    /// for C.
+    member_pointers: Vec<(String, String)>,
 }
 
 /// The object a C++ instance-method receiver resolves to: the access-path expression to
@@ -5198,6 +5203,18 @@ impl<'a> Context<'a> {
                     Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
                 }
             }
+            // C++ `new T(args)` anywhere, not only initializing a declaration (spec 042): the
+            // `operator_call` hook allocates the object. Never occurs under the C grammar.
+            "new_expression" => {
+                let operator_call = self.hooks.operator_call;
+                match operator_call(self, program, node, source, scope_view)? {
+                    Some(value) => Ok(value),
+                    None => {
+                        unexpected_ast("new_expression without a hook".to_string())?;
+                        Ok(Exp::Variable(self.dead_temp_path(program, scope_view).base))
+                    }
+                }
+            }
             // A C++ lambda: its closure is a pointer to the lambda's function (spec 034). Never
             // occurs under the C grammar.
             "lambda_expression" => {
@@ -6302,10 +6319,10 @@ impl<'a> Context<'a> {
             // An object's own `a[i]` is its `operator[]`, not an element.
             "subscript_expression" => {
                 let base = node.child_by_field_name("argument")?;
-                let name = to_str(&base, source);
-                (base.kind() == "identifier" && self.local_pointers.contains(name))
-                    .then(|| self.local_types.get(name).cloned())
-                    .flatten()
+                if !self.is_pointer_like(base, source, scope_view) {
+                    return None;
+                }
+                self.object_class_of(base, source, scope_view)
             }
             _ => None,
         }
@@ -6320,12 +6337,66 @@ impl<'a> Context<'a> {
                 continue;
             }
             let info = self.classes.get(&c)?;
-            if let Some((_, object_class)) = info.member_objects.iter().find(|(m, _)| m == member) {
-                return Some(object_class.clone());
+            if let Some((_, object_class)) = info
+                .member_objects
+                .iter()
+                .chain(info.member_pointers.iter())
+                .find(|(m, _)| m == member)
+            {
+                return self.class_named_in(&c, object_class);
             }
             stack.extend(info.bases.iter().cloned());
         }
         None
+    }
+
+    /// Whether `node` names a pointer (or an array, which decays to one) rather than an object:
+    /// a pointer-typed local or parameter, or a pointer or array member (spec 042).
+    fn is_pointer_like(&self, node: Node<'_>, source: &str, scope_view: &ScopeView) -> bool {
+        let member_is_pointer = |class: &str, member: &str| {
+            let mut stack = vec![class.to_string()];
+            let mut seen: HashSet<String> = HashSet::default();
+            while let Some(c) = stack.pop() {
+                if !seen.insert(c.clone()) {
+                    continue;
+                }
+                let Some(info) = self.classes.get(&c) else {
+                    continue;
+                };
+                if info.member_pointers.iter().any(|(m, _)| m == member) {
+                    return true;
+                }
+                stack.extend(info.bases.iter().cloned());
+            }
+            false
+        };
+        match node.kind() {
+            "identifier" => {
+                let name = to_str(&node, source);
+                if self.local_types.contains_key(name)
+                    || self
+                        .scope_tree
+                        .find_variable(scope_view.sidx, name)
+                        .is_some()
+                {
+                    return self.local_pointers.contains(name);
+                }
+                self.current_method_class
+                    .as_ref()
+                    .is_some_and(|class| member_is_pointer(class, name))
+            }
+            "field_expression" => {
+                let (Some(argument), Some(field)) = (
+                    node.child_by_field_name("argument"),
+                    node.child_by_field_name("field"),
+                ) else {
+                    return false;
+                };
+                self.object_class_of(argument, source, scope_view)
+                    .is_some_and(|class| member_is_pointer(&class, to_str(&field, source)))
+            }
+            _ => false,
+        }
     }
 
     /// The receiver of an unqualified call `m(args)` inside a member function (spec 035): `this`,

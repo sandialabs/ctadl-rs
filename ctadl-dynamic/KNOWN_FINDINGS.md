@@ -17,10 +17,11 @@ frontend ingestion gaps — and tracks their disposition.
 | F4 — a field path composed across a call is never admissible | soundness | 38, CPP_161, CPP_179, CPP_229, CPP_237 | ❌ **open** (codegen `paths` gate) |
 | F5 — `(p + 1)->f` and `arr[1].f` lower to different paths | soundness | 39 | ❌ **open** (C pointer model) |
 | F6 — a `static` local does not persist across calls | soundness | 40 | ❌ **open** (C frontend) |
+| F7 — a pointer stored in a field does not alias its pointee | soundness | 41, CPP_252 | ❌ **open** (C pointer model / engine) |
 
 F2 and the two frontend findings above were surfaced by the **broadened M7 generator** (it threads
 taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
-Resolved entries are kept as a record of what the approach caught and how each was fixed. **F3–F6
+Resolved entries are kept as a record of what the approach caught and how each was fixed. **F3–F7
 are open** (2026-10-13).
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
@@ -29,6 +30,20 @@ are open** (2026-10-13).
 instead of a run-failing `NEW-GAP`/`FRONTEND-ERROR`. When a fix lands, the harness reports the
 case as `resolved-known-gap` / `resolved-known-frontend-gap`; the closure step is to remove that
 field from the manifest **and** mark the entry below RESOLVED.
+
+---
+
+## F7 — A pointer stored in a field does not alias its pointee (OPEN)
+
+- **Status:** **open**, allowlisted as `known_gap: "F7"` on cases `41` (C) and `CPP_252`. Found
+  2026-10-13 by the round-4 C++ composite scan (the observer pattern, `m08`).
+- **What:** `sj.obs = &st;` stores `st` (the pointer model passes a record by its own path) into
+  the field. A later write through the field, `sj.obs->last = v`, lands on `sj.obs.last` and never
+  reaches `st.last`. The store carries taint forward (from `st.x` to `sj.obs.x`) but not back. It
+  happens within one function too, and across calls it is what breaks the observer, delegate and
+  `Out(In* p) : in(p)` patterns.
+- **Fix direction:** model the stored pointer as an alias of its pointee, which is a points-to
+  question for the C pointer model and the engine.
 
 ---
 

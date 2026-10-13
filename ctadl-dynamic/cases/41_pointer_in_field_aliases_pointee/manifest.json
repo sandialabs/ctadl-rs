@@ -1,0 +1,7 @@
+{
+  "name": "pointer_in_field_aliases_pointee",
+  "description": "F7 (open): `sj.obs = &st; sj.obs->last = source(); sink(st.last)`. A pointer kept in a field does not alias its pointee for later writes through the field. s=none, d=flow. Allowlisted as known_gap F7.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F7"
+}

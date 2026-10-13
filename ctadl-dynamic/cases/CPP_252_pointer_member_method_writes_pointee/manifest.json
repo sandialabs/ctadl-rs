@@ -1,0 +1,7 @@
+{
+  "name": "CPP_252_pointer_member_method_writes_pointee",
+  "description": "C++ pointer members / new / namespaced bases (spec 042), POSITIVE: Out(In* p) : in(p); in->set(x); sink(i.v) -- dispatched, blocked by F7. Allowlisted as known_gap F7.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F7"
+}
