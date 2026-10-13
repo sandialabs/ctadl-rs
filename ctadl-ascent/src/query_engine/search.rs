@@ -303,9 +303,11 @@ impl LazySuccessors for TaintSearchGraph {
         }
 
         // Field-alias back-flow: a load `x = a.q` makes `x` an alias of `a.q`,
-        // so taint on `x.p` also lives at `a.(q·p)`. The empty-`p` step is
-        // ungated (its path `q` is already materialized, coming off an assign);
-        // an extended path is subject to the materialized-paths gate. The
+        // so taint on `x.p` also lives at `a.(q·p)`, subject to the
+        // materialized-paths gate. There is no empty-`p` step: taint on `x`
+        // itself is about the value `x` holds, not the field it was read from,
+        // and following it back put a tainted call return onto the fields its
+        // summary read (tests/tnt/callsite_smear_field.tnt). The
         // closure engine additionally gated its alias seeding on the base being
         // tainted — a flooding mitigation the demand-driven expansion doesn't
         // need, since only reached states are ever expanded.
