@@ -1,14 +1,16 @@
 /**
  * @file Tree-sitter grammar for flowy (.tnt), the test-case language of the ctadl analyzer.
  *
- * This is a port of `../src/flowy.pest` and should accept exactly the same language. Rule names
- * follow the pest grammar. Rules that pest has but that carry no information of their own here
- * (`def`, `stmt`, `terminator`, `p`, `ap_comma_list`, `summary_ap`) are hidden.
+ * This is a port of the peg grammar in `../src/parse.rs` and should accept the same language,
+ * except that it cannot reject an integer too large for 64 bits or a return arity above 255.
+ * Node names follow the peg rules and the syntax tree types there (`path`, `field`, `offset`,
+ * `star`, ...). Rules that carry no information of their own here (`def`, `stmt`, `terminator`,
+ * `segment`) are hidden.
  *
- * Pest literals are not reserved words: `return`, `ptr`, `goto`, etc. are still valid `ident`s
- * (e.g. the `return` port in a summary, or a variable named `ptr`). `_name` reproduces that by
- * admitting each keyword as an `ident`. A keyword must not run into an identifier (`returnx` is
- * an identifier, never `return x`), which `word` gives us.
+ * Keywords are not reserved: `return`, `ptr`, `goto`, etc. are still valid `ident`s (e.g. the
+ * `return` port in a summary, or a variable named `ptr`). `_name` reproduces that by admitting
+ * each keyword as an `ident`. A keyword must not run into an identifier (`returnx` is an
+ * identifier, never `return x`), which `word` gives us.
  */
 
 /// <reference types="tree-sitter-cli/dsl" />
@@ -16,7 +18,7 @@
 
 const KEYWORDS = ['var', 'def', 'where', 'summaries', 'byref', 'byval', 'goto', 'return', 'ptr'];
 
-/** `rule ~ ("," ~ rule)*` */
+/** `rule ++ ","` */
 const commaSep1 = (rule) => seq(rule, repeat(seq(',', rule)));
 
 module.exports = grammar({
@@ -27,11 +29,11 @@ module.exports = grammar({
   word: $ => $.ident,
 
   rules: {
-    top: $ => repeat($._def),
+    program: $ => repeat($._def),
 
     _def: $ => choice($.var_def, $.function_def),
 
-    var_def: $ => seq('var', $._name, ';'),
+    var_def: $ => seq('var', field('name', $._name), ';'),
 
     function_def: $ => seq(
       'def',
@@ -39,69 +41,87 @@ module.exports = grammar({
       $.params,
       optional($.return_arity),
       optional($.where_clause),
-      $.block_list,
+      '{',
+      repeat($.block),
+      '}',
     ),
-
-    block_list: $ => seq('{', repeat($.block), '}'),
 
     params: $ => seq('(', optional(commaSep1($.param)), ')'),
 
-    param: $ => seq($._name, optional($.param_passing_style)),
+    param: $ => seq(field('name', $._name), optional($.passing_style)),
 
-    param_passing_style: _ => choice('byref', 'byval'),
+    passing_style: _ => choice('byref', 'byval'),
 
-    return_arity: $ => seq(':', $.int),
+    // peg reads the arity as a `u8`, so it cannot be negative.
+    return_arity: $ => seq(':', alias(/\+?[0-9]+/, $.int)),
 
-    where_clause: $ => seq('where', 'summaries', $.summaries),
-
-    block: $ => seq(field('label', $._name), ':', repeat($._stmt), $._terminator),
-
-    _terminator: $ => choice($.goto_stmt, $.return_stmt),
-
-    _stmt: $ => choice($.update_stmt, $.assign_stmt, $.assign_call_stmt, $.call_stmt),
-
-    update_stmt: $ => seq($.ap, '=', '[', $.ap, ':=', $.ap, ']', ';'),
-
-    assign_stmt: $ => seq($.ap, '=', commaSep1($.ap), ';'),
-
-    assign_call_stmt: $ => seq($.ap, '=', $.ap, $.actuals, ';'),
-
-    call_stmt: $ => seq($.ap, $.actuals, ';'),
-
-    goto_stmt: $ => seq('goto', commaSep1($._name), ';'),
-
-    return_stmt: $ => seq('return', optional($.ap), ';'),
-
-    _p: $ => choice($.star_p, $.field_p, $.offset_p),
-
-    star_p: _ => seq('.', '*'),
-
-    field_p: $ => seq('.', $._name),
-
-    offset_p: $ => seq('.', '[', $.int, ']'),
-
-    ap: $ => choice(
-      $.function_ptr,
-      seq($._name, repeat($._p)),
-      $.int,
-      $.string,
+    where_clause: $ => seq(
+      'where',
+      'summaries',
+      '[',
+      optional(commaSep1($.summary_entry)),
+      ']',
     ),
 
-    function_ptr: $ => seq('ptr', '<', $._name, '>'),
-
-    actuals: $ => seq('(', optional(commaSep1($.ap)), ')'),
-
-    summary_entry: $ => seq($.ap, $.summary_op, $.ap),
+    summary_entry: $ => seq(
+      field('dest', $.path),
+      field('flow', $.summary_op),
+      field('source', $.path),
+    ),
 
     summary_op: _ => choice('<-', '</-'),
 
-    summaries: $ => seq('[', optional(commaSep1($.summary_entry)), ']'),
+    block: $ => seq(field('label', $._name), ':', repeat($._stmt), $._terminator),
 
-    // `int` is not atomic in pest, so whitespace and comments may separate the sign and digits
-    // (`- 1 2` is an int). `digits` is a named node so that error recovery cannot silently invent one.
-    int: $ => seq(optional(choice('+', '-')), repeat1($.digits)),
+    _stmt: $ => choice($.update_stmt, $.assign_stmt, $.assign_call_stmt, $.call_stmt),
 
-    digits: _ => /[0-9]+/,
+    // `dest = [source := value];`
+    update_stmt: $ => seq(
+      field('dest', $.path),
+      '=',
+      '[',
+      field('source', $.path),
+      ':=',
+      field('value', $.ap),
+      ']',
+      ';',
+    ),
+
+    assign_stmt: $ => seq(field('dest', $.path), '=', commaSep1(field('source', $.ap)), ';'),
+
+    assign_call_stmt: $ => seq(
+      field('dest', $.path),
+      '=',
+      field('callee', $.path),
+      $.actuals,
+      ';',
+    ),
+
+    call_stmt: $ => seq(field('callee', $.path), $.actuals, ';'),
+
+    _terminator: $ => choice($.goto_stmt, $.return_stmt),
+
+    goto_stmt: $ => seq('goto', commaSep1(field('target', $._name)), ';'),
+
+    return_stmt: $ => seq('return', optional(field('value', $.ap)), ';'),
+
+    actuals: $ => seq('(', optional(commaSep1($.ap)), ')'),
+
+    ap: $ => choice($.function_ptr, $.path, $.int, $.string),
+
+    function_ptr: $ => seq('ptr', '<', field('name', $._name), '>'),
+
+    path: $ => seq(field('base', $._name), repeat($._segment)),
+
+    _segment: $ => choice($.star, $.field, $.offset),
+
+    star: _ => seq('.', '*'),
+
+    field: $ => seq('.', $._name),
+
+    offset: $ => seq('.', '[', $.int, ']'),
+
+    int: _ => /[+-]?[0-9]+/,
 
     _name: $ => choice($.ident, ...KEYWORDS.map(k => alias(k, $.ident))),
 

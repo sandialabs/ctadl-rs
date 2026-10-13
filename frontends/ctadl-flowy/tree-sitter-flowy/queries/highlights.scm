@@ -8,18 +8,18 @@
   "ptr"
 ] @keyword
 
-(param_passing_style) @keyword
+(passing_style) @keyword
 
 (function_def name: (ident) @function)
-(function_ptr (ident) @function)
-(call_stmt (ap . (ident) @function))
-(assign_call_stmt (ap) (ap . (ident) @function) (actuals))
+(function_ptr name: (ident) @function)
+(call_stmt callee: (path . base: (ident) @function))
+(assign_call_stmt callee: (path . base: (ident) @function))
 
 (block label: (ident) @label)
-(goto_stmt (ident) @label)
+(goto_stmt target: (ident) @label)
 
-(param (ident) @variable.parameter)
-(field_p (ident) @property)
+(param name: (ident) @variable.parameter)
+(field (ident) @property)
 
 (int) @number
 (string) @string

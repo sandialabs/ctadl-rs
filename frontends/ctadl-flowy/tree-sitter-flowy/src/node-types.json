@@ -19,19 +19,11 @@
     "named": true,
     "fields": {},
     "children": {
-      "multiple": true,
+      "multiple": false,
       "required": true,
       "types": [
         {
-          "type": "field_p",
-          "named": true
-        },
-        {
           "type": "function_ptr",
-          "named": true
-        },
-        {
-          "type": "ident",
           "named": true
         },
         {
@@ -39,11 +31,7 @@
           "named": true
         },
         {
-          "type": "offset_p",
-          "named": true
-        },
-        {
-          "type": "star_p",
+          "type": "path",
           "named": true
         },
         {
@@ -56,17 +44,34 @@
   {
     "type": "assign_call_stmt",
     "named": true,
-    "fields": {},
+    "fields": {
+      "callee": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "path",
+            "named": true
+          }
+        ]
+      },
+      "dest": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "path",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
-      "multiple": true,
+      "multiple": false,
       "required": true,
       "types": [
         {
           "type": "actuals",
-          "named": true
-        },
-        {
-          "type": "ap",
           "named": true
         }
       ]
@@ -75,16 +80,27 @@
   {
     "type": "assign_stmt",
     "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "ap",
-          "named": true
-        }
-      ]
+    "fields": {
+      "dest": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "path",
+            "named": true
+          }
+        ]
+      },
+      "source": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "ap",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -134,41 +150,33 @@
     }
   },
   {
-    "type": "block_list",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "block",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "call_stmt",
     "named": true,
-    "fields": {},
+    "fields": {
+      "callee": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "path",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
-      "multiple": true,
+      "multiple": false,
       "required": true,
       "types": [
         {
           "type": "actuals",
           "named": true
-        },
-        {
-          "type": "ap",
-          "named": true
         }
       ]
     }
   },
   {
-    "type": "field_p",
+    "type": "field",
     "named": true,
     "fields": {},
     "children": {
@@ -202,7 +210,7 @@
       "required": true,
       "types": [
         {
-          "type": "block_list",
+          "type": "block",
           "named": true
         },
         {
@@ -223,50 +231,37 @@
   {
     "type": "function_ptr",
     "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "ident",
-          "named": true
-        }
-      ]
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ident",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
     "type": "goto_stmt",
     "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "ident",
-          "named": true
-        }
-      ]
+    "fields": {
+      "target": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "ident",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
-    "type": "int",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "digits",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "offset_p",
+    "type": "offset",
     "named": true,
     "fields": {},
     "children": {
@@ -283,26 +278,28 @@
   {
     "type": "param",
     "named": true,
-    "fields": {},
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ident",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
-      "multiple": true,
-      "required": true,
+      "multiple": false,
+      "required": false,
       "types": [
         {
-          "type": "ident",
-          "named": true
-        },
-        {
-          "type": "param_passing_style",
+          "type": "passing_style",
           "named": true
         }
       ]
     }
-  },
-  {
-    "type": "param_passing_style",
-    "named": true,
-    "fields": {}
   },
   {
     "type": "params",
@@ -314,6 +311,65 @@
       "types": [
         {
           "type": "param",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "passing_style",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "path",
+    "named": true,
+    "fields": {
+      "base": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ident",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "field",
+          "named": true
+        },
+        {
+          "type": "offset",
+          "named": true
+        },
+        {
+          "type": "star",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "program",
+    "named": true,
+    "root": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "function_def",
+          "named": true
+        },
+        {
+          "type": "var_def",
           "named": true
         }
       ]
@@ -337,20 +393,21 @@
   {
     "type": "return_stmt",
     "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": false,
-      "types": [
-        {
-          "type": "ap",
-          "named": true
-        }
-      ]
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "ap",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
-    "type": "star_p",
+    "type": "star",
     "named": true,
     "fields": {}
   },
@@ -374,37 +431,39 @@
     }
   },
   {
-    "type": "summaries",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "summary_entry",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "summary_entry",
     "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "ap",
-          "named": true
-        },
-        {
-          "type": "summary_op",
-          "named": true
-        }
-      ]
+    "fields": {
+      "dest": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "path",
+            "named": true
+          }
+        ]
+      },
+      "flow": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "summary_op",
+            "named": true
+          }
+        ]
+      },
+      "source": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "path",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -413,53 +472,55 @@
     "fields": {}
   },
   {
-    "type": "top",
-    "named": true,
-    "root": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "function_def",
-          "named": true
-        },
-        {
-          "type": "var_def",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "update_stmt",
     "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "ap",
-          "named": true
-        }
-      ]
+    "fields": {
+      "dest": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "path",
+            "named": true
+          }
+        ]
+      },
+      "source": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "path",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ap",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
     "type": "var_def",
     "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "ident",
-          "named": true
-        }
-      ]
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ident",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -467,11 +528,11 @@
     "named": true,
     "fields": {},
     "children": {
-      "multiple": false,
-      "required": true,
+      "multiple": true,
+      "required": false,
       "types": [
         {
-          "type": "summaries",
+          "type": "summary_entry",
           "named": true
         }
       ]
@@ -494,15 +555,7 @@
     "named": false
   },
   {
-    "type": "+",
-    "named": false
-  },
-  {
     "type": ",",
-    "named": false
-  },
-  {
-    "type": "-",
     "named": false
   },
   {
@@ -567,10 +620,6 @@
     "named": false
   },
   {
-    "type": "digits",
-    "named": true
-  },
-  {
     "type": "escape_sequence",
     "named": true
   },
@@ -580,6 +629,10 @@
   },
   {
     "type": "ident",
+    "named": true
+  },
+  {
+    "type": "int",
     "named": true
   },
   {
