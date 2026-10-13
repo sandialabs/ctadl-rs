@@ -1,0 +1,6 @@
+{
+  "name": "CPP_192_lambda_value_capture",
+  "description": "C++ lambdas (spec 034), POSITIVE: `int y = source(); auto g = [y]() { sink(y); }; g()`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

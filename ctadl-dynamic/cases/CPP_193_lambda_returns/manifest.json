@@ -1,0 +1,6 @@
+{
+  "name": "CPP_193_lambda_returns",
+  "description": "C++ lambdas (spec 034), POSITIVE: `sink(f(source()))` with `f = [](int x) { return x + 1; }`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

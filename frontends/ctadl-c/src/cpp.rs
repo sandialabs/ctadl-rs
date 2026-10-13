@@ -21,7 +21,10 @@
 //! the shared core. C++-only constructs (classes, methods, references, namespaces,
 //! templates, …) are later milestones and may still error.
 
-use ctadl_ir::mir::{CallEdges, CallStyle, Exp, Program, Statement, StatementKind, VariableRef};
+use ctadl_ir::mir::{
+    CallEdges, CallObject, CallStyle, Exp, ParameterIdx, Program, Statement, StatementKind,
+    VariableRef,
+};
 use ctadl_ir::{PathSegment, ThinVec, thin_vec};
 use hashbrown::hash_map::HashMap;
 use streaming_iterator::StreamingIterator;
@@ -1203,6 +1206,7 @@ fn cpp_collect_methods<'a>(
 
     cpp_collect_namespaced_functions(ctx, source, root, program, global_sidx)?;
     cpp_collect_free_operators(ctx, source, root, program, global_sidx)?;
+    cpp_collect_lambdas(ctx, source, root, program, global_sidx)?;
     Ok(())
 }
 
@@ -2597,6 +2601,438 @@ fn construct_subobject<'a>(
     Ok(())
 }
 
+// ---- Lambdas (spec 034) -------------------------------------------------------------------------
+//
+// A lambda is lowered as a function of its own, `lambda@<row>:<col>`, and a lambda expression's
+// value is a pointer to that function, so `auto f = [..](..){..}; f(x)` and passing `f` on are the
+// indirect calls the index already resolves. What the body shares with the code around it lives
+// in global slots both functions name:
+// - a by-value capture is copied into `<val <lambda> x>` when the closure is created, and the body
+//   reads that slot;
+// - a variable captured by reference lives in `<ref <body> x>`, keyed on the body that declares it,
+//   for all of that body's accesses and the lambda's alike, so writes flow both ways.
+// A slot merges every activation of its function: a sound over-approximation.
+
+/// How a lambda captures one name.
+enum Capture<'t> {
+    /// `&x`, or `x` under `[&]`.
+    Ref,
+    /// `x`, or `x` under `[=]`.
+    Value,
+    /// `x = e`: a by-value capture of the expression `e`.
+    Init(Node<'t>),
+}
+
+/// The IR name of a lambda's function: its position, unique within a unit.
+fn lambda_name(lambda: Node<'_>) -> String {
+    let p = lambda.start_position();
+    format!("lambda@{}:{}", p.row + 1, p.column + 1)
+}
+
+/// The body `node` is lexically inside: the `compound_statement` body of the nearest enclosing
+/// function definition or lambda.
+fn enclosing_body(node: Node<'_>) -> Option<Node<'_>> {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        if n.kind() == "compound_statement"
+            && let Some(owner) = n.parent()
+            && matches!(owner.kind(), "function_definition" | "lambda_expression")
+            && owner
+                .child_by_field_name("body")
+                .is_some_and(|b| b.id() == n.id())
+        {
+            return Some(n);
+        }
+        cur = n.parent();
+    }
+    None
+}
+
+/// The names a function or lambda body declares: its parameters and every declaration in it,
+/// nested lambdas excluded (they declare their own).
+fn declared_names(body: Node<'_>, source: &str) -> std::collections::HashSet<String> {
+    let leaf = |d: Node<'_>| -> Option<String> {
+        let d = match d.kind() {
+            "init_declarator" | "function_declarator" => d.child_by_field_name("declarator")?,
+            _ => d,
+        };
+        declarator_leaf_ident(d, source).map(str::to_string)
+    };
+    let mut out = std::collections::HashSet::new();
+    let params = body.parent().and_then(|owner| {
+        let declarator = owner.child_by_field_name("declarator")?;
+        match owner.kind() {
+            "function_definition" => function_declarator_of(declarator)
+                .and_then(|(fd, _)| fd.child_by_field_name("parameters")),
+            "lambda_expression" => declarator.child_by_field_name("parameters"),
+            _ => None,
+        }
+    });
+    if let Some(params) = params {
+        let mut c = params.walk();
+        for pd in params.named_children(&mut c) {
+            if let Some(name) = pd.child_by_field_name("declarator").and_then(leaf) {
+                out.insert(name);
+            }
+        }
+    }
+    let mut stack = vec![body];
+    while let Some(n) = stack.pop() {
+        if matches!(n.kind(), "declaration" | "for_range_loop") {
+            let mut c = n.walk();
+            for d in n.children_by_field_name("declarator", &mut c) {
+                if let Some(name) = leaf(d) {
+                    out.insert(name);
+                }
+            }
+        }
+        let mut c = n.walk();
+        for child in n.named_children(&mut c) {
+            if child.kind() != "lambda_expression" {
+                stack.push(child);
+            }
+        }
+    }
+    out
+}
+
+/// What `lambda` captures, in order: its explicit list (`&x`, `x`, `x = e`), then, under a
+/// default (`[&]` / `[=]`), every variable its body names -- nested lambdas included -- that an
+/// enclosing body declares and the lambda itself does not. `this` is not modeled.
+fn lambda_captures<'t>(lambda: Node<'t>, source: &str) -> Vec<(String, Capture<'t>)> {
+    let mut captures: Vec<(String, Capture<'t>)> = Vec::new();
+    let mut default_by_ref: Option<bool> = None;
+    if let Some(spec) = lambda.child_by_field_name("captures") {
+        let mut by_ref = false;
+        let mut c = spec.walk();
+        for child in spec.children(&mut c) {
+            match child.kind() {
+                "lambda_default_capture" => default_by_ref = Some(to_str(&child, source) == "&"),
+                "&" => {
+                    by_ref = true;
+                    continue;
+                }
+                "identifier" => captures.push((
+                    to_str(&child, source).to_string(),
+                    if by_ref { Capture::Ref } else { Capture::Value },
+                )),
+                "lambda_capture_initializer" => {
+                    if let (Some(left), Some(right)) = (
+                        child.child_by_field_name("left"),
+                        child.child_by_field_name("right"),
+                    ) {
+                        captures.push((to_str(&left, source).to_string(), Capture::Init(right)));
+                    }
+                }
+                _ => {}
+            }
+            by_ref = false;
+        }
+    }
+    let (Some(by_ref), Some(body)) = (default_by_ref, lambda.child_by_field_name("body")) else {
+        return captures;
+    };
+    let mut outer = std::collections::HashSet::new();
+    let mut scope = enclosing_body(lambda);
+    while let Some(b) = scope {
+        outer.extend(declared_names(b, source));
+        scope = enclosing_body(b);
+    }
+    let own = declared_names(body, source);
+    let mut stack = vec![body];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "identifier" {
+            let name = to_str(&n, source);
+            if outer.contains(name)
+                && !own.contains(name)
+                && !captures.iter().any(|(c, _)| c == name)
+            {
+                captures.push((
+                    name.to_string(),
+                    if by_ref { Capture::Ref } else { Capture::Value },
+                ));
+            }
+        }
+        let mut c = n.walk();
+        stack.extend(n.named_children(&mut c));
+    }
+    captures
+}
+
+/// The global slot one capture lives in, or `None` for a by-reference capture of something no
+/// enclosing body declares (a global, already shared).
+fn capture_slot(
+    lambda: Node<'_>,
+    name: &str,
+    capture: &Capture<'_>,
+    source: &str,
+) -> Option<String> {
+    match capture {
+        Capture::Ref => {
+            let mut scope = enclosing_body(lambda);
+            while let Some(b) = scope {
+                if declared_names(b, source).contains(name) {
+                    return Some(format!("<ref {} {name}>", b.start_byte()));
+                }
+                scope = enclosing_body(b);
+            }
+            None
+        }
+        Capture::Value | Capture::Init(_) => Some(format!("<val {} {name}>", lambda.start_byte())),
+    }
+}
+
+/// The C++ `lambda_expr` hook: creating the closure copies each by-value capture into its slot
+/// (an init-capture's expression, evaluated here), and the closure is a pointer to the lambda's
+/// function (spec 034).
+fn cpp_lambda_expr<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    node: Node<'_>,
+    source: &'a str,
+    scope_view: &mut ScopeView,
+) -> anyhow::Result<Option<Exp>, Error> {
+    for (name, capture) in lambda_captures(node, source) {
+        let value = match capture {
+            Capture::Ref => continue,
+            Capture::Value => {
+                let ap = ctx.build_access_path(
+                    &name,
+                    Default::default(),
+                    scope_view,
+                    &mut program[scope_view.fidx].locals,
+                );
+                Exp::access_path(ctx.emit_loads(program, scope_view, ap))
+            }
+            Capture::Init(expr) => ctx.flatten_expr(program, expr, source, scope_view)?,
+        };
+        let Some(slot) = capture_slot(node, &name, &Capture::Value, source) else {
+            continue;
+        };
+        let target = RawPath::new(
+            VariableRef::new_global(),
+            thin_vec![PathSegment::symbol(slot.as_str())],
+        );
+        ctx.add_assign_to_program(program, scope_view, &target, &value, None);
+    }
+    Ok(Some(Exp::ObjectRef(CallObject::FunctionPtr(
+        lambda_name(node).into(),
+    ))))
+}
+
+/// The C++ `function_scan` hook (spec 034): before `body` is walked, map the variables it shares
+/// with lambdas to their slots -- inside a lambda's function, everything the lambda captures; in
+/// any body, each variable it declares that a lambda inside captures by reference -- and copy a
+/// parameter captured by reference into its slot at entry.
+fn cpp_function_scan<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    body: Node<'_>,
+    source: &'a str,
+) -> anyhow::Result<(), Error> {
+    if let Some(owner) = body.parent()
+        && owner.kind() == "lambda_expression"
+    {
+        for (name, capture) in lambda_captures(owner, source) {
+            if let Some(slot) = capture_slot(owner, &name, &capture, source) {
+                // A captured object keeps its class, so `b.m()` in the body dispatches.
+                if let Some((class, is_pointer)) = captured_class(ctx, owner, &name, source) {
+                    ctx.local_types.insert(name.clone(), class);
+                    super::note_pointer(&mut ctx.local_pointers, &name, is_pointer);
+                }
+                ctx.captured_globals.insert(name, slot);
+            }
+        }
+    }
+    let declared = declared_names(body, source);
+    let mut shared: Vec<String> = Vec::new();
+    let mut stack = vec![body];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "lambda_expression" {
+            for (name, capture) in lambda_captures(n, source) {
+                if matches!(capture, Capture::Ref)
+                    && declared.contains(&name)
+                    && capture_slot(n, &name, &capture, source)
+                        == Some(format!("<ref {} {name}>", body.start_byte()))
+                    && !shared.contains(&name)
+                {
+                    shared.push(name);
+                }
+            }
+        }
+        let mut c = n.walk();
+        stack.extend(n.named_children(&mut c));
+    }
+    if shared.is_empty() {
+        return Ok(());
+    }
+    let params: Vec<(ParameterIdx, String)> = ctx
+        .param_names
+        .get(scope_view.func_name.as_str())
+        .map(|names| {
+            names
+                .iter_enumerated()
+                .map(|(idx, n)| (idx, n.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    for name in shared {
+        let slot = format!("<ref {} {name}>", body.start_byte());
+        if let Some((idx, _)) = params.iter().find(|(_, p)| *p == name) {
+            let target = RawPath::new(
+                VariableRef::new_global(),
+                thin_vec![PathSegment::symbol(slot.as_str())],
+            );
+            ctx.add_assign_to_program(
+                program,
+                scope_view,
+                &target,
+                &Exp::Variable(VariableRef::new_parameter(*idx)),
+                None,
+            );
+        }
+        ctx.captured_globals.insert(name, slot);
+    }
+    Ok(())
+}
+
+/// The class of the variable `name` a lambda captures, from its declaration in the nearest
+/// enclosing body that declares it, and whether it is a pointer to that class.
+fn captured_class(
+    ctx: &Context<'_>,
+    lambda: Node<'_>,
+    name: &str,
+    source: &str,
+) -> Option<(String, bool)> {
+    let mut scope = enclosing_body(lambda);
+    while let Some(body) = scope {
+        if declared_names(body, source).contains(name) {
+            let mut candidates: Vec<Node<'_>> = Vec::new();
+            if let Some(owner) = body.parent()
+                && let Some(declarator) = owner.child_by_field_name("declarator")
+            {
+                let params = match owner.kind() {
+                    "function_definition" => function_declarator_of(declarator)
+                        .and_then(|(fd, _)| fd.child_by_field_name("parameters")),
+                    _ => declarator.child_by_field_name("parameters"),
+                };
+                if let Some(params) = params {
+                    let mut c = params.walk();
+                    candidates.extend(params.named_children(&mut c));
+                }
+            }
+            let mut stack = vec![body];
+            while let Some(n) = stack.pop() {
+                if n.kind() == "declaration" {
+                    candidates.push(n);
+                }
+                let mut c = n.walk();
+                for child in n.named_children(&mut c) {
+                    if child.kind() != "lambda_expression" {
+                        stack.push(child);
+                    }
+                }
+            }
+            for decl in candidates {
+                let mut c = decl.walk();
+                for d in decl.children_by_field_name("declarator", &mut c) {
+                    let inner = match d.kind() {
+                        "init_declarator" | "function_declarator" => {
+                            d.child_by_field_name("declarator").unwrap_or(d)
+                        }
+                        _ => d,
+                    };
+                    if declarator_leaf_ident(inner, source) == Some(name) {
+                        return declared_class(ctx, decl, source)
+                            .map(|class| (class, super::declarator_is_pointer(inner)));
+                    }
+                }
+            }
+            return None;
+        }
+        scope = enclosing_body(body);
+    }
+    None
+}
+
+/// Whether a lambda body returns a value (`return e;`), nested lambdas aside.
+fn lambda_returns_value(body: Node<'_>) -> bool {
+    let mut stack = vec![body];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "return_statement" {
+            let mut c = n.walk();
+            if n.named_children(&mut c).any(|ch| ch.kind() != "comment") {
+                return true;
+            }
+        }
+        let mut c = n.walk();
+        for child in n.named_children(&mut c) {
+            if !matches!(child.kind(), "lambda_expression" | "function_definition") {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+/// Discover every lambda in the unit and lower it as the function `lambda@<row>:<col>` (spec 034):
+/// its parameters (the body's `{` standing in for an absent list), its body, and a return arity
+/// from whether the body returns a value.
+fn cpp_collect_lambdas<'a>(
+    ctx: &mut Context<'a>,
+    source: &'a str,
+    root: Node<'_>,
+    program: &mut Program,
+    global_sidx: usize,
+) -> anyhow::Result<(), Error> {
+    let query = ctx.compile_query("(lambda_expression) @lambda");
+    let mut lambdas: Vec<(String, Node<'_>, Node<'_>, bool)> = Vec::new();
+    {
+        let mut cursor = QueryCursor::new();
+        let mut it = cursor.matches(&query, root, source.as_bytes());
+        while let Some(m) = it.next() {
+            let lambda = MatchExtractor::new(&query, m).get("lambda")?;
+            let Some(body) = lambda.child_by_field_name("body") else {
+                continue;
+            };
+            let Some(anchor) = body.child(0) else {
+                continue;
+            };
+            let params = lambda
+                .child_by_field_name("declarator")
+                .and_then(|d| d.child_by_field_name("parameters"))
+                .unwrap_or(anchor);
+            lambdas.push((
+                lambda_name(lambda),
+                params,
+                body,
+                !lambda_returns_value(body),
+            ));
+        }
+    }
+    for (name, _, _, _) in &lambdas {
+        ctx.functions
+            .entry(name.clone())
+            .or_insert_with(|| program.new_function());
+    }
+    for (name, params, body, void) in lambdas {
+        ctx.lower_function(
+            source,
+            program,
+            global_sidx,
+            &name,
+            void,
+            params,
+            body,
+            None,
+            false,
+            &[],
+        )?;
+    }
+    Ok(())
+}
+
 /// The C++ grammar-shape adapters installed on the lowering [`Context`]. The first two
 /// bridge the only C-subset node-shape divergences between the two grammars (per the
 /// spec-002 triage); [`cpp_collect_methods`] adds C++ instance-method/constructor discovery,
@@ -3239,6 +3675,8 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     // with the object as the arg-0 receiver. Declines for every operand that is not a known class
     // object, so the built-in lowering stands for all of C and for every scalar/array/pointer.
     operator_call: cpp_operator_call,
+    lambda_expr: cpp_lambda_expr,
+    function_scan: cpp_function_scan,
     arrow_operator: |ctx, program, object, source, scope_view| {
         member_operator_call(
             ctx,

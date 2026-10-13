@@ -1,0 +1,6 @@
+{
+  "name": "CPP_191_lambda_ref_capture_write",
+  "description": "C++ lambdas (spec 034), POSITIVE: `[&]() { y = source(); }` then `sink(y)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

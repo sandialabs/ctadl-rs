@@ -1110,6 +1110,26 @@ struct GrammarHooks {
         &'a str,
         &mut ScopeView,
     ) -> anyhow::Result<Option<Exp>, Error>,
+    /// Lower a C++ `lambda_expression` (spec 034): run what creating the closure runs (copying
+    /// by-value captures) and answer the closure's value, a pointer to the lambda's function. The
+    /// node never occurs under the C grammar, whose hook answers `None`.
+    lambda_expr: for<'a, 't> fn(
+        &mut Context<'a>,
+        &mut Program,
+        Node<'t>,
+        &'a str,
+        &mut ScopeView,
+    ) -> anyhow::Result<Option<Exp>, Error>,
+    /// Inspect a function's body before it is walked, at its entry block (spec 034). C++ fills
+    /// [`Context::captured_globals`] with the variables this body shares with lambdas, and, for a
+    /// captured parameter, copies it into its slot. A no-op for C.
+    function_scan: for<'a, 't> fn(
+        &mut Context<'a>,
+        &mut Program,
+        &ScopeView,
+        Node<'t>,
+        &'a str,
+    ) -> anyhow::Result<(), Error>,
 }
 
 impl GrammarHooks {
@@ -1151,6 +1171,9 @@ impl GrammarHooks {
         operator_call: |_ctx, _program, _node, _source, _scope_view| Ok(None),
         // Nor an overloaded `->`: every `p->f` is the built-in member access.
         arrow_operator: |_ctx, _program, _object, _source, _scope_view| Ok(None),
+        // C has no lambdas: nothing is captured and no lambda expression occurs.
+        lambda_expr: |_ctx, _program, _node, _source, _scope_view| Ok(None),
+        function_scan: |_ctx, _program, _scope_view, _body, _source| Ok(()),
     };
 }
 
@@ -1213,6 +1236,12 @@ struct Context<'a> {
     /// -- by alias, to the (template-erased) class (spec 033). Filled by the C++ `collect_aux`
     /// hook; empty for C. Read through [`Context::class_named`].
     type_aliases: HashMap<String, String>,
+    /// Variables of the function being lowered that live in a global slot, by name: one a C++
+    /// lambda captures by reference (so the enclosing function and the lambda's own function
+    /// name the same storage), and, inside a lambda's function, each captured variable (spec
+    /// 034). [`Context::build_access_path`] resolves such a name to `$globals.<slot>`. Filled by
+    /// the `function_scan` hook, reset per function; empty for C.
+    captured_globals: HashMap<String, String>,
     /// Overloaded-by-arity names: an IR **base name** (a free function's bare/qualified name
     /// `f` / `ns::f`, or a method's qualified `Class::method`) mapped to the set of explicit
     /// **arities** (parameter counts, `this` excluded) defined under it. A name is *overloaded*
@@ -1583,6 +1612,7 @@ impl Context<'_> {
             current_method_class: None,
             reference_aliases: HashMap::default(),
             type_aliases: HashMap::default(),
+            captured_globals: HashMap::default(),
             overloads: HashMap::default(),
             local_pointers: HashSet::default(),
             byval_class_params: HashMap::default(),
@@ -4813,6 +4843,13 @@ impl<'a> Context<'a> {
             ap.fields.append(&mut field_path);
             return ap;
         }
+        // A variable shared with a C++ lambda lives in its global slot (spec 034).
+        if let Some(slot) = self.captured_globals.get(name_pre_scope) {
+            let mut fields = ThinVec::with_capacity(field_path.len() + 1);
+            fields.push(PathSegment::symbol(slot.as_str()));
+            fields.append(&mut field_path);
+            return RawPath::new(VariableRef::new_global(), fields);
+        }
         let name: String;
         let varkind: VarKind;
         if let Some(vardecl) = self
@@ -5048,6 +5085,18 @@ impl<'a> Context<'a> {
                         &mut program[scope_view.fidx].locals,
                     );
                     Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
+                }
+            }
+            // A C++ lambda: its closure is a pointer to the lambda's function (spec 034). Never
+            // occurs under the C grammar.
+            "lambda_expression" => {
+                let lambda_expr = self.hooks.lambda_expr;
+                match lambda_expr(self, program, node, source, scope_view)? {
+                    Some(value) => Ok(value),
+                    None => {
+                        unexpected_ast("lambda_expression without a lambda hook".to_string())?;
+                        Ok(Exp::Variable(self.dead_temp_path(program, scope_view).base))
+                    }
                 }
             }
             "comma_expression" => {
@@ -5959,11 +6008,14 @@ impl<'a> Context<'a> {
                             scope_view,
                             &mut program[scope_view.fidx].locals,
                         );
+                        // An object named by a path (a global, or one shared with a lambda) is
+                        // passed as the value loaded from it, and written back (spec 034).
+                        let write_back = (!ap.is_pathless()).then(|| ap.clone());
                         let exp = Exp::access_path(self.emit_loads(program, scope_view, ap));
                         Ok(Some(RecvObj {
                             exp,
                             class,
-                            write_back: None,
+                            write_back,
                         }))
                     }
                     // An unqualified member object inside a method (spec 030).
@@ -6563,7 +6615,19 @@ impl<'a> Context<'a> {
         // dereference form `(*op_func)(...)` wraps the pointer in a
         // parenthesized/pointer expression, so route it through flatten_expr to
         // recover the underlying variable (`op_func`).
-        let access_path = if func_node.kind() == "identifier" || erased_name.is_some() {
+        let access_path = if func_node.kind() == "lambda_expression" {
+            // `[&]{ … }()`: call through the closure, held in a temp (spec 034).
+            let closure = self.flatten_expr(program, func_node, source, scope_view)?;
+            let temp = self.allocator.next_temp();
+            let holder = self.build_access_path(
+                &temp,
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            );
+            self.add_assign_to_program(program, scope_view, &holder, &closure, None);
+            holder
+        } else if func_node.kind() == "identifier" || erased_name.is_some() {
             self.build_access_path(
                 func_name,
                 Default::default(),
@@ -6780,6 +6844,7 @@ impl<'a> Context<'a> {
         self.local_types.clear();
         self.local_pointers.clear();
         self.reference_aliases.clear();
+        self.captured_globals.clear();
         self.current_method_class = class_context.map(str::to_string);
         // Address-of aliases are function-local and confined to a straight-line block.
         self.addr_alias.clear();
@@ -6887,6 +6952,10 @@ impl<'a> Context<'a> {
                 None,
             );
         }
+        // Whatever the grammar needs to know about the body before it is walked: for C++, the
+        // variables it shares with lambdas (spec 034). A no-op for C.
+        let function_scan = self.hooks.function_scan;
+        function_scan(self, program, &block_scope_view, body_node, source)?;
         let mut labels = Vec::new();
         collect_labels(body_node, source, &mut labels);
         for label in labels {

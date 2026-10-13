@@ -1,0 +1,6 @@
+{
+  "name": "CPP_196_lambda_value_snapshot_negative",
+  "description": "C++ lambdas (spec 034), NEGATIVE: `auto f = [x]() { return x; }; x = source(); sink(f())`. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

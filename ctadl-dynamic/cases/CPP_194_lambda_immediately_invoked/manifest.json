@@ -1,0 +1,6 @@
+{
+  "name": "CPP_194_lambda_immediately_invoked",
+  "description": "C++ lambdas (spec 034), POSITIVE: an immediately-invoked `[&]` lambda writing y. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_198_lambda_param_captured",
+  "description": "C++ lambdas (spec 034), POSITIVE: `void fill(int seed) { auto f = [&]() { sink(seed); }; f(); }`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

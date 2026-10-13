@@ -1,0 +1,6 @@
+{
+  "name": "CPP_195_lambda_passed_to_template",
+  "description": "C++ lambdas (spec 034), POSITIVE: `apply([](int v) { return v + 1; }, source())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

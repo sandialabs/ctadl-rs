@@ -4612,3 +4612,77 @@ fn cpp_type_aliases_name_their_class() {
         "{prog}"
     );
 }
+
+// ---- Spec 034: lambdas -------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_lambda_is_a_function_and_its_closure_a_pointer_to_it() {
+    // FR-1: the lambda's body is the function `lambda@<row>:<col>`, and the closure is a
+    // function pointer, so `f(x)` is an indirect call.
+    let src = r"
+        int f(int p) {
+            auto g = [](int x) { return x + 1; };
+            return g(p);
+        }";
+    let prog = program_from_cpp_string(src).0;
+    let lambda = prog
+        .functions
+        .functions
+        .raw
+        .iter()
+        .find(|fun| fun.name.starts_with("lambda@"))
+        .unwrap_or_else(|| panic!("no lambda function\n{prog}"));
+    assert_eq!(lambda.params.len(), 1, "{prog}");
+    let text = format!("{}", function_named(&prog, "f").unwrap());
+    assert!(text.contains("funcptr-call"), "{prog}");
+}
+
+#[test_log::test]
+fn cpp_lambda_captures_share_global_slots() {
+    // FR-2/FR-3: a by-reference capture makes the enclosing function's `y` a global slot the
+    // lambda's function names too; a by-value capture is copied into the lambda's own slot.
+    let src = r"
+        int f(int p) {
+            int y = 0;
+            int x = p;
+            auto g = [&y, x]() { y = x; };
+            g();
+            return y;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    let f = format!("{}", function_named(&prog, "f").unwrap());
+    assert!(
+        f.contains("<ref ") && f.contains(" y>"),
+        "y lives in a ref slot\n{prog}"
+    );
+    assert!(
+        f.contains("<val ") && f.contains(" x>"),
+        "x is copied to a val slot\n{prog}"
+    );
+    let lambda = prog
+        .functions
+        .functions
+        .raw
+        .iter()
+        .find(|fun| fun.name.starts_with("lambda@"))
+        .map(|fun| format!("{fun}"))
+        .unwrap_or_default();
+    assert!(
+        lambda.contains("<ref ") && lambda.contains("<val "),
+        "the body names both slots\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_lambda_implicit_capture_excludes_its_own_names() {
+    // FR-3: under `[&]`, a name the lambda declares itself is not a capture.
+    let src = r"
+        void f() {
+            int y = 0;
+            auto g = [&]() { int y = 1; y = y + 1; };
+            g();
+        }";
+    let prog = program_from_cpp_string(src).0;
+    let f = format!("{}", function_named(&prog, "f").unwrap());
+    assert!(!f.contains("<ref "), "the outer y is not captured\n{prog}");
+}

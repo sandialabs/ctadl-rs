@@ -1,0 +1,6 @@
+{
+  "name": "CPP_200_lambda_captured_object_method",
+  "description": "C++ lambdas (spec 034), POSITIVE: `[&]() { b.set(source()); }` then `sink(b.v)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

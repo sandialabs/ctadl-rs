@@ -1,0 +1,6 @@
+{
+  "name": "CPP_199_lambda_ref_capture_distinct_negative",
+  "description": "C++ lambdas (spec 034), NEGATIVE: `[&]() { y = source(); }` then `sink(w)`. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

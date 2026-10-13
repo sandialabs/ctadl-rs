@@ -1,0 +1,6 @@
+{
+  "name": "CPP_190_lambda_param",
+  "description": "C++ lambdas (spec 034), POSITIVE: `auto f = [](int x) { sink(x); }; f(source())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

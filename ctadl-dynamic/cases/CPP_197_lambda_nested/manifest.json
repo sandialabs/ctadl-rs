@@ -1,0 +1,6 @@
+{
+  "name": "CPP_197_lambda_nested",
+  "description": "C++ lambdas (spec 034), POSITIVE: nested `[&]` lambdas writing y. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
