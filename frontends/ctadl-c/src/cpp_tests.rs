@@ -2812,7 +2812,8 @@ fn cpp_pointer_returning_inline_method_is_discovered() {
     // `function_declarator` in a `pointer_declarator`. Discovery used to demand the bare
     // `function_declarator` (or a `reference_declarator` around it) and silently dropped the
     // body -- spec 130's bug on the C++ side. It is now discovered, lowered with the implicit
-    // `this`, and returns its (by-ref) pointer parameter.
+    // `this`, and returns its pointer parameter (`ByVal`, like every pointer: a write through
+    // it is a non-empty path and still flows out).
     let src = r"
         struct Box {
             int *pick(int *p) { return p; }
@@ -2821,7 +2822,7 @@ fn cpp_pointer_returning_inline_method_is_discovered() {
     check_func_params(
         &prog,
         "Box::pick",
-        &[ParameterType::ByRef, ParameterType::ByRef],
+        &[ParameterType::ByRef, ParameterType::ByVal],
     );
     check_return_arity(&prog, "Box::pick", 1);
     check_func_returns_path(&prog, "Box::pick", "@p1");
@@ -2856,7 +2857,7 @@ fn cpp_pointer_returning_out_of_line_method_is_discovered() {
     check_func_params(
         &prog,
         "Box::pick",
-        &[ParameterType::ByRef, ParameterType::ByRef],
+        &[ParameterType::ByRef, ParameterType::ByVal],
     );
     check_return_arity(&prog, "Box::pick", 1);
     check_func_returns_path(&prog, "Box::pick", "@p1");
@@ -2870,7 +2871,7 @@ fn cpp_pointer_returning_namespaced_function_is_discovered() {
             char *dup(char *s) { return s; }
         }";
     let prog = program_from_cpp_string(src).0;
-    check_func_params(&prog, "ns::dup", &[ParameterType::ByRef]);
+    check_func_params(&prog, "ns::dup", &[ParameterType::ByVal]);
     check_return_arity(&prog, "ns::dup", 1);
     check_func_returns_path(&prog, "ns::dup", "@p0");
 }
@@ -2980,9 +2981,9 @@ fn cpp_method_object_parameter_dispatches_on_p1() {
 #[test_log::test]
 fn cpp_class_parameter_modes_are_unchanged() {
     // FR-2 (the frontend's half): registering a parameter's class must not disturb its passing
-    // mode. `Box b` stays `ByVal`, `Box& b` and `Box* p` are `ByRef` (spec 003's out-param
-    // model), which is what makes a member write through a reference/pointer parameter reach
-    // the caller's object and a by-value one only the callee's copy. What the analysis *below*
+    // mode. `Box b` and `Box* p` are `ByVal` and `Box& b` is `ByRef`. A member write is a
+    // non-empty path, so it flows out of a `ByVal` formal too (`isout`); `ByRef` additionally
+    // carries a write at the formal's root, which only a reference can make the caller see. What the analysis *below*
     // the frontend does with a by-value aggregate is its own model (see the CPP_102 case).
     let src = r"
         struct Box { int v; void set(int x) { v = x; } };
@@ -2994,7 +2995,7 @@ fn cpp_class_parameter_modes_are_unchanged() {
     check_func_params(&prog, "by_value", &[ParameterType::ByVal]);
     check_func_params(&prog, "by_ref", &[ParameterType::ByRef]);
     check_func_params(&prog, "by_const_ref", &[ParameterType::ByVal]);
-    check_func_params(&prog, "by_ptr", &[ParameterType::ByRef]);
+    check_func_params(&prog, "by_ptr", &[ParameterType::ByVal]);
 }
 
 #[test_log::test]
@@ -3624,12 +3625,13 @@ fn cpp_same_arity_ctors_are_two_functions() {
         "Box::Box#1(int)",
         &[ParameterType::ByRef, ParameterType::ByVal],
     );
-    // A pointer parameter is `ByRef` (writes through it reach the caller's object), a plain
-    // `int` is `ByVal` -- the modes `param_head` always computed; only the *key* is new.
+    // A pointer parameter and a plain `int` are both `ByVal` (a write through the pointer is a
+    // non-empty path and still flows out) -- the modes `param_head` computes; only the *key*
+    // is new.
     check_func_params(
         &prog,
         "Box::Box#1(Box*)",
-        &[ParameterType::ByRef, ParameterType::ByRef],
+        &[ParameterType::ByRef, ParameterType::ByVal],
     );
     check_func_assign_or_update(&prog, "Box::Box#1(int)", "@p0.v", ["@p1"]);
     check_func_loads(&prog, "Box::Box#1(Box*)", "@p1.v");
@@ -3670,7 +3672,7 @@ fn cpp_same_arity_methods_and_free_functions_are_two_functions() {
     check_func_assign_or_update(&prog, "Box::set#1(int)", "@p0.v", ["@p1"]);
     check_func_loads(&prog, "Box::set#1(Box&)", "@p1.v");
     check_func_params(&prog, "f#1(int)", &[ParameterType::ByVal]);
-    check_func_params(&prog, "f#1(Box*)", &[ParameterType::ByRef]);
+    check_func_params(&prog, "f#1(Box*)", &[ParameterType::ByVal]);
     check_func_loads(&prog, "f#1(Box*)", "@p0.v");
 }
 
@@ -3687,7 +3689,7 @@ fn cpp_namespaced_same_arity_functions_are_two_functions() {
         }";
     let prog = program_from_cpp_string(src).0;
     check_func_params(&prog, "ns::f#1(int)", &[ParameterType::ByVal]);
-    check_func_params(&prog, "ns::f#1(Box*)", &[ParameterType::ByRef]);
+    check_func_params(&prog, "ns::f#1(Box*)", &[ParameterType::ByVal]);
     check_func_loads(&prog, "ns::f#1(Box*)", "@p0.v");
 }
 

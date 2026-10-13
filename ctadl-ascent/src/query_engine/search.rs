@@ -160,6 +160,31 @@ pub struct TaintSearchGraph {
     sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>>,
 }
 
+/// Whether a load at `q` off a vertex saturating at `p` reads a saturated value. Offsets
+/// are ignored (`[3].deref` is below `.deref`). A read at or below `p` does; a sibling
+/// field does not; a read of a parent of `p` does only when what remains below it is
+/// exactly `.deref`, i.e. it yields a pointer whose whole pointee is saturated. Any other
+/// parent read (a struct with one saturated field) is left to the path-precise load rule.
+fn saturating_read(q: &Path, p: &Path) -> bool {
+    let mut p = p.iter().filter(|s| s.is_symbol());
+    let mut q = q.iter().filter(|s| s.is_symbol());
+    loop {
+        match (p.next(), q.next()) {
+            (None, _) => return true,
+            (Some(a), Some(b)) if a == b => continue,
+            (Some(a), None) => return a.is_deref() && p.next().is_none(),
+            _ => return false,
+        }
+    }
+}
+
+/// True for a call's return vertex.
+fn is_call_return(v: &FlowVariable) -> bool {
+    v.as_call_arg()
+        .and_then(|c| CallArgId::try_from(c).ok())
+        .is_some_and(|c| c.formal == crate::codegen::RETURN_INDEX)
+}
+
 impl TaintSearchGraph {
     pub fn new(facts: &QueryFacts) -> Self {
         let mut assign_by_src: HashMap<
@@ -205,7 +230,14 @@ impl TaintSearchGraph {
         let mut copies_by_dst: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>> =
             HashMap::default();
         for (f, dst, dp, src, sp) in &facts.assign {
-            if dp.is_empty() && sp.is_empty() && dst.as_formal().is_none() && dst != src {
+            if dp.is_empty()
+                && sp.is_empty()
+                && dst.as_formal().is_none()
+                && dst != src
+                // A call's return is derived from the arguments by summary edges, not a copied
+                // reference, so the object hop must not cross it.
+                && !is_call_return(dst)
+            {
                 copies_by_dst.entry((*f, *dst)).or_default().push(*src);
             }
         }
@@ -274,9 +306,11 @@ impl LazySuccessors for TaintSearchGraph {
         }
 
         // Field-alias back-flow: a load `x = a.q` makes `x` an alias of `a.q`,
-        // so taint on `x.p` also lives at `a.(q·p)`. The empty-`p` step is
-        // ungated (its path `q` is already materialized, coming off an assign);
-        // an extended path is subject to the materialized-paths gate. The
+        // so taint on `x.p` also lives at `a.(q·p)`, subject to the
+        // materialized-paths gate. There is no empty-`p` step: taint on `x`
+        // itself is about the value `x` holds, not the field it was read from,
+        // and following it back put a tainted call return onto the fields its
+        // summary read (tests/tnt/callsite_smear_field.tnt). The
         // closure engine additionally gated its alias seeding on the base being
         // tainted — a flooding mitigation the demand-driven expansion doesn't
         // need, since only reached states are ever expanded.
@@ -284,9 +318,7 @@ impl LazySuccessors for TaintSearchGraph {
         // `a.(q·p)` is about all of them: `All`.
         if let Some(loads) = self.loads_by_dst.get(&(f, v)) {
             for (a, q) in loads {
-                if p.is_empty() {
-                    out.push(((f, *a, *q, level, ObjectScope::All), FlowEdge::Intra));
-                } else {
+                if !p.is_empty() {
                     let qp = q.concat(&p);
                     if self.paths.contains(&qp) {
                         out.push(((f, *a, qp, level, ObjectScope::All), FlowEdge::Intra));
@@ -313,18 +345,20 @@ impl LazySuccessors for TaintSearchGraph {
             }
         }
 
-        // Saturating vertex-level read: any subfield/offset read off a
-        // saturating vertex is tainted, regardless of the tainted path `p` and
-        // without the materialized-paths gate. For every load `x = v.q` off
-        // this vertex, taint the destination `x` (at the empty path) and keep it
-        // `Saturating`, so saturation fills the whole access-path subtree
-        // (recursively). This is what reconnects `@p1_0.[8].deref` to the
-        // saturating `@p1_0`. Plain nodes get no such edges, so precise sources
-        // (e.g. `getenv`) keep their path-sensitive behavior and cannot
-        // over-taint.
+        // Saturating vertex-level read: a subfield/offset read off a saturating vertex
+        // within `p`'s subtree (or of a pointer to it; see `saturating_read`) is tainted,
+        // without the materialized-paths gate. For every load `x = v.q` off this vertex,
+        // taint the destination `x` (at the empty path) and keep it `Saturating`, so
+        // saturation fills the whole access-path subtree (recursively). This is what
+        // reconnects `@p1_0.[8].deref` to the saturating `@p1_0`. Plain nodes get no such
+        // edges, so precise sources (e.g. `getenv`) keep their path-sensitive behavior and
+        // cannot over-taint.
         if level == TaintLevel::Saturating {
             if let Some(loads) = self.loads_by_src.get(&(f, v)) {
-                for (dst, _q) in loads {
+                for (dst, q) in loads {
+                    if !saturating_read(q, &p) {
+                        continue;
+                    }
                     out.push((
                         (
                             f,
