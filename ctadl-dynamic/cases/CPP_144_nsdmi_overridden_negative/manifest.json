@@ -1,0 +1,6 @@
+{
+  "name": "CPP_144_nsdmi_overridden_negative",
+  "description": "C++ default member initializers (spec 028), NEGATIVE: `int v = source(); B() : v(0)` -- an explicit initializer replaces the default. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

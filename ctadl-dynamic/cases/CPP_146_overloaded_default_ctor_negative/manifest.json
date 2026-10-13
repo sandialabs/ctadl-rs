@@ -1,0 +1,6 @@
+{
+  "name": "CPP_146_overloaded_default_ctor_negative",
+  "description": "C++ default construction (spec 028), NEGATIVE: `B b;` with B() : v(0) and B(int x) : v(x) -- only the niladic ctor runs. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

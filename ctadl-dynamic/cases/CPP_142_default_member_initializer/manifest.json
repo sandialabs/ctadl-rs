@@ -1,0 +1,6 @@
+{
+  "name": "CPP_142_default_member_initializer",
+  "description": "C++ default member initializers (spec 028), POSITIVE: `struct B { int v = source(); }; B b; sink(b.get())` -- the synthesized implicit default constructor runs the initializer. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -618,8 +618,17 @@ fn cpp_collect_methods<'a>(
         /// A constructor's member-initializer list as `(member, init-expr)` pairs; empty
         /// for an ordinary method and for a constructor written without one.
         member_inits: Vec<(String, Node<'t>)>,
+        /// Whether this is a constructor (copy constructors and the synthesized implicit
+        /// default constructor included), which applies the class's default member
+        /// initializers to every member its own list leaves out (spec 028).
+        is_ctor: bool,
     }
     let mut methods: Vec<MethodDef<'_>> = Vec::new();
+    // Each class's default member initializers (`int v = e;` / `int v{e};`) and the opening
+    // brace of its body, which stands in for the empty parameter list and body of a synthesized
+    // implicit default constructor (spec 028).
+    let mut nsdmis: HashMap<String, Vec<(String, Node<'_>)>> = HashMap::new();
+    let mut class_anchor: HashMap<String, Node<'_>> = HashMap::new();
 
     // Phase 1: scan classes, populate `ctx.classes`, collect method bodies. The query
     // cursor borrows the tree (not `ctx`), so populating `ctx.classes` here is fine.
@@ -660,12 +669,28 @@ fn cpp_collect_methods<'a>(
                     // reference inside a method resolves to the global `Class::<member>` rather
                     // than `this.<member>` (spec 015). A plain data member is not static.
                     let is_static = has_static_specifier(child, source);
+                    // A default member initializer: `= e` is the expression, `{e}` its one
+                    // element (spec 028). A static member's initializer is a global's, not a
+                    // constructor's.
+                    let default_value = child
+                        .child_by_field_name("default_value")
+                        .filter(|_| !is_static)
+                        .and_then(|dv| match dv.kind() {
+                            "initializer_list" => dv.named_child(0),
+                            _ => Some(dv),
+                        });
                     let mut dc = child.walk();
                     for declr in child.children_by_field_name("declarator", &mut dc) {
                         if let Some(name) = member_name(declr, source) {
                             info.members.insert(name.to_string());
                             if is_static {
                                 info.static_members.insert(name.to_string());
+                            }
+                            if let Some(init) = default_value {
+                                nsdmis
+                                    .entry(qualified_name.clone())
+                                    .or_default()
+                                    .push((name.to_string(), init));
                             }
                         }
                     }
@@ -756,6 +781,7 @@ fn cpp_collect_methods<'a>(
                             returns_member: None,
                             is_static: false,
                             member_inits: Vec::new(),
+                            is_ctor: false,
                         });
                     } else if is_ctor {
                         // A constructor returns no value and writes the object via `this`;
@@ -784,6 +810,7 @@ fn cpp_collect_methods<'a>(
                             returns_member: None,
                             is_static: false,
                             member_inits: ctor_member_inits(child, source),
+                            is_ctor: true,
                         });
                     } else {
                         // A `static` member function has no implicit `this`: it is a receiver-less
@@ -832,11 +859,15 @@ fn cpp_collect_methods<'a>(
                             returns_member,
                             is_static,
                             member_inits: Vec::new(),
+                            is_ctor: false,
                         });
                     }
                 }
                 _ => {}
             }
+        }
+        if let Some(brace) = body.child(0) {
+            class_anchor.insert(qualified_name.clone(), brace);
         }
         ctx.classes.insert(qualified_name, info);
     }
@@ -968,6 +999,7 @@ fn cpp_collect_methods<'a>(
                     // definition); an out-of-line definition here is always an instance method.
                     is_static: false,
                     member_inits,
+                    is_ctor,
                 },
             ));
         }
@@ -991,6 +1023,43 @@ fn cpp_collect_methods<'a>(
             }
         }
         methods.push(md);
+    }
+
+    // Phase 1.6 (spec 028): default member initializers. A class that declares no constructor
+    // but has some gets the implicit default constructor C++ defines for it, so `B b;` runs
+    // them; its parameter list and body are the class body's opening brace, which lowers to
+    // nothing. Then every constructor applies the defaults for the members its own initializer
+    // list leaves out.
+    for (class, defaults) in &nsdmis {
+        let Some(info) = ctx.classes.get_mut(class) else {
+            continue;
+        };
+        if info.has_ctor || defaults.is_empty() {
+            continue;
+        }
+        let Some(anchor) = class_anchor.get(class).copied() else {
+            continue;
+        };
+        info.has_ctor = true;
+        methods.push(MethodDef {
+            class: class.clone(),
+            name: class.clone(),
+            params: anchor,
+            body: anchor,
+            void: true,
+            returns_self: false,
+            returns_member: None,
+            is_static: false,
+            member_inits: Vec::new(),
+            is_ctor: true,
+        });
+    }
+    for md in methods.iter_mut().filter(|md| md.is_ctor) {
+        for (member, init) in nsdmis.get(&md.class).into_iter().flatten() {
+            if !md.member_inits.iter().any(|(m, _)| m == member) {
+                md.member_inits.push((member.clone(), *init));
+            }
+        }
     }
 
     // Phase 1.75: record which parameters of every function this unit defines are class objects
@@ -1416,6 +1485,8 @@ fn cpp_try_construct<'a>(
             }
             (obj_node, args, shapes, copy)
         }
+        // Default construction `Box b;` runs the default constructor (spec 028).
+        "identifier" => (declr, ThinVec::new(), Vec::new(), false),
         // Copy/brace init: `Box b = Box(args)` / `Box b{args}`.
         "init_declarator" => {
             let Some(obj_node) = declr

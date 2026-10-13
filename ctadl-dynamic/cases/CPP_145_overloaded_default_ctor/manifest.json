@@ -1,0 +1,6 @@
+{
+  "name": "CPP_145_overloaded_default_ctor",
+  "description": "C++ default construction (spec 028), POSITIVE: `B b;` with ctors B() (taints v) and B(int) -- arity 0 resolves to B::B#0. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_143_nsdmi_with_user_ctor",
+  "description": "C++ default member initializers (spec 028), POSITIVE: `int v = source();` with a user ctor `B(int x) : w(x)` that does not name v -- the ctor applies v's default. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

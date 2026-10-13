@@ -4248,3 +4248,52 @@ fn cpp_temporary_destructor_runs_at_scope_exit() {
         "the temporary is destroyed\n{prog}"
     );
 }
+
+// ---- Spec 028: default construction and default member initializers --------------------------
+
+#[test_log::test]
+fn cpp_default_declaration_runs_the_default_ctor() {
+    // FR-1: `B b;` constructs `b` through the niladic constructor, with `b` as the receiver.
+    let src = r"
+        struct B { int v; B() : v(0) {} };
+        int main() { B b; return b.v; }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "main", "B::B");
+}
+
+#[test_log::test]
+fn cpp_ctor_applies_default_member_initializers() {
+    // FR-2: a constructor stores the default of every member its list leaves out, and not of
+    // one it names.
+    let src = r"
+        struct B { int v = 1; int w = 2; B(int x) : w(x) {} };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_assign_or_update(&prog, "B::B", "@p0.v", ["#1"]);
+    check_func_assign_or_update(&prog, "B::B", "@p0.w", ["@p1"]);
+    assert_eq!(
+        function_named(&prog, "B::B")
+            .map(|f| format!("{f}").matches("@p0.w").count())
+            .unwrap_or_default(),
+        1,
+        "w is initialized once, by the list\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_implicit_default_ctor_is_synthesized_for_default_member_initializers() {
+    // FR-3: a constructor-less class with defaults gets `B::B(this)` storing them; a class with
+    // neither gets nothing.
+    let src = r"
+        struct B { int v = 7; int w{8}; };
+        struct Plain { int v; };
+        int main() { B b; Plain p; return b.v + p.v; }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(&prog, "B::B", &[ParameterType::ByRef]);
+    check_func_assign_or_update(&prog, "B::B", "@p0.v", ["#7"]);
+    check_func_assign_or_update(&prog, "B::B", "@p0.w", ["#8"]);
+    check_has_direct_call(&prog, "main", "B::B");
+    assert!(
+        function_named(&prog, "Plain::Plain").is_none(),
+        "no constructor is invented for a class without defaults\n{prog}"
+    );
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_141_default_ctor_runs",
+  "description": "C++ default construction (spec 028), POSITIVE: `B b; sink(b.get())` where B() : v(source()). The bare declaration now runs the default constructor. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
