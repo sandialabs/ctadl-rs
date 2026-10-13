@@ -1,0 +1,7 @@
+{
+  "name": "CPP_257_template_param_dispatch_precision",
+  "description": "C++ template-dependent calls (spec 043), NEGATIVE: run<B>(b, source()) reaches A::handle as well as B::handle -- labelled precision gap dependent-name-dispatch. s=flow d=none.",
+  "label": "Test",
+  "expect_flow": false,
+  "precision_gap": "dependent-name-dispatch"
+}

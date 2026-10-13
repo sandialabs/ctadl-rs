@@ -1,0 +1,6 @@
+{
+  "name": "CPP_254_template_param_method",
+  "description": "C++ template-dependent calls (spec 043), POSITIVE: `template <class T> void run(T& t, int x) { t.handle(x); }`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_253_crtp",
+  "description": "C++ template-dependent calls (spec 043), POSITIVE: CRTP Base<D>::run -> static_cast<D*>(this)->impl(x). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_255_template_member_of_param_type",
+  "description": "C++ template-dependent calls (spec 043), POSITIVE: Wrap<T> { T inner; read() calls inner.get() }. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

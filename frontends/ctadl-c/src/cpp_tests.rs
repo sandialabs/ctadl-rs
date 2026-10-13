@@ -4979,3 +4979,45 @@ fn cpp_new_is_an_expression() {
     check_has_direct_call(&prog, "F::F", "Impl::Impl");
     check_has_direct_call(&prog, "g", "Impl::Impl");
 }
+
+// ---- Spec 043: calls on template-dependent receivers -------------------------------------------
+
+#[test_log::test]
+fn cpp_dependent_receiver_reaches_every_class_declaring_the_method() {
+    // FR-1: `t.handle(x)` with `T& t` reaches `A::handle` and `B::handle`; `static_cast<D*>(this)`
+    // (CRTP) and a member of a template-parameter type are dependent too.
+    let src = r"
+        struct A { int v; void handle(int x) { v = x; } };
+        struct B { int v; void handle(int x) { v = 0; } };
+        template <class T> void run(T& t, int x) { t.handle(x); }
+        template <class D> struct Base { void go(int x) { static_cast<D*>(this)->handle(x); } };
+        template <class T> struct Wrap { T inner; void go(int x) { inner.handle(x); } };";
+    let prog = program_from_cpp_string(src).0;
+    for name in ["run", "Base::go", "Wrap::go"] {
+        let calls = direct_calls_in(&prog, name);
+        assert_eq!(calls.len(), 1, "{name}\n{prog}");
+        let (targets, _) = &calls[0];
+        assert!(
+            targets.contains(&"A::handle".to_string())
+                && targets.contains(&"B::handle".to_string()),
+            "{name}: every class declaring handle\n{prog}"
+        );
+    }
+}
+
+#[test_log::test]
+fn cpp_non_dependent_unknown_receiver_is_not_dispatched_by_name() {
+    // The name-based fallback is only for template parameters: outside a template, an unknown
+    // receiver's call is left as it was.
+    let src = r"
+        struct A { int v; void handle(int x) { v = x; } };
+        struct C { int (*handle)(int); };
+        int f(C c, int x) { return c.handle(x); }";
+    let prog = program_from_cpp_string(src).0;
+    assert!(
+        !direct_calls_in(&prog, "f")
+            .iter()
+            .any(|(t, _)| t.contains(&"A::handle".to_string())),
+        "{prog}"
+    );
+}

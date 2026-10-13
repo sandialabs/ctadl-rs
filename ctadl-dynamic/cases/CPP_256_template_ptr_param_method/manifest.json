@@ -1,0 +1,6 @@
+{
+  "name": "CPP_256_template_ptr_param_method",
+  "description": "C++ template-dependent calls (spec 043), POSITIVE: `template <class T> void feed(T* t, int x) { t->take(x); }`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

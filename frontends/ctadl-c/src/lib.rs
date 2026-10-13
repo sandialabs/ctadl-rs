@@ -1276,6 +1276,12 @@ struct Context<'a> {
     /// The class type each free function returns by value, by its base IR name (spec 041); see
     /// [`ClassInfo::returns_object`]. Filled by the C++ `collect_aux` hook; empty for C.
     function_returns_object: HashMap<String, String>,
+    /// The C++ template parameters in scope of the function being lowered (`T`, `D`), and the
+    /// locals and parameters declared with one as their type (spec 043). A method call on such a
+    /// receiver reaches every class declaring the method. Set by the `function_scan` hook, reset
+    /// per function; empty for C.
+    template_params: HashSet<String>,
+    local_dependent: HashSet<String>,
     /// Overloaded-by-arity names: an IR **base name** (a free function's bare/qualified name
     /// `f` / `ns::f`, or a method's qualified `Class::method`) mapped to the set of explicit
     /// **arities** (parameter counts, `this` excluded) defined under it. A name is *overloaded*
@@ -1652,6 +1658,8 @@ impl Context<'_> {
             lookup_prefixes: Vec::new(),
             post_call_copies: Vec::new(),
             function_returns_object: HashMap::default(),
+            template_params: HashSet::default(),
+            local_dependent: HashSet::default(),
             overloads: HashMap::default(),
             local_pointers: HashSet::default(),
             byval_class_params: HashMap::default(),
@@ -6399,6 +6407,142 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// Whether `node` is a receiver whose type is a C++ template parameter (spec 043): a local or
+    /// parameter declared with one, a member of one (`inner`, `this->inner`), or a named cast to
+    /// one (`static_cast<D*>(this)`, CRTP). Always `false` for C.
+    fn is_dependent(&self, node: Node<'_>, source: &str, scope_view: &ScopeView) -> bool {
+        if self.template_params.is_empty() {
+            return false;
+        }
+        let member_is_dependent = |member: &str| {
+            self.current_method_class
+                .as_ref()
+                .and_then(|class| self.classes.get(class))
+                .is_some_and(|info| {
+                    info.member_objects
+                        .iter()
+                        .chain(info.member_pointers.iter())
+                        .any(|(m, ty)| m == member && self.template_params.contains(ty))
+                })
+        };
+        match node.kind() {
+            "identifier" => {
+                let name = to_str(&node, source);
+                if self.local_dependent.contains(name) {
+                    return true;
+                }
+                self.scope_tree
+                    .find_variable(scope_view.sidx, name)
+                    .is_none()
+                    && member_is_dependent(name)
+            }
+            "field_expression" => {
+                node.child_by_field_name("argument")
+                    .is_some_and(|a| a.kind() == "this")
+                    && node
+                        .child_by_field_name("field")
+                        .is_some_and(|f| member_is_dependent(to_str(&f, source)))
+            }
+            "parenthesized_expression" | "pointer_expression" => node
+                .child_by_field_name("argument")
+                .or_else(|| first_named_child(node))
+                .is_some_and(|inner| self.is_dependent(inner, source, scope_view)),
+            "call_expression" => node
+                .child_by_field_name("function")
+                .filter(|f| f.kind() == "template_function")
+                .and_then(|f| f.child_by_field_name("arguments"))
+                .is_some_and(|targs| {
+                    let mut c = targs.walk();
+                    targs.named_children(&mut c).any(|t| {
+                        t.child_by_field_name("type")
+                            .is_some_and(|ty| self.template_params.contains(to_str(&ty, source)))
+                    })
+                }),
+            _ => false,
+        }
+    }
+
+    /// A method call on a receiver whose type is a C++ template parameter (spec 043). A template
+    /// is lowered once for all of its instances, so the call reaches `method` in **every** class
+    /// that declares it, by arity and shape: a sound superset of whichever class an instance
+    /// supplies. The receiver is passed as the value at its location, written back when that
+    /// location has a path. `None`, with nothing emitted, unless the receiver is dependent and
+    /// some class declares the method.
+    #[allow(clippy::too_many_arguments)]
+    fn dependent_call(
+        &mut self,
+        program: &mut Program,
+        call_node: Node<'_>,
+        recv_node: Node<'_>,
+        method: &str,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+        temp_name: String,
+    ) -> Result<Option<DispatchOut>, Error> {
+        if !self.is_dependent(recv_node, source, scope_view) {
+            return Ok(None);
+        }
+        let mut owners: Vec<String> = self
+            .classes
+            .iter()
+            .filter(|(_, info)| info.methods.contains(method))
+            .map(|(class, _)| class.clone())
+            .collect();
+        if owners.is_empty() {
+            return Ok(None);
+        }
+        owners.sort();
+        let arg_node = call_node
+            .child_by_field_name("arguments")
+            .expect("call_expression always has arguments");
+        let shapes = self.arg_shapes(arg_node, source);
+        let args = self.collect_arguments(program, arg_node, source, scope_view)?;
+        let targets: ThinVec<String> = owners
+            .iter()
+            .flat_map(|class| {
+                self.overload_targets(&format!("{class}::{method}"), args.len(), &shapes)
+            })
+            .collect();
+        let location = match recv_node.kind() {
+            "identifier" => self.build_access_path(
+                to_str(&recv_node, source),
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            ),
+            "field_expression" => self.flatten_lvalue(program, recv_node, source, scope_view)?,
+            _ => match self.flatten_expr(program, recv_node, source, scope_view)? {
+                Exp::Variable(v) => RawPath::new(v, ThinVec::new()),
+                Exp::AccessPath(ap) => raw_path_of(&ap),
+                _ => return Ok(None),
+            },
+        };
+        let recv = Exp::access_path(self.emit_loads(program, scope_view, location.clone()));
+        let mut call_args: ThinVec<Exp> = ctadl_ir::thin_vec![recv.clone()];
+        call_args.extend(args);
+        let ret =
+            VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name));
+        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+            StatementKind::CallAssign {
+                style: CallStyle::DirectCall {
+                    call_edges: CallEdges::Explicit(targets),
+                },
+                rets: ctadl_ir::thin_vec![ret.clone()],
+                args: call_args,
+            },
+        ));
+        if !location.is_pathless() {
+            self.add_assign_to_program(program, scope_view, &location, &recv, None);
+        }
+        self.emit_post_call_copies(program, scope_view);
+        Ok(Some(DispatchOut {
+            value: Exp::Variable(ret),
+            aliased: None,
+            location: None,
+            returns_object: None,
+        }))
+    }
+
     /// The receiver of an unqualified call `m(args)` inside a member function (spec 035): `this`,
     /// when the enclosing class or a base declares an instance method `m`, the function has an
     /// implicit `this`, and no local or parameter shadows `m`. A class's members hide outer
@@ -6525,7 +6669,16 @@ impl<'a> Context<'a> {
                     .expect("field_expression always has a field");
                 let Some(recv) = self.resolve_recv_obj(program, recv_node, source, scope_view)?
                 else {
-                    return Ok(None);
+                    // A receiver whose type is a template parameter (spec 043).
+                    return self.dependent_call(
+                        program,
+                        call_node,
+                        recv_node,
+                        to_str(&field_node, source),
+                        source,
+                        scope_view,
+                        temp_name,
+                    );
                 };
                 (recv, to_str(&field_node, source))
             }
@@ -7228,6 +7381,8 @@ impl<'a> Context<'a> {
         self.reference_aliases.clear();
         self.captured_globals.clear();
         self.post_call_copies.clear();
+        self.template_params.clear();
+        self.local_dependent.clear();
         self.lookup_prefixes = scope_prefixes(func_name);
         self.current_method_class = class_context.map(str::to_string);
         // Address-of aliases are function-local and confined to a straight-line block.

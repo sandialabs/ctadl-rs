@@ -3125,6 +3125,7 @@ fn cpp_function_scan<'a>(
     body: Node<'_>,
     source: &'a str,
 ) -> anyhow::Result<(), Error> {
+    collect_template_scope(ctx, body, source);
     if let Some(owner) = body.parent()
         && owner.kind() == "lambda_expression"
     {
@@ -3270,6 +3271,83 @@ fn captured_class(
         scope = enclosing_body(body);
     }
     None
+}
+
+/// The template parameters in scope of `body` -- every enclosing `template_declaration`'s type
+/// parameters -- and the parameters and locals declared with one (`T t`, `T& t`, `T* t`), into
+/// `Context::template_params` / `Context::local_dependent` (spec 043).
+fn collect_template_scope(ctx: &mut Context<'_>, body: Node<'_>, source: &str) {
+    let mut cur = body.parent();
+    while let Some(n) = cur {
+        if n.kind() == "template_declaration"
+            && let Some(params) = n.child_by_field_name("parameters")
+        {
+            let mut c = params.walk();
+            for param in params.named_children(&mut c) {
+                if matches!(
+                    param.kind(),
+                    "type_parameter_declaration" | "variadic_type_parameter_declaration"
+                ) {
+                    let mut pc = param.walk();
+                    if let Some(name) = param
+                        .named_children(&mut pc)
+                        .find(|p| p.kind() == "type_identifier")
+                    {
+                        ctx.template_params
+                            .insert(to_str(&name, source).to_string());
+                    }
+                }
+            }
+        }
+        cur = n.parent();
+    }
+    if ctx.template_params.is_empty() {
+        return;
+    }
+    let mut decls: Vec<Node<'_>> = Vec::new();
+    if let Some(owner) = body.parent()
+        && let Some(declarator) = owner.child_by_field_name("declarator")
+    {
+        let params = match owner.kind() {
+            "function_definition" => function_declarator_of(declarator)
+                .and_then(|(fd, _)| fd.child_by_field_name("parameters")),
+            _ => declarator.child_by_field_name("parameters"),
+        };
+        if let Some(params) = params {
+            let mut c = params.walk();
+            decls.extend(params.named_children(&mut c));
+        }
+    }
+    let mut stack = vec![body];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "declaration" {
+            decls.push(n);
+        }
+        let mut c = n.walk();
+        for child in n.named_children(&mut c) {
+            if child.kind() != "lambda_expression" {
+                stack.push(child);
+            }
+        }
+    }
+    for decl in decls {
+        let dependent = decl
+            .child_by_field_name("type")
+            .is_some_and(|t| ctx.template_params.contains(to_str(&t, source)));
+        if !dependent {
+            continue;
+        }
+        let mut c = decl.walk();
+        for d in decl.children_by_field_name("declarator", &mut c) {
+            let inner = match d.kind() {
+                "init_declarator" => d.child_by_field_name("declarator").unwrap_or(d),
+                _ => d,
+            };
+            if let Some(name) = declarator_leaf_ident(inner, source) {
+                ctx.local_dependent.insert(name.to_string());
+            }
+        }
+    }
 }
 
 /// Whether a lambda body returns a value (`return e;`), nested lambdas aside.
