@@ -472,7 +472,7 @@ impl FlowyCtx {
             let p = p.into_inner().next().unwrap();
             match p.as_rule() {
                 Rule::function_def => {
-                    let name = p.clone().into_inner().next().unwrap().as_str().to_string();
+                    let name = p.clone().into_inner().nth(1).unwrap().as_str().to_string();
                     defined_functions.insert(name);
                     func_defs.push(p);
                 }
@@ -498,7 +498,7 @@ impl FlowyCtx {
         let mut env: Env = Default::default();
         env.globals.extend(self.toplevel_vars.iter().cloned());
 
-        let mut kids = pair.into_inner();
+        let mut kids = pair.into_inner().skip(1); // kw_def
         let name_parse = kids.next().unwrap();
         let name: String = name_parse.as_str().into();
         if ["source", "sink", "errsource", "errsink"]
@@ -582,7 +582,7 @@ impl FlowyCtx {
 
     fn parse_var_def(&mut self, pair: Pair<'_, Rule>) -> Result<(), FlowyError> {
         // We just need to record this typing up references to this global
-        let v = pair.into_inner().next().unwrap();
+        let v = pair.into_inner().nth(1).unwrap();
         self.toplevel_vars.insert(v.as_str().to_string());
         Ok(())
     }
@@ -1078,7 +1078,7 @@ impl FlowyCtx {
                 data.push_back(Statement::new(call, source_info));
             }
             Rule::return_stmt => {
-                let mut inner = stmt_pair.into_inner();
+                let mut inner = stmt_pair.into_inner().skip(1); // kw_return
                 let terminator = match inner.next() {
                     Some(var) => {
                         let r = parse_ref(locals, local_table, var, defined_functions);
@@ -1122,7 +1122,7 @@ impl FlowyCtx {
                 (
                     GotoTargets {
                         targets: targets
-                            .into_iter()
+                            .skip(1) // kw_goto
                             .map(|t| BlockLabel(t.as_str().to_string()))
                             .collect(),
                         source_info,
@@ -1144,7 +1144,7 @@ impl FlowyCtx {
     fn parse_where_clause(&mut self, pair: Pair<'_, Rule>, locals: &Env, function: FunctionIdx) {
         assert!(pair.as_rule() == Rule::where_clause);
         pair.into_inner()
-            .next()
+            .nth(2)
             .unwrap()
             .into_inner()
             .for_each(|e| self.parse_summary_entry(e, locals, function))
@@ -1448,7 +1448,7 @@ fn parse_ref(
             ParsedRef::Value(Exp::Str(first.into_inner().next().unwrap().as_str().into()))
         }
         Rule::function_ptr => {
-            let name = first.into_inner().next().unwrap().as_str();
+            let name = first.into_inner().nth(1).unwrap().as_str();
             if !defined_functions.contains(name) {
                 log::warn!("function '{}' is not defined", name);
             }

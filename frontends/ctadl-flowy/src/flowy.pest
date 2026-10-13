@@ -55,27 +55,17 @@ summaries = {
 
 
 // A keyword must not run into an identifier: `returnx;` is a parse error, not `return x;`. The
-// boundary check has to be atomic (in a normal rule, `"return" ~ !ident_char` skips whitespace
-// before checking), but an atomic rule would add a pair to the parse tree. So each keyword is a
-// lookahead on an atomic rule, which leaves no pair, followed by the silent literal.
-kw_var = _{ &kw_var_word ~ "var" }
-kw_def = _{ &kw_def_word ~ "def" }
-kw_byref = _{ &kw_byref_word ~ "byref" }
-kw_byval = _{ &kw_byval_word ~ "byval" }
-kw_where = _{ &kw_where_word ~ "where" }
-kw_summaries = _{ &kw_summaries_word ~ "summaries" }
-kw_goto = _{ &kw_goto_word ~ "goto" }
-kw_return = _{ &kw_return_word ~ "return" }
-kw_ptr = _{ &kw_ptr_word ~ "ptr" }
-kw_var_word = @{ "var" ~ !ident_char }
-kw_def_word = @{ "def" ~ !ident_char }
-kw_byref_word = @{ "byref" ~ !ident_char }
-kw_byval_word = @{ "byval" ~ !ident_char }
-kw_where_word = @{ "where" ~ !ident_char }
-kw_summaries_word = @{ "summaries" ~ !ident_char }
-kw_goto_word = @{ "goto" ~ !ident_char }
-kw_return_word = @{ "return" ~ !ident_char }
-kw_ptr_word = @{ "ptr" ~ !ident_char }
+// boundary check has to be atomic: in a normal rule, `"return" ~ !ident_char` skips whitespace
+// before checking.
+kw_var = @{ "var" ~ !ident_char }
+kw_def = @{ "def" ~ !ident_char }
+kw_byref = @{ "byref" ~ !ident_char }
+kw_byval = @{ "byval" ~ !ident_char }
+kw_where = @{ "where" ~ !ident_char }
+kw_summaries = @{ "summaries" ~ !ident_char }
+kw_goto = @{ "goto" ~ !ident_char }
+kw_return = @{ "return" ~ !ident_char }
+kw_ptr = @{ "ptr" ~ !ident_char }
 ident_char = _{ ASCII_ALPHANUMERIC | "_" }
 
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
