@@ -1,0 +1,6 @@
+{
+  "name": "CPP_124_reinterpret_cast_roundtrip",
+  "description": "C++ named casts (spec 025), POSITIVE: `&x` round-tripped through `reinterpret_cast<long>` and `reinterpret_cast<int*>`; `*q` reads x. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -4033,3 +4033,72 @@ fn cpp_derived_object_matches_a_base_parameter() {
         "a derived object must not cross-resolve to the int overload\n{prog}"
     );
 }
+
+// ---- Spec 025: named and functional casts ---------------------------------------------------
+
+#[test_log::test]
+fn cpp_named_casts_are_their_operand() {
+    // FR-1: `static_cast<T>(e)` and kin parse as a call whose callee is a `template_function`;
+    // each is the value of its operand, so the parameter reaches the return through every one,
+    // and no call to a function named after the cast is emitted.
+    let src = r"
+        long a(int p) { return static_cast<long>(p); }
+        long b(int p) { return reinterpret_cast<long>(p); }
+        int c(const int p) { return const_cast<int>(p); }
+        int d(int p) { return dynamic_cast<int>(p); }";
+    let prog = program_from_cpp_string(src).0;
+    for name in ["a", "b", "c", "d"] {
+        assert!(
+            direct_calls_in(&prog, name).is_empty(),
+            "a named cast is not a call in `{name}`\n{prog}"
+        );
+    }
+    let (s, si) = get_summary(prog).unwrap();
+    for name in ["a", "b", "c", "d"] {
+        check_returns_param_in(&s, &si, name, 0, "");
+    }
+}
+
+#[test_log::test]
+fn cpp_functional_casts_are_their_operand() {
+    // FR-2: `int(e)` (a `primitive_type` callee), `long(e)` / `unsigned(e)` (the grammar reads a
+    // lone size keyword as an `identifier`) and `wide_t(e)` for a typedef name are conversions.
+    let src = r"
+        typedef long wide_t;
+        int a(int p) { return int(p); }
+        long b(int p) { return long(p); }
+        unsigned c(int p) { return unsigned(p); }
+        wide_t d(int p) { return wide_t(p); }";
+    let prog = program_from_cpp_string(src).0;
+    for name in ["a", "b", "c", "d"] {
+        assert!(
+            direct_calls_in(&prog, name).is_empty(),
+            "a functional cast is not a call in `{name}`\n{prog}"
+        );
+    }
+    let (s, si) = get_summary(prog).unwrap();
+    for name in ["a", "b", "c", "d"] {
+        check_returns_param_in(&s, &si, name, 0, "");
+    }
+}
+
+#[test_log::test]
+fn cpp_cast_in_store_position_names_the_operand() {
+    // FR-1 on the location side: `*static_cast<int*>(p) = v` stores through `p`, exactly as
+    // `*p = v` does.
+    let src = r"
+        void put(int* p, int v) { *static_cast<int*>(p) = v; }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_assign_or_update(&prog, "put", "@p0.deref", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_call_to_a_function_is_not_a_cast() {
+    // The boundary: a callee naming a function is still a call, even one whose name a typedef
+    // elsewhere could have claimed.
+    let src = r"
+        int conv(int x) { return x; }
+        int f(int p) { return conv(p); }";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "f", "conv", ["@p0"]);
+}

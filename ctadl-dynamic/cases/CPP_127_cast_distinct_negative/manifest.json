@@ -1,0 +1,6 @@
+{
+  "name": "CPP_127_cast_distinct_negative",
+  "description": "C++ casts (spec 025), NEGATIVE: `sink(static_cast<int>(y) + int(y))` with only x tainted. A cast is exactly its operand, so nothing reaches the sink. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

@@ -1060,7 +1060,9 @@ struct GrammarHooks {
     /// -- C++ operator overloading (spec 023). `a = x` is `a.operator=(x)`, `a += x` is
     /// `a.operator+=(x)`, `a[i]` is `a.operator[](i)` and `f(args)` is `f.operator()(args)`
     /// whenever the operand is an object of a class that declares that operator; the taint such
-    /// a body moves is only observed if the call is emitted.
+    /// a body moves is only observed if the call is emitted. A C++ named cast
+    /// (`static_cast<T>(e)` and kin) or functional cast (`int(e)`) is a built-in operator the
+    /// grammar also spells as a call; the hook answers it with its operand's value (spec 025).
     ///
     /// The three shared arms that lower those shapes -- the `assignment_expression` and
     /// `call_expression` arms of [`Context::flatten_expr`], and [`Context::flatten_subscript`] --

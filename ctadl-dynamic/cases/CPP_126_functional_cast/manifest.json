@@ -1,0 +1,6 @@
+{
+  "name": "CPP_126_functional_cast",
+  "description": "C++ functional casts (spec 025), POSITIVE: `long l = long(x); sink(int(l))` with x tainted. Both parse as calls (to an `identifier` `long` and a `primitive_type` `int`) and must lower as their operand. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

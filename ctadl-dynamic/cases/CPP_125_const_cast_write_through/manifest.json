@@ -1,0 +1,6 @@
+{
+  "name": "CPP_125_const_cast_write_through",
+  "description": "C++ named casts (spec 025), POSITIVE: `*const_cast<int*>(p) = source()` in a callee reaches the caller's x through the address-taken cell. The cast sits in store position, so the location resolves through it. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

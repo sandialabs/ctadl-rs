@@ -1,0 +1,6 @@
+{
+  "name": "CPP_123_static_cast_value",
+  "description": "C++ named casts (spec 025), POSITIVE: `long l = static_cast<long>(source()); sink(static_cast<int>(l))`. The grammar spells a named cast as a call to a `template_function`; it must lower as its operand (value-preserving), not as a call to an undefined `static_cast<long>`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

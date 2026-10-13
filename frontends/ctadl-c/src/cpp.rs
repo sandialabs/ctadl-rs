@@ -2208,6 +2208,12 @@ fn cpp_operator_call<'a>(
             let callee = node
                 .child_by_field_name("function")
                 .expect("call_expression always has a function");
+            // A named or functional cast is a built-in operator too, spelled as a call (spec 025).
+            if let Some(operand) = cast_call_operand(ctx, node, source, scope_view) {
+                return ctx
+                    .flatten_expr(program, operand, source, scope_view)
+                    .map(Some);
+            }
             let Some(class) = operand_class(ctx, callee, source) else {
                 return Ok(None);
             };
@@ -2236,6 +2242,55 @@ fn cpp_operator_call<'a>(
         }
         _ => Ok(None),
     }
+}
+
+/// The operand of a cast the C++ grammar spells as a call, or `None` for any other call.
+///
+/// tree-sitter-cpp has no node for either shape, so the ordinary lowering would call a function
+/// nothing defines (`static_cast<long>`, `long`) and drop the operand's taint. Like a C
+/// `cast_expression`, both are value-preserving for taint, so the cast's value is its one
+/// operand's (spec 025):
+/// - a named cast, `static_cast<T>(e)` / `reinterpret_cast` / `const_cast` / `dynamic_cast`,
+///   whose callee is a `template_function` named by the keyword. A `dynamic_cast` that fails
+///   yields null, which carries nothing; reading it as the operand over-approximates.
+/// - a functional cast `T(e)` to a non-class type: `int(e)` (a `primitive_type` callee),
+///   `long(e)` / `unsigned(e)` (the grammar reads a lone size keyword as an `identifier`), or a
+///   typedef name the unit declares that no value shadows. `C(e)` for a class `C` is a
+///   construction, not a conversion, and is not answered here.
+fn cast_call_operand<'t>(
+    ctx: &Context<'_>,
+    call: Node<'t>,
+    source: &str,
+    scope_view: &ScopeView,
+) -> Option<Node<'t>> {
+    let callee = call.child_by_field_name("function")?;
+    let is_cast = match callee.kind() {
+        "template_function" => callee.child_by_field_name("name").is_some_and(|name| {
+            matches!(
+                to_str(&name, source),
+                "static_cast" | "reinterpret_cast" | "const_cast" | "dynamic_cast"
+            )
+        }),
+        "primitive_type" | "sized_type_specifier" => true,
+        "identifier" | "type_identifier" => {
+            let name = to_str(&callee, source);
+            matches!(name, "long" | "short" | "unsigned" | "signed")
+                || (ctx.type_names.contains(name)
+                    && !ctx.classes.contains_key(name)
+                    && !ctx.names_a_value(name, scope_view))
+        }
+        _ => false,
+    };
+    if !is_cast {
+        return None;
+    }
+    let args = call.child_by_field_name("arguments")?;
+    let mut cursor = args.walk();
+    let mut operands = args
+        .named_children(&mut cursor)
+        .filter(|n| n.kind() != "comment");
+    let operand = operands.next()?;
+    operands.next().is_none().then_some(operand)
 }
 
 /// The method name of the subscript operator, `a[i]`.
