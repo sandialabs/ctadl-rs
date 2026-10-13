@@ -3899,6 +3899,17 @@ impl<'a> Context<'a> {
                 | "parenthesized_declarator"
                 | "array_declarator" => {
                     self.flatten_expr(program, nest_decl, source, scope_view)?;
+                    // A C++ pointer to a class, or an array of objects -- which decays to one --
+                    // is recorded like any class-typed local (spec 038): `p->m()` and `arr[i].m()`
+                    // dispatch, while `p + 1` stays pointer arithmetic. `class_type` is `None`
+                    // for C.
+                    if let Some(class) = &class_type
+                        && matches!(nest_decl.kind(), "pointer_declarator" | "array_declarator")
+                        && let Some(leaf) = declarator_leaf_ident(nest_decl, source)
+                    {
+                        self.local_types.insert(leaf.to_string(), class.clone());
+                        note_pointer(&mut self.local_pointers, leaf, true);
+                    }
                     continue;
                 }
                 // The asm annotation on a declarator, not a declarator: an
@@ -6082,8 +6093,9 @@ impl<'a> Context<'a> {
                     None => self.member_object_receiver(program, recv_node, source, scope_view),
                 }
             }
-            // `x.in`, `p->in`, `this->in`: a member object (spec 030).
-            "field_expression" => {
+            // `x.in`, `p->in`, `this->in`: a member object (spec 030); `arr[i]`, `p[i]`: an
+            // element of an array of objects (spec 038).
+            "field_expression" | "subscript_expression" => {
                 self.member_object_receiver(program, recv_node, source, scope_view)
             }
             // The implicit receiver inside a method body: `this.m()` (rare) or `(*this).m()`.
@@ -6224,6 +6236,15 @@ impl<'a> Context<'a> {
                 )?;
                 let field = node.child_by_field_name("field")?;
                 self.member_object_class(&base, to_str(&field, source))
+            }
+            // An element of an array of objects, or of what a class pointer points at (spec 038).
+            // An object's own `a[i]` is its `operator[]`, not an element.
+            "subscript_expression" => {
+                let base = node.child_by_field_name("argument")?;
+                let name = to_str(&base, source);
+                (base.kind() == "identifier" && self.local_pointers.contains(name))
+                    .then(|| self.local_types.get(name).cloned())
+                    .flatten()
             }
             _ => None,
         }

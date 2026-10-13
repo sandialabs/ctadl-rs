@@ -1,0 +1,6 @@
+{
+  "name": "CPP_225_object_array_method",
+  "description": "C++ arrays of objects (spec 038), POSITIVE: `arr[0].set(source()); sink(arr[0].v)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

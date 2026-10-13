@@ -1,0 +1,6 @@
+{
+  "name": "CPP_226_pointer_declared_then_assigned",
+  "description": "C++ arrays of objects (spec 038), POSITIVE: `B* p; p = &b; p->set(source()); sink(b.v)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

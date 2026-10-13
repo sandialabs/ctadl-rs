@@ -1,0 +1,7 @@
+{
+  "name": "CPP_229_object_array_set_get",
+  "description": "C++ arrays of objects (spec 038), POSITIVE: `arr[1].set(source()); sink(arr[1].get())` -- dispatched correctly, blocked by F4. Allowlisted as known_gap F4.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F4"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_223_object_array_ctor",
+  "description": "C++ arrays of objects (spec 038), POSITIVE: `B arr[2]; sink(arr[0].v)` with B() : v(source()). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1665,6 +1665,10 @@ fn cpp_try_construct<'a>(
     let Some(declr) = decl_node.child_by_field_name("declarator") else {
         return Ok(false);
     };
+    // An array of objects (spec 038): every element is default-constructed.
+    if declr.kind() == "array_declarator" {
+        return construct_array(ctx, source, program, scope_view, declr, class);
+    }
 
     // Whether this class runs a **user** copy constructor on a copy. A class without one keeps
     // the value-copy lowering below byte-for-byte: its implicit member-wise copy *is* that copy.
@@ -1800,6 +1804,43 @@ fn cpp_try_construct<'a>(
     emit_construction(
         ctx, source, program, scope_view, class, obj_node, args, &shapes, copy,
     );
+    Ok(true)
+}
+
+/// Default-construct every element of `B arr[N];` (spec 038), each through the class's
+/// niladic constructor on its element (`arr[i]`, copy-in/copy-out). A constant `N` up to 64
+/// constructs that many; otherwise only element 0, which is also where a non-constant subscript
+/// reads (see F3). The array is recorded as a pointer to its class, as `walk_declaration` does
+/// for one it declares itself. Element destructors are not modeled.
+fn construct_array<'a>(
+    ctx: &mut Context<'a>,
+    source: &'a str,
+    program: &mut Program,
+    scope_view: &mut ScopeView,
+    declr: Node<'_>,
+    class: &str,
+) -> anyhow::Result<bool, Error> {
+    let Some(name) = declarator_leaf_ident(declr, source) else {
+        return Ok(false);
+    };
+    ctx.flatten_expr(program, declr, source, scope_view)?;
+    ctx.local_types.insert(name.to_string(), class.to_string());
+    super::note_pointer(&mut ctx.local_pointers, name, true);
+    let count = declr
+        .child_by_field_name("size")
+        .and_then(|n| to_str(&n, source).parse::<i64>().ok())
+        .filter(|n| (1..=64).contains(n))
+        .unwrap_or(1);
+    for index in 0..count {
+        let mut element = ctx.build_access_path(
+            name,
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
+        super::push_element(&mut element.fields, Some(index));
+        construct_subobject(ctx, program, scope_view, source, class, element, Vec::new())?;
+    }
     Ok(true)
 }
 

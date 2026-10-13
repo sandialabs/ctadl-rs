@@ -1,0 +1,6 @@
+{
+  "name": "CPP_228_pointer_index_method",
+  "description": "C++ arrays of objects (spec 038), POSITIVE: `void fill(B* p) { p[0].set(source()); }`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

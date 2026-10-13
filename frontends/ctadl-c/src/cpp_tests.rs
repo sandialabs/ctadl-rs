@@ -4812,3 +4812,40 @@ fn cpp_nested_class_is_named_qualified_and_out_of_line() {
     assert!(function_named(&prog, "Inner::get").is_some(), "{prog}");
     check_has_direct_call(&prog, "f", "Inner::get");
 }
+
+// ---- Spec 038: arrays of objects ---------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_object_array_elements_are_constructed() {
+    // FR-1: `B arr[2];` constructs each element through `B::B`.
+    let src = r"
+        struct B { int v; B() : v(0) {} };
+        int main() { B arr[2]; return arr[0].v; }";
+    let prog = program_from_cpp_string(src).0;
+    assert_eq!(
+        direct_calls_in(&prog, "main")
+            .iter()
+            .filter(|(t, _)| t == &["B::B".to_string()])
+            .count(),
+        2,
+        "{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_object_array_element_is_a_receiver() {
+    // FR-2: `arr[1].set(x)` dispatches `B::set` on the element and writes it back; a class
+    // pointer declared without an initializer is a receiver too.
+    let src = r"
+        struct B { int v; void set(int x) { v = x; } };
+        void f(int x) { B arr[2]; arr[1].set(x); B* p; p = &arr[0]; p->set(x); }";
+    let prog = program_from_cpp_string(src).0;
+    assert_eq!(
+        direct_calls_in(&prog, "f")
+            .iter()
+            .filter(|(t, _)| t == &["B::set".to_string()])
+            .count(),
+        2,
+        "{prog}"
+    );
+}

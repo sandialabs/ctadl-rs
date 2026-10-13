@@ -1,0 +1,6 @@
+{
+  "name": "CPP_227_object_array_distinct_negative",
+  "description": "C++ arrays of objects (spec 038), NEGATIVE: `B arr[2]; sink(arr[0].getw())` with only v tainted. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

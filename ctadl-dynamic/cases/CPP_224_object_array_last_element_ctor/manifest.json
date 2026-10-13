@@ -1,0 +1,6 @@
+{
+  "name": "CPP_224_object_array_last_element_ctor",
+  "description": "C++ arrays of objects (spec 038), POSITIVE: `B arr[3]; sink(arr[2].v)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
