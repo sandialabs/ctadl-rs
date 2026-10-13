@@ -41,7 +41,6 @@ use std::hash::BuildHasherDefault;
 use rustc_hash::FxHasher;
 
 use ctadl_ir::graph::{LazyAnnotation, LazySuccessors, find_annotated_paths_from_set};
-use ctadl_ir::mir::PathSegment;
 
 /// `hashbrown` maps/sets keyed by the deterministic, fast `FxHasher` rather than
 /// the DoS-resistant SipHash the std collections default to — the taint tables
@@ -168,9 +167,7 @@ fn saturating_read(q: &Path, p: &Path) -> bool {
         match (p.next(), q.next()) {
             (None, _) => return true,
             (Some(a), Some(b)) if a == b => continue,
-            (Some(PathSegment::Symbol(sym)), None) => {
-                return &**sym == "deref" && p.next().is_none();
-            }
+            (Some(a), None) => return a.is_deref() && p.next().is_none(),
             _ => return false,
         }
     }

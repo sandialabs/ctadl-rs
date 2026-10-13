@@ -157,6 +157,19 @@ impl BasicBlockIdx {
 
 pub type Symbol = ArcIntern<str>;
 
+/// Field name for the *memory* an address names -- the dereference itself. Front ends with
+/// pointers (C, pcode) spell every memory access as an address followed by this symbol, so C's
+/// `a[3]` is the path `a.[3].deref` and `*p` is `p.deref`. An [`Offset`] in a path only moves
+/// an address; this field is what touches memory.
+///
+/// Keeping the offset apart from the dereference is what makes element addresses composable:
+/// offsets are summed when paths meet, so a callee's write at `.[1].deref` through `&a[1]`
+/// (the address `a.[1]`) lands on `a.[2].deref`, where a caller's `a[2]` reads. The analysis
+/// keys on this spelling too (the index admits `<path>.deref` for native imports, and the
+/// query engine's saturating read treats `.deref` as "the whole pointee"), so a front end that
+/// needs a pointer-like field should use this one rather than minting its own.
+pub const DEREF_FIELD: &str = "deref";
+
 /// A newtype wrapper for u64 representing a numeric offset in field access
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -219,6 +232,19 @@ impl PathSegment {
     #[inline]
     pub fn offset(offset: i64) -> Self {
         PathSegment::Offset(Offset(offset))
+    }
+
+    /// The dereference segment, [`DEREF_FIELD`].
+    #[inline]
+    pub fn deref() -> Self {
+        PathSegment::symbol(DEREF_FIELD)
+    }
+
+    /// True for the dereference segment ([`DEREF_FIELD`]) -- the memory at an address, as
+    /// opposed to a struct member.
+    #[inline]
+    pub fn is_deref(&self) -> bool {
+        matches!(self, PathSegment::Symbol(s) if &**s == DEREF_FIELD)
     }
 }
 
@@ -941,6 +967,12 @@ impl FieldRef {
         Self {
             field: ArcIntern::from(name.as_ref()),
         }
+    }
+
+    /// The dereference field, [`DEREF_FIELD`].
+    #[inline]
+    pub fn deref() -> Self {
+        Self::symbol(DEREF_FIELD)
     }
 
     /// A field path from an already-interned symbol.

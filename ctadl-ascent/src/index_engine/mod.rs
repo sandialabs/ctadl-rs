@@ -1316,19 +1316,15 @@ fn compute_alias_of_formal(
     pre.alias_of_formal
 }
 
-/// The synthetic field the native front ends use for "the memory at this address": the C
-/// front end's `DEREF_FIELD`, pcode's `PathSegment::symbol("deref")`. The query engine's
-/// saturating-read rule keys on the same spelling.
-const DEREF_FIELD: &str = "deref";
-
 /// Computes `paths`, the admissible access paths: the syntactic program paths, the paths the
 /// input summaries mention, and each one-level concatenation of the two. Its own small
 /// fixpoint, run BEFORE the main ascent, so the main program takes `paths` as a plain input
 /// and can also hold it as a [`PathSet`] for lookups that never build a path.
 ///
-/// With `deref_paths` (a native front end: every pointer may be dereferenced), `deref` is also
-/// a model path, so every program path gains its `.deref` extension exactly as it would under
-/// a loaded summary that mentions `.deref`. The flow through a pointer stored in a field needs
+/// With `deref_paths` (a native front end: every pointer may be dereferenced), `deref`
+/// ([`DEREF_FIELD`](ctadl_ir::mir::DEREF_FIELD)) is also a model path, so every program path
+/// gains its `.deref` extension exactly as it would under a loaded summary that mentions
+/// `.deref`. The flow through a pointer stored in a field needs
 /// that compound path: the store `o->p = b` carries `b`'s pointee only onto `p.deref`, which
 /// no single frame spells (the reader loads `o->p`, and a callee dereferences its own formal).
 /// With no propagation model loaded there was nothing to concatenate, so an index built
@@ -1341,9 +1337,7 @@ fn compute_paths(
     deref_paths: bool,
 ) -> Vec<(Path,)> {
     if deref_paths {
-        let deref = (Path::from_accesses(std::iter::once(PathSegment::symbol(
-            DEREF_FIELD,
-        ))),);
+        let deref = (Path::from_accesses(std::iter::once(PathSegment::deref())),);
         if !model_paths.contains(&deref) {
             model_paths.push(deref);
         }
