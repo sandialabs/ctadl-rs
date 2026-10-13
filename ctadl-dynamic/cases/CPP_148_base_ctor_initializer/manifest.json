@@ -1,0 +1,6 @@
+{
+  "name": "CPP_148_base_ctor_initializer",
+  "description": "C++ subobject construction (spec 029), POSITIVE: D(int x) : Base(x) -- the base initializer runs Base::Base on this. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

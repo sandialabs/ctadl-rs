@@ -1,0 +1,6 @@
+{
+  "name": "CPP_149_implicit_derived_ctor",
+  "description": "C++ subobject construction (spec 029), POSITIVE: a ctor-less D : Base -- the synthesized D::D runs Base::Base. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

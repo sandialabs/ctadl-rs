@@ -1,0 +1,6 @@
+{
+  "name": "CPP_152_base_ctor_distinct_negative",
+  "description": "C++ subobject construction (spec 029), NEGATIVE: Base(int x) : v(x), u(0) via D(int x) : Base(x); sink(d.u). s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

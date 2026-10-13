@@ -1,0 +1,6 @@
+{
+  "name": "CPP_153_member_object_distinct_negative",
+  "description": "C++ subobject construction (spec 029), NEGATIVE: Out(int x) : in(x) with In(int x) : v(x), u(0); sink(o.in.u). s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

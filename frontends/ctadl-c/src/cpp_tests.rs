@@ -4297,3 +4297,56 @@ fn cpp_implicit_default_ctor_is_synthesized_for_default_member_initializers() {
         "no constructor is invented for a class without defaults\n{prog}"
     );
 }
+
+// ---- Spec 029: subobject construction ---------------------------------------------------------
+
+#[test_log::test]
+fn cpp_member_object_initializer_runs_its_ctor() {
+    // FR-2: `: in(x)` on a member object constructs it through `In::In` on the value loaded
+    // from `this.in`, then stores that value back (copy-in/copy-out), so the member the
+    // constructor wrote is `this.in.v`. `main` reads `o.in.v` so that path is materialized.
+    let src = r"
+        struct In { int v; In(int x) : v(x) {} };
+        struct Out { In in; int w; Out(int x) : in(x), w(0) {} };
+        int main() { Out o(1); return o.in.v; }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "Out::Out", "In::In");
+    let (s, si) = get_summary(prog).unwrap();
+    check_flow_in(&s, &si, "Out::Out", 1, "", 0, ".in.v");
+}
+
+#[test_log::test]
+fn cpp_base_initializer_runs_the_base_ctor_on_this() {
+    // FR-1: `: Base(x)` constructs the base subobject on the object itself (`@p0`), and a base
+    // the list leaves out is default-constructed.
+    let src = r"
+        struct Base { int v; Base(int x) : v(x) {} };
+        struct Other { int u; Other() : u(0) {} };
+        struct D : Base, Other { D(int x) : Base(x) {} };";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "D::D", "Base::Base", ["@p0", "@p1"]);
+    check_direct_call(&prog, "D::D", "Other::Other", ["@p0"]);
+    let (s, si) = get_summary(prog).unwrap();
+    check_flow_in(&s, &si, "D::D", 1, "", 0, ".v");
+}
+
+#[test_log::test]
+fn cpp_implicit_ctor_constructs_bases_and_member_objects() {
+    // FR-3: a constructor-less class whose base or member object has a constructor gets the
+    // implicit default constructor, which runs both; a member of a constructor-less class is
+    // left alone.
+    let src = r"
+        struct Base { int v; Base() : v(1) {} };
+        struct In { int w; In() : w(2) {} };
+        struct Plain { int p; };
+        struct D : Base { In in; Plain pl; };
+        int main() { D d; return d.v; }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "D::D", "Base::Base");
+    check_has_direct_call(&prog, "D::D", "In::In");
+    check_has_direct_call(&prog, "main", "D::D");
+    assert!(
+        function_named(&prog, "Plain::Plain").is_none(),
+        "no constructor is invented for a plain member\n{prog}"
+    );
+}

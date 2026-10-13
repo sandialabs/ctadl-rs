@@ -1,0 +1,6 @@
+{
+  "name": "CPP_151_member_object_initializer",
+  "description": "C++ subobject construction (spec 029), POSITIVE: Out(int x) : in(x) -- In::In runs on this.in via copy-in/copy-out. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

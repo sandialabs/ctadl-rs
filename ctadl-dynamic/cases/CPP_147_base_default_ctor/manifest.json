@@ -1,0 +1,6 @@
+{
+  "name": "CPP_147_base_default_ctor",
+  "description": "C++ subobject construction (spec 029), POSITIVE: D() : w(0) with Base() : v(source()) -- the base default ctor runs on the object. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -878,6 +878,11 @@ struct ClassInfo {
     /// destructors — rather than the single static-type destructor (spec 016). `false` for C and
     /// for every non-virtual destructor, so a non-polymorphic `delete` stays single-target.
     dtor_virtual: bool,
+    /// The class's **member objects**: by-value data members whose declared type names a
+    /// class, as `(member, class)` in declaration order (spec 029). A constructor constructs
+    /// each through that class's constructor -- with the arguments its initializer list gives,
+    /// or by default -- exactly as a declared object is constructed. Empty for C.
+    member_objects: Vec<(String, String)>,
 }
 
 /// The object a C++ instance-method receiver resolves to: the access-path expression to

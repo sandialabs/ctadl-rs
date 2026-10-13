@@ -674,17 +674,25 @@ fn cpp_collect_methods<'a>(
                     // constructor's.
                     let default_value = child
                         .child_by_field_name("default_value")
+                        .filter(|_| !is_static);
+                    // A by-value member whose type names a class is a member object (spec 029);
+                    // whether that class is known is decided when a constructor runs.
+                    let object_class = child
+                        .child_by_field_name("type")
+                        .filter(|t| matches!(t.kind(), "type_identifier" | "qualified_identifier"))
                         .filter(|_| !is_static)
-                        .and_then(|dv| match dv.kind() {
-                            "initializer_list" => dv.named_child(0),
-                            _ => Some(dv),
-                        });
+                        .map(|t| to_str(&t, source).to_string());
                     let mut dc = child.walk();
                     for declr in child.children_by_field_name("declarator", &mut dc) {
                         if let Some(name) = member_name(declr, source) {
                             info.members.insert(name.to_string());
                             if is_static {
                                 info.static_members.insert(name.to_string());
+                            }
+                            if let Some(class) = &object_class
+                                && declr.kind() == "field_identifier"
+                            {
+                                info.member_objects.push((name.to_string(), class.clone()));
                             }
                             if let Some(init) = default_value {
                                 nsdmis
@@ -1030,29 +1038,43 @@ fn cpp_collect_methods<'a>(
     // them; its parameter list and body are the class body's opening brace, which lowers to
     // nothing. Then every constructor applies the defaults for the members its own initializer
     // list leaves out.
-    for (class, defaults) in &nsdmis {
-        let Some(info) = ctx.classes.get_mut(class) else {
-            continue;
-        };
-        if info.has_ctor || defaults.is_empty() {
-            continue;
+    // Spec 029 widens "has some": a base or member object whose class has a constructor
+    // (perhaps itself implicit) needs constructing too, so this runs to a fixpoint.
+    loop {
+        let needs_ctor: Vec<String> = ctx
+            .classes
+            .iter()
+            .filter(|(class, info)| {
+                let constructs = |c: &String| ctx.classes.get(c).is_some_and(|i| i.has_ctor);
+                !info.has_ctor
+                    && class_anchor.contains_key(*class)
+                    && (nsdmis.get(*class).is_some_and(|d| !d.is_empty())
+                        || info.bases.iter().any(constructs)
+                        || info.member_objects.iter().any(|(_, c)| constructs(c)))
+            })
+            .map(|(class, _)| class.clone())
+            .collect();
+        if needs_ctor.is_empty() {
+            break;
         }
-        let Some(anchor) = class_anchor.get(class).copied() else {
-            continue;
-        };
-        info.has_ctor = true;
-        methods.push(MethodDef {
-            class: class.clone(),
-            name: class.clone(),
-            params: anchor,
-            body: anchor,
-            void: true,
-            returns_self: false,
-            returns_member: None,
-            is_static: false,
-            member_inits: Vec::new(),
-            is_ctor: true,
-        });
+        for class in needs_ctor {
+            let anchor = class_anchor[&class];
+            if let Some(info) = ctx.classes.get_mut(&class) {
+                info.has_ctor = true;
+            }
+            methods.push(MethodDef {
+                class: class.clone(),
+                name: class,
+                params: anchor,
+                body: anchor,
+                void: true,
+                returns_self: false,
+                returns_member: None,
+                is_static: false,
+                member_inits: Vec::new(),
+                is_ctor: true,
+            });
+        }
     }
     for md in methods.iter_mut().filter(|md| md.is_ctor) {
         for (member, init) in nsdmis.get(&md.class).into_iter().flatten() {
@@ -1358,14 +1380,13 @@ fn cpp_copy_args<'a>(
     Ok(())
 }
 
-/// Extract a constructor's member-initializer list from its `function_definition` node as
-/// `(member, init-expression)` pairs. The list (`: v(x), w(y)`) appears as an unnamed
-/// `field_initializer_list` child between the declarator and the body; each
-/// `field_initializer` names a `field_identifier` member followed by an `argument_list`
-/// (`v(x)`) or `initializer_list` (`v{x}`) holding the initializer. We take the first
-/// initializer expression for each member (scalar members, this slice). A base-class
-/// initializer (`: Base(x)`, inheritance — out of scope) names a type, not a
-/// `field_identifier`, and is skipped. Returns empty when there is no init list.
+/// Extract a constructor's initializer list from its `function_definition` node as
+/// `(name, field_initializer)` pairs. The list (`: Base(x), v(y), in{z}`) appears as an unnamed
+/// `field_initializer_list` child between the declarator and the body. Each `field_initializer`
+/// names a member (`field_identifier`) or a base class (`type_identifier` /
+/// `qualified_identifier`), followed by its `argument_list` or `initializer_list`;
+/// [`cpp_emit_member_inits`] reads the arguments off it ([`init_args`]). Returns empty when
+/// there is no list.
 fn ctor_member_inits<'t>(fdef: Node<'t>, source: &str) -> Vec<(String, Node<'t>)> {
     let mut inits = Vec::new();
     let mut fc = fdef.walk();
@@ -1378,15 +1399,36 @@ fn ctor_member_inits<'t>(fdef: Node<'t>, source: &str) -> Vec<(String, Node<'t>)
             if fi.kind() != "field_initializer" {
                 continue;
             }
-            let Some(member) = fi.named_child(0).filter(|n| n.kind() == "field_identifier") else {
+            let Some(name) = fi.named_child(0).filter(|n| {
+                matches!(
+                    n.kind(),
+                    "field_identifier" | "type_identifier" | "qualified_identifier"
+                )
+            }) else {
                 continue;
             };
-            if let Some(expr) = fi.named_child(1).and_then(|args| args.named_child(0)) {
-                inits.push((to_str(&member, source).to_string(), expr));
-            }
+            inits.push((to_str(&name, source).to_string(), fi));
         }
     }
     inits
+}
+
+/// The argument expressions of one constructor initializer: the arguments of a
+/// `field_initializer` (`v(x, y)` / `v{x}`), the elements of a braced default (`int v{x};`), or
+/// a default `= e`'s one expression.
+fn init_args(node: Node<'_>) -> Vec<Node<'_>> {
+    let list = match node.kind() {
+        "field_initializer" => node.named_child(1),
+        "initializer_list" | "argument_list" => Some(node),
+        _ => return vec![node],
+    };
+    let Some(list) = list else {
+        return Vec::new();
+    };
+    let mut cursor = list.walk();
+    list.named_children(&mut cursor)
+        .filter(|n| n.kind() != "comment")
+        .collect()
 }
 
 /// Try to lower a class-typed declaration as an **object construction** — the C++
@@ -1755,6 +1797,24 @@ fn emit_ctor_call(
         &mut program[scope_view.fidx].locals,
     );
     let recv = Exp::access_path(ctx.emit_loads(program, scope_view, recv_ap));
+    emit_ctor_edge(
+        ctx, program, scope_view, class, recv, ctor_args, arg_shapes, copy,
+    );
+}
+
+/// The constructor edge itself: `DirectCall Class::Class…(recv, args…)` with `recv` -- an
+/// already-resolved receiver expression -- as arg 0. See [`emit_ctor_call`].
+#[allow(clippy::too_many_arguments)]
+fn emit_ctor_edge(
+    ctx: &mut Context<'_>,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    class: &str,
+    recv: Exp,
+    ctor_args: ThinVec<Exp>,
+    arg_shapes: &[ArgShape],
+    copy: bool,
+) {
     let arity = ctor_args.len();
     let mut args: ThinVec<Exp> = thin_vec![recv];
     args.extend(ctor_args);
@@ -2168,19 +2228,24 @@ fn drain_dtor_frame(
     }
 }
 
-/// The C++ `ctor_prologue` hook: lower a constructor's **member-initializer list** into the
-/// stores it stands for, before the body runs (C++ initialization order).
+/// The C++ `ctor_prologue` hook: lower a constructor's initializer list -- and the
+/// initialization C++ performs implicitly -- before the body runs, in C++ order: base
+/// subobjects, then members.
 ///
-/// Each `member(expr)` becomes `this.<member> = <expr>`. The target is built directly as
-/// `@p0.<member>` rather than resolved by name, so a parameter that shadows the member
-/// (`Box(int v) : v(v)`) cannot redirect the *left* side away from `this` — only the right side
-/// goes through the shared expression lowering, where `v` correctly resolves to the parameter
-/// `@pN`. `this` is parameter 0, installed by `lower_function` for every instance method and
-/// constructor, and the symbolic `<member>` field makes this a store in the offset-only IR,
-/// hence the `RawPath`.
+/// - Each base class with a constructor is constructed on the object itself (`@p0`; a base
+///   subobject shares the derived object's member paths), with the arguments its `: Base(x)`
+///   entry gives, or by default (spec 029).
+/// - Each listed member that is an object of a class with a constructor is constructed through
+///   it on `this.<member>` (spec 029). Any other listed member stores its value:
+///   `member(expr)` is `this.<member> = <expr>`. That target is built directly as
+///   `@p0.<member>` rather than resolved by name, so a parameter that shadows the member
+///   (`Box(int v) : v(v)`) cannot redirect the left side away from `this`. Only the right side
+///   goes through the shared expression lowering, where `v` resolves to the parameter `@pN`.
+/// - Each member object the list leaves out is default-constructed (spec 029).
 ///
-/// The pairs come from `ctor_member_inits`, which reads them off the constructor definition
-/// during method discovery; a non-constructor gets an empty slice and emits nothing.
+/// The pairs come from `ctor_member_inits`, plus the class's default member initializers for
+/// the members it does not name (spec 028); a non-constructor gets an empty slice and emits
+/// nothing.
 fn cpp_emit_member_inits<'a>(
     ctx: &mut Context<'a>,
     program: &mut Program,
@@ -2188,13 +2253,140 @@ fn cpp_emit_member_inits<'a>(
     source: &'a str,
     member_inits: &[(String, Node<'_>)],
 ) -> anyhow::Result<(), Error> {
-    for (member, init_expr) in member_inits {
-        let target = RawPath::new(
+    let this_member = |member: &str| {
+        RawPath::new(
             VariableRef::new_parameter(0u32.into()),
-            thin_vec![PathSegment::symbol(member.as_str())],
-        );
-        let val = ctx.flatten_expr(program, *init_expr, source, scope_view)?;
-        ctx.add_assign_to_program(program, scope_view, &target, &val, None);
+            thin_vec![PathSegment::symbol(member)],
+        )
+    };
+    let (bases, member_objects) = ctx
+        .current_method_class
+        .as_ref()
+        .and_then(|class| ctx.classes.get(class))
+        .map(|info| (info.bases.clone(), info.member_objects.clone()))
+        .unwrap_or_default();
+    let has_ctor =
+        |ctx: &Context<'_>, class: &str| ctx.classes.get(class).is_some_and(|info| info.has_ctor);
+    for base in &bases {
+        let init = member_inits
+            .iter()
+            .find(|(name, _)| name == base)
+            .map(|(_, node)| init_args(*node))
+            .unwrap_or_default();
+        if has_ctor(ctx, base) {
+            let this = RawPath::new(VariableRef::new_parameter(0u32.into()), ThinVec::new());
+            construct_subobject(ctx, program, scope_view, source, base, this, init)?;
+        } else {
+            for arg in init {
+                ctx.flatten_expr(program, arg, source, scope_view)?;
+            }
+        }
+    }
+    for (member, init) in member_inits {
+        if bases.contains(member) {
+            continue;
+        }
+        let args = init_args(*init);
+        let object_class = member_objects
+            .iter()
+            .find(|(m, _)| m == member)
+            .map(|(_, class)| class.clone())
+            .filter(|class| has_ctor(ctx, class));
+        if let Some(class) = object_class {
+            construct_subobject(
+                ctx,
+                program,
+                scope_view,
+                source,
+                &class,
+                this_member(member),
+                args,
+            )?;
+            continue;
+        }
+        // A scalar or class-less member takes its value; `v()` value-initializes it.
+        let mut value: Option<Exp> = None;
+        for arg in args {
+            let arg = ctx.flatten_expr(program, arg, source, scope_view)?;
+            value = Some(match value {
+                None => arg,
+                Some(prev) => {
+                    let temp = ctx.allocator.next_temp();
+                    let target = ctx.build_access_path(
+                        &temp,
+                        Default::default(),
+                        scope_view,
+                        &mut program[scope_view.fidx].locals,
+                    );
+                    ctx.add_assign_to_program(program, scope_view, &target, &prev, Some(&arg));
+                    Exp::Variable(target.base)
+                }
+            });
+        }
+        if let Some(value) = value {
+            ctx.add_assign_to_program(program, scope_view, &this_member(member), &value, None);
+        }
+    }
+    for (member, class) in &member_objects {
+        if member_inits.iter().any(|(m, _)| m == member) || !has_ctor(ctx, class) {
+            continue;
+        }
+        construct_subobject(
+            ctx,
+            program,
+            scope_view,
+            source,
+            class,
+            this_member(member),
+            Vec::new(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Construct the subobject at `recv` -- a base subobject (the object itself) or a member
+/// object (`this.<member>`) -- through `class`'s constructor with the argument expressions
+/// `arg_nodes`. A single argument that is an object of `class` (or a subclass of it) runs the
+/// copy constructor when the class declares one (spec 029).
+fn construct_subobject<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    scope_view: &mut ScopeView,
+    source: &'a str,
+    class: &str,
+    recv: RawPath,
+    arg_nodes: Vec<Node<'_>>,
+) -> anyhow::Result<(), Error> {
+    let shapes: Vec<ArgShape> = arg_nodes
+        .iter()
+        .map(|arg| ctx.arg_shape(*arg, source))
+        .collect();
+    let copy = ctx
+        .classes
+        .get(class)
+        .is_some_and(|info| info.has_copy_ctor)
+        && matches!(shapes.as_slice(), [ArgShape::Object(c)] if ctx.class_is_a(c, class));
+    let mut args: ThinVec<Exp> = ThinVec::new();
+    for arg in arg_nodes {
+        args.push(ctx.flatten_expr(program, arg, source, scope_view)?);
+    }
+    let location = recv.clone();
+    let recv = Exp::access_path(ctx.emit_loads(program, scope_view, recv));
+    emit_ctor_edge(
+        ctx,
+        program,
+        scope_view,
+        class,
+        recv.clone(),
+        args,
+        &shapes,
+        copy,
+    );
+    // A member object is named by a symbolic field, which the offset-only IR can only pass as
+    // the value loaded from it. Store that value back, so what the constructor wrote into the
+    // receiver lands on `this.<member>` (copy-in/copy-out).
+    if !location.is_pathless() {
+        ctx.add_assign_to_program(program, scope_view, &location, &recv, None);
     }
     Ok(())
 }

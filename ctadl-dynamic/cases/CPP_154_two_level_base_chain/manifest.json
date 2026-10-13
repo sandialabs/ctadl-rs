@@ -1,0 +1,6 @@
+{
+  "name": "CPP_154_two_level_base_chain",
+  "description": "C++ subobject construction (spec 029), POSITIVE: C : B : A with A() : a(source()) -- the implicit C::C runs B::B, which runs A::A. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
