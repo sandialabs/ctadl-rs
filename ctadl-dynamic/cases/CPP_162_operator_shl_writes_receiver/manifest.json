@@ -1,0 +1,6 @@
+{
+  "name": "CPP_162_operator_shl_writes_receiver",
+  "description": "C++ member operators (spec 031), POSITIVE: `s << source()` runs S::operator<< which stores into s.v. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

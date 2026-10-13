@@ -1,0 +1,7 @@
+{
+  "name": "pointer_arith_member_vs_subscript",
+  "description": "F5 (open): `arr[1].v = source(); q = p + 1; sink(q->v)`. `p->f` lowers as `p.f` but `arr[1].f` as `arr.[1].deref.f`, so the two spellings of one member never meet. s=none, d=flow. Allowlisted as known_gap F5.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F5"
+}

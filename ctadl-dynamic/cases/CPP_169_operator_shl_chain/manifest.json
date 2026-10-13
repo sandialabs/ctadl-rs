@@ -1,0 +1,6 @@
+{
+  "name": "CPP_169_operator_shl_chain",
+  "description": "C++ member operators (spec 031), POSITIVE: `s << 1 << source()` -- the second << dispatches on the object the first returned. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

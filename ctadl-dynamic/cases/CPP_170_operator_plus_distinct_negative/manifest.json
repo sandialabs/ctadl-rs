@@ -1,0 +1,6 @@
+{
+  "name": "CPP_170_operator_plus_distinct_negative",
+  "description": "C++ member operators (spec 031), NEGATIVE: `a + 1` where operator+ reads w, and only v is tainted. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

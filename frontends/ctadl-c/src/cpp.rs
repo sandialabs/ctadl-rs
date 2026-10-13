@@ -2461,10 +2461,40 @@ fn construct_subobject<'a>(
 /// **object**: a local or parameter whose declared type is a class this unit knows. That is
 /// exactly what [`Context::local_types`] records, so this is one map lookup — and the map is
 /// empty for C, which is why no C assignment, subscript or call is ever rewritten.
-fn operand_class(ctx: &Context<'_>, node: Node<'_>, source: &str) -> Option<String> {
-    (node.kind() == "identifier")
-        .then(|| ctx.local_types.get(to_str(&node, source)).cloned())
-        .flatten()
+fn operand_class(
+    ctx: &Context<'_>,
+    node: Node<'_>,
+    source: &str,
+    scope_view: &ScopeView,
+) -> Option<String> {
+    match node.kind() {
+        // A pointer is not an object: `p + 1` is pointer arithmetic whatever `p` points to.
+        "identifier" if ctx.local_pointers.contains(to_str(&node, source)) => None,
+        "this" => None,
+        "parenthesized_expression" => {
+            operand_class(ctx, super::first_named_child(node)?, source, scope_view)
+        }
+        // An operator applied to an object, whose member operator returns `*this`, is that
+        // object again: `s << a << b` chains on `s` (spec 031).
+        "binary_expression" | "unary_expression" | "update_expression" => {
+            let (operand, op) = match node.kind() {
+                "binary_expression" => (
+                    node.child_by_field_name("left")?,
+                    node.child_by_field_name("operator")?,
+                ),
+                _ => (
+                    node.child_by_field_name("argument")?,
+                    node.child_by_field_name("operator")?,
+                ),
+            };
+            let class = operand_class(ctx, operand, source, scope_view)?;
+            let method = format!("operator{}", to_str(&op, source));
+            let (_, returns_self) = ctx.resolve_method_class(&class, &method)?;
+            returns_self.then_some(class)
+        }
+        // A local or parameter object, `*p`, `*this`, or a member object (spec 031).
+        _ => ctx.object_class_of(node, source, scope_view),
+    }
 }
 
 /// Lower an expression whose operator is a user-defined **method** — the C++
@@ -2498,7 +2528,7 @@ fn cpp_operator_call<'a>(
             let obj = node
                 .child_by_field_name("argument")
                 .expect("subscript_expression always has an argument");
-            let Some(class) = operand_class(ctx, obj, source) else {
+            let Some(class) = operand_class(ctx, obj, source, scope_view) else {
                 return Ok(None);
             };
             if ctx.resolve_method_class(&class, SUBSCRIPT_OP).is_none() {
@@ -2525,6 +2555,55 @@ fn cpp_operator_call<'a>(
         "compound_literal_expression" => {
             construct_temporary(ctx, program, node, source, scope_view)
         }
+        // `a <op> b` with `a` an object: `a.operator<op>(b)` (spec 031).
+        "binary_expression" => {
+            let (Some(left), Some(right), Some(op)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+                node.child_by_field_name("operator"),
+            ) else {
+                return Ok(None);
+            };
+            let method = format!("operator{}", to_str(&op, source));
+            member_operator_call(
+                ctx,
+                program,
+                left,
+                &method,
+                &[right],
+                false,
+                source,
+                scope_view,
+            )
+        }
+        // `<op> a` with `a` an object: `a.operator<op>()` -- `-a`, `!a`, `~a`, `*a` (spec 031).
+        "unary_expression" | "pointer_expression" => {
+            let (Some(arg), Some(op)) = (
+                node.child_by_field_name("argument"),
+                node.child_by_field_name("operator"),
+            ) else {
+                return Ok(None);
+            };
+            let op = to_str(&op, source);
+            if node.kind() == "pointer_expression" && op != "*" {
+                return Ok(None);
+            }
+            let method = format!("operator{op}");
+            member_operator_call(ctx, program, arg, &method, &[], false, source, scope_view)
+        }
+        // `++a` is `a.operator++()`; `a++` is `a.operator++(0)`, the dummy `int` that tells the
+        // postfix overload apart (spec 031).
+        "update_expression" => {
+            let (Some(arg), Some(op)) = (
+                node.child_by_field_name("argument"),
+                node.child_by_field_name("operator"),
+            ) else {
+                return Ok(None);
+            };
+            let postfix = op.start_byte() > arg.start_byte();
+            let method = format!("operator{}", to_str(&op, source));
+            member_operator_call(ctx, program, arg, &method, &[], postfix, source, scope_view)
+        }
         "call_expression" => {
             // `f(args)` where `f` names an object, not a function: the call operator. A callee
             // that is anything else — every function call, in C and C++ alike — misses in
@@ -2541,7 +2620,7 @@ fn cpp_operator_call<'a>(
             if let Some(object) = construct_temporary(ctx, program, node, source, scope_view)? {
                 return Ok(Some(object));
             }
-            let Some(class) = operand_class(ctx, callee, source) else {
+            let Some(class) = operand_class(ctx, callee, source, scope_view) else {
                 return Ok(None);
             };
             if ctx.resolve_method_class(&class, CALL_OP).is_none() {
@@ -2723,6 +2802,54 @@ fn cast_call_operand<'t>(
     operands.next().is_none().then_some(operand)
 }
 
+/// Lower an operator applied to an object as a call of its class's member `method` (spec
+/// 031): `obj` is the receiver, `operands` the remaining operands, and `dummy_int` appends the
+/// `0` a postfix `++`/`--` passes. Declines -- before evaluating anything -- unless `obj` is an
+/// object whose class (or a base) declares `method`, so a built-in operator, and every C one,
+/// lowers as before. An overload set of `method` resolves by arity; the operand shapes are not
+/// read, so same-arity overloads all become targets.
+#[allow(clippy::too_many_arguments)]
+fn member_operator_call<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    obj: Node<'_>,
+    method: &str,
+    operands: &[Node<'_>],
+    dummy_int: bool,
+    source: &'a str,
+    scope_view: &mut ScopeView,
+) -> anyhow::Result<Option<Exp>, Error> {
+    let Some(class) = operand_class(ctx, obj, source, scope_view) else {
+        return Ok(None);
+    };
+    if ctx.resolve_method_class(&class, method).is_none() {
+        return Ok(None);
+    }
+    let recv = match obj.kind() {
+        // A chained operator (`s << a` in `s << a << b`): its value is the object it returned,
+        // which `emit_method_call` aliased to the receiver.
+        "binary_expression" | "unary_expression" | "update_expression" => super::RecvObj {
+            exp: ctx.flatten_expr(program, obj, source, scope_view)?,
+            class,
+            write_back: None,
+        },
+        _ => match ctx.resolve_recv_obj(program, obj, source, scope_view)? {
+            Some(recv) => recv,
+            None => return Ok(None),
+        },
+    };
+    let mut args: ThinVec<Exp> = ThinVec::new();
+    for operand in operands {
+        args.push(ctx.flatten_expr(program, *operand, source, scope_view)?);
+    }
+    if dummy_int {
+        args.push(Exp::new_str("0"));
+    }
+    let temp = ctx.allocator.next_temp();
+    let out = ctx.emit_method_call(program, scope_view, source, &recv, method, args, None, temp)?;
+    Ok(out.map(|o| o.value))
+}
+
 /// The method name of the subscript operator, `a[i]`.
 const SUBSCRIPT_OP: &str = "operator[]";
 /// The method name of the call operator, `f(args)`.
@@ -2759,7 +2886,7 @@ fn cpp_operator_assign<'a>(
         .child_by_field_name("operator")
         .map_or("=", |o| to_str(&o, source));
 
-    if let Some(class) = operand_class(ctx, left, source) {
+    if let Some(class) = operand_class(ctx, left, source, scope_view) {
         // `a = x` / `a += x`: the operator named by the assignment's own spelling.
         let method = format!("operator{op}");
         if ctx.resolve_method_class(&class, &method).is_none() {
@@ -2790,7 +2917,7 @@ fn cpp_operator_assign<'a>(
     let obj = left
         .child_by_field_name("argument")
         .expect("subscript_expression always has an argument");
-    let Some(class) = operand_class(ctx, obj, source) else {
+    let Some(class) = operand_class(ctx, obj, source, scope_view) else {
         return Ok(None);
     };
     let Some((defining, _)) = ctx.resolve_method_class(&class, SUBSCRIPT_OP) else {

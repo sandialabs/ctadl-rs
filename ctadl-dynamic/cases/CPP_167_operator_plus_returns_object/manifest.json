@@ -1,0 +1,6 @@
+{
+  "name": "CPP_167_operator_plus_returns_object",
+  "description": "C++ member operators (spec 031), POSITIVE: `V c = a + b` with V::operator+ building r.v from v. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

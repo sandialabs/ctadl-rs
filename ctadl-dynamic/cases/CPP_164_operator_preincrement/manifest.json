@@ -1,0 +1,6 @@
+{
+  "name": "CPP_164_operator_preincrement",
+  "description": "C++ member operators (spec 031), POSITIVE: `++c` runs C::operator++() which stores source() into v. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_168_operator_deref_iterator",
+  "description": "C++ member operators (spec 031), POSITIVE: `*it` runs It::operator*() returning *p. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

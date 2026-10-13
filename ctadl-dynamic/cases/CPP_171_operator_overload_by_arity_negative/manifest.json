@@ -1,0 +1,6 @@
+{
+  "name": "CPP_171_operator_overload_by_arity_negative",
+  "description": "C++ member operators (spec 031), NEGATIVE: `a - 1` resolves to the arity-1 operator- (returns x), not the unary one (returns v). s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

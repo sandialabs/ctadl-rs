@@ -1,0 +1,6 @@
+{
+  "name": "CPP_163_operator_eq_body_sinks",
+  "description": "C++ member operators (spec 031), POSITIVE: `a == b` runs S::operator== whose body sinks v. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

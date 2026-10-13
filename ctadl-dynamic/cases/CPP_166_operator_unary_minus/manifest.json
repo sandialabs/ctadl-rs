@@ -1,0 +1,6 @@
+{
+  "name": "CPP_166_operator_unary_minus",
+  "description": "C++ member operators (spec 031), POSITIVE: `-a` runs S::operator-() whose body sinks v. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

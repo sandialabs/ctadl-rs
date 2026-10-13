@@ -1,0 +1,6 @@
+{
+  "name": "CPP_165_operator_postincrement",
+  "description": "C++ member operators (spec 031), POSITIVE: `c++` runs C::operator++(int). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

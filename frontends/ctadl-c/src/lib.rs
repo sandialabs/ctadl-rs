@@ -1074,7 +1074,8 @@ struct GrammarHooks {
     /// (`static_cast<T>(e)` and kin) or functional cast (`int(e)`) is a built-in operator the
     /// grammar also spells as a call; the hook answers it with its operand's value (spec 025).
     /// A call `C(args)` on a class name constructs a temporary; the hook answers the object
-    /// (spec 027).
+    /// (spec 027). The `binary_expression`, `unary_expression`, `update_expression` and `*`
+    /// `pointer_expression` arms consult it too, for an object's member operators (spec 031).
     ///
     /// The three shared arms that lower those shapes -- the `assignment_expression` and
     /// `call_expression` arms of [`Context::flatten_expr`], and [`Context::flatten_subscript`] --
@@ -5046,6 +5047,13 @@ impl<'a> Context<'a> {
             | "false"
             | "null" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
             "unary_expression" => {
+                // C++ operator overloading: `-a`, `!a`, `~a` on an object whose class declares
+                // that operator is a method call (spec 031). The hook declines every built-in
+                // operator, and always for C.
+                let operator_call = self.hooks.operator_call;
+                if let Some(value) = operator_call(self, program, node, source, scope_view)? {
+                    return Ok(value);
+                }
                 let ch = node
                     .child_by_field_name("argument")
                     .expect("always has an argument");
@@ -5063,12 +5071,23 @@ impl<'a> Context<'a> {
                         _ => self.flatten_expr(program, operand, source, scope_view),
                     };
                 }
+                // C++ `a + b`, `a == b`, `s << x` on an object whose class declares the
+                // operator (spec 031); see the `unary_expression` arm.
+                let operator_call = self.hooks.operator_call;
+                if let Some(value) = operator_call(self, program, node, source, scope_view)? {
+                    return Ok(value);
+                }
                 let operator = node
                     .child_by_field_name("operator")
                     .expect("always has an operator");
                 self.flatten_binary(program, node, operator, source, scope_view)
             }
             "update_expression" => {
+                // C++ `++a` / `a++` on an object (spec 031); see the `unary_expression` arm.
+                let operator_call = self.hooks.operator_call;
+                if let Some(value) = operator_call(self, program, node, source, scope_view)? {
+                    return Ok(value);
+                }
                 self.flatten_update_expression(program, node, source, scope_view)
             }
 
@@ -5137,6 +5156,11 @@ impl<'a> Context<'a> {
                 Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
             }
             "pointer_expression" => {
+                // C++ `*it` on an object whose class declares `operator*` (spec 031).
+                let operator_call = self.hooks.operator_call;
+                if let Some(value) = operator_call(self, program, node, source, scope_view)? {
+                    return Ok(value);
+                }
                 let arg = node
                     .child_by_field_name("argument")
                     .expect("always a argument for the * operator");

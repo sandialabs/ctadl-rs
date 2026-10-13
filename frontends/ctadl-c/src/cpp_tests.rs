@@ -4431,3 +4431,63 @@ fn cpp_delete_runs_the_destruction_chain() {
         .collect();
     assert_eq!(calls, vec!["D::~D", "Base::~Base"], "{prog}");
 }
+
+// ---- Spec 031: member operators ---------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_binary_and_unary_operators_dispatch_to_members() {
+    // FR-1: `a + b`, `-a` and `*a` on objects call the class's member operators with the
+    // object as receiver; a class without the operator keeps the built-in lowering.
+    let src = r"
+        struct S { int v; int operator+(int x) { return v + x; } int operator-() { return v; }
+                   int operator*() { return v; } };
+        struct P { int v; };
+        int f(int y) { S a; P b; int r = a + y; int s = -a; int t = *a; return r + s + t + b.v; }";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "f", "S::operator+", ["a", "@p0"]);
+    check_direct_call(&prog, "f", "S::operator-", ["a"]);
+    check_direct_call(&prog, "f", "S::operator*", ["a"]);
+    assert_eq!(direct_calls_in(&prog, "f").len(), 3, "{prog}");
+}
+
+#[test_log::test]
+fn cpp_increment_operators_pass_the_postfix_dummy() {
+    // FR-2: `++c` is `operator++()`, `c++` is `operator++(0)`; with both defined they resolve
+    // by arity.
+    let src = r"
+        struct C { int v; C& operator++() { v = v + 1; return *this; }
+                   C operator++(int) { C old = *this; v = v + 1; return old; } };
+        void f() { C c; ++c; c++; }";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "f", "C::operator++#0", ["c"]);
+    check_direct_call(&prog, "f", "C::operator++#1", ["c", "#0"]);
+}
+
+#[test_log::test]
+fn cpp_pointer_arithmetic_is_not_an_operator_call() {
+    // A pointer to a class is not an object: `p + 1` stays pointer arithmetic even though the
+    // class declares `operator+`.
+    let src = r"
+        struct V { int v; int operator+(int x) { return x; } };
+        V* f(V* p) { return p + 1; }";
+    let prog = program_from_cpp_string(src).0;
+    assert!(direct_calls_in(&prog, "f").is_empty(), "{prog}");
+}
+
+#[test_log::test]
+fn cpp_operator_chain_dispatches_on_the_returned_receiver() {
+    // FR-3: `s << 1 << 2` -- the outer `<<` dispatches on the object the inner one returned.
+    let src = r"
+        struct S { int v; S& operator<<(int x) { v = x; return *this; } };
+        void f() { S s; s << 1 << 2; }";
+    let prog = program_from_cpp_string(src).0;
+    let calls = direct_calls_in(&prog, "f");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(c, _)| c == &["S::operator<<".to_string()])
+            .count(),
+        2,
+        "{prog}"
+    );
+}

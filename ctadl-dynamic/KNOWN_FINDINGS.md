@@ -15,11 +15,12 @@ frontend ingestion gaps — and tracks their disposition.
 | labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (spec 018) |
 | F3 — a non-constant subscript reads/writes only element 0 | soundness | 37, CPP_133 | ❌ **open** (IR path model) |
 | F4 — a field path composed across a call is never admissible | soundness | 38, CPP_161 | ❌ **open** (codegen `paths` gate) |
+| F5 — `(p + 1)->f` and `arr[1].f` lower to different paths | soundness | 39 | ❌ **open** (C pointer model) |
 
 F2 and the two frontend findings above were surfaced by the **broadened M7 generator** (it threads
 taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
-Resolved entries are kept as a record of what the approach caught and how each was fixed. **F3 and
-F4 are open** (2026-10-13).
+Resolved entries are kept as a record of what the approach caught and how each was fixed. **F3, F4
+and F5 are open** (2026-10-13).
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
@@ -27,6 +28,23 @@ F4 are open** (2026-10-13).
 instead of a run-failing `NEW-GAP`/`FRONTEND-ERROR`. When a fix lands, the harness reports the
 case as `resolved-known-gap` / `resolved-known-frontend-gap`; the closure step is to remove that
 field from the manifest **and** mark the entry below RESOLVED.
+
+---
+
+## F5 — `p->f` and `p[0].f` name a member at different paths (OPEN)
+
+- **Status:** **open**, allowlisted as `known_gap: "F5"` on case `39`. Found 2026-10-13 while
+  checking that C++ operator dispatch leaves pointer arithmetic alone (spec 031).
+- **What:** in the C pointer model (tsfb `27ff7da3`, "prototype"), `p->f` lowers as `p.f` while
+  `p[i].f` / `arr[1].f` lowers as `p.[i].deref.f`. One member written through one spelling is
+  not read through the other:
+  ```c
+  arr[1].v = source(); struct V* q = arr + 1; sink(q->v);   /* s=none, d=flow */
+  ```
+  `p[1].v` (same spelling as the write) agrees.
+- **Fix direction:** one path for "the record at address `e`": either `p->f` as `p.deref.f`, or
+  subscripted records without the trailing `deref`. This belongs to the owners of the C pointer
+  model.
 
 ---
 
