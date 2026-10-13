@@ -31,7 +31,8 @@ use super::{
     ArgShape, ClassInfo, Context, GrammarHooks, MatchExtractor, OverloadSig, ParamType, RawPath,
     ScopeView, TranslationUnit, VarKind, compile_query_for, declarator_leaf_ident, declared_class,
     function_declarator_of, is_class_member_definition, is_namespaced_definition, lower_units,
-    mangle_overload, param_types, returns_void, signature_text, to_str, unparenthesize,
+    mangle_overload, param_types, returns_void, signature_text, template_erased_name, to_str,
+    unparenthesize,
 };
 use ctadl_import::error::Error;
 
@@ -408,7 +409,8 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, Vec<Param
         "qualified_identifier" => {
             let scope = name_node.child_by_field_name("scope")?;
             let name = name_node.child_by_field_name("name")?;
-            let scope_s = to_str(&scope, source);
+            let scope_erased = template_erased_name(scope, source);
+            let scope_s = scope_erased.as_str();
             // An out-of-line **operator** (`Acc& Acc::operator+=(int)`) names an `operator_name`
             // here; normalize it to the same string the inline form and the dispatch site build.
             let name_s = &if name.kind() == "operator_name" {
@@ -500,6 +502,48 @@ fn cpp_aux_owns_definition(def: Node<'_>) -> bool {
             .is_none_or(|name| name.kind() != "identifier"),
         // Not function-shaped at all: left to the shared pass, which reports it as for C.
         None => false,
+    }
+}
+
+/// Record the C++ type aliases that name a known class (spec 033): `using A = T;` and
+/// `typedef T A;`, where `T` -- template arguments erased, a `struct`/`class` tag unwrapped --
+/// is a class this unit declares. An alias of an alias resolves when declared after it.
+fn collect_type_aliases(ctx: &mut Context<'_>, source: &str, root: Node<'_>) {
+    let query = ctx.compile_query(
+        r#"
+        [(alias_declaration name: (type_identifier) @alias type: (type_descriptor type: (_) @type))
+         (type_definition type: (_) @type declarator: (type_identifier) @alias)]
+        "#,
+    );
+    let mut found: Vec<(String, String)> = Vec::new();
+    {
+        let mut cursor = QueryCursor::new();
+        let mut it = cursor.matches(&query, root, source.as_bytes());
+        while let Some(m) = it.next() {
+            let extract = MatchExtractor::new(&query, m);
+            let (Ok(alias), Ok(ty)) = (extract.get("alias"), extract.get("type")) else {
+                continue;
+            };
+            let ty = match ty.kind() {
+                "struct_specifier" | "class_specifier" => match ty.child_by_field_name("name") {
+                    Some(name) => name,
+                    None => continue,
+                },
+                _ => ty,
+            };
+            found.push((
+                to_str(&alias, source).to_string(),
+                template_erased_name(ty, source),
+            ));
+        }
+    }
+    for (alias, target) in found {
+        if alias == target {
+            continue;
+        }
+        if let Some(class) = ctx.class_named(&target) {
+            ctx.type_aliases.insert(alias, class);
+        }
     }
 }
 
@@ -663,7 +707,24 @@ fn cpp_collect_methods<'a>(
             ..Default::default()
         };
         let mut bc = body.walk();
-        for child in body.children(&mut bc) {
+        // A member template (`template <class T> void set(T x) {…}`) is one member for all of
+        // its instances (spec 033): lower the definition it wraps. The grammar names such a
+        // method with an `identifier`, not a `field_identifier`, so remember which they are.
+        let children: Vec<(Node<'_>, bool)> = body
+            .children(&mut bc)
+            .map(|child| {
+                if child.kind() == "template_declaration" {
+                    let mut tc = child.walk();
+                    let inner = child
+                        .named_children(&mut tc)
+                        .find(|n| matches!(n.kind(), "function_definition" | "field_declaration"));
+                    (inner.unwrap_or(child), true)
+                } else {
+                    (child, false)
+                }
+            })
+            .collect();
+        for (child, templated) in children {
             match child.kind() {
                 "field_declaration" => {
                     // A `static` data member (`static int total;`) is a class-scoped **global**,
@@ -681,9 +742,14 @@ fn cpp_collect_methods<'a>(
                     // whether that class is known is decided when a constructor runs.
                     let object_class = child
                         .child_by_field_name("type")
-                        .filter(|t| matches!(t.kind(), "type_identifier" | "qualified_identifier"))
+                        .filter(|t| {
+                            matches!(
+                                t.kind(),
+                                "type_identifier" | "qualified_identifier" | "template_type"
+                            )
+                        })
                         .filter(|_| !is_static)
-                        .map(|t| to_str(&t, source).to_string());
+                        .map(|t| template_erased_name(t, source));
                     let mut dc = child.walk();
                     for declr in child.children_by_field_name("declarator", &mut dc) {
                         if let Some(name) = member_name(declr, source) {
@@ -745,10 +811,12 @@ fn cpp_collect_methods<'a>(
                     // lowered as the built-in store (spec 023). It is an ordinary instance method
                     // under a punctuation name: `Acc::operator=`, with the implicit `this`.
                     let is_operator = name_node.kind() == "operator_name";
+                    let is_template_method = templated && name_node.kind() == "identifier";
                     if name_node.kind() != "field_identifier"
                         && !is_ctor
                         && !is_dtor
                         && !is_operator
+                        && !is_template_method
                     {
                         continue;
                     }
@@ -892,6 +960,7 @@ fn cpp_collect_methods<'a>(
     // still hold only its own members. `bases` is empty for every C and base-less class, so this
     // adds nothing there. Done before phase 2b lowers the bodies, which read `members`.
     flatten_inherited_members(ctx);
+    collect_type_aliases(ctx, source, root);
 
     // Build the subclass hierarchy (reverse of `bases`) now that every class is known, so a
     // virtual call lowered in phase 2b — or in a later top-level body — can walk a static type's
@@ -944,12 +1013,13 @@ fn cpp_collect_methods<'a>(
             // An out-of-line **operator** (`Acc& Acc::operator+=(int x){…}`) names its method
             // with an `operator_name` rather than an `identifier`; accept it and normalize the
             // spelling to the same string the inline form and the dispatch site build (spec 023).
-            if scope.kind() != "namespace_identifier"
+            // A class template's out-of-line member names its scope `Box<T>` (spec 033).
+            if !matches!(scope.kind(), "namespace_identifier" | "template_type")
                 || !matches!(method_node.kind(), "identifier" | "operator_name")
             {
                 continue;
             }
-            let class = to_str(&scope, source).to_string();
+            let class = template_erased_name(scope, source);
             // Only lower out-of-line bodies for a class known from its declaration (this
             // slice's scope). An unknown qualifier (e.g. a namespaced free function) is left
             // alone — it is not an instance method we can model here.
@@ -1354,7 +1424,7 @@ fn cpp_discover_byval_class_params(
             .map(|pd| {
                 pd.child_by_field_name("declarator")
                     .filter(|d| d.kind() == "identifier")
-                    .and_then(|_| declared_class(&ctx.classes, pd, source))
+                    .and_then(|_| declared_class(ctx, pd, source))
             })
             .collect();
         if byval.iter().any(Option::is_some) {
@@ -1622,8 +1692,8 @@ fn cpp_try_construct<'a>(
                     // Only a call on the class name itself is construction (`Box(args)`).
                     let on_class = value
                         .child_by_field_name("function")
-                        .filter(|f| f.kind() == "identifier")
-                        .is_some_and(|f| to_str(&f, source) == class);
+                        .filter(|f| matches!(f.kind(), "identifier" | "template_function"))
+                        .is_some_and(|f| template_erased_name(f, source) == class);
                     if !on_class {
                         return Ok(false);
                     }
@@ -1949,7 +2019,8 @@ fn lower_new_expression<'a>(
     let Some(type_node) = new_expr.child_by_field_name("type") else {
         return Ok(None);
     };
-    let alloc_type = to_str(&type_node, source);
+    let erased = template_erased_name(type_node, source);
+    let alloc_type = &ctx.class_named(&erased).unwrap_or(erased);
 
     // The constructor arguments: a parenthesized `argument_list` (`new Box(source())`) or a
     // braced `initializer_list` (`new Box{source()}`); absent for `new Box`/`new Box()`.
@@ -2773,16 +2844,20 @@ fn temporary_of<'t>(
     };
     if !matches!(
         type_node.kind(),
-        "identifier" | "type_identifier" | "qualified_identifier"
+        "identifier"
+            | "type_identifier"
+            | "qualified_identifier"
+            | "template_type"
+            | "template_function"
     ) {
         return None;
     }
-    let name = to_str(&type_node, source);
-    let info = ctx.classes.get(name)?;
-    if (braced && !info.has_ctor) || ctx.names_a_value(name, scope_view) {
+    let name = ctx.class_named(&template_erased_name(type_node, source))?;
+    let info = ctx.classes.get(&name)?;
+    if (braced && !info.has_ctor) || ctx.names_a_value(&name, scope_view) {
         return None;
     }
-    Some((name.to_string(), args))
+    Some((name, args))
 }
 
 /// Lower the temporary `C(args)` / `C{args}` (spec 027) and return the object, or `None` when

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_186_template_static_method",
+  "description": "C++ templates (spec 033), POSITIVE: `sink(M<int>::twice(source()))`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

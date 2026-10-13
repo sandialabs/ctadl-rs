@@ -1,0 +1,6 @@
+{
+  "name": "CPP_184_template_two_params",
+  "description": "C++ templates (spec 033), POSITIVE: `Pair<int, int> p(0, source()); sink(p.second())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

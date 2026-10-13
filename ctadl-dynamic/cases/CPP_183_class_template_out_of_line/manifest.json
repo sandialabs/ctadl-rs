@@ -1,0 +1,6 @@
+{
+  "name": "CPP_183_class_template_out_of_line",
+  "description": "C++ templates (spec 033), POSITIVE: out-of-line `template <class T> void Box<T>::set(T x)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

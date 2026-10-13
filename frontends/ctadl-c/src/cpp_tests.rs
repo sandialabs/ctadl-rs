@@ -4540,3 +4540,75 @@ fn cpp_overloaded_arrow_reads_through_the_returned_pointer() {
     let prog = program_from_cpp_string(src).0;
     check_direct_call(&prog, "f", "P::operator->", ["w"]);
 }
+
+// ---- Spec 033: templates (type-erased) -------------------------------------------------------
+
+#[test_log::test]
+fn cpp_class_template_instances_are_the_template() {
+    // FR-1: `Box<int> b` is an object of `Box`, its methods (inline and out-of-line, written
+    // `Box<T>::get`) are `Box::…`, and `new Box<int>()` / `Box<int>(x)` construct a `Box`.
+    let src = r"
+        template <class T> struct Box { T v; Box(T x) : v(x) {} void set(T x) { v = x; } T get(); };
+        template <class T> T Box<T>::get() { return v; }
+        int f(int p) {
+            Box<int> b(0); b.set(p);
+            Box<int>* q = new Box<int>(p);
+            return b.get() + q->get() + Box<int>(p).get();
+        }";
+    let prog = program_from_cpp_string(src).0;
+    assert!(function_named(&prog, "Box::get").is_some(), "{prog}");
+    check_has_direct_call(&prog, "f", "Box::set");
+    check_has_direct_call(&prog, "f", "Box::get");
+    assert_eq!(
+        direct_calls_in(&prog, "f")
+            .iter()
+            .filter(|(c, _)| c == &["Box::Box".to_string()])
+            .count(),
+        3,
+        "declaration, new and temporary each construct a Box\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_explicit_template_arguments_name_the_template() {
+    // FR-2: `twice<int>(x)` calls `twice`, and `M<int>::id(x)` calls `M::id` -- direct calls,
+    // where `twice<int>` used to be an indirect call through a temp.
+    let src = r"
+        template <typename T> T twice(T x) { return x + x; }
+        template <class T> struct M { static T id(T x) { return x; } };
+        int f(int p) { return twice<int>(p) + M<int>::id(p); }";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "f", "twice", ["@p0"]);
+    check_direct_call(&prog, "f", "M::id", ["@p0"]);
+}
+
+#[test_log::test]
+fn cpp_member_template_is_a_method() {
+    // FR-3: a member template inside a class body is lowered as a method (its name parses as an
+    // `identifier` there).
+    let src = r"
+        struct S { int v; template <class T> void set(T x) { v = x; } };
+        void f(int p) { S s; s.set(p); }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_assign_or_update(&prog, "S::set", "@p0.v", ["@p1"]);
+    check_has_direct_call(&prog, "f", "S::set");
+}
+
+#[test_log::test]
+fn cpp_type_aliases_name_their_class() {
+    // FR-4: `using IntBox = Box<int>;` and `typedef Box<int> B2;` declare objects of `Box`.
+    let src = r"
+        template <class T> struct Box { T v; void set(T x) { v = x; } };
+        using IntBox = Box<int>;
+        typedef Box<int> B2;
+        void f(int p) { IntBox a; B2 b; a.set(p); b.set(p); }";
+    let prog = program_from_cpp_string(src).0;
+    assert_eq!(
+        direct_calls_in(&prog, "f")
+            .iter()
+            .filter(|(c, _)| c == &["Box::set".to_string()])
+            .count(),
+        2,
+        "{prog}"
+    );
+}

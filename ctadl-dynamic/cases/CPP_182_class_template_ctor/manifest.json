@@ -1,0 +1,6 @@
+{
+  "name": "CPP_182_class_template_ctor",
+  "description": "C++ templates (spec 033), POSITIVE: `Box<int> b(source()); sink(b.get())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

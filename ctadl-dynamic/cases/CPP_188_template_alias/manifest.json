@@ -1,0 +1,6 @@
+{
+  "name": "CPP_188_template_alias",
+  "description": "C++ templates (spec 033), POSITIVE: `using IntBox = Box<int>; IntBox b; b.set(source())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

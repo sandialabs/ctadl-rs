@@ -1209,6 +1209,10 @@ struct Context<'a> {
     /// `reference_declarator`), so it is empty for C and the C path is unchanged. Reset per
     /// function in [`Context::lower_function`].
     reference_aliases: HashMap<String, RawPath>,
+    /// C++ type aliases that name a class -- `using IntBox = Box<int>;`, `typedef Box<int> B;`
+    /// -- by alias, to the (template-erased) class (spec 033). Filled by the C++ `collect_aux`
+    /// hook; empty for C. Read through [`Context::class_named`].
+    type_aliases: HashMap<String, String>,
     /// Overloaded-by-arity names: an IR **base name** (a free function's bare/qualified name
     /// `f` / `ns::f`, or a method's qualified `Class::method`) mapped to the set of explicit
     /// **arities** (parameter counts, `this` excluded) defined under it. A name is *overloaded*
@@ -1475,7 +1479,7 @@ fn param_type(pd: Node<'_>, source: &str) -> ParamType {
     let declarator = pd.child_by_field_name("declarator");
     let name = pd
         .child_by_field_name("type")
-        .map(|t| without_whitespace(to_str(&t, source)))
+        .map(|t| without_whitespace(&template_erased_name(t, source)))
         .unwrap_or_default();
     let mut decoration = String::new();
     if let Some(d) = declarator {
@@ -1578,6 +1582,7 @@ impl Context<'_> {
             local_types: HashMap::default(),
             current_method_class: None,
             reference_aliases: HashMap::default(),
+            type_aliases: HashMap::default(),
             overloads: HashMap::default(),
             local_pointers: HashSet::default(),
             byval_class_params: HashMap::default(),
@@ -1685,6 +1690,13 @@ impl Context<'_> {
         }
     }
 
+    /// The class a type name denotes: the name itself when it is a known class, or the class a
+    /// C++ type alias names (spec 033). `None` for every other name -- all of C.
+    fn class_named(&self, name: &str) -> Option<String> {
+        let name = self.type_aliases.get(name).map_or(name, String::as_str);
+        self.classes.contains_key(name).then(|| name.to_string())
+    }
+
     /// Whether `sub` **is a** `base`: the same class, or a transitive subclass of it. Walks the
     /// neutral [`Self::classes`] base lists (empty for C and for every base-less class, so this is
     /// plain equality there). A `seen` guard bounds a malformed hierarchy.
@@ -1742,9 +1754,9 @@ impl Context<'_> {
             // `new C(…)` yields a pointer to a fresh object of the allocated class.
             "new_expression" => node
                 .child_by_field_name("type")
-                .map(|t| to_str(&t, source))
-                .filter(|name| self.classes.contains_key(*name))
-                .map_or(ArgShape::Other, |name| ArgShape::Pointer(name.to_string())),
+                .map(|t| template_erased_name(t, source))
+                .filter(|name| self.classes.contains_key(name))
+                .map_or(ArgShape::Other, ArgShape::Pointer),
             _ => ArgShape::Other,
         }
     }
@@ -3729,7 +3741,7 @@ impl<'a> Context<'a> {
         // local it declares so a later `recv.method(…)` call can dispatch on it. For C the
         // `classes` map is empty, so this is always `None` and records nothing. The same
         // resolution binds a class-typed *parameter* in `collect_params`; see [`declared_class`].
-        let class_type: Option<String> = declared_class(&self.classes, node, source);
+        let class_type: Option<String> = declared_class(self, node, source);
 
         // A class-typed declaration may be an object *construction* (`Box b(args)` and the
         // copy/brace variants). Delegate that recognition + lowering to the C++ `construct`
@@ -4241,7 +4253,7 @@ impl<'a> Context<'a> {
                 declarator.kind()
             ));
         };
-        if let Some(class) = declared_class(&self.classes, loop_node, source) {
+        if let Some(class) = declared_class(self, loop_node, source) {
             self.local_types.insert(name.to_string(), class);
             note_pointer(
                 &mut self.local_pointers,
@@ -4912,10 +4924,9 @@ impl<'a> Context<'a> {
         function_name: &str,
         scope_view: &ScopeView,
     ) -> anyhow::Result<(), Error> {
-        let param_names = self
-            .param_names
-            .entry(function_name.to_string())
-            .or_default();
+        // Taken out of the map for the walk (and put back below), so the class lookup can borrow
+        // the context while names are pushed.
+        let mut param_names = self.param_names.remove(function_name).unwrap_or_default();
 
         // The parameters are the parameter list's own children, walked in order, and a
         // parameter's index is its position among them -- never match order over the whole
@@ -4963,7 +4974,7 @@ impl<'a> Context<'a> {
                     // Neutral: `classes` is empty for C, so no C parameter is ever registered.
                     // `lower_function` clears `local_types` before calling us, so these entries
                     // belong to the function about to be walked.
-                    if let Some(class) = declared_class(&self.classes, decl, source) {
+                    if let Some(class) = declared_class(self, decl, source) {
                         self.local_types.insert(pn.to_string(), class);
                         // `Box* p` is a pointer parameter, `Box b` / `Box& b` an object one —
                         // which is what decides whether passing it on can mean a `C*` overload
@@ -4983,6 +4994,8 @@ impl<'a> Context<'a> {
                 }
             }
         }
+        self.param_names
+            .insert(function_name.to_string(), param_names);
         Ok(())
     }
 
@@ -5999,9 +6012,8 @@ impl<'a> Context<'a> {
                 // empty for C.
                 if let Some(class) = recv_node
                     .child_by_field_name("function")
-                    .map(|f| to_str(&f, source))
-                    .filter(|name| self.classes.contains_key(*name))
-                    .map(str::to_string)
+                    .map(|f| template_erased_name(f, source))
+                    .filter(|name| self.classes.contains_key(name))
                 {
                     let exp = self.flatten_expr(program, recv_node, source, scope_view)?;
                     return Ok(Some(RecvObj {
@@ -6019,9 +6031,8 @@ impl<'a> Context<'a> {
             "compound_literal_expression" => {
                 let Some(class) = recv_node
                     .child_by_field_name("type")
-                    .map(|t| to_str(&t, source))
-                    .filter(|name| self.classes.contains_key(*name))
-                    .map(str::to_string)
+                    .map(|t| template_erased_name(t, source))
+                    .filter(|name| self.classes.contains_key(name))
                 else {
                     return Ok(None);
                 };
@@ -6504,7 +6515,18 @@ impl<'a> Context<'a> {
         {
             func_node = unparenthesized_callee(pointer);
         }
-        let func_name = to_str(&func_node, source);
+        // C++ `f<int>(x)` calls `f`, and `M<int>::twice(x)` calls `M::twice`: a template is one
+        // function for all of its instances (spec 033). The identity for every C callee.
+        if func_node.kind() == "template_function"
+            && let Some(name) = func_node.child_by_field_name("name")
+        {
+            func_node = name;
+        }
+        let erased_name = (func_node.kind() == "qualified_identifier")
+            .then(|| template_erased_name(func_node, source));
+        let func_name = erased_name
+            .as_deref()
+            .unwrap_or_else(|| to_str(&func_node, source));
 
         let arg_node = node.child_by_field_name("arguments").expect("always has");
         let mut args = self.collect_arguments(program, arg_node, source, scope_view)?;
@@ -6541,7 +6563,7 @@ impl<'a> Context<'a> {
         // dereference form `(*op_func)(...)` wraps the pointer in a
         // parenthesized/pointer expression, so route it through flatten_expr to
         // recover the underlying variable (`op_func`).
-        let access_path = if func_node.kind() == "identifier" {
+        let access_path = if func_node.kind() == "identifier" || erased_name.is_some() {
             self.build_access_path(
                 func_name,
                 Default::default(),
@@ -7650,16 +7672,44 @@ fn note_pointer(local_pointers: &mut HashSet<String>, name: &str, is_pointer: bo
     }
 }
 
-fn declared_class(
-    classes: &HashMap<String, ClassInfo>,
-    node: Node<'_>,
-    source: &str,
-) -> Option<String> {
+fn declared_class(ctx: &Context<'_>, node: Node<'_>, source: &str) -> Option<String> {
     node.child_by_field_name("type")
-        .filter(|t| matches!(t.kind(), "type_identifier" | "qualified_identifier"))
-        .map(|t| to_str(&t, source))
-        .filter(|name| classes.contains_key(*name))
-        .map(str::to_string)
+        .filter(|t| {
+            matches!(
+                t.kind(),
+                "type_identifier" | "qualified_identifier" | "template_type"
+            )
+        })
+        .and_then(|t| ctx.class_named(&template_erased_name(t, source)))
+}
+
+/// The name a type or callee node spells, with every C++ template argument list dropped:
+/// `Box<int>` is `Box`, `M<int>::twice` is `M::twice`, `f<int>` is `f` (spec 033). A template is
+/// lowered once for all of its instances -- the IR is untyped, so one body over-approximates
+/// every instance -- and an instance therefore names its template. Structural, so an operator
+/// name containing `<` (`operator<`) is untouched. The node kinds it peels never occur under the
+/// C grammar, where this is the node's text.
+fn template_erased_name(node: Node<'_>, source: &str) -> String {
+    match node.kind() {
+        "template_type" | "template_function" | "template_method" => {
+            node.child_by_field_name("name").map_or_else(
+                || to_str(&node, source).to_string(),
+                |n| template_erased_name(n, source),
+            )
+        }
+        "qualified_identifier" => {
+            let scope = node
+                .child_by_field_name("scope")
+                .map(|s| template_erased_name(s, source))
+                .unwrap_or_default();
+            let name = node
+                .child_by_field_name("name")
+                .map(|n| template_erased_name(n, source))
+                .unwrap_or_default();
+            format!("{scope}::{name}")
+        }
+        _ => to_str(&node, source).to_string(),
+    }
 }
 
 /// Whether a declarator names a **pointer** to its declared type (`Box* p`), descending through

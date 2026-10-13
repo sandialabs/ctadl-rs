@@ -1,0 +1,6 @@
+{
+  "name": "CPP_185_template_heap_object",
+  "description": "C++ templates (spec 033), POSITIVE: `Box<int>* p = new Box<int>(); p->set(source()); sink(p->get())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

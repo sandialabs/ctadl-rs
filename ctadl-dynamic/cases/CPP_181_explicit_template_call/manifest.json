@@ -1,0 +1,6 @@
+{
+  "name": "CPP_181_explicit_template_call",
+  "description": "C++ templates (spec 033), POSITIVE: `sink(twice<int>(source()))`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

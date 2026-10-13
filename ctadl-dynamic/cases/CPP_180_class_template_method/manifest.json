@@ -1,0 +1,6 @@
+{
+  "name": "CPP_180_class_template_method",
+  "description": "C++ templates (spec 033), POSITIVE: `Box<int> b; b.set(source()); sink(b.get())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

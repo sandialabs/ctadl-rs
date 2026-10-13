@@ -1,0 +1,6 @@
+{
+  "name": "CPP_187_member_template",
+  "description": "C++ templates (spec 033), POSITIVE: `struct S { template <class T> void set(T x) {...} }; s.set(source())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

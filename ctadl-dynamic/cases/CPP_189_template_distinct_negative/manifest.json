@@ -1,0 +1,6 @@
+{
+  "name": "CPP_189_template_distinct_negative",
+  "description": "C++ templates (spec 033), NEGATIVE: `Box<int> b; b.set(source()); sink(b.getw())`. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}
