@@ -5,7 +5,7 @@ language as the pest grammar, with the same rule names. See the header of `gramm
 pest quirks it reproduces. Nothing in the workspace builds or uses it; it exists for editor syntax
 highlighting (`queries/highlights.scm`).
 
-`src/` is generated except for `src/scanner.c`. After editing `grammar.js`, regenerate and
+`src/` is generated. After editing `grammar.js`, regenerate and
 check the test cases:
 
 ```sh

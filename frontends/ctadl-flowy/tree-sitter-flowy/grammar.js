@@ -7,9 +7,8 @@
  *
  * Pest literals are not reserved words: `return`, `ptr`, `goto`, etc. are still valid `ident`s
  * (e.g. the `return` port in a summary, or a variable named `ptr`). `_name` reproduces that by
- * admitting each keyword as an `ident`. Nor do they need a word boundary: `returnx;` is
- * `return x;`; src/scanner.c handles that at the start of a statement, the only place where pest's
- * reading differs from the longest match.
+ * admitting each keyword as an `ident`. A keyword must not run into an identifier (`returnx` is
+ * an identifier, never `return x`), which `word` gives us.
  */
 
 /// <reference types="tree-sitter-cli/dsl" />
@@ -25,8 +24,7 @@ module.exports = grammar({
 
   extras: $ => [/[ \t\r\n]/, $.comment],
 
-  // See src/scanner.c.
-  externals: $ => [$._return_prefix, $._goto_prefix, $._error_sentinel],
+  word: $ => $.ident,
 
   rules: {
     top: $ => repeat($._def),
@@ -70,9 +68,9 @@ module.exports = grammar({
 
     call_stmt: $ => seq($.ap, $.actuals, ';'),
 
-    goto_stmt: $ => seq(choice('goto', alias($._goto_prefix, 'goto')), commaSep1($._name), ';'),
+    goto_stmt: $ => seq('goto', commaSep1($._name), ';'),
 
-    return_stmt: $ => seq(choice('return', alias($._return_prefix, 'return')), optional($.ap), ';'),
+    return_stmt: $ => seq('return', optional($.ap), ';'),
 
     _p: $ => choice($.star_p, $.field_p, $.offset_p),
 

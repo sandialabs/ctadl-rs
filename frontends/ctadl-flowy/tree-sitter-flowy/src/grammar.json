@@ -1,6 +1,7 @@
 {
   "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
   "name": "flowy",
+  "word": "ident",
   "rules": {
     "top": {
       "type": "REPEAT",
@@ -405,22 +406,8 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "STRING",
-              "value": "goto"
-            },
-            {
-              "type": "ALIAS",
-              "content": {
-                "type": "SYMBOL",
-                "name": "_goto_prefix"
-              },
-              "named": false,
-              "value": "goto"
-            }
-          ]
+          "type": "STRING",
+          "value": "goto"
         },
         {
           "type": "SEQ",
@@ -457,22 +444,8 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "STRING",
-              "value": "return"
-            },
-            {
-              "type": "ALIAS",
-              "content": {
-                "type": "SYMBOL",
-                "name": "_return_prefix"
-              },
-              "named": false,
-              "value": "return"
-            }
-          ]
+          "type": "STRING",
+          "value": "return"
         },
         {
           "type": "CHOICE",
@@ -951,20 +924,7 @@
   ],
   "conflicts": [],
   "precedences": [],
-  "externals": [
-    {
-      "type": "SYMBOL",
-      "name": "_return_prefix"
-    },
-    {
-      "type": "SYMBOL",
-      "name": "_goto_prefix"
-    },
-    {
-      "type": "SYMBOL",
-      "name": "_error_sentinel"
-    }
-  ],
+  "externals": [],
   "inline": [],
   "supertypes": [],
   "reserved": {}
