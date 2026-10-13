@@ -14,11 +14,12 @@ frontend ingestion gaps — and tracks their disposition.
 | initializer_list (`{...}`) not ingested | frontend | 31, 34–36 | ✅ resolved (spec 019) |
 | labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (spec 018) |
 | F3 — a non-constant subscript reads/writes only element 0 | soundness | 37, CPP_133 | ❌ **open** (IR path model) |
+| F4 — a field path composed across a call is never admissible | soundness | 38, CPP_161 | ❌ **open** (codegen `paths` gate) |
 
 F2 and the two frontend findings above were surfaced by the **broadened M7 generator** (it threads
 taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
-Resolved entries are kept as a record of what the approach caught and how each was fixed. **F3 is
-open** (2026-10-13).
+Resolved entries are kept as a record of what the approach caught and how each was fixed. **F3 and
+F4 are open** (2026-10-13).
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
@@ -26,6 +27,35 @@ open** (2026-10-13).
 instead of a run-failing `NEW-GAP`/`FRONTEND-ERROR`. When a fix lands, the harness reports the
 case as `resolved-known-gap` / `resolved-known-frontend-gap`; the closure step is to remove that
 field from the manifest **and** mark the entry below RESOLVED.
+
+---
+
+## F4 — A field path composed across a call is never admissible (OPEN)
+
+- **Status:** **open**, allowlisted as `known_gap: "F4"` on cases `38` (C) and `CPP_161` (C++
+  member-object receivers). Found 2026-10-13 while adding member-object receivers (spec 030).
+- **What:** taint lives at a path only if that path is in the `paths` gate. Codegen seeds the
+  gate with syntactic paths and composes them along a **load chain within one basic block**
+  (`cap_path` in `codegen/mod.rs`: `t = load o.in; u = load t.v` yields `.in.v`).
+  `compute_paths` then adds only one-level concatenations with *summary/model* paths. A field
+  read that happens **inside a callee**, on a value loaded from a field, therefore never makes
+  the composed path admissible:
+  ```c
+  o.in = i;            /* i.v tainted */
+  sink(get(o.in));     /* get reads p.v: needs o.in.v -- s=none, d=flow */
+  ```
+  The same program with `sink(o.in.v)` agrees, because the read spells `.in.v` in-block. In C++
+  this hits every method call on a member object whose result depends on a member the callee
+  reads: `o.in.set(s); sink(o.in.get())`, `in.get()` inside a method, a member object's
+  destructor reading its own fields.
+- **Not the frontend:** the frontend emits the right calls (receivers loaded from `this.in`,
+  copy-in/copy-out). A frontend "hint" (dead loads of each member after the receiver load) would
+  seed the path in the harness, but `ctadl index` runs dead-temp elimination first, so the CLI
+  and the harness would disagree. It was rejected for that reason.
+- **Fix direction:** compose actual-parameter capture paths with the callee's formal paths
+  (`cap_path` of an actual × the paths its callee's formal reaches), or admit
+  `program_paths × summary_paths` concatenations for computed summaries, not just model ones.
+  Either is an index-engine change that main owns.
 
 ---
 

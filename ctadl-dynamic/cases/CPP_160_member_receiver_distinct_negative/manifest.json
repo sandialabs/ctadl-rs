@@ -1,0 +1,6 @@
+{
+  "name": "CPP_160_member_receiver_distinct_negative",
+  "description": "C++ member-object receivers (spec 030), NEGATIVE: o.in.set(source()); sink(o.in.getu()). s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

@@ -1,0 +1,7 @@
+{
+  "name": "member_store_then_callee_field_read",
+  "description": "F4 (open): `o.in = i; sink(get(o.in))` where get reads p.v. The composed path `.in.v` never becomes admissible (codegen composes paths only along an in-block load chain; the `.v` read is in the callee), so s=none while d=flow. Allowlisted as known_gap F4.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F4"
+}

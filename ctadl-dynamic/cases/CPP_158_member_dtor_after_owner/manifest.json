@@ -1,0 +1,6 @@
+{
+  "name": "CPP_158_member_dtor_after_owner",
+  "description": "C++ destruction chain (spec 030), POSITIVE: ~Out then the member's ~In (which sinks in.v). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

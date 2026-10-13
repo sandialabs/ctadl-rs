@@ -888,11 +888,16 @@ struct ClassInfo {
 /// The object a C++ instance-method receiver resolves to: the access-path expression to
 /// pass as the arg-0 (`ByRef`) receiver, and the object's class (to look up the method).
 /// Produced by [`Context::resolve_recv_obj`] for a plain identifier local, the implicit
-/// `this`, or a chained call whose callee returns its receiver.
+/// `this`, a member object, or a chained call whose callee returns its receiver.
 #[derive(Clone)]
 struct RecvObj {
     exp: Exp,
     class: String,
+    /// Where to store the receiver back after the call, for a member object (spec 030). The
+    /// offset-only IR can pass `x.in` only as the value loaded from it, and index summaries do
+    /// not write a callee's stores back through that load, so the call is copy-in/copy-out.
+    /// `None` for a receiver that is a variable or address of its own.
+    write_back: Option<RawPath>,
 }
 
 /// The outcome of lowering a C++ instance-method (or chained) call in [`Context::dispatch_call`].
@@ -5905,10 +5910,19 @@ impl<'a> Context<'a> {
                             &mut program[scope_view.fidx].locals,
                         );
                         let exp = Exp::access_path(self.emit_loads(program, scope_view, ap));
-                        Ok(Some(RecvObj { exp, class }))
+                        Ok(Some(RecvObj {
+                            exp,
+                            class,
+                            write_back: None,
+                        }))
                     }
-                    None => Ok(None),
+                    // An unqualified member object inside a method (spec 030).
+                    None => self.member_object_receiver(program, recv_node, source, scope_view),
                 }
+            }
+            // `x.in`, `p->in`, `this->in`: a member object (spec 030).
+            "field_expression" => {
+                self.member_object_receiver(program, recv_node, source, scope_view)
             }
             // The implicit receiver inside a method body: `this.m()` (rare) or `(*this).m()`.
             "this" => match self.current_method_class.clone() {
@@ -5920,7 +5934,11 @@ impl<'a> Context<'a> {
                         &mut program[scope_view.fidx].locals,
                     );
                     let exp = Exp::access_path(self.emit_loads(program, scope_view, ap));
-                    Ok(Some(RecvObj { exp, class }))
+                    Ok(Some(RecvObj {
+                        exp,
+                        class,
+                        write_back: None,
+                    }))
                 }
                 None => Ok(None),
             },
@@ -5949,7 +5967,11 @@ impl<'a> Context<'a> {
                     .map(str::to_string)
                 {
                     let exp = self.flatten_expr(program, recv_node, source, scope_view)?;
-                    return Ok(Some(RecvObj { exp, class }));
+                    return Ok(Some(RecvObj {
+                        exp,
+                        class,
+                        write_back: None,
+                    }));
                 }
                 let temp = self.allocator.next_temp();
                 Ok(self
@@ -5967,10 +5989,101 @@ impl<'a> Context<'a> {
                     return Ok(None);
                 };
                 let exp = self.flatten_expr(program, recv_node, source, scope_view)?;
-                Ok(Some(RecvObj { exp, class }))
+                Ok(Some(RecvObj {
+                    exp,
+                    class,
+                    write_back: None,
+                }))
             }
             _ => Ok(None),
         }
+    }
+
+    /// A C++ member object as a method receiver (spec 030): an unqualified member `in` inside a
+    /// method, or `x.in` / `p->in` / `this->in` / `c.b.a` on a known object, whose declared type
+    /// is a class. The receiver is the value loaded from the member's location and is written
+    /// back after the call ([`RecvObj::write_back`]). `None` for anything else -- every C field
+    /// access, since `classes` is empty there.
+    fn member_object_receiver(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<Option<RecvObj>, Error> {
+        let Some(class) = self.object_class_of(node, source, scope_view) else {
+            return Ok(None);
+        };
+        let location = self.flatten_lvalue(program, node, source, scope_view)?;
+        let exp = Exp::access_path(self.emit_loads(program, scope_view, location.clone()));
+        let write_back = (!location.is_pathless()).then_some(location);
+        Ok(Some(RecvObj {
+            exp,
+            class,
+            write_back,
+        }))
+    }
+
+    /// The class of the object `node` names, when it is a known object: a class-typed local or
+    /// parameter (object or pointer), `this`, or a member object reached from one -- `a.b`,
+    /// `p->b`, or an unqualified member `b` inside a method that no local shadows.
+    fn object_class_of(
+        &self,
+        node: Node<'_>,
+        source: &str,
+        scope_view: &ScopeView,
+    ) -> Option<String> {
+        match node.kind() {
+            "identifier" => {
+                let name = to_str(&node, source);
+                if let Some(class) = self.local_types.get(name) {
+                    return Some(class.clone());
+                }
+                if self
+                    .scope_tree
+                    .find_variable(scope_view.sidx, name)
+                    .is_some()
+                {
+                    return None;
+                }
+                let class = self.current_method_class.as_ref()?;
+                self.member_object_class(class, name)
+            }
+            "this" => self.current_method_class.clone(),
+            "parenthesized_expression" => {
+                self.object_class_of(first_named_child(node)?, source, scope_view)
+            }
+            "pointer_expression" => {
+                self.object_class_of(node.child_by_field_name("argument")?, source, scope_view)
+            }
+            "field_expression" => {
+                let base = self.object_class_of(
+                    node.child_by_field_name("argument")?,
+                    source,
+                    scope_view,
+                )?;
+                let field = node.child_by_field_name("field")?;
+                self.member_object_class(&base, to_str(&field, source))
+            }
+            _ => None,
+        }
+    }
+
+    /// The class of `class`'s member object `member`, looking through its bases.
+    fn member_object_class(&self, class: &str, member: &str) -> Option<String> {
+        let mut stack = vec![class.to_string()];
+        let mut seen: HashSet<String> = HashSet::default();
+        while let Some(c) = stack.pop() {
+            if !seen.insert(c.clone()) {
+                continue;
+            }
+            let info = self.classes.get(&c)?;
+            if let Some((_, object_class)) = info.member_objects.iter().find(|(m, _)| m == member) {
+                return Some(object_class.clone());
+            }
+            stack.extend(info.bases.iter().cloned());
+        }
+        None
     }
 
     /// Try to lower `call_node` as a C++ instance-method call — `recv.method(args)`, including
@@ -6128,6 +6241,9 @@ impl<'a> Context<'a> {
                 args: method_args,
             },
         ));
+        if let Some(location) = &recv.write_back {
+            self.add_assign_to_program(program, scope_view, location, &recv.exp, None);
+        }
 
         // A receiver-returning method makes the call's result an alias to the receiver
         // object. Register the result temp as an alias of that object so `Class& r = call`

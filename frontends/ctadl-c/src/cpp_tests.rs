@@ -2309,9 +2309,10 @@ fn cpp_scope_exit_destructors_are_reverse_construction_order() {
 
 #[test_log::test]
 fn cpp_scope_exit_derived_object_destroys_as_exact_declared_type() {
-    // FR-2: a stack `Derived d` (base `~Base`) destroys as exactly `Derived::~Derived` — a stack
-    // object's dynamic type equals its declared type, so scope exit is the single-target exact-type
-    // destructor (no CHA, even though `~Base` exists in the hierarchy).
+    // FR-2: a stack `Derived d` (base `~Base`) destroys as exactly `Derived` — a stack object's
+    // dynamic type equals its declared type, so scope exit is the single-target exact-type
+    // destructor (no CHA), followed by its base subobject's own single-target `~Base`, as C++
+    // runs it (spec 030; it used to stop at `~Derived`).
     let src = r#"
         extern "C" int source();
         extern "C" void sink(int);
@@ -2330,8 +2331,12 @@ fn cpp_scope_exit_derived_object_destroys_as_exact_declared_type() {
         .collect();
     assert_eq!(
         dtor_edges,
-        vec![vec!["Derived::~Derived".to_string()]],
-        "a stack Derived destroys as exactly Derived::~Derived (single-target, no CHA)\n{prog}"
+        vec![
+            vec!["Derived::~Derived".to_string()],
+            vec!["Base::~Base".to_string()]
+        ],
+        "a stack Derived destroys as exactly Derived::~Derived, then its Base (single-target, \
+         no CHA)\n{prog}"
     );
     check_direct_call_arg0(&prog, "main", "Derived::~Derived", "d");
 }
@@ -4349,4 +4354,80 @@ fn cpp_implicit_ctor_constructs_bases_and_member_objects() {
         function_named(&prog, "Plain::Plain").is_none(),
         "no constructor is invented for a plain member\n{prog}"
     );
+}
+
+// ---- Spec 030: member-object receivers and the destruction chain ------------------------------
+
+#[test_log::test]
+fn cpp_member_object_receivers_dispatch() {
+    // FR-1: `in.set(x)` inside a method, `this->in.set(x)` and `o.in.set(x)` dispatch to the
+    // member's class, on the value loaded from the member, and store it back after the call.
+    let src = r"
+        struct In { int v; void set(int x) { v = x; } };
+        struct Out {
+            In in;
+            void put(int x) { in.set(x); }
+            void put2(int x) { this->in.set(x); }
+        };
+        int main() { Out o; o.in.set(1); return 0; }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "Out::put", "In::set");
+    check_has_direct_call(&prog, "Out::put2", "In::set");
+    check_has_direct_call(&prog, "main", "In::set");
+    for name in ["Out::put", "Out::put2"] {
+        assert_eq!(
+            count_writes_in(&prog, name, "@p0.in"),
+            1,
+            "the member is written back once in {name}\n{prog}"
+        );
+    }
+}
+
+#[test_log::test]
+fn cpp_local_shadowing_a_member_object_is_not_a_receiver() {
+    // A local that shadows the member is not the member: no dispatch on `in`.
+    let src = r"
+        struct In { int v; void set(int x) { v = x; } };
+        struct Out { In in; void put(int x) { int in = x; in = in + 1; } };";
+    let prog = program_from_cpp_string(src).0;
+    assert!(
+        direct_calls_in(&prog, "Out::put").is_empty(),
+        "a shadowing scalar local is not a member-object receiver\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_scope_exit_runs_the_destruction_chain() {
+    // FR-2: destroying a `D : Base` with a member object runs `~D`, then the member's `~In`,
+    // then `~Base` -- each once, in that order.
+    let src = r"
+        struct In { int v; ~In() { v = 0; } };
+        struct Base { int b; ~Base() { b = 0; } };
+        struct D : Base { In in; ~D() { b = 1; } };
+        int main() { { D d; } return 0; }";
+    let prog = program_from_cpp_string(src).0;
+    let calls: Vec<String> = dtor_calls_per_block(&prog, "main")
+        .into_iter()
+        .flatten()
+        .collect();
+    assert_eq!(
+        calls,
+        vec!["D::~D", "In::~In", "Base::~Base"],
+        "destruction order\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_delete_runs_the_destruction_chain() {
+    // FR-2 for a non-virtual `delete`: the static type's own destructor, members, then bases.
+    let src = r"
+        struct Base { int b; ~Base() { b = 0; } };
+        struct D : Base { ~D() { b = 1; } };
+        int main() { D* p = new D(); delete p; return 0; }";
+    let prog = program_from_cpp_string(src).0;
+    let calls: Vec<String> = dtor_calls_per_block(&prog, "main")
+        .into_iter()
+        .flatten()
+        .collect();
+    assert_eq!(calls, vec!["D::~D", "Base::~Base"], "{prog}");
 }

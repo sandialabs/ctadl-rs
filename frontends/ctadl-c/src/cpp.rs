@@ -2108,20 +2108,27 @@ fn cpp_lower_delete<'a>(
     let Some(recv) = ctx.resolve_recv_obj(program, operand, source, scope_view)? else {
         return Ok(());
     };
-    // The destructor the static type binds — walking to the nearest base that declares one. No
-    // destructor anywhere in the hierarchy ⇒ `delete` is a no-op (unchanged from spec 014).
+    let location = match &recv.exp {
+        Exp::Variable(v) => RawPath::new(v.clone(), ThinVec::new()),
+        Exp::AccessPath(ap) => super::raw_path_of(ap),
+        _ => return Ok(()),
+    };
+    // A non-virtual destructor destroys exactly the static type: its own destructor, members
+    // and bases, as at scope exit (spec 030).
+    if !dtor_is_virtual(ctx, &recv.class) {
+        destroy_object(ctx, program, scope_view, location, &recv.class, true, 0);
+        return Ok(());
+    }
+    // A virtual destructor dispatches by CHA over the static type's subtree destructors
+    // (`DirectCall <targets>(recv)`, the referent `*p` as the arg-0 by-ref receiver). The
+    // defining class -- the nearest one in the base chain that declares a destructor -- has its
+    // members and bases destroyed after it, whichever override ran.
     let Some(defining) = dtor_defining_class(ctx, &recv.class) else {
         return Ok(());
     };
-    // A virtual destructor dispatches by CHA over the static type's subtree destructors; a
-    // non-virtual one is the single static-type destructor (`defining::~{defining}`).
-    let targets: ThinVec<String> = if dtor_is_virtual(ctx, &recv.class) {
-        dtor_cha_targets(ctx, &recv.class, &defining).into()
-    } else {
-        thin_vec![format!("{defining}::~{}", simple_class_name(&defining))]
-    };
-    // Emit `DirectCall <targets>(recv)` — the referent `*p` as the arg-0 by-ref receiver.
+    let targets: ThinVec<String> = dtor_cha_targets(ctx, &recv.class, &defining).into();
     emit_dtor_call(ctx, program, scope_view, targets, recv.exp);
+    destroy_object(ctx, program, scope_view, location, &defining, false, 0);
     Ok(())
 }
 
@@ -2210,21 +2217,72 @@ fn drain_dtor_frame(
     // themselves are pushed and popped by `walk_compound_body`.
     let frame = ctx.dtor_frames[idx].clone();
     for (obj_name, class) in frame.into_iter().rev() {
-        // Only a class whose hierarchy declares a destructor produces a call; a destructor-less
-        // stack object emits nothing (unchanged from spec 014).
-        let Some(defining) = dtor_defining_class(ctx, &class) else {
-            continue;
-        };
-        let targets: ThinVec<String> =
-            thin_vec![format!("{defining}::~{}", simple_class_name(&defining))];
-        let recv_ap = ctx.build_access_path(
+        let location = ctx.build_access_path(
             &obj_name,
             Default::default(),
             scope_view,
             &mut program[scope_view.fidx].locals,
         );
-        let recv = Exp::access_path(ctx.emit_loads(program, scope_view, recv_ap));
-        emit_dtor_call(ctx, program, scope_view, targets, recv);
+        destroy_object(ctx, program, scope_view, location, &class, true, 0);
+    }
+}
+
+/// Destroy the object at `location`, of exact class `class`, as C++ does (spec 030): its own
+/// destructor body (when `own` and the class declares one), then its member objects in reverse
+/// declaration order, then its base subobjects in reverse order -- each recursively. A tree
+/// with no destructor anywhere emits nothing (unchanged from spec 014). A member object is
+/// passed as the value loaded from `this.<member>`; nothing is written back, since the object
+/// is gone. `depth` bounds a malformed (cyclic) hierarchy.
+fn destroy_object(
+    ctx: &mut Context<'_>,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    location: RawPath,
+    class: &str,
+    own: bool,
+    depth: usize,
+) {
+    let Some(info) = ctx.classes.get(class) else {
+        return;
+    };
+    if depth > 32 {
+        return;
+    }
+    let (has_dtor, members, bases) = (
+        info.has_dtor,
+        info.member_objects.clone(),
+        info.bases.clone(),
+    );
+    if own && has_dtor {
+        let recv = Exp::access_path(ctx.emit_loads(program, scope_view, location.clone()));
+        let target = format!("{class}::~{}", simple_class_name(class));
+        emit_dtor_call(ctx, program, scope_view, thin_vec![target], recv);
+    }
+    for (member, member_class) in members.iter().rev() {
+        let mut member_location = location.clone();
+        member_location
+            .fields
+            .push(PathSegment::symbol(member.as_str()));
+        destroy_object(
+            ctx,
+            program,
+            scope_view,
+            member_location,
+            member_class,
+            true,
+            depth + 1,
+        );
+    }
+    for base in bases.iter().rev() {
+        destroy_object(
+            ctx,
+            program,
+            scope_view,
+            location.clone(),
+            base,
+            true,
+            depth + 1,
+        );
     }
 }
 

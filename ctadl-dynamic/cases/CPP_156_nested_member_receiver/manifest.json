@@ -1,0 +1,6 @@
+{
+  "name": "CPP_156_nested_member_receiver",
+  "description": "C++ member-object receivers (spec 030), POSITIVE: c.b.a.set(source()); sink(c.b.a.v). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

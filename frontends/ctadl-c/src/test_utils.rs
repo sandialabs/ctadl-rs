@@ -597,6 +597,17 @@ pub(crate) fn count_writes_to(prog: &Program, dst: &str) -> usize {
         .count()
 }
 
+/* `count_writes_to` for the function named `name` in a multi-function program. */
+pub(crate) fn count_writes_in(prog: &Program, name: &str, dst: &str) -> usize {
+    let fun = function_named(prog, name).unwrap_or_else(|| panic!("no function {name:?}\n{prog}"));
+    let dst_ap = access_path_from_str(dst, &fun.locals);
+    fun.blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .filter(|s| writes_dest(&s.kind, &dst_ap))
+        .count()
+}
+
 /* Asserts the (single) function writes to `dst` exactly `count` times, ignoring the written value.
 The source-agnostic complement to `check_assign_or_update`: use it when the value written is an
 incidental flatten temp that shouldn't be pinned -- e.g. `x++` lowers to `x = <t0>` and `p->x++` to

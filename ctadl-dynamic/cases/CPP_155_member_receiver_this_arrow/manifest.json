@@ -1,0 +1,6 @@
+{
+  "name": "CPP_155_member_receiver_this_arrow",
+  "description": "C++ member-object receivers (spec 030), POSITIVE: this->in.set(x) inside Out::put, then sink(o.in.v). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

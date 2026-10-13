@@ -1,0 +1,6 @@
+{
+  "name": "CPP_157_base_dtor_after_derived",
+  "description": "C++ destruction chain (spec 030), POSITIVE: ~D then ~Base (which sinks v) at scope exit. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
