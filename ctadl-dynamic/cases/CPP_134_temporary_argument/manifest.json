@@ -1,0 +1,6 @@
+{
+  "name": "CPP_134_temporary_argument",
+  "description": "C++ temporaries (spec 027), POSITIVE: `take(B(source()))` with `take(const B&)` reading b.v. The temporary is constructed through B::B and passed as the object. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

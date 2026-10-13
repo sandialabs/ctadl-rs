@@ -1,0 +1,6 @@
+{
+  "name": "CPP_137_brace_temporary_ctor",
+  "description": "C++ temporaries (spec 027), POSITIVE: `sink(B{source()}.get())` -- brace temporary on a class with a constructor runs B::B. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

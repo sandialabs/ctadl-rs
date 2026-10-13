@@ -4174,3 +4174,77 @@ fn cpp_range_for_variable_is_scoped_to_the_loop() {
     let (s, _si) = get_summary(program_from_cpp_string(src).0).unwrap();
     check_returns_param(&s, 0, "");
 }
+
+// ---- Spec 027: temporaries --------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_temporary_is_constructed_and_passed() {
+    // FR-1: `B(p)` on a class constructs a fresh object through `B::B` (never a call to a
+    // function `B`), and the object is the value passed on.
+    let src = r"
+        struct B { int v; B(int x) : v(x) {} };
+        int take(const B& b) { return b.v; }
+        int f(int p) { return take(B(p)); }";
+    let prog = program_from_cpp_string(src).0;
+    let calls = direct_calls_in(&prog, "f");
+    assert!(
+        calls
+            .iter()
+            .any(|(callees, _)| callees == &["B::B".to_string()]),
+        "the temporary runs its constructor\n{prog}"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|(callees, _)| callees == &["B".to_string()]),
+        "no call to a function named after the class\n{prog}"
+    );
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn cpp_temporary_receiver_dispatches() {
+    // FR-2: a method called on a temporary dispatches with the constructed object as receiver.
+    let src = r"
+        struct B { int v; B(int x) : v(x) {} int get() { return v; } };
+        int f(int p) { return B(p).get(); }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "f", "B::get");
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn cpp_brace_temporary_runs_the_constructor() {
+    // FR-3: `B{p}` on a class with a constructor is a construction; `P{p, 0}` on a
+    // constructor-less class is aggregate initialization, member by member.
+    let src = r"
+        struct B { int v; B(int x) : v(x) {} int get() { return v; } };
+        struct P { int a; int b; };
+        int f(int p) { return B{p}.get(); }
+        int g(int p) { P q = P{p, 0}; return q.a; }
+        int h(int p) { P q = P{0, p}; return q.a; }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "f", "B::B");
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+    check_returns_param_in(&s, &si, "g", 0, "");
+    check_does_not_return_param_in(&s, &si, "h", 0, "");
+}
+
+#[test_log::test]
+fn cpp_temporary_destructor_runs_at_scope_exit() {
+    // FR-4: the temporary joins the enclosing scope's destructor frame.
+    let src = r"
+        struct G { int v; G(int x) : v(x) {} ~G() { v = 0; } };
+        int f(int p) { int r = G(p).v; return r; }";
+    let prog = program_from_cpp_string(src).0;
+    assert!(
+        dtor_calls_per_block(&prog, "f")
+            .iter()
+            .flatten()
+            .any(|c| c == "G::~G"),
+        "the temporary is destroyed\n{prog}"
+    );
+}

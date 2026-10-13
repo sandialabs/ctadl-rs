@@ -1,0 +1,6 @@
+{
+  "name": "CPP_135_return_temporary",
+  "description": "C++ temporaries (spec 027), POSITIVE: `B make() { return B(source()); }` then `B c = make(); sink(c.get())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

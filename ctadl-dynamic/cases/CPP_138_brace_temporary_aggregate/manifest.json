@@ -1,0 +1,6 @@
+{
+  "name": "CPP_138_brace_temporary_aggregate",
+  "description": "C++ temporaries (spec 027), POSITIVE: `pick(P{source(), 0})` reading p.a -- an aggregate brace temporary, initialized member-wise by name. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

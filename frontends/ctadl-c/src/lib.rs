@@ -1063,6 +1063,8 @@ struct GrammarHooks {
     /// a body moves is only observed if the call is emitted. A C++ named cast
     /// (`static_cast<T>(e)` and kin) or functional cast (`int(e)`) is a built-in operator the
     /// grammar also spells as a call; the hook answers it with its operand's value (spec 025).
+    /// A call `C(args)` on a class name constructs a temporary; the hook answers the object
+    /// (spec 027).
     ///
     /// The three shared arms that lower those shapes -- the `assignment_expression` and
     /// `call_expression` arms of [`Context::flatten_expr`], and [`Context::flatten_subscript`] --
@@ -5197,14 +5199,26 @@ impl<'a> Context<'a> {
             // has the same `type` field a declaration does, so `declaration_type_tag` reads
             // its tag unchanged; its optional abstract array declarator carries the rank.
             "compound_literal_expression" => {
+                // C++ `C{args}` for a class with a constructor is a construction, not an
+                // aggregate: the `operator_call` hook constructs the temporary (spec 027). It
+                // declines every C compound literal.
+                let operator_call = self.hooks.operator_call;
+                if let Some(value) = operator_call(self, program, node, source, scope_view)? {
+                    return Ok(value);
+                }
                 let ty = node
                     .child_by_field_name("type")
                     .expect("compound_literal_expression always has a type");
                 let value = node
                     .child_by_field_name("value")
                     .expect("compound_literal_expression always has a value");
-                let own = declaration_type_tag(ty, source)
-                    .and_then(|tag| self.struct_layouts.get(tag).cloned());
+                // C spells the type `(struct P)`, a `type_descriptor`; C++'s `P{..}` names it
+                // bare, a `type_identifier`.
+                let tag = match ty.kind() {
+                    "type_identifier" => Some(to_str(&ty, source)),
+                    _ => declaration_type_tag(ty, source),
+                };
+                let own = tag.and_then(|tag| self.struct_layouts.get(tag).cloned());
                 let rank = ty
                     .child_by_field_name("declarator")
                     .map(array_declarator_rank)
@@ -5920,10 +5934,35 @@ impl<'a> Context<'a> {
             // A chained receiver: lower the inner call; only a receiver-returning method
             // (`return *this`) yields an object to chain on.
             "call_expression" => {
+                // A C++ temporary `C(args)` is an object of `C`, which `flatten_expr`
+                // constructs (spec 027). Data-driven on the neutral `classes` map, which is
+                // empty for C.
+                if let Some(class) = recv_node
+                    .child_by_field_name("function")
+                    .map(|f| to_str(&f, source))
+                    .filter(|name| self.classes.contains_key(*name))
+                    .map(str::to_string)
+                {
+                    let exp = self.flatten_expr(program, recv_node, source, scope_view)?;
+                    return Ok(Some(RecvObj { exp, class }));
+                }
                 let temp = self.allocator.next_temp();
                 Ok(self
                     .dispatch_call(program, recv_node, source, scope_view, temp)?
                     .and_then(|out| out.aliased))
+            }
+            // A braced temporary `C{args}`, constructed or aggregate-initialized (spec 027).
+            "compound_literal_expression" => {
+                let Some(class) = recv_node
+                    .child_by_field_name("type")
+                    .map(|t| to_str(&t, source))
+                    .filter(|name| self.classes.contains_key(*name))
+                    .map(str::to_string)
+                else {
+                    return Ok(None);
+                };
+                let exp = self.flatten_expr(program, recv_node, source, scope_view)?;
+                Ok(Some(RecvObj { exp, class }))
             }
             _ => Ok(None),
         }

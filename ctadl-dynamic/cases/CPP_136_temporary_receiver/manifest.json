@@ -1,0 +1,6 @@
+{
+  "name": "CPP_136_temporary_receiver",
+  "description": "C++ temporaries (spec 027), POSITIVE: `sink(B(source()).get())`; the call-expression receiver is the constructed temporary. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

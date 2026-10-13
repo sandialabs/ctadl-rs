@@ -1,0 +1,6 @@
+{
+  "name": "CPP_140_temporary_distinct_negative",
+  "description": "C++ temporaries (spec 027), NEGATIVE: `sink(B(source()).getw())` where the ctor taints v and w stays 0. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

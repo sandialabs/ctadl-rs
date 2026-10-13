@@ -1,0 +1,6 @@
+{
+  "name": "CPP_139_temporary_destructor",
+  "description": "C++ temporaries (spec 027), POSITIVE: `G(source()).v` where ~G sinks v. The temporary joins the scope destructor frame. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

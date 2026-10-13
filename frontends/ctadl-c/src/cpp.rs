@@ -2201,6 +2201,9 @@ fn cpp_operator_call<'a>(
             )?;
             Ok(out.map(|o| o.value))
         }
+        "compound_literal_expression" => {
+            construct_temporary(ctx, program, node, source, scope_view)
+        }
         "call_expression" => {
             // `f(args)` where `f` names an object, not a function: the call operator. A callee
             // that is anything else — every function call, in C and C++ alike — misses in
@@ -2213,6 +2216,9 @@ fn cpp_operator_call<'a>(
                 return ctx
                     .flatten_expr(program, operand, source, scope_view)
                     .map(Some);
+            }
+            if let Some(object) = construct_temporary(ctx, program, node, source, scope_view)? {
+                return Ok(Some(object));
             }
             let Some(class) = operand_class(ctx, callee, source) else {
                 return Ok(None);
@@ -2242,6 +2248,109 @@ fn cpp_operator_call<'a>(
         }
         _ => Ok(None),
     }
+}
+
+/// The class and argument list of a temporary: `C(args)` for a known class `C` that no value
+/// in scope shadows, or `C{args}` for one that declares a constructor (a constructor-less
+/// `C{..}` is an aggregate, which the shared compound-literal lowering initializes). `None`
+/// for every other expression, and for all of C, where `classes` is empty.
+fn temporary_of<'t>(
+    ctx: &Context<'_>,
+    node: Node<'t>,
+    source: &str,
+    scope_view: &ScopeView,
+) -> Option<(String, Node<'t>)> {
+    let (type_node, args, braced) = match node.kind() {
+        "call_expression" => (
+            node.child_by_field_name("function")?,
+            node.child_by_field_name("arguments")?,
+            false,
+        ),
+        "compound_literal_expression" => (
+            node.child_by_field_name("type")?,
+            node.child_by_field_name("value")?,
+            true,
+        ),
+        _ => return None,
+    };
+    if !matches!(
+        type_node.kind(),
+        "identifier" | "type_identifier" | "qualified_identifier"
+    ) {
+        return None;
+    }
+    let name = to_str(&type_node, source);
+    let info = ctx.classes.get(name)?;
+    if (braced && !info.has_ctor) || ctx.names_a_value(name, scope_view) {
+        return None;
+    }
+    Some((name.to_string(), args))
+}
+
+/// Lower the temporary `C(args)` / `C{args}` (spec 027) and return the object, or `None` when
+/// `node` is not one (see [`temporary_of`]).
+///
+/// A temporary is a fresh local object, constructed exactly as a declared one is: the
+/// arity- and shape-resolved constructor edge ([`emit_ctor_call`]) with the object as the
+/// arg-0 receiver, or the copy constructor for `C(c)` from an object of `C`. Its value is that
+/// object, so `take(C(x))`, `return C(x)` and `C(x).m()` all see what the constructor stored.
+/// A class with no constructor yields the fresh object after evaluating the arguments for
+/// their effects.
+///
+/// The temporary joins the enclosing scope's destructor frame. C++ destroys it at the end of
+/// its full expression, which is earlier, but nothing can reach the object in between, so the
+/// members its destructor reads are the same either way.
+fn construct_temporary<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    node: Node<'_>,
+    source: &'a str,
+    scope_view: &mut ScopeView,
+) -> anyhow::Result<Option<Exp>, Error> {
+    let Some((class, args_node)) = temporary_of(ctx, node, source, scope_view) else {
+        return Ok(None);
+    };
+    let (has_ctor, has_copy_ctor) = ctx
+        .classes
+        .get(&class)
+        .map_or((false, false), |info| (info.has_ctor, info.has_copy_ctor));
+    let mut cursor = args_node.walk();
+    let arg_nodes: Vec<Node<'_>> = args_node
+        .named_children(&mut cursor)
+        .filter(|n| n.kind() != "comment")
+        .collect();
+    let copy = has_copy_ctor
+        && arg_nodes.len() == 1
+        && names_class_object(ctx, source, arg_nodes[0], &class);
+    let shapes: Vec<ArgShape> = arg_nodes
+        .iter()
+        .map(|arg| ctx.arg_shape(*arg, source))
+        .collect();
+    let mut args: ThinVec<Exp> = ThinVec::new();
+    for arg in arg_nodes {
+        args.push(ctx.flatten_expr(program, arg, source, scope_view)?);
+    }
+
+    let obj = ctx.allocator.next_temp();
+    ctx.scope_tree
+        .add_variable(scope_view.sidx, obj.clone(), VarKind::Local);
+    ctx.local_types.insert(obj.clone(), class.clone());
+    ctx.local_pointers.remove(&obj);
+    if let Some(frame) = ctx.dtor_frames.last_mut() {
+        frame.push((obj.clone(), class.clone()));
+    }
+    if has_ctor {
+        emit_ctor_call(ctx, program, scope_view, &class, &obj, args, &shapes, copy);
+    }
+    let path = ctx.build_access_path(
+        &obj,
+        Default::default(),
+        scope_view,
+        &mut program[scope_view.fidx].locals,
+    );
+    Ok(Some(Exp::access_path(
+        ctx.emit_loads(program, scope_view, path),
+    )))
 }
 
 /// The operand of a cast the C++ grammar spells as a call, or `None` for any other call.
