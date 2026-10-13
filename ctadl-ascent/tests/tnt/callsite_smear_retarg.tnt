@@ -1,0 +1,22 @@
+// A tainted return value must not taint the call's own argument.
+//
+// `wrap`'s return carries a source and its summary is `return <- n`, a derivation from the
+// argument rather than a reference copy. The call-site smear let the object hop cross the call's
+// return vertex, putting the return's taint back onto `m`, so `errsink(m, S)` fired. No saturating
+// source is involved.
+def wrap(n): 1
+where summaries [return <- n]
+{
+s:
+  x = source(S);
+  r = n, x;
+  return r;
+}
+
+def main(m) {
+s:
+  t = wrap(m);
+  sink(t, S);
+  errsink(m, S);
+  return;
+}
