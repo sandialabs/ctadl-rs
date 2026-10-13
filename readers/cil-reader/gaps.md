@@ -474,8 +474,8 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
   indexes from HeapSizes and the row counts whatever `#JTD` says. Both are
   known anti-Cecil tricks.
 
-**D4. Formatter labels at offset ≥ 0x10000.**
-- **Cecil:** keeps only the low 4 hex digits (`IL_0003`).
+**D4. Formatter labels at offset ≥ 0x10000.** *Won't emulate:* the truncation is in the test helper `FormatLabel` (`Test/Mono.Cecil.Tests/Formatter.cs:99-103`), which pads with `"000" + x` and keeps the last 4 digits. Cecil's library prints every digit (`Instruction.ToString`, `Mono.Cecil.Cil/Instruction.cs:142-146`), as the port and CecilDump do.
+- **Cecil:** the test Formatter keeps only the low 4 hex digits (`IL_0003`).
 - **Rust:** `formatted()` prints `IL_10003`. cil-dump already matches CecilDump.
 
 **D5. Cases where Cecil's Formatter throws and the port prints something.**
