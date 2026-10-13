@@ -92,8 +92,6 @@
 // `mbsrtowcs(dest, &src, len, ps)` -- `src` is a `char **`, one level deeper than `mbstowcs`.
 {"find":"methods","where":[{"constraint":"signature_match","names":["mbsrtowcs","wcsrtombs"]}],"model":{"propagation":[{"input":"Argument(1).deref.deref","output":"Argument(0).deref"}]}}
 // ---- allocation ----
-// No model for `malloc` and friends: a size is not the buffer's contents
-// (`malloc_size_does_not_taint_the_buffer` in frontends/ctadl-c).
 // `realloc(ptr, size)` KEEPS the old contents. Modeling it like `malloc` drops them, which ends
 // a flow through every grow-the-buffer loop in a parser.
 {"find":"methods","where":[{"constraint":"signature_match","names":["realloc","reallocarray","reallocf"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return.deref"}]}}
