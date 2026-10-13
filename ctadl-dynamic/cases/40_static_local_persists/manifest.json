@@ -1,0 +1,7 @@
+{
+  "name": "static_local_persists",
+  "description": "F6 (open): a `static` local (`static int last`) is lowered as an ordinary local, so a value stored in one call is not seen by the next. s=none, d=flow. Allowlisted as known_gap F6.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F6"
+}

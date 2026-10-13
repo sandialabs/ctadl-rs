@@ -1247,6 +1247,15 @@ struct Context<'a> {
     /// 034). [`Context::build_access_path`] resolves such a name to `$globals.<slot>`. Filled by
     /// the `function_scan` hook, reset per function; empty for C.
     captured_globals: HashMap<String, String>,
+    /// C++ `using namespace X;` directives of this unit, as `X::` prefixes, and `using X::f;`
+    /// declarations, by name (spec 037). Read by [`Context::resolve_callee_name`] and
+    /// [`Context::class_named`]; empty for C.
+    using_namespaces: Vec<String>,
+    using_aliases: HashMap<String, String>,
+    /// The enclosing scopes of the function being lowered, innermost first, as `ns::Class::`,
+    /// `ns::` prefixes of its IR name (spec 037). Empty for every C function, whose names have
+    /// no `::`.
+    lookup_prefixes: Vec<String>,
     /// Overloaded-by-arity names: an IR **base name** (a free function's bare/qualified name
     /// `f` / `ns::f`, or a method's qualified `Class::method`) mapped to the set of explicit
     /// **arities** (parameter counts, `this` excluded) defined under it. A name is *overloaded*
@@ -1618,6 +1627,9 @@ impl Context<'_> {
             reference_aliases: HashMap::default(),
             type_aliases: HashMap::default(),
             captured_globals: HashMap::default(),
+            using_namespaces: Vec::new(),
+            using_aliases: HashMap::default(),
+            lookup_prefixes: Vec::new(),
             overloads: HashMap::default(),
             local_pointers: HashSet::default(),
             byval_class_params: HashMap::default(),
@@ -1728,8 +1740,57 @@ impl Context<'_> {
     /// The class a type name denotes: the name itself when it is a known class, or the class a
     /// C++ type alias names (spec 033). `None` for every other name -- all of C.
     fn class_named(&self, name: &str) -> Option<String> {
-        let name = self.type_aliases.get(name).map_or(name, String::as_str);
-        self.classes.contains_key(name).then(|| name.to_string())
+        let resolved = self.type_aliases.get(name).map_or(name, String::as_str);
+        if self.classes.contains_key(resolved) {
+            return Some(resolved.to_string());
+        }
+        // C++ name lookup (spec 037): the enclosing namespaces, then `using` directives, then --
+        // a nested class being keyed by its own name -- the last component of a qualified name.
+        self.lookup_prefixes
+            .iter()
+            .chain(self.using_namespaces.iter())
+            .map(|prefix| format!("{prefix}{name}"))
+            .chain(name.rsplit_once("::").map(|(_, last)| last.to_string()))
+            .map(|candidate| {
+                self.type_aliases
+                    .get(&candidate)
+                    .cloned()
+                    .unwrap_or(candidate)
+            })
+            .find(|candidate| self.classes.contains_key(candidate))
+    }
+
+    /// The function an unqualified call names, by C++ name lookup (spec 037): the caller's
+    /// enclosing namespaces and class, innermost first; the name itself; then `using`
+    /// declarations and directives. `None` when the name needs no rewriting -- always for C,
+    /// whose function names hold no `::` and whose units have no `using`.
+    fn resolve_callee_name(&self, name: &str) -> Option<String> {
+        let known = |candidate: &str| {
+            self.functions.contains_key(candidate)
+                || self.overloads.contains_key(candidate)
+                || self.declared_functions.contains(candidate)
+        };
+        if let Some(found) = self
+            .lookup_prefixes
+            .iter()
+            .map(|prefix| format!("{prefix}{name}"))
+            .find(|candidate| known(candidate))
+        {
+            return Some(found);
+        }
+        if known(name) {
+            return None;
+        }
+        self.using_aliases
+            .get(name)
+            .cloned()
+            .into_iter()
+            .chain(
+                self.using_namespaces
+                    .iter()
+                    .map(|prefix| format!("{prefix}{name}")),
+            )
+            .find(|candidate| known(candidate))
     }
 
     /// Whether `sub` **is a** `base`: the same class, or a transitive subclass of it. Walks the
@@ -5057,10 +5118,16 @@ impl<'a> Context<'a> {
                 // `call_target_assign` fact indirect-call resolution needs; a plain-global
                 // read would drop the taint. Direct calls resolve in `collect_call`, not
                 // here.
-                if self
+                let not_a_variable = self
                     .scope_tree
                     .find_variable(scope_view.sidx, text)
-                    .is_none()
+                    .is_none();
+                // C++ name lookup may find it in an enclosing namespace (spec 037).
+                let looked_up = not_a_variable
+                    .then(|| self.resolve_callee_name(text))
+                    .flatten();
+                let text = looked_up.as_deref().unwrap_or(text);
+                if not_a_variable
                     && (self.functions.contains_key(text) || self.declared_functions.contains(text))
                 {
                     // Which definition of `text` this file means, when more than one file
@@ -6651,6 +6718,17 @@ impl<'a> Context<'a> {
         let func_name = erased_name
             .as_deref()
             .unwrap_or_else(|| to_str(&func_node, source));
+        // An unqualified C++ callee names what name lookup finds: `g()` inside `ns::f` is
+        // `ns::g`, and `using` makes `id` mean `ns::id` (spec 037). The identity for C.
+        let looked_up = (func_node.kind() == "identifier"
+            && self
+                .scope_tree
+                .find_variable(scope_view.sidx, func_name)
+                .is_none())
+        .then(|| self.resolve_callee_name(func_name))
+        .flatten();
+        let named = erased_name.is_some() || looked_up.is_some();
+        let func_name = looked_up.as_deref().unwrap_or(func_name);
 
         let arg_node = node.child_by_field_name("arguments").expect("always has");
         let mut args = self.collect_arguments(program, arg_node, source, scope_view)?;
@@ -6699,7 +6777,7 @@ impl<'a> Context<'a> {
             );
             self.add_assign_to_program(program, scope_view, &holder, &closure, None);
             holder
-        } else if func_node.kind() == "identifier" || erased_name.is_some() {
+        } else if func_node.kind() == "identifier" || named {
             self.build_access_path(
                 func_name,
                 Default::default(),
@@ -6917,6 +6995,7 @@ impl<'a> Context<'a> {
         self.local_pointers.clear();
         self.reference_aliases.clear();
         self.captured_globals.clear();
+        self.lookup_prefixes = scope_prefixes(func_name);
         self.current_method_class = class_context.map(str::to_string);
         // Address-of aliases are function-local and confined to a straight-line block.
         self.addr_alias.clear();
@@ -7844,6 +7923,20 @@ fn declared_class(ctx: &Context<'_>, node: Node<'_>, source: &str) -> Option<Str
             )
         })
         .and_then(|t| ctx.class_named(&template_erased_name(t, source)))
+}
+
+/// The enclosing scopes of a function named `func_name`, innermost first: `ns::S::set` gives
+/// `ns::S::` and `ns::` (spec 037). An overload mangling (`#…`) is ignored. A C name has no
+/// `::`, so it has none.
+fn scope_prefixes(func_name: &str) -> Vec<String> {
+    let base = func_name.split('#').next().unwrap_or(func_name);
+    let mut prefixes = Vec::new();
+    let mut end = base.len();
+    while let Some(idx) = base[..end].rfind("::") {
+        prefixes.push(base[..idx + 2].to_string());
+        end = idx;
+    }
+    prefixes
 }
 
 /// The name a type or callee node spells, with every C++ template argument list dropped:

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_216_namespace_hides_global_negative",
+  "description": "C++ name lookup (spec 037), NEGATIVE: ns::wrap calls pick -> ns::pick (returns 0), not ::pick. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

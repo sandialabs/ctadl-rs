@@ -1,0 +1,6 @@
+{
+  "name": "CPP_217_using_namespace",
+  "description": "C++ name lookup (spec 037), POSITIVE: `using namespace ns; sink(id(source()))`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

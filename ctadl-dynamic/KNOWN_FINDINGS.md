@@ -16,11 +16,12 @@ frontend ingestion gaps — and tracks their disposition.
 | F3 — a non-constant subscript reads/writes only element 0 | soundness | 37, CPP_133 | ❌ **open** (IR path model) |
 | F4 — a field path composed across a call is never admissible | soundness | 38, CPP_161, CPP_179 | ❌ **open** (codegen `paths` gate) |
 | F5 — `(p + 1)->f` and `arr[1].f` lower to different paths | soundness | 39 | ❌ **open** (C pointer model) |
+| F6 — a `static` local does not persist across calls | soundness | 40 | ❌ **open** (C frontend) |
 
 F2 and the two frontend findings above were surfaced by the **broadened M7 generator** (it threads
 taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
-Resolved entries are kept as a record of what the approach caught and how each was fixed. **F3, F4
-and F5 are open** (2026-10-13).
+Resolved entries are kept as a record of what the approach caught and how each was fixed. **F3–F6
+are open** (2026-10-13).
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
@@ -28,6 +29,20 @@ and F5 are open** (2026-10-13).
 instead of a run-failing `NEW-GAP`/`FRONTEND-ERROR`. When a fix lands, the harness reports the
 case as `resolved-known-gap` / `resolved-known-frontend-gap`; the closure step is to remove that
 field from the manifest **and** mark the entry below RESOLVED.
+
+---
+
+## F6 — A `static` local does not persist across calls (OPEN)
+
+- **Status:** **open**, allowlisted as `known_gap: "F6"` on case `40`. Found 2026-10-13 by the
+  round-2 C++ candidate scan (`g26_static_local_counter`); C has it identically.
+- **What:** `static int last = 0;` inside a function has static storage duration: one object for
+  every call, initialized once. The frontend declares it as an ordinary local, so a value stored
+  in one call is gone in the next.
+- **Fix direction:** in `walk_declaration`, a declaration with a `static` storage-class
+  specifier inside a function declares a global named after its function
+  (`<function>::<name>`), resolved by `build_access_path`, with its initializer as the global's
+  initialization rather than a per-call store. This is a C-frontend change for the C owners.
 
 ---
 

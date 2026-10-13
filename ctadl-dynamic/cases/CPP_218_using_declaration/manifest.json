@@ -1,0 +1,6 @@
+{
+  "name": "CPP_218_using_declaration",
+  "description": "C++ name lookup (spec 037), POSITIVE: `using ns::id; sink(id(source()))`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

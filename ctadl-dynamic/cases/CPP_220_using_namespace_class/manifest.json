@@ -1,0 +1,6 @@
+{
+  "name": "CPP_220_using_namespace_class",
+  "description": "C++ name lookup (spec 037), POSITIVE: `using namespace ns; B b; b.v = source(); sink(b.get())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

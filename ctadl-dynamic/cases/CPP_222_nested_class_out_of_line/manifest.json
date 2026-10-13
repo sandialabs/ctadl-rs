@@ -1,0 +1,6 @@
+{
+  "name": "CPP_222_nested_class_out_of_line",
+  "description": "C++ name lookup (spec 037), POSITIVE: a nested class declared qualified with an out-of-line method. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

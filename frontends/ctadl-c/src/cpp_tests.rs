@@ -4766,3 +4766,49 @@ fn cpp_returned_member_object_is_a_receiver() {
     check_has_direct_call(&prog, "f", "In::set");
     assert_eq!(count_writes_in(&prog, "f", "@p0.in"), 1, "{prog}");
 }
+
+// ---- Spec 037: name lookup ---------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_unqualified_call_finds_the_enclosing_namespace() {
+    // FR-1: `id(x)` inside `ns::wrap` is `ns::id`, which hides a global `id`; a method of a
+    // namespaced class finds it too.
+    let src = r"
+        int id(int x) { return 0; }
+        namespace ns {
+            int id(int x) { return x; }
+            int wrap(int x) { return id(x); }
+            struct S { int v; void set(int x) { v = id(x); } };
+        }";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "ns::wrap", "ns::id", ["@p0"]);
+    check_direct_call(&prog, "ns::S::set", "ns::id", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_using_makes_a_namespace_member_visible() {
+    // FR-2: `using namespace ns;` and `using ns::id;` resolve unqualified functions and
+    // classes.
+    let src = r"
+        namespace ns { int id(int x) { return x; } struct B { int v; int get() { return v; } }; }
+        namespace m { int twice(int x) { return x + x; } }
+        using namespace ns;
+        using m::twice;
+        int f(int p) { B b; b.v = p; return id(p) + twice(p) + b.get(); }";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "f", "ns::id", ["@p0"]);
+    check_direct_call(&prog, "f", "m::twice", ["@p0"]);
+    check_has_direct_call(&prog, "f", "ns::B::get");
+}
+
+#[test_log::test]
+fn cpp_nested_class_is_named_qualified_and_out_of_line() {
+    // FR-3: `Outer::Inner i;` is an `Inner`, and `int Outer::Inner::get()` is its method.
+    let src = r"
+        struct Outer { struct Inner { int v; int get(); }; };
+        int Outer::Inner::get() { return v; }
+        int f() { Outer::Inner i; return i.get(); }";
+    let prog = program_from_cpp_string(src).0;
+    assert!(function_named(&prog, "Inner::get").is_some(), "{prog}");
+    check_has_direct_call(&prog, "f", "Inner::get");
+}

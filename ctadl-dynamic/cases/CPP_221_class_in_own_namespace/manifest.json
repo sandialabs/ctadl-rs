@@ -1,0 +1,6 @@
+{
+  "name": "CPP_221_class_in_own_namespace",
+  "description": "C++ name lookup (spec 037), POSITIVE: ns::use declares `B b` (ns::B) and calls b.get(). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

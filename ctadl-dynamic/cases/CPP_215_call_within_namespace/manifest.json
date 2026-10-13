@@ -1,0 +1,6 @@
+{
+  "name": "CPP_215_call_within_namespace",
+  "description": "C++ name lookup (spec 037), POSITIVE: ns::wrap calls id(x) -> ns::id. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

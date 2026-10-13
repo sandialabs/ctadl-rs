@@ -508,6 +508,38 @@ fn cpp_aux_owns_definition(def: Node<'_>) -> bool {
     }
 }
 
+/// Record the unit's `using namespace X;` directives (as `X::` prefixes) and `using X::f;`
+/// declarations (`f` → `X::f`) for name lookup (spec 037). A directive's scope is not tracked:
+/// it applies to the whole unit, which over-approximates.
+fn collect_using(ctx: &mut Context<'_>, source: &str, root: Node<'_>) {
+    let query = ctx.compile_query("(using_declaration) @using");
+    let mut cursor = QueryCursor::new();
+    let mut it = cursor.matches(&query, root, source.as_bytes());
+    while let Some(m) = it.next() {
+        let Ok(using) = MatchExtractor::new(&query, m).get("using") else {
+            continue;
+        };
+        let mut c = using.walk();
+        let children: Vec<Node<'_>> = using.children(&mut c).collect();
+        let is_directive = children.iter().any(|n| n.kind() == "namespace");
+        let Some(target) = children
+            .iter()
+            .find(|n| matches!(n.kind(), "identifier" | "qualified_identifier"))
+        else {
+            continue;
+        };
+        let name = template_erased_name(*target, source);
+        if is_directive {
+            let prefix = format!("{name}::");
+            if !ctx.using_namespaces.contains(&prefix) {
+                ctx.using_namespaces.push(prefix);
+            }
+        } else if let Some((_, last)) = name.rsplit_once("::") {
+            ctx.using_aliases.insert(last.to_string(), name.clone());
+        }
+    }
+}
+
 /// Record the C++ type aliases that name a known class (spec 033): `using A = T;` and
 /// `typedef T A;`, where `T` -- template arguments erased, a `struct`/`class` tag unwrapped --
 /// is a class this unit declares. An alias of an alias resolves when declared after it.
@@ -673,6 +705,7 @@ fn cpp_collect_methods<'a>(
         is_ctor: bool,
     }
     let mut methods: Vec<MethodDef<'_>> = Vec::new();
+    collect_using(ctx, source, root);
     // Each class's default member initializers (`int v = e;` / `int v{e};`) and the opening
     // brace of its body, which stands in for the empty parameter list and body of a synthesized
     // implicit default constructor (spec 028).
@@ -1006,23 +1039,31 @@ fn cpp_collect_methods<'a>(
             if name_node.kind() != "qualified_identifier" {
                 continue;
             }
-            let (Some(scope), Some(method_node), Some(params)) = (
-                name_node.child_by_field_name("scope"),
-                name_node.child_by_field_name("name"),
-                func_declr.child_by_field_name("parameters"),
-            ) else {
+            let Some(params) = func_declr.child_by_field_name("parameters") else {
                 continue;
             };
+            // The method is the innermost name; everything before it is the class, however it
+            // is qualified: `Box<T>::set` (spec 033), `ns::Box::m`, `Outer::Inner::get` (spec 037).
+            let mut method_node = name_node;
+            while method_node.kind() == "qualified_identifier" {
+                match method_node.child_by_field_name("name") {
+                    Some(inner) => method_node = inner,
+                    None => break,
+                }
+            }
             // An out-of-line **operator** (`Acc& Acc::operator+=(int x){…}`) names its method
             // with an `operator_name` rather than an `identifier`; accept it and normalize the
             // spelling to the same string the inline form and the dispatch site build (spec 023).
-            // A class template's out-of-line member names its scope `Box<T>` (spec 033).
-            if !matches!(scope.kind(), "namespace_identifier" | "template_type")
-                || !matches!(method_node.kind(), "identifier" | "operator_name")
-            {
+            if !matches!(method_node.kind(), "identifier" | "operator_name") {
                 continue;
             }
-            let class = template_erased_name(scope, source);
+            let full = template_erased_name(name_node, source);
+            let Some((class_part, _)) = full.rsplit_once("::") else {
+                continue;
+            };
+            let Some(class) = ctx.class_named(class_part) else {
+                continue;
+            };
             // Only lower out-of-line bodies for a class known from its declaration (this
             // slice's scope). An unknown qualifier (e.g. a namespaced free function) is left
             // alone — it is not an instance method we can model here.

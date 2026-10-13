@@ -1,0 +1,6 @@
+{
+  "name": "CPP_219_method_calls_namespace_function",
+  "description": "C++ name lookup (spec 037), POSITIVE: ns::S::set calls id(x). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
