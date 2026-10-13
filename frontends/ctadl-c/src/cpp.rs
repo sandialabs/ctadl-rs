@@ -3368,8 +3368,9 @@ fn construct_temporary<'a>(
 /// `m(args)` inside a member function, where `m` names a member function of the enclosing class
 /// or a base and no local or parameter shadows it (spec 035). A class's members hide outer
 /// names, so this is C++'s implicit `this->m(args)`: an instance method dispatches on `this`
-/// (CHA when virtual), exactly as `this->m(args)` does. A static member function is the direct
-/// call `Class::m(args)`. Anything else declines, so every C call, and every C++ call outside a
+/// (CHA when virtual) through [`Context::dispatch_call`], which also answers the location a
+/// reference result denotes (spec 036). A static member function is the direct call
+/// `Class::m(args)`. Anything else declines, so every C call, and every C++ call outside a
 /// member function, lowers as before.
 fn implicit_member_call<'a>(
     ctx: &mut Context<'a>,
@@ -3398,30 +3399,10 @@ fn implicit_member_call<'a>(
     {
         return Ok(None);
     }
-    let has_this = ctx
-        .param_names
-        .get(scope_view.func_name.as_str())
-        .and_then(|names| names.iter().next())
-        .is_some_and(|first| *first == "this");
-    if has_this && ctx.resolve_method_class(&class, name).is_some() {
-        let recv = super::RecvObj {
-            exp: Exp::Variable(VariableRef::new_parameter(0u32.into())),
-            class,
-            write_back: None,
-        };
-        let args = ctx.collect_arguments(program, args_node, source, scope_view)?;
-        let temp = ctx.allocator.next_temp();
-        let out = ctx.emit_method_call(
-            program,
-            scope_view,
-            source,
-            &recv,
-            name,
-            args,
-            Some(args_node),
-            temp,
-        )?;
-        return Ok(out.map(|o| o.value));
+    // An instance method dispatches on `this` (`Context::dispatch_call`).
+    let temp = ctx.allocator.next_temp();
+    if let Some(out) = ctx.dispatch_call(program, call, source, scope_view, temp)? {
+        return Ok(Some(out.value));
     }
     // A static member function of the class or a base: `Class::m`.
     let mut stack = vec![class];

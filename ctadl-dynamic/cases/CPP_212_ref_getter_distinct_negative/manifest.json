@@ -1,0 +1,6 @@
+{
+  "name": "CPP_212_ref_getter_distinct_negative",
+  "description": "C++ reference results (spec 036), NEGATIVE: `b.ref() = source()` with ref returning w; sink(b.v). s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_210_const_getter_chain",
+  "description": "C++ reference results (spec 036), POSITIVE: `sink(o.inner().get())` with o.in.v tainted. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

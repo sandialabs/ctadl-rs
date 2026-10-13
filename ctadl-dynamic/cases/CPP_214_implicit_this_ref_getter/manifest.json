@@ -1,0 +1,6 @@
+{
+  "name": "CPP_214_implicit_this_ref_getter",
+  "description": "C++ reference results (spec 036), POSITIVE: `void put(int x) { ref() = x; }`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

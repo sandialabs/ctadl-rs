@@ -1,0 +1,6 @@
+{
+  "name": "CPP_209_assign_through_ref_getter",
+  "description": "C++ reference results (spec 036), POSITIVE: `b.ref() = source(); sink(b.v)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

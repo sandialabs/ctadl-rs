@@ -904,9 +904,14 @@ struct RecvObj {
 struct DispatchOut {
     /// The call's result value (a temp), for use as an ordinary rvalue.
     value: Exp,
-    /// When the callee returns a reference to its receiver (`return *this`), the object the
-    /// result aliases — so a chained `.n(…)` dispatches on it and `Class& r = call` binds to it.
+    /// When the callee returns a reference to its receiver (`return *this`), or to a member
+    /// object of it (spec 036), the object the result aliases -- so a chained `.n(…)`
+    /// dispatches on it.
     aliased: Option<RecvObj>,
+    /// The location a reference result denotes: the receiver for `return *this`, the receiver's
+    /// member for a method returning a bare member by reference (spec 036). What
+    /// `call() = x` stores to and `T& r = call()` binds.
+    location: Option<RawPath>,
 }
 
 /// Grammar-shape adapters for the *few* places tree-sitter-cpp and tree-sitter-c expose
@@ -3950,27 +3955,15 @@ impl<'a> Context<'a> {
                 self.reference_aliases.insert(ref_name.to_string(), path);
                 return Ok(());
             }
-            // A `call_expression` referent is a reference-returning method
-            // (`Box& r = b.setV(x)`): its result temp was already registered as an alias of
-            // the receiver object by `dispatch_call`, so flattening it yields that object and
-            // `r` binds straight through to it.
+            // A `call_expression` referent names the location its reference result denotes
+            // (`Box& r = b.setV(x)` the receiver, `int& r = b.ref()` the member; spec 036), or
+            // for any other call the value it returns.
             if let Some(val) = value
                 && val.kind() == "call_expression"
             {
-                // The call's value is already the aliased object when the callee returns the
-                // receiver (`dispatch_call` registered its result temp before resolving it), so
-                // this binds `r` straight through to that object. A pathless object normalizes
-                // to `Exp::Variable`, an offset-only address to `Exp::AccessPath`; both name a
-                // location a reference can bind to.
-                let loc = match self.flatten_expr(program, val, source, scope_view)? {
-                    Exp::Variable(v) => Some(RawPath::new(v, ThinVec::new())),
-                    Exp::AccessPath(ap) => Some(raw_path_of(&ap)),
-                    _ => None,
-                };
-                if let Some(loc) = loc {
-                    self.reference_aliases.insert(ref_name.to_string(), loc);
-                    return Ok(());
-                }
+                let loc = self.flatten_lvalue(program, val, source, scope_view)?;
+                self.reference_aliases.insert(ref_name.to_string(), loc);
+                return Ok(());
             }
             // Fallback: register a plain local and copy whatever initializer there is.
             self.scope_tree
@@ -6186,6 +6179,35 @@ impl<'a> Context<'a> {
         None
     }
 
+    /// The receiver of an unqualified call `m(args)` inside a member function (spec 035): `this`,
+    /// when the enclosing class or a base declares an instance method `m`, the function has an
+    /// implicit `this`, and no local or parameter shadows `m`. A class's members hide outer
+    /// names, as in C++. `None` everywhere else -- all of C, where `current_method_class` is
+    /// unset.
+    fn implicit_this_receiver(&self, method: &str, scope_view: &ScopeView) -> Option<RecvObj> {
+        let class = self.current_method_class.clone()?;
+        if self
+            .scope_tree
+            .find_variable(scope_view.sidx, method)
+            .is_some()
+        {
+            return None;
+        }
+        let has_this = self
+            .param_names
+            .get(scope_view.func_name.as_str())
+            .and_then(|names| names.iter().next())
+            .is_some_and(|first| *first == "this");
+        if !has_this || self.resolve_method_class(&class, method).is_none() {
+            return None;
+        }
+        Some(RecvObj {
+            exp: Exp::Variable(VariableRef::new_parameter(0u32.into())),
+            class,
+            write_back: None,
+        })
+    }
+
     /// Try to lower `call_node` as a C++ instance-method call — `recv.method(args)`, including
     /// a chained receiver (`recv.a(args).b(args2)`). Returns `None` if it is not an instance-
     /// method call (a plain function call, or a function-pointer *member* call like `s.fp(x)`);
@@ -6206,19 +6228,29 @@ impl<'a> Context<'a> {
         let func_node = call_node
             .child_by_field_name("function")
             .expect("call_expression always has a function");
-        if func_node.kind() != "field_expression" {
-            return Ok(None);
-        }
-        let recv_node = func_node
-            .child_by_field_name("argument")
-            .expect("field_expression always has an argument");
-        let field_node = func_node
-            .child_by_field_name("field")
-            .expect("field_expression always has a field");
-        let method = to_str(&field_node, source);
-
-        let Some(recv) = self.resolve_recv_obj(program, recv_node, source, scope_view)? else {
-            return Ok(None);
+        let (recv, method) = match func_node.kind() {
+            "field_expression" => {
+                let recv_node = func_node
+                    .child_by_field_name("argument")
+                    .expect("field_expression always has an argument");
+                let field_node = func_node
+                    .child_by_field_name("field")
+                    .expect("field_expression always has a field");
+                let Some(recv) = self.resolve_recv_obj(program, recv_node, source, scope_view)?
+                else {
+                    return Ok(None);
+                };
+                (recv, to_str(&field_node, source))
+            }
+            // C++'s implicit `this->m(args)` (spec 035).
+            "identifier" => {
+                let method = to_str(&func_node, source);
+                match self.implicit_this_receiver(method, scope_view) {
+                    Some(recv) => (recv, method),
+                    None => return Ok(None),
+                }
+            }
+            _ => return Ok(None),
         };
         // Resolve `method` against the receiver's static class, then (if not defined there)
         // walk its base chain to the class that defines it — an inherited method dispatches to
@@ -6358,6 +6390,28 @@ impl<'a> Context<'a> {
             Exp::AccessPath(ap) => Some(raw_path_of(ap)),
             _ => None,
         };
+        // The receiver's own location: where a copied-in member receiver is written back to,
+        // else the variable or address passed.
+        let recv_location = recv.write_back.clone().or_else(|| recv_loc.clone());
+        // A method returning a bare member by reference (`int& ref() { return v; }`) denotes
+        // that member of its receiver (spec 036; the same record `operator[]` uses, spec 023).
+        let member = if returns_self {
+            None
+        } else {
+            self.classes
+                .get(&defining_class)
+                .and_then(|info| info.returns_member.get(method))
+                .cloned()
+        };
+        let location = match (returns_self, &member, &recv_location) {
+            (true, _, Some(loc)) => Some(loc.clone()),
+            (false, Some(member), Some(loc)) => {
+                let mut loc = loc.clone();
+                loc.fields.push(PathSegment::symbol(member.as_str()));
+                Some(loc)
+            }
+            _ => None,
+        };
         let aliased = match (returns_self, recv_loc) {
             (true, Some(loc)) => {
                 self.reference_aliases.insert(temp_name.clone(), loc);
@@ -6374,7 +6428,25 @@ impl<'a> Context<'a> {
             &mut program[scope_view.fidx].locals,
         );
         let value = Exp::access_path(self.emit_loads(program, scope_view, ap));
-        Ok(Some(DispatchOut { value, aliased }))
+        // A member *object* returned by reference is an object to chain on, copied in from its
+        // location and written back after the chained call.
+        let aliased = match (aliased, &member, &location) {
+            (Some(aliased), _, _) => Some(aliased),
+            (None, Some(member), Some(loc)) => {
+                self.member_object_class(&recv.class, member)
+                    .map(|class| RecvObj {
+                        exp: Exp::access_path(self.emit_loads(program, scope_view, loc.clone())),
+                        class,
+                        write_back: Some(loc.clone()),
+                    })
+            }
+            (None, _, _) => None,
+        };
+        Ok(Some(DispatchOut {
+            value,
+            aliased,
+            location,
+        }))
     }
 
     /// The cast tree-sitter cannot see -- its operand list, to lower as one -- or `None`
@@ -7275,6 +7347,28 @@ impl<'a> Context<'a> {
                 } else {
                     // `&x` is not an lvalue; keep the operand's location.
                     self.flatten_lvalue(program, arg, source, scope_view)
+                }
+            }
+            // A C++ method call whose result is a reference names a location (spec 036):
+            // `b.ref() = x` stores to the member `ref` returns. Any other call is the catch-all's.
+            "call_expression" => {
+                let temp = self.allocator.next_temp();
+                match self.dispatch_call(program, node, source, scope_view, temp)? {
+                    Some(DispatchOut {
+                        location: Some(location),
+                        ..
+                    }) => Ok(location),
+                    Some(DispatchOut {
+                        value: Exp::Variable(v),
+                        ..
+                    }) => Ok(RawPath::new(v, ThinVec::new())),
+                    Some(_) => self.not_a_location(program, node, scope_view),
+                    // Any other call: the value it returns, held in a variable (or an address).
+                    None => match self.flatten_expr(program, node, source, scope_view)? {
+                        Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
+                        Exp::AccessPath(ap) => Ok(raw_path_of(&ap)),
+                        _ => self.not_a_location(program, node, scope_view),
+                    },
                 }
             }
             // A cast in lvalue position. The cast is value-preserving, so the location it

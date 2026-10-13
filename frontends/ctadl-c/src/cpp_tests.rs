@@ -4737,3 +4737,32 @@ fn cpp_local_shadowing_a_method_is_not_a_member_call() {
         "{prog}"
     );
 }
+
+// ---- Spec 036: reference results ---------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_assignment_through_a_reference_getter_stores_the_member() {
+    // FR-1: `b.ref() = x`, where `ref` returns the member `v` by reference, stores to `b.v`;
+    // `int& r = b.ref()` binds `r` to it.
+    let src = r"
+        struct B { int v; int& ref() { return v; } };
+        void f(B& b, int x) { b.ref() = x; }
+        void g(B& b, int x) { int& r = b.ref(); r = x; }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "f", "B::ref");
+    check_func_assign_or_update(&prog, "f", "@p0.v", ["@p1"]);
+    check_func_assign_or_update(&prog, "g", "@p0.v", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_returned_member_object_is_a_receiver() {
+    // FR-2: `o.inner().set(x)`, where `inner` returns the member object `in` by reference,
+    // dispatches `In::set` on `o.in` and writes it back.
+    let src = r"
+        struct In { int v; void set(int x) { v = x; } };
+        struct Out { In in; In& inner() { return in; } };
+        void f(Out& o, int x) { o.inner().set(x); }";
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "f", "In::set");
+    assert_eq!(count_writes_in(&prog, "f", "@p0.in"), 1, "{prog}");
+}

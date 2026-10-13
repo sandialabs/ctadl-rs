@@ -1,0 +1,6 @@
+{
+  "name": "CPP_213_member_object_getter_set",
+  "description": "C++ reference results (spec 036), POSITIVE: `o.inner().set(source()); sink(o.in.v)`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
