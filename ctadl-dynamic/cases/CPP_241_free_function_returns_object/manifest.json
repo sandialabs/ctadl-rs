@@ -1,0 +1,6 @@
+{
+  "name": "CPP_241_free_function_returns_object",
+  "description": "C++ returned objects / function-pointer members (spec 041), POSITIVE: `sink(make(source()).get())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

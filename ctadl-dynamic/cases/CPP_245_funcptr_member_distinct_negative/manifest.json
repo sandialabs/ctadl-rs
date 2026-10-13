@@ -1,0 +1,6 @@
+{
+  "name": "CPP_245_funcptr_member_distinct_negative",
+  "description": "C++ returned objects / function-pointer members (spec 041), NEGATIVE: b.cb = handler, b.other = quiet; click calls other(x). s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

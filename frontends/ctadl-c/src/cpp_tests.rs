@@ -4897,3 +4897,44 @@ fn cpp_lambda_capturing_this_uses_the_object_slot() {
         "the slot is filled and copied back\n{prog}"
     );
 }
+
+// ---- Spec 041: returned objects and function-pointer members ------------------------------------
+
+#[test_log::test]
+fn cpp_object_returned_by_value_is_a_receiver() {
+    // FR-1: `p.twice().get()`, `make(x).get()` and `W::make(x).get()` dispatch `get` on the
+    // returned object.
+    let src = r"
+        struct P { int x; P twice() const { P r; r.x = x + x; return r; } int get() const { return x; }
+                   static P make(int v) { P p; p.x = v; return p; } };
+        P make(int v) { P p; p.x = v; return p; }
+        int f(int v) { P p; p.x = v; return p.twice().get() + make(v).get() + P::make(v).get(); }";
+    let prog = program_from_cpp_string(src).0;
+    assert_eq!(
+        direct_calls_in(&prog, "f")
+            .iter()
+            .filter(|(t, _)| t == &["P::get".to_string()])
+            .count(),
+        3,
+        "{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_function_pointer_member_is_called_through() {
+    // FR-2: an unqualified function-pointer member called in a method is `this->cb(x)`, an
+    // indirect call through `this.cb`, and a function named as a most-vexing-parse constructor
+    // argument is a function pointer.
+    let src = r"
+        int id(int x) { return x; }
+        struct Btn { int (*cb)(int); Btn(int (*f)(int)) : cb(f) {} int click(int x) { return cb(x); } };
+        int f(int v) { Btn b(id); return b.click(v); }";
+    let prog = program_from_cpp_string(src).0;
+    let click = format!("{}", function_named(&prog, "Btn::click").unwrap());
+    assert!(
+        click.contains("load @p0.cb") && click.contains("funcptr-call"),
+        "{prog}"
+    );
+    let f = format!("{}", function_named(&prog, "f").unwrap());
+    assert!(f.contains("ptr<id>"), "{prog}");
+}

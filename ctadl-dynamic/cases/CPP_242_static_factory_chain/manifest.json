@@ -1,0 +1,6 @@
+{
+  "name": "CPP_242_static_factory_chain",
+  "description": "C++ returned objects / function-pointer members (spec 041), POSITIVE: `sink(W::make(source()).get())`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

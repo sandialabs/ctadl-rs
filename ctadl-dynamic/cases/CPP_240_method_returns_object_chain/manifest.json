@@ -1,0 +1,6 @@
+{
+  "name": "CPP_240_method_returns_object_chain",
+  "description": "C++ returned objects / function-pointer members (spec 041), POSITIVE: `sink(p.twice().get())` where twice returns P by value. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

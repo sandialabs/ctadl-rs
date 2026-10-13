@@ -883,6 +883,11 @@ struct ClassInfo {
     /// each through that class's constructor -- with the arguments its initializer list gives,
     /// or by default -- exactly as a declared object is constructed. Empty for C.
     member_objects: Vec<(String, String)>,
+    /// The class type, as written (template-erased), that each method returns **by value**,
+    /// by method name (spec 041). The call's result is then an object of that class, so a chained
+    /// `x.m().n()` dispatches `n` on it. Resolved through [`Context::class_named`] at use. Empty
+    /// for C.
+    returns_object: HashMap<String, String>,
 }
 
 /// The object a C++ instance-method receiver resolves to: the access-path expression to
@@ -912,6 +917,8 @@ struct DispatchOut {
     /// member for a method returning a bare member by reference (spec 036). What
     /// `call() = x` stores to and `T& r = call()` binds.
     location: Option<RawPath>,
+    /// The class of the object the method returns by value, if it does (spec 041).
+    returns_object: Option<String>,
 }
 
 /// Grammar-shape adapters for the *few* places tree-sitter-cpp and tree-sitter-c expose
@@ -1261,6 +1268,9 @@ struct Context<'a> {
     /// slot back into its object, since any call may run the closure. Set by the
     /// `function_scan` hook, reset per function; empty for C.
     post_call_copies: Vec<(RawPath, RawPath)>,
+    /// The class type each free function returns by value, by its base IR name (spec 041); see
+    /// [`ClassInfo::returns_object`]. Filled by the C++ `collect_aux` hook; empty for C.
+    function_returns_object: HashMap<String, String>,
     /// Overloaded-by-arity names: an IR **base name** (a free function's bare/qualified name
     /// `f` / `ns::f`, or a method's qualified `Class::method`) mapped to the set of explicit
     /// **arities** (parameter counts, `this` excluded) defined under it. A name is *overloaded*
@@ -1636,6 +1646,7 @@ impl Context<'_> {
             using_aliases: HashMap::default(),
             lookup_prefixes: Vec::new(),
             post_call_copies: Vec::new(),
+            function_returns_object: HashMap::default(),
             overloads: HashMap::default(),
             local_pointers: HashSet::default(),
             byval_class_params: HashMap::default(),
@@ -1764,6 +1775,24 @@ impl Context<'_> {
                     .unwrap_or(candidate)
             })
             .find(|candidate| self.classes.contains_key(candidate))
+    }
+
+    /// [`Self::class_named`] as seen from inside `scope`, a qualified function or class name: its
+    /// enclosing namespaces and classes first (spec 041). A return type written unqualified in
+    /// `ns::make` means `ns::P`.
+    fn class_named_in(&self, scope: &str, name: &str) -> Option<String> {
+        scope_prefixes(&format!("{scope}::_"))
+            .iter()
+            .map(|prefix| format!("{prefix}{name}"))
+            .find_map(|candidate| {
+                let candidate = self
+                    .type_aliases
+                    .get(&candidate)
+                    .cloned()
+                    .unwrap_or(candidate);
+                self.classes.contains_key(&candidate).then_some(candidate)
+            })
+            .or_else(|| self.class_named(name))
     }
 
     /// The function an unqualified call names, by C++ name lookup (spec 037): the caller's
@@ -6158,9 +6187,30 @@ impl<'a> Context<'a> {
                     }));
                 }
                 let temp = self.allocator.next_temp();
-                Ok(self
-                    .dispatch_call(program, recv_node, source, scope_view, temp)?
-                    .and_then(|out| out.aliased))
+                if let Some(out) =
+                    self.dispatch_call(program, recv_node, source, scope_view, temp)?
+                {
+                    // An object the method returns by value is a receiver too (spec 041).
+                    return Ok(out.aliased.or_else(|| {
+                        out.returns_object.map(|class| RecvObj {
+                            exp: out.value,
+                            class,
+                            write_back: None,
+                        })
+                    }));
+                }
+                // A free or static function returning an object by value (spec 041).
+                match self.call_returns_object(recv_node, source) {
+                    Some(class) => {
+                        let exp = self.flatten_expr(program, recv_node, source, scope_view)?;
+                        Ok(Some(RecvObj {
+                            exp,
+                            class,
+                            write_back: None,
+                        }))
+                    }
+                    None => Ok(None),
+                }
             }
             // A braced temporary `C{args}`, constructed or aggregate-initialized (spec 027).
             "compound_literal_expression" => {
@@ -6313,6 +6363,33 @@ impl<'a> Context<'a> {
             let value = Exp::access_path(self.emit_loads(program, scope_view, src));
             self.add_assign_to_program(program, scope_view, &dst, &value, None);
         }
+    }
+
+    /// The class of the object a free or static-member call returns by value (spec 041): `f(..)`
+    /// by name lookup in [`Self::function_returns_object`], or `C::m(..)` in `C`'s
+    /// [`ClassInfo::returns_object`]. `None` for anything else, and always for C.
+    fn call_returns_object(&self, call: Node<'_>, source: &str) -> Option<String> {
+        let callee = call.child_by_field_name("function")?;
+        let name = match callee.kind() {
+            "identifier" => self
+                .resolve_callee_name(to_str(&callee, source))
+                .unwrap_or_else(|| to_str(&callee, source).to_string()),
+            "qualified_identifier" | "template_function" => template_erased_name(callee, source),
+            _ => return None,
+        };
+        if let Some(returned) = self.function_returns_object.get(&name) {
+            // Seen from the function's own scope: `ns::make` returning `P` means `ns::P`.
+            let scope = name.rsplit_once("::").map_or("", |(scope, _)| scope);
+            return if scope.is_empty() {
+                self.class_named(returned)
+            } else {
+                self.class_named_in(scope, returned)
+            };
+        }
+        let (class, method) = name.rsplit_once("::")?;
+        let class = self.class_named(class)?;
+        let returned = self.classes.get(&class)?.returns_object.get(method)?;
+        self.class_named_in(&class, returned)
     }
 
     /// The receiver of an unqualified call `m(args)` inside a C++ lambda that captured `this`
@@ -6586,10 +6663,16 @@ impl<'a> Context<'a> {
             }
             (None, _, _) => None,
         };
+        let returns_object = self
+            .classes
+            .get(&defining_class)
+            .and_then(|info| info.returns_object.get(method))
+            .and_then(|class| self.class_named_in(&defining_class, class));
         Ok(Some(DispatchOut {
             value,
             aliased,
             location,
+            returns_object,
         }))
     }
 

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_239_funcptr_member_template",
+  "description": "C++ returned objects / function-pointer members (spec 041), POSITIVE: `Holder<int (*)(int)> h(id); sink(h.call(source()))`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_238_funcptr_member_unqualified",
+  "description": "C++ returned objects / function-pointer members (spec 041), POSITIVE: `void click(int x) { cb(x); }` with b.cb = handler. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

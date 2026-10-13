@@ -71,8 +71,15 @@ fn cpp_subscript_index(node: Node<'_>) -> Node<'_> {
 fn member_name<'a>(decl: Node<'_>, source: &'a str) -> Option<&'a str> {
     match decl.kind() {
         "field_identifier" => Some(to_str(&decl, source)),
-        "pointer_declarator" | "array_declarator" | "parenthesized_declarator" => decl
+        "pointer_declarator" | "array_declarator" => decl
             .child_by_field_name("declarator")
+            .and_then(|d| member_name(d, source)),
+        "parenthesized_declarator" => decl.named_child(0).and_then(|d| member_name(d, source)),
+        // A function-pointer member, `void (*cb)(int)` (spec 041). A member function's own
+        // declaration, `void set(int);`, names its function directly and is not a data member.
+        "function_declarator" => decl
+            .child_by_field_name("declarator")
+            .filter(|d| d.kind() == "parenthesized_declarator")
             .and_then(|d| member_name(d, source)),
         _ => None,
     }
@@ -508,6 +515,44 @@ fn cpp_aux_owns_definition(def: Node<'_>) -> bool {
     }
 }
 
+/// The class type a function definition returns by value, as written and template-erased:
+/// its `type` when that names a type (`P`, `ns::P`, `Box<int>`), else `None` (spec 041). The
+/// caller checks the declarator is no pointer or reference; whether the type is a class is
+/// decided at use, through [`Context::class_named`].
+fn by_value_class_type(def: Node<'_>, source: &str) -> Option<String> {
+    def.child_by_field_name("type")
+        .filter(|t| {
+            matches!(
+                t.kind(),
+                "type_identifier" | "qualified_identifier" | "template_type"
+            )
+        })
+        .map(|t| template_erased_name(t, source))
+}
+
+/// Record the class each free function returns by value, by its base IR name (spec 041).
+fn collect_function_returns(ctx: &mut Context<'_>, source: &str, root: Node<'_>) {
+    let query =
+        ctx.compile_query("(function_definition declarator: (function_declarator) @decl) @def");
+    let mut cursor = QueryCursor::new();
+    let mut it = cursor.matches(&query, root, source.as_bytes());
+    while let Some(m) = it.next() {
+        let Ok(def) = MatchExtractor::new(&query, m).get("def") else {
+            continue;
+        };
+        if is_class_member_definition(def) {
+            continue;
+        }
+        let (Some(returned), Some((base, _))) = (
+            by_value_class_type(def, source),
+            overload_base_name(def, source),
+        ) else {
+            continue;
+        };
+        ctx.function_returns_object.insert(base, returned);
+    }
+}
+
 /// Record the unit's `using namespace X;` directives (as `X::` prefixes) and `using X::f;`
 /// declarations (`f` → `X::f`) for name lookup (spec 037). A directive's scope is not tracked:
 /// it applies to the whole unit, which over-approximates.
@@ -706,6 +751,7 @@ fn cpp_collect_methods<'a>(
     }
     let mut methods: Vec<MethodDef<'_>> = Vec::new();
     collect_using(ctx, source, root);
+    collect_function_returns(ctx, source, root);
     // Each class's default member initializers (`int v = e;` / `int v{e};`) and the opening
     // brace of its body, which stands in for the empty parameter list and body of a synthesized
     // implicit default constructor (spec 028).
@@ -948,6 +994,13 @@ fn cpp_collect_methods<'a>(
                             .then(|| body_returns_member(method_body, source))
                             .flatten()
                             .map(str::to_string);
+                        // A class returned by value makes the call's result an object (spec 041).
+                        if !is_reference_return
+                            && !returns_pointer
+                            && let Some(ret) = by_value_class_type(child, source)
+                        {
+                            info.returns_object.insert(name.clone(), ret);
+                        }
                         if !is_static {
                             info.methods.insert(name.clone());
                             if returns_self {
@@ -1021,7 +1074,7 @@ fn cpp_collect_methods<'a>(
             body: (compound_statement) @body) @def
         "#,
     );
-    let mut out_of_line: Vec<(bool, bool, MethodDef<'_>)> = Vec::new();
+    let mut out_of_line: Vec<(bool, bool, MethodDef<'_>, Option<String>)> = Vec::new();
     {
         let mut ool_cursor = QueryCursor::new();
         let mut ool_it = ool_cursor.matches(&ool_query, root, source.as_bytes());
@@ -1103,6 +1156,9 @@ fn cpp_collect_methods<'a>(
             } else {
                 Vec::new()
             };
+            let returned = (!is_ctor && !returns_pointer && decl.kind() != "reference_declarator")
+                .then(|| by_value_class_type(def, source))
+                .flatten();
             out_of_line.push((
                 is_ctor,
                 is_copy_ctor,
@@ -1125,14 +1181,18 @@ fn cpp_collect_methods<'a>(
                     member_inits,
                     is_ctor,
                 },
+                returned,
             ));
         }
     }
     // Register each out-of-line method's name on its class (so `recv.m(…)` dispatches even
     // though the body lives outside the class body), or mark the class as having a
     // constructor; then queue it for lowering alongside the inline methods.
-    for (is_ctor, is_copy_ctor, md) in out_of_line {
+    for (is_ctor, is_copy_ctor, md, returned) in out_of_line {
         if let Some(info) = ctx.classes.get_mut(&md.class) {
+            if let Some(returned) = returned {
+                info.returns_object.insert(md.name.clone(), returned);
+            }
             if is_ctor {
                 info.has_ctor = true;
                 info.has_copy_ctor |= is_copy_ctor;
@@ -1929,10 +1989,14 @@ fn reconstruct_mvp_arg<'a>(
             let temp = ctx.allocator.next_temp();
             let ret =
                 VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
+            // The callee by C++ name lookup, as for any call (spec 037).
+            let callee = ctx
+                .resolve_callee_name(name)
+                .unwrap_or_else(|| name.to_string());
             program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
                 StatementKind::CallAssign {
                     style: CallStyle::DirectCall {
-                        call_edges: CallEdges::Explicit(thin_vec![name.to_string()]),
+                        call_edges: CallEdges::Explicit(thin_vec![callee]),
                     },
                     rets: thin_vec![ret],
                     args: call_args,
@@ -1948,6 +2012,23 @@ fn reconstruct_mvp_arg<'a>(
         }
         // A bare value reference (`y`), or a fallback.
         _ => {
+            // A function named as an argument (`Holder h(id)`) is a pointer to it, exactly as
+            // the expression lowering reads one (spec 041).
+            if ctx
+                .scope_tree
+                .find_variable(scope_view.sidx, name)
+                .is_none()
+            {
+                let resolved = ctx
+                    .resolve_callee_name(name)
+                    .unwrap_or_else(|| name.to_string());
+                if ctx.functions.contains_key(&resolved)
+                    || ctx.declared_functions.contains(&resolved)
+                {
+                    let target = ctx.resolve_reference(&resolved);
+                    return Ok(Exp::ObjectRef(CallObject::FunctionPtr(target.into())));
+                }
+            }
             let ap = ctx.build_access_path(
                 name,
                 Default::default(),

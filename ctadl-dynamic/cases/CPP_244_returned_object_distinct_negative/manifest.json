@@ -1,0 +1,6 @@
+{
+  "name": "CPP_244_returned_object_distinct_negative",
+  "description": "C++ returned objects / function-pointer members (spec 041), NEGATIVE: `sink(p.copy().gety())` with only x tainted. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}
