@@ -365,6 +365,12 @@ pub fn check_with_config<P: AsRef<Path>>(
     }
     log::trace!("requirements: {}", program.requirements);
     crate::cli::inspect_index_facts(&index_facts, Some(&source_info.sites))?;
+    let index_result =
+        taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
+    let final_call = index_result.final_call(&index_facts.call);
+    // Fanned over `final_call`, as `ctadl query` does, so an endpoint in a function reached only
+    // by an indirect call is anchored at that call site. The checks below fan over the same
+    // relation, and an endpoint seeded from the direct calls alone would never compare equal.
     let endpoints = program
         .requirements
         .endpoint_requires
@@ -372,14 +378,11 @@ pub fn check_with_config<P: AsRef<Path>>(
         .iter()
         .flat_map(|(_k, v)| v.iter().map(|(ep, _)| ep))
         .flat_map(|e| {
-            from_flowy_endpoint(&source_info.sites, &index_facts.call, e)
+            from_flowy_endpoint(&source_info.sites, &final_call, e)
                 .into_iter()
                 .map(|ep| (ep,))
         })
         .collect();
-    let index_result =
-        taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
-    let final_call = index_result.final_call(&index_facts.call);
 
     if let Some(dot_path) = dump_index_graph {
         let mut file = std::fs::File::create(dot_path)
