@@ -885,29 +885,6 @@ fn c_sinks_reached(stem: &str) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
-/// `funcptrmulti.c`: an indirect call that resolves to two targets enters both of them.
-#[test]
-fn test_cli_query_c_funcptr_with_two_targets() {
-    run_store_test(|| {
-        assert_eq!(
-            c_sinks_reached("funcptrmulti"),
-            ["sink_a", "sink_b"].map(String::from).into()
-        );
-    });
-}
-
-/// `funcptr2down.c`: an indirect call through a struct field whose target was installed two
-/// frames down reaches the sinks inside both targets, and not the one in the sibling field.
-#[test]
-fn test_cli_query_c_funcptr_stored_two_frames_down() {
-    run_store_test(|| {
-        assert_eq!(
-            c_sinks_reached("funcptr2down"),
-            ["sink_strips", "sink_tiles"].map(String::from).into()
-        );
-    });
-}
-
 /// `funcptrthrough.c`: a call target crosses an indirect call both ways -- installed inside a
 /// function reached through a pointer, and handed to one -- and not into the uncalled sibling field.
 #[test]

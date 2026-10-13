@@ -1,0 +1,84 @@
+// A function pointer installed in a struct field two frames below the frame that owns the
+// struct, then called through that field from a third function. This is libtiff's RGBA decode
+// reduced: TIFFRGBAImageBegin -> PickContigCase stores
+// `img->get = TIFFIsTiled(tif) ? gtTileContig : gtStripContig`, and TIFFRGBAImageGet calls
+// `(*img->get)(img, raster, w, h)`.
+//
+// The sinks in `sink_strips` and `sink_tiles` must both be reached. `begin` only forwards the
+// object and makes no indirect call of its own, which is the frame the call-target tag used to
+// stop at, so the call resolved to nothing and neither sink was reached. `put_never` is
+// installed in the sibling field `put`, which is never called, so `sink_clean` must stay silent.
+// As in `funcptr_two_targets.tnt`, each sink is one call below its target so that reaching it
+// means entering the target.
+
+def sink_strips(v) {
+start:
+  sink(v, Height);
+  return;
+}
+
+def sink_tiles(v) {
+start:
+  sink(v, Height);
+  return;
+}
+
+def sink_clean(v) {
+start:
+  errsink(v, Height);
+  return;
+}
+
+def get_strips(im byref, h):1 {
+start:
+  sink_strips(h);
+  return h;
+}
+
+def get_tiles(im byref, h):1 {
+start:
+  sink_tiles(h);
+  return h;
+}
+
+def put_never(im byref, h):1 {
+start:
+  sink_clean(h);
+  return h;
+}
+
+// Installs the targets. No indirect call here or in `begin`.
+def pick(im byref) {
+start:
+  goto tiled, strips;
+tiled:
+  im.get = ptr<get_tiles>;
+  goto done;
+strips:
+  im.get = ptr<get_strips>;
+  goto done;
+done:
+  im.put = ptr<put_never>;
+  return;
+}
+
+def begin(im byref) {
+start:
+  pick(im);
+  return;
+}
+
+def get(im byref, h):1 {
+start:
+  f = im.get;
+  r = f(im, h);
+  return r;
+}
+
+def main() {
+start:
+  h = source(Height);
+  begin(im);
+  r = get(im, h);
+  return;
+}
