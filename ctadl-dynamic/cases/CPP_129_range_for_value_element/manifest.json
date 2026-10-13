@@ -1,0 +1,6 @@
+{
+  "name": "CPP_129_range_for_value_element",
+  "description": "C++ range-for (spec 026), POSITIVE: `a[0] = source(); for (int x : a) sink(x)`. The by-value variable copies an element of the range. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

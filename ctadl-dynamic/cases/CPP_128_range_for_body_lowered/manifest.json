@@ -1,0 +1,6 @@
+{
+  "name": "CPP_128_range_for_body_lowered",
+  "description": "C++ range-for (spec 026), POSITIVE: `for (int x : a) { sink(source() + x); }`. The loop (body included) used to be dropped by the statement walker's catch-all. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

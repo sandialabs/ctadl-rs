@@ -1,0 +1,7 @@
+{
+  "name": "nonconst_index_reads_nonzero_element",
+  "description": "F3 (open): `a[1] = source(); for (i) sink(a[i])`. A non-constant subscript lowers to the `a[0]` path (`a.deref`) and never meets the write at `a.[1].deref`, so s=none while d=flow. Allowlisted as known_gap F3 until the IR path model has an offset that may-aliases every concrete offset.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F3"
+}

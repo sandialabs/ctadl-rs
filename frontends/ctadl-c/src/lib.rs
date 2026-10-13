@@ -3568,6 +3568,10 @@ impl<'a> Context<'a> {
             "for_statement" => {
                 self.walk_for(source, program, scope_view, child)?;
             }
+            // C++ `for (T x : r)`; the node never occurs under the C grammar.
+            "for_range_loop" => {
+                self.walk_range_for(source, program, scope_view, child)?;
+            }
             "switch_statement" => {
                 self.walk_switch(source, program, scope_view, child)?;
             }
@@ -4049,6 +4053,197 @@ impl<'a> Context<'a> {
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
         self.walk_compound_statement(source, program, &update_scope, &update_cp)?;
         *scope_view = continuation;
+        Ok(())
+    }
+
+    /// Lower a C++ range-based `for (T x : r) body` (spec 026). `for_range_loop` only occurs
+    /// under the C++ grammar, so this is inert for C.
+    ///
+    /// It lowers as `while` does, with the loop variable bound in the header. The range is
+    /// evaluated once, before the loop. Each trip then binds `x` to an element of the range --
+    /// the location a non-constant subscript `r[i]` names (`r.deref`, see [`push_element`]) --
+    /// and walks the body, which loops back to the header; the header also exits. A reference
+    /// variable (`T& x`, `auto&& x`) aliases that element, so a write through it is a write to
+    /// the range's memory; any other variable is a copy of it. A braced range
+    /// (`for (x : {a, b})`) has no memory, so the variable takes every listed value.
+    ///
+    /// The element is `r[0]`'s location, so this shares the module note's non-constant
+    /// subscript limitation: a write at `r[2]` is not seen through the variable.
+    fn walk_range_for(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        child: Node<'_>,
+    ) -> Result<(), Error> {
+        // C++20's `for (init; T x : r)`: the init statement runs once, first.
+        if let Some(init) = child.child_by_field_name("initializer") {
+            self.walk_statement(source, program, scope_view, init)?;
+        }
+        let right = child
+            .child_by_field_name("right")
+            .expect("a range-for always has a range");
+        let element = self.range_element(program, right, source, scope_view)?;
+
+        let mut head = add_scoped_block(
+            program,
+            scope_view,
+            &mut self.scope_tree,
+            true,
+            "range_for_head",
+        )?;
+        let continuation = add_block(
+            program,
+            &*scope_view,
+            &mut self.scope_tree,
+            false,
+            "Continuation",
+        )?;
+        if let Some(declarator) = child.child_by_field_name("declarator") {
+            self.bind_range_variable(program, source, &head, child, declarator, element)?;
+        }
+        link_blocks(program, &head, &continuation, false)?;
+
+        let body_node = child.child_by_field_name("body").expect("always has body");
+        let (mut body_scope, cp) = self.setup_compound(
+            program,
+            &mut head,
+            body_node,
+            BlockTypeRequest::NewBlockOrScopedBlock,
+            true,
+            "range_for_body",
+        )?;
+        body_scope.continuation_blidx = Some(head.blidx);
+        // `break` leaves the loop; `continue` re-binds the next element.
+        body_scope.break_target = Some(continuation.blidx);
+        body_scope.continue_target = Some(head.blidx);
+        body_scope.break_frame_depth = Some(self.dtor_frames.len());
+        body_scope.continue_frame_depth = body_scope.break_frame_depth;
+        self.walk_compound_statement(source, program, &body_scope, &cp)?;
+        *scope_view = continuation;
+        Ok(())
+    }
+
+    /// What a range-for variable binds to: the element location of range `right`, or, for a
+    /// braced list, one value blending every listed element.
+    fn range_element(
+        &mut self,
+        program: &mut Program,
+        right: Node<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<Result<RawPath, Exp>, Error> {
+        if right.kind() == "initializer_list" {
+            let mut value: Option<Exp> = None;
+            let mut cursor = right.walk();
+            let items: Vec<Node<'_>> = right
+                .named_children(&mut cursor)
+                .filter(|n| n.kind() != "comment")
+                .collect();
+            for item in items {
+                let item = self.flatten_expr(program, item, source, scope_view)?;
+                value = Some(match value {
+                    None => item,
+                    Some(prev) => {
+                        let temp = self.allocator.next_temp();
+                        let target = self.build_access_path(
+                            &temp,
+                            Default::default(),
+                            scope_view,
+                            &mut program[scope_view.fidx].locals,
+                        );
+                        self.add_assign_to_program(
+                            program,
+                            scope_view,
+                            &target,
+                            &prev,
+                            Some(&item),
+                        );
+                        Exp::Variable(target.base)
+                    }
+                });
+            }
+            return Ok(Err(value.unwrap_or_else(|| {
+                Exp::Variable(self.dead_temp_path(program, scope_view).base)
+            })));
+        }
+        let mut range = match right.kind() {
+            "identifier"
+            | "field_expression"
+            | "subscript_expression"
+            | "pointer_expression"
+            | "qualified_identifier"
+            | "parenthesized_expression"
+            | "this" => self.flatten_lvalue(program, right, source, scope_view)?,
+            // A call or any other computed range: its value, held in a temp if need be.
+            _ => match self.flatten_expr(program, right, source, scope_view)? {
+                Exp::Variable(v) => RawPath::new(v, ThinVec::new()),
+                Exp::AccessPath(ap) => raw_path_of(&ap),
+                value => {
+                    let temp = self.allocator.next_temp();
+                    let target = self.build_access_path(
+                        &temp,
+                        Default::default(),
+                        scope_view,
+                        &mut program[scope_view.fidx].locals,
+                    );
+                    self.add_assign_to_program(program, scope_view, &target, &value, None);
+                    target
+                }
+            },
+        };
+        push_element(&mut range.fields, None);
+        Ok(Ok(range))
+    }
+
+    /// Bind a range-for's variable in the loop header `head` (see [`Self::walk_range_for`]):
+    /// a reference aliases the element location, anything else is a local copy of the element.
+    /// A class-typed variable is recorded like any class-typed local, so `x.m()` dispatches.
+    fn bind_range_variable(
+        &mut self,
+        program: &mut Program,
+        source: &'a str,
+        head: &ScopeView,
+        loop_node: Node<'_>,
+        declarator: Node<'_>,
+        element: Result<RawPath, Exp>,
+    ) -> Result<(), Error> {
+        let Some(name) = declarator_leaf_ident(declarator, source) else {
+            // A structured binding (`auto [k, v] : m`) has no single name to bind.
+            return unexpected_ast(format!(
+                "range-for variable of kind {} is not bound",
+                declarator.kind()
+            ));
+        };
+        if let Some(class) = declared_class(&self.classes, loop_node, source) {
+            self.local_types.insert(name.to_string(), class);
+            note_pointer(
+                &mut self.local_pointers,
+                name,
+                declarator_is_pointer(declarator),
+            );
+        }
+        if declarator.kind() == "reference_declarator"
+            && let Ok(location) = &element
+        {
+            self.reference_aliases
+                .insert(name.to_string(), location.clone());
+            return Ok(());
+        }
+        self.reference_aliases.remove(name);
+        self.scope_tree
+            .add_variable(head.sidx, name.to_string(), VarKind::Local);
+        let target = self.build_access_path(
+            name,
+            Default::default(),
+            head,
+            &mut program[head.fidx].locals,
+        );
+        let value = match element {
+            Ok(location) => Exp::access_path(self.emit_loads(program, head, location)),
+            Err(value) => value,
+        };
+        self.add_assign_to_program(program, head, &target, &value, None);
         Ok(())
     }
 

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_130_range_for_ref_writes",
+  "description": "C++ range-for (spec 026), POSITIVE: `for (auto& y : a) y = source();` writes the array through the reference variable; a second loop sums it. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

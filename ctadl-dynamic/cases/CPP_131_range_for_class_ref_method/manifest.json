@@ -1,0 +1,6 @@
+{
+  "name": "CPP_131_range_for_class_ref_method",
+  "description": "C++ range-for (spec 026), POSITIVE: `for (B& b : arr) s = s + b.get();` with arr[0].v tainted. The class-typed reference variable dispatches `get` with the element as receiver. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

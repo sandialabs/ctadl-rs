@@ -4102,3 +4102,75 @@ fn cpp_call_to_a_function_is_not_a_cast() {
     let prog = program_from_cpp_string(src).0;
     check_direct_call(&prog, "f", "conv", ["@p0"]);
 }
+
+// ---- Spec 026: range-based for ----------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_range_for_body_is_lowered() {
+    // FR-1: the loop and its body lower; a `for_range_loop` used to fall into the statement
+    // walker's expression catch-all, which dropped the body with it.
+    let src = r"
+        int f(int p) {
+            int a[2] = {1, 2};
+            int r = 0;
+            for (int x : a) { r = p; }
+            return r;
+        }";
+    let (s, _si) = get_summary(program_from_cpp_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn cpp_range_for_value_variable_reads_an_element() {
+    // FR-2: a by-value variable is a copy of the element location a non-constant subscript
+    // names (`a.deref`), loaded in the loop header.
+    let src = r"
+        int f(int* a) {
+            int r = 0;
+            for (int x : a) r = x;
+            return r;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_loads(&prog, "f", "@p0.deref");
+    let (s, _si) = get_summary(prog).unwrap();
+    check_returns_param(&s, 0, ".deref");
+}
+
+#[test_log::test]
+fn cpp_range_for_reference_variable_writes_the_range() {
+    // FR-3: a reference variable aliases the element, so a store through it is a store to the
+    // range's memory, and nothing is copied into a local of that name.
+    let src = r"
+        void fill(int* a, int v) {
+            for (int& y : a) y = v;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_assign_or_update(&prog, "fill", "@p0.deref", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_range_for_braced_list_blends_every_value() {
+    // FR-4: a braced range has no memory; the variable takes every listed value.
+    let src = r"
+        int f(int p, int q) {
+            int s = 0;
+            for (int x : {p, 1, q}) s = x;
+            return s;
+        }";
+    let (s, _si) = get_summary(program_from_cpp_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn cpp_range_for_variable_is_scoped_to_the_loop() {
+    // The loop variable shadows an outer `x` only inside the loop: the outer one is returned.
+    let src = r"
+        int f(int p, int* a) {
+            int x = p;
+            for (int x : a) { x = 0; }
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_cpp_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}

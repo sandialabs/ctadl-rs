@@ -1,0 +1,6 @@
+{
+  "name": "CPP_132_range_for_distinct_negative",
+  "description": "C++ range-for (spec 026), NEGATIVE: a constant-only range summed while an unrelated local is tainted. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

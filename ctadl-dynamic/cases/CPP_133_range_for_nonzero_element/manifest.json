@@ -1,0 +1,7 @@
+{
+  "name": "CPP_133_range_for_nonzero_element",
+  "description": "C++ range-for x F3 (open): `a[1] = source(); for (int x : a) sink(x)`. The element location is the non-constant-subscript path, `a[0]`'s, so the write at a[1] is missed (s=none, d=flow) -- the shared C model gap of case 37. Allowlisted as known_gap F3.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F3"
+}

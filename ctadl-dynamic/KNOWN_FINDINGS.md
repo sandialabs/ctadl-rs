@@ -13,11 +13,12 @@ frontend ingestion gaps — and tracks their disposition.
 | F2 — multiple funcptr stores into an aggregate drop taint | soundness | 30, 33 | ✅ resolved (index-engine path fix) |
 | initializer_list (`{...}`) not ingested | frontend | 31, 34–36 | ✅ resolved (spec 019) |
 | labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (spec 018) |
+| F3 — a non-constant subscript reads/writes only element 0 | soundness | 37, CPP_133 | ❌ **open** (IR path model) |
 
 F2 and the two frontend findings above were surfaced by the **broadened M7 generator** (it threads
 taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
-Resolved entries are kept as a record of what the approach caught and how each was fixed. **No
-finding is currently open.**
+Resolved entries are kept as a record of what the approach caught and how each was fixed. **F3 is
+open** (2026-10-13).
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
@@ -25,6 +26,31 @@ finding is currently open.**
 instead of a run-failing `NEW-GAP`/`FRONTEND-ERROR`. When a fix lands, the harness reports the
 case as `resolved-known-gap` / `resolved-known-frontend-gap`; the closure step is to remove that
 field from the manifest **and** mark the entry below RESOLVED.
+
+---
+
+## F3 — A non-constant subscript only meets element 0 (OPEN)
+
+- **Status:** **open**, allowlisted as `known_gap: "F3"` on cases `37` (C) and `CPP_133` (C++
+  range-for). Found 2026-10-13 while adding range-for (spec 026).
+- **What:** `a[i]` with a non-constant `i` lowers to `a.deref`, the same path as `a[0]`
+  (`push_element`: offset 0 is elided, and a non-constant index has no offset to name). A write
+  at a nonzero constant index is `a.[1].deref`, so the two never meet:
+  ```c
+  a[1] = source(); for (i = 0; i < 3; i++) sink(a[i]);   /* s=none, d=flow */
+  for (i = 0; i < 3; i++) a[i] = source(); sink(a[1]);   /* s=none, d=flow */
+  ```
+  Writes and reads at `a[0]` and at non-constant indices do agree. Every loop over an array
+  touches this.
+- **History:** F5 on the old symbolic path model (`38f3f8b2`) fixed it with a `[_elem_]`
+  sentinel that `match_prefix` let may-alias every `[N]`. main's Offset+deref model replaced
+  symbolic subscripts with numeric offsets and the sentinel went with it; the module note in
+  `frontends/ctadl-c/src/lib.rs` ("Non-constant subscript indices") records the regression as a
+  limitation.
+- **Fix direction:** an "unknown offset" `OffsetAccess`/`PathSegment` in `ctadl-ir` that the
+  index and query engines' path matchers treat as may-aliasing every concrete offset, emitted by
+  `push_element` for a non-constant index. This is a change to the IR and engines that main owns,
+  not a frontend change.
 
 ---
 
