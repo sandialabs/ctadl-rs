@@ -321,7 +321,7 @@ pub struct IndexConfig {
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
     /// Admits `<path>.deref` for every program path. The native front ends (C, pcode) deal in
-    /// pointers, and every pointer may be dereferenced. See [`compute_paths`].
+    /// pointers, and every pointer may be dereferenced. See `compute_paths`.
     pub deref_paths: bool,
 }
 
