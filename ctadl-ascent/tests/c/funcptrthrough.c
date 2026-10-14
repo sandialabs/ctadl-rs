@@ -1,5 +1,4 @@
-/* Call targets crossing an indirect call, both ways. libtiff's codec dispatch is the up case:
- * `(*c->init)(tif)` reaches `InitCCITTFax3`, which installs `tif->tif_encoderow`.
+/* Call targets crossing an indirect call, both ways.
  *
  *   - up:          `init` installs `enc` and is reached only through `setup`'s pointer.
  *   - down:        `run` hands `cb` to `apply`, reached only through `op`.
