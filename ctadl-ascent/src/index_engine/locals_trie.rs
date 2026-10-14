@@ -292,6 +292,13 @@ where
     /// some formal, because `fwd`'s outer key is exactly the subject of a `locals` row. It
     /// costs O(1): the trie already keys on the prefix that a scan of the rows would have to
     /// rediscover.
+    /// EXPERIMENT: every row, for the locals census.
+    pub fn iter_rows(&self) -> impl Iterator<Item = (&F, &V, &P, &M, &Fp)> + '_ {
+        self.fwd
+            .iter()
+            .flat_map(|((f, v), group)| group.iter().map(move |(p, m, fp)| (f, v, p, m, fp)))
+    }
+
     #[inline]
     pub fn num_reached_variables(&self) -> usize {
         self.fwd.len()

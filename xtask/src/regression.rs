@@ -22,6 +22,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::android_icc;
+use crate::android_native;
 use crate::apk;
 use crate::assertions;
 use crate::dex;
@@ -711,6 +712,7 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             worker,
         ),
         Kind::AndroidIcc { spec } => run_android_icc(&case.name, spec),
+        Kind::AndroidNative { spec } => run_android_native(&case.name, spec, worker),
     }
 }
 
@@ -786,6 +788,79 @@ fn run_android_icc(name: &str, spec_path: &Path) -> Result<Outcome> {
         )),
         (_, Outcome::Fail(why)) => Outcome::Xfail(why),
         (_, other) => other,
+    };
+    with_valid_sarif(&work, &[&sarif], outcome)
+}
+
+/// Imports a real app with its native libraries, indexes and queries it with the spec's model, and
+/// checks what the JNI bridge linked and which flows came back. See [`android_native`].
+fn run_android_native(name: &str, spec_path: &Path, worker: &Worker) -> Result<Outcome> {
+    let spec = android_native::load_spec(spec_path)?;
+    let (apk, model) = android_native::resolve_paths(spec_path, &spec);
+    let Some(apk) = apk else {
+        return Ok(Outcome::Skip(format!(
+            "{} is not set; the Nix dev shell provides the app APKs",
+            android_native::APKS_ENV
+        )));
+    };
+    if !apk.is_file() {
+        return Ok(Outcome::Skip(format!(
+            "APK fixture not found at {}",
+            apk.display()
+        )));
+    }
+    if !model.is_file() {
+        bail!("model file not found at {}", model.display());
+    }
+
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+    let project = "app";
+    let sarif = work.join("out.sarif");
+    let model = model.to_string_lossy().into_owned();
+    // The bridge's summary line is logged at `info`.
+    let mut env = worker.ghidra_env.clone();
+    env.push(("RUST_LOG".to_string(), "warn,ctadl=info".to_string()));
+    let ctadl = |args: &[&str], log: &str| run_ctadl_logged(&work, &state, &env, args, log);
+
+    ctadl(
+        &[
+            "import",
+            "--language",
+            "apk",
+            "--name",
+            project,
+            &apk.to_string_lossy(),
+        ],
+        "import.log",
+    )?;
+    let index_log = ctadl(&["index", project, "-m", &model], "index.log")?;
+    ctadl(
+        &[
+            "query",
+            project,
+            "-m",
+            &model,
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
+        "query.log",
+    )?;
+
+    // Both checks, reported together: a regression in what links usually also loses flows, and
+    // seeing both says which.
+    let failures: Vec<String> = [
+        android_native::check_bridge(&index_log, &spec.bridge),
+        android_native::check_flows(&sarif, &spec.flows)?,
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let outcome = if failures.is_empty() {
+        Outcome::Pass
+    } else {
+        Outcome::Fail(failures.join("\n"))
     };
     with_valid_sarif(&work, &[&sarif], outcome)
 }
@@ -1463,23 +1538,17 @@ fn check_pcode_case(
             .map(|addr| addr - PCODE_BASE_ADDRESS)
             .collect()
     };
-    if offsets.is_empty() {
-        if cfg!(target_os = "macos") {
-            return Ok(Outcome::Skip(
-                "no tainted instructions on Darwin; skipping strict offset check".to_string(),
-            ));
-        }
-        return Ok(Outcome::Fail(
-            "no tainted instructions in SARIF output".to_string(),
-        ));
-    }
-
-    // A positive case must also carry a connected source -> sink flow. Checked
-    // after the tainted-instruction guard above so the macOS self-skip (where there
-    // is no taint output at all) still wins rather than reporting a spurious failure.
+    // A positive case must carry a connected source -> sink flow. This is checked
+    // before the tainted-instruction guard below so a lost flow reports as one, on
+    // every platform. (This used to be a SKIP on Darwin, which hid a lost flow.)
     if !connects {
         return Ok(Outcome::Fail(
             "no code flow connects a source to a sink".to_string(),
+        ));
+    }
+    if offsets.is_empty() {
+        return Ok(Outcome::Fail(
+            "no tainted instructions in SARIF output".to_string(),
         ));
     }
 
@@ -1798,6 +1867,28 @@ fn run_jni(
                 )?;
             }
         }
+        Packaging::Xapk => {
+            // The `SplitApks` pair, as one app bundle.
+            let base = work.join(format!("{class}.apk"));
+            let split = work.join(format!("{class}.config.{}.apk", abi.replace('-', "_")));
+            write_apk(&base, &[("classes.dex", &dex)])?;
+            write_apk(&split, &[(&lib_entry, &lib)])?;
+            let bundle = work.join(format!("{class}.xapk"));
+            write_apk(
+                &bundle,
+                &[
+                    (file_name_of(&base)?, &base),
+                    (file_name_of(&split)?, &split),
+                ],
+            )?;
+            ctadl(
+                &["import", "--name", &dex_project, &bundle.to_string_lossy()],
+                "import.log",
+            )?;
+            if let Some(why) = check_bundle_signature_hints(&state.join("ctadl"))? {
+                return Ok(Outcome::Fail(why));
+            }
+        }
         Packaging::Separate => {
             ctadl(
                 &["import", "--name", &dex_project, &dex_arg(&dex)],
@@ -1861,7 +1952,8 @@ fn run_jni(
     match packaging {
         // `SplitApks` names the native APK, whose own sub-import carries the library.
         Packaging::Separate | Packaging::SplitApks => index_args.push(&native_project),
-        Packaging::SingleApk => {}
+        // Both import once; the APK's or the bundle's sub-imports carry the library.
+        Packaging::SingleApk | Packaging::Xapk => {}
         Packaging::SummaryApk => {
             index_args.extend_from_slice(&["--no-native-libs", "--summary", &summary_project])
         }
@@ -1949,6 +2041,29 @@ fn run_jni(
         &addr2line,
     )?;
     with_valid_sarif(&work, &[&sarif, &machine_sarif], outcome)
+}
+
+/// Checks that importing an app bundle told Ghidra the prototypes of the natives its base split
+/// declares, though the library is in another split: some library import's `jni-signatures.tsv`
+/// has a `Java_*` symbol row. Only a DEX supplies those -- a library's own `RegisterNatives` tables
+/// give addresses -- and the native split has none of its own.
+fn check_bundle_signature_hints(store: &Path) -> Result<Option<String>> {
+    let imports = store.join("imports");
+    for entry in
+        std::fs::read_dir(&imports).with_context(|| format!("listing {}", imports.display()))?
+    {
+        let hints = entry?.path().join("jni-signatures.tsv");
+        if let Ok(text) = std::fs::read_to_string(&hints) {
+            if text.lines().any(|l| l.starts_with("sym\tJava_")) {
+                return Ok(None);
+            }
+        }
+    }
+    Ok(Some(format!(
+        "no library import under {} has a Java_* signature hint: the bundle importer did not pass \
+         the base split's natives to the native split",
+        imports.display()
+    )))
 }
 
 /// How a JNI case builds and packages its library.

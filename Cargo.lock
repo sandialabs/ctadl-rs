@@ -474,8 +474,6 @@ dependencies = [
 [[package]]
 name = "ascent_macro"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7d782b676e47b3657e5ae8ad3abe74b73a67a2cf73b3df85d1764e004724646"
 dependencies = [
  "ascent_base",
  "derive-syn-parse",
@@ -1180,6 +1178,7 @@ dependencies = [
  "trie",
  "url",
  "which",
+ "windows-sys 0.61.2",
  "zip 0.6.6",
 ]
 

@@ -53,6 +53,8 @@ pub enum Kind {
     },
     /// Pinned external Android ICC benchmark APK plus expected-answer spec.
     AndroidIcc { spec: PathBuf },
+    /// Pinned real Android app with native code, plus a spec of what must link and flow.
+    AndroidNative { spec: PathBuf },
 }
 
 /// How a [`Kind::Jni`] case hands its two halves to `ctadl import`.
@@ -68,6 +70,10 @@ pub enum Packaging {
     /// Android App Bundle is distributed, and what an XAPK download unpacks to: the
     /// native half arrives in an APK with no `classes*.dex` in it at all.
     SplitApks,
+    /// The two APKs of [`Self::SplitApks`], zipped into one app bundle (`.xapk`) and imported
+    /// once. The native split still has no DEX, but the bundle importer passes it the base
+    /// split's `native` declarations, so its library is disassembled knowing their prototypes.
+    Xapk,
     /// Package both into one APK beside a second, JNI-free library, import it once, and index
     /// the library on its own into a summary project. The app is then indexed with
     /// `--no-native-libs --summary <that project>`, so the bridge links against the library's
@@ -86,6 +92,7 @@ impl Kind {
             Kind::Lua { .. } => Frontend::Lua,
             Kind::Jni { .. } => Frontend::Jni,
             Kind::AndroidIcc { .. } => Frontend::AndroidIcc,
+            Kind::AndroidNative { .. } => Frontend::AndroidNative,
         }
     }
 }
@@ -110,6 +117,8 @@ pub enum Frontend {
     Jni,
     /// External Android ICC benchmark APKs (DroidBench ICC / ICC-Bench style).
     AndroidIcc,
+    /// Real Android apps with native code, imported whole: needs Ghidra, like `Jni`.
+    AndroidNative,
 }
 
 impl Frontend {
@@ -121,6 +130,7 @@ impl Frontend {
         Frontend::Jni,
         Frontend::C,
         Frontend::AndroidIcc,
+        Frontend::AndroidNative,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -132,6 +142,7 @@ impl Frontend {
             Frontend::Lua => "lua",
             Frontend::Jni => "jni",
             Frontend::AndroidIcc => "android-icc",
+            Frontend::AndroidNative => "android-native",
         }
     }
 }
@@ -148,8 +159,9 @@ impl FromStr for Frontend {
             "lua" => Ok(Frontend::Lua),
             "jni" => Ok(Frontend::Jni),
             "android-icc" | "icc" => Ok(Frontend::AndroidIcc),
+            "android-native" => Ok(Frontend::AndroidNative),
             other => {
-                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni, android-icc)")
+                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni, android-icc, android-native)")
             }
         }
     }
@@ -183,6 +195,7 @@ pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
     cases.extend(discover_lua(&tests_dir.join("lua"))?);
     cases.extend(discover_jni(&tests_dir.join("jni"))?);
     cases.extend(discover_android_icc(&tests_dir.join("android-icc"))?);
+    cases.extend(discover_android_native(&tests_dir.join("android-native"))?);
     cases.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(cases)
 }
@@ -200,6 +213,26 @@ fn discover_android_icc(dir: &Path) -> Result<Vec<TestCase>> {
         cases.push(TestCase {
             name: format!("AndroidIcc:{stem}"),
             kind: Kind::AndroidIcc {
+                spec: absolute(&entry)?,
+            },
+        });
+    }
+    Ok(cases)
+}
+
+fn discover_android_native(dir: &Path) -> Result<Vec<TestCase>> {
+    let mut cases = Vec::new();
+    if !dir.is_dir() {
+        return Ok(cases);
+    }
+    for entry in read_dir_sorted(dir)? {
+        if entry.extension().and_then(|e| e.to_str()) != Some("json5") {
+            continue;
+        }
+        let stem = file_stem(&entry)?;
+        cases.push(TestCase {
+            name: format!("AndroidNative:{stem}"),
+            kind: Kind::AndroidNative {
                 spec: absolute(&entry)?,
             },
         });
@@ -389,6 +422,20 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
                 untyped: false,
             },
         });
+        // And the same two APKs as one `.xapk`, imported with one command: the bundle importer has
+        // to hand the base split's natives to the native split. Same claims again.
+        cases.push(TestCase {
+            name: format!("Jni:{stem}+xapk"),
+            kind: Kind::Jni {
+                java: absolute(&entry)?,
+                native: absolute(&native)?,
+                config: absolute(&config)?,
+                bridge: None,
+                packaging: Packaging::Xapk,
+                abi: abi.clone(),
+                untyped: false,
+            },
+        });
         // And the summary workflow: the library indexed on its own, the app indexed without
         // its libraries against that project. Same claims about the Java half; the native
         // half is reached only through the library's summaries.
@@ -487,7 +534,10 @@ fn to_kebab_case(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{discover_android_icc, discover_jni, to_kebab_case, Frontend, Kind, Packaging};
+    use super::{
+        discover_android_icc, discover_android_native, discover_jni, to_kebab_case, Frontend, Kind,
+        Packaging,
+    };
 
     /// Every shipped JNI case is discovered, and one that carries a `<kebab>.bridge.jsonl`
     /// yields a second, declaratively-bridged case beside it.
@@ -569,6 +619,7 @@ mod tests {
             for (suffix, expected) in [
                 ("+apk", Packaging::SingleApk),
                 ("+split-apks", Packaging::SplitApks),
+                ("+xapk", Packaging::Xapk),
                 ("+summary", Packaging::SummaryApk),
             ] {
                 let (packaged_artifacts, packaged_bridge, packaged) = of(suffix);
@@ -597,7 +648,7 @@ mod tests {
         let cases = discover_jni(&dir).expect("discovering jni cases");
         let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
         // `+summary` is the registry-only boundary reached through a summary project.
-        for suffix in ["", "+apk", "+split-apks", "+summary"] {
+        for suffix in ["", "+apk", "+split-apks", "+xapk", "+summary"] {
             assert!(
                 names.contains(&format!("Jni:JniRegister{suffix}").as_str()),
                 "the RegisterNatives case is missing: {names:?}"
@@ -633,6 +684,7 @@ mod tests {
                 "Jni:JniWide",
                 "Jni:JniWide+apk",
                 "Jni:JniWide+split-apks",
+                "Jni:JniWide+xapk",
                 "Jni:JniWide+summary",
                 "Jni:JniWide+untyped"
             ]
@@ -679,6 +731,10 @@ mod tests {
             Frontend::AndroidIcc
         );
         assert_eq!("icc".parse::<Frontend>().unwrap(), Frontend::AndroidIcc);
+        assert_eq!(
+            "android-native".parse::<Frontend>().unwrap(),
+            Frontend::AndroidNative
+        );
         // Tolerate stray whitespace/case from a comma-separated list.
         assert_eq!(" Pcode ".parse::<Frontend>().unwrap(), Frontend::Pcode);
         assert_eq!(" C ".parse::<Frontend>().unwrap(), Frontend::C);
@@ -688,6 +744,28 @@ mod tests {
         for frontend in Frontend::ALL {
             assert_eq!(frontend.as_str().parse::<Frontend>().unwrap(), *frontend);
         }
+    }
+
+    #[test]
+    fn discovers_android_native_specs() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("nightly/tests/android-native");
+        if !dir.is_dir() {
+            return;
+        }
+        let cases = discover_android_native(&dir).expect("discovering android native cases");
+        assert!(
+            cases
+                .iter()
+                .any(|c| c.name == "AndroidNative:jwtc-android-chess"),
+            "{:?}",
+            cases.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+        assert!(cases
+            .iter()
+            .all(|c| c.kind.frontend() == Frontend::AndroidNative));
     }
 
     #[test]

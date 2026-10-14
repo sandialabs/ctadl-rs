@@ -285,6 +285,9 @@ pub struct CodegenReport {
     /// rather than from the matched names, which is the only place that knows a name belonged
     /// to a function this project actually lowered.
     pub skipped_bodies: usize,
+    /// Of `skipped_bodies`, those skipped only because a `skip-exclusive-callees` root alone
+    /// reaches them (see [`exclusive_callees`]).
+    pub skipped_exclusive_callees: usize,
     /// Java call sites by bucket, per [`JavaDispatch::index`].
     pub buckets: [SiteBuckets; 4],
     /// Signatures whose dispatch model was refused because the CHA target set holds a matched
@@ -305,6 +308,7 @@ impl CodegenReport {
     /// Folds another import's phase-1 report in.
     pub fn merge(&mut self, other: CodegenReport) {
         self.skipped_bodies += other.skipped_bodies;
+        self.skipped_exclusive_callees += other.skipped_exclusive_callees;
         for (ours, theirs) in self.buckets.iter_mut().zip(other.buckets.iter()) {
             ours.add(theirs);
         }
@@ -338,7 +342,9 @@ pub fn codegen_program(
     }
 
     let cha = ClassHierarchyAnalysis::new(&program_info.vmt, instantiated_classes);
+    let exclusive = exclusive_callees(&program_info.program, &matches.skip_exclusive_callees);
     let mut v = CodegenVisitor::new(cha, facts, source_info, strategy, policy, matches);
+    v.exclusive_callees = exclusive;
     for f in program_info.program.functions.drain(..) {
         v.visit_function_data(FunctionIdx::new(0), &f);
     }
@@ -355,6 +361,100 @@ pub fn codegen_program(
         log::error!("unbalanced call-site buckets: {totals:?}");
     }
     report
+}
+
+/// The functions of `program` that only `roots` reach, for `modes: ["skip-exclusive-callees"]`.
+///
+/// The greatest set `S` of candidates such that every direct caller of a member is a root or in
+/// `S`. A candidate is a function reachable from a root by direct calls that:
+///
+/// - has a Ghidra default name (`FUN_…`). A function with a symbol could be called by name from
+///   another import, which this program cannot see; one without cannot.
+/// - is not address-taken (never a `FunctionPtr` in the program), since an indirect call could
+///   reach it from anywhere.
+///
+/// Greatest rather than least because the demangler's parse functions are mutually recursive:
+/// building up from "every caller is already skipped" would never admit a cycle.
+///
+/// Computed per import, from that import's IR alone. The result never includes a root.
+pub fn exclusive_callees(program: &Program, roots: &BTreeSet<Str>) -> BTreeSet<Str> {
+    if roots.is_empty() {
+        return BTreeSet::new();
+    }
+    struct CallGraph {
+        caller: Option<Str>,
+        /// callee -> its direct callers
+        callers: BTreeMap<Str, BTreeSet<Str>>,
+        /// caller -> its direct callees
+        callees: BTreeMap<Str, BTreeSet<Str>>,
+        address_taken: BTreeSet<Str>,
+    }
+    impl Visitor for CallGraph {
+        fn visit_call_style(&mut self, style: &CallStyle) {
+            if let CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(targets),
+            } = style
+            {
+                let caller = self.caller.clone().unwrap();
+                for target in targets {
+                    let target: Str = target.clone().into();
+                    self.callers
+                        .entry(target.clone())
+                        .or_default()
+                        .insert(caller.clone());
+                    self.callees.entry(caller.clone()).or_default().insert(target);
+                }
+            }
+            self.super_call_style(style);
+        }
+        fn visit_exp(&mut self, exp: &Exp) {
+            if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = exp {
+                self.address_taken.insert(name.clone().into());
+            }
+            self.super_exp(exp);
+        }
+    }
+    let mut graph = CallGraph {
+        caller: None,
+        callers: BTreeMap::new(),
+        callees: BTreeMap::new(),
+        address_taken: BTreeSet::new(),
+    };
+    for f in program.functions.iter() {
+        graph.caller = Some(f.name.clone().into());
+        graph.visit_function_data(FunctionIdx::new(0), f);
+    }
+
+    let eligible = |f: &Str| f.starts_with("FUN_") && !graph.address_taken.contains(f);
+    // Candidates: eligible functions reachable from a root through eligible functions.
+    let mut candidates = BTreeSet::new();
+    let mut work: Vec<Str> = roots.iter().cloned().collect();
+    while let Some(f) = work.pop() {
+        for callee in graph.callees.get(&f).into_iter().flatten() {
+            if !roots.contains(callee) && eligible(callee) && candidates.insert(callee.clone()) {
+                work.push(callee.clone());
+            }
+        }
+    }
+    // Drop every candidate with a caller outside the set, until none has one.
+    loop {
+        let outside: Vec<Str> = candidates
+            .iter()
+            .filter(|f| {
+                graph.callers[*f]
+                    .iter()
+                    .any(|c| !roots.contains(c) && !candidates.contains(c))
+            })
+            .cloned()
+            .collect();
+        if outside.is_empty() {
+            break;
+        }
+        for f in outside {
+            candidates.remove(&f);
+        }
+    }
+    candidates
 }
 
 /// Generate code for a function in SSA form (see [`ctadl_ir::ssa::transform`]).
@@ -500,6 +600,10 @@ struct CodegenVisitor<'a> {
     deferred_dispatch: BTreeSet<(Symbol, Symbol)>,
     /// What this visitor did, returned by [`codegen_program`].
     report: CodegenReport,
+    /// This import's functions that only a `skip-exclusive-callees` root reaches. Skipped like
+    /// `matches.skip_analysis`, but kept per import: an unnamed function's name means nothing
+    /// outside it.
+    exclusive_callees: BTreeSet<Str>,
 }
 
 /// Everything the ladder needs to know about one signature, independent of the site.
@@ -556,6 +660,7 @@ impl<'a> CodegenVisitor<'a> {
             synthetics: Default::default(),
             deferred_dispatch: Default::default(),
             report: Default::default(),
+            exclusive_callees: BTreeSet::new(),
         }
     }
 
@@ -802,7 +907,8 @@ impl Visitor for CodegenVisitor<'_> {
         let name: Str = function.name.clone().into();
         // Checked before the name is interned, against the same spelling the model matcher took
         // out of the IR.
-        let skip = self.matches.skip_analysis.contains(&name);
+        let exclusive = self.exclusive_callees.contains(&name);
+        let skip = exclusive || self.matches.skip_analysis.contains(&name);
         let func_id = self
             .source_info
             .sites
@@ -829,6 +935,7 @@ impl Visitor for CodegenVisitor<'_> {
             log::debug!("skip-analysis: not lowering the body of {}", function.name);
             self.visit_params(&function.params);
             self.report.skipped_bodies += 1;
+            self.report.skipped_exclusive_callees += usize::from(exclusive);
             return;
         }
         self.super_function_data(idx, function);

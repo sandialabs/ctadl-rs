@@ -1,0 +1,33 @@
+// Chess (jwtc.android.chess), version 297 from F-Droid. MIT licensed.
+// Upstream APK: https://f-droid.org/repo/jwtc.android.chess_297.apk
+// Fixture SHA-256: 972daf6b71ea5b8614925b887da177fe6a521cf60c489d0b8c00f5ffce9881e9
+//
+// A 3.4 MB app whose chess engine is C++ in lib/<abi>/libchess-jni.so, stripped. Of its 57 Java
+// `native` methods, 51 are bound with RegisterNatives and the rest by Java_* symbol, so both
+// bindings link here. The Dex is obfuscated (`Lx2/c;`, `Lt2/l;`), which is why the model names
+// pinned-version identifiers; a new APK version means re-pinning them.
+//
+// The flows cross the boundary in both directions:
+//  * Java into native: `Lx2/c;->s(I)V` passes a field of `list.get(i)` to JNI.move and
+//    JNI.requestDuckMove, and it reaches the engine's `Game::move` and
+//    `ChessBoard::requestDuckMove` inside the library.
+//  * Native into Java: `ChessBoard::getMyMove`'s return value comes back out of its JNI wrapper
+//    and into StringBuilder.append in Java: `Lm2/v;->y0` passes it to `Lx2/c;->y` as the move,
+//    which appends its name (`jwtc/chess/g;->f`) to the move text. That needs the return value
+//    recovered across the library's PLT stubs and tail calls (ExportPcode.java's
+//    SignatureRecovery).
+//
+// The model scopes the Java sinks to that one method, `Lx2/c;->y`: with every StringBuilder.append
+// in the app as a sink, the query takes minutes instead of seconds. It used to be `Lt2/l;->F`,
+// where the flow was an artifact: F reuses its String parameter's register for getMyMove()'s
+// result, and writing the exit version back to the formal fed it into F's own incoming String.
+{
+  apk: "jwtc.android.chess_297.apk",
+  model: "models/jwtc-android-chess.json",
+  bridge: { linked: 57, registered: 51, prototype_mismatch: 0 },
+  flows: [
+    { label: "JavaMove", source: "Ljava/util/ArrayList;->get", sink: "Game::move" },
+    { label: "JavaMove", source: "Ljava/util/ArrayList;->get", sink: "ChessBoard::requestDuckMove" },
+    { label: "NativeValue", source: "ChessBoard::getMyMove", sink: "Ljava/lang/StringBuilder;->append" },
+  ],
+}

@@ -598,8 +598,9 @@ but not its fields".
 
 ### `modes`
 
-Analysis directives. One defined value: `["skip-analysis"]` — don't analyze the
-body of the matched function. Index time only; `ctadl query` reports it as
+Analysis directives. Two defined values: `"skip-analysis"` — don't analyze the
+body of the matched function — and `"skip-exclusive-callees"`, which extends it
+to the function's private helpers (below). Index time only; `ctadl query` reports it as
 ignored, like a `propagation`.
 
 **A model without it ADDS to a body; a model with it REPLACES the body.** That is
@@ -651,6 +652,18 @@ Reach for it in two situations:
   its body manufactures are usually what multiply. This is why the ARM C++
   exception unwinder is modelled in `native-index.jsonl`, and
   `skip_analysis_hybrid.tnt` is the case that pins it.
+
+`"skip-exclusive-callees"` handles a library routine whose cost is in helpers
+a model cannot name. It requires `"skip-analysis"`, and also skips every function
+that only the matched one reaches. The closure is computed per import from its
+direct calls. It is the greatest set of candidates whose callers are all the
+matched function or other members, so mutually recursive helpers are included.
+A candidate must have a Ghidra default name (`FUN_…`), since a function with a
+symbol could be called by name from another library, which the import cannot
+see. It must also not be address-taken, since an indirect call could reach it
+from anywhere. libc++abi's `__cxa_demangle`, whose parser lives in an anonymous
+namespace, is modelled this way in `native-index.jsonl`. The `models:` log line
+counts the closure's bodies separately ("as exclusive callees").
 
 A generator carrying `modes` and no `propagation` is legal and says *this
 function moves nothing* — the honest model for a routine whose only job is
@@ -967,6 +980,7 @@ design is drawn on.
 | Register a composed access path the code never writes | `methods` | `access_paths` |
 | Frameworks that call your override indirectly | `methods` | `forward_self` *(not yet implemented)* |
 | Skip analyzing a body and trust the model | `methods` | `modes: ["skip-analysis"]` |
+| ...and its unnamed helpers, too | `methods` | `modes: ["skip-analysis", "skip-exclusive-callees"]` |
 
 ### End-to-end example
 

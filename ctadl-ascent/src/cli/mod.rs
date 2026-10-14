@@ -315,10 +315,11 @@ pub fn index(
     let android_intent_stats = android_intent::emit_phase2_facts(&mut facts, &source_info.sites);
     log::info!(
         "models: {} summary row(s), {} declared access path(s), {} function body(ies) not \
-         analyzed",
+         analyzed ({} as exclusive callees)",
         model_report.summaries,
         model_report.declared_paths,
-        codegen_report.skipped_bodies
+        codegen_report.skipped_bodies,
+        codegen_report.skipped_exclusive_callees
     );
     if android_intent_stats.api_functions > 0 || android_intent_stats.intent_frames > 0 {
         log::info!(
