@@ -5,14 +5,15 @@ small apps with native code (see "M7. Small apps with native code"). The measure
 `/Volumes/Shampoo/ct-bigapk/small/`. M1 indexes `androidudpbus` and two other apps whole; M2-M6
 index the Dex-only imports in `small/r8-general/`; M7-M8 index whole APKs again. M9-M11 run on a
 Windows machine with 7.9 GB of RAM: M11 is a second corpus of ten F-Droid apps, Dex only, in
-`tmp/corpus2/`.
+`tmp/corpus2/`. M12 runs on a Linux machine with 62 GB of RAM: three apps 1-8x the size of the
+largest in M11, Dex only.
 
 The document has four parts:
 
-- **Problems** (P1-P30): each problem found, what causes it and where it shows up.
-- **Solutions** (S1-S35): each fix tried or proposed, which problems it applies to, and whether it
+- **Problems** (P1-P32): each problem found, what causes it and where it shows up.
+- **Solutions** (S1-S37): each fix tried or proposed, which problems it applies to, and whether it
   is done, rejected or undecided. An entry merged into another keeps its number and a pointer.
-- **Measurements** (M1-M11): the investigations, in the order they were done, with their tables.
+- **Measurements** (M1-M12): the investigations, in the order they were done, with their tables.
 - **Data**: where every investigation's output is, and the experiment switches.
 
 ## Status at a glance
@@ -49,6 +50,8 @@ The document has four parts:
 | P28. The globals slot of every call in a large static initializer | S34 | Open |
 | P29. Rhino's interpreter loop in the hybrid context | S14 | Open |
 | P30. The transient at the end of scc 4 | S33 | Open; located (M10) |
+| P31. The context-free call rule joins before it tests the mode | S36 | Open; time only |
+| P32. The memory checkpoints read -1 on Linux | S37 | Open; tooling |
 
 # Problems
 
@@ -175,7 +178,8 @@ P29; if S9 finds the same mechanism, the two belong together.
 ### P6. Wild relations
 
 **Seen in:** `conscryptprovider`, `a2050`; the cost without the rows in every Java app
-(`cash.p.terminal`). **Measured in:** M6, M7. **Solutions:** S27 (for Java only).
+(`cash.p.terminal`, Element, OsmAnd~). **Measured in:** M6, M7, M12. **Solutions:** S27 (for Java
+only).
 
 The offset-keyed relations of the wildcard match take most of Ascent's default containers. In
 `conscryptprovider`, `edge_split_wild` (46 M rows, 7.6 GB) and `assign_wild` (26 M, 3.8 GB) are
@@ -186,7 +190,8 @@ rule).
 
 **On Java the wildcard rules cost about 9 s and produce nothing** (`cash.p.terminal`).
 `assign_wild`, `edge_split_wild`, `locals_wild` and `locals_key_wild` scan every `assign_like` or
-`reach_vp` delta, but Java paths have no trailing offsets. (Moved here from P21.)
+`reach_vp` delta, but Java paths have no trailing offsets. (Moved here from P21.) In M12 the six
+wildcard rules cost 2.0 s (WhatsApp), 9.2 s (OsmAnd~) and 14.1 s (Element), and derive nothing.
 
 ### P7. Summary growth
 
@@ -452,7 +457,8 @@ iterations).
 ### P17. Call-target tags are stored many times
 
 **Seen in:** `greenbits`, `cash.p.terminal`, `darkcoin`, `heartratemonitor`, `at.bitfire.davdroid`,
-`com.amaze.filemanager`. **Measured in:** M3, M4, M6, M10, M11. **Solutions:** S12, S13.
+`com.amaze.filemanager`, Element. **Measured in:** M3, M4, M6, M10, M11, M12. **Solutions:** S12,
+S13.
 
 `call_target_assign_like` is stored five times: the row store plus four indices, one of which
 repeats the whole row. S11's `cta_key` is stored three times. At `greenbits`' 320 s rung the two
@@ -463,7 +469,8 @@ is a net memory loss on `cash.p.terminal` (4 GB), `darkcoin` (44 M rows, 18.0 �
 
 In M11 the call-target tags are what put DAVx⁵ and Amaze over 4 GB. In DAVx⁵ they are its two
 largest relations, `cta_key` 634 MB and `call_target_assign_like` 572 MB: 31% of what scc 4
-returns (Tusky: 20%). In Amaze they are 851 MB (24%).
+returns (Tusky: 20%). In Amaze they are 851 MB (24%). In M12's Element they are 2.34 GB, and
+`call_target_assign_like` is 1.18 GB for 2.3 M rows, 512 B/row.
 
 ### P18. `reach_vp` is stored three times
 
@@ -508,7 +515,8 @@ first iteration, against 1.9 GB for DAVx⁵.
 
 ### P21. Joins that scan a whole relation every iteration
 
-**Seen in:** `cash.p.terminal`. **Measured in:** M6. **Solutions:** S27.
+**Seen in:** `cash.p.terminal`, WhatsApp, Element, OsmAnd~. **Measured in:** M6, M12.
+**Solutions:** S27, and S36 for one of them (P31).
 
 **Scanning joins cost 25-39 s.** `critical_summary` rule 1.2, `context_assign`,
 `establishes_direct` and `critical_reach`. Rule 1.2 shows the pattern: Ascent drives it from
@@ -517,6 +525,27 @@ So every one of the 637 iterations walks the 2.9 M `call` rows to find a few new
 get more expensive per row on almost no rows: `critical_summary` 0.8, 26 and 2,277 µs,
 `establishes_direct` 2.5, 14 and 3,436 µs, `context_assign` 39, 99 and 875 µs. (The wildcard rules'
 cost on Java, once here, is in P6.)
+
+**The same rules lead M12, on apps that converge.** At the fixpoint, `context_assign`'s seed rule
+(3.1) costs 264 (WhatsApp), 612 (OsmAnd~) and 595 µs (Element) per row, `critical_summary` rule 1.2
+44, 101 and 186 µs, and `establishes_direct` 48, 74 and 353 µs, against about 1 µs for the rules
+that build `edge_split` and `locals`. On Element the three take 32, 21 and 11 s of 229 s of scc 4
+rule time. The same four-way join (`callee_info`, `locals`, `resolvent`, `callee_resolvents`) costs
+0.03-0.06 s in `resolved_call`, which runs once after scc 4: the cost is the scan repeated in each of
+scc 4's 495-567 iterations.
+
+### P31. The context-free call rule joins before it tests the mode
+
+**Seen in:** WhatsApp, Element, OsmAnd~ (every run with a hybrid context). **Measured in:** M12.
+**Solutions:** S36.
+
+Rule 3.1 has a twin for `HybridContext::None` that writes the same instantiation to `assign_like`
+(`index_engine/mod.rs`, "3.1 without context"). Its `config(c), if c.hybrid_context ==
+HybridContext::None` comes last, after `callee_info`, `locals`, `resolvent`, `callee_resolvents`
+and `summary`, so with the default context it runs rule 3.1's whole scan and throws every row away.
+Its three semi-naive variants derive 0 rows and cost 0.7 s (WhatsApp), 12.6 s (OsmAnd~) and 30.4 s
+(Element): as much as rule 3.1 itself (0.6, 12.1 and 32.0 s), and 13% of Element's scc 4 rule time.
+Rule 3.1 tests the mode after `callee_resolvents`, before `summary`.
 
 ### P26. Plain relations are sized in powers of two
 
@@ -560,6 +589,15 @@ skipping strict offset check").
 - The pcode import is not deterministic. One run's import of `FUN_00105b18` in
   `libcpuinfo-libs.so` had one assignment and two locals in a different order, which changed 6
   `assign_like` edges.
+
+### P32. The memory checkpoints read -1 on Linux
+
+**Measured in:** M12. **Solutions:** S37.
+
+`phys_footprint_mb` (`index_engine/mod.rs`) reads the process footprint on macOS and Windows and
+returns -1.0 everywhere else, so on Linux every `[mem cp]` line reads `-1.0 MB` and the "Enters
+fixpoint" and "Returns" columns of M10 and M11 cannot be read from the log. M12 takes them from the
+cap's samples instead.
 
 # Solutions
 
@@ -975,6 +1013,23 @@ to the global heap. Either way the check is
 
 Keeping interpreter loops out of hybrid inlining (P29) is S14's bound on decision sets, which
 already exists as `--hybrid-context bounded:k` and `spill:k`; see S14.
+
+### S36. Test the mode first in the context-free call rule
+
+**Applies to:** P31. **Status:** undecided, not tried; about −30 s of rule time on Element, −12.6 s
+on OsmAnd~, estimated from M12.
+
+Move `config(c), if c.hybrid_context == HybridContext::None` to the front of the body. The rule
+derives the same rows in every mode, and with a hybrid context it stops at the test. Rule 3.1's own
+test could move to the front the same way, though there it only matters under `None`.
+
+### S37. Read the footprint on Linux
+
+**Applies to:** P32. **Status:** undecided, not started.
+
+Read `VmRSS` from `/proc/self/status` (or the resident pages in `/proc/self/statm`) in the Linux
+branch of `phys_footprint_mb`, so that the `[mem cp]` lines are comparable across the three
+platforms.
 
 # Measurements
 
@@ -1643,6 +1698,50 @@ differences larger than that are read here.
   take 4-13 s together. One MoneyWallet run took 17 s for the first two of those; its rerun took
   5 s, so that was the machine paging.
 
+## M12. Element, OsmAnd~ and WhatsApp: large, not blowing up (2026-10-13)
+
+**Problems:** P6, P17, P18, P19, P20, P21, P26, P31, P32. **Solutions:** S36, S37.
+
+Three apps larger than any in M11, Dex only (Ghidra is not installed, so 4-66 MB of native code per
+app is not imported and its JNI methods log "no implementation found"). On a Linux machine with
+62 GB of RAM, the binary at `4e30de1c`, under a 32 GB cap (48 GB for WhatsApp), with memory sampled
+every 2 s. Each app was imported and indexed once with no timeout. All three reach a fixpoint far
+under the cap, so none was laddered.
+
+| App | Dex | Functions | IR | Import | Enters fixpoint | Returns | Peak | scc 4 | Wall |
+|---|---|---|---|---|---|---|---|---|---|
+| `com.whatsapp` 2.17.79 | 8.7 MB | 57,754 | 38.3 MB | 7.5 s, 0.58 GB | 602 MB | 2,769 MB | 2.71 GB | 235 it, 28.4 s | 62 s |
+| `net.osmand.plus` 5.3.10 | 48.0 MB | 341,427 | 224.2 MB | 32 s, 2.49 GB | 2,759 MB | 11,712 MB | 11.44 GB | 495 it, 176.3 s | 351 s |
+| `im.vector.app` (Element) 1.6.62 | 66.8 MB | 464,996 | 323.6 MB | 43 s, 3.39 GB | 4,575 MB | 15,714 MB | 15.40 GB | 567 it, 269.3 s | 543 s |
+
+"Enters fixpoint" and "Returns" are the cap's samples nearest the `[mem cp]` lines, since those read
+-1 on Linux (P32). The cap measures the cgroup, which counts page cache as well as the heap. At 2 s
+the samples are too coarse to separate the transient (P30) from what scc 4 returns.
+
+- **They cost what their size predicts.** The peak is about 76x (WhatsApp), 55x (OsmAnd~) and 51x
+  (Element) the IR, inside M6's 34-123x. 18.3, 76.3 and 104.4 M rows are derived, 72-74% of them
+  new, as in M10 and M11. Memory climbs steadily through scc 4 (Element: 3.9 to 15.4 GB over
+  300 s), with no iteration jumping as Conversations' did in M11.
+- **WhatsApp is not large.** The APK is 29 MB, but 23 MB of it is resources; its 8.7 MB of dex is
+  1.25x `com.noto`'s.
+- **The common profile is M10's, scaled up.** The largest stores are `edge_split` (398, 1,709 and
+  1,975 MB), `assign_like` (323, 1,354 and 1,505 MB) and `locals` (216, 879 and 1,471 MB).
+  Call-target tags come next (P17): `cta_key` and `call_target_assign_like` together are 363 MB,
+  1.52 GB and 2.34 GB. `actual_param` is 779 MB on both large apps, its row store and its full
+  copy `_indices_none` each exactly 256 MiB (P19, P26), and `reach_vp_none` is 403 MB on Element
+  (P18).
+- **The scanning joins lead the per-row ranking (P21).** `context_assign` 3.1 costs 264-612 µs per
+  row, `critical_summary` 1.2 44-186 µs and `establishes_direct` 48-353 µs, against about 1 µs
+  for the `edge_split` and `locals` rules. On Element they take 32, 21 and 11 s of 229 s of scc 4
+  rule time.
+- **A rule that derives nothing costs as much as 3.1 (P31).** The `HybridContext::None` twin of 3.1
+  derives 0 rows and costs 0.7, 12.6 and 30.4 s, because it tests the mode after its joins.
+- **The wildcard rules derive nothing (P6)**, at 2.0, 9.2 and 14.1 s.
+- **Time outside scc 4.** On Element, 138 s go before `ascent_run` (44 s of them SSA), holding
+  about 3.9 GB from codegen on (P20), and 108 s after it: 51 s from the relation census to
+  `result.try_save`, and 56 s of saving, against 4-13 s for both in M11. OsmAnd~ takes 92 s
+  before and 61 s after.
+
 # Data
 
 ## Experiment switches
@@ -1869,3 +1968,21 @@ On the Windows machine, under `C:\Users\timlo\ctadl-rs\tmp\` (not on Shampoo):
   log with samples; `$env:CENSUS` adds the census), `iters.py <log> <rung log>` (per-iteration commit and top rules, with rule names
   from a rung's scc summary), `phases.py <logs>` (time per index phase).
 - Conversations' 5 s rung is missing: an edit to `memguard.ps1` mid-ladder broke it.
+
+## M12: Element, OsmAnd~ and WhatsApp
+
+On the Linux machine, under `/home/ubuntu/`:
+
+- `samples/im.vector.app/im.vector.app_40106624.apk` and
+  `samples/net.osmand.plus/net.osmand.plus_531003.apk`, from `https://f-droid.org/repo/` (F-Droid's
+  suggested versions on 2026-10-13); each sha256 matches F-Droid's `index-v2.json` of that day.
+  `samples/com.whatsapp_2.17.79-451676_minAPI14.apk` came with the machine.
+- `ctadl-rs/tmp/blowup-{whatsapp,element,osmand}/`: `import.log`, `baseline.log` (the debug log
+  with the per-rule counters, the census, `[idxsizes]` and `[memsample]` lines) and `state/` (the
+  import and the index). `scripts/blowup-rank.py <log>` ranks them.
+- `ctadl-rs/.scratch/` (untracked): `memguard.sh LIMIT_GB LOG CMD...`, the Linux cap. It runs the
+  command in a `systemd-run --user --scope` with `MemoryMax`, `MemorySwapMax=0` and
+  `OOMPolicy=continue` (otherwise the OOM kill takes the summary line with it), writes
+  `scripts/memguard.ps1`'s `[memguard]` line with the cgroup's `memory.peak` and `oom_kill` count,
+  and samples `memory.current` under `MEMGUARD_SAMPLE_MS`. `ladder.sh APK OUTDIR LIMIT_GB "T1 T2 ..."`
+  does what `scripts/blowup-ladder.ps1` does.
