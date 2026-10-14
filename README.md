@@ -113,7 +113,8 @@ name alone, and `--no-jni-bridge` disables the pass entirely (and implies the fi
 `--no-jni-bridge` also when joining a pair by hand with a
 [`bridge` model](docs/model-generators.md#bridge), so the pair is not bridged twice. Note that the
 `RegisterNatives` tables are recovered at *import* time, so a library imported before this feature
-existed has none, and `ctadl import --skip-existing` will not create one — re-import without it.
+existed has none, and a re-import reuses the unchanged library without creating one — re-import
+with `ctadl import --force`.
 
 #### Linking against a library indexed on its own
 

@@ -1,0 +1,11 @@
+name = "Flowy"
+grammar = "flowy"
+path_suffixes = ["tnt"]
+line_comments = ["// "]
+tab_size = 4
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = false },
+    { start = "(", end = ")", close = true, newline = false },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+]

@@ -719,6 +719,19 @@ fn test_pipeline_tag() {
     assert_eq!(Pipeline::index_default().tag(), "dt+co+ssa(prune)+cp");
     assert_eq!(Pipeline::index_default().prune(false).tag(), "dt+co+ssa+cp");
     assert_eq!(Pipeline::ssa_only().tag(), "ssa(prune)");
+    assert_eq!(
+        Pipeline::ssa_only()
+            .param_write_back(ParamWriteBack::Entry)
+            .tag(),
+        "ssa(prune,entry)"
+    );
+    assert_eq!(
+        Pipeline::ssa_only()
+            .prune(false)
+            .param_write_back(ParamWriteBack::Entry)
+            .tag(),
+        "ssa(entry)"
+    );
     assert_eq!(Pipeline::none().tag(), "none");
     // Pruning does nothing without SSA, and the tag says so instead of suggesting that a pass
     // ran.
@@ -738,4 +751,254 @@ fn program_f() -> Program {
     let mut program = Program::default();
     program.functions.push(function_f());
     program
+}
+
+// Pruned SSA.
+//
+// Each test CFG below has a variable whose phi minimal SSA would place but no use observes, and
+// one whose phi a use does observe. `phi_placements` names phis by (block, unversioned variable)
+// so the pruned and minimal forms can be compared even though their version numbers differ.
+
+fn local(f: &mut FunctionData, name: &str) -> VariableRef {
+    VariableRef::new_local_idx(f.intern_local(name))
+}
+
+fn konst(n: u8) -> Exp {
+    Exp::Bytes(vec![n])
+}
+
+fn goto(targets: &[usize]) -> Option<Terminator> {
+    Some(Terminator::new_kind(TerminatorKind::Goto {
+        targets: targets.iter().map(|&t| BasicBlockIdx::new(t)).collect(),
+    }))
+}
+
+fn assign(dest: &VariableRef, sources: impl IntoIterator<Item = Exp>) -> Statement {
+    Statement::new_kind(StatementKind::assign(dest.clone(), sources))
+}
+
+// def Diamond(p) {
+//   if (..) { x = 1; t = 1; p = 1; } else { x = 2; t = 2; }
+//   return x;
+// }
+//
+// `x` is returned and `p` reaches the exit's param-flow, so both need a phi at the join. `t` is
+// never read, so it gets none.
+fn function_diamond() -> FunctionData {
+    let mut f = FunctionData {
+        name: "Diamond".to_string(),
+        ..Default::default()
+    };
+    f.set_return_type(ReturnType { arity: 1 });
+    f.params.push(ParameterType::ByVal);
+    let x = local(&mut f, "x");
+    let t = local(&mut f, "t");
+    let p = VariableRef::new_parameter(ParameterIdx::new(0));
+    let blocks = f.blocks.blocks_mut();
+    blocks.push(BasicBlockData::new(goto(&[1, 2])));
+    let mut b1 = BasicBlockData::new(goto(&[3]));
+    b1.extend([
+        assign(&x, [konst(1)]),
+        assign(&t, [konst(1)]),
+        assign(&p, [konst(1)]),
+    ]);
+    blocks.push(b1);
+    let mut b2 = BasicBlockData::new(goto(&[3]));
+    b2.extend([assign(&x, [konst(2)]), assign(&t, [konst(2)])]);
+    blocks.push(b2);
+    blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
+        TerminatorKind::Return {
+            args: smallvec![Exp::Variable(x)],
+        },
+    ))));
+    f
+}
+
+// def Loop() {
+//   i = 0;
+//   while (..) { i = i + 1; d = i; }
+//   return i;
+// }
+//
+// `i` is loop-carried and returned, so the header needs a phi for it. `d` is assigned in the
+// body but never read, so the header gets no phi for it.
+fn function_loop() -> FunctionData {
+    let mut f = FunctionData {
+        name: "Loop".to_string(),
+        ..Default::default()
+    };
+    f.set_return_type(ReturnType { arity: 1 });
+    let i = local(&mut f, "i");
+    let d = local(&mut f, "d");
+    let blocks = f.blocks.blocks_mut();
+    let mut b0 = BasicBlockData::new(goto(&[1]));
+    b0.extend([assign(&i, [konst(0)])]);
+    blocks.push(b0);
+    blocks.push(BasicBlockData::new(goto(&[2, 3])));
+    let mut b2 = BasicBlockData::new(goto(&[1]));
+    b2.extend([
+        assign(&i, [Exp::Variable(i.clone()), konst(1)]),
+        assign(&d, [Exp::Variable(i.clone())]),
+    ]);
+    blocks.push(b2);
+    blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
+        TerminatorKind::Return {
+            args: smallvec![Exp::Variable(i)],
+        },
+    ))));
+    f
+}
+
+type Placement = (BasicBlockIdx, ArcIntern<Variable>);
+
+/// Every phi in `f`, as (block, unversioned variable).
+fn phi_placements(f: &FunctionData) -> HashSet<Placement> {
+    let mut out = HashSet::new();
+    for (bb, data) in f.blocks.iter_enumerated() {
+        for s in data.iter() {
+            if let StatementKind::Phi { dest, .. } = &s.kind {
+                assert!(
+                    out.insert((bb, dest.variable.clone())),
+                    "two phis for {dest} in {bb:?}"
+                );
+            }
+        }
+    }
+    out
+}
+
+/// The phis of `f` that some non-phi statement or terminator reaches through phi operands: the
+/// phis a use can observe. Pruned SSA must place exactly these.
+fn live_phi_placements(f: &FunctionData) -> HashSet<Placement> {
+    let mut phis: HashMap<VariableRef, (BasicBlockIdx, Vec<VariableRef>)> = HashMap::new();
+    let mut work: Vec<VariableRef> = Vec::new();
+    for (bb, data) in f.blocks.iter_enumerated() {
+        for s in data.iter() {
+            if let StatementKind::Phi { dest, operands } = &s.kind {
+                let ops = operands.iter().map(|(_, v)| v.clone()).collect();
+                phis.insert(dest.clone(), (bb, ops));
+            } else {
+                work.extend(s.iter_src_var().cloned());
+            }
+        }
+        work.extend(data.terminator().iter_src_var().cloned());
+    }
+    let mut live: HashSet<VariableRef> = HashSet::new();
+    while let Some(v) = work.pop() {
+        if let Some((_, ops)) = phis.get(&v)
+            && live.insert(v)
+        {
+            work.extend(ops.iter().cloned());
+        }
+    }
+    live.into_iter()
+        .map(|v| (phis[&v].0, v.variable.clone()))
+        .collect()
+}
+
+fn placements_named(p: &HashSet<Placement>, f: &FunctionData, name: &str) -> usize {
+    let v = local(&mut f.clone(), name).variable;
+    p.iter().filter(|(_, pv)| *pv == v).count()
+}
+
+fn all_test_functions() -> Vec<FunctionData> {
+    let mut fs = vec![
+        function_f(),
+        function_g(),
+        function_g1(),
+        function_diamond(),
+        function_loop(),
+    ];
+    fs.extend(program_h().functions.iter().cloned());
+    fs.extend(program_h_update().functions.iter().cloned());
+    fs
+}
+
+/// Pruned SSA places exactly the phis of minimal SSA that a use observes.
+#[test]
+fn test_pruned_phis_are_the_live_minimal_phis() {
+    for f in all_test_functions() {
+        let mut minimal = f.clone();
+        transform_with(&mut minimal, true, PhiMode::Minimal, ParamWriteBack::Exit);
+        let mut pruned = f.clone();
+        transform(&mut pruned, true);
+        check_ssa_func(&pruned);
+        assert_eq!(
+            live_phi_placements(&minimal),
+            phi_placements(&pruned),
+            "{}: pruned phis differ from the live minimal phis",
+            f.name
+        );
+        assert_eq!(phi_placements(&pruned), live_phi_placements(&pruned));
+    }
+}
+
+#[test]
+fn test_pruned_diamond() {
+    let mut f = function_diamond();
+    let mut minimal = f.clone();
+    transform_with(&mut minimal, true, PhiMode::Minimal, ParamWriteBack::Exit);
+    transform(&mut f, true);
+    check_ssa_func(&f);
+    let (minimal, pruned) = (phi_placements(&minimal), phi_placements(&f));
+    // Minimal SSA merges `t` at the join and again at the exit, which `complete` makes a join.
+    assert_eq!(
+        placements_named(&minimal, &f, "t"),
+        2,
+        "minimal SSA merges the dead `t`"
+    );
+    assert_eq!(placements_named(&pruned, &f, "t"), 0, "`t` is never read");
+    assert_eq!(placements_named(&pruned, &f, "x"), 1, "`x` is returned");
+    let p = VariableRef::new_parameter(ParameterIdx::new(0)).variable;
+    assert!(
+        pruned
+            .iter()
+            .any(|(bb, v)| *v == p && *bb == BasicBlockIdx::new(3)),
+        "`p` reaches param-flow, so the join merges it"
+    );
+}
+
+#[test]
+fn test_entry_write_back() {
+    // `p` is reassigned on one branch of the diamond. Under `Entry` the param-flow reads `p_0`,
+    // the caller's argument, and nothing merges `p` at the join.
+    let mut f = function_diamond();
+    transform_with(&mut f, true, PhiMode::Pruned, ParamWriteBack::Entry);
+    check_ssa_func(&f);
+    let p = VariableRef::new_parameter(ParameterIdx::new(0));
+    let flows: Vec<_> = f
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .filter_map(|st| match &st.kind {
+            StatementKind::ParamFlow { params, .. } => Some(params.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(flows.len(), 1, "one param-flow, in the exit block");
+    assert_eq!(flows[0].len(), 1);
+    assert_eq!(flows[0][ParameterIdx::new(0)], p.with_version(0));
+    assert!(
+        !phi_placements(&f).iter().any(|(_, v)| *v == p.variable),
+        "no phi merges `p`"
+    );
+}
+
+#[test]
+fn test_pruned_loop() {
+    let mut f = function_loop();
+    let mut minimal = f.clone();
+    transform_with(&mut minimal, true, PhiMode::Minimal, ParamWriteBack::Exit);
+    transform(&mut f, true);
+    check_ssa_func(&f);
+    let (minimal, pruned) = (phi_placements(&minimal), phi_placements(&f));
+    let header = BasicBlockIdx::new(1);
+    let i = local(&mut f.clone(), "i").variable;
+    let d = local(&mut f.clone(), "d").variable;
+    assert!(
+        minimal.contains(&(header, d.clone())),
+        "minimal SSA merges the dead `d`"
+    );
+    assert!(!pruned.contains(&(header, d)), "`d` is never read");
+    assert!(pruned.contains(&(header, i)), "`i` is loop-carried");
 }

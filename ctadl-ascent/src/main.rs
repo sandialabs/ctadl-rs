@@ -160,12 +160,16 @@ pub struct ImportArgs {
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
 
-    /// Skip the import if an import of the same name already exists whose stored
-    /// artifact path and content hash match the artifact being imported. This
-    /// avoids re-doing the (potentially expensive) translation when nothing has
-    /// changed.
+    /// Re-import even when an up-to-date import already exists.
+    ///
+    /// By default, an import is skipped when an import of the same name already
+    /// exists whose stored artifact path and content hash match the artifact being
+    /// imported, and likewise each of an APK's native libraries whose bytes are
+    /// unchanged. This avoids re-doing the (potentially expensive) translation, above
+    /// all the disassembly of native libraries. Pass this to redo it anyway, e.g. to
+    /// pick up import-time output that a newer ctadl produces.
     #[arg(long)]
-    pub skip_existing: bool,
+    pub force: bool,
 
     /// Do not import the native libraries packaged inside an APK.
     ///
@@ -574,11 +578,10 @@ pub struct GoArgs {
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
 
-    /// Skip importing an artifact when an import of the same name already exists
-    /// whose stored artifact path and content hash match. Applies to the import
-    /// step of this one-shot flow.
+    /// Re-import artifacts even when an up-to-date import already exists.
+    /// See `ctadl import --help`.
     #[arg(long)]
-    pub skip_existing: bool,
+    pub force: bool,
 
     /// Do not import the native libraries packaged inside an APK.
     /// See `ctadl import --help`.
@@ -662,7 +665,7 @@ fn main() -> anyhow::Result<()> {
                     artifact: artifact.clone(),
                     name: None,
                     language: args.language,
-                    skip_existing: args.skip_existing,
+                    force: args.force,
                     no_native_libs: args.no_native_libs,
                     native_abi: args.native_abi.clone(),
                 };
@@ -816,7 +819,8 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 artifact: index_args.facts_path.clone(),
                 name: Some(legacy_name.to_string()),
                 language: ImportLanguage::Pcode,
-                skip_existing: false,
+                // This legacy path always re-imports.
+                force: true,
                 // Not an APK: this legacy path imports a directory of pcode facts.
                 no_native_libs: false,
                 native_abi: None,
@@ -907,9 +911,10 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     .to_str()
     .ok_or(anyhow::anyhow!("error converting filename to string"))?;
 
-    // If requested, skip the import when an up-to-date one already exists: the
+    // Unless forced, skip the import when an up-to-date one already exists: the
     // destination is present and the stored artifact path and content hash match.
-    if args.skip_existing && project::ArtifactImport::is_up_to_date(name, path)? {
+    let skip_existing = !args.force;
+    if skip_existing && project::ArtifactImport::is_up_to_date(name, path)? {
         log::info!(
             "skipping import '{}': destination exists and artifact hash matches",
             name
@@ -922,18 +927,17 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     cli::import(
         &config,
         cli::ImportOptions {
-            skip_existing: args.skip_existing,
+            skip_existing,
             native_libs: !args.no_native_libs,
             native_abi: args.native_abi.as_deref(),
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote
     // (e.g. the pcode importer records `image_base`), then record the artifact's
-    // content hash (and path) so a later `--skip-existing` import can tell the import
-    // is up to date.
+    // content hash (and path) so a later import can tell the import is up to date.
     let mut config = project::ArtifactImport::load_by_name(name)?;
     // A Ghidra Server repository can't be content-hashed (it's remote), so skip the
-    // hash for it; `--skip-existing` simply re-imports such artifacts each time.
+    // hash for it; such artifacts are simply re-imported each time.
     if !project::is_ghidra_server_url(&config.artifact_path) {
         config.record_artifact_hash()?;
     }

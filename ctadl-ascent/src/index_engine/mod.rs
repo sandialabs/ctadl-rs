@@ -45,6 +45,7 @@ use ascent::ascent;
 use ascent::ascent_par;
 use ascent::ascent_run;
 use ascent::ascent_source;
+use ctadl_ir::mir::PathSegment;
 use derive_builder::Builder;
 use hashbrown::hash_map::HashMap;
 use packed_struct::prelude::*;
@@ -319,6 +320,9 @@ pub struct IndexConfig {
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
+    /// When set, every program path `p` also admits `p.deref`, as if a loaded summary mentioned
+    /// `.deref`.
+    pub deref_paths: bool,
 }
 
 impl Default for IndexConfig {
@@ -328,6 +332,7 @@ impl Default for IndexConfig {
             hybrid_context: HybridContext::default(),
             context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
+            deref_paths: false,
         }
     }
 }
@@ -1315,7 +1320,20 @@ fn compute_alias_of_formal(
 /// input summaries mention, and each one-level concatenation of the two. Its own small
 /// fixpoint, run BEFORE the main ascent, so the main program takes `paths` as a plain input
 /// and can also hold it as a [`PathSet`] for lookups that never build a path.
-fn compute_paths(program_paths: Vec<(Path,)>, model_paths: Vec<(Path,)>) -> Vec<(Path,)> {
+///
+/// With `deref_paths`, `deref` ([`DEREF_FIELD`](ctadl_ir::mir::DEREF_FIELD)) is also a model
+/// path, so every program path gains its `.deref` extension.
+fn compute_paths(
+    program_paths: Vec<(Path,)>,
+    mut model_paths: Vec<(Path,)>,
+    deref_paths: bool,
+) -> Vec<(Path,)> {
+    if deref_paths {
+        let deref = (Path::from_accesses(std::iter::once(PathSegment::deref())),);
+        if !model_paths.contains(&deref) {
+            model_paths.push(deref);
+        }
+    }
     let pre = ascent_run! {
         relation program_paths(Path) = program_paths;
         relation model_paths(Path) = model_paths;
@@ -1648,18 +1666,26 @@ ascent_source! {
         callee_info(func_id, _, v, p_call, _),
         locals(func_id, v, p_call, n, p_n);
 
-    // 1.2: Propagate Critical Summary (context-free) up the stack.
-    critical_summary(caller_func_id, n, p_n) <--
+    // 1.2: Propagate Critical Summary (context-free) up the stack. The caller may pass only a
+    // prefix `key` of the callee's path (`fwd(s) { call(s); }` never touches `s->op`), so the
+    // argument is matched at every split `p_tgt = key · rest` and `rest` is put back on.
+    critical_summary(caller_func_id, n, p_nr) <--
         call(caller_func_id, caller_insn_id, tgt),
         critical_summary(tgt, n_tgt, p_tgt),
         let arg = call_arg!(*caller_insn_id, *n_tgt),
-        locals(caller_func_id, arg, p_tgt, n, p_n);
+        path_set(ps),
+        for (key, rest) in &ps.splits(p_tgt).exact,
+        locals(caller_func_id, arg, key, n, p_n),
+        if let Some(p_nr) = ps.concat(p_n, None, rest);
     // ... and across a resolved function-pointer call (`op(f, v)` reaching `apply(f, v)`).
-    critical_summary(caller_func_id, n, p_n) <--
+    critical_summary(caller_func_id, n, p_nr) <--
         fnptr_call(caller_func_id, caller_insn_id, tgt),
         critical_summary(tgt, n_tgt, p_tgt),
         let arg = call_arg!(*caller_insn_id, *n_tgt),
-        locals(caller_func_id, arg, p_tgt, n, p_n);
+        path_set(ps),
+        for (key, rest) in &ps.splits(p_tgt).exact,
+        locals(caller_func_id, arg, key, n, p_n),
+        if let Some(p_nr) = ps.concat(p_n, None, rest);
 
     // 2.1: Base Resolvent. A stored call target locally reaches a critical summary, so
     // instantiate the resolvent in the parameters of the summary. The target is carried
@@ -1695,19 +1721,26 @@ ascent_source! {
     // skytube. Materializing the call-arg rows of `locals` instead was 59 M rows on launcher
     // (41% of `locals`); keying the filter by the vertex needs nothing new
     // (`docs/context-assign-fix-candidates.md`).
-    relation critical_arg(FunctionId, FlowVariable, Path, FunctionId, InsnId, FormalIndex);
-    critical_arg(g, arg, p, f, insn, n) <--
+    // Keyed by every split `p = key · rest`, as in 1.2: the caller may reach only a prefix.
+    relation critical_arg(FunctionId, FlowVariable, Path, Path, Path, FunctionId, InsnId, FormalIndex);
+    critical_arg(g, arg, *key, *rest, *p, f, insn, n) <--
         critical_summary(f, n, p),
         call(g, insn, f),
-        let arg = call_arg!(*insn, *n);
-    critical_arg(g, arg, p, f, insn, n) <--
+        let arg = call_arg!(*insn, *n),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p).exact;
+    critical_arg(g, arg, *key, *rest, *p, f, insn, n) <--
         critical_summary(f, n, p),
         fnptr_call(g, insn, f),
-        let arg = call_arg!(*insn, *n);
+        let arg = call_arg!(*insn, *n),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p).exact;
     relation critical_reach(FunctionId, FormalIndex, Path, FunctionId, InsnId, FormalIndex, Path);
-    critical_reach(g, n2, p2, f, insn, n, p) <--
-        locals(g, arg, p, n2, p2),
-        critical_arg(g, arg, p, f, insn, n);
+    critical_reach(g, n2, p2r, f, insn, n, p) <--
+        locals(g, arg, key, n2, p2),
+        critical_arg(g, arg, key, rest, p, f, insn, n),
+        path_set(ps),
+        if let Some(p2r) = ps.concat(p2, None, rest);
     establishes_via(f, d, g, insn, up) <--
         critical_reach(g, n2, p2, f, insn, n, p),
         resolvent(g, n2, p2, obj, up),
@@ -2227,6 +2260,7 @@ pub fn taint_index_with_config(
             (func_id, insn_id, *target)
         })
         .collect();
+    let deref_paths = config.deref_paths;
     let config_val = vec![(config,)];
 
     // Precompute `alias_of_formal` in its own small fixpoint, BEFORE the main ascent -- see
@@ -2261,6 +2295,7 @@ pub fn taint_index_with_config(
     let paths = compute_paths(
         all_program_paths.into_iter().collect(),
         summary_paths.into_iter().collect(),
+        deref_paths,
     );
     let path_set = PathSetRef(Arc::new(PathSet::from_paths(paths.iter().map(|(p,)| *p))));
     log::debug!(
@@ -2922,5 +2957,29 @@ mod tests {
             Parallelism::Serial
         };
         assert_eq!(Parallelism::from_jobs(0), expected);
+    }
+
+    /// With `deref_paths` (a native-language import), `compute_paths` mints `<program
+    /// path>.deref` on its own. The store `o->p = b` carries the pointee only onto `p.deref`,
+    /// which no single frame spells; with no summary loaded there used to be no model path to
+    /// concatenate, so the flow through a pointer stored in a field was lost
+    /// (`tests/c/ptrfield.c`).
+    #[test]
+    fn compute_paths_admits_deref_of_every_program_path_for_native_imports() {
+        let p = |s: &str| (Path::parse(s).unwrap(),);
+        let program = vec![(Path::empty(),), p(".p"), p(".q")];
+        let paths = compute_paths(program.clone(), vec![], true);
+        assert!(paths.contains(&p(".p.deref")), "{paths:?}");
+        assert!(paths.contains(&p(".q.deref")), "{paths:?}");
+
+        // Off (a Java or Lua import): nothing is invented, the path set is unchanged.
+        let paths = compute_paths(program.clone(), vec![], false);
+        assert_eq!(paths.len(), program.len(), "{paths:?}");
+        assert!(!paths.contains(&p(".p.deref")));
+
+        // A loaded summary that already mentions `.deref` makes the flag a no-op.
+        let with_model = compute_paths(program.clone(), vec![p(".deref")], false);
+        let with_flag = compute_paths(program, vec![], true);
+        assert_eq!(with_model, with_flag);
     }
 }

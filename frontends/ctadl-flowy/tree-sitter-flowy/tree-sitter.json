@@ -1,0 +1,20 @@
+{
+  "grammars": [
+    {
+      "name": "flowy",
+      "camelcase": "Flowy",
+      "scope": "source.flowy",
+      "path": ".",
+      "file-types": ["tnt"],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "Apache-2.0",
+    "description": "Flowy (.tnt) grammar for tree-sitter",
+    "links": {
+      "repository": "https://github.com/sandialabs/ctadl-rs"
+    }
+  }
+}

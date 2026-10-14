@@ -1,6 +1,9 @@
 /*!
 This module implements Cytron et al's phi placement and SSA renaming.
 
+The SSA form is *pruned*: a phi for a variable goes only where the variable is live on entry to
+the block, so no phi is placed that no later use can observe.
+
 After SSA conversion, one may depend on a few things:
 - All variables are versioned. Version 0 is the "incoming" version for each variable, conceptually.
 - Right before each `return`, there is a `param-flow` instruction that indicates, for each formal
@@ -61,17 +64,35 @@ pub struct Pipeline {
     pub dead_temps: bool,
     /// Run [`coalesce_copies`], which merges away copy temporaries that have a single use.
     pub coalesce: bool,
-    /// Run [`transform_program`], which places phi nodes using Cytron's algorithm and renames
+    /// Run [`transform_program`], which places pruned phi nodes using Cytron's algorithm and renames
     /// variables into SSA form.
     pub ssa: bool,
     /// Run [`propagate_copies`], which forwards copies through the SSA graph.
     pub copy_prop: bool,
-    /// Passed on to [`transform_program`]. Has no effect unless `ssa` is set.
+    /// Passed on to [`transform_program_with`]. Has no effect unless `ssa` is set.
     ///
     /// Set this whenever the IR comes from a front end that can emit blocks no path reaches.
     /// SSA conversion needs every block to be reachable from the start block and panics
     /// otherwise, and pruning is how a caller makes that true.
     pub prune_unreachable: bool,
+    /// Passed on to [`transform_program_with`]; see [`ParamWriteBack`]. Has no effect unless
+    /// `ssa` is set.
+    pub param_write_back: ParamWriteBack,
+}
+
+/// Which version of each parameter the exit block's param-flow hands back to the parameter's
+/// formal. The param-flow is how a callee's writes through a parameter reach its caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ParamWriteBack {
+    /// The version live at exit. Right for a front end that writes through a parameter by
+    /// assigning to it.
+    #[default]
+    Exit,
+    /// The entry version, version 0. Right for a front end whose parameter variables are
+    /// ordinary locals that the callee may rebind: the caller's argument cannot change, and a
+    /// write through it is a field store on the entry version. Reassigning a parameter, as in
+    /// `p0 = p0.f` before a return, then does not flow `p0.f` back to the caller's argument.
+    Entry,
 }
 
 impl Pipeline {
@@ -90,6 +111,7 @@ impl Pipeline {
             ssa: true,
             copy_prop: true,
             prune_unreachable: true,
+            param_write_back: ParamWriteBack::Exit,
         }
     }
 
@@ -102,6 +124,7 @@ impl Pipeline {
             ssa: false,
             copy_prop: false,
             prune_unreachable: false,
+            param_write_back: ParamWriteBack::Exit,
         }
     }
 
@@ -124,28 +147,43 @@ impl Pipeline {
         self
     }
 
+    /// Sets [`Pipeline::param_write_back`].
+    #[inline]
+    #[must_use]
+    pub fn param_write_back(mut self, param_write_back: ParamWriteBack) -> Self {
+        self.param_write_back = param_write_back;
+        self
+    }
+
     /// A short name for this pipeline, to record in a log line or a report which passes ran.
     /// For example, `dt+co+ssa(prune)+cp`, or `none`.
     ///
     /// The same `Pipeline` value always produces the same string, and two pipelines produce the
     /// same string only when they are equal.
     pub fn tag(&self) -> String {
-        let mut parts: Vec<&'static str> = Vec::with_capacity(4);
+        let mut parts: Vec<String> = Vec::with_capacity(4);
         if self.dead_temps {
-            parts.push("dt");
+            parts.push("dt".into());
         }
         if self.coalesce {
-            parts.push("co");
+            parts.push("co".into());
         }
         if self.ssa {
-            parts.push(if self.prune_unreachable {
-                "ssa(prune)"
+            let mut opts: Vec<&str> = Vec::new();
+            if self.prune_unreachable {
+                opts.push("prune");
+            }
+            if self.param_write_back == ParamWriteBack::Entry {
+                opts.push("entry");
+            }
+            parts.push(if opts.is_empty() {
+                "ssa".into()
             } else {
-                "ssa"
+                format!("ssa({})", opts.join(","))
             });
         }
         if self.copy_prop {
-            parts.push("cp");
+            parts.push("cp".into());
         }
         if parts.is_empty() {
             // `prune_unreachable` does nothing on its own, without `ssa`. So "none" is the
@@ -175,7 +213,7 @@ pub fn run_pipeline(program: &mut Program, p: Pipeline) {
         coalesce_copies(program);
     }
     if p.ssa {
-        transform_program(program, p.prune_unreachable);
+        transform_program_with(program, p.prune_unreachable, p.param_write_back);
     }
     if p.copy_prop {
         propagate_copies(program);
@@ -186,9 +224,14 @@ pub fn run_pipeline(program: &mut Program, p: Pipeline) {
 ///
 /// Every function has to meet the preconditions listed on [`transform`].
 pub fn transform_program(program: &mut Program, prune: bool) {
+    transform_program_with(program, prune, ParamWriteBack::Exit);
+}
+
+/// [`transform_program`], choosing which parameter versions the exit param-flow writes back.
+pub fn transform_program_with(program: &mut Program, prune: bool, write_back: ParamWriteBack) {
     for (_, f) in program.functions.iter_enumerated_mut() {
         log::debug!("f: {f}");
-        transform(f, prune);
+        transform_with(f, prune, PhiMode::Pruned, write_back);
     }
 }
 
@@ -228,8 +271,57 @@ pub fn transform_program(program: &mut Program, prune: bool) {
 ///
 /// The function passes [`FunctionData::verify`], which this pass asserts before returning. It
 /// has exactly one `return`, and that `return` is the terminator of the single exit block this
-/// pass adds. Every variable use names a version, and version 0 is the incoming version.
+/// pass adds. Every variable use names a version, and version 0 is the incoming version. The
+/// form is pruned: every phi is reached by some non-phi use (see the module documentation).
+#[inline]
 pub fn transform(function: &mut FunctionData, prune: bool) {
+    transform_with(function, prune, PhiMode::Pruned, ParamWriteBack::Exit);
+}
+
+/// Which phis [`PhiPlace`] inserts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PhiMode {
+    /// Every block in the iterated dominance frontier of a variable's definitions gets a phi.
+    /// Only the tests use this, as the baseline pruned SSA is checked against.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Minimal,
+    /// Of those blocks, only the ones where the variable is live on entry get a phi.
+    Pruned,
+}
+
+/// Fills in the exit param-flow's parameters with their entry versions, version 0. Runs after
+/// renaming, on a param-flow that [`complete`] built without parameters.
+fn write_back_entry_params(function: &mut FunctionData) {
+    let params: IndexVec<ParameterIdx, VariableRef> = function
+        .params
+        .iter_enumerated()
+        .map(|(i, _)| VariableRef::new_parameter(i).with_version(0))
+        .collect();
+    let blocks = function.blocks.blocks_mut_preserves_cfg();
+    let exit = blocks
+        .iter_mut()
+        .rev()
+        .find(|b| {
+            b.terminator
+                .as_ref()
+                .is_some_and(|t| matches!(t.kind, TerminatorKind::Return { .. }))
+        })
+        .expect("SSA has a single exit block");
+    for st in exit.statements.iter_mut() {
+        if let StatementKind::ParamFlow { params: p, .. } = &mut st.kind {
+            *p = params;
+            return;
+        }
+    }
+    unreachable!("the exit block has a param-flow");
+}
+
+fn transform_with(
+    function: &mut FunctionData,
+    prune: bool,
+    mode: PhiMode,
+    write_back: ParamWriteBack,
+) {
     if function.blocks.is_empty() {
         return;
     }
@@ -238,8 +330,8 @@ pub fn transform(function: &mut FunctionData, prune: bool) {
     }
     // Forward returns into the exit block as a new return. Change the former returns into gotos
     log::trace!("begin ssa transform");
-    complete(function);
-    let phi = PhiPlace::new(function);
+    complete(function, write_back);
+    let phi = PhiPlace::new(function, mode);
     log::trace!("blocks after phi place: {}", function.blocks);
     SsaRename::new(&mut function.blocks, phi);
 
@@ -263,6 +355,9 @@ pub fn transform(function: &mut FunctionData, prune: bool) {
             dest: variable.with_version(0),
             sources: smallvec![Exp::Variable(variable)],
         }));
+    }
+    if write_back == ParamWriteBack::Entry {
+        write_back_entry_params(function);
     }
     log::trace!("assume that version 0 is initial version");
     log::trace!("blocks after rename: {}", function);
@@ -343,7 +438,7 @@ fn prune_unreachable_nodes(function: &mut FunctionData) {
 ///
 /// Preconditions: the function has a start block, and every block has a terminator. This runs
 /// as part of [`transform`], so it inherits that function's preconditions.
-fn complete(function: &mut FunctionData) {
+fn complete(function: &mut FunctionData, write_back: ParamWriteBack) {
     // Creates block data for a "return <retvars>" block. Since we're going to rewrite all CFG
     // blocks to add the assignments and gotos, we don't actually wire up the exit block until the
     // end of this function.
@@ -354,13 +449,17 @@ fn complete(function: &mut FunctionData) {
         })
         .collect();
 
-    // Exit block observes parameters and returns retvars
+    // Exit block observes parameters and returns retvars. Under `ParamWriteBack::Entry` the
+    // parameters are left out until after renaming (see `write_back_entry_params`), so that
+    // renaming neither gives them their exit versions nor places phis to merge those.
+    let observed = match write_back {
+        ParamWriteBack::Exit => function.num_parameters(),
+        ParamWriteBack::Entry => 0,
+    };
     let exit_block_contents = BasicBlockData::new_stmts(
-        [Statement::new_kind(StatementKind::param_flow(
-            function.num_parameters(),
-        ))]
-        .into_iter()
-        .collect(),
+        [Statement::new_kind(StatementKind::param_flow(observed))]
+            .into_iter()
+            .collect(),
         Some(Terminator::new_kind(TerminatorKind::Return {
             args: retvars.iter().map(|v| Exp::Variable(v.clone())).collect(),
         })),
@@ -428,7 +527,12 @@ impl MutVisitor for SingleExitRewrite {
 impl PhiPlace {
     /// Place phi functions. Figure 11 in the Cytron et al paper. The returns are used to
     /// initialize variable sets.
-    fn new(function: &mut FunctionData) -> Self {
+    ///
+    /// With [`PhiMode::Pruned`], a phi for `v` goes at `y` only if `y` is in the iterated
+    /// dominance frontier of `v`'s definitions *and* `v` is live on entry to `y`. This is the
+    /// pruned SSA of Choi, Cytron and Ferrante. The worklist still visits every block of the
+    /// iterated dominance frontier; liveness decides only whether a phi is inserted there.
+    fn new(function: &mut FunctionData, mode: PhiMode) -> Self {
         let dominators = DominatorTree::new(&function.blocks);
         let mut phi_place = Self {
             variables: Default::default(),
@@ -436,22 +540,39 @@ impl PhiPlace {
         };
         // Script-a in the paper. Maps variable to all the blocks that assign that variable.
         let mut a: HashMap<ArcIntern<Variable>, SmallVec<[BasicBlockIdx; 4]>> = Default::default();
+        // Maps each variable to the blocks that read it before any assignment to it in the same
+        // block: the blocks where it is live on entry because of a use inside the block.
+        let mut upward_uses: HashMap<ArcIntern<Variable>, SmallVec<[BasicBlockIdx; 4]>> =
+            Default::default();
         // Set of all variables.
         let variables = &mut phi_place.variables;
 
-        // Initialize `a` and `variables`.
+        // Initialize `a`, `upward_uses` and `variables`. A statement reads its sources before it
+        // writes its destinations, so `x = x + 1` is an upward-exposed use of `x`.
+        let mut killed: HashSet<ArcIntern<Variable>> = HashSet::new();
+        let mut used: HashSet<ArcIntern<Variable>> = HashSet::new();
         for (bb, data) in function.blocks.iter_enumerated() {
+            killed.clear();
+            used.clear();
+            let mut note_use = |v: &VariableRef, killed: &HashSet<_>| {
+                if !killed.contains(&v.variable) && used.insert(v.variable.clone()) {
+                    upward_uses.entry(v.variable.clone()).or_default().push(bb);
+                }
+            };
             for stmt in data.iter() {
+                for v in stmt.iter_src_var() {
+                    variables.insert(v.variable.clone());
+                    note_use(v, &killed);
+                }
                 for v in stmt.iter_dst_var() {
                     a.entry(v.variable.clone()).or_default().push(bb);
                     variables.insert(v.variable.clone());
-                }
-                for v in stmt.iter_src_var() {
-                    variables.insert(v.variable.clone());
+                    killed.insert(v.variable.clone());
                 }
             }
             for v in data.terminator().iter_src_var() {
                 variables.insert(v.variable.clone());
+                note_use(v, &killed);
             }
         }
 
@@ -465,17 +586,49 @@ impl PhiPlace {
         // outer loop.
         let mut work: IndexVec<BasicBlockIdx, usize> =
             IndexVec::from_elem_n(0, function.blocks.num_nodes());
-        // has_already[x] indices whether a phi-function for v has been inserted at x.
+        // has_already[x] indices whether a phi-function for v has been considered at x.
         let mut has_already: IndexVec<BasicBlockIdx, usize> =
             IndexVec::from_elem_n(0, function.blocks.num_nodes());
+        // defines[x] == iter_count means x assigns v; live_in[x] == iter_count means v is live on
+        // entry to x. Stamped with iter_count, like `work`, so they need no clearing per variable.
+        let mut defines: IndexVec<BasicBlockIdx, usize> =
+            IndexVec::from_elem_n(0, function.blocks.num_nodes());
+        let mut live_in: IndexVec<BasicBlockIdx, usize> =
+            IndexVec::from_elem_n(0, function.blocks.num_nodes());
+        let mut live_w: Vec<BasicBlockIdx> = Vec::new();
         let mut iter_count = 0;
 
         let df = DominanceFrontier::new(&function.blocks, &phi_place.dominators);
         for v in variables.clone() {
             assert!(w.is_empty());
             iter_count += 1;
+            let defs = assigns_of(&v);
+            if mode == PhiMode::Pruned {
+                // Live-in set of v: walk backward from the upward-exposed uses, and stop at
+                // blocks that assign v. A block that both assigns v and reads it first is
+                // already a seed, so stopping there loses nothing.
+                for &x in &defs {
+                    defines[x] = iter_count;
+                }
+                for &x in upward_uses
+                    .get(&v)
+                    .map(|u| u.as_slice())
+                    .unwrap_or_default()
+                {
+                    live_in[x] = iter_count;
+                    live_w.push(x);
+                }
+                while let Some(x) = live_w.pop() {
+                    for p in function.blocks.predecessors(x) {
+                        if live_in[p] < iter_count && defines[p] < iter_count {
+                            live_in[p] = iter_count;
+                            live_w.push(p);
+                        }
+                    }
+                }
+            }
             // Set up worklist with set of basic blocks with assignments to v.
-            for x in assigns_of(&v) {
+            for x in defs {
                 work[x] = iter_count;
                 w.push(x);
             }
@@ -483,17 +636,19 @@ impl PhiPlace {
                 let df_y: SmallVec<[_; 4]> = df.iter(x).collect();
                 for y in df_y.into_iter() {
                     if has_already[y] < iter_count {
-                        // Insert a phi func with placeholder copies of predecessor operand
-                        let operands = function
-                            .blocks
-                            .predecessors(y)
-                            .map(|pred| (pred, VariableRef::new_var_ref(v.clone())))
-                            .collect();
-                        let block_data = &mut function.blocks.blocks_mut_preserves_cfg()[y];
-                        block_data.push_front(Statement::new_kind(StatementKind::Phi {
-                            dest: VariableRef::new_var_ref(v.clone()),
-                            operands,
-                        }));
+                        if mode == PhiMode::Minimal || live_in[y] == iter_count {
+                            // Insert a phi func with placeholder copies of predecessor operand
+                            let operands = function
+                                .blocks
+                                .predecessors(y)
+                                .map(|pred| (pred, VariableRef::new_var_ref(v.clone())))
+                                .collect();
+                            let block_data = &mut function.blocks.blocks_mut_preserves_cfg()[y];
+                            block_data.push_front(Statement::new_kind(StatementKind::Phi {
+                                dest: VariableRef::new_var_ref(v.clone()),
+                                operands,
+                            }));
+                        }
                         // Done with placing
 
                         has_already[y] = iter_count;
