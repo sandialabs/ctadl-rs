@@ -144,7 +144,9 @@ pub enum Resource<'a> {
     AssemblyLinked {
         name: Cow<'a, str>,
         attributes: u32,
-        assembly: AssemblyName<'a>,
+        /// `None` for an AssemblyRef rid past its table, where Cecil's
+        /// `Assembly` is null.
+        assembly: Option<AssemblyName<'a>>,
     },
 }
 
@@ -362,6 +364,7 @@ impl<'a> Module<'a> {
         let strings = self.data.md.strings();
         let blobs = self.data.md.blobs();
         let mut out = Vec::new();
+        let mut refs = None;
         for (_, row) in self.data.md.table::<ManifestResourceRaw>().rows() {
             let row = row?;
             let name = strings.get(row.name)?;
@@ -373,10 +376,13 @@ impl<'a> Module<'a> {
                     offset: row.offset,
                 });
             } else if imp.token_type() == Some(TokenType::AssemblyRef) {
-                let refs = self.assembly_references()?;
-                let Some(assembly) = refs.into_iter().nth(imp.rid() as usize - 1) else {
-                    continue;
-                };
+                if refs.is_none() {
+                    refs = Some(self.assembly_references()?);
+                }
+                let assembly = refs
+                    .as_ref()
+                    .and_then(|refs| refs.get(imp.rid() as usize - 1))
+                    .cloned();
                 out.push(Resource::AssemblyLinked {
                     name,
                     attributes: row.flags,

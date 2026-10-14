@@ -8,6 +8,7 @@ use super::{cecil_root, read_fixture, read_resource, Test};
 use cil_reader::model::custom_attributes::MAX_ATTRIBUTE_DEPTH;
 use cil_reader::model::resolver::{AssemblyCache, DirectoryLoader};
 use cil_reader::model::sig::MAX_TYPE_SIG_DEPTH;
+use cil_reader::model::Resource;
 use cil_reader::raw::pe::PeImage;
 use cil_reader::raw::tables::{
     CustomAttributeRaw, FieldRaw, GenericParamConstraintRaw, InterfaceImplRaw, ModuleRaw,
@@ -913,6 +914,51 @@ fn null_interfaces_and_constraints() {
     }
 }
 
+// A ManifestResource whose Implementation is an AssemblyRef past its
+// table. Cecil's GetTypeReferenceScope is null there, and the resource
+// stays with a null Assembly; it used to be left out. CecilDump
+// dereferences the null, so only this test covers it.
+fn resource_assembly_refs_out_of_range() {
+    let sections: Vec<_> = cil_dump::ALL_SECTIONS.iter().map(|&(_, s)| s).collect();
+    // Implementation is the fourth column, after Offset, Flags and Name.
+    for (rid, assembly) in [(1, Some("mscorlib")), (0x3fff, None)] {
+        let mut data = read_resource("libres.dll");
+        let (count, patched) = {
+            let resources = Module::read(&data).unwrap().resources().unwrap();
+            let patched = resources
+                .iter()
+                .position(|r| r.name() == "embedded1.txt")
+                .unwrap();
+            (resources.len(), patched)
+        };
+        patch_column(
+            &mut data,
+            Table::ManifestResource,
+            patched as u32 + 1,
+            10,
+            coded(rid, 2, 1),
+        );
+        let module = Module::read(&data).unwrap();
+        let after = module.resources().unwrap();
+        assert_eq!(after.len(), count);
+        match &after[patched] {
+            Resource::AssemblyLinked {
+                name, assembly: a, ..
+            } => {
+                assert_eq!(name, "embedded1.txt");
+                assert_eq!(a.as_ref().map(|a| &*a.name), assembly);
+            }
+            _ => panic!("expected an assembly-linked resource"),
+        }
+        let text = cil_dump::dump(&module, &sections, None).unwrap();
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("assembly-linked name=embedded1.txt "))
+            .unwrap();
+        assert_eq!(line.ends_with(" assembly=-"), assembly.is_none(), "{line}");
+    }
+}
+
 pub(super) const TESTS: &[Test] = &[
     ("nested_class_cycles", nested_class_cycles),
     (
@@ -938,5 +984,9 @@ pub(super) const TESTS: &[Test] = &[
     (
         "null_interfaces_and_constraints",
         null_interfaces_and_constraints,
+    ),
+    (
+        "resource_assembly_refs_out_of_range",
+        resource_assembly_refs_out_of_range,
     ),
 ];

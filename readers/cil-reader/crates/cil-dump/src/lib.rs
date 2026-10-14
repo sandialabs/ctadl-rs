@@ -293,7 +293,7 @@ fn dump_resources(module: &Module<'_>, out: &mut String) -> Result<()> {
                 writeln!(
                     out,
                     "assembly-linked name={name} flags=0x{attributes:08x} assembly={}",
-                    assembly.full_name()
+                    assembly.as_ref().map_or("-".into(), |a| a.full_name())
                 )
                 .unwrap();
             }
