@@ -1,7 +1,6 @@
 // One indirect call site that resolves to two targets. `im.get` is assigned `get_a` on one
 // branch and `get_b` on the other (C: `im.get = pick() ? get_a : get_b`), then called. The
-// query has to enter both targets' formals; it used to keep one callee per call site, so only
-// the last target it saw was entered and the sink in the other was never reached.
+// query enters both targets' formals, so the sinks in both are reached.
 //
 // The sinks sit one call further down, in `sink_a` and `sink_b`, so each is anchored at a call
 // site inside a target. A `sink` directly on a target's formal would be anchored at the indirect

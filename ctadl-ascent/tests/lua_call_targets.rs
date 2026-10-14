@@ -1,9 +1,8 @@
 //! Indirect calls through Lua closures.
 //!
-//! - `tests/lua/multitarget.lua`: a call that may reach either of two closures enters both. The
-//!   same query defect as `test_cli_query_c_funcptr_with_two_targets`, through another front end.
-//! - `tests/lua/throughindirect.lua`: a call target crosses an indirect call, both ways. The same
-//!   index defect as `test_cli_query_c_funcptr_through_indirect_call`.
+//! - `tests/lua/multitarget.lua`: a call that may reach either of two closures enters both.
+//! - `tests/lua/throughindirect.lua`: a call target crosses an indirect call, both ways. The Lua
+//!   counterpart of `test_cli_query_c_funcptr_through_indirect_call`.
 
 use ctadl_ascent::cli;
 use ctadl_ascent::codegen::CallResolutionStrategy;

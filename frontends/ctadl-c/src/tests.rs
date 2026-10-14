@@ -1999,12 +1999,8 @@ fn funcptr_array_multistore_flows() {
     check_returns_param(&summary, 1, "");
 }
 
-// A function pointer installed into a struct field by a helper, then called through the field
-// from another frame. `setup2` only forwards the object and makes no indirect call itself:
-// that is the frame the call-target tag has to climb through on its way back up (libtiff:
-// TIFFRGBAImageBegin -> PickContigCase stores `img->get`, called from TIFFRGBAImageGet). The
-// two `by_callee` tests are the one-frame controls; the two `two_frames_down` tests are the
-// bug. Each asserts on `wrap`, the only function that receives `b` as @p1.
+// `setup` installs `id` into `s->op`; `setup2` only forwards `s` to `setup` and makes no indirect
+// call itself; `run` calls through `s->op`.
 const FUNCPTR_SETUP_PRELUDE: &str = r"
     int id(int p) { return p; }
     struct S { int (*op)(int); };
@@ -2013,6 +2009,7 @@ const FUNCPTR_SETUP_PRELUDE: &str = r"
     int run(struct S *s, int x) { return s->op(x); }
 ";
 
+// The pointer is installed one frame down and called in the frame that installed it.
 #[test_log::test]
 fn funcptr_stored_by_callee_called_in_caller() {
     let src = format!(
@@ -2023,6 +2020,8 @@ fn funcptr_stored_by_callee_called_in_caller() {
     check_returns_param_in(&summary, &si, "wrap", 1, "");
 }
 
+// The pointer is installed two frames down, through `setup2`, and called in the frame that
+// installed it.
 #[test_log::test]
 fn funcptr_stored_two_frames_down_called_in_caller() {
     let src = format!(
@@ -2033,6 +2032,7 @@ fn funcptr_stored_two_frames_down_called_in_caller() {
     check_returns_param_in(&summary, &si, "wrap", 1, "");
 }
 
+// The pointer is installed one frame down and called in a sibling callee, `run`.
 #[test_log::test]
 fn funcptr_stored_by_callee_called_in_other_callee() {
     let src = format!(
@@ -2043,6 +2043,8 @@ fn funcptr_stored_by_callee_called_in_other_callee() {
     check_returns_param_in(&summary, &si, "wrap", 1, "");
 }
 
+// The pointer is installed two frames down, through `setup2`, and called in a sibling callee,
+// `run`.
 #[test_log::test]
 fn funcptr_stored_two_frames_down_called_in_other_callee() {
     let src = format!(

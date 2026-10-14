@@ -1677,7 +1677,6 @@ ascent_source! {
         for (key, rest) in &ps.splits(p_tgt).exact,
         locals(caller_func_id, arg, key, n, p_n),
         if let Some(p_nr) = ps.concat(p_n, None, rest);
-    // ... and across a resolved function-pointer call (`op(f, v)` reaching `apply(f, v)`).
     critical_summary(caller_func_id, n, p_nr) <--
         fnptr_call(caller_func_id, caller_insn_id, tgt),
         critical_summary(tgt, n_tgt, p_tgt),
@@ -2032,7 +2031,6 @@ ascent_source! {
     relation tag_closure_func(FunctionId);
     tag_closure_func(f) <-- critical_call(f);
     tag_closure_func(f) <-- call_target_assign(f, _, _), call(_, _, f);
-    // The out-formal rule below needs no such twin: a caller of a resolved site is a `critical_call`.
     tag_closure_func(f) <-- call_target_assign(f, _, _), fnptr_call(_, _, f);
     // A caller of a function that exports a tag on an out-formal walks its tags too: the
     // target may have been installed several frames down (`begin(&img)` -> `pick(img)` storing
@@ -2089,10 +2087,6 @@ ascent_source! {
     // receiver over the symmetric call-site `assign_like` edges, the local-dispatch bypass
     // resolves the indirect call exactly, and if the receiver is passed onward rule 2.1
     // derives the resolvent with its establishing site recorded.
-    //
-    // Not gated on `critical_call(caller)`: a frame that only forwards the object
-    // (`begin(img) { pick(img); }`) makes no indirect call, and the gate stopped the tag one
-    // frame short of the frame that does (see `tag_closure_func` above).
     call_target_assign_like(caller, cv, p.clone(), tgt) <--
         call_target_assign_like(callee, v, p, tgt),
         formal_param(callee, v, formal_ty),
@@ -2100,8 +2094,6 @@ ascent_source! {
         if isout(&n, *formal_ty, p),
         call(caller, insn, callee),
         let cv = call_arg!(*insn, n);
-    // ... and out of a callee reached through a function pointer (a codec's init installing
-    // its encoder, called as `(*c->init)(tif)`).
     call_target_assign_like(caller, cv, p.clone(), tgt) <--
         call_target_assign_like(callee, v, p, tgt),
         formal_param(callee, v, formal_ty),

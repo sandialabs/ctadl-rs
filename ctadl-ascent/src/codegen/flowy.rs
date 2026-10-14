@@ -368,9 +368,6 @@ pub fn check_with_config<P: AsRef<Path>>(
     let index_result =
         taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
     let final_call = index_result.final_call(&index_facts.call);
-    // Fanned over `final_call`, as `ctadl query` does, so an endpoint in a function reached only
-    // by an indirect call is anchored at that call site. The checks below fan over the same
-    // relation, and an endpoint seeded from the direct calls alone would never compare equal.
     let endpoints = program
         .requirements
         .endpoint_requires
@@ -533,11 +530,13 @@ fn flowy_endpoint_base(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEn
 
 /// Resolves a flowy `source`/`sink` declaration to the query endpoints it seeds and checks
 /// against. A declaration on a parameter fans out to one endpoint per call site of its function
-/// (so flows that differ only by call site stay distinct); a declaration on a local (e.g. a
-/// `source`'s returned value), a global, or a function with no callers stays function-anchored.
-/// The parameter index is taken from `endpoint.formal` (resolved by the flowy front-end), since
-/// SSA has versioned the port into a local. The same set is used for both seeding and requirement
-/// checking, so a path's endpoint compares equal to a declared one.
+/// in `call` (so flows that differ only by call site stay distinct); a declaration on a local
+/// (e.g. a `source`'s returned value), a global, or a function with no callers stays
+/// function-anchored. `call` is the final call graph, so a function reached only through a
+/// resolved indirect call is anchored at that call site. The parameter index is taken from
+/// `endpoint.formal` (resolved by the flowy front-end), since SSA has versioned the port into a
+/// local. The same set is used for both seeding and requirement checking, so a path's endpoint
+/// compares equal to a declared one.
 fn from_flowy_endpoint(
     sites: &fx::IdMap,
     call: &[(fx::PackedInsnSiteId, fx::FunctionId)],

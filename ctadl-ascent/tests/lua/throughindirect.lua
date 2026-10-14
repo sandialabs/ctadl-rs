@@ -1,5 +1,5 @@
--- Call targets crossing an indirect call, both ways, with closures. The same defect as
--- `test_cli_query_c_funcptr_through_indirect_call`, through another front end.
+-- Call targets crossing an indirect call, both ways, with closures. The Lua counterpart of
+-- `test_cli_query_c_funcptr_through_indirect_call`.
 --   up:          `run_up` calls `factory`, a closure passed in, and calls what it returns.
 --   down:        `run_down` hands a closure to `op`, itself a closure passed in.
 --   down_formal: `run_down_formal` hands on its own parameter `f` the same way.
