@@ -13,6 +13,9 @@
 //!   height are forgotten, and a read of a variable never written is a bug,
 //!   so a value read from the wrong depth shows up even when the right value
 //!   happens to be there.
+//! - Before each instruction, every input `resolve_address` resolves must
+//!   hold exactly the address of that place, since that analysis is a must;
+//!   and every `ldloca`/`ldarga` it runs must be in `address_taken`.
 //! - It matches only on `Effect`, `CallKind` and `Control`, except where the
 //!   effect vocabulary leaves out what execution needs: the comparison a
 //!   `Test` branches on, `isinst` vs `castclass`, `unbox` vs `unbox.any`,
@@ -772,7 +775,7 @@ impl<'m, 'd> Interp<'m, 'd> {
             if ins.height != height {
                 return Err(at(format!("height {} bound, {height} reached", ins.height)));
             }
-            match self.exec(fi, ins) {
+            match self.exec(fi, mf, ins) {
                 Ok(()) => {}
                 Err(Stop::Throw(exc)) => {
                     if filter {
@@ -1109,11 +1112,57 @@ impl<'m, 'd> Interp<'m, 'd> {
 
     // ---- effects -------------------------------------------------------------
 
-    fn exec(&mut self, fi: usize, ins: &BoundIns) -> R<()> {
+    fn exec(&mut self, fi: usize, mf: &MethodFlow, ins: &BoundIns) -> R<()> {
+        self.check_places(fi, ins)?;
         self.frames[fi].tests.clear();
         let code = ins.flow.opcode.code;
         for e in &ins.effects {
+            let taken = match e {
+                Effect::AddressOf {
+                    place: Place::Local(n),
+                    ..
+                } => Some(Var::Local(*n)),
+                Effect::AddressOf {
+                    place: Place::Arg(n),
+                    ..
+                } => Some(Var::Arg(*n)),
+                _ => None,
+            };
+            if let Some(v) = taken {
+                if !mf.address_taken().contains(v) {
+                    return bug(format!(
+                        "the address of {v} is taken, but not in address_taken"
+                    ));
+                }
+            }
             self.effect(fi, code, e)?;
+        }
+        Ok(())
+    }
+
+    /// `resolve_address` is a must-analysis: where it names the place an
+    /// input points at, the input must hold exactly that address.
+    fn check_places(&mut self, fi: usize, ins: &BoundIns) -> R<()> {
+        for (i, place) in ins.input_places.iter().enumerate() {
+            let Some(place) = place else { continue };
+            let Some(&var) = ins.inputs.get(i) else {
+                return bug(format!("a place for input {i}, which does not exist"));
+            };
+            let actual = self.read(fi, var)?;
+            let claimed = match self.place(fi, place) {
+                Ok(loc) => Value::Ptr(loc),
+                // Evaluating the place threw (a null base, say): the
+                // address it names cannot be the one the input holds.
+                Err(Stop::Throw(_)) => Value::Null,
+                Err(e) => return Err(e),
+            };
+            if actual != claimed {
+                return bug(format!(
+                    "resolve_address says input {i} ({var}) points at {place}, \
+                     but it holds {}",
+                    actual.describe()
+                ));
+            }
         }
         Ok(())
     }
@@ -1474,6 +1523,14 @@ impl<'m, 'd> Interp<'m, 'd> {
             Place::Static(f) => Base::Static(f.token.raw()),
             Place::Field(v, f) => {
                 let base = self.read(fi, *v)?;
+                // A struct held in the variable itself (the place
+                // resolve_address names for `ldloca s; ldflda f`).
+                if let Value::Struct(_) = base {
+                    return Ok(Loc {
+                        base: Base::Var { frame: fi, var: *v },
+                        path: vec![f.token.raw()],
+                    });
+                }
                 return self.field_loc(base, f.token.raw());
             }
             Place::Element(v, indices) => {
