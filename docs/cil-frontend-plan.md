@@ -19,8 +19,8 @@ of M4–M7, so keep it until those land.
 | M | Work | Status |
 | --- | --- | --- |
 | M0 | Workspace integration | **Done** (differently from the steps written; see §1) |
-| M1 | `cil_reader::flow` Layer 1 | **Designed, not implemented.** Design: [`cil-flow-api.md`](cil-flow-api.md). No `flow` module exists. Reader helpers are partly there (§2.1). |
-| M2 | `flow` Layer 2: CFG and stack heights | **Designed, not implemented.** Design: [`cil-flow-api.md`](cil-flow-api.md) §4 |
+| M1 | `cil_reader::flow` Layer 1 | **Done.** [`cil-flow-api.md`](cil-flow-api.md) §10 says what was built and where it departs from the design. Reader helpers done (§2.1). |
+| M2 | `flow` Layer 2: CFG and stack heights | **Done.** [`cil-flow-api.md`](cil-flow-api.md) §4, §10. Gated by `cil:flow`. |
 | M3 | The `ctadl-cil` frontend | **Designed, not implemented.** Design: [`cil-frontend-translation.md`](cil-frontend-translation.md). It goes in `frontends/ctadl-cil/`, not `ctadl-ascent/src/languages/cil/`. |
 | M4 | Engine plumbing (`Cil` VMT, `CilCall`, dispatch key) | **Not started.** None of the §5 variants exist. |
 | M5 | Regression harness | **Reader half only.** `Frontend::Cil` exists and runs the Cecil-parity checks (`cil:must-fail`, `cil:cecil-tests`, `cil:read`, `cil:goldens`, `cil:cecil-compare`). Nothing compiles `.cs` programs or runs import → index → query. |
@@ -113,7 +113,7 @@ and no nix.
 
 ## 2. Milestone M1 — `cil_reader::flow`, part 1: per-instruction dataflow
 
-> **Status: designed, not implemented.** The design is
+> **Status: done.** See [`cil-flow-api.md`](cil-flow-api.md) §10. The design is
 > [`cil-flow-api.md`](cil-flow-api.md) §3, §5 and §7.1–7.6 (types, per-opcode
 > effects, tests). What the Dex and JVM readers get wrong, which this design
 > avoids, is in `docs/dex-jvm-reader-improvements.md` on the
@@ -124,21 +124,21 @@ and no nix.
 Small additions to the existing `cil-reader` model layer, all mechanical. Status
 of each is in brackets.
 
-- **[Not done]** `MethodBody::code_file_offset() -> u32` — the PE byte offset of the first code
+- **[Done]** `MethodBody::code_file_offset() -> u32` — the PE byte offset of the first code
   byte. Requires threading `PeImage::resolve_rva` (already public on `raw`) out
   through the model; `MethodBody` currently holds a private `&ModuleData`.
-- **[Not done]** `Ins::size()` / `Ins::end_offset()`. Only `OpCode::size()` (the
+- **[Done]** `Ins::size()` / `Ins::end_offset()`. Only `OpCode::size()` (the
   opcode bytes, not the operand) exists.
-- **[Not done]** `MethodBody::user_string(tok) -> Result<String>` for `ldstr`. The `#US` heap is
+- **[Done]** `MethodBody::user_string(tok) -> Result<String>` for `ldstr`. The `#US` heap is
   reachable today only via `Module::metadata().user_strings()`; a body cannot get
   back to its module (`MethodBody::m` is private), so a frontend walking bodies has
   to thread the `Module` alongside.
-- **[Partly done]** Uniform operand resolution: `resolve_method`, `resolve_field`, `resolve_type`
+- **[Done, as `flow::Operands` and `MethodBody::{field,type,method}_name`]** Uniform operand resolution: `resolve_method`, `resolve_field`, `resolve_type`
   returning name structs, each handling all of Def / Ref / Spec / MemberRef /
   MethodSpec. `resolve_operand` already returns the `Entity`; these put a name on it.
   `MethodBody::resolve_operand` and the resolver's `resolve_type` exist. The
   name-returning trio does not.
-- **[Not done]** `MethodDef::is_virtual() / is_newslot() / is_abstract()` from `attributes()` (the
+- **[Done, with `is_final`]** `MethodDef::is_virtual() / is_newslot() / is_abstract()` from `attributes()` (the
   masks exist, the accessors don't). Still true. The frontend needs these for
   override aliases and for lowering a non-virtual `callvirt` as a direct call.
 - **[Done]** `MethodDef::overrides()` (`MethodImpl` rows), `MethodDef::pinvoke_info()`,
@@ -149,7 +149,7 @@ of each is in brackets.
 
 ## 3. Milestone M2 — `cil_reader::flow`, part 2: CFG and stack heights
 
-> **Status: designed, not implemented.** The design is
+> **Status: done.** See [`cil-flow-api.md`](cil-flow-api.md) §10. The design is
 > [`cil-flow-api.md`](cil-flow-api.md) §2, §4, §7.7–7.9 and §8.1: basic blocks
 > and exception edges, stack heights and kinds (no values, no phis), and never
 > failing a method on a bad stack.
@@ -401,7 +401,7 @@ do.
 > **Status: reader checks only.** `Frontend::Cil` and `xtask/src/cil.rs` exist,
 > but they hold the Cecil-parity checks for the reader, not what this section
 > describes. There is no `Kind::Cil`, no `xtask/tests/cil/*.cs`, and no
-> end-to-end check. The flow-layer property tests are also not written. Source
+> end-to-end check. The flow-layer property tests are written: `cil:flow`. Source
 > lines (step 2 below, M5b) are not started.
 
 `xtask/src/cil.rs` + `Frontend::Cil` + `Kind::Cil { cs, config }` in
@@ -488,8 +488,8 @@ every BCL call is an opaque barrier that taint does not cross. Minimum viable se
 | M | Work | Est. | Depends on | Status |
 | --- | --- | --- | --- | --- |
 | M0 | Workspace integration | 0.5 d | — | Done |
-| M1 | `flow`: per-instruction effects, operand resolution, reader helpers | 3–4 d | M0 | Designed |
-| M2 | `flow`: CFG + stack heights (no phis; SSA places them) | 4–5 d | M1 | Designed |
+| M1 | `flow`: per-instruction effects, operand resolution, reader helpers | 3–4 d | M0 | Done |
+| M2 | `flow`: CFG + stack heights (no phis; SSA places them) | 4–5 d | M1 | Done |
 | M3 | `ctadl-cil` frontend | 5–7 d | M2 | Designed |
 | M4 | Engine plumbing (`Cil` VMT / CallStyle / dispatch key) | 1–2 d | — (parallel with M1–M3) | Not started |
 | M5 | xtask regression harness | 2–3 d | M3, M4 | Reader checks only |
@@ -502,8 +502,9 @@ bridge work.
 
 ## 11. Acceptance
 
-> **Status:** none of 1–5 is met yet. Item 1 needs `flow` tests, and there is no
-> `flow` module.
+> **Status:** item 1 is met. Item 2 is met for the reader and the flow layer
+> (`cil:flow` included); the frontend's own checks do not exist yet. Items 3–5
+> need the frontend.
 
 1. `cargo test -p cil-reader` green from the repo root with no .NET SDK,
    including the new `flow` unit tests. The fixture and corpus property tests

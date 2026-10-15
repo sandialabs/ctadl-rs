@@ -1,7 +1,10 @@
 # Design: `cil_reader::flow` — per-instruction dataflow for CIL - DO-NOT-MERGE
 
-Status: design, not implemented. This is milestones M1 and M2 of
-[`cil-frontend-plan.md`](cil-frontend-plan.md). What `dex-reader` and
+Status: implemented (milestones M1 and M2 of
+[`cil-frontend-plan.md`](cil-frontend-plan.md)), in
+`readers/cil-reader/crates/cil-reader/src/flow/`. Where the code departs from
+the first version of this design, the text below says what it does and §10
+lists why. What `dex-reader` and
 `jvm-reader` get wrong, and so what this design avoids, is in
 `docs/dex-jvm-reader-improvements.md` on the `dex-jvm-reader-fixes` branch. This
 document specifies the API: the types, what every CIL opcode produces, the
@@ -120,10 +123,13 @@ the bound code:
 
 ## 3. Layer 1 types
 
-New module tree `cil-reader/src/flow/`: `mod.rs` (types), `opcode.rs` (the
+Module tree `cil-reader/src/flow/`: `mod.rs` (types), `opcode.rs` (the
 per-opcode table, §5), `call.rs` (call-site construction), `prefix.rs` (prefix
-folding), `edges.rs` (the flat edge view, §4.3). The crate stays dependency-free,
-so there is no `smallvec` (§8.3).
+folding and `MethodBody::flows`), `edges.rs` (the flat edge view, §4.3),
+`operands.rs` (operand resolution and the names of §3.4), `delegate.rs`
+(§3.5), `method.rs` (Layer 2) and `check.rs` (the §7 invariants, shared by the
+unit tests and the corpus check). The crate stays dependency-free, so there is
+no `smallvec` (§8.3).
 
 ### 3.1 Slots
 
@@ -167,9 +173,12 @@ pub enum Field<S> {
     /// Array length (`ldlen`).
     Length,
     /// Through a managed or unmanaged pointer (`ldind*`, `stind*`, `ldobj`,
-    /// `stobj`, `cpobj`, `cpblk`, `initblk`, `initobj`). The CTADL frontend
-    /// lowers it to `ctadl_ir::mir::DEREF_FIELD` (translation §6.3).
+    /// `stobj`, `cpobj`). The CTADL frontend lowers it to
+    /// `ctadl_ir::mir::DEREF_FIELD` (translation §6.3).
     Deref,
+    /// Through a pointer, a block of `size` bytes (`cpblk`, `initblk`). A
+    /// client that does not care about the extent reads it as `Deref`.
+    Block { size: S },
 }
 
 /// The root of a memory access.
@@ -238,8 +247,10 @@ pub enum Effect<S> {
     Store { dst: Path<S>, src: S },
     /// dst := &place
     AddressOf { dst: S, place: Place<S> },
-    /// dst := a fresh object, array, or stack block.
-    New { dst: S, kind: NewKind, ty: Option<TypeOp>, size: Option<S> },
+    /// dst := a fresh object, array, or stack block. `sizes` holds the
+    /// operands that size it: one for newarr and localloc, one per `.ctor`
+    /// argument of a multi-dimensional array, none otherwise.
+    New { dst: S, kind: NewKind, ty: Option<TypeOp>, sizes: Vec<S> },
     /// dst := a function pointer to `method`. `receiver` is set for ldvirtftn,
     /// whose target depends on the receiver's runtime type.
     FunctionPtr { dst: S, method: MethodOp, receiver: Option<S> },
@@ -279,11 +290,13 @@ pub enum Op {
     Conv(ConvTarget),
     Cmp(CmpOp),              // ceq/cgt/clt and their _un forms
     MkRefAny(TypeOp), RefAnyType, RefAnyVal(TypeOp),
+    Opaque,                  // the unknown operation of an Opaque effect's edges
 }
 ```
 
-(`Op` keeps the `.ovf` and `.un` distinctions as flags. They are omitted above
-for brevity.)
+(`Op` keeps the `.ovf` and `.un` distinctions as `OpFlags`, on `Add`, `Sub`,
+`Mul`, `Div`, `Rem`, `Shr`, `Cmp` and `Conv`. They are omitted above for
+brevity.)
 
 Every type has `fn map<T>(self, f: impl FnMut(S) -> T) -> Effect<T>`, which is how
 Layer 2 binds slots.
@@ -367,10 +380,18 @@ Delegate construction and invocation are **not** separate `CallKind`s in Layer 1
 Recognizing them needs the declaring type's base class, and that type can live
 in another assembly. Instead, `flow::delegate::classify(&CallSite, &dyn
 TypeOracle) -> Option<DelegateOp>` gives `Ctor { target: S, fnptr: S }` or
-`Invoke`. `TypeOracle` is a small trait (`base_type(TypeOp) -> Option<TypeOp>`)
-that the client implements over all the assemblies it has loaded. Without an oracle,
-a structural fallback applies: a ctor with signature `(object, native int)`, or
-`Invoke`/`BeginInvoke` on a class whose ctor has that shape.
+`Invoke`. `TypeOracle` is a small trait: `declaring_type(&MethodOp)`,
+`method_name(&MethodOp)` and `is_delegate(&TypeOp) -> Option<bool>` (derives
+from `System.MulticastDelegate`). It answers `is_delegate` rather than
+`base_type`, because a `TypeOp` is a token that means something only in its own
+module, so a base-type walk across assemblies has to happen inside the oracle.
+`delegate::ModuleTypes` is an oracle over one module and, given an
+`AssemblyCache`, over every assembly the cache loads (through
+`Module::resolve_type`); `MethodBody` is an oracle over its own module. When the
+oracle cannot tell, a structural fallback applies: a ctor with signature
+`(object, native int)` counts, and `ModuleTypes` takes a type whose base does not
+resolve but whose ctor has that shape for a delegate, so its `Invoke` and
+`BeginInvoke` count too.
 
 ### 3.6 The per-instruction record
 
@@ -415,9 +436,25 @@ impl<'a> MethodBody<'a> {
 pub fn instruction_flow(ins: &Ins<'_>, prefixes: Prefixes, cx: &FlowCx<'_>) -> Result<InsFlow>;
 
 /// What Layer 1 needs beyond the instruction: operand resolution and the
-/// enclosing method's return type (for `ret`).
-pub struct FlowCx<'a> { /* &ModuleData, current MethodSig */ }
+/// enclosing method's signature (for `ret`).
+pub struct FlowCx<'a> { pub operands: &'a dyn Operands, pub method_sig: &'a MethodSig }
+
+/// Resolves field, method and call-site tokens, and says whether a type is
+/// known to be a value type. `Module` and `MethodBody` implement it; a test
+/// can stub it.
+pub trait Operands { /* field, method, call_site, is_value_type */ }
 ```
+
+Two operand facts need knowledge of a type. `newobj` gives `NewKind::ValueType`
+when the ctor's declaring type is known to be a value type in this module (a
+TypeDef, a `valuetype` generic instance, or a primitive TypeRef), and
+`NewKind::Object` otherwise. `unbox.any T` gives `Cast(T)` when `T` is known to
+be a reference type, and `Unbox(T)` otherwise (value types and generic
+parameters).
+
+Prefixes at the very end of a body have no instruction to fold into. They get
+a record of their own: the last prefix as `opcode`, no inputs, no effects,
+`Control::Next`. That is the only record whose `opcode` is a prefix.
 
 ---
 
@@ -474,8 +511,11 @@ pub struct Block {
     /// has nothing to special-case. Finally and fault entries get nothing:
     /// they start with an empty stack.
     pub instrs: Vec<BoundIns>,
+    pub exit_height: u16,                // 0 after leave, endfinally, endfilter
     pub succs: Vec<BlockId>,
+    pub preds: Vec<BlockId>,             // normal predecessors
     pub exc_succs: Vec<BlockId>,         // handler entries reachable from here
+    pub handler_entry: Option<u16>,      // set on a handler's or filter's entry
 }
 
 pub struct BoundIns {
@@ -484,7 +524,12 @@ pub struct BoundIns {
     pub inputs: Vec<Var>,                // the variable bound to each In(i)
     pub outputs: Vec<Var>,               // the variable bound to each Out(i)
     pub input_kinds: Vec<StackKind>,     // the kind of each In(i)
+    pub input_places: Vec<Option<Place<Var>>>, // resolve_address of each In(i)
+    pub height: u16,                     // stack height before the instruction
 }
+
+/// An instruction: its block and its index in the block's `instrs`.
+pub struct InsId { pub block: BlockId, pub index: usize }
 
 impl MethodFlow {
     pub fn build(body: &MethodBody<'_>) -> MethodFlow;   // never fails (§8.1)
@@ -526,6 +571,26 @@ locals as of that point, not as of the block's end.
 **The `rethrow` lookup.** `rethrow` binds `Caught` to `Caught(h)` for the
 innermost catch or filter handler that encloses it.
 
+**`leave` and `finally`.** A `leave` has edges to its target and to the entry
+of every finally it exits. The `endfinally` of each exited finally has an edge
+to the next finally out, and the last one to the target. That is a superset of
+the paths, so a value defined in a finally reaches whatever follows it.
+
+**Stack kinds.** Each output's kind comes from the effect that writes it: the
+declared type of an argument, local, field or call result; the input's kind
+for a copy; ECMA-335 §III.1.5 for arithmetic; `ManagedPtr` for an address. An
+enum value is `Int32`. A disagreement at a join becomes `Unknown`.
+
+**Managed pointers.** `resolve_address` is a must-analysis over the bound code:
+an `AddressOf` sets a fact, copies move it, any other write kills it and every
+fact whose place mentions the written variable, and a join keeps only the
+facts every predecessor agrees on. A stack base is traced back to the argument
+or local it copies, so `ldarg.0; ldflda f; ldfld g` resolves to `arg0.f`, which
+`Field(Stack(0), f)` could not be, since the address overwrites its own base.
+`address_escapes_resolution` is the matching may-analysis: an `AddressOf`
+escapes when its address may reach an input that the must-analysis cannot
+resolve.
+
 ### 4.3 The flat edge view
 
 Some clients only need "operand A flows to output B" (a quick prototype, a
@@ -540,8 +605,9 @@ impl InsFlow { pub fn edges(&self) -> impl Iterator<Item = Edge<Slot>> + '_; }
 
 Derivation: `Assign`/`Load`/`Store` give one edge per source. `AddressOf` gives
 `Place -> dst` with `Transfer::Copy`; the address *aliases* the place. `New`
-with a size gives `size -> dst.length` (`Derived`). `Opaque` gives the full
-cross product. `Call`, `Const`, `Test` and `Clear` give no intra-instruction
+gives `size -> dst.length` for each size: `Copy` for a single one,
+`Derived(Mul)` for the dimensions of a multi-dimensional array. `Opaque` gives
+the full cross product with `Derived(Op::Opaque)`. `Call`, `Const`, `Test` and `Clear` give no intra-instruction
 edges, because calls are inter-procedural and the models decide them. Element
 indices give no edges either. Unlike the effects, this view applies a policy (the
 same one Dex and JVM use), so it is a convenience, not the specification. It is
@@ -624,7 +690,7 @@ client read `ldloca s; ldfld f` as `loc_s.f` instead of `loc_s.*.f`.
 
 | Opcodes | Roles | Effects |
 | --- | --- | --- |
-| `newarr T` | Size | `New o0 Array(T) size=i0` |
+| `newarr T` | Size | `New o0 Array(T) sizes=[i0]` |
 | `ldlen` | Object | `Load o0 := i0.length` |
 | `ldelem.*` `ldelem.ref` `ldelem T` | Object, Index | `Load o0 := i0[i1]` |
 | `stelem.*` `stelem.ref` `stelem T` | Object, Index, Value | `Store i0[i1] := i2` |
@@ -632,7 +698,7 @@ client read `ldloca s; ldfld f` as `loc_s.f` instead of `loc_s.*.f`.
 | `call T[,]::Get(i..)` | Receiver, Index… | `Load result := recv[i..]` |
 | `call T[,]::Set(i.., v)` | Receiver, Index…, Value | `Store recv[i..] := v` |
 | `call T[,]::Address(i..)` | Receiver, Index… | `AddressOf result = Element(recv, [i..])` |
-| `newobj T[,]::.ctor(n..)` | Size… | `New o0 Array(T) size=None` |
+| `newobj T[,]::.ctor(n..)` | Size… | `New o0 Array(T[,]) sizes=[i..]` |
 
 The indices are part of the path, so the effect records exactly what the
 instruction reads. Whether a tainted index taints the element read is not
@@ -653,9 +719,9 @@ and no model.
 | `stobj T` | Address, Value | `Store i0.* := i1` |
 | `cpobj T` | Address, SrcAddress | `Load T := i1.*; Store i0.* := T` |
 | `initobj T` | Address | `Clear i0` |
-| `cpblk` | Address, SrcAddress, Size | `Load T := i1.*; Store i0.* := T` |
-| `initblk` | Address, Value, Size | `Store i0.* := i1` |
-| `localloc` | Size | `New o0 StackAlloc size=i0` |
+| `cpblk` | Address, SrcAddress, Size | `Load T := i1.*[..i2]; Store i0.*[..i2] := T` (`Field::Block`) |
+| `initblk` | Address, Value, Size | `Store i0.*[..i2] := i1` (`Field::Block`) |
+| `localloc` | Size | `New o0 StackAlloc sizes=[i0]` |
 
 ### 5.7 Objects, casts, boxing, typed references
 
@@ -794,9 +860,17 @@ Layer 1, for every instruction in every fixture method:
 2. Every `In(i)` is used by some effect, unless `inputs[i]` is `Discarded`.
 3. Every `Out(i)` is defined by exactly one effect.
 4. Every `Temp` is defined before it is used, within the instruction.
-5. An input's role matches its use: `Object`/`Address` appear only as path
-   roots or `Place` bases, `Index` only in `Element` indices, and `Value` only
-   as an `Assign`/`Store` source.
+5. An input's role matches its use. The table of §5 fixes which uses each
+   role allows: `Value` only as an `Assign`/`Store` source; `Object` as a path
+   root, a `Place` base, the source of a `Cast`/`Unbox` (castclass, isinst,
+   unbox) or ldvirtftn's receiver; `Address` as a path root, `Clear`'s address
+   or mkrefany's source; `SrcAddress` only as a path root; `Receiver` as a
+   call's receiver, or a path root or place base (multi-dimensional arrays);
+   `Arg(k)` only as argument `k`; `Index` only in element indices; `Size` only
+   as a `New` size or a `Block` size; `Lhs`/`Rhs` as a `Derived` source or a
+   `Test` source; `Condition` only in `Test`; and `Callee`, `Exception` and
+   `ReturnValue` only as calli's callee, the thrown value and the returned
+   value. Any input may be an `Opaque` source.
 6. The `match` in `opcode.rs` is exhaustive over `Code` with **no `_` arm**, so
    adding an opcode is a compile error.
 
@@ -808,7 +882,10 @@ Layer 2, for every method:
 8. **No effect reads a variable that an earlier effect of the same instruction
    wrote, unless Layer 1 meant it to.** Concretely: bind with distinct names and
    bind with depth names, then run both through a small interpreter. The two
-   must agree. This is what checks the collision rule in §4.2.
+   must agree. This is what checks the collision rule in §4.2. (The
+   interpreter is symbolic: a copy is the identity, any other effect makes a
+   term of what it read, and memory writes, calls, tests and exits are events.
+   Both runs must give the same events, outputs and argument/local values.)
 9. `succs`/`preds` are consistent, every catch, filter and filtered-handler
    entry has height 1, every finally and fault entry has height 0, and every
    `leave` target has height 0.
@@ -874,3 +951,42 @@ cil-reader`, and `cil:flow` green under `xtask regression --frontend cil`. `cil-
 --flow` output for the new fixtures is reviewed and blessed. A client can then
 be written with no `match` on `Code`: it matches only on `Effect`, `CallKind`
 and `Control`.
+
+---
+
+## 10. As implemented
+
+All of §9 is done. `cargo test -p cil-reader` holds the unit tests of steps 2
+and 3 (and the collision rule's), and `cil:flow` in `cargo xtask regression
+--frontend cil` holds the rest:
+
+- **property**: §7.1–7.5 and coverage of every instruction byte, then §7.7–7.9,
+  over every method body of the Cecil corpus and the compiled fixtures
+  (185,390 bodies, 4,056,136 instructions, 669,573 blocks). Opaque effects and
+  Layer 2 warnings appear only in the fixtures built to be malformed
+  (`gap-*`, `branch-out`) and in `flow.il`'s deliberate height mismatch. A
+  summary is written to `<work>/cil-flow/summary.txt`.
+- **fixtures**: targeted tests on `readers/cil-reader/fixtures/flow.il`, the
+  new fixture §9 asks for, one per listed case.
+- **goldens**: `cil-dump --flow` of `flow.il` (both layers) against
+  `xtask/cil-goldens/flow`, regenerated by `cargo xtask cil bless-flow`.
+- **client**: `xtask/src/cil/flow/client.rs`, an argument-to-return taint
+  analysis that matches only on `Effect`, `CallKind` and `Control`.
+
+Departures from the first version of this design, each reflected above:
+
+1. `Field::Block { size }` and `New::sizes: Vec<S>`. The table gave `cpblk`
+   and `initblk` a `Size` input and multi-dimensional array constructors
+   their dimensions, but no effect used them, which broke goal 3 and
+   invariant 7.2.
+2. `Op::Opaque`, so an `Opaque` effect's edges can be `Derived`.
+3. Invariant 7.5 is a per-role table of allowed uses. The summary in the
+   first version contradicted §5, which uses `Object` inputs as cast and unbox
+   sources and an `Address` as mkrefany's.
+4. `TypeOracle` answers `is_delegate` instead of `base_type` (§3.5).
+5. `FlowCx` holds an `Operands` resolver rather than module data, so Layer 1
+   runs without a module in unit tests.
+6. Layer 2 records more than the first sketch: `Block::{exit_height, preds,
+   handler_entry}`, `BoundIns::{input_places, height}`, `InsId`, and
+   `FlowWarning` as an enum. A catch or filter entry's exception assignment is
+   a `BoundIns` of size 0 (`is_handler_entry`).

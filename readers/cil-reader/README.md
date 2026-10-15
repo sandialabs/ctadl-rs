@@ -45,6 +45,11 @@ for ty in module.types()? {
 - **Resolution**: `AssemblyCache` + `AssemblyLoader`/`DirectoryLoader`,
   `Module::resolve_type/resolve_member` with type forwarders and base-type
   walks.
+- **Dataflow** (`flow`): what each instruction reads and writes as a small
+  closed set of effects (`MethodBody::flows`), and per method the CFG with
+  exception edges, stack heights and kinds, and effects bound to
+  depth-named variables (`MethodFlow`). Design: `docs/cil-flow-api.md`;
+  `cargo dump --flow <assembly>` prints both layers.
 
 Not supported: portable PDB, anything write-side, and WinRT projections.
 
@@ -68,8 +73,8 @@ only Rust (`nix develop` at the repo root, or any recent toolchain):
 
 ```sh
 cargo test -p cil-reader                    # unit tests; needs no external inputs
-cargo xtask regression --frontend cil       # cil:must-fail, cil:cecil-tests, cil:read, cil:goldens, cil:cecil-compare
-cargo dump <assembly> [--sections a,b,c] [--no-il]   # from readers/cil-reader: the cil-dump CLI
+cargo xtask regression --frontend cil       # cil:must-fail, cil:cecil-tests, cil:read, cil:goldens, cil:cecil-compare, cil:flow
+cargo dump <assembly> [--sections a,b,c] [--no-il] [--flow]   # from readers/cil-reader: the cil-dump CLI
 ```
 
 No test inputs are committed:
@@ -102,4 +107,5 @@ Regenerating committed artifacts:
 ```sh
 cargo xtask cil bless [--filter <name>]  # rewrite xtask/cil-goldens from cecil-dump (after moving the cecil pin)
 cargo xtask cil codegen                  # regenerate the opcode table from Cecil's OpCodes.cs
+cargo xtask cil bless-flow               # rewrite xtask/cil-goldens/flow, the cil-dump --flow goldens of flow.il
 ```

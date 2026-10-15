@@ -282,8 +282,8 @@ method through `run_pipeline` and require no panic.
 ## 6. Effects → statements (`effects.rs`)
 
 `F(field)` means `FieldRef::symbol(..)`: `Named(f)` gives `<cls::f>`, `Element`
-gives `"[]"`, `Length` gives `"length"`, and `Deref` gives `FieldRef::deref()`,
-whose symbol is `DEREF_FIELD`. `ap(v)` means `AccessPath::without_fields(var(v))`.
+gives `"[]"`, `Length` gives `"length"`, and `Deref` and `Block` (a `cpblk`
+or `initblk` extent) give `FieldRef::deref()`, whose symbol is `DEREF_FIELD`. `ap(v)` means `AccessPath::without_fields(var(v))`.
 The frontend never spells the dereference as a string literal. `DEREF_FIELD` is
 the field the index and the query treat as a pointer target (`PathSegment::is_deref`),
 and the `ctadl-ir` docs ask any frontend that needs a pointer-like field to use it
