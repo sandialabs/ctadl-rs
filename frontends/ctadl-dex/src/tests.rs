@@ -571,3 +571,34 @@ fn invoke_custom_is_a_call_with_unknown_target() {
     assert_eq!(arg_names(&locals, args), ["v1", "v2"]);
     assert_eq!(ctx.call_result.as_ref(), Some(&rets[0]));
 }
+
+/// const-method-handle and const-method-type define `vAA` as an object of their class.
+#[test]
+fn const_method_handle_and_type_assign_an_object() {
+    use dex_reader::instructions::{Format21c, MethodHandleIdx, ProtoIdx};
+    for (inst, cls) in [
+        (
+            Instruction::ConstMethodHandle(Format21c {
+                a: Reg(0),
+                idx: MethodHandleIdx(0),
+            }),
+            "Ljava/lang/invoke/MethodHandle;",
+        ),
+        (
+            Instruction::ConstMethodType(Format21c {
+                a: Reg(0),
+                idx: ProtoIdx(0),
+            }),
+            "Ljava/lang/invoke/MethodType;",
+        ),
+    ] {
+        let (assigns, locals) = assign_from(inst);
+        assert_eq!(assigns.len(), 1);
+        let (var, exp) = &assigns[0];
+        assert_eq!(local_name(&locals, var), "v0");
+        let Exp::ObjectRef(CallObject::JavaObject(got)) = exp else {
+            panic!("expected a JavaObject, got {exp:?}");
+        };
+        assert_eq!(&**got, cls);
+    }
+}

@@ -749,6 +749,13 @@ impl Context {
                     None
                 }
             }
+            // A method handle or method type constant is an object of that class
+            Instruction::ConstMethodHandle(_) => Some(Exp::new_object_ref(CallObject::JavaObject(
+                JavaClass("Ljava/lang/invoke/MethodHandle;".into()),
+            ))),
+            Instruction::ConstMethodType(_) => Some(Exp::new_object_ref(CallObject::JavaObject(
+                JavaClass("Ljava/lang/invoke/MethodType;".into()),
+            ))),
             _ => None,
         } {
             for d in dest {
