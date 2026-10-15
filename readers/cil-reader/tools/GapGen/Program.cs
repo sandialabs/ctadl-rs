@@ -73,6 +73,9 @@ static class Program {
             ("operand-tokens", OperandTokens, OperandTokenRows),
             ("local-tokens", LocalTokens, LocalTokenValues),
             ("code-sizes", CodeSizes, CodeSizeValues),
+            ("resources-no-dir", () => Resources("resources-no-dir"), image => ResourcesDirectory(image, 0, 0)),
+            ("resources-dir-outside", () => Resources("resources-dir-outside"),
+                image => ResourcesDirectory(image, 0x7fff_0000, 0x100)),
         };
         foreach (var (name, build, patch) in images) {
             var mod = build();
@@ -1217,6 +1220,26 @@ static class Program {
         }
     }
 
+    // A module with two embedded resources, a.txt and b.txt, whose data
+    // is "resource:a" and "resource:b".
+    static ModuleDef Resources(string name) {
+        var mod = NewModule(name);
+        foreach (var r in new[] { "a", "b" })
+            mod.Resources.Add(new EmbeddedResource($"{r}.txt", Encoding.ASCII.GetBytes($"resource:{r}")));
+        return mod;
+    }
+
+    // Points the CLI header's Resources directory at rva and size, leaving
+    // the data where it is. Cecil's GetManagedResource gives no bytes when
+    // no section holds the directory's RVA, whatever its size.
+    static void ResourcesDirectory(byte[] image, uint rva, uint size) {
+        int cli = CliHeader(image);
+        if (ReadI32(image, cli + 24) == 0)
+            throw new InvalidOperationException("no resources directory");
+        WriteU32(image, cli + 24, rva);
+        WriteU32(image, cli + 28, size);
+    }
+
     static int IndexOf(byte[] image, byte[] pattern, int from = 0) {
         for (int i = from; i + pattern.Length <= image.Length; i++)
             if (image.AsSpan(i, pattern.Length).SequenceEqual(pattern))
@@ -1225,14 +1248,20 @@ static class Program {
     }
 
     // The file offset of the metadata root, from the PE headers.
-    static int MetadataRoot(byte[] image) {
+    static int MetadataRoot(byte[] image) => RvaToOffset(image, ReadI32(image, CliHeader(image) + 8));
+
+    // The file offset of the CLI header, from the PE headers.
+    static int CliHeader(byte[] image) {
+        int optional = ReadI32(image, 0x3c) + 24;
+        bool pe32Plus = BitConverter.ToUInt16(image, optional) == 0x20b;
+        return RvaToOffset(image, ReadI32(image, optional + (pe32Plus ? 224 : 208)));
+    }
+
+    static int RvaToOffset(byte[] image, int rva) {
         int pe = ReadI32(image, 0x3c);
         int sections = BitConverter.ToUInt16(image, pe + 6);
-        int optional = pe + 24;
         int optionalSize = BitConverter.ToUInt16(image, pe + 20);
-        bool pe32Plus = BitConverter.ToUInt16(image, optional) == 0x20b;
-        int cli = RvaToOffset(image, ReadI32(image, optional + (pe32Plus ? 224 : 208)), optional + optionalSize, sections);
-        return RvaToOffset(image, ReadI32(image, cli + 8), optional + optionalSize, sections);
+        return RvaToOffset(image, rva, pe + 24 + optionalSize, sections);
     }
 
     static int RvaToOffset(byte[] image, int rva, int sectionTable, int sections) {

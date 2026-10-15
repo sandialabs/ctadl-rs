@@ -1,6 +1,6 @@
 //! `Module`: the root of the Cecil-shaped object model.
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::model::data::ModuleData;
 use crate::model::handles::*;
 use crate::model::util::sha1;
@@ -403,12 +403,14 @@ impl<'a> Module<'a> {
 
     /// The data of an embedded resource (`MetadataReader.GetManagedResource`):
     /// a length-prefixed blob at `offset` in the CLI resources directory.
+    /// Empty when no section holds the directory's RVA, whatever its size,
+    /// as Cecil's `GetReaderAt` finds no reader there.
     pub fn resource_data(&self, offset: u32) -> Result<&'a [u8]> {
-        let dir = self.data.image.resources_directory;
-        if dir.is_zero() {
-            return Err(Error::Unsupported("module has no resources directory"));
-        }
-        let base = self.data.image.resolve_rva(dir.virtual_address)?;
+        let rva = self.data.image.resources_directory.virtual_address;
+        let Some(section) = self.data.image.section_at_rva(rva) else {
+            return Ok(&[]);
+        };
+        let base = section.file_offset(rva) as usize;
         let mut cur = crate::raw::cursor::Cur::at(self.data.image.data(), base + offset as usize);
         let len = cur.u32()? as usize;
         cur.bytes(len)
