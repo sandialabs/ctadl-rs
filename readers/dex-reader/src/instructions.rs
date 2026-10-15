@@ -2717,12 +2717,15 @@ impl Instruction {
                 dataflow!([f.a, f.b], [f.a])
             }
             AddLong2Addr(f) | SubLong2Addr(f) | MulLong2Addr(f) | DivLong2Addr(f)
-            | RemLong2Addr(f) | AndLong2Addr(f) | OrLong2Addr(f) | XorLong2Addr(f)
-            | ShlLong2Addr(f) | ShrLong2Addr(f) | UshrLong2Addr(f) => {
+            | RemLong2Addr(f) | AndLong2Addr(f) | OrLong2Addr(f) | XorLong2Addr(f) => {
                 dataflow!(
                     [f.a, f.a.next_reg(), f.b, f.b.next_reg()],
                     [f.a, f.a.next_reg()]
                 )
+            }
+            // The shift amount is an int, so vB is one register, not a pair
+            ShlLong2Addr(f) | ShrLong2Addr(f) | UshrLong2Addr(f) => {
+                dataflow!([f.a, f.a.next_reg(), f.b], [f.a, f.a.next_reg()])
             }
             AddFloat2Addr(f) | SubFloat2Addr(f) | MulFloat2Addr(f) | DivFloat2Addr(f)
             | RemFloat2Addr(f) => {
@@ -2768,11 +2771,15 @@ impl Instruction {
                 dataflow!([f.b, f.c], [f.a])
             }
             AddLong(f) | SubLong(f) | MulLong(f) | DivLong(f) | RemLong(f) | AndLong(f)
-            | OrLong(f) | XorLong(f) | ShlLong(f) | ShrLong(f) | UshrLong(f) => {
+            | OrLong(f) | XorLong(f) => {
                 dataflow!(
                     [f.b, f.b.next_reg(), f.c, f.c.next_reg()],
                     [f.a, f.a.next_reg()]
                 )
+            }
+            // The shift amount is an int, so vC is one register, not a pair
+            ShlLong(f) | ShrLong(f) | UshrLong(f) => {
+                dataflow!([f.b, f.b.next_reg(), f.c], [f.a, f.a.next_reg()])
             }
             AddFloat(f) | SubFloat(f) | MulFloat(f) | DivFloat(f) | RemFloat(f) => {
                 dataflow!([f.b, f.c], [f.a])
@@ -3744,6 +3751,30 @@ mod tests {
             df(&[0, 1, 2, 3], &[0, 1])
         );
         assert_eq!(CmpLong(f23x(0, 2, 4)).data_flow(), df(&[2, 3, 4, 5], &[0]));
+    }
+
+    /// A long shift's amount is an int: one register, not a pair.
+    #[test]
+    fn long_shift_amount_is_one_register() {
+        use Instruction::*;
+        for op in [ShlLong, ShrLong, UshrLong] {
+            let inst = op(f23x(0, 2, 4));
+            assert_eq!(
+                inst.data_flow(),
+                df(&[2, 3, 4], &[0, 1]),
+                "opcode {:#04x}",
+                inst.discriminant()
+            );
+        }
+        for op in [ShlLong2Addr, ShrLong2Addr, UshrLong2Addr] {
+            let inst = op(f12x(0, 2));
+            assert_eq!(
+                inst.data_flow(),
+                df(&[0, 1, 2], &[0, 1]),
+                "opcode {:#04x}",
+                inst.discriminant()
+            );
+        }
     }
 
     #[test]

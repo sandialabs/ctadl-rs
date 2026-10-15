@@ -427,3 +427,30 @@ fn aput_wide_stores_value_pair() {
         (vec!["v0".to_string(), "v1".to_string()], "v2".to_string())
     );
 }
+
+/// `shl-long v0, v2, v4` computes `v0:v1 = v2:v3 << v4`. The shift amount is the int in `v4`, so
+/// `v5` must not flow into the result.
+#[test]
+fn shl_long_reads_one_shift_register() {
+    use dex_reader::instructions::Format23x;
+    let inst = Instruction::ShlLong(Format23x {
+        a: Reg(0),
+        b: Reg(2),
+        c: Reg(4),
+    });
+    let (assigns, locals) = assign_from(inst);
+    let flows: Vec<(String, String)> = assigns
+        .iter()
+        .map(|(var, exp)| {
+            let Exp::Variable(src) = exp else {
+                panic!("expected a variable source, got {exp:?}");
+            };
+            (local_name(&locals, var), local_name(&locals, src))
+        })
+        .collect();
+    let expected: Vec<(String, String)> = ["v0", "v1"]
+        .iter()
+        .flat_map(|d| ["v2", "v3", "v4"].map(|s| (d.to_string(), s.to_string())))
+        .collect();
+    assert_eq!(flows, expected);
+}
