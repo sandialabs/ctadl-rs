@@ -76,6 +76,7 @@ static class Program {
             ("resources-no-dir", () => Resources("resources-no-dir"), image => ResourcesDirectory(image, 0, 0)),
             ("resources-dir-outside", () => Resources("resources-dir-outside"),
                 image => ResourcesDirectory(image, 0x7fff_0000, 0x100)),
+            ("resource-lengths", () => Resources("resource-lengths"), ResourceLengths),
         };
         foreach (var (name, build, patch) in images) {
             var mod = build();
@@ -1238,6 +1239,21 @@ static class Program {
             throw new InvalidOperationException("no resources directory");
         WriteU32(image, cli + 24, rva);
         WriteU32(image, cli + 28, size);
+    }
+
+    // Gives a.txt a length that runs 1 MB past the end of the file, which
+    // Cecil's ReadBytes reads up to the end, and b.txt one of 2^31, which
+    // ReadBytes throws on as a negative count.
+    static void ResourceLengths(byte[] image) {
+        foreach (var (r, length) in new[] { ("a", 0x10_0000u), ("b", 0x8000_0000u) }) {
+            var data = Encoding.ASCII.GetBytes($"resource:{r}");
+            int at = IndexOf(image, data);
+            if (at < 0 || IndexOf(image, data, at + 1) >= 0)
+                throw new InvalidOperationException($"{r}.txt: data not found exactly once");
+            if (ReadI32(image, at - 4) != data.Length)
+                throw new InvalidOperationException($"{r}.txt: no length before the data");
+            WriteU32(image, at - 4, length);
+        }
     }
 
     static int IndexOf(byte[] image, byte[] pattern, int from = 0) {

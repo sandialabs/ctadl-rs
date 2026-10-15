@@ -1,6 +1,6 @@
 //! `Module`: the root of the Cecil-shaped object model.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::model::data::ModuleData;
 use crate::model::handles::*;
 use crate::model::util::sha1;
@@ -411,9 +411,16 @@ impl<'a> Module<'a> {
             return Ok(&[]);
         };
         let base = section.file_offset(rva) as usize;
-        let mut cur = crate::raw::cursor::Cur::at(self.data.image.data(), base + offset as usize);
-        let len = cur.u32()? as usize;
-        cur.bytes(len)
+        let data = self.data.image.data();
+        let mut cur = crate::raw::cursor::Cur::at(data, base + offset as usize);
+        // `BinaryReader.ReadBytes` throws on a negative count, and reads a
+        // longer one up to the end of the file.
+        let len = cur.u32()?;
+        if len > i32::MAX as u32 {
+            return Err(Error::bad(cur.pos(), "resource length of 2^31 or more"));
+        }
+        let start = cur.pos();
+        Ok(&data[start..data.len().min(start + len as usize)])
     }
 
     pub fn has_exported_types(&self) -> bool {
