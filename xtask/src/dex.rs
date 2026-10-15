@@ -25,6 +25,7 @@ use dex_reader::parser::*;
 use dex_reader::{APKParser, DexParser};
 
 use crate::baksmali;
+use crate::dexlib2;
 use crate::exec;
 use crate::regression::Outcome;
 
@@ -54,13 +55,14 @@ pub fn run_checks(
     let missing_tool = ["javac", "dx"]
         .into_iter()
         .find(|t| exec::which(t).is_none());
+    let mut samples = Vec::new();
     if let Some(tool) = missing_tool {
         let why = format!("`{tool}` not on PATH");
         results.push(("dex:samples".to_string(), Outcome::Skip(why.clone())));
         results.push(("dex:line-map".to_string(), Outcome::Skip(why.clone())));
         results.push(("dex:baksmali".to_string(), Outcome::Skip(why)));
     } else {
-        let samples = compile_samples(java_samples, work)?;
+        samples = compile_samples(java_samples, work)?;
         if samples.is_empty() {
             bail!("no .java samples found in {}", java_samples.display());
         }
@@ -89,6 +91,17 @@ pub fn run_checks(
             ));
         }
     }
+
+    // Differential decoding against dexlib2, over the all-opcodes fixture plus
+    // whatever else this run has: the compiled samples and the APK.
+    let existing_apk = apk.filter(|p| p.exists());
+    results.push((
+        "dex:dexlib2-decode".to_string(),
+        match missing_dexlib2_tool() {
+            Some(why) => Outcome::Skip(why),
+            None => to_outcome(check_dexlib2_decode(&samples, existing_apk, work)),
+        },
+    ));
 
     // The real-world APK smoke test: parse every classes*.dex it carries. It is
     // pure-Rust, so it runs even when the JDK/dx toolchain is absent.
@@ -323,6 +336,72 @@ fn check_baksmali(samples: &[SampleDex], work: &Path) -> Result<()> {
     }
     if total == 0 {
         bail!("no methods were compared against baksmali across samples");
+    }
+    Ok(())
+}
+
+/// Why `dex:dexlib2-decode` cannot run here, if it cannot.
+fn missing_dexlib2_tool() -> Option<String> {
+    if let Some(tool) = ["java", "smali"]
+        .into_iter()
+        .find(|t| exec::which(t).is_none())
+    {
+        return Some(format!("`{tool}` not on PATH"));
+    }
+    if dexlib2::find_jar().is_none() {
+        return Some(
+            "no dexlib2 jar: set DEXLIB2_JAR or put the `baksmali` wrapper on PATH".into(),
+        );
+    }
+    None
+}
+
+/// dex-reader decodes every instruction the way dexlib2 does: the all-opcodes
+/// fixture (which must hold every opcode), each compiled sample, and each
+/// `classes*.dex` in the APK.
+fn check_dexlib2_decode(samples: &[SampleDex], apk: Option<&Path>, work: &Path) -> Result<()> {
+    let jar = dexlib2::find_jar().context("no dexlib2 jar")?;
+    let work = work.join("dexlib2");
+    let fixture = dexlib2::assemble_all_opcodes(&work.join("all-opcodes"))?;
+    let fixture_bytes =
+        std::fs::read(&fixture).with_context(|| format!("reading {}", fixture.display()))?;
+    let parser = DexParser::new(&fixture_bytes)
+        .map_err(|e| anyhow::anyhow!("DexParser for all-opcodes: {e}"))?;
+    let missing = dexlib2::missing_opcodes(&parser)?;
+    if !missing.is_empty() {
+        bail!("all-opcodes.smali lacks opcodes: {}", missing.join(", "));
+    }
+
+    let mut inputs: Vec<(String, PathBuf, Vec<u8>)> =
+        vec![("all-opcodes".to_string(), fixture, fixture_bytes)];
+    for sample in samples {
+        inputs.push((
+            sample.name.clone(),
+            sample.dex.clone(),
+            sample.bytes.clone(),
+        ));
+    }
+    if let Some(apk) = apk {
+        let buffer = std::fs::read(apk).with_context(|| format!("reading {}", apk.display()))?;
+        let apk_parser =
+            APKParser::new(&buffer).map_err(|e| anyhow::anyhow!("parsing APK: {e}"))?;
+        let dir = work.join("apk");
+        exec::fresh_dir(&dir)?;
+        for (name, parser) in apk_parser.dex_parsers_with_filenames() {
+            let path = dir.join(name);
+            std::fs::write(&path, parser.data)
+                .with_context(|| format!("writing {}", path.display()))?;
+            inputs.push((format!("apk-{name}"), path, parser.data.to_vec()));
+        }
+    }
+
+    let mut compared = 0usize;
+    for (name, dex, bytes) in &inputs {
+        compared += dexlib2::compare(&jar, dex, bytes, &work.join(name))
+            .with_context(|| format!("dexlib2 decode of {name}"))?;
+    }
+    if compared == 0 {
+        bail!("no instructions were compared against dexlib2");
     }
     Ok(())
 }

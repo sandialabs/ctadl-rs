@@ -17,6 +17,7 @@ mod apk;
 mod assertions;
 mod baksmali;
 mod dex;
+mod dexlib2;
 mod discovery;
 mod exec;
 mod jvm;

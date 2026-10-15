@@ -23,3 +23,14 @@ xtask owns this fixture. The regression harness finds it automatically at
 the `ctadl-ascent/tests/cli.rs` import smoke test that once did has moved here as
 the `apk:*` checks, which is why that file's own rule -- synthetic input, temp
 store, milliseconds -- holds without exception.
+
+# `all-opcodes.smali`
+
+Every Dalvik opcode in dex 039, with operands chosen to catch decoder bugs:
+distinct registers in each field, the largest register each field can hold,
+extreme literals, backward and forward branches, and every payload kind. It is
+source, not a binary: `dex:dexlib2-decode` assembles it with `smali assemble
+--api 28` at test time, then requires dex-reader to decode every instruction
+exactly as dexlib2 does (see `xtask/src/dexlib2.rs`). The check fails if the
+file stops covering an opcode. It is never run, so it need not pass the
+verifier.
