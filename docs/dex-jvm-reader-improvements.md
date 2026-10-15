@@ -1,7 +1,7 @@
 # Improving `dex-reader` and `jvm-reader` dataflow - DO-NOT-MERGE
 
 Status: §1 (`dex-reader`) is fixed on branch `dex-jvm-reader-fixes`, except for
-the open items in §1.6. §2 (`jvm-reader`) is open and not scheduled. These
+the open items in §1.7. §2 (`jvm-reader`) is open and not scheduled. These
 problems were found while designing the CIL reader's dataflow layer
 ([`cil-flow-api.md`](cil-flow-api.md)), which is built to avoid them.
 
@@ -9,10 +9,10 @@ problems were found while designing the CIL reader's dataflow layer
 
 ## 1. `dex-reader`
 
-`Instruction::data_flow()` (`readers/dex-reader/src/instructions.rs:2603`)
+`Instruction::data_flow()` (`readers/dex-reader/src/instructions.rs:2596`)
 returns the registers an instruction reads (`source`) and writes (`dest`). Its
 only consumer is `dataflow_to_assign` in `frontends/ctadl-dex/src/lib.rs`
-(`:654`).
+(`:686`).
 
 | Problem | Status | Commit |
 | --- | --- | --- |
@@ -21,12 +21,17 @@ only consumer is `dataflow_to_assign` in `frontends/ctadl-dex/src/lib.rs`
 | §1.1 boxed, uncomparable `DataFlow`, dead `ret` | fixed | `71b8f70e` |
 | §1.1 no tests of `data_flow()` | fixed | `124351d0` |
 | §1.5 long shifts read their shift amount as a pair | fixed | `86f8634e` |
-| §1.1 roles erased (bags, not roles) | open | §1.6 |
-| §1.6 `0xfa`-`0xff` opcodes report no registers | open | §1.6 |
+| §1.6 opcodes `0xfa`-`0xff` named and decoded as unused | fixed | `36978bb0` |
+| §1.6 `0xfa`-`0xff` report no registers; 45cc decoded wrong | fixed | `809f5321` |
+| §1.6 `0xfa`-`0xff` treated as unable to throw | fixed | `013232a8` |
+| §1.6 invoke-polymorphic/custom produce no call | fixed | `50066e95` |
+| §1.6 const-method-handle/type leave `vAA` undefined | fixed | `92fa2da6` |
+| §1.1 roles erased (bags, not roles) | open | §1.7 |
+| §1.7 invoke-custom and method handle targets unresolved | open | §1.7 |
 
 None of these fixes changed `cargo xtask regression`. It reports 165 passed and
-3 xfail both before (`6839064f`) and after (`86f8634e`), with the same outcome
-for every case.
+3 xfail before (`6839064f`), after the §1.2-§1.5 fixes (`86f8634e`), and after
+the §1.6 fixes (`92fa2da6`), with the same outcome for every case.
 
 ### 1.1 What the original pattern got wrong
 
@@ -155,7 +160,60 @@ register.
 opcodes. The frontend test `shl_long_reads_one_shift_register` fails before the
 fix.
 
-### 1.6 Still open
+### 1.6 Fixed: opcodes `0xfa`-`0xff` were treated as unused
+
+**Severity:** live, but rare in app code. These opcodes exist from dex 038
+(Android 8.0) onward. Fixed in `36978bb0`, `809f5321`, `013232a8`, `50066e95` and
+`92fa2da6`.
+
+dex-reader decoded opcodes `0xfa`-`0xff` with the right formats, but named them
+`UnusedFA` to `UnusedFF`. In dex 038 they are `invoke-polymorphic`,
+`invoke-polymorphic/range`, `invoke-custom`, `invoke-custom/range`,
+`const-method-handle` and `const-method-type`. `MethodHandle.invoke` and
+`invokeExact` compile to `invoke-polymorphic`. A non-desugared lambda or
+`invokedynamic` compiles to `invoke-custom`. The `Unused` names led several
+places to treat them as no-ops:
+
+| Where | What was wrong | Fixed in |
+| --- | --- | --- |
+| names and disassembly | `unused-fa` ... `unused-ff`; const-method-handle's operand typed as a method index, though it indexes the method_handles table | `36978bb0` |
+| `data_flow()` | invoke-polymorphic(/range) read no registers; const-method-handle/type wrote no register | `809f5321` |
+| `Format45cc::new` | the `A\|G` nibbles of invoke-polymorphic's first unit were swapped, so the argument count and the fifth register were read from each other's bits | `809f5321` |
+| `call_args()`, `is_invoke()` | invoke-polymorphic missing from both; invoke-custom missing from `is_invoke()` | `809f5321` |
+| `can_throw()` | all six listed as unable to throw, so inside a `try` block they got no edge to the handler | `013232a8` |
+| ctadl-dex `decode_call` | invoke-polymorphic and invoke-custom produced no statement. The following move-result read the shared `retval` temporary, whose reaching definition was the *previous* call's result, so that unrelated value flowed into the register | `50066e95` |
+| ctadl-dex `dataflow_to_assign` | const-method-handle/type emitted nothing, so `vAA` kept its earlier value | `92fa2da6` |
+
+**Fix.** In dex-reader: real names and mnemonics, a `MethodHandleIdx` index
+type, and 45cc decoded into an `args` list in the same order as 35c. The
+invokes read their arguments, the const opcodes write `vAA`, and all six can
+throw. In ctadl-dex:
+
+- `invoke-polymorphic` becomes a `JavaCall` on the method it names, with the
+  handle as receiver, the same as `invoke-virtual`. It gets an external stub,
+  and models can match it.
+- `invoke-custom` names a call site, not a method, so it becomes a
+  `CallStyle::Unknown` call. Flow through it is still cut (see §1.7), but its
+  result is now defined at the site, and `ctadl report` counts it as `unknown`.
+- `const-method-handle` and `const-method-type` define `vAA` as an object
+  reference of class `Ljava/lang/invoke/MethodHandle;` or
+  `Ljava/lang/invoke/MethodType;`.
+
+**Regression protection.** In dex-reader:
+`invoke_polymorphic_decodes_and_reads_its_arguments`, which decodes raw code
+units and so pins the nibble order;
+`invoke_polymorphic_range_and_invoke_custom_read_their_arguments`;
+`const_method_handle_and_type_write_their_register`; and
+`opcodes_fa_to_ff_can_throw`. In ctadl-dex:
+`invoke_polymorphic_is_a_virtual_call`,
+`invoke_custom_is_a_call_with_unknown_target` and
+`const_method_handle_and_type_assign_an_object`.
+
+The regression samples are compiled with `javac --release 8` and `dx`, which
+never emit these opcodes. So `cargo xtask regression` does not exercise them,
+and the unit tests are their only coverage.
+
+### 1.7 Still open
 
 1. **Roles.** The structural fix for §1.1 problem 1 is a role-carrying
    per-instruction view, the shape [`cil-flow-api.md`](cil-flow-api.md) specifies
@@ -163,17 +221,16 @@ fix.
    reworked, that is the shape to converge on. Until then, consumers must decode
    operand roles from the instruction fields by position, never by comparing
    register values.
-2. **Opcodes `0xfa`-`0xff` report no registers.** `dex-reader` names
-   them `UnusedFA` to `UnusedFF` (`instructions.rs:1265-1270`), but in dex 038+
-   they are `invoke-polymorphic`, `invoke-polymorphic/range`, `invoke-custom`,
-   `invoke-custom/range`, `const-method-handle` and `const-method-type`.
-   `data_flow()` handles `UnusedFC`/`UnusedFD` (invoke-custom) as invokes. But it
-   returns no registers for `UnusedFA`/`UnusedFB` (invoke-polymorphic, which
-   `MethodHandle.invoke` compiles to), so their arguments do not flow. It also
-   returns no destination for `UnusedFE`/`UnusedFF` (`const-method-handle` and
-   `const-method-type` write `vAA`). These are rare in app code. Fixing them
-   means giving them real names, `data_flow()` entries, and call handling in the
-   frontend.
+2. **invoke-custom and method handle targets.** An `invoke-custom` call has no
+   target, so no flow passes through it. Resolving one means reading its
+   `call_site_item` (bootstrap method handle, name and method type; `DexParser`
+   already parses `call_site_ids` and `method_handles`). It also means modeling
+   the common bootstrap, `LambdaMetafactory.metafactory`, which returns an object
+   capturing the arguments. Likewise, `invoke-polymorphic` resolves only to
+   `MethodHandle.invoke` itself. Which method a handle points to (from
+   `const-method-handle` or `MethodHandles.Lookup`) is not tracked, so flow
+   through the handle depends on a model for `MethodHandle.invoke`, and the
+   default models have none.
 
 ---
 
