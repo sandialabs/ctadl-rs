@@ -130,10 +130,28 @@ pub fn run(opts: &Options) -> Result<bool> {
     let results_text = run_on_device(&built, &out)?;
     let results = parse_results(&results_text)?;
 
-    let cases_bytes = std::fs::read(&built.cases_dex)?;
-    let parser = DexParser::new(&cases_bytes).map_err(|e| anyhow!("parsing cases.dex: {e}"))?;
-    let decoded = instructions_under_test(&parser, &built)?;
+    let decoded = decode_cases(&built)?;
 
+    let evaluation = evaluate(&all, &results, &decoded)?;
+    std::fs::write(out.join("report.txt"), &evaluation.report)?;
+    print!("{}", evaluation.report);
+    println!("report: {}", out.join("report.txt").display());
+    Ok(evaluation.ok)
+}
+
+/// The verdict on every case, as report text, and whether they all passed.
+struct Evaluation {
+    report: String,
+    ok: bool,
+}
+
+/// Judge every case in `all` against its observation in `results` and its decoding in
+/// `decoded`, both keyed by class name.
+fn evaluate(
+    all: &[Case],
+    results: &BTreeMap<String, Observed>,
+    decoded: &BTreeMap<String, Instruction>,
+) -> Result<Evaluation> {
     let mut report = String::new();
     let mut failed = 0usize;
     let mut unexpected_reviews = 0usize;
@@ -188,10 +206,10 @@ pub fn run(opts: &Options) -> Result<bool> {
         "\n{} cases: {failed} failed, {unexpected_reviews} need review, {stale} stale expectations",
         all.len()
     )?;
-    std::fs::write(out.join("report.txt"), &report)?;
-    print!("{report}");
-    println!("report: {}", out.join("report.txt").display());
-    Ok(failed == 0 && unexpected_reviews == 0 && stale == 0)
+    Ok(Evaluation {
+        report,
+        ok: failed == 0 && unexpected_reviews == 0 && stale == 0,
+    })
 }
 
 fn class_name(i: usize) -> String {
@@ -429,8 +447,15 @@ fn build(all: &[Case], out: &Path) -> Result<Built> {
     exec::run_checked(d8, "d8")?;
     let driver_dex = out.join("driver.dex");
     std::fs::rename(java.join("classes.dex"), &driver_dex)?;
+    Ok(Built {
+        driver_dex,
+        ..build_cases(all, out)?
+    })
+}
 
-    // The cases: one smali class each, so a verifier failure costs only its own case.
+/// The cases alone: one smali class each, so a verifier failure costs only its own case.
+/// `driver_dex` is left empty.
+fn build_cases(all: &[Case], out: &Path) -> Result<Built> {
     let smali_dir = out.join("smali");
     exec::fresh_dir(&smali_dir)?;
     let mut manifest = String::new();
@@ -452,7 +477,7 @@ fn build(all: &[Case], out: &Path) -> Result<Built> {
     let manifest_path = out.join("manifest.txt");
     std::fs::write(&manifest_path, manifest)?;
     Ok(Built {
-        driver_dex,
+        driver_dex: PathBuf::new(),
         cases_dex,
         manifest: manifest_path,
         insn_index,
@@ -635,6 +660,13 @@ fn parse_results(text: &str) -> Result<BTreeMap<String, Observed>> {
         }
     }
     Ok(out)
+}
+
+/// dex-reader's decoding of each case's instruction under test, from `built.cases_dex`.
+fn decode_cases(built: &Built) -> Result<BTreeMap<String, Instruction>> {
+    let bytes = std::fs::read(&built.cases_dex)?;
+    let parser = DexParser::new(&bytes).map_err(|e| anyhow!("parsing cases.dex: {e}"))?;
+    instructions_under_test(&parser, built)
 }
 
 /// dex-reader's decoding of each case's instruction under test.
