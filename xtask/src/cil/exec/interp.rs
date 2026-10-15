@@ -33,8 +33,9 @@ use std::rc::Rc;
 
 use cil_reader::cil::Code;
 use cil_reader::flow::{
-    BlockId, BoundIns, CallKind, CallSite, CmpOp, Const, Control, Effect, Field, Handler,
-    HandlerKind, MethodFlow, NewKind, Op, Operands, Path, Place, Root, Transfer, TypeOp, Var,
+    BlockId, BoundIns, CallKind, CallSite, CmpOp, Const, Control, Effect, Field, FlowOptions,
+    Handler, HandlerKind, MethodFlow, NewKind, Op, Operands, Path, Place, Root, Transfer, TypeOp,
+    Var,
 };
 use cil_reader::model::{MemberRefSig, MethodDef, TypeDef, TypeDefOrRef, TypeSig};
 use cil_reader::{Entity, MetadataToken, Module, TokenType};
@@ -149,6 +150,8 @@ const DEPTH_LIMIT: usize = 200;
 
 pub struct Interp<'m, 'd> {
     module: &'m Module<'d>,
+    /// How methods' flow is built.
+    options: FlowOptions,
     /// Full names of the module's types.
     types: HashMap<String, u32>,
     methods: HashMap<u32, Rc<Prepared>>,
@@ -170,7 +173,7 @@ fn in_handler(h: &Handler, offset: u32) -> bool {
 }
 
 impl<'m, 'd> Interp<'m, 'd> {
-    pub fn new(module: &'m Module<'d>) -> Interp<'m, 'd> {
+    pub fn new(module: &'m Module<'d>, options: FlowOptions) -> Interp<'m, 'd> {
         let mut types = HashMap::new();
         for t in module.all_types() {
             if let Ok(name) = t.full_name() {
@@ -179,6 +182,7 @@ impl<'m, 'd> Interp<'m, 'd> {
         }
         Interp {
             module,
+            options,
             types,
             methods: HashMap::new(),
             field_tys: HashMap::new(),
@@ -537,7 +541,7 @@ impl<'m, 'd> Interp<'m, 'd> {
         if sig.generic_arity > 0 {
             return unsupported(format!("generic method {name}"));
         }
-        let flow = MethodFlow::build(&body);
+        let flow = MethodFlow::build_with(&body, self.options);
         let mut params = Vec::new();
         let mut byref = Vec::new();
         if sig.has_this {

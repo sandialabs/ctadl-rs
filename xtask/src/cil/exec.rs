@@ -15,6 +15,10 @@
 //! no compared trial at all fails the check, so the fixtures stay in what is
 //! modeled.
 //!
+//! Every trial runs twice: over the CFG `MethodFlow::build` gives, and over
+//! the one `split_after_throwing_in_try` gives, which ends a block after
+//! every call and throw in a try.
+//!
 //! Everything is written under `<work>/cil-exec/`: `flow-run`'s output per
 //! fixture (`<fixture>.jsonl`), every mismatch and bug in full
 //! (`failures.txt`), and per-method counts (`summary.txt`).
@@ -31,6 +35,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value as Json;
 
+use cil_reader::flow::FlowOptions;
 use cil_reader::Module;
 
 use super::parallel_map;
@@ -203,50 +208,75 @@ fn run_fixture(
     }
     let data = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let module = Module::read(&data).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let mut interp = Interp::new(&module);
+    let mut interps = [
+        ("", Interp::new(&module, FlowOptions::default())),
+        (
+            " [split]",
+            Interp::new(
+                &module,
+                FlowOptions {
+                    split_after_throwing_in_try: true,
+                },
+            ),
+        ),
+    ];
     let mut report = Report::default();
     for line in String::from_utf8(output.stdout)?.lines() {
         let trial: Trial = serde_json::from_str(line).context("a flow-run line")?;
-        let counts = report.methods.entry(trial.name.clone()).or_default();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            interp.reset();
-            replay(&mut interp, &trial)
-        }));
-        let result = result.unwrap_or_else(|_| Err(Stop::Bug("the interpreter panicked".into())));
-        let at = format!("{} trial {}", trial.name, trial.trial);
-        match result {
-            Ok(actual) if actual == trial.outcome => counts.compared += 1,
-            Ok(actual) => {
-                counts.compared += 1;
-                counts.mismatched += 1;
-                let (line, first) = first_difference(&trial.outcome, &actual);
-                report
-                    .failures
-                    .push(format!("{at}: differs at line {line}: {first}"));
-                let _ = write!(
+        for (mode, interp) in &mut interps {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                interp.reset();
+                replay(interp, &trial)
+            }));
+            let result =
+                result.unwrap_or_else(|_| Err(Stop::Bug("the interpreter panicked".into())));
+            let at = format!("{} trial {}{mode}", trial.name, trial.trial);
+            record(&mut report, fixture, &trial, &at, result);
+        }
+    }
+    Ok(report)
+}
+
+/// Count one replay of `trial`, and keep its failure if it is one.
+fn record(
+    report: &mut Report,
+    fixture: &str,
+    trial: &Trial,
+    at: &str,
+    result: Result<String, Stop>,
+) {
+    let counts = report.methods.entry(trial.name.clone()).or_default();
+    match result {
+        Ok(actual) if actual == trial.outcome => counts.compared += 1,
+        Ok(actual) => {
+            counts.compared += 1;
+            counts.mismatched += 1;
+            let (line, first) = first_difference(&trial.outcome, &actual);
+            report
+                .failures
+                .push(format!("{at}: differs at line {line}: {first}"));
+            let _ = write!(
                     report.detail,
                     "== MISMATCH {fixture} {at}\nargs: {}\nexpected (.NET):\n{}actual (interpreter):\n{}\n",
                     serde_json::to_string(&trial.args).unwrap_or_default(),
                     trial.outcome,
                     actual
                 );
-            }
-            Err(Stop::Bug(msg)) => {
-                counts.bugs += 1;
-                report.failures.push(format!("{at}: {msg}"));
-                let _ = write!(
-                    report.detail,
-                    "== BUG {fixture} {at}\nargs: {}\n{msg}\nexpected (.NET):\n{}\n",
-                    serde_json::to_string(&trial.args).unwrap_or_default(),
-                    trial.outcome
-                );
-            }
-            Err(Stop::Unspecified(why)) => *counts.unspecified.entry(why).or_default() += 1,
-            Err(Stop::Unsupported(why)) => *counts.unsupported.entry(why).or_default() += 1,
-            Err(Stop::Throw(_)) => unreachable!("replay renders exceptions"),
         }
+        Err(Stop::Bug(msg)) => {
+            counts.bugs += 1;
+            report.failures.push(format!("{at}: {msg}"));
+            let _ = write!(
+                report.detail,
+                "== BUG {fixture} {at}\nargs: {}\n{msg}\nexpected (.NET):\n{}\n",
+                serde_json::to_string(&trial.args).unwrap_or_default(),
+                trial.outcome
+            );
+        }
+        Err(Stop::Unspecified(why)) => *counts.unspecified.entry(why).or_default() += 1,
+        Err(Stop::Unsupported(why)) => *counts.unsupported.entry(why).or_default() += 1,
+        Err(Stop::Throw(_)) => unreachable!("replay renders exceptions"),
     }
-    Ok(report)
 }
 
 /// The first line where the two texts differ (1-based), shown both ways.
