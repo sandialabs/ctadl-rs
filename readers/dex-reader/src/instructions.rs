@@ -3584,6 +3584,192 @@ impl<'a> DisplayInstr for Format<'a> {
 mod tests {
     use super::*;
 
+    /// A `DataFlow` reading `source` and writing `dest`, given as register numbers.
+    fn df(source: &[u32], dest: &[u32]) -> DataFlow {
+        DataFlow {
+            source: source.iter().copied().map(Reg).collect(),
+            dest: dest.iter().copied().map(Reg).collect(),
+        }
+    }
+
+    fn f12x(a: u32, b: u32) -> Format12x {
+        Format12x {
+            a: Reg(a),
+            b: Reg(b),
+        }
+    }
+
+    fn f22c(a: u32, b: u32) -> Format22c<FieldIdx> {
+        Format22c {
+            a: Reg(a),
+            b: Reg(b),
+            idx: FieldIdx(0),
+        }
+    }
+
+    fn f23x(a: u32, b: u32, c: u32) -> Format23x {
+        Format23x {
+            a: Reg(a),
+            b: Reg(b),
+            c: Reg(c),
+        }
+    }
+
+    #[test]
+    fn moves() {
+        use Instruction::*;
+        assert_eq!(MoveObject(f12x(0, 1)).data_flow(), df(&[1], &[0]));
+        assert_eq!(MoveWide(f12x(0, 2)).data_flow(), df(&[2, 3], &[0, 1]));
+        assert_eq!(
+            MoveResultWide(Format11x { a: Reg(4) }).data_flow(),
+            df(&[], &[4, 5])
+        );
+        assert_eq!(
+            ReturnWide(Format11x { a: Reg(4) }).data_flow(),
+            df(&[4, 5], &[])
+        );
+    }
+
+    #[test]
+    fn consts() {
+        use Instruction::*;
+        assert_eq!(
+            ConstWide16(Format21s { a: Reg(6), lit: 1 }).data_flow(),
+            df(&[], &[6, 7])
+        );
+        // check-cast narrows the type of vA in place, so it both reads and writes it.
+        assert_eq!(
+            CheckCast(Format21c {
+                a: Reg(3),
+                idx: TypeIdx(0),
+            })
+            .data_flow(),
+            df(&[3], &[3])
+        );
+    }
+
+    #[test]
+    fn loads() {
+        use Instruction::*;
+        assert_eq!(IGetObject(f22c(0, 1)).data_flow(), df(&[1], &[0]));
+        assert_eq!(IGetWide(f22c(0, 2)).data_flow(), df(&[2], &[0, 1]));
+        assert_eq!(AGet(f23x(0, 1, 2)).data_flow(), df(&[1, 2], &[0]));
+        assert_eq!(AGetWide(f23x(0, 2, 3)).data_flow(), df(&[2, 3], &[0, 1]));
+    }
+
+    #[test]
+    fn stores() {
+        use Instruction::*;
+        assert_eq!(IPutObject(f22c(0, 1)).data_flow(), df(&[0, 1], &[]));
+        assert_eq!(APut(f23x(0, 1, 2)).data_flow(), df(&[0, 1, 2], &[]));
+        assert_eq!(APutWide(f23x(0, 2, 3)).data_flow(), df(&[0, 1, 2, 3], &[]));
+        assert_eq!(
+            SPutWide(Format21c {
+                a: Reg(4),
+                idx: FieldIdx(0),
+            })
+            .data_flow(),
+            df(&[4, 5], &[])
+        );
+    }
+
+    /// Every instance-field and array store reads its value, object or array, and index
+    /// registers, and writes none.
+    #[test]
+    fn stores_read_every_operand_and_write_nothing() {
+        use Instruction::*;
+        let iputs: [(fn(Format22c<FieldIdx>) -> Instruction, bool); 7] = [
+            (IPut, false),
+            (IPutBoolean, false),
+            (IPutByte, false),
+            (IPutChar, false),
+            (IPutShort, false),
+            (IPutObject, false),
+            (IPutWide, true),
+        ];
+        for (op, wide) in iputs {
+            let inst = op(f22c(0, 5));
+            let flow = inst.data_flow();
+            let mut expected: Vec<Reg> = vec![Reg(0)];
+            if wide {
+                expected.push(Reg(1));
+            }
+            expected.push(Reg(5));
+            assert_eq!(
+                flow.source.as_slice(),
+                expected,
+                "opcode {:#04x}",
+                inst.discriminant()
+            );
+            assert!(flow.dest.is_empty(), "opcode {:#04x}", inst.discriminant());
+        }
+
+        let aputs: [(fn(Format23x) -> Instruction, bool); 7] = [
+            (APut, false),
+            (APutBoolean, false),
+            (APutByte, false),
+            (APutChar, false),
+            (APutShort, false),
+            (APutObject, false),
+            (APutWide, true),
+        ];
+        for (op, wide) in aputs {
+            let inst = op(f23x(0, 5, 6));
+            let flow = inst.data_flow();
+            let mut expected: Vec<Reg> = vec![Reg(0)];
+            if wide {
+                expected.push(Reg(1));
+            }
+            expected.extend([Reg(5), Reg(6)]);
+            assert_eq!(
+                flow.source.as_slice(),
+                expected,
+                "opcode {:#04x}",
+                inst.discriminant()
+            );
+            assert!(flow.dest.is_empty(), "opcode {:#04x}", inst.discriminant());
+        }
+    }
+
+    #[test]
+    fn arithmetic() {
+        use Instruction::*;
+        assert_eq!(IntToLong(f12x(0, 2)).data_flow(), df(&[2], &[0, 1]));
+        assert_eq!(
+            AddLong(f23x(0, 2, 4)).data_flow(),
+            df(&[2, 3, 4, 5], &[0, 1])
+        );
+        assert_eq!(
+            AddLong2Addr(f12x(0, 2)).data_flow(),
+            df(&[0, 1, 2, 3], &[0, 1])
+        );
+        assert_eq!(CmpLong(f23x(0, 2, 4)).data_flow(), df(&[2, 3, 4, 5], &[0]));
+    }
+
+    #[test]
+    fn invokes_read_their_arguments() {
+        use Instruction::*;
+        let args = vec![Reg(1), Reg(2), Reg(3)];
+        assert_eq!(
+            InvokeVirtual(Format35c {
+                idx: MethodIdx(0),
+                args,
+            })
+            .data_flow(),
+            df(&[1, 2, 3], &[])
+        );
+        // More arguments than `Regs` holds inline.
+        let args: Vec<Reg> = (10..20).map(Reg).collect();
+        assert_eq!(
+            InvokeStaticRange(Format3rc {
+                idx: MethodIdx(0),
+                args,
+            })
+            .data_flow(),
+            df(&(10..20).collect::<Vec<_>>(), &[])
+        );
+    }
+
     /// `iput-wide vA, vB, field` reads the value pair `vA, vA+1` and the object `vB`. It writes
     /// no register, like every other store.
     #[test]
