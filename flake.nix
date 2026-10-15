@@ -191,6 +191,10 @@
         #   repros of divergences from Cecil: the `.il` sources in
         #   readers/cil-reader/fixtures, assembled as Cecil's are, and the
         #   modules gapGen writes.
+        # - `<name>.cs.dll` and `<name>-debug.cs.dll`: the `.cs` sources in
+        #   readers/cil-reader/fixtures, compiled as Cecil's are and again
+        #   unoptimized, since Debug and Release shape the IL differently
+        #   (the `cil:exec` check runs both).
         cilFixtures = pkgs.stdenvNoCC.mkDerivation {
           # `name` rather than pname/version: see cecilDump.
           name = "cil-fixtures-${builtins.substring 0 7 cecil.rev}";
@@ -218,18 +222,20 @@
               echo "assembled $name.dll"
             done
 
-            for cs in ${cecil}/Test/Resources/cs/*.cs; do
-              name=$(basename "$cs")
-              stem=''${name%.cs}
-              build=work/$stem
+            # compile <source> <assembly name> <Release|Debug>: builds one
+            # source into work/<assembly name>/bin/<config>/<assembly name>.dll.
+            compile() {
+              local cs=$1 project=$2 config=$3 optimize=true
+              if [ "$config" = Debug ]; then optimize=false; fi
+              local build=work/$project
               mkdir -p "$build"
-              cat >"$build/$stem.csproj" <<EOF
+              cat >"$build/$project.csproj" <<EOF
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <TargetFramework>net8.0</TargetFramework>
-                <AssemblyName>$stem</AssemblyName>
+                <AssemblyName>$project</AssemblyName>
                 <DefineConstants>NET_CORE</DefineConstants>
-                <Optimize>true</Optimize>
+                <Optimize>$optimize</Optimize>
                 <Deterministic>true</Deterministic>
                 <DebugType>none</DebugType>
                 <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
@@ -244,14 +250,31 @@
               </ItemGroup>
             </Project>
             EOF
-              if ! (cd "$build" && dotnet build -c Release --nologo -v q >build.log 2>&1); then
+              if ! (cd "$build" && dotnet build -c "$config" --nologo -v q >build.log 2>&1); then
                 cat "$build/build.log" >&2
                 exit 1
               fi
-              cp "$build/bin/Release/$stem.dll" "$out/$name.dll"
+            }
+
+            for cs in ${cecil}/Test/Resources/cs/*.cs; do
+              name=$(basename "$cs")
+              stem=''${name%.cs}
+              compile "$cs" "$stem" Release
+              cp "work/$stem/bin/Release/$stem.dll" "$out/$name.dll"
               echo "compiled $name.dll"
               ptr-gen "$out/$name.dll" "$out/ptr-$name.dll"
               echo "rewrote ptr-$name.dll"
+            done
+
+            for cs in ${./readers/cil-reader/fixtures}/*.cs; do
+              name=$(basename "$cs")
+              stem=''${name%.cs}
+              compile "$cs" "$stem" Release
+              cp "work/$stem/bin/Release/$stem.dll" "$out/$name.dll"
+              echo "compiled $name.dll"
+              compile "$cs" "$stem-debug" Debug
+              cp "work/$stem-debug/bin/Debug/$stem-debug.dll" "$out/$stem-debug.cs.dll"
+              echo "compiled $stem-debug.cs.dll"
             done
 
             gap-gen "$out"
