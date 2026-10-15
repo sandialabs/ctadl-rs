@@ -7,6 +7,7 @@
 //! - Layer 1, [`InsFlow`]: one instruction at a time, with operands named by
 //!   position ([`Slot::In`], [`Slot::Out`]). A pure function of the
 //!   instruction and its resolved operands; no stack simulation. See
+//!   [`MethodBody::flows`](crate::model::MethodBody::flows) and
 //!   [`instruction_flow`].
 //! - Layer 2: the CFG and stack heights of a whole method, with stack
 //!   positions bound to depth-named variables.
@@ -19,10 +20,12 @@ pub mod check;
 mod edges;
 mod opcode;
 mod operands;
+mod prefix;
 
 pub use edges::{Edge, Loc};
 pub use opcode::instruction_flow;
 pub use operands::{ArrayMethod, FlowCx, Operands, ResolvedMethod};
+pub use prefix::is_prefix;
 
 use crate::cil::OpCode;
 use crate::model::{MethodSig, TypeSig};
