@@ -278,3 +278,152 @@ fn new_instance_assign() {
         panic!("Expected JavaObject, got {:?}", exp);
     }
 }
+
+/// A parser whose constant pool holds one field, `LFoo;->cb:LBar;`, at index 0.
+fn parser_with_field() -> DexParser<'static> {
+    use dex_reader::types::{FieldId, StringId, StringTable, TypeId};
+
+    // Each string_data_item is a ULEB128 UTF-16 length, the MUTF-8 bytes, then a NUL.
+    let data: &'static [u8] = b"\x05LBar;\0\x05LFoo;\0\x02cb\0";
+    let mut parser = dummy_parser();
+    parser.data = data;
+    parser.strings = StringTable {
+        data,
+        string_ids: vec![
+            StringId { string_data_off: 0 },
+            StringId { string_data_off: 7 },
+            StringId {
+                string_data_off: 14,
+            },
+        ],
+    };
+    parser.type_ids = vec![TypeId { descriptor_idx: 0 }, TypeId { descriptor_idx: 1 }];
+    parser.field_ids = vec![FieldId {
+        class_idx: 1,
+        type_idx: 0,
+        name_idx: 2,
+    }];
+    parser
+}
+
+/// Translates a store and returns the registers that flow into the stored value, and the object
+/// (or array) register the value is stored into.
+///
+/// Stores translate to `temp = assign(values...)` then `store(object.field, temp)`.
+fn store_parts(parser: &DexParser<'_>, inst: Instruction) -> (Vec<String>, String) {
+    let mut ctx = Context::new();
+    let mut locals = Locals::default();
+    let stmts = ctx
+        .dataflow_to_assign(parser, &dummy_code_item(), &inst, &mut locals)
+        .unwrap();
+    let [assign, store] = stmts.as_slice() else {
+        panic!("expected an assign and a store, got {stmts:?}");
+    };
+    let StatementKind::Assign {
+        dest: temp,
+        sources,
+    } = &assign.kind
+    else {
+        panic!("expected an assign, got {assign:?}");
+    };
+    let StatementKind::Store { dest, value, .. } = &store.kind else {
+        panic!("expected a store, got {store:?}");
+    };
+    assert_eq!(value, &Exp::from(temp.clone()), "store must write the temp");
+    let values = sources
+        .iter()
+        .map(|s| match s {
+            Exp::Variable(v) => local_name(&locals, v),
+            other => panic!("expected a variable source, got {other:?}"),
+        })
+        .collect();
+    (values, local_name(&locals, &dest.base))
+}
+
+#[test]
+fn iput_object_stores_value() {
+    use dex_reader::instructions::{FieldIdx, Format22c};
+    let inst = Instruction::IPutObject(Format22c {
+        a: Reg(0),
+        b: Reg(1),
+        idx: FieldIdx(0),
+    });
+    assert_eq!(
+        store_parts(&parser_with_field(), inst),
+        (vec!["v0".to_string()], "v1".to_string())
+    );
+}
+
+/// `iput-object p0, p0, F` is what `this.f = this` compiles to. The value and the object are
+/// the same register, and the value must still flow into the field.
+#[test]
+fn iput_object_self_alias_stores_value() {
+    use dex_reader::instructions::{FieldIdx, Format22c};
+    let inst = Instruction::IPutObject(Format22c {
+        a: Reg(0),
+        b: Reg(0),
+        idx: FieldIdx(0),
+    });
+    assert_eq!(
+        store_parts(&parser_with_field(), inst),
+        (vec!["v0".to_string()], "v0".to_string())
+    );
+}
+
+#[test]
+fn iput_wide_stores_value_pair() {
+    use dex_reader::instructions::{FieldIdx, Format22c};
+    let inst = Instruction::IPutWide(Format22c {
+        a: Reg(0),
+        b: Reg(2),
+        idx: FieldIdx(0),
+    });
+    assert_eq!(
+        store_parts(&parser_with_field(), inst),
+        (vec!["v0".to_string(), "v1".to_string()], "v2".to_string())
+    );
+}
+
+/// `aput-object v1, v1, v2` is `a[i] = a`: the value and the array are the same register.
+#[test]
+fn aput_object_self_alias_stores_value() {
+    use dex_reader::instructions::Format23x;
+    let inst = Instruction::APutObject(Format23x {
+        a: Reg(1),
+        b: Reg(1),
+        c: Reg(2),
+    });
+    assert_eq!(
+        store_parts(&dummy_parser(), inst),
+        (vec!["v1".to_string()], "v1".to_string())
+    );
+}
+
+/// `aput v0, v1, v0` is `a[i] = i`: the value and the index are the same register.
+#[test]
+fn aput_value_is_index_stores_value() {
+    use dex_reader::instructions::Format23x;
+    let inst = Instruction::APut(Format23x {
+        a: Reg(0),
+        b: Reg(1),
+        c: Reg(0),
+    });
+    assert_eq!(
+        store_parts(&dummy_parser(), inst),
+        (vec!["v0".to_string()], "v1".to_string())
+    );
+}
+
+#[test]
+fn aput_wide_stores_value_pair() {
+    use dex_reader::instructions::Format23x;
+    let inst = Instruction::APutWide(Format23x {
+        a: Reg(0),
+        b: Reg(2),
+        c: Reg(3),
+    });
+    assert_eq!(
+        store_parts(&dummy_parser(), inst),
+        (vec!["v0".to_string(), "v1".to_string()], "v2".to_string())
+    );
+}

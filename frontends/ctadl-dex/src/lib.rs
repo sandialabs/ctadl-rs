@@ -802,12 +802,13 @@ impl Context {
             | Instruction::IPutObject(f)
             | Instruction::IPutWide(f) => {
                 let temp_var = self.counter.temp(locals);
-                // flow sources to temp
+                // flow the stored value to temp. Take it from vA by position, not by filtering the
+                // object out of `source`: in `iput-object p0, p0, F` the value is the object.
+                let value = stored_value_regs(f.a, matches!(inst, Instruction::IPutWide(_)));
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
-                    source
-                        .cloned()
-                        .filter(|r| *r != f.b)
+                    value
+                        .into_iter()
                         .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 let object = reg_to_var(code_item, f.b, locals);
@@ -870,11 +871,13 @@ impl Context {
             | Instruction::APutObject(f)
             | Instruction::APutWide(f) => {
                 let temp_var = self.counter.temp(locals);
+                // As for iput: the value is vA by position, since it may share a register with
+                // the array (`a[i] = a`) or the index (`a[i] = i`).
+                let value = stored_value_regs(f.a, matches!(inst, Instruction::APutWide(_)));
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
-                    source
-                        .cloned()
-                        .filter(|r| *r != f.b && *r != f.c)
+                    value
+                        .into_iter()
                         .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 let array_var = reg_to_var(code_item, f.b, locals);
@@ -951,6 +954,15 @@ impl Context {
 
     fn except(locals: &mut Locals) -> VariableRef {
         VariableRef::new_local_idx(locals.get_or_intern("throwval"))
+    }
+}
+
+/// The registers holding the value a store writes: `a`, or the pair `a, a+1` when `wide`.
+fn stored_value_regs(a: Reg, wide: bool) -> SmallVec<[Reg; 2]> {
+    if wide {
+        smallvec![a, a.next_reg()]
+    } else {
+        smallvec![a]
     }
 }
 
