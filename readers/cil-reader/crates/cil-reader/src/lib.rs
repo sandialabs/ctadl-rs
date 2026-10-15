@@ -12,6 +12,7 @@
 
 pub mod cil;
 pub mod error;
+pub mod flow;
 pub mod model;
 pub mod raw;
 pub mod token;
