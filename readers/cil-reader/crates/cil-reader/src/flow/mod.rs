@@ -6,16 +6,23 @@
 //!
 //! - Layer 1, [`InsFlow`]: one instruction at a time, with operands named by
 //!   position ([`Slot::In`], [`Slot::Out`]). A pure function of the
-//!   instruction and its resolved operands; no stack simulation.
+//!   instruction and its resolved operands; no stack simulation. See
+//!   [`instruction_flow`].
 //! - Layer 2: the CFG and stack heights of a whole method, with stack
 //!   positions bound to depth-named variables.
 //!
 //! The layer reports facts and makes no policy choices: every operand an
 //! instruction reads appears in some effect, with its [`Role`].
 
+mod call;
+pub mod check;
 mod edges;
+mod opcode;
+mod operands;
 
 pub use edges::{Edge, Loc};
+pub use opcode::instruction_flow;
+pub use operands::{ArrayMethod, FlowCx, Operands, ResolvedMethod};
 
 use crate::cil::OpCode;
 use crate::model::{MethodSig, TypeSig};
@@ -1014,5 +1021,7 @@ impl fmt::Display for Control {
     }
 }
 
+#[cfg(test)]
+mod opcode_tests;
 #[cfg(test)]
 mod tests;
