@@ -973,6 +973,22 @@ and 3 (and the collision rule's), and `cil:flow` in `cargo xtask regression
 - **client**: `xtask/src/cil/flow/client.rs`, an argument-to-return taint
   analysis that matches only on `Effect`, `CallKind` and `Control`.
 
+A second check, `cil:exec`, runs the layer. `flow-run`
+(`readers/cil-reader/tools/FlowRun`) calls every method of the exec fixtures
+(`exec.cs`, built Release and Debug, and `exec.il`) on .NET with random
+arguments and statics. An interpreter over `MethodFlow`
+(`xtask/src/cil/exec/`) runs the same calls from the same state, over both
+the default CFG and the `split_after_throwing_in_try` one, and the end states
+must match. The interpreter moves only along the CFG, checks every height it
+reaches against the bound ones, and checks each input that `resolve_address`
+resolves against the address it actually holds. Injecting the bugs this
+layer could plausibly have (no collision temporary, a missing leave, finally,
+endfilter or exception edge, a handler's height, operand order, a wrong
+`rethrow` handler, a join that keeps one side's address) makes it fail. It
+found one real bug: a copy kept a resolved place that named the copy's own
+destination (`ldelema; dup` resolved `dup`'s output to `&a[s1]`, with `s1`
+the address itself).
+
 Departures from the first version of this design, each reflected above:
 
 1. `Field::Block { size }` and `New::sizes: Vec<S>`. The table gave `cpblk`
