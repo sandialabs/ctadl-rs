@@ -454,3 +454,120 @@ fn shl_long_reads_one_shift_register() {
         .collect();
     assert_eq!(flows, expected);
 }
+
+/// A parser whose string table holds `strings`, in order. Each string must be ASCII.
+fn parser_with_strings(strings: &[&str]) -> DexParser<'static> {
+    use dex_reader::types::{StringId, StringTable};
+
+    // Each string_data_item is a ULEB128 UTF-16 length, the MUTF-8 bytes, then a NUL.
+    let mut data = Vec::new();
+    let mut string_ids = Vec::new();
+    for s in strings {
+        assert!(s.is_ascii() && s.len() < 0x80);
+        string_ids.push(StringId {
+            string_data_off: data.len() as u32,
+        });
+        data.push(s.len() as u8);
+        data.extend_from_slice(s.as_bytes());
+        data.push(0);
+    }
+    let data: &'static [u8] = Box::leak(data.into_boxed_slice());
+    let mut parser = dummy_parser();
+    parser.data = data;
+    parser.strings = StringTable { data, string_ids };
+    parser
+}
+
+/// A parser whose method 0 is `Ljava/lang/invoke/MethodHandle;->invoke()Ljava/lang/Object;`.
+fn parser_with_method_handle_invoke() -> DexParser<'static> {
+    use dex_reader::types::{MethodId, ProtoId, TypeId};
+
+    let mut parser = parser_with_strings(&[
+        "Ljava/lang/invoke/MethodHandle;",
+        "Ljava/lang/Object;",
+        "invoke",
+        "L",
+    ]);
+    parser.type_ids = vec![TypeId { descriptor_idx: 0 }, TypeId { descriptor_idx: 1 }];
+    parser.proto_ids = vec![ProtoId {
+        shorty_idx: 3,
+        return_type_idx: 1,
+        parameters_off: 0,
+    }];
+    parser.method_ids = vec![MethodId {
+        class_idx: 0,
+        proto_idx: 0,
+        name_idx: 2,
+    }];
+    parser
+}
+
+fn arg_names(locals: &Locals, args: &[Exp]) -> Vec<String> {
+    args.iter()
+        .map(|a| {
+            local_name(
+                locals,
+                a.variable_ref().expect("expected a variable argument"),
+            )
+        })
+        .collect()
+}
+
+/// `invoke-polymorphic {v0, v1, v2}, MethodHandle.invoke, proto` calls `invoke` on the handle
+/// in `v0`, passing `v1` and `v2`, like invoke-virtual.
+#[test]
+fn invoke_polymorphic_is_a_virtual_call() {
+    use dex_reader::instructions::{Format45cc, MethodIdx, ProtoIdx};
+    let parser = parser_with_method_handle_invoke();
+    let inst = Instruction::InvokePolymorphic(Format45cc {
+        method_id: MethodIdx(0),
+        args: vec![Reg(0), Reg(1), Reg(2)],
+        proto_id: ProtoIdx(0),
+    });
+    let mut ctx = Context::new();
+    let mut locals = Locals::default();
+    let stmt = ctx
+        .decode_call(&parser, &dummy_code_item(), &inst, &mut locals)
+        .expect("invoke-polymorphic should lower to a call");
+    let StatementKind::CallAssign { style, args, rets } = &stmt.kind else {
+        panic!("expected a call, got {stmt:?}");
+    };
+    let CallStyle::JavaCall {
+        receiver,
+        cls,
+        simple_name,
+        dispatch,
+        ..
+    } = style
+    else {
+        panic!("expected a Java call, got {style:?}");
+    };
+    assert_eq!(local_name(&locals, receiver), "v0");
+    assert_eq!(&**cls, "Ljava/lang/invoke/MethodHandle;");
+    assert_eq!(&**simple_name, "invoke");
+    assert_eq!(*dispatch, JavaDispatch::Virtual);
+    assert_eq!(arg_names(&locals, args), ["v1", "v2"]);
+    assert_eq!(ctx.call_result.as_ref(), Some(&rets[0]));
+}
+
+/// invoke-custom has no method to name, so it becomes a call with an unknown target. It must
+/// still define the result that the following move-result reads.
+#[test]
+fn invoke_custom_is_a_call_with_unknown_target() {
+    use dex_reader::instructions::{CallIdx, Format35c};
+    let inst = Instruction::InvokeCustom(Format35c {
+        idx: CallIdx(0),
+        args: vec![Reg(1), Reg(2)],
+    });
+    let mut ctx = Context::new();
+    let mut locals = Locals::default();
+    let stmt = ctx
+        .decode_call(&dummy_parser(), &dummy_code_item(), &inst, &mut locals)
+        .expect("invoke-custom should lower to a call");
+    let StatementKind::CallAssign { style, args, rets } = &stmt.kind else {
+        panic!("expected a call, got {stmt:?}");
+    };
+    assert!(matches!(style, CallStyle::Unknown), "got {style:?}");
+    assert_eq!(arg_names(&locals, args), ["v1", "v2"]);
+    assert_eq!(ctx.call_result.as_ref(), Some(&rets[0]));
+}

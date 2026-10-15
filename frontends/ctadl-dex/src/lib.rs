@@ -583,6 +583,20 @@ impl Context {
         // If this instruction is not a call, bail out.
         let args_regs = inst.call_args()?; // returns &[Reg]
 
+        // invoke-custom names a call site, not a method: a bootstrap method picks the target at
+        // run time. Record the call with an unknown target, so that the move-result after it
+        // reads this call's result rather than an earlier call's.
+        if matches!(
+            inst,
+            Instruction::InvokeCustom(_) | Instruction::InvokeCustomRange(_)
+        ) {
+            let args = args_regs
+                .iter()
+                .map(|reg| AccessPath::without_fields(reg_to_var(code, *reg, locals)).into())
+                .collect();
+            return Some(self.call_assign(CallStyle::Unknown, args, locals));
+        }
+
         // Resolve the method index from the specific invoke variant, and with it the
         // dispatch kind.
         let (method_idx, dispatch) = match inst {
@@ -596,6 +610,12 @@ impl Context {
             Instruction::InvokeDirectRange(fmt) => (fmt.idx, None),
             Instruction::InvokeStaticRange(fmt) => (fmt.idx, None),
             Instruction::InvokeInterfaceRange(fmt) => (fmt.idx, Some(JavaDispatch::Interface)),
+            // invoke-polymorphic calls a signature-polymorphic method (`MethodHandle.invoke`,
+            // `invokeExact`, ...) on the handle in its first argument, like invoke-virtual.
+            Instruction::InvokePolymorphic(fmt) => (fmt.method_id, Some(JavaDispatch::Virtual)),
+            Instruction::InvokePolymorphicRange(fmt) => {
+                (fmt.method_id, Some(JavaDispatch::Virtual))
+            }
             _ => return None,
         };
         let is_static = dispatch.is_none();
@@ -635,20 +655,32 @@ impl Context {
             }
         };
 
+        let args = if is_static {
+            args
+        } else {
+            args.into_iter().skip(1).collect()
+        };
+        Some(self.call_assign(style, args, locals))
+    }
+
+    /// A call statement returning into the result and exception temporaries, which the next
+    /// move-result or move-exception reads.
+    fn call_assign(
+        &mut self,
+        style: CallStyle,
+        args: ctadl_ir::ThinVec<Exp>,
+        locals: &mut Locals,
+    ) -> Statement {
         // Dex returns into a special register, so just create a temporary.
         let retval = Context::ret(locals);
         let throwval = Context::except(locals);
         self.call_result = Some(retval.clone());
         self.catch_result = Some(throwval.clone());
-        Some(Statement::new_kind(StatementKind::CallAssign {
+        Statement::new_kind(StatementKind::CallAssign {
             style,
             rets: ctadl_ir::thin_vec![retval, throwval],
-            args: if is_static {
-                args
-            } else {
-                args.into_iter().skip(1).collect()
-            },
-        }))
+            args,
+        })
     }
 
     fn dataflow_to_assign(
