@@ -860,38 +860,30 @@ impl<T: DisplayInstr + Copy> DisplayInstr for Format3rc<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Format45cc {
-    pub a: u32,
     pub method_id: MethodIdx,
-    pub c: Reg,
-    pub d: Reg,
-    pub e: Reg,
-    pub f: Reg,
-    pub g: Reg,
+    pub args: Vec<Reg>,
     pub proto_id: ProtoIdx,
 }
 
 impl Format45cc {
     pub fn new(insns: &[u16]) -> (usize, Self) {
-        let a = ((insns[0] >> 8) & 0x0f) as u32;
+        // Same register layout as 35c: A|G|op BBBB F|E|D|C, then the proto index HHHH.
+        let count: usize = ((insns[0] >> 12) & 0x0f).into();
+        let g = Reg(((insns[0] >> 8) & 0x0f).into());
         let method_id = MethodIdx(insns[1].into());
         let c = Reg((insns[2] & 0x0f).into());
         let d = Reg(((insns[2] >> 4) & 0x0f).into());
         let e = Reg(((insns[2] >> 8) & 0x0f).into());
         let f = Reg(((insns[2] >> 12) & 0x0f).into());
-        let g = Reg(((insns[0] >> 12) & 0x0f).into());
         let proto_id = ProtoIdx(insns[3].into());
+        let args = [c, d, e, f, g].into_iter().take(count).collect();
         (
             4,
             Self {
-                a,
                 method_id,
-                c,
-                d,
-                e,
-                f,
-                g,
+                args,
                 proto_id,
             },
         )
@@ -899,42 +891,26 @@ impl Format45cc {
 }
 impl DisplayInstr for Format45cc {
     fn display_raw(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{{")?;
+        for (i, arg) in self.args.iter().enumerate() {
+            if i != 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", RawArg(arg))?;
+        }
         write!(
             f,
-            "{}, {}, {}, {}, {}, {}, {}, {}",
-            self.a,
+            "}}, {}, {}",
             RawArg(self.method_id),
-            RawArg(self.c),
-            RawArg(self.d),
-            RawArg(self.e),
-            RawArg(self.f),
-            RawArg(self.g),
-            RawArg(self.proto_id),
+            RawArg(self.proto_id)
         )
     }
 
     fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
         // Smali-style order:
         //   {regs}, method, proto
-        let mut regs: Vec<Reg> = Vec::with_capacity(self.a as usize);
-        if self.a > 0 {
-            regs.push(self.c);
-        }
-        if self.a > 1 {
-            regs.push(self.d);
-        }
-        if self.a > 2 {
-            regs.push(self.e);
-        }
-        if self.a > 3 {
-            regs.push(self.f);
-        }
-        if self.a > 4 {
-            regs.push(self.g);
-        }
-
         write!(f, "{{")?;
-        for (i, r) in regs.iter().enumerate() {
+        for (i, r) in self.args.iter().enumerate() {
             if i != 0 {
                 write!(f, ", ")?;
             }
@@ -2694,8 +2670,13 @@ impl Instruction {
             | InvokeDirectRange(f)
             | InvokeStaticRange(f)
             | InvokeInterfaceRange(f) => dataflow_from_args(&f.args),
+            InvokePolymorphic(f) => dataflow_from_args(&f.args),
+            InvokePolymorphicRange(f) => dataflow_from_args(&f.args),
             InvokeCustom(f) => dataflow_from_args(&f.args),
             InvokeCustomRange(f) => dataflow_from_args(&f.args),
+            // 21c: dest=a
+            ConstMethodHandle(f) => dataflow!([], [f.a]),
+            ConstMethodType(f) => dataflow!([], [f.a]),
             // 31t
             FillArrayData(f) | PackedSwitch(f) | SparseSwitch(f) => {
                 dataflow!([f.a], [])
@@ -2816,16 +2797,12 @@ impl Instruction {
             | UnusedF8(_) | UnusedF9(_) => {
                 dataflow!([], [])
             }
-            // Not modeled yet
-            InvokePolymorphic(_)
-            | InvokePolymorphicRange(_)
-            | ConstMethodHandle(_)
-            | ConstMethodType(_) => dataflow!([], []),
         }
     }
 
     /// Returns the argument registers of a call/invoke instruction in order, or `None` if this
-    /// instruction is not a call (invoke or invoke-custom). Array instructions are excluded.
+    /// instruction is not a call (invoke, invoke-polymorphic or invoke-custom). Array instructions
+    /// are excluded.
     pub fn call_args(&self) -> Option<&[Reg]> {
         use Instruction::*;
         match self {
@@ -2836,13 +2813,16 @@ impl Instruction {
             | InvokeDirectRange(f)
             | InvokeStaticRange(f)
             | InvokeInterfaceRange(f) => Some(&f.args),
+            InvokePolymorphic(f) => Some(&f.args),
+            InvokePolymorphicRange(f) => Some(&f.args),
             InvokeCustom(f) => Some(&f.args),
             InvokeCustomRange(f) => Some(&f.args),
             _ => None,
         }
     }
 
-    /// Returns `true` if this instruction is an invoke (invoke-virtual, invoke-static, etc.).
+    /// Returns `true` if this instruction is an invoke (invoke-virtual, invoke-static,
+    /// invoke-polymorphic, invoke-custom, etc.).
     pub fn is_invoke(&self) -> bool {
         use Instruction::*;
         matches!(
@@ -2857,6 +2837,10 @@ impl Instruction {
                 | InvokeDirectRange(_)
                 | InvokeStaticRange(_)
                 | InvokeInterfaceRange(_)
+                | InvokePolymorphic(_)
+                | InvokePolymorphicRange(_)
+                | InvokeCustom(_)
+                | InvokeCustomRange(_)
         )
     }
 
@@ -3776,6 +3760,76 @@ mod tests {
             df(&[0, 1, 2, 3], &[0, 1])
         );
         assert_eq!(CmpLong(f23x(0, 2, 4)).data_flow(), df(&[2, 3, 4, 5], &[0]));
+    }
+
+    /// `invoke-polymorphic {v1, v2, v3, v4, v9}, meth@5, proto@7`. Format 45cc is
+    /// `A|G|op BBBB F|E|D|C HHHH`: the argument count A is the high nibble of the first unit.
+    #[test]
+    fn invoke_polymorphic_decodes_and_reads_its_arguments() {
+        let insns = [
+            (5 << 12) | (9 << 8) | 0xfa,
+            5,
+            (4 << 12) | (3 << 8) | (2 << 4) | 1,
+            7,
+        ];
+        let (size, inst) = Instruction::new(&insns);
+        assert_eq!(size, 4);
+        let Instruction::InvokePolymorphic(f) = &inst else {
+            panic!(
+                "expected invoke-polymorphic, got opcode {:#04x}",
+                inst.discriminant()
+            );
+        };
+        assert_eq!(f.method_id, MethodIdx(5));
+        assert_eq!(f.proto_id, ProtoIdx(7));
+        assert_eq!(f.args, [1, 2, 3, 4, 9].map(Reg));
+        assert_eq!(inst.data_flow(), df(&[1, 2, 3, 4, 9], &[]));
+        assert_eq!(inst.call_args(), Some([1, 2, 3, 4, 9].map(Reg).as_slice()));
+        assert!(inst.is_invoke());
+
+        // Two arguments: only C and D are used.
+        let insns = [(2 << 12) | 0xfa, 5, (2 << 4) | 1, 7];
+        let (_, inst) = Instruction::new(&insns);
+        assert_eq!(inst.data_flow(), df(&[1, 2], &[]));
+    }
+
+    #[test]
+    fn invoke_polymorphic_range_and_invoke_custom_read_their_arguments() {
+        use Instruction::*;
+        let inst = InvokePolymorphicRange(Format4rcc {
+            method_id: MethodIdx(0),
+            args: vec![Reg(4), Reg(5), Reg(6)],
+            proto_id: ProtoIdx(0),
+        });
+        assert_eq!(inst.data_flow(), df(&[4, 5, 6], &[]));
+        assert!(inst.is_invoke());
+        let inst = InvokeCustom(Format35c {
+            idx: CallIdx(0),
+            args: vec![Reg(1), Reg(2)],
+        });
+        assert_eq!(inst.data_flow(), df(&[1, 2], &[]));
+        assert!(inst.is_invoke());
+        let inst = InvokeCustomRange(Format3rc {
+            idx: CallIdx(0),
+            args: vec![Reg(7), Reg(8)],
+        });
+        assert_eq!(inst.data_flow(), df(&[7, 8], &[]));
+        assert!(inst.is_invoke());
+    }
+
+    #[test]
+    fn const_method_handle_and_type_write_their_register() {
+        use Instruction::*;
+        let inst = ConstMethodHandle(Format21c {
+            a: Reg(3),
+            idx: MethodHandleIdx(0),
+        });
+        assert_eq!(inst.data_flow(), df(&[], &[3]));
+        let inst = ConstMethodType(Format21c {
+            a: Reg(4),
+            idx: ProtoIdx(0),
+        });
+        assert_eq!(inst.data_flow(), df(&[], &[4]));
     }
 
     /// A long shift's amount is an int: one register, not a pair.
