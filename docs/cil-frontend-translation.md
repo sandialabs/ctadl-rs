@@ -238,9 +238,42 @@ instantiated with a reference type. That is the conservative choice.
 | call result | local `retval` (shared, as in Dex) |
 | `Root::Static` | `new_global()` |
 
-All of them are unversioned (see `cil-flow-api.md` §6.5). The frontend's own
-temporaries (§6.3's `t`, `c_k`, `u_k`, `cell_k`, and §7's delegate loads) are
-fresh locals with prefixes of their own, so they never collide with `t{k}`.
+All of them are unversioned (the flow layer never versions, `cil-flow-api.md`
+§6.5). The frontend's own temporaries (§6.3's `t`, `c_k`, `u_k`, `cell_k`, and
+§7's delegate loads) are fresh locals with prefixes of their own, so they never
+collide with `t{k}`.
+
+### 5.3 What the ctadl-ir pipeline does for the frontend
+
+The frontend's MIR goes through `ssa::run_pipeline` in `ctadl index`
+(`Pipeline::index_default()`): dead-temp elimination, copy coalescing, pruned
+Cytron SSA, then copy propagation and trivial-phi elimination. The flow layer's
+output is raw (unversioned, every copy kept), and the frontend relies on this
+pipeline instead of cleaning it up itself:
+
+- **Unversioned variables.** `ssa::transform` requires IR that is not yet in
+  SSA, and `coalesce_copies` only touches unversioned `Variable::Local`s. §5.2
+  maps every `Var` to such a local, a parameter, or the global.
+- **Depth names.** A `Stack(d)` is reassigned at every push at depth `d`. Pruned
+  Cytron SSA gives each definition of `s{d}` its own version and puts a phi only
+  where two definitions really meet. "What object does this `stfld` write to"
+  is answered by copy propagation rewriting `s0.f := v` to `p0.f := v` after
+  `s0 := p0`.
+- **Copies.** `ldloc`, `stloc`, `dup` and the flow layer's collision
+  temporaries are single-use copies, which `coalesce_copies` merges before SSA.
+  Multi-use copies are removed by `propagate_copies` after SSA, as are phis
+  that merge a value only with copies of itself. Removing them in the frontend
+  would duplicate those passes.
+- **Exceptions.** SSA places the phi that merges the `throwval` versions
+  reaching a handler (§8).
+- **Terminators and reachability.** Every block gets a terminator. Multiple
+  `ret`s are fine, because SSA adds the single exit block itself. Unreachable
+  blocks (common after `leave` into a `finally`) are fine, because `ctadl index`
+  runs with `prune_unreachable`.
+
+The frontend does not test single definitions or dominance: `ssa::transform`
+asserts `FunctionData::verify` itself. The frontend's tests run each corpus
+method through `run_pipeline` and require no panic.
 
 ---
 
@@ -329,6 +362,15 @@ write u_k into P
 caller's `cell_k`, so `u_k` sees it, and through it `P` does too. When
 the argument is unresolved, it is passed as is: it is already a pointer
 variable, and the callee's `deref` writes come back to it.
+
+This depends on `ArtifactLanguage::Cil` returning `Entry` from
+`param_write_back()` (`ctadl-import/src/project.rs`), as JVM and Dex do. CIL
+arguments are passed by value: `starg` only rebinds the callee's own copy, and
+the caller must not see it. A write that must reach the caller goes through a
+`ref`/`out` parameter, which is a `deref` store on the parameter's entry
+version, and that is exactly what `Entry` writes back. (`Exit` is right for C
+only because the C frontend lowers `*out = x` to `out = x`; see the comment on
+`param_write_back`.)
 
 **The rare case: an address merged at a join.** C# `ref` conditionals
 (`ref (c ? ref a : ref b)`) and hand-written IL can merge two addresses, and

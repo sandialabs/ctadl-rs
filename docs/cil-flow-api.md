@@ -5,20 +5,20 @@ Status: design, not implemented. This is milestones M1 and M2 of
 `jvm-reader` get wrong, and so what this design avoids, is in
 `docs/dex-jvm-reader-improvements.md` on the `dex-jvm-reader-fixes` branch. This
 document specifies the API: the types, what every CIL opcode produces, the
-invariants, and how to build and test it. It does not cover the CTADL frontend.
-Where the frontend comes up, it is only to show that the API gives it what it
-needs.
+invariants, and how to build and test it. How the CTADL frontend turns this
+into CTADL IR is a separate design,
+[`cil-frontend-translation.md`](cil-frontend-translation.md).
 
-This layer is not a taint analysis. It is the step *before* compiling to an IR
-on which taint analysis runs. Its job is to say, for each instruction, what it
-reads, what it writes, and how values move between them, in a vocabulary small
-enough that the `ctadl-cil` frontend can lower it without decoding CIL itself.
+This layer is an API for getting dataflow information out of CIL. It does not
+generate IR and it is not an analysis. Its job is to say, for each instruction,
+what it reads, what it writes, and how values move between them, in a
+vocabulary small enough that a client can use it without decoding CIL itself.
 The CIL-specific pattern matching (operand order, stack shape, prefixes,
 multi-dimensional array methods, `newobj`, managed pointers) is done here once,
-so the frontend does not have to do it. Policy belongs to the frontend and to
-CTADL: which flows matter, whether an index taints an element, whether a branch
-condition is implicit flow, or whether `initobj` kills anything. The layer
-reports facts and makes none of those choices.
+so no client has to do it. Policy belongs to the client: which flows matter,
+whether an index taints an element, whether a branch condition is implicit
+flow, or whether `initobj` kills anything. The layer reports facts and makes
+none of those choices.
 
 ---
 
@@ -29,17 +29,13 @@ reports facts and makes none of those choices.
 1. For every CIL instruction, say **what it reads, what it writes, and how
    values move between them**: a plain copy, a computed value, or a move
    through memory (a field, an array element, a managed pointer, a static).
-   This is the basic dataflow an IR needs from each instruction, before any
-   analysis is run on that IR.
-2. Describe each instruction's flow with a **small, closed set of effects** that
-   lower one-to-one onto CTADL IR statements (assign, load, store, call, return).
-   The frontend should translate effects, not decode instructions again: it
-   should not need a `match` on `Code`.
+2. Describe each instruction's flow with a **small, closed set of effects**
+   (assign, load, store, call, return, and a few more). A client matches on
+   effects, not on instructions: it should not need a `match` on `Code`.
 3. **Report facts, not policy.** Every operand an instruction reads appears in
    some effect, including array indices and branch conditions. The layer never
    drops an input because a particular analysis would ignore it. Deciding which
-   reads become IR edges is the frontend's job
-   ([`cil-frontend-translation.md`](cil-frontend-translation.md) §9).
+   reads matter is the client's job.
 4. **Every input has a role.** The API names the receiver, the index, the stored
    value and the address. It does not hand back an unlabelled list of sources the
    way `dex_reader::DataFlow` does.
@@ -54,21 +50,19 @@ reports facts and makes none of those choices.
 **Non-goals**
 
 - Points-to analysis. The layer only resolves managed pointers that can be traced
-  back syntactically (§6.3). Everything else is a `deref` access path that CTADL
-  handles.
+  back syntactically (§6.3). Everything else stays an access through the
+  pointer (`Field::Deref`), and what that means is left to the client.
 - Choosing which flows an analysis follows. Implicit (control-dependence) flow,
   index-to-element flow, sanitizers, and strong updates are all analysis
   policy. The layer reports the inputs involved (branch conditions as `Test`
   effects, indices inside `Element` paths) and leaves the choice to the
-  frontend.
+  client.
 - Resolving calls. A call is reported with its target token and signature.
   Dispatch belongs to CHA and the models.
-- **SSA construction, phis, and copy cleanup.** The `ctadl-ir` pipeline
-  (`ssa::run_pipeline` with `Pipeline::index_default()`, called by `ctadl
-  index`) already does these for every frontend: dead-temp elimination, copy
-  coalescing, pruned Cytron SSA, then copy propagation and trivial-phi
-  elimination. The flow layer is designed to produce input for that pipeline,
-  and it does none of that work itself (§6.5).
+- **Value numbering, SSA, and copy cleanup.** Variables are named by
+  location, not by definition (§2), and every copy CIL makes is reported.
+  Clients that want versions or fewer copies compute them (§6.5).
+- **Generating IR.** That is a client's job.
 
 ---
 
@@ -81,9 +75,6 @@ MethodBody ──► Layer 1: flow::InsFlow             per instruction, statele
                      ▼  bind (CFG + stack heights)
                Layer 2: flow::MethodFlow           per method; In/Out replaced by
                (Effect<Var>: "stack depth 3")       depth-named mutable variables
-                     │
-                     ▼  frontend (not in this crate): Effect<Var> → MIR, 1:1
-               ctadl-ir ssa::run_pipeline          versions, phis, copy cleanup
 ```
 
 The main change from an earlier sketch of this layer: **the per-instruction
@@ -98,32 +89,32 @@ its slot type:
   by opcode, with no method body or CFG.
 - `Effect<Var>` (Layer 2) is the same effect after `In`/`Out` are replaced by
   **stack-depth variables**: an instruction at entry height `h` that pops `p`
-  binds `In(i)` to `Stack(h - p + i)` and `Out(j)` to `Stack(h - p + j)`. The
-  frontend consumes this one.
+  binds `In(i)` to `Stack(h - p + i)` and `Out(j)` to `Stack(h - p + j)`. Most
+  clients consume this one.
 
 Binding is `effect.map(|slot| bind(slot))`. There is no second effect type to
 keep in sync.
 
 **Why depth names and not values.** A `Stack(d)` variable is reassigned every
 time something is pushed at depth `d`, just as a Dex register or a CIL local is
-reassigned. That is fine because the frontend's MIR goes through `ctadl-ir`'s
-SSA pass before any facts are generated. Pruned Cytron SSA gives every
-definition of `s2` its own version and puts a phi only where two definitions
-really meet. Coalescing and copy propagation then remove the copies that
-`ldloc`/`stloc`/`dup` produce. So the reader does not mint definition-unique
-values, place phis, or track origins: the pipeline already does all three, and
-does them for every frontend. The earlier sketch's `Origin` enum and
-`entry_phis` are dropped for that reason. "What object does this `stfld` write
-to" is answered by copy propagation rewriting `s0.f := v` to `p0.f := v` after
-`s0 := p0`.
+reassigned. Bound code is then ordinary register-machine code: mutable
+variables, no phis. Naming values by definition would mean placing phis at
+every join where two pushes meet, which is SSA construction, and a client that
+wants SSA will build it with its own conventions anyway. So the reader does not
+mint definition-unique values, place phis, or track origins. The earlier
+sketch's `Origin` enum and `entry_phis` are dropped for that reason. "What
+object does this `stfld` write to" is a reaching-definitions question over the
+bound code (`s0 := p0` then `s0.f := v`), which any client can ask.
 
-What Layer 2 *does* have to compute is what SSA cannot:
+What Layer 2 *does* have to compute is what a client cannot easily recover from
+the bound code:
 
 - the CFG, including exception edges;
 - each block's entry stack **height**, which is what depth naming needs;
 - each depth's verification **kind** (`StackKind`), which decides whether an
   `ldfld` base is an object or a pointer to a struct;
-- managed-pointer targets (§6.3), because MIR has no address-of operation.
+- managed-pointer targets (§6.3): once bound, an address is just a value in a
+  variable, and tracing it needs the stack-level view.
 
 ---
 
@@ -153,7 +144,7 @@ pub enum Slot {
     Temp(u8),
     /// The exception this instruction raises if it completes abruptly: the
     /// second result of a call, or the operand of throw. In Layer 2 it binds to
-    /// `Var::Thrown`, which the frontend lowers to the conventional `throwval`.
+    /// `Var::Thrown`.
     Thrown,
     /// The exception the enclosing catch/filter handler caught (`rethrow`).
     Caught,
@@ -184,7 +175,7 @@ pub enum Field<S> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Root<S> {
     Slot(S),
-    /// The static-field base. Lowers to CTADL's `VariableRef::new_global()`.
+    /// The static-field base: one root shared by every static field.
     Static,
 }
 
@@ -221,7 +212,7 @@ pub enum Transfer {
     /// reference type. Identity is preserved.
     Cast(TypeOp),
     /// A value type boxed into a fresh heap object. Contents are preserved. The
-    /// frontend may also record an allocation of `TypeOp` for CHA.
+    /// client may also treat it as an allocation of `TypeOp`.
     Box(TypeOp),
     /// A boxed object unwrapped (unbox.any to a value type, unbox). Contents
     /// are preserved.
@@ -262,8 +253,8 @@ pub enum Effect<S> {
     /// `jmp`: exit by transferring every argument slot to `method`.
     Jump { method: MethodOp },
     /// The inputs decide control flow: brtrue, beq, switch, endfilter.
-    /// Reported so a client can model implicit flow. Lowering it to nothing
-    /// is also a valid choice.
+    /// Reported so a client can model implicit flow. Ignoring it is also a
+    /// valid choice.
     Test { srcs: Vec<S> },
     /// Fallback when an operand does not resolve or an opcode is undefined.
     /// The reader does not know the semantics, so it lists every input and
@@ -310,10 +301,7 @@ keep its plain positional semantics.
 These are lightweight and lazily named. Layer 1 resolves only what it needs to
 know the instruction's shape. Names are derived on demand, through the existing
 `names` module with its Cecil-parity spellings. These are for display and
-debugging. The CTADL names (assembly-qualified classes, descriptors with
-positional generic parameters) are built by the frontend's `names.rs`
-([`cil-frontend-translation.md`](cil-frontend-translation.md) §3), which
-departs from Cecil on purpose.
+debugging. A client that needs other spellings builds them from the handles.
 
 ```rust
 pub struct FieldOp  { pub token: MetadataToken, pub is_static: bool, pub ty: TypeSig }
@@ -379,7 +367,7 @@ Recognizing them needs the declaring type's base class, and that type can live
 in another assembly. Instead, `flow::delegate::classify(&CallSite, &dyn
 TypeOracle) -> Option<DelegateOp>` gives `Ctor { target: S, fnptr: S }` or
 `Invoke`. `TypeOracle` is a small trait (`base_type(TypeOp) -> Option<TypeOp>`)
-that the frontend implements over all its loaded assemblies. Without an oracle,
+that the client implements over all the assemblies it has loaded. Without an oracle,
 a structural fallback applies: a ctor with signature `(object, native int)`, or
 `Invoke`/`BeginInvoke` on a class whose ctor has that shape.
 
@@ -437,8 +425,8 @@ pub struct FlowCx<'a> { /* &ModuleData, current MethodSig */ }
 ### 4.1 Variables
 
 ```rust
-/// A pre-SSA variable. All of these are ordinary mutable variables that may be
-/// assigned many times; versioning is ctadl-ir's job (§6.5).
+/// A location-named variable. All of these are ordinary mutable variables that
+/// may be assigned many times (§6.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Var {
     Arg(u16),
@@ -446,13 +434,13 @@ pub enum Var {
     /// The stack slot at this depth (0 = bottom).
     Stack(u16),
     /// An instruction-local temporary. Numbered per instruction and reused
-    /// across instructions; coalescing removes it.
+    /// across instructions.
     Temp(u8),
     /// The exception caught by handler `h`, set on entry to the handler and
     /// read by `rethrow`. A separate variable because depth 0 can be
     /// overwritten before a `rethrow`.
     Caught(u16),
-    /// The exceptional result of the current instruction (CTADL's `throwval`).
+    /// The exceptional result of the current instruction.
     Thrown,
 }
 
@@ -463,7 +451,8 @@ pub enum StackKind { Int32, Int64, NativeInt, Float, ObjRef, ManagedPtr, ValueTy
 ```
 
 The variable naming carries no information about definitions. Two unrelated
-values pushed at depth 2 are both `Stack(2)`, and SSA separates them.
+values pushed at depth 2 are both `Stack(2)`, and a client that needs to tell
+them apart uses reaching definitions or SSA.
 
 ### 4.2 The method view
 
@@ -480,7 +469,7 @@ pub struct Block {
     pub entry_height: u16,
     pub entry_kinds: Vec<StackKind>,
     /// For a catch handler, filter, or filtered handler entry:
-    /// `Stack(0) := Caught(h)`, prepended by the binder so that the frontend
+    /// `Stack(0) := Caught(h)`, prepended by the binder so that a client
     /// has nothing to special-case. Finally and fault entries get nothing:
     /// they start with an empty stack.
     pub instrs: Vec<BoundIns>,
@@ -504,8 +493,8 @@ impl MethodFlow {
     /// Locals and args whose address is taken anywhere (ldloca, ldarga).
     pub fn address_taken(&self) -> &BitSet;
     /// Whether the address that the AddressOf at `at` produces reaches a use
-    /// where `resolve_address` returns None (a merge of two addresses). The
-    /// frontend then also emits a cell for it.
+    /// where `resolve_address` returns None (a merge of two addresses), so a
+    /// client knows that pointer may refer to more than one place.
     pub fn address_escapes_resolution(&self, at: InsId) -> bool;
     /// §4.3, for the whole method.
     pub fn edges(&self) -> impl Iterator<Item = Edge<Var>> + '_;
@@ -524,15 +513,14 @@ Call   Ctor recv=t0 args=[s0, s1]
 Assign s0 := [t0] Copy
 ```
 
-The pre-SSA `coalesce_copies` pass merges `t0` away wherever that is safe, so
-the temporary costs nothing in the facts. The rule is mechanical, applies to
-any instruction, and is tested by invariant 7.8.
+`t0` is a single-use copy, which any copy coalescing removes. The rule is
+mechanical, applies to any instruction, and is tested by invariant 7.8.
 
 **Block splitting.** `MethodFlow::build_with(body, FlowOptions {
 split_after_throwing_in_try: true })` ends a block after every `Call` or `Throw`
 inside a protected range. Each such point then gets its own exception edge, and
-the handler sees that point's `throwval` and local versions, not the block's
-last ones. The CIL frontend turns this on (`cil-frontend-translation.md` §8).
+a client that tracks state per block sees, at the handler, the exception and
+locals as of that point, not as of the block's end.
 
 **The `rethrow` lookup.** `rethrow` binds `Caught` to `Caught(h)` for the
 innermost catch or filter handler that encloses it.
@@ -628,8 +616,8 @@ forms and are listed once. "Roles" lists `inputs[i]`.
 
 The `Object` input of `ldfld`/`stfld`/`ldflda` can be an object reference, a
 managed pointer to a struct, or (for `ldfld` only) a struct value. Layer 1 does
-not distinguish them. Layer 2 does, through `StackKind`, and the frontend uses
-§6.3 to turn `ldloca s; ldfld f` into `loc_s.f` instead of `loc_s.*.f`.
+not distinguish them. Layer 2 does, through `StackKind`, and §6.3 lets a
+client read `ldloca s; ldfld f` as `loc_s.f` instead of `loc_s.*.f`.
 
 ### 5.5 Arrays
 
@@ -647,8 +635,7 @@ not distinguish them. Layer 2 does, through `StackKind`, and the frontend uses
 
 The indices are part of the path, so the effect records exactly what the
 instruction reads. Whether a tainted index taints the element read is not
-decided here. The frontend makes that choice (translation §9; Dex and JVM say
-no). **Multi-dimensional arrays** do not use opcodes: they are `MemberRef`
+decided here. The client makes that choice. **Multi-dimensional arrays** do not use opcodes: they are `MemberRef`
 calls on a `TypeSpec` array type, with runtime-provided methods. Layer 1
 recognizes the declaring type `TypeSig::Array` and the names
 `Get`/`Set`/`Address`/`.ctor`, and emits element effects instead of a `Call`.
@@ -686,8 +673,8 @@ and no model.
 `box` and `unbox` are *contents-preserving* assigns rather than a `New` plus a
 field store. A struct's fields are then reachable through the box with the same
 field names, which is what a field-sensitive analysis needs. `Transfer::Box(T)`
-still tells the frontend that an allocation happened, which CHA's
-`instantiated_classes` needs.
+still tells a client that an allocation happened, which class-hierarchy
+analysis needs.
 
 ### 5.8 Calls and function pointers
 
@@ -726,22 +713,14 @@ its bogus `InlineBrTarget`, the same way Cecil reads it.
 
 ## 6. Design decisions worth calling out
 
-### 6.1 Effects map one-to-one onto CTADL statements
+### 6.1 A small, closed effect vocabulary
 
-| Effect | CTADL |
-| --- | --- |
-| `Assign` | `StatementKind::assign` |
-| `Const` | `assign` from a constant (or nothing) |
-| `Load` / `Store` | `load` / `store` with `FieldPath::symbol("<f>")`, `"[]"`, `"length"`, `"deref"` |
-| `New` | `assign` from `Exp::new_object_ref` |
-| `FunctionPtr` | `assign` from `CallObject::FunctionPtr` |
-| `Call` | call statement plus `CallStyle` from `CallKind` |
-| `Return` | `Return [v, empty]` terminator |
-| `Throw` | `throwval := src`, then a `Goto` to the handlers or `Return [empty, throwval]` |
-
-`AddressOf`, `Clear`, `Test` and `Opaque` are the only effects without a direct
-counterpart. Lowering them is a frontend policy, and §6.3 supplies what that
-policy needs.
+Most effects (`Assign`, `Const`, `Load`, `Store`, `New`, `FunctionPtr`, `Call`,
+`Return`, `Throw`) are the primitive moves any dataflow client already has a
+notion of, so a client handles each with one case. `AddressOf`, `Clear`, `Test`
+and `Opaque` are CIL facts that clients interpret differently, and §6.3
+supplies what that interpretation needs. The CTADL frontend's mapping is
+translation §6.
 
 ### 6.2 Roles make the dex-reader bug class impossible
 
@@ -750,19 +729,18 @@ in another. That can only happen when roles are implicit. Here, `stfld` *is*
 `Store { dst: Path { root: i0, .. }, src: i1 }`: the object can only be a path
 root. §7 checks that every input is consumed exactly as its role says.
 
-### 6.3 Managed pointers: resolve syntactically, fall back to `deref`
+### 6.3 Managed pointers: resolve syntactically, fall back to `Deref`
 
 `ref`/`out` and `ldloca` are where CIL dataflow differs most from Java bytecode.
 Two cases:
 
 1. **Resolvable**: the address comes from an `AddressOf` through copies only
    (`ldloca 3; ldc 1; stind.i4`, `ldflda f; ldfld g`, `ldloca s; call
-   S::M()`). `MethodFlow::resolve_address(at, i)` returns the `Place`, and the
-   frontend lowers `Store v.* := x` as `loc3 := x` or `obj.f.g := x`. Most C#
+   S::M()`). `MethodFlow::resolve_address(at, i)` returns the `Place`, so a
+   client can read `Store v.* := x` as a write to `loc3` or `obj.f.g`. Most C#
    compiler output is this case.
 
-   Copy propagation cannot do this, because MIR has no address-of, so the
-   reader has to. Resolution is a forward pass that runs alongside the height
+   A client cannot easily do this on bound code, so the reader does it. Resolution is a forward pass that runs alongside the height
    pass. Its state is a map from depth (and from address-holding local) to
    `Place`. `AddressOf` sets an entry, copies move it, and any other write clears
    it. At a join, the maps are intersected, keeping only entries on which every
@@ -772,57 +750,35 @@ Two cases:
    operators that produce an address, which the C# compiler sometimes emits
    across blocks.
 2. **Not resolvable**: a byref parameter, addresses that differ across a join, an address read
-   from memory. The access stays `root.*` (`deref`), as in the C frontend.
+   from memory. The access stays `root.*` (`Field::Deref`).
 
 The two meet at **byref call arguments**. `int.TryParse(s, out n)` passes
-`&loc_n`, and `CallSite::byref_args` says which arguments are addresses. With
-`resolve_address`, the frontend can use copy-in/copy-out through a fresh cell
-passed in place of the pointer: `cell.* := loc_n` before the call and
-`loc_n := cell.*` after it, so callee writes through `deref` (or a model's
-`Argument[1].deref`) reach `loc_n` (translation §6.3). `address_taken()` lets the frontend
-apply this only to the locals that need it.
+`&loc_n`. The layer reports which arguments are addresses
+(`CallSite::byref_args`), where each one points when it can be traced
+(`resolve_address`), and which locals ever have their address taken
+(`address_taken()`). That is what a client needs to connect writes the callee
+makes through the pointer back to `loc_n`. How the CTADL frontend does it
+(copy-in/copy-out through a fresh cell) is in translation §6.3.
 
 ### 6.4 Exceptions are values
 
-A call's second result (CTADL's arity-2 return) is `Slot::Thrown`, bound to
-`Var::Thrown`, the conventional `throwval`. Layer 2 adds the exception edge from
-every block in a try range to its handler entry. The handler entry starts with
-`Stack(0) := Caught(h)`, and the frontend assigns `Caught(h) := throwval` there.
-SSA then places the phi that merges the `throwval` versions reaching the handler.
-So a value stored in an exception object reaches `e.Message` in
-`catch (Exception e) { sink(e.Message); }` with no special casing. Implicit
+A call's exceptional result is `Slot::Thrown`, bound to `Var::Thrown`, and
+`throw`'s operand is too. Layer 2 adds the exception edge from every block in a
+try range to its handler entry. The handler entry starts with
+`Stack(0) := Caught(h)`. A client relates `Thrown` at the raising points to
+`Caught(h)` along those edges, so a value stored in an exception object reaches
+`e.Message` in `catch (Exception e) { sink(e.Message); }` with no special
+casing. Implicit
 runtime exceptions (a null `ldfld`, an array bounds check) are not reported:
 the runtime creates them, so they hold no value from the method.
 
-### 6.5 The contract with the ctadl-ir pipeline
+### 6.5 Output is raw: unversioned, every copy kept
 
-The frontend's MIR goes through `ssa::run_pipeline` in `ctadl index`, with the
-SSA settings chosen per language. The flow layer is shaped to fit that
-pipeline:
-
-- **Emit unversioned variables.** `ssa::transform` requires IR that is not yet
-  in SSA, and `coalesce_copies` only touches unversioned `Variable::Local`s.
-  `Var::{Local, Stack, Temp, Caught}` become plain locals, `Var::Arg(n)` becomes
-  parameter `n`, and `Root::Static` becomes the global.
-- **Don't clean up copies in the reader or the frontend.** `ldloc`, `stloc`,
-  `dup` and the collision temporaries all produce single-use copies, which
-  `coalesce_copies` merges before SSA. Multi-use copies are removed by
-  `propagate_copies` after SSA, as are phis that merge a value only with copies
-  of itself. Removing them by hand duplicates those passes and makes the effects
-  harder to check.
-- **Terminators and reachability.** Every block gets a terminator.
-  Multiple `ret`s are fine, because SSA adds the single exit block itself.
-  Unreachable blocks (common after `leave` into a `finally`) are fine, because
-  `ctadl index` runs with `prune_unreachable`.
-- **`ParamWriteBack::Entry`.** `ArtifactLanguage::Cil` should return `Entry`
-  from `param_write_back()` (`ctadl-import/src/project.rs`), as JVM and Dex
-  do. CIL arguments are passed by value: `starg` only rebinds the callee's own
-  copy, and the caller must not see it. A write that must reach the caller goes
-  through a `ref`/`out` parameter, which is a `deref` store on the parameter's
-  entry version, and that is exactly what `Entry` writes back. The copy-in/copy-out
-  lowering of §6.3 depends on this. (`Exit` is right for C only because the C
-  frontend lowers `*out = x` to `out = x`; see the comment on
-  `param_write_back`.)
+Variables are named by location (§4.1), never versioned. Every copy CIL makes
+(`ldloc`, `stloc`, `dup`, the collision temporaries of §4.2) is reported as an
+`Assign`. Unreachable blocks (common after `leave` into a `finally`) are kept.
+Cleaning any of this up is a client choice, and doing it here would make the
+effects harder to check against the opcode table (§7).
 
 ---
 
@@ -856,10 +812,7 @@ Layer 2, for every method:
    entry has height 1, every finally and fault entry has height 0, and every
    `leave` target has height 0.
 
-Not tested here: single definitions and dominance. Those are properties of
-SSA output, and `ssa::transform` asserts `FunctionData::verify` itself. The
-frontend's tests should run each corpus method through `run_pipeline` with no
-panic.
+Not tested here: anything about what a client builds from this output.
 
 ---
 
@@ -867,11 +820,11 @@ panic.
 
 1. **Bad stack at a join**: take the smaller height, mark the dropped depths'
    kinds `Unknown`, log at `debug`, and continue. Depth names keep this cheap:
-   no values have to be invented, and SSA merges whatever does reach a depth.
+   no values have to be invented.
    `MethodFlow::build` is infallible. Diagnostics go to `MethodFlow::warnings`.
 2. **Indices and conditions** are reported, not interpreted. Both appear in
    effects (`Element` indices, `Test`) with their roles. Whether they carry
-   flow is decided by the frontend.
+   flow is decided by the client.
 3. **Allocation**: the crate is dependency-free, so `Vec` throughout to start.
    Non-call instructions have at most two effects and three inputs. If profiling
    on the corpus shows allocation matters, swap in a hand-rolled fixed-capacity
@@ -880,12 +833,12 @@ panic.
 4. **`arglist`/varargs**: rare outside C++/CLI. `Const ArgList` drops the link
    to the extra arguments, so it breaks goal 3. If the corpus shows it
    matters, upgrade it to `Assign o0 := [extra args] Derived`.
-5. **`Clear` (initobj)** is reported on every address. A frontend can treat it
+5. **`Clear` (initobj)** is reported on every address. A client can treat it
    as a strong update only when `resolve_address` traces the address.
 6. **Pinned locals** (`TypeSig::Pinned`) and **unmanaged pointers** (`T*`,
    `conv.u` of a managed pointer) are treated like managed pointers. Pointer
    arithmetic on them yields `Derived`, and `resolve_address` returns `None`.
-   A client then sees an ordinary `deref` access through a derived value.
+   A client then sees an ordinary `Deref` access through a derived value.
 
 ---
 
@@ -896,7 +849,7 @@ Layer 2.
 
 | # | Step | Tests |
 | --- | --- | --- |
-| 1 | Reader helpers: `Ins::size`/`end_offset`, `MethodBody::user_string`, `MethodBody::code_file_offset` (for the frontend's source spans), name lookups for `FieldOp`/`MethodOp`/`TypeOp`, `MethodOp` construction (MethodDef/MemberRef/MethodSpec → `MethodSig`), the current method's sig on `FlowCx` | Unit tests on fixtures |
+| 1 | Reader helpers: `Ins::size`/`end_offset`, `MethodBody::user_string`, `MethodBody::code_file_offset` (for source spans), name lookups for `FieldOp`/`MethodOp`/`TypeOp`, `MethodOp` construction (MethodDef/MemberRef/MethodSpec → `MethodSig`), the current method's sig on `FlowCx` | Unit tests on fixtures |
 | 2 | `flow` types + `map` + `edges`, with no opcode logic | Unit tests: `map` keeps structure; edge derivation per effect |
 | 3 | `opcode.rs`: the exhaustive table of §5.1–5.7, without calls | One test per family on hand-assembled IL bytes (a tiny test-only encoder), asserting exact `InsFlow` |
 | 4 | `call.rs` + `prefix.rs`: §5.8–5.9, multi-dimensional array methods, `byref_args`, `delegate::classify` | Fixture tests: instance/static/virtual/constrained/calli/newobj/vararg/out-param/delegate |
@@ -917,7 +870,6 @@ multi-dimensional arrays, filters, `cpobj`/`initobj` on structs, and `calli`.
 
 **Acceptance for this layer**: the unit tests green under `cargo test -p
 cil-reader`, and `cil:flow` green under `xtask regression --frontend cil`. `cil-dump
---flow` output for the new fixtures is reviewed and blessed. A frontend can then
+--flow` output for the new fixtures is reviewed and blessed. A client can then
 be written with no `match` on `Code`: it matches only on `Effect`, `CallKind`
-and `Control`. Its MIR, sent through `ssa::run_pipeline` with
-`ParamWriteBack::Entry`, verifies without a panic on every corpus method.
+and `Control`.
