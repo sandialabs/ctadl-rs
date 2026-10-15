@@ -3,9 +3,11 @@
 //! `docs/cil-flow-api.md` §9. Each is a plain `fn()` that panics on failure.
 
 use cil_reader::cil::{Code, RawOperand};
+use cil_reader::flow::check::layer2_violations;
 use cil_reader::flow::delegate::{classify, DelegateOp, ModuleTypes, TypeOracle};
 use cil_reader::flow::{
-    CallKind, CallSite, Effect, Field, InsFlow, Path, Place, Root, Slot, TypeOp,
+    CallKind, CallSite, Effect, Field, FlowOptions, FlowWarning, HandlerKind, InsFlow, InsId,
+    MethodFlow, Path, Place, Root, Slot, StackKind, TypeOp, Var,
 };
 use cil_reader::model::{MethodBody, MethodDef};
 use cil_reader::Module;
@@ -27,6 +29,18 @@ pub const TESTS: &[Test] = &[
     ("prefixes", prefixes),
     ("struct_ops", struct_ops),
     ("names", names),
+    ("l2_out_param", l2_out_param),
+    ("l2_struct_fields", l2_struct_fields),
+    ("l2_ref_param", l2_ref_param),
+    ("l2_filter", l2_filter),
+    ("l2_catch_finally", l2_catch_finally),
+    ("l2_split_after_throwing", l2_split_after_throwing),
+    ("l2_newobj_args", l2_newobj_args),
+    ("l2_dup_stfld", l2_dup_stfld),
+    ("l2_address_join", l2_address_join),
+    ("l2_height_mismatch", l2_height_mismatch),
+    ("l2_kinds", l2_kinds),
+    ("l2_whole_fixture", l2_whole_fixture),
 ];
 
 const FLOW: &str = "flow.il.dll";
@@ -332,5 +346,332 @@ fn names() {
             body.type_name(&body.declaring_type(m).unwrap()).unwrap(),
             "Flow"
         );
+    });
+}
+
+// ---- Layer 2 ---------------------------------------------------------------
+
+/// Layer 2 of `Flow::name`, checked against §7.7–7.9.
+fn method_flow(module: &Module<'_>, name: &str) -> (MethodFlow, Vec<String>) {
+    method_flow_with(module, name, FlowOptions::default())
+}
+
+fn method_flow_with(
+    module: &Module<'_>,
+    name: &str,
+    options: FlowOptions,
+) -> (MethodFlow, Vec<String>) {
+    let body = method(module, "Flow", name).body().unwrap();
+    let mf = MethodFlow::build_with(&body, options);
+    let violations = layer2_violations(&mf);
+    assert!(violations.is_empty(), "{name}: {violations:?}");
+    (mf, Vec::new())
+}
+
+/// The id of the first instruction with opcode `code`.
+fn at(mf: &MethodFlow, code: Code) -> InsId {
+    mf.instructions()
+        .find(|(_, ins)| ins.flow.opcode.code == code && !ins.is_handler_entry())
+        .map(|(id, _)| id)
+        .unwrap_or_else(|| panic!("no {code:?}"))
+}
+
+fn bound(mf: &MethodFlow, id: InsId) -> Vec<String> {
+    mf.ins(id).effects.iter().map(|e| e.to_string()).collect()
+}
+
+fn l2_out_param() {
+    with_module(|module| {
+        let (mf, _) = method_flow(module, "OutParam");
+        let call = at(&mf, Code::Call);
+        assert_eq!(mf.resolve_address(call, 1), Some(&Place::Local(0)));
+        assert_eq!(mf.resolve_address(call, 0), None);
+        assert!(mf.address_taken().contains(Var::Local(0)));
+        assert!(!mf.address_escapes_resolution(at(&mf, Code::Ldloca_S)));
+        assert_eq!(
+            bound(&mf, call),
+            ["Call Static 0a000002 args=[s0, s1] result=s0 thrown=thrown byref=[1]"]
+        );
+        assert!(mf.warnings.is_empty(), "{:?}", mf.warnings);
+    });
+}
+
+fn l2_struct_fields() {
+    with_module(|module| {
+        // ldloca + stfld/ldfld: the base is a pointer to the local.
+        let (mf, _) = method_flow(module, "StructField");
+        let stfld = at(&mf, Code::Stfld);
+        assert_eq!(mf.resolve_address(stfld, 0), Some(&Place::Local(0)));
+        assert_eq!(mf.ins(stfld).input_kinds[0], StackKind::ManagedPtr);
+        let ldfld = at(&mf, Code::Ldfld);
+        assert_eq!(mf.resolve_address(ldfld, 0), Some(&Place::Local(0)));
+        // ldarg.0; ldflda p; ldfld Y: the address is arg0.p.
+        let (mf, _) = method_flow(module, "NestedField");
+        let ldfld = at(&mf, Code::Ldfld);
+        let Some(Place::Field(Var::Arg(0), f)) = mf.resolve_address(ldfld, 0) else {
+            panic!("{:?}", mf.resolve_address(ldfld, 0))
+        };
+        let body = method(module, "Flow", "NestedField").body().unwrap();
+        assert_eq!(body.field_name(f).unwrap(), "Point Holder::p");
+        // initobj/cpobj through ldloca.
+        let (mf, _) = method_flow(module, "ClearCopy");
+        assert_eq!(
+            mf.resolve_address(at(&mf, Code::Initobj), 0),
+            Some(&Place::Local(0))
+        );
+        let cpobj = at(&mf, Code::Cpobj);
+        assert_eq!(mf.resolve_address(cpobj, 0), None); // the byref parameter
+        assert_eq!(mf.resolve_address(cpobj, 1), Some(&Place::Local(0)));
+    });
+}
+
+fn l2_ref_param() {
+    with_module(|module| {
+        // A byref parameter is not traceable.
+        let (mf, _) = method_flow(module, "Inc");
+        let stind = at(&mf, Code::Stind_I4);
+        assert_eq!(mf.resolve_address(stind, 0), None);
+        assert_eq!(mf.ins(stind).input_kinds[0], StackKind::ManagedPtr);
+        let (mf, _) = method_flow(module, "CallInc");
+        assert_eq!(
+            mf.resolve_address(at(&mf, Code::Call), 0),
+            Some(&Place::Local(0))
+        );
+    });
+}
+
+fn l2_filter() {
+    with_module(|module| {
+        let (mf, _) = method_flow(module, "Filter");
+        assert_eq!(mf.handlers.len(), 1);
+        let h = &mf.handlers[0];
+        assert_eq!(h.kind, HandlerKind::Filter);
+        let (filter, handler) = (h.entry.unwrap(), h.handler_block.unwrap());
+        assert_ne!(filter, handler);
+        for b in [filter, handler] {
+            let block = &mf.blocks[b];
+            assert_eq!(block.entry_height, 1);
+            assert_eq!(block.entry_kinds, [StackKind::ObjRef]);
+            assert!(block.instrs[0].is_handler_entry());
+            assert_eq!(
+                bound(&mf, InsId { block: b, index: 0 }),
+                ["Assign s0 := [caught0] Copy"]
+            );
+        }
+        // The try block's exception edge goes to the filter; endfilter
+        // goes on to the handler.
+        assert!(mf.blocks[0].exc_succs.contains(&filter));
+        let endfilter = at(&mf, Code::Endfilter);
+        assert_eq!(mf.blocks[endfilter.block].succs, [handler]);
+        assert_eq!(bound(&mf, endfilter), ["Test [s0]"]);
+    });
+}
+
+fn l2_catch_finally() {
+    with_module(|module| {
+        let (mf, _) = method_flow(module, "CatchFinally");
+        let catch = mf
+            .handlers
+            .iter()
+            .position(|h| h.kind == HandlerKind::Catch)
+            .unwrap();
+        let finally = &mf.handlers[mf
+            .handlers
+            .iter()
+            .position(|h| h.kind == HandlerKind::Finally)
+            .unwrap()];
+        let catch_entry = mf.handlers[catch].entry.unwrap();
+        let finally_entry = finally.entry.unwrap();
+        assert_eq!(mf.blocks[catch_entry].entry_height, 1);
+        assert_eq!(mf.blocks[finally_entry].entry_height, 0);
+        assert!(!mf.blocks[finally_entry].instrs[0].is_handler_entry());
+        // rethrow throws what the catch caught.
+        assert_eq!(
+            bound(&mf, at(&mf, Code::Rethrow)),
+            [format!("Throw caught{catch}")]
+        );
+        // The try body reaches both handlers; the catch reaches the finally.
+        assert!(mf.blocks[0].exc_succs.contains(&catch_entry));
+        assert!(mf.blocks[0].exc_succs.contains(&finally_entry));
+        assert!(mf.blocks[catch_entry].exc_succs.contains(&finally_entry));
+        // leave END goes through the finally, which goes on to END.
+        let ret = mf.block_at(mf.ins(at(&mf, Code::Ret)).flow.offset).unwrap();
+        let leaves: Vec<InsId> = mf
+            .instructions()
+            .filter(|(_, i)| matches!(i.flow.opcode.code, Code::Leave_S))
+            .map(|(id, _)| id)
+            .collect();
+        let outer = *leaves.last().unwrap();
+        let succs = &mf.blocks[outer.block].succs;
+        assert!(
+            succs.contains(&ret) && succs.contains(&finally_entry),
+            "{succs:?}"
+        );
+        let endfinally = at(&mf, Code::Endfinally);
+        assert_eq!(mf.blocks[endfinally.block].succs, [ret]);
+        assert_eq!(mf.blocks[ret].entry_height, 0);
+    });
+}
+
+fn l2_split_after_throwing() {
+    with_module(|module| {
+        let (plain, _) = method_flow(module, "CatchFinally");
+        let (split, _) = method_flow_with(
+            module,
+            "CatchFinally",
+            FlowOptions {
+                split_after_throwing_in_try: true,
+            },
+        );
+        assert!(split.blocks.len() > plain.blocks.len());
+        // Every call in a try range ends its block.
+        for (id, ins) in split.instructions() {
+            if ins.effects.iter().any(|e| matches!(e, Effect::Call(_)))
+                && split
+                    .handlers
+                    .iter()
+                    .any(|h| (h.try_start..h.try_end).contains(&ins.flow.offset))
+            {
+                assert_eq!(id.index + 1, split.blocks[id.block].instrs.len());
+                assert!(!split.blocks[id.block].exc_succs.is_empty());
+            }
+        }
+    });
+}
+
+fn l2_newobj_args() {
+    with_module(|module| {
+        // ldnull; ldarg.0; ldc.i4.1; newobj Holder(object, int32): height 3.
+        let (mf, _) = method_flow(module, "NewobjArgs");
+        let newobj = at(&mf, Code::Newobj);
+        assert_eq!(mf.ins(newobj).height, 3);
+        assert_eq!(mf.ins(newobj).inputs, [Var::Stack(1), Var::Stack(2)]);
+        assert_eq!(mf.ins(newobj).outputs, [Var::Stack(1)]);
+        assert_eq!(
+            bound(&mf, newobj),
+            [
+                "New t0 Object(02000003)",
+                "Call Ctor 06000003 recv=t0 args=[s1, s2] thrown=thrown",
+                "Assign s1 := [t0] Copy",
+            ]
+        );
+        assert_eq!(
+            bound(&mf, at(&mf, Code::Stsfld)),
+            ["Store static.<static 04000006> := s1"]
+        );
+        assert_eq!(bound(&mf, at(&mf, Code::Ret)), ["Return s0"]);
+    });
+}
+
+fn l2_dup_stfld() {
+    with_module(|module| {
+        let (mf, _) = method_flow(module, "DupStfld");
+        assert_eq!(
+            bound(&mf, at(&mf, Code::Dup)),
+            ["Assign s0 := [s0] Copy", "Assign s1 := [s0] Copy"]
+        );
+        assert_eq!(
+            bound(&mf, at(&mf, Code::Stfld)),
+            ["Store s1.<04000003> := s2"]
+        );
+        assert_eq!(bound(&mf, at(&mf, Code::Ret)), ["Return s0"]);
+        assert_eq!(
+            mf.ins(at(&mf, Code::Stfld)).input_kinds,
+            [StackKind::ObjRef, StackKind::ObjRef]
+        );
+    });
+}
+
+fn l2_address_join() {
+    with_module(|module| {
+        let (mf, _) = method_flow(module, "AddressJoin");
+        let stores: Vec<InsId> = mf
+            .instructions()
+            .filter(|(_, i)| i.flow.opcode.code == Code::Stind_I4)
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(stores.len(), 2);
+        // c ? &a : &b — two places: unresolved, and both addresses escape.
+        assert_eq!(mf.resolve_address(stores[0], 0), None);
+        // c ? &a : &a — one place.
+        assert_eq!(mf.resolve_address(stores[1], 0), Some(&Place::Local(0)));
+        let loads: Vec<InsId> = mf
+            .instructions()
+            .filter(|(_, i)| i.flow.opcode.code == Code::Ldloca_S)
+            .map(|(id, _)| id)
+            .collect();
+        let escapes: Vec<bool> = loads
+            .iter()
+            .map(|&id| mf.address_escapes_resolution(id))
+            .collect();
+        assert_eq!(escapes, [true, true, false, false]);
+        let taken: Vec<Var> = mf.address_taken().iter().collect();
+        assert_eq!(taken, [Var::Local(0), Var::Local(1)]);
+    });
+}
+
+fn l2_height_mismatch() {
+    with_module(|module| {
+        let (mf, _) = method_flow(module, "HeightMismatch");
+        let pop = at(&mf, Code::Pop);
+        let join = &mf.blocks[pop.block];
+        assert_eq!(join.entry_height, 1);
+        assert_eq!(join.preds.len(), 2);
+        assert!(mf.warnings.contains(&FlowWarning::HeightMismatch {
+            offset: join.start,
+            heights: (1, 2)
+        }));
+        // Still bound: the pop takes the kept depth.
+        assert_eq!(mf.ins(pop).inputs, [Var::Stack(0)]);
+    });
+}
+
+fn l2_kinds() {
+    with_module(|module| {
+        let (mf, _) = method_flow(module, "Misc");
+        let kinds = |code| mf.ins(at(&mf, code)).input_kinds.clone();
+        assert_eq!(kinds(Code::Ldlen), [StackKind::ObjRef]);
+        assert_eq!(
+            kinds(Code::Stelem_I4),
+            [StackKind::ObjRef, StackKind::Int32, StackKind::Int32]
+        );
+        // ldlen pushes a native int, conv.i4 makes it an int32.
+        assert_eq!(kinds(Code::Conv_I4), [StackKind::NativeInt]);
+        assert_eq!(kinds(Code::Add), [StackKind::Int32, StackKind::Int32]);
+        assert_eq!(kinds(Code::Box), [StackKind::Int32]);
+        assert_eq!(kinds(Code::Ckfinite), [StackKind::Float]);
+        assert_eq!(kinds(Code::Mkrefany), [StackKind::ManagedPtr]);
+        let (mf, _) = method_flow(module, "Blocks");
+        assert_eq!(
+            mf.ins(at(&mf, Code::Stloc_0)).input_kinds,
+            [StackKind::NativeInt]
+        );
+        let (mf, _) = method_flow(module, "MultiArray");
+        assert_eq!(
+            mf.ins(at(&mf, Code::Ldind_I4)).input_kinds,
+            [StackKind::ManagedPtr]
+        );
+        assert_eq!(mf.ins(at(&mf, Code::Pop)).input_kinds, [StackKind::Int32]);
+    });
+}
+
+fn l2_whole_fixture() {
+    // Every method of the fixture holds §7.7–7.9, and only HeightMismatch
+    // warns.
+    with_module(|module| {
+        for ty in module.types().unwrap() {
+            for m in ty.methods().unwrap() {
+                if !m.has_body().unwrap() || m.rva().unwrap() == 0 {
+                    continue;
+                }
+                let body = m.body().unwrap();
+                let mf = MethodFlow::build(&body);
+                let name = m.name().unwrap();
+                assert_eq!(layer2_violations(&mf), Vec::<String>::new(), "{name}");
+                if name != "HeightMismatch" {
+                    assert!(mf.warnings.is_empty(), "{name}: {:?}", mf.warnings);
+                }
+            }
+        }
     });
 }

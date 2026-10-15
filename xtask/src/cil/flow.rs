@@ -4,7 +4,7 @@
 //! - **property**: the invariants of §7 over every method body in the corpus
 //!   (Cecil's assemblies and the compiled fixtures). Layer 1: §7.1–7.5 via
 //!   `cil_reader::flow::check`, plus coverage of every instruction byte.
-//!   Layer 2: §7.7–7.9 once it exists.
+//!   Layer 2: §7.7–7.9 via `MethodFlow::build` on every body.
 //! - **fixtures**: targeted tests on `flow.il` (in
 //!   `readers/cil-reader/fixtures`), one per case §9 lists.
 //! - **goldens**: `cil-dump --flow` of the flow fixtures against
@@ -21,8 +21,8 @@ use std::sync::RwLock;
 
 use anyhow::{Context, Result};
 use cil_reader::cil::Ins;
-use cil_reader::flow::check::layer1_violations;
-use cil_reader::flow::{FlowCx, InsFlow};
+use cil_reader::flow::check::{layer1_violations, layer2_violations};
+use cil_reader::flow::{FlowCx, InsFlow, MethodFlow};
 use cil_reader::model::{MethodBody, MethodDef};
 use cil_reader::raw::Table;
 use cil_reader::Module;
@@ -160,6 +160,9 @@ struct Stats {
     decode_errors: usize,
     /// Opaque effects by reason, for the summary.
     opaque_reasons: BTreeMap<String, usize>,
+    /// Layer 2 warnings by kind, for the summary.
+    warnings: BTreeMap<String, usize>,
+    blocks: usize,
 }
 
 impl Stats {
@@ -171,12 +174,22 @@ impl Stats {
         for (k, v) in &other.opaque_reasons {
             *self.opaque_reasons.entry(k.clone()).or_default() += v;
         }
+        for (k, v) in &other.warnings {
+            *self.warnings.entry(k.clone()).or_default() += v;
+        }
+        self.blocks += other.blocks;
     }
 
     fn describe(&self) -> String {
         format!(
-            "methods={} instructions={} opaque={} decode-errors={} {:?}",
-            self.methods, self.instructions, self.opaque, self.decode_errors, self.opaque_reasons
+            "methods={} instructions={} blocks={} opaque={} decode-errors={} {:?} warnings={:?}",
+            self.methods,
+            self.instructions,
+            self.blocks,
+            self.opaque,
+            self.decode_errors,
+            self.opaque_reasons,
+            self.warnings
         )
     }
 }
@@ -204,7 +217,9 @@ fn sweep_input(path: &Path) -> Result<(Stats, Vec<String>), String> {
                 continue;
             };
             stats.methods += 1;
-            for v in check_body(&method, &body, &mut stats) {
+            let mut found = check_body(&method, &body, &mut stats);
+            found.extend(check_method_flow(&body, &mut stats));
+            for v in found {
                 if violations.len() < MAX_PER_INPUT {
                     violations.push(format!("{:08x}: {v}", method.token().raw()));
                 } else {
@@ -218,6 +233,18 @@ fn sweep_input(path: &Path) -> Result<(Stats, Vec<String>), String> {
         Ok((stats, violations))
     })
     .map_err(|_| "panicked".to_string())?
+}
+
+/// The Layer 2 invariants over one body.
+fn check_method_flow(body: &MethodBody<'_>, stats: &mut Stats) -> Vec<String> {
+    let mf = MethodFlow::build(body);
+    stats.blocks += mf.blocks.len();
+    for w in &mf.warnings {
+        let kind = format!("{w:?}");
+        let kind = kind.split([' ', '(', '{']).next().unwrap_or("").to_string();
+        *stats.warnings.entry(kind).or_default() += 1;
+    }
+    layer2_violations(&mf)
 }
 
 /// The Layer 1 invariants over one body, plus coverage: the records tile the

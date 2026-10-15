@@ -11,6 +11,16 @@
 	IL_0007: ret
 		Return
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0008 entry 0 [] exit 0
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001
+			Assign s1 := [arg1] Copy
+		IL_0002 in [& i4]
+			Store s0.<04000001> := s1
+		IL_0007
+			Return
 06000002 System.Void Holder::.ctor()
 	IL_0000: ldarg.0
 		in [] out 1
@@ -21,6 +31,14 @@
 	IL_0006: ret
 		Return
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0007 entry 0 [] exit 0
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001 in [o]
+			Call Instance 0a000001 recv=s0 args=[] thrown=thrown
+		IL_0006
+			Return
 06000003 System.Void Holder::.ctor(System.Object,System.Int32)
 	IL_0000: ldarg.0
 		in [] out 1
@@ -49,6 +67,26 @@
 	IL_0014: ret
 		Return
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0015 entry 0 [] exit 0
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001 in [o]
+			Call Instance 0a000001 recv=s0 args=[] thrown=thrown
+		IL_0006
+			Assign s0 := [arg0] Copy
+		IL_0007
+			Assign s1 := [arg1] Copy
+		IL_0008 in [o o]
+			Store s0.<04000003> := s1
+		IL_000d
+			Assign s0 := [arg0] Copy
+		IL_000e
+			Assign s1 := [arg2] Copy
+		IL_000f in [o i4]
+			Store s0.<04000004> := s1
+		IL_0014
+			Return
 06000004 System.Int32 Holder::Twice(System.Int32)
 	IL_0000: ldarg.1
 		in [] out 1
@@ -63,10 +101,24 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0004 entry 0 [] exit 0
+		IL_0000
+			Assign s0 := [arg1] Copy
+		IL_0001
+			Const s1 = I4(2)
+		IL_0002 in [i4 i4]
+			Assign s0 := [s0, s1] Derived(mul)
+		IL_0003 in [i4]
+			Return s0
 06000007 System.Void Flow::Sink(System.Object)
 	IL_0000: ret
 		Return
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0001 entry 0 [] exit 0
+		IL_0000
+			Return
 06000008 System.Int32 Flow::Twice(System.Int32)
 	IL_0000: ldarg.0
 		in [] out 1
@@ -81,6 +133,16 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0004 entry 0 [] exit 0
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001
+			Const s1 = I4(2)
+		IL_0002 in [i4 i4]
+			Assign s0 := [s0, s1] Derived(mul)
+		IL_0003 in [i4]
+			Return s0
 06000009 System.Int32 Flow::OutParam(System.String)
 	IL_0000: ldarg.0
 		in [] out 1
@@ -100,6 +162,20 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_000b entry 0 [] exit 0
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001
+			AddressOf s1 = &loc0
+		IL_0003 in [o &] i1=&loc0
+			Call Static 0a000002 args=[s0, s1] result=s0 thrown=thrown byref=[1]
+		IL_0008 in [i4]
+		IL_0009
+			Assign s0 := [loc0] Copy
+		IL_000a in [i4]
+			Return s0
+	address-taken loc0
 0600000a System.Void Flow::Inc(System.Int32&)
 	IL_0000: ldarg.0
 		in [] out 1
@@ -122,6 +198,22 @@
 	IL_0006: ret
 		Return
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0007 entry 0 [] exit 0
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001
+			Assign s1 := [arg0] Copy
+		IL_0002 in [&]
+			Load s1 := s1.*
+		IL_0003
+			Const s2 = I4(1)
+		IL_0004 in [i4 i4]
+			Assign s1 := [s1, s2] Derived(add)
+		IL_0005 in [& i4]
+			Store s0.* := s1
+		IL_0006
+			Return
 0600000b System.Int32 Flow::CallInc()
 	IL_0000: ldloca.s V_0
 		in [] out 1
@@ -136,6 +228,17 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0009 entry 0 [] exit 0
+		IL_0000
+			AddressOf s0 = &loc0
+		IL_0002 in [&] i0=&loc0
+			Call Static 0600000a args=[s0] thrown=thrown byref=[0]
+		IL_0007
+			Assign s0 := [loc0] Copy
+		IL_0008 in [i4]
+			Return s0
+	address-taken loc0
 0600000c System.Int32 Flow::StructField()
 	IL_0000: ldloca.s V_0
 		in [] out 1
@@ -156,6 +259,21 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0010 entry 0 [] exit 0
+		IL_0000
+			AddressOf s0 = &loc0
+		IL_0002
+			Const s1 = I4(5)
+		IL_0003 in [& i4] i0=&loc0
+			Store s0.<04000001> := s1
+		IL_0008
+			AddressOf s0 = &loc0
+		IL_000a in [&] i0=&loc0
+			Load s0 := s0.<04000001>
+		IL_000f in [i4]
+			Return s0
+	address-taken loc0
 0600000d System.Void Flow::ClearCopy(Point&)
 	IL_0000: ldloca.s V_0
 		in [] out 1
@@ -194,6 +312,34 @@
 	IL_001e: ret
 		Return
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_001f entry 0 [] exit 0
+		IL_0000
+			AddressOf s0 = &loc0
+		IL_0002 in [&] i0=&loc0
+			Clear s0
+		IL_0008
+			Assign s0 := [arg0] Copy
+		IL_0009
+			AddressOf s1 = &loc0
+		IL_000b in [& &] i1=&loc0
+			Load t0 := s1.*
+			Store s0.* := t0
+		IL_0010
+			Assign s0 := [arg0] Copy
+		IL_0011 in [&]
+			Load s0 := s0.*
+		IL_0016 in [vt(02000002)]
+			Assign loc0 := [s0] Copy
+		IL_0017
+			Assign s0 := [arg0] Copy
+		IL_0018
+			Assign s1 := [loc0] Copy
+		IL_0019 in [& vt(02000002)]
+			Store s0.* := s1
+		IL_001e
+			Return
+	address-taken loc0
 0600000e System.Int32 Flow::NestedField(Holder)
 	IL_0000: ldarg.0
 		in [] out 1
@@ -208,6 +354,16 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_000c entry 0 [] exit 0
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001 in [o]
+			AddressOf s0 = &s0.<04000005>
+		IL_0006 in [&] i0=&arg0.<04000005>
+			Load s0 := s0.<04000002>
+		IL_000b in [i4]
+			Return s0
 0600000f System.String Flow::Constrained(T)
 	IL_0000: ldarga.s 0
 		in [] out 1
@@ -219,6 +375,15 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_000e entry 0 [] exit 0
+		IL_0000
+			AddressOf s0 = &arg0
+		IL_0002 in [&] i0=&arg0
+			Call Virtual{constrained=1b000001} 0a000003 recv=s0 args=[] result=s0 thrown=thrown prefixes=[constrained(1b000001)]
+		IL_000d in [o]
+			Return s0
+	address-taken arg0
 06000010 System.Int32 Flow::Delegates(Holder)
 	IL_0000: ldarg.0
 		in [] out 1
@@ -240,6 +405,22 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0013 entry 0 [] exit 0
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001
+			FunctionPtr s1 = 06000004
+		IL_0007 in [o i]
+			New t0 Object(02000004)
+			Call Ctor 06000005 recv=t0 args=[s0, s1] thrown=thrown
+			Assign s0 := [t0] Copy
+		IL_000c
+			Const s1 = I4(3)
+		IL_000d in [o i4]
+			Call Virtual 06000006 recv=s0 args=[s1] result=s0 thrown=thrown
+		IL_0012 in [i4]
+			Return s0
 06000011 Fn Flow::Lambdas(Holder)
 	IL_0000: ldnull
 		in [] out 1
@@ -271,6 +452,30 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_001b entry 0 [] exit 0
+		IL_0000
+			Const s0 = Null
+		IL_0001
+			FunctionPtr s1 = 06000008
+		IL_0007 in [o i]
+			New t0 Object(02000004)
+			Call Ctor 06000005 recv=t0 args=[s0, s1] thrown=thrown
+			Assign s0 := [t0] Copy
+		IL_000c in [o]
+		IL_000d
+			Assign s0 := [arg0] Copy
+		IL_000e in [o]
+			Assign s0 := [s0] Copy
+			Assign s1 := [s0] Copy
+		IL_000f in [o]
+			FunctionPtr s1 = 06000004 receiver=s1
+		IL_0015 in [o i]
+			New t0 Object(02000004)
+			Call Ctor 06000005 recv=t0 args=[s0, s1] thrown=thrown
+			Assign s0 := [t0] Copy
+		IL_001a in [o]
+			Return s0
 06000012 System.Int32 Flow::MultiArray()
 	IL_0000: ldc.i4.2
 		in [] out 1
@@ -332,6 +537,47 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0024 entry 0 [] exit 0
+		IL_0000
+			Const s0 = I4(2)
+		IL_0001
+			Const s1 = I4(3)
+		IL_0002 in [i4 i4]
+			New s0 Array(1b000002) sizes=[s0, s1]
+		IL_0007 in [o]
+			Assign loc0 := [s0] Copy
+		IL_0008
+			Assign s0 := [loc0] Copy
+		IL_0009
+			Const s1 = I4(1)
+		IL_000a
+			Const s2 = I4(2)
+		IL_000b
+			Const s3 = I4(7)
+		IL_000c in [o i4 i4 i4]
+			Store s0[s1, s2] := s3
+		IL_0011
+			Assign s0 := [loc0] Copy
+		IL_0012
+			Const s1 = I4(1)
+		IL_0013
+			Const s2 = I4(2)
+		IL_0014 in [o i4 i4]
+			Load s0 := s0[s1, s2]
+		IL_0019 in [i4]
+		IL_001a
+			Assign s0 := [loc0] Copy
+		IL_001b
+			Const s1 = I4(1)
+		IL_001c
+			Const s2 = I4(2)
+		IL_001d in [o i4 i4]
+			AddressOf s0 = &s0[s1, s2]
+		IL_0022 in [&] i0=&loc0[s1, s2]
+			Load s0 := s0.*
+		IL_0023 in [i4]
+			Return s0
 06000013 System.Void Flow::Filter(System.Object)
 	IL_0000: ldarg.0
 		in [] out 1
@@ -362,6 +608,34 @@
 	IL_0019: ret
 		Return
 		-> return
+	-- layer 2
+	handler 0 Filter try IL_0000..IL_0008 entry B1 handler B2
+	B0 IL_0000..IL_0008 entry 0 [] exit 0 -> B3 exc B1
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001 in [o]
+			Call Static 06000007 args=[s0] thrown=thrown
+		IL_0006
+	B1 IL_0008..IL_0012 entry 1 [o] exit 0 -> B2
+		IL_0008
+			Assign s0 := [caught0] Copy
+		IL_0008 in [o]
+			Assign s0 := [s0] Cast(01000005)
+		IL_000d
+			Const s1 = Null
+		IL_000e in [o o]
+			Assign s0 := [s0, s1] Derived(cmp.Gt.un)
+		IL_0010 in [i4]
+			Test [s0]
+	B2 IL_0012..IL_0019 entry 1 [o] exit 0 -> B3
+		IL_0012
+			Assign s0 := [caught0] Copy
+		IL_0012 in [o]
+			Call Static 06000007 args=[s0] thrown=thrown
+		IL_0017
+	B3 IL_0019..IL_001a entry 0 [] exit 0
+		IL_0019
+			Return
 06000014 System.Void Flow::CatchFinally(System.Object)
 	IL_0000: ldarg.0
 		in [] out 1
@@ -399,6 +673,39 @@
 	IL_001f: ret
 		Return
 		-> return
+	-- layer 2
+	handler 0 Catch try IL_0000..IL_0008 entry B1 handler B1
+	handler 1 Finally try IL_0000..IL_0018 entry B3 handler B3
+	B0 IL_0000..IL_0008 entry 0 [] exit 0 -> B2 exc B1 B3
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001 in [o]
+			Call Static 06000007 args=[s0] thrown=thrown
+		IL_0006
+	B1 IL_0008..IL_0016 entry 1 [o] exit 0 exc B3
+		IL_0008
+			Assign s0 := [caught0] Copy
+		IL_0008 in [o]
+			Assign loc0 := [s0] Copy
+		IL_0009
+			Assign s0 := [loc0] Copy
+		IL_000a in [o]
+			Call Virtual 0a000008 recv=s0 args=[] result=s0 thrown=thrown
+		IL_000f in [o]
+			Call Static 06000007 args=[s0] thrown=thrown
+		IL_0014
+			Throw caught0
+	B2 IL_0016..IL_0018 entry 0 [] exit 0 -> B4 B3 exc B3
+		IL_0016
+	B3 IL_0018..IL_001f entry 0 [] exit 0 -> B4
+		IL_0018
+			Assign s0 := [arg0] Copy
+		IL_0019 in [o]
+			Call Static 06000007 args=[s0] thrown=thrown
+		IL_001e
+	B4 IL_001f..IL_0020 entry 0 [] exit 0
+		IL_001f
+			Return
 06000015 System.Int32 Flow::Calli(System.Int32)
 	IL_0000: ldarg.0
 		in [] out 1
@@ -413,6 +720,16 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_000d entry 0 [] exit 0
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001
+			FunctionPtr s1 = 06000008
+		IL_0007 in [i4 i]
+			Call Indirect{callee=s1} args=[s0] result=s0 thrown=thrown
+		IL_000c in [i4]
+			Return s0
 06000016 System.Object Flow::NewobjArgs(System.Object)
 	IL_0000: ldnull
 		in [] out 1
@@ -434,6 +751,22 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_000e entry 0 [] exit 0
+		IL_0000
+			Const s0 = Null
+		IL_0001
+			Assign s1 := [arg0] Copy
+		IL_0002
+			Const s2 = I4(1)
+		IL_0003 in [o i4]
+			New t0 Object(02000003)
+			Call Ctor 06000003 recv=t0 args=[s1, s2] thrown=thrown
+			Assign s1 := [t0] Copy
+		IL_0008 in [o]
+			Store static.<static 04000006> := s1
+		IL_000d in [o]
+			Return s0
 06000017 Holder Flow::DupStfld(System.Object)
 	IL_0000: newobj System.Void Holder::.ctor()
 		in [] out 1
@@ -453,6 +786,20 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_000d entry 0 [] exit 0
+		IL_0000
+			New s0 Object(02000003)
+			Call Ctor 06000002 recv=s0 args=[] thrown=thrown
+		IL_0005 in [o]
+			Assign s0 := [s0] Copy
+			Assign s1 := [s0] Copy
+		IL_0006
+			Assign s2 := [arg0] Copy
+		IL_0007 in [o o]
+			Store s1.<04000003> := s2
+		IL_000c in [o]
+			Return s0
 06000018 System.Int32 Flow::AddressJoin(System.Boolean)
 	IL_0000: ldarg.0
 		in [] out 1
@@ -509,6 +856,49 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0003 entry 0 [] exit 0 -> B2 B1
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001 in [i4]
+			Test [s0]
+	B1 IL_0003..IL_0007 entry 0 [] exit 1 -> B3
+		IL_0003 escapes
+			AddressOf s0 = &loc0
+		IL_0005
+	B2 IL_0007..IL_0009 entry 0 [] exit 1 -> B3
+		IL_0007 escapes
+			AddressOf s0 = &loc1
+	B3 IL_0009..IL_000e entry 1 [&] exit 0 -> B5 B4
+		IL_0009
+			Const s1 = I4(5)
+		IL_000a in [& i4]
+			Store s0.* := s1
+		IL_000b
+			Assign s0 := [arg0] Copy
+		IL_000c in [i4]
+			Test [s0]
+	B4 IL_000e..IL_0012 entry 0 [] exit 1 -> B6
+		IL_000e
+			AddressOf s0 = &loc0
+		IL_0010
+	B5 IL_0012..IL_0014 entry 0 [] exit 1 -> B6
+		IL_0012
+			AddressOf s0 = &loc0
+	B6 IL_0014..IL_001a entry 1 [&] exit 0
+		IL_0014
+			Const s1 = I4(6)
+		IL_0015 in [& i4] i0=&loc0
+			Store s0.* := s1
+		IL_0016
+			Assign s0 := [loc0] Copy
+		IL_0017
+			Assign s1 := [loc1] Copy
+		IL_0018 in [i4 i4]
+			Assign s0 := [s0, s1] Derived(add)
+		IL_0019 in [i4]
+			Return s0
+	address-taken loc0 loc1
 06000019 System.Void Flow::HeightMismatch(System.Boolean)
 	IL_0000: ldarg.0
 		in [] out 1
@@ -533,6 +923,26 @@
 	IL_0009: ret
 		Return
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0003 entry 0 [] exit 0 -> B2 B1
+		IL_0000
+			Assign s0 := [arg0] Copy
+		IL_0001 in [i4]
+			Test [s0]
+	B1 IL_0003..IL_0007 entry 0 [] exit 2 -> B3
+		IL_0003
+			Const s0 = I4(1)
+		IL_0004
+			Const s1 = I4(2)
+		IL_0005
+	B2 IL_0007..IL_0008 entry 0 [] exit 1 -> B3
+		IL_0007
+			Const s0 = I4(3)
+	B3 IL_0008..IL_000a entry 1 [i4] exit 0
+		IL_0008 in [i4]
+		IL_0009
+			Return
+	warning IL_0008: reached with heights 1 and 2
 0600001a System.Void Flow::VarArgs(System.Int32)
 	IL_0000: arglist
 		in [] out 1
@@ -542,6 +952,13 @@
 	IL_0003: ret
 		Return
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0004 entry 0 [] exit 0
+		IL_0000
+			Const s0 = ArgList
+		IL_0002 in [?]
+		IL_0003
+			Return
 0600001b System.Void Flow::CallVarArgs()
 	IL_0000: ldc.i4.1
 		in [] out 1
@@ -558,6 +975,18 @@
 	IL_000c: ret
 		Return
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_000d entry 0 [] exit 0
+		IL_0000
+			Const s0 = I4(1)
+		IL_0001
+			Const s1 = String(70000001)
+		IL_0006
+			Const s2 = I4(2)
+		IL_0007 in [i4 o i4]
+			Call Static 0a000009 args=[s0, s1, s2] thrown=thrown
+		IL_000c
+			Return
 0600001c System.Void Flow::Blocks(System.IntPtr)
 	IL_0000: ldc.i4.s 16
 		in [] out 1
@@ -596,6 +1025,33 @@
 	IL_0014: ret
 		Return
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_0015 entry 0 [] exit 0
+		IL_0000
+			Const s0 = I4(16)
+		IL_0002 in [i4]
+			New s0 StackAlloc sizes=[s0]
+		IL_0004 in [i]
+			Assign loc0 := [s0] Copy
+		IL_0005
+			Assign s0 := [loc0] Copy
+		IL_0006
+			Const s1 = I4(0)
+		IL_0007
+			Const s2 = I4(16)
+		IL_0009 in [i i4 i4]
+			Store s0.*[..s2] := s1
+		IL_000b
+			Assign s0 := [loc0] Copy
+		IL_000c
+			Assign s1 := [arg0] Copy
+		IL_000d
+			Const s2 = I4(16)
+		IL_000f in [i i i4]
+			Load t0 := s1.*[..s2]
+			Store s0.*[..s2] := t0
+		IL_0014
+			Return
 0600001d System.Int32 Flow::Prefixes(Holder,System.Int32[])
 	IL_0000: ldarg.1
 		in [] out 1
@@ -621,6 +1077,23 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_001a entry 0 [] exit 0
+		IL_0000
+			Assign s0 := [arg1] Copy
+		IL_0001
+			Const s1 = I4(0)
+		IL_0002 in [o i4]
+			AddressOf s0 = &s0[s1]
+		IL_0009 in [&] i0=&arg1[s1]
+		IL_000a
+			Assign s0 := [arg0] Copy
+		IL_000b in [o]
+			Load s0 := s0.<04000004>
+		IL_0012 in [i4]
+			Call Static 06000008 args=[s0] result=s0 thrown=thrown prefixes=[tail]
+		IL_0019 in [i4]
+			Return s0
 0600001e System.Object Flow::Misc(System.Object,System.Int32,System.Double)
 	IL_0000: ldarg.1
 		in [] out 1
@@ -746,7 +1219,95 @@
 		in [ReturnValue] out 0
 		Return i0
 		-> return
+	-- layer 2
+	B0 IL_0000..IL_000e entry 0 [] exit 0 -> B1 B2
+		IL_0000
+			Assign s0 := [arg1] Copy
+		IL_0001 in [i4]
+			Test [s0]
+	B1 IL_000e..IL_0060 entry 0 [] exit 0 -> B2
+		IL_000e
+			Assign s0 := [arg1] Copy
+		IL_000f in [i4]
+			New s0 Array(01000004) sizes=[s0]
+		IL_0014 in [o]
+			Assign loc0 := [s0] Copy
+		IL_0015
+			Assign s0 := [loc0] Copy
+		IL_0016
+			Assign s1 := [arg1] Copy
+		IL_0017
+			Assign s2 := [arg1] Copy
+		IL_0018 in [o i4 i4]
+			Store s0[s1] := s2
+		IL_0019
+			Assign s0 := [loc0] Copy
+		IL_001a in [o]
+			Load s0 := s0.length
+		IL_001b in [i]
+			Assign s0 := [s0] Derived(conv.I4)
+		IL_001c
+			Assign s1 := [loc0] Copy
+		IL_001d
+			Const s2 = I4(0)
+		IL_001e in [o i4]
+			Load s1 := s1[s2]
+		IL_001f in [i4 i4]
+			Assign s0 := [s0, s1] Derived(add)
+		IL_0020 in [i4]
+			Assign s0 := [s0] Box(01000004)
+		IL_0025 in [o]
+			Assign s0 := [s0] Unbox(01000004)
+		IL_002a in [i4]
+		IL_002b
+			Assign s0 := [arg0] Copy
+		IL_002c in [o]
+			Assign s0 := [s0] Cast(01000007)
+		IL_0031 in [o]
+			Assign s0 := [s0] Cast(01000007)
+		IL_0036 in [o]
+			Assign s0 := [s0] Cast(01000007)
+		IL_003b in [o]
+		IL_003c
+			Assign s0 := [arg2] Copy
+		IL_003d in [f]
+			Assign s0 := [s0] Copy
+		IL_003e in [f]
+			Assign s0 := [s0] Derived(conv.ovf.I4)
+		IL_003f in [i4]
+		IL_0040
+			AddressOf s0 = &loc1
+		IL_0042 in [&] i0=&loc1
+			Assign s0 := [s0] Derived(mkrefany 02000002)
+		IL_0047 in [?]
+			Assign loc2 := [s0] Copy
+		IL_0048
+			Assign s0 := [loc2] Copy
+		IL_0049 in [?]
+			Assign s0 := [s0] Derived(refanyval 02000002)
+		IL_004e in [&]
+		IL_004f
+			Assign s0 := [loc2] Copy
+		IL_0050 in [?]
+			Assign s0 := [s0] Derived(refanytype)
+		IL_0052 in [?]
+		IL_0053
+			Const s0 = Token(02000002)
+		IL_0058 in [?]
+		IL_0059
+			Const s0 = SizeOf(02000002)
+		IL_005f in [i4]
+	B2 IL_0060..IL_0062 entry 0 [] exit 0
+		IL_0060
+			Assign s0 := [arg0] Copy
+		IL_0061 in [o]
+			Return s0
+	address-taken loc1
 0600001f System.Void Flow::Jump(System.Object)
 	IL_0000: jmp System.Void Flow::Sink(System.Object)
 		Jump 06000007
 		-> jump
+	-- layer 2
+	B0 IL_0000..IL_0005 entry 0 [] exit 0
+		IL_0000
+			Jump 06000007
