@@ -366,9 +366,7 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Cecil:** reads past the end and continues.
 - **Since C7:** the body keeps the instructions before it, with `decode_error` set.
 
-**C9. Code that ends exactly at end of file.**
-- **Rust:** `model/body.rs:122` uses `>`, so it decodes the code.
-- **Cecil:** uses `<=`, so the code is clamped to empty.
+**C9. Code that ends exactly at end of file.** *Moved to D11:* the port reads more than Cecil there, not less.
 
 **C10. Unresolvable operand tokens print `!error`.** *Fixed:* `lookup_token` (`model/module.rs`) is `None` wherever Cecil's `LookupToken` is null (rid 0, a rid past its table, another table, and a field or method in no type's member list, which `LookupField`/`LookupMethod` do not find), and `Module::lookup_token`, `resolve_operand` and the Formatter all go through it; a call site past the StandAloneSig table is null too (`ReadCallSite`). The Formatter, and so cil-dump, print no operand for these. `gap-operand-tokens.dll` covers each kind, and before the fix printed `!error` for all 14 of its operands. `malformed::operand_tokens_not_found` (`cil:cecil-tests`) covers `resolve_operand` and the orphan members, which CecilDump leaves out of its member lists where cil-dump does not. A call site of rid 0, which Cecil reads from the row before the table, still prints `!error`. Evidence is in `/Volumes/Shampoo/c10-2026-10-11/`.
 - **Cases:** rid 0, a rid out of range, or an unsupported table.
@@ -524,6 +522,17 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Rust:** resolves both to the method.
 - **Fixture:** none; `cil:cecil-compare` would differ. Repros are
   `roslyn.dll` and `a31c.dll` in `/Volumes/Shampoo/a31-2026-10-06/`.
+
+**D11. Cecil empties code that ends exactly at the end of the file.** *Won't emulate.*
+- **Cecil:** `CodeReader.ReadCode` sets the code size to 0 when
+  `Length <= code_size + Position` (`Mono.Cecil.Cil/CodeReader.cs:146`), so
+  code that fits the file exactly, with no byte after it, reads as empty.
+- **Rust:** `read_code` (`model/body.rs`) empties only code that runs past the
+  end of the file, so it decodes that code. Both empty a size of 2^31 or more
+  and one whose end overflows. The port reads every body Cecil reads, and
+  this one too.
+- **Fixture:** none; `cil:cecil-compare` would differ. Sections are padded to
+  the file alignment, so only a hand-built or truncated image has this shape.
 
 ---
 
