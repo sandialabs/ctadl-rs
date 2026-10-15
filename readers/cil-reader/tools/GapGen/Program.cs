@@ -53,11 +53,15 @@ static class Program {
             ("heap-indexes", HeapIndexes),
             ("typeref-scopes", TypeRefScopes),
             ("field-size-lib", FieldSizeLib),
+            ("ptr-ranges", PtrRanges),
         };
         foreach (var (name, build) in fixtures) {
             var (mod, patch) = build();
             var opts = new ModuleWriterOptions(mod);
             opts.PEHeadersOptions.TimeDateStamp = 0;
+            // Keeps ptr-ranges' rids, which writes its Ptr tables.
+            if (name == "ptr-ranges")
+                opts.MetadataOptions.Flags |= MetadataFlags.PreserveRids;
             opts.WriterEvent += (_, e) => {
                 if (e.Event == ModuleWriterEvent.MDEndCreateTables)
                     patch(e.Writer.Metadata);
@@ -1296,6 +1300,46 @@ static class Program {
         if (raw + size != image.Length)
             throw new InvalidOperationException("the last section does not end the file");
         WriteU32(image, row, (uint)(va + size - 2));
+    }
+
+    // Types A, B and C, written once and read back, then a field x and a
+    // property PX put first in A: they take the next free rids, so dnlib
+    // writes FieldPtr and PropertyPtr tables (as PtrGen does). Cecil ends
+    // the last type's list at the end of the member table, not of the Ptr
+    // table, and reads a list that starts past the Ptr table straight from
+    // the member table.
+    static (ModuleDef, Action<Metadata>) PtrRanges() {
+        var first = NewModule("ptr-ranges");
+        var cs = first.CorLibTypes;
+        foreach (var (name, fields, property) in new[] { ("A", new[] { "a1", "a2" }, "PA"), ("B", new[] { "b1" }, "PB"), ("C", new string[0], null) }) {
+            var t = NewClass(first, "", name);
+            foreach (var f in fields)
+                t.Fields.Add(new FieldDefUser(f, new FieldSig(cs.Int32), FieldAttributes.Public));
+            if (property != null)
+                t.Properties.Add(new PropertyDefUser(property, PropertySig.CreateInstance(cs.Int32)));
+            first.Types.Add(t);
+        }
+        var bytes = new MemoryStream();
+        first.Write(bytes, new ModuleWriterOptions(first) { PEHeadersOptions = { TimeDateStamp = 0 } });
+        var mod = ModuleDefMD.Load(bytes.ToArray());
+        var a = mod.Find("A", false);
+        a.Fields.Insert(0, new FieldDefUser("x", new FieldSig(mod.CorLibTypes.Int32), FieldAttributes.Public));
+        a.Properties.Insert(0, new PropertyDefUser("PX", PropertySig.CreateInstance(mod.CorLibTypes.Int32)));
+        var c = mod.Find("C", false);
+        return (mod, md => {
+            if (md.TablesHeap.FieldPtrTable.Rows != 4 || md.TablesHeap.PropertyPtrTable.Rows != 3)
+                throw new InvalidOperationException("unexpected Ptr tables");
+            // A field z that no FieldPtr row names. C, the last type, lists
+            // fields from past the end of the FieldPtr table, to the end of
+            // the Field table, so it reads z.
+            md.TablesHeap.FieldTable.Add(new RawFieldRow((ushort)FieldAttributes.Public, md.StringsHeap.Add("z"),
+                md.BlobHeap.Add(new byte[] { 0x06, 0x08 })));
+            // Likewise a property PZ, which C lists from past the end of the
+            // PropertyPtr table.
+            uint pz = md.TablesHeap.PropertyTable.Add(new RawPropertyRow(0, md.StringsHeap.Add("PZ"),
+                md.BlobHeap.Add(new byte[] { 0x28, 0x00, 0x08 })));
+            md.TablesHeap.PropertyMapTable.Add(new RawPropertyMapRow(md.GetRid(c), pz));
+        });
     }
 
     // Value types whose size only their ClassLayout gives: Lib.S, of 12

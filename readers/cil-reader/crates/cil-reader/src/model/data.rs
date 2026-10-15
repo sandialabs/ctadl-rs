@@ -78,10 +78,9 @@ pub(crate) struct LazyTables {
     /// GenericParam rid → (GenericParamConstraint rid, constraint token)
     /// (InitializeGenericConstraints).
     pub generic_constraints: Lazy<HashMap<u32, Vec<(u32, MetadataToken)>>>,
-    /// Field/Method/Property/Event rid → the FieldPtr/MethodPtr/PropertyPtr/
-    /// EventPtr row naming it, in that order. Only built when the Ptr table
-    /// exists, since member list columns then index the Ptr table.
-    pub ptr_inverses: [Lazy<HashMap<u32, u32>>; 4],
+    /// Field/Method/Property/Event rid → the TypeDef whose list reads it
+    /// last, in that order (see [`ModuleData::member_owner`]).
+    pub member_owners: [Lazy<HashMap<u32, u32>>; 4],
 }
 
 #[derive(Default)]
@@ -121,28 +120,16 @@ impl<'a> ModuleData<'a> {
 
     /// TypeDef member list ranges, mirroring `MetadataReader.ReadListRange`:
     /// the length of a list column range comes from peeking the next row (or
-    /// the target table length + 1 for the last row).
+    /// the member table's length + 1 for the last row, even when the list
+    /// indexes a Ptr table).
     pub fn type_member_ranges(&self) -> Result<&Vec<(Range, Range)>> {
         get(&self.lazy.type_member_ranges, || {
             let table = self.md.table::<TypeDefRaw>();
             let count = table.len();
-            let field_ptr = self.md.row_count(Table::FieldPtr);
-            let method_ptr = self.md.row_count(Table::MethodPtr);
-            // When Ptr tables exist, list columns index into them. A table
-            // of u32::MAX rows cannot hold its last one, so saturating loses
-            // nothing.
-            let field_end = if field_ptr != 0 {
-                field_ptr
-            } else {
-                self.md.row_count(Table::Field)
-            }
-            .saturating_add(1);
-            let method_end = if method_ptr != 0 {
-                method_ptr
-            } else {
-                self.md.row_count(Table::Method)
-            }
-            .saturating_add(1);
+            // A table of u32::MAX rows cannot hold its last one, so
+            // saturating loses nothing.
+            let field_end = self.md.row_count(Table::Field).saturating_add(1);
+            let method_end = self.md.row_count(Table::Method).saturating_add(1);
 
             let mut ranges = Vec::with_capacity(table.rows_present() as usize);
             let mut prev: Option<(u32, u32)> = None;
@@ -184,72 +171,123 @@ impl<'a> ModuleData<'a> {
         Ok(self.member_ranges_of(type_rid)?.1)
     }
 
-    /// The position of member `rid` in its owners' list columns: `rid` itself,
-    /// or, when `ptr_table` exists, the Ptr row that names it. `None` when no
-    /// Ptr row does, so no owner lists it.
-    ///
-    /// Cecil sets `DeclaringType` from the collection that read the member,
-    /// through the Ptr table; if two Ptr rows name the same member, the last
-    /// read wins, so the last row wins here too.
-    pub fn member_list_index(&self, ptr_table: Table, rid: u32) -> Result<Option<u32>> {
-        let slot = match ptr_table {
-            Table::FieldPtr => 0,
-            Table::MethodPtr => 1,
-            Table::PropertyPtr => 2,
-            Table::EventPtr => 3,
-            // No other list column goes through a Ptr table that has an
-            // inverse here.
-            _ => return Ok(Some(rid)),
-        };
+    /// The rids of the members a list `range` reads (`ReadFields` and the
+    /// others): through `ptr_table` when it has a row `range.start`, and
+    /// straight from the member table otherwise, as Cecil falls back to.
+    /// Rows past the end of the table read are left out, where Cecil reads
+    /// them at the wrong offset, as are Ptr rows naming rid 0 or a member
+    /// past its table. A range into rows the header claims but the tables
+    /// stream does not hold is an error, as Cecil throws reading them.
+    pub fn member_rids(&self, range: Range, ptr_table: Table) -> Result<Vec<u32>> {
+        let target = member_table(ptr_table);
         let ptr_rows = self.md.row_count(ptr_table);
-        if ptr_rows == 0 {
-            return Ok(Some(rid));
+        let target_rows = self.md.row_count(target);
+        let through_ptr = ptr_rows != 0 && range.start <= ptr_rows;
+        let indexed = if through_ptr { ptr_table } else { target };
+        let end = (range.start + range.length).min(self.md.row_count(indexed).saturating_add(1));
+        if end > self.md.rows_present(indexed).saturating_add(1) {
+            return Err(Error::bad(0, "member list runs past the tables stream"));
         }
-        let inverse = get(&self.lazy.ptr_inverses[slot], || {
-            let mut map = HashMap::new();
-            for ptr_rid in 1..=ptr_rows {
-                let target = match ptr_table {
-                    Table::FieldPtr => self.md.row::<FieldPtrRaw>(ptr_rid)?.field,
-                    Table::MethodPtr => self.md.row::<MethodPtrRaw>(ptr_rid)?.method,
-                    Table::PropertyPtr => self.md.row::<PropertyPtrRaw>(ptr_rid)?.property,
-                    _ => self.md.row::<EventPtrRaw>(ptr_rid)?.event,
-                };
-                map.insert(target, ptr_rid);
+        let mut out = Vec::with_capacity(range.length.min(4096) as usize);
+        for rid in range.start..end {
+            let actual = if through_ptr {
+                match ptr_table {
+                    Table::FieldPtr => self.md.row::<FieldPtrRaw>(rid)?.field,
+                    Table::MethodPtr => self.md.row::<MethodPtrRaw>(rid)?.method,
+                    Table::EventPtr => self.md.row::<EventPtrRaw>(rid)?.event,
+                    _ => self.md.row::<PropertyPtrRaw>(rid)?.property,
+                }
+            } else {
+                rid
+            };
+            if (1..=target_rows).contains(&actual) {
+                out.push(actual);
             }
-            Ok(map)
-        })?;
-        Ok(inverse.get(&rid).copied())
+        }
+        Ok(out)
     }
 
-    /// Reverse owner lookup by binary search over the member ranges
-    /// (`MetadataSystem.BinaryRangeSearch`).
-    pub fn member_declaring_type(&self, member_rid: u32, field: bool) -> Result<Option<u32>> {
-        let ptr_table = if field {
-            Table::FieldPtr
-        } else {
-            Table::MethodPtr
+    /// The TypeDef whose member list reads member `rid` of the table
+    /// `ptr_table` points to. Cecil sets `DeclaringType` from the
+    /// collection that read the member. When a FieldPtr or MethodPtr table
+    /// exists it reads every type's fields and methods up front, in rid
+    /// order (`CompleteTypes`), so a field or method that two lists read
+    /// takes the later type, as do properties and events here; otherwise
+    /// it finds a field's or method's type by a binary search of the
+    /// ranges (`MetadataSystem.BinaryRangeSearch`).
+    pub fn member_owner(&self, ptr_table: Table, rid: u32) -> Result<Option<u32>> {
+        let field = match ptr_table {
+            Table::FieldPtr => true,
+            Table::MethodPtr => false,
+            _ => return Ok(self.member_owners(ptr_table)?.get(&rid).copied()),
         };
-        let Some(member_rid) = self.member_list_index(ptr_table, member_rid)? else {
-            return Ok(None);
-        };
+        if self.completes_types() {
+            return Ok(self.member_owners(ptr_table)?.get(&rid).copied());
+        }
         let ranges = self.type_member_ranges()?;
         let mut min = 0usize;
         let mut max = ranges.len().wrapping_sub(1);
         while min <= max && max != usize::MAX {
             let mid = min + (max - min) / 2;
             let range = if field { ranges[mid].0 } else { ranges[mid].1 };
-            if member_rid < range.start {
+            if rid < range.start {
                 if mid == 0 {
                     break;
                 }
                 max = mid - 1;
-            } else if member_rid >= range.start + range.length {
+            } else if rid >= range.start + range.length {
                 min = mid + 1;
             } else {
                 return Ok(Some(mid as u32 + 1));
             }
         }
         Ok(None)
+    }
+
+    /// Whether Cecil reads every type's fields and methods up front, which
+    /// it does when a FieldPtr or MethodPtr table exists (`CompleteTypes`).
+    pub fn completes_types(&self) -> bool {
+        self.md.row_count(Table::FieldPtr) != 0 || self.md.row_count(Table::MethodPtr) != 0
+    }
+
+    /// Member rid → the last TypeDef, in rid order, whose list reads it.
+    fn member_owners(&self, ptr_table: Table) -> Result<&HashMap<u32, u32>> {
+        let slot = match ptr_table {
+            Table::FieldPtr => 0,
+            Table::MethodPtr => 1,
+            Table::PropertyPtr => 2,
+            _ => 3,
+        };
+        get(&self.lazy.member_owners[slot], || {
+            let mut lists: Vec<(u32, Range)> = match ptr_table {
+                Table::FieldPtr | Table::MethodPtr => self
+                    .type_member_ranges()?
+                    .iter()
+                    .zip(1..)
+                    .map(|(&(fields, methods), owner)| {
+                        (owner, if slot == 0 { fields } else { methods })
+                    })
+                    .collect(),
+                Table::PropertyPtr => self
+                    .properties_ranges()?
+                    .iter()
+                    .map(|(&o, &r)| (o, r))
+                    .collect(),
+                _ => self
+                    .events_ranges()?
+                    .iter()
+                    .map(|(&o, &r)| (o, r))
+                    .collect(),
+            };
+            lists.sort_unstable_by_key(|&(owner, _)| owner);
+            let mut owners = HashMap::new();
+            for (owner, range) in lists {
+                for rid in self.member_rids(range, ptr_table)? {
+                    owners.insert(rid, owner);
+                }
+            }
+            Ok(owners)
+        })
     }
 
     pub fn nested_maps(&self) -> Result<&NestedMaps> {
@@ -386,17 +424,13 @@ impl<'a> ModuleData<'a> {
 
     pub fn events_ranges(&self) -> Result<&HashMap<u32, Range>> {
         get(&self.lazy.events_ranges, || {
-            self.map_ranges::<EventMapRaw>(Table::Event, Table::EventPtr, |r| {
-                (r.parent, r.event_list)
-            })
+            self.map_ranges::<EventMapRaw>(Table::Event, |r| (r.parent, r.event_list))
         })
     }
 
     pub fn properties_ranges(&self) -> Result<&HashMap<u32, Range>> {
         get(&self.lazy.properties_ranges, || {
-            self.map_ranges::<PropertyMapRaw>(Table::Property, Table::PropertyPtr, |r| {
-                (r.parent, r.property_list)
-            })
+            self.map_ranges::<PropertyMapRaw>(Table::Property, |r| (r.parent, r.property_list))
         })
     }
 
@@ -405,18 +439,13 @@ impl<'a> ModuleData<'a> {
     fn map_ranges<R: RawRow>(
         &self,
         target: Table,
-        target_ptr: Table,
         cols: impl Fn(&R) -> (u32, u32),
     ) -> Result<HashMap<u32, Range>> {
         let table = self.md.table::<R>();
         let count = table.len();
-        let ptr_rows = self.md.row_count(target_ptr);
-        let end = if ptr_rows != 0 {
-            ptr_rows
-        } else {
-            self.md.row_count(target)
-        }
-        .saturating_add(1);
+        // The last row's range ends at the member table's length + 1, even
+        // when the list indexes a Ptr table (`ReadListRange`).
+        let end = self.md.row_count(target).saturating_add(1);
         let mut map = HashMap::with_capacity(table.rows_present() as usize);
         let mut prev: Option<(u32, u32)> = None;
         for rid in 1..=count {
@@ -552,6 +581,16 @@ impl<'a> ModuleData<'a> {
             add_range(&mut ranges, owner, range);
         }
         Ok(ranges)
+    }
+}
+
+/// The member table a Ptr table points into.
+fn member_table(ptr_table: Table) -> Table {
+    match ptr_table {
+        Table::FieldPtr => Table::Field,
+        Table::MethodPtr => Table::Method,
+        Table::EventPtr => Table::Event,
+        _ => Table::Property,
     }
 }
 

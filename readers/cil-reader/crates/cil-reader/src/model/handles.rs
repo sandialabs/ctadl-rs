@@ -412,14 +412,22 @@ impl<'a> TypeDef<'a> {
         Ok(self.m.class_layouts()?.get(&self.rid).copied())
     }
 
-    /// `HasFields` of a type Cecil has not read: whether its field range,
-    /// deleted fields included, is non-empty.
+    /// `HasFields`: whether the type has fields, once Cecil has read them,
+    /// which it does up front when a FieldPtr or MethodPtr table exists;
+    /// otherwise, as for a type Cecil has not read, whether its field
+    /// range, deleted fields included, is non-empty.
     pub fn has_fields(&self) -> Result<bool> {
+        if self.m.completes_types() {
+            return Ok(!self.fields()?.is_empty());
+        }
         Ok(self.m.fields_range(self.rid)?.length > 0)
     }
 
-    /// `HasMethods` of a type Cecil has not read, as [`TypeDef::has_fields`].
+    /// `HasMethods`, as [`TypeDef::has_fields`].
     pub fn has_methods(&self) -> Result<bool> {
+        if self.m.completes_types() {
+            return Ok(!self.methods()?.is_empty());
+        }
         Ok(self.m.methods_range(self.rid)?.length > 0)
     }
 
@@ -502,49 +510,17 @@ impl<'a> TypeDef<'a> {
     }
 }
 
-/// Resolves a member range through an optional Ptr indirection table
-/// (`MetadataReader.ReadPointers`), without the rids that name no member:
-/// the part of the range past the table it indexes, and a Ptr row naming
-/// rid 0 or a rid past the member table. Cecil reads those at the wrong
-/// offset, as whatever bytes are there. A range into rows the header claims
-/// but the tables stream does not hold is an error, as Cecil throws reading
-/// them; it fails before making a handle for each.
+/// The members a list `range` reads (see [`ModuleData::member_rids`]).
 fn resolve_member_range<'a, H>(
     m: &'a ModuleData<'a>,
     range: Range,
     ptr_table: Table,
     make: impl Fn(u32) -> H,
 ) -> Result<Vec<H>> {
-    let target = match ptr_table {
-        Table::FieldPtr => Table::Field,
-        Table::MethodPtr => Table::Method,
-        Table::EventPtr => Table::Event,
-        _ => Table::Property,
-    };
-    let ptr_rows = m.md.row_count(ptr_table);
-    let target_rows = m.md.row_count(target);
-    let indexed = if ptr_rows != 0 { ptr_table } else { target };
-    let end = (range.start + range.length).min(m.md.row_count(indexed).saturating_add(1));
-    if end > m.md.rows_present(indexed).saturating_add(1) {
-        return Err(Error::bad(0, "member list runs past the tables stream"));
-    }
-    let mut out = Vec::with_capacity(range.length.min(4096) as usize);
-    for rid in range.start..end {
-        let actual = if ptr_rows != 0 {
-            match ptr_table {
-                Table::FieldPtr => m.md.row::<FieldPtrRaw>(rid)?.field,
-                Table::MethodPtr => m.md.row::<MethodPtrRaw>(rid)?.method,
-                Table::EventPtr => m.md.row::<EventPtrRaw>(rid)?.event,
-                _ => m.md.row::<PropertyPtrRaw>(rid)?.property,
-            }
-        } else {
-            rid
-        };
-        if (1..=target_rows).contains(&actual) {
-            out.push(make(actual));
-        }
-    }
-    Ok(out)
+    Ok(m.member_rids(range, ptr_table)?
+        .into_iter()
+        .map(make)
+        .collect())
 }
 
 fn has_generic_params(m: &ModuleData<'_>, owner: MetadataToken) -> Result<bool> {
@@ -756,7 +732,7 @@ impl<'a> FieldDef<'a> {
     pub fn declaring_type(&self) -> Result<Option<TypeDef<'a>>> {
         Ok(self
             .m
-            .member_declaring_type(self.rid, true)?
+            .member_owner(Table::FieldPtr, self.rid)?
             .map(|rid| TypeDef { m: self.m, rid }))
     }
 
@@ -1129,7 +1105,7 @@ impl<'a> MethodDef<'a> {
     pub fn declaring_type(&self) -> Result<Option<TypeDef<'a>>> {
         Ok(self
             .m
-            .member_declaring_type(self.rid, false)?
+            .member_owner(Table::MethodPtr, self.rid)?
             .map(|rid| TypeDef { m: self.m, rid }))
     }
 
@@ -1341,19 +1317,10 @@ impl<'a> PropertyDef<'a> {
     }
 
     pub fn declaring_type(&self) -> Result<Option<TypeDef<'a>>> {
-        // Map ranges index PropertyPtr when it exists.
-        let Some(index) = self.m.member_list_index(Table::PropertyPtr, self.rid)? else {
-            return Ok(None);
-        };
-        for (&type_rid, range) in self.m.properties_ranges()? {
-            if index >= range.start && index < range.start + range.length {
-                return Ok(Some(TypeDef {
-                    m: self.m,
-                    rid: type_rid,
-                }));
-            }
-        }
-        Ok(None)
+        Ok(self
+            .m
+            .member_owner(Table::PropertyPtr, self.rid)?
+            .map(|rid| TypeDef { m: self.m, rid }))
     }
 
     fn accessor(&self, semantics: u16) -> Result<Option<MethodDef<'a>>> {
@@ -1449,19 +1416,10 @@ impl<'a> EventDef<'a> {
     }
 
     pub fn declaring_type(&self) -> Result<Option<TypeDef<'a>>> {
-        // Map ranges index EventPtr when it exists.
-        let Some(index) = self.m.member_list_index(Table::EventPtr, self.rid)? else {
-            return Ok(None);
-        };
-        for (&type_rid, range) in self.m.events_ranges()? {
-            if index >= range.start && index < range.start + range.length {
-                return Ok(Some(TypeDef {
-                    m: self.m,
-                    rid: type_rid,
-                }));
-            }
-        }
-        Ok(None)
+        Ok(self
+            .m
+            .member_owner(Table::EventPtr, self.rid)?
+            .map(|rid| TypeDef { m: self.m, rid }))
     }
 
     fn accessor(&self, semantics: u16) -> Result<Option<MethodDef<'a>>> {

@@ -647,12 +647,12 @@ pub(crate) fn lookup_token<'a>(
         // LookupField and LookupMethod find the member through its
         // declaring type.
         Some(TokenType::Field)
-            if in_range(Table::Field) && m.member_declaring_type(rid, true)?.is_some() =>
+            if in_range(Table::Field) && m.member_owner(Table::FieldPtr, rid)?.is_some() =>
         {
             Some(Entity::Field(FieldDef { m, rid }))
         }
         Some(TokenType::Method)
-            if in_range(Table::Method) && m.member_declaring_type(rid, false)?.is_some() =>
+            if in_range(Table::Method) && m.member_owner(Table::MethodPtr, rid)?.is_some() =>
         {
             Some(Entity::Method(MethodDef { m, rid }))
         }
