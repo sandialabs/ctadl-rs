@@ -77,6 +77,7 @@ static class Program {
             ("resources-dir-outside", () => Resources("resources-dir-outside"),
                 image => ResourcesDirectory(image, 0x7fff_0000, 0x100)),
             ("resource-lengths", () => Resources("resource-lengths"), ResourceLengths),
+            ("field-data-end", FieldDataEnd, FieldDataAtEnd),
         };
         foreach (var (name, build, patch) in images) {
             var mod = build();
@@ -1256,6 +1257,41 @@ static class Program {
         }
     }
 
+    static readonly byte[] FieldData = Encoding.ASCII.GetBytes("rvadata!");
+
+    // C.D, a static int64 whose initial value is FieldData.
+    static ModuleDef FieldDataEnd() {
+        var mod = NewModule("field-data-end");
+        var c = NewClass(mod, "", "C");
+        mod.Types.Add(c);
+        c.Fields.Add(new FieldDefUser("D", new FieldSig(mod.CorLibTypes.Int64),
+            FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.HasFieldRVA) {
+            InitialValue = FieldData,
+        });
+        return mod;
+    }
+
+    // Moves C.D's RVA to 2 bytes before the end of the last section, which
+    // ends the file, so 6 of its 8 bytes lie past the end. Cecil's
+    // GetFieldInitializeValue reads it with ReadBytes, which reads up to
+    // the end of the file.
+    static void FieldDataAtEnd(byte[] image) {
+        int at = IndexOf(image, FieldData);
+        if (at < 0 || IndexOf(image, FieldData, at + 1) >= 0)
+            throw new InvalidOperationException("field data not found exactly once");
+        var rva = BitConverter.GetBytes(OffsetToRva(image, at));
+        int row = IndexOf(image, rva);
+        if (row < 0 || IndexOf(image, rva, row + 1) >= 0)
+            throw new InvalidOperationException("FieldRVA row not found exactly once");
+        int pe = ReadI32(image, 0x3c);
+        int sections = BitConverter.ToUInt16(image, pe + 6);
+        int last = pe + 24 + BitConverter.ToUInt16(image, pe + 20) + 40 * (sections - 1);
+        int va = ReadI32(image, last + 12), size = ReadI32(image, last + 16), raw = ReadI32(image, last + 20);
+        if (raw + size != image.Length)
+            throw new InvalidOperationException("the last section does not end the file");
+        WriteU32(image, row, (uint)(va + size - 2));
+    }
+
     static int IndexOf(byte[] image, byte[] pattern, int from = 0) {
         for (int i = from; i + pattern.Length <= image.Length; i++)
             if (image.AsSpan(i, pattern.Length).SequenceEqual(pattern))
@@ -1278,6 +1314,19 @@ static class Program {
         int sections = BitConverter.ToUInt16(image, pe + 6);
         int optionalSize = BitConverter.ToUInt16(image, pe + 20);
         return RvaToOffset(image, rva, pe + 24 + optionalSize, sections);
+    }
+
+    static int OffsetToRva(byte[] image, int offset) {
+        int pe = ReadI32(image, 0x3c);
+        int sections = BitConverter.ToUInt16(image, pe + 6);
+        int sectionTable = pe + 24 + BitConverter.ToUInt16(image, pe + 20);
+        for (int i = 0; i < sections; i++) {
+            int at = sectionTable + 40 * i;
+            int va = ReadI32(image, at + 12), size = ReadI32(image, at + 16), raw = ReadI32(image, at + 20);
+            if (offset >= raw && offset < raw + size)
+                return offset - raw + va;
+        }
+        throw new InvalidOperationException($"offset {offset:x} outside any section");
     }
 
     static int RvaToOffset(byte[] image, int rva, int sectionTable, int sections) {

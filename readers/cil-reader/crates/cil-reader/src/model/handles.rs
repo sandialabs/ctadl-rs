@@ -807,8 +807,15 @@ impl<'a> FieldDef<'a> {
         };
         let size = self.field_type_size(&self.field_type()?)?;
         // Cecil's GetFieldInitializeValue returns an empty array when the RVA
-        // does not land in any section.
-        Ok(Some(self.m.image.slice_at_rva(rva, size).unwrap_or(&[])))
+        // does not land in any section, and reads with `ReadBytes`, which
+        // stops at the end of the file.
+        let image = &self.m.image;
+        let Some(section) = image.section_at_rva(rva) else {
+            return Ok(Some(&[]));
+        };
+        let data = image.data();
+        let start = data.len().min(section.file_offset(rva) as usize);
+        Ok(Some(&data[start..data.len().min(start + size)]))
     }
 
     fn field_type_size(&self, ty: &TypeSig) -> Result<usize> {
