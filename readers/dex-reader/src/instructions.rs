@@ -2711,7 +2711,7 @@ impl Instruction {
             IPut(f) | IPutBoolean(f) | IPutByte(f) | IPutChar(f) | IPutShort(f) | IPutObject(f) => {
                 dataflow_source_sink_ret!([f.a, f.b], [], [])
             }
-            IPutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg()], [f.b], []),
+            IPutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg(), f.b], [], []),
             // 35c/3rc: source = args
             FilledNewArray(f) => dataflow_from_args(&f.args),
             FilledNewArrayRange(f) => dataflow_from_args(&f.args),
@@ -3626,5 +3626,34 @@ impl<'a> DisplayInstr for Format<'a> {
             Format::Format51l(fmt) => fmt.display(f, cp),
             Format::FormatUnused(fmt) => fmt.display(f, cp),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn regs(it: &mut DynIter) -> Vec<Reg> {
+        let it: &mut dyn DoubleEndedStreamingIterator<Item = Reg> = &mut **it;
+        it.cloned().collect()
+    }
+
+    /// `iput-wide vA, vB, field` reads the value pair `vA, vA+1` and the object `vB`. It writes
+    /// no register, like every other store.
+    #[test]
+    fn iput_wide_reads_object_register() {
+        let inst = Instruction::IPutWide(Format22c {
+            a: Reg(2),
+            b: Reg(5),
+            idx: FieldIdx(0),
+        });
+        let DataFlow {
+            mut source,
+            mut dest,
+            mut ret,
+        } = inst.data_flow();
+        assert_eq!(regs(&mut source), vec![Reg(2), Reg(3), Reg(5)]);
+        assert_eq!(regs(&mut dest), vec![]);
+        assert_eq!(regs(&mut ret), vec![]);
     }
 }
