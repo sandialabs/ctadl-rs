@@ -1,6 +1,7 @@
 # Validating `dex-reader`'s instruction semantics - DO-NOT-MERGE
 
-Status: proposal. Nothing is built.
+Status: §1 and §2 are built (see "What was built" at the end). The frontend
+check in §2 and §3 are not.
 
 `dex-reader` hand-writes per-opcode facts that the rest of the pipeline trusts:
 `Instruction::data_flow()` (registers read and written), `can_throw()`,
@@ -187,3 +188,76 @@ Build §1 first. It costs a few hours, needs no device, and would have caught
 §1.2 and most of §1.6. Then build §2, which is the only check here that
 validates read sets and frontend edges. It would have caught §1.3, §1.5 and the
 rest of §1.6.
+
+---
+
+## What was built
+
+### §1: dexlib2 cross-check
+
+| Check | Where | Runs in |
+| --- | --- | --- |
+| Opcode table: name, format, size, reference kinds, written registers, can-throw, sets-result, can-continue | `readers/dex-reader/tests/dexlib2_opcodes.rs`, against `tests/data/dexlib2-opcodes.tsv` | `cargo test` |
+| Differential decoding, instruction by instruction | `dex:dexlib2-decode` (`xtask/src/dexlib2.rs`) | `cargo xtask regression` |
+| Disassembly text of every opcode | `dex:baksmali-all-opcodes` | `cargo xtask regression` |
+
+The dump lives in dex-reader rather than `xtask/tests/dex/`, because the test
+that reads it is in dex-reader. `scripts/DumpDexlib2Opcodes.java` regenerates
+it. Differential decoding runs over the compiled samples, the APK fixture, and
+`xtask/tests/dex/all-opcodes.smali`, a new fixture that holds every opcode with
+edge-case operands. The check fails if the fixture stops covering an opcode.
+
+Results:
+
+- The opcode table agrees with dexlib2 on every fact but one. dexlib2 says
+  `fill-array-data` cannot throw, but it throws on a null array or a short
+  one. ART's own table and the runtime harness agree with dex-reader, so the
+  test lists this as a known divergence.
+- Decoding agrees on every instruction (about 1.5M lines across the fixture,
+  samples and APK). Reverting the 45cc fix (`809f5321`) fails the check.
+- The disassembly comparison over the fixture found four display bugs, all
+  hidden from `dex:baksmali` by its normalizers or absent from the samples:
+  `const-wide/high16` printed negative values wrong (`d936c882`); array-data
+  elements were unsigned and unsuffixed (`ba6f5224`); proto operands and
+  method-handle operands printed as raw indices (`78d910de`, `2b6edcba`).
+  The normalizers that hid the first two are gone. Call sites are still shown
+  only by index, `call<N>`, because dex-reader has no encoded-array decoder.
+
+### §2: per-opcode runtime harness
+
+`cargo xtask dex-opcodes [--avd <name>] [--out <dir>] [--filter <name>]`
+(`xtask/src/dex_opcodes/`). It is opt-in, not part of `regression`. It needs a
+device or an emulator. To make one:
+
+```sh
+export ANDROID_AVD_HOME=/Volumes/Shampoo/android-avd   # or anywhere
+avdmanager create avd -n dexop34 -k "system-images;android-34;google_apis;arm64-v8a"
+cargo xtask dex-opcodes --avd dexop34
+```
+
+It differs from the sketch above in two ways. First, it perturbs inputs
+inside one process, not by rerunning `dalvikvm` per variant: the Java driver
+calls each case once per input value, so all 250 cases take about ten seconds.
+Second, each case is its own class, so a verifier rejection costs only that
+case. Everything a run produces (smali, manifest, device log, results, report)
+lands in `--out`.
+
+Results on an API 34 arm64 emulator: all 250 cases pass, so ART contradicts no
+`data_flow()` or `can_throw()` answer. The review items that remain are listed
+with their reasons in `EXPECTED_REVIEWS`: resolution-only throws, monitors
+(no visible value), `check-cast` (writes the same reference), and
+`long-to-int`'s high word (truncated, but the verifier requires the pair).
+Reintroducing old bugs shows the harness catches them:
+
+| Reintroduced bug | Harness verdict |
+| --- | --- |
+| `iput-wide` lists its object as a dest (§1.2 of the improvements doc) | FAIL |
+| long shifts read `vC+1` (§1.5) | REVIEW: source v8 never changed the result |
+| invoke-polymorphic reads no registers (§1.6) | FAIL |
+| invoke-custom cannot throw (§1.6) | FAIL |
+
+Not built: checking the ctadl-dex IR against the observed dependences, which
+would catch frontend bugs like the self-alias store (§1.3). It needs a
+reachability check over each case's IR, including fields, array elements and
+calls, and is the next step if one is wanted.
+
