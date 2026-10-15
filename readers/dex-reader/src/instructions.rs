@@ -3064,12 +3064,6 @@ impl Instruction {
                 | UnusedF7(_)
                 | UnusedF8(_)
                 | UnusedF9(_)
-                | InvokePolymorphic(_)
-                | InvokePolymorphicRange(_)
-                | InvokeCustom(_)
-                | InvokeCustomRange(_)
-                | ConstMethodHandle(_)
-                | ConstMethodType(_)
         )
     }
 }
@@ -3830,6 +3824,44 @@ mod tests {
             idx: ProtoIdx(0),
         });
         assert_eq!(inst.data_flow(), df(&[], &[4]));
+    }
+
+    /// Invokes can throw whatever the callee throws, and const-method-handle and
+    /// const-method-type can fail to resolve their constant.
+    #[test]
+    fn opcodes_fa_to_ff_can_throw() {
+        use Instruction::*;
+        let insts = [
+            InvokePolymorphic(Format45cc {
+                method_id: MethodIdx(0),
+                args: vec![Reg(0)],
+                proto_id: ProtoIdx(0),
+            }),
+            InvokePolymorphicRange(Format4rcc {
+                method_id: MethodIdx(0),
+                args: vec![Reg(0)],
+                proto_id: ProtoIdx(0),
+            }),
+            InvokeCustom(Format35c {
+                idx: CallIdx(0),
+                args: vec![],
+            }),
+            InvokeCustomRange(Format3rc {
+                idx: CallIdx(0),
+                args: vec![],
+            }),
+            ConstMethodHandle(Format21c {
+                a: Reg(0),
+                idx: MethodHandleIdx(0),
+            }),
+            ConstMethodType(Format21c {
+                a: Reg(0),
+                idx: ProtoIdx(0),
+            }),
+        ];
+        for inst in insts {
+            assert!(inst.can_throw(), "opcode {:#04x}", inst.discriminant());
+        }
     }
 
     /// A long shift's amount is an int: one register, not a pair.
