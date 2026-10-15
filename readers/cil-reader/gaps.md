@@ -404,7 +404,7 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
   `catch -`. Catch token that isn't a type: Rust prints the member; Cecil
   errors.
 
-**C13. Resource data edge cases.** *Reproduced.*
+**C13. Resource data edge cases.** *Fixed:* `Resource::AssemblyLinked::assembly` (`model/module.rs`) is an `Option`, none for an AssemblyRef past its table, and cil-dump prints it as `-`; CecilDump dereferences the null, so `malformed::resource_assembly_refs_out_of_range` (`cil:cecil-tests`) covers it. `resource_data` gives no bytes when no section holds the Resources directory's RVA, whatever its size, cuts a length past the end of the file there, and fails on one of 2^31 or more, where `ReadBytes` throws; `FieldDef::initial_value` (`model/handles.rs`) cuts at the end of the file too. `gap-resources-no-dir.dll`, `gap-resources-dir-outside.dll`, `gap-resource-lengths.dll` and `gap-field-data-end.dll` cover these; before, cil-dump printed `size=-1` or `rva-data=-` for each. Still different: `ReadBytes` allocates the whole count first, so Cecil may throw OutOfMemory on a length near 2^31 that the port cuts; and Cecil's `Advance` takes a resource offset as an `int`, so an offset of 2^31 or more seeks back from the directory, where the port reads past it. Evidence is in `/Volumes/Shampoo/c13-2026-10-14/`.
 - **Rust:** `model/module.rs:330-363`.
 - **No resources directory:** Rust errors (`size=-1`); Cecil returns 0 bytes.
 - **Length past end of file:** Rust errors; Cecil returns the truncated bytes.
