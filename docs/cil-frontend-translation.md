@@ -1,9 +1,8 @@
 # Design: the CIL frontend's translation to CTADL IR - DO-NOT-MERGE
 
 Status: design, not implemented. It builds on [`cil-flow-api.md`](cil-flow-api.md),
-which describes the reader's dataflow layer, and refines §4 (M3) of
-[`cil-frontend-plan.md`](cil-frontend-plan.md). Engine plumbing (the `Cil` VMT
-variant, `CallStyle`, the dispatch key) is M4 in that plan. It is touched on here
+which describes the reader's dataflow layer. Engine plumbing (the `Cil` VMT
+variant, `CallStyle`, the dispatch key) is separate work. It is touched on here
 only where the frontend has to fill it in.
 
 **Decided:**
@@ -39,9 +38,7 @@ answer, and in the frontend otherwise.
 
 ## 2. Crate layout
 
-`frontends/ctadl-cil/` is a sibling of `ctadl-dex` and `ctadl-jvm`. (The
-frontend plan says `ctadl-ascent/src/languages/cil/`, but the frontends live
-in `frontends/`.) It has the same `Context` lifecycle as Dex: `new`, then
+`frontends/ctadl-cil/` is a sibling of `ctadl-dex` and `ctadl-jvm`. It has the same `Context` lifecycle as Dex: `new`, then
 `process` once per assembly, then `finish` once. That way a multi-assembly app
 becomes one `ProgramInfo` with one hierarchy. Unlike Dex, which keeps most of
 its logic in one `impl Context`, each concern gets its own file:
@@ -143,10 +140,10 @@ written in terms of `!0`.
 
 Filled per assembly in `process` and finalized in `finish`. The columns mirror
 `VirtualMethodTable::Java` (`methods`, `hierarchy`, `interfaces`,
-`abstract_methods`) plus `pinvokes` in place of `natives`. The M4 table in the
-frontend plan lists only `methods, hierarchy, pinvokes` and should add the other
-two: the functional-interface recognition that `abstract_methods` exists for
-is just what delegates and lambdas need.
+`abstract_methods`) plus `pinvokes` in place of `natives`. The `Cil` variant
+needs `interfaces` and `abstract_methods` too: the functional-interface
+recognition that `abstract_methods` exists for is just what delegates and
+lambdas need.
 
 ### 4.1 Rows
 
@@ -467,8 +464,8 @@ taint test passes under `xtask regression --frontend cil`.
 | 10 | Multiple assemblies and forwarding | §3.3, `import_directory` | app + library DLL; `System.Object` via a facade |
 
 Slices 1–4 need only `ctadl-ir` as it is today, and can use `CallStyle::DirectCall`
-everywhere. Slice 5 is the first that needs M4's `CilCall` and VMT plumbing, so
-M4 should land by then.
+everywhere. Slice 5 is the first that needs the engine plumbing (`CilCall` and
+the `Cil` VMT variant), so that should land by then.
 
 ---
 

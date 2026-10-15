@@ -19,7 +19,7 @@ of M4–M7, so keep it until those land.
 | M | Work | Status |
 | --- | --- | --- |
 | M0 | Workspace integration | **Done** (differently from the steps written; see §1) |
-| M1 | `cil_reader::flow` Layer 1 | **Designed, not implemented.** Design: [`cil-flow-api.md`](cil-flow-api.md). No `flow` module exists. Reader helpers are partly there (§2.4). |
+| M1 | `cil_reader::flow` Layer 1 | **Designed, not implemented.** Design: [`cil-flow-api.md`](cil-flow-api.md). No `flow` module exists. Reader helpers are partly there (§2.1). |
 | M2 | `flow` Layer 2: CFG and stack heights | **Designed, not implemented.** Design: [`cil-flow-api.md`](cil-flow-api.md) §4 |
 | M3 | The `ctadl-cil` frontend | **Designed, not implemented.** Design: [`cil-frontend-translation.md`](cil-frontend-translation.md). It goes in `frontends/ctadl-cil/`, not `ctadl-ascent/src/languages/cil/`. |
 | M4 | Engine plumbing (`Cil` VMT, `CilCall`, dispatch key) | **Not started.** None of the §5 variants exist. |
@@ -113,217 +113,12 @@ and no nix.
 
 ## 2. Milestone M1 — `cil_reader::flow`, part 1: per-instruction dataflow
 
-> **Status: designed, not implemented.** [`cil-flow-api.md`](cil-flow-api.md)
-> replaces §2.3 and §2.5. §2.1–2.2 (what the Dex and JVM readers get wrong) are
-> recorded only here. §2.4 is still current.
+> **Status: designed, not implemented.** The design is
+> [`cil-flow-api.md`](cil-flow-api.md) §3, §5 and §7.1–7.6 (types, per-opcode
+> effects, tests). What the Dex and JVM readers get wrong, which this design
+> avoids, is in [`dex-jvm-reader-improvements.md`](dex-jvm-reader-improvements.md).
 
-This is the piece the request calls out, and the place to improve on the existing
-patterns rather than copy them.
-
-### 2.1 What `dex-reader`'s pattern gets wrong
-
-`dex_reader::instructions::DataFlow` is three boxed streaming iterators:
-
-```rust
-pub struct DataFlow {
-    pub source: DynIter,   // Box<dyn DoubleEndedStreamingIterator<Item = Reg>>
-    pub dest: DynIter,
-    pub ret: DynIter,
-}
-```
-
-Concrete problems, each visible in `ctadl-dex/src/lib.rs`:
-
-1. **Three heap allocations per instruction**, plus `RegSliceStream` cloning the
-   argument slice into a `Vec` for every call site. It also forces the
-   `streaming-iterator` crate on every consumer (`ctadl-ascent` imports
-   `StreamingIterator` solely to call `dest.owned()`).
-2. **Bags, not roles.** `(source, dest, ret)` erases *which* source is the object
-   base, which is the index, which is the stored value. So the consumer re-decodes
-   the instruction anyway — `dataflow_to_assign`'s `IPut` arm reads
-   `source.filter(|r| *r != f.b)` and then uses `f.b` directly for the object, and
-   `APut` filters two registers out by hand. The dataflow view is doing half the job
-   twice.
-3. **No operand data.** Field/string/type indices are not in `DataFlow`, so the
-   consumer goes back to `parser.get_field(f.idx)` / `constant_pool().strings`.
-4. **Silently inconsistent.** `IPut*` lists the object register as a *source*:
-   `dataflow_source_sink_ret!([f.a, f.b], [], [])`. `IPutWide` lists it as a *dest*:
-   `dataflow_source_sink_ret!([f.a, f.a.next_reg()], [f.b], [])`. Nothing catches
-   this because the one consumer ignores both fields for that opcode. There is no
-   property that could be asserted, because there is no independent source of truth
-   about pop/push counts in Dex.
-5. **Untestable.** `DataFlow` derives nothing — no `Debug`, no `PartialEq`. There are
-   no unit tests of `data_flow()` itself; the only coverage is 13 tests of the
-   *frontend's* translation in `ctadl-dex/src/tests.rs`.
-
-### 2.2 What `jvm-reader`'s pattern gets wrong
-
-`jvm_reader::flow` is closer — it has a `Location` enum carrying `Constant`,
-`FieldRef`, `ArrayElement`, `Allocation`, which is the right instinct. But:
-
-1. **Two representations for one thing.** Decode emits `Location::StackInput(depth)`
-   / `StackOutput`; a later `normalize_stack_slots_for_method` pass *mutates* them
-   into `Location::StackSlot(id)`. Every consumer must handle both, and
-   `ctadl-jvm`'s `convert_location_to_var_ref` has a `"Stack Local?"` bucket for
-   the case that should be impossible.
-2. ~~**Slot ids are stack depths, not definitions.**~~ *Retracted.* This said that
-   naming a stack slot by its depth merges unrelated values. It does not, because
-   the frontend's output goes through `ctadl_ir::ssa::run_pipeline` before any facts
-   are generated. Pruned SSA gives every definition of `s2` its own version and puts
-   a phi only where two definitions really meet. Depth naming is in fact what the
-   CIL design uses (see [`cil-flow-api.md`](cil-flow-api.md) §4).
-3. **The frontend re-implements value numbering.** To answer "which
-   object does this `putfield` write to", `ctadl-jvm/src/lib.rs` carries
-   `stack_aliases`, `dup_slot_pairs`, `last_aload_reg`, `note_assign_aliases`,
-   `stack_slot_alias`, `aload_for_stack_slot`, `aload_register_before`,
-   `resolve_object_var`, `field_object_base`, and `init_survivor_link` — roughly 200
-   lines of backwards-scanning heuristics, with comments like "Prefer a stable
-   register/parameter for this stack slot when it differs from the most recent
-   aload". Depth naming is not why this code exists (see 2). After SSA,
-   `propagate_copies` already rewrites a store's base from a stack slot to the
-   variable that was copied into it. Whether this code is needed at all has not
-   been checked against `ctadl-jvm`.
-4. **Hand-written stack effects.** `stack_effect` and `misc_stack_effect` are
-   opcode tables maintained by hand.
-5. **Fails whole methods.** An inconsistent stack height at a join returns
-   `Err(InvalidClassFileMessage(...))`, losing the method — and with it every call
-   edge through it.
-
-### 2.3 The design for CIL
-
-> **Superseded by [`cil-flow-api.md`](cil-flow-api.md)**, which specifies this API in
-> full. The main changes from the sketch below: per-instruction effects are
-> positional and need no stack simulation, the `Origin` enum is dropped, and there
-> are no reader-minted phis or definition-unique stack values. Stack slots are named
-> by depth, and versioning is left to the `ctadl-ir` SSA pipeline.
-
-Two things make CIL easier to do properly than either:
-
-- `cil_reader::cil::opcodes::OpCode` **already carries `stack_pop` / `stack_push`
-  (`StackBehaviour`) and `flow_control`**, generated from Cecil. Stack effect is
-  derivable, not hand-written; only `Varpop`/`Varpush` (calls, `newobj`, `ret`) need
-  the signature, which we have.
-- Operands are metadata tokens, and the model layer already resolves them
-  (`MethodBody::resolve_operand` → `Entity`, `full_name()` with Cecil parity).
-
-New module `cil-reader/src/flow/` (`mod.rs`, `operand.rs`, `effect.rs`, `cfg.rs`,
-`stack.rs`). Everything derives `Debug, Clone, PartialEq` so it is unit-testable.
-
-**Values — one representation, minted at definition sites:**
-
-```rust
-/// A dataflow value. Stack values are named by their *definition site*, never by
-/// stack depth: every push mints a fresh id, and a join mints a phi.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Value {
-    /// Method argument slot (0 = `this` for instance methods).
-    Arg(u16),
-    /// Local variable slot (the `.locals init` signature).
-    Local(u16),
-    /// A stack temporary, id unique within the method.
-    Stack(StackId),
-}
-
-/// Where a stack value came from. This is what lets a frontend anchor a `stfld` on
-/// the underlying local instead of scanning backwards for the `ldarg` that pushed
-/// the receiver — the thing `jvm-reader`'s consumer does by hand.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Origin {
-    Copy(Value),                 // ldarg / ldloc / dup
-    AddressOf(Place),            // ldloca / ldarga / ldflda / ldelema
-    Const(Const),                // ldc.* / ldstr / ldnull / ldtoken
-    Alloc(TypeName),             // newobj / newarr / box
-    FieldRead(FieldName),        // ldfld / ldsfld
-    ElementRead,                 // ldelem
-    CallResult { at: u32 },      // return value of the call at IL offset `at`
-    FunctionPtr(MethodName),     // ldftn / ldvirtftn
-    Exception,                   // handler / filter entry
-    Phi(SmallVec<[Value; 4]>),   // block-join merge
-    Computed,                    // arithmetic, conversions, comparisons
-}
-```
-
-**Effects — one variant per CTADL IR statement, so the frontend is a translation
-and not a re-decode:**
-
-```rust
-#[derive(Debug, Clone, PartialEq)]
-pub enum Effect {
-    /// dest := sources (multiple sources = a join / non-deterministic merge)
-    Assign { dest: Value, sources: SmallVec<[Value; 2]>, origin: Origin },
-    /// dest := base.field   (field = Named / Element / Length / Deref)
-    Load  { dest: Value, base: Value, field: Field },
-    /// base.field := value
-    Store { base: Value, field: Field, value: Value },
-    /// dest := new T   (newobj/newarr/box; the ctor call is a separate Effect)
-    New   { dest: Value, ty: TypeName },
-    /// throwval := value  (throw / rethrow)
-    Throw { value: Option<Value> },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Field {
-    /// `<[Asm]Ns.Type::name>` — an instance or static field.
-    Named(FieldName),
-    /// `[]` — array element.
-    Element,
-    /// `length` — array length.
-    Length,
-    /// `deref` — through a managed pointer (`ldind`/`stind`/`ldobj`/`stobj`).
-    Deref,
-}
-```
-
-**Calls — everything the frontend needs, resolved:**
-
-```rust
-#[derive(Debug, Clone, PartialEq)]
-pub struct CallInfo {
-    pub kind: CallKind,
-    pub target: Option<MethodName>,      // None for calli
-    pub receiver: Option<Value>,         // instance calls; also newobj's fresh object
-    pub arguments: SmallVec<[Value; 4]>, // in declaration order, receiver excluded
-    pub result: Option<Value>,           // non-void
-    pub signature: MethodSigName,        // params + return, for the CHA descriptor
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum CallKind {
-    Static,
-    /// `call` on an instance method: non-virtual, exact target.
-    Instance,
-    /// `callvirt`. `constrained` carries the `constrained.` prefix's type, which is
-    /// a *better* static receiver class than the declaring type on generic code.
-    Virtual { constrained: Option<TypeName> },
-    /// `newobj`: allocation + ctor in one instruction.
-    Ctor,
-    /// `calli` through a function pointer on the stack.
-    Indirect { callee: Value },
-    /// `callvirt D::Invoke` on a delegate.
-    DelegateInvoke,
-}
-```
-
-**Per-instruction view:**
-
-```rust
-#[derive(Debug, Clone, PartialEq)]
-pub struct InstructionFlow {
-    pub offset: u32,          // IL offset within the method body
-    pub file_offset: u32,     // byte offset in the PE image, for SourceInfo spans
-    pub size: u32,
-    pub opcode: OpCode,       // prefixes already folded in
-    pub effects: SmallVec<[Effect; 2]>,
-    pub call: Option<CallInfo>,
-    pub branch: Branch,       // None / Fallthrough / Uncond / Cond / Switch / Leave / Ret / Throw
-}
-```
-
-Prefixes (`volatile.`, `unaligned.`, `no.`, `readonly.`, `tail.`, `constrained.`) are
-folded into the following instruction — they never appear as standalone steps, the
-same way `jvm-reader` folds `wide`.
-
-### 2.4 Reader-side helpers M1 also needs
+### 2.1 Reader-side helpers M1 also needs
 
 Small additions to the existing `cil-reader` model layer, all mechanical. Status
 of each is in brackets.
@@ -349,65 +144,14 @@ of each is in brackets.
   and `TypeDef::is_sealed()` / `is_interface()` / `is_abstract()`, which the
   frontend also needs.
 
-### 2.5 Testing M1
-
-- Unit tests per opcode family against the 19 committed fixtures, asserting exact
-  `Vec<Effect>` — impossible today for either existing reader, cheap here because
-  everything is `PartialEq`.
-- **The property test the existing readers cannot have:** for every instruction in
-  every fixture, `effects`/`call` consume exactly `stack_pop` values and produce
-  exactly `stack_push`, cross-checked against the generated opcode table. This is
-  what would have caught the `IPutWide` inconsistency in `dex-reader`.
-- A handful of new `.il` fixtures for the shapes the Cecil corpus does not stress:
-  `out`/`ref` parameters, delegates, `constrained.` callvirt, try/catch/finally/filter.
-
 ---
 
-## 3. Milestone M2 — `cil_reader::flow`, part 2: CFG and abstract stack
+## 3. Milestone M2 — `cil_reader::flow`, part 2: CFG and stack heights
 
-> **Status: designed, not implemented.** [`cil-flow-api.md`](cil-flow-api.md) §4
-> and §7 refine this section.
-
-### 3.1 Basic blocks
-
-`flow::basic_blocks(&MethodBody) -> MethodCfg`, following `dex_reader::basic_blocks`
-and `jvm_reader::compute_basic_blocks_for_method`:
-
-- Leaders: offset 0, every branch/switch target, the fall-through of every
-  conditional, every `try` start, every handler start, every filter start.
-- Successors: branch targets + fall-through; `leave` → its target *and* the enclosing
-  `finally` entry; `endfinally`/`endfilter` → the appropriate continuation.
-- Exception edges: every block overlapping a `try` range → that try's handler and
-  filter blocks (matching the approximation `jvm-reader` uses).
-
-### 3.2 Stack heights, not values
-
-See [`cil-flow-api.md`](cil-flow-api.md) §4. A worklist pass computes each block's
-entry stack **height** and the verification **kind** (`StackKind`) at each depth. It
-does not compute values. Each stack slot is named by its depth (`s{depth}`) as an
-ordinary, unversioned local. The `ctadl-ir` SSA pipeline (pruned Cytron SSA, then
-`propagate_copies`) does the versioning, places the phis, and removes the copies.
-
-- The entry block starts at height 0. Handler and filter entries start at height 1,
-  holding the caught exception.
-- `Varpop`/`Varpush` resolve from the call or `ret` signature.
-- `leave` empties the stack (ECMA-335 §12.4.2.5).
-
-**Deliberately unlike `jvm-reader`: never fail the method.** If two predecessors
-reach a join with different heights, log at `debug`, take the smaller height, and
-continue. Obfuscated and hand-written IL is real, and losing a method loses every
-call edge through it.
-
-### 3.3 Testing M2
-
-Property tests over every method in every fixture:
-
-- depth never goes negative and never exceeds the header's `max_stack`;
-- every predecessor of a block agrees on its entry height (or the mismatch is logged);
-- block successor/predecessor relations are mutually consistent.
-
-Single definition and dominance are SSA's job, and `FunctionData::verify` checks them
-after the frontend's IR goes through `ssa::transform`.
+> **Status: designed, not implemented.** The design is
+> [`cil-flow-api.md`](cil-flow-api.md) §2, §4, §7.7–7.9 and §8.1: basic blocks
+> and exception edges, stack heights and kinds (no values, no phis), and never
+> failing a method on a bad stack.
 
 ---
 
@@ -713,7 +457,7 @@ every BCL call is an opaque barrier that taint does not cross. Minimum viable se
 | `async`/`await` and iterators compile to state machines; locals become fields of a generated struct | Field-sensitive taint should follow this *for free* — but it must be pinned by a dedicated regression case, because the whole method body moves into `MoveNext` |
 | Lambdas/closures compile to display classes | Same story as above; same test |
 | NativeAOT-published apps contain no IL | Out of scope — that is the pcode path |
-| Obfuscated / non-verifiable IL breaks the stack simulation | The graceful-degradation rule in §3.2 is exactly this; log and continue instead of dropping the method |
+| Obfuscated / non-verifiable IL breaks the stack simulation | The graceful-degradation rule in `cil-flow-api.md` §8.1 is exactly this; log and continue instead of dropping the method |
 | Self-contained publishes drop ~200 assemblies | The assembly-selection policy in §4.7, plus `skip-analysis` models |
 | Generic instantiation explosion in CHA | Erasure to the open definition (§4.1) |
 | Reusing the Java VMT for speed, then flipping | Invalidates indexes and model files; decided against in §5 |

@@ -4,7 +4,7 @@
 **Status:** open — present since the initial commit (`a3c69002`)
 **Severity:** finding 1 is latent (no wrong output today, blocks any second consumer);
 finding 2 is live (silently drops a real dataflow edge)
-**Found by:** design review for the CIL frontend (`docs/cil-frontend-plan.md` §2.1, item 4)
+**Found by:** design review for the CIL frontend (`docs/dex-jvm-reader-improvements.md` §1, item 4)
 
 ---
 
@@ -124,7 +124,7 @@ ambiguous (finding 2). Two further symptoms of the same shape:
   forced on every consumer.
 
 The structural fix is a role-carrying, `PartialEq`-derivable per-instruction view — the
-design being written for `cil_reader::flow` (`docs/cil-frontend-plan.md` §2.3). If
+design being written for `cil_reader::flow` (`docs/cil-flow-api.md`). If
 `dex-reader` is reworked, that is the shape to converge on.
 
 ---
@@ -146,4 +146,4 @@ Any of these would have caught finding 1:
 - `readers/dex-reader/src/instructions.rs:2711-2714` — the inconsistent arms
 - `readers/dex-reader/src/instructions.rs:2801-2804` — `APut*`, for contrast
 - `frontends/ctadl-dex/src/lib.rs:655-674, 795-820, 863-884` — the sole consumer
-- `docs/cil-frontend-plan.md` §2.1 — where this was first written up
+- `docs/dex-jvm-reader-improvements.md` §1 — where this was first written up

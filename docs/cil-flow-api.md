@@ -1,8 +1,9 @@
 # Design: `cil_reader::flow` — per-instruction dataflow for CIL - DO-NOT-MERGE
 
-Status: design, not implemented. Refines §2 (M1) and §3 (M2) of
-[`cil-frontend-plan.md`](cil-frontend-plan.md). That plan argues *why* the reader
-needs a dataflow layer and what `dex-reader` and `jvm-reader` get wrong. This
+Status: design, not implemented. This is milestones M1 and M2 of
+[`cil-frontend-plan.md`](cil-frontend-plan.md). What `dex-reader` and
+`jvm-reader` get wrong, and so what this design avoids, is in
+[`dex-jvm-reader-improvements.md`](dex-jvm-reader-improvements.md). This
 document specifies the API: the types, what every CIL opcode produces, the
 invariants, and how to build and test it. It does not cover the CTADL frontend.
 Where the frontend comes up, it is only to show that the API gives it what it
@@ -85,10 +86,10 @@ MethodBody ──► Layer 1: flow::InsFlow             per instruction, statele
                ctadl-ir ssa::run_pipeline          versions, phis, copy cleanup
 ```
 
-The main change from the M1 sketch in the frontend plan: **the per-instruction
+The main change from an earlier sketch of this layer: **the per-instruction
 semantics do not depend on stack simulation.** In that sketch, `InstructionFlow`
-holds `Value::Stack(id)`, so you cannot describe one instruction without running
-M2's worklist over the whole method. Here, one type `Effect<S>` is generic over
+held `Value::Stack(id)`, a stack value named by its definition, so you could not
+describe one instruction without running a worklist over the whole method. Here, one type `Effect<S>` is generic over
 its slot type:
 
 - `Effect<Slot>` (Layer 1) names positions: `In(1)` is the second operand popped,
@@ -111,7 +112,7 @@ definition of `s2` its own version and puts a phi only where two definitions
 really meet. Coalescing and copy propagation then remove the copies that
 `ldloc`/`stloc`/`dup` produce. So the reader does not mint definition-unique
 values, place phis, or track origins: the pipeline already does all three, and
-does them for every frontend. The M1 sketch's `Origin` enum and
+does them for every frontend. The earlier sketch's `Origin` enum and
 `entry_phis` are dropped for that reason. "What object does this `stfld` write
 to" is answered by copy propagation rewriting `s0.f := v` to `p0.f := v` after
 `s0 := p0`.
