@@ -123,7 +123,7 @@ Sections:
 - **Inconsistent:** the port's own `model/typeparser.rs:94-103` compares full
   names.
 
-**A11. `FieldDef::rva()` returns the raw table value.** *Fixed:* `rva()` is `None` where Cecil's RVA is 0, and `field_type_size` sizes in-module generic instances; `gap-attributes.il.dll` and the C++/CLI corpus images cover it. Still open: sizing TypeRef'd valuetypes, which needs an assembly resolver (CecilDump runs without one).
+**A11. `FieldDef::rva()` returns the raw table value.** *Fixed:* `rva()` is `None` where Cecil's RVA is 0, and `field_type_size` sizes in-module generic instances; `gap-attributes.il.dll` and the C++/CLI corpus images cover it. Sizing now resolves any other type as `GetFieldTypeSize` does (`FieldDef::rva_with`, `initial_value_with`), through `Module::resolve_type_sig`; `rva()` and `initial_value()` resolve with a resolver that always throws, as CecilDump's `[fields]` does, so a type in another assembly or a corlib type such as native int fails the RVA, even an RVA of 0, which Cecil checks after sizing. Both dumps' `[fields-resolved]` section reads the RVAs again with the fixtures directory's assemblies; `gap-field-sizes.dll` and `gap-field-size-lib.dll` cover both.
 - **Rust:** `model/handles.rs:589-591`.
 - **Cecil:** reports 0 when it can't determine the field type's size
   (`Mono.Cecil/AssemblyReader.cs:1328-1345`).
@@ -214,7 +214,7 @@ Sections:
 - **Cecil:** a TypeSpec wrapping a plain class or valuetype TypeRef still counts
   (`Mono.Cecil/AssemblyReader.cs:1198-1208`).
 
-**A28. Edit-and-continue `_Deleted` members are not filtered out.** *Fixed:* `TypeDef::fields`, `methods`, `properties` and `events` (`model/handles.rs`) leave out members whose `is_deleted` holds; `has_*` still count the raw ranges, as Cecil's reader does for a type not yet read. `gap-deleted.dll` covers it; see D9 for where Cecil goes wrong.
+**A28. Edit-and-continue `_Deleted` members are not filtered out.** *Fixed:* `TypeDef::fields`, `methods`, `properties` and `events` (`model/handles.rs`) leave out members whose `is_deleted` holds; `has_*` still count the raw ranges, as Cecil's reader does for a type not yet read (except with Ptr tables; see C18). `gap-deleted.dll` covers it; see D9 for where Cecil goes wrong.
 - **Cecil:** skips SpecialName members named `_Deleted` (`IsDeleted`,
   `Mono.Cecil/AssemblyReader.cs:1757-1760`).
 
@@ -434,7 +434,7 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - **Recommendation:** keep the port's behavior; matching Cecil means emulating
   out-of-bounds reads.
 
-**C18. Member list ranges with Ptr tables.**
+**C18. Member list ranges with Ptr tables.** *Fixed:* `ModuleData::member_rids` (`model/data.rs`) ends the last list at the end of the member table and reads a list that starts past the Ptr table straight from the member table, as `ReadFields` and the others do; rows past the end of the table read are still left out (B14). A member's declaring type is the last type, in rid order, whose list reads it (`member_owner`), as `CompleteTypes` leaves fields and methods when a FieldPtr or MethodPtr table exists, and `has_fields`/`has_methods` then count the members read. `gap-ptr-ranges.dll` covers a field and a property listed past the end of their Ptr tables. Not covered: a Ptr table longer than its member table, whose extra rows the last list no longer reads; dnlib does not keep an added Ptr row.
 - **Rust:** `model/data.rs:113-122, 310-314` and `model/handles.rs:899-905` end
   the last range at the Ptr table's length.
 - **Cecil:** uses the target table's length (`Mono.Cecil/AssemblyReader.cs:991-992`).
