@@ -26,7 +26,14 @@ macro_rules! index_type {
 }
 
 index_type!(
-    Reg, TypeIdx, ProtoIdx, MethodIdx, CallIdx, FieldIdx, StringIdx
+    Reg,
+    TypeIdx,
+    ProtoIdx,
+    MethodIdx,
+    CallIdx,
+    MethodHandleIdx,
+    FieldIdx,
+    StringIdx
 );
 
 pub trait DisplayInstr {
@@ -139,6 +146,16 @@ impl DisplayInstr for CallIdx {
 
     fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
         write!(f, "call<{}>", self.0)
+    }
+}
+
+impl DisplayInstr for MethodHandleIdx {
+    fn display_raw(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self.0)
+    }
+
+    fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+        write!(f, "method_handle<{}>", self.0)
     }
 }
 
@@ -1262,12 +1279,12 @@ pub enum Instruction {
     UnusedF7(FormatUnused) = 0xf7,
     UnusedF8(FormatUnused) = 0xf8,
     UnusedF9(FormatUnused) = 0xf9,
-    UnusedFA(Format45cc) = 0xfa,
-    UnusedFB(Format4rcc) = 0xfb,
-    UnusedFC(Format35c<CallIdx>) = 0xfc,
-    UnusedFD(Format3rc<CallIdx>) = 0xfd,
-    UnusedFE(Format21c<MethodIdx>) = 0xfe,
-    UnusedFF(Format21c<ProtoIdx>) = 0xff,
+    InvokePolymorphic(Format45cc) = 0xfa,
+    InvokePolymorphicRange(Format4rcc) = 0xfb,
+    InvokeCustom(Format35c<CallIdx>) = 0xfc,
+    InvokeCustomRange(Format3rc<CallIdx>) = 0xfd,
+    ConstMethodHandle(Format21c<MethodHandleIdx>) = 0xfe,
+    ConstMethodType(Format21c<ProtoIdx>) = 0xff,
 }
 
 /// The registers an instruction reads and writes. A wide (64-bit) operand contributes both of its
@@ -2306,27 +2323,27 @@ impl Instruction {
             }
             0xfa => {
                 let (size, fmt) = Format45cc::new(insns);
-                (size, Instruction::UnusedFA(fmt))
+                (size, Instruction::InvokePolymorphic(fmt))
             }
             0xfb => {
                 let (size, fmt) = Format4rcc::new(insns);
-                (size, Instruction::UnusedFB(fmt))
+                (size, Instruction::InvokePolymorphicRange(fmt))
             }
             0xfc => {
                 let (size, fmt) = Format35c::<CallIdx>::new(insns);
-                (size, Instruction::UnusedFC(fmt))
+                (size, Instruction::InvokeCustom(fmt))
             }
             0xfd => {
                 let (size, fmt) = Format3rc::<CallIdx>::new(insns);
-                (size, Instruction::UnusedFD(fmt))
+                (size, Instruction::InvokeCustomRange(fmt))
             }
             0xfe => {
-                let (size, fmt) = Format21c::<MethodIdx>::new(insns);
-                (size, Instruction::UnusedFE(fmt))
+                let (size, fmt) = Format21c::<MethodHandleIdx>::new(insns);
+                (size, Instruction::ConstMethodHandle(fmt))
             }
             0xff => {
                 let (size, fmt) = Format21c::<ProtoIdx>::new(insns);
-                (size, Instruction::UnusedFF(fmt))
+                (size, Instruction::ConstMethodType(fmt))
             }
         }
     }
@@ -2583,12 +2600,12 @@ impl Instruction {
             Self::UnusedF7(fmt) => Format::FormatUnused(fmt),
             Self::UnusedF8(fmt) => Format::FormatUnused(fmt),
             Self::UnusedF9(fmt) => Format::FormatUnused(fmt),
-            Self::UnusedFA(fmt) => Format::Format45cc(fmt),
-            Self::UnusedFB(fmt) => Format::Format4rcc(fmt),
-            Self::UnusedFC(fmt) => Format::Format35cC(fmt),
-            Self::UnusedFD(fmt) => Format::Format3rcC(fmt),
-            Self::UnusedFE(fmt) => Format::Format21cM(fmt),
-            Self::UnusedFF(fmt) => Format::Format21cP(fmt),
+            Self::InvokePolymorphic(fmt) => Format::Format45cc(fmt),
+            Self::InvokePolymorphicRange(fmt) => Format::Format4rcc(fmt),
+            Self::InvokeCustom(fmt) => Format::Format35cC(fmt),
+            Self::InvokeCustomRange(fmt) => Format::Format3rcC(fmt),
+            Self::ConstMethodHandle(fmt) => Format::Format21cH(fmt),
+            Self::ConstMethodType(fmt) => Format::Format21cP(fmt),
         }
     }
 
@@ -2677,8 +2694,8 @@ impl Instruction {
             | InvokeDirectRange(f)
             | InvokeStaticRange(f)
             | InvokeInterfaceRange(f) => dataflow_from_args(&f.args),
-            UnusedFC(f) => dataflow_from_args(&f.args),
-            UnusedFD(f) => dataflow_from_args(&f.args),
+            InvokeCustom(f) => dataflow_from_args(&f.args),
+            InvokeCustomRange(f) => dataflow_from_args(&f.args),
             // 31t
             FillArrayData(f) | PackedSwitch(f) | SparseSwitch(f) => {
                 dataflow!([f.a], [])
@@ -2796,14 +2813,19 @@ impl Instruction {
             | UnusedE6(_) | UnusedE7(_) | UnusedE8(_) | UnusedE9(_) | UnusedEA(_) | UnusedEB(_)
             | UnusedEC(_) | UnusedED(_) | UnusedEE(_) | UnusedEF(_) | UnusedF0(_) | UnusedF1(_)
             | UnusedF2(_) | UnusedF3(_) | UnusedF4(_) | UnusedF5(_) | UnusedF6(_) | UnusedF7(_)
-            | UnusedF8(_) | UnusedF9(_) | UnusedFA(_) | UnusedFB(_) | UnusedFE(_) | UnusedFF(_) => {
+            | UnusedF8(_) | UnusedF9(_) => {
                 dataflow!([], [])
             }
+            // Not modeled yet
+            InvokePolymorphic(_)
+            | InvokePolymorphicRange(_)
+            | ConstMethodHandle(_)
+            | ConstMethodType(_) => dataflow!([], []),
         }
     }
 
     /// Returns the argument registers of a call/invoke instruction in order, or `None` if this
-    /// instruction is not a call (invoke or UnusedFC/UnusedFD). Array instructions are excluded.
+    /// instruction is not a call (invoke or invoke-custom). Array instructions are excluded.
     pub fn call_args(&self) -> Option<&[Reg]> {
         use Instruction::*;
         match self {
@@ -2814,8 +2836,8 @@ impl Instruction {
             | InvokeDirectRange(f)
             | InvokeStaticRange(f)
             | InvokeInterfaceRange(f) => Some(&f.args),
-            UnusedFC(f) => Some(&f.args),
-            UnusedFD(f) => Some(&f.args),
+            InvokeCustom(f) => Some(&f.args),
+            InvokeCustomRange(f) => Some(&f.args),
             _ => None,
         }
     }
@@ -3058,12 +3080,12 @@ impl Instruction {
                 | UnusedF7(_)
                 | UnusedF8(_)
                 | UnusedF9(_)
-                | UnusedFA(_)
-                | UnusedFB(_)
-                | UnusedFC(_)
-                | UnusedFD(_)
-                | UnusedFE(_)
-                | UnusedFF(_)
+                | InvokePolymorphic(_)
+                | InvokePolymorphicRange(_)
+                | InvokeCustom(_)
+                | InvokeCustomRange(_)
+                | ConstMethodHandle(_)
+                | ConstMethodType(_)
         )
     }
 }
@@ -3456,12 +3478,12 @@ pub static DALVIK_OPCODES: [&str; 256] = [
     "unused-f7",
     "unused-f8",
     "unused-f9",
-    "unused-fa",
-    "unused-fb",
-    "unused-fc",
-    "unused-fd",
-    "unused-fe",
-    "unused-ff",
+    "invoke-polymorphic",
+    "invoke-polymorphic/range",
+    "invoke-custom",
+    "invoke-custom/range",
+    "const-method-handle",
+    "const-method-type",
 ];
 
 pub enum Format<'a> {
@@ -3473,6 +3495,7 @@ pub enum Format<'a> {
     Format20t(&'a Format20t),
     Format21cF(&'a Format21c<FieldIdx>),
     Format21cM(&'a Format21c<MethodIdx>),
+    Format21cH(&'a Format21c<MethodHandleIdx>),
     Format21cP(&'a Format21c<ProtoIdx>),
     Format21cS(&'a Format21c<StringIdx>),
     Format21cT(&'a Format21c<TypeIdx>),
@@ -3514,6 +3537,7 @@ impl<'a> DisplayInstr for Format<'a> {
             Format::Format20t(fmt) => fmt.display_raw(f),
             Format::Format21cF(fmt) => fmt.display_raw(f),
             Format::Format21cM(fmt) => fmt.display_raw(f),
+            Format::Format21cH(fmt) => fmt.display_raw(f),
             Format::Format21cP(fmt) => fmt.display_raw(f),
             Format::Format21cS(fmt) => fmt.display_raw(f),
             Format::Format21cT(fmt) => fmt.display_raw(f),
@@ -3555,6 +3579,7 @@ impl<'a> DisplayInstr for Format<'a> {
             Format::Format20t(fmt) => fmt.display(f, cp),
             Format::Format21cF(fmt) => fmt.display(f, cp),
             Format::Format21cM(fmt) => fmt.display(f, cp),
+            Format::Format21cH(fmt) => fmt.display(f, cp),
             Format::Format21cP(fmt) => fmt.display(f, cp),
             Format::Format21cS(fmt) => fmt.display(f, cp),
             Format::Format21cT(fmt) => fmt.display(f, cp),
