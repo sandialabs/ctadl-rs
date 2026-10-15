@@ -169,6 +169,21 @@
             exec ${jdk}/bin/java -jar ${jar} "$@"
           '';
 
+        # smali, the assembler from the same 3.0.9 release, for building .dex
+        # inputs by hand: opcodes that javac + dx never emit, such as
+        # invoke-polymorphic and invoke-custom (see docs/dex-validation.md).
+        # Fetched like baksmali above, never committed.
+        smali =
+          let
+            jar = pkgs.fetchurl {
+              url = "https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat.jar";
+              hash = "sha256-z2L8JWRqfs27CfHGt2Prx+nfYJKS2Ws7vgP7o6Qs2eQ=";
+            };
+          in
+          pkgs.writeShellScriptBin "smali" ''
+            exec ${jdk}/bin/java -jar ${jar} "$@"
+          '';
+
         # The one version this tree has. Read rather than repeated so these
         # derivations stay named after it; see the root Cargo.toml.
         workspaceVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
@@ -287,6 +302,7 @@
             androidSdk.androidsdk
             jdk
             baksmali
+            smali
             pkgs.ghidra-bin
           ];
         };
