@@ -35,3 +35,14 @@ exactly as dexlib2 does (see `xtask/src/dexlib2.rs`). The check fails if the
 file stops covering an opcode. `dex:baksmali-all-opcodes` also compares
 dex-reader's smali disassembly of it with baksmali's. It is never run, so it need not pass the
 verifier.
+
+# `opcodes-art.txt`
+
+ART's observations from the last passing `cargo xtask dex-opcodes --save` run:
+for each case, which registers the instruction wrote, which ones changed its
+result, and what it threw, as seen on an emulator. Like the APK, it cannot be
+rebuilt from source here, since producing it needs a device. The
+`dex:opcodes-replay` check judges dex-reader against it (see
+`xtask/src/dex_opcodes/saved.rs` and `docs/dex-validation.md`). Regenerate it
+with `--save` after changing a case, `H.java` or `Driver.java`. A unit test
+fails until you do.

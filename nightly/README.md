@@ -94,6 +94,8 @@ both — the same reasons the taint cases are nightly:
 - **`dex:*`** — `dex-reader` over the compiled samples (parse, line map, UTF-8 constants) and
   against `baksmali` as ground truth, plus `dex:apk`, which parses every `classes*.dex` in the
   real-world APK. Needs `javac`/`dx` for the sample-derived checks; `dex:apk` does not.
+  `dex:opcodes-replay` judges dex-reader's `data_flow()` and `can_throw()` against ART's
+  saved observations of every opcode (`xtask/tests/dex/opcodes-art.txt`); it needs `smali`.
 - **`jvm:*`** — `jvm-reader` over the same samples compiled to `.class`/`.jar`. Needs `javac`.
 - **`apk:*`** — `ctadl` itself, end to end, over that same real-world APK
   (`xtask/tests/dex/com.noto_54.apk`). Needs no toolchain at all: the APK is prebuilt and checked

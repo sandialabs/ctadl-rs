@@ -225,9 +225,9 @@ Results:
 
 ### §2: per-opcode runtime harness
 
-`cargo xtask dex-opcodes [--avd <name>] [--out <dir>] [--filter <name>]`
-(`xtask/src/dex_opcodes/`). It is opt-in, not part of `regression`. It needs a
-device or an emulator. To make one:
+`cargo xtask dex-opcodes [--avd <name>] [--out <dir>] [--filter <name>] [--save]`
+(`xtask/src/dex_opcodes/`). Running it is opt-in, not part of `regression`, because it needs
+a device or an emulator. To make one:
 
 ```sh
 export ANDROID_AVD_HOME=/Volumes/Shampoo/android-avd   # or anywhere
@@ -255,6 +255,27 @@ Reintroducing old bugs shows the harness catches them:
 | long shifts read `vC+1` (§1.5) | REVIEW: source v8 never changed the result |
 | invoke-polymorphic reads no registers (§1.6) | FAIL |
 | invoke-custom cannot throw (§1.6) | FAIL |
+
+#### Saved observations
+
+Nightly CI has no emulator, so a live run cannot guard later changes. Instead,
+`--save` writes a passing run's observations to `xtask/tests/dex/opcodes-art.txt`,
+and the `dex:opcodes-replay` check in `cargo xtask regression` judges dex-reader
+against them. It rebuilds the cases with `smali`, decodes them with the current
+dex-reader, and applies the same rules as a live run, so a change to
+`data_flow()`, `can_throw()` or the decoders that ART contradicts fails nightly.
+With add-int and the other int binops missing `vC`, and the long shifts reading
+`vC+1`, the replay fails on 11 cases and flags the 3 shifts.
+
+The file fingerprints the harness (H.java, Driver.java) and each case's smali
+and manifest entry. A unit test in `xtask` fails when either changed since the
+save, so editing a case without rerunning it fails `cargo test`. Rerun with:
+
+```sh
+cargo xtask dex-opcodes --avd dexop34 --save
+```
+
+The saved run is from an API 34 arm64 emulator; two runs gave identical results.
 
 Not built: checking the ctadl-dex IR against the observed dependences, which
 would catch frontend bugs like the self-alias store (§1.3). It needs a
