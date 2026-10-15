@@ -10,6 +10,24 @@ tests green off committed fixtures, byte-identical to Mono.Cecil on 114/114 corp
 files). What it does **not** have is the layer both other bytecode frontends depend
 on — a per-instruction dataflow view — so that is where this plan starts.
 
+## Status (2026-10-15)
+
+Only the reader exists. Nothing past M0 is implemented. M1–M3 now have detailed
+designs in their own documents. The rest of this plan is the only written record
+of M4–M7, so keep it until those land.
+
+| M | Work | Status |
+| --- | --- | --- |
+| M0 | Workspace integration | **Done** (differently from the steps written; see §1) |
+| M1 | `cil_reader::flow` Layer 1 | **Designed, not implemented.** Design: [`cil-flow-api.md`](cil-flow-api.md). No `flow` module exists. Reader helpers are partly there (§2.4). |
+| M2 | `flow` Layer 2: CFG and stack heights | **Designed, not implemented.** Design: [`cil-flow-api.md`](cil-flow-api.md) §4 |
+| M3 | The `ctadl-cil` frontend | **Designed, not implemented.** Design: [`cil-frontend-translation.md`](cil-frontend-translation.md). It goes in `frontends/ctadl-cil/`, not `ctadl-ascent/src/languages/cil/`. |
+| M4 | Engine plumbing (`Cil` VMT, `CilCall`, dispatch key) | **Not started.** None of the §5 variants exist. |
+| M5 | Regression harness | **Reader half only.** `Frontend::Cil` exists and runs the Cecil-parity checks (`cil:must-fail`, `cil:cecil-tests`, `cil:read`, `cil:goldens`, `cil:cecil-compare`). Nothing compiles `.cs` programs or runs import → index → query. |
+| M5b | Portable-PDB sequence points | **Not started.** `MethodDebugInformation` exists only as a table and token id. |
+| M6 | `cil-index.jsonl` default models | **Not started** |
+| M7 | P/Invoke bridge, Xamarin | **Not started** (optional) |
+
 ---
 
 ## 0. Where the seams are
@@ -94,6 +112,10 @@ and no nix.
 ---
 
 ## 2. Milestone M1 — `cil_reader::flow`, part 1: per-instruction dataflow
+
+> **Status: designed, not implemented.** [`cil-flow-api.md`](cil-flow-api.md)
+> replaces §2.3 and §2.5. §2.1–2.2 (what the Dex and JVM readers get wrong) are
+> recorded only here. §2.4 is still current.
 
 This is the piece the request calls out, and the place to improve on the existing
 patterns rather than copy them.
@@ -303,21 +325,29 @@ same way `jvm-reader` folds `wide`.
 
 ### 2.4 Reader-side helpers M1 also needs
 
-Small additions to the existing `cil-reader` model layer, all mechanical:
+Small additions to the existing `cil-reader` model layer, all mechanical. Status
+of each is in brackets.
 
-- `MethodBody::code_file_offset() -> u32` — the PE byte offset of the first code
+- **[Not done]** `MethodBody::code_file_offset() -> u32` — the PE byte offset of the first code
   byte. Requires threading `PeImage::resolve_rva` (already public on `raw`) out
   through the model; `MethodBody` currently holds a private `&ModuleData`.
-- `Ins::size()` / `Ins::end_offset()`.
-- `MethodBody::user_string(tok) -> Result<String>` for `ldstr`. The `#US` heap is
+- **[Not done]** `Ins::size()` / `Ins::end_offset()`. Only `OpCode::size()` (the
+  opcode bytes, not the operand) exists.
+- **[Not done]** `MethodBody::user_string(tok) -> Result<String>` for `ldstr`. The `#US` heap is
   reachable today only via `Module::metadata().user_strings()`; a body cannot get
   back to its module (`MethodBody::m` is private), so a frontend walking bodies has
   to thread the `Module` alongside.
-- Uniform operand resolution: `resolve_method`, `resolve_field`, `resolve_type`
+- **[Partly done]** Uniform operand resolution: `resolve_method`, `resolve_field`, `resolve_type`
   returning name structs, each handling all of Def / Ref / Spec / MemberRef /
   MethodSpec. `resolve_operand` already returns the `Entity`; these put a name on it.
-- `MethodDef::is_virtual() / is_newslot() / is_abstract()` from `attributes()` (the
-  masks exist, the accessors don't).
+  `MethodBody::resolve_operand` and the resolver's `resolve_type` exist. The
+  name-returning trio does not.
+- **[Not done]** `MethodDef::is_virtual() / is_newslot() / is_abstract()` from `attributes()` (the
+  masks exist, the accessors don't). Still true. The frontend needs these for
+  override aliases and for lowering a non-virtual `callvirt` as a direct call.
+- **[Done]** `MethodDef::overrides()` (`MethodImpl` rows), `MethodDef::pinvoke_info()`,
+  and `TypeDef::is_sealed()` / `is_interface()` / `is_abstract()`, which the
+  frontend also needs.
 
 ### 2.5 Testing M1
 
@@ -334,6 +364,9 @@ Small additions to the existing `cil-reader` model layer, all mechanical:
 ---
 
 ## 3. Milestone M2 — `cil_reader::flow`, part 2: CFG and abstract stack
+
+> **Status: designed, not implemented.** [`cil-flow-api.md`](cil-flow-api.md) §4
+> and §7 refine this section.
 
 ### 3.1 Basic blocks
 
@@ -379,6 +412,12 @@ after the frontend's IR goes through `ssa::transform`.
 ---
 
 ## 4. Milestone M3 — the frontend, `ctadl-ascent/src/languages/cil/`
+
+> **Status: designed, not implemented.**
+> [`cil-frontend-translation.md`](cil-frontend-translation.md) replaces this
+> section in detail. The crate goes in `frontends/ctadl-cil/`, and §4.2's
+> hierarchy also needs the `interfaces` and `abstract_methods` columns. §4.6's
+> lowering of `box`, value types, and managed pointers is revised there (§6).
 
 Structurally a sibling of `ctadl-dex/src/lib.rs`: a `Context` with
 `process(module, artifact_key, &mut Builders)` callable once per assembly and
@@ -549,6 +588,12 @@ all of them is neither necessary nor affordable. Provide a flag to override.
 
 ## 5. Milestone M4 — engine plumbing
 
+> **Status: not started.** No `VirtualMethodTable::Cil`, `CallStyle::CilCall`,
+> `CallObject::CilObject`, `CallTargetObject::CilClass`, `CallDispatchKey::Cil`,
+> `ArtifactLanguage::Cil` or `ChaLanguage::Cil` exists. The translation doc's
+> slice 5 is the first that needs this. The VMT row should also add
+> `interfaces` and `abstract_methods` (translation doc §4).
+
 **Recommendation: add a dedicated `Cil` variant everywhere rather than reusing the
 `Java` one.**
 
@@ -590,6 +635,12 @@ do.
 
 ## 6. Milestone M5 — regression harness
 
+> **Status: reader checks only.** `Frontend::Cil` and `xtask/src/cil.rs` exist,
+> but they hold the Cecil-parity checks for the reader, not what this section
+> describes. There is no `Kind::Cil`, no `xtask/tests/cil/*.cs`, and no
+> end-to-end check. The flow-layer property tests are also not written. Source
+> lines (step 2 below, M5b) are not started.
+
 `xtask/src/cil.rs` + `Frontend::Cil` + `Kind::Cil { cs, config }` in
 `xtask/src/discovery.rs`, following `xtask/src/jvm.rs`:
 
@@ -617,6 +668,9 @@ so there is nothing to map an IL offset back to a `.cs` line with. Two steps:
 
 ## 7. Milestone M6 — default models (`defaults/cil-index.jsonl`)
 
+> **Status: not started.** `ctadl-ascent/src/models/defaults/` holds only the
+> Java, Lua and native model files.
+
 Not polish. The Java defaults are 55 generators, and without the .NET equivalent
 every BCL call is an opaque barrier that taint does not cross. Minimum viable set:
 
@@ -639,6 +693,8 @@ every BCL call is an opaque barrier that taint does not cross. Minimum viable se
 ---
 
 ## 8. Milestone M7 (optional) — cross-language bridges
+
+> **Status: not started.**
 
 - **P/Invoke ↔ pcode**, reusing the JNI bridge machinery: `[DllImport("libfoo",
   EntryPoint="bar")]` names the native symbol outright, so the join is a direct
@@ -666,22 +722,25 @@ every BCL call is an opaque barrier that taint does not cross. Minimum viable se
 
 ## 10. Sequencing and effort
 
-| M | Work | Est. | Depends on |
-| --- | --- | --- | --- |
-| M0 | Workspace integration | 0.5 d | — |
-| M1 | `flow`: per-instruction effects, operand resolution, reader helpers | 3–4 d | M0 |
-| M2 | `flow`: CFG + abstract stack + phis | 4–5 d | M1 |
-| M3 | `languages/cil` frontend | 5–7 d | M2 |
-| M4 | Engine plumbing (`Cil` VMT / CallStyle / dispatch key) | 1–2 d | — (parallel with M1–M3) |
-| M5 | xtask regression harness | 2–3 d | M3, M4 |
-| M5b | Portable-PDB sequence points → source lines | 2–3 d | M5 |
-| M6 | `cil-index.jsonl` default models | 2–3 d | M5 |
-| M7 | P/Invoke bridge, Xamarin | optional | M6 |
+| M | Work | Est. | Depends on | Status |
+| --- | --- | --- | --- | --- |
+| M0 | Workspace integration | 0.5 d | — | Done |
+| M1 | `flow`: per-instruction effects, operand resolution, reader helpers | 3–4 d | M0 | Designed |
+| M2 | `flow`: CFG + stack heights (no phis; SSA places them) | 4–5 d | M1 | Designed |
+| M3 | `ctadl-cil` frontend | 5–7 d | M2 | Designed |
+| M4 | Engine plumbing (`Cil` VMT / CallStyle / dispatch key) | 1–2 d | — (parallel with M1–M3) | Not started |
+| M5 | xtask regression harness | 2–3 d | M3, M4 | Reader checks only |
+| M5b | Portable-PDB sequence points → source lines | 2–3 d | M5 | Not started |
+| M6 | `cil-index.jsonl` default models | 2–3 d | M5 | Not started |
+| M7 | P/Invoke bridge, Xamarin | optional | M6 | Not started |
 
 Roughly **3–4 weeks** to a frontend at parity with the JVM one, plus the optional
 bridge work.
 
 ## 11. Acceptance
+
+> **Status:** none of 1–5 is met yet. Item 1 needs `flow` tests, and there is no
+> `flow` module.
 
 1. `cargo test -p cil-reader` green from the repo root with no .NET SDK, including
    the new `flow` unit and property tests.
