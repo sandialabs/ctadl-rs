@@ -18,8 +18,8 @@ use cil_reader::model::resolver::{
     AssemblyCache, AssemblyLoader, DirectoryLoader, ResolvedMember, ResolvedType,
 };
 use cil_reader::model::{
-    ConstantValue, Entity, ExceptionHandlerType, GenericContext, Module, Resource, TypeDef,
-    TypeDefOrRef,
+    ConstantValue, Entity, ExceptionHandlerType, FieldDef, GenericContext, Module, Resource,
+    TypeDef, TypeDefOrRef,
 };
 use cil_reader::raw::{ModuleKind, Table, TargetArchitecture};
 use cil_reader::{MetadataToken, Result, TokenType};
@@ -133,7 +133,7 @@ pub fn dump(module: &Module<'_>, sections: &[Section], dir: Option<&Path>) -> Re
         dump_types(module, &mut out)?;
     }
     if has(Section::Fields) {
-        dump_fields(module, &mut out)?;
+        dump_fields(module, dir, &mut out)?;
     }
     if has(Section::Methods) {
         dump_methods(module, &mut out)?;
@@ -349,8 +349,12 @@ fn dump_generic_params(_module: &Module<'_>, ty: &TypeDef<'_>, out: &mut String)
     Ok(())
 }
 
-fn dump_fields(module: &Module<'_>, out: &mut String) -> Result<()> {
+fn dump_fields(module: &Module<'_>, dir: Option<&Path>, out: &mut String) -> Result<()> {
     out.push_str("[fields]\n");
+    let loader = NetmodulesOnly(DirectoryLoader::new(
+        dir.into_iter().map(Path::to_path_buf).collect(),
+    ));
+    let cache = AssemblyCache::throwing(&loader);
     for rid in 1..=module.metadata().row_count(Table::Field) {
         let Some(field) = module.field_def(rid) else {
             continue;
@@ -370,19 +374,7 @@ fn dump_fields(module: &Module<'_>, out: &mut String) -> Result<()> {
         if let Some(offset) = field.offset()? {
             write!(out, " offset={offset}").unwrap();
         }
-        // CecilDump reads RVA and InitialValue before writing either, and
-        // prints only `rva-data=!error` when one fails.
-        let rva = field.rva().and_then(|rva| {
-            rva.map(|rva| Ok((rva, field.initial_value()?.unwrap_or(&[]))))
-                .transpose()
-        });
-        match rva {
-            Ok(Some((rva, data))) => {
-                write!(out, " rva=0x{rva:08x} rva-data={}", hex(data)).unwrap();
-            }
-            Ok(None) => {}
-            Err(_) => out.push_str(" rva-data=!error"),
-        }
+        out.push_str(&rva_part(&field, &cache));
         write_optional(out, "constant", field.constant(), format_constant);
         write_optional(out, "marshal", field.marshal_info(), format_marshal);
         out.push('\n');
@@ -653,6 +645,21 @@ fn dump_events(module: &Module<'_>, out: &mut String) -> Result<()> {
         out.push('\n');
     }
     Ok(())
+}
+
+/// A field's ` rva=... rva-data=...`, its type sized through `cache`.
+/// CecilDump reads RVA and InitialValue before writing either, and prints
+/// only ` rva-data=!error` when one fails.
+fn rva_part(field: &FieldDef<'_>, cache: &AssemblyCache<'_>) -> String {
+    let rva = field.rva_with(cache).and_then(|rva| {
+        rva.map(|rva| Ok((rva, field.initial_value_with(cache)?.unwrap_or(&[]))))
+            .transpose()
+    });
+    match rva {
+        Ok(Some((rva, data))) => format!(" rva=0x{rva:08x} rva-data={}", hex(data)),
+        Ok(None) => String::new(),
+        Err(_) => " rva-data=!error".to_string(),
+    }
 }
 
 fn write_other_methods(methods: &[cil_reader::model::MethodDef<'_>], out: &mut String) {

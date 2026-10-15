@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::model::data::ModuleData;
 use crate::model::handles::{MemberRefSig, MethodDef, TypeDef, TypeRef};
 use crate::model::names::{GenericContext, sig_full_name, token_full_name};
-use crate::model::resolver::{AssemblyCache, AssemblyLoader};
+use crate::model::resolver::{AssemblyCache, NoLoader};
 use crate::model::sig::{ElementType, SigReader, TypeSig};
 use crate::model::typeparser::ParsedType;
 use crate::raw::tables::*;
@@ -35,20 +35,6 @@ fn check_depth(depth: u32) -> Result<()> {
         return Err(Error::bad(0, "custom attribute argument nested too deeply"));
     }
     Ok(())
-}
-
-/// Loads nothing. A throwing cache over it is Cecil with an assembly
-/// resolver that always throws.
-struct NoLoader;
-
-impl AssemblyLoader for NoLoader {
-    fn load_assembly(&self, _: &crate::model::module::AssemblyName<'_>) -> Option<Vec<u8>> {
-        None
-    }
-
-    fn load_file(&self, _: &str) -> Option<Vec<u8>> {
-        None
-    }
 }
 
 /// The type of a custom-attribute argument (Cecil models these as

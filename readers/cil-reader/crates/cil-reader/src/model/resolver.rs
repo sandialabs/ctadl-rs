@@ -94,6 +94,20 @@ pub struct AssemblyCache<'l> {
     throws_on_miss: bool,
 }
 
+/// Loads nothing. A throwing cache over it is Cecil with an assembly
+/// resolver that always throws.
+pub(crate) struct NoLoader;
+
+impl AssemblyLoader for NoLoader {
+    fn load_assembly(&self, _: &AssemblyName<'_>) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn load_file(&self, _: &str) -> Option<Vec<u8>> {
+        None
+    }
+}
+
 /// The error resolution gives, from an [`AssemblyCache::throwing`] cache,
 /// for an assembly its loader can't find: Cecil's
 /// `AssemblyResolutionException`.

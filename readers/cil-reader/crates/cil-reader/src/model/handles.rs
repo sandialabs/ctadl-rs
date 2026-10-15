@@ -12,6 +12,7 @@ use crate::model::names::{
     GenericContext, method_params_full_name, sig_full_name, token_full_name, typedef_full_name,
     typeref_full_name,
 };
+use crate::model::resolver::{AssemblyCache, NoLoader};
 use crate::model::sig::{ElementType, MethodSig, PropertySig, SigReader, TypeSig};
 use crate::raw::heaps::Utf16Str;
 use crate::raw::tables::*;
@@ -785,27 +786,33 @@ impl<'a> FieldDef<'a> {
         Ok(self.m.field_layouts()?.get(&self.rid).copied())
     }
 
-    /// `FieldDefinition.RVA`: the FieldRVA row's RVA, or `None` where Cecil
-    /// reports 0: no row, an RVA of 0, or a field type of no known size
-    /// (`MetadataReader.ReadFieldRVA`).
+    /// `FieldDefinition.RVA`, with an assembly resolver that always throws,
+    /// as [`FieldDef::rva_with`] reads it.
     pub fn rva(&self) -> Result<Option<u32>> {
-        let Some(&rva) = self.m.field_rvas()?.get(&self.rid) else {
-            return Ok(None);
-        };
-        if rva == 0 || self.field_type_size(&self.field_type()?)? == 0 {
-            return Ok(None);
-        }
-        Ok(Some(rva))
+        self.rva_with(&AssemblyCache::throwing(&NoLoader))
     }
 
-    /// The field's initial data (FieldRVA), sized by the field type
-    /// (`MetadataReader.GetFieldTypeSize`; type-layout-sized valuetypes only
-    /// resolve in-module).
+    /// `FieldDefinition.RVA`, resolving the field type through `cache`: the
+    /// FieldRVA row's RVA, or `None` where Cecil reports 0: no row, an RVA
+    /// of 0, or a field type of no known size (`MetadataReader.ReadFieldRVA`).
+    /// Cecil sizes the type before it checks the RVA, so a type that fails
+    /// to resolve fails even an RVA of 0.
+    pub fn rva_with(&self, cache: &AssemblyCache<'_>) -> Result<Option<u32>> {
+        Ok(self.rva_and_size(cache)?.map(|(rva, _)| rva))
+    }
+
+    /// The field's initial data, with an assembly resolver that always
+    /// throws, as [`FieldDef::initial_value_with`] reads it.
     pub fn initial_value(&self) -> Result<Option<&'a [u8]>> {
-        let Some(rva) = self.rva()? else {
+        self.initial_value_with(&AssemblyCache::throwing(&NoLoader))
+    }
+
+    /// The field's initial data (FieldRVA), sized by the field type, which
+    /// resolves through `cache` (`MetadataReader.GetFieldTypeSize`).
+    pub fn initial_value_with(&self, cache: &AssemblyCache<'_>) -> Result<Option<&'a [u8]>> {
+        let Some((rva, size)) = self.rva_and_size(cache)? else {
             return Ok(None);
         };
-        let size = self.field_type_size(&self.field_type()?)?;
         // Cecil's GetFieldInitializeValue returns an empty array when the RVA
         // does not land in any section, and reads with `ReadBytes`, which
         // stops at the end of the file.
@@ -818,7 +825,18 @@ impl<'a> FieldDef<'a> {
         Ok(Some(&data[start..data.len().min(start + size)]))
     }
 
-    fn field_type_size(&self, ty: &TypeSig) -> Result<usize> {
+    /// The RVA and size `ReadFieldRVA` reads, or `None` where it reports 0.
+    fn rva_and_size(&self, cache: &AssemblyCache<'_>) -> Result<Option<(u32, usize)>> {
+        let Some(&rva) = self.m.field_rvas()?.get(&self.rid) else {
+            return Ok(None);
+        };
+        let size = self.field_type_size(&self.field_type()?, cache)?;
+        Ok((size != 0 && rva != 0).then_some((rva, size)))
+    }
+
+    /// `GetFieldTypeSize`: primitives by their size, anything else by the
+    /// class size of the type it resolves to.
+    fn field_type_size(&self, ty: &TypeSig, cache: &AssemblyCache<'_>) -> Result<usize> {
         Ok(match ty {
             TypeSig::Boolean | TypeSig::U1 | TypeSig::I1 => 1,
             TypeSig::U2 | TypeSig::I2 | TypeSig::Char => 2,
@@ -828,33 +846,28 @@ impl<'a> FieldDef<'a> {
             // fixed image, use 8 as CoreCLR-on-64-bit would.
             TypeSig::Ptr(_) | TypeSig::FnPtr(_) => 8,
             TypeSig::CModReq { inner, .. } | TypeSig::CModOpt { inner, .. } => {
-                self.field_type_size(inner)?
+                self.field_type_size(inner, cache)?
             }
-            TypeSig::Named { token, .. } if token.token_type() == Some(TokenType::TypeRef) => {
-                match (TypeRef {
-                    m: self.m,
-                    rid: token.rid(),
-                })
-                .primitive()?
-                {
-                    Some(primitive) => self.field_type_size(&primitive)?,
-                    None => 0,
-                }
-            }
-            // A generic instance resolves to its generic type, as Cecil's
-            // GenericInstanceType.Resolve() does.
-            TypeSig::Named { token, .. } | TypeSig::GenericInst { ty: token, .. }
-                if token.token_type() == Some(TokenType::TypeDef) =>
+            // Cecil reads a TypeRef to a primitive as that primitive.
+            TypeSig::Named { token, .. }
+                if token.token_type() == Some(TokenType::TypeRef)
+                    && let Some(primitive) = (TypeRef {
+                        m: self.m,
+                        rid: token.rid(),
+                    })
+                    .primitive()? =>
             {
-                let td = TypeDef {
-                    m: self.m,
-                    rid: token.rid(),
-                };
-                td.class_layout()?
-                    .map(|(_, size)| size as usize)
-                    .unwrap_or(0)
+                self.field_type_size(&primitive, cache)?
             }
-            _ => 0,
+            // `TypeReference.Resolve()`, through the element type; a generic
+            // instance resolves to its generic type.
+            _ => match self.m.module().resolve_type_sig(ty, cache)? {
+                Some(resolved) => resolved
+                    .ty
+                    .class_layout()?
+                    .map_or(0, |(_, size)| size as usize),
+                None => 0,
+            },
         })
     }
 

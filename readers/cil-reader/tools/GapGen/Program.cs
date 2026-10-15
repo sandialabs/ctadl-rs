@@ -52,6 +52,7 @@ static class Program {
             ("utf8-names", Utf8Names),
             ("heap-indexes", HeapIndexes),
             ("typeref-scopes", TypeRefScopes),
+            ("field-size-lib", FieldSizeLib),
         };
         foreach (var (name, build) in fixtures) {
             var (mod, patch) = build();
@@ -78,6 +79,7 @@ static class Program {
                 image => ResourcesDirectory(image, 0x7fff_0000, 0x100)),
             ("resource-lengths", () => Resources("resource-lengths"), ResourceLengths),
             ("field-data-end", FieldDataEnd, FieldDataAtEnd),
+            ("field-sizes", FieldSizes, FieldSizeRvas),
         };
         foreach (var (name, build, patch) in images) {
             var mod = build();
@@ -85,6 +87,10 @@ static class Program {
             opts.PEHeadersOptions.TimeDateStamp = 0;
             AddEmptyStream(opts, "#XS");
             AddEmptyStream(opts, "#YS");
+            // dnlib checks a field's initial value against the size of its
+            // type, which it cannot know for a type in another assembly.
+            if (name == "field-sizes")
+                opts.Logger = DummyLogger.NoThrowInstance;
             var bytes = new MemoryStream();
             mod.Write(bytes, opts);
             var image = bytes.ToArray();
@@ -1290,6 +1296,67 @@ static class Program {
         if (raw + size != image.Length)
             throw new InvalidOperationException("the last section does not end the file");
         WriteU32(image, row, (uint)(va + size - 2));
+    }
+
+    // Value types whose size only their ClassLayout gives: Lib.S, of 12
+    // bytes, and Lib.G`1, of 16.
+    static (ModuleDef, Action<Metadata>) FieldSizeLib() {
+        var mod = NewModule("field-size-lib");
+        var valueType = mod.CorLibTypes.GetTypeRef("System", "ValueType");
+        foreach (var (name, size) in new[] { ("S", 12u), ("G`1", 16u) }) {
+            var t = new TypeDefUser("Lib", name, valueType) {
+                Attributes = TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.SequentialLayout,
+                ClassLayout = new ClassLayoutUser(0, size),
+            };
+            if (name == "G`1")
+                t.GenericParameters.Add(new GenericParamUser(0, GenericParamAttributes.NonVariant, "T"));
+            mod.Types.Add(t);
+        }
+        return (mod, _ => { });
+    }
+
+    // Static fields with initial data whose types Cecil sizes only by
+    // resolving them, the field's name, then its data: gap-field-size-lib's
+    // S and G<int32>, which an assembly resolver over the fixtures
+    // directory finds, and native int, whose corlib it does not. Zero is
+    // an S whose RVA FieldSizeRvas makes 0, which Cecil sizes first.
+    static readonly (string, string)[] SizedFields = {
+        ("S", "fieldsize:S."),
+        ("G", "fieldsize:G<int>"),
+        ("P", "fsize:P!"),
+        ("Zero", "fieldsize:Z."),
+    };
+
+    static ModuleDef FieldSizes() {
+        var mod = NewModule("field-sizes");
+        var lib = GapRef("field-size-lib");
+        var s = new ValueTypeSig(new TypeRefUser(mod, "Lib", "S", lib));
+        var types = new Dictionary<string, TypeSig> {
+            ["S"] = s,
+            ["G"] = new GenericInstSig(new ValueTypeSig(new TypeRefUser(mod, "Lib", "G`1", lib)), mod.CorLibTypes.Int32),
+            ["P"] = mod.CorLibTypes.IntPtr,
+            ["Zero"] = s,
+        };
+        var c = NewClass(mod, "", "C");
+        mod.Types.Add(c);
+        foreach (var (name, data) in SizedFields)
+            c.Fields.Add(new FieldDefUser(name, new FieldSig(types[name]),
+                FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.HasFieldRVA) {
+                InitialValue = Encoding.ASCII.GetBytes(data),
+            });
+        return mod;
+    }
+
+    static void FieldSizeRvas(byte[] image) {
+        var data = Encoding.ASCII.GetBytes(SizedFields.Single(f => f.Item1 == "Zero").Item2);
+        int at = IndexOf(image, data);
+        if (at < 0 || IndexOf(image, data, at + 1) >= 0)
+            throw new InvalidOperationException("Zero: data not found exactly once");
+        var rva = BitConverter.GetBytes(OffsetToRva(image, at));
+        int row = IndexOf(image, rva);
+        if (row < 0 || IndexOf(image, rva, row + 1) >= 0)
+            throw new InvalidOperationException("Zero: FieldRVA row not found exactly once");
+        WriteU32(image, row, 0);
     }
 
     static int IndexOf(byte[] image, byte[] pattern, int from = 0) {
