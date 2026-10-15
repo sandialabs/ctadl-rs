@@ -430,3 +430,4 @@ ca parent=0x0600000c ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute
 0x0a000019 -> mscorlib.dll!0x06001df6 System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor()
 [custom-attributes-resolved]
 ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=((System.Diagnostics.DebuggableAttribute/DebuggingModes:258))
+[fields-resolved]

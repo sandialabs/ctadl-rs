@@ -74,3 +74,4 @@ ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::
 0x0a00000b -> -
 [custom-attributes-resolved]
 ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+[fields-resolved]

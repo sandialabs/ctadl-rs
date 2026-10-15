@@ -58,3 +58,4 @@ public-key=-
 0x0a000002 -> varargs!0x06000001 System.Void <Module>::Foo()
 0x0a000003 -> varargs!0x06000002 System.Void <Module>::Bar(System.String)
 [custom-attributes-resolved]
+[fields-resolved]

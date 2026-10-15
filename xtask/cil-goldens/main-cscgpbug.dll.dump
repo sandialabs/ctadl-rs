@@ -116,3 +116,4 @@ ca parent=0x06000008 ctor=System.Void System.Runtime.CompilerServices.CompilerGe
 0x0a000008 -> test.dll!0x06000001 T BaseListViewModel`1::get_SelectedItem()
 0x0a000009 -> test.dll!0x06000002 System.Void BaseListViewModel`1::set_SelectedItem(T)
 [custom-attributes-resolved]
+[fields-resolved]

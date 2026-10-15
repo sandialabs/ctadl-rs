@@ -69,3 +69,4 @@ ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCom
 0x0a000002 -> mscorlib.dll!0x0600594a System.Void System.Console::WriteLine(System.String)
 0x0a000003 -> mscorlib.dll!0x06001df6 System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor()
 [custom-attributes-resolved]
+[fields-resolved]

@@ -27,3 +27,4 @@ embedded name=res.resources flags=0x00000001 size=204
 [il]
 [resolve]
 [custom-attributes-resolved]
+[fields-resolved]

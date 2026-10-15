@@ -65,3 +65,4 @@ sec parent=0x06000001 action=6 attr=System.Security.Permissions.SecurityPermissi
 0x0a000005 -> -
 [custom-attributes-resolved]
 ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+[fields-resolved]

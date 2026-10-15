@@ -155,3 +155,4 @@ ca parent=0x0600000e ctor=System.Void BAttribute::.ctor() args=() field Value=(S
 ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
 ca parent=0x02000002 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
 ca parent=0x02000003 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+[fields-resolved]

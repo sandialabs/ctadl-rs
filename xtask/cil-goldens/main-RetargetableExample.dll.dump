@@ -90,3 +90,4 @@ ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.GuidAttribu
 0x0a00000b -> -
 [custom-attributes-resolved]
 ca parent=0x17000001 ctor=System.Void System.ComponentModel.DefaultValueAttribute::.ctor(System.Object) args=()
+[fields-resolved]

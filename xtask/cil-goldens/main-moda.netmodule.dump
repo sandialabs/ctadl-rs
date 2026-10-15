@@ -44,3 +44,4 @@ entry-point=-
 0x0a000001 -> -
 0x0a000002 -> -
 [custom-attributes-resolved]
+[fields-resolved]

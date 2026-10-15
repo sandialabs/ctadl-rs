@@ -60,3 +60,4 @@ sec parent=0x02000003 action=4 attr=System.Security.Permissions.PermissionSetAtt
 0x0a000001 -> -
 0x0a000002 -> -
 [custom-attributes-resolved]
+[fields-resolved]

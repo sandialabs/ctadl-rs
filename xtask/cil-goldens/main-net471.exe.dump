@@ -86,3 +86,4 @@ ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkA
 0x0a00000f -> -
 [custom-attributes-resolved]
 ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+[fields-resolved]

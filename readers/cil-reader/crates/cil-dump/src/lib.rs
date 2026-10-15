@@ -44,6 +44,7 @@ pub enum Section {
     Il,
     Resolve,
     CustomAttributesResolved,
+    FieldsResolved,
 }
 
 pub const ALL_SECTIONS: &[(&str, Section)] = &[
@@ -66,6 +67,7 @@ pub const ALL_SECTIONS: &[(&str, Section)] = &[
         "custom-attributes-resolved",
         Section::CustomAttributesResolved,
     ),
+    ("fields-resolved", Section::FieldsResolved),
 ];
 
 fn hex(bytes: &[u8]) -> String {
@@ -81,8 +83,9 @@ fn tok(t: MetadataToken) -> String {
 
 /// Renders a dump of `module` for the selected sections. `dir` is the
 /// directory [`Section::Resolve`] probes for referenced assemblies (the
-/// input's own); without one, it and [`Section::CustomAttributesResolved`]
-/// are left out. Custom attributes load the assembly's netmodules from it.
+/// input's own); without one, it, [`Section::CustomAttributesResolved`] and
+/// [`Section::FieldsResolved`] are left out. Custom attributes and fields
+/// load the assembly's netmodules from it.
 pub fn dump(module: &Module<'_>, sections: &[Section], dir: Option<&Path>) -> Result<String> {
     let mut out = String::new();
     let has = |s: Section| sections.contains(&s);
@@ -158,6 +161,9 @@ pub fn dump(module: &Module<'_>, sections: &[Section], dir: Option<&Path>) -> Re
     }
     if let (true, Some(dir)) = (has(Section::CustomAttributesResolved), dir) {
         dump_custom_attributes_resolved(module, dir, &mut out)?;
+    }
+    if let (true, Some(dir)) = (has(Section::FieldsResolved), dir) {
+        dump_fields_resolved(module, dir, &mut out)?;
     }
     Ok(out)
 }
@@ -643,6 +649,30 @@ fn dump_events(module: &Module<'_>, out: &mut String) -> Result<()> {
         }
         write_other_methods(&event.other_methods()?, out);
         out.push('\n');
+    }
+    Ok(())
+}
+
+/// The fields whose RVA changes when their types' assemblies resolve
+/// through a [`DirectoryLoader`] over `dir`, as `[resolve]`'s do, with that
+/// RVA.
+fn dump_fields_resolved(module: &Module<'_>, dir: &Path, out: &mut String) -> Result<()> {
+    out.push_str("[fields-resolved]\n");
+    let netmodules = NetmodulesOnly(DirectoryLoader::new(vec![dir.to_path_buf()]));
+    let unresolved = AssemblyCache::throwing(&netmodules);
+    let loader = DirectoryLoader::new(vec![dir.to_path_buf()]);
+    let cache = AssemblyCache::new(&loader);
+    for rid in 1..=module.metadata().row_count(Table::Field) {
+        let Some(field) = module.field_def(rid) else {
+            continue;
+        };
+        if field.is_deleted().unwrap_or(false) {
+            continue;
+        }
+        let rva = rva_part(&field, &cache);
+        if rva != rva_part(&field, &unresolved) {
+            writeln!(out, "{}{rva}", tok(field.token())).unwrap();
+        }
     }
     Ok(())
 }

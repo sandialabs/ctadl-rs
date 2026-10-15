@@ -30,6 +30,7 @@ static class Program
         "module", "assembly", "assembly-refs", "module-refs", "resources",
         "exported-types", "types", "fields", "methods", "properties", "events",
         "custom-attributes", "security-declarations", "il", "resolve", "custom-attributes-resolved",
+        "fields-resolved",
     };
 
     static int Main (string [] args)
@@ -81,6 +82,7 @@ static class Program
             case "il": DumpIl (module, o); break;
             case "resolve": DumpResolve (path, o); break;
             case "custom-attributes-resolved": DumpCustomAttributesResolved (module, path, o); break;
+            case "fields-resolved": DumpFieldsResolved (module, path, o); break;
             default:
                 Console.Error.WriteLine ($"unknown section: {section}");
                 return 1;
@@ -282,12 +284,7 @@ static class Program
             o.Append ($"{Tok (field.MetadataToken)}={fullName} flags=0x{(ushort) field.Attributes:x4}");
             if (field.HasLayoutInfo)
                 o.Append ($" offset={field.Offset}");
-            try {
-                if (field.RVA != 0)
-                    o.Append ($" rva=0x{(uint) field.RVA:x8} rva-data={Hex (field.InitialValue)}");
-            } catch {
-                o.Append (" rva-data=!error");
-            }
+            o.Append (RvaPart (field));
             if (field.HasConstant)
                 o.Append ($" constant={FormatConstant (field.Constant)}");
             if (field.HasMarshalInfo)
@@ -502,6 +499,40 @@ static class Program
             var line = AttributeLine (resolved [i].parent, resolved [i].attr);
             if (line != AttributeLine (unresolved [i].parent, unresolved [i].attr))
                 o.Append (line).Append ('\n');
+        }
+    }
+
+    // A field's ` rva=... rva-data=...`: reading the RVA sizes the field's
+    // type, which resolves it with the module's assembly resolver.
+    static string RvaPart (FieldDefinition field)
+    {
+        try {
+            return field.RVA != 0
+                ? $" rva=0x{(uint) field.RVA:x8} rva-data={Hex (field.InitialValue)}"
+                : "";
+        } catch {
+            return " rva-data=!error";
+        }
+    }
+
+    // The fields whose RVA changes when their types' assemblies resolve from
+    // the input's directory, as [resolve]'s do, with that RVA. `module` is
+    // the image read without resolution.
+    static void DumpFieldsResolved (ModuleDefinition module, string path, StringBuilder o)
+    {
+        o.Append ("[fields-resolved]\n");
+        var directory = System.IO.Path.GetDirectoryName (System.IO.Path.GetFullPath (path));
+        var parameters = new ReaderParameters {
+            AssemblyResolver = new DirectoryResolver (directory),
+        };
+        using var resolving = ModuleDefinition.ReadModule (path, parameters);
+        ReadAsDumped (module);
+        ReadAsDumped (resolving);
+        var unresolved = MembersInRidOrder (module, ty => ty.Fields).ToDictionary (f => f.MetadataToken.RID);
+        foreach (var field in MembersInRidOrder (resolving, ty => ty.Fields)) {
+            var rva = RvaPart (field);
+            if (!unresolved.TryGetValue (field.MetadataToken.RID, out var other) || rva != RvaPart (other))
+                o.Append ($"{Tok (field.MetadataToken)}{rva}\n");
         }
     }
 

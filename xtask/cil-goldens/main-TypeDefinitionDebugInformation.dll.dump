@@ -102,3 +102,4 @@ ca parent=0x02000003 ctor=System.Void System.AttributeUsageAttribute::.ctor(Syst
 [custom-attributes-resolved]
 ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
 ca parent=0x02000003 ctor=System.Void System.AttributeUsageAttribute::.ctor(System.AttributeTargets) args=()
+[fields-resolved]

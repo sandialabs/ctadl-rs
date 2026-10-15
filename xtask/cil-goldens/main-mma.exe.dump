@@ -62,3 +62,4 @@ ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.Compilatio
 0x0a000005 -> modb.netmodule!0x06000001 System.String Module.B.Baz::Gazonk()
 0x0a000006 -> -
 [custom-attributes-resolved]
+[fields-resolved]
