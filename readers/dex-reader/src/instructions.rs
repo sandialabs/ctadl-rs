@@ -159,8 +159,30 @@ impl DisplayInstr for MethodHandleIdx {
         write!(f, "{}", self.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
-        write!(f, "method_handle<{}>", self.0)
+    /// Written as smali writes it: the handle's kind, `@`, then the field or method it names.
+    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+        let Some(handle) = cp.method_handles.get(self.0 as usize) else {
+            return write!(f, "<invalid_method_handle>");
+        };
+        let member = u32::from(handle.field_or_method_id);
+        let (kind, is_field) = match handle.method_handle_type {
+            0x00 => ("static-put", true),
+            0x01 => ("static-get", true),
+            0x02 => ("instance-put", true),
+            0x03 => ("instance-get", true),
+            0x04 => ("invoke-static", false),
+            0x05 => ("invoke-instance", false),
+            0x06 => ("invoke-constructor", false),
+            0x07 => ("invoke-direct", false),
+            0x08 => ("invoke-interface", false),
+            _ => return write!(f, "<invalid_method_handle>"),
+        };
+        write!(f, "{kind}@")?;
+        if is_field {
+            FieldIdx(member).display(f, cp)
+        } else {
+            MethodIdx(member).display(f, cp)
+        }
     }
 }
 
