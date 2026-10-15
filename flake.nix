@@ -773,6 +773,10 @@
               jadx
               scrcpy
               androidLldb
+              # The SDK the fixtures and CecilDump build with, for building and
+              # running .NET code by hand (ildasm/ilasm round trips, harnesses
+              # that run fixture methods for real).
+              dotnet-sdk_8
             ];
             packages = [ testEnv ];
 
@@ -790,6 +794,9 @@
             ANDROID_NDK_ROOT = "${androidDebugSdk.androidsdk}/libexec/android-sdk/ndk-bundle";
             FRIDA_SERVER = "${fridaServer}";
             CTADL_ANDROID_ICC_APKS = "${droidbenchIccApks}";
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
 
             # The debugging SDK's bin/ (adb, emulator, avdmanager, ...) goes
             # ahead of testEnv's, which carries the regression SDK's adb too.
