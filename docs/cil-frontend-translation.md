@@ -238,7 +238,9 @@ instantiated with a reference type. That is the conservative choice.
 | call result | local `retval` (shared, as in Dex) |
 | `Root::Static` | `new_global()` |
 
-All of them are unversioned (see `cil-flow-api.md` §6.5).
+All of them are unversioned (see `cil-flow-api.md` §6.5). The frontend's own
+temporaries (§6.3's `t`, `c_k`, `u_k`, `cell_k`, and §7's delegate loads) are
+fresh locals with prefixes of their own, so they never collide with `t{k}`.
 
 ---
 
@@ -392,8 +394,9 @@ the `Goto` targets.
 | `Throw` (`throwval := src` already emitted) | `Goto { exc_succs }` if protected, else `Return [empty, throwval]` |
 | `Jump m` | `CallAssign` to `m` with every parameter, then `Return [retval, throwval]` |
 
-`empty` is `Exp::new_bytes(vec![])`, as in Dex. Each handler or filter entry
-block starts with `caught{h} := throwval`. The flow layer's prepended `s0 :=
+`empty` is `Exp::new_bytes(vec![])`, as in Dex. Each catch, filter, or
+filtered-handler entry block starts with `caught{h} := throwval`. Finally and
+fault entries start with nothing. The flow layer's prepended `s0 :=
 caught{h}` follows it.
 
 **Precise exception edges.** In Dex, a block with two calls in a try range
@@ -428,7 +431,8 @@ span. `file_offset` needs the reader helper `MethodBody::code_file_offset()`.
 
 ## 10. What this asks of the flow layer
 
-Changes to `cil-flow-api.md` that this design depends on:
+Changes to `cil-flow-api.md` that this design depends on. All four are now in
+that document (§4.2, §6.3, §9 step 1).
 
 1. **Block splitting** after `Call` and `Throw` inside a protected range
    (§8). This is a `MethodFlow::build` option, on for this frontend.

@@ -309,7 +309,11 @@ keep its plain positional semantics.
 
 These are lightweight and lazily named. Layer 1 resolves only what it needs to
 know the instruction's shape. Names are derived on demand, through the existing
-`names` module with its Cecil-parity spellings.
+`names` module with its Cecil-parity spellings. These are for display and
+debugging. The CTADL names (assembly-qualified classes, descriptors with
+positional generic parameters) are built by the frontend's `names.rs`
+([`cil-frontend-translation.md`](cil-frontend-translation.md) §3), which
+departs from Cecil on purpose.
 
 ```rust
 pub struct FieldOp  { pub token: MetadataToken, pub is_static: bool, pub ty: TypeSig }
@@ -475,8 +479,10 @@ pub struct Block {
     /// Stack height on entry, and the kind at each depth below it.
     pub entry_height: u16,
     pub entry_kinds: Vec<StackKind>,
-    /// For a handler or filter entry: `Stack(0) := Caught(h)`, prepended by
-    /// the binder so that the frontend has nothing to special-case.
+    /// For a catch handler, filter, or filtered handler entry:
+    /// `Stack(0) := Caught(h)`, prepended by the binder so that the frontend
+    /// has nothing to special-case. Finally and fault entries get nothing:
+    /// they start with an empty stack.
     pub instrs: Vec<BoundIns>,
     pub succs: Vec<BlockId>,
     pub exc_succs: Vec<BlockId>,         // handler entries reachable from here
@@ -730,7 +736,8 @@ its bogus `InlineBrTarget`, the same way Cecil reads it.
 | `New` | `assign` from `Exp::new_object_ref` |
 | `FunctionPtr` | `assign` from `CallObject::FunctionPtr` |
 | `Call` | call statement plus `CallStyle` from `CallKind` |
-| `Return` / `Throw` | `retval` / `throwval` assigns plus a terminator |
+| `Return` | `Return [v, empty]` terminator |
+| `Throw` | `throwval := src`, then a `Goto` to the handlers or `Return [empty, throwval]` |
 
 `AddressOf`, `Clear`, `Test` and `Opaque` are the only effects without a direct
 counterpart. Lowering them is a frontend policy, and §6.3 supplies what that
@@ -769,9 +776,10 @@ Two cases:
 
 The two meet at **byref call arguments**. `int.TryParse(s, out n)` passes
 `&loc_n`, and `CallSite::byref_args` says which arguments are addresses. With
-`resolve_address`, the frontend can use copy-in/copy-out: `p.* := loc_n` before
-the call and `loc_n := p.*` after it, so callee writes through `deref` (or a
-model's `Argument[1].deref`) reach `loc_n`. `address_taken()` lets the frontend
+`resolve_address`, the frontend can use copy-in/copy-out through a fresh cell
+passed in place of the pointer: `cell.* := loc_n` before the call and
+`loc_n := cell.*` after it, so callee writes through `deref` (or a model's
+`Argument[1].deref`) reach `loc_n` (translation §6.3). `address_taken()` lets the frontend
 apply this only to the locals that need it.
 
 ### 6.4 Exceptions are values
@@ -844,8 +852,9 @@ Layer 2, for every method:
    wrote, unless Layer 1 meant it to.** Concretely: bind with distinct names and
    bind with depth names, then run both through a small interpreter. The two
    must agree. This is what checks the collision rule in §4.2.
-9. `succs`/`preds` are consistent, every handler entry has height 1, and every
-   block after `leave` has height 0.
+9. `succs`/`preds` are consistent, every catch, filter and filtered-handler
+   entry has height 1, every finally and fault entry has height 0, and every
+   `leave` target has height 0.
 
 Not tested here: single definitions and dominance. Those are properties of
 SSA output, and `ssa::transform` asserts `FunctionData::verify` itself. The
@@ -887,19 +896,27 @@ Layer 2.
 
 | # | Step | Tests |
 | --- | --- | --- |
-| 1 | Reader helpers: `Ins::size`, `MethodBody::user_string`, name lookups for `FieldOp`/`MethodOp`/`TypeOp`, `MethodOp` construction (MethodDef/MemberRef/MethodSpec → `MethodSig`), the current method's sig on `FlowCx` | Unit tests on fixtures |
+| 1 | Reader helpers: `Ins::size`/`end_offset`, `MethodBody::user_string`, `MethodBody::code_file_offset` (for the frontend's source spans), name lookups for `FieldOp`/`MethodOp`/`TypeOp`, `MethodOp` construction (MethodDef/MemberRef/MethodSpec → `MethodSig`), the current method's sig on `FlowCx` | Unit tests on fixtures |
 | 2 | `flow` types + `map` + `edges`, with no opcode logic | Unit tests: `map` keeps structure; edge derivation per effect |
 | 3 | `opcode.rs`: the exhaustive table of §5.1–5.7, without calls | One test per family on hand-assembled IL bytes (a tiny test-only encoder), asserting exact `InsFlow` |
 | 4 | `call.rs` + `prefix.rs`: §5.8–5.9, multi-dimensional array methods, `byref_args`, `delegate::classify` | Fixture tests: instance/static/virtual/constrained/calli/newobj/vararg/out-param/delegate |
 | 5 | Property test of §7.1–7.6 over every method in `$CIL_READER_FIXTURES` and the Cecil corpus, plus `cil-dump --flow` to print Layer 1 per instruction (for review and for goldens under `xtask/cil-goldens`) | The property test is the acceptance gate for Layer 1 |
 | 6 | Layer 2: CFG, stack heights and `StackKind`, depth binding with the collision rule, handler `Caught` wiring, `resolve_address`, `address_taken`. No phis and no value numbering (§2) | Properties §7.7–7.9 over the corpus; targeted tests for `out` params, `ldloca`+struct fields, try/catch/filter/finally, `newobj` with arguments, `dup`+`stfld`, an address across a `?:` join, and a join with mismatched heights |
 
+**Where the tests live.** `cil-reader` has no `tests/` directory and no
+committed DLLs: the fixtures come from the flake (`$CIL_READER_FIXTURES`), and
+every fixture-backed reader test already runs in `xtask regression --frontend
+cil` (frontend plan §1). Flow tests follow the same split. Steps 2 and 3, which
+need no DLL, are `cargo test -p cil-reader` unit tests. The fixture tests of
+steps 4 and 6 and the corpus property test of step 5 are a new `cil:flow` check
+in xtask.
+
 New `.il` or C# fixtures for what the Cecil corpus barely exercises: `out`/`ref`
 arguments, `constrained.` callvirt on a generic, delegates and lambdas,
 multi-dimensional arrays, filters, `cpobj`/`initobj` on structs, and `calli`.
 
-**Acceptance for this layer**: steps 1–6 green under `cargo test -p cil-reader`
-plus the fixture-backed `xtask regression --frontend cil` checks. `cil-dump
+**Acceptance for this layer**: the unit tests green under `cargo test -p
+cil-reader`, and `cil:flow` green under `xtask regression --frontend cil`. `cil-dump
 --flow` output for the new fixtures is reviewed and blessed. A frontend can then
 be written with no `match` on `Code`: it matches only on `Effect`, `CallKind`
 and `Control`. Its MIR, sent through `ssa::run_pipeline` with

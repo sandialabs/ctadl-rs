@@ -5,9 +5,9 @@ class-hierarchy analysis over the type graph, `CallStyle`-tagged virtual calls t
 feed CHA + hybrid inlining, field-sensitive lowering of member access, and a
 per-language default model file.
 
-The bytecode reader already exists: `cil-reader` (M0–M7 of its original plan, 166
-tests green off committed fixtures, byte-identical to Mono.Cecil on 114/114 corpus
-files). What it does **not** have is the layer both other bytecode frontends depend
+The bytecode reader already exists: `cil-reader` (M0–M7 of its original plan,
+byte-identical to Mono.Cecil on 114/114 corpus files; its fixture-backed tests
+now run in `xtask regression --frontend cil`, see §1). What it does **not** have is the layer both other bytecode frontends depend
 on — a per-instruction dataflow view — so that is where this plan starts.
 
 ## Status (2026-10-15)
@@ -156,13 +156,25 @@ of each is in brackets.
 
 ---
 
-## 4. Milestone M3 — the frontend, `ctadl-ascent/src/languages/cil/`
+## 4. Milestone M3 — the frontend, `frontends/ctadl-cil/`
 
 > **Status: designed, not implemented.**
 > [`cil-frontend-translation.md`](cil-frontend-translation.md) replaces this
-> section in detail. The crate goes in `frontends/ctadl-cil/`, and §4.2's
-> hierarchy also needs the `interfaces` and `abstract_methods` columns. §4.6's
-> lowering of `box`, value types, and managed pointers is revised there (§6).
+> section, and where they differ it wins. The differences:
+> - The crate goes in `frontends/ctadl-cil/`, re-exported from
+>   `ctadl-ascent/src/languages/mod.rs` the way `ctadl_dex` is.
+> - §4.1: descriptors write generic parameters by position (`!0`, `!!0`), not
+>   by Cecil's names (translation §3.2).
+> - §4.2: the hierarchy also needs `interfaces` and `abstract_methods`.
+>   Generic overrides and `MethodImpl` rows become override-alias `methods`
+>   rows, not hierarchy edges (translation §4.2).
+> - §4.5: there is no `CallKind::DelegateInvoke`; delegates come from
+>   `flow::delegate::classify`. A sealed or non-virtual `callvirt` is a
+>   `DirectCall`, and `constrained.` is used only when the type declares or
+>   inherits the method (translation §7).
+> - §4.6: `box`/`unbox` preserve contents, not identity. `ldobj`/`stobj`/
+>   `initobj`/`cpobj` and `ldelema` go through managed-pointer lowering, not
+>   whole-object assigns (translation §6).
 
 Structurally a sibling of `ctadl-dex/src/lib.rs`: a `Context` with
 `process(module, artifact_key, &mut Builders)` callable once per assembly and
@@ -224,7 +236,7 @@ For each `TypeDef` from `module.all_types()` (includes nested):
   conservative choice.)
 - `return_type = ReturnType { arity: 2 }` — `(normal, exception)`, matching Dex/JVM
   so the shared Java-style models and the `throwval` convention carry over.
-- Blocks 1:1 with `MethodCfg` blocks. The frontend emits no phis, because SSA places them.
+- Blocks 1:1 with `MethodFlow` blocks. The frontend emits no phis, because SSA places them.
 - Terminators: `ret` → `Return { args: [result_or_empty, empty] }`; `throw`/`rethrow`
   → handler successors if any, else `Return { args: [empty, throwval] }`;
   everything else → `Goto { targets: successors }`, or a two-empty `Return` when
@@ -238,15 +250,16 @@ Nearly mechanical, which is the point of M1's design:
 
 | Effect | Statement |
 | --- | --- |
-| `Assign { dest, sources, .. }` | `StatementKind::assign(var(dest), sources)` |
-| `Load { dest, base, field }` | `StatementKind::load(var(dest), var(base), field_path(field))` |
-| `Store { base, field, value }` | `StatementKind::store(AccessPath::without_fields(var(base)), field_path(field), value)` |
-| `New { dest, ty }` | `assign(var(dest), [Exp::new_object_ref(CallObject::CilObject(ty))])` |
-| `Throw { value }` | `assign(throwval, [value])` |
+| `Assign { dst, srcs, .. }` | `StatementKind::assign(var(dst), srcs)` |
+| `Load { dst, src: Path { root, field } }` | `StatementKind::load(var(dst), var(root), field_path(field))` |
+| `Store { dst: Path { root, field }, src }` | `StatementKind::store(AccessPath::without_fields(var(root)), field_path(field), src)` |
+| `New { dst, ty, .. }` | `assign(var(dst), [Exp::new_object_ref(CallObject::CilObject(ty))])` |
+| `Throw { src }` | `assign(throwval, [src])` |
 
 with `Field::Named(f)` → `FieldPath::symbol("<f>")`, `Element` → `"[]"`,
-`Length` → `"length"`, `Deref` → `"deref"`. A static field's `base` is
-`VariableRef::new_global()`, matching how Dex lowers `SGet`/`SPut`.
+`Length` → `"length"`, `Deref` → `"deref"`. `Root::Static` is
+`VariableRef::new_global()`, matching how Dex lowers `SGet`/`SPut`. The full
+table, including pointer roots, is translation §6.
 
 Variables: `Var::Arg(n)` → `VariableRef::new_parameter(n)`; `Var::Local(n)` →
 local `loc{n}`; `Var::Stack(depth)` → local `s{depth}`. All of them are unversioned.
@@ -268,9 +281,13 @@ CallKind::Static | CallKind::Instance | CallKind::Ctor
 CallKind::Virtual { constrained }
     => CallStyle::CilCall { receiver, cls: constrained.unwrap_or(declaring_type),
                             name, descriptor }
-CallKind::Indirect { callee } | CallKind::DelegateInvoke
+CallKind::Indirect { callee }
     => CallStyle::FuncPtrCall { callee, signature }
 ```
+
+A `callvirt D::Invoke` that `flow::delegate::classify` reports as `Invoke` is
+also a `FuncPtrCall`, on the function pointer stored in the delegate
+(translation §7).
 
 `CallStyle::CilCall` is what codegen turns into either an exact `call` edge (one CHA
 resolvent), or a `callee_info` fact keyed on `CallDispatchKey::Cil(name, descriptor)`
@@ -296,7 +313,8 @@ These are not polish; they are where most real .NET taint lives.
   `ctadl-jvm/src/lib.rs` has no counterpart here.
 - **Delegates.** `ldftn`/`ldvirtftn` push a function pointer (`Effect::FunctionPtr`); the
   `newobj D::.ctor(object, native int)` that consumes it makes the delegate object
-  carry that function pointer; `callvirt D::Invoke` is a `DelegateInvoke`. Map to
+  carry that function pointer; `callvirt D::Invoke` calls it.
+  `flow::delegate::classify` recognizes both. Map to
   `CallObject::FunctionPtr` + `CallStyle::FuncPtrCall`, which the engine already
   resolves through the identity `callee_resolvents(FunctionId(f), C, f)`. This is how
   events, callbacks, and LINQ lambdas get call edges at all.
@@ -317,7 +335,7 @@ These are not polish; they are where most real .NET taint lives.
 
 ### 4.7 Import entry point
 
-`languages/cil::import_assembly(path)` for a single `.dll`/`.exe`, and
+`ctadl_cil::import_assembly(path)` for a single `.dll`/`.exe`, and
 `import_directory(path)` walking a published-app directory, both producing one
 `ProgramInfo`. One `ArtifactLanguage::Cil` accepts either, as `ArtifactLanguage::C`
 already does for a file or a directory of sources.
@@ -361,7 +379,7 @@ The additive change set, following Lua's precedent exactly:
 
 | File | Change |
 | --- | --- |
-| `ctadl-ir/src/mir/call.rs` | `VirtualMethodTable::Cil { methods, hierarchy, pinvokes }`, `CallStyle::CilCall`, `CallObject::CilObject`, `CilClass`/`CilMethod`/`CilSignature` newtypes, `new_cil()`, `Display` arms |
+| `ctadl-ir/src/mir/call.rs` | `VirtualMethodTable::Cil { methods, hierarchy, interfaces, abstract_methods, pinvokes }`, `CallStyle::CilCall`, `CallObject::CilObject`, `CilClass`/`CilMethod`/`CilSignature` newtypes, `new_cil()`, `Display` arms |
 | `ctadl-ir/src/mir/visit/mod.rs` | visitor arm for `CilCall` |
 | `ctadl-ascent/src/facts.rs` | `CallTargetObject::CilClass`, `CallDispatchKey::Cil(name, desc)` |
 | `ctadl-ascent/src/facts/parquet.rs` | two tag bytes + encode/decode arms |
@@ -369,7 +387,7 @@ The additive change set, following Lua's precedent exactly:
 | `ctadl-ascent/src/cli/mod.rs` | import dispatch arm |
 | `ctadl-ascent/src/codegen/mod.rs` | `ChaLanguage::Cil` (reuses `run_cha` unchanged), `CilCall` codegen arm mirroring `JavaCall`, `emit_callee_resolvents` arm, `InstantiationFinder` arm |
 | `ctadl-ascent/src/models/{mod,match_index,json,codegen}.rs` | VMT arms; `CIL_DEFAULT_MODELS` |
-| `ctadl-ascent/src/languages/mod.rs` | `pub mod cil;` |
+| `ctadl-ascent/src/languages/mod.rs` | `pub use ctadl_cil as cil;` (the crate is `frontends/ctadl-cil`) |
 | `ctadl-ascent/src/languages/jni.rs` | `SlotModel::for_language` arm (CIL is not a JNI language) |
 
 `run_cha` itself needs no change: it is already language-neutral, and the `Cil` arm
@@ -487,15 +505,16 @@ bridge work.
 > **Status:** none of 1–5 is met yet. Item 1 needs `flow` tests, and there is no
 > `flow` module.
 
-1. `cargo test -p cil-reader` green from the repo root with no .NET SDK, including
-   the new `flow` unit and property tests.
+1. `cargo test -p cil-reader` green from the repo root with no .NET SDK,
+   including the new `flow` unit tests. The fixture and corpus property tests
+   are the `cil:flow` check under item 2 (`cil-flow-api.md` §9).
 2. `cargo xtask regression --frontend cil` green, or cleanly skipped without the SDK.
 3. `ctadl go app app.dll query.json` reports a planted source→sink path, with SARIF
    regions pointing at `.cs` lines (after M5b).
 4. A virtual call with more than one CHA resolvent produces `callee_info` facts and
    is resolved by hybrid inlining — verifiable in `ctadl index`'s
    `hybrid inlining: ... resolvent: N` line, the same way the Java frontends are.
-5. `languages/cil/mod.rs` contains **no** backwards-scanning heuristics to recover
+5. `frontends/ctadl-cil/` contains **no** backwards-scanning heuristics to recover
    the object base of a field access. If it does, either copy propagation is missing
    a case or the flow layer is, and the fix belongs there rather than in a
    workaround here.
