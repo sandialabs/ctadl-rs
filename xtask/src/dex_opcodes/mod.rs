@@ -20,6 +20,7 @@
 //! `javac`, `d8` and `smali`. All inputs and outputs land in `--out`.
 
 mod cases;
+mod saved;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -91,6 +92,8 @@ pub struct Options {
     pub out: PathBuf,
     pub avd: Option<String>,
     pub filter: Option<String>,
+    /// Save the run's observations to [`saved::path`] for `dex:opcodes-replay`.
+    pub save: bool,
 }
 
 impl Default for Options {
@@ -99,6 +102,7 @@ impl Default for Options {
             out: PathBuf::from("target/dex-opcodes"),
             avd: None,
             filter: None,
+            save: false,
         }
     }
 }
@@ -116,6 +120,9 @@ pub fn run(opts: &Options) -> Result<bool> {
     }
     if all.is_empty() {
         bail!("no cases selected");
+    }
+    if opts.save && opts.filter.is_some() {
+        bail!("--save needs every case; drop --filter");
     }
     let out = std::path::absolute(&opts.out)?;
     exec::fresh_dir(&out)?;
@@ -136,7 +143,45 @@ pub fn run(opts: &Options) -> Result<bool> {
     std::fs::write(out.join("report.txt"), &evaluation.report)?;
     print!("{}", evaluation.report);
     println!("report: {}", out.join("report.txt").display());
+    if opts.save {
+        if !evaluation.ok {
+            bail!("not saving the observations of a run that did not pass");
+        }
+        let path = saved::path();
+        std::fs::write(&path, saved::render(&all, &device_name()?, &results_text))?;
+        println!("saved observations: {}", path.display());
+    }
     Ok(evaluation.ok)
+}
+
+/// The `dex:opcodes-replay` check: judge dex-reader against the observations saved by
+/// `--save`, with no device. Needs only `smali`, to rebuild the cases. Writes the report to
+/// `work/report.txt`.
+pub fn replay(work: &Path) -> Result<()> {
+    let all = cases::all();
+    let saved = saved::parse(saved::SAVED)?;
+    saved::check_current(&saved, &all)?;
+    let results = parse_results(saved.results)?;
+    exec::fresh_dir(work)?;
+    let built = build_cases(&all, work)?;
+    let decoded = decode_cases(&built)?;
+    let evaluation = evaluate(&all, &results, &decoded)?;
+    let report = work.join("report.txt");
+    std::fs::write(&report, &evaluation.report)?;
+    if !evaluation.ok {
+        bail!(
+            "dex-reader disagrees with ART's observations ({}; see {}):\n{}",
+            saved.device,
+            report.display(),
+            evaluation
+                .report
+                .lines()
+                .filter(|l| !l.starts_with("PASS") && !l.contains("expected: "))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+    Ok(())
 }
 
 /// The verdict on every case, as report text, and whether they all passed.
@@ -553,6 +598,21 @@ fn ensure_device(avd: Option<&str>, out: &Path) -> Result<Option<Emulator>> {
         }
         std::thread::sleep(Duration::from_secs(2));
     }
+}
+
+/// The attached device's API level, ABI and build, for the saved observations.
+fn device_name() -> Result<String> {
+    let prop = |name: &str| -> Result<String> {
+        Ok(adb(&["shell", "getprop", name], "adb shell getprop")?
+            .trim()
+            .to_string())
+    };
+    Ok(format!(
+        "api {} {} {}",
+        prop("ro.build.version.sdk")?,
+        prop("ro.product.cpu.abi")?,
+        prop("ro.build.fingerprint")?
+    ))
 }
 
 fn adb(args: &[&str], what: &str) -> Result<String> {

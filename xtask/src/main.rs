@@ -11,7 +11,7 @@
 //!     cargo xtask regression --filter <name>
 //!     cargo xtask regression --tests-dir <dir>
 //!     cargo xtask report-eval --apks <dir>
-//!     cargo xtask dex-opcodes [--avd <name>]
+//!     cargo xtask dex-opcodes [--avd <name>] [--save]
 
 mod android_icc;
 mod apk;
@@ -143,6 +143,7 @@ fn parse_dex_opcodes_args(mut args: impl Iterator<Item = String>) -> Result<dex_
             "--out" => opts.out = PathBuf::from(args.next().context("--out requires a value")?),
             "--avd" => opts.avd = Some(args.next().context("--avd requires a value")?),
             "--filter" => opts.filter = Some(args.next().context("--filter requires a value")?),
+            "--save" => opts.save = true,
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -249,6 +250,10 @@ Tasks:
     --avd <name>             Boot this AVD headless if no device is attached,
                              and shut it down afterwards.
     --filter <name>          Only run cases whose name contains <name>.
+    --save                   If every case passes, save ART's observations to
+                             xtask/tests/dex/opcodes-art.txt, which the
+                             `dex:opcodes-replay` regression check judges
+                             dex-reader against without a device.
 
   report-eval --apks <dir>   Run `ctadl report` over a directory of artifacts and
                              print a cross-app summary, keeping each app's JSON.

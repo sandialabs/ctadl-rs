@@ -25,6 +25,7 @@ use dex_reader::parser::*;
 use dex_reader::{APKParser, DexParser};
 
 use crate::baksmali;
+use crate::dex_opcodes;
 use crate::dexlib2;
 use crate::exec;
 use crate::regression::Outcome;
@@ -102,6 +103,16 @@ pub fn run_checks(
         {
             Some(tool) => Outcome::Skip(format!("`{tool}` not on PATH")),
             None => to_outcome(check_baksmali_all_opcodes(work)),
+        },
+    ));
+
+    // dex-reader's data_flow() and can_throw() against what ART did when
+    // `cargo xtask dex-opcodes --save` last ran every opcode on a device.
+    results.push((
+        "dex:opcodes-replay".to_string(),
+        match exec::which("smali") {
+            None => Outcome::Skip("`smali` not on PATH".into()),
+            Some(_) => to_outcome(dex_opcodes::replay(&work.join("opcodes-replay"))),
         },
     ));
 
