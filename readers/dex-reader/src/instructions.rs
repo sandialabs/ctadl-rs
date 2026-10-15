@@ -115,8 +115,13 @@ impl DisplayInstr for ProtoIdx {
         write!(f, "{}", self.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
-        write!(f, "proto<{}>", self.0)
+    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+        let proto = cp
+            .proto_ids
+            .get(self.0 as usize)
+            .and_then(|p| p.pretty_signature(cp.data, &cp.strings, &cp.type_ids).ok())
+            .unwrap_or("<invalid_proto>".into());
+        write!(f, "{proto}")
     }
 }
 
