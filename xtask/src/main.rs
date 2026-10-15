@@ -11,12 +11,14 @@
 //!     cargo xtask regression --filter <name>
 //!     cargo xtask regression --tests-dir <dir>
 //!     cargo xtask report-eval --apks <dir>
+//!     cargo xtask dex-opcodes [--avd <name>]
 
 mod android_icc;
 mod apk;
 mod assertions;
 mod baksmali;
 mod dex;
+mod dex_opcodes;
 mod dexlib2;
 mod discovery;
 mod exec;
@@ -54,6 +56,10 @@ fn run() -> Result<bool> {
         Some("regression") => {
             let opts = parse_regression_args(args)?;
             regression::run(&opts)
+        }
+        Some("dex-opcodes") => {
+            let opts = parse_dex_opcodes_args(args)?;
+            dex_opcodes::run(&opts)
         }
         Some("report-eval") => {
             let opts = parse_report_eval_args(args)?;
@@ -126,6 +132,23 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
     }
     if let Some(selected) = frontends {
         opts.frontends = selected;
+    }
+    Ok(opts)
+}
+
+fn parse_dex_opcodes_args(mut args: impl Iterator<Item = String>) -> Result<dex_opcodes::Options> {
+    let mut opts = dex_opcodes::Options::default();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--out" => opts.out = PathBuf::from(args.next().context("--out requires a value")?),
+            "--avd" => opts.avd = Some(args.next().context("--avd requires a value")?),
+            "--filter" => opts.filter = Some(args.next().context("--filter requires a value")?),
+            "-h" | "--help" => {
+                print_help();
+                std::process::exit(0);
+            }
+            other => bail!("unknown argument `{other}` (try `xtask --help`)"),
+        }
     }
     Ok(opts)
 }
@@ -216,6 +239,16 @@ Tasks:
                              (default: auto-detect `ctadl-ascent/src/models`).
                              The `models:*` checks self-skip when neither the
                              flag nor the default directory is present.
+
+  dex-opcodes                Run every Dalvik opcode on ART (an attached device or
+                             emulator) and check dex-reader's data_flow() and
+                             can_throw() against what it reads, writes and throws.
+                             Opt-in and slow; see docs/dex-validation.md.
+    --out <dir>              Where the generated cases, device log, results and
+                             report go (default: target/dex-opcodes).
+    --avd <name>             Boot this AVD headless if no device is attached,
+                             and shut it down afterwards.
+    --filter <name>          Only run cases whose name contains <name>.
 
   report-eval --apks <dir>   Run `ctadl report` over a directory of artifacts and
                              print a cross-app summary, keeping each app's JSON.
