@@ -298,27 +298,6 @@ fn string_literal_code_units(body: &str) -> Vec<u16> {
     units
 }
 
-/// Normalize unsigned decimal that fits in u32 but represents a negative i32
-/// (array-data, etc.) to signed form so both sides match.
-fn normalize_signed_u32_line(line: &str) -> String {
-    let s = line.trim();
-    if s.is_empty() {
-        return line.to_string();
-    }
-    if s.starts_with('-') {
-        return line.to_string();
-    }
-    if !s.chars().all(|c| c.is_ascii_digit()) {
-        return line.to_string();
-    }
-    if let Ok(n) = s.parse::<u32>() {
-        if n >= 2147483648 {
-            return (n as i32).to_string();
-        }
-    }
-    line.to_string()
-}
-
 fn normalize_switch_targets(line: &str) -> String {
     // Sparse-switch entries: "65 -> :sswitch_47" vs ":sswitch_0" -> "65 -> <tgt>".
     let arrow_pos = line.find("->").or_else(|| line.find('\u{2192}'));
@@ -429,7 +408,6 @@ fn normalize_line_common(line: &str) -> Option<String> {
     let s = normalize_switch_targets(&s);
     let s = normalize_numeric_literals(&s);
     let s = normalize_branch_targets(&s);
-    let s = normalize_signed_u32_line(&s);
     let s = normalize_register_like_field_name(&s);
     Some(s)
 }

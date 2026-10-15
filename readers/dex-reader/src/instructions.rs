@@ -3098,50 +3098,23 @@ impl DisplayInstr for PayloadInstruction {
             }
             PayloadInstruction::FillArrayData(payload) => {
                 write!(f, ".array-data {}", payload.element_width)?;
+                // Elements are signed, written with baksmali's width suffix: t (byte), s (short),
+                // none (int), and L (long) unless the value fits in an int.
                 let w = payload.element_width as usize;
-                let mut off = 0usize;
-                while off + w <= payload.data.len() {
-                    let val: i64 = match w {
-                        1 => payload.data[off] as i64,
-                        2 => {
-                            let v = u16::from_le_bytes([payload.data[off], payload.data[off + 1]]);
-                            v as i64
-                        }
-                        4 => {
-                            let v = u32::from_le_bytes([
-                                payload.data[off],
-                                payload.data[off + 1],
-                                payload.data[off + 2],
-                                payload.data[off + 3],
-                            ]);
-                            v as i64
-                        }
-                        8 => {
-                            let v = u64::from_le_bytes([
-                                payload.data[off],
-                                payload.data[off + 1],
-                                payload.data[off + 2],
-                                payload.data[off + 3],
-                                payload.data[off + 4],
-                                payload.data[off + 5],
-                                payload.data[off + 6],
-                                payload.data[off + 7],
-                            ]);
-                            v as i64
-                        }
-                        _ => break,
-                    };
-                    if w == 8 {
-                        let v = val as i64;
-                        if v >= i32::MIN as i64 && v <= i32::MAX as i64 {
-                            write!(f, "\n    {}", v)?;
-                        } else {
-                            write!(f, "\n    {}L", v)?;
-                        }
-                    } else {
-                        write!(f, "\n    {}", val)?;
+                if matches!(w, 1 | 2 | 4 | 8) {
+                    for chunk in payload.data.chunks_exact(w) {
+                        let mut bytes = [0u8; 8];
+                        bytes[..w].copy_from_slice(chunk);
+                        let shift = 64 - 8 * w as u32;
+                        let val = (i64::from_le_bytes(bytes) << shift) >> shift;
+                        let suffix = match w {
+                            1 => "t",
+                            2 => "s",
+                            8 => long_suffix(val),
+                            _ => "",
+                        };
+                        write!(f, "\n    {val}{suffix}")?;
                     }
-                    off += w;
                 }
                 write!(f, "\n.end array-data")
             }
