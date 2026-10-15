@@ -8,6 +8,8 @@
 //! opaque blobs print as lowercase hex; attribute strings print escaped, so
 //! every record is one line.
 
+pub mod flow;
+
 use cil_reader::cil::RawOperand;
 use cil_reader::model::AssemblyName;
 use cil_reader::model::custom_attributes::{
@@ -1032,9 +1034,7 @@ fn dump_il(module: &Module<'_>, out: &mut String) -> Result<()> {
                 }
                 ExceptionHandlerType::Finally => "finally".to_string(),
                 // CecilDump prints every other kind as a fault.
-                ExceptionHandlerType::Fault | ExceptionHandlerType::Other(_) => {
-                    "fault".to_string()
-                }
+                ExceptionHandlerType::Fault | ExceptionHandlerType::Other(_) => "fault".to_string(),
             };
             writeln!(
                 out,
