@@ -1,18 +1,36 @@
 # Improving `dex-reader` and `jvm-reader` dataflow - DO-NOT-MERGE
 
-Status: open. Nothing is scheduled. These problems were found while designing
-the CIL reader's dataflow layer ([`cil-flow-api.md`](cil-flow-api.md)), which is
-built to avoid them. §1 covers `dex-reader`, including two concrete bugs, one of
-which gives wrong output today (§1.3). §2 covers `jvm-reader`.
+Status: §1 (`dex-reader`) is fixed on branch `dex-jvm-reader-fixes`, except for
+the open items in §1.6. §2 (`jvm-reader`) is open and not scheduled. These
+problems were found while designing the CIL reader's dataflow layer
+([`cil-flow-api.md`](cil-flow-api.md)), which is built to avoid them.
 
 ---
 
 ## 1. `dex-reader`
 
-### 1.1 What its pattern gets wrong
+`Instruction::data_flow()` (`readers/dex-reader/src/instructions.rs:2603`)
+returns the registers an instruction reads (`source`) and writes (`dest`). Its
+only consumer is `dataflow_to_assign` in `frontends/ctadl-dex/src/lib.rs`
+(`:654`).
 
-`dex_reader::instructions::DataFlow` (`readers/dex-reader/src/instructions.rs:1274`)
-is three boxed streaming iterators:
+| Problem | Status | Commit |
+| --- | --- | --- |
+| §1.2 `iput-wide` reports its object register as a destination | fixed | `145aa942` |
+| §1.3 aliased `iput`/`aput` registers drop the stored value | fixed | `11d421d4` |
+| §1.1 boxed, uncomparable `DataFlow`, dead `ret` | fixed | `71b8f70e` |
+| §1.1 no tests of `data_flow()` | fixed | `124351d0` |
+| §1.5 long shifts read their shift amount as a pair | fixed | `86f8634e` |
+| §1.1 roles erased (bags, not roles) | open | §1.6 |
+| §1.6 `0xfa`-`0xff` opcodes report no registers | open | §1.6 |
+
+None of these fixes changed `cargo xtask regression`. It reports 165 passed and
+3 xfail both before (`6839064f`) and after (`86f8634e`), with the same outcome
+for every case.
+
+### 1.1 What the original pattern got wrong
+
+`DataFlow` used to be three boxed streaming iterators:
 
 ```rust
 pub struct DataFlow {
@@ -22,130 +40,140 @@ pub struct DataFlow {
 }
 ```
 
-Its only consumer is `dataflow_to_assign` in `frontends/ctadl-dex/src/lib.rs`
-(`:655`). Problems, each visible there:
+1. **Bags, not roles.** *Open.* `(source, dest)` records *whether* a register
+   takes part, not *which role* it plays: object base, index, or stored value.
+   So the consumer still decodes the instruction again to find the object
+   (`f.b`) and the array index (`f.c`). Before `11d421d4` it also recovered the
+   stored value by filtering registers out of `source`, which caused §1.3. The
+   value is now taken by position (`stored_value_regs`, `lib.rs:952`), but
+   `source` still carries no roles.
+2. **Silently inconsistent.** *Fixed* (`145aa942`). `IPutWide` listed the object
+   register as a *dest* while every other store listed it as a source (§1.2).
+3. **No operand data.** *Open, minor.* Field, string and type indices are not in
+   `DataFlow`, so the consumer reads them from the instruction directly
+   (`parser.get_field(f.idx)`).
+4. **`ret` was dead.** *Fixed* (`71b8f70e`). All 67 table entries passed `[]`
+   for it, and the consumer bound it as `ret: _`. The field is gone.
+5. **Three heap allocations per instruction.** *Fixed* (`71b8f70e`). There was
+   also a `Vec` copy of every invoke's arguments, and every consumer had to
+   depend on `streaming-iterator`. The crate that imported `StreamingIterator`
+   only to call `dest.owned()` was `ctadl-dex`; an earlier draft of this note
+   said `ctadl-ascent`, which was wrong. `source` and `dest` are now
+   `SmallVec<[Reg; 5]>` (the `Regs` alias). That fits every fixed-arity
+   instruction, including 35c invokes, without allocating. The
+   `streaming-iterator` dependency is removed from both crates.
+6. **Untestable.** *Fixed* (`71b8f70e`, `124351d0`). `DataFlow` now derives
+   `Debug, Clone, PartialEq, Eq, Default`. `readers/dex-reader` has per-family
+   unit tests of `data_flow()` and a property test over every store opcode.
+7. **Nothing to check against.** *Still true.* Dex has no pop/push table, so
+   unlike CIL (whose `OpCode` carries `StackBehaviour` generated from Cecil)
+   there is no independent source of truth. The unit tests pin the table's
+   current answers, checked by hand against the Dalvik bytecode spec. They do
+   not derive those answers from a spec.
 
-1. **Bags, not roles.** `(source, dest, ret)` records *whether* a register takes
-   part, not *which role* it plays: object base, index, or stored value. So the
-   consumer re-decodes the instruction anyway. The `IPut` arm filters `f.b` out of
-   `source` and then uses `f.b` directly as the object, and `APut` filters two
-   registers out by hand. The dataflow view does half the job twice, and the two
-   decodings can drift apart (§1.2) or be ambiguous (§1.3).
-2. **Silently inconsistent.** `IPutWide` lists the object register as a *dest*
-   while every other store lists it as a source (§1.2).
-3. **No operand data.** Field, string and type indices are not in `DataFlow`, so
-   the consumer goes back to `parser.get_field(f.idx)` and
-   `constant_pool().strings`.
-4. **`ret` is dead.** All 67 `dataflow_source_sink_ret!` invocations pass `[]`
-   for it, `dataflow_from_args` sets it empty, and the consumer binds it as
-   `ret: _` (`frontends/ctadl-dex/src/lib.rs:665`). It costs a boxed empty
-   iterator per instruction and carries nothing.
-5. **Three heap allocations per instruction**, plus `RegSliceStream` copying the
-   argument slice into a `Vec` at every call site. It also forces the
-   `streaming-iterator` crate on every consumer (`ctadl-ascent` imports
-   `StreamingIterator` solely to call `dest.owned()`).
-6. **Untestable.** `DataFlow` derives nothing: no `Debug`, no `PartialEq`, and its
-   fields are trait objects, so a test cannot compare two of them. There are no
-   tests of `data_flow()` in `dex-reader`. The only coverage is the 11 tests of
-   the *frontend's* translation in `frontends/ctadl-dex/src/tests.rs`, and none
-   exercises `iput-wide` or a self-aliased store.
-7. **Nothing to check against.** Dex has no pop/push table, so unlike CIL (whose
-   `OpCode` carries `StackBehaviour` generated from Cecil) there is no
-   independent source of truth a property test could cross-check `data_flow()`
-   against.
+### 1.2 Fixed: `iput-wide` reported the object register as a destination
 
-### 1.2 Bug: `iput-wide` reports the object register as a destination
+**Severity:** latent; it gave no wrong output. Present from the initial commit
+(`a3c69002`) until `145aa942`.
 
-**Severity:** latent. No wrong output today, but it blocks any second consumer.
-Present since the initial commit (`a3c69002`).
-
-Dex format 22c is `iput vA, vB, field@CCCC`: `vA` (plus `vA+1` when wide) is the
-**value stored**, and `vB` is the **object written into**. `vB` is read, never
-written. The table disagrees with itself about `vB`:
-
-```rust
-// readers/dex-reader/src/instructions.rs:2711
-IPut(f) | IPutBoolean(f) | IPutByte(f) | IPutChar(f) | IPutShort(f) | IPutObject(f) => {
-    dataflow_source_sink_ret!([f.a, f.b], [], [])          // vB is a SOURCE
-}
-// readers/dex-reader/src/instructions.rs:2714
-IPutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg()], [f.b], [])  // vB is a DEST
-```
-
-`IPutWide` is the only outlier among the stores:
-
-| Opcode | source | dest | object/array register |
-| --- | --- | --- | --- |
-| `IPut*` (`:2711`) | `[a, b]` | `[]` | source ✓ |
-| `IPutWide` (`:2714`) | `[a, a+1]` | `[b]` | **dest ✗** |
-| `SPutWide` (`:2704`) | `[a, a+1]` | `[]` | n/a (static) ✓ |
-| `APut*` (`:2801`) | `[a, b, c]` | `[]` | source ✓ |
-| `APutWide` (`:2804`) | `[a, a+1, b, c]` | `[]` | source ✓ |
-
-**Why nothing catches it.** The consumer handles all seven `IPut*` variants in
-one arm (`frontends/ctadl-dex/src/lib.rs:797-822`). It filters `f.b` back out of
-`source` (`:810`), takes the object from `f.b` directly (`:813`), and never reads
-`dest` on this path. So the wrong `dest` is discarded and the output is correct.
-Problems 6 and 7 above mean no test could notice.
-
-**What breaks when it stops being invisible.** Any consumer that reads `dest` as
-"the registers this instruction defines" (a liveness pass, def-use chains, an SSA
-renamer, a register-level slicer) will conclude that `iput-wide` kills `vB`. The
-object's incoming flow is cut there, and every later use of `vB` is attributed
-to a definition that does not exist.
-
-**Fix.** One line, and it doesn't change what the current consumer does,
-because it filters `f.b` out of `source` anyway:
+Dex format 22c is `iput vA, vB, field@CCCC`. `vA` (plus `vA+1` when wide) is
+the **value stored**, and `vB` is the **object written into**. `vB` is read,
+never written. The table had:
 
 ```rust
-IPutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg(), f.b], [], []),
+IPut(f) | ... | IPutObject(f) => dataflow_source_sink_ret!([f.a, f.b], [], [])  // vB a source
+IPutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg()], [f.b], [])      // vB a DEST
 ```
 
-### 1.3 Bug: a self-aliased `iput`/`aput` silently drops the stored value
+The ctadl-dex consumer never read `dest` on the iput path, so the output was
+correct. But any consumer that treats `dest` as "the registers this instruction
+defines" (liveness, def-use chains, an SSA renamer) would decide that
+`iput-wide` kills `vB`, and the object's incoming flow would be cut there.
 
-**Severity:** live. It drops a real dataflow edge today.
+**Fix.** `IPutWide(f) => dataflow!([f.a, f.a.next_reg(), f.b], [])`.
+**Regression protection.** `iput_wide_reads_object_register`, plus
+`stores_read_every_operand_and_write_nothing`, which checks every `iput*` and
+`aput*` opcode.
 
-The consumer recovers the value operands by removing the object register **by
-value**:
+### 1.3 Fixed: aliased `iput`/`aput` registers dropped the stored value
+
+**Severity:** live; it dropped real dataflow edges. Fixed in `11d421d4`.
+
+The consumer recovered the value operands by removing the object register (and,
+for `aput`, the index register) from `source` **by value**:
 
 ```rust
-// frontends/ctadl-dex/src/lib.rs:810  (IPut* arm)
-source.cloned().filter(|r| *r != f.b) ...
-// frontends/ctadl-dex/src/lib.rs:877  (APut* arm)
-source.cloned().filter(|r| *r != f.b && *r != f.c) ...
+source.cloned().filter(|r| *r != f.b) ...               // IPut* arm
+source.cloned().filter(|r| *r != f.b && *r != f.c) ...  // APut* arm
 ```
 
-When the value register and the object register are the *same* register, the
-filter removes the value too. The generated statements are `assign(temp, [])`, a
-temp with no sources, then `store(object.field, temp)`. The edge
-`vX -> vX.field` is lost.
+When the value shared a register with either one, the filter also removed the
+value. The output was `assign(temp, [])` followed by `store(object.field,
+temp)`, so the edge from the value into the field or element was lost. Affected
+shapes:
 
-`iput-object p0, p0, LFoo;->cb:LBar;` is exactly this shape. It is what
-`this.mCallback = this` compiles to, a common Android idiom (self-registering
-listeners, self-referential nodes). `aput-object v1, v1, v2` (`a[i] = a`) is the
-array analogue.
+| Instruction | Source idiom |
+| --- | --- |
+| `iput-object p0, p0, LFoo;->cb:LBar;` | `this.cb = this` (self-registering listeners, self-referential nodes) |
+| `aput-object v1, v1, v2` | `a[i] = a` |
+| `aput v0, v1, v0` | `a[i] = i`. An earlier draft of this note missed this case; it is probably the most common of the three. |
 
-**Fix.** Don't recover operands by comparing values. Take the value operands
-positionally from the instruction fields (`f.a`, plus `f.a.next_reg()` for the
-wide variants) instead of filtering `source`.
+**Fix.** Take the value registers by position: `vA`, plus `vA+1` for
+`iput-wide` and `aput-wide` (`stored_value_regs`).
+**Regression protection.** In `frontends/ctadl-dex/src/tests.rs`:
+`iput_object_self_alias_stores_value`, `aput_object_self_alias_stores_value`,
+`aput_value_is_index_stores_value` (all three fail before the fix), plus
+non-aliased controls for `iput-object`, `iput-wide` and `aput-wide`.
 
-### 1.4 The structural fix and regression protection
+### 1.4 Regression protection
 
-Both bugs come from problem 1: `DataFlow` erases roles, so the consumer
-reconstructs them. The structural fix is a role-carrying, `PartialEq`-derivable
-per-instruction view, the shape [`cil-flow-api.md`](cil-flow-api.md) specifies
-for CIL (§3, and §6.2 for why roles make §1.2 impossible). If `dex-reader` is
-reworked, that is the shape to converge on.
+This section listed three cheap protections. All three are in place:
 
-Short of that, any of these would have caught §1.2, and the third catches §1.3:
+1. A non-boxed, `PartialEq` `DataFlow` with per-opcode-family unit tests
+   (`readers/dex-reader/src/instructions.rs`, `mod tests`).
+2. A table-level property test: every store reads its value, object or array,
+   and index, and writes no register
+   (`stores_read_every_operand_and_write_nothing`).
+3. Frontend tests over `iput-wide` and aliased stores (§1.3).
 
-1. `#[derive(Debug, Clone, PartialEq)]` on a non-boxed `DataFlow` (for example
-   `Vec<Reg>` fields), plus per-opcode-family unit tests asserting the exact
-   register lists.
-2. A table-level property test: for every store opcode, the object or array
-   register appears in `source` and not in `dest`.
-3. Frontend tests in `frontends/ctadl-dex/src/tests.rs` over `iput-wide` and
-   `iput-object p0, p0, F`.
+### 1.5 Fixed: long shifts read the shift amount as a register pair
+
+**Severity:** live; it created spurious dataflow edges. Found while writing the
+tests in §1.4, and fixed in `86f8634e`.
+
+`shl-long`, `shr-long` and `ushr-long` were grouped with the other long binops,
+so the table read the second operand as a pair: `vC, vC+1` (or `vB, vB+1` for
+the `/2addr` forms). The shift amount is an `int` (`long << int` in Java, and
+ART's verifier checks that operand as `Integer`), so it is one register.
+`shl-long v0, v2, v4` reported a read of `v5`. ctadl-dex's generic arm flows
+every source into each destination, so it created a false edge from whatever
+`v5` held into `v0:v1`, which can produce false taint paths.
+
+**Fix.** The three shifts have their own arms, reading `vC` (or `vB`) as one
+register.
+**Regression protection.** `long_shift_amount_is_one_register` checks all six
+opcodes. The frontend test `shl_long_reads_one_shift_register` fails before the
+fix.
+
+### 1.6 Still open
+
+1. **Roles.** The structural fix for §1.1 problem 1 is a role-carrying
+   per-instruction view, the shape [`cil-flow-api.md`](cil-flow-api.md) specifies
+   for CIL (§3, and §6.2 for why roles make §1.2 impossible). If `dex-reader` is
+   reworked, that is the shape to converge on. Until then, consumers must decode
+   operand roles from the instruction fields by position, never by comparing
+   register values.
+2. **Opcodes `0xfa`-`0xff` report no registers.** `dex-reader` names
+   them `UnusedFA` to `UnusedFF` (`instructions.rs:1265-1270`), but in dex 038+
+   they are `invoke-polymorphic`, `invoke-polymorphic/range`, `invoke-custom`,
+   `invoke-custom/range`, `const-method-handle` and `const-method-type`.
+   `data_flow()` handles `UnusedFC`/`UnusedFD` (invoke-custom) as invokes. But it
+   returns no registers for `UnusedFA`/`UnusedFB` (invoke-polymorphic, which
+   `MethodHandle.invoke` compiles to), so their arguments do not flow. It also
+   returns no destination for `UnusedFE`/`UnusedFF` (`const-method-handle` and
+   `const-method-type` write `vAA`). These are rare in app code. Fixing them
+   means giving them real names, `data_flow()` entries, and call handling in the
+   frontend.
 
 ---
 
