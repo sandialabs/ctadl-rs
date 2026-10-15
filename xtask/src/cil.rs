@@ -4,7 +4,7 @@
 //!
 //! The dump format is the contract: `cil-dump` renders an assembly with
 //! cil-reader, `tools/CecilDump` renders it with Mono.Cecil, and the two must
-//! be byte-identical. Five checks of that, and one of the flow layer:
+//! be byte-identical. Five checks of that, and two of the flow layer:
 //!
 //! - `cil:must-fail`     — non-CLI inputs (`text_file.txt`) are rejected.
 //! - `cil:cecil-tests`   — cil-reader's ports of Cecil's own test suites, which
@@ -21,6 +21,10 @@
 //! - `cil:flow`          — cil-reader's flow layer: its invariants over the
 //!   whole corpus, targeted tests on the `flow.il` fixture, and the
 //!   `cil-dump --flow` goldens (`xtask/cil-goldens/flow`); see [`flow`].
+//! - `cil:exec`          — the flow layer run: the exec fixtures' methods on
+//!   .NET (`flow-run`) and in an interpreter over `MethodFlow`, with the
+//!   same random inputs, must agree; see [`exec`]. Self-skips without
+//!   `flow-run`.
 //!
 //! The corpus, golden naming and comparison rules live in [`parity`].
 //! `cargo xtask cil bless` regenerates the goldens.
@@ -42,6 +46,7 @@ use crate::regression::Outcome;
 use parity::{CecilDump, Input};
 
 mod cecil_tests;
+pub mod exec;
 pub mod flow;
 mod parity;
 
@@ -99,6 +104,7 @@ pub fn run_checks(
             "cil:flow".to_string(),
             flow::run(&inputs, fixtures, goldens, work)?,
         ),
+        ("cil:exec".to_string(), exec::run(fixtures, work)?),
     ])
 }
 

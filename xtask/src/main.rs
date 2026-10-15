@@ -152,11 +152,12 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
 fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
     let command = args
         .next()
-        .context("`cil` requires a command: bless, bless-flow or codegen")?;
+        .context("`cil` requires a command: bless, bless-flow, exec or codegen")?;
     let mut cil_dir = None;
     let mut goldens = None;
     let mut cecil_src = None;
     let mut filter = None;
+    let mut out = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--cil-dir" => {
@@ -174,8 +175,13 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
                     args.next().context("--cecil-src requires a value")?,
                 ));
             }
-            "--filter" if command == "bless" => {
+            "--filter" if command == "bless" || command == "exec" => {
                 filter = Some(args.next().context("--filter requires a value")?);
+            }
+            "--out" if command == "exec" => {
+                out = Some(PathBuf::from(
+                    args.next().context("--out requires a value")?,
+                ));
             }
             "-h" | "--help" => {
                 print_help();
@@ -183,6 +189,12 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
             }
             other => bail!("unknown argument `{other}` (try `xtask --help`)"),
         }
+    }
+    if command == "exec" {
+        let fixtures = cil::resolve_fixtures(None)?
+            .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")?;
+        let out = out.unwrap_or_else(|| PathBuf::from("target/xtask-cil-exec"));
+        return cil::exec::run_standalone(&fixtures, &out, filter.as_deref());
     }
     let cil_dir = cil::resolve_cil_dir(cil_dir.as_deref())?
         .context("cil-reader directory not found; pass --cil-dir")?;
@@ -202,7 +214,9 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
             cil::flow::bless(&goldens, &fixtures)
         }
         "codegen" => Ok(cil_codegen::run(&cecil, &cil_dir)),
-        other => bail!("unknown `cil` command `{other}` (expected bless, bless-flow or codegen)"),
+        other => {
+            bail!("unknown `cil` command `{other}` (expected bless, bless-flow, exec or codegen)")
+        }
     }
 }
 
@@ -324,6 +338,13 @@ Tasks:
                              Rewrite xtask/cil-goldens/flow (or <dir>/flow), the
                              `cil-dump --flow` goldens of the flow fixtures,
                              from $CIL_READER_FIXTURES. Review the diff.
+    exec [--filter <name>] [--out <dir>]
+                             The `cil:exec` check on its own: run the exec
+                             fixtures' methods (those whose name contains
+                             <name>) on .NET with `flow-run` and in the
+                             interpreter over the flow layer, print per-method
+                             counts and every failure, and keep the outputs in
+                             <dir>/cil-exec (default: target/xtask-cil-exec).
     codegen                  Regenerate cil-reader's opcode table from Cecil's
                              OpCodes.cs.
 
