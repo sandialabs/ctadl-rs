@@ -3,7 +3,7 @@
 Status: design, not implemented. This is milestones M1 and M2 of
 [`cil-frontend-plan.md`](cil-frontend-plan.md). What `dex-reader` and
 `jvm-reader` get wrong, and so what this design avoids, is in
-[`dex-jvm-reader-improvements.md`](dex-jvm-reader-improvements.md). This
+`docs/dex-jvm-reader-improvements.md` on the `dex-jvm-reader-fixes` branch. This
 document specifies the API: the types, what every CIL opcode produces, the
 invariants, and how to build and test it. It does not cover the CTADL frontend.
 Where the frontend comes up, it is only to show that the API gives it what it

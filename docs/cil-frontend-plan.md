@@ -116,7 +116,8 @@ and no nix.
 > **Status: designed, not implemented.** The design is
 > [`cil-flow-api.md`](cil-flow-api.md) §3, §5 and §7.1–7.6 (types, per-opcode
 > effects, tests). What the Dex and JVM readers get wrong, which this design
-> avoids, is in [`dex-jvm-reader-improvements.md`](dex-jvm-reader-improvements.md).
+> avoids, is in `docs/dex-jvm-reader-improvements.md` on the
+> `dex-jvm-reader-fixes` branch.
 
 ### 2.1 Reader-side helpers M1 also needs
 
