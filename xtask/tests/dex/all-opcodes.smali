@@ -63,6 +63,9 @@
     const-wide/high16 v238, 0x8000000000000000L
     const-wide/high16 v236, -0x1000000000000L
     const-wide/high16 v234, 0x7fff000000000000L
+    const-wide/high16 v230, 0x0L
+    const-wide v228, 0x7fffffffL
+    const-wide v226, 0x80000000L
     const-string v233, "a"
     const-string/jumbo v232, "b"
     const-class v231, LAllOpcodes;
@@ -112,7 +115,7 @@
     .end array-data
 :longs
     .array-data 8
-        -0x8000000000000000L 0x7fffffffffffffffL
+        -0x8000000000000000L 0x7fffffffffffffffL 0x0L -0x2L 0x80000000L
     .end array-data
 :packed
     .packed-switch 0x1

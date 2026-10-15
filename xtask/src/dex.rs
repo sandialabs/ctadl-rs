@@ -92,6 +92,19 @@ pub fn run_checks(
         }
     }
 
+    // The disassembly check again, over the all-opcodes fixture: the samples
+    // hold only what `dx` emits, so display code for the rest goes unchecked.
+    results.push((
+        "dex:baksmali-all-opcodes".to_string(),
+        match ["smali", "baksmali"]
+            .into_iter()
+            .find(|t| exec::which(t).is_none())
+        {
+            Some(tool) => Outcome::Skip(format!("`{tool}` not on PATH")),
+            None => to_outcome(check_baksmali_all_opcodes(work)),
+        },
+    ));
+
     // Differential decoding against dexlib2, over the all-opcodes fixture plus
     // whatever else this run has: the compiled samples and the APK.
     let existing_apk = apk.filter(|p| p.exists());
@@ -336,6 +349,18 @@ fn check_baksmali(samples: &[SampleDex], work: &Path) -> Result<()> {
     }
     if total == 0 {
         bail!("no methods were compared against baksmali across samples");
+    }
+    Ok(())
+}
+
+/// dex-reader's smali disassembly of the all-opcodes fixture matches baksmali.
+fn check_baksmali_all_opcodes(work: &Path) -> Result<()> {
+    let work = work.join("baksmali-all-opcodes");
+    let dex = dexlib2::assemble_all_opcodes(&work)?;
+    let bytes = std::fs::read(&dex).with_context(|| format!("reading {}", dex.display()))?;
+    let methods = baksmali::compare(&dex, &bytes, &work.join("baksmali"))?;
+    if methods == 0 {
+        bail!("no methods of all-opcodes were compared against baksmali");
     }
     Ok(())
 }

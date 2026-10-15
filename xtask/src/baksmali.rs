@@ -298,6 +298,24 @@ fn string_literal_code_units(body: &str) -> Vec<u16> {
     units
 }
 
+/// baksmali writes an invoke-custom's call site in full, `call_site_N(name, type, args...)@bsm`;
+/// dex-reader writes only its index, `call<N>`. Reduce baksmali's form to dex-reader's. The
+/// call-site index itself is checked by `dex:dexlib2-decode`, but the call site's contents are
+/// not compared.
+fn normalize_call_site(line: &str) -> String {
+    let Some(start) = line.find("call_site_") else {
+        return line.to_string();
+    };
+    let digits: String = line[start + "call_site_".len()..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    if digits.is_empty() || !line.starts_with("invoke-custom") {
+        return line.to_string();
+    }
+    format!("{}call<{digits}>", &line[..start])
+}
+
 fn normalize_switch_targets(line: &str) -> String {
     // Sparse-switch entries: "65 -> :sswitch_47" vs ":sswitch_0" -> "65 -> <tgt>".
     let arrow_pos = line.find("->").or_else(|| line.find('\u{2192}'));
@@ -405,6 +423,7 @@ fn normalize_line_common(line: &str) -> Option<String> {
     }
 
     let s = normalize_const_string(s);
+    let s = normalize_call_site(&s);
     let s = normalize_switch_targets(&s);
     let s = normalize_numeric_literals(&s);
     let s = normalize_branch_targets(&s);
@@ -639,7 +658,20 @@ fn diff_preview(expected: &[String], actual: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_const_string;
+    use super::{normalize_call_site, normalize_const_string};
+
+    /// baksmali's full call site reduces to dex-reader's index form; other lines are untouched.
+    #[test]
+    fn call_site_reduces_to_its_index() {
+        assert_eq!(
+            normalize_call_site(
+                "invoke-custom {v1, v2}, call_site_12(\"run\", (II)V)@LA;->bsm()Ljava/lang/invoke/CallSite;"
+            ),
+            "invoke-custom {v1, v2}, call<12>"
+        );
+        let other = "const-string v0, \"call_site_1\"";
+        assert_eq!(normalize_call_site(other), other);
+    }
 
     /// The two disassemblers write the same constant three different ways, so
     /// the comparison only means anything if both sides canonicalize to the

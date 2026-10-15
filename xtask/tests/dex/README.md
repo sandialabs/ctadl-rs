@@ -32,5 +32,6 @@ extreme literals, backward and forward branches, and every payload kind. It is
 source, not a binary: `dex:dexlib2-decode` assembles it with `smali assemble
 --api 28` at test time, then requires dex-reader to decode every instruction
 exactly as dexlib2 does (see `xtask/src/dexlib2.rs`). The check fails if the
-file stops covering an opcode. It is never run, so it need not pass the
+file stops covering an opcode. `dex:baksmali-all-opcodes` also compares
+dex-reader's smali disassembly of it with baksmali's. It is never run, so it need not pass the
 verifier.
