@@ -1465,7 +1465,11 @@ impl AddrState {
                         continue;
                     }
                     self.kill(*dst);
-                    if let Some(a) = addr {
+                    // As for AddressOf: a place that mentions `dst` named
+                    // its old value, which the copy has just overwritten.
+                    if let Some(a) = addr
+                        && !place_vars(&a).contains(dst)
+                    {
                         self.addr.insert(*dst, a);
                     }
                     if let Some(m) = may {
