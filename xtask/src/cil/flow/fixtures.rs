@@ -41,6 +41,7 @@ pub const TESTS: &[Test] = &[
     ("l2_height_mismatch", l2_height_mismatch),
     ("l2_kinds", l2_kinds),
     ("l2_whole_fixture", l2_whole_fixture),
+    ("client_without_code", client_without_code),
 ];
 
 const FLOW: &str = "flow.il.dll";
@@ -673,5 +674,30 @@ fn l2_whole_fixture() {
                 }
             }
         }
+    });
+}
+
+/// The acceptance criterion of §9: a client that matches only on Effect,
+/// CallKind and Control (see `client.rs`) answers a real question.
+fn client_without_code() {
+    with_module(|module| {
+        let reaching = |name: &str| {
+            let m = method(module, "Flow", name);
+            let params = m.signature().unwrap().params.len() as u16;
+            let mf = MethodFlow::build(&m.body().unwrap());
+            super::client::args_reaching_return(&mf, params)
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(reaching("Twice"), [0]);
+        // Through int.TryParse's out parameter: byref_args + resolve_address.
+        assert_eq!(reaching("OutParam"), [0]);
+        assert_eq!(reaching("Calli"), [0]);
+        assert_eq!(reaching("NestedField"), [0]);
+        // Through the address of the argument, as the call's receiver.
+        assert_eq!(reaching("Constrained"), [0]);
+        assert_eq!(reaching("Misc"), [0]);
+        // The argument only decides branches: no implicit flow here.
+        assert_eq!(reaching("AddressJoin"), Vec::<u16>::new());
     });
 }

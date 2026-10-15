@@ -32,6 +32,7 @@ use super::parity::Input;
 use super::{parallel_map, to_outcome};
 use crate::regression::Outcome;
 
+mod client;
 mod fixtures;
 
 /// The fixtures whose `cil-dump --flow` has a golden.
