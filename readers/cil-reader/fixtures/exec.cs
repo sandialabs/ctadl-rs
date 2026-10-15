@@ -992,6 +992,16 @@ namespace Exec
             return x * 10 + y;
         }
 
+        // A join of an address that resolves (&x) with one that does not
+        // (the ref parameter): the address after it resolves to neither.
+        public static int RefJoin(int a, ref int p)
+        {
+            int x = a * 3;
+            ref int r = ref (a > 0 ? ref x : ref p);
+            r += 7;
+            return x * 100 + p;
+        }
+
         public static int Multi(int a, int b)
         {
             var m = new int[3, 4];
