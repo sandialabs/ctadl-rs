@@ -2,12 +2,13 @@
 
 Status: design, not implemented. It builds on [`cil-flow-api.md`](cil-flow-api.md),
 which describes the reader's dataflow layer. Engine plumbing (the `Cil` VMT
-variant, `CallStyle`, the dispatch key) is separate work. It is touched on here
-only where the frontend has to fill it in.
+variant, `CallStyle`, the dispatch key, the `deref_paths` gate) is separate
+work. It is touched on here only where the frontend has to fill it in.
 
 **Decided:**
 - Managed pointers lower to the place they point at whenever the flow layer can
-  trace it. They fall back to `deref` only when it cannot.
+  trace it. They fall back to the dereference field
+  `ctadl_ir::mir::DEREF_FIELD` only when it cannot.
 - Names are assembly-qualified and ILAsm-flavored (§3).
 
 ---
@@ -50,7 +51,7 @@ its logic in one `impl Context`, each concern gets its own file:
 | `hierarchy.rs` | VMT rows: methods, parents, interfaces, abstract methods, override aliases, P/Invoke | §4 |
 | `method.rs` | `FunctionData` shape, blocks, terminators, source info | §5, §8 |
 | `effects.rs` | `Effect<Var>` → statements | §6 |
-| `ptr.rs` | Lowering of managed pointers (resolved place vs. `deref`, copy-in/copy-out) | §6.3 |
+| `ptr.rs` | Lowering of managed pointers (resolved place vs. `DEREF_FIELD`, copy-in/copy-out) | §6.3 |
 | `calls.rs` | `CallSite` → `CallAssign`, delegates, extern stubs | §7 |
 | `tests.rs` | Per-table unit tests on synthetic `MethodFlow`s | — |
 
@@ -88,7 +89,8 @@ All of them come from `names.rs`.
 | Function id | `{cls}::{simple}{descriptor}` | `[MyApp]Acme.Gadget::Parse(System.String)->System.Int32` |
 | Field | `<{cls}::{name}>` | `<[MyApp]Acme.Gadget::_name>` |
 | Allocation | `CallObject::CilObject({cls})` | `cil<[MyApp]Acme.Gadget>` |
-| Array element / length / pointer target | `[]` / `length` / `deref` | the same symbols as Dex, JVM and C |
+| Array element / length | `[]` / `length` | the same symbols as Dex and JVM |
+| Pointer target | `ctadl_ir::mir::DEREF_FIELD` (`FieldRef::deref()`) | the one dereference spelling shared with C, pcode, the index and the query |
 
 `Asm` is the **simple** assembly name, without version or public key token. So
 `[System.Runtime]` is the same across framework versions.
@@ -280,8 +282,12 @@ method through `run_pipeline` and require no panic.
 ## 6. Effects → statements (`effects.rs`)
 
 `F(field)` means `FieldRef::symbol(..)`: `Named(f)` gives `<cls::f>`, `Element`
-gives `"[]"`, `Length` gives `"length"`, `Deref` gives `"deref"`. `ap(v)` means
-`AccessPath::without_fields(var(v))`.
+gives `"[]"`, `Length` gives `"length"`, and `Deref` gives `FieldRef::deref()`,
+whose symbol is `DEREF_FIELD`. `ap(v)` means `AccessPath::without_fields(var(v))`.
+The frontend never spells the dereference as a string literal. `DEREF_FIELD` is
+the field the index and the query treat as a pointer target (`PathSegment::is_deref`),
+and the `ctadl-ir` docs ask any frontend that needs a pointer-like field to use it
+rather than mint its own.
 
 ### 6.1 The table
 
@@ -323,8 +329,9 @@ over-approximates, which is acceptable.
 
 ### 6.3 Managed pointers (`ptr.rs`)
 
-The decided rule is to lower to the traced place, with `deref` only as a
-fallback. `MethodFlow::resolve_address(at, i)` gives the `Place` for input `i`.
+The decided rule is to lower to the traced place, with `DEREF_FIELD` only as a
+fallback. Below, `D` is `FieldRef::deref()` and `v.D` is the path through it.
+`MethodFlow::resolve_address(at, i)` gives the `Place` for input `i`.
 
 Reading and writing a resolved place:
 
@@ -340,10 +347,10 @@ So each pointer effect lowers like this:
 
 | Effect on pointer `v` | Resolved to `P` | Unresolved |
 | --- | --- | --- |
-| `Load dst := v.*` | read `P` into `dst` | `load(dst, v, deref)` |
-| `Store v.* := x` | write `x` into `P` | `store(v, deref, x)` |
-| `Load dst := v.f` (struct through pointer) | field `f` of `P` | `t := load v.deref; load(dst, t, f)` |
-| `Store v.f := x` | field `f` of `P` | `t := load v.deref; store(t, f, x)` |
+| `Load dst := v.*` | read `P` into `dst` | `load(dst, v, D)` |
+| `Store v.* := x` | write `x` into `P` | `store(v, D, x)` |
+| `Load dst := v.f` (struct through pointer) | field `f` of `P` | `t := load v.D; load(dst, t, f)` |
+| `Store v.f := x` | field `f` of `P` | `t := load v.D; store(t, f, x)` |
 | `Clear v` | `assign(P, [])` for `Local`/`Arg`; nothing otherwise | nothing |
 
 **Byref call arguments: copy-in/copy-out.** For each index in
@@ -351,34 +358,48 @@ So each pointer effect lowers like this:
 
 ```text
 c_k := read P               copy-in
-store cell_k.deref := c_k
+store cell_k.D := c_k
 call f(..., cell_k, ...)    cell_k is passed where the pointer was
-u_k := load cell_k.deref    copy-out
+u_k := load cell_k.D        copy-out
 write u_k into P
 ```
 
 `cell_k` is a fresh local per call site and argument. Under
-`ParamWriteBack::Entry`, the callee's `store p.deref := v` comes back to the
+`ParamWriteBack::Entry`, the callee's `store p.D := v` comes back to the
 caller's `cell_k`, so `u_k` sees it, and through it `P` does too. When
 the argument is unresolved, it is passed as is: it is already a pointer
-variable, and the callee's `deref` writes come back to it.
+variable, and the callee's writes through `D` come back to it.
 
 This depends on `ArtifactLanguage::Cil` returning `Entry` from
 `param_write_back()` (`ctadl-import/src/project.rs`), as JVM and Dex do. CIL
 arguments are passed by value: `starg` only rebinds the callee's own copy, and
 the caller must not see it. A write that must reach the caller goes through a
-`ref`/`out` parameter, which is a `deref` store on the parameter's entry
-version, and that is exactly what `Entry` writes back. (`Exit` is right for C
-only because the C frontend lowers `*out = x` to `out = x`; see the comment on
-`param_write_back`.)
+`ref`/`out` parameter, which is a store through `D` on the parameter's entry
+version, and that is exactly what `Entry` writes back. (C uses `Exit` only
+because the C frontend lowers `*out = x` to `out = x`; the comment on
+`param_write_back` calls that a deficiency of the C frontend and notes that C
+could use `Entry` too once `*p` lowers to `p.deref`.)
+
+**Admitting `.deref` paths in the index.** `ctadl index` admits the path
+`p.deref` for every program path `p` only when `IndexConfig::deref_paths` is set
+(or a loaded model mentions `.deref`). `ctadl-ascent/src/cli/mod.rs` sets it
+when any import is C or pcode. Without it, an index with no propagation model
+cannot carry a pointee's taint through a pointer held in memory: the store
+`o.p := b` reaches only `o.p`, and `o.p.deref` is not a path the index knows
+(`ptrfield.c` is the regression test). CIL has such pointers: `T*` fields in
+`unsafe` code, `ref` fields of ref structs (`Span<T>`'s reference to its first
+element), and an unresolved address stored through a pointer. So
+`ArtifactLanguage::Cil` joins C and pcode in that gate. Pointers that only live
+in locals and parameters (`cell_k`, byref parameters) do not need it, because
+their frames spell `v.deref` directly.
 
 **The rare case: an address merged at a join.** C# `ref` conditionals
 (`ref (c ? ref a : ref b)`) and hand-written IL can merge two addresses, and
 then `resolve_address` returns `None` at the use. Reads still need to work, so
 the fallback is: an `AddressOf { dst, P }` whose `dst` reaches an unresolved
 use (the flow layer reports this, see §10) also emits `c := read P; store
-dst.deref := c`. Reads through the merged pointer then see both places. Writes
-through it reach only `dst.deref`, not `a` or `b`. That is a known
+dst.D := c`. Reads through the merged pointer then see both places. Writes
+through it reach only `dst.D`, not `a` or `b`. That is a known
 false-negative, counted in the import summary as `cil: unresolved address
 writes`.
 
@@ -419,7 +440,10 @@ The engine resolves a `FuncPtrCall` through `CallObject::FunctionPtr(fid)`,
 which `ldftn` put into `fnptr`. Passing the target object as argument 0 gives a
 closure (a display-class method) its `this`. For a static target, argument 0
 is an extra the callee ignores. The two field names are fixed internal symbols
-in `names.rs`.
+in `names.rs`. A delegate passed through helpers that only forward it is still
+resolved at the `Invoke`: the index matches a field-held call target at every
+split of its path, so it reaches a frame that never touches the field itself
+(`tests/tnt/funcptr_field_forward.tnt`).
 
 ---
 
@@ -459,7 +483,8 @@ span. `file_offset` needs the reader helper `MethodBody::code_file_offset()`.
 
 | Policy | Choice | Where |
 | --- | --- | --- |
-| Pointer lowering | Traced place, else `deref`; copy-in/copy-out for byref arguments | `ptr.rs` |
+| Pointer lowering | Traced place, else `DEREF_FIELD`; copy-in/copy-out for byref arguments | `ptr.rs` |
+| `.deref` admission | `IndexConfig::deref_paths` on for Cil imports (§6.3) | `ctadl-ascent` `cli/mod.rs` |
 | Index taint | An array index does not taint the element read (as Dex and JVM) | `effects.rs` |
 | Branch conditions | `Test` emits nothing | `effects.rs` |
 | `box` | Contents-preserving assign; `T` recorded as instantiated for CHA | `effects.rs` |
@@ -505,7 +530,7 @@ taint test passes under `xtask regression --frontend cil`.
 | 5 | Hierarchy, virtual calls, CHA | §4.1, §7 `Virtual`, sealed/non-virtual | interface dispatch with two implementations |
 | 6 | Generic overrides and explicit implementations | §4.2, §4.3 | `D : B<string>`; `IComparer<T>`; `void IFoo.Bar()` |
 | 7 | Exceptions | §8 handlers, block splitting | `catch (E e) { sink(e.Message); }` |
-| 8 | Managed pointers | §6.3 | `TryParse(s, out n)`, `ref` accumulator, struct field through `ldloca` |
+| 8 | Managed pointers | §6.3 | `TryParse(s, out n)`, `ref` accumulator, struct field through `ldloca`, taint through a `T*` field with no models loaded |
 | 9 | Delegates and lambdas | §7 delegates | `Func<string,string>` and an event handler |
 | 10 | Multiple assemblies and forwarding | §3.3, `import_directory` | app + library DLL; `System.Object` via a facade |
 

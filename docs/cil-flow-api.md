@@ -167,7 +167,8 @@ pub enum Field<S> {
     /// Array length (`ldlen`).
     Length,
     /// Through a managed or unmanaged pointer (`ldind*`, `stind*`, `ldobj`,
-    /// `stobj`, `cpobj`, `cpblk`, `initblk`, `initobj`).
+    /// `stobj`, `cpobj`, `cpblk`, `initblk`, `initobj`). The CTADL frontend
+    /// lowers it to `ctadl_ir::mir::DEREF_FIELD` (translation §6.3).
     Deref,
 }
 
