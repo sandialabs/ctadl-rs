@@ -144,17 +144,23 @@ Concrete problems, each visible in `ctadl-dex/src/lib.rs`:
    into `Location::StackSlot(id)`. Every consumer must handle both, and
    `ctadl-jvm`'s `convert_location_to_var_ref` has a `"Stack Local?"` bucket for
    the case that should be impossible.
-2. **Slot ids are stack depths, not definitions.** `StackSlot(n)` is the absolute
-   depth the value sits at. Two unrelated values at depth 2 in different blocks get
-   the same name, which merges flows that never merge.
-3. **Consequence: the frontend re-implements value numbering.** To answer "which
+2. ~~**Slot ids are stack depths, not definitions.**~~ *Retracted.* This said that
+   naming a stack slot by its depth merges unrelated values. It does not, because
+   the frontend's output goes through `ctadl_ir::ssa::run_pipeline` before any facts
+   are generated. Pruned SSA gives every definition of `s2` its own version and puts
+   a phi only where two definitions really meet. Depth naming is in fact what the
+   CIL design uses (see [`cil-flow-api.md`](cil-flow-api.md) §4).
+3. **The frontend re-implements value numbering.** To answer "which
    object does this `putfield` write to", `ctadl-jvm/src/lib.rs` carries
    `stack_aliases`, `dup_slot_pairs`, `last_aload_reg`, `note_assign_aliases`,
    `stack_slot_alias`, `aload_for_stack_slot`, `aload_register_before`,
    `resolve_object_var`, `field_object_base`, and `init_survivor_link` — roughly 200
    lines of backwards-scanning heuristics, with comments like "Prefer a stable
    register/parameter for this stack slot when it differs from the most recent
-   aload". That is the abstraction leaking.
+   aload". Depth naming is not why this code exists (see 2). After SSA,
+   `propagate_copies` already rewrites a store's base from a stack slot to the
+   variable that was copied into it. Whether this code is needed at all has not
+   been checked against `ctadl-jvm`.
 4. **Hand-written stack effects.** `stack_effect` and `misc_stack_effect` are
    opcode tables maintained by hand.
 5. **Fails whole methods.** An inconsistent stack height at a join returns
@@ -162,6 +168,12 @@ Concrete problems, each visible in `ctadl-dex/src/lib.rs`:
    edge through it.
 
 ### 2.3 The design for CIL
+
+> **Superseded by [`cil-flow-api.md`](cil-flow-api.md)**, which specifies this API in
+> full. The main changes from the sketch below: per-instruction effects are
+> positional and need no stack simulation, the `Origin` enum is dropped, and there
+> are no reader-minted phis or definition-unique stack values. Stack slots are named
+> by depth, and versioning is left to the `ctadl-ir` SSA pipeline.
 
 Two things make CIL easier to do properly than either:
 
@@ -335,34 +347,34 @@ and `jvm_reader::compute_basic_blocks_for_method`:
 - Exception edges: every block overlapping a `try` range → that try's handler and
   filter blocks (matching the approximation `jvm-reader` uses).
 
-### 3.2 Abstract stack interpretation
+### 3.2 Stack heights, not values
 
-A worklist pass in reverse post-order that turns the operand stack into named values:
+See [`cil-flow-api.md`](cil-flow-api.md) §4. A worklist pass computes each block's
+entry stack **height** and the verification **kind** (`StackKind`) at each depth. It
+does not compute values. Each stack slot is named by its depth (`s{depth}`) as an
+ordinary, unversioned local. The `ctadl-ir` SSA pipeline (pruned Cytron SSA, then
+`propagate_copies`) does the versioning, places the phis, and removes the copies.
 
-- Block entry state is a `Vec<Value>`. Entry block starts empty; handler and filter
-  entry blocks start with a single synthetic `Value` of origin `Origin::Exception`.
-- Each instruction pops `stack_pop` values (naming its operands) and pushes
-  `stack_push` fresh `Stack(id)` values, each recorded with its `Origin`.
-- `Varpop`/`Varpush` resolve from the call/`ret` signature.
-- At a join where predecessor states disagree on the value at a depth, mint a fresh
-  `Stack(id)` with `Origin::Phi([...])` and record it in the block's `entry_phis`.
-  The frontend emits one `Assign { dest: phi, sources }` per phi at block entry —
-  which is exactly what the shared SSA pass expects to see.
+- The entry block starts at height 0. Handler and filter entries start at height 1,
+  holding the caught exception.
+- `Varpop`/`Varpush` resolve from the call or `ret` signature.
 - `leave` empties the stack (ECMA-335 §12.4.2.5).
 
-**Deliberately unlike `jvm-reader`: never fail the method.** On a depth mismatch at a
-join, log at `debug`, take the common prefix, mint fresh values for the remainder, and
-continue. Obfuscated and hand-written IL is real, and losing a method loses every call
-edge through it.
+**Deliberately unlike `jvm-reader`: never fail the method.** If two predecessors
+reach a join with different heights, log at `debug`, take the smaller height, and
+continue. Obfuscated and hand-written IL is real, and losing a method loses every
+call edge through it.
 
 ### 3.3 Testing M2
 
 Property tests over every method in every fixture:
 
 - depth never goes negative and never exceeds the header's `max_stack`;
-- every `Value::Stack` has exactly one definition;
-- every use is dominated by its definition, or is a phi input;
+- every predecessor of a block agrees on its entry height (or the mismatch is logged);
 - block successor/predecessor relations are mutually consistent.
+
+Single definition and dominance are SSA's job, and `FunctionData::verify` checks them
+after the frontend's IR goes through `ssa::transform`.
 
 ---
 
@@ -428,7 +440,7 @@ For each `TypeDef` from `module.all_types()` (includes nested):
   conservative choice.)
 - `return_type = ReturnType { arity: 2 }` — `(normal, exception)`, matching Dex/JVM
   so the shared Java-style models and the `throwval` convention carry over.
-- Blocks 1:1 with `MethodCfg` blocks; `entry_phis` become leading `Assign`s.
+- Blocks 1:1 with `MethodCfg` blocks. The frontend emits no phis, because SSA places them.
 - Terminators: `ret` → `Return { args: [result_or_empty, empty] }`; `throw`/`rethrow`
   → handler successors if any, else `Return { args: [empty, throwval] }`;
   everything else → `Goto { targets: successors }`, or a two-empty `Return` when
@@ -452,14 +464,17 @@ with `Field::Named(f)` → `FieldPath::symbol("<f>")`, `Element` → `"[]"`,
 `Length` → `"length"`, `Deref` → `"deref"`. A static field's `base` is
 `VariableRef::new_global()`, matching how Dex lowers `SGet`/`SPut`.
 
-Variables: `Value::Arg(n)` → `VariableRef::new_parameter(n)`; `Value::Local(n)` →
-local `loc{n}`; `Value::Stack(id)` → local `s{id}`.
+Variables: `Var::Arg(n)` → `VariableRef::new_parameter(n)`; `Var::Local(n)` →
+local `loc{n}`; `Var::Stack(depth)` → local `s{depth}`. All of them are unversioned.
 
-**No aliasing heuristics.** Because `Origin` travels with every value, the frontend
-answers "what object does this `stfld` write to" by reading
-`Origin::Copy(Value::Arg(0))` off the receiver, rather than scanning the block
-backwards for an `ldarg` — the ~200 lines that `ctadl-jvm/src/lib.rs` spends on that
-question do not get written here.
+**No aliasing heuristics.** `ldarg.0; …; stfld f` lowers to `s0 := p0; s0.f := v`.
+After SSA, `propagate_copies` rewrites the store's base to `p0`. So the frontend does
+not scan backwards for the `ldarg`; the pipeline does that work.
+
+**SSA settings.** `ArtifactLanguage::Cil` returns `ParamWriteBack::Entry` from
+`param_write_back()`, as JVM and Dex do. `starg` rebinds only the callee's own copy of
+an argument, while a write through a `ref`/`out` parameter is a `deref` store on the
+entry version, which is exactly what `Entry` hands back to the caller.
 
 ### 4.5 Calls
 
@@ -486,7 +501,7 @@ That is what makes an external callee nameable by a model.
 These are not polish; they are where most real .NET taint lives.
 
 - **Managed pointers / `out` and `ref` parameters.** `ldloca`/`ldarga`/`ldflda`/
-  `ldelema` push an address (`Origin::AddressOf(place)`); `stind.*`/`stobj` write
+  `ldelema` push an address (`Effect::AddressOf`); `stind.*`/`stobj` write
   through it; `ldind.*`/`ldobj` read through it. Lowered as `Store`/`Load` with the
   `deref` field, the convention the C frontend already uses. Without this,
   `int.TryParse(s, out n)` — and every `TryGetValue`, every `ref` accumulator — loses
@@ -495,7 +510,7 @@ These are not polish; they are where most real .NET taint lives.
   call with the fresh object as receiver. This is strictly simpler than the JVM's
   `new` / `dup` / `invokespecial` sequence, and the `init_survivor_link` hack in
   `ctadl-jvm/src/lib.rs` has no counterpart here.
-- **Delegates.** `ldftn`/`ldvirtftn` push `Origin::FunctionPtr(method)`; the
+- **Delegates.** `ldftn`/`ldvirtftn` push a function pointer (`Effect::FunctionPtr`); the
   `newobj D::.ctor(object, native int)` that consumes it makes the delegate object
   carry that function pointer; `callvirt D::Invoke` is a `DelegateInvoke`. Map to
   `CallObject::FunctionPtr` + `CallStyle::FuncPtrCall`, which the engine already
@@ -560,7 +575,7 @@ The additive change set, following Lua's precedent exactly:
 | `ctadl-ir/src/mir/visit/mod.rs` | visitor arm for `CilCall` |
 | `ctadl-ascent/src/facts.rs` | `CallTargetObject::CilClass`, `CallDispatchKey::Cil(name, desc)` |
 | `ctadl-ascent/src/facts/parquet.rs` | two tag bytes + encode/decode arms |
-| `ctadl-import/src/project.rs` | `ArtifactLanguage::Cil`, `ALL`, `name()`; bump `INDEX_FORMAT_VERSION` |
+| `ctadl-import/src/project.rs` | `ArtifactLanguage::Cil`, `ALL`, `name()`, `param_write_back()` → `Entry`; bump `INDEX_FORMAT_VERSION` |
 | `ctadl-ascent/src/cli/mod.rs` | import dispatch arm |
 | `ctadl-ascent/src/codegen/mod.rs` | `ChaLanguage::Cil` (reuses `run_cha` unchanged), `CilCall` codegen arm mirroring `JavaCall`, `emit_callee_resolvents` arm, `InstantiationFinder` arm |
 | `ctadl-ascent/src/models/{mod,match_index,json,codegen}.rs` | VMT arms; `CIL_DEFAULT_MODELS` |
@@ -677,5 +692,6 @@ bridge work.
    is resolved by hybrid inlining — verifiable in `ctadl index`'s
    `hybrid inlining: ... resolvent: N` line, the same way the Java frontends are.
 5. `languages/cil/mod.rs` contains **no** backwards-scanning heuristics to recover
-   the object base of a field access. If it does, M1's `Origin` design failed and
-   should be fixed there rather than worked around here.
+   the object base of a field access. If it does, either copy propagation is missing
+   a case or the flow layer is, and the fix belongs there rather than in a
+   workaround here.
