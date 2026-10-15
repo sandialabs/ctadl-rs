@@ -175,6 +175,41 @@
         # from Cecil.
         gapGen = dnlibTool "gap-gen" "GapGen";
 
+        # FlowRun (readers/cil-reader/tools/FlowRun): runs an assembly's methods
+        # on .NET with random arguments, the reference that the `cil:exec`
+        # check's interpreter over cil-reader's flow layer is compared against.
+        # No NuGet packages, so it builds offline like cecilDump.
+        flowRun = pkgs.stdenvNoCC.mkDerivation {
+          # `name` rather than pname/version: see cecilDump.
+          name = "flow-run";
+          src = ./readers/cil-reader/tools/FlowRun;
+          nativeBuildInputs = [
+            pkgs.dotnet-sdk_8
+            pkgs.makeWrapper
+          ];
+          env = {
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+          };
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
+            dotnet build -c Release --nologo -p:UseAppHost=false -o out
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/lib/flow-run" "$out/bin"
+            cp -R out/. "$out/lib/flow-run/"
+            makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/flow-run" \
+              --add-flags "$out/lib/flow-run/FlowRun.dll" \
+              --set DOTNET_NOLOGO 1 \
+              --set DOTNET_CLI_TELEMETRY_OPTOUT 1
+            runHook postInstall
+          '';
+        };
+
         # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled.
         # The tests find them through CIL_READER_FIXTURES. Offline (nothing
         # references a NuGet package) and byte-for-byte reproducible:
@@ -541,6 +576,8 @@
             pkgs.ghidra-bin
             # The `cil:cecil-compare` check's reference dumper.
             cecilDump
+            # The `cil:exec` check's reference runner.
+            flowRun
           ];
         };
 
@@ -579,6 +616,7 @@
         # Exposed so `nix build .#cecil-dump` can warm the cache on its own.
         packages.cecil-dump = cecilDump;
         packages.cil-fixtures = cilFixtures;
+        packages.flow-run = flowRun;
         packages.ptr-gen = ptrGen;
         packages.gap-gen = gapGen;
         # Legacy ctadl: nix run .#ctadl-souffle

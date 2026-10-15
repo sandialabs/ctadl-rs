@@ -8,3 +8,5 @@ tools/PtrGen/bin
 tools/PtrGen/obj
 tools/GapGen/bin
 tools/GapGen/obj
+tools/FlowRun/bin
+tools/FlowRun/obj
