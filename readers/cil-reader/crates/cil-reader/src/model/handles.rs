@@ -1074,6 +1074,22 @@ impl<'a> MethodDef<'a> {
         Ok(self.attributes()? & method_attributes::STATIC != 0)
     }
 
+    pub fn is_virtual(&self) -> Result<bool> {
+        Ok(self.attributes()? & method_attributes::VIRTUAL != 0)
+    }
+
+    pub fn is_newslot(&self) -> Result<bool> {
+        Ok(self.attributes()? & method_attributes::NEW_SLOT != 0)
+    }
+
+    pub fn is_abstract(&self) -> Result<bool> {
+        Ok(self.attributes()? & method_attributes::ABSTRACT != 0)
+    }
+
+    pub fn is_final(&self) -> Result<bool> {
+        Ok(self.attributes()? & method_attributes::FINAL != 0)
+    }
+
     pub fn is_constructor(&self) -> Result<bool> {
         let attrs = self.attributes()?;
         Ok(attrs & method_attributes::RT_SPECIAL_NAME != 0

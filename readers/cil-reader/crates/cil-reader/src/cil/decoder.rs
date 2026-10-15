@@ -94,6 +94,21 @@ pub struct Ins<'a> {
     pub offset: u32,
     pub opcode: OpCode,
     pub operand: RawOperand<'a>,
+    /// Encoded length, opcode and operand together.
+    size: u32,
+}
+
+impl Ins<'_> {
+    /// Encoded length in bytes: the opcode (one or two bytes, also for an
+    /// [`UNDEFINED`] one) plus its operand.
+    pub fn size(&self) -> u32 {
+        self.size
+    }
+
+    /// Offset of the byte after this instruction.
+    pub fn end_offset(&self) -> u32 {
+        self.offset + self.size
+    }
 }
 
 /// Iterator over the instructions of a method body's code bytes.
@@ -180,6 +195,7 @@ impl<'a> InstructionDecoder<'a> {
             offset,
             opcode,
             operand,
+            size: self.cur.pos() as u32 - offset,
         })
     }
 }
@@ -218,7 +234,27 @@ mod tests {
             assert_eq!(ins[0].operand, RawOperand::Target(target));
             assert_eq!(ins[1].opcode.code, Code::Ret);
             assert!(!ins[1].opcode.is_undefined());
+            assert_eq!(ins[0].end_offset(), ins[1].offset);
         }
+    }
+
+    #[test]
+    fn sizes_cover_opcode_and_operand() {
+        // ldc.i4.s 5; ldarg 0x0102 (fe 09); switch (2 targets); ldc.r8; ret
+        let code = [
+            0x1f, 0x05, //
+            0xfe, 0x09, 0x02, 0x01, //
+            0x45, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //
+            0x23, 0, 0, 0, 0, 0, 0, 0xf0, 0x3f, //
+            0x2a,
+        ];
+        let ins: Vec<_> = decode(&code).into_iter().map(|i| i.unwrap()).collect();
+        let sizes: Vec<u32> = ins.iter().map(|i| i.size()).collect();
+        assert_eq!(sizes, [2, 4, 13, 9, 1]);
+        for pair in ins.windows(2) {
+            assert_eq!(pair[0].end_offset(), pair[1].offset);
+        }
+        assert_eq!(ins[4].end_offset(), code.len() as u32);
     }
 
     #[test]

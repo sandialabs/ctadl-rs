@@ -46,6 +46,8 @@ pub struct ExceptionHandler {
 pub struct MethodBody<'a> {
     pub(crate) m: &'a ModuleData<'a>,
     pub(crate) method_rid: u32,
+    /// File offset of the first code byte.
+    code_offset: u32,
     pub max_stack: u32,
     pub init_locals: bool,
     pub code_size: u32,
@@ -78,6 +80,7 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
     let mut body = MethodBody {
         m,
         method_rid,
+        code_offset: 0,
         max_stack: 0,
         init_locals: false,
         code_size: 0,
@@ -129,6 +132,7 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
 fn read_code<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cur<'a>) {
     let data = cur.data();
     let start = cur.pos();
+    body.code_offset = start as u32;
     // Code that runs past the end of the file reads as empty, as in
     // CodeReader.ReadCode. Cecil also empties code that ends exactly at
     // the end of the file; this reads it.
@@ -267,6 +271,17 @@ impl<'a> MethodBody<'a> {
 
     fn generic_context(&self) -> Result<GenericContext> {
         self.method().generic_context()
+    }
+
+    /// The file offset of the first code byte, after the body header: add
+    /// an instruction's offset to it to find the instruction in the image.
+    pub fn code_file_offset(&self) -> u32 {
+        self.code_offset
+    }
+
+    /// The `#US` heap string that an `ldstr` operand names.
+    pub fn user_string(&self, token: MetadataToken) -> Result<String> {
+        Ok(self.m.md.user_strings().get(token.rid())?.to_string_lossy())
     }
 
     /// The `Formatter.FormatMethodBody` rendering, tabs and all — the format
