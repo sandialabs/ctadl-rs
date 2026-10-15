@@ -31,7 +31,9 @@ answer, and in the frontend otherwise.
    not forced by the IR has a constant or function and a paragraph in §9.
 5. **Each layer is checked against something it does not control.** For the
    frontend that is `FunctionData::verify` plus the SSA pass running without a
-   panic on every corpus method, then end-to-end taint tests.
+   panic on every corpus method, then end-to-end taint tests, and `cil:taint`
+   (§12): the index's summaries must cover every flow a run of the exec
+   fixtures shows.
 6. **Build in vertical slices** (§11). Each slice adds table rows, a fixture,
    and a test, end to end.
 
@@ -518,8 +520,9 @@ that document (§4.2, §6.3, §9 step 1).
 ## 11. Slices
 
 Each slice is done when its fixture's `cil-dump --flow` and MIR goldens are
-blessed, its table rows are implemented with no `_` arms, and an end-to-end
-taint test passes under `xtask regression --frontend cil`.
+blessed, its table rows are implemented with no `_` arms, an end-to-end
+taint test passes under `xtask regression --frontend cil`, and `cil:taint`
+(§12) covers the slice's exec fixture methods.
 
 | # | Slice | Rows | Fixture / test |
 | --- | --- | --- | --- |
@@ -540,7 +543,228 @@ the `Cil` VMT variant), so that should land by then.
 
 ---
 
-## 12. Open questions
+## 12. Validation against dynamic flows (`cil:taint`)
+
+The checks in §1.5 show that the IR is well formed and that some chosen flows
+are found. They do not show that the index's summaries agree with what the
+code does. `cil:taint` checks that: every data flow a run of a fixture method
+actually shows must be covered by a summary that `ctadl index` computed for
+that method. The run is checked against something the frontend does not
+control: `cil:exec`'s interpreter, whose end states already match .NET's on
+the exec fixtures (`cil-flow-api.md`).
+
+It checks the whole chain at once: the flow layer, this translation, the SSA
+pipeline, the index's rules, and summary composition across calls. A miss is
+localized afterwards, from the method's `cil-dump --flow`, its MIR, and its
+summary rows.
+
+### 12.1 Static side
+
+A summary row is `(f, i, p, j, q)` (`index_engine::FunctionSummary`): the
+value at formal `i`, path `p`, on entry reaches formal `j`, path `q`, on
+exit. Formals are numbered as the codegen numbers them: `n ≥ 0` is parameter
+`n` (`this` is 0), `-1` is the normal return and `-2` the exceptional one
+(the two slots of §5.1's `ReturnType`), and `GLOBALS_INDEX` is the global. A
+formal `j ≥ 0` is an output only where `isout` says so: a `ByVal` parameter
+with an empty path is not, so rebinding a parameter (`starg`) is never a flow
+to the caller, which matches CIL.
+
+The check runs `ctadl import` and `ctadl index` on each exec fixture, with
+`IndexConfig::deref_paths` on as §6.3 requires, and reads the summary rows of
+the fixture's methods by function id (§3.1).
+
+### 12.2 Dynamic side
+
+The interpreter gets a shadow: every value it holds also carries a set of
+labels. A label is an input location, `(i, p)`. The shadow never changes what
+the interpreter computes, and the comparison with .NET still runs on every
+trial, so the concrete semantics stay checked.
+
+- **Entry.** Each argument, and every location reachable from it, is
+  labeled with the path it was reached by: `arg1`, `arg1.<C::f>`,
+  `arg1.<C::f>.[]`. Paths use §3.1's spellings: `<cls::f>`, `[]`, `length`,
+  and `DEREF_FIELD` for the target of a pointer argument. A location reached
+  by two paths gets both labels.
+- **Propagation.** Labels follow what each operation computes, from the
+  values it reads: a copy, cast, box or unbox keeps its operand's labels;
+  arithmetic, comparison and conversion take the union of their operands';
+  a load takes the loaded location's; a store gives the location the stored
+  value's; a constant or a fresh object has none; a call propagates through
+  the callee's interpreted body. These rules come from the semantics, never
+  from §6.1's table, which they exist to check.
+- **What CTADL does not track by design.** These are dropped in the shadow,
+  and listed in one place in the code, each citing the §9 policy it mirrors:
+  implicit flows (a `Test` or a branch taints nothing), and an array index
+  tainting the element read.
+- **Exit.** Walk the normal result (`-1`), the thrown object (`-2`), and
+  everything reachable from each argument. Each label `(i, p)` found at
+  output location `(j, q)` is a dynamic flow `(i, p) → (j, q)`. The value at
+  `-1` itself, path empty, counts, as does each field reached from it.
+
+### 12.3 Which paths the index can reach
+
+The index has no length bound on paths, and it never cuts one short. It
+works over a closed set of **admitted paths**, `compute_paths`
+(`ctadl-ascent/src/index_engine/mod.rs`), fixed before the main run, and
+every rule that builds a longer path asks `PathSet::concat` for it. When the
+result is not admitted, the rule derives nothing: the flow is dropped, with
+no shorter flow kept in its place. A path is admitted if it is:
+
+- a **program path**: the path on an assignment edge, an actual argument, or
+  the receiver of an indirect call; or a path codegen composes along a chain
+  of loads, copies and stores (`CodegenVisitor::visit_basic_block_data`,
+  `ctadl-ascent/src/codegen/mod.rs`), which it does **within one basic
+  block** only;
+- a **model path**: a path a loaded model's summary mentions, or one such
+  path joined once with a program path. Summaries the index derives add
+  nothing;
+- with `deref_paths`, a program path extended by `DEREF_FIELD`.
+
+The set is global: a path one function spells is admitted in every function.
+
+So a field chain the code builds across blocks reaches no summary. Small
+`flowy` fixtures show it (`p.f.g` read as `t = p.f; r = t.g`):
+
+| Shape | Summary | End to end |
+| --- | --- | --- |
+| both loads in one block, or three; a store through a temporary | found | found |
+| a `goto` between the loads, or between the load and the store | absent | lost |
+| the second load's base a phi of two loads | absent | — |
+| `n = n.next` in a loop, then `n.val` | absent | lost |
+| callee reads `q.g`, caller passes `p.f` | absent | lost |
+
+No coarser row (`return <- p.f`, `return <- p`) stands in for the missing
+one. Dex, JVM, pcode and Lua all lower field reads to `Load`, so this holds
+for them too; the skipped `substitute_prefix_demo.tnt` is a case of the same
+gate. CIL meets it more often than they do: the flow layer starts a block at
+every branch target, the split CFG (§8) ends one after every call in a
+`try`, and C#'s `?.`, `??`, `?:` and loops all put a field chain across
+blocks.
+
+A fix is engine work, not this frontend's: compose paths along SSA
+definitions across blocks, joining over phis and bounding the depth around
+loops. Until then, §12.4 keeps these misses apart from the frontend's.
+
+### 12.4 The comparison
+
+A dynamic flow `(i, p) → (j, q)` is **covered** if there is a summary row
+`(f, i, p', j, q')` with `p = p'·s` and `q = q'·s` for some suffix `s`: a
+summary about a whole object also covers its fields. Each uncovered flow is
+then sorted, in this order:
+
+1. **Unknown field: fail.** Every field of `p` and `q` (`<cls::f>`, `[]`,
+   `length`, `DEREF_FIELD`) must occur in some admitted path. A load or
+   store always admits the path of its own field, so a field the index has
+   never seen means the frontend misspelled it (§3.1) or never lowered the
+   access. This is checked before the filter below, which would otherwise
+   hide exactly these bugs.
+2. **Path not admitted: report.** `p` or `q` is not in the index's admitted
+   set (the index writes it out as `paths`, `docs/debugging.md`). The index
+   cannot produce that row at all, so the miss is §12.3's, not the
+   frontend's. These are listed per method under their own heading and
+   counted; the count is what the gate costs on CIL, and a jump in it when a
+   slice lands means something to read.
+3. **Known miss: XFAIL.** The flow matches an entry of the known-miss file
+   (§12.5).
+4. **Otherwise: fail**, with the method, the trial's starting state, and the
+   flow.
+
+The filter in step 2 tests only the endpoints, while the index tests every
+path it builds on the way. So a flow with both endpoints admitted can still
+be dropped on an intermediate path and fail in step 4. That is an engine
+miss to triage, and, once understood, a known-miss entry. The other way
+round cannot happen: a row whose endpoint is not admitted is one the index
+never derives, so step 2 hides nothing the index would have found. If step
+4 turns out noisy, the interpreter can model the gate instead: it knows the
+block each load ran in, so it can mark a flow whose path was built inside
+one basic block as one the index must admit, and filter only the rest.
+
+**Precision** is reported, not gated: per method, the summary rows that no
+trial showed. The static side covers every path and every aliasing, the
+dynamic side only those 64 random trials reach, so a static-only row is not
+a bug, and an over-approximation the design accepts (§6.2's struct
+aliasing, CHA) needs no marking. A ratio that jumps between runs is worth a
+look.
+
+Under the same convention as `cil:exec`, `cil:taint` writes the dynamic
+flows, the admitted paths, the summary rows and every sorted flow under
+`<work>/cil-taint/`, and runs in `xtask regression --frontend cil` beside
+`cil:exec`.
+
+### 12.5 Known misses
+
+A miss the project knows and accepts is marked per flow, in a checked-in
+file next to the goldens, `xtask/cil-taint-known.toml`:
+
+```toml
+[[known]]
+method = "Exec.Lists::Walk"          # Class::Method, with the descriptor if overloaded
+flow   = "arg0.<next>*.<val> -> ret" # src -> dst; `f*` matches the field zero or more times
+kind   = "engine:path-composition"
+why    = "n = n.next in a loop composes no path (tnt: path_loop.tnt)"
+```
+
+- **Per flow, not per method.** One method can hold an accepted miss and
+  enforced flows beside it. This follows `regression.rs`'s XFAIL allowlists
+  (`LUA_XFAIL`, `C_KNOWN_FAILURES`), at a finer grain.
+- **`flow` is a pattern.** A loop makes a different dynamic path per trip,
+  so a field may repeat (`f*`); otherwise paths are spelled exactly, with
+  §12.2's spelling (field names may drop the class when unambiguous in the
+  method).
+- **`kind` is one of a fixed list**, each tied to a section or a reproducer:
+  `engine:path-composition` (§12.3, on an intermediate path), `engine:alias-rule`
+  (the aliasing rule summarizes only paths the program stores through),
+  `design:unresolved-address-write` (§6.3). The report counts XFAILs per
+  kind, so an engine fix shows as its kind going to zero. A new kind is
+  added to the list with its section.
+- **`why` is required**, and an `engine:` entry names a `.tnt` reproducer in
+  `ctadl-ascent/tests/tnt`, so the limitation is tested where it lives and
+  not only through CIL. Reproducers that fail today go in as known
+  limitations, the way `substitute_prefix_demo.tnt` does.
+- **A stale entry fails.** An entry that matches no uncovered flow in any
+  trial is reported XPASS and fails the check: either the index now covers
+  the flow or the fixture no longer exercises it, and either way the entry
+  goes. Trials are seeded (`SEED`), so this does not flake.
+
+Entries live in the file, not as attributes on the fixture methods, so that
+changing one does not rebuild the fixtures.
+
+### 12.6 Limits
+
+- **Fixtures only.** It covers the exec fixtures, not real assemblies. Each
+  slice (§11) adds methods for its constructs to `exec.cs` or `exec.il`, and
+  the interpreter must model them: virtual dispatch for slice 5, `ref` and
+  `out` for slice 8, delegates for slice 9.
+- **No BCL bodies.** A trial that calls into the BCL is outside the oracle
+  unless the interpreter models the callee and `ctadl` loads a model for it
+  that says the same. The fixtures stay self-contained instead.
+- **No aliased inputs yet.** `flow-run` makes a fresh object for every
+  argument, so flows that exist only when two arguments are the same object
+  (the index's aliasing rule) are never shown. `flow-run` needs an option to
+  pass one object as several arguments, and `cil:taint` should use it.
+- **Statics.** Flows through static fields go through `global` (§5.2), the
+  formal `GLOBALS_INDEX` in a summary row. Nothing yet checks how the index
+  summarizes it (flowy's own checker, `port_to_index`, refuses a global
+  port), so until the rows through it are understood, statics carry no
+  labels and are not outputs.
+- **Must agree on names.** A spelling that differs between the frontend's
+  fields and the shadow's paths shows up as an unknown field (§12.4, step
+  1). That is a check of §3.1 too, but the first failures of a new slice
+  should be read with it in mind.
+- **The admission gate.** Flows §12.3 drops are counted, not checked, so
+  `cil:taint` says nothing about the frontend's lowering along them. The
+  count bounds how much is unchecked.
+
+### 12.7 When
+
+Build it with slice 1, not after slice 10. Slices 1–4 lower every call as
+`DirectCall`, which `ctadl index` needs nothing new for, so from the first
+slice on each one is gated by `cil:taint` on its own fixture methods (§11's
+"done" includes it).
+
+---
+
+## 13. Open questions
 
 1. **Descriptor qualification** (§3.2). The descriptor leaves out assemblies.
    The catch is that it cannot tell apart two overloads that differ only by the
