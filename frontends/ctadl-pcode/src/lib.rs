@@ -160,7 +160,7 @@ impl Addr {
     }
 
     fn push_deref(&mut self) {
-        self.segments.push(PathSegment::symbol("deref"));
+        self.segments.push(PathSegment::deref());
     }
 }
 
@@ -1241,7 +1241,7 @@ impl Context {
             stmts.push(Statement::new_kind(StatementKind::load(
                 dest.clone(),
                 addr,
-                FieldRef::symbol("deref"),
+                FieldRef::deref(),
             )));
             if !output_var.is_pathless() {
                 self.push_assign_or_store(&mut stmts, output_var, Exp::Variable(dest), locals);

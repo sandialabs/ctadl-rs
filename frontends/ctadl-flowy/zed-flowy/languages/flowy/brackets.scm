@@ -1,0 +1,5 @@
+("(" @open ")" @close)
+("[" @open "]" @close)
+("{" @open "}" @close)
+(function_ptr "<" @open ">" @close)
+(string "\"" @open "\"" @close)
