@@ -17,6 +17,7 @@
 
 mod call;
 pub mod check;
+pub mod delegate;
 mod edges;
 mod opcode;
 mod operands;
