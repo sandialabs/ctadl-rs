@@ -1,0 +1,752 @@
+06000001 System.Void Point::.ctor(System.Int32)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: ldarg.1
+		in [] out 1
+		Assign o0 := [arg1] Copy
+	IL_0002: stfld System.Int32 Point::X
+		in [Object, Value] out 0
+		Store i0.<04000001> := i1
+	IL_0007: ret
+		Return
+		-> return
+06000002 System.Void Holder::.ctor()
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: call System.Void System.Object::.ctor()
+		in [Receiver] out 0
+		Call Instance 0a000001 recv=i0 args=[] thrown=thrown
+	IL_0006: ret
+		Return
+		-> return
+06000003 System.Void Holder::.ctor(System.Object,System.Int32)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: call System.Void System.Object::.ctor()
+		in [Receiver] out 0
+		Call Instance 0a000001 recv=i0 args=[] thrown=thrown
+	IL_0006: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0007: ldarg.1
+		in [] out 1
+		Assign o0 := [arg1] Copy
+	IL_0008: stfld System.Object Holder::f
+		in [Object, Value] out 0
+		Store i0.<04000003> := i1
+	IL_000d: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_000e: ldarg.2
+		in [] out 1
+		Assign o0 := [arg2] Copy
+	IL_000f: stfld System.Int32 Holder::g
+		in [Object, Value] out 0
+		Store i0.<04000004> := i1
+	IL_0014: ret
+		Return
+		-> return
+06000004 System.Int32 Holder::Twice(System.Int32)
+	IL_0000: ldarg.1
+		in [] out 1
+		Assign o0 := [arg1] Copy
+	IL_0001: ldc.i4.2
+		in [] out 1
+		Const o0 = I4(2)
+	IL_0002: mul
+		in [Lhs, Rhs] out 1
+		Assign o0 := [i0, i1] Derived(mul)
+	IL_0003: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+06000007 System.Void Flow::Sink(System.Object)
+	IL_0000: ret
+		Return
+		-> return
+06000008 System.Int32 Flow::Twice(System.Int32)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: ldc.i4.2
+		in [] out 1
+		Const o0 = I4(2)
+	IL_0002: mul
+		in [Lhs, Rhs] out 1
+		Assign o0 := [i0, i1] Derived(mul)
+	IL_0003: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+06000009 System.Int32 Flow::OutParam(System.String)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: ldloca.s V_0
+		in [] out 1
+		AddressOf o0 = &loc0
+	IL_0003: call System.Boolean System.Int32::TryParse(System.String,System.Int32&)
+		in [Arg(0), Arg(1)] out 1
+		Call Static 0a000002 args=[i0, i1] result=o0 thrown=thrown byref=[1]
+	IL_0008: pop
+		in [Discarded] out 0
+	IL_0009: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_000a: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+0600000a System.Void Flow::Inc(System.Int32&)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0002: ldind.i4
+		in [Address] out 1
+		Load o0 := i0.*
+	IL_0003: ldc.i4.1
+		in [] out 1
+		Const o0 = I4(1)
+	IL_0004: add
+		in [Lhs, Rhs] out 1
+		Assign o0 := [i0, i1] Derived(add)
+	IL_0005: stind.i4
+		in [Address, Value] out 0
+		Store i0.* := i1
+	IL_0006: ret
+		Return
+		-> return
+0600000b System.Int32 Flow::CallInc()
+	IL_0000: ldloca.s V_0
+		in [] out 1
+		AddressOf o0 = &loc0
+	IL_0002: call System.Void Flow::Inc(System.Int32&)
+		in [Arg(0)] out 0
+		Call Static 0600000a args=[i0] thrown=thrown byref=[0]
+	IL_0007: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_0008: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+0600000c System.Int32 Flow::StructField()
+	IL_0000: ldloca.s V_0
+		in [] out 1
+		AddressOf o0 = &loc0
+	IL_0002: ldc.i4.5
+		in [] out 1
+		Const o0 = I4(5)
+	IL_0003: stfld System.Int32 Point::X
+		in [Object, Value] out 0
+		Store i0.<04000001> := i1
+	IL_0008: ldloca.s V_0
+		in [] out 1
+		AddressOf o0 = &loc0
+	IL_000a: ldfld System.Int32 Point::X
+		in [Object] out 1
+		Load o0 := i0.<04000001>
+	IL_000f: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+0600000d System.Void Flow::ClearCopy(Point&)
+	IL_0000: ldloca.s V_0
+		in [] out 1
+		AddressOf o0 = &loc0
+	IL_0002: initobj Point
+		in [Address] out 0
+		Clear i0
+	IL_0008: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0009: ldloca.s V_0
+		in [] out 1
+		AddressOf o0 = &loc0
+	IL_000b: cpobj Point
+		in [Address, SrcAddress] out 0
+		Load t0 := i1.*
+		Store i0.* := t0
+	IL_0010: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0011: ldobj Point
+		in [Address] out 1
+		Load o0 := i0.*
+	IL_0016: stloc.0
+		in [Value] out 0
+		Assign loc0 := [i0] Copy
+	IL_0017: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0018: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_0019: stobj Point
+		in [Address, Value] out 0
+		Store i0.* := i1
+	IL_001e: ret
+		Return
+		-> return
+0600000e System.Int32 Flow::NestedField(Holder)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: ldflda Point Holder::p
+		in [Object] out 1
+		AddressOf o0 = &i0.<04000005>
+	IL_0006: ldfld System.Int32 Point::Y
+		in [Object] out 1
+		Load o0 := i0.<04000002>
+	IL_000b: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+0600000f System.String Flow::Constrained(T)
+	IL_0000: ldarga.s 0
+		in [] out 1
+		AddressOf o0 = &arg0
+	IL_0008: callvirt System.String System.Object::ToString() [constrained(1b000001)] at IL_0002
+		in [Receiver] out 1
+		Call Virtual{constrained=1b000001} 0a000003 recv=i0 args=[] result=o0 thrown=thrown prefixes=[constrained(1b000001)]
+	IL_000d: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+06000010 System.Int32 Flow::Delegates(Holder)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: ldftn System.Int32 Holder::Twice(System.Int32)
+		in [] out 1
+		FunctionPtr o0 = 06000004
+	IL_0007: newobj System.Void Fn::.ctor(System.Object,System.IntPtr)
+		in [Arg(0), Arg(1)] out 1
+		New o0 Object(02000004)
+		Call Ctor 06000005 recv=o0 args=[i0, i1] thrown=thrown
+	IL_000c: ldc.i4.3
+		in [] out 1
+		Const o0 = I4(3)
+	IL_000d: callvirt System.Int32 Fn::Invoke(System.Int32)
+		in [Receiver, Arg(0)] out 1
+		Call Virtual 06000006 recv=i0 args=[i1] result=o0 thrown=thrown
+	IL_0012: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+06000011 Fn Flow::Lambdas(Holder)
+	IL_0000: ldnull
+		in [] out 1
+		Const o0 = Null
+	IL_0001: ldftn System.Int32 Flow::Twice(System.Int32)
+		in [] out 1
+		FunctionPtr o0 = 06000008
+	IL_0007: newobj System.Void Fn::.ctor(System.Object,System.IntPtr)
+		in [Arg(0), Arg(1)] out 1
+		New o0 Object(02000004)
+		Call Ctor 06000005 recv=o0 args=[i0, i1] thrown=thrown
+	IL_000c: pop
+		in [Discarded] out 0
+	IL_000d: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_000e: dup
+		in [Value] out 2
+		Assign o0 := [i0] Copy
+		Assign o1 := [i0] Copy
+	IL_000f: ldvirtftn System.Int32 Holder::Twice(System.Int32)
+		in [Object] out 1
+		FunctionPtr o0 = 06000004 receiver=i0
+	IL_0015: newobj System.Void Fn::.ctor(System.Object,System.IntPtr)
+		in [Arg(0), Arg(1)] out 1
+		New o0 Object(02000004)
+		Call Ctor 06000005 recv=o0 args=[i0, i1] thrown=thrown
+	IL_001a: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+06000012 System.Int32 Flow::MultiArray()
+	IL_0000: ldc.i4.2
+		in [] out 1
+		Const o0 = I4(2)
+	IL_0001: ldc.i4.3
+		in [] out 1
+		Const o0 = I4(3)
+	IL_0002: newobj System.Void System.Int32[0...,0...]::.ctor(System.Int32,System.Int32)
+		in [Size, Size] out 1
+		New o0 Array(1b000002) sizes=[i0, i1]
+	IL_0007: stloc.0
+		in [Value] out 0
+		Assign loc0 := [i0] Copy
+	IL_0008: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_0009: ldc.i4.1
+		in [] out 1
+		Const o0 = I4(1)
+	IL_000a: ldc.i4.2
+		in [] out 1
+		Const o0 = I4(2)
+	IL_000b: ldc.i4.7
+		in [] out 1
+		Const o0 = I4(7)
+	IL_000c: call System.Void System.Int32[0...,0...]::Set(System.Int32,System.Int32,System.Int32)
+		in [Receiver, Index, Index, Value] out 0
+		Store i0[i1, i2] := i3
+	IL_0011: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_0012: ldc.i4.1
+		in [] out 1
+		Const o0 = I4(1)
+	IL_0013: ldc.i4.2
+		in [] out 1
+		Const o0 = I4(2)
+	IL_0014: call System.Int32 System.Int32[0...,0...]::Get(System.Int32,System.Int32)
+		in [Receiver, Index, Index] out 1
+		Load o0 := i0[i1, i2]
+	IL_0019: pop
+		in [Discarded] out 0
+	IL_001a: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_001b: ldc.i4.1
+		in [] out 1
+		Const o0 = I4(1)
+	IL_001c: ldc.i4.2
+		in [] out 1
+		Const o0 = I4(2)
+	IL_001d: call System.Int32& System.Int32[0...,0...]::Address(System.Int32,System.Int32)
+		in [Receiver, Index, Index] out 1
+		AddressOf o0 = &i0[i1, i2]
+	IL_0022: ldind.i4
+		in [Address] out 1
+		Load o0 := i0.*
+	IL_0023: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+06000013 System.Void Flow::Filter(System.Object)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: call System.Void Flow::Sink(System.Object)
+		in [Arg(0)] out 0
+		Call Static 06000007 args=[i0] thrown=thrown
+	IL_0006: leave.s IL_0019
+		-> leave IL_0019
+	IL_0008: isinst System.ArgumentException
+		in [Object] out 1
+		Assign o0 := [i0] Cast(01000005)
+	IL_000d: ldnull
+		in [] out 1
+		Const o0 = Null
+	IL_000e: cgt.un
+		in [Lhs, Rhs] out 1
+		Assign o0 := [i0, i1] Derived(cmp.Gt.un)
+	IL_0010: endfilter
+		in [Condition] out 0
+		Test [i0]
+		-> endfilter
+	IL_0012: call System.Void Flow::Sink(System.Object)
+		in [Arg(0)] out 0
+		Call Static 06000007 args=[i0] thrown=thrown
+	IL_0017: leave.s IL_0019
+		-> leave IL_0019
+	IL_0019: ret
+		Return
+		-> return
+06000014 System.Void Flow::CatchFinally(System.Object)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: call System.Void Flow::Sink(System.Object)
+		in [Arg(0)] out 0
+		Call Static 06000007 args=[i0] thrown=thrown
+	IL_0006: leave.s IL_0016
+		-> leave IL_0016
+	IL_0008: stloc.0
+		in [Value] out 0
+		Assign loc0 := [i0] Copy
+	IL_0009: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_000a: callvirt System.String System.Exception::get_Message()
+		in [Receiver] out 1
+		Call Virtual 0a000008 recv=i0 args=[] result=o0 thrown=thrown
+	IL_000f: call System.Void Flow::Sink(System.Object)
+		in [Arg(0)] out 0
+		Call Static 06000007 args=[i0] thrown=thrown
+	IL_0014: rethrow
+		Throw caught
+		-> throw
+	IL_0016: leave.s IL_001f
+		-> leave IL_001f
+	IL_0018: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0019: call System.Void Flow::Sink(System.Object)
+		in [Arg(0)] out 0
+		Call Static 06000007 args=[i0] thrown=thrown
+	IL_001e: endfinally
+		-> endfinally
+	IL_001f: ret
+		Return
+		-> return
+06000015 System.Int32 Flow::Calli(System.Int32)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: ldftn System.Int32 Flow::Twice(System.Int32)
+		in [] out 1
+		FunctionPtr o0 = 06000008
+	IL_0007: calli System.Int32(System.Int32)
+		in [Arg(0), Callee] out 1
+		Call Indirect{callee=i1} args=[i0] result=o0 thrown=thrown
+	IL_000c: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+06000016 System.Object Flow::NewobjArgs(System.Object)
+	IL_0000: ldnull
+		in [] out 1
+		Const o0 = Null
+	IL_0001: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0002: ldc.i4.1
+		in [] out 1
+		Const o0 = I4(1)
+	IL_0003: newobj System.Void Holder::.ctor(System.Object,System.Int32)
+		in [Arg(0), Arg(1)] out 1
+		New o0 Object(02000003)
+		Call Ctor 06000003 recv=o0 args=[i0, i1] thrown=thrown
+	IL_0008: stsfld System.Object Holder::s
+		in [Value] out 0
+		Store static.<static 04000006> := i0
+	IL_000d: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+06000017 Holder Flow::DupStfld(System.Object)
+	IL_0000: newobj System.Void Holder::.ctor()
+		in [] out 1
+		New o0 Object(02000003)
+		Call Ctor 06000002 recv=o0 args=[] thrown=thrown
+	IL_0005: dup
+		in [Value] out 2
+		Assign o0 := [i0] Copy
+		Assign o1 := [i0] Copy
+	IL_0006: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0007: stfld System.Object Holder::f
+		in [Object, Value] out 0
+		Store i0.<04000003> := i1
+	IL_000c: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+06000018 System.Int32 Flow::AddressJoin(System.Boolean)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: brtrue.s IL_0007
+		in [Condition] out 0
+		Test [i0]
+		-> cond IL_0007
+	IL_0003: ldloca.s V_0
+		in [] out 1
+		AddressOf o0 = &loc0
+	IL_0005: br.s IL_0009
+		-> goto IL_0009
+	IL_0007: ldloca.s V_1
+		in [] out 1
+		AddressOf o0 = &loc1
+	IL_0009: ldc.i4.5
+		in [] out 1
+		Const o0 = I4(5)
+	IL_000a: stind.i4
+		in [Address, Value] out 0
+		Store i0.* := i1
+	IL_000b: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_000c: brtrue.s IL_0012
+		in [Condition] out 0
+		Test [i0]
+		-> cond IL_0012
+	IL_000e: ldloca.s V_0
+		in [] out 1
+		AddressOf o0 = &loc0
+	IL_0010: br.s IL_0014
+		-> goto IL_0014
+	IL_0012: ldloca.s V_0
+		in [] out 1
+		AddressOf o0 = &loc0
+	IL_0014: ldc.i4.6
+		in [] out 1
+		Const o0 = I4(6)
+	IL_0015: stind.i4
+		in [Address, Value] out 0
+		Store i0.* := i1
+	IL_0016: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_0017: ldloc.1
+		in [] out 1
+		Assign o0 := [loc1] Copy
+	IL_0018: add
+		in [Lhs, Rhs] out 1
+		Assign o0 := [i0, i1] Derived(add)
+	IL_0019: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+06000019 System.Void Flow::HeightMismatch(System.Boolean)
+	IL_0000: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0001: brtrue.s IL_0007
+		in [Condition] out 0
+		Test [i0]
+		-> cond IL_0007
+	IL_0003: ldc.i4.1
+		in [] out 1
+		Const o0 = I4(1)
+	IL_0004: ldc.i4.2
+		in [] out 1
+		Const o0 = I4(2)
+	IL_0005: br.s IL_0008
+		-> goto IL_0008
+	IL_0007: ldc.i4.3
+		in [] out 1
+		Const o0 = I4(3)
+	IL_0008: pop
+		in [Discarded] out 0
+	IL_0009: ret
+		Return
+		-> return
+0600001a System.Void Flow::VarArgs(System.Int32)
+	IL_0000: arglist
+		in [] out 1
+		Const o0 = ArgList
+	IL_0002: pop
+		in [Discarded] out 0
+	IL_0003: ret
+		Return
+		-> return
+0600001b System.Void Flow::CallVarArgs()
+	IL_0000: ldc.i4.1
+		in [] out 1
+		Const o0 = I4(1)
+	IL_0001: ldstr "x"
+		in [] out 1
+		Const o0 = String(70000001)
+	IL_0006: ldc.i4.2
+		in [] out 1
+		Const o0 = I4(2)
+	IL_0007: call System.Void Flow::VarArgs(System.Int32,...,System.String,System.Int32)
+		in [Arg(0), Arg(1), Arg(2)] out 0
+		Call Static 0a000009 args=[i0, i1, i2] thrown=thrown
+	IL_000c: ret
+		Return
+		-> return
+0600001c System.Void Flow::Blocks(System.IntPtr)
+	IL_0000: ldc.i4.s 16
+		in [] out 1
+		Const o0 = I4(16)
+	IL_0002: localloc
+		in [Size] out 1
+		New o0 StackAlloc sizes=[i0]
+	IL_0004: stloc.0
+		in [Value] out 0
+		Assign loc0 := [i0] Copy
+	IL_0005: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_0006: ldc.i4.0
+		in [] out 1
+		Const o0 = I4(0)
+	IL_0007: ldc.i4.s 16
+		in [] out 1
+		Const o0 = I4(16)
+	IL_0009: initblk
+		in [Address, Value, Size] out 0
+		Store i0.*[..i2] := i1
+	IL_000b: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_000c: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_000d: ldc.i4.s 16
+		in [] out 1
+		Const o0 = I4(16)
+	IL_0012: cpblk [unaligned(1)] at IL_000f
+		in [Address, SrcAddress, Size] out 0
+		Load t0 := i1.*[..i2]
+		Store i0.*[..i2] := t0
+	IL_0014: ret
+		Return
+		-> return
+0600001d System.Int32 Flow::Prefixes(Holder,System.Int32[])
+	IL_0000: ldarg.1
+		in [] out 1
+		Assign o0 := [arg1] Copy
+	IL_0001: ldc.i4.0
+		in [] out 1
+		Const o0 = I4(0)
+	IL_0004: ldelema System.Int32 [readonly] at IL_0002
+		in [Object, Index] out 1
+		AddressOf o0 = &i0[i1]
+	IL_0009: pop
+		in [Discarded] out 0
+	IL_000a: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_000d: ldfld System.Int32 Holder::g [volatile] at IL_000b
+		in [Object] out 1
+		Load o0 := i0.<04000004>
+	IL_0014: call System.Int32 Flow::Twice(System.Int32) [tail] at IL_0012
+		in [Arg(0)] out 1
+		Call Static 06000008 args=[i0] result=o0 thrown=thrown prefixes=[tail]
+	IL_0019: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+0600001e System.Object Flow::Misc(System.Object,System.Int32,System.Double)
+	IL_0000: ldarg.1
+		in [] out 1
+		Assign o0 := [arg1] Copy
+	IL_0001: switch (IL_000e, IL_0060)
+		in [Condition] out 0
+		Test [i0]
+		-> switch (IL_000e, IL_0060)
+	IL_000e: ldarg.1
+		in [] out 1
+		Assign o0 := [arg1] Copy
+	IL_000f: newarr System.Int32
+		in [Size] out 1
+		New o0 Array(01000004) sizes=[i0]
+	IL_0014: stloc.0
+		in [Value] out 0
+		Assign loc0 := [i0] Copy
+	IL_0015: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_0016: ldarg.1
+		in [] out 1
+		Assign o0 := [arg1] Copy
+	IL_0017: ldarg.1
+		in [] out 1
+		Assign o0 := [arg1] Copy
+	IL_0018: stelem.i4
+		in [Object, Index, Value] out 0
+		Store i0[i1] := i2
+	IL_0019: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_001a: ldlen
+		in [Object] out 1
+		Load o0 := i0.length
+	IL_001b: conv.i4
+		in [Value] out 1
+		Assign o0 := [i0] Derived(conv.I4)
+	IL_001c: ldloc.0
+		in [] out 1
+		Assign o0 := [loc0] Copy
+	IL_001d: ldc.i4.0
+		in [] out 1
+		Const o0 = I4(0)
+	IL_001e: ldelem.i4
+		in [Object, Index] out 1
+		Load o0 := i0[i1]
+	IL_001f: add
+		in [Lhs, Rhs] out 1
+		Assign o0 := [i0, i1] Derived(add)
+	IL_0020: box System.Int32
+		in [Value] out 1
+		Assign o0 := [i0] Box(01000004)
+	IL_0025: unbox.any System.Int32
+		in [Object] out 1
+		Assign o0 := [i0] Unbox(01000004)
+	IL_002a: pop
+		in [Discarded] out 0
+	IL_002b: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_002c: castclass System.String
+		in [Object] out 1
+		Assign o0 := [i0] Cast(01000007)
+	IL_0031: isinst System.String
+		in [Object] out 1
+		Assign o0 := [i0] Cast(01000007)
+	IL_0036: unbox.any System.String
+		in [Object] out 1
+		Assign o0 := [i0] Cast(01000007)
+	IL_003b: pop
+		in [Discarded] out 0
+	IL_003c: ldarg.2
+		in [] out 1
+		Assign o0 := [arg2] Copy
+	IL_003d: ckfinite
+		in [Value] out 1
+		Assign o0 := [i0] Copy
+	IL_003e: conv.ovf.i4
+		in [Value] out 1
+		Assign o0 := [i0] Derived(conv.ovf.I4)
+	IL_003f: pop
+		in [Discarded] out 0
+	IL_0040: ldloca.s V_1
+		in [] out 1
+		AddressOf o0 = &loc1
+	IL_0042: mkrefany Point
+		in [Address] out 1
+		Assign o0 := [i0] Derived(mkrefany 02000002)
+	IL_0047: stloc.2
+		in [Value] out 0
+		Assign loc2 := [i0] Copy
+	IL_0048: ldloc.2
+		in [] out 1
+		Assign o0 := [loc2] Copy
+	IL_0049: refanyval Point
+		in [Value] out 1
+		Assign o0 := [i0] Derived(refanyval 02000002)
+	IL_004e: pop
+		in [Discarded] out 0
+	IL_004f: ldloc.2
+		in [] out 1
+		Assign o0 := [loc2] Copy
+	IL_0050: refanytype
+		in [Value] out 1
+		Assign o0 := [i0] Derived(refanytype)
+	IL_0052: pop
+		in [Discarded] out 0
+	IL_0053: ldtoken Point
+		in [] out 1
+		Const o0 = Token(02000002)
+	IL_0058: pop
+		in [Discarded] out 0
+	IL_0059: sizeof Point
+		in [] out 1
+		Const o0 = SizeOf(02000002)
+	IL_005f: pop
+		in [Discarded] out 0
+	IL_0060: ldarg.0
+		in [] out 1
+		Assign o0 := [arg0] Copy
+	IL_0061: ret
+		in [ReturnValue] out 0
+		Return i0
+		-> return
+0600001f System.Void Flow::Jump(System.Object)
+	IL_0000: jmp System.Void Flow::Sink(System.Object)
+		Jump 06000007
+		-> jump

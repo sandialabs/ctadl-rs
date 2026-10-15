@@ -4,7 +4,7 @@
 //!
 //! The dump format is the contract: `cil-dump` renders an assembly with
 //! cil-reader, `tools/CecilDump` renders it with Mono.Cecil, and the two must
-//! be byte-identical. Five checks:
+//! be byte-identical. Five checks of that, and one of the flow layer:
 //!
 //! - `cil:must-fail`     — non-CLI inputs (`text_file.txt`) are rejected.
 //! - `cil:cecil-tests`   — cil-reader's ports of Cecil's own test suites, which
@@ -18,6 +18,9 @@
 //!   the inputs too large to keep goldens for. Needs the
 //!   `cecil-dump` launcher (the flake's `cecilDump`, on PATH in the devshell
 //!   and the regression check); self-skips without it.
+//! - `cil:flow`          — cil-reader's flow layer: its invariants over the
+//!   whole corpus, targeted tests on the `flow.il` fixture, and the
+//!   `cil-dump --flow` goldens (`xtask/cil-goldens/flow`); see [`flow`].
 //!
 //! The corpus, golden naming and comparison rules live in [`parity`].
 //! `cargo xtask cil bless` regenerates the goldens.
@@ -39,6 +42,7 @@ use crate::regression::Outcome;
 use parity::{CecilDump, Input};
 
 mod cecil_tests;
+pub mod flow;
 mod parity;
 
 /// Failing inputs listed per check before the rest are summarized as a count.
@@ -90,6 +94,10 @@ pub fn run_checks(
         (
             "cil:cecil-compare".to_string(),
             check_cecil_compare(&inputs, &dumps, work)?,
+        ),
+        (
+            "cil:flow".to_string(),
+            flow::run(&inputs, fixtures, goldens, work)?,
         ),
     ])
 }

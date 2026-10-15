@@ -152,7 +152,7 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
 fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
     let command = args
         .next()
-        .context("`cil` requires a command: bless or codegen")?;
+        .context("`cil` requires a command: bless, bless-flow or codegen")?;
     let mut cil_dir = None;
     let mut goldens = None;
     let mut cecil_src = None;
@@ -164,7 +164,7 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
                     args.next().context("--cil-dir requires a value")?,
                 ));
             }
-            "--cil-goldens" if command == "bless" => {
+            "--cil-goldens" if command == "bless" || command == "bless-flow" => {
                 goldens = Some(PathBuf::from(
                     args.next().context("--cil-goldens requires a value")?,
                 ));
@@ -194,8 +194,15 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
                 .context("goldens directory not found; pass --cil-goldens")?;
             cil::bless(&goldens, &cecil, filter.as_deref())
         }
+        "bless-flow" => {
+            let goldens = cil::resolve_goldens(goldens.as_deref())?
+                .context("goldens directory not found; pass --cil-goldens")?;
+            let fixtures = cil::resolve_fixtures(None)?
+                .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")?;
+            cil::flow::bless(&goldens, &fixtures)
+        }
         "codegen" => Ok(cil_codegen::run(&cecil, &cil_dir)),
-        other => bail!("unknown `cil` command `{other}` (expected bless or codegen)"),
+        other => bail!("unknown `cil` command `{other}` (expected bless, bless-flow or codegen)"),
     }
 }
 
@@ -313,6 +320,10 @@ Tasks:
                              Rewrite xtask/cil-goldens (or <dir>) from
                              `cecil-dump` (on PATH in the dev shell). Needed after
                              moving the flake's `cecil` pin.
+    bless-flow [--cil-goldens <dir>]
+                             Rewrite xtask/cil-goldens/flow (or <dir>/flow), the
+                             `cil-dump --flow` goldens of the flow fixtures,
+                             from $CIL_READER_FIXTURES. Review the diff.
     codegen                  Regenerate cil-reader's opcode table from Cecil's
                              OpCodes.cs.
 

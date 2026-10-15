@@ -90,7 +90,7 @@ thread_local! {
 
 /// Chain a hook in front of the existing one that captures test panics. Other
 /// threads' panics, and this thread's outside a test, still go to the old one.
-fn install_panic_hook() {
+pub(super) fn install_panic_hook() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let previous = panic::take_hook();
@@ -104,7 +104,7 @@ fn install_panic_hook() {
     });
 }
 
-fn run_one(test: fn()) -> Result<(), String> {
+pub(super) fn run_one(test: fn()) -> Result<(), String> {
     CAPTURING.set(true);
     let result = panic::catch_unwind(test);
     CAPTURING.set(false);
