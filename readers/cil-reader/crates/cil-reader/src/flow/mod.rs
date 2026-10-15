@@ -9,8 +9,8 @@
 //!   instruction and its resolved operands; no stack simulation. See
 //!   [`MethodBody::flows`](crate::model::MethodBody::flows) and
 //!   [`instruction_flow`].
-//! - Layer 2: the CFG and stack heights of a whole method, with stack
-//!   positions bound to depth-named variables.
+//! - Layer 2, [`MethodFlow`]: the CFG and stack heights of a whole method,
+//!   with stack positions bound to depth-named variables ([`Var`]).
 //!
 //! The layer reports facts and makes no policy choices: every operand an
 //! instruction reads appears in some effect, with its [`Role`].
@@ -19,11 +19,16 @@ mod call;
 pub mod check;
 pub mod delegate;
 mod edges;
+mod method;
 mod opcode;
 mod operands;
 mod prefix;
 
 pub use edges::{Edge, Loc};
+pub use method::{
+    BitSet, Block, BlockId, BoundIns, FlowOptions, FlowWarning, Handler, HandlerKind, InsId,
+    MethodFlow, StackKind, Var,
+};
 pub use opcode::instruction_flow;
 pub use operands::{ArrayMethod, FlowCx, Operands, ResolvedMethod};
 pub use prefix::is_prefix;

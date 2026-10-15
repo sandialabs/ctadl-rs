@@ -280,3 +280,359 @@ pub fn layer1_violations(ins: &Ins<'_>, flow: &InsFlow, cx: &FlowCx<'_>) -> Vec<
     }
     v
 }
+
+// ---- Layer 2 (§7.7–7.9) ------------------------------------------------------
+
+use super::method::{BoundIns, FlowWarning, HandlerKind, MethodFlow, Var};
+use super::{Control as Ctl, Transfer as Tr};
+use std::collections::HashMap;
+use std::hash::Hash;
+
+/// A symbolic value of the 7.8 interpreter: an initial value, or what an
+/// effect computed from the values it read.
+#[derive(Debug, Clone, PartialEq)]
+enum Val {
+    Init(String),
+    /// Effect index, which of its results, and the values it read.
+    Term(usize, usize, Vec<Val>),
+}
+
+/// What one run of an instruction's effects does: the values it leaves in
+/// variables, and the observable events (memory writes, calls, tests,
+/// exits) with the values they read.
+struct Run<S> {
+    env: HashMap<S, Val>,
+    events: Vec<(usize, Vec<Val>)>,
+}
+
+/// Runs `effects` symbolically. A plain copy is the identity; anything else
+/// makes a term of what it read.
+fn interpret<S: Clone + Eq + Hash>(effects: &[Effect<S>], init: impl Fn(&S) -> Val) -> Run<S> {
+    let mut run = Run {
+        env: HashMap::new(),
+        events: Vec::new(),
+    };
+    for (k, e) in effects.iter().enumerate() {
+        let mut vals = Vec::new();
+        e.for_each_read(|s| vals.push(run.env.get(s).cloned().unwrap_or_else(|| init(s))));
+        match e {
+            Effect::Assign {
+                dst,
+                transfer: Tr::Copy,
+                srcs,
+            } if srcs.len() == 1 => {
+                run.env.insert(dst.clone(), vals[0].clone());
+            }
+            Effect::Store { .. }
+            | Effect::Clear { .. }
+            | Effect::Return { .. }
+            | Effect::Throw { .. }
+            | Effect::Test { .. }
+            | Effect::Jump { .. }
+            | Effect::Call(_)
+            | Effect::Opaque { .. } => run.events.push((k, vals.clone())),
+            _ => {}
+        }
+        if matches!(e, Effect::Assign { transfer: Tr::Copy, srcs, .. } if srcs.len() == 1) {
+            continue;
+        }
+        let mut n = 0;
+        e.for_each_write(|d| {
+            run.env.insert(d.clone(), Val::Term(k, n, vals.clone()));
+            n += 1;
+        });
+    }
+    run
+}
+
+fn slot_name(s: &Slot) -> String {
+    s.to_string()
+}
+
+fn var_name(v: &Var, base: u16) -> String {
+    match *v {
+        Var::Stack(d) if d >= base => format!("i{}", d - base),
+        Var::Caught(_) => "caught".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Invariant 7.8 for one instruction: binding by depth changes nothing an
+/// instruction does compared with binding In and Out to distinct names.
+fn check_binding(ins: &BoundIns) -> Option<String> {
+    let flow = &ins.flow;
+    let base = ins.height.saturating_sub(flow.inputs.len() as u16);
+    let distinct = interpret(&flow.effects, |s| Val::Init(slot_name(s)));
+    let bound = interpret(&ins.effects, |v| Val::Init(var_name(v, base)));
+    // The appended collision copies are not events.
+    if distinct.events != bound.events {
+        return Some(format!(
+            "7.8: events differ: {:?} vs {:?}",
+            distinct.events, bound.events
+        ));
+    }
+    for (j, var) in ins.outputs.iter().enumerate() {
+        let d = distinct.env.get(&Slot::Out(j as u8));
+        let b = bound.env.get(var);
+        if d != b {
+            return Some(format!("7.8: o{j} is {d:?} but {var} is {b:?}"));
+        }
+    }
+    for (slot, val) in &distinct.env {
+        let var = match *slot {
+            Slot::Arg(n) => Var::Arg(n),
+            Slot::Local(n) => Var::Local(n),
+            Slot::Thrown => Var::Thrown,
+            _ => continue,
+        };
+        if bound.env.get(&var) != Some(val) {
+            return Some(format!("7.8: {slot} differs from {var}"));
+        }
+    }
+    None
+}
+
+/// The violations of invariants 7.7–7.9 by `mf`. Empty when it holds them
+/// all.
+pub fn layer2_violations(mf: &MethodFlow) -> Vec<String> {
+    let mut v = Vec::new();
+    let warned = |w: &dyn Fn(&FlowWarning) -> bool| mf.warnings.iter().any(w);
+
+    for (b, block) in mf.blocks.iter().enumerate() {
+        // 7.7: underflows and max_stack, or a warning.
+        for ins in &block.instrs {
+            let offset = ins.flow.offset;
+            let pops = ins.flow.inputs.len() as u16;
+            if ins.height < pops
+                && !warned(
+                    &|w| matches!(w, FlowWarning::Underflow { offset: o, .. } if *o == offset),
+                )
+            {
+                v.push(format!("7.7: IL_{offset:04x} underflows without a warning"));
+            }
+            let after = ins.height.saturating_sub(pops) as u32 + ins.flow.outputs as u32;
+            if after > mf.max_stack
+                && !ins.is_handler_entry()
+                && !warned(
+                    &|w| matches!(w, FlowWarning::ExceedsMaxStack { offset: o, .. } if *o == offset),
+                )
+            {
+                v.push(format!(
+                    "7.7: IL_{offset:04x} exceeds max-stack {} without a warning",
+                    mf.max_stack
+                ));
+            }
+            // 7.8
+            if !ins.is_handler_entry()
+                && let Some(msg) = check_binding(ins)
+            {
+                v.push(format!("IL_{offset:04x} {}: {msg}", ins.flow.opcode));
+            }
+        }
+        // 7.7: predecessors agree on the entry height.
+        for &s in &block.succs {
+            let succ = &mf.blocks[s];
+            if succ.handler_entry.is_none()
+                && block.exit_height != succ.entry_height
+                && !warned(
+                    &|w| matches!(w, FlowWarning::HeightMismatch { offset, .. } if *offset == succ.start),
+                )
+            {
+                v.push(format!(
+                    "7.7: IL_{:04x} leaves height {} but IL_{:04x} starts at {}, without a warning",
+                    block.start, block.exit_height, succ.start, succ.entry_height
+                ));
+            }
+            // 7.9: succs and preds agree.
+            if !succ.preds.contains(&b) {
+                v.push(format!(
+                    "7.9: IL_{:04x} -> IL_{:04x} is missing from the preds",
+                    block.start, succ.start
+                ));
+            }
+        }
+        for &p in &block.preds {
+            if !mf.blocks[p].succs.contains(&b) {
+                v.push(format!(
+                    "7.9: IL_{:04x} has pred IL_{:04x}, which does not lead to it",
+                    block.start, mf.blocks[p].start
+                ));
+            }
+        }
+        // 7.9: leave targets start empty.
+        if let Some(Ctl::Leave(t)) = block.instrs.last().map(|i| &i.flow.control)
+            && let Some(tb) = mf.block_at(*t)
+            && mf.blocks[tb].entry_height != 0
+        {
+            v.push(format!(
+                "7.9: leave target IL_{t:04x} has a non-empty stack"
+            ));
+        }
+    }
+    // 7.9: handler entries.
+    for (index, h) in mf.handlers.iter().enumerate() {
+        let want = match h.kind {
+            HandlerKind::Catch | HandlerKind::Filter => 1,
+            HandlerKind::Finally | HandlerKind::Fault => 0,
+        };
+        for b in [h.entry, h.handler_block].into_iter().flatten() {
+            let height = mf.blocks[b].entry_height;
+            if height != want {
+                v.push(format!(
+                    "7.9: handler {index} ({:?}) entry IL_{:04x} has height {height}, not {want}",
+                    h.kind, mf.blocks[b].start
+                ));
+            }
+        }
+    }
+    v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::method::bind_effects;
+    use super::super::{CallSite, NewKind, Prefixes, TypeOp};
+    use super::*;
+    use crate::cil::opcodes;
+    use crate::model::{MethodSig, TypeSig};
+    use crate::token::MetadataToken;
+
+    fn newobj(args: u8) -> InsFlow {
+        let sig = MethodSig {
+            has_this: true,
+            explicit_this: false,
+            calling_convention: 0,
+            generic_arity: 0,
+            return_type: TypeSig::Void,
+            params: vec![TypeSig::I4; args as usize],
+        };
+        InsFlow {
+            offset: 0,
+            size: 5,
+            opcode: opcodes::NEWOBJ,
+            prefixes: Prefixes::default(),
+            inputs: (0..args as u16).map(Role::Arg).collect(),
+            outputs: 1,
+            effects: vec![
+                Effect::New {
+                    dst: Slot::Out(0),
+                    kind: NewKind::Object,
+                    ty: Some(TypeOp {
+                        token: MetadataToken(0x0200_0002),
+                    }),
+                    sizes: vec![],
+                },
+                Effect::Call(CallSite {
+                    kind: CallKind::Ctor,
+                    method: None,
+                    sig,
+                    receiver: Some(Slot::Out(0)),
+                    args: (0..args).map(Slot::In).collect(),
+                    result: None,
+                    thrown: Slot::Thrown,
+                    byref_args: vec![],
+                    prefixes: Prefixes::default(),
+                }),
+            ],
+            control: Ctl::Next,
+        }
+    }
+
+    fn bound(flow: InsFlow, height: u16) -> BoundIns {
+        let base = height - flow.inputs.len() as u16;
+        let (effects, inputs, outputs) = bind_effects(&flow, base, None);
+        BoundIns {
+            input_places: vec![None; inputs.len()],
+            input_kinds: vec![],
+            flow,
+            effects,
+            inputs,
+            outputs,
+            height,
+        }
+    }
+
+    fn rendered(ins: &BoundIns) -> Vec<String> {
+        ins.effects.iter().map(|e| e.to_string()).collect()
+    }
+
+    #[test]
+    fn newobj_with_arguments_goes_through_a_temp() {
+        // The design's example: newobj C::.ctor(a, b) at entry height 2.
+        let ins = bound(newobj(2), 2);
+        assert_eq!(
+            rendered(&ins),
+            [
+                "New t0 Object(02000002)",
+                "Call Ctor recv=t0 args=[s0, s1] thrown=thrown",
+                "Assign s0 := [t0] Copy",
+            ]
+        );
+        assert_eq!(ins.outputs, [Var::Stack(0)]);
+        assert_eq!(check_binding(&ins), None);
+    }
+
+    #[test]
+    fn newobj_without_arguments_needs_no_temp() {
+        let ins = bound(newobj(0), 3);
+        assert_eq!(
+            rendered(&ins),
+            [
+                "New s3 Object(02000002)",
+                "Call Ctor recv=s3 args=[] thrown=thrown"
+            ]
+        );
+        assert_eq!(check_binding(&ins), None);
+    }
+
+    #[test]
+    fn dup_binds_without_a_temp() {
+        let flow = InsFlow {
+            offset: 0,
+            size: 1,
+            opcode: opcodes::DUP,
+            prefixes: Prefixes::default(),
+            inputs: vec![Role::Value],
+            outputs: 2,
+            effects: vec![
+                Effect::Assign {
+                    dst: Slot::Out(0),
+                    srcs: vec![Slot::In(0)],
+                    transfer: Tr::Copy,
+                },
+                Effect::Assign {
+                    dst: Slot::Out(1),
+                    srcs: vec![Slot::In(0)],
+                    transfer: Tr::Copy,
+                },
+            ],
+            control: Ctl::Next,
+        };
+        let ins = bound(flow, 1);
+        assert_eq!(
+            rendered(&ins),
+            ["Assign s0 := [s0] Copy", "Assign s1 := [s0] Copy"]
+        );
+        assert_eq!(check_binding(&ins), None);
+    }
+
+    #[test]
+    fn the_interpreter_catches_a_binding_without_the_rule() {
+        // newobj bound naively: New s0 overwrites the first argument.
+        let mut ins = bound(newobj(2), 2);
+        ins.effects = newobj(2)
+            .effects
+            .into_iter()
+            .map(|e| {
+                e.map(|s| match s {
+                    Slot::In(i) => Var::Stack(i as u16),
+                    Slot::Out(j) => Var::Stack(j as u16),
+                    Slot::Thrown => Var::Thrown,
+                    _ => unreachable!(),
+                })
+            })
+            .collect();
+        let msg = check_binding(&ins).expect("a violation");
+        assert!(msg.starts_with("7.8"), "{msg}");
+    }
+}
