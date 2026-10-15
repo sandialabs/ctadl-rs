@@ -1,6 +1,6 @@
 use std::fmt::Formatter;
 
-use streaming_iterator::{DoubleEndedStreamingIterator, StreamingIterator};
+use smallvec::{SmallVec, smallvec};
 
 use crate::types::{DexConstantPool, DexString, MethodId};
 
@@ -1270,77 +1270,33 @@ pub enum Instruction {
     UnusedFF(Format21c<ProtoIdx>) = 0xff,
 }
 
-/// Represents data flow registers accessed by an instruction
+/// The registers an instruction reads and writes. A wide (64-bit) operand contributes both of its
+/// registers, low then high.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DataFlow {
-    /// Source registers for the instruction
-    pub source: DynIter,
-    /// Dest registers for the instruction
-    pub dest: DynIter,
-    /// Ret registers for the instruction
-    pub ret: DynIter,
+    /// Registers the instruction reads
+    pub source: Regs,
+    /// Registers the instruction writes
+    pub dest: Regs,
 }
 
-type DynIter = Box<dyn DoubleEndedStreamingIterator<Item = Reg>>;
-
-/// Streaming iterator over a slice of registers (used for 35c/3rc args).
-struct RegSliceStream {
-    vec: Vec<Reg>,
-    pos: usize,
-}
-
-impl RegSliceStream {
-    fn new(slice: &[Reg]) -> Self {
-        Self {
-            vec: slice.to_vec(),
-            pos: 0,
-        }
-    }
-}
-
-impl StreamingIterator for RegSliceStream {
-    type Item = Reg;
-    fn advance(&mut self) {
-        self.pos = (self.pos + 1).min(self.vec.len());
-    }
-    fn get(&self) -> Option<&Reg> {
-        self.vec.get(self.pos)
-    }
-}
-
-impl DoubleEndedStreamingIterator for RegSliceStream {
-    fn advance_back(&mut self) {
-        self.pos = self.pos.saturating_sub(1);
-    }
-}
+/// Register list sized so that the operands of all fixed-arity instructions, including 35c
+/// invokes, fit without allocating.
+pub type Regs = SmallVec<[Reg; 5]>;
 
 fn dataflow_from_args(args: &[Reg]) -> DataFlow {
     DataFlow {
-        source: Box::new(RegSliceStream::new(args)),
-        dest: Box::new(streaming_iterator::empty()),
-        ret: Box::new(streaming_iterator::empty()),
+        source: Regs::from_slice(args),
+        dest: Regs::new(),
     }
 }
 
-macro_rules! iter_chain {
-    ([]) => {
-        streaming_iterator::empty()
-    };
-    ([$first:expr]) => {
-        streaming_iterator::once($first)
-    };
-    ([$first:expr, $($rest:expr),+ $(,)?]) => {
-        streaming_iterator::once($first).chain(iter_chain!([$($rest),+]))
-    };
-}
-
-/// Given arrays of references to source, dest, and return Reg information, build iterators over
-/// them and pack them into a DataFlow
-macro_rules! dataflow_source_sink_ret {
-    ($source:tt, $dest:tt, $ret:tt) => {
+/// Builds a [`DataFlow`] from lists of source and dest registers.
+macro_rules! dataflow {
+    ([$($source:expr),* $(,)?], [$($dest:expr),* $(,)?] $(,)?) => {
         DataFlow {
-            source: Box::new(iter_chain!($source)),
-            dest: Box::new(iter_chain!($dest)),
-            ret: Box::new(iter_chain!($ret)),
+            source: smallvec![$($source),*],
+            dest: smallvec![$($dest),*],
         }
     };
 }
@@ -2646,72 +2602,71 @@ impl Instruction {
     /// Returns data flow information about the registers accessed by this instruction
     pub fn data_flow(&self) -> DataFlow {
         use Instruction::*;
-        // The order of dataflow_source_sink_ret is source-dest-ret
         match self {
             // Move: dest=a, source=b
-            Move(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
-            MoveFrom16(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
-            Move16(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
+            Move(f) => dataflow!([f.b], [f.a]),
+            MoveFrom16(f) => dataflow!([f.b], [f.a]),
+            Move16(f) => dataflow!([f.b], [f.a]),
             MoveWide(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()])
             }
             MoveWideFrom16(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()])
             }
             MoveWide16(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()])
             }
-            MoveObject(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
-            MoveObjectFrom16(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
-            MoveObject16(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
+            MoveObject(f) => dataflow!([f.b], [f.a]),
+            MoveObjectFrom16(f) => dataflow!([f.b], [f.a]),
+            MoveObject16(f) => dataflow!([f.b], [f.a]),
             // Move result / exception: dest=a only
-            MoveResult(f) => dataflow_source_sink_ret!([], [f.a], []),
-            MoveResultWide(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
-            MoveResultObject(f) => dataflow_source_sink_ret!([], [f.a], []),
-            MoveException(f) => dataflow_source_sink_ret!([], [f.a], []),
+            MoveResult(f) => dataflow!([], [f.a]),
+            MoveResultWide(f) => dataflow!([], [f.a, f.a.next_reg()]),
+            MoveResultObject(f) => dataflow!([], [f.a]),
+            MoveException(f) => dataflow!([], [f.a]),
             // No registers
             ReturnVoid(_) | Nop(_) | Goto(_) | Goto16(_) | Goto32(_) => {
-                dataflow_source_sink_ret!([], [], [])
+                dataflow!([], [])
             }
             // 11x read only
-            Return(f) => dataflow_source_sink_ret!([f.a], [], []),
-            ReturnWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg()], [], []),
-            ReturnObject(f) => dataflow_source_sink_ret!([f.a], [], []),
-            MonitorEnter(f) | MonitorExit(f) | Throw(f) => dataflow_source_sink_ret!([f.a], [], []),
+            Return(f) => dataflow!([f.a], []),
+            ReturnWide(f) => dataflow!([f.a, f.a.next_reg()], []),
+            ReturnObject(f) => dataflow!([f.a], []),
+            MonitorEnter(f) | MonitorExit(f) | Throw(f) => dataflow!([f.a], []),
             // Const: dest only
-            Const4(f) => dataflow_source_sink_ret!([], [f.a], []),
-            Const16(f) => dataflow_source_sink_ret!([], [f.a], []),
-            Const(f) => dataflow_source_sink_ret!([], [f.a], []),
-            ConstHigh16(f) => dataflow_source_sink_ret!([], [f.a], []),
-            ConstWide16(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
-            ConstWide32(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
-            ConstWide(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
-            ConstWideHigh16(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
+            Const4(f) => dataflow!([], [f.a]),
+            Const16(f) => dataflow!([], [f.a]),
+            Const(f) => dataflow!([], [f.a]),
+            ConstHigh16(f) => dataflow!([], [f.a]),
+            ConstWide16(f) => dataflow!([], [f.a, f.a.next_reg()]),
+            ConstWide32(f) => dataflow!([], [f.a, f.a.next_reg()]),
+            ConstWide(f) => dataflow!([], [f.a, f.a.next_reg()]),
+            ConstWideHigh16(f) => dataflow!([], [f.a, f.a.next_reg()]),
             // 21c/31c: dest=a
-            ConstString(f) => dataflow_source_sink_ret!([], [f.a], []),
-            ConstStringJumbo(f) => dataflow_source_sink_ret!([], [f.a], []),
-            ConstClass(f) | NewInstance(f) => dataflow_source_sink_ret!([], [f.a], []),
-            CheckCast(f) => dataflow_source_sink_ret!([f.a], [f.a], []),
+            ConstString(f) => dataflow!([], [f.a]),
+            ConstStringJumbo(f) => dataflow!([], [f.a]),
+            ConstClass(f) | NewInstance(f) => dataflow!([], [f.a]),
+            CheckCast(f) => dataflow!([f.a], [f.a]),
             // SGet*: dest=a (wide = two regs)
             SGet(f) | SGetBoolean(f) | SGetByte(f) | SGetChar(f) | SGetShort(f) | SGetObject(f) => {
-                dataflow_source_sink_ret!([], [f.a], [])
+                dataflow!([], [f.a])
             }
-            SGetWide(f) => dataflow_source_sink_ret!([], [f.a, f.a.next_reg()], []),
+            SGetWide(f) => dataflow!([], [f.a, f.a.next_reg()]),
             // SPut*: source=a
             SPut(f) | SPutBoolean(f) | SPutByte(f) | SPutChar(f) | SPutShort(f) | SPutObject(f) => {
-                dataflow_source_sink_ret!([f.a], [], [])
+                dataflow!([f.a], [])
             }
-            SPutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg()], [], []),
+            SPutWide(f) => dataflow!([f.a, f.a.next_reg()], []),
             // 22c
-            InstanceOf(f) | NewArray(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
+            InstanceOf(f) | NewArray(f) => dataflow!([f.b], [f.a]),
             IGet(f) | IGetBoolean(f) | IGetByte(f) | IGetChar(f) | IGetShort(f) | IGetObject(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a], [])
+                dataflow!([f.b], [f.a])
             }
-            IGetWide(f) => dataflow_source_sink_ret!([f.b], [f.a, f.a.next_reg()], []),
+            IGetWide(f) => dataflow!([f.b], [f.a, f.a.next_reg()]),
             IPut(f) | IPutBoolean(f) | IPutByte(f) | IPutChar(f) | IPutShort(f) | IPutObject(f) => {
-                dataflow_source_sink_ret!([f.a, f.b], [], [])
+                dataflow!([f.a, f.b], [])
             }
-            IPutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg(), f.b], [], []),
+            IPutWide(f) => dataflow!([f.a, f.a.next_reg(), f.b], []),
             // 35c/3rc: source = args
             FilledNewArray(f) => dataflow_from_args(&f.args),
             FilledNewArrayRange(f) => dataflow_from_args(&f.args),
@@ -2726,110 +2681,106 @@ impl Instruction {
             UnusedFD(f) => dataflow_from_args(&f.args),
             // 31t
             FillArrayData(f) | PackedSwitch(f) | SparseSwitch(f) => {
-                dataflow_source_sink_ret!([f.a], [], [])
+                dataflow!([f.a], [])
             }
             // 21t/22t branches
             IfEq(f) | IfNe(f) | IfLt(f) | IfGe(f) | IfGt(f) | IfLe(f) => {
-                dataflow_source_sink_ret!([f.a, f.b], [], [])
+                dataflow!([f.a, f.b], [])
             }
             IfEqz(f) | IfNez(f) | IfLtz(f) | IfGez(f) | IfGtz(f) | IfLez(f) => {
-                dataflow_source_sink_ret!([f.a], [], [])
+                dataflow!([f.a], [])
             }
             // 12x unary
-            ArrayLength(f) => dataflow_source_sink_ret!([f.b], [f.a], []),
+            ArrayLength(f) => dataflow!([f.b], [f.a]),
             NegInt(f) | NotInt(f) | IntToByte(f) | IntToChar(f) | IntToShort(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a], [])
+                dataflow!([f.b], [f.a])
             }
             NegFloat(f) | IntToFloat(f) | FloatToInt(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a], [])
+                dataflow!([f.b], [f.a])
             }
             IntToLong(f) | IntToDouble(f) | FloatToLong(f) | FloatToDouble(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b], [f.a, f.a.next_reg()])
             }
             LongToInt(f) | LongToFloat(f) | DoubleToInt(f) | DoubleToFloat(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a])
             }
             NegLong(f) | NotLong(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()])
             }
             NegDouble(f) | LongToDouble(f) | DoubleToLong(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()], [])
+                dataflow!([f.b, f.b.next_reg()], [f.a, f.a.next_reg()])
             }
             // 12x binary 2addr: source=a,b dest=a (or wide)
             AddInt2Addr(f) | SubInt2Addr(f) | MulInt2Addr(f) | DivInt2Addr(f) | RemInt2Addr(f)
             | AndInt2Addr(f) | OrInt2Addr(f) | XorInt2Addr(f) | ShlInt2Addr(f) | ShrInt2Addr(f)
             | UshrInt2Addr(f) => {
-                dataflow_source_sink_ret!([f.a, f.b], [f.a], [])
+                dataflow!([f.a, f.b], [f.a])
             }
             AddLong2Addr(f) | SubLong2Addr(f) | MulLong2Addr(f) | DivLong2Addr(f)
             | RemLong2Addr(f) | AndLong2Addr(f) | OrLong2Addr(f) | XorLong2Addr(f)
             | ShlLong2Addr(f) | ShrLong2Addr(f) | UshrLong2Addr(f) => {
-                dataflow_source_sink_ret!(
+                dataflow!(
                     [f.a, f.a.next_reg(), f.b, f.b.next_reg()],
-                    [f.a, f.a.next_reg()],
-                    []
+                    [f.a, f.a.next_reg()]
                 )
             }
             AddFloat2Addr(f) | SubFloat2Addr(f) | MulFloat2Addr(f) | DivFloat2Addr(f)
             | RemFloat2Addr(f) => {
-                dataflow_source_sink_ret!([f.a, f.b], [f.a], [])
+                dataflow!([f.a, f.b], [f.a])
             }
             AddDouble2Addr(f) | SubDouble2Addr(f) | MulDouble2Addr(f) | DivDouble2Addr(f)
             | RemDouble2Addr(f) => {
-                dataflow_source_sink_ret!(
+                dataflow!(
                     [f.a, f.a.next_reg(), f.b, f.b.next_reg()],
-                    [f.a, f.a.next_reg()],
-                    []
+                    [f.a, f.a.next_reg()]
                 )
             }
             // 22s / 22b
             AddIntLit16(f) | RsubInt(f) | MulIntLit16(f) | DivIntLit16(f) | RemIntLit16(f)
             | AndIntLit16(f) | OrIntLit16(f) | XorIntLit16(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a], [])
+                dataflow!([f.b], [f.a])
             }
             AddIntLit8(f) | RsubIntLit8(f) | MulIntLit8(f) | DivIntLit8(f) | RemIntLit8(f)
             | AndIntLit8(f) | OrIntLit8(f) | XorIntLit8(f) | ShlIntLit8(f) | ShrIntLit8(f)
             | UshrIntLit8(f) => {
-                dataflow_source_sink_ret!([f.b], [f.a], [])
+                dataflow!([f.b], [f.a])
             }
             // 23x aget*: dest=a, source=b,c (array, index)
             AGet(f) | AGetBoolean(f) | AGetByte(f) | AGetChar(f) | AGetShort(f) | AGetObject(f) => {
-                dataflow_source_sink_ret!([f.b, f.c], [f.a], [])
+                dataflow!([f.b, f.c], [f.a])
             }
-            AGetWide(f) => dataflow_source_sink_ret!([f.b, f.c], [f.a, f.a.next_reg()], []),
+            AGetWide(f) => dataflow!([f.b, f.c], [f.a, f.a.next_reg()]),
             // 23x aput*
             APut(f) | APutBoolean(f) | APutByte(f) | APutChar(f) | APutShort(f) | APutObject(f) => {
-                dataflow_source_sink_ret!([f.a, f.b, f.c], [], [])
+                dataflow!([f.a, f.b, f.c], [])
             }
-            APutWide(f) => dataflow_source_sink_ret!([f.a, f.a.next_reg(), f.b, f.c], [], []),
+            APutWide(f) => dataflow!([f.a, f.a.next_reg(), f.b, f.c], []),
             // 23x binop / cmp
-            CmplFloat(f) | CmpgFloat(f) => dataflow_source_sink_ret!([f.b, f.c], [f.a], []),
+            CmplFloat(f) | CmpgFloat(f) => dataflow!([f.b, f.c], [f.a]),
             CmpLong(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg(), f.c, f.c.next_reg()], [f.a], [])
+                dataflow!([f.b, f.b.next_reg(), f.c, f.c.next_reg()], [f.a])
             }
             CmplDouble(f) | CmpgDouble(f) => {
-                dataflow_source_sink_ret!([f.b, f.b.next_reg(), f.c, f.c.next_reg()], [f.a], [])
+                dataflow!([f.b, f.b.next_reg(), f.c, f.c.next_reg()], [f.a])
             }
             AddInt(f) | SubInt(f) | MulInt(f) | DivInt(f) | RemInt(f) | AndInt(f) | OrInt(f)
             | XorInt(f) | ShlInt(f) | ShrInt(f) | UshrInt(f) => {
-                dataflow_source_sink_ret!([f.b, f.c], [f.a], [])
+                dataflow!([f.b, f.c], [f.a])
             }
             AddLong(f) | SubLong(f) | MulLong(f) | DivLong(f) | RemLong(f) | AndLong(f)
             | OrLong(f) | XorLong(f) | ShlLong(f) | ShrLong(f) | UshrLong(f) => {
-                dataflow_source_sink_ret!(
+                dataflow!(
                     [f.b, f.b.next_reg(), f.c, f.c.next_reg()],
-                    [f.a, f.a.next_reg()],
-                    []
+                    [f.a, f.a.next_reg()]
                 )
             }
             AddFloat(f) | SubFloat(f) | MulFloat(f) | DivFloat(f) | RemFloat(f) => {
-                dataflow_source_sink_ret!([f.b, f.c], [f.a], [])
+                dataflow!([f.b, f.c], [f.a])
             }
             AddDouble(f) | SubDouble(f) | MulDouble(f) | DivDouble(f) | RemDouble(f) => {
-                dataflow_source_sink_ret!(
+                dataflow!(
                     [f.b, f.b.next_reg(), f.c, f.c.next_reg()],
-                    [f.a, f.a.next_reg()],
-                    []
+                    [f.a, f.a.next_reg()]
                 )
             }
             // Unused
@@ -2839,7 +2790,7 @@ impl Instruction {
             | UnusedEC(_) | UnusedED(_) | UnusedEE(_) | UnusedEF(_) | UnusedF0(_) | UnusedF1(_)
             | UnusedF2(_) | UnusedF3(_) | UnusedF4(_) | UnusedF5(_) | UnusedF6(_) | UnusedF7(_)
             | UnusedF8(_) | UnusedF9(_) | UnusedFA(_) | UnusedFB(_) | UnusedFE(_) | UnusedFF(_) => {
-                dataflow_source_sink_ret!([], [], [])
+                dataflow!([], [])
             }
         }
     }
@@ -3633,11 +3584,6 @@ impl<'a> DisplayInstr for Format<'a> {
 mod tests {
     use super::*;
 
-    fn regs(it: &mut DynIter) -> Vec<Reg> {
-        let it: &mut dyn DoubleEndedStreamingIterator<Item = Reg> = &mut **it;
-        it.cloned().collect()
-    }
-
     /// `iput-wide vA, vB, field` reads the value pair `vA, vA+1` and the object `vB`. It writes
     /// no register, like every other store.
     #[test]
@@ -3647,13 +3593,12 @@ mod tests {
             b: Reg(5),
             idx: FieldIdx(0),
         });
-        let DataFlow {
-            mut source,
-            mut dest,
-            mut ret,
-        } = inst.data_flow();
-        assert_eq!(regs(&mut source), vec![Reg(2), Reg(3), Reg(5)]);
-        assert_eq!(regs(&mut dest), vec![]);
-        assert_eq!(regs(&mut ret), vec![]);
+        assert_eq!(
+            inst.data_flow(),
+            DataFlow {
+                source: smallvec![Reg(2), Reg(3), Reg(5)],
+                dest: smallvec![],
+            }
+        );
     }
 }

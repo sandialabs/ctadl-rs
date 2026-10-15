@@ -15,7 +15,6 @@ use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
 use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
-use streaming_iterator::StreamingIterator; // needed for DataFlow.dest.owned()
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
@@ -659,15 +658,8 @@ impl Context {
         inst: &Instruction,
         locals: &mut Locals,
     ) -> Result<Vec<Statement>, DexError> {
-        let DataFlow {
-            source,
-            dest,
-            ret: _,
-        } = inst.data_flow();
+        let DataFlow { source, dest } = inst.data_flow();
         let mut stmts: Vec<Statement> = Vec::new();
-
-        // We have to iterate over dest multiple times, sadly, so we need to store the dest items.
-        let dest: SmallVec<[Reg; 4]> = dest.owned().collect();
 
         if let Some(const_exp) = match inst {
             // 8-bit signed constant
@@ -761,7 +753,7 @@ impl Context {
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
                     source
-                        .cloned()
+                        .into_iter()
                         .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 // flow temp into field update
@@ -898,13 +890,12 @@ impl Context {
             }
             _ => {
                 // Flows all the sources to each dest
-                let sources: Vec<_> = source.copied().collect();
-                if !sources.is_empty() {
+                if !source.is_empty() {
                     for dest in dest.iter() {
                         let dst_var = reg_to_var(code_item, *dest, locals);
                         stmts.push(Statement::new_kind(StatementKind::assign(
                             dst_var,
-                            sources
+                            source
                                 .iter()
                                 .map(|s| reg_to_var(code_item, *s, locals).into()),
                         )));
