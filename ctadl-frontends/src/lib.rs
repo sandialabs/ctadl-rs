@@ -16,7 +16,7 @@ order to avoid it.
 # Features
 
 A program that uses this crate says which languages it reads. The default set is `dex`, `jvm`
-and `apk`. `pcode`, `lua`, `c`, `xapk` and `flowy` are off unless asked for. Each one adds a
+and `apk`. `pcode`, `lua`, `c`, `xapk`, `flowy` and `cil` are off unless asked for. Each one adds a
 single front-end crate and the matching `ctadl-import` error variants.
 
 [`ArtifactLanguage`] always lists every language, whatever is enabled. It is an enum, so the
@@ -107,7 +107,8 @@ fn unsupported(language: ArtifactLanguage, feature: &str) -> Error {
         feature = "pcode",
         feature = "lua",
         feature = "c",
-        feature = "flowy"
+        feature = "flowy",
+        feature = "cil"
     )),
     allow(unreachable_code)
 )]
@@ -172,6 +173,11 @@ pub fn import_artifact(
         C => ctadl_c::import_c(&import.artifact_path)?,
         #[cfg(not(feature = "c"))]
         C => return Err(unsupported(C, "c")),
+
+        #[cfg(feature = "cil")]
+        Cil => ctadl_cil::import_path(&import.artifact_path)?,
+        #[cfg(not(feature = "cil"))]
+        Cil => return Err(unsupported(Cil, "cil")),
     };
     log::info!(
         "'{}': imported {} function(s)",

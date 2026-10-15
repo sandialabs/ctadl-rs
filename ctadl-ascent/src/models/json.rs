@@ -642,6 +642,12 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                         .map(|(cls, _, _, fid)| (cls.as_ref(), fid.as_ref()))
                         .collect(),
                 ),
+                VirtualMethodTable::Cil { methods, .. } => Some(
+                    methods
+                        .iter()
+                        .map(|(cls, _, _, fid)| (cls.as_ref(), fid.as_ref()))
+                        .collect(),
+                ),
                 _ => None,
             },
             Universe::Dispatch => Some(
@@ -2071,25 +2077,43 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         };
         self.validate_predicate(n, inner, SubjectKind::Class);
         // Snapshot (id, [supertypes]) — `hierarchy[cls]` is `[0]` = superclass, rest = interfaces.
-        let VirtualMethodTable::Java { hierarchy, .. } = self.index.vmt else {
-            log::warn!("'extends' constraint is Java-only; matching nothing on this frontend");
+        let vmt = self.index.vmt;
+        let supers_of = |cls: &str| -> Option<Vec<&'p str>> {
+            match vmt {
+                VirtualMethodTable::Java { hierarchy, .. } => Some(
+                    hierarchy
+                        .get(&ctadl_ir::mir::call::JavaClass(cls.into()))
+                        .map(|scs| scs.iter().map(|sc| sc.as_ref()).collect())
+                        .unwrap_or_default(),
+                ),
+                VirtualMethodTable::Cil { hierarchy, .. } => Some(
+                    hierarchy
+                        .get(&ctadl_ir::mir::call::CilClass(cls.into()))
+                        .map(|scs| scs.iter().map(|sc| sc.as_ref()).collect())
+                        .unwrap_or_default(),
+                ),
+                _ => None,
+            }
+        };
+        if supers_of("").is_none() {
+            log::warn!(
+                "'extends' constraint needs a class hierarchy (Java or CIL); matching nothing \
+                 on this frontend"
+            );
             self.target_set_mut(n).intersect_with(UniverseSet::empty());
             return;
-        };
+        }
         let Some(classes) = self.class_entries(n) else {
-            log::warn!("'extends' constraint is Java-only; matching nothing on this frontend");
+            log::warn!(
+                "'extends' constraint needs a class hierarchy (Java or CIL); matching nothing \
+                 on this frontend"
+            );
             self.target_set_mut(n).intersect_with(UniverseSet::empty());
             return;
         };
         let entries: Vec<(&'p str, Vec<&'p str>)> = classes
             .into_iter()
-            .map(|(cls, id)| {
-                let supers = hierarchy
-                    .get(&ctadl_ir::mir::call::JavaClass(cls.into()))
-                    .map(|scs| scs.iter().map(|sc| sc.as_ref()).collect())
-                    .unwrap_or_default();
-                (id, supers)
-            })
+            .map(|(cls, id)| (id, supers_of(cls).unwrap_or_default()))
             .collect();
         let mut matched: Vec<&'p str> = Vec::new();
         for (fid, supers) in &entries {
@@ -2829,6 +2853,13 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
         UniverseSet::All => match vmt {
             VirtualMethodTable::Java { methods, .. } => {
                 methods.iter().map(|t| t.3.to_string()).collect()
+            }
+            // An override alias names the same method id as its class's own row, so the ids
+            // are deduplicated: "all" is every method once.
+            VirtualMethodTable::Cil { methods, .. } => {
+                let ids: std::collections::BTreeSet<&str> =
+                    methods.iter().map(|t| t.3.as_ref()).collect();
+                ids.into_iter().map(str::to_owned).collect()
             }
             VirtualMethodTable::Native { methods } => {
                 methods.iter().map(|t| t.2.to_string()).collect()

@@ -212,6 +212,8 @@ pub enum ImportLanguage {
     Pcode,
     /// Treat as Flowy file
     Flowy,
+    /// Treat as a .NET assembly (`.dll`/`.exe`), or a directory of them (a published app)
+    Cil,
     /// Infer from extension/content
     Auto,
 }
@@ -899,6 +901,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             ImportLanguage::Lua => Lua,
             ImportLanguage::Pcode => Pcode,
             ImportLanguage::Flowy => Flowy,
+            ImportLanguage::Cil => Cil,
             ImportLanguage::Auto => unreachable!(),
         }
     };
@@ -1168,6 +1171,10 @@ fn autodetect_import_language<P: AsRef<Path>>(
             if path.is_dir() && dir_contains_lua(path) {
                 return Ok(ImportLanguage::Lua);
             }
+            // A published .NET app is a directory of assemblies.
+            if path.is_dir() && ctadl_ascent::languages::cil::dir_has_cli_image(path) {
+                return Ok(ImportLanguage::Cil);
+            }
 
             let ext = path.extension().and_then(|e| OsStr::to_str(e));
 
@@ -1179,6 +1186,10 @@ fn autodetect_import_language<P: AsRef<Path>>(
                 Some("jar") => ImportLanguage::Jar,
                 Some("lua") => ImportLanguage::Lua,
                 Some("tnt") => ImportLanguage::Flowy,
+                // A PE file is .NET when it has CLI metadata, and native otherwise.
+                Some("dll" | "exe") if ctadl_ascent::languages::cil::is_cli_image(path) => {
+                    ImportLanguage::Cil
+                }
                 // A Ghidra project file: export pcode from the existing project.
                 Some("gpr") => ImportLanguage::Pcode,
                 // A C source file or header.

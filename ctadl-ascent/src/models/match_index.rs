@@ -232,6 +232,31 @@ impl<'p> ProgramMatchIndex<'p> {
                         .or_default()
                         .push(val)
                 });
+        } else if let VirtualMethodTable::Cil { methods, .. } = vmt {
+            // The Java arm, over .NET spellings: `[Asm]Ns.Type`, `Parse`,
+            // `(System.String)->System.Int32`, and the method id
+            // `[Asm]Ns.Type::Parse(System.String)->System.Int32`. An override alias row
+            // (`VirtualMethodTable::Cil`) makes a method matchable under the base method's
+            // name and descriptor too, which is what a model of an interface method wants.
+            for (cls, name, sig, fid) in methods {
+                let fid = fid.as_ref();
+                program_method_names
+                    .entry(name.as_ref())
+                    .or_default()
+                    .push(fid);
+                program_method_parents
+                    .entry(cls.as_ref())
+                    .or_default()
+                    .push(fid);
+                program_method_signatures
+                    .entry(sig.as_ref())
+                    .or_default()
+                    .push(fid);
+                program_method_qualified_ids
+                    .entry(fid)
+                    .or_default()
+                    .push(fid);
+            }
         } else if let VirtualMethodTable::Native { methods } = vmt {
             // Native frontends (pcode, clang) carry, per function, a simple
             // (un-decorated) name and a best-effort type signature alongside the
@@ -335,6 +360,9 @@ impl<'p> ProgramMatchIndex<'p> {
 
         let universe: UniverseSet<&'p str> = match vmt {
             VirtualMethodTable::Java { methods, .. } => {
+                methods.iter().map(|(_, _, _, fid)| fid.as_ref()).collect()
+            }
+            VirtualMethodTable::Cil { methods, .. } => {
                 methods.iter().map(|(_, _, _, fid)| fid.as_ref()).collect()
             }
             VirtualMethodTable::Native { methods } => {

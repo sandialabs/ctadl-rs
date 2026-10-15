@@ -98,6 +98,8 @@ pub fn default_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'s
         VirtualMethodTable::Java { .. } => Some(JAVA_DEFAULT_MODELS),
         VirtualMethodTable::Native { .. } => Some(NATIVE_DEFAULT_MODELS),
         VirtualMethodTable::Lua { .. } => Some(LUA_DEFAULT_MODELS),
+        // No .NET default models are shipped yet (frontend plan, M6).
+        VirtualMethodTable::Cil { .. } => None,
         // flowy, and anything else with no method table: a default model file has nothing to
         // match against, and shipping one would be a language guess.
         VirtualMethodTable::Unknown => None,

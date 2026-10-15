@@ -6,6 +6,7 @@ members = [
     "ctadl-import",
     "ctadl-ir",
     "frontends/ctadl-c",
+    "frontends/ctadl-cil",
     "frontends/ctadl-dex",
     "frontends/ctadl-flowy",
     "frontends/ctadl-jvm",

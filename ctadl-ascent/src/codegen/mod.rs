@@ -417,6 +417,9 @@ fn call_target_object(exp: &Exp) -> Option<fx::CallTargetObject> {
         Exp::ObjectRef(CallObject::LuaClass(cls)) => {
             Some(fx::CallTargetObject::LuaClass(cls.clone()))
         }
+        Exp::ObjectRef(CallObject::CilObject(cls)) => {
+            Some(fx::CallTargetObject::CilClass(cls.0.clone()))
+        }
         _ => None,
     }
 }
@@ -444,6 +447,9 @@ impl Visitor for InstantiationFinder<'_> {
             }
             Exp::ObjectRef(CallObject::LuaClass(cls)) => {
                 self.instantiated_classes.insert(cls.clone());
+            }
+            Exp::ObjectRef(CallObject::CilObject(cls)) => {
+                self.instantiated_classes.insert(cls.0.clone());
             }
             _ => {}
         }
@@ -670,11 +676,10 @@ impl<'a> CodegenVisitor<'a> {
                 log::trace!("java: hybrid resolve {cls}.{simple_name}{descriptor} (deferred)");
                 self.deferred_dispatch
                     .insert((simple_name.clone(), descriptor.clone()));
-                self.facts.callee_info.push((
-                    site,
-                    FlowVertex(recv_var, fx::Path::empty()),
-                    fx::CallDispatchKey::Java(simple_name.clone(), descriptor.clone()),
-                ));
+                let key = self.cha.dispatch_key(simple_name, descriptor);
+                self.facts
+                    .callee_info
+                    .push((site, FlowVertex(recv_var, fx::Path::empty()), key));
             }
         }
     }
@@ -1062,6 +1067,26 @@ impl Visitor for CodegenVisitor<'_> {
                         let action = self.classify(&key, *dispatch, super_start.as_ref());
                         self.apply(site, recv_var, &key, *dispatch, action);
                     }
+                    CallStyle::CilCall {
+                        receiver,
+                        cls,
+                        simple_name,
+                        descriptor,
+                    } => {
+                        // The `JavaCall` arm, keyed in the CIL space (`ChaLanguage::Cil`).
+                        // `callvirt` does not say whether it dispatches through an interface;
+                        // the table does, and the ladder's per-kind policy wants to know.
+                        let recv_var = self.trans_variable_ref(receiver);
+                        args.insert(0, Exp::Variable(receiver.clone()));
+                        let dispatch = if self.cha.is_interface(cls) {
+                            JavaDispatch::Interface
+                        } else {
+                            JavaDispatch::Virtual
+                        };
+                        let key = (cls.clone(), simple_name.clone(), descriptor.clone());
+                        let action = self.classify(&key, dispatch, None);
+                        self.apply(site, recv_var, &key, dispatch, action);
+                    }
                     CallStyle::LuaCall { receiver, method } => {
                         // A Lua receiver has no static type, so there is no declared class to key
                         // CHA on: the static resolvent set is every class method of this name
@@ -1359,12 +1384,10 @@ impl Visitor for CodegenVisitor<'_> {
                     ));
                     self.funcptr_targets.insert(target);
                 }
-                if let Exp::ObjectRef(CallObject::JavaObject(cls)) = value {
-                    self.facts.call_target_assign.push((
-                        site,
-                        dest_vertex.clone(),
-                        fx::CallTargetObject::Symbol(cls.0.clone()),
-                    ));
+                if let Some(object) = call_target_object(value) {
+                    self.facts
+                        .call_target_assign
+                        .push((site, dest_vertex.clone(), object));
                 }
                 // whole-aggregate copy: dest <- source
                 self.facts.assign.push((
@@ -1464,6 +1487,8 @@ pub(crate) enum ChaLanguage {
     #[default]
     Java,
     Lua,
+    /// .NET: the Java scheme, keyed `(CilClass(cls), Cil(name, desc))`.
+    Cil,
 }
 
 /// `(class, method simple name, descriptor) -> targets`. The descriptor is a fixed empty
@@ -1504,6 +1529,9 @@ pub(crate) struct ClassHierarchyAnalysis {
     /// Memo keyed by start signature. Bounded by distinct super-call signatures, about 1% of
     /// the virtual ones.
     super_memo: std::cell::RefCell<hashbrown::HashMap<SignatureKey, SuperResolution>>,
+    /// The types the table declares to be interfaces. Only the CIL arm fills it: a Java site
+    /// says itself whether it dispatches through an interface, and a `callvirt` does not.
+    interfaces: hashbrown::HashSet<Symbol>,
 }
 
 impl ClassHierarchyAnalysis {
@@ -1564,6 +1592,55 @@ impl ClassHierarchyAnalysis {
                     declared,
                     parents,
                     super_memo: Default::default(),
+                    interfaces: Default::default(),
+                }
+            }
+            // CIL is the Java arm over its own table. Override aliases (rows under a class with a
+            // base or interface method's key) are ordinary `method_implemented` rows here: a
+            // class "implementing" the base key is exactly what makes CHA find its override.
+            VirtualMethodTable::Cil {
+                methods,
+                hierarchy,
+                interfaces,
+                ..
+            } => {
+                let mut method_implemented: Vec<(Symbol, Symbol, Symbol, Symbol)> = methods
+                    .iter()
+                    .cloned()
+                    .map(|(a, b, c, d)| (a.into(), b.into(), c.into(), d.into()))
+                    .collect();
+                // An exact override and its alias are the same row.
+                method_implemented.sort_unstable();
+                method_implemented.dedup();
+                let mut direct_superclass: Vec<(Symbol, Symbol)> = hierarchy
+                    .iter()
+                    .flat_map(|(sub, sups)| sups.iter().map(|sup| (sup.0.clone(), sub.0.clone())))
+                    .collect();
+                direct_superclass.sort_unstable();
+                let interface_type = interfaces.iter().map(|c| (c.0.clone(),)).collect();
+                let instantiated_classes_vec =
+                    instantiated_classes.into_iter().map(|s| (s,)).collect();
+                let declared = declared_implementations(&method_implemented);
+                let parents = hierarchy
+                    .iter()
+                    .map(|(sub, sups)| (sub.0.clone(), sups.iter().map(|s| s.0.clone()).collect()))
+                    .collect();
+                let (resolvents, rta_resolvents) = run_cha(
+                    method_implemented,
+                    direct_superclass,
+                    interface_type,
+                    Default::default(),
+                    instantiated_classes_vec,
+                    rta,
+                );
+                Self {
+                    language: ChaLanguage::Cil,
+                    resolvents,
+                    rta_resolvents,
+                    declared,
+                    parents,
+                    super_memo: Default::default(),
+                    interfaces: interfaces.iter().map(|c| c.0.clone()).collect(),
                 }
             }
             // Lua mirrors the Java arm: a Lua method is a `method_implemented` with a fixed
@@ -1610,6 +1687,23 @@ impl ClassHierarchyAnalysis {
 
     pub(crate) fn language(&self) -> ChaLanguage {
         self.language
+    }
+
+    /// Whether the table declares `cls` an interface. Always false outside CIL; see
+    /// [`Self::interfaces`].
+    pub(crate) fn is_interface(&self, cls: &Symbol) -> bool {
+        self.interfaces.contains(cls)
+    }
+
+    /// The `callee_info` key a deferred `(name, descriptor)` site is joined on, in this
+    /// table's language. Lua sites build their own key, since theirs has no descriptor.
+    pub(crate) fn dispatch_key(&self, name: &Symbol, descriptor: &Symbol) -> fx::CallDispatchKey {
+        match self.language {
+            ChaLanguage::Cil => fx::CallDispatchKey::Cil(name.clone(), descriptor.clone()),
+            ChaLanguage::Java | ChaLanguage::Lua => {
+                fx::CallDispatchKey::Java(name.clone(), descriptor.clone())
+            }
+        }
     }
 
     pub(crate) fn java_resolvents(
@@ -1797,6 +1891,10 @@ fn emit_callee_resolvents(
             ChaLanguage::Lua => (
                 fx::CallTargetObject::LuaClass(cls.clone()),
                 fx::CallDispatchKey::Lua(name.clone()),
+            ),
+            ChaLanguage::Cil => (
+                fx::CallTargetObject::CilClass(cls.clone()),
+                fx::CallDispatchKey::Cil(name.clone(), desc.clone()),
             ),
         };
         for target in targets {

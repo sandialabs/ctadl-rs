@@ -1127,6 +1127,7 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
                 }
                 CallTargetObject::Symbol(cls) => format!("java<{cls}>"),
                 CallTargetObject::LuaClass(cls) => format!("lua<{cls}>"),
+                CallTargetObject::CilClass(cls) => format!("cil<{cls}>"),
             };
 
             writeln!(
