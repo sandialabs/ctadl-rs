@@ -129,7 +129,9 @@ fn read_body<'a>(m: &'a ModuleData<'a>, method_rid: u32, rva: u32) -> Result<Met
 fn read_code<'a>(body: &mut MethodBody<'a>, cur: &mut crate::raw::cursor::Cur<'a>) {
     let data = cur.data();
     let start = cur.pos();
-    // CodeReader.ReadCode: clamp out-of-range code sizes to zero.
+    // Code that runs past the end of the file reads as empty, as in
+    // CodeReader.ReadCode. Cecil also empties code that ends exactly at
+    // the end of the file; this reads it.
     let mut code_size = body.code_size as usize;
     if start + code_size > data.len() {
         code_size = 0;
