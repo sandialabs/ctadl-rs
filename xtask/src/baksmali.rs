@@ -145,8 +145,9 @@ fn normalize_numeric_literals(line: &str) -> String {
                     j += 1;
                 }
                 let hex: String = chars[i + 3..j].iter().collect();
-                if let Ok(v) = i64::from_str_radix(&hex, 16) {
-                    out.push_str(&(-v).to_string());
+                // u64, so that -0x8000000000000000 (i64::MIN) converts too.
+                if let Ok(v) = u64::from_str_radix(&hex, 16) {
+                    out.push_str(&(-i128::from(v)).to_string());
                     i = j;
                     continue;
                 }
@@ -163,7 +164,7 @@ fn normalize_numeric_literals(line: &str) -> String {
                     j += 1;
                 }
                 let hex: String = chars[i + 2..j].iter().collect();
-                if let Ok(v) = i64::from_str_radix(&hex, 16) {
+                if let Ok(v) = u64::from_str_radix(&hex, 16) {
                     out.push_str(&v.to_string());
                     i = j;
                     continue;
@@ -297,28 +298,6 @@ fn string_literal_code_units(body: &str) -> Vec<u16> {
     units
 }
 
-fn normalize_wide_literal(line: &str) -> String {
-    // const-wide/high16 and const/high16 literals may be shown in different
-    // forms; reduce to opcode + reg + placeholder so we compare structure.
-    if let Some(rest) = line.strip_prefix("const-wide/high16 ") {
-        if let Some((reg_part, _lit)) = rest.split_once(',') {
-            let reg_part = reg_part.trim();
-            if !reg_part.is_empty() {
-                return format!("const-wide/high16 {}, <lit>L", reg_part);
-            }
-        }
-    }
-    if let Some(rest) = line.strip_prefix("const/high16 ") {
-        if let Some((reg_part, _lit)) = rest.split_once(',') {
-            let reg_part = reg_part.trim();
-            if !reg_part.is_empty() {
-                return format!("const/high16 {}, <lit>", reg_part);
-            }
-        }
-    }
-    line.to_string()
-}
-
 /// Normalize unsigned decimal that fits in u32 but represents a negative i32
 /// (array-data, etc.) to signed form so both sides match.
 fn normalize_signed_u32_line(line: &str) -> String {
@@ -447,7 +426,6 @@ fn normalize_line_common(line: &str) -> Option<String> {
     }
 
     let s = normalize_const_string(s);
-    let s = normalize_wide_literal(&s);
     let s = normalize_switch_targets(&s);
     let s = normalize_numeric_literals(&s);
     let s = normalize_branch_targets(&s);

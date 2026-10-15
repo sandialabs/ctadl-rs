@@ -427,8 +427,19 @@ impl DisplayInstr for Format51l {
     }
 
     fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
-        write!(f, "{}, {}L", DispArg(self.a, cp), self.lit)
+        write!(
+            f,
+            "{}, {}{}",
+            DispArg(self.a, cp),
+            self.lit,
+            long_suffix(self.lit)
+        )
     }
+}
+
+/// The suffix baksmali writes after a 64-bit literal: `L`, unless the value fits in an int.
+fn long_suffix(v: i64) -> &'static str {
+    if i32::try_from(v).is_ok() { "" } else { "L" }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3165,17 +3176,14 @@ impl DisplayInstr for Instruction {
         // Baksmali prints the full 64-bit value (e.g. -0x8000000000000000L), not the raw immediate.
         if let Self::ConstWideHigh16(fmt) = self {
             let wide_val = (fmt.lit as i64) << 48;
-            let (sign, abs_hex) = if wide_val < 0 {
-                ("-", format!("0x{:x}", (wide_val as u64)))
-            } else {
-                ("", format!("0x{:x}", wide_val as u64))
-            };
+            let sign = if wide_val < 0 { "-" } else { "" };
             return write!(
                 f,
-                "const-wide/high16 {}, {}{}L",
+                "const-wide/high16 {}, {}0x{:x}{}",
                 DispArg(fmt.a, cp),
                 sign,
-                abs_hex
+                wide_val.unsigned_abs(),
+                long_suffix(wide_val)
             );
         }
 
