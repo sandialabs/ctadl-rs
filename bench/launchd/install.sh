@@ -36,7 +36,7 @@ done
 
 mkdir -p "$logs" "$agents" "$(dirname "$launch")"
 if [ ! -x "$launch" ]; then
-  /usr/bin/cc -O2 -o "$launch" "$here/launch.c"
+  "${CC:-cc}" -O2 -o "$launch" "$here/launch.c"
   echo "built $launch -- add it under System Settings > Privacy & Security > Full Disk Access"
 fi
 
