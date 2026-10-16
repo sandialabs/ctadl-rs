@@ -1,11 +1,10 @@
 # Improving `dex-reader` and `jvm-reader` dataflow - DO-NOT-MERGE
 
 Status: §1 (`dex-reader`) is fixed on branch `dex-jvm-reader-fixes`, except for
-the open items in §1.7. §2 (`jvm-reader`) is open and not scheduled. §3 records
-wrong taint answers from `ctadl-jvm`, confirmed by test programs. §3.1
-(`24064a85`), §3.2, §3.3 and the `swap` item of §3.4 are fixed; the rest are
-open. These
-problems were found while designing the CIL reader's dataflow layer
+the open items in §1.7. In §2 (`jvm-reader` design), item 5 is fixed and items
+1 and 4 are open. §3 records wrong taint answers from `ctadl-jvm`, confirmed by
+test programs. §3.1 (`24064a85`), §3.2, §3.3, and the `swap` and `ldc` items of
+§3.4 are fixed; the rest are open. These problems were found while designing the CIL reader's dataflow layer
 ([`cil-flow-api.md`](cil-flow-api.md)), which is built to avoid them.
 
 ---
@@ -266,7 +265,7 @@ and the unit tests are their only coverage.
    gave wrong answers (§3.1). `24064a85` deleted it.
 4. **Hand-written stack effects.** `stack_effect` and `misc_stack_effect` are
    opcode tables maintained by hand.
-5. **Fails whole methods.** *Fixed in `ctadl-jvm`.* An inconsistent stack
+5. **Fails whole methods.** *Fixed in `ctadl-jvm`* (`c9f9b2c4`). An inconsistent stack
    height at a join returns `Err(StackHeightMismatch { .. })`. `ctadl-jvm`
    passed this and every other decode error up, so one bad method failed the
    import of its whole class or JAR, not just the method. It now logs a warning
@@ -293,9 +292,9 @@ and every control passes on both frontends. The programs and logs are in
 
 | Program | Expected | JVM frontend | Control (passes) |
 | --- | --- | --- | --- |
-| `get().data = t;` then `sink(holder.data)`, where `get()` returns `holder` | flow | no flow | `g = get(); g.data = t;` |
-| `get().v = t;` with a `long` field `v` | flow | no flow | — |
-| `a.data = source();` then `sink(fresh().data)`, where `fresh()` returns a new object | no flow | flow | `f = fresh(); sink(f.data);` |
+| `get().data = t;` then `sink(holder.data)`, where `get()` returns `holder` | flow | no flow (fixed, §3.1) | `g = get(); g.data = t;` |
+| `get().v = t;` with a `long` field `v` | flow | no flow (fixed, §3.1) | — |
+| `a.data = source();` then `sink(fresh().data)`, where `fresh()` returns a new object | no flow | flow (fixed, §3.1) | `f = fresh(); sink(f.data);` |
 | `o = source(); String x = o.data = y; sink(x);` with clean `y` | no flow | flow (fixed, §3.2) | `o.data = y; String x = y;` |
 
 ### 3.1 Fixed: field accesses used the last `aload`, not the object on the stack
@@ -373,7 +372,7 @@ There are three enforced cases: `DupX1Chain` (no flow), its positive twin
 `apply_jvm_allowlist` (`xtask/src/regression.rs`) turned a failing `Jvm:` case
 into XFAIL unless the case was listed in `JVM_E2E_ENFORCED`. All four programs
 above were reported as XFAIL, so the suite stayed green. The §3.1 and §3.2
-cases were enforced first. Enforcement is now the default, as it is for the C
+cases were enforced first. Enforcement is now the default (`f4612c87`), as it is for the C
 frontend: `JVM_KNOWN_FAILURES` lists the JVM cases allowed to fail, and it is
 empty. All 34 JVM cases pass, including `DefaultModelsFlow`, which had never
 been enforced. A new JVM case that fails now fails the suite.
@@ -388,7 +387,7 @@ have since tested the first three items against ASM and the JVM:
   ordinary dataflow, which overwrites one input before reading it. javac rarely
   emits `swap`, so no taint case covers it; `jvm:asm-flow`, `jvm:opcodes` and
   `test_stack_shuffle_dataflow` do.
-- *Fixed:* `ldc` of a MethodHandle, MethodType or dynamic constant was an
+- *Fixed* (`5ee983db`): `ldc` of a MethodHandle, MethodType or dynamic constant was an
   error in `resolve_constant`, and the method failed to decode. `ctadl-jvm`
   passed the error up, so the whole class or JAR failed to import, not just
   the method. javac rarely emits these; other compilers and bytecode tools
