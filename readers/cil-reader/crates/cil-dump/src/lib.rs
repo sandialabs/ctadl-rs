@@ -20,8 +20,8 @@ use cil_reader::model::resolver::{
     AssemblyCache, AssemblyLoader, DirectoryLoader, ResolvedMember, ResolvedType,
 };
 use cil_reader::model::{
-    ConstantValue, Entity, ExceptionHandlerType, FieldDef, GenericContext, Module, Resource,
-    TypeDef, TypeDefOrRef,
+    ConstantValue, Entity, ExceptionHandlerType, FieldDef, GenericContext, Module, PdbSource,
+    Resource, TypeDef, TypeDefOrRef,
 };
 use cil_reader::raw::{ModuleKind, Table, TargetArchitecture};
 use cil_reader::{MetadataToken, Result, TokenType};
@@ -1059,4 +1059,89 @@ pub fn sweep(module: &Module<'_>) -> Result<()> {
         None,
     )?;
     Ok(())
+}
+
+/// The `[symbols]` dump of `module`, read from `path`: its portable PDB as
+/// [`PdbSource::locate`] finds it. The documents the sequence points name,
+/// by token, then every method body's points in IL order, as raw numbers
+/// (a hidden point is line 0xfeefee). `none` without a portable PDB;
+/// `!error` where it does not read or does not match, and on a method whose
+/// body or points do not read.
+pub fn dump_symbols(module: &Module<'_>, path: &Path) -> String {
+    let mut out = String::from("[symbols]\n");
+    let source = match PdbSource::locate(module, path) {
+        Ok(Some(source)) => source,
+        Ok(None) => {
+            out.push_str("none\n");
+            return out;
+        }
+        Err(_) => {
+            out.push_str("!error\n");
+            return out;
+        }
+    };
+    let Ok(pdb) = source.read(module) else {
+        out.push_str("!error\n");
+        return out;
+    };
+    let mut methods = String::new();
+    let mut documents = std::collections::BTreeSet::new();
+    for rid in 1..=module.metadata().row_count(Table::Method) {
+        let Some(method) = module.method_def(rid) else {
+            continue;
+        };
+        if !method.has_body().unwrap_or(false)
+            || method.rva().unwrap_or(0) == 0
+            || method.is_deleted().unwrap_or(false)
+        {
+            continue;
+        }
+        let points = match method.body().and_then(|_| pdb.sequence_points(rid)) {
+            Ok(points) => points,
+            Err(_) => {
+                writeln!(methods, "{} !error", tok(method.token())).unwrap();
+                continue;
+            }
+        };
+        if points.is_empty() {
+            continue;
+        }
+        writeln!(methods, "{}", tok(method.token())).unwrap();
+        for p in points {
+            documents.insert(p.document);
+            writeln!(
+                methods,
+                "\tIL_{:04x} {} {},{}-{},{}",
+                p.offset,
+                tok(MetadataToken::new(TokenType::Document, p.document)),
+                p.start_line,
+                p.start_column,
+                p.end_line,
+                p.end_column
+            )
+            .unwrap();
+        }
+    }
+    for rid in documents {
+        match pdb.document(rid) {
+            Ok(d) => writeln!(
+                out,
+                "document {} name={} hash-algorithm={} hash={} language={}",
+                tok(d.token),
+                d.name,
+                d.hash_algorithm,
+                hex(d.hash),
+                d.language
+            )
+            .unwrap(),
+            Err(_) => writeln!(
+                out,
+                "document {} !error",
+                tok(MetadataToken::new(TokenType::Document, rid))
+            )
+            .unwrap(),
+        }
+    }
+    out.push_str(&methods);
+    out
 }

@@ -23,6 +23,7 @@ using System.Text;
 
 using Mono.Cecil;
 using Mono.Cecil.Cil;
+using Mono.Collections.Generic;
 
 static class Program
 {
@@ -37,6 +38,7 @@ static class Program
     {
         var sections = new List<string> (AllSections);
         string path = null;
+        bool symbols = false;
 
         for (int i = 0; i < args.Length; i++) {
             switch (args [i]) {
@@ -46,6 +48,9 @@ static class Program
             case "--no-il":
                 sections.Remove ("il");
                 break;
+            case "--symbols":
+                symbols = true;
+                break;
             default:
                 path = args [i];
                 break;
@@ -53,8 +58,13 @@ static class Program
         }
 
         if (path == null) {
-            Console.Error.WriteLine ("usage: CecilDump [--sections a,b,c] [--no-il] <file>");
+            Console.Error.WriteLine ("usage: CecilDump [--sections a,b,c] [--no-il] [--symbols] <file>");
             return 1;
+        }
+
+        if (symbols) {
+            Console.Out.Write (DumpSymbols (path));
+            return 0;
         }
 
         var parameters = new ReaderParameters {
@@ -838,6 +848,58 @@ static class Program
             }
         }
         s.Append ('"');
+    }
+
+    // The sequence points of the module's symbols, as Cecil reads them with
+    // ReadSymbols: `none` without symbols (native PDBs and .mdb files are not
+    // compiled in, so read as none), `!error` where reading them throws. The
+    // documents the points name, by token, then every method body's points
+    // as raw numbers. The format is crates/cil-dump's `dump_symbols`.
+    static string DumpSymbols (string path)
+    {
+        var o = new StringBuilder ("[symbols]\n");
+        ModuleDefinition module;
+        try {
+            module = ModuleDefinition.ReadModule (path, new ReaderParameters {
+                AssemblyResolver = new FailResolver (),
+                ReadSymbols = true,
+                SymbolReaderProvider = new DefaultSymbolReaderProvider (throwIfNoSymbol: false),
+            });
+        } catch {
+            o.Append ("!error\n");
+            return o.ToString ();
+        }
+        using (module) {
+            if (!module.HasSymbols) {
+                o.Append ("none\n");
+                return o.ToString ();
+            }
+            var methods = new StringBuilder ();
+            var documents = new SortedDictionary<uint, Document> ();
+            foreach (var method in MembersInRidOrder (module, ty => ty.Methods)) {
+                if (!method.HasBody || method.RVA == 0)
+                    continue;
+                Collection<SequencePoint> points;
+                try {
+                    _ = method.Body;
+                    points = method.DebugInformation.SequencePoints;
+                } catch {
+                    methods.Append ($"{Tok (method.MetadataToken)} !error\n");
+                    continue;
+                }
+                if (points.Count == 0)
+                    continue;
+                methods.Append ($"{Tok (method.MetadataToken)}\n");
+                foreach (var p in points) {
+                    documents [p.Document.MetadataToken.RID] = p.Document;
+                    methods.Append ($"\tIL_{p.Offset:x4} {Tok (p.Document.MetadataToken)} {p.StartLine},{p.StartColumn}-{p.EndLine},{p.EndColumn}\n");
+                }
+            }
+            foreach (var d in documents.Values)
+                o.Append ($"document {Tok (d.MetadataToken)} name={d.Url} hash-algorithm={d.HashAlgorithmGuid.ToString ("d")} hash={Hex (d.Hash)} language={d.LanguageGuid.ToString ("d")}\n");
+            o.Append (methods);
+        }
+        return o.ToString ();
     }
 
     static void DumpIl (ModuleDefinition module, StringBuilder o)
