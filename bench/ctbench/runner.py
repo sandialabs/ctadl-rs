@@ -285,8 +285,18 @@ class Daemon:
             if (sha12, suite, bench) not in live:
                 shutil.rmtree(store, ignore_errors=True)
                 removed += 1
+        # Scratch a killed Ghidra or JVM left behind. Nothing we run lasts a day without
+        # touching its own scratch, so older entries are orphans.
+        cutoff = time.time() - 86400
+        for entry in (self.root / "tmp").iterdir():
+            try:
+                if entry.lstat().st_mtime < cutoff:
+                    shutil.rmtree(entry) if entry.is_dir() and not entry.is_symlink() else entry.unlink()
+                    removed += 1
+            except OSError:
+                pass
         if removed:
-            self.log("gc", f"removed {removed} orphaned store(s)")
+            self.log("gc", f"removed {removed} orphaned store(s) and scratch entries")
 
     def activity_kills(self, unit_id: int) -> int:
         return self.conn.execute("SELECT count(*) FROM runs WHERE unit_id=? AND outcome='killed' "
