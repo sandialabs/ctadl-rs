@@ -1,0 +1,80 @@
+# Configuration for the continuous benchmark daemon. Paths may use ~.
+
+[paths]
+repo = "~/proj/ctadl-rs"            # the repository whose branch is tracked
+bench_repo = "~/proj/ct-bench"      # this worktree: suites, harnesses, xtask
+root = "/Volumes/Shampoo/ctadl-bench"  # db, builds, work dirs, logs all live under here
+
+[track]
+remote = "origin"
+branch = "main"
+poll_s = 300                        # how often to fetch
+# On first start only the tip is queued. Older commits can be queued by hand with
+# `ctbench enqueue <sha>`, and `backfill` fills in skipped first-parent commits when idle.
+backfill = true
+
+[gate]
+tick_s = 5
+input_idle_s = 120          # a keystroke this recent means the user is here
+foreign_cpu_pct = 150       # CPU (percent of one core) used by processes that are not ours
+quiet_night_s = 900         # quiet this long before a p-tier run starts, at night...
+quiet_day_s = 2400          # ...and during the day
+night_start_hour = 23
+night_end_hour = 7
+# A unit killed this many times because the user came back runs on the e tier from then on,
+# so a busy week still gets every unit measured.
+max_activity_kills = 3
+dev_processes = [
+  "cargo", "rustc", "rust-analyzer", "ld", "ld64", "clang", "cc", "gcc", "make", "ninja",
+  "java", "gradle", "ctadl", "souffle", "nix", "nix-daemon", "nix-build", "python3", "node",
+  "xcodebuild", "swift", "swiftc", "go",
+]
+
+[build]
+mem_cap_gib = 48
+timeout_s = 7200
+
+[defaults]
+mem_cap_gib = 64
+timeouts = { import = 21600, index = 7200, query = 3600, report = 3600 }
+
+[suites.taintbench]
+order = 10
+
+[suites.android-icc]
+order = 20
+specs = "nightly/tests/android-icc"   # relative to bench_repo
+
+[suites.fdroid]
+order = 30
+list = "bench/suites/fdroid.json"
+
+[suites.firmware7]
+order = 40
+list = "bench/suites/firmware7.json"
+model = "firmware-eval/models/cmdi-firmware.json5"
+
+[suites.apps]
+order = 50
+list = "bench/suites/apps.json"
+mem_cap_gib = 96
+
+# Not part of a commit's pass: a sweep of every sink-bearing binary in the Operation Mango
+# dataset (bench/suites/firmware-sweep.json, from gen_firmware_sweep.py), pinned to one commit,
+# running in parallel whenever no pass work is waiting. When it completes, the next sweep starts
+# at the newest built commit. Its wall times are shared with sibling workers, so they are
+# recorded as wall_shared_s and never compared.
+[sweep]
+enabled = true
+list = "bench/suites/firmware-sweep.json"
+model = "firmware-eval/models/cmdi-firmware.json5"
+workers_p = 12          # when the machine is quiet
+workers_e = 3           # on the efficiency cores while the user is here
+batch = 100             # binaries queued at a time
+# Same guard as the original campaign (run_one.py), so statuses compare. Timeouts count
+# p-tier seconds; a second on the e tier counts as e_time_weight of one.
+timeouts = { import = 600, index = 600, query = 600 }
+mem_cap_gib = 24
+
+[timeouts]
+e_time_weight = 0.25

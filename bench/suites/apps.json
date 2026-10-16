@@ -1,0 +1,82 @@
+[
+ {
+  "bench": "FX-File-Explorer",
+  "app": "FX+File+Explorer",
+  "version": "9.1.0.8",
+  "path": "/Users/dbueno/apps/FX+File+Explorer_9.1.0.8_APKPure.apk",
+  "size": 12697277,
+  "sha256": "19af15780d0fc65242ed3f97d6397adfbb0055225cef84ccbc2c777b906bf2c6"
+ },
+ {
+  "bench": "Facebook-Lite",
+  "app": "Facebook+Lite",
+  "version": "513.0.0.6.105",
+  "path": "/Users/dbueno/apps/Facebook+Lite_513.0.0.6.105_APKPure.apk",
+  "size": 3369992,
+  "sha256": "bc6ba7d44422993bb173e211a193e33a0cdcd715c1caef6b149b77ab9ffbb974"
+ },
+ {
+  "bench": "Google-Chrome",
+  "app": "Google+Chrome",
+  "version": "149.0.7827.160",
+  "path": "/Users/dbueno/apps/Google+Chrome_149.0.7827.160_APKPure.xapk",
+  "size": 26574220,
+  "sha256": "9a505c4396d463616cf4607c7244306bddcc5d9f77be53cdf279b0309345599a"
+ },
+ {
+  "bench": "Messenger",
+  "app": "Messenger",
+  "version": "570.0.0.34.87",
+  "path": "/Users/dbueno/apps/Messenger_570.0.0.34.87_APKPure.apk",
+  "size": 85631370,
+  "sha256": "f76d059d19977ecad9f240231aef9dce881dde8306ba1ec9820ba343374235db"
+ },
+ {
+  "bench": "Telegram",
+  "app": "Telegram",
+  "version": "12.9.0",
+  "path": "/Users/dbueno/apps/Telegram_12.9.0_APKPure.xapk",
+  "size": 80308369,
+  "sha256": "1528c27312a0570e495a4a7a31c8ac9a8be459e70b1867706096f24b0aa6597e"
+ },
+ {
+  "bench": "TikTok-Videos-Shop-LIVE",
+  "app": "TikTok+-+Videos%2C+Shop+%26+LIVE",
+  "version": "46.1.3",
+  "path": "/Users/dbueno/apps/TikTok+-+Videos%2C+Shop+%26+LIVE_46.1.3_APKPure.xapk",
+  "size": 213347187,
+  "sha256": "69e208183a7753ec449fd803f34ae1c4d8895fda97d9c4467f6bcbd03c187d1f"
+ },
+ {
+  "bench": "TikTok-Lite-Save-Data-Fast",
+  "app": "TikTok+Lite+-+Save+Data+%26+Fast",
+  "version": "44.0.3",
+  "path": "/Users/dbueno/apps/TikTok+Lite+-+Save+Data+%26+Fast_44.0.3_APKPure.apk",
+  "size": 81441333,
+  "sha256": "39dadd2e893a23c4a8ff813db0368548561c18f1eba4e16075d7a8a280fbe7d3"
+ },
+ {
+  "bench": "VLC-for-Android",
+  "app": "VLC+for+Android",
+  "version": "3.7.0",
+  "path": "/Users/dbueno/apps/VLC+for+Android_3.7.0_APKPure.xapk",
+  "size": 106288998,
+  "sha256": "640d5091e1da211d149939c621ae6997d0ff2639dc9df6569cf4b256971a6e0c"
+ },
+ {
+  "bench": "WhatsApp-Business",
+  "app": "WhatsApp+Business",
+  "version": "2.26.21.75",
+  "path": "/Users/dbueno/apps/WhatsApp+Business_2.26.21.75_APKPure.xapk",
+  "size": 100615979,
+  "sha256": "a096559069278005c01b57a96d7d9ba7ac52a79d36d5e7395492066957e9e84f"
+ },
+ {
+  "bench": "WhatsApp-Messenger",
+  "app": "WhatsApp+Messenger",
+  "version": "2.26.27.85",
+  "path": "/Users/dbueno/apps/WhatsApp+Messenger_2.26.27.85_APKPure.xapk",
+  "size": 88265985,
+  "sha256": "28b5306e843f2bd4793f869c78d841a91acacdd87862288ce495ea1009daeef0"
+ }
+]

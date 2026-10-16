@@ -1,0 +1,407 @@
+[
+ {
+  "bench": "D-Link-878-bin-lighttpd",
+  "device": "D-Link DIR-878",
+  "category": "Web server",
+  "binary": "/bin/lighttpd",
+  "arch": "MIPS32",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/binwalk_extracted/DIR_878_FW120B05_decode.BIN.extracted/A0/decompressed.bin.extracted/8957DC/decompressed.bin.extracted/0/bin/lighttpd",
+  "sha256": "eba9462190252669c33ad78bff6be8d963c061c14102deac5a01311e375f8f83"
+ },
+ {
+  "bench": "D-Link-878-bin-web",
+  "device": "D-Link DIR-878",
+  "category": "Web server",
+  "binary": "/bin/web",
+  "arch": "MIPS32",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/binwalk_extracted/DIR_878_FW120B05_decode.BIN.extracted/A0/decompressed.bin.extracted/8957DC/decompressed.bin.extracted/0/bin/web",
+  "sha256": "f1b6014626204f6a148f1bb643bddfa36104576a26b4c1f1080a7f1098b649f6"
+ },
+ {
+  "bench": "D-Link-878-usr-sbin-goahead",
+  "device": "D-Link DIR-878",
+  "category": "Web server",
+  "binary": "/usr/sbin/goahead",
+  "arch": "MIPS32",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/binwalk_extracted/DIR_878_FW120B05_decode.BIN.extracted/A0/decompressed.bin.extracted/8957DC/decompressed.bin.extracted/0/usr/sbin/goahead",
+  "sha256": "33b7660e90ecf67c4d4d1bf26f35d5bc5fedcc2857c64c3853d858a77a1a18b9"
+ },
+ {
+  "bench": "D-Link-878-bin-prog-cgi",
+  "device": "D-Link DIR-878",
+  "category": "Web / CGI",
+  "binary": "/bin/prog.cgi",
+  "arch": "MIPS32",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/binwalk_extracted/DIR_878_FW120B05_decode.BIN.extracted/A0/decompressed.bin.extracted/8957DC/decompressed.bin.extracted/0/bin/prog.cgi",
+  "sha256": "e2bfcdec07a6ef5c5367180e2d8fe85dc6b6fbf28757b279272e9e7a5a48f880"
+ },
+ {
+  "bench": "D-Link-878-sbin-seama-cgi",
+  "device": "D-Link DIR-878",
+  "category": "Web / CGI",
+  "binary": "/sbin/seama.cgi",
+  "arch": "MIPS32",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/binwalk_extracted/DIR_878_FW120B05_decode.BIN.extracted/A0/decompressed.bin.extracted/8957DC/decompressed.bin.extracted/0/sbin/seama.cgi",
+  "sha256": "42214e094071c6ae72f23781cd7739da49491f4bfbc05a6024065583686daf36"
+ },
+ {
+  "bench": "D-Link-878-etc-ro-lighttpd-www-web-wireless-cgi",
+  "device": "D-Link DIR-878",
+  "category": "Web / CGI",
+  "binary": "/etc_ro/lighttpd/www/web/wireless.cgi",
+  "arch": "MIPS32",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/binwalk_extracted/DIR_878_FW120B05_decode.BIN.extracted/A0/decompressed.bin.extracted/8957DC/decompressed.bin.extracted/0/etc_ro/lighttpd/www/web/wireless.cgi",
+  "sha256": "36681a3c859bc8356d401e0c1455eaba7b01aa56a054549946f90f92aa5a60e2"
+ },
+ {
+  "bench": "D-Link-878-sbin-fwupload-cgi",
+  "device": "D-Link DIR-878",
+  "category": "Web / CGI",
+  "binary": "/sbin/fwupload.cgi",
+  "arch": "MIPS32",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/binwalk_extracted/DIR_878_FW120B05_decode.BIN.extracted/A0/decompressed.bin.extracted/8957DC/decompressed.bin.extracted/0/sbin/fwupload.cgi",
+  "sha256": "6f996275f4a9cf4a1d780fcf724fa125dc416ecc64f66ae5dddc2c00e7de9014"
+ },
+ {
+  "bench": "D-Link-878-etc-ro-lighttpd-www-web-HNAP1-dlcfg-cgi",
+  "device": "D-Link DIR-878",
+  "category": "Web / CGI",
+  "binary": "/etc_ro/lighttpd/www/web/HNAP1/dlcfg.cgi",
+  "arch": "MIPS32",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/binwalk_extracted/DIR_878_FW120B05_decode.BIN.extracted/A0/decompressed.bin.extracted/8957DC/decompressed.bin.extracted/0/etc_ro/lighttpd/www/web/HNAP1/dlcfg.cgi",
+  "sha256": "67643f17bca5205110b002fab532ffaff3f57bd76d5e83df710fde3f02075d88"
+ },
+ {
+  "bench": "D-Link-878-etc-ro-lighttpd-www-web-HNAP1-dllog-cgi",
+  "device": "D-Link DIR-878",
+  "category": "Web / CGI",
+  "binary": "/etc_ro/lighttpd/www/web/HNAP1/dllog.cgi",
+  "arch": "MIPS32",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/binwalk_extracted/DIR_878_FW120B05_decode.BIN.extracted/A0/decompressed.bin.extracted/8957DC/decompressed.bin.extracted/0/etc_ro/lighttpd/www/web/HNAP1/dllog.cgi",
+  "sha256": "fc0a534838ae4f27b217ff67b5315a20b7143bcdc9080ae5381d7189fe44497a"
+ },
+ {
+  "bench": "D-Link-878-etc-ro-lighttpd-www-web-HNAP1-dlquickvpnsettings-cgi",
+  "device": "D-Link DIR-878",
+  "category": "Web / CGI",
+  "binary": "/etc_ro/lighttpd/www/web/HNAP1/dlquickvpnsettings.cgi",
+  "arch": "MIPS32",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/binwalk_extracted/DIR_878_FW120B05_decode.BIN.extracted/A0/decompressed.bin.extracted/8957DC/decompressed.bin.extracted/0/etc_ro/lighttpd/www/web/HNAP1/dlquickvpnsettings.cgi",
+  "sha256": "1675052095a6c9d5ef1af484942a4cf958d4d2643b87f156118dae632d72a6e0"
+ },
+ {
+  "bench": "D-Link-878-bin-miniupnpd",
+  "device": "D-Link DIR-878",
+  "category": "UPnP / WPS",
+  "binary": "/bin/miniupnpd",
+  "arch": "MIPS32",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/binwalk_extracted/DIR_878_FW120B05_decode.BIN.extracted/A0/decompressed.bin.extracted/8957DC/decompressed.bin.extracted/0/bin/miniupnpd",
+  "sha256": "bc78911fecd1819ec590c65a657882eac33e803701aeaad99601e289ed14507a"
+ },
+ {
+  "bench": "R7000-usr-sbin-httpd",
+  "device": "NetGear R7000",
+  "category": "Web server",
+  "binary": "/usr/sbin/httpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/R7000/binwalk_extracted/R7000-V1.0.11.100_10.2.100.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/httpd",
+  "sha256": "8d1c6959ad1e809ac8c4bb86d6c17c4bf7da8d362302c1cf59fa348be7285e96"
+ },
+ {
+  "bench": "R7000-opt-rcagent-cgi-processor",
+  "device": "NetGear R7000",
+  "category": "Web / CGI",
+  "binary": "/opt/rcagent/cgi_processor",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/R7000/binwalk_extracted/R7000-V1.0.11.100_10.2.100.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/opt/rcagent/cgi_processor",
+  "sha256": "fcbe1e9736b44c3be88353edd8c06439d3f0f1d6fa94ecb9bad8a71b6dd8123d"
+ },
+ {
+  "bench": "R7000-opt-broken-readycloud-control-cgi",
+  "device": "NetGear R7000",
+  "category": "Web / CGI",
+  "binary": "/opt/broken/readycloud_control.cgi",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/R7000/binwalk_extracted/R7000-V1.0.11.100_10.2.100.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/opt/broken/readycloud_control.cgi",
+  "sha256": "6c335fdb4a95a0de8bf826ed1e7b50494b8507d04d6094419c9a9c58ddbe0229"
+ },
+ {
+  "bench": "R7000-opt-rcagent-cgi-rccommand-cgi",
+  "device": "NetGear R7000",
+  "category": "Web / CGI",
+  "binary": "/opt/rcagent/cgi/rccommand.cgi",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/R7000/binwalk_extracted/R7000-V1.0.11.100_10.2.100.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/opt/rcagent/cgi/rccommand.cgi",
+  "sha256": "54b4f8ed938df8dbea2b74906025ac37475db9a478e97e9d5e71963ea0489ea3"
+ },
+ {
+  "bench": "R7000-www-cgi-bin-genie-cgi",
+  "device": "NetGear R7000",
+  "category": "Web / CGI",
+  "binary": "/www/cgi-bin/genie.cgi",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/R7000/binwalk_extracted/R7000-V1.0.11.100_10.2.100.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/www/cgi-bin/genie.cgi",
+  "sha256": "c70dda8992726fda9d289cade9d3222f149b585221e83e8923c69ba7c9b50f27"
+ },
+ {
+  "bench": "R7000-usr-sbin-upnpd",
+  "device": "NetGear R7000",
+  "category": "UPnP / WPS",
+  "binary": "/usr/sbin/upnpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/R7000/binwalk_extracted/R7000-V1.0.11.100_10.2.100.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/upnpd",
+  "sha256": "ab5380bdfd59b4d8397ff205c8171d6abc2f7cb2d025f5350a3138d6d598d6d3"
+ },
+ {
+  "bench": "R7000-opt-bit-bitdefender-tar-extracted-0-bitdefender-patches-base-bin-bdupnp",
+  "device": "NetGear R7000",
+  "category": "UPnP / WPS",
+  "binary": "/opt/bit/bitdefender.tar.extracted/0/bitdefender/patches/base/bin/bdupnp",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/R7000/binwalk_extracted/R7000-V1.0.11.100_10.2.100.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/opt/bit/bitdefender.tar.extracted/0/bitdefender/patches/base/bin/bdupnp",
+  "sha256": "da74fd2531591342edb1053514589b307187390b60a0a9996aebb47e60589e64"
+ },
+ {
+  "bench": "R7000-usr-sbin-wpsd",
+  "device": "NetGear R7000",
+  "category": "UPnP / WPS",
+  "binary": "/usr/sbin/wpsd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/R7000/binwalk_extracted/R7000-V1.0.11.100_10.2.100.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/wpsd",
+  "sha256": "deee31eca121705c83edb0fab03c5b76724e46cc2ba87189f14d56cd9d60da07"
+ },
+ {
+  "bench": "R7000-usr-sbin-wlanconfigd",
+  "device": "NetGear R7000",
+  "category": "UPnP / WPS",
+  "binary": "/usr/sbin/wlanconfigd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/R7000/binwalk_extracted/R7000-V1.0.11.100_10.2.100.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/wlanconfigd",
+  "sha256": "7abb64d08f9ab231fb5929aed6996e914159adddac639325a72d02047bd3fe6f"
+ },
+ {
+  "bench": "RV6400-v2-usr-sbin-httpd",
+  "device": "NetGear R6400v2",
+  "category": "Web server",
+  "binary": "/usr/sbin/httpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/binwalk_extracted/R6400v2-V1.0.4.84_10.0.58.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/httpd",
+  "sha256": "97d9ea236985324eaf5eaa7a251fd7b92897714f83a6b277f3e17400cbf0dbc8"
+ },
+ {
+  "bench": "RV6400-v2-etc-dap-zip-extracted-0-dap-data-nginx",
+  "device": "NetGear R6400v2",
+  "category": "Web server",
+  "binary": "/etc/dap.zip.extracted/0/dap_data/nginx",
+  "arch": "ARM (static)",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/binwalk_extracted/R6400v2-V1.0.4.84_10.0.58.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/nginx",
+  "sha256": "9f28ad00e7aee13585304beb1194f0fa407bf0c9cebd625eb50fd51ac9ba2627"
+ },
+ {
+  "bench": "RV6400-v2-opt-rcagent-cgi-processor",
+  "device": "NetGear R6400v2",
+  "category": "Web / CGI",
+  "binary": "/opt/rcagent/cgi_processor",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/binwalk_extracted/R6400v2-V1.0.4.84_10.0.58.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/opt/rcagent/cgi_processor",
+  "sha256": "49013997d249a8c9d95a1e3cafa17c16b2cdd4c2230c5ec68bc54586ef0692e9"
+ },
+ {
+  "bench": "RV6400-v2-opt-broken-readycloud-control-cgi",
+  "device": "NetGear R6400v2",
+  "category": "Web / CGI",
+  "binary": "/opt/broken/readycloud_control.cgi",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/binwalk_extracted/R6400v2-V1.0.4.84_10.0.58.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/opt/broken/readycloud_control.cgi",
+  "sha256": "f0a7aa75268d51632467b6d04a5b97ecda10cd6ec54cef9920f2bb9a101eeacb"
+ },
+ {
+  "bench": "RV6400-v2-opt-rcagent-cgi-rccommand-cgi",
+  "device": "NetGear R6400v2",
+  "category": "Web / CGI",
+  "binary": "/opt/rcagent/cgi/rccommand.cgi",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/binwalk_extracted/R6400v2-V1.0.4.84_10.0.58.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/opt/rcagent/cgi/rccommand.cgi",
+  "sha256": "bf0d178abc7cd67954189a53c064765b896567d56b6283b341ab65ce8de880b9"
+ },
+ {
+  "bench": "RV6400-v2-www-cgi-bin-genie-cgi",
+  "device": "NetGear R6400v2",
+  "category": "Web / CGI",
+  "binary": "/www/cgi-bin/genie.cgi",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/binwalk_extracted/R6400v2-V1.0.4.84_10.0.58.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/www/cgi-bin/genie.cgi",
+  "sha256": "35e124daf0d5bf0dd0c435de7d2e9243d89bdc1a880e4aa91051cde76ebbf02b"
+ },
+ {
+  "bench": "RV6400-v2-usr-sbin-upnpd",
+  "device": "NetGear R6400v2",
+  "category": "UPnP / WPS",
+  "binary": "/usr/sbin/upnpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/binwalk_extracted/R6400v2-V1.0.4.84_10.0.58.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/upnpd",
+  "sha256": "918cef2326c6e045f79fb76d77f8aabd0b1b0dc346910400448c39f6d06a4985"
+ },
+ {
+  "bench": "RV6400-v2-usr-sbin-wpsd",
+  "device": "NetGear R6400v2",
+  "category": "UPnP / WPS",
+  "binary": "/usr/sbin/wpsd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/binwalk_extracted/R6400v2-V1.0.4.84_10.0.58.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/wpsd",
+  "sha256": "cc9e89ea586ac751c41e77fb07acc6e74fd7f63656c0fea17c5bc25e12b24a4c"
+ },
+ {
+  "bench": "RV6400-v2-usr-sbin-wlanconfigd",
+  "device": "NetGear R6400v2",
+  "category": "UPnP / WPS",
+  "binary": "/usr/sbin/wlanconfigd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/binwalk_extracted/R6400v2-V1.0.4.84_10.0.58.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/wlanconfigd",
+  "sha256": "bbae77d33d55d90051ccefb1a8e39e30279534725a93daf833b1b8d95a9a4d41"
+ },
+ {
+  "bench": "XR300-usr-sbin-httpd",
+  "device": "NetGear XR300",
+  "category": "Web server",
+  "binary": "/usr/sbin/httpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/httpd",
+  "sha256": "87633dda2c271bc1a7c9c8091777132714fbfc8e3895422784a48c4894acdb9e"
+ },
+ {
+  "bench": "XR300-etc-dap-zip-extracted-0-dap-data-nginx",
+  "device": "NetGear XR300",
+  "category": "Web server",
+  "binary": "/etc/dap.zip.extracted/0/dap_data/nginx",
+  "arch": "ARM (static)",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/nginx",
+  "sha256": "2fabad0961f643e8ae255f011aa1215919afc85ff11d5d2c8271f2996f4192eb"
+ },
+ {
+  "bench": "XR300-usr-funjsq-plugin-netgear-tar-gz-extracted-0-decompressed-bin-extracted-0-tmp-funjsq-bin-funjsq-httpd",
+  "device": "NetGear XR300",
+  "category": "Web server",
+  "binary": "/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_httpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_httpd",
+  "sha256": "f9246e98dd9b0ac57e79459f88aae7b8933a956b93b1e7015a82067e2590e10e"
+ },
+ {
+  "bench": "XR300-www-cgi-bin-genie-cgi",
+  "device": "NetGear XR300",
+  "category": "Web / CGI",
+  "binary": "/www/cgi-bin/genie.cgi",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/www/cgi-bin/genie.cgi",
+  "sha256": "38a87ef958704c44b1d41bc11df1bfb512aa3b0cf59d4a2b8d61f54275fa3f3f"
+ },
+ {
+  "bench": "XR300-usr-sbin-upnpd",
+  "device": "NetGear XR300",
+  "category": "UPnP / WPS",
+  "binary": "/usr/sbin/upnpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/upnpd",
+  "sha256": "81039fdf166cf46fddf9fc8420913bee75a8ffaa940564909fee4740f9ae1f35"
+ },
+ {
+  "bench": "XR300-usr-sbin-wpsd",
+  "device": "NetGear XR300",
+  "category": "UPnP / WPS",
+  "binary": "/usr/sbin/wpsd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/wpsd",
+  "sha256": "bba17c18b1bfc7a9918c3a42205faac6c3f8227ccfa28c367d35a571e26ed989"
+ },
+ {
+  "bench": "XR300-usr-sbin-wlanconfigd",
+  "device": "NetGear XR300",
+  "category": "UPnP / WPS",
+  "binary": "/usr/sbin/wlanconfigd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/sbin/wlanconfigd",
+  "sha256": "f193c76480dfa17b7304c0a0ebf8e5ae8b60b1dfe47a2b1976b9a83619ec9613"
+ },
+ {
+  "bench": "AC15-bin-httpd",
+  "device": "Tenda AC15",
+  "category": "Web server",
+  "binary": "/bin/httpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/Tenda/AC15/binwalk_extracted/US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/0/\u0002.bin.extracted/0/partition_1.bin.extracted/0/squashfs-root/bin/httpd",
+  "sha256": "e9d1b92527c57f24d141fa10a7377237de66a9c4f9c1b83223adfa8f1f1db11d"
+ },
+ {
+  "bench": "AC15-usr-bin-nginx",
+  "device": "Tenda AC15",
+  "category": "Web server",
+  "binary": "/usr/bin/nginx",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/Tenda/AC15/binwalk_extracted/US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/0/\u0002.bin.extracted/0/partition_1.bin.extracted/0/squashfs-root/usr/bin/nginx",
+  "sha256": "f3916d8f8f73858b2967059fc440615e8e02b34178ffa2caf77cc488851a7ad9"
+ },
+ {
+  "bench": "AC15-bin-dhttpd",
+  "device": "Tenda AC15",
+  "category": "Web server",
+  "binary": "/bin/dhttpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/Tenda/AC15/binwalk_extracted/US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/0/\u0002.bin.extracted/0/partition_1.bin.extracted/0/squashfs-root/bin/dhttpd",
+  "sha256": "9fffd66d6f5f6d2a268d1b5cdc1f7995ba4b1aa5b3c654d994728a8d3b01ccf1"
+ },
+ {
+  "bench": "AC15-bin-miniupnpd",
+  "device": "Tenda AC15",
+  "category": "UPnP / WPS",
+  "binary": "/bin/miniupnpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/Tenda/AC15/binwalk_extracted/US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/0/\u0002.bin.extracted/0/partition_1.bin.extracted/0/squashfs-root/bin/miniupnpd",
+  "sha256": "6e7c82ee60946601e00c1972314ff2d4a9f8dcbd20e2bc78689e7d05d43a854a"
+ },
+ {
+  "bench": "AC18-bin-httpd",
+  "device": "Tenda AC18",
+  "category": "Web server",
+  "binary": "/bin/httpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/Tenda/AC18/binwalk_extracted/ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/0/\u0002.bin.extracted/0/partition_1.bin.extracted/0/squashfs-root/bin/httpd",
+  "sha256": "addecb1e2d5e7befe200b75d925c52d84f3d60db5f18c1071136648e0f70d388"
+ },
+ {
+  "bench": "AC18-usr-bin-nginx",
+  "device": "Tenda AC18",
+  "category": "Web server",
+  "binary": "/usr/bin/nginx",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/Tenda/AC18/binwalk_extracted/ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/0/\u0002.bin.extracted/0/partition_1.bin.extracted/0/squashfs-root/usr/bin/nginx",
+  "sha256": "b20e74ba545f3b02709a5e05949d6a109e14184f18400513aeed11506ba0b0ef"
+ },
+ {
+  "bench": "AC18-bin-dhttpd",
+  "device": "Tenda AC18",
+  "category": "Web server",
+  "binary": "/bin/dhttpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/Tenda/AC18/binwalk_extracted/ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/0/\u0002.bin.extracted/0/partition_1.bin.extracted/0/squashfs-root/bin/dhttpd",
+  "sha256": "faae1a49f57a5b2f8caf0bdca074f3cb11bafa141f8fa70615be0d5c0d8a177f"
+ },
+ {
+  "bench": "W20E-bin-httpd",
+  "device": "Tenda W20E",
+  "category": "Web server",
+  "binary": "/bin/httpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/Tenda/W20E/binwalk_extracted/US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/0/\u0002.bin.extracted/0/partition_1.bin.extracted/0/squashfs-root/bin/httpd",
+  "sha256": "47f619b0b85b5c7804c6116e59d5d66d6b0f8975cd03e94ae2f3e5610c257c28"
+ },
+ {
+  "bench": "W20E-bin-miniupnpd",
+  "device": "Tenda W20E",
+  "category": "UPnP / WPS",
+  "binary": "/bin/miniupnpd",
+  "arch": "ARM",
+  "path": "/Volumes/Shampoo/datasets/operation-mango-public/firmware/7_firmware/Tenda/W20E/binwalk_extracted/US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/0/\u0002.bin.extracted/0/partition_1.bin.extracted/0/squashfs-root/bin/miniupnpd",
+  "sha256": "890b2bba26fa4c024fa577ee886e5e079b3dfec09c1cda345ee6dee6d5d7bff4"
+ }
+]

@@ -1,0 +1,74 @@
+[
+ {
+  "bench": "chat-schildi-android",
+  "app": "chat.schildi.android",
+  "version": "12104",
+  "path": "/Users/dbueno/apps/fdroid/chat.schildi.android_12104.apk",
+  "size": 160953956,
+  "sha256": "921dfb3c7f90e6189c033fa1a46d1b0543cc87c316105e5df3ba4ecd17a4de07"
+ },
+ {
+  "bench": "com-duckduckgo-mobile-android",
+  "app": "com.duckduckgo.mobile.android",
+  "version": "52921000",
+  "path": "/Users/dbueno/apps/fdroid/com.duckduckgo.mobile.android_52921000.apk",
+  "size": 176062923,
+  "sha256": "126f79deacb7a7b087e3d085d971fb04e958afc1918a5838831f8f00f42694b8"
+ },
+ {
+  "bench": "com-nextcloud-client",
+  "app": "com.nextcloud.client",
+  "version": "350000051",
+  "path": "/Users/dbueno/apps/fdroid/com.nextcloud.client_350000051.apk",
+  "size": 95314568,
+  "sha256": "ccc70b2534201eb7d60f44dd50ea4abbc1c3721b6046d9a89842cf9505709ac9"
+ },
+ {
+  "bench": "com-nextcloud-talk2",
+  "app": "com.nextcloud.talk2",
+  "version": "240000094",
+  "path": "/Users/dbueno/apps/fdroid/com.nextcloud.talk2_240000094.apk",
+  "size": 164401004,
+  "sha256": "d4a855e40936ef4554e55b49e9e32075b9a52a87e0116529a286d8f73dee5f09"
+ },
+ {
+  "bench": "de-danoeh-antennapod",
+  "app": "de.danoeh.antennapod",
+  "version": "3120195",
+  "path": "/Users/dbueno/apps/fdroid/de.danoeh.antennapod_3120195.apk",
+  "size": 17733444,
+  "sha256": "11b38c20b555b445a301c12028ccb912af24dce1d8b85532658b797b85d52638"
+ },
+ {
+  "bench": "net-osmand-plus",
+  "app": "net.osmand.plus",
+  "version": "531003",
+  "path": "/Users/dbueno/apps/fdroid/net.osmand.plus_531003.apk",
+  "size": 162183115,
+  "sha256": "27f1eb82d288a9939b7c0bdd0fb94f78749824ffc753d32d421e01cbe487e5e0"
+ },
+ {
+  "bench": "network-loki-messenger-fdroid",
+  "app": "network.loki.messenger.fdroid",
+  "version": "4535",
+  "path": "/Users/dbueno/apps/fdroid/network.loki.messenger.fdroid_4535.apk",
+  "size": 176659288,
+  "sha256": "a8b20e4e4bc5a479ab14e362cd89d72a9c026b8f4794a6f52a1bbded2c71e8a7"
+ },
+ {
+  "bench": "org-schabi-newpipe",
+  "app": "org.schabi.newpipe",
+  "version": "1015",
+  "path": "/Users/dbueno/apps/fdroid/org.schabi.newpipe_1015_cb84069.apk",
+  "size": 11507122,
+  "sha256": "18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79"
+ },
+ {
+  "bench": "org-wikipedia",
+  "app": "org.wikipedia",
+  "version": "50603",
+  "path": "/Users/dbueno/apps/fdroid/org.wikipedia_50603.apk",
+  "size": 92582196,
+  "sha256": "ef2956466ea71acd7396b5fd7b97e4b09eae03c8f33f8c5c372b47bbaac33dc4"
+ }
+]
