@@ -27,6 +27,7 @@
 //
 //   case <name> <class> op=<opcode> index=<i> h=<height before>
 //   place <place> changed=<0|1> influence=<slot>,...
+//   wide <p>               stack slots p and p+1 after hold one long or double
 //   error <what went wrong>
 //   end
 //
@@ -860,6 +861,7 @@ public class JvmOpcodes implements Opcodes {
             out.println("place " + place + " changed=" + (changed ? 1 : 0) + " influence="
                     + String.join(",", influence.getOrDefault(place, new TreeSet<>())));
         }
+        for (int p : base.wide) out.println("wide " + p);
         out.println("end");
     }
 

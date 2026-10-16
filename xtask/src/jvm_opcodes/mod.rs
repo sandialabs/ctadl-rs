@@ -104,6 +104,8 @@ struct Observed {
     height: usize,
     /// Place -> (written by the baseline run, input slots that changed it).
     places: BTreeMap<String, (bool, BTreeSet<String>)>,
+    /// Stack slots `p` such that `out<p>` and `out<p+1>` hold one long or double.
+    wide: BTreeSet<usize>,
     errors: Vec<String>,
 }
 
@@ -239,6 +241,12 @@ fn parse_results(text: &str) -> Result<Vec<Observed>> {
                     .collect();
                 c.places.insert(place, (changed, influence));
             }
+            Some("wide") => {
+                let c = cur
+                    .as_mut()
+                    .with_context(|| format!("{line} outside a case"))?;
+                c.wide.insert(words.next().context("wide slot")?.parse()?);
+            }
             Some("error") => {
                 let c = cur
                     .as_mut()
@@ -352,6 +360,24 @@ fn judge(
             None => place.clone(),
         };
         claimed.entry(place).or_default().extend(slots);
+    }
+    // The harness observes a long or double as one value, giving both halves
+    // what either half shows, so jvm-reader's halves are judged as one value
+    // too. `dup2` of a long copies it half by half, which `jvm:asm-flow`
+    // checks at the slot level.
+    for p in &case.wide {
+        let (lo, hi) = (format!("out{p}"), format!("out{}", p + 1));
+        let both: BTreeSet<String> = [&lo, &hi]
+            .iter()
+            .filter_map(|place| claimed.get(*place))
+            .flatten()
+            .cloned()
+            .collect();
+        for place in [lo, hi] {
+            if let Some(sources) = claimed.get_mut(&place) {
+                sources.clone_from(&both);
+            }
+        }
     }
 
     let empty = (false, BTreeSet::new());
