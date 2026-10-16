@@ -532,6 +532,9 @@ class Daemon:
         stopping: list[int] = []
         signal.signal(signal.SIGTERM, lambda *_: stopping.append(1))
         signal.signal(signal.SIGINT, lambda *_: stopping.append(1))
+        # tmux and ssh hang up rather than terminate; children run in their own sessions and
+        # would outlive us, so a hangup shuts down the same way.
+        signal.signal(signal.SIGHUP, lambda *_: stopping.append(1))
         while not stopping:
             try:
                 snap, user_here, p_ok = self.observe()
