@@ -250,8 +250,14 @@ pub fn run(opts: &Options) -> Result<bool> {
     // Assemble every independent unit of work, in report order. The pool below
     // preserves that order regardless of which worker finishes first.
     let mut tasks: Vec<Task<'_>> = cases.iter().map(Task::Case).collect();
+    // The nightly Java cases double as jvm-reader inputs: `jvm:asm-flow`
+    // compiles them as the JVM cases do and checks every instruction.
+    let java_cases = tests_dir.join("java");
     if let Some(samples) = samples_dir.as_deref().filter(|_| wants_jvm) {
-        tasks.push(Task::JvmChecks { samples });
+        tasks.push(Task::JvmChecks {
+            samples,
+            cases: Some(java_cases.as_path()).filter(|dir| dir.is_dir()),
+        });
     }
     if let Some(samples) = samples_dir.as_deref().filter(|_| wants_dex) {
         tasks.push(Task::DexChecks {
@@ -335,6 +341,7 @@ enum Task<'a> {
     Case(&'a TestCase),
     JvmChecks {
         samples: &'a Path,
+        cases: Option<&'a Path>,
     },
     DexChecks {
         samples: &'a Path,
@@ -371,12 +378,12 @@ impl Task<'_> {
                     apply_xfail_allowlists(&case.name, outcome),
                 )]
             }
-            Task::JvmChecks { samples } => {
+            Task::JvmChecks { samples, cases } => {
                 // jvm-reader checks: compile the sample .java and exercise
                 // jvm-reader on the resulting .class files and a jar built from
                 // them.
                 let results = scratch_dir("jvm")
-                    .and_then(|work| jvm::run_checks(samples, &work))
+                    .and_then(|work| jvm::run_checks(samples, *cases, &work))
                     .unwrap_or_else(|err| {
                         vec![("jvm".to_string(), Outcome::Fail(format!("{err:#}")))]
                     });

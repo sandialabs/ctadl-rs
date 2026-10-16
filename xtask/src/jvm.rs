@@ -22,8 +22,8 @@ use jvm_reader::{
     ClassFileError, ClassFileParser, InstructionKind, JarFileParser, Location, MethodInfo,
 };
 
-use crate::exec;
 use crate::regression::Outcome;
+use crate::{asm_flow, exec};
 
 /// A compiled sample program.
 struct Sample {
@@ -37,7 +37,14 @@ struct Sample {
 /// Compile every sample and run all jvm-reader checks. Returns named
 /// (case, outcome) pairs to fold into the regression report. If the JDK tools
 /// are missing, returns a single Skip (mirrors the pcode Darwin skip).
-pub fn run_checks(samples_dir: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
+///
+/// `cases` is the nightly Java case directory, whose programs `jvm:asm-flow`
+/// checks as well.
+pub fn run_checks(
+    samples_dir: &Path,
+    cases: Option<&Path>,
+    work: &Path,
+) -> Result<Vec<(String, Outcome)>> {
     for tool in ["javac", "jar", "javap"] {
         if exec::which(tool).is_none() {
             return Ok(vec![(
@@ -66,10 +73,80 @@ pub fn run_checks(samples_dir: &Path, work: &Path) -> Result<Vec<(String, Outcom
         ("jvm:utf8-constants", check_utf8_constants),
     ];
 
-    Ok(checks
+    let mut results: Vec<(String, Outcome)> = checks
         .into_iter()
         .map(|(name, run)| (name.to_string(), to_outcome(run(&samples))))
-        .collect())
+        .collect();
+    let asm_flow = match asm_flow::find_classpath() {
+        Some(cp) => to_outcome(check_asm_flow(&cp, &samples, cases, work)),
+        None => Outcome::Skip("no ASM: set ASM_CLASSPATH or put `asm-classpath` on PATH".into()),
+    };
+    results.push(("jvm:asm-flow".to_string(), asm_flow));
+    Ok(results)
+}
+
+/// jvm-reader's dataflow agrees with ASM's on every instruction of the
+/// all-opcodes class (which must hold every opcode), the samples, and the
+/// nightly Java cases. See [`asm_flow`].
+fn check_asm_flow(cp: &str, samples: &[Sample], cases: Option<&Path>, work: &Path) -> Result<()> {
+    let work = work.join("asm-flow");
+    let fixture = asm_flow::build_all_opcodes(cp, &work.join("all-opcodes"))?;
+    let missing = asm_flow::missing_opcodes(std::slice::from_ref(&fixture))?;
+    if !missing.is_empty() {
+        bail!("AllOpcodes.java lacks opcodes: {}", missing.join(", "));
+    }
+
+    let mut inputs = vec![("all-opcodes", vec![fixture])];
+    inputs.push((
+        "samples",
+        samples.iter().flat_map(|s| s.classes.clone()).collect(),
+    ));
+    if let Some(cases) = cases {
+        // As the JVM taint cases compile them.
+        let class_dir = work.join("cases-classes");
+        exec::fresh_dir(&class_dir)?;
+        let mut sources: Vec<PathBuf> = std::fs::read_dir(cases)
+            .with_context(|| format!("reading {}", cases.display()))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("java"))
+            .collect();
+        sources.sort();
+        let mut javac = Command::new("javac");
+        javac
+            .args(["--release", "8", "-encoding", "UTF-8", "-d"])
+            .arg(&class_dir)
+            .args(&sources);
+        exec::run_checked(javac, "javac")?;
+        let mut classes = Vec::new();
+        collect_class_files(&class_dir, &mut classes)?;
+        classes.sort();
+        inputs.push(("cases", classes));
+    }
+
+    let mut problems = Vec::new();
+    for (label, classes) in &inputs {
+        match asm_flow::compare(cp, label, classes, &work.join(label)) {
+            Ok(report) if *label == "all-opcodes" => {
+                // Every known disagreement is on an opcode the fixture holds,
+                // so one it no longer trips has been fixed.
+                let (_, undecodable) = asm_flow::KNOWN_UNDECODABLE;
+                let reasons = asm_flow::KNOWN.iter().map(|(_, why)| *why);
+                for reason in reasons.chain([undecodable]) {
+                    if !report.known.contains_key(reason) {
+                        problems.push(format!(
+                            "known disagreement no longer seen, remove it from asm_flow::KNOWN: {reason}"
+                        ));
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(err) => problems.push(format!("{err:#}")),
+        }
+    }
+    if !problems.is_empty() {
+        bail!("{}", problems.join("\n"));
+    }
+    Ok(())
 }
 
 fn to_outcome(result: Result<()>) -> Outcome {

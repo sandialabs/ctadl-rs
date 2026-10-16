@@ -15,6 +15,7 @@
 
 mod android_icc;
 mod apk;
+mod asm_flow;
 mod assertions;
 mod baksmali;
 mod dex;
