@@ -12,7 +12,7 @@ on — a per-instruction dataflow view — so that is where this plan starts.
 
 ## Status (2026-10-16)
 
-M0–M5b are done. M1–M3 have detailed designs in their own documents, which say
+M0–M6 are done. M1–M3 have detailed designs in their own documents, which say
 what was built; this plan is the only written record of M6–M7, so keep it until
 those land.
 
@@ -25,7 +25,7 @@ those land.
 | M4 | Engine plumbing (`Cil` VMT, `CilCall`, dispatch key) | **Done**, as §5 lists, plus `pinvokes` and a fix the CIL checks found: the index now summarizes every return slot, so exceptions reach callers (Dex and JVM too). |
 | M5 | Regression harness | **Done.** `cil:frontend` (corpus sweep and IR goldens), `cil:taint` (summaries against .NET runs) and the `Cil:*` taint cases in `nightly/tests/cil`, which compile C# with `dotnet build` and run import → index → query. A case is judged by the sink functions its flows end in and by the source lines they reach. |
 | M5b | Portable-PDB sequence points | **Done**, as §6 says: `cil_reader::model::pdb`, checked against Cecil by `cil:symbols`, and source spans in the frontend (`lines.rs`). |
-| M6 | `cil-index.jsonl` default models | **Not started** |
+| M6 | `cil-index.jsonl` default models | **Done**, as §7 says: propagation models, checked against .NET by `cil:models`. |
 | M7 | P/Invoke bridge, Xamarin | **Not started** (optional) |
 
 ---
@@ -465,8 +465,8 @@ source, which would need the formatter to read a file that is not on disk.
 
 ## 7. Milestone M6 — default models (`defaults/cil-index.jsonl`)
 
-> **Status: not started.** `ctadl-ascent/src/models/defaults/` holds only the
-> Java, Lua and native model files.
+> **Status: done**, differently from the list below in two places; what was built
+> follows it.
 
 Not polish. The Java defaults are 55 generators, and without the .NET equivalent
 every BCL call is an opaque barrier that taint does not cross. Minimum viable set:
@@ -486,6 +486,50 @@ every BCL call is an opaque barrier that taint does not cross. Minimum viable se
   `BinaryFormatter::Deserialize`.
 - **`modes: ["skip-analysis"]`** for anything huge and uninteresting that would
   otherwise multiply hybrid-inlining resolvents.
+
+**As built.** `ctadl-ascent/src/models/defaults/cil-index.jsonl`, which
+`models::default_model_file` selects for `VirtualMethodTable::Cil`. Its header says
+how classes are spelled and what each port segment means. It covers the propagation
+list above and adds string interpolation, primitive parsing and formatting,
+`BitConverter`, URIs and web encodings, the generic, non-generic and concurrent
+collections with their interfaces and struct enumerators, `KeyValuePair`, arrays,
+spans and memories, readers, writers and streams, regular expressions, JSON
+documents, tasks and awaiters, `Nullable` and tuples.
+
+- **No sinks.** The default files are propagation only, by design and by test
+  (`no_shipped_default_declares_an_endpoint`): `ctadl index` loads them and
+  discards endpoints, and `ctadl query` does not load them. The sink list above
+  belongs in a user's query models.
+- **No `skip-analysis`.** The framework's bodies are not imported unless
+  `--include-framework` asks for them, so there is nothing to skip.
+- **Struct receivers and `out` parameters** are reached through `.deref`, because
+  the frontend passes a pointer (translation §6.3): `int.ToString()` reads
+  `Argument(0).deref`, a `foreach` over a `List<T>` reads its enumerator's
+  `Argument(0).deref.\[]`, and `TryGetValue` writes `Argument(2).deref`.
+
+`cil:models` (`xtask/src/cil/models.rs`, in `regression --frontend cil` and as
+`cargo xtask cil models`) checks the file against .NET. `model-run`
+(`frontends/ctadl-cil/tools/ModelRun`) lists every public method of the classes
+the file names, spelled as the frontend spells them. The loader matches the file
+against that list, so each overload a generator selects is checked through the
+ports it actually decodes to. `model-run` then calls each one 32 times with marker
+strings in its arguments, and reports every marker found in an output it was not
+in before the call. Such a flow must be covered by a modeled pair, with the
+`cil:taint` suffix rule, or be accepted in `xtask/cil-models-known.json5`. A class
+that has moved assembly, and a generator that selects nothing, fail too. A modeled
+pair that no run confirms is listed, not failed. At the time of writing it selects
+1,996 methods and calls 1,579 of them; the rest take a ref struct (a span), a
+pointer, or arguments the runner cannot build. The `Cil:library` case runs the
+call shapes C# compiles to (interpolation, `foreach` over struct enumerators, `out`
+parameters, interface calls, tuples) through import, index and query; none of its
+flows is found with `--no-default-models`.
+
+Not covered: a chained writer whose result is dropped, followed by a read of the
+receiver (`sb.Append(a).Append(b); sb.ToString()`), because no propagation model
+can say that a method returns its own receiver; the Java models have the same gap.
+An `async` method's body is not reached from its caller, because the builder's
+`Start` runs the state machine inside the library. Delegates (`Delegate.Combine`,
+`DynamicInvoke`) are not modeled.
 
 ---
 
@@ -528,7 +572,7 @@ every BCL call is an opaque barrier that taint does not cross. Minimum viable se
 | M4 | Engine plumbing (`Cil` VMT / CallStyle / dispatch key) | 1–2 d | — (parallel with M1–M3) | Done |
 | M5 | xtask regression harness | 2–3 d | M3, M4 | Done |
 | M5b | Portable-PDB sequence points → source lines | 2–3 d | M5 | Done |
-| M6 | `cil-index.jsonl` default models | 2–3 d | M5 | Not started |
+| M6 | `cil-index.jsonl` default models | 2–3 d | M5 | Done |
 | M7 | P/Invoke bridge, Xamarin | optional | M6 | Not started |
 
 Roughly **3–4 weeks** to a frontend at parity with the JVM one, plus the optional
