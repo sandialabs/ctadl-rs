@@ -96,7 +96,8 @@ class Daemon:
             # Pin any thread pool a phase might start, so instruction counts do not depend on
             # how many cores the tier gave it. ctadl index is serial by default.
             "RAYON_NUM_THREADS": "4",
-            # nix in the dev shell needs the user's nix config and the daemon socket only.
+            # HOME moved, so point nix at the user's own config (flakes are enabled there).
+            "NIX_USER_CONF_FILES": str(Path.home() / ".config" / "nix" / "nix.conf"),
             "NIX_REMOTE": "daemon",
         }
 

@@ -25,7 +25,7 @@ night_end_hour = 7
 # so a busy week still gets every unit measured.
 max_activity_kills = 3
 dev_processes = [
-  "cargo", "rustc", "rust-analyzer", "ld", "ld64", "clang", "cc", "gcc", "make", "ninja",
+  "cargo", "rustc", "ld", "ld64", "clang", "cc", "gcc", "make", "ninja",
   "java", "gradle", "ctadl", "souffle", "nix", "nix-daemon", "nix-build", "python3", "node",
   "xcodebuild", "swift", "swiftc", "go",
 ]
