@@ -1,4 +1,8 @@
 {
   expected_sinks: ["Sink1", "Sink2", "Sink3", "Sink4", "Sink5"],
   unexpected_sinks: ["Clean1"],
+  // Each scenario's source and sink lines.
+  expected_lines: [35, 40, 42, 48, 54, 55, 62, 64],
+  // The clean sinks' lines.
+  unexpected_lines: [70],
 }

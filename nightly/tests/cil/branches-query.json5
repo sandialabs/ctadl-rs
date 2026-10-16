@@ -2,4 +2,8 @@
   expected_sinks: ["Sink1", "Sink2", "Sink3"],
   // Implicit flow is not tracked by design.
   unexpected_sinks: ["Clean1"],
+  // Each scenario's source and sink lines.
+  expected_lines: [18, 20, 25, 31],
+  // The clean sinks' lines.
+  unexpected_lines: [39],
 }

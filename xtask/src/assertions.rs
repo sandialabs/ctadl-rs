@@ -218,8 +218,8 @@ pub fn codeflow_connects_source_and_sink(sarif: &Path) -> Result<bool> {
 
 /// The functions whose sinks a connected code flow ends in: for every thread flow that
 /// has a source step, the function the last sink step names
-/// (`sink call-arg(22, 0) in <function>`). The CIL cases judge reachability by these,
-/// since a CIL import has no source lines yet.
+/// (`sink call-arg(22, 0) in <function>`). The CIL cases judge reachability by these as
+/// well as by lines, which keeps a file's scenarios apart where their lines would not.
 pub fn collect_codeflow_sink_functions(sarif: &Path) -> Result<BTreeSet<String>> {
     let value = read_json(sarif)?;
     let mut found = BTreeSet::new();

@@ -1,17 +1,19 @@
 //! The CIL taint cases: `nightly/tests/cil/<name>.cs`, or a directory `<name>/` of `.cs` files
 //! that are separate assemblies, each paired with `<name>-query.json5`.
 //!
-//! A case is compiled with `dotnet build` (Release, like the exec fixtures), imported with
-//! `ctadl import -l cil` (the output directory, for a multi-assembly case), indexed and
-//! queried. The query model is generated from the config: `Source()` and `SourceInt()` return
+//! A case is compiled with `dotnet build` (Release, like the exec fixtures, with a portable PDB
+//! beside each assembly), imported with `ctadl import -l cil` (the output directory, for a
+//! multi-assembly case), indexed and queried. The query model is generated from the config: `Source()` and `SourceInt()` return
 //! a source, and each function the config names among `expected_sinks` and
 //! `unexpected_sinks` sinks its argument 0. A config may give its own `model_generators` too,
 //! which are added.
 //!
-//! A CIL import has no source lines yet (cil-reader reads no PDB), so a case is judged by the
-//! sinks its code flows end in: every simple name in `expected_sinks` must be the sink of a
-//! code flow that starts at a source, and no name in `unexpected_sinks` may be. Giving each
-//! scenario of a file its own sink function keeps the scenarios apart.
+//! A case is judged twice. By the sinks its code flows end in: every simple name in
+//! `expected_sinks` must be the sink of a code flow that starts at a source, and no name in
+//! `unexpected_sinks` may be; giving each scenario of a file its own sink function keeps the
+//! scenarios apart. And by source lines, as a Lua case is: every line in `expected_lines` must
+//! be a code-flow step's `startLine`, and none in `unexpected_lines` may be. The PDB gives the
+//! steps their lines; in a multi-assembly case the lines of all its files are one set.
 //!
 //! In a multi-assembly case the files are built in name order, each referencing the ones
 //! built before it, and the assembly is named after the file stem.
@@ -30,6 +32,8 @@ use crate::regression::Outcome;
 pub struct Config {
     pub expected_sinks: Vec<String>,
     pub unexpected_sinks: Vec<String>,
+    pub expected_lines: Vec<i64>,
+    pub unexpected_lines: Vec<i64>,
     pub extra_models: Vec<Value>,
 }
 
@@ -51,6 +55,8 @@ pub fn read_config(path: &Path) -> Result<Config> {
     Ok(Config {
         expected_sinks: names("expected_sinks"),
         unexpected_sinks: names("unexpected_sinks"),
+        expected_lines: crate::assertions::read_expected_lines(path)?,
+        unexpected_lines: crate::assertions::read_unexpected_lines(path)?,
         extra_models: value
             .get("model_generators")
             .and_then(Value::as_array)
@@ -130,7 +136,7 @@ pub fn compile(dotnet: &Path, source: &Path, work: &Path, out: &Path) -> Result<
     <AssemblyName>{stem}</AssemblyName>
     <Optimize>true</Optimize>
     <Deterministic>true</Deterministic>
-    <DebugType>none</DebugType>
+    <DebugType>portable</DebugType>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <Nullable>disable</Nullable>
@@ -155,9 +161,11 @@ pub fn compile(dotnet: &Path, source: &Path, work: &Path, out: &Path) -> Result<
             .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
             .env("DOTNET_SKIP_FIRST_TIME_EXPERIENCE", "1");
         exec::run_checked(cmd, "dotnet build")?;
-        let dll = bin.join(format!("{stem}.dll"));
-        std::fs::copy(&dll, out.join(format!("{stem}.dll")))
-            .with_context(|| format!("copying {}", dll.display()))?;
+        for ext in ["dll", "pdb"] {
+            let file = bin.join(format!("{stem}.{ext}"));
+            std::fs::copy(&file, out.join(format!("{stem}.{ext}")))
+                .with_context(|| format!("copying {}", file.display()))?;
+        }
         built.push(out.join(format!("{stem}.dll")));
     }
     Ok(if source.is_dir() {
@@ -181,20 +189,40 @@ pub fn check(config: &Config, sarif: &Path) -> Result<Outcome> {
         .iter()
         .filter(|s| reached.contains(*s))
         .collect();
-    if missing.is_empty() && unexpected.is_empty() {
-        return Ok(Outcome::Pass);
-    }
     let mut why = Vec::new();
     if !missing.is_empty() {
-        why.push(format!("expected sinks not reached: {missing:?}"));
+        why.push(format!(
+            "expected sinks not reached: {missing:?} (reached {reached:?})"
+        ));
     }
     if !unexpected.is_empty() {
-        why.push(format!("unexpected sinks reached: {unexpected:?}"));
+        why.push(format!(
+            "unexpected sinks reached: {unexpected:?} (reached {reached:?})"
+        ));
     }
-    Ok(Outcome::Fail(format!(
-        "{} (reached {reached:?})",
-        why.join("; ")
-    )))
+
+    let lines = crate::assertions::collect_codeflow_start_lines(sarif)?;
+    let missing_lines: Vec<i64> = config
+        .expected_lines
+        .iter()
+        .copied()
+        .filter(|line| !lines.contains(line))
+        .collect();
+    if !missing_lines.is_empty() {
+        why.push(format!(
+            "expected lines {missing_lines:?} not reached (reached {lines:?})"
+        ));
+    }
+    if let Some(bad) = crate::assertions::check_unexpected_lines(&config.unexpected_lines, &lines)
+    {
+        why.push(bad);
+    }
+
+    Ok(if why.is_empty() {
+        Outcome::Pass
+    } else {
+        Outcome::Fail(why.join("; "))
+    })
 }
 
 /// `Sink1` in `[case]Cases.Taint::Sink1(System.Object)->System.Void`.

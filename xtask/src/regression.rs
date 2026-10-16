@@ -770,7 +770,7 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
 
 /// Run one C# case (see [`crate::cil::cases`]): compile it, import it through the CIL
 /// frontend, index, query with the model its config implies, and judge the code flows by the
-/// sink functions they end in.
+/// sink functions they end in and the source lines they reach.
 fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
     use crate::cil::cases;
     let Some(dotnet) = cases::dotnet() else {
