@@ -828,6 +828,18 @@ impl Visitor for CodegenVisitor<'_> {
             FlowVariable::formal_index(RETURN_INDEX.into()),
             fx::FormalType::ByRef,
         ));
+        // ... and one per further return value, numbered on down (-2, -3, ...) as `Return`
+        // terminators and call sites number them. Without the declaration a return slot
+        // still gets assignments but never a summary: the summary rule joins on
+        // `formal_param`. Java and CIL return `(normal, exception)`, so this is what makes
+        // an exception thrown out of a callee reach the caller's handler.
+        for k in 2..=i16::from(function.return_type.arity) {
+            self.facts.formal_param.push((
+                self.function.unwrap(),
+                FlowVariable::formal_index((-k).into()),
+                fx::FormalType::ByRef,
+            ));
+        }
         if skip {
             // `modes: ["skip-analysis"]`: lower the signature, drop the body. The function behaves
             // like a stub.

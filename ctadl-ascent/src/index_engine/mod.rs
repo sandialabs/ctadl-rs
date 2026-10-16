@@ -2854,6 +2854,61 @@ mod tests {
         (result, source_info)
     }
 
+    /// `fn thrower(x) -> (normal, exception) { return ((), x); }` and
+    /// `fn catcher(a) { r, e = thrower(a); return (e, ()); }`: a value thrown out of a callee
+    /// reaches the caller's exception slot, and from there anything the caller does with it.
+    /// Java and CIL functions return arity 2, and the second slot is a formal like the first:
+    /// without its `formal_param` row, no summary through it was ever derived.
+    #[test]
+    fn exceptional_return_is_summarized() {
+        let mut thrower = FunctionData {
+            name: "thrower".to_string(),
+            return_type: ReturnType { arity: 2 },
+            ..Default::default()
+        };
+        {
+            let mut fb = FunctionBuilder::new(&mut thrower);
+            let x = fb.add_param(ParameterType::ByVal);
+            let body = fb.add_block();
+            let mut b = fb.at_block(body);
+            let x = b.new_param_var(x);
+            b.create_ret(vec![Exp::new_bytes(Vec::new()), x.into()]);
+        }
+        let mut catcher = FunctionData {
+            name: "catcher".to_string(),
+            return_type: ReturnType { arity: 2 },
+            ..Default::default()
+        };
+        {
+            let mut fb = FunctionBuilder::new(&mut catcher);
+            let a = fb.add_param(ParameterType::ByVal);
+            let body = fb.add_block();
+            let mut b = fb.at_block(body);
+            let (r, e, a) = (
+                b.new_local_var("r"),
+                b.new_local_var("e"),
+                b.new_param_var(a),
+            );
+            b.create_call(
+                CallStyle::DirectCall {
+                    call_edges: CallEdges::Explicit(ctadl_ir::thin_vec!["thrower".to_string()]),
+                },
+                vec![r, e.clone()],
+                vec![a.into()],
+            );
+            b.create_ret(vec![e.into(), Exp::new_bytes(Vec::new())]);
+        }
+        let (result, si) = index_functions([thrower, catcher]);
+        let (thrower, catcher) = (func_id(&si.sites, "thrower"), func_id(&si.sites, "catcher"));
+        let has = |f: FunctionId, dst: i16, src: i16| {
+            result.summary.iter().any(|(sf, d, dp, s, sp)| {
+                *sf == f && **d == dst && dp.is_empty() && **s == src && sp.is_empty()
+            })
+        };
+        assert!(has(thrower, -2, 0), "summary = {:?}", result.summary);
+        assert!(has(catcher, -1, 0), "summary = {:?}", result.summary);
+    }
+
     /// A site is resolved by either of two rules -- a target stored in the calling function,
     /// or one arriving through a formal -- and `resolved_call` has an arm for each. One arm
     /// alone would silently drop half the call graph.
