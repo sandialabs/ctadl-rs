@@ -359,6 +359,8 @@ class Daemon:
             elif r.start_tier == "p" and not (r.demoted or r.promoted or r.stopped):
                 metrics["wall_s"] = real
         self.put_metrics(run_id, metrics)
+        if outcome in ("ok", "oom") and u["phase"] in ("import", "index"):
+            self.check_budget(a, run_id, metrics, outcome)
         self.conn.execute("UPDATE units SET status=? WHERE id=?",
                           ("done" if outcome == "ok" else "failed", u["id"]))
         if not a.sweep or outcome != "ok":
@@ -377,6 +379,35 @@ class Daemon:
                                   (run_id, "score_error", err))
                 self.log("score-error", f"{u['suite']}/{u['bench']}: {err.splitlines()[-1]}")
         self.maybe_clean(u)
+
+    def check_budget(self, a: Active, run_id: int, metrics: dict, outcome: str) -> None:
+        """Record the size of the IR instructions an import wrote, and hold an index run's peak
+        memory to `index_mem_per_ir_byte` times that. A ratio over 1 is a blowup. An index run
+        memguard killed used at least what it had when killed, so its ratio is a lower bound."""
+        u = a.unit
+        ir = sum(p.stat().st_size
+                 for p in (self.work_dir(u) / "store" / "imports").glob("*/ir-program.bitcode"))
+        if not ir:
+            return
+        if u["phase"] == "import":
+            self.put_metrics(run_id, {"ir_program_b": ir})
+            return
+        per_byte = self.cfg.get("budget", {}).get("index_mem_per_ir_byte", 100)
+        peak = metrics.get("peak_footprint_b") or metrics.get("maxrss_b")
+        if peak is None:
+            if outcome != "oom":
+                return
+            peak = json.loads(u["spec"])["mem_cap_gib"] * 2**30
+        budget = per_byte * ir
+        ratio = peak / budget
+        m = {"ir_program_b": ir, "mem_budget_b": budget, "mem_budget_ratio": ratio}
+        if outcome == "oom":
+            m["mem_budget_lower_bound"] = 1
+        self.put_metrics(run_id, m)
+        if ratio > 1 and not a.sweep:
+            self.log("over-budget", f"{u['sha'][:10]} {u['suite']}/{u['bench']} index peak "
+                     f"{peak / 2**20:,.0f} MiB is {'at least ' if outcome == 'oom' else ''}{ratio:.1f}x "
+                     f"its budget ({per_byte} x {ir / 2**20:,.1f} MiB of IR)")
 
     def put_metrics(self, run_id: int, metrics: dict) -> None:
         self.conn.executemany("INSERT OR REPLACE INTO metrics(run_id, name, value) VALUES (?,?,?)",

@@ -58,6 +58,17 @@ daemon, foreign CPU use, and memory pressure.
 * Every benchmark run is capped at 16 GiB by memguard (builds at 48 GiB); a run over the cap
   is killed and recorded as `oom`.
 
+## Index memory budget
+
+An index run may use 100 bytes of peak memory per byte of IR instructions
+(`[budget] index_mem_per_ir_byte`). The IR's size is that of `imports/*/ir-program.bitcode`,
+the import's encoded program, recorded as `ir_program_b` on both import and index runs. Each
+index run stores `mem_budget_ratio` = peak footprint / (100 x IR bytes). Over 1 is a blowup: it
+is logged as an `over-budget` event, reported as a regression when the benchmark was under budget
+before (or new), and as `over-budget` while it stays over. An index run memguard killed counts at
+least its peak, so its ratio is a lower bound (shown with `≥`). Sweep runs record the ratio too;
+the sweep table counts the binaries over budget.
+
 Builds run `cargo build --release` inside the commit's own `nix develop` shell, as the daemon's
 child, so they move between tiers too; the shared target dir makes them incremental.
 

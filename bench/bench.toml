@@ -41,6 +41,11 @@ timeout_s = 7200
 mem_cap_gib = 16
 timeouts = { import = 21600, index = 7200, query = 3600, report = 3600 }
 
+[budget]
+# An index run may use this many bytes of peak memory per byte of IR instructions (the size of
+# the import's ir-program.bitcode). A run over it is flagged as a blowup.
+index_mem_per_ir_byte = 100
+
 [suites.taintbench]
 order = 10
 

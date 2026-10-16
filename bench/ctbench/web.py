@@ -124,6 +124,8 @@ def fmt(v, metric: str = "") -> str:
         return "–"
     if isinstance(v, str):
         return esc(v)
+    if metric == "mem_budget_ratio":
+        return f"{v:,.2f}×"
     if metric.endswith("_b"):
         return f"{v / 2**20:,.0f} MiB"
     if metric in ("instructions", "cycles"):
@@ -184,7 +186,11 @@ def sweep_history(conn) -> list[dict]:
         findings = conn.execute(
             "SELECT coalesce(sum(m.value),0) FROM units u JOIN runs r ON r.unit_id=u.id JOIN metrics m "
             "ON m.run_id=r.id AND m.name='q_findings' WHERE u.sha=? AND u.suite=?", (s["sha"], SWEEP)).fetchone()[0]
-        rows.append({"sha": s["sha"], "subject": s["subject"], "counts": dict(counts), "findings": findings})
+        over = conn.execute(
+            "SELECT count(*) FROM units u JOIN runs r ON r.unit_id=u.id JOIN metrics m ON m.run_id=r.id "
+            "AND m.name='mem_budget_ratio' AND m.value > 1 WHERE u.sha=? AND u.suite=?", (s["sha"], SWEEP)).fetchone()[0]
+        rows.append({"sha": s["sha"], "subject": s["subject"], "counts": dict(counts), "findings": findings,
+                     "over_budget": over})
     return rows
 
 
@@ -227,12 +233,12 @@ def chart(title: str, points: list[dict], key: str, unit: str = "") -> str:
 
 
 def kind_tag(kind: str) -> str:
-    cls = {"regression": "reg", "improvement": "imp"}.get(kind, "chg")
+    cls = {"regression": "reg", "over-budget": "reg", "improvement": "imp"}.get(kind, "chg")
     return f'<span class="tag {cls}">{esc(kind)}</span>'
 
 
 def findings_table(found: list[dict], limit: int | None = None) -> str:
-    order = {"regression": 0, "improvement": 1, "change": 2}
+    order = {"regression": 0, "over-budget": 1, "improvement": 2, "change": 3}
     found = sorted(found, key=lambda f: (order.get(f["kind"], 3), -abs(f.get("rel") or 0)))
     rows = []
     for f in found[:limit]:
@@ -295,11 +301,13 @@ def index(cfg) -> bytes:
         found = report.compare(conn, c["sha"])
         nreg = sum(1 for f in found if f["kind"] == "regression")
         nimp = sum(1 for f in found if f["kind"] == "improvement")
+        nover = sum(1 for f in found if f["metric"] == "mem_budget_ratio" and f["kind"] != "improvement")
         b.append(f'<h2>Latest: <a href="/c/{esc(c["sha"])}"><code>{esc(c["sha"][:10])}</code></a> '
                  f'<span class="sub">{esc(c["subject"])}</span></h2>')
         bad = f', {c["bad"]} failed or skipped' if c["bad"] else ""
         b.append(f'<div class="card"><p style="margin-top:0">{c["done"]:,} of {c["units"]:,} units done{bad} · '
-                 f'<span class="tag reg">{nreg} regressions</span> · <span class="tag imp">{nimp} improvements</span></p>'
+                 f'<span class="tag reg">{nreg} regressions</span> · <span class="tag imp">{nimp} improvements</span> · '
+                 f'<span class="tag reg">{nover} index runs over the memory budget</span></p>'
                  f'{findings_table(found, 25)}</div>')
 
     # Trends.
@@ -335,13 +343,14 @@ def index(cfg) -> bytes:
     if hist:
         b.append('<h2>Firmware sweeps</h2><div class="card scroll"><table><tr><th>commit</th>'
                  '<th class=num>ok</th><th class=num>timeout</th><th class=num>oom</th><th class=num>failed</th>'
-                 '<th class=num>open</th><th class=num>findings</th></tr>')
+                 '<th class=num>open</th><th class=num>findings</th><th class=num>over mem. budget</th></tr>')
         for h in hist:
             k = h["counts"]
             b.append(f"<tr><td><code>{esc(h['sha'][:10])}</code> <span class=sub>{esc(h['subject'][:50])}</span></td>"
                      f"<td class=num>{k.get('ok', 0):,}</td><td class=num>{k.get('timeout', 0):,}</td>"
                      f"<td class=num>{k.get('oom', 0):,}</td><td class=num>{k.get('failed', 0):,}</td>"
-                     f"<td class=num>{k.get('open', 0):,}</td><td class=num>{h['findings']:,.0f}</td></tr>")
+                     f"<td class=num>{k.get('open', 0):,}</td><td class=num>{h['findings']:,.0f}</td>"
+                     f"<td class=num>{h['over_budget']:,}</td></tr>")
         b.append("</table></div>")
 
     # Commits.
@@ -365,6 +374,14 @@ def index(cfg) -> bytes:
     return page("ctadl benchmarks", "".join(b))
 
 
+def budget_cell(v: dict) -> str:
+    r = v.get("mem_budget_ratio")
+    if r is None:
+        return ""
+    text = ("≥" if v.get("mem_budget_lower_bound") else "") + fmt(r, "mem_budget_ratio")
+    return f'<span class="tag reg">{esc(text)}</span>' if r > 1 else esc(text)
+
+
 def commit_page(cfg, sha: str) -> bytes:
     conn = ro(cfg)
     c = conn.execute("SELECT * FROM commits WHERE sha LIKE ?", (sha + "%",)).fetchone()
@@ -376,7 +393,8 @@ def commit_page(cfg, sha: str) -> bytes:
          f'<div class="sub">build {esc(c["build_status"])}</div>',
          "<h2>Changes vs. previous commits</h2>", f'<div class="card">{findings_table(found)}</div>',
          '<h2>Every unit</h2><div class="card scroll"><table><tr><th>benchmark</th><th>phase</th><th>outcome</th>'
-         '<th class=num>wall</th><th class=num>instructions</th><th class=num>peak</th><th>quality</th></tr>']
+         '<th class=num>wall</th><th class=num>instructions</th><th class=num>peak</th><th class=num>IR</th>'
+         '<th class=num>of mem. budget</th><th>quality</th></tr>']
     for (suite, bench, phase), v in sorted(vals.items()):
         q = ", ".join(f"{k[2:]}={fmt(x)}" for k, x in sorted(v.items())
                       if k.startswith("q_") and not k.startswith("q_report."))
@@ -385,6 +403,8 @@ def commit_page(cfg, sha: str) -> bytes:
                  f"<td class=num>{fmt(v.get('wall_s'), 'wall_s')}</td>"
                  f"<td class=num>{fmt(v.get('instructions'), 'instructions')}</td>"
                  f"<td class=num>{fmt(v.get('peak_footprint_b'), 'peak_footprint_b')}</td>"
+                 f"<td class=num>{fmt(v.get('ir_program_b'), 'ir_program_b') if 'ir_program_b' in v else ''}</td>"
+                 f"<td class=num>{budget_cell(v)}</td>"
                  f"<td class=mono>{esc(q)}</td></tr>")
     b.append("</table></div>")
     return page(f"{c['sha'][:10]} · ctadl benchmarks", "".join(b))

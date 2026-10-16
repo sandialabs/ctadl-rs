@@ -5,6 +5,9 @@ median of the same metric over the previous `window` measured commits, and flagg
 moves by more than the metric's threshold *and* by more than 3x the spread (median absolute
 deviation) the baseline itself shows. Quality metrics (`q_*`) and output digests are flagged on
 any change: those are deterministic, so any change is real.
+
+Index memory is also held to an absolute budget, a multiple of the IR's size (see the runner's
+`check_budget`): every index run over it is flagged, as a regression when it is newly over.
 """
 
 from __future__ import annotations
@@ -71,6 +74,7 @@ def compare(conn, sha: str, window: int = 5) -> list[dict]:
     findings = []
     for key, v in sorted(cur.items()):
         history = [b[key] for b in base if key in b]
+        findings.extend(budget_findings(key, v, history))
         if not history:
             continue
         # Outcome changes first: a benchmark that used to finish and now does not.
@@ -110,6 +114,21 @@ def compare(conn, sha: str, window: int = 5) -> list[dict]:
     return findings
 
 
+def budget_findings(key, v: dict, history: list[dict]) -> list[dict]:
+    """An index run over its memory budget, or back under it."""
+    r = v.get("mem_budget_ratio")
+    if r is None:
+        return []
+    prev = next((h["mem_budget_ratio"] for h in history if "mem_budget_ratio" in h), None)
+    value = f"≥{r:.2f}×" if v.get("mem_budget_lower_bound") else r
+    if r > 1:
+        kind = "over-budget" if prev is not None and prev > 1 else "regression"
+        return [dict(key=key, metric="mem_budget_ratio", kind=kind, value=value, baseline=prev)]
+    if prev is not None and prev > 1:
+        return [dict(key=key, metric="mem_budget_ratio", kind="improvement", value=value, baseline=prev)]
+    return []
+
+
 def sweep_summary(conn) -> dict:
     sha = dbm.get_state(conn, "sweep.sha")
     if not sha:
@@ -127,13 +146,16 @@ def sweep_summary(conn) -> dict:
         "SELECT coalesce(sum(m.value),0), count(*) FROM units u JOIN runs r ON r.unit_id=u.id "
         "JOIN metrics m ON m.run_id=r.id AND m.name='q_findings' WHERE u.sha=? AND u.suite=?",
         (sha, SWEEP)).fetchone()
+    over = conn.execute(
+        "SELECT count(*) FROM units u JOIN runs r ON r.unit_id=u.id JOIN metrics m ON m.run_id=r.id "
+        "AND m.name='mem_budget_ratio' AND m.value > 1 WHERE u.sha=? AND u.suite=?", (sha, SWEEP)).fetchone()[0]
     done = conn.execute("SELECT count(DISTINCT bench) FROM units WHERE sha=? AND suite=? AND "
                         "status NOT IN ('pending','running') AND phase='query'", (sha, SWEEP)).fetchone()[0]
     from . import suites  # noqa: E402
     return {"sha": sha, "started_at": int(dbm.get_state(conn, "sweep.started_at", "0")),
             "cursor": int(dbm.get_state(conn, "sweep.cursor", "0")), "finished": done,
             "query_outcomes": dict(by_status), "failed_before_query": failed_early,
-            "findings": findings[0], "binaries_with_results": findings[1]}
+            "findings": findings[0], "binaries_with_results": findings[1], "over_budget": over}
 
 
 def status(cfg) -> None:
@@ -150,7 +172,8 @@ def status(cfg) -> None:
     s = sweep_summary(conn)
     if s:
         print(f"sweep @ {s['sha'][:10]}: {s['finished']} binaries finished, queued up to {s['cursor']}; "
-              f"query outcomes {s['query_outcomes']}; {s['findings']:.0f} findings")
+              f"query outcomes {s['query_outcomes']}; {s['findings']:.0f} findings; "
+              f"{s['over_budget']} index runs over the memory budget")
     print("recent events:")
     for e in conn.execute("SELECT * FROM events ORDER BY at DESC LIMIT 15"):
         print(f"  {time.strftime('%m-%d %H:%M:%S', time.localtime(e['at']))} {e['kind']} {e['detail'][:120]}")
