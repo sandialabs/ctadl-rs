@@ -210,6 +210,41 @@
           '';
         };
 
+        # ModelRun (frontends/ctadl-cil/tools/ModelRun): calls the .NET library
+        # methods the default CIL models select, with marked arguments, the
+        # reference the `cil:models` check compares the models against. No
+        # NuGet packages, so it builds offline like flowRun.
+        modelRun = pkgs.stdenvNoCC.mkDerivation {
+          # `name` rather than pname/version: see cecilDump.
+          name = "model-run";
+          src = ./frontends/ctadl-cil/tools/ModelRun;
+          nativeBuildInputs = [
+            pkgs.dotnet-sdk_8
+            pkgs.makeWrapper
+          ];
+          env = {
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+          };
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
+            dotnet build -c Release --nologo -p:UseAppHost=false -o out
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/lib/model-run" "$out/bin"
+            cp -R out/. "$out/lib/model-run/"
+            makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/model-run" \
+              --add-flags "$out/lib/model-run/ModelRun.dll" \
+              --set DOTNET_NOLOGO 1 \
+              --set DOTNET_CLI_TELEMETRY_OPTOUT 1
+            runHook postInstall
+          '';
+        };
+
         # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled.
         # The tests find them through CIL_READER_FIXTURES. Offline (nothing
         # references a NuGet package) and byte-for-byte reproducible:
@@ -578,6 +613,8 @@
             cecilDump
             # The `cil:exec` check's reference runner.
             flowRun
+            # The `cil:models` check's reference runner.
+            modelRun
           ];
         };
 
@@ -617,6 +654,7 @@
         packages.cecil-dump = cecilDump;
         packages.cil-fixtures = cilFixtures;
         packages.flow-run = flowRun;
+        packages.model-run = modelRun;
         packages.ptr-gen = ptrGen;
         packages.gap-gen = gapGen;
         # Legacy ctadl: nix run .#ctadl-souffle
