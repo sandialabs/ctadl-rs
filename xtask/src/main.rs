@@ -152,7 +152,7 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
 fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
     let command = args
         .next()
-        .context("`cil` requires a command: bless, bless-flow, bless-mir, exec or codegen")?;
+        .context("`cil` requires a command: bless, bless-flow, bless-mir, exec, models or codegen")?;
     let mut cil_dir = None;
     let mut fixtures = None;
     let mut ctadl = None;
@@ -190,7 +190,7 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
             "--filter" if command == "bless" || command == "exec" => {
                 filter = Some(args.next().context("--filter requires a value")?);
             }
-            "--out" if command == "exec" || command == "taint" => {
+            "--out" if command == "exec" || command == "taint" || command == "models" => {
                 out = Some(PathBuf::from(
                     args.next().context("--out requires a value")?,
                 ));
@@ -233,6 +233,27 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
             }
         });
     }
+    if command == "models" {
+        let out = out.unwrap_or_else(|| PathBuf::from("target/xtask-cil-models"));
+        std::fs::create_dir_all(&out)?;
+        let outcome = cil::models::run(&cil::models::resolve_xtask_dir(), &out)?;
+        return Ok(match outcome {
+            regression::Outcome::Pass => {
+                println!("PASS cil:models");
+                true
+            }
+            regression::Outcome::Skip(why) => {
+                println!("SKIP cil:models: {why}");
+                true
+            }
+            regression::Outcome::Fail(why)
+            | regression::Outcome::HardFail(why)
+            | regression::Outcome::Xfail(why) => {
+                println!("FAIL cil:models: {why}");
+                false
+            }
+        });
+    }
     if command == "exec" {
         let fixtures = cil::resolve_fixtures(fixtures.as_deref())?
             .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")?;
@@ -259,8 +280,8 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
         "codegen" => Ok(cil_codegen::run(&cecil, &cil_dir)),
         other => {
             bail!(
-                "unknown `cil` command `{other}` (expected bless, bless-flow, bless-mir, exec or \
-                 codegen)"
+                "unknown `cil` command `{other}` (expected bless, bless-flow, bless-mir, exec, \
+                 models or codegen)"
             )
         }
     }
@@ -399,7 +420,12 @@ Tasks:
                              interpreter over the flow layer, print per-method
                              counts and every failure, and keep the outputs in
                              <dir>/cil-exec (default: target/xtask-cil-exec).
-    codegen                  Regenerate cil-reader's opcode table from Cecil's
+    models [--out <dir>]     The `cil:models` check on its own: the default .NET
+                             models against what .NET does with the methods
+                             they select (`model-run`, built with `dotnet` when
+                             not on PATH), with its report in
+                             <dir>/cil-models (default: target/xtask-cil-models).
+    codegen                 Regenerate cil-reader's opcode table from Cecil's
                              OpCodes.cs.
 
   report-eval --apks <dir>   Run `ctadl report` over a directory of artifacts and

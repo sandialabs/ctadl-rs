@@ -1,0 +1,17 @@
+// What `cil:models` (xtask/src/cil/models.rs) accepts.
+//
+// - `unavailable`: classes the default models name that `model-run` cannot load, because they
+//   are not part of .NET. Their generators are not checked.
+// - `flows`: flows .NET shows that the models leave out on purpose, one entry per flow:
+//   `fid` is a regex over the function id, `flow` is `src -> dst` in port spelling
+//   (`Argument(0).\[] -> Return`), and `why` is required. An entry that matches nothing fails
+//   the check (XPASS), so it goes when the model or the method changes.
+{
+  unavailable: [
+    {
+      cls: "[Newtonsoft.Json]Newtonsoft.Json.JsonConvert",
+      why: "Newtonsoft.Json is a NuGet package, not part of the shared framework",
+    },
+  ],
+  flows: [],
+}

@@ -36,6 +36,9 @@
 //!   .NET (`flow-run`) and in an interpreter over `MethodFlow`, with the
 //!   same random inputs, must agree; see [`exec`]. Self-skips without
 //!   `flow-run`.
+//! - `cil:models`        — the default .NET models against what .NET does with
+//!   the methods they select (`model-run`); see [`models`]. Needs neither the
+//!   corpus nor the fixtures; self-skips without `model-run` or `dotnet`.
 //!
 //! The corpus, golden naming and comparison rules live in [`parity`].
 //! `cargo xtask cil bless` regenerates the goldens.
@@ -61,6 +64,7 @@ mod cecil_tests;
 pub mod exec;
 pub mod flow;
 pub mod frontend;
+pub mod models;
 mod parity;
 pub mod taint;
 
@@ -71,6 +75,21 @@ const MAX_LISTED: usize = 10;
 /// `cecil` the Cecil checkout holding the corpus; `fixtures` the compiled
 /// fixtures.
 pub fn run_checks(
+    goldens: Option<&Path>,
+    cecil: Option<&Path>,
+    fixtures: Option<&Path>,
+    work: &Path,
+) -> Result<Vec<(String, Outcome)>> {
+    let mut results = reader_checks(goldens, cecil, fixtures, work)?;
+    // The models are checked against .NET itself, so they need neither input.
+    results.push((
+        "cil:models".to_string(),
+        models::run(&models::resolve_xtask_dir(), work)?,
+    ));
+    Ok(results)
+}
+
+fn reader_checks(
     goldens: Option<&Path>,
     cecil: Option<&Path>,
     fixtures: Option<&Path>,
