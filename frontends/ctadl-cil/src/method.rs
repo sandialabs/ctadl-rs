@@ -53,9 +53,10 @@ use cil_reader::token::TokenType;
 use ctadl_ir::mir::{FieldRef, LocalIdx};
 use ctadl_ir::*;
 use smallvec::{SmallVec, smallvec};
-use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
+use source_info::SourceInfoBuilder;
 
 use crate::Collected;
+use crate::lines::MethodSpans;
 use crate::names::{ModNames, Namer};
 use crate::ptr::{Addresses, VarInfo};
 
@@ -259,7 +260,7 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
     body: &MethodBody<'m>,
     sig: &MethodSig,
     fdat: &mut FunctionData,
-    key: &ArtifactKey,
+    lines: &mut MethodSpans<'_, '_>,
     spans: &mut SourceInfoBuilder,
     out: &mut Collected,
 ) {
@@ -313,7 +314,7 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
         em.block = BasicBlockIdx::new(b);
         lower.static_fnptrs.clear();
         if b == 0 {
-            em.source_info = span(key, spans, body, block.start, 1);
+            em.source_info = lines.span(spans, block.start, 1);
             let out = em.excout();
             em.assign(out, [empty()]);
         }
@@ -324,14 +325,14 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
             if handler.entry == Some(b)
                 && matches!(handler.kind, HandlerKind::Catch | HandlerKind::Filter)
             {
-                em.source_info = span(key, spans, body, block.start, 1);
+                em.source_info = lines.span(spans, block.start, 1);
                 let caught = em.var(Var::Caught(h));
                 let thrown = em.throwval();
                 em.assign(caught, [Exp::Variable(thrown)]);
             }
         }
         for (index, ins) in block.instrs.iter().enumerate() {
-            em.source_info = span(key, spans, body, ins.flow.offset, ins.flow.size.max(1));
+            em.source_info = lines.span(spans, ins.flow.offset, ins.flow.size.max(1));
             let at = InsId { block: b, index };
             lower.cur = at;
             lower.cross_check(at, ins);
@@ -362,20 +363,6 @@ pub fn thunk_body(fdat: &mut FunctionData, target: &str, target_arity: usize) {
     em.fdat.blocks[em.block].terminator = Some(Terminator::new_kind(TerminatorKind::Return {
         args: smallvec![Exp::Variable(retval), Exp::Variable(thrown)],
     }));
-}
-
-fn span(
-    key: &ArtifactKey,
-    spans: &mut SourceInfoBuilder,
-    body: &MethodBody<'_>,
-    offset: u32,
-    size: u32,
-) -> SourceInfo {
-    SourceInfo::new(spans.span_for(
-        key.clone(),
-        body.code_file_offset() + offset,
-        SpanLen::ByteLen(size),
-    ))
 }
 
 fn empty() -> Exp {

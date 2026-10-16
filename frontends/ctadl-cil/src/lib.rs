@@ -13,6 +13,7 @@ module docs here carry its tables, one per file:
 | `effects.rs`   | `Effect<Var>` to statements (§6)                                  |
 | `ptr.rs`       | managed pointers (§6.3)                                           |
 | `calls.rs`     | calls, delegates, extern stubs (§7)                               |
+| `lines.rs`     | spans: source lines from the portable PDB, else IL bytes          |
 
 Like the Dex front end, a [`Context`] is made once, given each assembly with
 [`Context::process`], and turned into one [`ProgramInfo`] by [`Context::finish`]: a
@@ -20,13 +21,16 @@ multi-assembly application has one hierarchy. Referenced assemblies that are not
 (the framework, by default) are still read for their metadata, from the input's directory
 and the framework's ([`ImportOptions::reference_dirs`]): base types' virtual methods, type
 forwarders, sealed and virtual flags. Nothing of theirs is lowered.
+
+An assembly's portable PDB (beside it, embedded, or in its own metadata) gives its instructions
+source lines; see `lines.rs`.
 */
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use cil_reader::Module;
-use cil_reader::model::{AssemblyCache, DirectoryLoader, TypeDef};
+use cil_reader::model::{AssemblyCache, DirectoryLoader, PdbSource, TypeDef};
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::call::{CilClass, CilMethod, CilSignature, CilSimpleName, VirtualMethodTable};
 use ctadl_ir::*;
@@ -34,9 +38,12 @@ use hashbrown::HashMap;
 use smallvec::SmallVec;
 use source_info::{ArtifactKey, SourceInfoBuilder};
 
+use lines::{LineStats, ModuleSpans};
+
 mod calls;
 mod effects;
 pub mod hierarchy;
+pub mod lines;
 pub mod method;
 pub mod names;
 mod ptr;
@@ -144,6 +151,17 @@ pub fn import_files_with_stats(
     for (f, data) in files.iter().zip(&datas) {
         modules.push(Module::read(data).err_context(|| format!("reading {}", f.display()))?);
     }
+    // Symbols are optional: one that does not read costs the assembly its lines, not the import.
+    let pdb_sources: Vec<Option<PdbSource>> = files
+        .iter()
+        .zip(&modules)
+        .map(|(f, module)| {
+            PdbSource::locate(module, f).unwrap_or_else(|e| {
+                log::warn!("cil: {}: symbols: {e}", f.display());
+                None
+            })
+        })
+        .collect();
     let mut dirs: Vec<PathBuf> = Vec::new();
     for f in files {
         if let Some(d) = f.parent() {
@@ -162,15 +180,24 @@ pub fn import_files_with_stats(
     let cache = AssemblyCache::new(&loader);
     let namer = Namer::new(&cache);
     let mut ctx = Context::new();
-    for (i, (f, module)) in files.iter().zip(&modules).enumerate() {
+    for (i, ((f, module), source)) in files.iter().zip(&modules).zip(&pdb_sources).enumerate() {
         let key = ArtifactKey {
             path: f.to_string_lossy().to_string(),
             sub_artifact_id: i.try_into().unwrap_or(u32::MAX),
             hash: Vec::new(),
             encoding: source_info::ArtifactEncoding::Binary,
         };
-        ctx.process(module, &namer, key)
+        let pdb = source.as_ref().and_then(|s| match s.read(module) {
+            Ok(pdb) => Some(pdb),
+            Err(e) => {
+                log::warn!("cil: {}: symbols ({}): {e}", f.display(), s.describe());
+                None
+            }
+        });
+        let mut spans = ModuleSpans::new(key, pdb);
+        ctx.process(module, &namer, &mut spans)
             .err_context(|| format!("converting {}", f.display()))?;
+        ctx.out.stats.lines.add(spans.stats);
     }
     ctx.finish_with_stats()
 }
@@ -305,6 +332,8 @@ pub struct Stats {
     pub address_disagreements: usize,
     /// Base types and interfaces whose metadata could not be read, so made no aliases.
     pub missing_metadata: Vec<String>,
+    /// Source lines.
+    pub lines: LineStats,
 }
 
 /// The VMT columns, gathered as `process` runs.
@@ -344,17 +373,18 @@ impl Context {
     }
 
     /// Translates one assembly into the program.
+    /// Translates one assembly into the program, its spans from `spans`.
     pub fn process<'m>(
         &mut self,
         module: &'m Module<'m>,
         namer: &Namer<'m, '_>,
-        key: ArtifactKey,
+        spans: &mut ModuleSpans<'_>,
     ) -> Result<(), Error> {
         let names = ModNames::new(module, namer);
         self.out.stats.assemblies += 1;
         log::debug!("cil: processing assembly {}", names.asm);
         for td in module.all_types() {
-            self.process_type(&names, namer, module, td, &key)?;
+            self.process_type(&names, namer, module, td, spans)?;
         }
         Ok(())
     }
@@ -365,7 +395,7 @@ impl Context {
         namer: &Namer<'m, '_>,
         module: &'m Module<'m>,
         td: TypeDef<'m>,
-        key: &ArtifactKey,
+        spans: &mut ModuleSpans<'_>,
     ) -> Result<(), Error> {
         self.out.stats.types += 1;
         let cls = names.typedef_cls(&td);
@@ -441,13 +471,14 @@ impl Context {
             if md.has_body()? && md.rva()? != 0 {
                 let body = md.body()?;
                 self.out.stats.bodies += 1;
+                let mut lines = spans.method(md.token().rid(), body.code_file_offset());
                 method::lower_body(
                     names,
                     &md,
                     &body,
                     &sig,
                     fdat,
-                    key,
+                    &mut lines,
                     &mut self.spans,
                     &mut self.out,
                 );
@@ -589,6 +620,26 @@ impl Context {
                 "cil: {} input(s) the flow layer traces to a place and the frontend does not",
                 s.address_disagreements
             );
+        }
+        if s.lines.pdbs > 0 {
+            let mut used = s.lines.documents.clone();
+            used.sort();
+            used.dedup();
+            log::info!(
+                "cil: source lines: {} of {} bodies, from {} document(s) of {} PDB(s)",
+                s.lines.methods_with_lines,
+                s.bodies,
+                used.len(),
+                s.lines.pdbs
+            );
+            let mut unusable = s.lines.unusable_documents.clone();
+            unusable.sort();
+            unusable.dedup();
+            for (path, why) in &unusable {
+                log::warn!("cil: no source lines from {path}: {why}");
+            }
+        } else if s.bodies > 0 {
+            log::info!("cil: no portable PDB, so no source lines: spans are IL bytes");
         }
         if !s.missing_metadata.is_empty() {
             let mut missing = s.missing_metadata.clone();

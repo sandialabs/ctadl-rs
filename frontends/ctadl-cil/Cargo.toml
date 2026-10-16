@@ -9,6 +9,7 @@ ctadl-import = { path = "../../ctadl-import", features = ["cil"] }
 ctadl-ir = { path = "../../ctadl-ir", features = ["serde"] }
 hashbrown = "0.16"
 log = "0.4"
+sha1 = "0.10"
 smallvec = "1"
 source-info = { path = "../../source-info", features = ["serde"] }
 

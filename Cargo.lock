@@ -1229,6 +1229,7 @@ dependencies = [
  "ctadl-ir",
  "hashbrown 0.16.1",
  "log",
+ "sha1",
  "smallvec",
  "source-info",
 ]
