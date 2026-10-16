@@ -380,15 +380,14 @@ impl Context {
                                         }
                                     }
                                 }
-                                let dup_stmts =
-                                    if Self::is_stack_dup_opcode(instr.opcode) {
-                                        Some(self.stack_dup_statements(
-                                            &instr.dataflow,
-                                            &mut fdat.locals,
-                                        ))
-                                    } else {
-                                        None
-                                    };
+                                let dup_stmts = if Self::is_stack_shuffle_opcode(instr.opcode) {
+                                    Some(self.stack_shuffle_statements(
+                                        &instr.dataflow,
+                                        &mut fdat.locals,
+                                    ))
+                                } else {
+                                    None
+                                };
                                 if let Some(stmts) = dup_stmts {
                                     Self::record_dup_slot_pairs(
                                         &mut dup_slot_pairs,
@@ -757,9 +756,9 @@ impl Context {
         })
     }
 
-    /// Stack-manipulation `dup*` opcodes (JVMS 6.5).
-    fn is_stack_dup_opcode(opcode: u8) -> bool {
-        matches!(opcode, 0x59..=0x5e)
+    /// Stack-manipulation opcodes: `dup*` and `swap` (JVMS 6.5).
+    fn is_stack_shuffle_opcode(opcode: u8) -> bool {
+        matches!(opcode, 0x59..=0x5f)
     }
 
     fn assign_var(dest: VariableRef, src: VariableRef) -> Statement {
@@ -782,14 +781,20 @@ impl Context {
         }
     }
 
+    /// Record each pair of outputs that are copies of one value: they have the
+    /// same sources.
     fn record_dup_slot_pairs(pairs: &mut HashSet<DupSlotPair>, dataflow: &[DataflowInfo]) {
-        let slots: SmallVec<[u32; 4]> = dataflow
-            .iter()
-            .filter_map(|df| Self::stack_slot_index(&df.destination))
-            .collect();
-        for i in 0..slots.len() {
-            for j in (i + 1)..slots.len() {
-                Self::record_dup_slot_pair(pairs, slots[i], slots[j]);
+        for (i, a) in dataflow.iter().enumerate() {
+            for b in &dataflow[i + 1..] {
+                if a.sources != b.sources {
+                    continue;
+                }
+                if let (Some(x), Some(y)) = (
+                    Self::stack_slot_index(&a.destination),
+                    Self::stack_slot_index(&b.destination),
+                ) {
+                    Self::record_dup_slot_pair(pairs, x, y);
+                }
             }
         }
     }
@@ -828,33 +833,57 @@ impl Context {
         Some(Self::assign_var(survivor, recv_var))
     }
 
-    /// Lower `dup` / `dup_x1` / … so every duplicate stack slot is flow-connected.
-    fn stack_dup_statements(
+    /// Lower `dup*` and `swap`. Every source is read before the instruction, but
+    /// the outputs land on the input slots (`dup_x1` puts `v1` where `v2` was), so
+    /// a source slot that an output overwrites is first copied to a temporary.
+    fn stack_shuffle_statements(
         &self,
         dataflow: &[DataflowInfo],
         locals: &mut Locals,
     ) -> SmallVec<[Statement; 8]> {
+        let moves: SmallVec<[&DataflowInfo; 6]> = dataflow
+            .iter()
+            .filter(|df| df.sources.as_slice() != std::slice::from_ref(&df.destination))
+            .collect();
+        let overwritten: SmallVec<[u32; 6]> = moves
+            .iter()
+            .filter_map(|df| Self::stack_slot_index(&df.destination))
+            .collect();
         let mut stmts = SmallVec::new();
-        let mut dests = SmallVec::<[VariableRef; 4]>::new();
-        for df in dataflow {
-            let mut sources = SmallVec::new();
-            for source_loc in df.sources.iter() {
-                sources.push(self.convert_location_to_exp(source_loc, locals));
+        let mut saved = SmallVec::<[u32; 6]>::new();
+        for df in &moves {
+            for n in df.sources.iter().filter_map(Self::stack_slot_index) {
+                if overwritten.contains(&n) && !saved.contains(&n) {
+                    saved.push(n);
+                    stmts.push(Self::assign_var(
+                        Self::shuffle_temp(n, locals),
+                        self.convert_location_to_var_ref(&Location::StackSlot(n), locals),
+                    ));
+                }
             }
-            let dest = self.convert_location_to_var_ref(&df.destination, locals);
+        }
+        for df in moves {
+            let sources = df
+                .sources
+                .iter()
+                .map(|loc| match Self::stack_slot_index(loc) {
+                    Some(n) if saved.contains(&n) => {
+                        Exp::from(AccessPath::without_fields(Self::shuffle_temp(n, locals)))
+                    }
+                    _ => self.convert_location_to_exp(loc, locals),
+                })
+                .collect();
             stmts.push(Statement::new_kind(StatementKind::Assign {
-                dest: dest.clone(),
+                dest: self.convert_location_to_var_ref(&df.destination, locals),
                 sources,
             }));
-            dests.push(dest);
-        }
-        for i in 0..dests.len() {
-            for j in (i + 1)..dests.len() {
-                stmts.push(Self::assign_var(dests[i].clone(), dests[j].clone()));
-                stmts.push(Self::assign_var(dests[j].clone(), dests[i].clone()));
-            }
         }
         stmts
+    }
+
+    /// The temporary [`Self::stack_shuffle_statements`] saves stack slot `n` in.
+    fn shuffle_temp(n: u32, locals: &mut Locals) -> VariableRef {
+        VariableRef::new_local_idx(locals.get_or_intern(&format!("shuffle{n}")))
     }
 
     fn dataflow_to_statements(
