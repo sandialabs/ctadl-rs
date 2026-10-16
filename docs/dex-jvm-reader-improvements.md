@@ -368,13 +368,15 @@ There are three enforced cases: `DupX1Chain` (no flow), its positive twin
 `DupX1ChainFlow`, and `Dup2X1Chain` (no flow, a `long` field, compiled to
 `dup2_x1`).
 
-### 3.3 The regression suite hides JVM taint failures
+### 3.3 Fixed: the regression suite hid JVM taint failures
 
-`apply_jvm_allowlist` (`xtask/src/regression.rs`) turns a failing `Jvm:` case
-into XFAIL unless the case is listed in `JVM_E2E_ENFORCED`. All four programs
-above were reported as XFAIL, so the suite stayed green. *Fixed* for these
-bugs: the §3.1 and §3.2 cases are enforced. The allowlist itself remains, so a
-new JVM case is not enforced until it is added to `JVM_E2E_ENFORCED`.
+`apply_jvm_allowlist` (`xtask/src/regression.rs`) turned a failing `Jvm:` case
+into XFAIL unless the case was listed in `JVM_E2E_ENFORCED`. All four programs
+above were reported as XFAIL, so the suite stayed green. The §3.1 and §3.2
+cases were enforced first. Enforcement is now the default, as it is for the C
+frontend: `JVM_KNOWN_FAILURES` lists the JVM cases allowed to fail, and it is
+empty. All 34 JVM cases pass, including `DefaultModelsFlow`, which had never
+been enforced. A new JVM case that fails now fails the suite.
 
 ### 3.4 Suspected, not yet tested
 

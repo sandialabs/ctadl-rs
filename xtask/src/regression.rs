@@ -49,64 +49,22 @@ const PCODE_BASE_ADDRESS: i64 = 0x10_0000;
 /// genuinely unimplemented capability, never to paper over a regression.
 const LUA_XFAIL: &[&str] = &[];
 
-/// JVM E2E cases whose failures count toward the suite exit code. All other
-/// `Jvm:*` taint cases run for visibility but report as XFAIL when they fail.
+/// JVM E2E cases known to fail today, quarantined as XFAIL. Every other
+/// `Jvm:*` case is enforced, as in [`C_KNOWN_FAILURES`].
 ///
-/// The four `*Flow` cases covering switch selectors, wide parameters and the
-/// shift family are enforced because each is a known-answer test for a decoder
-/// defect that has already been fixed once: demoting them to XFAIL would let
-/// the same bug come back silently, which is the opposite of why they exist.
-/// The `CallResult*` cases are enforced for the same reason: they cover field
-/// and array accesses on a call's result, which the frontend once attributed
-/// to the most recently loaded local.
-/// The `Dup*Chain*` cases cover chained field assignments, which javac
-/// compiles to `dup_x1` and `dup2_x1`; jvm-reader once sent every input of
-/// those to every output.
-const JVM_E2E_ENFORCED: &[&str] = &[
-    "Jvm:AnotherExample",
-    "Jvm:ArrayFlow",
-    "Jvm:ArrayFlowComplex",
-    "Jvm:ArrayListFlow",
-    "Jvm:ArrayListIteratorFlow",
-    "Jvm:BranchingFlow",
-    "Jvm:CallResultArrayStore",
-    "Jvm:CallResultFieldLoad",
-    "Jvm:CallResultFieldStore",
-    "Jvm:CallResultWideField",
-    "Jvm:CrossClassStaticFieldFlow",
-    "Jvm:Dup2X1Chain",
-    "Jvm:DupX1Chain",
-    "Jvm:DupX1ChainFlow",
-    "Jvm:ExceptionFlow",
-    "Jvm:FieldFlow",
-    "Jvm:FieldSensitivity",
-    "Jvm:InstanceMethodFlow",
-    "Jvm:LoopFlow",
-    "Jvm:MethodCallFlow",
-    "Jvm:MultiArrayFlow",
-    "Jvm:ObjectSensitivity",
-    "Jvm:Reassignment",
-    "Jvm:ShiftFlow",
-    "Jvm:ShortArrayFlow",
-    "Jvm:SmallConstantFlow",
-    "Jvm:SourceSinkExample",
-    "Jvm:StaticFieldFlow",
-    "Jvm:StringBuilderFlow",
-    "Jvm:StringSwitchFlow",
-    "Jvm:SwitchFlow",
-    "Jvm:WideFieldFlow",
-    "Jvm:WideParamFlow",
-];
+/// Currently empty. Enforcement used to be opt-in, case by case, so a new JVM
+/// case that failed was reported as XFAIL and the suite stayed green: the
+/// field-access and `dup_x1` bugs in `docs/dex-jvm-reader-improvements.md`
+/// §3.1 and §3.2 went unnoticed that way. Add an entry only for a known,
+/// documented gap, and delete it once the case passes.
+const JVM_KNOWN_FAILURES: &[&str] = &[];
 
 /// Tree-sitter C cases known to fail today, quarantined as XFAIL so the suite
 /// stays green while that frontend matures.
 ///
-/// This is the inverse of [`JVM_E2E_ENFORCED`]: the JVM E2E frontend is mostly
-/// still maturing, so it opts *in* to enforcement case by case; the C frontend
-/// already passes the bulk of the suite, so enforcement is the *default* and
-/// only these named gaps are exempt. Each entry is a current limitation, not a
-/// permanent waiver -- delete it once the case passes so a later regression is
-/// caught rather than silently re-quarantined. These names are the `C:`-prefixed
+/// Enforcement is the default and only these named gaps are exempt. Each entry
+/// is a current limitation, not a permanent waiver -- delete it once the case
+/// passes so a later regression is caught rather than silently re-quarantined. These names are the `C:`-prefixed
 /// reporting names, so they cannot collide with the Pcode case over the same
 /// source, and quarantining one never affects that Pcode case.
 const C_KNOWN_FAILURES: &[&str] = &[
@@ -185,12 +143,13 @@ fn default_jobs() -> usize {
 pub(crate) enum Outcome {
     Pass,
     Fail(String),
-    /// A failure the JVM allowlist must not demote to XFAIL. Reported exactly
+    /// A failure no known-failure list may demote to XFAIL. Reported exactly
     /// like [`Outcome::Fail`]; see [`with_valid_sarif`] for the one thing that
     /// raises it.
     HardFail(String),
     Skip(String),
-    /// Expected failure on a non-enforced JVM E2E case; does not fail the suite.
+    /// Expected failure on a case in a known-failure list; does not fail the
+    /// suite.
     Xfail(String),
 }
 
@@ -605,9 +564,9 @@ fn preflight(cases: &[TestCase], ghidra_selected: bool, release: bool) -> Result
 /// SARIF that does not validate is a defect of its own, so it fails the case
 /// even when the taint assertions were satisfied -- a consumer cannot read a log
 /// it cannot parse, however good the answer inside it is. It fails as
-/// [`Outcome::HardFail`] so [`apply_jvm_allowlist`] cannot turn it into an
-/// XFAIL: the allowlist exists for the JVM frontend's taint precision, which
-/// this says nothing about.
+/// [`Outcome::HardFail`] so [`apply_xfail_allowlists`] cannot turn it into an
+/// XFAIL: the allowlists exist for a frontend's taint precision, which this
+/// says nothing about.
 fn with_valid_sarif(work: &Path, files: &[&Path], outcome: Outcome) -> Result<Outcome> {
     let Some(why) = sarif::validate(work, files)? else {
         return Ok(outcome);
@@ -679,22 +638,17 @@ fn apply_xfail_allowlists(name: &str, outcome: Outcome) -> Outcome {
     apply_c_allowlist(name, apply_jvm_allowlist(name, outcome))
 }
 
-/// Non-enforced JVM E2E failures are reported as XFAIL so the suite can stay
-/// green while the frontend matures. This covers the *taint* answer only:
-/// [`Outcome::HardFail`] (invalid SARIF) is never demoted, since the shape of
-/// the output does not depend on how good the frontend's taint results are.
+/// Known-failing JVM E2E cases are reported as XFAIL; every other JVM case is
+/// enforced. See [`JVM_KNOWN_FAILURES`].
 fn apply_jvm_allowlist(name: &str, outcome: Outcome) -> Outcome {
     match outcome {
-        Outcome::Fail(why) if name.starts_with("Jvm:") && !JVM_E2E_ENFORCED.contains(&name) => {
-            Outcome::Xfail(why)
-        }
+        Outcome::Fail(why) if JVM_KNOWN_FAILURES.contains(&name) => Outcome::Xfail(why),
         other => other,
     }
 }
 
 /// Known-failing tree-sitter C cases are reported as XFAIL; every other C case
-/// is enforced. See [`C_KNOWN_FAILURES`] for why enforcement is the default for
-/// this frontend (the opposite of the JVM allowlist above).
+/// is enforced. See [`C_KNOWN_FAILURES`].
 fn apply_c_allowlist(name: &str, outcome: Outcome) -> Outcome {
     match outcome {
         Outcome::Fail(why) if C_KNOWN_FAILURES.contains(&name) => Outcome::Xfail(why),
@@ -2576,7 +2530,14 @@ fn scratch_dir(name: &str) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::from_summary_links;
+    use super::{apply_xfail_allowlists, from_summary_links, Outcome};
+
+    /// A failing JVM case fails the suite unless it is a known failure.
+    #[test]
+    fn a_failing_jvm_case_is_enforced() {
+        let outcome = apply_xfail_allowlists("Jvm:NewCase", Outcome::Fail("no flow".into()));
+        assert!(matches!(outcome, Outcome::Fail(_)));
+    }
 
     #[test]
     fn reads_the_from_summary_count_off_the_bridge_line() {

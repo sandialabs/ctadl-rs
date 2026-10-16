@@ -285,9 +285,9 @@ consumer cannot read is a defect on its own. The report lists every diagnostic
 and the path to the validation log, which is left in the case's scratch
 directory as `checksarif-log.sarif`.
 
-This is the one check the JVM allowlist cannot demote to XFAIL. The allowlist
-exists for the maturity of that frontend's *taint results*, which the shape of
-the log says nothing about.
+This is the one check the known-failure lists (`JVM_KNOWN_FAILURES`,
+`C_KNOWN_FAILURES`) cannot demote to XFAIL. Those lists exist for a frontend's
+*taint results*, which the shape of the log says nothing about.
 
 Rules are configured in `nix/sarif-multitool/sarif-validation.xml`. A rule that
 cannot apply to a binary/bytecode analyzer belongs there, turned off with a
