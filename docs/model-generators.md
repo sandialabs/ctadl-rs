@@ -75,6 +75,7 @@ chosen by the frontend's method table:
 | dex, apk, jvm, jar | `java-index.jsonl` |
 | pcode | `native-index.jsonl` |
 | lua | `lua-index.jsonl` |
+| cil | `cil-index.jsonl` |
 | flowy | *(none)* |
 
 Your `--models` files are unioned on top of the selected default. Pass
@@ -415,6 +416,7 @@ port must match:
 | Frontend | Array element segment | Port spelling |
 | --- | --- | --- |
 | dex, jvm | `Symbol("[]")` | `Argument(0).\[]` — JSON `"Argument(0).\\[]"` |
+| cil | `Symbol("[]")`, and `deref` for what a struct receiver or a `ref`/`out` parameter points at | `Argument(0).\[]`, `Argument(2).deref` |
 | lua | `Symbol("[_elem_]")`, and `Symbol("[3]")` for a literal key | `Argument(0).\[_elem_]`, `Argument(0).\[3]` |
 | C (tree-sitter) | a real `Offset` then `Symbol("[]")` — `a[3]` is `.[3].\[]`, and `a[0]` and `a[n]` are both a bare `.\[]` | `Argument(0).[3].\[]`, `Argument(0).\[]` |
 | pcode | a real `Offset` | `Argument(0).[8]` |
