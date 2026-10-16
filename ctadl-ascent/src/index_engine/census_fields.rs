@@ -62,7 +62,6 @@ macro_rules! census_serial {
         c.add("context_summary_top", "context_summary_top_indices_0_1", $prog.context_summary_top.len(), HeapBytes::heap_stat(&$prog.context_summary_top_indices_0_1));
         c.add("critical_arg", "rows Vec", $prog.critical_arg.len(), HeapBytes::heap_stat(&$prog.critical_arg));
         c.add("critical_arg", "critical_arg_indices_0_1_2", $prog.critical_arg.len(), HeapBytes::heap_stat(&$prog.critical_arg_indices_0_1_2));
-        c.add("critical_arg", "critical_arg_indices_0_1_2_3_4_5", $prog.critical_arg.len(), HeapBytes::heap_stat(&$prog.critical_arg_indices_0_1_2_3_4_5));
         c.add("critical_call", "rows Vec", $prog.critical_call.len(), HeapBytes::heap_stat(&$prog.critical_call));
         c.add("critical_call", "critical_call_indices_0", $prog.critical_call.len(), HeapBytes::heap_stat(&$prog.critical_call_indices_0));
         c.add("critical_call", "critical_call_indices_none", $prog.critical_call.len(), HeapBytes::heap_stat(&$prog.critical_call_indices_none));

@@ -280,13 +280,7 @@ impl std::fmt::Display for Callee {
 // --- per-app run -----------------------------------------------------------
 
 fn run_app(app: &App, apk: &Path) -> Result<Outcome> {
-    let findings: Findings = read_json(&app.dir.join("findings.json"))?;
     let model = app.dir.join("model.json");
-    let expected: Expected = match std::fs::read_to_string(app.dir.join("expected.json")) {
-        Ok(text) => serde_json::from_str(&text)
-            .with_context(|| format!("failed to parse {}/expected.json", app.dir.display()))?,
-        Err(_) => Expected::default(),
-    };
 
     let work = scratch_dir(&app.name)?;
     let state = work.join("state");
@@ -324,7 +318,33 @@ fn run_app(app: &App, apk: &Path) -> Result<Outcome> {
         ],
     )?;
 
-    let sarif_json: Value = read_json(&sarif)?;
+    Ok(score_app(app, &sarif)?.0)
+}
+
+/// What a scored app detected, for `taintbench-score --json`.
+#[derive(serde::Serialize)]
+pub struct Counts {
+    pub matched_positive: Vec<i64>,
+    pub matched_negative: Vec<i64>,
+    pub total_positive: usize,
+    pub total_negative: usize,
+    pub passed: bool,
+    pub verdict: String,
+}
+
+/// Matches the flows in `sarif` against the app's ground truth and baseline. Separate from
+/// running ctadl so a caller that runs (and measures) the phases itself can score the result.
+fn score_app(app: &App, sarif: &Path) -> Result<(Outcome, Counts)> {
+    let findings: Findings = read_json(&app.dir.join("findings.json"))?;
+    let expected: Expected = match std::fs::read_to_string(app.dir.join("expected.json")) {
+        Ok(text) => serde_json::from_str(&text)
+            .with_context(|| format!("failed to parse {}/expected.json", app.dir.display()))?,
+        Err(_) => Expected::default(),
+    };
+    let mut matched_positive: BTreeSet<i64> = BTreeSet::new();
+    let mut matched_negative: BTreeSet<i64> = BTreeSet::new();
+    let outcome: Result<Outcome> = (|| {
+    let sarif_json: Value = read_json(sarif)?;
     let detected_sources = collect_endpoint_callees(&sarif_json, TAINT_SOURCE_RULE_ID);
     let detected_sinks = collect_endpoint_callees(&sarif_json, TAINT_SINK_RULE_ID);
     let path_pairs = collect_path_pairs(&sarif_json);
@@ -355,8 +375,6 @@ fn run_app(app: &App, apk: &Path) -> Result<Outcome> {
         .collect();
 
     // Match each finding on the callee of its source AND its sink.
-    let mut matched_positive: BTreeSet<i64> = BTreeSet::new();
-    let mut matched_negative: BTreeSet<i64> = BTreeSet::new();
     println!("  findings:");
     for f in &findings.findings {
         let src = f.source.callee();
@@ -480,6 +498,35 @@ fn run_app(app: &App, apk: &Path) -> Result<Outcome> {
         return Ok(Outcome::Pass(summary));
     }
     Ok(Outcome::Pass(format!("{summary}; {}", notes.join("; "))))
+    })();
+    let outcome = outcome?;
+    let (passed, verdict) = match &outcome {
+        Outcome::Pass(why) => (true, why.clone()),
+        Outcome::Fail(why) | Outcome::Skip(why) => (false, why.clone()),
+    };
+    let total_negative = findings.findings.iter().filter(|f| f.is_negative).count();
+    let total_positive = findings.findings.len() - total_negative;
+    let counts = Counts {
+        matched_positive: matched_positive.into_iter().collect(),
+        matched_negative: matched_negative.into_iter().collect(),
+        total_positive,
+        total_negative,
+        passed,
+        verdict,
+    };
+    Ok((outcome, counts))
+}
+
+/// Score one app's SARIF without running ctadl, writing the counts as JSON to `json_out`.
+pub fn score(apps_dir: Option<&Path>, app_name: &str, sarif: &Path, json_out: &Path) -> Result<bool> {
+    let apps_dir = resolve_apps_dir(apps_dir)?;
+    let app = discover_apps(&apps_dir)?
+        .into_iter()
+        .find(|a| a.name == app_name)
+        .with_context(|| format!("no TaintBench app `{app_name}` under {}", apps_dir.display()))?;
+    let (_, counts) = score_app(&app, sarif)?;
+    std::fs::write(json_out, serde_json::to_string_pretty(&counts)?)?;
+    Ok(true)
 }
 
 fn callee_or_target(callee: &Option<Callee>, target: &str) -> String {

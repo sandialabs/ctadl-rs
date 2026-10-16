@@ -66,6 +66,25 @@ fn run() -> Result<bool> {
             let opts = parse_taintbench_args(args)?;
             taintbench::run(&opts)
         }
+        Some("taintbench-score") => {
+            let (mut apps_dir, mut app, mut sarif, mut json) = (None, None, None, None);
+            while let Some(arg) = args.next() {
+                let mut value = || args.next().with_context(|| format!("{arg} requires a value"));
+                match arg.as_str() {
+                    "--apps-dir" => apps_dir = Some(PathBuf::from(value()?)),
+                    "--app" => app = Some(value()?),
+                    "--sarif" => sarif = Some(PathBuf::from(value()?)),
+                    "--json" => json = Some(PathBuf::from(value()?)),
+                    other => bail!("unknown argument `{other}` (try `xtask --help`)"),
+                }
+            }
+            taintbench::score(
+                apps_dir.as_deref(),
+                &app.context("--app is required")?,
+                &sarif.context("--sarif is required")?,
+                &json.context("--json is required")?,
+            )
+        }
         Some("-h" | "--help") | None => {
             print_help();
             Ok(true)
@@ -283,6 +302,13 @@ Tasks:
     --apk <name>=<path>      APK to analyze for app <name> (the dir name).
                              Repeatable. Apps with no APK are skipped.
     --filter <name>          Only run apps whose name contains <name>.
+
+  taintbench-score           Score one app's existing SARIF against its ground
+                             truth and baseline, without running ctadl.
+    --app <name>             The app (its directory name).
+    --sarif <path>           The SARIF `ctadl query --sarif-profile agent` wrote.
+    --json <path>            Where to write the counts.
+    --apps-dir <dir>         As for `taintbench`.
 "
     );
 }
