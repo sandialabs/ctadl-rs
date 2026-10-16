@@ -320,12 +320,12 @@ fn heights(lines: &[String]) -> Result<Vec<Option<usize>>> {
 }
 
 /// Maps jvm-reader's `Parameter(ordinal)` back to the local it lives in.
-struct LocalNames {
+pub(crate) struct LocalNames {
     first_slot: Vec<u16>,
 }
 
 impl LocalNames {
-    fn new(method: &MethodInfo, desc: &str) -> Self {
+    pub(crate) fn new(method: &MethodInfo, desc: &str) -> Self {
         let is_instance = method.access_flags & 0x0008 == 0;
         let map = ParameterSlotMap::for_method(desc, is_instance);
         let mut first_slot = Vec::new();
@@ -345,6 +345,10 @@ impl LocalNames {
             None => format!("param?{ordinal}"),
         }
     }
+}
+
+fn atoms<const N: usize>(a: [String; N]) -> BTreeSet<String> {
+    a.into_iter().collect()
 }
 
 /// ASM reports the long forms of instructions that have a short one.
@@ -385,14 +389,17 @@ fn constant(c: &ConstantValue) -> String {
     }
 }
 
-/// One instruction's line. See the module comment for how jvm-reader's
-/// dataflow is read.
-fn render(
-    idx: usize,
-    info: &InstructionFlowInfo<'_>,
-    before: usize,
-    locals: &LocalNames,
-) -> String {
+/// What jvm-reader says one instruction does, read as the module comment
+/// describes: the stack height after it, and every place it writes with the
+/// atoms that place then holds. Stack slots it pushes are all present, even
+/// one that ends up holding what it held before.
+pub(crate) struct Claims {
+    pub after: usize,
+    pub places: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// jvm-reader's [`Claims`] for `info`, with `before` slots on the stack.
+pub(crate) fn claims(info: &InstructionFlowInfo<'_>, before: usize, locals: &LocalNames) -> Claims {
     let (consume, produce) = instruction_stack_effect(info);
     let remaining = before.saturating_sub(consume);
     let after = remaining + produce;
@@ -486,17 +493,35 @@ fn render(
         }
     }
     for (p, s) in stack {
-        if s.len() == 1 && s.first() == Some(&format!("in{p}")) && p < before {
-            continue;
-        }
         effects.insert(format!("out{p}"), s);
     }
-    effects.retain(|place, s| {
-        !(place.starts_with("local") && s.len() == 1 && s.first() == Some(place))
+    Claims {
+        after,
+        places: effects,
+    }
+}
+
+/// One instruction's line: its [`Claims`], less the stack slots and locals
+/// that still hold what they held before, as `AsmFlow.java` prints them.
+fn render(
+    idx: usize,
+    info: &InstructionFlowInfo<'_>,
+    before: usize,
+    locals: &LocalNames,
+) -> String {
+    let Claims { after, mut places } = claims(info, before, locals);
+    places.retain(|place, s| {
+        let identity = match place.strip_prefix("out") {
+            Some(p) => {
+                p.parse::<usize>().is_ok_and(|p| p < before) && *s == atoms([format!("in{p}")])
+            }
+            None => place.starts_with("local") && *s == atoms([place.clone()]),
+        };
+        !identity
     });
 
     let mut line = format!("{idx} op={} h={before}->{after}", asm_opcode(info.opcode));
-    for (place, s) in effects {
+    for (place, s) in places {
         let atoms: Vec<&str> = s.iter().map(String::as_str).collect();
         let _ = write!(line, " {place}={}", atoms.join("+"));
     }
