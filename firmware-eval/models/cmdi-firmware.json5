@@ -1,0 +1,314 @@
+// =============================================================================
+// CTADL taint model: command injection in Linux firmware - DO-NOT-MERGE
+// =============================================================================
+//
+// This model mirrors the source/sink set of Operation Mango so that CTADL and
+// Mango are directly comparable on the firmware-eval benchmark. It is meant to
+// be loaded with `ctadl ... --models firmware-eval/models/cmdi-firmware.json5`.
+// It can be loaded ALONE or alongside CTADL's built-in pcode default model; the
+// propagation summaries below overlap the defaults harmlessly (the Datalog
+// engine is set-based, so duplicate facts are idempotent).
+//
+// Provenance / faithful-mirror notes
+// -----------------------------------
+//  * Sinks  come from operation-mango: package/argument_resolver/external_function/
+//           sink/sink_lists.py  -> COMMAND_INJECTION_SINKS
+//  * Sources come from:           external_function/input_functions.py
+//           (INPUT_EXTERNAL_FUNCTIONS) and the getter sinks reused as sources.
+//
+// Port index convention
+// ---------------------
+//  Mango `vulnerable_parameters` is 1-based (arg 1 = first argument).
+//  CTADL `Argument(n)` is 0-based.  So Mango [1] -> Argument(0), [2] -> Argument(1).
+//
+// `.deref` convention
+// -------------------
+//  Command-injection sinks take a `char *`; the *string bytes* live at the
+//  dereferenced location, so taint is checked on `Argument(0).deref`, matching
+//  CTADL's shipped pcode default model. Same reasoning for char* sources.
+//
+// `kind` convention
+// -----------------
+//  CTADL reports a flow whenever ANY source taint reaches ANY sink (kinds need
+//  not match -- the shipped default cmdi detector itself pairs source kind
+//  `user_input` with sink kind `command_injection`). We exploit that: each
+//  source carries a distinct kind so the normalized Finding's `source_class`
+//  falls out of the report directly:
+//      nvram_input   -> NVRAM
+//      env_input     -> ENV
+//      network_input -> NETWORK
+//      file_input    -> FILE
+//  (If a CTADL build is ever changed to require kind-matching and you get zero
+//   flows, collapse every source `kind` below to `command_injection`.)
+//
+// Matching / anchoring
+// --------------------
+//  We match with `constraint: "name"` -- a regex against the function's *short
+//  name* -- anchored with ^(...)$ to mirror Mango's exact-name semantics and
+//  avoid substring hits like "filesystem" matching ".*system.*".
+//
+//  IMPORTANT: use `name`, NOT `signature_pattern`, on real firmware. On stripped
+//  ELFs the Ghidra pcode frontend names an imported sink by its *whole mangled
+//  signature* -- e.g. `<EXTERNAL>::system@0000a4c0` -- so an anchored
+//  `signature_pattern` of `^(system|...)$` matches ZERO functions (confirmed on
+//  netctrl: "Matched 0 sources and 0 sinks"), silently zeroing out the entire
+//  analysis. `name` matches the short name (`system`) in both cases: compiled/
+//  unstripped binaries (bare `system`) and stripped firmware thunks
+//  (`<EXTERNAL>::system@<addr>`). This also fixes the propagation builders, whose
+//  imports are decorated the same way (`<EXTERNAL>::sprintf@<addr>`). Verified no
+//  regression on the synthetic corpus (`nested` argv->system still reported).
+//  If a future frontend decorates names too (e.g. `system@plt`, `__imp_system`),
+//  relax the anchors or add an alternate generator with `.*(...).*`.
+//
+// HTTP KEY_BEACONS (ranking, not modeled here)
+// --------------------------------------------
+//  Mango boosts a finding's rank when the getter's key argument is an HTTP CGI
+//  var (REQUEST_URI, HTTP_COOKIE, QUERY_STRING, CONTENT_TYPE, HTTP_HOST, ...).
+//  CTADL has no model primitive for "argument string value equals X", so that
+//  stays a harness-side ranking step over the resolved key string, not a source.
+// =============================================================================
+{
+  model_generators: [
+
+    // ---------------------------------------------------------------------
+    // SOURCES -- ARGV: main(argc, argv); argv is Argument(1), a `char**`. Mango
+    // taints all of argv.
+    //
+    // `argv[i]` compiles to `*(argv + 8*i)` -- an *offset* read (`.[8*i].deref`)
+    // that is a sibling of the offset-0 `.deref` path we model the source at.
+    // Precise, path-matched propagation never connects the two (the frontend also
+    // spills `argv` to a stack local across a bare-base copy), so the argv[i>0]
+    // flow to a sink is dropped -- the argv/offset-taint regression documented in
+    // ../repro/README.md (recall 83.3% -> 4.2% on cta@beb327a).
+    //
+    // The fix is the source-side `saturating` flag (added in ctadl #70, a836dbe;
+    // see docs/model-generators.md §7): a saturating source taints the whole
+    // access-path subtree beneath the seeded vertex -- every offset/element read
+    // off the argv base -- so `argv[i]` reconnects to the source regardless of how
+    // the caller indexes in. This is exactly the "all of it is attacker-controlled"
+    // case the flag exists for. Reported SARIF is unchanged in shape.
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{ constraint: "name", pattern: "^main$" }],
+      model: { sources: [
+        { port: "Argument(1).deref",       kind: "argv_input", saturating: true },
+        { port: "Argument(1).deref.deref", kind: "argv_input", saturating: true }
+      ] }
+    },
+
+    // ---------------------------------------------------------------------
+    // SINKS -- command injection (Mango COMMAND_INJECTION_SINKS)
+    // Command string at Mango param 1 => CTADL Argument(0).deref
+    //
+    // The command data is the *string* at Argument(0), so we anchor the port at
+    // `.deref` (the pointed-to bytes) rather than the raw pointer -- anchoring at
+    // bare `Argument(0)` also seeds the pointer value and inflates false
+    // positives. Wildcard matching (the default for sinks) still covers any
+    // sub-field extension of the string (`.deref.[k]`, byte-level derefs, etc.).
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{
+        constraint: "name",
+        pattern: "^(system|twsystem|execFormatCmd|exec_cmd|___system|bstar_system|doSystemCmd|doShell|CsteSystem|cgi_deal_popen|ExeCmd|ExecShell|exec_shell_popen|exec_shell_popen_str|popen|execl|execlp|execle|execv|execvp|execvpe|execve|tp_systemEx|exec_shell_async|exec_shell_sync|exec_shell_sync2|SLIBCSystem|SLIBCExec|SLIBCExecv|SLIBCPopen|pegaSystem)$"
+      }],
+      model: { sinks: [{ port: "Argument(0).deref", kind: "command_injection" }] }
+    },
+
+    // SLIBCExecl: Mango marks vulnerable param 2 => Argument(1).deref
+    {
+      find: "methods",
+      where: [{ constraint: "name", pattern: "^(SLIBCExecl)$" }],
+      model: { sinks: [{ port: "Argument(1).deref", kind: "command_injection" }] }
+    },
+
+    // ---------------------------------------------------------------------
+    // SINKS -- exec-family ARGUMENT injection (argv passed to a spawned program)
+    //
+    // Unlike `system`/`popen`, the exec* family does NOT run a shell: Argument(0)
+    // is the program *path*, and the attacker-controllable command data lives in
+    // the argv the child receives. Mango models this with a dedicated `execv`
+    // analysis (resolves the spawned binary + which arg index is tainted), not a
+    // cmdi closure -- so these never appear in `cmdi_results.json`. We mirror it
+    // here as ordinary taint sinks on the argument ports so CTADL can flag the
+    // same argv -> exec* argument-injection flow.
+    //
+    //  * Variadic form  execl(path, arg0, arg1, ..., NULL): each arg is its own
+    //    positional parameter, a char* -> the tainted data is the string
+    //    `Argument(1..N).deref`. We cap N at 8 (covers realistic command
+    //    builders; raise if a target passes more).
+    //  * Array form     execv(path, argv[], ...): argv is a single pointer at
+    //    Argument(1); element argv[i] is `Argument(1).[8*i].deref` -- the offset
+    //    sits *before* the deref, so it is not a suffix of `.deref`. We anchor at
+    //    the bare `Argument(1)` and rely on wildcard matching (default) to cover
+    //    every element `Argument(1).[k].deref`, so a tainted argv[i>0] (e.g.
+    //    `args[2] = argv[1]`) is flagged, not just argv[0].
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{ constraint: "name", pattern: "^(execl|execlp|execle)$" }],
+      model: { sinks: [
+        { port: "Argument(1).deref", kind: "command_injection" },
+        { port: "Argument(2).deref", kind: "command_injection" },
+        { port: "Argument(3).deref", kind: "command_injection" },
+        { port: "Argument(4).deref", kind: "command_injection" },
+        { port: "Argument(5).deref", kind: "command_injection" },
+        { port: "Argument(6).deref", kind: "command_injection" },
+        { port: "Argument(7).deref", kind: "command_injection" },
+        { port: "Argument(8).deref", kind: "command_injection" }
+      ] }
+    },
+    {
+      find: "methods",
+      where: [{ constraint: "name", pattern: "^(execv|execvp|execvpe|execve)$" }],
+      model: { sinks: [{ port: "Argument(1)", kind: "command_injection" }] }
+    },
+
+    // ---------------------------------------------------------------------
+    // SOURCES -- NVRAM getters (return value is attacker-influenced config)
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{
+        constraint: "name",
+        pattern: "^(nvram_get|nvram_safe_get|bcm_nvram_get|envram_get|wlcsm_nvram_get|dni_nvram_get|PTI_nvram_get|acosNvramConfig_get|acosNvramConfig_read|GetValue)$"
+      }],
+      model: { sources: [{ port: "Return.deref", kind: "nvram_input" }] }
+    },
+
+    // SOURCES -- environment getter
+    {
+      find: "methods",
+      where: [{ constraint: "name", pattern: "^(getenv)$" }],
+      model: { sources: [{ port: "Return.deref", kind: "env_input" }] }
+    },
+
+    // ---------------------------------------------------------------------
+    // SOURCES -- network input. Buffer written by the call.
+    //   recv(sock, buf, len, flags)            -> buf = Argument(1)
+    //   recvfrom(sock, buf, len, flags, ...)   -> buf = Argument(1)
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{ constraint: "name", pattern: "^(recv|recvfrom)$" }],
+      model: { sources: [{ port: "Argument(1).deref", kind: "network_input" }] }
+    },
+
+    // Mango synthetic CGI parameter parser: result + out-buffer are network input
+    {
+      find: "methods",
+      where: [{ constraint: "name", pattern: "^(custom_param_parser)$" }],
+      model: { sources: [
+        { port: "Return.deref",      kind: "network_input" },
+        { port: "Argument(0).deref", kind: "network_input" }
+      ] }
+    },
+
+    // ---------------------------------------------------------------------
+    // SOURCES -- file/stream input (Mango INPUT_EXTERNAL_FUNCTIONS)
+    //   read(fd, buf, count)   -> buf = Argument(1)
+    //   fread(ptr, sz, n, str) -> ptr = Argument(0)
+    //   fgets(s, n, stream)    -> s   = Argument(0), and returns s
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{ constraint: "name", pattern: "^(read)$" }],
+      model: { sources: [{ port: "Argument(1).deref", kind: "file_input" }] }
+    },
+    {
+      find: "methods",
+      where: [{ constraint: "name", pattern: "^(fread)$" }],
+      model: { sources: [{ port: "Argument(0).deref", kind: "file_input" }] }
+    },
+    {
+      find: "methods",
+      where: [{ constraint: "name", pattern: "^(fgets)$" }],
+      model: { sources: [
+        { port: "Argument(0).deref", kind: "file_input" },
+        { port: "Return.deref",      kind: "file_input" }
+      ] }
+    },
+
+    // ---------------------------------------------------------------------
+    // PROPAGATION -- string builders, so tainted config/network data reaches a
+    // sink through the usual `sprintf(cmd, "fmt %s", tainted); system(cmd)`
+    // patterns. (Overlaps CTADL's pcode default model; harmless if both load.)
+    //
+    // Base-level input edge (added alongside the `.deref` edge)
+    // --------------------------------------------------------
+    // When the tainted source is `argv[i]`, the saturating argv source (above)
+    // taints the argv base and every offset/element read off it -- but that taint
+    // lives at the *pointer* level of the copied-in argument (`Argument(n)`), not
+    // only at its `.deref` bytes. A `.deref`-only propagation input therefore does
+    // not see it, and the flow dies at the string builder (this is why `heap`,
+    // `wrapper`, `sprintf_resolved_and_unresolved`, and the argv leg of
+    // `multi_input` produced zero flows with the saturating source alone -- their
+    // argv reaches `system` *through* a string builder, unlike the direct
+    // `system(argv[1])` cases `nested`/`simple`/`after_values`). Adding a
+    // base-level `input: Argument(n) -> output: Argument(0).deref` edge lets the
+    // pointer-level saturating taint cross the summary into the destination
+    // string, where the sink reads it. Mirrors Mango, which models these builders
+    // as unconditional taint-through.
+    // ---------------------------------------------------------------------
+
+    // sprintf family: any format/source arg -> destination buffer (Argument 0) + return
+    {
+      find: "methods",
+      where: [{
+        constraint: "name",
+        pattern: "^(sprintf|snprintf|vsprintf|vsnprintf|asprintf|vasprintf|swprintf|vswprintf)$"
+      }],
+      model: { propagation: [
+        { input: "Argument(*).deref", output: "Argument(0).deref" },
+        { input: "Argument(*).deref", output: "Return.deref" },
+        { input: "Argument(*)",       output: "Argument(0).deref" }
+      ] }
+    },
+
+    // strcpy / strcat family: src (Argument 1) -> dest (Argument 0) + return
+    {
+      find: "methods",
+      where: [{
+        constraint: "name",
+        pattern: "^(strcpy|strncpy|stpcpy|stpncpy|strcat|strncat|strlcpy|strlcat)$"
+      }],
+      model: { propagation: [
+        { input: "Argument(1).deref", output: "Argument(0).deref" },
+        { input: "Argument(1).deref", output: "Return.deref" },
+        { input: "Argument(1)",       output: "Argument(0).deref" }
+      ] }
+    },
+
+    // memcpy / memmove: src (Argument 1) -> dest (Argument 0) + return
+    {
+      find: "methods",
+      where: [{ constraint: "name", pattern: "^(memcpy|memmove|mempcpy|bcopy)$" }],
+      model: { propagation: [
+        { input: "Argument(1).deref", output: "Argument(0).deref" },
+        { input: "Argument(1).deref", output: "Return.deref" },
+        { input: "Argument(1)",       output: "Argument(0).deref" }
+      ] }
+    },
+
+    // strdup family and search/tokenizers: Argument 0 -> return
+    {
+      find: "methods",
+      where: [{
+        constraint: "name",
+        pattern: "^(strdup|strndup|strstr|strchr|strrchr|strpbrk|strtok|strtok_r|strsep|basename|dirname)$"
+      }],
+      model: { propagation: [{ input: "Argument(0).deref", output: "Return.deref" }] }
+    },
+
+    // numeric parses keep taint on the (scalar) return
+    {
+      find: "methods",
+      where: [{
+        constraint: "name",
+        pattern: "^(atoi|atol|atoll|strtol|strtoll|strtoul|strtoull)$"
+      }],
+      model: { propagation: [{ input: "Argument(0).deref", output: "Return" }] }
+    }
+  ]
+}
