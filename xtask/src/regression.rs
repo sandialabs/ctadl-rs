@@ -56,6 +56,9 @@ const LUA_XFAIL: &[&str] = &[];
 /// shift family are enforced because each is a known-answer test for a decoder
 /// defect that has already been fixed once: demoting them to XFAIL would let
 /// the same bug come back silently, which is the opposite of why they exist.
+/// The `CallResult*` cases are enforced for the same reason: they cover field
+/// and array accesses on a call's result, which the frontend once attributed
+/// to the most recently loaded local.
 const JVM_E2E_ENFORCED: &[&str] = &[
     "Jvm:AnotherExample",
     "Jvm:ArrayFlow",
@@ -63,6 +66,10 @@ const JVM_E2E_ENFORCED: &[&str] = &[
     "Jvm:ArrayListFlow",
     "Jvm:ArrayListIteratorFlow",
     "Jvm:BranchingFlow",
+    "Jvm:CallResultArrayStore",
+    "Jvm:CallResultFieldLoad",
+    "Jvm:CallResultFieldStore",
+    "Jvm:CallResultWideField",
     "Jvm:CrossClassStaticFieldFlow",
     "Jvm:ExceptionFlow",
     "Jvm:FieldFlow",

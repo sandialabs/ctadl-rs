@@ -318,9 +318,7 @@ impl Context {
                             .map(|e| e.handler_pc as u32)
                             .collect();
 
-                        let mut stack_aliases: HashMap<String, VariableRef> = HashMap::new();
                         let mut dup_slot_pairs: HashSet<DupSlotPair> = HashSet::new();
-                        let mut last_aload_reg: Option<VariableRef> = None;
 
                         for bb in basic_blocks.clone().blocks() {
                             let mut bb_data = BasicBlockData::new(None);
@@ -341,7 +339,7 @@ impl Context {
                             let block_instrs = bb.instructions(&basic_blocks);
 
                             // Add statements to the basic block
-                            for (instr_idx, instr) in block_instrs.iter().enumerate() {
+                            for instr in block_instrs.iter() {
                                 let source_info =
                                     SourceInfo::new(builders.source_info_builder.span_for(
                                         artifact_key.clone(),
@@ -370,7 +368,6 @@ impl Context {
                                                     )],
                                                 });
                                             assign.source_info = source_info;
-                                            Self::note_assign_aliases(&assign, &mut stack_aliases);
                                             bb_data.push_back(assign);
                                         }
                                         if let Some(mut link) = Self::init_survivor_link(
@@ -379,7 +376,6 @@ impl Context {
                                             &mut fdat.locals,
                                         ) {
                                             link.source_info = source_info;
-                                            Self::note_assign_aliases(&link, &mut stack_aliases);
                                             bb_data.push_back(link);
                                         }
                                     }
@@ -400,7 +396,6 @@ impl Context {
                                     );
                                     for mut stmt in stmts {
                                         stmt.source_info = source_info;
-                                        Self::note_assign_aliases(&stmt, &mut stack_aliases);
                                         bb_data.push_back(stmt);
                                     }
                                 } else {
@@ -408,22 +403,9 @@ impl Context {
                                         for mut stmt in self.dataflow_to_statements(
                                             instr.opcode,
                                             df,
-                                            &stack_aliases,
-                                            last_aload_reg.as_ref(),
-                                            block_instrs,
-                                            instr_idx,
                                             &mut fdat.locals,
                                         ) {
                                             stmt.source_info = source_info;
-                                            Self::note_assign_aliases(&stmt, &mut stack_aliases);
-                                            if let StatementKind::Assign { dest, sources } =
-                                                &stmt.kind
-                                                && let [Exp::Variable(v)] = sources.as_slice()
-                                                && Self::is_stack_var(dest)
-                                                && Self::aload_source_var(v)
-                                            {
-                                                last_aload_reg = Some(v.clone());
-                                            }
                                             bb_data.push_back(stmt);
                                         }
                                     }
@@ -775,167 +757,6 @@ impl Context {
         })
     }
 
-    fn is_register_var(v: &VariableRef) -> bool {
-        v.to_string().starts_with("reg")
-    }
-
-    fn is_stack_var(v: &VariableRef) -> bool {
-        v.to_string().starts_with("stack")
-    }
-
-    fn note_assign_aliases(stmt: &Statement, aliases: &mut HashMap<String, VariableRef>) {
-        if let StatementKind::Assign { dest, sources } = &stmt.kind
-            && let [src] = sources.as_slice()
-        {
-            if let Exp::Variable(v) = src {
-                let base = aliases
-                    .get(&v.to_string())
-                    .cloned()
-                    .unwrap_or_else(|| v.clone());
-                if Self::is_stack_var(dest)
-                    && (Self::is_register_var(v) || Self::aload_source_var(v))
-                {
-                    aliases.insert(dest.to_string(), v.clone());
-                } else {
-                    aliases.insert(dest.to_string(), base);
-                }
-                return;
-            }
-            if matches!(src, Exp::ObjectRef(_)) {
-                aliases.insert(dest.to_string(), dest.clone());
-            }
-        }
-    }
-
-    fn aload_source_var(v: &VariableRef) -> bool {
-        let s = v.to_string();
-        s.starts_with("reg") || s.starts_with("@p")
-    }
-
-    fn stack_slot_alias(
-        loc: &Location,
-        aliases: &HashMap<String, VariableRef>,
-        locals: &mut Locals,
-    ) -> Option<VariableRef> {
-        let stack_var = match loc {
-            Location::StackSlot(n) => {
-                VariableRef::new_local_idx(locals.get_or_intern(&format!("stack{n}")))
-            }
-            _ => return None,
-        };
-        aliases.get(&stack_var.to_string()).cloned()
-    }
-
-    fn aload_for_stack_slot(
-        block_instrs: &[jvm_reader::flow::InstructionFlowInfo<'_>],
-        current_idx: usize,
-        object_loc: &Location,
-        locals: &mut Locals,
-    ) -> Option<VariableRef> {
-        let target_slot = Self::stack_slot_index(object_loc)?;
-        for inst in block_instrs[..current_idx].iter().rev() {
-            if matches!(inst.opcode, 0x15..=0x2d) {
-                for df in &inst.dataflow {
-                    if Self::stack_slot_index(&df.destination) != Some(target_slot) {
-                        continue;
-                    }
-                    for loc in &df.sources {
-                        match loc {
-                            Location::Register(n) => {
-                                return Some(VariableRef::new_local_idx(
-                                    locals.get_or_intern(&format!("reg{n}")),
-                                ));
-                            }
-                            Location::Parameter(n) => {
-                                return Some(VariableRef::new_parameter((*n).into()));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            if matches!(inst.opcode, 0xb4 | 0xb5) {
-                break;
-            }
-        }
-        None
-    }
-
-    fn resolve_object_var(
-        &self,
-        loc: &Location,
-        aliases: &HashMap<String, VariableRef>,
-        locals: &mut Locals,
-    ) -> VariableRef {
-        if let Some(base) = Self::stack_slot_alias(loc, aliases, locals) {
-            return base;
-        }
-        let v = self.convert_location_to_var_ref(loc, locals);
-        aliases.get(&v.to_string()).cloned().unwrap_or(v)
-    }
-
-    fn aload_register_before(
-        block_instrs: &[jvm_reader::flow::InstructionFlowInfo<'_>],
-        current_idx: usize,
-        locals: &mut Locals,
-    ) -> Option<VariableRef> {
-        for inst in block_instrs[..current_idx].iter().rev() {
-            if matches!(inst.opcode, 0x15..=0x2d) {
-                for df in &inst.dataflow {
-                    for loc in &df.sources {
-                        match loc {
-                            Location::Register(n) => {
-                                return Some(VariableRef::new_local_idx(
-                                    locals.get_or_intern(&format!("reg{n}")),
-                                ));
-                            }
-                            Location::Parameter(n) => {
-                                return Some(VariableRef::new_parameter((*n).into()));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                return None;
-            }
-            if matches!(inst.opcode, 0xb4 | 0xb5) {
-                break;
-            }
-        }
-        None
-    }
-
-    fn field_object_base(
-        &self,
-        loc: &Location,
-        aliases: &HashMap<String, VariableRef>,
-        last_aload_reg: Option<&VariableRef>,
-        block_instrs: &[jvm_reader::flow::InstructionFlowInfo<'_>],
-        instr_idx: usize,
-        locals: &mut Locals,
-    ) -> VariableRef {
-        // Prefer a stable register/parameter for this stack slot when it differs from the
-        // most recent aload (e.g. aload_0; aload_1; putfield must use this, not the arg).
-        if let Some(slot_base) = Self::stack_slot_alias(loc, aliases, locals)
-            && !Self::is_stack_var(&slot_base)
-        {
-            let conflicts_with_last = last_aload_reg.is_some_and(|r| r != &slot_base);
-            if conflicts_with_last {
-                return slot_base;
-            }
-        }
-        if let Some(reg) = last_aload_reg {
-            return reg.clone();
-        }
-        if let Some(reg) = Self::aload_for_stack_slot(block_instrs, instr_idx, loc, locals) {
-            return reg;
-        }
-        if let Some(reg) = Self::aload_register_before(block_instrs, instr_idx, locals) {
-            return reg;
-        }
-        self.resolve_object_var(loc, aliases, locals)
-    }
-
     /// Stack-manipulation `dup*` opcodes (JVMS 6.5).
     fn is_stack_dup_opcode(opcode: u8) -> bool {
         matches!(opcode, 0x59..=0x5e)
@@ -1040,10 +861,6 @@ impl Context {
         &mut self,
         opcode: u8,
         data: &DataflowInfo,
-        aliases: &HashMap<String, VariableRef>,
-        last_aload_reg: Option<&VariableRef>,
-        block_instrs: &[jvm_reader::flow::InstructionFlowInfo<'_>],
-        instr_idx: usize,
         locals: &mut Locals,
     ) -> SmallVec<[Statement; 2]> {
         let dest_is_array = matches!(data.destination, Location::ArrayElement { .. });
@@ -1094,14 +911,10 @@ impl Context {
             // getfield
             0xb4 => {
                 let field = Self::field_ref_in(&data.sources).expect("getfield field");
-                let object = self.field_object_base(
+                let object = self.convert_location_to_var_ref(
                     Self::stack_sources(&data.sources)
                         .next()
                         .expect("getfield object"),
-                    aliases,
-                    last_aload_reg,
-                    block_instrs,
-                    instr_idx,
                     locals,
                 );
                 smallvec![Statement::new_kind(StatementKind::load(
@@ -1116,17 +929,11 @@ impl Context {
                     Location::FieldRef(f) => f,
                     _ => panic!("putfield destination"),
                 };
+                // The value is on top (one slot, or two for long/double), the object below it.
                 let mut stacks = Self::stack_sources(&data.sources);
                 let value = self.stack_exp(stacks.next().expect("putfield value"), locals);
-                let object_slot = stacks.next().expect("putfield object");
-                let object = self.field_object_base(
-                    object_slot,
-                    aliases,
-                    last_aload_reg,
-                    block_instrs,
-                    instr_idx,
-                    locals,
-                );
+                let object_slot = stacks.last().expect("putfield object");
+                let object = self.convert_location_to_var_ref(object_slot, locals);
                 smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(object),
                     Self::jvm_field_symbol(field),
@@ -1150,14 +957,7 @@ impl Context {
             // *aload
             0x2e..=0x35 if Self::array_base(&data.sources).is_some() => {
                 let base = Self::array_base(&data.sources).expect("aload base");
-                let object = self.field_object_base(
-                    base,
-                    aliases,
-                    last_aload_reg,
-                    block_instrs,
-                    instr_idx,
-                    locals,
-                );
+                let object = self.convert_location_to_var_ref(base, locals);
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination, locals),
                     object,
@@ -1175,14 +975,7 @@ impl Context {
                         .expect("astore value"),
                     locals,
                 );
-                let object = self.field_object_base(
-                    base,
-                    aliases,
-                    last_aload_reg,
-                    block_instrs,
-                    instr_idx,
-                    locals,
-                );
+                let object = self.convert_location_to_var_ref(base, locals);
                 smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(object),
                     mir::FieldRef::symbol("[]"),
