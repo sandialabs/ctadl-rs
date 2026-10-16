@@ -107,18 +107,6 @@ pub const KNOWN: &[(u8, &str)] = &[
     (0x0d, "fconst_2 holds the bits 0x2, not 2.0f"),
     (0x0f, "dconst_1 holds the bits 0x1, not 1.0"),
     (
-        0x5a,
-        "dup_x1 sends every input to every output (jvm-reader improvements doc 3.2)",
-    ),
-    (0x5b, "dup_x2 sends every input to every output (3.2)"),
-    (
-        0x5c,
-        "dup2 sends every input to every output, and rewrites its inputs (3.2)",
-    ),
-    (0x5d, "dup2_x1 sends every input to every output (3.2)"),
-    (0x5e, "dup2_x2 sends every input to every output (3.2)"),
-    (0x5f, "swap sends both inputs to both outputs (3.4)"),
-    (
         0xbd,
         "anewarray of an array type allocates [L[I; rather than [[I",
     ),

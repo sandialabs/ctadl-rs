@@ -46,18 +46,6 @@ const HARNESS: &str = include_str!("JvmOpcodes.java");
 /// the known jvm-reader bugs `jvm:asm-flow` also lists, and are stale once the
 /// case has none.
 pub const EXPECTED_REVIEWS: &[(&str, &str, &str)] = &[
-    ("dup_x1", "*", DUP),
-    ("dup_x2_ints", "*", DUP),
-    ("dup_x2_long", "*", DUP),
-    ("dup2_ints", "*", DUP),
-    ("dup2_x1_ints", "*", DUP),
-    ("dup2_x1_long", "*", DUP),
-    ("dup2_x2_ints", "*", DUP),
-    ("dup2_x2_long_over_ints", "*", DUP),
-    ("dup2_x2_ints_over_long", "*", DUP),
-    ("dup2_x2_long_over_long", "*", DUP),
-    ("swap", "*", SWAP),
-    ("swap_refs", "*", SWAP),
     (
         "l2i",
         "out1 lists in2, which never changed it",
@@ -79,10 +67,6 @@ pub const EXPECTED_REVIEWS: &[(&str, &str, &str)] = &[
         "The low word holds only bits below the integer part of the candidates.",
     ),
 ];
-
-const DUP: &str = "jvm-reader sends every input of dup_x* and dup2* to every output \
-     (jvm-reader improvements doc 3.2).";
-const SWAP: &str = "jvm-reader sends both inputs of swap to both outputs (3.4).";
 
 /// Opcodes the harness does not run; see the module comment.
 const NOT_RUN: &[u8] = &[

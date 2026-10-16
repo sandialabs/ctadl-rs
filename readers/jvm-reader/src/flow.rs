@@ -1397,6 +1397,41 @@ fn split_dataflow_infos(sources: Vec<Location>, destinations: Vec<Location>) -> 
         .collect()
 }
 
+/// What each output of a stack shuffle (`dup*`, `swap`) copies, as JVMS 6.5
+/// gives it: the input depth (0 = top) of each output, deepest output first.
+/// A category-2 value is two slots, so this one table also covers the forms of
+/// `dup2`, `dup2_x1` and `dup2_x2` that move longs and doubles.
+fn stack_shuffle(opcode: u8) -> Option<&'static [u8]> {
+    Some(match opcode {
+        // dup: v1 -> v1, v1
+        0x59 => &[0, 0],
+        // dup_x1: v2, v1 -> v1, v2, v1
+        0x5a => &[0, 1, 0],
+        // dup_x2: v3, v2, v1 -> v1, v3, v2, v1
+        0x5b => &[0, 2, 1, 0],
+        // dup2: v2, v1 -> v2, v1, v2, v1
+        0x5c => &[1, 0, 1, 0],
+        // dup2_x1: v3, v2, v1 -> v2, v1, v3, v2, v1
+        0x5d => &[1, 0, 2, 1, 0],
+        // dup2_x2: v4, v3, v2, v1 -> v2, v1, v4, v3, v2, v1
+        0x5e => &[1, 0, 3, 2, 1, 0],
+        // swap: v2, v1 -> v1, v2
+        0x5f => &[0, 1],
+        _ => return None,
+    })
+}
+
+/// One dataflow per output of a stack shuffle, each with its one source.
+fn stack_shuffle_dataflow(inputs: &[u8]) -> Vec<DataflowInfo> {
+    inputs
+        .iter()
+        .map(|&depth| DataflowInfo {
+            sources: vec![Location::StackInput(depth)],
+            destination: Location::StackOutput,
+        })
+        .collect()
+}
+
 /// The parameter slot map for a method, from its descriptor and access flags.
 ///
 /// A method whose descriptor cannot be read has no usable parameter list, so
@@ -1445,7 +1480,9 @@ pub fn decode_flow_instruction<'a>(
         let kind = opcode_kind(opcode);
         let mut dataflow = Vec::new();
         let mut call = None;
-        if kind == InstructionKind::Dataflow {
+        if let Some(inputs) = stack_shuffle(opcode) {
+            dataflow = stack_shuffle_dataflow(inputs);
+        } else if kind == InstructionKind::Dataflow {
             let (sources, destinations) = decode_dataflow(code, pc, cf, opcode, &params, false)?;
             dataflow = split_dataflow_infos(sources, destinations);
         } else if kind == InstructionKind::Call {
@@ -1632,57 +1669,6 @@ fn decode_dataflow(
                     });
                 }
             }
-        }
-        0x59 => {
-            sources.push(Location::StackInput(0));
-            destinations.push(Location::StackOutput);
-            destinations.push(Location::StackOutput);
-        }
-        0x5a => {
-            for i in 0..2 {
-                sources.push(Location::StackInput(i));
-            }
-            for _ in 0..3 {
-                destinations.push(Location::StackOutput);
-            }
-        }
-        0x5b => {
-            for i in 0..3 {
-                sources.push(Location::StackInput(i));
-            }
-            for _ in 0..4 {
-                destinations.push(Location::StackOutput);
-            }
-        }
-        0x5c => {
-            for i in 0..2 {
-                sources.push(Location::StackInput(i));
-            }
-            for _ in 0..4 {
-                destinations.push(Location::StackOutput);
-            }
-        }
-        0x5d => {
-            for i in 0..3 {
-                sources.push(Location::StackInput(i));
-            }
-            for _ in 0..5 {
-                destinations.push(Location::StackOutput);
-            }
-        }
-        0x5e => {
-            for i in 0..4 {
-                sources.push(Location::StackInput(i));
-            }
-            for _ in 0..6 {
-                destinations.push(Location::StackOutput);
-            }
-        }
-        0x5f => {
-            sources.push(Location::StackInput(0));
-            sources.push(Location::StackInput(1));
-            destinations.push(Location::StackOutput);
-            destinations.push(Location::StackOutput);
         }
         0xbb => {
             let idx = read_u16_be(code, pc + 1)?;
@@ -2356,59 +2342,36 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_dup_dataflow() {
-        let cf = &constant_pool_only();
-        let (sources, destinations) =
-            decode_dataflow(&[0x59], 0, cf, 0x59, &ParameterSlotMap::default(), false)
-                .expect("decode");
-        assert_eq!(sources, vec![Location::StackInput(0)]);
-        assert_eq!(destinations.len(), 2);
-        assert!(destinations
-            .iter()
-            .all(|d| matches!(d, Location::StackOutput)));
+    /// The one source of each output of a stack shuffle, deepest output first.
+    fn shuffle(opcode: u8) -> Vec<Location> {
+        let dataflow =
+            super::stack_shuffle_dataflow(super::stack_shuffle(opcode).expect("a shuffle"));
+        dataflow
+            .into_iter()
+            .map(|df| {
+                assert_eq!(df.destination, Location::StackOutput);
+                let [source] = <[Location; 1]>::try_from(df.sources).expect("one source");
+                source
+            })
+            .collect()
     }
 
+    /// Each output of `dup*` and `swap` copies exactly one input, in the JVMS
+    /// 6.5 order. Listing every input as a source of every output mixes the
+    /// values (jvm-reader improvements doc 3.2).
     #[test]
-    fn test_dup_x1_dataflow() {
-        let cf = &constant_pool_only();
-        let (sources, destinations) =
-            decode_dataflow(&[0x5a], 0, cf, 0x5a, &ParameterSlotMap::default(), false)
-                .expect("decode");
-        assert_eq!(sources.len(), 2);
-        assert_eq!(destinations.len(), 3);
-        assert!(destinations
-            .iter()
-            .all(|d| matches!(d, Location::StackOutput)));
-    }
-
-    #[test]
-    fn test_dup2_dataflow() {
-        let cf = &constant_pool_only();
-        let (sources, destinations) =
-            decode_dataflow(&[0x5c], 0, cf, 0x5c, &ParameterSlotMap::default(), false)
-                .expect("decode");
-        assert_eq!(sources.len(), 2);
-        assert_eq!(destinations.len(), 4);
-        assert!(destinations
-            .iter()
-            .all(|d| matches!(d, Location::StackOutput)));
-    }
-
-    #[test]
-    fn test_swap_dataflow() {
-        let cf = &constant_pool_only();
-        let (sources, destinations) =
-            decode_dataflow(&[0x5f], 0, cf, 0x5f, &ParameterSlotMap::default(), false)
-                .expect("decode");
+    fn test_stack_shuffle_dataflow() {
+        use Location::StackInput as In;
+        assert_eq!(shuffle(0x59), vec![In(0), In(0)]);
+        assert_eq!(shuffle(0x5a), vec![In(0), In(1), In(0)]);
+        assert_eq!(shuffle(0x5b), vec![In(0), In(2), In(1), In(0)]);
+        assert_eq!(shuffle(0x5c), vec![In(1), In(0), In(1), In(0)]);
+        assert_eq!(shuffle(0x5d), vec![In(1), In(0), In(2), In(1), In(0)]);
         assert_eq!(
-            sources,
-            vec![Location::StackInput(0), Location::StackInput(1)]
+            shuffle(0x5e),
+            vec![In(1), In(0), In(3), In(2), In(1), In(0)]
         );
-        assert_eq!(destinations.len(), 2);
-        assert!(destinations
-            .iter()
-            .all(|d| matches!(d, Location::StackOutput)));
+        assert_eq!(shuffle(0x5f), vec![In(0), In(1)]);
     }
 
     #[test]
