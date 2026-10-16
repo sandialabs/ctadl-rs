@@ -361,14 +361,28 @@ enforced. The 3.2 case should be added and enforced when 3.2 is fixed.
 
 ### 3.4 Suspected, not yet tested
 
-- `swap` (`0x5f`) is not lowered by `stack_dup_statements`, but its decoding
-  lists both inputs as sources of both outputs, so the two values mix as in 3.2.
-- `ldc` of a MethodHandle, MethodType or dynamic constant is an error in
-  `resolve_constant` (`flow.rs:1377`), which probably loses the method. javac
-  rarely emits these; other compilers and bytecode tools can.
-- `instanceof` and `arraylength` have a stack effect but no dataflow. Their
-  result takes the input's stack slot id, so the object's taint passes to the
-  boolean or the length.
-- The `ireturn`..`areturn` terminators return `StackSlot(0)`, the bottom of the
-  stack, which is right only when the return value is alone on the stack.
+`jvm:asm-flow` and `jvm:opcodes` ([`jvm-validation.md`](jvm-validation.md))
+have since tested the first three items against ASM and the JVM:
 
+- *Confirmed:* `swap` (`0x5f`) lists both inputs as sources of both outputs, so
+  the two values mix as in 3.2. `stack_dup_statements` does not lower it.
+- *Confirmed:* `ldc` of a MethodHandle, MethodType or dynamic constant is an
+  error in `resolve_constant`, and the whole method fails to decode. javac
+  rarely emits these; other compilers and bytecode tools can.
+- *Not a jvm-reader bug:* `instanceof` and `arraylength` have a stack effect but
+  no dataflow, so their result keeps the input's stack slot and the object's
+  taint passes to the boolean or the length. Their result does depend on the
+  object, so both checks accept this. Whether that dependence should carry
+  taint is a policy question for the frontend.
+- *Untested:* the `ireturn`..`areturn` terminators return `StackSlot(0)`, the
+  bottom of the stack, which is right only when the return value is alone on the
+  stack. The checks above do not look at the frontend.
+
+### 3.5 Found by the ASM cross-check
+
+- `fconst_1`, `fconst_2` and `dconst_1` decode to `Float(1)`, `Float(2)` and
+  `Double(1)`. Those hold raw bits, so the constants are tiny denormals rather
+  than 1.0 and 2.0. `const_for_const_op` casts the integer instead of converting
+  it.
+- `anewarray` of an array type allocates `[L[I;` rather than `[[I`: the decoder
+  always wraps the class operand in `L...;`.
