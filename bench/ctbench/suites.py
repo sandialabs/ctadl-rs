@@ -12,7 +12,6 @@ import json
 import re
 from pathlib import Path
 
-from . import db as dbm
 
 # The SARIF profile every suite queries with: source and sink endpoints plus connected paths,
 # which is what the scorers read.
