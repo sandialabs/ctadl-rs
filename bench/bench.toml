@@ -24,9 +24,11 @@ night_end_hour = 7
 # A unit killed this many times because the user came back runs on the e tier from then on,
 # so a busy week still gets every unit measured.
 max_activity_kills = 3
+# Interpreters (python3, node) are left out: long-lived ones -- this web page, editor servers --
+# would hold the gate shut forever. Work they do still shows up as foreign CPU.
 dev_processes = [
   "cargo", "rustc", "ld", "ld64", "clang", "cc", "gcc", "make", "ninja",
-  "java", "gradle", "ctadl", "souffle", "nix", "nix-daemon", "nix-build", "python3", "node",
+  "java", "gradle", "ctadl", "souffle", "nix", "nix-daemon", "nix-build",
   "xcodebuild", "swift", "swiftc", "go",
 ]
 
