@@ -76,6 +76,7 @@ class Daemon:
         self.next_poll = 0.0
         self.next_gc = 0.0
         self.xtask: str | None = None
+        self.xtask_retry_at = 0.0
         self.last_gate_state = None
         self.git = inputs.get("git", "git")
         for d in ("tmp", "home"):
@@ -196,8 +197,13 @@ class Daemon:
             target_dir = self.root / "target"
             self.conn.execute("UPDATE commits SET build_status='building' WHERE sha=?", (sha,))
         else:
+            # The tracked branch's dev shell, not the bench branch's: the bench branch carries
+            # taintbench's flake, whose dev shell does not build on macOS. The toolchain is the
+            # same, since the bench branch is merged from the tracked one.
             src = self.bench_repo
-            flake = f"git+file://{self.bench_repo}?rev={sha}"
+            t = self.cfg["track"]
+            tip = self.git_out("rev-parse", f"{t['remote']}/{t['branch']}")
+            flake = f"git+file://{self.repo}?rev={tip}"
             cargo = ["cargo", "build", "--release", "-p", "xtask"]
             target_dir = self.root / "target-bench"
         env = {**self.env, "CARGO_TARGET_DIR": str(target_dir)}
@@ -231,8 +237,9 @@ class Daemon:
             self.xtask = str(out)
             self.log("build-ok", f"xtask {sha[:10]}")
         else:
-            self.log("build-failed", f"xtask rc={rc} log={log}")
-            raise SystemExit(f"cannot build the bench xtask; see {log}")
+            # Only TaintBench scoring needs xtask; keep measuring and try again in an hour.
+            self.xtask_retry_at = time.time() + 3600
+            self.log("build-failed", f"xtask rc={rc} log={log}; retrying in an hour")
 
     # --- units ---------------------------------------------------------------------------------
 
@@ -474,7 +481,7 @@ class Daemon:
         if exclusive:
             return
         sweeping = [a for a in self.active if a.sweep]
-        if self.xtask is None:
+        if self.xtask is None and time.time() >= self.xtask_retry_at:
             head = self.git_out("rev-parse", "HEAD", repo=self.bench_repo)
             built = self.root / "builds" / head / "xtask"
             if built.exists():

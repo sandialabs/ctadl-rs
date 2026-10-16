@@ -35,7 +35,8 @@ mem_cap_gib = 48
 timeout_s = 7200
 
 [defaults]
-mem_cap_gib = 64
+# memguard cap for every benchmark run (pass and sweep alike).
+mem_cap_gib = 16
 timeouts = { import = 21600, index = 7200, query = 3600, report = 3600 }
 
 [suites.taintbench]
@@ -57,7 +58,6 @@ model = "firmware-eval/models/cmdi-firmware.json5"
 [suites.apps]
 order = 50
 list = "bench/suites/apps.json"
-mem_cap_gib = 96
 
 # Not part of a commit's pass: a sweep of every sink-bearing binary in the Operation Mango
 # dataset (bench/suites/firmware-sweep.json, from gen_firmware_sweep.py), pinned to one commit,
@@ -74,7 +74,7 @@ batch = 100             # binaries queued at a time
 # Same guard as the original campaign (run_one.py), so statuses compare. Timeouts count
 # p-tier seconds; a second on the e tier counts as e_time_weight of one.
 timeouts = { import = 600, index = 600, query = 600 }
-mem_cap_gib = 24
+mem_cap_gib = 16
 
 [timeouts]
 e_time_weight = 0.25

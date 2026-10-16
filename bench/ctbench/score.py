@@ -87,6 +87,8 @@ def score(spec: dict, work: Path, ctx) -> tuple[dict[str, float], dict[str, str]
         metrics.update({f"q_report.{k}": v for k, v in leaves.items()})
 
     if kind == "taintbench":
+        if ctx.xtask is None:
+            raise RuntimeError("xtask is not built (see the build-failed event), so TaintBench is unscored")
         out = work / "taintbench-score.json"
         log = work / "taintbench-score.log"
         with open(log, "wb") as f:

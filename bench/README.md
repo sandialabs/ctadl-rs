@@ -55,6 +55,8 @@ daemon, foreign CPU use, and memory pressure.
   and sweep units are demoted in place. After 3 such kills a unit runs on the e tier.
 * Memory pressure: sweep workers are shed (youngest first); other work is paused.
 * Commit passes and builds run alone; the sweep uses 12 workers when quiet, 3 otherwise.
+* Every benchmark run is capped at 16 GiB by memguard (builds at 48 GiB); a run over the cap
+  is killed and recorded as `oom`.
 
 Builds run `cargo build --release` inside the commit's own `nix develop` shell, as the daemon's
 child, so they move between tiers too; the shared target dir makes them incremental.
