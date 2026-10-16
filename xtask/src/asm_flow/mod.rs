@@ -112,19 +112,12 @@ pub const KNOWN: &[(u8, &str)] = &[
     ),
 ];
 
-/// A method jvm-reader cannot decode at all, known when ASM's dump of it
-/// shows an `ldc` of one of these constants.
-pub const KNOWN_UNDECODABLE: (&[&str], &str) = (
-    &["=const:MT", "=const:MH", "=const:CD"],
-    "ldc of a MethodType, MethodHandle or dynamic constant fails the method (3.4)",
-);
-
 /// What [`compare`] found.
 #[derive(Debug, Default)]
 pub struct Report {
     /// Instructions compared (live ones, in methods both sides dumped).
     pub compared: usize,
-    /// Disagreements on a [`KNOWN`] opcode or an undecodable method, by reason.
+    /// Disagreements on a [`KNOWN`] opcode, by reason.
     pub known: BTreeMap<&'static str, usize>,
 }
 
@@ -150,16 +143,12 @@ pub fn compare(cp: &str, label: &str, classes: &[PathBuf], work: &Path) -> Resul
     let mut all = String::new();
     for (method, want) in &theirs {
         let got = ours.get(method);
-        if got.is_some_and(|g| g.first().is_some_and(|l| l.starts_with("error "))) {
-            let (markers, reason) = KNOWN_UNDECODABLE;
-            let known = want.iter().any(|l| markers.iter().any(|m| l.contains(m)));
-            let error = &got.unwrap()[0];
+        if let Some(error) = got
+            .and_then(|g| g.first())
+            .filter(|l| l.starts_with("error "))
+        {
             writeln!(all, "{method}: {error}")?;
-            if known {
-                *report.known.entry(reason).or_default() += 1;
-            } else {
-                problems.push(format!("{method}: jvm-reader: {error}"));
-            }
+            problems.push(format!("{method}: jvm-reader: {error}"));
             continue;
         }
         let Some(got) = got else {
@@ -373,6 +362,9 @@ fn constant(c: &ConstantValue) -> String {
         ConstantValue::Double(bits) => format!("const:D{bits:x}"),
         ConstantValue::String(s) => format!("const:S{}", escape(s)),
         ConstantValue::ClassRef(name) => format!("const:C{name}"),
+        ConstantValue::MethodType(desc) => format!("const:MT{desc}"),
+        ConstantValue::MethodHandle { name, .. } => format!("const:MH{name}"),
+        ConstantValue::Dynamic { name, .. } => format!("const:CD{name}"),
         ConstantValue::Null => "const:null".to_string(),
     }
 }

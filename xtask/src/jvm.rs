@@ -137,9 +137,7 @@ fn check_asm_flow(cp: &str, samples: &[Sample], cases: Option<&Path>, work: &Pat
             Ok(report) if *label == "all-opcodes" => {
                 // Every known disagreement is on an opcode the fixture holds,
                 // so one it no longer trips has been fixed.
-                let (_, undecodable) = asm_flow::KNOWN_UNDECODABLE;
-                let reasons = asm_flow::KNOWN.iter().map(|(_, why)| *why);
-                for reason in reasons.chain([undecodable]) {
+                for (_, reason) in asm_flow::KNOWN {
                     if !report.known.contains_key(reason) {
                         problems.push(format!(
                             "known disagreement no longer seen, remove it from asm_flow::KNOWN: {reason}"

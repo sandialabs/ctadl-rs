@@ -68,14 +68,15 @@ bug was fixed and its entry must go).
 | --- | --- | --- | --- |
 | `fconst_1`, `fconst_2`, `dconst_1` | `Float(1)`, `Float(2)`, `Double(1)`: the raw bits 1 and 2, tiny denormals | `0x3f800000`, `0x40000000`, `0x3ff0000000000000` | new; `const_for_const_op` casts the integer instead of converting it |
 | `anewarray` of an array type | allocates `[L[I;` | `[[I` | new; `decode_dataflow` always wraps the class in `L...;` |
-| `ldc` of a MethodType, MethodHandle or dynamic constant | the whole method fails to decode | a constant | improvements §3.4, confirmed |
 
 The samples and nightly cases trip only `dconst_1`.
 
 It also found that `dup_x1`, `dup_x2`, `dup2`, `dup2_x1`, `dup2_x2` and `swap`
 sent every input to every output, rather than following the JVMS §6.5
 permutation (improvements §3.2 and §3.4). That was fixed in jvm-reader, and its
-`KNOWN` entries were deleted.
+`KNOWN` entries were deleted. Likewise, `ldc` of a MethodType, MethodHandle or
+dynamic constant made the whole method fail to decode (improvements §3.4). It
+now pushes the constant, and the check fails if such a method stops decoding.
 
 Everything else agrees: every load, store and `iinc` (short, plain and wide
 forms, and stores into parameter slots), every arithmetic, conversion and

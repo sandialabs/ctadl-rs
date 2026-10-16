@@ -378,9 +378,17 @@ have since tested the first three items against ASM and the JVM:
   ordinary dataflow, which overwrites one input before reading it. javac rarely
   emits `swap`, so no taint case covers it; `jvm:asm-flow`, `jvm:opcodes` and
   `test_stack_shuffle_dataflow` do.
-- *Confirmed:* `ldc` of a MethodHandle, MethodType or dynamic constant is an
-  error in `resolve_constant`, and the whole method fails to decode. javac
-  rarely emits these; other compilers and bytecode tools can.
+- *Fixed:* `ldc` of a MethodHandle, MethodType or dynamic constant was an
+  error in `resolve_constant`, and the method failed to decode. `ctadl-jvm`
+  passed the error up, so the whole class or JAR failed to import, not just
+  the method. javac rarely emits these; other compilers and bytecode tools
+  can. `ConstantValue` now has `MethodHandle`, `MethodType` and `Dynamic`
+  variants. `ctadl-jvm` lowers the first two as objects of class
+  `MethodHandle` and `MethodType`, as `ctadl-dex` does for
+  `const-method-handle` and `const-method-type`. It lowers a dynamic constant
+  of reference type as an object of that type. Regression protection:
+  `ldc_decodes_method_handle_type_and_dynamic_constants`, and `jvm:asm-flow`,
+  which no longer lists these as known failures.
 - *Not a jvm-reader bug:* `instanceof` and `arraylength` have a stack effect but
   no dataflow, so their result keeps the input's stack slot and the object's
   taint passes to the boolean or the length. Their result does depend on the

@@ -51,6 +51,22 @@ pub enum ConstantValue {
     Double(u64),
     String(String),
     ClassRef(String),
+    /// A `CONSTANT_MethodType`: the method descriptor it names.
+    MethodType(String),
+    /// A `CONSTANT_MethodHandle`: its reference kind (JVMS 5.4.3.5) and the
+    /// field or method it refers to.
+    MethodHandle {
+        reference_kind: u8,
+        class_name: String,
+        name: String,
+        descriptor: String,
+    },
+    /// A `CONSTANT_Dynamic`: the name and field descriptor of the value its
+    /// bootstrap method produces. The value itself is known only at run time.
+    Dynamic {
+        name: String,
+        descriptor: String,
+    },
     Null,
 }
 
@@ -1382,6 +1398,47 @@ fn resolve_constant(cf: &ClassFile, cp_index: u16) -> ClassFileResult<ConstantVa
         CpEntry::Class { name_index } => {
             let s = cf.get_utf8(*name_index)?.to_string();
             Ok(ConstantValue::ClassRef(s))
+        }
+        CpEntry::MethodType { descriptor_index } => Ok(ConstantValue::MethodType(
+            cf.get_utf8(*descriptor_index)?.to_string(),
+        )),
+        CpEntry::MethodHandle {
+            reference_kind,
+            reference_index,
+        } => match cf.get_cp(*reference_index)? {
+            CpEntry::Fieldref {
+                class_index,
+                name_and_type_index,
+            }
+            | CpEntry::Methodref {
+                class_index,
+                name_and_type_index,
+            }
+            | CpEntry::InterfaceMethodref {
+                class_index,
+                name_and_type_index,
+            } => {
+                let (name, descriptor) = cf.get_name_and_type(*name_and_type_index)?;
+                Ok(ConstantValue::MethodHandle {
+                    reference_kind: *reference_kind,
+                    class_name: cf.get_class_name(*class_index)?.to_string(),
+                    name: name.to_string(),
+                    descriptor: descriptor.to_string(),
+                })
+            }
+            _ => Err(ClassFileError::InvalidClassFile(
+                "MethodHandle must refer to a field or method",
+            )),
+        },
+        CpEntry::Dynamic {
+            name_and_type_index,
+            ..
+        } => {
+            let (name, descriptor) = cf.get_name_and_type(*name_and_type_index)?;
+            Ok(ConstantValue::Dynamic {
+                name: name.to_string(),
+                descriptor: descriptor.to_string(),
+            })
         }
         _ => Err(ClassFileError::InvalidClassFile("expected constant entry")),
     }
@@ -2852,5 +2909,68 @@ mod tests {
             }
             other => panic!("expected StackUnderflow, got {other:?}"),
         }
+    }
+
+    /// `ldc` of a MethodType, MethodHandle or dynamic constant pushes that
+    /// constant; `ldc2_w` of a `long` dynamic constant pushes it as two words.
+    /// These used to be decode errors, which lost the whole method.
+    #[test]
+    fn ldc_decodes_method_handle_type_and_dynamic_constants() {
+        let mut cf = constant_pool_with_fields();
+        cf.constant_pool.extend([
+            // 11: MethodType (J)V, reusing a new Utf8 at 14
+            Some(CpEntry::MethodType {
+                descriptor_index: 14,
+            }),
+            // 12: MethodHandle REF_getField Demo.wide:J
+            Some(CpEntry::MethodHandle {
+                reference_kind: 1,
+                reference_index: WIDE_FIELD_INDEX,
+            }),
+            // 13: Dynamic wide:J (bootstrap method 0)
+            Some(CpEntry::Dynamic {
+                bootstrap_method_attr_index: 0,
+                name_and_type_index: 5,
+            }),
+            Some(CpEntry::Utf8(JvmString::Utf8("(J)V".to_string()))),
+        ]);
+        let decode = |code: &[u8]| {
+            decode_dataflow(code, 0, &cf, code[0], &ParameterSlotMap::default(), false)
+                .expect("decode")
+        };
+
+        let (sources, destinations) = decode(&[0x12, 11]);
+        assert_eq!(
+            sources,
+            vec![Location::Constant(ConstantValue::MethodType(
+                "(J)V".to_string()
+            ))]
+        );
+        assert_eq!(destinations, vec![Location::StackOutput]);
+
+        let (sources, destinations) = decode(&[0x13, 0, 12]);
+        assert_eq!(
+            sources,
+            vec![Location::Constant(ConstantValue::MethodHandle {
+                reference_kind: 1,
+                class_name: "Demo".to_string(),
+                name: "wide".to_string(),
+                descriptor: "J".to_string(),
+            })]
+        );
+        assert_eq!(destinations, vec![Location::StackOutput]);
+
+        let (sources, destinations) = decode(&[0x14, 0, 13]);
+        assert_eq!(
+            sources,
+            vec![Location::Constant(ConstantValue::Dynamic {
+                name: "wide".to_string(),
+                descriptor: "J".to_string(),
+            })]
+        );
+        assert_eq!(
+            destinations,
+            vec![Location::StackOutput, Location::StackOutput]
+        );
     }
 }

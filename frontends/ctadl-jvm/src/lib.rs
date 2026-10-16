@@ -1032,6 +1032,18 @@ impl Context {
             Location::Constant(ConstantValue::Integer(n)) => Exp::new_int(*n as i64),
             Location::Constant(ConstantValue::Long(n)) => Exp::new_int(*n),
             Location::Constant(ConstantValue::String(s)) => Exp::new_str(s),
+            // As ctadl-dex models const-method-handle and const-method-type.
+            Location::Constant(ConstantValue::MethodHandle { .. }) => {
+                Self::allocation_exp("java/lang/invoke/MethodHandle")
+            }
+            Location::Constant(ConstantValue::MethodType(_)) => {
+                Self::allocation_exp("java/lang/invoke/MethodType")
+            }
+            Location::Constant(ConstantValue::Dynamic { descriptor, .. })
+                if descriptor.starts_with('L') || descriptor.starts_with('[') =>
+            {
+                Self::allocation_exp(descriptor)
+            }
             Location::Allocation(class_name) => Self::allocation_exp(class_name),
             // A field read is not expressible as an Exp; genuine field reads are lowered to
             // Load instructions in the getfield/getstatic/aload opcode arms. This &self helper
