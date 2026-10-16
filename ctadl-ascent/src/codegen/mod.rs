@@ -213,7 +213,8 @@ pub fn classify_rung(
     Rung::Inline { by_model: false }
 }
 
-/// Every Java call site lands in exactly one of the four buckets. The invariant is asserted:
+/// Every dispatch site (a Java, Dex or CIL virtual, interface or super call) lands in exactly
+/// one of the four buckets. The invariant is asserted:
 /// `modelled + skipped + cha + inlined == java_sites`.
 ///
 /// Without these counts a mis-scoped dispatch model silently swallows a signature and the only
@@ -264,7 +265,7 @@ impl std::fmt::Display for SiteBuckets {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} java site(s): {} modelled, {} skipped, {} CHA ({} with no target, {} exact \
+            "{} dispatch site(s): {} modelled, {} skipped, {} CHA ({} with no target, {} exact \
              super), {} inlined ({} by model)",
             self.java_sites,
             self.modelled,
@@ -285,7 +286,7 @@ pub struct CodegenReport {
     /// rather than from the matched names, which is the only place that knows a name belonged
     /// to a function this project actually lowered.
     pub skipped_bodies: usize,
-    /// Java call sites by bucket, per [`JavaDispatch::index`].
+    /// Dispatch sites by bucket, per [`JavaDispatch::index`].
     pub buckets: [SiteBuckets; 4],
     /// Signatures whose dispatch model was refused because the CHA target set holds a matched
     /// source or sink, mapped to the endpoint that refused it.
