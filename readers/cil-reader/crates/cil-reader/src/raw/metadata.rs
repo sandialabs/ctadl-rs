@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::raw::coded::{CODED_INDEX_COUNT, CodedIndexKind};
 use crate::raw::cursor::Cur;
 use crate::raw::heaps::{BlobHeap, GuidHeap, StringsHeap, UserStringsHeap};
-use crate::raw::pe::PeImage;
+use crate::raw::pe::{PeImage, StreamHeader};
 use crate::raw::tables::{
     RawRow, SizeCtx, TABLE_COUNT, Table, TableInfo, TableRef, table_row_size,
 };
@@ -20,9 +20,8 @@ pub struct Metadata<'a> {
     pub(crate) us_data: &'a [u8],
     pub(crate) guid_data: &'a [u8],
     pub(crate) tables_data: &'a [u8],
-    /// The `#Pdb` stream, for the optional portable-PDB phase (M8).
-    #[allow(dead_code)]
-    pub(crate) pdb_data: Option<&'a [u8]>,
+    /// The `#Pdb` stream's header, which a portable PDB has.
+    pub pdb: Option<PdbHeader>,
 
     /// The `HeapSizes` byte from the `#~` header.
     pub heap_sizes: u8,
@@ -35,8 +34,28 @@ pub struct Metadata<'a> {
     tables: [TableInfo; TABLE_COUNT],
 }
 
+/// The `#Pdb` stream's header (Cecil `PdbHeap`), past which nothing is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PdbHeader {
+    /// The PDB id: a GUID, then a stamp. The GUID is the one an assembly's
+    /// CodeView debug entry names.
+    pub id: [u8; 20],
+    /// The entry point's MethodDef token, or 0.
+    pub entry_point: u32,
+    /// Which of the type-system tables the PDB was made against have rows.
+    pub type_system_tables: u64,
+}
+
 impl<'a> Metadata<'a> {
     pub(crate) fn from_image(image: &PeImage<'a>) -> Result<Metadata<'a>> {
+        Metadata::from_streams(&image.stream_headers, image.metadata_offset)
+    }
+
+    /// The metadata of the streams of a root at file offset `metadata_offset`.
+    pub(crate) fn from_streams(
+        streams: &[StreamHeader<'a>],
+        metadata_offset: usize,
+    ) -> Result<Metadata<'a>> {
         let mut strings_data: &[u8] = &[];
         let mut blob_data: &[u8] = &[];
         let mut us_data: &[u8] = &[];
@@ -46,7 +65,7 @@ impl<'a> Metadata<'a> {
         let mut minimal_delta = false;
         let mut pdb_data = None;
 
-        for stream in &image.stream_headers {
+        for stream in streams {
             // The CLR's read-write metadata, which opens `#-` tables, finds
             // `#JTD` with `_stricmp`.
             if stream.name.eq_ignore_ascii_case("#JTD") {
@@ -66,8 +85,7 @@ impl<'a> Metadata<'a> {
             }
         }
 
-        let tables_data =
-            tables_data.ok_or(Error::bad(image.metadata_offset, "no #~ or #- stream"))?;
+        let tables_data = tables_data.ok_or(Error::bad(metadata_offset, "no #~ or #- stream"))?;
 
         // ImageReader.ReadTableHeap
         let mut cur = Cur::new(tables_data);
@@ -77,7 +95,30 @@ impl<'a> Metadata<'a> {
         let valid = cur.u64()?;
         let sorted = cur.u64()?;
 
+        // ImageReader.ReadPdbHeap. A portable PDB's tables index the tables of
+        // the assembly it describes, which it does not hold: their row
+        // counts, which size those indices, are in `#Pdb`. Counts in the
+        // `#~` header follow and win.
         let mut row_counts = [0u32; TABLE_COUNT];
+        let pdb = match pdb_data {
+            None => None,
+            Some(data) => {
+                let mut pdb_cur = Cur::new(data);
+                let id: [u8; 20] = pdb_cur.bytes(20)?.try_into().unwrap();
+                let entry_point = pdb_cur.u32()?;
+                let type_system_tables = pdb_cur.u64()?;
+                for (i, count) in row_counts.iter_mut().enumerate() {
+                    if type_system_tables & (1u64 << i) != 0 {
+                        *count = pdb_cur.u32()?;
+                    }
+                }
+                Some(PdbHeader {
+                    id,
+                    entry_point,
+                    type_system_tables,
+                })
+            }
+        };
         for (i, count) in row_counts.iter_mut().enumerate() {
             if valid & (1u64 << i) != 0 {
                 *count = cur.u32()?;
@@ -137,7 +178,7 @@ impl<'a> Metadata<'a> {
             us_data,
             guid_data,
             tables_data,
-            pdb_data,
+            pdb,
             heap_sizes,
             valid,
             sorted,
@@ -202,6 +243,12 @@ impl<'a> Metadata<'a> {
     /// Reads the row with 1-based `rid` from `R`'s table.
     pub fn row<R: RawRow>(&self, rid: u32) -> Result<R> {
         self.table::<R>().row(rid)
+    }
+
+    /// Whether `table` is in the `Valid` bitvector (Cecil `TableHeap.HasTable`),
+    /// rows or not.
+    pub fn is_valid(&self, table: Table) -> bool {
+        self.valid & (1u64 << table as u8) != 0
     }
 
     pub fn is_sorted(&self, table: Table) -> bool {

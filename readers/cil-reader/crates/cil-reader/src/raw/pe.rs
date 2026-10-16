@@ -321,38 +321,9 @@ impl<'a> PeImage<'a> {
     fn read_metadata_root(&mut self) -> Result<()> {
         let md_off = self.resolve_rva(self.metadata_directory.virtual_address)?;
         self.metadata_offset = md_off;
-        let mut cur = Cur::at(self.data, md_off);
-        if cur.u32()? != 0x424a_5342 {
-            return Err(Error::bad(md_off, "missing BSJB metadata signature"));
-        }
-        cur.skip(8)?; // MajorVersion, MinorVersion, Reserved
-        let version_len = cur.u32()? as usize;
-        let version_bytes = cur.bytes(version_len)?;
-        let end = version_bytes
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(version_len);
-        self.runtime_version = latin1(&version_bytes[..end]);
-        cur.skip(2)?; // Flags
-        let stream_count = cur.u16()?;
-
-        for _ in 0..stream_count {
-            let at = cur.pos();
-            // ImageReader.ReadMetadataStream: the offset is added to the
-            // root's file offset in unchecked uint arithmetic.
-            let start = (md_off as u32).wrapping_add(cur.u32()?) as usize;
-            let size = cur.u32()?;
-            let name = read_aligned_string(&mut cur, 16)?;
-            // ReadHeapData reads with BinaryReader.ReadBytes((int) size),
-            // which throws on a negative count and otherwise stops at the
-            // end of the file.
-            if size > i32::MAX as u32 {
-                return Err(Error::bad(at, "metadata stream size past 2^31"));
-            }
-            let rest = self.data.get(start..).unwrap_or(&[]);
-            let data = &rest[..(size as usize).min(rest.len())];
-            self.stream_headers.push(StreamHeader { name, data });
-        }
+        let (runtime_version, stream_headers) = read_metadata_root(self.data, md_off)?;
+        self.runtime_version = runtime_version;
+        self.stream_headers = stream_headers;
         Ok(())
     }
 
@@ -402,6 +373,49 @@ impl<'a> PeImage<'a> {
     pub fn metadata(&self) -> Result<Metadata<'a>> {
         Metadata::from_image(self)
     }
+}
+
+/// Reads the metadata root (BSJB) at file offset `md_off`: the version
+/// string, as Latin-1, and the stream headers. A PE image's root is where its
+/// CLI header points; a portable PDB's is at offset 0.
+pub(crate) fn read_metadata_root(
+    data: &[u8],
+    md_off: usize,
+) -> Result<(Cow<'_, str>, Vec<StreamHeader<'_>>)> {
+    let mut cur = Cur::at(data, md_off);
+    if cur.u32()? != 0x424a_5342 {
+        return Err(Error::bad(md_off, "missing BSJB metadata signature"));
+    }
+    cur.skip(8)?; // MajorVersion, MinorVersion, Reserved
+    let version_len = cur.u32()? as usize;
+    let version_bytes = cur.bytes(version_len)?;
+    let end = version_bytes
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(version_len);
+    let version = latin1(&version_bytes[..end]);
+    cur.skip(2)?; // Flags
+    let stream_count = cur.u16()?;
+
+    let mut streams = Vec::with_capacity(stream_count.into());
+    for _ in 0..stream_count {
+        let at = cur.pos();
+        // ImageReader.ReadMetadataStream: the offset is added to the
+        // root's file offset in unchecked uint arithmetic.
+        let start = (md_off as u32).wrapping_add(cur.u32()?) as usize;
+        let size = cur.u32()?;
+        let name = read_aligned_string(&mut cur, 16)?;
+        // ReadHeapData reads with BinaryReader.ReadBytes((int) size),
+        // which throws on a negative count and otherwise stops at the
+        // end of the file.
+        if size > i32::MAX as u32 {
+            return Err(Error::bad(at, "metadata stream size past 2^31"));
+        }
+        let rest = data.get(start..).unwrap_or(&[]);
+        let data = &rest[..(size as usize).min(rest.len())];
+        streams.push(StreamHeader { name, data });
+    }
+    Ok((version, streams))
 }
 
 fn module_kind(characteristics: u16, subsystem: u16) -> ModuleKind {

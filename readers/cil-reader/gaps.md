@@ -491,7 +491,6 @@ bad part, where the port returns `Err`. Sometimes that fails the whole image.
 - Section names are decoded as lossy UTF-8; Cecil uses Latin-1.
 - `parse_runtime("v1")` returns 1.1; Cecil throws.
 - Lone surrogates in `#US` display as U+FFFD.
-- `#Pdb` row counts are ignored.
 - Some arithmetic can overflow `usize` on 32-bit targets only.
 
 **D7. IL nits.**
