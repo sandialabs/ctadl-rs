@@ -54,8 +54,8 @@ fn jvm_descriptor_to_params(descriptor: &str, is_instance: bool) -> Vec<Paramete
     params
 }
 
-//#[cfg(test)]
-//mod tests;
+#[cfg(test)]
+mod tests;
 
 pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
     //let data = read_file_bytes(file)?;
@@ -308,9 +308,16 @@ impl Context {
                     }
                     Some(code_attr) => {
                         log::trace!("Processing code for function {}", method_name);
-                        let basic_blocks = parser
-                            .basic_blocks_with_stack_slots(enc)?
-                            .expect("Non-empty function");
+                        // A method jvm-reader cannot decode keeps its declaration, so calls
+                        // to it still resolve, but gets no body. Failing here would fail the
+                        // import of every other method in the class or JAR.
+                        let basic_blocks = match parser.basic_blocks_with_stack_slots(enc) {
+                            Ok(blocks) => blocks.expect("Non-empty function"),
+                            Err(e) => {
+                                log::warn!("{full_name}: importing without a body: {e}");
+                                continue;
+                            }
+                        };
 
                         let handler_pcs: HashSet<u32> = code_attr
                             .exception_table

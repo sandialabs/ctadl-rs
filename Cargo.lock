@@ -1300,6 +1300,7 @@ dependencies = [
  "log",
  "smallvec",
  "source-info",
+ "tempfile",
 ]
 
 [[package]]

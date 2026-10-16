@@ -266,9 +266,17 @@ and the unit tests are their only coverage.
    gave wrong answers (§3.1). `24064a85` deleted it.
 4. **Hand-written stack effects.** `stack_effect` and `misc_stack_effect` are
    opcode tables maintained by hand.
-5. **Fails whole methods.** An inconsistent stack height at a join returns
-   `Err(InvalidClassFileMessage(...))`, losing the method — and with it every call
-   edge through it.
+5. **Fails whole methods.** *Fixed in `ctadl-jvm`.* An inconsistent stack
+   height at a join returns `Err(StackHeightMismatch { .. })`. `ctadl-jvm`
+   passed this and every other decode error up, so one bad method failed the
+   import of its whole class or JAR, not just the method. It now logs a warning
+   and imports that method without a body. The declaration stays, so calls to
+   the method still resolve, but no flow passes through it. Verified bytecode
+   always has consistent heights, so a mismatch means a jvm-reader bug (or
+   pre-Java-7 `jsr`/`ret`, which jvm-reader does not model). The fix limits the
+   damage to one method; it does not recover the method. Regression protection:
+   `undecodable_method_is_imported_without_a_body` in `ctadl-jvm`, which fails
+   before the fix.
 
 ---
 
