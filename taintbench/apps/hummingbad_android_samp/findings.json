@@ -1,0 +1,375 @@
+{
+  "fileName": "hummingbad_android_samp.apk",
+  "day": "2019-07-25",
+  "findings": [
+    {
+      "source": {
+        "statement": "JSONObject joData = new JSONObject(cursor.getString(cursor.getColumnIndex(\"data\"))).getJSONObject(\"data\");",
+        "methodName": "private static ArrayList<DuAdData> listDuAdDatasFromAppCache(Context context)",
+        "className": "com.android.ad.du.BaiduCacheDBUtil",
+        "lineNo": 117,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = interfaceinvoke $r9.<android.database.Cursor: java.lang.String getString(int)>($i0)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "return this.db.insert(DuAd.DB_TB, null, values);",
+        "methodName": "public long insertAd(DuAd ad)",
+        "className": "com.mb.bdapp.db.DBService",
+        "lineNo": 120,
+        "targetName": "insert",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$l1 = virtualinvoke $r6.<android.database.sqlite.SQLiteDatabase: long insert(java.lang.String,java.lang.String,android.content.ContentValues)>(\"tb_dubai_adv\", null, $r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "duAdDatas.add(new DuAdData(adId, pkg, joData.getString(\"name\"), joData.getString(\"playurl\"), joData.getString(\"sdesc\")));",
+          "methodName": "private static ArrayList<DuAdData> listDuAdDatasFromAppCache(Context context)",
+          "className": "com.android.ad.du.BaiduCacheDBUtil",
+          "lineNo": 122,
+          "ID": 1
+        },
+        {
+          "statement": "return duAdDatas;",
+          "methodName": "private static ArrayList<DuAdData> listDuAdDatasFromAppCache(Context context)",
+          "className": "com.android.ad.du.BaiduCacheDBUtil",
+          "lineNo": 130,
+          "ID": 2
+        },
+        {
+          "statement": "Iterator it = listDuAdDatasFromAppCache(context).iterator();",
+          "methodName": "private static String getData(Context context)",
+          "className": "com.android.ad.du.BaiduCacheDBUtil",
+          "lineNo": 97,
+          "ID": 3
+        },
+        {
+          "statement": "DuAdData duAdData = (DuAdData) it.next();",
+          "methodName": "public static DuAdData findDbDuAdData(Context context, String appName)",
+          "className": "com.android.ad.du.BaiduCacheDBUtil",
+          "lineNo": 97,
+          "ID": 4
+        },
+        {
+          "statement": "return duAdData;",
+          "methodName": "public static DuAdData findDbDuAdData(Context context, String appName)",
+          "className": "com.android.ad.du.BaiduCacheDBUtil",
+          "lineNo": 97,
+          "ID": 5
+        },
+        {
+          "statement": "DuAdData duDdata = BaiduCacheDBUtil.findDbDuAdData(ShowDuAd.this.mContext, ad.getTitle());",
+          "methodName": "public void onClick(DuNativeAd ad)",
+          "className": "com.android.ad.du.ShowDuAd.AnonymousClass1",
+          "lineNo": 417,
+          "ID": 6
+        },
+        {
+          "statement": "intent.putExtra(Constants.DUAD_DATA, duDdata.toJson());",
+          "methodName": "public void onClick(DuNativeAd ad)",
+          "className": "com.android.ad.du.ShowDuAd.AnonymousClass1",
+          "lineNo": 420,
+          "ID": 7
+        },
+        {
+          "statement": "ShowDuAd.this.sendBroadcast(intent);",
+          "methodName": "public void onClick(DuNativeAd ad)",
+          "className": "com.android.ad.du.ShowDuAd.AnonymousClass1",
+          "lineNo": 421,
+          "ID": 8
+        },
+        {
+          "statement": "String adData = intent.getStringExtra(Constants.DUAD_DATA);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.mb.bdapp.service.BaiduService.AnonymousClass1",
+          "lineNo": 85,
+          "ID": 9
+        },
+        {
+          "statement": "BaiduService.this.handleDuAd(adData);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.mb.bdapp.service.BaiduService.AnonymousClass1",
+          "lineNo": 88,
+          "ID": 10
+        },
+        {
+          "statement": "DuAd duAd = jsonToDuAd(adData);",
+          "methodName": "public void handleDuAd(String adData)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 145,
+          "ID": 11
+        },
+        {
+          "statement": "requestAdDownUrl(duAd);",
+          "methodName": "public void handleDuAd(String adData)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 148,
+          "ID": 12
+        },
+        {
+          "statement": "parmams.add(RequestAdDownURLAPI.AD_PNAME, duAd.getPname());",
+          "methodName": "private void requestAdDownUrl(final DuAd duAd)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 166,
+          "ID": 13
+        },
+        {
+          "statement": "requestdownurl.requestAd(parmams, new APIListener() {",
+          "methodName": "private void requestAdDownUrl(final DuAd duAd)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 195,
+          "ID": 14
+        },
+        {
+          "statement": "public void onComplete(AdDownURLResponse adResponse) {",
+          "methodName": "public void onError(Exception e)",
+          "className": "com.mb.bdapp.service.BaiduService.AnonymousClass3",
+          "lineNo": 176,
+          "ID": 15
+        },
+        {
+          "statement": "String downurl = adResponse.getDownurl();",
+          "methodName": "public void onComplete(AdDownURLResponse adResponse)",
+          "className": "com.mb.bdapp.service.BaiduService.AnonymousClass3",
+          "lineNo": 179,
+          "ID": 16
+        },
+        {
+          "statement": "duAd.setDownUrl(downurl);",
+          "methodName": "public void onComplete(AdDownURLResponse adResponse)",
+          "className": "com.mb.bdapp.service.BaiduService.AnonymousClass3",
+          "lineNo": 185,
+          "ID": 17
+        },
+        {
+          "statement": "BaiduService.this.saveDuAd(duAd);",
+          "methodName": "public void onComplete(AdDownURLResponse adResponse)",
+          "className": "com.mb.bdapp.service.BaiduService.AnonymousClass3",
+          "lineNo": 186,
+          "ID": 18
+        },
+        {
+          "statement": "long id = DBService.getInstance(this).insertAd(duAd);",
+          "methodName": "public void saveDuAd(DuAd duAd)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 238,
+          "ID": 19
+        },
+        {
+          "statement": "values.put(DuAd.DB_DOWN_URL, ad.getDownUrl());",
+          "methodName": "public long insertAd(DuAd ad)",
+          "className": "com.mb.bdapp.db.DBService",
+          "lineNo": 116,
+          "ID": 20
+        }
+      ],
+      "attributes": {
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true
+      },
+      "ID": 1,
+      "description": "This malicious ICC flow crosses one activity and two services. It starts by reading advertisement information from data base into a JSONObject, when the user performs a click, new advertisements will be downloaded and saved into data base. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "JSONObject joData = new JSONObject(cursor.getString(cursor.getColumnIndex(\"data\"))).getJSONObject(\"data\");",
+        "methodName": "private static ArrayList<DuAdData> listDuAdDatasFromAppCache(Context context)",
+        "className": "com.android.ad.du.BaiduCacheDBUtil",
+        "lineNo": 117,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = interfaceinvoke $r9.<android.database.Cursor: java.lang.String getString(int)>($i0)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "this.db.update(DuAd.DB_TB, values, \"_ID = ?\", new String[]{Long.toString(id)});",
+        "methodName": "public void updateAdById(long id, DuAd ad)",
+        "className": "com.mb.bdapp.db.DBService",
+        "lineNo": 307,
+        "targetName": "update",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r6.<android.database.sqlite.SQLiteDatabase: int update(java.lang.String,android.content.ContentValues,java.lang.String,java.lang.String[])>(\"tb_dubai_adv\", $r2, \"_ID = ?\", $r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "duAdDatas.add(new DuAdData(adId, pkg, joData.getString(\"name\"), joData.getString(\"playurl\"), joData.getString(\"sdesc\")));",
+          "methodName": "private static ArrayList<DuAdData> listDuAdDatasFromAppCache(Context context)",
+          "className": "com.android.ad.du.BaiduCacheDBUtil",
+          "lineNo": 122,
+          "ID": 1
+        },
+        {
+          "statement": "return duAdDatas;",
+          "methodName": "private static ArrayList<DuAdData> listDuAdDatasFromAppCache(Context context)",
+          "className": "com.android.ad.du.BaiduCacheDBUtil",
+          "lineNo": 130,
+          "ID": 2
+        },
+        {
+          "statement": "Iterator it = listDuAdDatasFromAppCache(context).iterator();",
+          "methodName": "private static String getData(Context context)",
+          "className": "com.android.ad.du.BaiduCacheDBUtil",
+          "lineNo": 97,
+          "ID": 3
+        },
+        {
+          "statement": "DuAdData duAdData = (DuAdData) it.next();",
+          "methodName": "public static DuAdData findDbDuAdData(Context context, String appName)",
+          "className": "com.android.ad.du.BaiduCacheDBUtil",
+          "lineNo": 97,
+          "ID": 4
+        },
+        {
+          "statement": "return duAdData;",
+          "methodName": "public static DuAdData findDbDuAdData(Context context, String appName)",
+          "className": "com.android.ad.du.BaiduCacheDBUtil",
+          "lineNo": 97,
+          "ID": 5
+        },
+        {
+          "statement": "DuAdData duDdata = BaiduCacheDBUtil.findDbDuAdData(ShowDuAd.this.mContext, ad.getTitle());",
+          "methodName": "public void onClick(DuNativeAd ad)",
+          "className": "com.android.ad.du.ShowDuAd.AnonymousClass1",
+          "lineNo": 417,
+          "ID": 6
+        },
+        {
+          "statement": "intent.putExtra(Constants.DUAD_DATA, duDdata.toJson());",
+          "methodName": "public void onClick(DuNativeAd ad)",
+          "className": "com.android.ad.du.ShowDuAd.AnonymousClass1",
+          "lineNo": 420,
+          "ID": 7
+        },
+        {
+          "statement": "ShowDuAd.this.sendBroadcast(intent);",
+          "methodName": "public void onClick(DuNativeAd ad)",
+          "className": "com.android.ad.du.ShowDuAd.AnonymousClass1",
+          "lineNo": 421,
+          "ID": 8
+        },
+        {
+          "statement": "String adData = intent.getStringExtra(Constants.DUAD_DATA);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.mb.bdapp.service.BaiduService.AnonymousClass1",
+          "lineNo": 85,
+          "ID": 9
+        },
+        {
+          "statement": "BaiduService.this.handleDuAd(adData);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.mb.bdapp.service.BaiduService.AnonymousClass1",
+          "lineNo": 88,
+          "ID": 10
+        },
+        {
+          "statement": "DuAd duAd = jsonToDuAd(adData);",
+          "methodName": "public void handleDuAd(String adData)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 145,
+          "ID": 11
+        },
+        {
+          "statement": "requestAdDownUrl(duAd);",
+          "methodName": "public void handleDuAd(String adData)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 148,
+          "ID": 12
+        },
+        {
+          "statement": "parmams.add(RequestAdDownURLAPI.AD_PNAME, duAd.getPname());",
+          "methodName": "private void requestAdDownUrl(final DuAd duAd)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 166,
+          "ID": 13
+        },
+        {
+          "statement": "requestdownurl.requestAd(parmams, new APIListener() {",
+          "methodName": "private void requestAdDownUrl(final DuAd duAd)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 195,
+          "ID": 14
+        },
+        {
+          "statement": "String downurl = adResponse.getDownurl();",
+          "methodName": "public void onComplete(AdDownURLResponse adResponse)",
+          "className": "com.mb.bdapp.service.BaiduService.AnonymousClass3",
+          "lineNo": 179,
+          "ID": 15
+        },
+        {
+          "statement": "duAd.setDownUrl(downurl);",
+          "methodName": "public void onComplete(AdDownURLResponse adResponse)",
+          "className": "com.mb.bdapp.service.BaiduService.AnonymousClass3",
+          "lineNo": 185,
+          "ID": 16
+        },
+        {
+          "statement": "BaiduService.this.saveDuAd(duAd);",
+          "methodName": "public void onComplete(AdDownURLResponse adResponse)",
+          "className": "com.mb.bdapp.service.BaiduService.AnonymousClass3",
+          "lineNo": 186,
+          "ID": 17
+        },
+        {
+          "statement": "DuAd oldAd = DBService.getInstance(this).queryAdByPname(duAd.getPname());",
+          "methodName": "public void saveDuAd(DuAd duAd)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 233,
+          "ID": 18
+        },
+        {
+          "statement": "handleOldAd(oldAd, duAd);",
+          "methodName": "public void saveDuAd(DuAd duAd)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 235,
+          "ID": 19
+        },
+        {
+          "statement": "DBService.getInstance(this).updateAdById((long) oldAd.get_ID(), duAd);",
+          "methodName": "private void handleOldAd(DuAd oldAd, DuAd duAd)",
+          "className": "com.mb.bdapp.service.BaiduService",
+          "lineNo": 222,
+          "ID": 20
+        },
+        {
+          "statement": "values.put(DuAd.DB_DOWN_URL, ad.getDownUrl());",
+          "methodName": "public void updateAdById(long id, DuAd ad)",
+          "className": "com.mb.bdapp.db.DBService",
+          "lineNo": 302,
+          "ID": 21
+        }
+      ],
+      "attributes": {
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true
+      },
+      "ID": 2,
+      "description": "This malicious ICC flow crosses one activity and two services. It starts by reading advertisement information from data base into a JSONObject, when the user performs a click, new advertisements will be downloaded and updated in the data base. ",
+      "isNegative": false
+    }
+  ]
+}

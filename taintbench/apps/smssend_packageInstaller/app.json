@@ -1,0 +1,9 @@
+{
+  "name": "smssend_packageInstaller",
+  "apk": {
+    "url": "https://github.com/TaintBench/smssend_packageInstaller/releases/download/APK/smssend_packageInstaller.apk",
+    "sha256": "sha256-gIjeG+yNlSOQLBMedodWE40sg7q3Gq7PKveSMTDBss8="
+  },
+  "upstream": "https://github.com/TaintBench/smssend_packageInstaller",
+  "findingsCommit": "master"
+}

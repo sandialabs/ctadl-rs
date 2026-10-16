@@ -320,6 +320,18 @@
           src = ./.;
           version = workspaceVersion;
         };
+
+        # The TaintBench source-sink suite: real Android malware APKs checked
+        # against their hand-curated ground-truth taint findings. Separate from
+        # `regression`/nightly on purpose -- it is much lighter, needing only
+        # ctadl, no Ghidra/JDK/Android SDK. The app discovery, the APK fetches,
+        # and the check derivation itself all live in ./nix/taintbench.nix;
+        # exposed below as `checks.<system>.taintbench`.
+        taintbench = import ./nix/taintbench.nix {
+          inherit pkgs;
+          src = ./taintbench;
+          ctadl = self.packages.${system}.default;
+        };
       in
       {
         packages.default = naersk-lib.buildPackage ./.;
@@ -485,7 +497,12 @@
             };
           in
           {
-            inherit regression dex-reader-tests jvm-reader-tests;
+            inherit
+              regression
+              dex-reader-tests
+              jvm-reader-tests
+              taintbench
+              ;
           };
 
         formatter = pkgs.nixfmt;

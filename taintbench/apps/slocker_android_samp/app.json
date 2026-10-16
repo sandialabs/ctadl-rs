@@ -1,0 +1,9 @@
+{
+  "name": "slocker_android_samp",
+  "apk": {
+    "url": "https://github.com/TaintBench/slocker_android_samp/releases/download/APK/slocker_android_samp.apk",
+    "sha256": "sha256-TBW600htxKoFU60meBKv8psaSVGrzG7JHvfB/u1457I="
+  },
+  "upstream": "https://github.com/TaintBench/slocker_android_samp",
+  "findingsCommit": "master"
+}

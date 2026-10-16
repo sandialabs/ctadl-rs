@@ -1,0 +1,97 @@
+{
+  "fileName": "death_ring_materialflow.apk",
+  "day": "2019-04-11",
+  "findings": [
+    {
+      "source": {
+        "statement": "body.append(currMsg.getDisplayMessageBody());",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.qc.access.SmsReceiver",
+        "lineNo": 78,
+        "targetName": "getDisplayMessageBody",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = virtualinvoke $r4.<android.telephony.gsm.SmsMessage: java.lang.String getDisplayMessageBody()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "SmsManager.getDefault().sendTextMessage(phoneNumber, null, msmStr, null, null);",
+        "methodName": "public static void send2(String phoneNumber, String msmStr)",
+        "className": "com.qc.model.SmsSenderAndReceiver",
+        "lineNo": 28,
+        "targetName": "sendTextMessage",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<android.telephony.gsm.SmsManager: void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)>($r0, null, $r1, null, null)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "this.smsContent = body.toString();",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.qc.access.SmsReceiver",
+          "lineNo": 81,
+          "ID": 1
+        },
+        {
+          "statement": "String replyContent = Funs.getReplySmsContent(this.replyCotents, this.smsContent, this.replyKeyWords);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.qc.access.SmsReceiver",
+          "lineNo": 149,
+          "ID": 2
+        },
+        {
+          "statement": "if (smsContent.contains(key)) {",
+          "methodName": "public static String getReplySmsContent(HashMap<String, String> replyes, String smsContent, List<String> keys)",
+          "className": "com.qc.common.Funs",
+          "lineNo": 1247,
+          "ID": 3
+        },
+        {
+          "statement": "replyContent = (String) replyes.get(key);",
+          "methodName": "public static String getReplySmsContent(HashMap<String, String> replyes, String smsContent, List<String> keys)",
+          "className": "com.qc.common.Funs",
+          "lineNo": 1249,
+          "ID": 4
+        },
+        {
+          "statement": "return replyContent;",
+          "methodName": "public static String getReplySmsContent(HashMap<String, String> replyes, String smsContent, List<String> keys)",
+          "className": "com.qc.common.Funs",
+          "lineNo": 1246,
+          "ID": 5
+        },
+        {
+          "statement": "if (replyContent != null && replyContent.length() > 0) {",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.qc.access.SmsReceiver",
+          "lineNo": 151,
+          "ID": 6
+        },
+        {
+          "statement": "SmsSenderAndReceiver.send2(this.smsNumber, replyContent);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.qc.access.SmsReceiver",
+          "lineNo": 152,
+          "ID": 7
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "collections": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads SMS content to fake text message for fishing.",
+      "isNegative": false
+    }
+  ]
+}

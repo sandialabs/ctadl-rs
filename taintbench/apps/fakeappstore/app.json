@@ -1,0 +1,9 @@
+{
+  "name": "fakeappstore",
+  "apk": {
+    "url": "https://github.com/TaintBench/fakeappstore/releases/download/APK/fakeappstore.apk",
+    "sha256": "sha256-8MF/5trsLBaJu6+BUK5GQ4zYy8HhtKhQDR08XzF7zpU="
+  },
+  "upstream": "https://github.com/TaintBench/fakeappstore",
+  "findingsCommit": "master"
+}

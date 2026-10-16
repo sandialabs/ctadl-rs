@@ -1,0 +1,9 @@
+{
+  "name": "sms_send_locker_qqmagic",
+  "apk": {
+    "url": "https://github.com/TaintBench/sms_send_locker_qqmagic/releases/download/APK/sms_send_locker_qqmagic.apk",
+    "sha256": "sha256-uRTA3Vf/yxyWzzfWGjrgUqU3LwHF+sPqBTW72w2oYt0="
+  },
+  "upstream": "https://github.com/TaintBench/sms_send_locker_qqmagic",
+  "findingsCommit": "master"
+}

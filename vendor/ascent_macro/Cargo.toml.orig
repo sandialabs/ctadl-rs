@@ -1,0 +1,29 @@
+[package]
+name = "ascent_macro"
+version.workspace = true
+edition = "2021"
+authors = ["Arash Sahebolamri"]
+repository = "https://github.com/s-arash/ascent"
+license = "MIT"
+description = "implementation of ascent macros"
+
+[lib]
+proc-macro = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+syn = { version = "2.0.57", features = ["derive", "full", "extra-traits", "visit-mut"] } 
+quote = "1.0"
+ascent_base = { workspace = true }
+proc-macro2 = "1.0"
+itertools = "0.13"
+petgraph = "0.6.0"
+derive-syn-parse = "0.2.0"
+lazy_static = "1.4.0"
+duplicate = { version = "2.0", default-features = false }
+
+[dev-dependencies]
+ascent = { path = "../ascent" }
+rayon = "1.5"
+crossbeam = "0.8"

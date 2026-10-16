@@ -62,6 +62,7 @@ pub use crate::index_engine::decision::{Decision, DecisionId, DecisionSet};
 use crate::index_engine::path_set::{PathSet, PathSetRef};
 
 pub mod assign_like_trie;
+pub mod census;
 pub mod c_assign_like_trie;
 pub mod c_locals_trie;
 pub mod decision;
@@ -70,6 +71,9 @@ pub mod locals_trie;
 pub mod path_group;
 pub mod path_set;
 pub mod source_info;
+
+// `census_serial!(prog)`: the byte census of every physical structure of `IndexProg`.
+include!("census_fields.rs");
 
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
@@ -2288,8 +2292,109 @@ pub fn taint_index_with_config(
     // nothing under `ascent!` (`Vec` to `Vec` reuses the allocation) and is what `ascent_par!`
     // needs, where a plain relation's physical store is a `boxcar::Vec` (a lock-free append-only
     // vector) instead of a `std::vec::Vec`.
+    // The byte census runs under the serial engine only: it prices `ascent!`'s concrete storage
+    // types, and `ascent_par!`'s are different. `CTADL_INDEX_CENSUS=<file>` also writes it as TSV.
+    macro_rules! log_census {
+        ($prog:ident) => {{
+            let census = census_serial!($prog);
+            let fp = (phys_footprint_mb() * 1024.0 * 1024.0) as usize;
+            log::debug!("[census] {}", census.ranked(fp));
+            let (pn, pt, pp) = tailshare::interner_heap_stats::<ctadl_ir::mir::PathSegment>();
+            let (sn, st, sp) = decision::set_heap_stats();
+            log::debug!(
+                "[census] interners: path nodes {pn} ({:.1} MB table + {:.1} MB payload) | \
+                 decision sets {sn} ({:.1} MB table + {:.1} MB payload) | {} | path_set {} paths",
+                pt as f64 / 1048576.0, pp as f64 / 1048576.0,
+                st as f64 / 1048576.0, sp as f64 / 1048576.0,
+                decision::stats(), path_set.0.len()
+            );
+            if let Ok(dir) = std::env::var("CTADL_INDEX_DUMP") {
+                if let Err(e) = dump_relations!($prog, dir) {
+                    log::warn!("dumping index relations to {dir}: {e}");
+                }
+            }
+            if let Ok(out) = std::env::var("CTADL_INDEX_CENSUS") {
+                if let Err(e) = std::fs::write(&out, census.tsv()) {
+                    log::warn!("writing index census to {out}: {e}");
+                }
+            }
+        }};
+    }
+    // `CTADL_INDEX_DUMP=<dir>`: the heavy relations as TSV, for attributing rows to the program.
+    macro_rules! dump_relations {
+        ($prog:ident, $dir:expr) => {{
+            (|| -> std::io::Result<()> {
+                use std::io::Write as _;
+                let dir = std::path::PathBuf::from(&$dir);
+                std::fs::create_dir_all(&dir)?;
+                let open = |n: &str| -> std::io::Result<std::io::BufWriter<std::fs::File>> {
+                    Ok(std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(dir.join(n))?))
+                };
+                if let Some(m) = id_map {
+                    let mut w = open("functions.tsv")?;
+                    writeln!(w, "f\tname")?;
+                    for (i, n) in m.get_id_to_name_map() {
+                        writeln!(w, "{i}\t{n}")?;
+                    }
+                }
+                let mut w = open("locals.tsv")?;
+                writeln!(w, "f\tv\tp\tformal\tfp")?;
+                let mut res = Ok(());
+                $prog.__locals_ind_common.for_each_row(|f, v, p, m, fp| {
+                    if res.is_ok() { res = writeln!(w, "{}\t{v}\t{p}\t{m}\t{fp}", f.id); }
+                });
+                res?;
+                let mut w = open("assign_like.tsv")?;
+                writeln!(w, "f\tvd\tpd\tvs\tps")?;
+                let mut res = Ok(());
+                $prog.__assign_like_ind_common.for_each_row(|f, vd, pd, vs, ps| {
+                    if res.is_ok() { res = writeln!(w, "{}\t{vd}\t{pd}\t{vs}\t{ps}", f.id); }
+                });
+                res?;
+                let mut w = open("call_target_assign_like.tsv")?;
+                writeln!(w, "f\tv\tp\ttarget")?;
+                for (f, v, p, t) in $prog.call_target_assign_like.iter() {
+                    writeln!(w, "{}\t{v}\t{p}\t{t}", f.id)?;
+                }
+                let mut w = open("call_target_assign.tsv")?;
+                writeln!(w, "f\tv\tp\ttarget")?;
+                for (f, crate::facts::FlowVertex(v, p), t) in $prog.call_target_assign.iter() {
+                    writeln!(w, "{}\t{v}\t{p}\t{t}", f.id)?;
+                }
+                let mut w = open("summary.tsv")?;
+                writeln!(w, "f\tn1\tp1\tn2\tp2")?;
+                for (f, n1, p1, n2, p2) in $prog.summary.iter() {
+                    writeln!(w, "{}\t{n1}\t{p1}\t{n2}\t{p2}", f.id)?;
+                }
+                let mut w = open("call.tsv")?;
+                writeln!(w, "f\tinsn\ttgt")?;
+                for (f, i, t) in $prog.call.iter() {
+                    writeln!(w, "{}\t{}\t{}", f.id, i.id, t.id)?;
+                }
+                let mut w = open("callee_info.tsv")?;
+                writeln!(w, "f\tinsn\tv\tp\tkey")?;
+                for (f, i, v, p, k) in $prog.callee_info.iter() {
+                    writeln!(w, "{}\t{}\t{v}\t{p}\t{k:?}", f.id, i.id)?;
+                }
+                let mut w = open("resolved_call.tsv")?;
+                writeln!(w, "f\tinsn\ttgt")?;
+                for (f, i, t) in $prog.resolved_call.iter() {
+                    writeln!(w, "{}\t{}\t{}", f.id, i.id, t.id)?;
+                }
+                let mut w = open("context_locals.tsv")?;
+                writeln!(w, "f\tv\tp\tformal\tfp\tnset")?;
+                for (f, v, p, m, fp, ds) in $prog.context_locals.iter() {
+                    writeln!(w, "{}\t{v}\t{p}\t{m}\t{fp}\t{}", f.id, if ds.is_top() { -1 } else { ds.ids().count() as i64 })?;
+                }
+                Ok(())
+            })()
+        }};
+    }
+    macro_rules! no_census {
+        ($prog:ident) => {{}};
+    }
     macro_rules! run_engine {
-        ($prog_ty:ty) => {{
+        ($prog_ty:ty, $census:ident) => {{
             let mut prog = <$prog_ty>::default();
         prog.formal_param = facts.formal_param.into_iter().collect();
         prog.actual_param = facts.actual_param.into_iter().collect();
@@ -2372,6 +2477,7 @@ pub fn taint_index_with_config(
             "[mem cp] after relation census (nothing drained yet): {:.1} MB",
             phys_footprint_mb()
         );
+        $census!(prog);
         log::debug!(
             "propagation relations: reach_vp={} locals_key={} locals_key_wild={} locals_wild={} \
              assign_wild={} edge_split={} edge_split_wild={} ext_dst={} ext_fml={}",
@@ -2472,7 +2578,7 @@ pub fn taint_index_with_config(
     }
 
     let result = match parallelism {
-        Parallelism::Serial => run_engine!(IndexProg),
+        Parallelism::Serial => run_engine!(IndexProg, log_census),
         Parallelism::Threads(threads) => {
             // A dedicated pool rather than rayon's global one, so `-j N` means exactly N index
             // threads no matter what else in the process has touched rayon. The parallel program
@@ -2483,7 +2589,7 @@ pub fn taint_index_with_config(
                 .thread_name(|i| format!("ctadl-index-{i}"))
                 .build()
                 .expect("spawning the index thread pool");
-            pool.install(move || run_engine!(ParIndexProg))
+            pool.install(move || run_engine!(ParIndexProg, no_census))
         }
     };
     log::trace!("index result: {}", result.display(id_map));

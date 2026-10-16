@@ -1,0 +1,9 @@
+{
+  "name": "remote_control_smack",
+  "apk": {
+    "url": "https://github.com/TaintBench/remote_control_smack/releases/download/APK/remote_control_smack.apk",
+    "sha256": "sha256-qaIFU8ALILGHJLtbPahJryTZAzLr4JSG41ZZ2ZJ/4Cg="
+  },
+  "upstream": "https://github.com/TaintBench/remote_control_smack",
+  "findingsCommit": "master"
+}

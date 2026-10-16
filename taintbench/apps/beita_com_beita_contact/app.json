@@ -1,0 +1,9 @@
+{
+  "name": "beita_com_beita_contact",
+  "apk": {
+    "url": "https://github.com/TaintBench/beita_com_beita_contact/releases/download/APK/beita_com_beita_contact.apk",
+    "sha256": "sha256-cdDHQzJel1Yeg15/fW9gXqSLyWOJvXYPB4NHtcYa1sk="
+  },
+  "upstream": "https://github.com/TaintBench/beita_com_beita_contact",
+  "findingsCommit": "master"
+}

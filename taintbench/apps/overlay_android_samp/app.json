@@ -1,0 +1,9 @@
+{
+  "name": "overlay_android_samp",
+  "apk": {
+    "url": "https://github.com/TaintBench/overlay_android_samp/releases/download/APK/overlay_android_samp.apk",
+    "sha256": "sha256-QSCCmhLqpCXeVOQXDQJIrGKGUwPigW9exgAbRZvEs6I="
+  },
+  "upstream": "https://github.com/TaintBench/overlay_android_samp",
+  "findingsCommit": "master"
+}

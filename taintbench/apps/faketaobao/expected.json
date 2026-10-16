@@ -1,0 +1,4 @@
+{
+  "_comment": "Baseline snapshot: the TaintBench finding IDs ctadl detects today via a connected source->sink path. 0 of the 4 positive flows connect. Every finding's source and sink is recognized as an endpoint. See ../../README.md.",
+  "matched_finding_ids": []
+}

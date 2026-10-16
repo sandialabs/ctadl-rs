@@ -1,0 +1,9 @@
+{
+  "name": "godwon_samp",
+  "apk": {
+    "url": "https://github.com/TaintBench/godwon_samp/releases/download/APK/godwon_samp.apk",
+    "sha256": "sha256-zTNWdVJElj7jVgsdQKxD16E/FTFhzVS5t6C98VSSWA4="
+  },
+  "upstream": "https://github.com/TaintBench/godwon_samp",
+  "findingsCommit": "master"
+}

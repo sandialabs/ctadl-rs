@@ -1,0 +1,9 @@
+{
+  "name": "the_interview_movieshow",
+  "apk": {
+    "url": "https://github.com/TaintBench/the_interview_movieshow/releases/download/APK/the_interview_movieshow.apk",
+    "sha256": "sha256-jSzJTiVARC9sezPW+UH4rPtsxaRhQYUOIONl6whx2/M="
+  },
+  "upstream": "https://github.com/TaintBench/the_interview_movieshow",
+  "findingsCommit": "master"
+}

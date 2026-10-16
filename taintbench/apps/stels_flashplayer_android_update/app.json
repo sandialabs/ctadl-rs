@@ -1,0 +1,9 @@
+{
+  "name": "stels_flashplayer_android_update",
+  "apk": {
+    "url": "https://github.com/TaintBench/stels_flashplayer_android_update/releases/download/APK/stels_flashplayer_android_update.apk",
+    "sha256": "sha256-A8G0TJTIbDE3hiwg+fdF4Pic4s23eNxkZqBqZbelka4="
+  },
+  "upstream": "https://github.com/TaintBench/stels_flashplayer_android_update",
+  "findingsCommit": "master"
+}

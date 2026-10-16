@@ -1,0 +1,9 @@
+{
+  "name": "faketaobao",
+  "apk": {
+    "url": "https://github.com/TaintBench/faketaobao/releases/download/APK/faketaobao.apk",
+    "sha256": "sha256-UwI3dlyhrPZREGv6FNyAC8HpU7TPZdMI9msPYpjiaps="
+  },
+  "upstream": "https://github.com/TaintBench/faketaobao",
+  "findingsCommit": "master"
+}

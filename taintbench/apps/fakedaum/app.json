@@ -1,0 +1,9 @@
+{
+  "name": "fakedaum",
+  "apk": {
+    "url": "https://github.com/TaintBench/fakedaum/releases/download/APK/fakedaum.apk",
+    "sha256": "sha256-gdlaDBuXTPLvTvQKhxsyAS0qqWzQfojpFpmFH4/tUkw="
+  },
+  "upstream": "https://github.com/TaintBench/fakedaum",
+  "findingsCommit": "master"
+}

@@ -1,0 +1,4 @@
+{
+  "_comment": "Baseline snapshot: TaintBench finding IDs ctadl currently detects via a connected source->sink path. The app's single flow -- the packed asset `ds` reaching Method.invoke, i.e. dynamically loaded code -- connects. See ../../README.md.",
+  "matched_finding_ids": [1]
+}

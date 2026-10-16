@@ -1,0 +1,4 @@
+{
+  "_comment": "Baseline snapshot: TaintBench finding IDs ctadl currently detects via a connected source->sink path. ctadl connects 11 of the 12 positive flows; only #5 (LocationManager.getLastKnownLocation -> FileWriter.write) is missed -- its source and sink are both recognized as endpoints, but no connecting path is found. The three negatives #11/#13/#14 (getDeviceId -> putObject) share their source/sink callee pair with positive #7, so they are 'shadowed' and not counted as false positives -- our callee-granularity matching cannot tell those call sites apart (DEX SARIF carries no reliable line/byteOffset). See ../../README.md.",
+  "matched_finding_ids": [1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 15]
+}

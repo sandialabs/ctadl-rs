@@ -339,6 +339,15 @@ pub fn codegen_program(
 
     let cha = ClassHierarchyAnalysis::new(&program_info.vmt, instantiated_classes);
     let mut v = CodegenVisitor::new(cha, facts, source_info, strategy, policy, matches);
+    if std::env::var("CTADL_CONST_STATICS").is_ok_and(|s| s == "1") {
+        let stored = mutable_static_fields(program_info.program.functions.iter());
+        log::warn!(
+            "CTADL_CONST_STATICS: {} static field(s) stored outside their <clinit>; reads of all \
+             other static fields are lowered as constants",
+            stored.len()
+        );
+        v.mutable_statics = Some(stored);
+    }
     for f in program_info.program.functions.drain(..) {
         v.visit_function_data(FunctionIdx::new(0), &f);
     }
@@ -355,6 +364,35 @@ pub fn codegen_program(
         log::error!("unbalanced call-site buckets: {totals:?}");
     }
     report
+}
+
+/// The static fields stored by some function other than their owner's `<clinit>`. A static
+/// field is a store straight into the global heap, `store $globals.field := v`, and its owner
+/// is the class prefix of its symbol, `Lpkg/Cls;->name:type`.
+fn mutable_static_fields<'f>(
+    functions: impl IntoIterator<Item = &'f FunctionData>,
+) -> BTreeSet<Symbol> {
+    let mut stored = BTreeSet::new();
+    for f in functions {
+        for block in f.blocks.iter() {
+            for stmt in block.statements.iter() {
+                if let StatementKind::Store { dest, field, .. } = &stmt.kind
+                    && matches!(dest.base.variable.as_ref(), Variable::GlobalHeap)
+                    && dest.accesses.is_empty()
+                {
+                    let sym = field.symbol_ref();
+                    // The symbol is spelled `<Lpkg/Cls;->name:type>`.
+                    let owner = sym.trim_start_matches('<').split("->").next().unwrap_or("");
+                    let in_own_clinit =
+                        f.name.starts_with(owner) && f.name[owner.len()..].starts_with("-><clinit>");
+                    if !in_own_clinit {
+                        stored.insert(sym.clone());
+                    }
+                }
+            }
+        }
+    }
+    stored
 }
 
 /// Generate code for a function in SSA form (see [`ctadl_ir::ssa::transform`]).
@@ -500,6 +538,10 @@ struct CodegenVisitor<'a> {
     deferred_dispatch: BTreeSet<(Symbol, Symbol)>,
     /// What this visitor did, returned by [`codegen_program`].
     report: CodegenReport,
+    /// DO-NOT-MERGE experiment (`CTADL_CONST_STATICS=1`): the static fields some function other
+    /// than their owner's `<clinit>` stores to. A direct `$globals.<field>` read of any other
+    /// static field is lowered as a constant (no `assign`), like a literal. `None` when off.
+    mutable_statics: Option<BTreeSet<Symbol>>,
 }
 
 /// Everything the ladder needs to know about one signature, independent of the site.
@@ -556,7 +598,25 @@ impl<'a> CodegenVisitor<'a> {
             synthetics: Default::default(),
             deferred_dispatch: Default::default(),
             report: Default::default(),
+            mutable_statics: None,
         }
+    }
+
+    /// Whether a read is a direct `$globals.<field>` of an effectively-final static field, under
+    /// the `CTADL_CONST_STATICS` experiment.
+    fn is_const_static(
+        &self,
+        root: &VariableRef,
+        base_path: &fx::Path,
+        source: &AccessPath,
+        field: &FieldRef,
+    ) -> bool {
+        self.mutable_statics.as_ref().is_some_and(|stored| {
+            matches!(root.variable.as_ref(), Variable::GlobalHeap)
+                && base_path.is_empty()
+                && source.accesses.is_empty()
+                && !stored.contains(field.symbol_ref())
+        })
     }
 
     /// Which of the four buckets a Java call site belongs in, and what to emit there.
@@ -902,6 +962,11 @@ impl Visitor for CodegenVisitor<'_> {
                             ))),
                     );
                     self.paths_dedup.insert((path,));
+                    if self.is_const_static(&root, &base_path, source, field) {
+                        // A constant: the temporary is a fresh value, not a path into the heap.
+                        self.cap_path.remove(dest);
+                        continue;
+                    }
                     self.cap_path.insert(dest.clone(), (root, path));
                 }
                 StatementKind::Store { dest, field, .. } => {
@@ -1261,6 +1326,10 @@ impl Visitor for CodegenVisitor<'_> {
                         ))),
                 );
                 self.paths_dedup.insert((path,));
+                if self.is_const_static(&root_var, &base_path, source, field) {
+                    // An effectively-final static field: a constant, like a literal.
+                    return;
+                }
                 // dest <- root.<composed path>
                 self.facts.assign.push((
                     site,

@@ -1,0 +1,4 @@
+{
+  "_comment": "Baseline snapshot: TaintBench finding IDs ctadl currently detects via a connected source->sink path. #1 (contacts -> premium-rate SMS) connects. #2 and #3 do not: both cross an AsyncTask boundary -- the IMEI is packed into the String[] passed to `execute(...)` and read out of `params` in doInBackground (#3), and the server's reply comes back through onPostExecute (#2) -- an edge ctadl's call graph does not have. All three findings' sources and sinks are recognized as endpoints. See ../../README.md.",
+  "matched_finding_ids": [1]
+}
