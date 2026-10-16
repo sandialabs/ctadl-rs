@@ -107,7 +107,8 @@ type TaintVertex = (FunctionId, FlowVariable, Path);
 
 /// The implicit taint dataflow graph: edges are computed on demand from indexed
 /// program tables, never materialized. Edge expansion covers direct assigns
-/// with path substitution, field-alias back-flow from loads, the backward copy
+/// with path substitution, address computations off a tainted value,
+/// field-alias back-flow from loads, the backward copy
 /// hop that carries object identity (see [`ObjectScope`]), and formal/actual
 /// call-boundary steps.
 pub struct TaintSearchGraph {
@@ -124,6 +125,12 @@ pub struct TaintSearchGraph {
     /// any offset `q` off a saturating base `a` taints the load's destination
     /// `x`, regardless of whether `q` matches the tainted path.
     loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>>,
+    /// Address computations `dst.dp = src.(k·[n])` -- edges whose source path
+    /// ends in an offset -- indexed by source and keyed by the path `k` before
+    /// the offset: `(f, src) -> [(k, dst, dp)]`. The address depends on the
+    /// value at `src.k`, so a taint on that value reaches `dst.dp`; the direct
+    /// `assign_by_src` step only carries taint that lies under the offset.
+    addrs_by_src: HashMap<(FunctionId, FlowVariable), Vec<(Path, FlowVariable, Path)>>,
     /// `formal_param`, keyed by `(function, formal variable)`.
     formal_ty: HashMap<(FunctionId, FlowVariable), FormalType>,
     /// Call sites indexed by callee, for formal-to-actual (function exit) steps.
@@ -190,7 +197,15 @@ impl TaintSearchGraph {
             HashMap::default();
         let mut loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>> =
             HashMap::default();
+        let mut addrs_by_src: HashMap<(FunctionId, FlowVariable), Vec<(Path, FlowVariable, Path)>> =
+            HashMap::default();
         for (f, dst, dp, src, sp) in &facts.assign {
+            if let Some((key, _)) = sp.split_trailing_offset() {
+                addrs_by_src
+                    .entry((*f, *src))
+                    .or_default()
+                    .push((key, *dst, *dp));
+            }
             assign_by_src
                 .entry((*f, *src))
                 .or_default()
@@ -258,6 +273,7 @@ impl TaintSearchGraph {
             assign_by_src,
             loads_by_dst,
             loads_by_src,
+            addrs_by_src,
             formal_ty,
             callers_by_callee,
             callee_by_site,
@@ -296,6 +312,18 @@ impl LazySuccessors for TaintSearchGraph {
                         ObjectScope::All
                     };
                     out.push(((f, *dst, p2, level, scope2), FlowEdge::Intra));
+                }
+            }
+        }
+
+        // Address computation: `dst.dp = src.(p·[n])` -- C's `&a[2]`, pcode's
+        // `PTRADD` -- is an address computed from the value at `src.p`, so a
+        // taint on that value is a taint on the address. A fresh derivation, so
+        // `All`.
+        if let Some(addrs) = self.addrs_by_src.get(&(f, v)) {
+            for (key, dst, dp) in addrs {
+                if *key == p && self.paths.contains(dp) {
+                    out.push(((f, *dst, *dp, level, ObjectScope::All), FlowEdge::Intra));
                 }
             }
         }
@@ -821,6 +849,75 @@ mod tests {
         assert!(
             plain.taint_edge.is_empty(),
             "plain source at the bare path must not reach the `.field` sink"
+        );
+    }
+
+    /// Facts for a plain source on `base` and a sink on `dst`, joined by the single edge
+    /// `dst = base.<read>`; also returns `base` and `dst`.
+    fn plain_source_through(read: &str) -> (QueryFacts, FlowVariable, FlowVariable) {
+        let f = 0u32;
+        let base = FlowVariable::local("base".into());
+        let dst = FlowVariable::local("dst".into());
+        let read = Path::parse(read).unwrap();
+        let facts = QueryFacts {
+            assign: vec![(FunctionId::new(f), dst, Path::empty(), base, read)],
+            paths: vec![(Path::empty(),), (read,)],
+            endpoints: vec![(source(f, base, false),), (sink(f, dst),)],
+            ..Default::default()
+        };
+        (facts, base, dst)
+    }
+
+    /// Whether the closure engine's `taint` holds `var` at the empty path, seeded by an endpoint
+    /// of `direction`.
+    fn closure_taints(result: &QueryResult, var: FlowVariable, direction: TaintDirection) -> bool {
+        result
+            .taint
+            .iter()
+            .any(|(_, _, v, p, ep)| *v == var && p.is_empty() && ep.direction == direction)
+    }
+
+    /// An assign whose source path ends in an offset, `dst = base.[8]`, computes an address from
+    /// the value of `base` -- C's `&base[2]`, pcode's `PTRADD` -- so a taint on that value reaches
+    /// `dst`, from a plain source too. Contrast `saturating_source_reaches_offset_read`, whose
+    /// edge reads a field `.field`, where a plain source rightly stops. Both engines agree. The
+    /// end-to-end version is `test_cli_query_c_pointer_value_through_offset` in `tests/cli.rs`.
+    #[test]
+    fn plain_source_value_reaches_offset_address() {
+        let (facts, base, dst) = plain_source_through(".[8]");
+        assert!(
+            !taint_search(facts.clone(), None).taint_edge.is_empty(),
+            "search: a tainted value must reach an address computed from it"
+        );
+        let closure = super::super::taint_analysis_datalog(facts, None);
+        assert!(
+            closure_taints(&closure, dst, TaintDirection::Forward),
+            "closure: the source's taint must reach the address computed from it"
+        );
+        assert!(
+            closure_taints(&closure, base, TaintDirection::Backward),
+            "closure: the sink's demand must reach the value the address is computed from"
+        );
+    }
+
+    /// The boundary of `plain_source_value_reaches_offset_address`: `dst = base.[8].deref` reads
+    /// the memory at that address, and a plain taint on the pointer value says nothing about the
+    /// memory it points at. Only a saturating source reaches this.
+    #[test]
+    fn plain_source_value_does_not_reach_offset_pointee() {
+        let (facts, base, dst) = plain_source_through(".[8].deref");
+        assert!(
+            taint_search(facts.clone(), None).taint_edge.is_empty(),
+            "search: a tainted pointer value must not taint the memory it points at"
+        );
+        let closure = super::super::taint_analysis_datalog(facts, None);
+        assert!(
+            !closure_taints(&closure, dst, TaintDirection::Forward),
+            "closure: a tainted pointer value must not taint the memory it points at"
+        );
+        assert!(
+            !closure_taints(&closure, base, TaintDirection::Backward),
+            "closure: a demand on the memory must not reach the pointer value"
         );
     }
 

@@ -486,6 +486,11 @@ Source ports carry one extra knob:
   }
   ```
 
+  A precise source on a *pointer value* does reach an address computed from
+  it: `q = &p[2]` in C, or `p + 8` in pcode, carries a taint on `p` to `q`.
+  What it does not reach is the memory at that address, `p[2]`; that is what
+  saturation adds.
+
   Saturation is purely internal to the search: reported flows (SARIF) are
   unchanged in shape — a saturating source just reconstructs flows a precise
   source would drop. It applies in the default demand-driven search engine; the
