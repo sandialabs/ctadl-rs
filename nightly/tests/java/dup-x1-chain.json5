@@ -1,0 +1,44 @@
+{
+  // No flow: o is tainted (14), but x = o.data = y (16) copies the clean y
+  // into both o.data and x. javac keeps y on the stack with dup_x1, which once
+  // sent o to every output as well (dex-jvm-reader-improvements.md 3.2).
+  "expected_lines": [],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "source",
+          "parent": "LDupX1Chain;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "UserInput",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "sink",
+          "parent": "LDupX1Chain;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "TaintedData",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -59,6 +59,9 @@ const LUA_XFAIL: &[&str] = &[];
 /// The `CallResult*` cases are enforced for the same reason: they cover field
 /// and array accesses on a call's result, which the frontend once attributed
 /// to the most recently loaded local.
+/// The `Dup*Chain*` cases cover chained field assignments, which javac
+/// compiles to `dup_x1` and `dup2_x1`; jvm-reader once sent every input of
+/// those to every output.
 const JVM_E2E_ENFORCED: &[&str] = &[
     "Jvm:AnotherExample",
     "Jvm:ArrayFlow",
@@ -71,6 +74,9 @@ const JVM_E2E_ENFORCED: &[&str] = &[
     "Jvm:CallResultFieldStore",
     "Jvm:CallResultWideField",
     "Jvm:CrossClassStaticFieldFlow",
+    "Jvm:Dup2X1Chain",
+    "Jvm:DupX1Chain",
+    "Jvm:DupX1ChainFlow",
     "Jvm:ExceptionFlow",
     "Jvm:FieldFlow",
     "Jvm:FieldSensitivity",
