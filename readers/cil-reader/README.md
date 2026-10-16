@@ -50,15 +50,23 @@ for ty in module.types()? {
   exception edges, stack heights and kinds, and effects bound to
   depth-named variables (`MethodFlow`). Design: `docs/cil-flow-api.md`;
   `cargo dump --flow <assembly>` prints both layers.
+- **Portable PDB** (`model::pdb`): documents and sequence points, from a
+  `.pdb` beside the assembly, an embedded PDB, or debug tables in the
+  assembly itself, found and matched to the assembly as Cecil's
+  `DefaultSymbolReaderProvider` does; `cil-dump --symbols` prints them.
+  Local scopes, variables, constants, imports and custom debug information
+  are not read.
 
-Not supported: portable PDB, anything write-side, and WinRT projections.
+Not supported: native (Windows) PDBs and `.mdb` symbols, anything
+write-side, and WinRT projections.
 
 ### Cecil parity
 
 `cargo xtask regression --frontend cil` (root workspace) runs `cil-dump` and
 `tools/CecilDump` (the same dump format on top of Mono.Cecil) over the corpus of 100+ test assemblies:
 **114/114 comparable files are byte-identical**. Excluded: `*.winmd` (Cecil
-applies WinRT projections).
+applies WinRT projections). The symbols dumps (`--symbols` on both sides)
+are byte-identical over the whole corpus too.
 
 ~175 tests ported from Cecil's read-side suites (ImageRead, Module, Assembly,
 Type, Field, Method, Parameter, Property, Event, NestedTypes, MethodBody,

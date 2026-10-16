@@ -130,6 +130,23 @@ pub fn rust_dump(path: &Path) -> Result<String, String> {
     }
 }
 
+/// The `[symbols]` dump of the image at `path` (`cil-dump --symbols`): the
+/// sequence points of its portable PDB. A panic is reported as an error.
+pub fn rust_symbols(path: &Path) -> Result<String, String> {
+    let data = std::fs::read(path).map_err(|e| format!("read: {e}"))?;
+    match std::panic::catch_unwind(|| -> cil_reader::Result<String> {
+        let module = cil_reader::Module::read(&data)?;
+        Ok(cil_dump::dump_symbols(&module, path))
+    }) {
+        Ok(Ok(dump)) => Ok(dump),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("panicked".to_string()),
+    }
+}
+
+/// The symbols dump of an image with no portable PDB.
+pub const NO_SYMBOLS: &str = "[symbols]\nnone\n";
+
 /// First line at which `expected` and `actual` differ (1-based), with the two
 /// lines when both exist.
 pub fn first_divergence(expected: &str, actual: &str) -> (usize, Option<(String, String)>) {
@@ -168,7 +185,17 @@ impl CecilDump {
     }
 
     pub fn dump(&self, input: &Path) -> Result<String, String> {
+        self.run(&[], input)
+    }
+
+    /// `CecilDump --symbols`; see [`rust_symbols`].
+    pub fn symbols(&self, input: &Path) -> Result<String, String> {
+        self.run(&["--symbols"], input)
+    }
+
+    fn run(&self, flags: &[&str], input: &Path) -> Result<String, String> {
         let output = Command::new(&self.program)
+            .args(flags)
             .arg(input)
             // Keep the first-run banner and telemetry notice off stdout,
             // which is the dump.

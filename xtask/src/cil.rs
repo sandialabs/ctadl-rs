@@ -4,7 +4,7 @@
 //!
 //! The dump format is the contract: `cil-dump` renders an assembly with
 //! cil-reader, `tools/CecilDump` renders it with Mono.Cecil, and the two must
-//! be byte-identical. Five checks of that, and two of the flow layer:
+//! be byte-identical. Six checks of that, and two of the flow layer:
 //!
 //! - `cil:must-fail`     — non-CLI inputs (`text_file.txt`) are rejected.
 //! - `cil:cecil-tests`   — cil-reader's ports of Cecil's own test suites, which
@@ -18,6 +18,11 @@
 //!   the inputs too large to keep goldens for. Needs the
 //!   `cecil-dump` launcher (the flake's `cecilDump`, on PATH in the devshell
 //!   and the regression check); self-skips without it.
+//! - `cil:symbols`       — the sequence points of each input's portable PDB
+//!   (`cil-dump --symbols`) match the committed goldens
+//!   (`xtask/cil-goldens/symbols`; an input with no golden has no PDB) and a
+//!   live run of `CecilDump --symbols`, as `cil:goldens` and
+//!   `cil:cecil-compare` check the main dump.
 //! - `cil:flow`          — cil-reader's flow layer: its invariants over the
 //!   whole corpus, targeted tests on the `flow.il` fixture, and the
 //!   `cil-dump --flow` goldens (`xtask/cil-goldens/flow`); see [`flow`].
@@ -108,6 +113,10 @@ pub fn run_checks(
         (
             "cil:cecil-compare".to_string(),
             check_cecil_compare(&inputs, &dumps, work)?,
+        ),
+        (
+            "cil:symbols".to_string(),
+            check_symbols(goldens, &inputs, work)?,
         ),
         (
             "cil:flow".to_string(),
@@ -235,6 +244,88 @@ fn check_cecil_compare(
             "\nboth dumps of each mismatch are in {} (CecilDump: {})",
             diffs.display(),
             cecil_dump.describe()
+        );
+    }
+    Ok(outcome)
+}
+
+/// Where the symbols goldens are.
+fn symbols_goldens(goldens: &Path) -> PathBuf {
+    goldens.join("symbols")
+}
+
+fn check_symbols(goldens: &Path, inputs: &[Input], work: &Path) -> Result<Outcome> {
+    let dumps = parallel_map(inputs, |input| parity::rust_symbols(&input.path));
+    let golden_dir = symbols_goldens(goldens);
+    let mut failures = Vec::new();
+    let mut with_symbols = 0usize;
+    for (input, dump) in inputs.iter().zip(&dumps) {
+        let dump = match dump {
+            Ok(dump) => dump,
+            Err(e) => {
+                failures.push(format!("{}: {e}", input.id()));
+                continue;
+            }
+        };
+        let Some(golden_name) = input.golden_name() else {
+            continue;
+        };
+        let golden_path = golden_dir.join(&golden_name);
+        let golden = if golden_path.exists() {
+            with_symbols += 1;
+            std::fs::read_to_string(&golden_path)
+                .with_context(|| format!("failed to read {}", golden_path.display()))?
+        } else {
+            parity::NO_SYMBOLS.to_string()
+        };
+        if golden != *dump {
+            failures.push(describe_diff(&golden_name, "golden", &golden, dump));
+        }
+    }
+    if with_symbols == 0 {
+        return Ok(Outcome::Fail(format!(
+            "no symbols goldens under {}",
+            golden_dir.display()
+        )));
+    }
+
+    // Live, when there is a CecilDump that has `--symbols`: one built before
+    // it had the flag dumps the whole image instead, and is left out.
+    let live = CecilDump::locate().filter(|c| {
+        inputs
+            .first()
+            .and_then(|i| c.symbols(&i.path).ok())
+            .is_some_and(|d| d.starts_with("[symbols]"))
+    });
+    if let Some(cecil_dump) = &live {
+        let compared: Vec<(&Input, &String)> = inputs
+            .iter()
+            .zip(&dumps)
+            .filter(|(input, _)| !parity::compare_skip(&input.name()))
+            .filter_map(|(input, dump)| dump.as_ref().ok().map(|d| (input, d)))
+            .collect();
+        let cecil_dumps = parallel_map(&compared, |(input, _)| cecil_dump.symbols(&input.path));
+        let diffs = work.join("symbols-compare");
+        for ((input, rust), cecil) in compared.iter().zip(&cecil_dumps) {
+            let name = input.id();
+            match cecil {
+                Err(e) => failures.push(format!("{name}: {}", e.trim_end())),
+                Ok(cecil) if cecil == *rust => {}
+                Ok(cecil) => {
+                    std::fs::create_dir_all(&diffs)?;
+                    std::fs::write(diffs.join(format!("{name}.cecil")), cecil)?;
+                    std::fs::write(diffs.join(format!("{name}.rust")), rust)?;
+                    failures.push(describe_diff(&name, "cecil", cecil, rust));
+                }
+            }
+        }
+    }
+    let mut outcome = to_outcome(failures, "input(s)");
+    if let Outcome::Fail(why) = &mut outcome {
+        let _ = write!(
+            why,
+            "\nboth dumps of each live mismatch are in {}",
+            work.join("symbols-compare").display()
         );
     }
     Ok(outcome)
@@ -370,7 +461,7 @@ pub fn resolve_cecil_src(
 }
 
 /// `cargo xtask cil bless [filter]`: regenerate the committed goldens
-/// (`xtask/cil-goldens`) from CecilDump. Needed after moving the flake's `cecil`
+/// (`xtask/cil-goldens`, and its `symbols/`) from CecilDump. Needed after moving the flake's `cecil`
 /// pin or changing the dump format on both sides; review the diff before
 /// committing it. Only Cecil's own assemblies get goldens; see
 /// `Input::golden_name`.
@@ -383,6 +474,8 @@ pub fn bless(goldens: &Path, cecil: &Path, filter: Option<&str>) -> Result<bool>
         )
     })?;
     std::fs::create_dir_all(goldens)?;
+    let symbols_dir = symbols_goldens(goldens);
+    std::fs::create_dir_all(&symbols_dir)?;
     let mut written = 0usize;
     let mut errors = 0usize;
     for input in parity::corpus(cecil, None) {
@@ -398,11 +491,34 @@ pub fn bless(goldens: &Path, cecil: &Path, filter: Option<&str>) -> Result<bool>
         }
         match cecil_dump.dump(&input.path) {
             Ok(dump) => {
-                std::fs::write(goldens.join(golden_name), dump)?;
+                std::fs::write(goldens.join(&golden_name), dump)?;
                 written += 1;
             }
             Err(e) => {
                 eprintln!("ERROR {name}: {}", e.trim_end());
+                errors += 1;
+            }
+        }
+        // An input without symbols has no golden.
+        let symbols_path = symbols_dir.join(&golden_name);
+        match cecil_dump.symbols(&input.path) {
+            Ok(dump) if !dump.starts_with("[symbols]") => {
+                anyhow::bail!(
+                    "{} has no --symbols; rebuild it (`nix build .#cecil-dump`)",
+                    cecil_dump.describe()
+                );
+            }
+            Ok(dump) if dump == parity::NO_SYMBOLS => {
+                if symbols_path.exists() {
+                    std::fs::remove_file(&symbols_path)?;
+                }
+            }
+            Ok(dump) => {
+                std::fs::write(&symbols_path, dump)?;
+                written += 1;
+            }
+            Err(e) => {
+                eprintln!("ERROR {name} --symbols: {}", e.trim_end());
                 errors += 1;
             }
         }
