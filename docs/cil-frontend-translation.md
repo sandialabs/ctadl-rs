@@ -56,6 +56,7 @@ its logic in one `impl Context`, each concern gets its own file:
 | `effects.rs` | `Effect<Var>` → statements | §6 |
 | `ptr.rs` | Lowering of managed pointers (resolved place vs. `DEREF_FIELD`, copy-in/copy-out) | §6.3 |
 | `calls.rs` | `CallSite` → `CallAssign`, delegates, extern stubs | §7 |
+| `lines.rs` | Spans: an instruction's source lines from the portable PDB, else its IL bytes | §14 |
 | `tests.rs` | Per-table unit tests on synthetic `MethodFlow`s | — |
 
 `effects.rs` and `calls.rs` take a `MethodFlow` and an `Emitter` (see below) and
@@ -820,9 +821,14 @@ The checks:
   delegate type.
 - `Cil:*` taint cases (§11): `nightly/tests/cil`, one C# file per slice (a
   directory of files for slice 10, one assembly each), compiled with `dotnet
-  build`. With no source lines yet (M5b), a case is judged by the sink
-  functions its code flows end in: each scenario of a file sinks into its own
-  function, `expected_sinks` must all be reached and `unexpected_sinks` none.
+  build` with a portable PDB. A case is judged by the sink functions its code
+  flows end in (each scenario of a file sinks into its own function,
+  `expected_sinks` must all be reached and `unexpected_sinks` none) and by the
+  source lines its steps reach (`expected_lines`, `unexpected_lines`).
+- Source lines (the frontend plan's M5b, which says what was built): an
+  instruction's span is its sequence point's bytes in the `.cs` file when the
+  PDB and an unchanged document are there, else its bytes in the assembly
+  (`lines.rs`).
 
 Departures from the design, each found by building it or by one of the checks:
 
@@ -925,8 +931,8 @@ Not done:
   framework's metadata; so `cil:taint` does not gate slice 6, and slice 9 only
   with a delegate type of the module. The `Cil:overrides` and `Cil:delegates`
   cases cover them end to end. §12.6's other limits stand.
-- No source lines (M5b) and no default models (M6). Without models every BCL
-  call is an opaque stub, so a flow through `string.Concat` is lost.
+- No default models (M6). Without models every BCL call is an opaque stub, so a
+  flow through `string.Concat` is lost.
 - `ldvirtftn` binds the method the token names, as §7 has it, so a delegate
   over a virtual method reaches only that declaration.
 

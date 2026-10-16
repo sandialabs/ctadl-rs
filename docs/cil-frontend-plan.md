@@ -10,11 +10,11 @@ byte-identical to Mono.Cecil on 114/114 corpus files; its fixture-backed tests
 now run in `xtask regression --frontend cil`, see §1). What it does **not** have is the layer both other bytecode frontends depend
 on — a per-instruction dataflow view — so that is where this plan starts.
 
-## Status (2026-10-15)
+## Status (2026-10-16)
 
-M0–M4 are done, and M5 but for source lines. M1–M3 have detailed designs in
-their own documents, which say what was built; this plan is the only written
-record of M5b–M7, so keep it until those land.
+M0–M5b are done. M1–M3 have detailed designs in their own documents, which say
+what was built; this plan is the only written record of M6–M7, so keep it until
+those land.
 
 | M | Work | Status |
 | --- | --- | --- |
@@ -23,8 +23,8 @@ record of M5b–M7, so keep it until those land.
 | M2 | `flow` Layer 2: CFG and stack heights | **Done.** [`cil-flow-api.md`](cil-flow-api.md) §4, §10. Gated by `cil:flow`. |
 | M3 | The `ctadl-cil` frontend | **Done**, in `frontends/ctadl-cil/`. [`cil-frontend-translation.md`](cil-frontend-translation.md) §14 says what was built and where it departs from the design. |
 | M4 | Engine plumbing (`Cil` VMT, `CilCall`, dispatch key) | **Done**, as §5 lists, plus `pinvokes` and a fix the CIL checks found: the index now summarizes every return slot, so exceptions reach callers (Dex and JVM too). |
-| M5 | Regression harness | **Done but for source lines (M5b).** `cil:frontend` (corpus sweep and IR goldens), `cil:taint` (summaries against .NET runs) and the `Cil:*` taint cases in `nightly/tests/cil`, which compile C# with `dotnet build` and run import → index → query. With no source lines, a case is judged by the sink functions its flows end in. |
-| M5b | Portable-PDB sequence points | **Not started.** `MethodDebugInformation` exists only as a table and token id. |
+| M5 | Regression harness | **Done.** `cil:frontend` (corpus sweep and IR goldens), `cil:taint` (summaries against .NET runs) and the `Cil:*` taint cases in `nightly/tests/cil`, which compile C# with `dotnet build` and run import → index → query. A case is judged by the sink functions its flows end in and by the source lines they reach. |
+| M5b | Portable-PDB sequence points | **Done**, as §6 says: `cil_reader::model::pdb`, checked against Cecil by `cil:symbols`, and source spans in the frontend (`lines.rs`). |
 | M6 | `cil-index.jsonl` default models | **Not started** |
 | M7 | P/Invoke bridge, Xamarin | **Not started** (optional) |
 
@@ -158,7 +158,7 @@ of each is in brackets.
 
 ## 4. Milestone M3 — the frontend, `frontends/ctadl-cil/`
 
-> **Status: designed, not implemented.**
+> **Status: done**; see the table at the top.
 > [`cil-frontend-translation.md`](cil-frontend-translation.md) replaces this
 > section, and where they differ it wins. The differences:
 > - The crate goes in `frontends/ctadl-cil/`, re-exported from
@@ -351,11 +351,9 @@ all of them is neither necessary nor affordable. Provide a flag to override.
 
 ## 5. Milestone M4 — engine plumbing
 
-> **Status: not started.** No `VirtualMethodTable::Cil`, `CallStyle::CilCall`,
-> `CallObject::CilObject`, `CallTargetObject::CilClass`, `CallDispatchKey::Cil`,
-> `ArtifactLanguage::Cil` or `ChaLanguage::Cil` exists. The translation doc's
-> slice 5 is the first that needs this. The VMT row should also add
-> `interfaces` and `abstract_methods` (translation doc §4).
+> **Status: done**, as recommended below;
+> [`cil-frontend-translation.md`](cil-frontend-translation.md) §14 lists the
+> variants.
 
 **Recommendation: add a dedicated `Cil` variant everywhere rather than reusing the
 `Java` one.**
@@ -398,11 +396,10 @@ do.
 
 ## 6. Milestone M5 — regression harness
 
-> **Status: reader checks only.** `Frontend::Cil` and `xtask/src/cil.rs` exist,
-> but they hold the Cecil-parity checks for the reader, not what this section
-> describes. There is no `Kind::Cil`, no `xtask/tests/cil/*.cs`, and no
-> end-to-end check. The flow-layer property tests are written: `cil:flow`. Source
-> lines (step 2 below, M5b) are not started.
+> **Status: done.** The cases are `nightly/tests/cil/*.cs` (`Kind::Cil`), not
+> `xtask/tests/cil`; the reader-level checks are `cil:flow`, `cil:exec` and
+> `cil:symbols` rather than a comparison with `ildasm`. Source lines (M5b) are
+> done as step 2 below describes; what was built follows it.
 
 `xtask/src/cil.rs` + `Frontend::Cil` + `Kind::Cil { cs, config }` in
 `xtask/src/discovery.rs`, following `xtask/src/jvm.rs`:
@@ -426,6 +423,43 @@ so there is nothing to map an IL offset back to a `.cs` line with. Two steps:
    sequence-point tables are a small, well-specified, self-contained slice, and
    `dotnet build` emits a `.pdb` next to every assembly by default. Without it, SARIF
    output for .NET points at byte offsets, which is a poor deliverable.
+
+As built:
+
+- **Reader** (`cil_reader::model::pdb`). `PdbSource::locate` finds a module's
+  portable PDB as Cecil's `DefaultSymbolReaderProvider` does (debug tables in the
+  module, else an `EmbeddedPortablePdb` entry, inflated, else a `.pdb` beside the
+  file) and `read` requires its id to match a CodeView entry. `PortablePdb` reads
+  documents and sequence points as Cecil's `MetadataReader` does; `Metadata` now
+  takes the type-system row counts that size a PDB's indices from `#Pdb`. Local
+  scopes, variables, constants, imports and custom debug information (embedded
+  source among them) are not read. `flate2`, already in the workspace, inflates.
+- **Check** (`cil:symbols`). `cil-dump --symbols` and `CecilDump --symbols` print
+  the sequence points and the documents they name; the two are byte-identical over
+  the corpus (21 Cecil inputs have portable symbols, `Mono.Android.dll`'s some
+  920,000 lines among them, and the mismatched `pdb-mismatch.pdb` is an error on
+  both sides). Goldens are in `xtask/cil-goldens/symbols` (an input with none has
+  no PDB), written by `cargo xtask cil bless`; the live comparison runs when the
+  `cecil-dump` on PATH has `--symbols`.
+- **Frontend** (`frontends/ctadl-cil/src/lines.rs`). An instruction's span is the
+  sequence point that covers its offset, as the bytes of the `.cs` file from the
+  point's start to its end (a UTF-8 artifact, so SARIF regions are lines and
+  columns), when the document is on disk at the path the PDB names and hashes to
+  the PDB's SHA-1 or SHA-256. Otherwise (no PDB, a hidden point, a missing or
+  changed file) the span stays the instruction's bytes in the assembly. The import
+  log says how many bodies got lines and from which documents, and warns of each
+  document it could not use.
+- **SARIF.** A sequence point is a statement, so in `Sink(F(Source()))` every call
+  has one location, and the formatter's code-flow steps, deduped by location, lost
+  their sink step. A `source`/`sink` step is now deduped only against a step at the
+  same instruction (`ctadl-ascent/src/query_engine/formatter.rs`); where locations
+  are byte offsets nothing changes.
+- **Cases.** `nightly/tests/cil` builds with `DebugType=portable`, and each config
+  gives `expected_lines` and `unexpected_lines` as a Lua case does, beside its sinks.
+
+Not done: a path map for documents whose paths are not the local ones (a
+deterministic CI build's `/_/`, or a build on another machine), and embedded
+source, which would need the formatter to read a file that is not on disk.
 
 ---
 
@@ -490,10 +524,10 @@ every BCL call is an opaque barrier that taint does not cross. Minimum viable se
 | M0 | Workspace integration | 0.5 d | — | Done |
 | M1 | `flow`: per-instruction effects, operand resolution, reader helpers | 3–4 d | M0 | Done |
 | M2 | `flow`: CFG + stack heights (no phis; SSA places them) | 4–5 d | M1 | Done |
-| M3 | `ctadl-cil` frontend | 5–7 d | M2 | Designed |
-| M4 | Engine plumbing (`Cil` VMT / CallStyle / dispatch key) | 1–2 d | — (parallel with M1–M3) | Not started |
-| M5 | xtask regression harness | 2–3 d | M3, M4 | Reader checks only |
-| M5b | Portable-PDB sequence points → source lines | 2–3 d | M5 | Not started |
+| M3 | `ctadl-cil` frontend | 5–7 d | M2 | Done |
+| M4 | Engine plumbing (`Cil` VMT / CallStyle / dispatch key) | 1–2 d | — (parallel with M1–M3) | Done |
+| M5 | xtask regression harness | 2–3 d | M3, M4 | Done |
+| M5b | Portable-PDB sequence points → source lines | 2–3 d | M5 | Done |
 | M6 | `cil-index.jsonl` default models | 2–3 d | M5 | Not started |
 | M7 | P/Invoke bridge, Xamarin | optional | M6 | Not started |
 
@@ -502,9 +536,8 @@ bridge work.
 
 ## 11. Acceptance
 
-> **Status:** item 1 is met. Item 2 is met for the reader and the flow layer
-> (`cil:flow` included); the frontend's own checks do not exist yet. Items 3–5
-> need the frontend.
+> **Status:** items 1–3 are met (item 3 by the `Cil:*` cases, whose code flows'
+> regions are `.cs` lines). Items 4 and 5 are not yet recorded as checked.
 
 1. `cargo test -p cil-reader` green from the repo root with no .NET SDK,
    including the new `flow` unit tests. The fixture and corpus property tests
