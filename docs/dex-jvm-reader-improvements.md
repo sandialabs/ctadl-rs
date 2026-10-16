@@ -2,7 +2,8 @@
 
 Status: §1 (`dex-reader`) is fixed on branch `dex-jvm-reader-fixes`, except for
 the open items in §1.7. §2 (`jvm-reader`) is open and not scheduled. §3 records
-wrong taint answers from `ctadl-jvm`, confirmed by test programs; they are open. These
+wrong taint answers from `ctadl-jvm`, confirmed by test programs. §3.1 is fixed
+(`24064a85`); the rest are open. These
 problems were found while designing the CIL reader's dataflow layer
 ([`cil-flow-api.md`](cil-flow-api.md)), which is built to avoid them.
 
@@ -260,8 +261,8 @@ and the unit tests are their only coverage.
    register/parameter for this stack slot when it differs from the most recent
    aload". Depth naming is not why this code exists (see 2). After SSA,
    `propagate_copies` already rewrites a store's base from a stack slot to the
-   variable that was copied into it. Whether this code is needed at all has not
-   been checked against `ctadl-jvm`.
+   variable that was copied into it. *Resolved:* the code was not needed, and it
+   gave wrong answers (§3.1). `24064a85` deleted it.
 4. **Hand-written stack effects.** `stack_effect` and `misc_stack_effect` are
    opcode tables maintained by hand.
 5. **Fails whole methods.** An inconsistent stack height at a join returns
@@ -288,7 +289,7 @@ and every control passes on both frontends. The programs and logs are in
 | `a.data = source();` then `sink(fresh().data)`, where `fresh()` returns a new object | no flow | flow | `f = fresh(); sink(f.data);` |
 | `o = source(); String x = o.data = y; sink(x);` with clean `y` | no flow | flow | `o.data = y; String x = y;` |
 
-### 3.1 Field accesses use the last `aload`, not the object on the stack
+### 3.1 Fixed: field accesses used the last `aload`, not the object on the stack
 
 `field_object_base` (`frontends/ctadl-jvm/src/lib.rs:908`) picks the object a
 `getfield` or `putfield` acts on. It prefers `last_aload_reg`, the register of
@@ -311,10 +312,20 @@ Field accesses on call results are everyday Java (`getFoo().bar`, builders,
 `this.x.y`), so this is the most serious bug here. It is the code §2 item 3
 calls backwards-scanning heuristics.
 
-Fix: take the base from the stack slot alone, and let SSA copy propagation
-(`propagate_copies`) resolve the slot to the variable copied into it, as §2
-item 3 suggests. Then delete `last_aload_reg`, `aload_for_stack_slot`,
-`aload_register_before` and the rest of the heuristics.
+The same heuristic chose the array for array loads and stores, so `get()[0] = t`
+was wrong too. And `putfield` took its object as the second stack source, which
+for a `long` or `double` field is the other half of the value. The heuristic
+usually hid that.
+
+Fixed in `24064a85`. The frontend now uses the stack slot that holds the object,
+as the Dex frontend uses the base register, and leaves aliasing to SSA copy
+propagation (`propagate_copies`) and the engine. `putfield`'s object is the last
+stack source. `last_aload_reg`, the stack alias map and their helpers are gone,
+about 200 lines. All 26 enforced JVM cases still pass, so none needed the
+heuristics. Four cases now cover the bug and are enforced:
+`CallResultFieldStore`, `CallResultFieldLoad`, `CallResultWideField` and
+`CallResultArrayStore` (`b58da523`). With the old `putfield` object position,
+`CallResultWideField` fails.
 
 ### 3.2 `dup_x*` sends every input to every output
 
@@ -339,8 +350,8 @@ both.
 
 `apply_jvm_allowlist` (`xtask/src/regression.rs`) turns a failing `Jvm:` case
 into XFAIL unless the case is listed in `JVM_E2E_ENFORCED`. All four programs
-above were reported as XFAIL, so the suite stays green. They should be added
-as enforced cases when 3.1 and 3.2 are fixed.
+above were reported as XFAIL, so the suite stayed green. The 3.1 cases are now
+enforced. The 3.2 case should be added and enforced when 3.2 is fixed.
 
 ### 3.4 Suspected, not yet tested
 
