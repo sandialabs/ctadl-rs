@@ -331,7 +331,7 @@ heuristics. Four cases now cover the bug and are enforced:
 
 For `dup_x1`, `dup_x2`, `dup2`, `dup2_x1` and `dup2_x2`, `decode_dataflow`
 (`readers/jvm-reader/src/flow.rs:1648`-`1687`) lists every input slot as a source
-of every output slot. `stack_dup_statements` (`lib.rs:1011`) then also assigns
+of every output slot. `stack_dup_statements` (`lib.rs:832`) then also assigns
 every output to every other output. `dup_x1` takes `..., v2, v1` to
 `..., v1, v2, v1`, so the outputs should be `v1`, `v2`, `v1`. Instead all three
 get both values.
@@ -344,7 +344,13 @@ sink.
 Fix: give each output its one source per JVMS §6.5. `dup2` and `dup2_x*` depend
 on whether the top values are category 1 or 2. `jvm-reader` already counts a
 category-2 value as two slots, so the slot-level permutation is the same for
-both.
+both. For example, `dup_x1` is `[v2, v1] -> [v1, v2, v1]`. In `ctadl-jvm`, drop
+the pairwise output links from `stack_dup_statements`: two copies of one value
+are already aliases once SSA and the engine see `a = v; b = v`. Keep the record
+of which slots one `dup` produced (`record_dup_slot_pairs`), because
+`init_survivor_link` (`lib.rs:803`) uses it to link `new; dup; invokespecial
+<init>`. The probe is `DupX1Chain` in `/Volumes/Shampoo/runs/jvm-audit/tests/`;
+it should become an enforced negative case.
 
 ### 3.3 The regression suite hides JVM taint failures
 
