@@ -832,6 +832,73 @@ const ANDROID_COMPONENT_NAME: &str = "package android.content; public class Comp
 const ANDROID_SERVICE_CONNECTION: &str =
     "package android.content; public interface ServiceConnection {}";
 
+/// Imports the C fixture `<stem>.c`, indexes and queries it with `<stem>.json`, and returns the
+/// names of the sink functions the tainted-path results reach.
+fn c_sinks_reached(stem: &str) -> std::collections::BTreeSet<String> {
+    use ctadl_ascent::codegen::CallResolutionStrategy;
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    let import_name = format!("test_{stem}_c");
+    let import = ArtifactImport::try_create(
+        &import_name,
+        ArtifactLanguage::C,
+        &c_fixture(&format!("{stem}.c")),
+    )
+    .unwrap();
+    cli::import(&import, cli::ImportOptions::default()).unwrap();
+    let project = AnalysisProject::try_create(
+        &format!("{import_name}_proj"),
+        &[&import_name],
+        SubImports::All,
+    )
+    .unwrap();
+    let models = vec![c_fixture(&format!("{stem}.json"))];
+    cli::index(
+        &project,
+        &[],
+        &models,
+        false,
+        cli::IndexOptions {
+            strategy: CallResolutionStrategy::default(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let out_dir = tempdir().unwrap();
+    let sarif = out_dir.path().join("out.sarif");
+    cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sarif).unwrap()).unwrap();
+    doc["runs"][0]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| {
+            r["ruleId"]
+                .as_str()
+                .is_some_and(|id| id.contains("tainted-path"))
+                && r["kind"].as_str() == Some("fail")
+        })
+        .flat_map(|r| r["properties"]["sinkFunctions"].as_array().unwrap())
+        .filter_map(|f| f.as_str().map(str::to_string))
+        .collect()
+}
+
+/// `funcptrthrough.c`: a call target crosses an indirect call both ways -- installed inside a
+/// function reached through a pointer, and handed to one -- and not into the uncalled sibling field.
+#[test]
+fn test_cli_query_c_funcptr_through_indirect_call() {
+    run_store_test(|| {
+        assert_eq!(
+            c_sinks_reached("funcptrthrough"),
+            ["sink_down", "sink_down_formal", "sink_up"]
+                .map(String::from)
+                .into()
+        );
+    });
+}
+
 /// Precision at call sites and through operands (`callsmear.c`): every `sink_hit*` is a
 /// real flow and must be reported; every `sink_clean*` reads a value that merely shares a
 /// call site, an expression or a struct with a tainted one and must stay silent.

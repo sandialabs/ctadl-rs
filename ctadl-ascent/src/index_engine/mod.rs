@@ -1414,6 +1414,9 @@ ascent_source! {
 
     // Which indirect / virtual call sites resolved to what
     relation resolved_call(FunctionId, InsnId, FunctionId);
+    // The function-pointer subset of `resolved_call` (C, Lua, pcode, Flowy): edges a call target
+    // crosses as it crosses a direct `call`. Java and Dex virtual dispatch stays out.
+    relation fnptr_call(FunctionId, InsnId, FunctionId);
     relation intent_pair(FunctionId, InsnId, FunctionId, IntentPairKind);
 
     // Hybrid Inlining relations: critical_summary(f, n, p). f(n.p = obj) invokes obj at some
@@ -1674,6 +1677,14 @@ ascent_source! {
         for (key, rest) in &ps.splits(p_tgt).exact,
         locals(caller_func_id, arg, key, n, p_n),
         if let Some(p_nr) = ps.concat(p_n, None, rest);
+    critical_summary(caller_func_id, n, p_nr) <--
+        fnptr_call(caller_func_id, caller_insn_id, tgt),
+        critical_summary(tgt, n_tgt, p_tgt),
+        let arg = call_arg!(*caller_insn_id, *n_tgt),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p_tgt).exact,
+        locals(caller_func_id, arg, key, n, p_n),
+        if let Some(p_nr) = ps.concat(p_n, None, rest);
 
     // 2.1: Base Resolvent. A stored call target locally reaches a critical summary, so
     // instantiate the resolvent in the parameters of the summary. The target is carried
@@ -1681,6 +1692,12 @@ ascent_source! {
     establishes_direct(f, d, caller, call_insn) <--
         critical_summary(f, n, p),
         call(caller, call_insn, f),
+        let arg = call_arg!(*call_insn, *n),
+        call_target_assign_like(caller, arg, p, cto),
+        let d = DecisionId::of(Decision { formal: *n, path: *p, target: cto.clone() });
+    establishes_direct(f, d, caller, call_insn) <--
+        critical_summary(f, n, p),
+        fnptr_call(caller, call_insn, f),
         let arg = call_arg!(*call_insn, *n),
         call_target_assign_like(caller, arg, p, cto),
         let d = DecisionId::of(Decision { formal: *n, path: *p, target: cto.clone() });
@@ -1708,6 +1725,12 @@ ascent_source! {
     critical_arg(g, arg, *key, *rest, *p, f, insn, n) <--
         critical_summary(f, n, p),
         call(g, insn, f),
+        let arg = call_arg!(*insn, *n),
+        path_set(ps),
+        for (key, rest) in &ps.splits(p).exact;
+    critical_arg(g, arg, *key, *rest, *p, f, insn, n) <--
+        critical_summary(f, n, p),
+        fnptr_call(g, insn, f),
         let arg = call_arg!(*insn, *n),
         path_set(ps),
         for (key, rest) in &ps.splits(p).exact;
@@ -1767,6 +1790,11 @@ ascent_source! {
         callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
         call_target_assign_like(func_id, arg, arg_p, cto),
         callee_resolvents(cto, dispatch_key, resolve_tgt);
+
+    fnptr_call(caller, insn, callee) <--
+        resolved_call(caller, insn, callee),
+        callee_info(caller, insn, _, _, key),
+        if *key == CallDispatchKey::C;
 
     // 3.2: apply a conditional summary at the callers whose route established its decision.
     // The two rules mirror 2.1 and 2.2, which is what makes them complete: a caller that holds
@@ -2003,6 +2031,18 @@ ascent_source! {
     relation tag_closure_func(FunctionId);
     tag_closure_func(f) <-- critical_call(f);
     tag_closure_func(f) <-- call_target_assign(f, _, _), call(_, _, f);
+    tag_closure_func(f) <-- call_target_assign(f, _, _), fnptr_call(_, _, f);
+    // A caller of a function that exports a tag on an out-formal walks its tags too: the
+    // target may have been installed several frames down (`a(&o)` -> `b(o)` storing
+    // `o->f`) and has to climb through frames that make no indirect call of their own
+    // before it meets its call site. Driven by a tag actually reaching an out-formal, so only
+    // frames a tag enters are admitted.
+    tag_closure_func(caller) <--
+        call_target_assign_like(callee, v, p, _),
+        formal_param(callee, v, formal_ty),
+        if let Some(n) = v.as_formal(),
+        if isout(&n, *formal_ty, p),
+        call(caller, _, callee);
 
     // Call Target Propagation (function pointers and Java objects alike). The stored
     // target is carried opaquely as a `CallTargetObject`; the variant is only tested
@@ -2053,7 +2093,13 @@ ascent_source! {
         if let Some(n) = v.as_formal(),
         if isout(&n, *formal_ty, p),
         call(caller, insn, callee),
-        critical_call(caller),
+        let cv = call_arg!(*insn, n);
+    call_target_assign_like(caller, cv, p.clone(), tgt) <--
+        call_target_assign_like(callee, v, p, tgt),
+        formal_param(callee, v, formal_ty),
+        if let Some(n) = v.as_formal(),
+        if isout(&n, *formal_ty, p),
+        fnptr_call(caller, insn, callee),
         let cv = call_arg!(*insn, n);
 
     critical_call(func_id) <-- callee_info(func_id, _, _, _, _);
