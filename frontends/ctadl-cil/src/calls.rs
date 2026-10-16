@@ -1,6 +1,7 @@
 //! Calls (translation §7). Each call is one `CallAssign { style, rets: [retval, throwval],
 //! args }`, with copy-in/copy-out around it for operands that hold a resolved address (§6.3),
-//! and `site.result := retval` after it.
+//! `excout := excout, throwval` after it when its exception may leave the method (§8,
+//! `method.rs`), and `site.result := retval`.
 //!
 //! | `CallKind`                        | `args`             | `style`                                 |
 //! | --------------------------------- | ------------------ | --------------------------------------- |
@@ -26,14 +27,24 @@
 //!
 //! | Classified as                     | Lowering                                                 |
 //! | --------------------------------- | -------------------------------------------------------- |
-//! | `Ctor { target, fnptr }`          | `store recv.<delegate::target> := target`, `store recv.<delegate::method> := fnptr`, then the ctor call |
-//! | `Invoke`                          | `m := load recv.<delegate::method>`, `FuncPtrCall { m }` with `[load recv.<delegate::target>] ++ args` |
+//! | `Ctor { target, fnptr }`          | `recv := target`, `store recv.<delegate::method> := fnptr`, then the ctor call |
+//! | `Invoke`                          | `m := load recv.<delegate::method>`, `FuncPtrCall { m }` with `[recv] ++ args` |
 //!
-//! The doc passes the target as argument 0 to every bound method, "an extra the callee
-//! ignores" for a static one. Arguments are positional, so that would hand a static method
-//! the target as its first parameter. A delegate bound to a static method stores a pointer to
-//! a thunk instead, `ctadl$delegate$<fid>`, whose parameter 0 is the ignored target and which
-//! calls the method with the rest.
+//! Two departures from the doc's table. First, the delegate *is* its target, where the doc
+//! stores the target in a field `<delegate::target>` and passes that field's value at the
+//! call. A closure's captured variables are fields of its target (the display class), and
+//! the bound method reads them as `this.x`; through a field, the caller's flow would need the
+//! path `.<delegate::target>.x`, which no statement spells and the index does not admit
+//! (`path_composition_store.tnt`), so a closure's captured value was lost. With the delegate
+//! being the target, `this.x` is the target's own `x`, and a lambda's writes to captured
+//! variables reach the method that captured them. Two delegates over one target share its
+//! `<delegate::method>`, which only adds call targets.
+//!
+//! Second, the doc passes the target as argument 0 to every bound method, "an extra the
+//! callee ignores" for a static one. Arguments are positional, so that would hand a static
+//! method the target as its first parameter. A delegate bound to a static method stores a
+//! pointer to a thunk instead, `ctadl$delegate$<fid>`, whose parameter 0 is the ignored
+//! target and which calls the method with the rest.
 
 use cil_reader::Entity;
 use cil_reader::flow::delegate::{self, DelegateOp, ModuleTypes};
@@ -46,7 +57,7 @@ use ctadl_ir::*;
 
 use crate::hierarchy::resolve_type;
 use crate::method::{Emitter, Lower, parameters};
-use crate::names::{DELEGATE_METHOD, DELEGATE_TARGET, MethodKey, ModNames};
+use crate::names::{DELEGATE_METHOD, MethodKey, ModNames};
 use crate::ptr::PlacePath;
 
 /// How a `callvirt` lowers.
@@ -74,7 +85,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                 if let Some(recv) = site.receiver {
                     let r = em.var(recv);
                     let t = self.value(em, ins, target);
-                    em.store(r.clone(), FieldRef::symbol(DELEGATE_TARGET), t);
+                    em.assign(r.clone(), [t]);
                     let f = match self.static_fnptrs.get(&fnptr).cloned() {
                         Some(fid) => {
                             let thunk = self.out.thunk(&fid);
@@ -179,6 +190,7 @@ impl Lower<'_, '_, '_, '_, '_> {
             rets: thin_vec![retval.clone(), thrown],
             args,
         });
+        self.raise_out(em);
         if let Some(r) = result {
             let d = em.var(r);
             em.assign(d, [Exp::Variable(retval)]);
@@ -305,7 +317,7 @@ impl Lower<'_, '_, '_, '_, '_> {
     }
 
     /// `callvirt D::Invoke(args)`: a call through the function pointer the delegate holds,
-    /// with the bound target as argument 0.
+    /// with the delegate, which is its target, as argument 0.
     fn delegate_invoke(
         &mut self,
         em: &mut Emitter<'_>,
@@ -319,10 +331,8 @@ impl Lower<'_, '_, '_, '_, '_> {
         let r = em.var(recv);
         let m = em.fresh("dm");
         em.load(m.clone(), r.clone(), FieldRef::symbol(DELEGATE_METHOD));
-        let target = em.fresh("dt");
-        em.load(target.clone(), r, FieldRef::symbol(DELEGATE_TARGET));
         let mut copy_outs = Vec::new();
-        let mut args: ThinVec<Exp> = thin_vec![Exp::Variable(target)];
+        let mut args: ThinVec<Exp> = thin_vec![Exp::Variable(r)];
         for a in &site.args {
             args.push(Exp::Variable(self.copy_in(em, ins, *a, &mut copy_outs)));
         }

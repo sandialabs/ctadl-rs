@@ -1,9 +1,10 @@
 # Design: the CIL frontend's translation to CTADL IR - DO-NOT-MERGE
 
-Status: design, not implemented. It builds on [`cil-flow-api.md`](cil-flow-api.md),
-which describes the reader's dataflow layer. Engine plumbing (the `Cil` VMT
-variant, `CallStyle`, the dispatch key, the `deref_paths` gate) is separate
-work. It is touched on here only where the frontend has to fill it in.
+Status: implemented, in `frontends/ctadl-cil/`, with the engine plumbing it needs
+(the `Cil` VMT variant, `CallStyle::CilCall`, the dispatch key, the `deref_paths`
+gate) and the checks of §1.5 and §12. Where the code departs from the design
+below, §14 says what it does and why. It builds on
+[`cil-flow-api.md`](cil-flow-api.md), which describes the reader's dataflow layer.
 
 **Decided:**
 - Managed pointers lower to the place they point at whenever the flow layer can
@@ -777,3 +778,155 @@ slice on each one is gated by `cil:taint` on its own fixture methods (§11's
 3. **Delegate field names** (§7). Two fixed symbols on every delegate object.
    The default models will need to refer to them for `Delegate.Combine`,
    `DynamicInvoke` and events.
+
+---
+
+## 14. As implemented
+
+The frontend is `frontends/ctadl-cil/`, laid out as §2 says; each file's module
+docs carry its table. `ctadl import` takes a CLI `.dll`/`.exe` or a directory of
+them (`-l cil`, or detected: a PE with CLI metadata is CIL, one without is
+pcode), and `--include-framework` imports a directory's framework assemblies as
+well. Referenced assemblies' metadata is read from the input's directory and
+the shared framework of the `dotnet` on `PATH`, or `$CTADL_CIL_REFERENCE_DIRS`.
+
+The engine has the `Cil` variants of the frontend plan's M4, after Lua's
+precedent: `VirtualMethodTable::Cil` (with `pinvokes`), `CallStyle::CilCall`,
+`CallObject::CilObject`, `CallTargetObject::CilClass`, `CallDispatchKey::Cil`
+(parquet tag 3, `INDEX_FORMAT_VERSION` 5), `ChaLanguage::Cil` on the shared
+`run_cha`, `ArtifactLanguage::Cil` with `Entry` write-back, and Cil in the
+`deref_paths` gate. A `CilCall` goes through the Java ladder (`classify`,
+`apply`), keyed in its own space; the ladder's dispatch kind is `Interface` when
+the table declares the class an interface. Models' `parent` and `extends`
+constraints read the `Cil` table as they read the Java one.
+
+The checks:
+
+- `cil:frontend` (§1.5): every assembly of the Cecil corpus and the fixtures is
+  imported, which verifies it, and run through the index's SSA pipeline with
+  `Entry` write-back; neither may panic. The frontend's IR of `exec.cs`,
+  `exec.il` and `flow.il` is held to goldens in `xtask/cil-goldens/mir`
+  (`cargo xtask cil bless-mir`). Over the corpus: 165 assemblies, 222,589
+  functions, 70,560 override aliases, 221 addresses that escape resolution.
+- `cil:taint` (§12), over `exec.cs` (Release and Debug) and `exec.il`. For it
+  `exec.cs` gained interface dispatch (`Ifaces`, with an explicit
+  implementation) and delegates (`Dels`: a static method group, an instance
+  method, a closure, a non-capturing lambda, a delegate in a field), and the
+  `cil:exec` interpreter models them: interface dispatch through `MethodImpl`
+  rows or by name, delegates as the frontend reads them, and the statics of
+  compiler-generated types initialized by running their static constructor, as
+  .NET does on first use. FlowRun now never makes a delegate without a
+  constructor, which it did for an `object` location once the fixture had a
+  delegate type.
+- `Cil:*` taint cases (§11): `nightly/tests/cil`, one C# file per slice (a
+  directory of files for slice 10, one assembly each), compiled with `dotnet
+  build`. With no source lines yet (M5b), a case is judged by the sink
+  functions its code flows end in: each scenario of a file sinks into its own
+  function, `expected_sinks` must all be reached and `unexpected_sinks` none.
+
+Departures from the design, each found by building it or by one of the checks:
+
+1. **Pointers are traced by the frontend** (`ptr.rs`), not by
+   `MethodFlow::resolve_address`. The layer names a place by the variables that
+   held its base and indices, and forgets it when one is written. `ldelema` and
+   `ldflda` push their address over their own base's slot, and `a[i*3] += x`
+   (`ldelema; dup; ldind; ...; stind`) overwrites the index's: the address
+   escapes resolution, and §6.3's fallback loses the write. In `exec.cs` that was
+   21 of the 22 escaping addresses; one was a real join (`RefLocal`). The
+   frontend runs the same must/may analysis with two changes the layer cannot
+   make: element indices are not part of a place (the frontend's §9 policy), and
+   a base held in a stack slot is saved into a local of the frontend's,
+   `ab{block}_{index}`, by the instruction that takes the address. Places nest
+   (`ldloca r; ldflda Lo; ldfld X` is `loc_r.Lo.X`). Every input the layer
+   resolves, the frontend resolves too; `cil:frontend` fails on a disagreement.
+2. **An address used as a value is materialized**, not only a byref argument:
+   any call operand that holds a traced address is copied in and out (so the
+   receiver of a struct's method is), a returned `ref` or a stored pointer gets a
+   cell, and so does a `ref` local an address is copied into. A value-type
+   `newobj` hands its constructor the new struct through a cell too: §7's table
+   passes the receiver as is, but the constructor writes through `this.D`.
+3. **A delegate is its target, and one bound to a static method points at a
+   thunk.** §7 stores the target in `<delegate::target>` and passes that field
+   at `Invoke`. A closure's captured variables are fields of the target, which
+   the lambda reads as `this.x`, so the caller's flow needs the path
+   `.<delegate::target>.x`; no statement spells it, the index does not admit it
+   (`path_composition_store.tnt`), and `Cil:delegates` lost every closure. The
+   constructor now copies the target into the delegate's variable
+   (`recv := target`) and stores only `<delegate::method>`; `Invoke` passes the
+   delegate itself as argument 0. Captured values read through, and a lambda's
+   writes to captured variables reach the method that captured them (the
+   `CapturedWrite` scenario), which neither lowering of §7 gave. Two delegates
+   over one target share its `<delegate::method>`, which only adds call
+   targets; open question 3 is down to that one symbol. And §7 passes the
+   target to every bound method as "an extra the callee ignores" when it is
+   static; arguments are positional, so a static method would take the target
+   as its first parameter. `ldftn` of a static method that a delegate
+   constructor binds in the same block stores `ptr<ctadl$delegate$<fid>>`, a
+   function whose parameter 0 is the ignored target and which calls the method
+   with the rest.
+4. **Exceptions leave a method from more places than §8 has.** A call outside
+   any `try` raises its callee's exception out of the method, and a protected
+   point whose handlers are typed, filters or finallies may too. Each such call
+   or throw adds its `throwval` into a local `excout` (defined empty at entry),
+   and every return's exceptional slot is `excout`. `cil:taint` found this:
+   `Exc.Uncaught` is `Throws(a) + 1`. Ending a block after every call would
+   have given each its own edge out, but would cut the load chains the index
+   composes paths along within a block (§12.3).
+5. **The index never summarized an exceptional return.** Codegen declared a
+   formal for the first return slot only, so `-2` got assignments but no
+   summary, for Dex and JVM as much as CIL. It now declares one per return
+   slot. `cil:taint` found this as four uncovered flows in `Exc`; the Dex and
+   JVM regression suites pass with it unchanged.
+6. **Forwarders are canonicalized as names are built** (§3.3 has `finish`
+   rewrite them): a TypeRef's assembly is followed through the forwarders of
+   the assemblies the reference-metadata cache can load. Same names, no second
+   pass over the IR.
+7. **Assembly-of-names details** (§3): a TypeRef with a null resolution scope
+   takes the assembly this module's `ExportedType` table sends it to; a vararg
+   descriptor ends its parameters with `...`, so a definition and a call site
+   spell the same one; an array names itself without an assembly
+   (`System.Int32[]`), which is the class `newarr` allocates.
+8. **Rows** (§4.1): every method that is not abstract gets a `methods` row and a
+   `FunctionData`, bodyless runtime methods (a delegate's `Invoke`) included,
+   like a Dex `native`. An abstract method gets a `FunctionData` with no body,
+   so a call to it is not stubbed.
+9. **Override aliases** (§4.2) match an interface method against the type's own
+   virtual methods and the ones it inherits, after `MethodImpl` rows, which win:
+   an interface method with an explicit implementation is not matched by name.
+10. **`box`** records the boxed type as instantiated by adding `cil<T>` as a
+    second source of the assign, which also gives the boxed value a class for
+    dispatch.
+11. **Code that names an argument past its signature** (hand-written IL, the
+    `gap-formatter.il` fixture) gets a local `badarg{n}`, so the IR verifies.
+12. **The known-miss file is JSON5** (`xtask/cil-taint-known.json5`), not TOML:
+    xtask already reads JSON5, and a new crate would have to be vendored into
+    the offline Nix build.
+
+`cil:taint` as built (§12): the shadow is a set of labels beside every value the
+`cil:exec` interpreter holds (`xtask/src/cil/exec/value.rs`, `Sh`), with the
+heap, cells and the exception in flight shadowed beside their values. A box's
+contents are at the box's own path, as the frontend's contents-preserving `box`
+has them. At exit, an argument variable itself is not an output, and neither is a
+field of a struct passed by value, since the caller does not see either change;
+objects reached from them are. Only the most general uncovered flows are sorted:
+one that is another extended by a common suffix follows from it. Paths are walked
+to a length of four. Today: 330 methods over three fixtures, every dynamic flow
+covered but 28 the index cannot admit (§12.3) and 4 known misses
+(`Exec.Obj::ObjectField`, one `engine:path-composition` and one
+`engine:alias-rule` in each Release and Debug build), with reproducers
+`path_composition_store.tnt` and `alias_cycle.tnt`. The first is broader than
+§12.3's table suggests: `n.g = x; o.f = n` composes `.f.g` in no block, not only
+across blocks, because codegen composes paths along load chains only.
+
+Not done:
+
+- The exec fixtures have no generics, which the interpreter does not model, and
+  no BCL delegate type (`Func<,>`), whose type does not resolve without the
+  framework's metadata; so `cil:taint` does not gate slice 6, and slice 9 only
+  with a delegate type of the module. The `Cil:overrides` and `Cil:delegates`
+  cases cover them end to end. §12.6's other limits stand.
+- No source lines (M5b) and no default models (M6). Without models every BCL
+  call is an opaque stub, so a flow through `string.Concat` is lost.
+- `ldvirtftn` binds the method the token names, as §7 has it, so a delegate
+  over a virtual method reaches only that declaration.
+

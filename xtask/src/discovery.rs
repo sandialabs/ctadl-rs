@@ -53,6 +53,10 @@ pub enum Kind {
     },
     /// Pinned external Android ICC benchmark APK plus expected-answer spec.
     AndroidIcc { spec: PathBuf },
+    /// C# compiled with `dotnet build` and imported through the CIL frontend; see
+    /// `crate::cil::cases`. `source` is a `.cs` file, or a directory of them that are
+    /// separate assemblies.
+    Cil { source: PathBuf, config: PathBuf },
 }
 
 /// How a [`Kind::Jni`] case hands its two halves to `ctadl import`.
@@ -86,6 +90,7 @@ impl Kind {
             Kind::Lua { .. } => Frontend::Lua,
             Kind::Jni { .. } => Frontend::Jni,
             Kind::AndroidIcc { .. } => Frontend::AndroidIcc,
+            Kind::Cil { .. } => Frontend::Cil,
         }
     }
 }
@@ -110,8 +115,8 @@ pub enum Frontend {
     Jni,
     /// External Android ICC benchmark APKs (DroidBench ICC / ICC-Bench style).
     AndroidIcc,
-    /// The cil-reader Cecil-parity checks; see [`crate::cil`]. No taint cases
-    /// yet: there is no CIL frontend in `ctadl import` to drive.
+    /// The cil-reader and CIL frontend checks (see [`crate::cil`]), and the C# taint
+    /// cases under `tests/cil`.
     Cil,
 }
 
@@ -189,7 +194,35 @@ pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
     cases.extend(discover_lua(&tests_dir.join("lua"))?);
     cases.extend(discover_jni(&tests_dir.join("jni"))?);
     cases.extend(discover_android_icc(&tests_dir.join("android-icc"))?);
+    cases.extend(discover_cil(&tests_dir.join("cil"))?);
     cases.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(cases)
+}
+
+/// Pair each `foo.cs`, or each `foo/` directory of C# sources (one assembly per file), with
+/// its `foo-query.json5`. Cases report as `Cil:foo`.
+fn discover_cil(dir: &Path) -> Result<Vec<TestCase>> {
+    let mut cases = Vec::new();
+    if !dir.is_dir() {
+        return Ok(cases);
+    }
+    for entry in read_dir_sorted(dir)? {
+        if !entry.is_dir() && entry.extension().and_then(|e| e.to_str()) != Some("cs") {
+            continue;
+        }
+        let stem = file_stem(&entry)?;
+        let config = dir.join(format!("{stem}-query.json5"));
+        if !config.is_file() {
+            continue;
+        }
+        cases.push(TestCase {
+            name: format!("Cil:{stem}"),
+            kind: Kind::Cil {
+                source: absolute(&entry)?,
+                config: absolute(&config)?,
+            },
+        });
+    }
     Ok(cases)
 }
 

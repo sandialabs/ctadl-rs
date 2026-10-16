@@ -762,7 +762,61 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             worker,
         ),
         Kind::AndroidIcc { spec } => run_android_icc(&case.name, spec),
+        Kind::Cil { source, config } => run_cil(&case.name, source, config),
     }
+}
+
+// --- CIL --------------------------------------------------------------------
+
+/// Run one C# case (see [`crate::cil::cases`]): compile it, import it through the CIL
+/// frontend, index, query with the model its config implies, and judge the code flows by the
+/// sink functions they end in.
+fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
+    use crate::cil::cases;
+    let Some(dotnet) = cases::dotnet() else {
+        return Ok(Outcome::Skip(
+            "`dotnet` not on PATH (the dev shell provides it)".to_string(),
+        ));
+    };
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+    let cfg = cases::read_config(config)?;
+    let artifact = cases::compile(&dotnet, source, &work, &work.join("out"))?;
+    let model = work.join("query.json");
+    std::fs::write(
+        &model,
+        serde_json::to_string_pretty(&cases::query_model(&cfg))?,
+    )?;
+    let project = name.replace(':', "_");
+    let sarif = work.join("output.sarif");
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "import",
+            "-l",
+            "cil",
+            "--name",
+            &project,
+            &artifact.to_string_lossy(),
+        ],
+    )?;
+    run_ctadl(&work, &state, &["index", &project])?;
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "query",
+            &project,
+            "-m",
+            &model.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
+    )?;
+    let outcome = cases::check(&cfg, &sarif)?;
+    with_valid_sarif(&work, &[&sarif], outcome)
 }
 
 fn run_android_icc(name: &str, spec_path: &Path) -> Result<Outcome> {

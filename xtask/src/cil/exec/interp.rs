@@ -21,10 +21,21 @@
 //!   `Test` branches on, `isinst` vs `castclass`, `unbox` vs `unbox.any`,
 //!   `ckfinite`, and `newarr` vs a multi-dimensional array's constructor.
 //!
+//! Every value carries a shadow ([`Sh`]) beside it, the labels `cil:taint`
+//! tracks (translation §12.2). Shadows never change what runs; `cil:exec`
+//! starts with none and so carries none.
+//!
+//! Delegates are modeled as the frontend reads them (translation §7): a
+//! delegate constructor binds a target and a function pointer, and `Invoke`
+//! calls the method with the target as `this` when it has one. The static
+//! fields of compiler-generated types (the caches of lambdas and method
+//! groups), which FlowRun neither prints nor resets, start at their defaults.
+//!
 //! Not modeled, so reported as [`Stop::Unsupported`]: strings, tokens,
-//! function pointers, delegates, generics, interfaces, `localloc`, blocks,
-//! typed references, and calls outside the module other than the
-//! `Object` and `Exception` constructors. Filters run in the first pass of
+//! function pointers to methods outside the module, generic methods and
+//! types' own code, `localloc`, blocks, typed references, and calls outside
+//! the module other than the `Object` and `Exception` constructors and
+//! delegates. Filters run in the first pass of
 //! their own frame only: a caller's filter runs after the callee's finally
 //! blocks, where the CLR runs it before.
 
@@ -32,6 +43,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use cil_reader::cil::Code;
+use cil_reader::flow::delegate::{self, DelegateOp, ModuleTypes, TypeOracle};
 use cil_reader::flow::{
     BlockId, BoundIns, CallKind, CallSite, CmpOp, Const, Control, Effect, Field, FlowOptions,
     Handler, HandlerKind, MethodFlow, NewKind, Op, Operands, Path, Place, Root, Transfer, TypeOp,
@@ -40,7 +52,7 @@ use cil_reader::flow::{
 use cil_reader::model::{MemberRefSig, MethodDef, TypeDef, TypeDefOrRef, TypeSig};
 use cil_reader::{Entity, MetadataToken, Module, TokenType};
 
-use super::value::{self, Base, Fault, Loc, Struct, Ty, Value, ARITHMETIC};
+use super::value::{self, Base, Fault, Labels, Loc, Sh, Struct, Ty, Value, ARITHMETIC};
 
 /// Why a call did not return normally.
 #[derive(Debug, Clone)]
@@ -86,6 +98,40 @@ pub enum Obj {
         vty: Ty,
         value: Value,
     },
+    /// A delegate: its type's full name, the target it binds (`null` for a static method),
+    /// and the method (a MethodDef token).
+    Delegate {
+        ty: String,
+        target: Value,
+        method: u32,
+    },
+}
+
+/// The shadow of a heap object, beside [`Obj`] at the same index.
+#[derive(Debug, Clone)]
+pub enum SObj {
+    /// A class instance's fields; a field not here has no labels.
+    Object(HashMap<u32, Sh>),
+    /// An array's elements, and its length as a location of its own.
+    Array { items: Vec<Sh>, length: Labels },
+    /// A box's value.
+    Boxed(Sh),
+    /// A delegate's target.
+    Delegate(Sh),
+}
+
+impl SObj {
+    fn for_obj(o: &Obj) -> SObj {
+        match o {
+            Obj::Object { .. } => SObj::Object(HashMap::new()),
+            Obj::Array { items, .. } => SObj::Array {
+                items: vec![Sh::default(); items.len()],
+                length: Labels::new(),
+            },
+            Obj::Boxed { .. } => SObj::Boxed(Sh::default()),
+            Obj::Delegate { .. } => SObj::Delegate(Sh::default()),
+        }
+    }
 }
 
 /// A method ready to run.
@@ -131,11 +177,15 @@ impl Cont {
 struct Frame {
     method: Rc<Prepared>,
     vars: HashMap<Var, Value>,
+    /// The shadow of each variable in `vars`; a variable not here has none.
+    svars: HashMap<Var, Sh>,
     conts: Vec<Cont>,
     /// The values the last `Test` effect read.
     tests: Vec<Value>,
     /// What the last `Return` effect returned.
     ret: Option<Option<Value>>,
+    /// Its shadow.
+    ret_sh: Sh,
 }
 
 enum Exit {
@@ -160,6 +210,15 @@ pub struct Interp<'m, 'd> {
     pub heap: Vec<Obj>,
     pub statics: HashMap<u32, Value>,
     pub cells: Vec<(Ty, Value)>,
+    /// The shadows of `heap`, index for index. [`Interp::sync_heap`] fills it in for
+    /// objects pushed onto `heap` from outside.
+    pub sheap: Vec<SObj>,
+    /// The shadows of `cells`, index for index.
+    pub scells: Vec<Sh>,
+    /// The shadow an exception object was last thrown with, by heap index.
+    pub exc_sh: HashMap<usize, Sh>,
+    /// The compiler-generated types whose statics this trial has initialized.
+    generated: std::collections::HashSet<u32>,
     frames: Vec<Frame>,
     steps: u64,
 }
@@ -190,6 +249,10 @@ impl<'m, 'd> Interp<'m, 'd> {
             heap: Vec::new(),
             statics: HashMap::new(),
             cells: Vec::new(),
+            sheap: Vec::new(),
+            scells: Vec::new(),
+            exc_sh: HashMap::new(),
+            generated: std::collections::HashSet::new(),
             frames: Vec::new(),
             steps: 0,
         }
@@ -200,8 +263,34 @@ impl<'m, 'd> Interp<'m, 'd> {
         self.heap.clear();
         self.statics.clear();
         self.cells.clear();
+        self.sheap.clear();
+        self.scells.clear();
+        self.exc_sh.clear();
+        self.generated.clear();
         self.frames.clear();
         self.steps = 0;
+    }
+
+    /// Gives every heap object and cell pushed from outside (a trial's starting state) an
+    /// empty shadow, matching its kind.
+    pub fn sync_heap(&mut self) {
+        self.sheap.truncate(self.heap.len());
+        for o in &self.heap[self.sheap.len()..] {
+            self.sheap.push(SObj::for_obj(o));
+        }
+        for (i, o) in self.heap.iter().enumerate() {
+            let mismatched = !matches!(
+                (o, &self.sheap[i]),
+                (Obj::Object { .. }, SObj::Object(_))
+                    | (Obj::Array { .. }, SObj::Array { .. })
+                    | (Obj::Boxed { .. }, SObj::Boxed(_))
+                    | (Obj::Delegate { .. }, SObj::Delegate(_))
+            );
+            if mismatched {
+                self.sheap[i] = SObj::for_obj(o);
+            }
+        }
+        self.scells.resize(self.cells.len(), Sh::default());
     }
 
     // ---- types ---------------------------------------------------------------
@@ -281,6 +370,10 @@ impl<'m, 'd> Interp<'m, 'd> {
                 Ty::Ref
             }
             TypeSig::Named {
+                is_value_type: false,
+                ..
+            }
+            | TypeSig::GenericInst {
                 is_value_type: false,
                 ..
             } => Ty::Ref,
@@ -445,7 +538,8 @@ impl<'m, 'd> Interp<'m, 'd> {
             | "System.NullReferenceException"
             | "System.IndexOutOfRangeException"
             | "System.InvalidCastException"
-            | "System.ArrayTypeMismatchException" => "System.SystemException",
+            | "System.ArrayTypeMismatchException"
+            | "System.ArgumentException" => "System.SystemException",
             "System.DivideByZeroException"
             | "System.OverflowException"
             | "System.NotFiniteNumberException" => "System.ArithmeticException",
@@ -463,7 +557,7 @@ impl<'m, 'd> Interp<'m, 'd> {
             return Ok(false);
         };
         let mut name = match &self.heap[*o] {
-            Obj::Object { ty, .. } | Obj::Boxed { ty, .. } => ty.clone(),
+            Obj::Object { ty, .. } | Obj::Boxed { ty, .. } | Obj::Delegate { ty, .. } => ty.clone(),
             Obj::Array { .. } => {
                 return match target.as_str() {
                     "System.Object" | "System.Array" => Ok(true),
@@ -473,7 +567,7 @@ impl<'m, 'd> Interp<'m, 'd> {
             }
         };
         loop {
-            if name == target {
+            if name == target || self.implements(&name, &target)? {
                 return Ok(true);
             }
             match self.parent(&name)? {
@@ -483,9 +577,37 @@ impl<'m, 'd> Interp<'m, 'd> {
         }
     }
 
+    /// Whether the module type `name` lists the interface `target`, directly or through the
+    /// interfaces it lists.
+    fn implements(&self, name: &str, target: &str) -> R<bool> {
+        let Some(&token) = self.types.get(name) else {
+            return Ok(false);
+        };
+        let mut queue = vec![self.type_def(token)?];
+        let mut seen = 0;
+        while let Some(t) = queue.pop() {
+            seen += 1;
+            if seen > 256 {
+                return bug("an interface cycle");
+            }
+            for i in t.interfaces().or_else(|e| bug(e.to_string()))? {
+                let Some(iface) = i.interface else { continue };
+                let iname = iface.full_name().or_else(|e| bug(e.to_string()))?;
+                if iname == target {
+                    return Ok(true);
+                }
+                if let Some(&it) = self.types.get(&iname) {
+                    queue.push(self.type_def(it)?);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     // ---- heap ----------------------------------------------------------------
 
     fn alloc(&mut self, o: Obj) -> Value {
+        self.sheap.push(SObj::for_obj(&o));
         self.heap.push(o);
         Value::Ref(self.heap.len() - 1)
     }
@@ -590,6 +712,9 @@ impl<'m, 'd> Interp<'m, 'd> {
         };
         let name = md.name().or_else(|e| bug(e.to_string()))?;
         let sig = md.signature().or_else(|e| bug(e.to_string()))?;
+        if self.type_def(decl)?.is_interface().unwrap_or(false) {
+            return self.dispatch_interface(token, &name, &sig, start);
+        }
         let mut next = Some(self.type_def(start)?);
         while let Some(t) = next {
             if t.token().raw() == decl {
@@ -612,6 +737,42 @@ impl<'m, 'd> Interp<'m, 'd> {
         Ok(token)
     }
 
+    /// The implementation of the interface method `token` an object of type `start` has: a
+    /// method whose `MethodImpl` row names it (an explicit implementation), else a virtual
+    /// method of the same name and signature, up the base chain.
+    fn dispatch_interface(
+        &self,
+        token: u32,
+        name: &str,
+        sig: &cil_reader::model::MethodSig,
+        start: u32,
+    ) -> R<u32> {
+        let mut next = Some(self.type_def(start)?);
+        while let Some(t) = next {
+            let methods = t.methods().or_else(|e| bug(e.to_string()))?;
+            for m in &methods {
+                let overrides = m.overrides().or_else(|e| bug(e.to_string()))?;
+                if overrides.iter().any(|o| o.raw() == token) {
+                    return Ok(m.token().raw());
+                }
+            }
+            for m in &methods {
+                if m.is_virtual().unwrap_or(false)
+                    && !m.is_abstract().unwrap_or(true)
+                    && m.name().ok().as_deref() == Some(name)
+                    && m.signature().ok().as_ref() == Some(sig)
+                {
+                    return Ok(m.token().raw());
+                }
+            }
+            next = match t.base_type() {
+                Ok(Some(TypeDefOrRef::Def(base))) => Some(base),
+                _ => None,
+            };
+        }
+        unsupported("an interface method no module type implements")
+    }
+
     /// `Ns.Type::Name` of a method outside the module.
     fn member_name(&self, token: MetadataToken) -> R<String> {
         let Ok(Some(Entity::MemberRef(r))) = self.module.lookup_token(token) else {
@@ -627,6 +788,17 @@ impl<'m, 'd> Interp<'m, 'd> {
 
     /// Run a method of the module. `args` holds `this` first.
     pub fn call(&mut self, token: u32, args: Vec<Value>) -> R<Option<Value>> {
+        let shs = vec![Sh::default(); args.len()];
+        self.call_sh(token, args, shs).map(|(v, _)| v)
+    }
+
+    /// [`Interp::call`] with the arguments' shadows; the result's shadow too.
+    pub fn call_sh(
+        &mut self,
+        token: u32,
+        args: Vec<Value>,
+        shs: Vec<Sh>,
+    ) -> R<(Option<Value>, Sh)> {
         if self.frames.len() >= DEPTH_LIMIT {
             return unsupported("call depth");
         }
@@ -640,11 +812,13 @@ impl<'m, 'd> Interp<'m, 'd> {
             ));
         }
         let mut vars = HashMap::new();
-        for (k, (a, ty)) in args.into_iter().zip(&p.params).enumerate() {
+        let mut svars = HashMap::new();
+        for (k, ((a, ty), sh)) in args.into_iter().zip(&p.params).zip(shs).enumerate() {
             let a = ty
                 .store(a)
                 .or_else(|e| bug(format!("{} argument {k}: {e}", p.name)))?;
             vars.insert(Var::Arg(k as u16), a);
+            svars.insert(Var::Arg(k as u16), sh);
         }
         for (n, ty) in p.locals.iter().enumerate() {
             let v = self.default_of(ty)?;
@@ -659,20 +833,26 @@ impl<'m, 'd> Interp<'m, 'd> {
         self.frames.push(Frame {
             method: p.clone(),
             vars,
+            svars,
             conts: Vec::new(),
             tests: Vec::new(),
             ret: None,
+            ret_sh: Sh::default(),
         });
         let fi = self.frames.len() - 1;
         let exit = self.run(fi, 0, 0, false);
+        let ret_sh = std::mem::take(&mut self.frames[fi].ret_sh);
         self.frames.pop();
         match exit? {
             Exit::Return(v) => match (&p.ret, v) {
-                (Some(ty), Some(v)) => Ok(Some(
-                    ty.store(v)
-                        .or_else(|e| bug(format!("{} returns: {e}", p.name)))?,
+                (Some(ty), Some(v)) => Ok((
+                    Some(
+                        ty.store(v)
+                            .or_else(|e| bug(format!("{} returns: {e}", p.name)))?,
+                    ),
+                    ret_sh,
                 )),
-                (None, None) => Ok(None),
+                (None, None) => Ok((None, Sh::default())),
                 _ => bug(format!("{} returns the wrong arity", p.name)),
             },
             Exit::EndFilter(..) => bug(format!("{} ended in endfilter", p.name)),
@@ -686,6 +866,21 @@ impl<'m, 'd> Interp<'m, 'd> {
             Some(x) => Ok(x.clone()),
             None => bug(format!("read of {v}, which holds no value")),
         }
+    }
+
+    fn sread(&self, fi: usize, v: Var) -> Sh {
+        self.frames[fi].svars.get(&v).cloned().unwrap_or_default()
+    }
+
+    fn swrite(&mut self, fi: usize, v: Var, sh: Sh) {
+        self.frames[fi].svars.insert(v, sh);
+    }
+
+    /// Writes a value and its shadow.
+    fn write_sh(&mut self, fi: usize, v: Var, x: Value, sh: Sh) -> R<()> {
+        self.write(fi, v, x)?;
+        self.swrite(fi, v, sh);
+        Ok(())
     }
 
     fn write(&mut self, fi: usize, v: Var, x: Value) -> R<()> {
@@ -705,9 +900,24 @@ impl<'m, 'd> Interp<'m, 'd> {
 
     /// Forget the stack at and above depth `height`.
     fn clear_stack(&mut self, fi: usize, height: u16) {
-        self.frames[fi]
-            .vars
-            .retain(|v, _| !matches!(v, Var::Stack(d) if *d >= height));
+        let above = |v: &Var| matches!(v, Var::Stack(d) if *d >= height);
+        self.frames[fi].vars.retain(|v, _| !above(v));
+        self.frames[fi].svars.retain(|v, _| !above(v));
+    }
+
+    /// The shadow exception `exc` was thrown with.
+    pub fn exc_shadow(&self, exc: &Value) -> Sh {
+        match exc {
+            Value::Ref(o) => self.exc_sh.get(o).cloned().unwrap_or_default(),
+            _ => Sh::default(),
+        }
+    }
+
+    /// Hands handler `c` of frame `fi` the exception, and its shadow.
+    fn set_caught(&mut self, fi: usize, c: usize, exc: Value) {
+        let sh = self.exc_shadow(&exc);
+        self.frames[fi].vars.insert(Var::Caught(c as u16), exc);
+        self.frames[fi].svars.insert(Var::Caught(c as u16), sh);
     }
 
     /// Follow a normal edge from `from` to the block at `target`.
@@ -984,7 +1194,7 @@ impl<'m, 'd> Interp<'m, 'd> {
         if let (Some(from), HandlerKind::Catch) = (from, mf.handlers[c].kind) {
             Self::exc_edge(mf, from, entry)?;
         }
-        self.frames[fi].vars.insert(Var::Caught(c as u16), exc);
+        self.set_caught(fi, c, exc);
         self.clear_stack(fi, 0);
         Ok(entry)
     }
@@ -1021,9 +1231,7 @@ impl<'m, 'd> Interp<'m, 'd> {
                         return bug(format!("filter {h} has no block"));
                     };
                     Self::exc_edge(mf, from, entry)?;
-                    self.frames[fi]
-                        .vars
-                        .insert(Var::Caught(h as u16), exc.clone());
+                    self.set_caught(fi, h, exc.clone());
                     let Exit::EndFilter(verdict, end) = self.run(fi, entry, 0, true)? else {
                         return bug("a filter returned");
                     };
@@ -1074,7 +1282,7 @@ impl<'m, 'd> Interp<'m, 'd> {
                             mf.blocks[end].start
                         ));
                     }
-                    self.frames[fi].vars.insert(Var::Caught(c as u16), exc);
+                    self.set_caught(fi, c, exc);
                     self.clear_stack(fi, 0);
                     return Ok((entry, 0));
                 }
@@ -1179,11 +1387,13 @@ impl<'m, 'd> Interp<'m, 'd> {
                 transfer,
             } => {
                 let mut vals = Vec::with_capacity(srcs.len());
+                let mut shs = Vec::with_capacity(srcs.len());
                 for s in srcs {
                     vals.push(self.read(fi, *s)?);
+                    shs.push(self.sread(fi, *s));
                 }
-                let v = self.transfer(code, transfer, vals)?;
-                self.write(fi, *dst, v)
+                let (v, sh) = self.transfer(code, transfer, vals, shs)?;
+                self.write_sh(fi, *dst, v, sh)
             }
             Effect::Const { dst, value } => {
                 let v = match value {
@@ -1194,19 +1404,20 @@ impl<'m, 'd> Interp<'m, 'd> {
                     Const::Null => Value::Null,
                     other => return unsupported(format!("constant {other}")),
                 };
-                self.write(fi, *dst, v)
+                self.write_sh(fi, *dst, v, Sh::default())
             }
             Effect::Load { dst, src } => {
-                let v = self.load(fi, src)?;
-                self.write(fi, *dst, v)
+                let (v, sh) = self.load(fi, src)?;
+                self.write_sh(fi, *dst, v, sh)
             }
             Effect::Store { dst, src } => {
                 let v = self.read(fi, *src)?;
-                self.store(fi, dst, v)
+                let sh = self.sread(fi, *src);
+                self.store(fi, dst, v, sh)
             }
             Effect::AddressOf { dst, place } => {
                 let loc = self.place(fi, place)?;
-                self.write(fi, *dst, Value::Ptr(loc))
+                self.write_sh(fi, *dst, Value::Ptr(loc), Sh::default())
             }
             Effect::New {
                 dst,
@@ -1215,7 +1426,7 @@ impl<'m, 'd> Interp<'m, 'd> {
                 sizes,
             } => {
                 let v = self.new_value(fi, code, *kind, ty.as_ref(), sizes)?;
-                self.write(fi, *dst, v)
+                self.write_sh(fi, *dst, v, Sh::default())
             }
             Effect::Clear { addr } => {
                 let Value::Ptr(loc) = self.read(fi, *addr)? else {
@@ -1229,15 +1440,17 @@ impl<'m, 'd> Interp<'m, 'd> {
                     },
                 };
                 let v = self.default_of(&ty)?;
-                self.write_loc(&loc, v)
+                self.write_loc(&loc, v)?;
+                self.swrite_loc(&loc, Sh::default())
             }
             Effect::Call(site) => self.call_site(fi, site),
             Effect::Return { src } => {
-                let v = match src {
-                    Some(s) => Some(self.read(fi, *s)?),
-                    None => None,
+                let (v, sh) = match src {
+                    Some(s) => (Some(self.read(fi, *s)?), self.sread(fi, *s)),
+                    None => (None, Sh::default()),
                 };
                 self.frames[fi].ret = Some(v);
+                self.frames[fi].ret_sh = sh;
                 Ok(())
             }
             Effect::Throw { src } => {
@@ -1245,10 +1458,12 @@ impl<'m, 'd> Interp<'m, 'd> {
                 if v == Value::Null {
                     return self.throw("System.NullReferenceException");
                 }
-                if !matches!(v, Value::Ref(_)) {
+                let Value::Ref(o) = v else {
                     return bug(format!("throw of {}", v.describe()));
-                }
-                self.frames[fi].vars.insert(Var::Thrown, v.clone());
+                };
+                let sh = self.sread(fi, *src);
+                self.exc_sh.insert(o, sh.clone());
+                self.write_sh(fi, Var::Thrown, v.clone(), sh)?;
                 Err(Stop::Throw(v))
             }
             Effect::Test { srcs } => {
@@ -1259,13 +1474,78 @@ impl<'m, 'd> Interp<'m, 'd> {
                 self.frames[fi].tests = vals;
                 Ok(())
             }
-            Effect::FunctionPtr { .. } => unsupported("function pointers"),
+            Effect::FunctionPtr {
+                dst,
+                method,
+                receiver,
+            } => {
+                if method.token.token_type() != Some(TokenType::Method) {
+                    return unsupported("a function pointer to a method outside the module");
+                }
+                let mut target = method.token.raw();
+                if let Some(r) = receiver {
+                    // ldvirtftn: the override the receiver's type has.
+                    match self.read(fi, *r)? {
+                        Value::Null => return self.throw("System.NullReferenceException"),
+                        Value::Ref(o) => {
+                            if let Obj::Object { ty, .. } = &self.heap[o] {
+                                let ty = ty.clone();
+                                target = self.dispatch(target, &ty)?;
+                            }
+                        }
+                        other => return bug(format!("ldvirtftn on {}", other.describe())),
+                    }
+                }
+                self.write_sh(fi, *dst, Value::Fn(target), Sh::default())
+            }
             Effect::Jump { .. } => unsupported("jmp"),
             Effect::Opaque { reason, .. } => bug(format!("an opaque effect ({reason:?})")),
         }
     }
 
-    fn transfer(&mut self, code: Code, transfer: &Transfer, vals: Vec<Value>) -> R<Value> {
+    /// An `Assign`'s value and its shadow (§12.2): a copy, cast, box or unbox keeps its
+    /// operand's labels, and a computed value takes the union of its operands'.
+    fn transfer(
+        &mut self,
+        code: Code,
+        transfer: &Transfer,
+        vals: Vec<Value>,
+        shs: Vec<Sh>,
+    ) -> R<(Value, Sh)> {
+        let operand = shs.first().cloned().unwrap_or_default();
+        let v = self.transfer_value(code, transfer, vals.clone())?;
+        let sh = match transfer {
+            Transfer::Copy | Transfer::Cast(_) => operand,
+            Transfer::Box(_) => {
+                // A fresh box holds the operand; the reference carries its labels too, since
+                // the frontend lowers `box` as a copy (§6.1).
+                if let (Value::Ref(o), [old]) = (&v, vals.as_slice()) {
+                    if *old != v {
+                        if let Some(SObj::Boxed(content)) = self.sheap.get_mut(*o) {
+                            *content = operand.clone();
+                        }
+                    }
+                }
+                Sh::of(operand.labels.clone())
+            }
+            Transfer::Unbox(_) => match vals.first() {
+                Some(Value::Ref(o)) if code != Code::Unbox => {
+                    let content = match self.sheap.get(*o) {
+                        Some(SObj::Boxed(c)) => c.clone(),
+                        _ => Sh::default(),
+                    };
+                    let mut sh = content;
+                    sh.labels.extend(operand.labels.iter().copied());
+                    sh
+                }
+                _ => Sh::of(operand.labels.clone()),
+            },
+            Transfer::Derived(_) => Sh::union(&shs),
+        };
+        Ok((v, sh))
+    }
+
+    fn transfer_value(&mut self, code: Code, transfer: &Transfer, vals: Vec<Value>) -> R<Value> {
         let one = |vals: &[Value]| match vals {
             [v] => Ok(v.clone()),
             _ => bug(format!("{transfer} of {} values", vals.len())),
@@ -1388,18 +1668,21 @@ impl<'m, 'd> Interp<'m, 'd> {
         Ok((a, flat))
     }
 
-    fn load(&mut self, fi: usize, p: &Path<Var>) -> R<Value> {
-        let base = match p.root {
+    /// The value at a path, and the shadow of the location it is read from (§12.2: a load
+    /// takes the loaded location's labels; statics carry none, §12.6).
+    fn load(&mut self, fi: usize, p: &Path<Var>) -> R<(Value, Sh)> {
+        let (base, base_sh) = match p.root {
             Root::Static => {
                 let Field::Named(f) = &p.field else {
                     return bug("a static root without a field");
                 };
+                self.ensure_static(f.token.raw())?;
                 return match self.statics.get(&f.token.raw()) {
-                    Some(v) => Ok(v.clone()),
+                    Some(v) => Ok((v.clone(), Sh::default())),
                     None => unsupported(format!("static {:08x}", f.token.raw())),
                 };
             }
-            Root::Slot(v) => self.read(fi, v)?,
+            Root::Slot(v) => (self.read(fi, v)?, self.sread(fi, v)),
         };
         match &p.field {
             Field::Named(f) => {
@@ -1407,12 +1690,12 @@ impl<'m, 'd> Interp<'m, 'd> {
                 match base {
                     Value::Null => self.throw("System.NullReferenceException"),
                     Value::Struct(s) => match s.fields.iter().find(|(t, _)| *t == f) {
-                        Some((_, v)) => Ok(v.clone()),
+                        Some((_, v)) => Ok((v.clone(), base_sh.field(f))),
                         None => bug(format!("struct {:08x} has no field {f:08x}", s.ty)),
                     },
                     other => {
                         let loc = self.field_loc(other, f)?;
-                        self.read_loc(&loc)
+                        Ok((self.read_loc(&loc)?, self.sread_loc(&loc)))
                     }
                 }
             }
@@ -1428,12 +1711,18 @@ impl<'m, 'd> Interp<'m, 'd> {
                 let Obj::Array { items, .. } = &self.heap[a] else {
                     unreachable!("element checked the array")
                 };
-                Ok(items[i].clone())
+                let sh = match &self.sheap[a] {
+                    SObj::Array { items, .. } => items.get(i).cloned().unwrap_or_default(),
+                    _ => Sh::default(),
+                };
+                Ok((items[i].clone(), sh))
             }
             Field::Length => match base {
                 Value::Null => self.throw("System.NullReferenceException"),
-                Value::Ref(a) => match &self.heap[a] {
-                    Obj::Array { items, .. } => Ok(Value::I(items.len() as i64)),
+                Value::Ref(a) => match (&self.heap[a], &self.sheap[a]) {
+                    (Obj::Array { items, .. }, SObj::Array { length, .. }) => {
+                        Ok((Value::I(items.len() as i64), Sh::of(length.clone())))
+                    }
                     _ => bug("ldlen of an object that is not an array"),
                 },
                 other => bug(format!("ldlen of {}", other.describe())),
@@ -1443,9 +1732,9 @@ impl<'m, 'd> Interp<'m, 'd> {
         }
     }
 
-    fn deref(&mut self, base: Value) -> R<Value> {
+    fn deref(&mut self, base: Value) -> R<(Value, Sh)> {
         match base {
-            Value::Ptr(loc) => self.read_loc(&loc),
+            Value::Ptr(loc) => Ok((self.read_loc(&loc)?, self.sread_loc(&loc))),
             Value::Null => self.throw("System.NullReferenceException"),
             other => unsupported(format!("dereference of {}", other.describe())),
         }
@@ -1471,12 +1760,15 @@ impl<'m, 'd> Interp<'m, 'd> {
         }
     }
 
-    fn store(&mut self, fi: usize, p: &Path<Var>, v: Value) -> R<()> {
+    /// Stores a value and its shadow at a path (§12.2: a store gives the location the stored
+    /// value's labels).
+    fn store(&mut self, fi: usize, p: &Path<Var>, v: Value, sh: Sh) -> R<()> {
         let base = match p.root {
             Root::Static => {
                 let Field::Named(f) = &p.field else {
                     return bug("a static root without a field");
                 };
+                self.ensure_static(f.token.raw())?;
                 let loc = Loc {
                     base: Base::Static(f.token.raw()),
                     path: Vec::new(),
@@ -1511,7 +1803,184 @@ impl<'m, 'd> Interp<'m, 'd> {
             Field::Length => return bug("a store to an array's length"),
             Field::Block { .. } => return unsupported("block stores"),
         };
-        self.write_loc(&loc, v)
+        self.write_loc(&loc, v)?;
+        self.swrite_loc(&loc, sh)
+    }
+
+    /// Initializes the statics of a compiler-generated type (`<>c`, `<>O`: the caches of
+    /// lambdas and method groups, and `<>c.<>9`, the instance non-capturing lambdas bind)
+    /// the first time a trial touches one, as .NET does: every static field at its default,
+    /// then the type's static constructor. FlowRun leaves these types alone.
+    fn ensure_static(&mut self, f: u32) -> R<()> {
+        if self.statics.contains_key(&f) {
+            return Ok(());
+        }
+        let Ok(Some(Entity::Field(fd))) = self.module.lookup_token(MetadataToken(f)) else {
+            return Ok(());
+        };
+        let Some(t) = fd.declaring_type().ok().flatten() else {
+            return Ok(());
+        };
+        let generated = t
+            .full_name()
+            .is_ok_and(|n| n.split('/').any(|part| part.starts_with('<')));
+        if !generated || !self.generated.insert(t.token().raw()) {
+            return Ok(());
+        }
+        let mut cctor = None;
+        for field in t.fields().or_else(|e| bug(e.to_string()))? {
+            if field.is_static().unwrap_or(false) && !field.is_literal().unwrap_or(false) {
+                let token = field.token().raw();
+                let ty = self.field_ty(token)?;
+                let v = self.default_of(&ty)?;
+                self.statics.insert(token, v);
+            }
+        }
+        for m in t.methods().or_else(|e| bug(e.to_string()))? {
+            if m.name().ok().as_deref() == Some(".cctor") {
+                cctor = Some(m.token().raw());
+            }
+        }
+        if let Some(c) = cctor {
+            self.call(c, Vec::new())?;
+        }
+        Ok(())
+    }
+
+    /// The shadow at the base of a location, if it has one: statics have none.
+    fn sbase_mut(&mut self, base: &Base) -> Option<&mut Sh> {
+        match base {
+            Base::Var { frame, var } => {
+                Some(self.frames.get_mut(*frame)?.svars.entry(*var).or_default())
+            }
+            Base::Static(_) => None,
+            Base::Field(o, f) => match self.sheap.get_mut(*o)? {
+                SObj::Object(fields) => Some(fields.entry(*f).or_default()),
+                _ => None,
+            },
+            Base::Elem(a, i) => match self.sheap.get_mut(*a)? {
+                SObj::Array { items, .. } => items.get_mut(*i),
+                _ => None,
+            },
+            Base::Boxed(o) => match self.sheap.get_mut(*o)? {
+                SObj::Boxed(c) => Some(c),
+                _ => None,
+            },
+            Base::Cell(k) => self.scells.get_mut(*k),
+        }
+    }
+
+    /// `newobj D::.ctor(target, fnptr)`: the delegate `New` made binds them.
+    fn delegate_ctor(&mut self, fi: usize, site: &CallSite<Var>, target: Var, fnptr: Var) -> R<()> {
+        let Some(r) = site.receiver else {
+            return bug("a delegate constructor with no receiver");
+        };
+        let Value::Ref(o) = self.read(fi, r)? else {
+            return bug("a delegate constructor on something New did not make");
+        };
+        let Value::Fn(method) = self.read(fi, fnptr)? else {
+            return unsupported("a delegate over a function pointer not from ldftn");
+        };
+        let target_value = self.read(fi, target)?;
+        if target_value == Value::Null && !self.method_def(method)?.is_static().unwrap_or(true) {
+            // .NET refuses to bind an instance method to null, at the constructor.
+            return self.throw("System.ArgumentException");
+        }
+        let target_sh = self.sread(fi, target);
+        let ty = match &self.heap[o] {
+            Obj::Object { ty, .. } => ty.clone(),
+            _ => return bug("a delegate constructor on an array or box"),
+        };
+        self.heap[o] = Obj::Delegate {
+            ty,
+            target: target_value,
+            method,
+        };
+        self.sheap[o] = SObj::Delegate(target_sh);
+        Ok(())
+    }
+
+    /// `callvirt D::Invoke(args)`: the bound method, with the target first when it has `this`.
+    fn delegate_invoke(&mut self, fi: usize, site: &CallSite<Var>) -> R<()> {
+        let oracle = ModuleTypes::new(self.module);
+        let name = site.method.as_ref().and_then(|m| oracle.method_name(m));
+        if name.as_deref() != Some("Invoke") {
+            return unsupported(format!("delegate {}", name.unwrap_or_default()));
+        }
+        let Some(r) = site.receiver else {
+            return bug("a delegate invocation with no receiver");
+        };
+        let (target, method, target_sh) = match self.read(fi, r)? {
+            Value::Null => return self.throw("System.NullReferenceException"),
+            Value::Ref(o) => match (&self.heap[o], &self.sheap[o]) {
+                (Obj::Delegate { target, method, .. }, SObj::Delegate(sh)) => {
+                    (target.clone(), *method, sh.clone())
+                }
+                _ => return bug("Invoke on an object that is not a delegate"),
+            },
+            other => return bug(format!("Invoke on {}", other.describe())),
+        };
+        let mut args = Vec::with_capacity(site.args.len() + 1);
+        let mut shs = Vec::with_capacity(site.args.len() + 1);
+        if !self.method_def(method)?.is_static().unwrap_or(true) {
+            args.push(target);
+            shs.push(target_sh);
+        }
+        for a in &site.args {
+            args.push(self.read(fi, *a)?);
+            shs.push(self.sread(fi, *a));
+        }
+        let result = self.call_sh(method, args, shs);
+        self.finish_call(fi, site, result)
+    }
+
+    /// Writes a call's result, or its exception, where the call site says.
+    fn finish_call(
+        &mut self,
+        fi: usize,
+        site: &CallSite<Var>,
+        result: R<(Option<Value>, Sh)>,
+    ) -> R<()> {
+        match result {
+            Ok((ret, sh)) => {
+                if let Some(dst) = site.result {
+                    let Some(v) = ret else {
+                        return bug("a call result from a void method");
+                    };
+                    self.write_sh(fi, dst, v, sh)?;
+                }
+                Ok(())
+            }
+            Err(Stop::Throw(exc)) => {
+                let sh = self.exc_shadow(&exc);
+                self.write_sh(fi, site.thrown, exc.clone(), sh)?;
+                Err(Stop::Throw(exc))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The shadow of the value at `loc`.
+    fn sread_loc(&mut self, loc: &Loc) -> Sh {
+        let Some(mut sh) = self.sbase_mut(&loc.base).map(|s| s.clone()) else {
+            return Sh::default();
+        };
+        for f in &loc.path {
+            sh = sh.field(*f);
+        }
+        sh
+    }
+
+    /// Writes the shadow of the value at `loc`.
+    fn swrite_loc(&mut self, loc: &Loc, sh: Sh) -> R<()> {
+        let Some(mut slot) = self.sbase_mut(&loc.base) else {
+            return Ok(());
+        };
+        for f in &loc.path {
+            slot = slot.field_mut(*f);
+        }
+        *slot = sh;
+        Ok(())
     }
 
     fn place(&mut self, fi: usize, place: &Place<Var>) -> R<Loc> {
@@ -1727,12 +2196,22 @@ impl<'m, 'd> Interp<'m, 'd> {
         let Some(method) = &site.method else {
             return unsupported("calli");
         };
+        match delegate::classify(site, &ModuleTypes::new(self.module)) {
+            Some(DelegateOp::Ctor { target, fnptr }) => {
+                return self.delegate_ctor(fi, site, target, fnptr);
+            }
+            Some(DelegateOp::Invoke) => return self.delegate_invoke(fi, site),
+            None => {}
+        }
         let mut args = Vec::with_capacity(site.args.len() + 1);
+        let mut shs = Vec::with_capacity(site.args.len() + 1);
         if let Some(r) = site.receiver {
             args.push(self.read(fi, r)?);
+            shs.push(self.sread(fi, r));
         }
         for a in &site.args {
             args.push(self.read(fi, *a)?);
+            shs.push(self.sread(fi, *a));
         }
         let token = method.token;
         let result = match token.token_type() {
@@ -1747,6 +2226,7 @@ impl<'m, 'd> Interp<'m, 'd> {
                                 base: Base::Var { frame: fi, var: r },
                                 path: Vec::new(),
                             });
+                            shs[0] = Sh::default();
                         }
                     }
                     CallKind::Virtual { constrained } => match (&args[0], constrained) {
@@ -1780,32 +2260,17 @@ impl<'m, 'd> Interp<'m, 'd> {
                     CallKind::Static | CallKind::Instance => {}
                     CallKind::Indirect { .. } => return unsupported("calli"),
                 }
-                self.call(target, args)
+                self.call_sh(target, args, shs)
             }
             Some(TokenType::MemberRef) => {
                 let name = self.member_name(token)?;
                 match name.as_str() {
-                    "System.Object::.ctor" | "System.Exception::.ctor" => Ok(None),
+                    "System.Object::.ctor" | "System.Exception::.ctor" => Ok((None, Sh::default())),
                     _ => return unsupported(format!("call of {name}")),
                 }
             }
             _ => return unsupported(format!("call of {:08x}", token.raw())),
         };
-        match result {
-            Ok(ret) => {
-                if let Some(dst) = site.result {
-                    let Some(v) = ret else {
-                        return bug("a call result from a void method");
-                    };
-                    self.write(fi, dst, v)?;
-                }
-                Ok(())
-            }
-            Err(Stop::Throw(exc)) => {
-                self.write(fi, site.thrown, exc.clone())?;
-                Err(Stop::Throw(exc))
-            }
-            Err(e) => Err(e),
-        }
+        self.finish_call(fi, site, result)
     }
 }

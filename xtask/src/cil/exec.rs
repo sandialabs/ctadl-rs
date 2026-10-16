@@ -42,10 +42,10 @@ use super::parallel_map;
 use super::parity::which;
 use crate::regression::Outcome;
 
-mod interp;
-mod value;
+pub(super) mod interp;
+pub(super) mod value;
 
-use interp::{Interp, Obj, Stop};
+use interp::{Interp, Obj, Prepared, Stop};
 use value::{Base, Loc, Struct, Ty, Value};
 
 pub const FLOW_RUN_ENV: &str = "FLOW_RUN";
@@ -62,14 +62,52 @@ const MAX_LISTED: usize = 10;
 
 /// One call, as `flow-run` prints it.
 #[derive(Deserialize)]
-struct Trial {
-    method: u32,
-    name: String,
-    trial: u32,
-    args: Vec<Json>,
-    statics: Vec<(u32, Json)>,
-    heap: Vec<Json>,
-    outcome: String,
+pub(super) struct Trial {
+    pub method: u32,
+    pub name: String,
+    pub trial: u32,
+    pub args: Vec<Json>,
+    pub statics: Vec<(u32, Json)>,
+    pub heap: Vec<Json>,
+    pub outcome: String,
+}
+
+/// Runs `flow-run` on one fixture, keeping its output in `dir`; the trials it printed.
+pub(super) fn flow_run_trials(
+    flow_run: &Path,
+    path: &Path,
+    dir: &Path,
+    fixture: &str,
+    filter: Option<&str>,
+) -> Result<Vec<Trial>> {
+    let mut cmd = Command::new(flow_run);
+    cmd.arg("--trials")
+        .arg(TRIALS.to_string())
+        .arg("--seed")
+        .arg(SEED.to_string());
+    if let Some(f) = filter {
+        cmd.arg("--filter").arg(f);
+    }
+    let output = cmd
+        .arg(path)
+        .env("DOTNET_NOLOGO", "1")
+        .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
+        .output()
+        .with_context(|| format!("running {}", flow_run.display()))?;
+    std::fs::write(dir.join(format!("{fixture}.jsonl")), &output.stdout)?;
+    std::fs::write(dir.join(format!("{fixture}.stderr")), &output.stderr)?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "flow-run failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        );
+    }
+    let mut trials = Vec::new();
+    for line in String::from_utf8(output.stdout)?.lines() {
+        trials.push(serde_json::from_str(line).context("a flow-run line")?);
+    }
+    Ok(trials)
 }
 
 /// What became of one method's trials.
@@ -183,29 +221,7 @@ fn run_fixture(
     fixture: &str,
     filter: Option<&str>,
 ) -> Result<Report> {
-    let mut cmd = Command::new(flow_run);
-    cmd.arg("--trials")
-        .arg(TRIALS.to_string())
-        .arg("--seed")
-        .arg(SEED.to_string());
-    if let Some(f) = filter {
-        cmd.arg("--filter").arg(f);
-    }
-    let output = cmd
-        .arg(path)
-        .env("DOTNET_NOLOGO", "1")
-        .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
-        .output()
-        .with_context(|| format!("running {}", flow_run.display()))?;
-    std::fs::write(dir.join(format!("{fixture}.jsonl")), &output.stdout)?;
-    std::fs::write(dir.join(format!("{fixture}.stderr")), &output.stderr)?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "flow-run failed ({}): {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim_end()
-        );
-    }
+    let trials = flow_run_trials(flow_run, path, dir, fixture, filter)?;
     let data = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let module = Module::read(&data).map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut interps = [
@@ -221,17 +237,16 @@ fn run_fixture(
         ),
     ];
     let mut report = Report::default();
-    for line in String::from_utf8(output.stdout)?.lines() {
-        let trial: Trial = serde_json::from_str(line).context("a flow-run line")?;
+    for trial in &trials {
         for (mode, interp) in &mut interps {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 interp.reset();
-                replay(interp, &trial)
+                replay(interp, trial)
             }));
             let result =
                 result.unwrap_or_else(|_| Err(Stop::Bug("the interpreter panicked".into())));
             let at = format!("{} trial {}{mode}", trial.name, trial.trial);
-            record(&mut report, fixture, &trial, &at, result);
+            record(&mut report, fixture, trial, &at, result);
         }
     }
     Ok(report)
@@ -333,6 +348,22 @@ impl Counts {
 
 /// Run one trial from its starting state; the end state's canonical text.
 fn replay(interp: &mut Interp<'_, '_>, trial: &Trial) -> Result<String, Stop> {
+    let (p, args) = setup(interp, trial)?;
+    let original = args.clone();
+    let result = match interp.call(trial.method, args) {
+        Ok(v) => Ok(v),
+        Err(Stop::Throw(e)) => Err(e),
+        Err(other) => return Err(other),
+    };
+    render(interp, trial, &p, &original, &result)
+}
+
+/// A trial's starting state, built in `interp`: the method, and its arguments (`this` first,
+/// a `ref`/`out` argument as a pointer to its cell).
+pub(super) fn setup(
+    interp: &mut Interp<'_, '_>,
+    trial: &Trial,
+) -> Result<(std::rc::Rc<Prepared>, Vec<Value>), Stop> {
     let bad = |what: &str| Stop::Bug(format!("flow-run printed a bad {what}"));
     let p = interp.prepare(trial.method)?;
 
@@ -409,17 +440,21 @@ fn replay(interp: &mut Interp<'_, '_>, trial: &Trial) -> Result<String, Stop> {
             None => args.push(decode(interp, a, &p.params[k])?),
         }
     }
-    let original = args.clone();
+    interp.sync_heap();
+    Ok((p, args))
+}
 
-    let result = match interp.call(trial.method, args) {
-        Ok(v) => Ok(v),
-        Err(Stop::Throw(e)) => Err(e),
-        Err(other) => return Err(other),
-    };
-
+/// The canonical text of a trial's end state, as FlowRun prints it.
+pub(super) fn render(
+    interp: &mut Interp<'_, '_>,
+    trial: &Trial,
+    p: &Prepared,
+    original: &[Value],
+    result: &Result<Option<Value>, Value>,
+) -> Result<String, Stop> {
     let mut canon = Canon::default();
     let mut text = String::new();
-    match &result {
+    match result {
         Err(e) => {
             let _ = writeln!(text, "throw {}", canon.value(interp, e, &Ty::Ref)?);
         }
@@ -578,6 +613,8 @@ impl Canon {
                 Obj::Boxed { ty, vty, value } => {
                     format!("box {ty} {}", self.value(interp, value, vty)?)
                 }
+                // A delegate declares no fields the module's types do.
+                Obj::Delegate { ty, .. } => format!("{ty} {{}}"),
             };
             let _ = writeln!(text, "@{i} {line}");
             i += 1;

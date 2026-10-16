@@ -43,9 +43,10 @@ use ctadl_ir::{ProgramInfo, ssa};
 
 /// Settings for one import, beyond the artifact itself and its language.
 ///
-/// Every field here matters only for an APK. An APK is the one artifact that imports other
-/// artifacts out of itself: its native libraries. See [`apk_native`]. [`Default`] gives the
-/// simple behavior, which is to import everything and reuse nothing.
+/// Every field here but the last matters only for an APK, the one artifact that imports other
+/// artifacts out of itself: its native libraries. See [`apk_native`]. The last is the CIL
+/// front end's assembly selection. [`Default`] gives the simple behavior, which is to import
+/// everything an APK holds, reuse nothing, and leave the .NET framework out.
 #[derive(Debug, Clone, Copy)]
 pub struct ImportOptions<'a> {
     /// Reuse a sub-import that was already done, when the artifact hash stored with it still
@@ -59,6 +60,9 @@ pub struct ImportOptions<'a> {
     /// Import the libraries for this ABI instead of the preferred one. See
     /// `dex_reader::apk::ABI_PREFERENCE`.
     pub native_abi: Option<&'a str>,
+    /// Import a .NET directory's framework assemblies too, rather than only reading their
+    /// metadata. Off by default.
+    pub cil_include_framework: bool,
 }
 
 impl Default for ImportOptions<'_> {
@@ -67,6 +71,7 @@ impl Default for ImportOptions<'_> {
             skip_existing: false,
             native_libs: true,
             native_abi: None,
+            cil_include_framework: false,
         }
     }
 }
@@ -175,7 +180,13 @@ pub fn import_artifact(
         C => return Err(unsupported(C, "c")),
 
         #[cfg(feature = "cil")]
-        Cil => ctadl_cil::import_path(&import.artifact_path)?,
+        Cil => ctadl_cil::import_path_with(
+            &import.artifact_path,
+            &ctadl_cil::ImportOptions {
+                include_framework: opts.cil_include_framework,
+                ..Default::default()
+            },
+        )?,
         #[cfg(not(feature = "cil"))]
         Cil => return Err(unsupported(Cil, "cil")),
     };

@@ -152,8 +152,10 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
 fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
     let command = args
         .next()
-        .context("`cil` requires a command: bless, bless-flow, exec or codegen")?;
+        .context("`cil` requires a command: bless, bless-flow, bless-mir, exec or codegen")?;
     let mut cil_dir = None;
+    let mut fixtures = None;
+    let mut ctadl = None;
     let mut goldens = None;
     let mut cecil_src = None;
     let mut filter = None;
@@ -165,7 +167,7 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
                     args.next().context("--cil-dir requires a value")?,
                 ));
             }
-            "--cil-goldens" if command == "bless" || command == "bless-flow" => {
+            "--cil-goldens" if matches!(command.as_str(), "bless" | "bless-flow" | "bless-mir") => {
                 goldens = Some(PathBuf::from(
                     args.next().context("--cil-goldens requires a value")?,
                 ));
@@ -175,10 +177,20 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
                     args.next().context("--cecil-src requires a value")?,
                 ));
             }
+            "--cil-fixtures" => {
+                fixtures = Some(PathBuf::from(
+                    args.next().context("--cil-fixtures requires a value")?,
+                ));
+            }
+            "--ctadl" if command == "taint" => {
+                ctadl = Some(PathBuf::from(
+                    args.next().context("--ctadl requires a value")?,
+                ));
+            }
             "--filter" if command == "bless" || command == "exec" => {
                 filter = Some(args.next().context("--filter requires a value")?);
             }
-            "--out" if command == "exec" => {
+            "--out" if command == "exec" || command == "taint" => {
                 out = Some(PathBuf::from(
                     args.next().context("--out requires a value")?,
                 ));
@@ -190,8 +202,39 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
             other => bail!("unknown argument `{other}` (try `xtask --help`)"),
         }
     }
+    if command == "bless-mir" {
+        let goldens = cil::resolve_goldens(goldens.as_deref())?
+            .context("goldens directory not found; pass --cil-goldens")?;
+        let fixtures = cil::resolve_fixtures(fixtures.as_deref())?
+            .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")?;
+        return cil::frontend::bless(&goldens, &fixtures);
+    }
+    if command == "taint" {
+        let fixtures = cil::resolve_fixtures(fixtures.as_deref())?
+            .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")?;
+        let ctadl = ctadl.context("`cil taint` requires --ctadl <path to the ctadl binary>")?;
+        let out = out.unwrap_or_else(|| PathBuf::from("target/xtask-cil-taint"));
+        std::fs::create_dir_all(&out)?;
+        let outcome = cil::taint::run(&ctadl, &fixtures, &cil::taint::resolve_xtask_dir(), &out)?;
+        return Ok(match outcome {
+            regression::Outcome::Pass => {
+                println!("PASS cil:taint");
+                true
+            }
+            regression::Outcome::Skip(why) => {
+                println!("SKIP cil:taint: {why}");
+                true
+            }
+            regression::Outcome::Fail(why)
+            | regression::Outcome::HardFail(why)
+            | regression::Outcome::Xfail(why) => {
+                println!("FAIL cil:taint: {why}");
+                false
+            }
+        });
+    }
     if command == "exec" {
-        let fixtures = cil::resolve_fixtures(None)?
+        let fixtures = cil::resolve_fixtures(fixtures.as_deref())?
             .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")?;
         let out = out.unwrap_or_else(|| PathBuf::from("target/xtask-cil-exec"));
         return cil::exec::run_standalone(&fixtures, &out, filter.as_deref());
@@ -209,13 +252,16 @@ fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
         "bless-flow" => {
             let goldens = cil::resolve_goldens(goldens.as_deref())?
                 .context("goldens directory not found; pass --cil-goldens")?;
-            let fixtures = cil::resolve_fixtures(None)?
+            let fixtures = cil::resolve_fixtures(fixtures.as_deref())?
                 .context("no compiled fixtures: set CIL_READER_FIXTURES (the dev shell does)")?;
             cil::flow::bless(&goldens, &fixtures)
         }
         "codegen" => Ok(cil_codegen::run(&cecil, &cil_dir)),
         other => {
-            bail!("unknown `cil` command `{other}` (expected bless, bless-flow, exec or codegen)")
+            bail!(
+                "unknown `cil` command `{other}` (expected bless, bless-flow, bless-mir, exec or \
+                 codegen)"
+            )
         }
     }
 }
@@ -338,6 +384,14 @@ Tasks:
                              Rewrite xtask/cil-goldens/flow (or <dir>/flow), the
                              `cil-dump --flow` goldens of the flow fixtures,
                              from $CIL_READER_FIXTURES. Review the diff.
+    bless-mir [--cil-goldens <dir>] [--cil-fixtures <dir>]
+                             Rewrite xtask/cil-goldens/mir (or <dir>/mir), the
+                             IR the CIL frontend makes of the frontend fixtures,
+                             from $CIL_READER_FIXTURES. Review the diff.
+    taint --ctadl <path> [--out <dir>]
+                             The `cil:taint` check on its own, against that
+                             `ctadl` binary, with its outputs in
+                             <dir>/cil-taint (default: target/xtask-cil-taint).
     exec [--filter <name>] [--out <dir>]
                              The `cil:exec` check on its own: run the exec
                              fixtures' methods (those whose name contains

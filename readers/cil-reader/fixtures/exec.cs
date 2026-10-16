@@ -6,7 +6,9 @@
 // and joins, Debug spills everything to locals and adds branches to the `ret`.
 //
 // The interpreter models only what this file uses, so keep to it:
-// - no strings, no generics, no lambdas or delegates, no interfaces;
+// - no strings and no generics;
+// - delegates only of this file's own types (a BCL delegate's type does not
+//   resolve without the framework), bound to methods of this module;
 // - no BCL calls beyond the Object and Exception constructors (no Math, no
 //   array initializers, which call RuntimeHelpers.InitializeArray);
 // - no `static readonly` fields, which the harness cannot reset;
@@ -1158,5 +1160,116 @@ namespace Exec
         public int Twice(int a) => Add(a) + Add(a);
 
         public virtual int Hook(int a) => a + Total;
+    }
+
+    // Interfaces (translation §11, slice 5): dispatch through an interface with
+    // two implementations, and an explicit implementation.
+    public interface IArea
+    {
+        int Area();
+    }
+
+    public interface IGrow
+    {
+        void Grow(int k);
+    }
+
+    public class Disk : IArea, IGrow
+    {
+        public int R;
+
+        public int Area() => 3 * R * R;
+
+        void IGrow.Grow(int k) { R += k; }
+    }
+
+    public class Plate : IArea
+    {
+        public int W;
+        public int H;
+
+        public int Area() => W * H;
+    }
+
+    public static class Ifaces
+    {
+        public static int Pick(int a, int b)
+        {
+            IArea x = a > b ? new Disk { R = a % 1000 } : (IArea)new Plate { W = a, H = b };
+            return x.Area();
+        }
+
+        public static int Explicit(int a, int k)
+        {
+            var d = new Disk { R = a };
+            IGrow g = d;
+            g.Grow(k);
+            return d.R;
+        }
+
+        public static int Through(Disk d, int k)
+        {
+            IGrow g = d;
+            g.Grow(k);
+            IArea x = d;
+            return x.Area() + d.R;
+        }
+    }
+
+    // Delegates (translation §11, slice 9): bound to a static method (through
+    // the frontend's thunk), to an instance method, to a closure, and to a
+    // lambda that captures nothing (cached in a compiler-generated static).
+    public delegate int IntFn(int x);
+
+    public class Scaler
+    {
+        public int K;
+
+        public int Apply(int x) => x * K;
+    }
+
+    public static class Dels
+    {
+        static int Twice(int x) => 2 * x;
+
+        public static int Static(int a)
+        {
+            IntFn f = Twice;
+            return f(a);
+        }
+
+        public static int Instance(Scaler s, int a)
+        {
+            IntFn f = s.Apply;
+            return f(a);
+        }
+
+        // The delegate crosses a call. `Run` is a local function, compiled to a
+        // `<`-named method, which FlowRun does not call on its own: it could
+        // only give it a delegate it made without a constructor.
+        public static int Closure(int a, int b)
+        {
+            IntFn f = x => x - b;
+            return Run(f, a) + b;
+
+            static int Run(IntFn f, int x) => f(x);
+        }
+
+        public static int Lambda(int a)
+        {
+            IntFn f = x => x + 1;
+            return f(a);
+        }
+
+        public static int Field(Scaler s, int a)
+        {
+            var h = new Holder { Fn = s.Apply };
+            return h.Fn(a);
+        }
+    }
+
+    public class Holder
+    {
+        public IntFn Fn;
     }
 }

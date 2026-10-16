@@ -186,6 +186,15 @@ pub struct ImportArgs {
     /// of arm64-v8a, armeabi-v7a, armeabi, x86_64, x86.
     #[arg(long, value_name = "ABI")]
     pub native_abi: Option<String>,
+
+    /// Import a .NET directory's framework and BCL assemblies too (`System.*`,
+    /// `Microsoft.Extensions.*`, `mscorlib`, ...).
+    ///
+    /// By default only the application's own assemblies are imported, and the framework's
+    /// are read for their metadata alone: base types, interfaces, type forwarders. A
+    /// self-contained publish ships some 200 of them.
+    #[arg(long)]
+    pub include_framework: bool,
 }
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
@@ -594,6 +603,11 @@ pub struct GoArgs {
     /// See `ctadl import --help`.
     #[arg(long, value_name = "ABI")]
     pub native_abi: Option<String>,
+
+    /// Import a .NET directory's framework and BCL assemblies too.
+    /// See `ctadl import --help`.
+    #[arg(long)]
+    pub include_framework: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -670,6 +684,7 @@ fn main() -> anyhow::Result<()> {
                     force: args.force,
                     no_native_libs: args.no_native_libs,
                     native_abi: args.native_abi.clone(),
+                    include_framework: args.include_framework,
                 };
                 let name = import_artifact_to_store(&import_args).with_context(|| {
                     format!("importing artifact from: '{}'", artifact.display())
@@ -826,6 +841,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 // Not an APK: this legacy path imports a directory of pcode facts.
                 no_native_libs: false,
                 native_abi: None,
+                include_framework: false,
             };
             import_artifact_to_store(&import_args)?;
 
@@ -933,6 +949,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             skip_existing,
             native_libs: !args.no_native_libs,
             native_abi: args.native_abi.as_deref(),
+            cil_include_framework: args.include_framework,
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote

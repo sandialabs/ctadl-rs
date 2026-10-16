@@ -1,0 +1,5 @@
+{
+  expected_sinks: ["Sink1", "Sink2", "Sink3"],
+  // Implicit flow is not tracked by design.
+  unexpected_sinks: ["Clean1"],
+}

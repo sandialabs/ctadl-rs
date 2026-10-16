@@ -1,0 +1,5 @@
+{
+  expected_sinks: ["Sink1", "Sink2", "Sink3", "Sink4"],
+  // `string.IsNullOrEmpty` is an extern stub with no model.
+  unexpected_sinks: ["Clean1"],
+}

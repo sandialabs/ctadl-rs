@@ -24,7 +24,7 @@
 //! | `FunctionPtr { dst, m }`                      | `dst := ptr<fid(m)>`                          |
 //! | `Clear { addr }`                              | resolved to a local or argument: `P := ()`; else nothing |
 //! | `Call(site)`                                  | §7, `calls.rs`                                |
-//! | `Throw { src }`                               | `throwval := src`; the terminator routes it   |
+//! | `Throw { src }`                               | `throwval := src`, into `excout` if it may leave the method; the terminator routes it |
 //! | `Return` / `Jump`                             | terminators (§8)                              |
 //! | `Test`                                        | nothing (§9)                                  |
 //! | `Opaque { srcs, dsts }`                       | each `d := srcs`; counted                     |
@@ -221,6 +221,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                 let t = em.throwval();
                 let v = em.exp(*src);
                 em.assign(t, [v]);
+                self.raise_out(em);
             }
             Effect::Return { .. } | Effect::Jump { .. } => {}
             Effect::Test { .. } => {}

@@ -21,6 +21,12 @@
 //! - `cil:flow`          — cil-reader's flow layer: its invariants over the
 //!   whole corpus, targeted tests on the `flow.il` fixture, and the
 //!   `cil-dump --flow` goldens (`xtask/cil-goldens/flow`); see [`flow`].
+//! - `cil:frontend`      — the CIL frontend (`ctadl-cil`): every corpus assembly
+//!   imported and put through the index's SSA pipeline, and the IR goldens
+//!   (`xtask/cil-goldens/mir`); see [`frontend`].
+//! - `cil:taint`         — the index's summaries of the exec fixtures' methods
+//!   against the flows the interpreter's runs show; see [`taint`]. Self-skips
+//!   without `flow-run`.
 //! - `cil:exec`          — the flow layer run: the exec fixtures' methods on
 //!   .NET (`flow-run`) and in an interpreter over `MethodFlow`, with the
 //!   same random inputs, must agree; see [`exec`]. Self-skips without
@@ -45,10 +51,13 @@ use anyhow::{Context, Result};
 use crate::regression::Outcome;
 use parity::{CecilDump, Input};
 
+pub mod cases;
 mod cecil_tests;
 pub mod exec;
 pub mod flow;
+pub mod frontend;
 mod parity;
+pub mod taint;
 
 /// Failing inputs listed per check before the rest are summarized as a count.
 const MAX_LISTED: usize = 10;
@@ -104,7 +113,15 @@ pub fn run_checks(
             "cil:flow".to_string(),
             flow::run(&inputs, fixtures, goldens, work)?,
         ),
+        (
+            "cil:frontend".to_string(),
+            frontend::run(&inputs, fixtures, goldens, work)?,
+        ),
         ("cil:exec".to_string(), exec::run(fixtures, work)?),
+        ("cil:taint".to_string(), {
+            let ctadl = crate::regression::ctadl_bin()?;
+            taint::run(&ctadl, fixtures, &taint::resolve_xtask_dir(), work)?
+        }),
     ])
 }
 

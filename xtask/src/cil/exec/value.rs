@@ -7,7 +7,52 @@
 //! A location holds its value already in stack form (a `uint8` field holds an
 //! `I4` in 0..=255): `Ty::store` narrows on the way in, so a load is a copy.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use cil_reader::flow::{CmpOp, ConvTarget, ConvType, Op, Var};
+
+/// A set of taint labels (`cil:taint`): indices into the labeler's table of input locations.
+pub type Labels = BTreeSet<u32>;
+
+/// The shadow of a value (`cil:taint`, translation §12.2): the labels of the input locations
+/// it carries data from, and for a struct value, the shadows of its fields. An object's fields
+/// are not here: they are locations of their own, shadowed on the heap.
+///
+/// The shadow never changes what the interpreter computes. With no labels anywhere, as in
+/// `cil:exec`, every shadow is empty.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Sh {
+    pub labels: Labels,
+    pub fields: BTreeMap<u32, Sh>,
+}
+
+impl Sh {
+    pub fn of(labels: Labels) -> Sh {
+        Sh {
+            labels,
+            fields: BTreeMap::new(),
+        }
+    }
+
+    /// The shadow of field `f` of a struct value.
+    pub fn field(&self, f: u32) -> Sh {
+        self.fields.get(&f).cloned().unwrap_or_default()
+    }
+
+    /// The shadow of field `f`, created empty if need be.
+    pub fn field_mut(&mut self, f: u32) -> &mut Sh {
+        self.fields.entry(f).or_default()
+    }
+
+    /// The labels of a value computed from these (`Transfer::Derived`).
+    pub fn union<'a>(shs: impl IntoIterator<Item = &'a Sh>) -> Sh {
+        let mut labels = Labels::new();
+        for s in shs {
+            labels.extend(s.labels.iter().copied());
+        }
+        Sh::of(labels)
+    }
+}
 
 /// The declared type of a location: a local, an argument, a field, an array
 /// element, a box. Decides how a store narrows and how a value renders.
@@ -117,7 +162,7 @@ impl Ty {
             Ty::I4 | Ty::U4 => int(&v).map(|x| Value::I4(x as i32)),
             Ty::I8 | Ty::U8 => int(&v).map(Value::I8),
             Ty::I | Ty::U => match v {
-                Value::Ptr(_) => Some(v),
+                Value::Ptr(_) | Value::Fn(_) => Some(v),
                 _ => int(&v).map(Value::I),
             },
             Ty::R4 => match v {
@@ -133,7 +178,7 @@ impl Ty {
             Ty::Ref => matches!(v, Value::Null | Value::Ref(_)).then_some(v),
             Ty::Struct(t) => matches!(&v, Value::Struct(s) if s.ty == *t).then_some(v),
             Ty::Ptr => match v {
-                Value::Ptr(_) | Value::I(_) | Value::Null => Some(v),
+                Value::Ptr(_) | Value::I(_) | Value::Null | Value::Fn(_) => Some(v),
                 _ => None,
             },
         };
@@ -155,6 +200,8 @@ pub enum Value {
     Ref(usize),
     Ptr(Loc),
     Struct(Struct),
+    /// A function pointer (`ldftn`, `ldvirtftn`): a MethodDef token of the module.
+    Fn(u32),
 }
 
 impl Value {
@@ -494,7 +541,12 @@ pub fn compare(op: CmpOp, un: bool, a: &Value, b: &Value) -> Result<bool, Fault>
     }
     // Object references and pointers: equality, and cgt.un against null
     // (`x != null`).
-    let is_ref = |v: &Value| matches!(v, Value::Null | Value::Ref(_) | Value::Ptr(_));
+    let is_ref = |v: &Value| {
+        matches!(
+            v,
+            Value::Null | Value::Ref(_) | Value::Ptr(_) | Value::Fn(_)
+        )
+    };
     if is_ref(a) && is_ref(b) {
         return match op {
             CmpOp::Eq => Ok(a == b),
@@ -520,7 +572,7 @@ pub fn truthy(v: &Value) -> Result<bool, Fault> {
         Value::I4(x) => *x != 0,
         Value::I8(x) | Value::I(x) => *x != 0,
         Value::Null => false,
-        Value::Ref(_) | Value::Ptr(_) => true,
+        Value::Ref(_) | Value::Ptr(_) | Value::Fn(_) => true,
         _ => return Err(Fault::Invalid(format!("brtrue of {}", v.describe()))),
     })
 }

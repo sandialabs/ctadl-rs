@@ -1,0 +1,26 @@
+// The misses `cil:taint` accepts (docs/cil-frontend-translation.md §12.5), one entry per flow.
+//
+// - `method`: `Ns.Class::Method`, with the descriptor if it is overloaded, in any fixture.
+// - `flow`: `src -> dst`, each `argN`, `ret` or `throw` and then `.segment`s; a field may drop
+//   its assembly and namespace (`<Node::Value>`), and `seg*` matches it zero or more times.
+// - `kind`: one of `engine:path-composition`, `engine:alias-rule`,
+//   `design:unresolved-address-write`. The report counts XFAILs per kind.
+// - `why`: required; an `engine:` entry names the `.tnt` reproducer in
+//   `ctadl-ascent/tests/tnt` that shows the limitation without CIL.
+//
+// An entry that matches no uncovered flow is an XPASS and fails the check: the index covers
+// the flow now, or the fixture no longer shows it, and either way the entry goes.
+[
+  {
+    method: "Exec.Obj::ObjectField",
+    flow: "arg1 -> ret.<Node::Value>",
+    kind: "engine:path-composition",
+    why: "`b.O = new Node { Value = a }` stores an object whose field was stored, and no statement spells `.O.Value`, so the index does not admit it (tnt: path_composition_store.tnt)",
+  },
+  {
+    method: "Exec.Obj::ObjectField",
+    flow: "arg0 -> ret.<Bag::O>",
+    kind: "engine:alias-rule",
+    why: "`b.O = b` makes a cycle, and the returned `b.O` is `b` again; the aliasing rule summarizes only the paths the program stores through (tnt: alias_cycle.tnt)",
+  },
+]

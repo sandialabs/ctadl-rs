@@ -1,0 +1,3 @@
+{
+  expected_sinks: ["Sink1", "Sink2", "Sink3"],
+}

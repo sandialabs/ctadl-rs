@@ -21,6 +21,7 @@
 //! | `Caught(h)` | local `caught{h}`    |
 //! | `Thrown`    | local `throwval`     |
 //! | call result | local `retval`       |
+//! | exceptions leaving the method | local `excout` |
 //!
 //! The frontend's own temporaries are `{prefix}_{n}` (`cell_3`, `c_4`), so they never collide
 //! with the flow layer's `t{k}`.
@@ -29,18 +30,20 @@
 //!
 //! | Last `Control` of the block | Terminator                                         |
 //! | --------------------------- | -------------------------------------------------- |
-//! | `Next` `Goto` `Cond` `Switch` `Leave` `EndFilter` | `Goto { succs ++ exc_succs }`; none: `Return [empty, empty]` |
-//! | `EndFinally`                | `Goto { succs ++ exc_succs (++ exit) }`; none: `Return [empty, throwval]` |
-//! | `Return`                    | `Return [v or empty, empty]`                       |
-//! | `Throw`                     | `Goto { exc_succs (++ exit) }`; unprotected: `Return [empty, throwval]` |
-//! | `Jump m`                    | call `m` with every parameter, `Return [retval, throwval]` |
+//! | `Next` `Goto` `Cond` `Switch` `Leave` `EndFilter` `EndFinally` | `Goto { succs ++ exc_succs }`; none: `Return [empty, excout]` |
+//! | `Return`                    | `Return [v or empty, excout]`                      |
+//! | `Throw`                     | `Goto { exc_succs }`; unprotected: `Return [empty, excout]` |
+//! | `Jump m`                    | call `m` with every parameter, `Return [retval, excout]` |
 //!
-//! Two departures from the doc's table, both about exceptions that leave the method. The
-//! doc sends a protected block's exception only to its handlers, but a typed catch, a filter
-//! and a finally let it go on: such a block also reaches an *exceptional exit*, a block that
-//! is `Return [empty, throwval]` (unless a catch-all handler covers it). And a `finally` or
-//! `fault` ends in `endfinally`, after which an exception it was entered with goes on to the
-//! next handler out, or out of the method.
+//! The exceptional slot of every return is `excout`, where the doc has `throwval` at a throw
+//! and `empty` elsewhere. An exception leaves a method from more places than a `throw` with
+//! no handler: from any call that is not in a `try`, and from a protected point whose
+//! handlers may not take it (a typed catch, a filter, a finally). Each such point adds its
+//! `throwval` into `excout` (`excout := excout, throwval`), defined empty at entry, and the
+//! value reaches the caller through whichever return the method takes. Ending a block after
+//! every call instead would give each its own edge out, but would cut the load chains the
+//! index composes paths along within a block (§12.3). `cil:taint` found the gap:
+//! `Exc.Uncaught` is `Throws(a) + 1`, whose callee's exception had no way out.
 
 use cil_reader::flow::{
     BlockId, BoundIns, Control, Effect, FlowOptions, HandlerKind, InsId, MethodFlow, Var,
@@ -83,6 +86,11 @@ impl<'f> Emitter<'f> {
     /// The `VariableRef` for a flow-layer variable (§5.2).
     pub fn var(&mut self, v: Var) -> VariableRef {
         match v {
+            // Code that names an argument past its signature does not verify; a local of
+            // its own keeps the IR well formed.
+            Var::Arg(n) if n as usize >= self.fdat.params.parameters.len() => {
+                self.local(&format!("badarg{n}"))
+            }
             Var::Arg(n) => VariableRef::new_parameter(ParameterIdx::new(n as usize)),
             Var::Local(n) => self.local(&format!("loc{n}")),
             Var::Stack(d) => self.local(&format!("s{d}")),
@@ -114,6 +122,11 @@ impl<'f> Emitter<'f> {
 
     pub fn throwval(&mut self) -> VariableRef {
         self.local("throwval")
+    }
+
+    /// The exceptions that may leave the method (see the module docs).
+    pub fn excout(&mut self) -> VariableRef {
+        self.local("excout")
     }
 
     pub fn push(&mut self, kind: StatementKind) {
@@ -296,10 +309,14 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
         fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
     }
     let mut em = Emitter::new(fdat);
-    let mut exit: Option<BasicBlockIdx> = None;
     for (b, block) in blocks.iter().enumerate() {
         em.block = BasicBlockIdx::new(b);
         lower.static_fnptrs.clear();
+        if b == 0 {
+            em.source_info = span(key, spans, body, block.start, 1);
+            let out = em.excout();
+            em.assign(out, [empty()]);
+        }
         // A catch or filter starts with the exception in `caught{h}`; the binder's own
         // first instruction then copies it to `s0`.
         if let Some(h) = block.handler_entry {
@@ -320,11 +337,8 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
             lower.cross_check(at, ins);
             lower.instruction(&mut em, at, ins);
         }
-        let term = lower.terminator(&mut em, b, &mut exit);
+        let term = lower.terminator(&mut em, b);
         em.fdat.blocks[em.block].terminator = Some(Terminator::new_kind(term));
-    }
-    if let Some(exit) = exit {
-        debug_assert_eq!(exit.index(), em.fdat.blocks.len() - 1);
     }
 }
 
@@ -370,12 +384,7 @@ fn empty() -> Exp {
 
 impl Lower<'_, '_, '_, '_, '_> {
     /// The terminator of block `b` (§8).
-    fn terminator(
-        &mut self,
-        em: &mut Emitter<'_>,
-        b: BlockId,
-        exit: &mut Option<BasicBlockIdx>,
-    ) -> TerminatorKind {
+    fn terminator(&mut self, em: &mut Emitter<'_>, b: BlockId) -> TerminatorKind {
         let block = &self.flow.blocks[b];
         let last = block.instrs.last();
         let control = last
@@ -387,7 +396,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                 targets.push(t);
             }
         };
-        let escapes = !block.exc_succs.is_empty() && !self.caught_by_all(b);
+        let out = Exp::Variable(em.excout());
         match control {
             Control::Return => {
                 let value = last
@@ -406,44 +415,22 @@ impl Lower<'_, '_, '_, '_, '_> {
                     })
                     .unwrap_or_else(empty);
                 return TerminatorKind::Return {
-                    args: smallvec![value, empty()],
+                    args: smallvec![value, out],
                 };
             }
             Control::Throw => {
-                if block.exc_succs.is_empty() {
-                    let thrown = em.throwval();
-                    return TerminatorKind::Return {
-                        args: smallvec![empty(), Exp::Variable(thrown)],
-                    };
-                }
                 for &s in &block.exc_succs {
                     add(BasicBlockIdx::new(s), &mut targets);
-                }
-                if escapes {
-                    add(self.exit(em, exit), &mut targets);
                 }
             }
             Control::Jump => {
                 let thrown = em.throwval();
                 return self.jump(em, last.unwrap(), thrown);
             }
-            Control::EndFinally => {
-                for &s in block.succs.iter().chain(&block.exc_succs) {
-                    add(BasicBlockIdx::new(s), &mut targets);
-                }
-                // The exception a finally or fault was entered with goes on after it, to
-                // the next handler out (`exc_succs`) or out of the method.
-                if block.exc_succs.is_empty() || escapes {
-                    if targets.is_empty() {
-                        let thrown = em.throwval();
-                        return TerminatorKind::Return {
-                            args: smallvec![empty(), Exp::Variable(thrown)],
-                        };
-                    }
-                    add(self.exit(em, exit), &mut targets);
-                }
-            }
-            Control::Next
+            // After an `endfinally`, the exception the finally was entered with goes on to the
+            // next handler out (`exc_succs`); one leaving the method is already in `excout`.
+            Control::EndFinally
+            | Control::Next
             | Control::Goto(_)
             | Control::Cond { .. }
             | Control::Switch(_)
@@ -452,34 +439,25 @@ impl Lower<'_, '_, '_, '_, '_> {
                 for &s in block.succs.iter().chain(&block.exc_succs) {
                     add(BasicBlockIdx::new(s), &mut targets);
                 }
-                if escapes {
-                    add(self.exit(em, exit), &mut targets);
-                }
             }
         }
         if targets.is_empty() {
             TerminatorKind::Return {
-                args: smallvec![empty(), empty()],
+                args: smallvec![empty(), out],
             }
         } else {
             TerminatorKind::Goto { targets }
         }
     }
 
-    /// The exceptional exit: `Return [empty, throwval]`, made on first use.
-    fn exit(&mut self, em: &mut Emitter<'_>, exit: &mut Option<BasicBlockIdx>) -> BasicBlockIdx {
-        if let Some(e) = exit {
-            return *e;
+    /// After a call or a throw: when the exception it may raise can leave the method (no
+    /// catch-all handler takes it), add it to `excout`.
+    pub fn raise_out(&mut self, em: &mut Emitter<'_>) {
+        if self.caught_by_all(self.cur.block) {
+            return;
         }
-        let thrown = em.throwval();
-        let mut data = BasicBlockData::new(None);
-        data.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-            args: smallvec![empty(), Exp::Variable(thrown)],
-        }));
-        em.fdat.blocks.blocks_mut().push(data);
-        let idx = BasicBlockIdx::new(em.fdat.blocks.len() - 1);
-        *exit = Some(idx);
-        idx
+        let (out, thrown) = (em.excout(), em.throwval());
+        em.assign(out.clone(), [Exp::Variable(out), Exp::Variable(thrown)]);
     }
 
     /// Whether every exception raised in block `b` is caught in this method: some handler it
@@ -527,12 +505,13 @@ impl Lower<'_, '_, '_, '_, '_> {
                 style: CallStyle::DirectCall {
                     call_edges: CallEdges::Explicit(thin_vec![fid]),
                 },
-                rets: thin_vec![retval.clone(), thrown.clone()],
+                rets: thin_vec![retval.clone(), thrown],
                 args,
             });
+            self.raise_out(em);
         }
         TerminatorKind::Return {
-            args: smallvec![Exp::Variable(retval), Exp::Variable(thrown)],
+            args: smallvec![Exp::Variable(retval), Exp::Variable(em.excout())],
         }
     }
 }

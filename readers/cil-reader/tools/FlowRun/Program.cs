@@ -231,9 +231,11 @@ sealed class Model
         return list;
     }
 
-    /// The module's concrete classes assignable to `t`.
+    /// The module's concrete classes assignable to `t`. Not delegate types: a delegate is
+    /// made by binding a method, and one made without a constructor is not a delegate.
     public List<Type> Concrete (Type t) =>
-        Types.Where (c => c.IsClass && !c.IsAbstract && t.IsAssignableFrom (c)).ToList ();
+        Types.Where (c => c.IsClass && !c.IsAbstract && !typeof (Delegate).IsAssignableFrom (c)
+            && t.IsAssignableFrom (c)).ToList ();
 
     /// The element code of an array's element type.
     public static string ElementCode (Type t)

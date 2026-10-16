@@ -27,9 +27,9 @@ use hashbrown::HashMap;
 /// a generic parameter, say. Still a class, so a row keyed on it is well formed.
 pub const UNKNOWN_CLASS: &str = "[?]?";
 
-/// The two fields a delegate object carries (translation §7): the bound target object, and
-/// the function pointer `ldftn` made. Fixed internal symbols, so models can name them.
-pub const DELEGATE_TARGET: &str = "<delegate::target>";
+/// The field a delegate carries (translation §7): the function pointer `ldftn` made. A fixed
+/// internal symbol, so models can name it. A delegate is its own target (`calls.rs`), so there
+/// is no field for that.
 pub const DELEGATE_METHOD: &str = "<delegate::method>";
 
 /// Array element and length fields, the same symbols as Dex and JVM.

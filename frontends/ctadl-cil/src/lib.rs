@@ -128,6 +128,14 @@ pub fn import_directory(dir: &Path, opts: &ImportOptions) -> Result<ProgramInfo,
 
 /// Imports these assemblies into one program.
 pub fn import_files(files: &[PathBuf], opts: &ImportOptions) -> Result<ProgramInfo, Error> {
+    Ok(import_files_with_stats(files, opts)?.0)
+}
+
+/// [`import_files`], with the import's counts.
+pub fn import_files_with_stats(
+    files: &[PathBuf],
+    opts: &ImportOptions,
+) -> Result<(ProgramInfo, Stats), Error> {
     let mut datas = Vec::with_capacity(files.len());
     for f in files {
         datas.push(std::fs::read(f).err_context(|| format!("reading {}", f.display()))?);
@@ -164,7 +172,7 @@ pub fn import_files(files: &[PathBuf], opts: &ImportOptions) -> Result<ProgramIn
         ctx.process(module, &namer, key)
             .err_context(|| format!("converting {}", f.display()))?;
     }
-    ctx.finish()
+    ctx.finish_with_stats()
 }
 
 /// Whether the file is a PE image with CLI metadata, as opposed to a native one.
@@ -449,7 +457,12 @@ impl Context {
     }
 
     /// Stubs every callee nothing defined, adds the delegate thunks, and builds the table.
-    pub fn finish(mut self) -> Result<ProgramInfo, Error> {
+    pub fn finish(self) -> Result<ProgramInfo, Error> {
+        Ok(self.finish_with_stats()?.0)
+    }
+
+    /// [`Context::finish`], with the import's counts.
+    pub fn finish_with_stats(mut self) -> Result<(ProgramInfo, Stats), Error> {
         let ext = std::mem::take(&mut self.out.ext);
         for (fid, (key, params)) in &ext {
             if self.defined.contains_key(fid) {
@@ -588,10 +601,14 @@ impl Context {
                 missing[0]
             );
         }
-        Ok(ProgramInfo {
-            program,
-            vmt,
-            source_info: self.spans.finish(),
-        })
+        let stats = self.out.stats;
+        Ok((
+            ProgramInfo {
+                program,
+                vmt,
+                source_info: self.spans.finish(),
+            },
+            stats,
+        ))
     }
 }

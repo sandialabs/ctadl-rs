@@ -1,0 +1,4 @@
+{
+  expected_sinks: ["Sink1", "Sink2", "Sink3", "Sink4", "Sink5"],
+  unexpected_sinks: ["Clean1", "Clean2"],
+}

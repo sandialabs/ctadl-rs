@@ -1,0 +1,14 @@
+// A known limitation (the CIL frontend translation, §12.5, `engine:alias-rule`): an object
+// stored into its own field is a cycle, and the index's aliasing rule summarizes only the
+// paths the program stores through. `b.o = b; return b.o` returns `b`, whose `.o` is `b`
+// again, so `return.o <- b` holds; the index does not derive it. `cil:taint` meets this in
+// `Exec.Obj::ObjectField`; its known-miss file points here. `flowy_tests.rs` skips this file
+// until the aliasing rule covers cycles.
+def F(b): 1
+where summaries [return.o <- b]
+{
+start:
+  b.o = b;
+  t = b.o;
+  return t;
+}

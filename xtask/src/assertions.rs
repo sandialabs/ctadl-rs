@@ -216,6 +216,45 @@ pub fn codeflow_connects_source_and_sink(sarif: &Path) -> Result<bool> {
     Ok(false)
 }
 
+/// The functions whose sinks a connected code flow ends in: for every thread flow that
+/// has a source step, the function the last sink step names
+/// (`sink call-arg(22, 0) in <function>`). The CIL cases judge reachability by these,
+/// since a CIL import has no source lines yet.
+pub fn collect_codeflow_sink_functions(sarif: &Path) -> Result<BTreeSet<String>> {
+    let value = read_json(sarif)?;
+    let mut found = BTreeSet::new();
+    let all = |v: Option<&Value>| -> Vec<Value> {
+        v.and_then(Value::as_array).cloned().unwrap_or_default()
+    };
+    for run in all(value.get("runs")) {
+        for result in all(run.get("results")) {
+            for flow in all(result.get("codeFlows")) {
+                for thread in all(flow.get("threadFlows")) {
+                    let msgs: Vec<String> = all(thread.get("locations"))
+                        .iter()
+                        .filter_map(|loc| {
+                            loc.get("location")
+                                .and_then(|l| l.get("message"))
+                                .and_then(|m| m.get("text"))
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .collect();
+                    if !msgs.iter().any(|m| m.starts_with("source ")) {
+                        continue;
+                    }
+                    if let Some(sink) = msgs.iter().rev().find(|m| m.starts_with("sink ")) {
+                        if let Some((_, function)) = sink.split_once(" in ") {
+                            found.insert(function.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// Collect every `byteOffset` reached by a code-flow step, i.e. the offsets under
 /// `runs[].results[].codeFlows[].threadFlows[].locations[]`.
 ///

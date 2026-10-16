@@ -12,18 +12,18 @@ on — a per-instruction dataflow view — so that is where this plan starts.
 
 ## Status (2026-10-15)
 
-Only the reader exists. Nothing past M0 is implemented. M1–M3 now have detailed
-designs in their own documents. The rest of this plan is the only written record
-of M4–M7, so keep it until those land.
+M0–M4 are done, and M5 but for source lines. M1–M3 have detailed designs in
+their own documents, which say what was built; this plan is the only written
+record of M5b–M7, so keep it until those land.
 
 | M | Work | Status |
 | --- | --- | --- |
 | M0 | Workspace integration | **Done** (differently from the steps written; see §1) |
 | M1 | `cil_reader::flow` Layer 1 | **Done.** [`cil-flow-api.md`](cil-flow-api.md) §10 says what was built and where it departs from the design. Reader helpers done (§2.1). |
 | M2 | `flow` Layer 2: CFG and stack heights | **Done.** [`cil-flow-api.md`](cil-flow-api.md) §4, §10. Gated by `cil:flow`. |
-| M3 | The `ctadl-cil` frontend | **Designed, not implemented.** Design: [`cil-frontend-translation.md`](cil-frontend-translation.md). It goes in `frontends/ctadl-cil/`, not `ctadl-ascent/src/languages/cil/`. |
-| M4 | Engine plumbing (`Cil` VMT, `CilCall`, dispatch key) | **Not started.** None of the §5 variants exist. |
-| M5 | Regression harness | **Reader half only.** `Frontend::Cil` exists and runs the Cecil-parity checks (`cil:must-fail`, `cil:cecil-tests`, `cil:read`, `cil:goldens`, `cil:cecil-compare`). Nothing compiles `.cs` programs or runs import → index → query. |
+| M3 | The `ctadl-cil` frontend | **Done**, in `frontends/ctadl-cil/`. [`cil-frontend-translation.md`](cil-frontend-translation.md) §14 says what was built and where it departs from the design. |
+| M4 | Engine plumbing (`Cil` VMT, `CilCall`, dispatch key) | **Done**, as §5 lists, plus `pinvokes` and a fix the CIL checks found: the index now summarizes every return slot, so exceptions reach callers (Dex and JVM too). |
+| M5 | Regression harness | **Done but for source lines (M5b).** `cil:frontend` (corpus sweep and IR goldens), `cil:taint` (summaries against .NET runs) and the `Cil:*` taint cases in `nightly/tests/cil`, which compile C# with `dotnet build` and run import → index → query. With no source lines, a case is judged by the sink functions its flows end in. |
 | M5b | Portable-PDB sequence points | **Not started.** `MethodDebugInformation` exists only as a table and token id. |
 | M6 | `cil-index.jsonl` default models | **Not started** |
 | M7 | P/Invoke bridge, Xamarin | **Not started** (optional) |
