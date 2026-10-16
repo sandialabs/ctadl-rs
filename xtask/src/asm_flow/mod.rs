@@ -352,7 +352,7 @@ fn atoms<const N: usize>(a: [String; N]) -> BTreeSet<String> {
 }
 
 /// ASM reports the long forms of instructions that have a short one.
-fn asm_opcode(op: u8) -> u8 {
+pub(crate) fn asm_opcode(op: u8) -> u8 {
     match op {
         0x1a..=0x2d => 0x15 + (op - 0x1a) / 4, // xload_<n>
         0x3b..=0x4e => 0x36 + (op - 0x3b) / 4, // xstore_<n>

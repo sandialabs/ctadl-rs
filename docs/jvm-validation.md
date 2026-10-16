@@ -10,9 +10,10 @@ it with independent sources instead.
 | | ASM cross-check | Per-opcode runtime harness |
 | --- | --- | --- |
 | Oracle | ASM's analyzer (`Frame.execute`) | HotSpot running each opcode |
-| Checks | stack effect, operand positions, `dup`/`swap` permutations, locals, field and array places, call operands, constants | value dependence of each output on each input, exceptions |
+| Checks | stack effect, operand positions, `dup`/`swap` permutations, locals, field and array places, call operands, constants | which inputs each output actually depends on |
 | Needs | a JDK and ASM | a JDK and ASM |
-| Runs in `cargo xtask regression` | yes, as `jvm:asm-flow` | yes |
+| Runs in `cargo xtask regression` | yes, as `jvm:asm-flow` | yes, as `jvm:opcodes` |
+| Time | a few seconds | about a second for 214 cases |
 
 Unlike Dex, the JVM needs no emulator: the JDK in the dev shell runs the
 bytecode itself. ASM comes from Maven Central through the flake
@@ -98,3 +99,85 @@ all-opcodes class and in the samples.
   stack (§3.4). Neither is visible here.
 - **Returns are not compared.** jvm-reader does not model what `xreturn`
   returns; only its stack effect is checked.
+
+---
+
+## 2. Per-opcode runtime harness (`jvm:opcodes`)
+
+`xtask/src/jvm_opcodes/`. This is the JVM version of `cargo xtask dex-opcodes`
+(see [`dex-validation.md`](dex-validation.md) §2), with HotSpot in place of ART.
+It needs no device, so it runs live in every `cargo xtask regression`, and
+there is no saved-observation file to keep in step.
+
+`JvmOpcodes.java` builds one class per case with ASM. Its `run()` loads every
+input from a helper class: eight int locals as padding, the case's own locals,
+then the operand stack, starting with one padding int. Then it runs the one
+instruction under test and hands every stack slot and local back, along with
+anything the instruction stored into an input object, an array or a static
+field, and what a callee received. ASM's analyzer supplies the types needed to
+capture the stack afterwards, so the harness does not depend on jvm-reader's
+idea of what the instruction left there.
+
+Each case runs once with every input at its first candidate value, then once
+per other candidate of each 32-bit input slot. That gives, for every place the
+instruction wrote, the input slots that changed it. The places use the same
+names as `jvm:asm-flow`. The Rust side reads jvm-reader's dataflow the same way
+(`asm_flow::claims`) and judges:
+
+| Finding | Verdict |
+| --- | --- |
+| an input changed a place, but jvm-reader does not list it as a source | FAIL |
+| a place was written, but jvm-reader does not list it | FAIL |
+| a listed source never changed its place, or a listed place was never written | REVIEW |
+
+A run shows dependence only for the values it tries, so a REVIEW needs a
+person. The expected ones, with reasons, are in `EXPECTED_REVIEWS`. A stale
+expectation fails the check, as does an opcode that no case covers.
+
+Some details of the comparison:
+
+- A load from an array element or a field depends on the slots that hold the
+  array and index, or the object. A store is keyed by the slot that holds the
+  object or array; picking a different object does not count as changing what
+  was stored.
+- A long or double result is one value. Its two stack slots are compared
+  together, so `ladd`'s low word is not required to depend on the high words.
+  Wide inputs are still perturbed one half at a time.
+- Division, remainder, comparison and the long logic ops start with equal
+  operands, so that a change to either operand shows up in the result.
+
+### Coverage
+
+214 cases cover every opcode except branches, switches, returns, `goto`, `jsr`
+and `ret`. Those move no data jvm-reader models, and `jvm:asm-flow` checks their
+stack effect. The cases include the short, plain and wide forms of every load
+and store, wide `iinc`, `ldc_w` (from a class whose constant pool is padded past
+256 entries), every form of every `dup`, every array kind including boolean, and
+all five call kinds.
+
+### What it found
+
+No FAILs: every input that changes an output is one jvm-reader lists as a
+source, for every opcode. The expected REVIEWs are:
+
+- the `dup_x*`, `dup2` (on two ints) and `swap` cases, where jvm-reader lists
+  inputs that cannot reach the output. These are the bugs `jvm:asm-flow` also
+  reports (improvements §3.2, §3.4). `dup2` on one long is consistent once the
+  halves are compared together.
+- `l2i`, whose result never depends on the high word, though the instruction
+  pops it.
+- `d2i` and `d2l`, where the candidates' low words hold only fractional bits.
+
+Two hand-made bugs show that it fails when it should. Mapping `istore_<n>` to
+local n+1 fails all four `istore_<n>` cases, and dropping `getfield`'s object
+source fails the three `getfield` cases.
+
+### Limits
+
+- **Dependence is value-specific.** A source that matters only for values the
+  candidates miss shows up as a REVIEW, not a FAIL.
+- **Only what jvm-reader models.** Exceptions are not judged: jvm-reader has no
+  `can_throw()` to check. Nor are branch conditions, since control dependence is
+  not dataflow.
+- **One instruction at a time, as in `jvm:asm-flow`.** `ctadl-jvm` is not
+  checked.

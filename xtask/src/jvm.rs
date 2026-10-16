@@ -23,7 +23,7 @@ use jvm_reader::{
 };
 
 use crate::regression::Outcome;
-use crate::{asm_flow, exec};
+use crate::{asm_flow, exec, jvm_opcodes};
 
 /// A compiled sample program.
 struct Sample {
@@ -77,11 +77,19 @@ pub fn run_checks(
         .into_iter()
         .map(|(name, run)| (name.to_string(), to_outcome(run(&samples))))
         .collect();
-    let asm_flow = match asm_flow::find_classpath() {
-        Some(cp) => to_outcome(check_asm_flow(&cp, &samples, cases, work)),
-        None => Outcome::Skip("no ASM: set ASM_CLASSPATH or put `asm-classpath` on PATH".into()),
+    // Both need ASM: one as an oracle, the other to build what it runs.
+    let (asm_flow, opcodes) = match asm_flow::find_classpath() {
+        Some(cp) => (
+            to_outcome(check_asm_flow(&cp, &samples, cases, work)),
+            to_outcome(jvm_opcodes::check(&cp, &work.join("opcodes"))),
+        ),
+        None => {
+            let why = "no ASM: set ASM_CLASSPATH or put `asm-classpath` on PATH";
+            (Outcome::Skip(why.into()), Outcome::Skip(why.into()))
+        }
     };
     results.push(("jvm:asm-flow".to_string(), asm_flow));
+    results.push(("jvm:opcodes".to_string(), opcodes));
     Ok(results)
 }
 

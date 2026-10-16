@@ -24,6 +24,7 @@ mod dexlib2;
 mod discovery;
 mod exec;
 mod jvm;
+mod jvm_opcodes;
 mod models;
 mod regression;
 mod report_eval;

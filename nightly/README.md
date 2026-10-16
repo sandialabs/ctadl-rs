@@ -99,7 +99,9 @@ both — the same reasons the taint cases are nightly:
 - **`jvm:*`** — `jvm-reader` over the same samples compiled to `.class`/`.jar`. Needs `javac`.
   `jvm:asm-flow` compares jvm-reader's dataflow for every instruction with ASM's analyzer, over
   the samples, the Java cases in `tests/java` and a generated class that holds every opcode
-  (`docs/jvm-validation.md`); it needs ASM (`asm-classpath`, from the flake).
+  (`docs/jvm-validation.md`). `jvm:opcodes` runs each opcode on the JVM, changing one input at
+  a time, and checks that every input that changes an output is one jvm-reader lists as a source.
+  Both need ASM (`asm-classpath`, from the flake).
 - **`apk:*`** — `ctadl` itself, end to end, over that same real-world APK
   (`xtask/tests/dex/com.noto_54.apk`). Needs no toolchain at all: the APK is prebuilt and checked
   in, so all these need is the `ctadl` binary.
