@@ -115,14 +115,31 @@ def promote(r: Running) -> None:
         r.promoted = True
 
 
+def _measured(r: Running) -> list[int]:
+    """The processes doing the work: everything under /usr/bin/time. memguard's shell and its
+    sleeps, and time itself, are left alone -- a shell that sees its child stop turns that
+    into an exit status."""
+    procs = activity.list_procs()
+    timers = [p.pid for p in procs if p.comm == "time" and p.pid in activity.descendants(procs, {r.pid})]
+    return sorted(activity.descendants(procs, set(timers)) - set(timers))
+
+
 def stop(r: Running) -> None:
-    os.killpg(r.pid, signal.SIGSTOP)
+    for pid in _measured(r):
+        try:
+            os.kill(pid, signal.SIGSTOP)
+        except ProcessLookupError:
+            pass
     r.stopped = True
     r.notes.append(f"stopped at {time.time():.0f}")
 
 
 def cont(r: Running) -> None:
-    os.killpg(r.pid, signal.SIGCONT)
+    for pid in _measured(r):
+        try:
+            os.kill(pid, signal.SIGCONT)
+        except ProcessLookupError:
+            pass
     r.notes.append(f"continued at {time.time():.0f}")
 
 

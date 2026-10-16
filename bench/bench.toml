@@ -14,7 +14,7 @@ poll_s = 300                        # how often to fetch
 backfill = true
 
 [gate]
-tick_s = 5
+tick_s = 2
 input_idle_s = 120          # a keystroke this recent means the user is here
 foreign_cpu_pct = 150       # CPU (percent of one core) used by processes that are not ours
 quiet_night_s = 900         # quiet this long before a p-tier run starts, at night...
