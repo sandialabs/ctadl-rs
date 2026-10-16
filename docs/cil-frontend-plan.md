@@ -580,8 +580,9 @@ bridge work.
 
 ## 11. Acceptance
 
-> **Status:** items 1–3 are met (item 3 by the `Cil:*` cases, whose code flows'
-> regions are `.cs` lines). Items 4 and 5 are not yet recorded as checked.
+> **Status:** all five are met (2026-10-16). Item 3 by the `Cil:*` cases, whose code
+> flows' regions are `.cs` lines. Items 4 and 5 were checked by hand, as recorded under
+> each.
 
 1. `cargo test -p cil-reader` green from the repo root with no .NET SDK,
    including the new `flow` unit tests. The fixture and corpus property tests
@@ -592,7 +593,26 @@ bridge work.
 4. A virtual call with more than one CHA resolvent produces `callee_info` facts and
    is resolved by hybrid inlining — verifiable in `ctadl index`'s
    `hybrid inlining: ... resolvent: N` line, the same way the Java frontends are.
+
+   *Checked:* `Cil:dispatch` alone does not show it, since each receiver there is
+   allocated in the calling method and needs no context (`resolvent: 0`). A probe does:
+   `Use(IF f, string s) => f.F(s)` with three implementations, one returning `s`,
+   called from three methods that each pass a different receiver and a tainted `s`. With
+   `--cha-threshold 1` the index logs `call resolution: 3 (site, target) pair(s) over 1
+   indirect call site(s)` and `resolvent: 3`, and the query reaches only the caller that
+   passed the implementation returning `s`; under CHA (the default threshold) it reaches
+   all three. The JVM and Dex frontends give the same results on the same program in
+   Java.
 5. `frontends/ctadl-cil/` contains **no** backwards-scanning heuristics to recover
    the object base of a field access. If it does, either copy propagation is missing
    a case or the flow layer is, and the fix belongs there rather than in a
    workaround here.
+
+   *Checked:* an object field's load or store takes its base straight from the flow
+   layer's operand variable (`effects.rs`, `load` and `store`), and nothing in the
+   frontend scans instructions backwards. The nearest thing is `ptr.rs`, which runs its
+   own forward must-analysis of managed-pointer targets instead of the layer's
+   `resolve_address`. It saves a pointer's base into a frontend local so a later stack
+   write cannot lose it, and leaves element indices out of a target (the index policy in
+   [`cil-frontend-translation.md`](cil-frontend-translation.md) §9). Its results are
+   checked against `resolve_address` as methods are lowered.
