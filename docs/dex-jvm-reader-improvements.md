@@ -2,8 +2,9 @@
 
 Status: §1 (`dex-reader`) is fixed on branch `dex-jvm-reader-fixes`, except for
 the open items in §1.7. §2 (`jvm-reader`) is open and not scheduled. §3 records
-wrong taint answers from `ctadl-jvm`, confirmed by test programs. §3.1 is fixed
-(`24064a85`); the rest are open. These
+wrong taint answers from `ctadl-jvm`, confirmed by test programs. §3.1
+(`24064a85`), §3.2, §3.3 and the `swap` item of §3.4 are fixed; the rest are
+open. These
 problems were found while designing the CIL reader's dataflow layer
 ([`cil-flow-api.md`](cil-flow-api.md)), which is built to avoid them.
 
@@ -287,7 +288,7 @@ and every control passes on both frontends. The programs and logs are in
 | `get().data = t;` then `sink(holder.data)`, where `get()` returns `holder` | flow | no flow | `g = get(); g.data = t;` |
 | `get().v = t;` with a `long` field `v` | flow | no flow | — |
 | `a.data = source();` then `sink(fresh().data)`, where `fresh()` returns a new object | no flow | flow | `f = fresh(); sink(f.data);` |
-| `o = source(); String x = o.data = y; sink(x);` with clean `y` | no flow | flow | `o.data = y; String x = y;` |
+| `o = source(); String x = o.data = y; sink(x);` with clean `y` | no flow | flow (fixed, §3.2) | `o.data = y; String x = y;` |
 
 ### 3.1 Fixed: field accesses used the last `aload`, not the object on the stack
 
@@ -327,45 +328,56 @@ heuristics. Four cases now cover the bug and are enforced:
 `CallResultArrayStore` (`b58da523`). With the old `putfield` object position,
 `CallResultWideField` fails.
 
-### 3.2 `dup_x*` sends every input to every output
+### 3.2 Fixed: `dup_x*` sent every input to every output
 
 For `dup_x1`, `dup_x2`, `dup2`, `dup2_x1` and `dup2_x2`, `decode_dataflow`
-(`readers/jvm-reader/src/flow.rs:1648`-`1687`) lists every input slot as a source
-of every output slot. `stack_dup_statements` (`lib.rs:832`) then also assigns
-every output to every other output. `dup_x1` takes `..., v2, v1` to
-`..., v1, v2, v1`, so the outputs should be `v1`, `v2`, `v1`. Instead all three
-get both values.
+listed every input slot as a source of every output slot. `stack_dup_statements`
+in `ctadl-jvm` then also assigned every output to every other output. `dup_x1`
+takes `..., v2, v1` to `..., v1, v2, v1`, so the outputs should be `v1`, `v2`,
+`v1`. Instead all three got both values.
 
 javac emits `dup_x1` for a chained assignment to a field
 (`x = o.data = y`), for `o.f++` used as a value, and similar code. In the
-example, the clean `y` picks up the taint of the object `o`, and `x` reaches the
-sink.
+example, the clean `y` picked up the taint of the object `o`, and `x` reached
+the sink.
 
-Fix: give each output its one source per JVMS §6.5. `dup2` and `dup2_x*` depend
-on whether the top values are category 1 or 2. `jvm-reader` already counts a
-category-2 value as two slots, so the slot-level permutation is the same for
-both. For example, `dup_x1` is `[v2, v1] -> [v1, v2, v1]`. In `ctadl-jvm`, drop
-the pairwise output links from `stack_dup_statements`: two copies of one value
-are already aliases once SSA and the engine see `a = v; b = v`. Keep the record
-of which slots one `dup` produced (`record_dup_slot_pairs`), because
-`init_survivor_link` (`lib.rs:803`) uses it to link `new; dup; invokespecial
-<init>`. The probe is `DupX1Chain` in `/Volumes/Shampoo/runs/jvm-audit/tests/`;
-it should become an enforced negative case.
+**Fix.** In jvm-reader, `stack_shuffle` gives each output its one input, per
+JVMS §6.5. jvm-reader counts a category-2 value as two slots, so the same
+slot-level permutation covers the long and double forms of `dup2*`. In
+`ctadl-jvm`, `stack_shuffle_statements` lowers `dup*` and `swap`. The outputs
+land on the input slots, so it first copies each input slot that an output
+overwrites into a temporary (`shuffle<n>`). The pairwise output links are gone,
+because two copies of one value are already aliases once SSA sees `a = v; b = v`.
+`record_dup_slot_pairs` now records only outputs that copy the same input, which
+is what `init_survivor_link` needs for `new; dup; invokespecial <init>`.
+
+**Regression protection.** `test_stack_shuffle_dataflow` in jvm-reader.
+`jvm:asm-flow` and `jvm:opcodes` no longer list these opcodes as known
+disagreements, so a regression fails them. `jvm:opcodes` now judges a long's
+two stack slots as one value on jvm-reader's side too, as it already did on the
+JVM's side. Otherwise a correct half-by-half `dup2` of a long would fail it.
+There are three enforced cases: `DupX1Chain` (no flow), its positive twin
+`DupX1ChainFlow`, and `Dup2X1Chain` (no flow, a `long` field, compiled to
+`dup2_x1`).
 
 ### 3.3 The regression suite hides JVM taint failures
 
 `apply_jvm_allowlist` (`xtask/src/regression.rs`) turns a failing `Jvm:` case
 into XFAIL unless the case is listed in `JVM_E2E_ENFORCED`. All four programs
-above were reported as XFAIL, so the suite stayed green. The 3.1 cases are now
-enforced. The 3.2 case should be added and enforced when 3.2 is fixed.
+above were reported as XFAIL, so the suite stayed green. *Fixed* for these
+bugs: the §3.1 and §3.2 cases are enforced. The allowlist itself remains, so a
+new JVM case is not enforced until it is added to `JVM_E2E_ENFORCED`.
 
 ### 3.4 Suspected, not yet tested
 
 `jvm:asm-flow` and `jvm:opcodes` ([`jvm-validation.md`](jvm-validation.md))
 have since tested the first three items against ASM and the JVM:
 
-- *Confirmed:* `swap` (`0x5f`) lists both inputs as sources of both outputs, so
-  the two values mix as in 3.2. `stack_dup_statements` does not lower it.
+- *Fixed with 3.2:* `swap` (`0x5f`) listed both inputs as sources of both
+  outputs, so the two values mixed as in 3.2, and the frontend lowered it as
+  ordinary dataflow, which overwrites one input before reading it. javac rarely
+  emits `swap`, so no taint case covers it; `jvm:asm-flow`, `jvm:opcodes` and
+  `test_stack_shuffle_dataflow` do.
 - *Confirmed:* `ldc` of a MethodHandle, MethodType or dynamic constant is an
   error in `resolve_constant`, and the whole method fails to decode. javac
   rarely emits these; other compilers and bytecode tools can.

@@ -66,14 +66,16 @@ bug was fixed and its entry must go).
 
 | Opcode | jvm-reader | Correct | |
 | --- | --- | --- | --- |
-| `dup_x1`, `dup_x2`, `dup2`, `dup2_x1`, `dup2_x2` | every input reaches every output; `dup2` also rewrites the two slots it copies | the JVMS §6.5 permutation | improvements §3.2, now confirmed for every form |
-| `swap` | both inputs reach both outputs | `out0=in1 out1=in0` | improvements §3.4, confirmed |
 | `fconst_1`, `fconst_2`, `dconst_1` | `Float(1)`, `Float(2)`, `Double(1)`: the raw bits 1 and 2, tiny denormals | `0x3f800000`, `0x40000000`, `0x3ff0000000000000` | new; `const_for_const_op` casts the integer instead of converting it |
 | `anewarray` of an array type | allocates `[L[I;` | `[[I` | new; `decode_dataflow` always wraps the class in `L...;` |
 | `ldc` of a MethodType, MethodHandle or dynamic constant | the whole method fails to decode | a constant | improvements §3.4, confirmed |
 
-The samples and nightly cases trip only `dconst_1`. javac does not emit the
-stack shuffles for them.
+The samples and nightly cases trip only `dconst_1`.
+
+It also found that `dup_x1`, `dup_x2`, `dup2`, `dup2_x1`, `dup2_x2` and `swap`
+sent every input to every output, rather than following the JVMS §6.5
+permutation (improvements §3.2 and §3.4). That was fixed in jvm-reader, and its
+`KNOWN` entries were deleted.
 
 Everything else agrees: every load, store and `iinc` (short, plain and wide
 forms, and stores into parameter slots), every arithmetic, conversion and
@@ -93,10 +95,9 @@ all-opcodes class and in the samples.
   modeling choice, the oracle follows it: an array load reads the element (not
   the index), and `getfield` reads the object and the field. Whether those are
   the right taint rules is not something ASM can say.
-- **It checks jvm-reader, not `ctadl-jvm`.** For example, `stack_dup_statements`
-  in the frontend links every `dup` output to every other output on its own
-  (improvements §3.2), and the `xreturn` value is taken from the bottom of the
-  stack (§3.4). Neither is visible here.
+- **It checks jvm-reader, not `ctadl-jvm`.** For example, the frontend takes
+  the `xreturn` value from the bottom of the stack (improvements §3.4), which
+  is not visible here.
 - **Returns are not compared.** jvm-reader does not model what `xreturn`
   returns; only its stack effect is checked.
 
@@ -142,7 +143,9 @@ Some details of the comparison:
   was stored.
 - A long or double result is one value. Its two stack slots are compared
   together, so `ladd`'s low word is not required to depend on the high words.
-  Wide inputs are still perturbed one half at a time.
+  jvm-reader's sources for the two slots are merged too, so a `dup2` that
+  copies a long half by half passes. `jvm:asm-flow` checks the half-by-half
+  order. Wide inputs are still perturbed one half at a time.
 - Division, remainder, comparison and the long logic ops start with equal
   operands, so that a change to either operand shows up in the result.
 
@@ -158,19 +161,19 @@ all five call kinds.
 ### What it found
 
 No FAILs: every input that changes an output is one jvm-reader lists as a
-source, for every opcode. The expected REVIEWs are:
+source, for every opcode. The expected REVIEWs are listed below. The `dup_x*`,
+`dup2` and `swap` cases used to be on this list, because jvm-reader drew their
+outputs from inputs that cannot reach them (improvements §3.2, §3.4). That was
+fixed, and they now agree.
 
-- the `dup_x*`, `dup2` (on two ints) and `swap` cases, where jvm-reader lists
-  inputs that cannot reach the output. These are the bugs `jvm:asm-flow` also
-  reports (improvements §3.2, §3.4). `dup2` on one long is consistent once the
-  halves are compared together.
 - `l2i`, whose result never depends on the high word, though the instruction
   pops it.
 - `d2i` and `d2l`, where the candidates' low words hold only fractional bits.
 
 Two hand-made bugs show that it fails when it should. Mapping `istore_<n>` to
 local n+1 fails all four `istore_<n>` cases, and dropping `getfield`'s object
-source fails the three `getfield` cases.
+source fails the three `getfield` cases, and reversing the `swap` or `dup2`
+permutation fails the `swap` and `dup2` cases (and `jvm:asm-flow`).
 
 ### Limits
 
