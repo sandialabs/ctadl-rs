@@ -2033,8 +2033,8 @@ ascent_source! {
     tag_closure_func(f) <-- call_target_assign(f, _, _), call(_, _, f);
     tag_closure_func(f) <-- call_target_assign(f, _, _), fnptr_call(_, _, f);
     // A caller of a function that exports a tag on an out-formal walks its tags too: the
-    // target may have been installed several frames down (`begin(&img)` -> `pick(img)` storing
-    // `img->get`) and has to climb through frames that make no indirect call of their own
+    // target may have been installed several frames down (`a(&o)` -> `b(o)` storing
+    // `o->f`) and has to climb through frames that make no indirect call of their own
     // before it meets its call site. Driven by a tag actually reaching an out-formal, so only
     // frames a tag enters are admitted.
     tag_closure_func(caller) <--

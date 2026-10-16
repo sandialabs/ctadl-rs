@@ -43,7 +43,7 @@ start:
   return h;
 }
 
-// Installs the targets. No indirect call here or in `begin`.
+// Installs the targets. No indirect call here.
 def pick(im byref) {
 start:
   goto tiled, strips;
