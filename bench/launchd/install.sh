@@ -13,6 +13,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 bench=$(cd "$here/.." && pwd)
 logs=/Volumes/Shampoo/ctadl-bench/logs
 agents="$HOME/Library/LaunchAgents"
+# The launcher is what holds Full Disk Access (see launch.c). Rebuilding it changes its code
+# hash and voids the grant, so it is built only when missing.
+launch="$HOME/.local/bin/ctadl-bench-launch"
 host=127.0.0.1
 port=8787
 uninstall=
@@ -31,7 +34,11 @@ for name in daemon web; do
 done
 [ -n "$uninstall" ] && { echo "uninstalled"; exit 0; }
 
-mkdir -p "$logs" "$agents"
+mkdir -p "$logs" "$agents" "$(dirname "$launch")"
+if [ ! -x "$launch" ]; then
+  /usr/bin/cc -O2 -o "$launch" "$here/launch.c"
+  echo "built $launch -- add it under System Settings > Privacy & Security > Full Disk Access"
+fi
 
 cat > "$agents/com.ctadl-bench.daemon.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -39,14 +46,13 @@ cat > "$agents/com.ctadl-bench.daemon.plist" <<EOF
 <plist version="1.0"><dict>
   <key>Label</key><string>com.ctadl-bench.daemon</string>
   <key>ProgramArguments</key><array>
+    <string>$launch</string><string>$logs/daemon.log</string>
     <string>$bench/run.sh</string><string>daemon</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>60</integer>
   <key>ProcessType</key><string>Standard</string>
-  <key>StandardOutPath</key><string>$logs/daemon.log</string>
-  <key>StandardErrorPath</key><string>$logs/daemon.log</string>
 </dict></plist>
 EOF
 
@@ -56,6 +62,7 @@ cat > "$agents/com.ctadl-bench.web.plist" <<EOF
 <plist version="1.0"><dict>
   <key>Label</key><string>com.ctadl-bench.web</string>
   <key>ProgramArguments</key><array>
+    <string>$launch</string><string>$logs/web.log</string>
     <string>/usr/sbin/taskpolicy</string><string>-b</string>
     <string>$bench/run.sh</string><string>serve</string>
     <string>--host</string><string>$host</string><string>--port</string><string>$port</string>
@@ -66,8 +73,6 @@ cat > "$agents/com.ctadl-bench.web.plist" <<EOF
   <key>ProcessType</key><string>Background</string>
   <key>LowPriorityIO</key><true/>
   <key>Nice</key><integer>10</integer>
-  <key>StandardOutPath</key><string>$logs/web.log</string>
-  <key>StandardErrorPath</key><string>$logs/web.log</string>
 </dict></plist>
 EOF
 
