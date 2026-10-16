@@ -602,7 +602,6 @@ pub fn normalize_stack_slots_for_method<'a>(
 fn rewrite_location_stack_inputs(
     loc: &mut Location,
     stack_len: usize,
-    max_stack_input_depth: &mut usize,
     class_name: &str,
     method_name: &str,
     method_desc: &str,
@@ -628,15 +627,11 @@ fn rewrite_location_stack_inputs(
             }
             let slot_index = stack_len - 1 - depth_usize;
             *loc = Location::StackSlot(slot_index as StackSlotId);
-            if depth_usize + 1 > *max_stack_input_depth {
-                *max_stack_input_depth = depth_usize + 1;
-            }
         }
         Location::ArrayElement { base, offset } => {
             rewrite_location_stack_inputs(
                 base.as_mut(),
                 stack_len,
-                max_stack_input_depth,
                 class_name,
                 method_name,
                 method_desc,
@@ -647,7 +642,6 @@ fn rewrite_location_stack_inputs(
             rewrite_location_stack_inputs(
                 offset.as_mut(),
                 stack_len,
-                max_stack_input_depth,
                 class_name,
                 method_name,
                 method_desc,
@@ -659,6 +653,51 @@ fn rewrite_location_stack_inputs(
         _ => {}
     }
     Ok(())
+}
+
+/// The number of operand stack slots an instruction pops and pushes, as
+/// [`normalize_stack_slots_for_method`] simulates it. A category-2 value counts
+/// as two slots.
+///
+/// `inst` must be as decoded, before normalization: the pops are read off its
+/// deepest `StackInput` and the pushes off its `StackOutput`s. Calls take theirs
+/// from the descriptor, and the instructions with neither (branches, returns,
+/// `pop`, `checkcast`, ...) from a table.
+pub fn instruction_stack_effect(inst: &InstructionFlowInfo<'_>) -> (usize, usize) {
+    fn depth(loc: &Location) -> usize {
+        match loc {
+            Location::StackInput(d) => *d as usize + 1,
+            Location::ArrayElement { base, offset } => depth(base).max(depth(offset)),
+            _ => 0,
+        }
+    }
+    let mut consume = 0;
+    let mut produce = 0;
+    for df in &inst.dataflow {
+        for src in &df.sources {
+            consume = consume.max(depth(src));
+        }
+        consume = consume.max(depth(&df.destination));
+        if let Location::StackOutput = df.destination {
+            produce += 1;
+        }
+    }
+    if inst.kind == InstructionKind::Call {
+        if let Some(call) = &inst.call {
+            let ret_desc = match call.call_kind {
+                CallKind::Dynamic => call.dynamic_type.as_deref(),
+                _ => call.target.as_ref().map(|t| t.descriptor.as_str()),
+            };
+            consume = consume.max(call.stack_slots_consumed as usize);
+            produce = produce.max(ret_desc.map_or(0, descriptor_return_slot_count));
+        }
+    }
+    if inst.dataflow.is_empty() && inst.kind != InstructionKind::Call {
+        let (misc_consume, misc_produce) = misc_stack_effect(inst.opcode);
+        consume = consume.max(misc_consume);
+        produce = produce.max(misc_produce);
+    }
+    (consume, produce)
 }
 
 fn simulate_block<'a>(
@@ -684,9 +723,7 @@ fn simulate_block<'a>(
             .this_class_name()
             .unwrap_or("<class-name-error>");
 
-        // Determine stack effect from dataflow and calls.
-        let mut max_stack_input_depth: usize = 0;
-        let mut stack_outputs: usize = 0;
+        let (consume, produce) = instruction_stack_effect(inst);
 
         if !inst.dataflow.is_empty() {
             let stack_len = state.slots.len();
@@ -695,7 +732,6 @@ fn simulate_block<'a>(
                     rewrite_location_stack_inputs(
                         src,
                         stack_len,
-                        &mut max_stack_input_depth,
                         class_name,
                         method_name,
                         method_desc,
@@ -707,7 +743,6 @@ fn simulate_block<'a>(
                 rewrite_location_stack_inputs(
                     &mut df.destination,
                     stack_len,
-                    &mut max_stack_input_depth,
                     class_name,
                     method_name,
                     method_desc,
@@ -715,37 +750,12 @@ fn simulate_block<'a>(
                     inst.opcode,
                     inst.mnemonic,
                 )?;
-
-                if let Location::StackOutput = df.destination {
-                    stack_outputs += 1;
-                }
             }
         }
 
-        // Additional stack effect for call instructions.
-        let mut call_consume: usize = 0;
-        let mut call_produce: usize = 0;
+        // Rewrite receiver/arguments stack locations from StackInput(depth)
+        // into absolute StackSlot ids based on the current stack state.
         if inst.kind == InstructionKind::Call {
-            if let Some(call) = &inst.call {
-                call_consume = call.stack_slots_consumed as usize;
-                let mut ret_slots = 0usize;
-                match call.call_kind {
-                    CallKind::Dynamic => {
-                        if let Some(desc) = &call.dynamic_type {
-                            ret_slots = descriptor_return_slot_count(desc);
-                        }
-                    }
-                    _ => {
-                        if let Some(target) = &call.target {
-                            ret_slots = descriptor_return_slot_count(&target.descriptor);
-                        }
-                    }
-                }
-                call_produce = ret_slots;
-            }
-
-            // Rewrite receiver/arguments stack locations from StackInput(depth)
-            // into absolute StackSlot ids based on the current stack state.
             if let Some(call) = inst.call.as_mut() {
                 let len = state.slots.len();
                 if let Some(receiver) = call.receiver.as_mut() {
@@ -793,17 +803,6 @@ fn simulate_block<'a>(
             }
         }
 
-        // Stack effects for non-Dataflow/non-Call opcodes that still mutate stack depth.
-        let (misc_consume, misc_produce) =
-            if inst.dataflow.is_empty() && inst.kind != InstructionKind::Call {
-                misc_stack_effect(inst.opcode)
-            } else {
-                (0, 0)
-            };
-
-        let consume = max_stack_input_depth.max(call_consume).max(misc_consume);
-        let produce = stack_outputs.max(call_produce).max(misc_produce);
-
         if state.slots.len() < consume {
             return Err(ClassFileError::StackUnderflow {
                 method: Box::new(MethodContext {
@@ -824,24 +823,18 @@ fn simulate_block<'a>(
         let old_len = state.slots.len();
         let remaining_len = old_len - consume;
         let mut out_i = 0usize;
-        if !inst.dataflow.is_empty() && stack_outputs > 0 {
-            for df in &mut inst.dataflow {
-                if matches!(df.destination, Location::StackOutput) {
-                    let id = (remaining_len + out_i) as StackSlotId;
-                    df.destination = Location::StackSlot(id);
-                    out_i += 1;
-                }
+        for df in &mut inst.dataflow {
+            if matches!(df.destination, Location::StackOutput) {
+                let id = (remaining_len + out_i) as StackSlotId;
+                df.destination = Location::StackSlot(id);
+                out_i += 1;
             }
         }
 
         // Rewrite call return value location.
-        if call_produce > 0 {
-            if let Some(call) = inst.call.as_mut() {
-                if let Some(ret_loc) = call.return_value.as_mut() {
-                    if matches!(ret_loc, Location::StackOutput) {
-                        *ret_loc = Location::StackSlot(remaining_len as StackSlotId);
-                    }
-                }
+        if let Some(ret_loc) = inst.call.as_mut().and_then(|c| c.return_value.as_mut()) {
+            if matches!(ret_loc, Location::StackOutput) {
+                *ret_loc = Location::StackSlot(remaining_len as StackSlotId);
             }
         }
 
