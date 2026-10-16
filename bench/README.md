@@ -25,9 +25,9 @@ Per commit, a **pass** (`bench.toml` `[suites.*]`):
 |---|---|---|
 | taintbench | 38 TaintBench apps (APKs pinned by the flake) | ground-truth flows found, known false positives (`xtask taintbench-score`) |
 | android-icc | 3 DroidBench ICC cases | flow present as expected |
-| fdroid | newest version of each app in `~/apps/fdroid` (`suites/fdroid.json`) | reported paths, `ctadl report` numbers |
+| fdroid | newest version of each app in `~/apps/fdroid` (`suites/fdroid.json`) | reported paths, `ctadl report` numbers, with the `suites/android-privacy.json` model |
 | firmware7 | 45 network-facing binaries of the 7 Mango devices (`suites/firmware7.json`) | cmdi findings, by source class |
-| apps | newest version of each app in `~/apps` (`suites/apps.json`) | reported paths, `ctadl report` numbers |
+| apps | newest version of each app in `~/apps` (`suites/apps.json`) | same as fdroid |
 
 Each benchmark is import -> index -> query (plus `report` for apps), one measured unit per
 phase. Besides counts, each query's set of reported paths/findings is stored as a digest, so a
@@ -38,6 +38,9 @@ Mango dataset - 32,559 binaries (`suites/firmware-sweep.json`) - pinned to one c
 parallel whenever no pass work is waiting, restarted at the newest commit when complete.
 
 The JSON lists are frozen with the `suites/gen_*.py` scripts; regenerate on purpose.
+`suites/android-privacy.json`, the fdroid and apps query model, is the framework-class rules of
+the TaintBench app models (`gen_android_model.py`): those suites have no ground truth, so they
+are queried for the same kinds of leak TaintBench scores.
 
 ## Staying out of the way
 

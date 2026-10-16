@@ -94,9 +94,10 @@ def benchmarks(cfg, inputs, conn, sha: str):
                         "status": spec.get("status", "pass")})
 
         elif suite in ("fdroid", "apps"):
+            model = str(bench_repo / s["model"])
             for app in json.loads((bench_repo / s["list"]).read_text()):
                 yield (suite, app["bench"], s["order"], mem,
-                       _apk_phases(t, app["path"], report=True),
+                       _apk_phases(t, app["path"], model=model, report=True),
                        {"kind": "flows", "input_sha256": app["sha256"]})
 
         elif suite == "firmware7":
