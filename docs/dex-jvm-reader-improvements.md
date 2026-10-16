@@ -1,7 +1,8 @@
 # Improving `dex-reader` and `jvm-reader` dataflow - DO-NOT-MERGE
 
 Status: §1 (`dex-reader`) is fixed on branch `dex-jvm-reader-fixes`, except for
-the open items in §1.7. §2 (`jvm-reader`) is open and not scheduled. These
+the open items in §1.7. §2 (`jvm-reader`) is open and not scheduled. §3 records
+wrong taint answers from `ctadl-jvm`, confirmed by test programs; they are open. These
 problems were found while designing the CIL reader's dataflow layer
 ([`cil-flow-api.md`](cil-flow-api.md)), which is built to avoid them.
 
@@ -266,3 +267,91 @@ and the unit tests are their only coverage.
 5. **Fails whole methods.** An inconsistent stack height at a join returns
    `Err(InvalidClassFileMessage(...))`, losing the method — and with it every call
    edge through it.
+
+---
+
+## 3. Confirmed `ctadl-jvm` bugs
+
+§2 is about design. This section is about wrong answers. Each bug below was
+confirmed with a small Java program run through `cargo xtask regression
+--frontend jvm,dex --tests-dir <dir>`. Every program gives the wrong answer on
+the JVM frontend and the right one on the Dex frontend. Each has a control
+program, identical except that the object goes through a local variable first,
+and every control passes on both frontends. The programs and logs are in
+`/Volumes/Shampoo/runs/jvm-audit/` (`tests/`, `tests2/`, `probe-1.log`,
+`probe-2.log`).
+
+| Program | Expected | JVM frontend | Control (passes) |
+| --- | --- | --- | --- |
+| `get().data = t;` then `sink(holder.data)`, where `get()` returns `holder` | flow | no flow | `g = get(); g.data = t;` |
+| `get().v = t;` with a `long` field `v` | flow | no flow | — |
+| `a.data = source();` then `sink(fresh().data)`, where `fresh()` returns a new object | no flow | flow | `f = fresh(); sink(f.data);` |
+| `o = source(); String x = o.data = y; sink(x);` with clean `y` | no flow | flow | `o.data = y; String x = y;` |
+
+### 3.1 Field accesses use the last `aload`, not the object on the stack
+
+`field_object_base` (`frontends/ctadl-jvm/src/lib.rs:908`) picks the object a
+`getfield` or `putfield` acts on. It prefers `last_aload_reg`, the register of
+the most recent `aload` that was emitted, over the stack slot that actually holds
+the object. It falls back to the slot only when no `aload` has been seen.
+`last_aload_reg` is declared once per method (`lib.rs:323`), never reset, and
+updated as blocks are emitted in index order, not in control-flow order.
+
+So whenever the object does not come from a local variable (a call result, a
+static field, an array element or another field), the access is attributed to
+whatever was loaded last:
+
+- `get().data = t` compiles to `invokestatic get; aload t; putfield data`. The
+  last `aload` is `t`, so the store becomes `t.data = t`, and the real object's
+  field never gets the taint. That is a missed flow.
+- `sink(fresh().data)` after `a.data = source()` reads `a.data`, because `a` was
+  the last `aload`. That is a false flow.
+
+Field accesses on call results are everyday Java (`getFoo().bar`, builders,
+`this.x.y`), so this is the most serious bug here. It is the code §2 item 3
+calls backwards-scanning heuristics.
+
+Fix: take the base from the stack slot alone, and let SSA copy propagation
+(`propagate_copies`) resolve the slot to the variable copied into it, as §2
+item 3 suggests. Then delete `last_aload_reg`, `aload_for_stack_slot`,
+`aload_register_before` and the rest of the heuristics.
+
+### 3.2 `dup_x*` sends every input to every output
+
+For `dup_x1`, `dup_x2`, `dup2`, `dup2_x1` and `dup2_x2`, `decode_dataflow`
+(`readers/jvm-reader/src/flow.rs:1648`-`1687`) lists every input slot as a source
+of every output slot. `stack_dup_statements` (`lib.rs:1011`) then also assigns
+every output to every other output. `dup_x1` takes `..., v2, v1` to
+`..., v1, v2, v1`, so the outputs should be `v1`, `v2`, `v1`. Instead all three
+get both values.
+
+javac emits `dup_x1` for a chained assignment to a field
+(`x = o.data = y`), for `o.f++` used as a value, and similar code. In the
+example, the clean `y` picks up the taint of the object `o`, and `x` reaches the
+sink.
+
+Fix: give each output its one source per JVMS §6.5. `dup2` and `dup2_x*` depend
+on whether the top values are category 1 or 2. `jvm-reader` already counts a
+category-2 value as two slots, so the slot-level permutation is the same for
+both.
+
+### 3.3 The regression suite hides JVM taint failures
+
+`apply_jvm_allowlist` (`xtask/src/regression.rs`) turns a failing `Jvm:` case
+into XFAIL unless the case is listed in `JVM_E2E_ENFORCED`. All four programs
+above were reported as XFAIL, so the suite stays green. They should be added
+as enforced cases when 3.1 and 3.2 are fixed.
+
+### 3.4 Suspected, not yet tested
+
+- `swap` (`0x5f`) is not lowered by `stack_dup_statements`, but its decoding
+  lists both inputs as sources of both outputs, so the two values mix as in 3.2.
+- `ldc` of a MethodHandle, MethodType or dynamic constant is an error in
+  `resolve_constant` (`flow.rs:1377`), which probably loses the method. javac
+  rarely emits these; other compilers and bytecode tools can.
+- `instanceof` and `arraylength` have a stack effect but no dataflow. Their
+  result takes the input's stack slot id, so the object's taint passes to the
+  boolean or the length.
+- The `ireturn`..`areturn` terminators return `StackSlot(0)`, the bottom of the
+  stack, which is right only when the return value is alone on the stack.
+
