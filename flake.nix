@@ -184,6 +184,32 @@
             exec ${jdk}/bin/java -jar ${jar} "$@"
           '';
 
+        # ASM, the bytecode library, for the jvm-reader checks that need an
+        # independent model of JVM bytecode: its analyzer is the oracle the
+        # `jvm:asm-flow` check compares jvm-reader's dataflow with, and its
+        # class writer builds bytecode javac never emits (see
+        # docs/jvm-validation.md). nixpkgs packages no ASM jars, so fetch the
+        # pinned release from Maven Central. `asm-classpath` prints the
+        # classpath, which is how xtask finds them.
+        asmClasspath =
+          let
+            jar =
+              name: hash:
+              pkgs.fetchurl {
+                url = "https://repo1.maven.org/maven2/org/ow2/asm/${name}/9.8/${name}-9.8.jar";
+                inherit hash;
+              };
+            jars = [
+              (jar "asm" "sha256-h26raoPa7K1cpn65/KuwY8l7WuuM8fynqYns3hdSIFE=")
+              (jar "asm-tree" "sha256-FLeIDLfIXu0QHicQQy/D/7gydVMqaolNxMQJXUmtWfE=")
+              (jar "asm-analysis" "sha256-5kBzL7zTxicZJaUE8SXjg4Roj037v5LIYi387g0J7bk=")
+              (jar "asm-util" "sha256-i6BGDsso/Q4pgOXz7zQzpROkV7wHf4GlO9x1tYegjRU=")
+            ];
+          in
+          pkgs.writeShellScriptBin "asm-classpath" ''
+            echo ${pkgs.lib.concatStringsSep ":" jars}
+          '';
+
         # The one version this tree has. Read rather than repeated so these
         # derivations stay named after it; see the root Cargo.toml.
         workspaceVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
@@ -303,6 +329,7 @@
             jdk
             baksmali
             smali
+            asmClasspath
             pkgs.ghidra-bin
           ];
         };
