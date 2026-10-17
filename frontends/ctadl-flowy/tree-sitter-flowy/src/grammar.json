@@ -180,6 +180,10 @@
       "members": [
         {
           "type": "STRING",
+          "value": "copied"
+        },
+        {
+          "type": "STRING",
           "value": "shared_fields"
         },
         {
@@ -815,6 +819,15 @@
           "content": {
             "type": "STRING",
             "value": "summaries"
+          },
+          "named": true,
+          "value": "ident"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "STRING",
+            "value": "copied"
           },
           "named": true,
           "value": "ident"

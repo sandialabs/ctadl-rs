@@ -184,7 +184,8 @@ peg::parser! {
             { Param { name, ty: ty.unwrap_or(ParameterType::SharedFields) } }
 
         rule param_type() -> ParameterType
-            = kw("shared_fields") { ParameterType::SharedFields }
+            = kw("copied") { ParameterType::Copied }
+            / kw("shared_fields") { ParameterType::SharedFields }
             / kw("shared") { ParameterType::Shared }
 
         rule arity() -> u8

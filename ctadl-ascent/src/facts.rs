@@ -1192,6 +1192,7 @@ pub enum IntentPairKind {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Default)]
 pub enum FormalType {
+    Copied,
     #[default]
     SharedFields,
     Shared,
@@ -1202,6 +1203,7 @@ impl From<mir::ParameterType> for FormalType {
     fn from(ty: mir::ParameterType) -> Self {
         use mir::ParameterType::*;
         match ty {
+            Copied => FormalType::Copied,
             Shared => FormalType::Shared,
             SharedFields => FormalType::SharedFields,
         }
@@ -1220,6 +1222,7 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> 
     let i: i16 = **formal_index;
     if i >= 0 {
         match formal_type {
+            FormalType::Copied => false,
             FormalType::Shared => true,
             FormalType::SharedFields => !ap.is_empty(),
         }

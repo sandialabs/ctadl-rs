@@ -727,6 +727,9 @@ mod local_names {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ParameterType {
+    /// Nothing is shared: the callee's parameter is its own copy, fields and all, so no path is
+    /// an output. Right for a C struct passed by value.
+    Copied,
     /// The root is the callee's own copy, and what it reaches is shared: every path but the
     /// empty one is an output. A flow into the whole value does not reach the caller.
     #[default]
@@ -1880,6 +1883,7 @@ impl Display for Params {
 impl Display for ParameterType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ParameterType::Copied => write!(f, "copied"),
             ParameterType::SharedFields => write!(f, "shared_fields"),
             ParameterType::Shared => write!(f, "shared"),
         }

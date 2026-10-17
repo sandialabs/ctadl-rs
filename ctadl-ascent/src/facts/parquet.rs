@@ -692,6 +692,7 @@ impl EncodeColumn<facts::FormalType> for DefaultEncoder {
                 .map(|t| match t {
                     SharedFields => 0,
                     Shared => 1,
+                    Copied => 2,
                 })
                 .collect_vec(),
         )
@@ -710,6 +711,7 @@ impl DecodeColumn<facts::FormalType> for DefaultDecoder {
             .map(|i| match i {
                 0 => SharedFields,
                 1 => Shared,
+                2 => Copied,
                 _ => panic!("bad encoding of FormalType"),
             })
     }

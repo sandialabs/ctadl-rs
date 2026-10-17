@@ -46,3 +46,21 @@ start:
   p.f = v;
   return;
 }
+
+// Nothing a callee writes to a `copied` parameter reaches the caller: not a field write,
+def FieldWriteCopied(p copied, v)
+where summaries [p.f </- v]
+{
+start:
+  p.f = v;
+  return;
+}
+
+// nor a callee's write to the argument it was passed, though that write reaches this function.
+def CallWritesCopied(p copied, v)
+where summaries [p.f </- v]
+{
+start:
+  FieldWriteSharedFields(p, v);
+  return;
+}

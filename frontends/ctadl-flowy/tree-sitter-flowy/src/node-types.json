@@ -608,6 +608,10 @@
     "extra": true
   },
   {
+    "type": "copied",
+    "named": false
+  },
+  {
     "type": "def",
     "named": false
   },
