@@ -8,7 +8,9 @@
 //! checked are exactly the overloads the generators select, and the ports are the ones the
 //! loader decodes. A class that does not load, or lives in another assembly than the one named
 //! (the frontend canonicalizes through forwarders), fails, as does a generator that selects
-//! nothing.
+//! nothing. A `find: "dispatch"` generator is matched against a `callvirt` of every listed
+//! method, so it is held to the same spellings, but nothing calls it: it names a contract,
+//! not a method, and the `find: methods` entries it repeats are the ones checked by calling.
 //!
 //! **What they do.** `model-run` calls each selected method with marked arguments, many times,
 //! and reports two things: a *flow*, a marker from input `(i, p)` found at output `(j, q)` that
@@ -36,12 +38,15 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use ctadl_ascent::models::{
-    try_check_jsonl_models, FormalIndexTypeTag, ImportScope, MatchedFunctions, ModelPort,
-    ProgramMatchIndex, ProgramModelMatches, CIL_DEFAULT_MODELS,
+    try_check_jsonl_models, DispatchKeys, FormalIndexTypeTag, ImportScope, MatchedFunctions,
+    ModelPort, ProgramMatchIndex, ProgramModelMatches, CIL_DEFAULT_MODELS,
 };
-use ctadl_ir::mir::call::{CilClass, CilMethod, CilSignature, CilSimpleName, VirtualMethodTable};
+use ctadl_ir::mir::builder::FunctionBuilder;
+use ctadl_ir::mir::call::{
+    CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, VirtualMethodTable,
+};
 use ctadl_ir::mir::{
-    BasicBlockData, FunctionData, Functions, ParameterType, PathSegment, Program, ProgramInfo,
+    BasicBlockData, Exp, FunctionData, Functions, ParameterType, PathSegment, Program, ProgramInfo,
     Statement, StatementKind,
 };
 use serde::Deserialize;
@@ -262,7 +267,12 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
         .map(|r| (r.fid.as_deref().unwrap(), r.arity.unwrap_or(0)))
         .collect();
     let program_info = program(&rows);
-    let index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let dispatch_keys = DispatchKeys::from_program(&program_info.program);
+    let index = ProgramMatchIndex::new_with_dispatch(
+        &program_info,
+        ImportScope::unknown(),
+        Some(&dispatch_keys),
+    );
     let mut matches = ProgramModelMatches::default();
     let (report, errors) =
         try_check_jsonl_models(&index, BufReader::new(contents), usize::MAX, &mut matches);
@@ -475,17 +485,44 @@ fn program(rows: &[Row]) -> ProgramInfo {
             )
         })
         .collect();
-    let functions = rows.iter().map(|r| {
-        let mut f = FunctionData::default();
-        f.set_name(r.fid.clone().unwrap_or_default());
-        for _ in 0..r.arity.unwrap_or(0) {
-            f.params.parameters.push(ParameterType::ByRef);
+    let mut functions: Vec<FunctionData> = rows
+        .iter()
+        .map(|r| {
+            let mut f = FunctionData::default();
+            f.set_name(r.fid.clone().unwrap_or_default());
+            for _ in 0..r.arity.unwrap_or(0) {
+                f.params.parameters.push(ParameterType::ByRef);
+            }
+            let blocks = f.blocks.blocks_mut();
+            let body = blocks.push(BasicBlockData::new(None));
+            blocks[body].extend(vec![Statement::new_kind(StatementKind::Nop)]);
+            f
+        })
+        .collect();
+    // One `callvirt` of every listed method, so a `find: "dispatch"` generator is matched
+    // against the call-site keys the frontend would write for the same methods.
+    let mut caller = FunctionData::default();
+    caller.set_name("ctadl$cil-models$caller".to_string());
+    {
+        let mut fb = FunctionBuilder::new(&mut caller);
+        let body = fb.add_block();
+        let mut b = fb.at_block(body);
+        let recv = b.new_local_var("recv");
+        for r in rows {
+            b.create_call(
+                CallStyle::CilCall {
+                    receiver: recv.clone(),
+                    cls: r.cls.as_str().into(),
+                    simple_name: r.simple.as_deref().unwrap_or_default().into(),
+                    descriptor: r.desc.as_deref().unwrap_or_default().into(),
+                },
+                Vec::new(),
+                Vec::new(),
+            );
         }
-        let blocks = f.blocks.blocks_mut();
-        let body = blocks.push(BasicBlockData::new(None));
-        blocks[body].extend(vec![Statement::new_kind(StatementKind::Nop)]);
-        f
-    });
+        b.create_ret(Vec::<Exp>::new());
+    }
+    functions.push(caller);
     ProgramInfo {
         vmt: VirtualMethodTable::Cil {
             methods,
