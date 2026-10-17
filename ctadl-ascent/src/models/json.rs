@@ -1097,8 +1097,9 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             self.add_json_error(crate::error::JsonModelError::UnexpectedField {
                 index: n,
                 field_name: key.clone(),
-                message: "not supported with find: dispatch; a dispatch model carries exactly \
-                          one of 'propagation', 'resolve' and 'closure_shaped'"
+                message: "not supported with find: dispatch; a dispatch model carries \
+                          'propagation', 'resolve' (optionally with 'propagation') or \
+                          'closure_shaped'"
                     .to_string(),
             });
             ok = false;
@@ -1106,7 +1107,9 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         let has_propagation = obj.contains_key("propagation");
         let has_resolve = obj.contains_key("resolve");
         let has_closure = obj.contains_key("closure_shaped");
-        if usize::from(has_propagation) + usize::from(has_resolve) + usize::from(has_closure) != 1 {
+        // `resolve` and `propagation` together are one disposition: inline, plus the summary.
+        let kinds = usize::from(has_propagation || has_resolve) + usize::from(has_closure);
+        if kinds != 1 {
             self.add_json_error(crate::error::JsonModelError::MissingField {
                 index: n,
                 field_name: "propagation' / 'resolve' / 'closure_shaped".to_string(),
@@ -1141,9 +1144,25 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             }
             return;
         }
+        let ports = if has_propagation {
+            let Some(items) = obj["propagation"].as_array() else {
+                self.report_not_array(n, "propagation");
+                return;
+            };
+            let mut ports = Vec::with_capacity(items.len());
+            for item in items {
+                match self.parse_dispatch_propagation(n, item) {
+                    Some(pair) => ports.push(pair),
+                    None => return,
+                }
+            }
+            ports
+        } else {
+            Vec::new()
+        };
         let disposition = if has_resolve {
             match obj["resolve"].as_str() {
-                Some("inline") => matches::Disposition::Inline,
+                Some("inline") => matches::Disposition::Inline(ports),
                 Some(other) => {
                     self.add_json_error(crate::error::JsonModelError::UnexpectedField {
                         index: n,
@@ -1161,17 +1180,6 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 }
             }
         } else {
-            let Some(items) = obj["propagation"].as_array() else {
-                self.report_not_array(n, "propagation");
-                return;
-            };
-            let mut ports = Vec::with_capacity(items.len());
-            for item in items {
-                match self.parse_dispatch_propagation(n, item) {
-                    Some(pair) => ports.push(pair),
-                    None => return,
-                }
-            }
             if ports.is_empty() {
                 matches::Disposition::Skip
             } else {

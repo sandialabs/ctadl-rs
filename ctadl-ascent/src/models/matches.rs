@@ -87,8 +87,11 @@ pub type DispatchKey = (facts::Str, facts::Str, facts::Str);
 /// `--no-default-models`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Disposition {
-    /// Hybrid inlining regardless of the threshold, unless the key has exactly one target.
-    Inline,
+    /// Hybrid inlining regardless of the threshold, unless the key has exactly one target. A
+    /// non-empty list is `resolve: inline` with a `propagation` too: the site is inlined *and*
+    /// gets the synthetic summary, for a contract whose receivers are sometimes the program's
+    /// objects, whose bodies inlining reaches, and sometimes a library's, which have none.
+    Inline(Vec<(ModelPort, ModelPort)>),
     /// One synthetic summary at the site, carrying these `(destination, source)` propagations.
     /// Two generators matching one key union their lists, as two generators matching one
     /// function do.
@@ -101,7 +104,7 @@ impl Disposition {
     /// Higher wins when several generators match one key.
     fn rank(&self) -> u8 {
         match self {
-            Disposition::Inline => 2,
+            Disposition::Inline(_) => 2,
             Disposition::Model(_) => 1,
             Disposition::Skip => 0,
         }
@@ -118,12 +121,13 @@ pub struct DispatchModel {
 
 impl DispatchModel {
     /// Folds another generator's disposition for the same key in, applying the precedence in
-    /// [`Disposition`]. Two `Model`s union their propagation lists; otherwise the higher-ranked
-    /// disposition wins. Either way both generators stay in the provenance, which is what lets
-    /// the diagnostics name the one that lost.
+    /// [`Disposition`]. Two `Model`s, or two `Inline`s, union their propagation lists; otherwise
+    /// the higher-ranked disposition wins. Either way both generators stay in the provenance,
+    /// which is what lets the diagnostics name the one that lost.
     pub fn merge(&mut self, other: DispatchModel) {
         match (&mut self.disposition, other.disposition) {
-            (Disposition::Model(ours), Disposition::Model(theirs)) => {
+            (Disposition::Model(ours), Disposition::Model(theirs))
+            | (Disposition::Inline(ours), Disposition::Inline(theirs)) => {
                 for p in theirs {
                     if !ours.contains(&p) {
                         ours.push(p);

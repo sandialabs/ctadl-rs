@@ -131,7 +131,8 @@ pub enum DispatchDisposition {
     Model,
     /// An empty propagation list: the target set is discarded.
     Skip,
-    /// `resolve: "inline"`: hybrid inlining whatever the target count.
+    /// `resolve: "inline"`: hybrid inlining whatever the target count, plus the synthetic
+    /// summary when the model also lists a propagation.
     Inline,
 }
 
@@ -531,8 +532,12 @@ enum SiteAction {
     Cha,
     /// Rung 0: super resolution found the one real target.
     SuperExact(Symbol),
-    /// Rung 3, or a rung-1 `resolve: inline`: hybrid inlining.
-    Defer { by_model: bool },
+    /// Rung 3, or a rung-1 `resolve: inline`: hybrid inlining. `summary` is the signature's
+    /// synthetic function, called as well, when the inline disposition carries a propagation.
+    Defer {
+        by_model: bool,
+        summary: Option<fx::FunctionId>,
+    },
 }
 
 impl<'a> CodegenVisitor<'a> {
@@ -578,14 +583,20 @@ impl<'a> CodegenVisitor<'a> {
     ) -> SiteAction {
         match self.strategy {
             CallResolutionStrategy::Cha => SiteAction::Cha,
-            CallResolutionStrategy::Hi => SiteAction::Defer { by_model: false },
+            CallResolutionStrategy::Hi => SiteAction::Defer {
+                by_model: false,
+                summary: None,
+            },
             CallResolutionStrategy::LegacyMixed => {
                 // A zero-target site emits nothing either way, so it takes the CHA arm; that
                 // is also where the ladder counts it.
                 if self.resolvent_count(key) <= 1 {
                     SiteAction::Cha
                 } else {
-                    SiteAction::Defer { by_model: false }
+                    SiteAction::Defer {
+                        by_model: false,
+                        summary: None,
+                    }
                 }
             }
             CallResolutionStrategy::Mixed => self.classify_ladder(key, dispatch, super_start),
@@ -614,7 +625,14 @@ impl<'a> CodegenVisitor<'a> {
             Rung::Model => SiteAction::Model(self.synthetic(key)),
             Rung::Skip => SiteAction::Skip,
             Rung::Cha => SiteAction::Cha,
-            Rung::Inline { by_model } => SiteAction::Defer { by_model },
+            Rung::Inline { by_model } => {
+                let summary = if by_model && self.inline_has_summary(key) {
+                    Some(self.synthetic(key))
+                } else {
+                    None
+                };
+                SiteAction::Defer { by_model, summary }
+            }
         }
     }
 
@@ -669,10 +687,13 @@ impl<'a> CodegenVisitor<'a> {
                     self.facts.call.push((site, target));
                 }
             }
-            SiteAction::Defer { by_model } => {
+            SiteAction::Defer { by_model, summary } => {
                 buckets.inlined += 1;
                 if by_model {
                     buckets.inlined_by_model += 1;
+                }
+                if let Some(target) = summary {
+                    self.facts.call.push((site, target));
                 }
                 log::trace!("java: hybrid resolve {cls}.{simple_name}{descriptor} (deferred)");
                 self.deferred_dispatch
@@ -703,6 +724,19 @@ impl<'a> CodegenVisitor<'a> {
             self.facts.external_function.push((id,));
         }
         id
+    }
+
+    /// Whether `key`'s `resolve: inline` disposition also lists a propagation.
+    fn inline_has_summary(&self, key: &SignatureKey) -> bool {
+        let model_key = (
+            Str::from(key.0.as_ref()),
+            Str::from(key.1.as_ref()),
+            Str::from(key.2.as_ref()),
+        );
+        matches!(
+            self.matches.dispatch.get(&model_key).map(|m| &m.disposition),
+            Some(crate::models::Disposition::Inline(ports)) if !ports.is_empty()
+        )
     }
 
     /// How many methods CHA resolves `key` to.
@@ -738,7 +772,7 @@ impl<'a> CodegenVisitor<'a> {
         let disposition = match self.matches.dispatch.get(&model_key) {
             None => None,
             Some(model) => match &model.disposition {
-                crate::models::Disposition::Inline => Some(DispatchDisposition::Inline),
+                crate::models::Disposition::Inline(_) => Some(DispatchDisposition::Inline),
                 crate::models::Disposition::Model(_) | crate::models::Disposition::Skip => {
                     let endpoint = targets
                         .iter()

@@ -577,7 +577,7 @@ fn policy_section(
             None
         } else {
             model.map(|m| match m.disposition {
-                Disposition::Inline => DispatchDisposition::Inline,
+                Disposition::Inline(_) => DispatchDisposition::Inline,
                 Disposition::Model(_) => DispatchDisposition::Model,
                 Disposition::Skip => DispatchDisposition::Skip,
             })

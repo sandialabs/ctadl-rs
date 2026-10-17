@@ -115,7 +115,7 @@ fn dispatch_propagations(
     matches: &ProgramModelMatches,
 ) -> impl Iterator<Item = PropagationMatch> + '_ {
     matches.dispatch.iter().flat_map(|(key, model)| {
-        let Disposition::Model(ports) = &model.disposition else {
+        let (Disposition::Model(ports) | Disposition::Inline(ports)) = &model.disposition else {
             return Vec::new();
         };
         let function = facts::Str::from(

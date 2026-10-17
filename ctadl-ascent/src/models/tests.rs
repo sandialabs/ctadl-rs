@@ -677,17 +677,39 @@ mod dispatch {
         .expect("loading");
         assert_eq!(
             out.dispatch.values().next().map(|m| &m.disposition),
-            Some(&Disposition::Inline)
+            Some(&Disposition::Inline(Vec::new()))
         );
     }
 
+    /// `resolve: inline` with a propagation keeps both: the site is inlined and carries the
+    /// summary.
+    #[test]
+    fn resolve_inline_with_a_propagation_keeps_the_ports() {
+        let out = dispatch_of(
+            &[ITERATOR],
+            vec![serde_json::json!({
+                "find": "dispatch",
+                "where": [{"constraint": "signature_match", "name": "next"}],
+                "model": {"resolve": "inline",
+                          "propagation": [{"input": "Argument(0)", "output": "Return"}]},
+            })],
+        )
+        .expect("loading");
+        let Some(Disposition::Inline(ports)) = out.dispatch.values().next().map(|m| &m.disposition)
+        else {
+            panic!("expected an inline disposition");
+        };
+        assert_eq!(ports.len(), 1);
+    }
+
     /// "Forgot the model" and "meant to discard" have to be different documents, so neither key
-    /// is an error and both keys is too.
+    /// is an error; and a marker is not a model, so `closure_shaped` stands alone.
     #[test]
     fn exactly_one_of_propagation_and_resolve_is_required() {
         for m in [
             serde_json::json!({}),
-            serde_json::json!({"propagation": [], "resolve": "inline"}),
+            serde_json::json!({"closure_shaped": true, "resolve": "inline"}),
+            serde_json::json!({"closure_shaped": true, "propagation": []}),
         ] {
             let err = errors_of(vec![serde_json::json!({
                 "find": "dispatch",
@@ -786,7 +808,7 @@ mod dispatch {
         ] {
             let out = dispatch_of(&[ITERATOR], vec![a, b]).expect("loading");
             let matched = out.dispatch.values().next().expect("one key");
-            assert_eq!(matched.disposition, Disposition::Inline);
+            assert_eq!(matched.disposition, Disposition::Inline(Vec::new()));
             assert_eq!(matched.provenance.len(), 2);
         }
     }
