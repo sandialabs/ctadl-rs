@@ -295,11 +295,16 @@
       "required": false,
       "types": [
         {
-          "type": "passing_style",
+          "type": "param_type",
           "named": true
         }
       ]
     }
+  },
+  {
+    "type": "param_type",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "params",
@@ -315,11 +320,6 @@
         }
       ]
     }
-  },
-  {
-    "type": "passing_style",
-    "named": true,
-    "fields": {}
   },
   {
     "type": "path",
@@ -603,14 +603,6 @@
     "named": false
   },
   {
-    "type": "byref",
-    "named": false
-  },
-  {
-    "type": "byval",
-    "named": false
-  },
-  {
     "type": "comment",
     "named": true,
     "extra": true
@@ -641,6 +633,14 @@
   },
   {
     "type": "return",
+    "named": false
+  },
+  {
+    "type": "shared",
+    "named": false
+  },
+  {
+    "type": "shared_fields",
     "named": false
   },
   {

@@ -1,5 +1,5 @@
 // Requires a summary due to assignments. Tests that value assignments don't
-// induce summaries because pass-by-value is assumed.
+// induce summaries: assigning to a parameter rebinds it, which is local to the callee.
 def F(p, q): 1
 where summaries [return <- q, return </- p, p </- q]
 {

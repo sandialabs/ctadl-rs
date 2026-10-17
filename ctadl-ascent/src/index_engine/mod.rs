@@ -2732,7 +2732,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let p = fb.add_param(ParameterType::ByVal);
+        let p = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let ret: Exp = if pass_through {
@@ -2757,7 +2757,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let x = fb.add_param(ParameterType::ByVal);
+        let x = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (fp, r, x) = (
@@ -2793,8 +2793,8 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let callee = fb.add_param(ParameterType::ByVal);
-        let x = fb.add_param(ParameterType::ByVal);
+        let callee = fb.add_param(ParameterType::SharedFields);
+        let x = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (r, callee, x) = (
@@ -2823,7 +2823,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let a = fb.add_param(ParameterType::ByVal);
+        let a = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (r, a) = (b.new_local_var("r"), b.new_param_var(a));

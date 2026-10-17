@@ -16,8 +16,8 @@ fn function_f() -> FunctionData {
     let mut f = FunctionData::default();
     f.set_name("F".to_string());
     f.set_return_type(ReturnType { arity: 1 });
-    f.params.push(ParameterType::ByVal);
-    f.params.push(ParameterType::ByVal);
+    f.params.push(ParameterType::SharedFields);
+    f.params.push(ParameterType::SharedFields);
     let a_idx = f.intern_local("a");
     let blocks = f.blocks.blocks_mut();
     let _start = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
@@ -67,7 +67,7 @@ fn function_g() -> FunctionData {
         ..Default::default()
     };
     g.set_return_type(ReturnType { arity: 1 });
-    g.params.push(ParameterType::ByVal);
+    g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let a = AccessPath {
@@ -118,7 +118,7 @@ fn function_g1() -> FunctionData {
         ..Default::default()
     };
     g.set_return_type(ReturnType { arity: 1 });
-    g.params.push(ParameterType::ByVal);
+    g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
@@ -171,7 +171,7 @@ fn program_h() -> Program {
     program.functions.push(FunctionData::default());
     let h = &mut program.functions[0.into()];
     h.set_name("F".to_string());
-    h.params.push(ParameterType::ByVal);
+    h.params.push(ParameterType::SharedFields);
     let blocks = h.blocks.blocks_mut();
     let _start = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Goto {
@@ -214,7 +214,7 @@ fn program_h_update() -> Program {
     program.functions.push(FunctionData::default());
     let h = &mut program.functions[0.into()];
     h.set_name("F".to_string());
-    h.params.push(ParameterType::ByVal);
+    h.params.push(ParameterType::SharedFields);
     let blocks = h.blocks.blocks_mut();
     let _start = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Goto {
@@ -778,7 +778,7 @@ fn function_diamond() -> FunctionData {
         ..Default::default()
     };
     f.set_return_type(ReturnType { arity: 1 });
-    f.params.push(ParameterType::ByVal);
+    f.params.push(ParameterType::SharedFields);
     let x = local(&mut f, "x");
     let t = local(&mut f, "t");
     let p = VariableRef::new_parameter(ParameterIdx::new(0));
@@ -963,7 +963,7 @@ fn exit_param_flow(f: &FunctionData) -> IndexVec<ParameterIdx, VariableRef> {
 fn test_entry_write_back() {
     // `p` is reassigned on one branch of the diamond. Whatever its type, the param-flow reads
     // `p_0`, the caller's argument, and nothing merges `p` at the join.
-    for ty in [ParameterType::ByVal, ParameterType::ByRef] {
+    for ty in [ParameterType::SharedFields, ParameterType::Shared] {
         let mut f = function_diamond();
         f.params.parameters[ParameterIdx::new(0)] = ty;
         transform(&mut f, true);

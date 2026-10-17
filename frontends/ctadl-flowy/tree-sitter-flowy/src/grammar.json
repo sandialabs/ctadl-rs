@@ -166,7 +166,7 @@
           "members": [
             {
               "type": "SYMBOL",
-              "name": "passing_style"
+              "name": "param_type"
             },
             {
               "type": "BLANK"
@@ -175,16 +175,16 @@
         }
       ]
     },
-    "passing_style": {
+    "param_type": {
       "type": "CHOICE",
       "members": [
         {
           "type": "STRING",
-          "value": "byref"
+          "value": "shared_fields"
         },
         {
           "type": "STRING",
-          "value": "byval"
+          "value": "shared"
         }
       ]
     },
@@ -823,7 +823,7 @@
           "type": "ALIAS",
           "content": {
             "type": "STRING",
-            "value": "byref"
+            "value": "shared"
           },
           "named": true,
           "value": "ident"
@@ -832,7 +832,7 @@
           "type": "ALIAS",
           "content": {
             "type": "STRING",
-            "value": "byval"
+            "value": "shared_fields"
           },
           "named": true,
           "value": "ident"

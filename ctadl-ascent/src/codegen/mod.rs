@@ -815,13 +815,13 @@ impl Visitor for CodegenVisitor<'_> {
         self.facts.formal_param.push((
             self.function.unwrap(),
             FlowVariable::formal_index(GLOBALS_INDEX.into()),
-            fx::FormalType::ByRef,
+            fx::FormalType::Shared,
         ));
         // Gens return parameter
         self.facts.formal_param.push((
             self.function.unwrap(),
             FlowVariable::formal_index(RETURN_INDEX.into()),
-            fx::FormalType::ByRef,
+            fx::FormalType::Shared,
         ));
         if skip {
             // `modes: ["skip-analysis"]`: lower the signature, drop the body. The function behaves

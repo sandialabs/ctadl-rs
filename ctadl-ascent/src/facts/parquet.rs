@@ -690,8 +690,8 @@ impl EncodeColumn<facts::FormalType> for DefaultEncoder {
             name,
             col.into_iter()
                 .map(|t| match t {
-                    ByVal => 0,
-                    ByRef => 1,
+                    SharedFields => 0,
+                    Shared => 1,
                 })
                 .collect_vec(),
         )
@@ -708,8 +708,8 @@ impl DecodeColumn<facts::FormalType> for DefaultDecoder {
         <Self as DecodeColumn<u8>>::into_decode_array(name, batch)
             .into_iter()
             .map(|i| match i {
-                0 => ByVal,
-                1 => ByRef,
+                0 => SharedFields,
+                1 => Shared,
                 _ => panic!("bad encoding of FormalType"),
             })
     }

@@ -1,9 +1,9 @@
-// Rebinding a parameter is local to the callee, whatever its passing style: SSA writes every
+// Rebinding a parameter is local to the callee, whatever its parameter type: SSA writes every
 // parameter back at the version the caller passed in. Writes to that version reach the caller.
 
-// Rebinding a `byval` parameter does not reach the caller, not even the fields of what it was
-// rebound to.
-def ByValRebind(p byval, q)
+// Rebinding a `shared_fields` parameter does not reach the caller, not even the fields of what
+// it was rebound to.
+def SharedFieldsRebind(p shared_fields, q)
 where summaries [p.f </- q.f]
 {
 start:
@@ -11,8 +11,8 @@ start:
   return;
 }
 
-// Nor does rebinding a `byref` parameter: the caller's argument still names the same object.
-def ByRefRebind(p byref, q)
+// Nor does rebinding a `shared` parameter: the caller's argument still names the same object.
+def SharedRebind(p shared, q)
 where summaries [p </- q, p.f </- q.f]
 {
 start:
@@ -21,7 +21,7 @@ start:
 }
 
 // A write after the rebinding lands on the new object, not on the caller's.
-def ByRefRebindThenWrite(p byref, q, v)
+def SharedRebindThenWrite(p shared, q, v)
 where summaries [p.f </- v]
 {
 start:
@@ -30,8 +30,8 @@ start:
   return;
 }
 
-// A field write reaches the caller whatever the passing style.
-def ByValFieldWrite(p byval, v)
+// A field write reaches the caller whether or not the root is shared.
+def FieldWriteSharedFields(p shared_fields, v)
 where summaries [p.f <- v]
 {
 start:
@@ -39,7 +39,7 @@ start:
   return;
 }
 
-def ByRefFieldWrite(p byref, v)
+def FieldWriteShared(p shared, v)
 where summaries [p.f <- v]
 {
 start:

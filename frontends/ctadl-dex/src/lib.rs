@@ -313,7 +313,7 @@ impl Context {
                     if !ACC_STATIC.is_set_in(enc.access_flags)
                         && !ACC_NATIVE.is_set_in(enc.access_flags)
                     {
-                        fdat.params.push(ParameterType::ByRef);
+                        fdat.params.push(ParameterType::Shared);
                     }
                     for param_idx in param_types.into_iter() {
                         let ty = parser.get_type(param_idx.into()).unwrap();
@@ -326,9 +326,9 @@ impl Context {
                         };
                         for _ in 0..reg_count {
                             fdat.params.push(if !descr.starts_with("L") {
-                                ParameterType::ByVal
+                                ParameterType::SharedFields
                             } else {
-                                ParameterType::ByRef
+                                ParameterType::Shared
                             });
                         }
                     }
@@ -504,9 +504,9 @@ impl Context {
                     let ty = parser.get_type(ty.into()).unwrap();
                     let descr = parser.get_string(ty.descriptor_idx.try_into().unwrap())?;
                     fdat.params.push(if !descr.starts_with("L") {
-                        ParameterType::ByVal
+                        ParameterType::SharedFields
                     } else {
-                        ParameterType::ByRef
+                        ParameterType::Shared
                     });
                 }
                 // All functions return 2 values: (normal_return, exception_return)
