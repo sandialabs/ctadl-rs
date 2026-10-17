@@ -531,6 +531,43 @@ An `async` method's body is not reached from its caller, because the builder's
 `Start` runs the state machine inside the library. Delegates (`Delegate.Combine`,
 `DynamicInvoke`) are not modeled.
 
+**Dispatch models.** The file ends with `find: "dispatch"` entries, the .NET
+counterpart of the Java file's section, which `DispatchKeys` matches against
+`CilCall` keys. They cover the Object contract on any class (`ToString`,
+`GetHashCode`, any one-parameter `Equals`, with `Argument(0).deref` for a
+constrained receiver), equality comparers, and the collection and dictionary
+interfaces with `ArrayList` and `Hashtable` at element level. They skip `Count`,
+`Contains*` and `IndexOf`, and send `Dispose`/`Close`/`Flush` and
+`MoveNext`/`MoveNextAsync` to hybrid inlining. They differ from Java in two places.
+`GetEnumerator` and `Current` are not modeled, because most enumerators are `yield`
+iterators: about two thirds of the `MoveNext` bodies in Roslyn, MSBuild and
+Newtonsoft.Json. `Compare` and `CompareTo` are not skipped, because `Cil:overrides`
+has a comparer that keeps what it compares. `cil:models` fails a dispatch entry that
+selects no listed method, but does not call it.
+
+Measured on the `m6/scale` assemblies with a query whose sources are every
+`ToString` and whose sinks are every `Write`/`WriteLine`
+(`/Volumes/Shampoo/m6/dispatch`). Deferred sites, before → after:
+
+| Assembly | Dispatch sites | Inlined before | Inlined after | Modelled + skipped |
+| --- | --- | --- | --- | --- |
+| Newtonsoft.Json | 3,441 | 1,223 | 1,005 | 365 |
+| System.Text.Json | 1,074 | 217 | 216 | 41 |
+| Microsoft.Build | 7,546 | 3,327 | 2,663 | 859 |
+| System.Private.CoreLib | 7,325 | 4,641 | 3,335 | 1,369 |
+| Microsoft.CodeAnalysis.CSharp | 30,323 | 17,354 | 17,038 | 409 |
+
+CoreLib's index drops from 998 s and 60.1 GiB to 531 s and 35.6 GiB. Roslyn's stays at
+about 1,250 s and 55.6 GiB: its deferred sites are its own visitors and symbol
+properties, which no default model covers. That run, however, indexed without the
+query's models, so the source/sink guard could not refuse the `ToString` model whose
+targets are that query's sources: CoreLib lost 21 of its 76 tainted paths, 70 sink
+findings and 43 source findings. Re-run on the four assemblies whose findings had
+changed, and indexed with `-m` as well, the guard refuses that one signature in each.
+The tainted paths and sink findings then equal the baseline's in all four (one MSBuild
+path is reported at another offset of the same function).
+CoreLib then takes 1,014 s, because `ToString` is the bulk of what the models cover there.
+
 ---
 
 ## 8. Milestone M7 (optional) — cross-language bridges
