@@ -1,0 +1,48 @@
+// Rebinding a parameter is local to the callee, whatever its passing style: SSA writes every
+// parameter back at the version the caller passed in. Writes to that version reach the caller.
+
+// Rebinding a `byval` parameter does not reach the caller, not even the fields of what it was
+// rebound to.
+def ByValRebind(p byval, q)
+where summaries [p.f </- q.f]
+{
+start:
+  p = q;
+  return;
+}
+
+// Nor does rebinding a `byref` parameter: the caller's argument still names the same object.
+def ByRefRebind(p byref, q)
+where summaries [p </- q, p.f </- q.f]
+{
+start:
+  p = q;
+  return;
+}
+
+// A write after the rebinding lands on the new object, not on the caller's.
+def ByRefRebindThenWrite(p byref, q, v)
+where summaries [p.f </- v]
+{
+start:
+  p = q;
+  p.f = v;
+  return;
+}
+
+// A field write reaches the caller whatever the passing style.
+def ByValFieldWrite(p byval, v)
+where summaries [p.f <- v]
+{
+start:
+  p.f = v;
+  return;
+}
+
+def ByRefFieldWrite(p byref, v)
+where summaries [p.f <- v]
+{
+start:
+  p.f = v;
+  return;
+}
