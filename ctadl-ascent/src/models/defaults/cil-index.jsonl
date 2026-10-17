@@ -321,9 +321,12 @@
 // Resource release for the Java file's reasons: a Dispose or Close body is where buffered data
 // reaches a file or a socket. Iteration because most enumerators are compiler-generated `yield`
 // state machines -- about two thirds of the MoveNext bodies in Roslyn, MSBuild and Newtonsoft.Json --
-// and an iterator's own body, with any source or sink in it, runs inside MoveNext. GetEnumerator and
-// Current are deliberately absent for the same reason: an iterator's Current reads a generated
-// field, not `.\[]`, so a model of either would lose what the iterator produced. They exceed the
-// threshold and defer by themselves.
+// and an iterator's own body, with any source or sink in it, runs inside MoveNext.
 {"find":"dispatch","where":[{"constraint":"signature_match","names":["Dispose","DisposeAsync","Close","Flush","FlushAsync"],"parents":["[System.Private.CoreLib]System.IDisposable","[System.Private.CoreLib]System.IAsyncDisposable","[System.Private.CoreLib]System.IO.Stream","[System.Private.CoreLib]System.IO.TextReader","[System.Private.CoreLib]System.IO.TextWriter","[System.Private.CoreLib]System.IO.BinaryReader","[System.Private.CoreLib]System.IO.BinaryWriter"]}],"model":{"resolve":"inline"}}
 {"find":"dispatch","where":[{"constraint":"signature_match","names":["MoveNext","MoveNextAsync"],"parents":["[System.Private.CoreLib]System.Collections.IEnumerator","[System.Private.CoreLib]System.Collections.Generic.IAsyncEnumerator`1"]}],"model":{"resolve":"inline"}}
+// GetEnumerator and Current are inlined too, since an iterator's Current reads a generated field, not
+// `.\[]`. But a library collection's enumerator has no method in the import for inlining to find, so
+// these also carry the `find: methods` entries' summary: a `foreach` over a parameter that holds a
+// List<T> or an array keeps its elements.
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["GetEnumerator"],"parents":["[System.Private.CoreLib]System.Collections.Generic.IEnumerable`1","[System.Private.CoreLib]System.Collections.IEnumerable"]}],"model":{"resolve":"inline","propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"dispatch","where":[{"constraint":"signature_match","names":["get_Current"],"parents":["[System.Private.CoreLib]System.Collections.Generic.IEnumerator`1","[System.Private.CoreLib]System.Collections.IEnumerator"]}],"model":{"resolve":"inline","propagation":[{"input":"Argument(0).\\[]","output":"Return"}]}}
