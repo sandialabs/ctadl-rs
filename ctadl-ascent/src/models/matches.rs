@@ -75,7 +75,8 @@ pub struct ModelPort {
 }
 
 /// A call site's static signature: the `(cls, simple_name, descriptor)` triple a
-/// `CallStyle::JavaCall` carries, which is what a `find: "dispatch"` generator matches.
+/// `CallStyle::JavaCall` or `CallStyle::CilCall` carries, which is what a `find: "dispatch"`
+/// generator matches.
 pub type DispatchKey = (facts::Str, facts::Str, facts::Str);
 
 /// What a matched `find: "dispatch"` generator says to do with every site of one signature.

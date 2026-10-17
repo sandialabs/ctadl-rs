@@ -23,7 +23,7 @@ IR are both dropped before the next import is loaded. Owning the strings would b
 across the import loop, which is exactly what streaming exists not to need.
 */
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use hashbrown::hash_map::HashMap;
 
@@ -66,7 +66,7 @@ pub struct ProgramMatchIndex<'p> {
     /// frontend, so a top-level `not X` can be materialized to `universe \ X`.
     pub(crate) universe: UniverseSet<&'p str>,
     /// What a `find: "dispatch"` generator matches: the distinct static signatures the
-    /// program's Java call sites name. `None` unless some loaded generator asked for them,
+    /// program's Java and CIL call sites name. `None` unless some loaded generator asked for them,
     /// because collecting them costs a pass over every statement.
     ///
     /// Unlike the method universe above, this contains types the app never declares. The
@@ -77,58 +77,69 @@ pub struct ProgramMatchIndex<'p> {
     pub(crate) dispatch: Option<DispatchUniverse<'p>>,
 }
 
-/// The distinct signature keys of a program's Java call sites, owned.
+/// The distinct signature keys of a program's Java and CIL call sites, owned.
 ///
 /// Separate from [`ProgramMatchIndex`] because the index borrows every string it matches on and
 /// these are composed rather than read out of the IR. A caller builds this beside the
 /// `ProgramInfo` and hands it to [`ProgramMatchIndex::new_with_dispatch`].
 #[derive(Default, Debug)]
 pub struct DispatchKeys {
-    /// `Lcls;->name(desc)` per distinct key -- the same spelling a `JavaMethod` id uses, so
-    /// `qualified-id` matching works unchanged.
+    /// `Lcls;->name(desc)` per distinct Java key and `[Asm]Ns.Type::name(desc)->ret` per CIL
+    /// key -- the spelling the frontend's own method ids use, so `qualified-id` matching works
+    /// unchanged.
     ids: Vec<String>,
     /// The three components of each key, parallel to [`Self::ids`].
     parts: Vec<(String, String, String)>,
 }
 
 impl DispatchKeys {
-    /// Collects every distinct `(cls, simple_name, descriptor)` a `JavaCall` in `program`
-    /// names. Sorted, so the matching that reads it does not depend on statement order.
+    /// Collects every distinct `(cls, simple_name, descriptor)` a `JavaCall` or a `CilCall` in
+    /// `program` names. Sorted, so the matching that reads it does not depend on statement
+    /// order.
     pub fn from_program(program: &ctadl_ir::mir::Program) -> Self {
         use ctadl_ir::mir::StatementKind;
         use ctadl_ir::mir::call::CallStyle;
-        let mut keys: BTreeSet<(String, String, String)> = BTreeSet::new();
+        // Key -> the separator its method id puts between class and name.
+        let mut keys: BTreeMap<(String, String, String), &'static str> = BTreeMap::new();
         for func in program.functions.iter() {
             for block in func.blocks.iter() {
                 for stmt in block.statements.iter() {
-                    let StatementKind::CallAssign {
-                        style:
-                            CallStyle::JavaCall {
-                                cls,
-                                simple_name,
-                                descriptor,
-                                ..
-                            },
-                        ..
-                    } = &stmt.kind
-                    else {
+                    let StatementKind::CallAssign { style, .. } = &stmt.kind else {
                         continue;
                     };
-                    keys.insert((
-                        cls.to_string(),
-                        simple_name.to_string(),
-                        descriptor.to_string(),
-                    ));
+                    let (cls, simple_name, descriptor, sep) = match style {
+                        CallStyle::JavaCall {
+                            cls,
+                            simple_name,
+                            descriptor,
+                            ..
+                        } => (cls, simple_name, descriptor, "->"),
+                        CallStyle::CilCall {
+                            cls,
+                            simple_name,
+                            descriptor,
+                            ..
+                        } => (cls, simple_name, descriptor, "::"),
+                        _ => continue,
+                    };
+                    keys.insert(
+                        (
+                            cls.to_string(),
+                            simple_name.to_string(),
+                            descriptor.to_string(),
+                        ),
+                        sep,
+                    );
                 }
             }
         }
         let ids = keys
             .iter()
-            .map(|(cls, name, desc)| format!("{cls}->{name}{desc}"))
+            .map(|((cls, name, desc), sep)| format!("{cls}{sep}{name}{desc}"))
             .collect();
         Self {
             ids,
-            parts: keys.into_iter().collect(),
+            parts: keys.into_keys().collect(),
         }
     }
 
@@ -141,7 +152,7 @@ impl DispatchKeys {
     }
 }
 
-/// The signature keys of a program's Java call sites, indexed the way the `where` evaluator
+/// The signature keys of a program's Java and CIL call sites, indexed the way the `where` evaluator
 /// reads them. Each map mirrors the shape of the method universe's, so no constraint
 /// implementation has to know which universe it is narrowing: the values are canonical key ids
 /// where the method maps' values are function fq-names.
