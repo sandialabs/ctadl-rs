@@ -253,8 +253,11 @@
 
 // ---- tasks, nullables, tuples ----
 // `await t` is t.GetAwaiter().GetResult(); the awaiters are structs. These model awaiting a library
-// task. An `async` method's own body is not reached from its caller at all: the builder's Start runs
-// the state machine inside the library, which no propagation model can express.
+// task. An `async` method's own task comes from its builder, a struct field of the state machine: the
+// body's `return x` is SetResult(x), and the method returns the builder's Task. The frontend calls the
+// state machine's MoveNext where the builder's Start would (calls.rs, `state_machine_started`).
+{"find":"methods","where":[{"constraint":"signature_match","names":["SetResult"],"parents":["[System.Private.CoreLib]System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1","[System.Private.CoreLib]System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1","[System.Private.CoreLib]System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0).deref"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["get_Task"],"parents":["[System.Private.CoreLib]System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1","[System.Private.CoreLib]System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1","[System.Private.CoreLib]System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["get_Result","GetAwaiter","ConfigureAwait"],"parents":["[System.Private.CoreLib]System.Threading.Tasks.Task`1"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["FromResult``1"],"parents":["[System.Private.CoreLib]System.Threading.Tasks.Task"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["GetResult"],"parents":["[System.Private.CoreLib]System.Runtime.CompilerServices.TaskAwaiter`1","[System.Private.CoreLib]System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1/ConfiguredTaskAwaiter","[System.Private.CoreLib]System.Runtime.CompilerServices.ValueTaskAwaiter`1","[System.Private.CoreLib]System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1/ConfiguredValueTaskAwaiter"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return"}]}}
