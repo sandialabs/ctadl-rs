@@ -60,6 +60,10 @@ use crate::method::{Emitter, Lower, parameters};
 use crate::names::{DELEGATE_METHOD, MethodKey, ModNames};
 use crate::ptr::PlacePath;
 
+/// The interface every compiler-generated async state machine implements.
+const ASYNC_STATE_MACHINE: &str =
+    "[System.Private.CoreLib]System.Runtime.CompilerServices.IAsyncStateMachine";
+
 /// How a `callvirt` lowers.
 enum Virtual {
     Dispatch(CallStyle),
@@ -120,6 +124,10 @@ impl Lower<'_, '_, '_, '_, '_> {
             .map(|a| Exp::Variable(self.copy_in(em, ins, *a, &mut copy_outs)))
             .collect();
         let target = site.method.as_ref().and_then(|m| self.target(m));
+        let started = match (site.method.as_ref(), &target) {
+            (Some(m), Some(t)) => self.state_machine_started(m, t),
+            _ => None,
+        };
         let direct = |this: &mut Self, key: &MethodKey, params: Vec<ParameterType>| {
             let fid = this.out.callee(key, params);
             CallStyle::DirectCall {
@@ -172,7 +180,13 @@ impl Lower<'_, '_, '_, '_, '_> {
                 }
             }
         };
-        self.emit_call(em, style, args, site.result, copy_outs);
+        // The builder runs the state machine it is handed: `sm.MoveNext()` on the same address,
+        // before the copy-out, so what the body writes into the machine comes back with it.
+        let then = started.and_then(|(key, params)| {
+            let sm = args.last()?.clone();
+            Some((direct(self, &key, params), thin_vec![sm]))
+        });
+        self.emit_call_then(em, style, args, site.result, then, copy_outs);
     }
 
     fn emit_call(
@@ -183,19 +197,88 @@ impl Lower<'_, '_, '_, '_, '_> {
         result: Option<Var>,
         copy_outs: Vec<(VariableRef, PlacePath)>,
     ) {
+        self.emit_call_then(em, style, args, result, None, copy_outs);
+    }
+
+    /// [`Self::emit_call`], with a second call after the first and before the copy-out.
+    fn emit_call_then(
+        &mut self,
+        em: &mut Emitter<'_>,
+        style: CallStyle,
+        args: ThinVec<Exp>,
+        result: Option<Var>,
+        then: Option<(CallStyle, ThinVec<Exp>)>,
+        copy_outs: Vec<(VariableRef, PlacePath)>,
+    ) {
         let retval = em.retval();
         let thrown = em.throwval();
         em.push(StatementKind::CallAssign {
             style,
-            rets: thin_vec![retval.clone(), thrown],
+            rets: thin_vec![retval.clone(), thrown.clone()],
             args,
         });
         self.raise_out(em);
         if let Some(r) = result {
             let d = em.var(r);
-            em.assign(d, [Exp::Variable(retval)]);
+            em.assign(d, [Exp::Variable(retval.clone())]);
+        }
+        if let Some((style, args)) = then {
+            em.push(StatementKind::CallAssign {
+                style,
+                rets: thin_vec![retval, thrown],
+                args,
+            });
+            self.raise_out(em);
         }
         self.copy_out(em, copy_outs);
+    }
+
+    /// The `MoveNext` a call starts, when the call is a builder's `Start<TStateMachine>(ref
+    /// TStateMachine)` (or an async iterator builder's `MoveNext<TStateMachine>`) on a state
+    /// machine this module defines. The compiler emits that call for every `async` method,
+    /// whatever its builder, and the builder runs `MoveNext` inside the library, so without
+    /// this the method's body is unreachable from its caller.
+    ///
+    /// Resuming after an `await` runs the same `MoveNext` again, through
+    /// `AwaitUnsafeOnCompleted`; one call covers it, since the body's states are its branches.
+    fn state_machine_started(
+        &self,
+        m: &MethodOp,
+        t: &Target,
+    ) -> Option<(MethodKey, Vec<ParameterType>)> {
+        if !matches!(t.key.simple.as_str(), "Start``1" | "MoveNext``1")
+            || t.key.desc != "(!!0&)->System.Void"
+        {
+            return None;
+        }
+        let Ok(Some(Entity::MethodSpec(ms))) = self.module.lookup_token(m.token) else {
+            return None;
+        };
+        let sm = match ms.generic_args().ok()?.into_iter().next()? {
+            TypeSig::Named { token, .. } | TypeSig::GenericInst { ty: token, .. } => token,
+            _ => return None,
+        };
+        let Ok(Some(Entity::TypeDef(td))) = self.module.lookup_token(sm) else {
+            return None;
+        };
+        let is_state_machine = td.interfaces().ok()?.iter().any(|i| {
+            i.interface
+                .as_ref()
+                .and_then(|i| self.names.token_cls(i.token()))
+                .as_deref()
+                == Some(ASYNC_STATE_MACHINE)
+        });
+        if !is_state_machine {
+            return None;
+        }
+        let move_next = td.methods().ok()?.into_iter().find(|md| {
+            md.name().is_ok_and(|n| n == "MoveNext")
+                && md
+                    .signature()
+                    .is_ok_and(|sig| sig.has_this && sig.params.is_empty())
+        })?;
+        let key = self.names.method_key(move_next.token())?;
+        Some((key, parameters(&move_next.signature().ok()?)))
     }
 
     /// How a `callvirt` of `m`, which resolves to `t`, lowers.
