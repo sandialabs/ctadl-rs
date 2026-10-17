@@ -527,9 +527,23 @@ flows is found with `--no-default-models`.
 Not covered: a chained writer whose result is dropped, followed by a read of the
 receiver (`sb.Append(a).Append(b); sb.ToString()`), because no propagation model
 can say that a method returns its own receiver; the Java models have the same gap.
-An `async` method's body is not reached from its caller, because the builder's
-`Start` runs the state machine inside the library. Delegates (`Delegate.Combine`,
-`DynamicInvoke`) are not modeled.
+Delegates (`Delegate.Combine`, `DynamicInvoke`) are not modeled.
+
+**Async methods and iterators.** An `async` method only builds its state machine and
+calls the builder's `Start<TStateMachine>(ref sm)`, which runs `sm.MoveNext()`
+inside the library. At such a call, on a state machine the module defines, the
+frontend also emits a direct call to that `MoveNext` on the same address
+(`calls.rs`, `state_machine_started`). One call covers every resumption, since
+`AwaitUnsafeOnCompleted` re-enters the same `MoveNext`, whose states are its
+branches. The result is `SetResult(x)` on the builder, a struct field of the state
+machine, and the method returns the builder's `Task`; both are modeled. `Cil:async`
+pins a result produced in the body, an argument echoed back, a sink after an
+`await`, `.Result` and `GetAwaiter().GetResult()`. `Cil:iterators` pins `yield`
+iterators: a value produced in the body, elements passed through from a `List<T>`
+and from an array, and a sink in the body. On the `m6/scale` assemblies, indexed
+with the query's models, neither change moves a site between rungs or changes a
+finding count, and index time and memory stay within run-to-run noise
+(`/Volumes/Shampoo/m6/async/scale`).
 
 **Dispatch models.** The file ends with `find: "dispatch"` entries, the .NET
 counterpart of the Java file's section, which `DispatchKeys` matches against
@@ -539,10 +553,13 @@ constrained receiver), equality comparers, and the collection and dictionary
 interfaces with `ArrayList` and `Hashtable` at element level. They skip `Count`,
 `Contains*` and `IndexOf`, and send `Dispose`/`Close`/`Flush` and
 `MoveNext`/`MoveNextAsync` to hybrid inlining. They differ from Java in two places.
-`GetEnumerator` and `Current` are not modeled, because most enumerators are `yield`
-iterators: about two thirds of the `MoveNext` bodies in Roslyn, MSBuild and
-Newtonsoft.Json. `Compare` and `CompareTo` are not skipped, because `Cil:overrides`
-has a comparer that keeps what it compares. `cil:models` fails a dispatch entry that
+The enumeration protocol is inlined rather than modeled, because most enumerators
+are `yield` iterators: about two thirds of the `MoveNext` bodies in Roslyn, MSBuild
+and Newtonsoft.Json. `GetEnumerator` and `Current` also carry the element summary
+(`resolve: inline` with a `propagation`), because a library collection behind the
+interface has no method in the import for inlining to find. `Compare` and
+`CompareTo` are not skipped, because `Cil:overrides` has a comparer that keeps what
+it compares. `cil:models` fails a dispatch entry that
 selects no listed method, but does not call it.
 
 Measured on the `m6/scale` assemblies with a query whose sources are every
@@ -588,7 +605,7 @@ CoreLib then takes 1,014 s, because `ToString` is the bulk of what the models co
 | Risk | Mitigation |
 | --- | --- |
 | Type-forwarding facades give one type two assembly-qualified names | Canonicalize through an `ExportedType` forwarder alias table in `Context::finish`; cil-reader already reads forwarders |
-| `async`/`await` and iterators compile to state machines; locals become fields of a generated struct | Field-sensitive taint should follow this *for free* — but it must be pinned by a dedicated regression case, because the whole method body moves into `MoveNext` |
+| `async`/`await` and iterators compile to state machines; locals become fields of a generated struct | Pinned by `Cil:async` and `Cil:iterators` (§7). Field-sensitive taint follows the fields; what it did not follow was the call into `MoveNext`, which the frontend now emits where the builder's `Start` would run it |
 | Lambdas/closures compile to display classes | Same story as above; same test |
 | NativeAOT-published apps contain no IL | Out of scope — that is the pcode path |
 | Obfuscated / non-verifiable IL breaks the stack simulation | The graceful-degradation rule in `cil-flow-api.md` §8.1 is exactly this; log and continue instead of dropping the method |
