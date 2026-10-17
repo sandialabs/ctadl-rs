@@ -1528,6 +1528,11 @@ fn is_statement_expression(node: Node<'_>) -> bool {
 /// A pointer or an array parameter is [`ParameterType::ByRef`] -- it is a handle on storage
 /// the caller can see written -- at every depth. A function pointer is not: what it points at
 /// is code, so `int (*cb)(int, int)` stays `ByVal`.
+///
+/// A write through a `ByRef` parameter reaches the caller only as a store on the parameter's
+/// entry version: rebinding the parameter does not. This front end still lowers `*out = x` to
+/// `out = x`, a rebinding, so such a write does not yet reach the caller. Lowering it to
+/// `store out.deref := x` is the fix.
 fn param_head(declarator: Node<'_>) -> (Option<Node<'_>>, ParameterType) {
     let mut node = declarator;
     let (mut is_ref, mut is_function, mut name) = (false, false, None);

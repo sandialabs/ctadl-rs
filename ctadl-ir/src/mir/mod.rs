@@ -711,12 +711,23 @@ mod local_names {
     }
 }
 
-/// Parameters can be passed by value or by reference.
+/// How a parameter is passed, which decides which of a callee's writes to it reach the caller.
+///
+/// Rebinding a parameter -- any instruction that defines the parameter variable, such as
+/// `p = q` -- never reaches the caller, whatever the parameter's type: SSA conversion writes
+/// every parameter back at its entry version, version 0 (see [`crate::ssa::transform`]). What
+/// reaches the caller is what flows into that entry version, which is a write to one of its
+/// fields (`store p.f := v`) or, at a call, a callee's write to the argument it was passed.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ParameterType {
+    /// A copy of the caller's value, such as a Java `int`. Only writes to its fields reach the
+    /// caller; a flow into the whole value does not.
     #[default]
     ByVal,
+    /// A handle on storage the caller shares, such as a Java object reference or a C pointer.
+    /// A flow into the whole value reaches the caller too, so a callee that writes the object it
+    /// was passed (`sb.append(x)`) writes the caller's.
     ByRef,
 }
 

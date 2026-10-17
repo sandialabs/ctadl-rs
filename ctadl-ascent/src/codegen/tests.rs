@@ -529,9 +529,11 @@ fn function_g() -> FunctionData {
 //   q = source(Net);
 //   a = q;
 //   p = a;
-//   sink(p, Net);
-//   return p;
+//   return sink(p, Net);
 // }
+//
+// The sink is the returned value, not the formal `p`: rebinding a parameter does not reach the
+// caller, so `p`'s formal is written back as the caller's argument and never sees `q`.
 fn function_h() -> (FunctionData, SourceSinkQuery) {
     let mut f = FunctionData {
         name: "H".to_string(),
@@ -568,7 +570,10 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
         },
         sink: TaintEndpoint {
             infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex(FlowVariable::formal_index(0i8.into()), fx::Path::empty()),
+            vertex: FlowVertex(
+                FlowVariable::formal_index(RETURN_INDEX.into()),
+                fx::Path::empty(),
+            ),
             label: fx::Label("Net".into()),
             direction: fx::TaintDirection::Backward,
         },
