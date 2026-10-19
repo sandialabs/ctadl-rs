@@ -29,6 +29,7 @@
 //! intended use (one `ctadl index` run on x86-64 / arm64).
 
 use std::iter::{Once, once};
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ascent::internal::{
@@ -177,6 +178,47 @@ lsm_col!(i8, 1);
 lsm_col!(i16, 1);
 lsm_col!(i32, 1);
 lsm_col!(i64, 1);
+
+// A pair of columns, for a relation that carries two values in one column. Its
+// slots are the pair's own bytes, so a reference into them is a `&(A, B)`; that
+// needs the pair to have no padding, which would otherwise be copied in as
+// uninitialized bytes.
+//
+// SAFETY: `to_slots` asserts the pair has no padding, fits the slots and is at
+// most 8-aligned; validity of the reinterpreted bytes is inherited from `A`/`B`.
+unsafe impl<A: LsmCol, B: LsmCol> LsmCol for (A, B) {
+    type Slots = Cat<A::Slots, B::Slots>;
+
+    #[inline]
+    fn to_slots(self) -> Self::Slots {
+        const {
+            assert!(
+                size_of::<(A, B)>() == size_of::<A>() + size_of::<B>(),
+                "LsmCol for (A, B): the pair has padding",
+            );
+            assert!(size_of::<(A, B)>() <= size_of::<Cat<A::Slots, B::Slots>>());
+            assert!(align_of::<(A, B)>() <= 8);
+        }
+        let mut slots = Cat(A::Slots::zeroed(), B::Slots::zeroed());
+        // SAFETY: the asserts above: `slots` is large enough and aligned for a
+        // `(A, B)`, and every byte of a padding-free pair is initialized.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                &self as *const (A, B) as *const u8,
+                &mut slots as *mut Self::Slots as *mut u8,
+                size_of::<(A, B)>(),
+            );
+        }
+        slots
+    }
+
+    #[inline]
+    unsafe fn ref_from(s: &Self::Slots) -> &Self {
+        // SAFETY: `s` is 8-aligned and holds the bytes `to_slots` copied out of a
+        // live `(A, B)`.
+        unsafe { &*(s as *const Self::Slots as *const (A, B)) }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Tuple encoding: an N-column tuple <-> a single fixed-width slot blob.
@@ -671,21 +713,82 @@ impl<K: LsmTuple, Rel> ToRelIndex<Rel> for LsmFullIndex<K> {
 }
 
 // ---------------------------------------------------------------------------
+// A physical relation that stores no tuples.
+// ---------------------------------------------------------------------------
+
+/// The physical relation of a `counting` LSM relation: it keeps the row count
+/// and nothing else, since every row is already in the relation's LSM indices.
+/// Ascent pushes each newly derived row exactly once, so `len` is the relation's
+/// size. Such a relation cannot be seeded through its field; its rows are
+/// derived.
+pub struct CountingVec<T> {
+    len: usize,
+    _marker: PhantomData<T>,
+}
+
+impl<T> Default for CountingVec<T> {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T> CountingVec<T> {
+    #[inline]
+    pub fn push(&mut self, _v: T) {
+        self.len += 1;
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[inline]
+    pub fn iter(&self) -> std::iter::Empty<&T> {
+        std::iter::empty()
+    }
+}
+
+impl<T> std::ops::Index<usize> for CountingVec<T> {
+    type Output = T;
+    fn index(&self, _index: usize) -> &T {
+        panic!("lsm::ascent_provider::CountingVec stores no tuples")
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The provider macros. Reference this module from a relation's `#[ds(...)]`
 // attribute (or the program's `#![ds(...)]`).
 // ---------------------------------------------------------------------------
 
-// The relation's own field stays an ordinary `Vec` (one in-RAM copy). Ascent
-// reads input facts from it (`update_indices`), pushes derived tuples into it,
-// and the user reads results from it. The memory win comes from the *indices*:
-// Ascent builds several per relation, each in three versions (new/delta/total),
-// and this provider keeps those in `mmap`'d LSM files instead of in-RAM hash
-// maps — so the data is no longer duplicated across many heap structures.
+// By default the relation's own field stays an ordinary `Vec` (one in-RAM copy).
+// Ascent reads input facts from it (`update_indices`), pushes derived tuples into
+// it, and the user reads results from it. The memory win comes from the
+// *indices*: Ascent builds several per relation, each in three versions
+// (new/delta/total), and this provider keeps those in `mmap`'d LSM files instead
+// of in-RAM hash maps — so the data is no longer duplicated across many heap
+// structures.
+//
+// `#[ds(lsm::ascent_provider::provider: counting)]` drops that last copy too: the
+// field becomes a [`CountingVec`], which keeps only the row count, for a derived
+// relation whose rows are read after the run through its full index (or not at
+// all).
 #[doc(hidden)]
 #[macro_export]
 macro_rules! lsm_nary_rel {
     ($name:ident, $field_types:ty, $indices:expr, ser, ()) => {
         ::std::vec::Vec<$field_types>
+    };
+    ($name:ident, $field_types:ty, $indices:expr, ser, (counting)) => {
+        $crate::ascent_provider::CountingVec<$field_types>
     };
 }
 
@@ -698,7 +801,7 @@ macro_rules! lsm_nary_rel_codegen {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! lsm_nary_rel_ind_common {
-    ($name:ident, $field_types:ty, $indices:expr, ser, ()) => {
+    ($name:ident, $field_types:ty, $indices:expr, ser, $args:tt) => {
         ()
     };
 }
@@ -706,7 +809,7 @@ macro_rules! lsm_nary_rel_ind_common {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! lsm_nary_rel_full_ind {
-    ($name:ident, $field_types:ty, $indices:expr, ser, (), $key:ty, $val:ty) => {
+    ($name:ident, $field_types:ty, $indices:expr, ser, $args:tt, $key:ty, $val:ty) => {
         $crate::ascent_provider::LsmFullIndex<$key>
     };
 }
@@ -714,7 +817,7 @@ macro_rules! lsm_nary_rel_full_ind {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! lsm_nary_rel_ind {
-    ($name:ident, $field_types:ty, $indices:expr, ser, (), $ind:expr, $key:ty, $val:ty) => {
+    ($name:ident, $field_types:ty, $indices:expr, ser, $args:tt, $ind:expr, $key:ty, $val:ty) => {
         $crate::ascent_provider::LsmIndex<$key, $val>
     };
 }
