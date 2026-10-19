@@ -239,8 +239,6 @@ pub fn run(opts: &Options) -> Result<bool> {
     // Assemble every independent unit of work, in report order. The pool below
     // preserves that order regardless of which worker finishes first.
     let mut tasks: Vec<Task<'_>> = cases.iter().map(Task::Case).collect();
-    // The nightly Java cases double as jvm-reader inputs: `jvm:asm-flow`
-    // compiles them as the JVM cases do and checks every instruction.
     let java_cases = tests_dir.join("java");
     if let Some(samples) = samples_dir.as_deref().filter(|_| wants_jvm) {
         tasks.push(Task::JvmChecks {

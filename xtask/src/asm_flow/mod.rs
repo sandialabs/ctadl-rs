@@ -22,9 +22,8 @@
 //! ASM decides the rest independently: the stack height before each
 //! instruction, how many slots it pops and pushes, the JVMS permutations of
 //! `dup_x*` and `swap`, and the operand positions of every load, store and
-//! call. The inputs are the compiled jvm-reader samples, the nightly Java
-//! cases, and `AllOpcodes.java`, which builds a class holding every opcode,
-//! including those javac never emits.
+//! call. `AllOpcodes.java` builds a class holding every opcode, including
+//! those javac never emits.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
