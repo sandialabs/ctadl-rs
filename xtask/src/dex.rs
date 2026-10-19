@@ -147,8 +147,8 @@ fn compile_samples(java_samples: &Path, work: &Path) -> Result<Vec<SampleDex>> {
         let dir = work.join(&name);
         exec::fresh_dir(&dir)?;
 
-        // Target Java 8 bytecode: dx (build-tools 30.0.2) predates and rejects
-        // newer class-file versions.
+        // Target Java 8 bytecode: dx, from the build-tools nix/android-jvm.nix
+        // pins, predates and rejects newer class-file versions.
         let mut javac = Command::new("javac");
         javac
             .current_dir(&dir)
