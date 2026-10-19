@@ -1,6 +1,7 @@
 # The dex/Android/JVM toolchain: the Android SDKs (the one the regression suite
-# builds with, and a larger one for debugging apps), the JDK, baksmali, the
-# DroidBench APKs, and the dex-reader and jvm-reader packages and unit tests.
+# builds with, and a larger one for debugging apps), the app-debugging tools,
+# the JDK, baksmali, the DroidBench APKs, and the dex-reader and jvm-reader
+# packages and unit tests.
 {
   pkgs,
   naersk-lib,
@@ -36,7 +37,7 @@ let
     )).androidenv;
 
   # --- Nightly regression suite dependencies -------------------------
-  # These are only forced when building `checks.<system>.{regression,nightly}`.
+  # These are only forced when building `checks.<system>.regression`.
 
   # The build-tools both SDKs carry, pinned because the DEX tests invoke `dx`,
   # which was removed in build-tools 31+.
@@ -133,9 +134,8 @@ let
 
   # baksmali, the reference smali disassembler, used as ground truth for
   # the dex-reader `dex:baksmali` regression check. nixpkgs has no smali
-  # package, so we fetch the pinned 3.0.9 "fat" jar (the same version the
-  # original dex-reader test used) and wrap it so `baksmali` runs it. The
-  # jar is fetched, never committed to this repo.
+  # package, so we fetch the pinned 3.0.9 "fat" jar and wrap it so
+  # `baksmali` runs it. The jar is fetched, never committed to this repo.
   baksmali =
     let
       jar = pkgs.fetchurl {
@@ -184,7 +184,7 @@ let
   #   to chew on.
   #
   # naersk installs whatever cargo reports as an executable, and an
-  # example is one, so this lands at $out/bin/dex-reader as before.
+  # example is one, so this lands at $out/bin/dex-reader.
   dex-reader = naersk-lib.buildPackage {
     src = readersSrc;
     preBuild = readersPreBuild;
@@ -261,18 +261,16 @@ in
   androidDebugSdkBuildTools = buildToolsDir androidDebugSdk;
   # dex-reader's pure-Rust unit tests, built offline by naersk in test
   # mode. No external toolchain needed. The integration-style
-  # full-parse checks (compiled samples + the real-world APK) were
-  # moved to `xtask regression`.
+  # full-parse checks (compiled samples + the real-world APK) are in
+  # `xtask regression`.
   #
-  # `cargo test --workspace` in the test workflow now covers these
-  # too -- dex-reader is a workspace member, where it used to be
-  # excluded. This check is kept because it runs on the nightly's Nix
-  # builder with no toolchain assumptions, and because it costs
-  # nothing to keep.
+  # `cargo test --workspace` in the test workflow covers these too. This
+  # check is kept because it runs on the nightly's Nix builder with no
+  # toolchain assumptions, and because it costs nothing to keep.
   #
-  # `--package` is not optional here: without it, `src = ./.` would
-  # test the whole workspace, which is a far larger build than this
-  # check wants.
+  # `--package` is not optional here: `src` is the whole tree, so without
+  # it this would test the whole workspace, which is a far larger build
+  # than this check wants.
   dex-reader-tests = naersk-lib.buildPackage {
     src = ../.;
     version = workspaceVersion;
@@ -295,10 +293,10 @@ in
   };
 
   # jvm-reader's unit tests, same arrangement -- and, like dex-reader's,
-  # now entirely hermetic: no `#[ignore]`, no JDK, no fixture directory.
-  # Everything that needed a compiled class moved out, to the `jvm:*`
-  # checks in `xtask regression` and to the `SwitchFlow` /
-  # `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint cases.
+  # entirely hermetic: no `#[ignore]`, no JDK, no fixture directory.
+  # What needs a compiled class is in the `jvm:*` checks in
+  # `xtask regression` and in the `SwitchFlow` / `StringSwitchFlow` /
+  # `WideParamFlow` / `ShiftFlow` taint cases.
   jvm-reader-tests = naersk-lib.buildPackage {
     src = ../.;
     version = workspaceVersion;

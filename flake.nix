@@ -5,8 +5,7 @@
     utils.url = "github:numtide/flake-utils";
     ctadl-souffle.url = "github:sandialabs/ctadl";
     # The Rust toolchain: fenix serves the upstream release rust-toolchain.toml
-    # pins, where nixpkgs has only its own rustc. The release builds also take
-    # each target's std from it, since they cross-compile.
+    # pins, where nixpkgs has only its own rustc.
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -82,12 +81,8 @@
         # derivations stay named after it; see the root Cargo.toml.
         workspaceVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
 
-        # The dex/Android/JVM toolchain: SDKs, debuggers, the readers, and
-        # their fixtures; see ./nix/android-jvm.nix.
         android = import ./nix/android-jvm.nix { inherit pkgs naersk-lib workspaceVersion; };
 
-        # The CIL/.NET toolchain: ilasm, the reference runners, and
-        # cil-reader's fixtures; see ./nix/cil.nix.
         cil = import ./nix/cil.nix { inherit pkgs cecil dnlib; };
 
         # The external toolchain the regression scripts expect on PATH
@@ -330,7 +325,6 @@
             ANDROID_SDK_ROOT = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk";
             ANDROID_HOME = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk";
             ANDROID_NDK_ROOT = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk/ndk-bundle";
-            # What to pass `avdmanager create avd -k`; see ./nix/android-jvm.nix.
             ANDROID_DEBUG_SYSTEM_IMAGE = android.androidDebugSystemImage;
             FRIDA_SERVER = "${android.fridaServer}";
             CTADL_ANDROID_ICC_APKS = "${android.droidbenchIccApks}";
