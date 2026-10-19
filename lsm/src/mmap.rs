@@ -327,17 +327,33 @@ fn load_run<K: Pod + Ord, V: Pod>(path: PathBuf) -> io::Result<MmapRun<K, V>> {
     Ok(run)
 }
 
+/// Bytes per chunk of a [`Memtable`]'s entries.
+const MEMTABLE_CHUNK_BYTES: usize = 16 * 1024;
+
+type MemtableEntry<K, V> = (K, SmallVec<[V; 1]>);
+
 /// The in-memory write buffer: each key's values, hashed by [`hash_key`] (the
 /// same hash the runs' Bloom filters take, so a lookup hashes its key once).
-/// Unordered; a flush sorts it.
+///
+/// The entries sit in insertion order in fixed-size chunks, and the hash table
+/// holds only their positions. Small chunks rather than one growing `Vec`
+/// because of how the allocator returns memory: freed small blocks go back as
+/// reclaimable pages, where a large block, freed or merely emptied, stays
+/// resident, so a memtable that has been flushed would still hold its peak.
+/// A table's bucket array is touched all over as soon as it fills a little;
+/// keeping its buckets at four bytes keeps that cost small next to the entries.
 struct Memtable<K, V> {
-    table: HashTable<(K, SmallVec<[V; 1]>)>,
+    index: HashTable<u32>,
+    chunks: Vec<Vec<MemtableEntry<K, V>>>,
+    len: usize,
 }
 
 impl<K, V> Default for Memtable<K, V> {
     fn default() -> Self {
         Self {
-            table: HashTable::new(),
+            index: HashTable::new(),
+            chunks: Vec::new(),
+            len: 0,
         }
     }
 }
@@ -345,43 +361,71 @@ impl<K, V> Default for Memtable<K, V> {
 impl<K: std::fmt::Debug, V: std::fmt::Debug> std::fmt::Debug for Memtable<K, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_map()
-            .entries(self.table.iter().map(|(k, v)| (k, v)))
+            .entries(self.chunks.iter().flatten().map(|(k, v)| (k, v)))
             .finish()
     }
 }
 
 impl<K: Pod + Ord, V: Pod> Memtable<K, V> {
+    const CHUNK: usize = {
+        let n = MEMTABLE_CHUNK_BYTES / size_of::<MemtableEntry<K, V>>();
+        if n == 0 { 1 } else { n }
+    };
+
+    fn entry(&self, i: u32) -> &MemtableEntry<K, V> {
+        let i = i as usize;
+        &self.chunks[i / Self::CHUNK][i % Self::CHUNK]
+    }
+
+    fn find(&self, hash: u64, key: &K) -> Option<u32> {
+        self.index.find(hash, |&i| self.entry(i).0 == *key).copied()
+    }
+
     fn insert(&mut self, hash: u64, key: K, value: V) {
-        match self
-            .table
-            .entry(hash, |(k, _)| *k == key, |(k, _)| hash_key(k))
-        {
-            hashbrown::hash_table::Entry::Occupied(mut e) => e.get_mut().1.push(value),
-            hashbrown::hash_table::Entry::Vacant(e) => {
-                e.insert((key, smallvec::smallvec![value]));
-            }
+        if let Some(i) = self.find(hash, &key) {
+            let i = i as usize;
+            self.chunks[i / Self::CHUNK][i % Self::CHUNK].1.push(value);
+            return;
         }
+        let i = u32::try_from(self.len).expect("memtable over u32::MAX keys");
+        if self.len.is_multiple_of(Self::CHUNK) {
+            self.chunks.push(Vec::with_capacity(Self::CHUNK));
+        }
+        self.chunks
+            .last_mut()
+            .unwrap()
+            .push((key, smallvec::smallvec![value]));
+        self.len += 1;
+        let chunks = &self.chunks;
+        self.index.insert_unique(hash, i, |&j| {
+            let j = j as usize;
+            hash_key(&chunks[j / Self::CHUNK][j % Self::CHUNK].0)
+        });
     }
 
     fn get(&self, hash: u64, key: &K) -> Option<&[V]> {
-        self.table
-            .find(hash, |(k, _)| k == key)
-            .map(|(_, vals)| vals.as_slice())
+        self.find(hash, key).map(|i| self.entry(i).1.as_slice())
     }
 
     fn keys_len(&self) -> usize {
-        self.table.len()
+        self.len
     }
 
     /// Every entry, by ascending key.
     fn sorted(&self) -> Vec<(&K, &[V])> {
         let mut entries: Vec<_> = self
-            .table
+            .chunks
             .iter()
+            .flatten()
             .map(|(k, vals)| (k, vals.as_slice()))
             .collect();
         entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
         entries
+    }
+
+    /// The entries in insertion order, consuming the memtable.
+    fn into_entries(self) -> impl Iterator<Item = MemtableEntry<K, V>> {
+        self.chunks.into_iter().flatten()
     }
 }
 
@@ -585,7 +629,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         if other.memtable_len >= self.memtable_limit / 4 {
             other.flush().expect("failed to flush mmap LSM memtable");
         }
-        for (key, vals) in std::mem::take(&mut other.memtable).table {
+        for (key, vals) in std::mem::take(&mut other.memtable).into_entries() {
             for value in vals {
                 self.insert(key, value);
             }
