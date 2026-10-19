@@ -16,7 +16,7 @@
       url = "github:jbevain/cecil/882ca5eedda1e62eb41bd5869aeb15d8f1538e51";
       flake = false;
     };
-    # dnlib, for cil-reader's Ptr-table fixtures (see ptrGen).
+    # dnlib, for cil-reader's Ptr-table fixtures (see ptrGen in ./nix/cil.nix).
     dnlib = {
       url = "github:0xd4d/dnlib/9ab9b58ab31b99b3f6cdef36efec613fc11ddbe2";
       flake = false;
@@ -85,34 +85,10 @@
         # The dex/Android/JVM toolchain: SDKs, debuggers, the readers, and
         # their fixtures; see ./nix/android-jvm.nix.
         android = import ./nix/android-jvm.nix { inherit pkgs naersk-lib workspaceVersion; };
-        inherit (android)
-          androidSdk
-          jdk
-          androidDebugSdk
-          androidDebugSystemImage
-          androidLldbArch
-          androidLldb
-          fridaServer
-          baksmali
-          dex-reader
-          jvm-reader
-          droidbenchIccApks
-          androidSdkBuildTools
-          androidDebugSdkBuildTools
-          ;
 
         # The CIL/.NET toolchain: ilasm, the reference runners, and
         # cil-reader's fixtures; see ./nix/cil.nix.
         cil = import ./nix/cil.nix { inherit pkgs cecil dnlib; };
-        inherit (cil)
-          ilasm
-          ptrGen
-          gapGen
-          flowRun
-          modelRun
-          cilFixtures
-          cecilDump
-          ;
 
         # The external toolchain the regression scripts expect on PATH
         # (dex-reader, jvm-reader, javac, dx, gcc/addr2line, ghidra, jq,
@@ -149,18 +125,18 @@
             # library: the ABI on which a `long` arrives split in two.
             pkgs.pkgsCross.gnu32.stdenv.cc
             pkgs.binutils
-            dex-reader
-            jvm-reader
-            androidSdk.androidsdk
-            jdk
-            baksmali
+            android.dex-reader
+            android.jvm-reader
+            android.androidSdk.androidsdk
+            android.jdk
+            android.baksmali
             pkgs.ghidra-bin
             # The `cil:cecil-compare` check's reference dumper.
-            cecilDump
+            cil.cecilDump
             # The `cil:exec` check's reference runner.
-            flowRun
+            cil.flowRun
             # The `cil:models` check's reference runner.
-            modelRun
+            cil.modelRun
           ];
         };
 
@@ -181,12 +157,12 @@
       {
         packages.default = naersk-lib.buildPackage ./.;
         # Exposed so `nix build .#cecil-dump` can warm the cache on its own.
-        packages.cecil-dump = cecilDump;
-        packages.cil-fixtures = cilFixtures;
-        packages.flow-run = flowRun;
-        packages.model-run = modelRun;
-        packages.ptr-gen = ptrGen;
-        packages.gap-gen = gapGen;
+        packages.cecil-dump = cil.cecilDump;
+        packages.cil-fixtures = cil.cilFixtures;
+        packages.flow-run = cil.flowRun;
+        packages.model-run = cil.modelRun;
+        packages.ptr-gen = cil.ptrGen;
+        packages.gap-gen = cil.gapGen;
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
         # Run a wrapper around ctadl-ascent that lets Ghidra process pcode
@@ -249,8 +225,8 @@
                   chmod -R u+w ./nightly
                   cd ./nightly
 
-                  export PATH="${androidSdkBuildTools}:$PATH"
-                  export ANDROID_SDK_ROOT="${androidSdk.androidsdk}/libexec/android-sdk"
+                  export PATH="${android.androidSdkBuildTools}:$PATH"
+                  export ANDROID_SDK_ROOT="${android.androidSdk.androidsdk}/libexec/android-sdk"
                   # ghidra/javac want a writable HOME; the sandbox HOME is not.
                   export HOME="$TMPDIR"
 
@@ -270,7 +246,7 @@
                   # stale binary, but the Nix sandbox has no source tree or cargo.
                   # Point it at the ctadl that ships in packages.default instead.
                   export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
-                  export CTADL_ANDROID_ICC_APKS="${droidbenchIccApks}"
+                  export CTADL_ANDROID_ICC_APKS="${android.droidbenchIccApks}"
                   # The `models:*` checks hold the model files ctadl ships to
                   # `ctadl-model-generator.schema.json`. Both live in the
                   # ctadl-ascent crate, outside ./nightly, and this sandbox has
@@ -287,7 +263,7 @@
                     --models-dir ${./ctadl-ascent/src/models} \
                     --cil-goldens ${./xtask/cil-goldens} \
                     --cecil-src ${cecil} \
-                    --cil-fixtures ${cilFixtures}
+                    --cil-fixtures ${cil.cilFixtures}
 
                   mkdir -p "$out"
                 '';
@@ -328,13 +304,13 @@
               pkg-config
               bzip2
               ghidra-bin
-              # Android app debugging; see androidDebugSdk above. jdb comes
+              # Android app debugging; see androidDebugSdk in ./nix/android-jvm.nix. jdb comes
               # with the JDK in testEnv.
               frida-tools
               apktool
               jadx
               scrcpy
-              androidLldb
+              android.androidLldb
               # The SDK the fixtures and CecilDump build with, for building and
               # running .NET code by hand (ildasm/ilasm round trips, harnesses
               # that run fixture methods for real).
@@ -347,17 +323,17 @@
             # checks and `cargo xtask cil` read it.
             CECIL_SRC = "${cecil}";
             # cil-reader's compiled fixtures, for the same consumers.
-            CIL_READER_FIXTURES = "${cilFixtures}";
+            CIL_READER_FIXTURES = "${cil.cilFixtures}";
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
             # The debugging SDK, a superset of the regression one, so the
             # emulator finds its system image through this.
-            ANDROID_SDK_ROOT = "${androidDebugSdk.androidsdk}/libexec/android-sdk";
-            ANDROID_HOME = "${androidDebugSdk.androidsdk}/libexec/android-sdk";
-            ANDROID_NDK_ROOT = "${androidDebugSdk.androidsdk}/libexec/android-sdk/ndk-bundle";
+            ANDROID_SDK_ROOT = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk";
+            ANDROID_HOME = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk";
+            ANDROID_NDK_ROOT = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk/ndk-bundle";
             # What to pass `avdmanager create avd -k`; see ./nix/android-jvm.nix.
-            ANDROID_DEBUG_SYSTEM_IMAGE = androidDebugSystemImage;
-            FRIDA_SERVER = "${fridaServer}";
-            CTADL_ANDROID_ICC_APKS = "${droidbenchIccApks}";
+            ANDROID_DEBUG_SYSTEM_IMAGE = android.androidDebugSystemImage;
+            FRIDA_SERVER = "${android.fridaServer}";
+            CTADL_ANDROID_ICC_APKS = "${android.droidbenchIccApks}";
             DOTNET_NOLOGO = "1";
             DOTNET_CLI_TELEMETRY_OPTOUT = "1";
             DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
@@ -368,8 +344,8 @@
             # the stdenv's; ANDROID_LLDB_SERVER names the binary to push for
             # `android-lldb`, and simpleperf is under $ANDROID_NDK_ROOT/simpleperf.
             shellHook = ''
-              export PATH="${androidDebugSdk.androidsdk}/bin:${androidDebugSdkBuildTools}:$PATH"
-              ANDROID_LLDB_SERVER=$(echo "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*/lib/clang/*/lib/linux/${androidLldbArch}/lldb-server)
+              export PATH="${android.androidDebugSdk.androidsdk}/bin:${android.androidDebugSdkBuildTools}:$PATH"
+              ANDROID_LLDB_SERVER=$(echo "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*/lib/clang/*/lib/linux/${android.androidLldbArch}/lldb-server)
               export ANDROID_LLDB_SERVER
             '';
           };

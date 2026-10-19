@@ -321,7 +321,6 @@ let
 in
 {
   inherit
-    ilasm
     ptrGen
     gapGen
     flowRun
