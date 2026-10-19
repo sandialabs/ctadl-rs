@@ -893,7 +893,8 @@ fn implicit_return() {
     get_summary(program_from_string(src).0).expect("Verify probably bonked");
 }
 
-//TODO_JDB:  I don't think i handled (p+1)->f(). (*(p+1) = f is: constant_pointer_offset_deref_is_a_subscript)
+// TODO_JDB: `(p + 1)->f()` is not handled; `*(p + 1) = f` is
+// (`constant_pointer_offset_deref_is_a_subscript`).
 
 #[test_log::test]
 fn simple_else() {
@@ -1179,7 +1180,7 @@ fn a_case_label_inside_an_if_is_entered_from_the_switch() {
 
 #[test_log::test]
 fn statements_after_a_case_labelled_if_body_follow_the_if() {
-    // tiffcmp.c's `CHECK`: `g = v2` follows the `if`, so it runs when `v1 != v2`.
+    // `g = v2` follows the `if`, so it runs when `v1 != v2`.
     let src = r"
         int g;
         int check(int a, int v1, int v2) {
@@ -1187,10 +1188,9 @@ fn statements_after_a_case_labelled_if_body_follow_the_if() {
             return 0;
         }";
     let _strict = super::force_error_on_ast();
-    let (prog, _, dump) = super::parse_c_program(src).expect("not a frontend gap");
+    let (prog, _, _dump) = super::parse_c_program(src).expect("not a frontend gap");
     let (s, si) = get_summary(prog).unwrap();
     check_param_into_global_in(&s, &si, "check", 2, ".g");
-    let _ = dump;
 }
 
 #[test_log::test]
@@ -1201,11 +1201,10 @@ fn the_tail_of_a_case_two_bodies_deep_is_lowered_once() {
         void f(int a, int b, int v) {
             switch (a) { case 1: if (b) if (v) case 2: return; g = v; }
         }";
-    let (prog, dump) = program_from_string(src);
+    let (prog, _dump) = program_from_string(src);
     check_writes_to(&prog, "$globals.g", 1);
     let (s, si) = get_summary(prog).unwrap();
     check_param_into_global_in(&s, &si, "f", 2, ".g");
-    let _ = dump;
 }
 
 #[test_log::test]
@@ -2562,9 +2561,8 @@ fn nonconstant_subscript_may_alias_constant() {
 
 #[test_log::test]
 fn constant_pointer_offset_deref_is_a_subscript() {
-    // `*(a + 2)` is `a[2]`: the literal is pointer arithmetic on the address, so the store
-    // lands on `.[2].deref`, not on `a[0]` (`nightly/tests/c/ptrarith.c`). `2 + a` and
-    // `a - 1` are the other spellings C allows.
+    // `*(a + 2)` is `a[2]`, so the store lands on `.[2].deref`, not `a[0]`
+    // (`nightly/tests/c/ptrarith.c`). Likewise `2 + a` and `a - 1`.
     let src = r"
         void plus(int *a, int src)  { *(a + 2) = src; }
         void rplus(int *a, int src) { *(2 + a) = src; }
@@ -5224,10 +5222,10 @@ fn a_cast_shaped_call_is_not_a_frontend_gap() {
 fn a_cast_of_a_signed_operand_reads_no_type_name() {
     // `(T) -1` is not `T - 1`: no global named `T` is read.
     let src = r"
-        typedef long tmsize_t;
-        long lit(void) { return (tmsize_t) -1; }
-        long neg(long x) { return (tmsize_t) - x; }
-        long pos(long x, long y) { return (tmsize_t) + x - y; }";
+        typedef long count_t;
+        long lit(void) { return (count_t) -1; }
+        long neg(long x) { return (count_t) - x; }
+        long pos(long x, long y) { return (count_t) + x - y; }";
     let (prog, dump) = program_from_string(src);
     assert!(
         check_no_match(&dump, "$globals"),
@@ -5256,11 +5254,11 @@ fn a_cast_of_a_dereference_reads_the_pointee() {
 
 #[test_log::test]
 fn a_cast_of_an_element_address_is_the_address() {
-    // tiff2pdf's `(tdata_t) &buffer[off]`: the callee fills the caller's buffer.
+    // `fill((bytes_t) &buf[off], v)` fills the caller's buffer.
     let src = r"
-        typedef char *tdata_t;
+        typedef char *bytes_t;
         void fill(char *d, char v) { d[0] = v; }
-        void at(char *buf, int off, char v) { fill((tdata_t) &buf[off], v); }";
+        void at(char *buf, int off, char v) { fill((bytes_t) &buf[off], v); }";
     let (s, si) = get_summary(program_from_string(src).0).unwrap();
     check_flow_in(&s, &si, "at", 2, "", 0, ".deref");
 }
@@ -5570,7 +5568,7 @@ fn taint_crosses_a_call_through_a_global_function_pointer() {
 
 #[test_log::test]
 fn taint_crosses_a_call_through_an_extern_function_pointer() {
-    // libtiff's error handler: declared `extern` here, defined and installed in another unit.
+    // `hook` is declared `extern` here, defined and installed in another unit.
     let lib = r"
         int (*hook)(int);
         void set_hook(int (*h)(int)) { hook = h; }";

@@ -20,13 +20,13 @@ struct t {
   char *buf;
 };
 
-unsigned long rowsize(struct t *tif) { return tif->width * 4; }
+unsigned long rowsize(struct t *obj) { return obj->width * 4; }
 unsigned long mul(unsigned long a, unsigned long b) { return a * b; }
 
 /* A call's return must not flow back onto the fields its callee read. */
-void case_return(struct t *tif) {
-  unsigned long w = tif->width;
-  unsigned long r = rowsize(tif) + source();
+void case_return(struct t *obj) {
+  unsigned long w = obj->width;
+  unsigned long r = rowsize(obj) + source();
   sink_hit_ret(r);
   sink_clean_field(w);
 }
@@ -40,11 +40,11 @@ void case_operand(unsigned long m) {
 }
 
 /* A summary `ret <- a, ret <- b` must not make `a` taint `b`. */
-void case_nested(struct t *tif) {
+void case_nested(struct t *obj) {
   unsigned long n = source();
-  unsigned long s = mul(n, rowsize(tif));
+  unsigned long s = mul(n, rowsize(obj));
   sink_hit_mul(s);
-  sink_clean_nested(tif->width);
+  sink_clean_nested(obj->width);
 }
 
 /* Saturation covers the stored field's subtree, not its siblings. */

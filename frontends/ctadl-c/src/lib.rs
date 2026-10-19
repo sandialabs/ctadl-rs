@@ -1716,7 +1716,7 @@ fn is_statement_expression(node: Node<'_>) -> bool {
     }
 }
 
-/// The name a parameter's declarator declares, and whether the parameter is a reference.
+/// The name a parameter's declarator declares.
 ///
 /// A declarator is not a fixed list of spellings, it NESTS: `char **argv` is a
 /// `pointer_declarator` inside a `pointer_declarator`, `char *v[]` an `array_declarator`
@@ -1726,17 +1726,11 @@ fn is_statement_expression(node: Node<'_>) -> bool {
 /// The name is `None` when the declarator declares none -- an abstract declarator
 /// (`void f(char **)`), or parse debris. That is not the same as "there is no parameter":
 /// see [`Context::collect_params`], which still owns the slot.
-///
-/// Every parameter is `ByVal`; writes through a pointer still flow out (`isout`).
-fn param_head(declarator: Node<'_>) -> (Option<Node<'_>>, ParameterType) {
+fn param_head(declarator: Node<'_>) -> Option<Node<'_>> {
     let mut node = declarator;
-    let mut name = None;
     while let Some(current) = unparenthesize(node) {
         match current.kind() {
-            "identifier" => {
-                name = Some(current);
-                break;
-            }
+            "identifier" => return Some(current),
             "pointer_declarator"
             | "abstract_pointer_declarator"
             | "array_declarator"
@@ -1744,15 +1738,12 @@ fn param_head(declarator: Node<'_>) -> (Option<Node<'_>>, ParameterType) {
             | "function_declarator"
             | "abstract_function_declarator" => {}
             // A declarator shape with no name in it to find (an attribute, debris).
-            _ => break,
+            _ => return None,
         }
         // `char **` bottoms out at an `abstract_pointer_declarator` with no inner declarator.
-        match current.child_by_field_name("declarator") {
-            Some(inner) => node = inner,
-            None => break,
-        }
+        node = current.child_by_field_name("declarator")?;
     }
-    (name, ParameterType::ByVal)
+    None
 }
 
 /// The name recorded for a parameter that declares none, so that `param_names` stays indexed
@@ -3364,10 +3355,9 @@ impl<'a> Context<'a> {
             let Some(declarator) = decl.child_by_field_name("declarator") else {
                 continue;
             };
-            let (param_name, param_type) = param_head(declarator);
-
-            fdat.params.push(param_type);
-            match param_name {
+            // Every parameter is `ByVal`; writes through a pointer still flow out (`isout`).
+            fdat.params.push(ParameterType::ByVal);
+            match param_head(declarator) {
                 Some(param_name) => {
                     let pn = to_str(&param_name, source);
                     param_names.push(pn);
@@ -4203,14 +4193,12 @@ impl<'a> Context<'a> {
             .then_some((op, operand))
     }
 
-    /// `e + K`, `K + e` or `e - K`, `K` an integer literal, read as an address: `e` and the
-    /// element offset (`-K` for a subtraction).
+    /// `e + K`, `K + e` or `e - K` (`K` an integer literal) as an address: `e` and the
+    /// element offset (`-K` for `e - K`).
     ///
-    /// Only a caller that knows `node` is an address may ask -- the operand of `*`, or a
-    /// subscript's base. There, one operand of the sum is the pointer and a literal is not, so
-    /// the literal is pointer arithmetic. Anywhere else `x + 2` may be integer arithmetic,
-    /// which the untyped parse cannot tell apart, and it still lowers as a merge of its
-    /// operands ([`Self::flatten_binary`]).
+    /// Only for a node known to be an address (the operand of `*`, a subscript's base).
+    /// Elsewhere `x + 2` may be integer arithmetic and lowers as a merge
+    /// ([`Self::flatten_binary`]).
     fn constant_pointer_offset<'t>(
         &self,
         node: Node<'t>,
@@ -4303,12 +4291,10 @@ impl<'a> Context<'a> {
                 })
         };
 
-        // A GNU statement expression in callee position produces a VALUE, and calling a
-        // value is calling through it. The access path cannot say so -- the value node may
-        // resolve to a bare global path, exactly the shape of a global callee that IS a
-        // name -- so ask the construct itself; left as a name, an empty-bodied function
-        // would be invented per call site.
-        // A global variable callee is a value too, unless a function of that name is defined.
+        // A callee that is a VALUE is called through, not by name. Its path can look like a
+        // named global's, so ask the construct: a GNU statement expression, or a global
+        // variable with no function of that name defined. Left as a name, an empty-bodied
+        // function would be invented per call site.
         let callee_is_a_value = is_statement_expression(func_node)
             || (func_node.kind() == "identifier"
                 && self.global_variables.contains(func_name)
