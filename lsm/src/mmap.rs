@@ -160,14 +160,16 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
 }
 
 /// Writes a run straight into its final file through a writable mapping. The
-/// caller knows the run's shape up front (entry and value counts), so the layout
-/// is fixed before the first byte and every section is written in place: no
-/// intermediate buffers or scratch files, and no write syscalls.
+/// caller knows the run's shape up front (its value count, and at most how many
+/// entries), so the layout is fixed before the first byte and every section is
+/// written in place: no intermediate buffers or scratch files, and no write
+/// syscalls. Entries short of the bound leave the tail of the key and offset
+/// sections unwritten, which costs address space but no disk.
 struct RunWriter {
     mmap: MmapMut,
     path: PathBuf,
     keep_file: bool,
-    entries_count: usize,
+    max_entries: usize,
     values_len: usize,
     keys_off: usize,
     offsets_off: usize,
@@ -179,19 +181,19 @@ struct RunWriter {
 }
 
 impl RunWriter {
-    /// Creates the run file at `path`, sized for `entries_count` keys and
-    /// `values_len` values of the given widths, and maps it for writing. A
-    /// temporary run (`keep_file == false`) is unlinked once it is mapped for
+    /// Creates the run file at `path`, sized for at most `max_entries` keys and
+    /// exactly `values_len` values of the given widths, and maps it for writing.
+    /// A temporary run (`keep_file == false`) is unlinked once it is mapped for
     /// reading, so it disappears with its last mapping.
     fn create<K: Pod, V: Pod>(
         path: PathBuf,
         keep_file: bool,
-        entries_count: usize,
+        max_entries: usize,
         values_len: usize,
     ) -> io::Result<Self> {
         let keys_off = align8(HEADER_LEN);
-        let offsets_off = align8(keys_off + entries_count * size_of::<K>());
-        let values_off = align8(offsets_off + (entries_count + 1) * size_of::<u64>());
+        let offsets_off = align8(keys_off + max_entries * size_of::<K>());
+        let values_off = align8(offsets_off + (max_entries + 1) * size_of::<u64>());
         let file_len = values_off + values_len * size_of::<V>();
         let file = fs::OpenOptions::new()
             .read(true)
@@ -202,27 +204,19 @@ impl RunWriter {
         file.set_len(file_len as u64)?;
         // SAFETY: the file was just created by us and nothing else maps or writes
         // it while this mapping lives.
-        let mut mmap = unsafe { MmapMut::map_mut(&file)? };
-        let header = &mut mmap[..HEADER_LEN];
-        header[0..4].copy_from_slice(RUN_MAGIC);
-        // header[4..8] stays the zero version/pad.
-        header[8..16].copy_from_slice(&(entries_count as u64).to_ne_bytes());
-        header[16..24].copy_from_slice(&(values_len as u64).to_ne_bytes());
-        header[24..32].copy_from_slice(&(keys_off as u64).to_ne_bytes());
-        header[32..40].copy_from_slice(&(offsets_off as u64).to_ne_bytes());
-        header[40..48].copy_from_slice(&(values_off as u64).to_ne_bytes());
+        let mmap = unsafe { MmapMut::map_mut(&file)? };
         Ok(Self {
             mmap,
             path,
             keep_file,
-            entries_count,
+            max_entries,
             values_len,
             keys_off,
             offsets_off,
             values_off,
             keys_written: 0,
             values_written: 0,
-            bloom: Bloom::with_capacity(entries_count),
+            bloom: Bloom::with_capacity(max_entries),
         })
     }
 
@@ -234,7 +228,7 @@ impl RunWriter {
     /// Begins a new entry. Must be called in ascending key order, then followed
     /// by zero or more `append_values` calls for that entry.
     fn start_key<K: Pod>(&mut self, key: &K) {
-        assert!(self.keys_written < self.entries_count, "run overflow: keys");
+        assert!(self.keys_written < self.max_entries, "run overflow: keys");
         let at = self.keys_off + self.keys_written * size_of::<K>();
         self.mmap[at..at + size_of::<K>()].copy_from_slice(bytemuck::bytes_of(key));
         self.bloom.insert(hash_key(key));
@@ -256,13 +250,21 @@ impl RunWriter {
     }
 
     fn finish<K: Pod + Ord, V: Pod>(mut self) -> io::Result<MmapRun<K, V>> {
-        assert_eq!(self.keys_written, self.entries_count, "run underflow: keys");
         assert_eq!(
             self.values_written, self.values_len,
             "run underflow: values"
         );
+        let entries_count = self.keys_written;
         // Closing sentinel offset (== total values).
-        self.write_offset(self.entries_count, self.values_len);
+        self.write_offset(entries_count, self.values_len);
+        let header = &mut self.mmap[..HEADER_LEN];
+        header[0..4].copy_from_slice(RUN_MAGIC);
+        // header[4..8] stays the zero version/pad.
+        header[8..16].copy_from_slice(&(entries_count as u64).to_ne_bytes());
+        header[16..24].copy_from_slice(&(self.values_len as u64).to_ne_bytes());
+        header[24..32].copy_from_slice(&(self.keys_off as u64).to_ne_bytes());
+        header[32..40].copy_from_slice(&(self.offsets_off as u64).to_ne_bytes());
+        header[40..48].copy_from_slice(&(self.values_off as u64).to_ne_bytes());
         let mmap = self.mmap.make_read_only()?;
         let path = if self.keep_file {
             Some(self.path)
@@ -273,7 +275,7 @@ impl RunWriter {
         Ok(MmapRun {
             mmap,
             path,
-            entries_count: self.entries_count,
+            entries_count,
             values_len: self.values_len,
             keys_off: self.keys_off,
             offsets_off: self.offsets_off,
@@ -599,17 +601,22 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     /// Streaming k-way merge of several runs into one. Each run is already sorted
     /// ascending by key, so we repeatedly pick the smallest head key across the
     /// runs and copy that key's values (concatenated from every run holding it)
-    /// straight into the new run's mapping. A first pass over the keys alone
-    /// counts the distinct keys, which fixes the new run's layout.
+    /// straight into the new run's mapping, sized for the case where no two runs
+    /// share a key.
     fn merge_runs(&mut self, level: usize, runs: Vec<MmapRun<K, V>>) -> io::Result<MmapRun<K, V>> {
+        let max_entries = runs.iter().map(|run| run.entries_count).sum();
         let values_len = runs.iter().map(|run| run.values_len).sum();
-        let mut entries_count = 0;
-        merge_keys(&runs, |_, _| entries_count += 1);
-        let mut writer = self.new_run_writer(level, entries_count, values_len)?;
-        merge_keys(&runs, |key, holders| {
+        let mut writer = self.new_run_writer(level, max_entries, values_len)?;
+        let sections: Vec<_> = runs
+            .iter()
+            .map(|run| (run.keys(), run.offsets(), run.values()))
+            .collect();
+        let keys: Vec<&[K]> = sections.iter().map(|&(keys, _, _)| keys).collect();
+        merge_keys(&keys, |key, holders| {
             writer.start_key(key);
             for &(r, i) in holders {
-                writer.append_values(runs[r].entry(i).1);
+                let (_, offsets, values) = sections[r];
+                writer.append_values(&values[offsets[i] as usize..offsets[i + 1] as usize]);
             }
         });
         let new_run = writer.finish()?;
@@ -620,32 +627,28 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     }
 }
 
-/// Visits the distinct keys of `runs` in ascending order, each with the
-/// `(run, entry)` positions that hold it, in run order.
-fn merge_keys<K: Pod + Ord, V: Pod>(
-    runs: &[MmapRun<K, V>],
-    mut visit: impl FnMut(&K, &[(usize, usize)]),
-) {
-    // Per-run cursor: index of the next unconsumed entry.
-    let mut cursors: Vec<usize> = vec![0; runs.len()];
-    let mut holders: Vec<(usize, usize)> = Vec::with_capacity(runs.len());
+/// Visits the distinct keys of several sorted key lists in ascending order, each
+/// with the `(list, index)` positions that hold it, in list order.
+fn merge_keys<K: Ord>(lists: &[&[K]], mut visit: impl FnMut(&K, &[(usize, usize)])) {
+    // Per-list cursor: index of the next unconsumed key.
+    let mut cursors: Vec<usize> = vec![0; lists.len()];
+    let mut holders: Vec<(usize, usize)> = Vec::with_capacity(lists.len());
     loop {
-        // Smallest key currently at any run's cursor head.
+        // Smallest key currently at any list's cursor head.
         let mut min_key: Option<&K> = None;
-        for (r, run) in runs.iter().enumerate() {
-            if cursors[r] < run.entries_count {
-                let key = &run.keys()[cursors[r]];
-                if min_key.is_none_or(|current| key < current) {
-                    min_key = Some(key);
-                }
+        for (keys, &cursor) in lists.iter().zip(&cursors) {
+            if let Some(key) = keys.get(cursor)
+                && min_key.is_none_or(|current| key < current)
+            {
+                min_key = Some(key);
             }
         }
         let Some(min_key) = min_key else { break };
         holders.clear();
-        for (r, run) in runs.iter().enumerate() {
-            if cursors[r] < run.entries_count && run.keys()[cursors[r]] == *min_key {
-                holders.push((r, cursors[r]));
-                cursors[r] += 1;
+        for (r, (keys, cursor)) in lists.iter().zip(&mut cursors).enumerate() {
+            if keys.get(*cursor) == Some(min_key) {
+                holders.push((r, *cursor));
+                *cursor += 1;
             }
         }
         visit(min_key, &holders);
