@@ -140,7 +140,8 @@ fn lua_program() -> ProgramInfo {
 /// enumerator's `Current` and a `ValueTuple` constructor's field.
 const CIL_CONCAT: &str =
     "[System.Private.CoreLib]System.String::Concat(System.String,System.String)->System.String";
-const CIL_CURRENT: &str = "[System.Private.CoreLib]System.Collections.Generic.List`1/Enumerator::get_Current()->!0";
+const CIL_CURRENT: &str =
+    "[System.Private.CoreLib]System.Collections.Generic.List`1/Enumerator::get_Current()->!0";
 const CIL_TUPLE: &str = "[System.Private.CoreLib]System.ValueTuple`2::.ctor(!0,!1)->System.Void";
 
 fn cil_program() -> ProgramInfo {
@@ -172,8 +173,18 @@ fn cil_program() -> ProgramInfo {
             CIL_TUPLE,
         ),
         // Bare names that collide with the native and Lua defaults' functions.
-        row("[App]C", NATIVE_PROBE, "()->System.Void", "[App]C::strcpy()->System.Void"),
-        row("[App]C", LUA_PROBE, "()->System.Void", "[App]C::format()->System.Void"),
+        row(
+            "[App]C",
+            NATIVE_PROBE,
+            "()->System.Void",
+            "[App]C::strcpy()->System.Void",
+        ),
+        row(
+            "[App]C",
+            LUA_PROBE,
+            "()->System.Void",
+            "[App]C::format()->System.Void",
+        ),
     ];
     let names: Vec<String> = methods.iter().map(|m| m.3.to_string()).collect();
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -259,7 +270,10 @@ fn cil_import_loads_only_the_cil_defaults() {
             "expected a .NET summary for {probe}, got {summarized:?}"
         );
     }
-    for other in ["[App]C::strcpy()->System.Void", "[App]C::format()->System.Void"] {
+    for other in [
+        "[App]C::strcpy()->System.Void",
+        "[App]C::format()->System.Void",
+    ] {
         assert!(
             !summarized.contains(other),
             "{other} picked up another language's defaults: {summarized:?}"

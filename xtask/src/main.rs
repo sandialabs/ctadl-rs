@@ -150,9 +150,9 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
 /// `cargo xtask cil <command>`: regenerate cil-reader's committed artifacts
 /// from the pinned Mono.Cecil. Checking them is `regression --frontend cil`.
 fn run_cil(mut args: impl Iterator<Item = String>) -> Result<bool> {
-    let command = args
-        .next()
-        .context("`cil` requires a command: bless, bless-flow, bless-mir, exec, models or codegen")?;
+    let command = args.next().context(
+        "`cil` requires a command: bless, bless-flow, bless-mir, exec, models or codegen",
+    )?;
     let mut cil_dir = None;
     let mut fixtures = None;
     let mut ctadl = None;

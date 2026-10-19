@@ -213,8 +213,7 @@ pub fn check(config: &Config, sarif: &Path) -> Result<Outcome> {
             "expected lines {missing_lines:?} not reached (reached {lines:?})"
         ));
     }
-    if let Some(bad) = crate::assertions::check_unexpected_lines(&config.unexpected_lines, &lines)
-    {
+    if let Some(bad) = crate::assertions::check_unexpected_lines(&config.unexpected_lines, &lines) {
         why.push(bad);
     }
 

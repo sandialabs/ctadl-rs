@@ -145,7 +145,16 @@ pub fn locate_model_run(xtask_dir: &Path, work: &Path) -> Result<Option<Vec<OsSt
     let out = work.join("model-run-build");
     let mut cmd = Command::new(&dotnet);
     cmd.current_dir(&source)
-        .args(["build", "-c", "Release", "--nologo", "-v", "q", "-p:UseAppHost=false", "-o"])
+        .args([
+            "build",
+            "-c",
+            "Release",
+            "--nologo",
+            "-v",
+            "q",
+            "-p:UseAppHost=false",
+            "-o",
+        ])
         .arg(&out)
         .env("DOTNET_NOLOGO", "1")
         .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
@@ -257,7 +266,9 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
     }
     for cls in &unavailable {
         if !listing.contains(&format!("\"cls\":{}", serde_json::to_string(cls)?)) {
-            failures.push(format!("{KNOWN_FILE}: unavailable class {cls} is not modeled"));
+            failures.push(format!(
+                "{KNOWN_FILE}: unavailable class {cls} is not modeled"
+            ));
         }
     }
 
@@ -320,7 +331,13 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
     )?;
     let runs = model_run(
         &cmd,
-        &["run", "--trials", &TRIALS.to_string(), "--seed", &SEED.to_string()],
+        &[
+            "run",
+            "--trials",
+            &TRIALS.to_string(),
+            "--seed",
+            &SEED.to_string(),
+        ],
         &fids_file,
         &dir.join("runs.jsonl"),
         &sandbox,
@@ -361,7 +378,9 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
                 )
             });
             let _ = writeln!(text, "  unexercised: {why}");
-            *skips.entry(why.split(':').next().unwrap().to_string()).or_default() += 1;
+            *skips
+                .entry(why.split(':').next().unwrap().to_string())
+                .or_default() += 1;
             continue;
         }
         checked += 1;
@@ -381,9 +400,9 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
                 .iter()
                 .map(|f| format!("{} -> {}", show(f), show(&flow.to)))
                 .collect();
-            let accepted = known_flows.iter().position(|(rx, k)| {
-                rx.is_match(&run.fid) && rendered.contains(&k.flow)
-            });
+            let accepted = known_flows
+                .iter()
+                .position(|(rx, k)| rx.is_match(&run.fid) && rendered.contains(&k.flow));
             match accepted {
                 Some(i) => {
                     known_hits[i] += 1;
@@ -392,7 +411,11 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
                 None => {
                     missing += 1;
                     let _ = writeln!(text, "  MISSING: {}", rendered.join(" | "));
-                    failures.push(format!("{}: {} is not modeled", run.fid, rendered.join(" | ")));
+                    failures.push(format!(
+                        "{}: {} is not modeled",
+                        run.fid,
+                        rendered.join(" | ")
+                    ));
                 }
             }
         }
@@ -430,7 +453,10 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
             .join(", ")
     );
     std::fs::write(dir.join("report.txt"), format!("{summary}\n\n{text}"))?;
-    println!("cil:models: {summary} (see {})", dir.join("report.txt").display());
+    println!(
+        "cil:models: {summary} (see {})",
+        dir.join("report.txt").display()
+    );
     if failures.is_empty() {
         return Ok(Outcome::Pass);
     }
@@ -598,11 +624,31 @@ mod tests {
     #[test]
     fn a_pair_covers_its_extensions_by_one_suffix() {
         // `Argument(0) -> Return` covers the elements too ...
-        assert!(covers(&loc(0, &[]), &loc(-1, &[]), &loc(0, &["[]"]), &loc(-1, &["[]"])));
+        assert!(covers(
+            &loc(0, &[]),
+            &loc(-1, &[]),
+            &loc(0, &["[]"]),
+            &loc(-1, &["[]"])
+        ));
         // ... but does not take an element out of its collection.
-        assert!(!covers(&loc(0, &[]), &loc(-1, &[]), &loc(0, &["[]"]), &loc(-1, &[])));
-        assert!(covers(&loc(0, &["[]"]), &loc(-1, &[]), &loc(0, &["[]"]), &loc(-1, &[])));
-        assert!(!covers(&loc(0, &["[]"]), &loc(-1, &[]), &loc(1, &["[]"]), &loc(-1, &[])));
+        assert!(!covers(
+            &loc(0, &[]),
+            &loc(-1, &[]),
+            &loc(0, &["[]"]),
+            &loc(-1, &[])
+        ));
+        assert!(covers(
+            &loc(0, &["[]"]),
+            &loc(-1, &[]),
+            &loc(0, &["[]"]),
+            &loc(-1, &[])
+        ));
+        assert!(!covers(
+            &loc(0, &["[]"]),
+            &loc(-1, &[]),
+            &loc(1, &["[]"]),
+            &loc(-1, &[])
+        ));
     }
 
     #[test]

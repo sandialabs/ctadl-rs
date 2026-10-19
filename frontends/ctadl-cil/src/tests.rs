@@ -80,7 +80,11 @@ fn parameters_of_a_signature() {
     };
     assert_eq!(
         parameters(&sig),
-        vec![ParameterType::ByRef, ParameterType::ByVal, ParameterType::ByRef]
+        vec![
+            ParameterType::ByRef,
+            ParameterType::ByVal,
+            ParameterType::ByRef
+        ]
     );
 }
 
