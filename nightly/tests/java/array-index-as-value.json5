@@ -1,0 +1,20 @@
+{
+  // Flow: i = source() (13) -> a[i] = i (14) -> sink(a[0]) (15). The stored value
+  // is also the index, so dx compiles the store to `aput v0, v1, v0`, the shape in
+  // which the Dex frontend once dropped the stored value (dex-jvm-reader-improvements.md 1.3).
+  // Line 14 is dropped: a pure copy into the array, which copy_alias collapses,
+  // as in ArrayFlow.
+  "expected_lines": [13, 15],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LArrayIndexAsValue;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LArrayIndexAsValue;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}
