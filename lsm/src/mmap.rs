@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, BufWriter, Write};
+use std::io;
 use std::iter::{Flatten, Peekable};
 use std::marker::PhantomData;
 use std::mem::size_of;
@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::vec;
 
 use bytemuck::Pod;
-use memmap2::Mmap;
+use memmap2::{Mmap, MmapMut};
 
 const DEFAULT_LEVEL_FANOUT: usize = 4;
 const RUN_MAGIC: &[u8; 4] = b"LSMM";
@@ -33,7 +33,7 @@ const RUN_MAGIC: &[u8; 4] = b"LSMM";
 /// keys_off(8) + offsets_off(8) + values_off(8).
 const HEADER_LEN: usize = 4 + 4 + 8 * 5;
 const DEFAULT_DISK_MEMTABLE_LIMIT: usize = 10_000;
-static NEXT_DISK_DIR_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_TEMP_RUN_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Borrowing value iterator: a flattened list of slices, one per source (the
 /// memtable plus each run that holds the key). Cheap to clone, which the Ascent
@@ -49,7 +49,9 @@ fn align8(n: usize) -> usize {
 #[derive(Debug)]
 struct MmapRun<K, V> {
     mmap: Mmap,
-    path: PathBuf,
+    /// The run's file, for a persistent map. A temporary run's file is unlinked
+    /// as soon as it is mapped, so it needs no cleanup.
+    path: Option<PathBuf>,
     entries_count: usize,
     values_len: usize,
     keys_off: usize,
@@ -87,6 +89,13 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
         }
     }
 
+    /// Deletes the run's file, if it still has one.
+    fn delete(self) {
+        if let Some(path) = &self.path {
+            let _ = fs::remove_file(path);
+        }
+    }
+
     /// The `i`th entry as `(&key, &values)`, both borrowing the mapping.
     fn entry(&self, i: usize) -> (&K, &[V]) {
         let offsets = self.offsets();
@@ -97,177 +106,125 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
     }
 }
 
-/// Total buffered run bytes above which the [`RunBuilder`] spills its columnar
-/// sections to scratch files instead of holding them in memory. Below it a run
-/// is assembled entirely in RAM and written in one pass (no scratch files —
-/// fast, the common case during compaction); above it the run streams to disk so
-/// peak memory stays bounded by roughly this amount regardless of run size.
-const SPILL_THRESHOLD: usize = 256 * 1024;
-
-/// One columnar section of a run. It accumulates in memory until the builder
-/// crosses [`SPILL_THRESHOLD`], at which point every section spills to a scratch
-/// file and subsequent writes stream straight to disk.
-enum Section {
-    Mem(Vec<u8>),
-    Spilled {
-        writer: BufWriter<fs::File>,
-        path: PathBuf,
-    },
-}
-
-impl Section {
-    fn mem_len(&self) -> usize {
-        match self {
-            Section::Mem(buf) => buf.len(),
-            Section::Spilled { .. } => 0,
-        }
-    }
-
-    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
-        match self {
-            Section::Mem(buf) => {
-                buf.extend_from_slice(bytes);
-                Ok(())
-            }
-            Section::Spilled { writer, .. } => writer.write_all(bytes),
-        }
-    }
-
-    /// Moves an in-memory section to a scratch file (no-op if already spilled).
-    fn spill(&mut self, path: PathBuf) -> io::Result<()> {
-        if let Section::Mem(buf) = self {
-            let mut writer = BufWriter::new(fs::File::create(&path)?);
-            writer.write_all(buf)?;
-            *self = Section::Spilled { writer, path };
-        }
-        Ok(())
-    }
-
-    /// Streams this section's bytes into `out`, consuming it.
-    fn copy_into(self, out: &mut impl Write) -> io::Result<()> {
-        match self {
-            Section::Mem(buf) => out.write_all(&buf),
-            Section::Spilled { mut writer, path } => {
-                writer.flush()?;
-                drop(writer);
-                let mut file = fs::File::open(&path)?;
-                io::copy(&mut file, out)?;
-                let _ = fs::remove_file(&path);
-                Ok(())
-            }
-        }
-    }
-}
-
-/// Assembles a run's three columnar sections, keeping small runs entirely in
-/// memory and spilling larger ones to scratch files past [`SPILL_THRESHOLD`], so
-/// peak memory is bounded by the threshold while the common (small) case never
-/// touches the filesystem.
-struct RunBuilder {
-    keys: Section,
-    offsets: Section,
-    values: Section,
-    out_path: PathBuf,
+/// Writes a run straight into its final file through a writable mapping. The
+/// caller knows the run's shape up front (entry and value counts), so the layout
+/// is fixed before the first byte and every section is written in place: no
+/// intermediate buffers or scratch files, and no write syscalls.
+struct RunWriter {
+    mmap: MmapMut,
+    path: PathBuf,
+    keep_file: bool,
     entries_count: usize,
-    values_len: u64,
-    spilled: bool,
+    values_len: usize,
+    keys_off: usize,
+    offsets_off: usize,
+    values_off: usize,
+    /// Entries and values written so far.
+    keys_written: usize,
+    values_written: usize,
 }
 
-impl RunBuilder {
-    fn new(out_path: PathBuf) -> io::Result<Self> {
+impl RunWriter {
+    /// Creates the run file at `path`, sized for `entries_count` keys and
+    /// `values_len` values of the given widths, and maps it for writing. A
+    /// temporary run (`keep_file == false`) is unlinked once it is mapped for
+    /// reading, so it disappears with its last mapping.
+    fn create<K: Pod, V: Pod>(
+        path: PathBuf,
+        keep_file: bool,
+        entries_count: usize,
+        values_len: usize,
+    ) -> io::Result<Self> {
+        let keys_off = align8(HEADER_LEN);
+        let offsets_off = align8(keys_off + entries_count * size_of::<K>());
+        let values_off = align8(offsets_off + (entries_count + 1) * size_of::<u64>());
+        let file_len = values_off + values_len * size_of::<V>();
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+        file.set_len(file_len as u64)?;
+        // SAFETY: the file was just created by us and nothing else maps or writes
+        // it while this mapping lives.
+        let mut mmap = unsafe { MmapMut::map_mut(&file)? };
+        let header = &mut mmap[..HEADER_LEN];
+        header[0..4].copy_from_slice(RUN_MAGIC);
+        // header[4..8] stays the zero version/pad.
+        header[8..16].copy_from_slice(&(entries_count as u64).to_ne_bytes());
+        header[16..24].copy_from_slice(&(values_len as u64).to_ne_bytes());
+        header[24..32].copy_from_slice(&(keys_off as u64).to_ne_bytes());
+        header[32..40].copy_from_slice(&(offsets_off as u64).to_ne_bytes());
+        header[40..48].copy_from_slice(&(values_off as u64).to_ne_bytes());
         Ok(Self {
-            keys: Section::Mem(Vec::new()),
-            offsets: Section::Mem(Vec::new()),
-            values: Section::Mem(Vec::new()),
-            out_path,
-            entries_count: 0,
-            values_len: 0,
-            spilled: false,
+            mmap,
+            path,
+            keep_file,
+            entries_count,
+            values_len,
+            keys_off,
+            offsets_off,
+            values_off,
+            keys_written: 0,
+            values_written: 0,
         })
     }
 
-    fn mem_total(&self) -> usize {
-        self.keys.mem_len() + self.offsets.mem_len() + self.values.mem_len()
+    fn write_offset(&mut self, i: usize, offset: usize) {
+        let at = self.offsets_off + i * size_of::<u64>();
+        self.mmap[at..at + size_of::<u64>()].copy_from_slice(&(offset as u64).to_ne_bytes());
     }
 
-    /// Spills all sections to scratch files if the in-memory buffers plus the
-    /// `incoming` bytes about to be written would exceed the threshold. Called
-    /// before each write so a single large append can't blow the bound.
-    fn reserve(&mut self, incoming: usize) -> io::Result<()> {
-        if !self.spilled && self.mem_total() + incoming > SPILL_THRESHOLD {
-            self.keys.spill(self.out_path.with_extension("keys.tmp"))?;
-            self.offsets
-                .spill(self.out_path.with_extension("offsets.tmp"))?;
-            self.values
-                .spill(self.out_path.with_extension("values.tmp"))?;
-            self.spilled = true;
-        }
-        Ok(())
-    }
-
-    /// Begins a new entry, recording its key and the offset at which its values
-    /// start. Must be called in ascending key order, then followed by zero or
-    /// more `append_values` calls for that entry.
-    fn start_key<K: Pod>(&mut self, key: &K) -> io::Result<()> {
-        self.reserve(size_of::<K>() + size_of::<u64>())?;
-        self.keys.write_all(bytemuck::bytes_of(key))?;
-        self.offsets.write_all(&self.values_len.to_ne_bytes())?;
-        self.entries_count += 1;
-        Ok(())
+    /// Begins a new entry. Must be called in ascending key order, then followed
+    /// by zero or more `append_values` calls for that entry.
+    fn start_key<K: Pod>(&mut self, key: &K) {
+        assert!(self.keys_written < self.entries_count, "run overflow: keys");
+        let at = self.keys_off + self.keys_written * size_of::<K>();
+        self.mmap[at..at + size_of::<K>()].copy_from_slice(bytemuck::bytes_of(key));
+        self.write_offset(self.keys_written, self.values_written);
+        self.keys_written += 1;
     }
 
     /// Appends values to the current entry. May be called several times to
     /// concatenate slices coming from different source runs.
-    fn append_values<V: Pod>(&mut self, vals: &[V]) -> io::Result<()> {
+    fn append_values<V: Pod>(&mut self, vals: &[V]) {
+        assert!(
+            self.values_written + vals.len() <= self.values_len,
+            "run overflow: values"
+        );
         let bytes: &[u8] = bytemuck::cast_slice(vals);
-        self.reserve(bytes.len())?;
-        self.values.write_all(bytes)?;
-        self.values_len += vals.len() as u64;
-        Ok(())
+        let at = self.values_off + self.values_written * size_of::<V>();
+        self.mmap[at..at + bytes.len()].copy_from_slice(bytes);
+        self.values_written += vals.len();
     }
 
-    /// Assembles the sections into the final, mmap-able run file.
     fn finish<K: Pod + Ord, V: Pod>(mut self) -> io::Result<MmapRun<K, V>> {
+        assert_eq!(self.keys_written, self.entries_count, "run underflow: keys");
+        assert_eq!(
+            self.values_written, self.values_len,
+            "run underflow: values"
+        );
         // Closing sentinel offset (== total values).
-        self.offsets.write_all(&self.values_len.to_ne_bytes())?;
-
-        let entries_count = self.entries_count;
-        let values_len = self.values_len;
-        let keys_bytes = entries_count * size_of::<K>();
-        let offsets_bytes = (entries_count + 1) * size_of::<u64>();
-        let keys_off = align8(HEADER_LEN);
-        let offsets_off = align8(keys_off + keys_bytes);
-        let values_off = align8(offsets_off + offsets_bytes);
-
-        let mut out = BufWriter::new(fs::File::create(&self.out_path)?);
-        let mut header = [0u8; HEADER_LEN];
-        header[0..4].copy_from_slice(RUN_MAGIC);
-        // header[4..8] left as the zero version/pad.
-        header[8..16].copy_from_slice(&(entries_count as u64).to_ne_bytes());
-        header[16..24].copy_from_slice(&values_len.to_ne_bytes());
-        header[24..32].copy_from_slice(&(keys_off as u64).to_ne_bytes());
-        header[32..40].copy_from_slice(&(offsets_off as u64).to_ne_bytes());
-        header[40..48].copy_from_slice(&(values_off as u64).to_ne_bytes());
-        out.write_all(&header)?;
-        // HEADER_LEN == keys_off (48, already 8-aligned), so no pad before keys.
-        self.keys.copy_into(&mut out)?;
-        write_padding(&mut out, offsets_off - (keys_off + keys_bytes))?;
-        self.offsets.copy_into(&mut out)?;
-        write_padding(&mut out, values_off - (offsets_off + offsets_bytes))?;
-        self.values.copy_into(&mut out)?;
-        out.flush()?;
-        drop(out);
-        load_run(self.out_path)
+        self.write_offset(self.entries_count, self.values_len);
+        let mmap = self.mmap.make_read_only()?;
+        let path = if self.keep_file {
+            Some(self.path)
+        } else {
+            fs::remove_file(&self.path)?;
+            None
+        };
+        Ok(MmapRun {
+            mmap,
+            path,
+            entries_count: self.entries_count,
+            values_len: self.values_len,
+            keys_off: self.keys_off,
+            offsets_off: self.offsets_off,
+            values_off: self.values_off,
+            _marker: PhantomData,
+        })
     }
-}
-
-/// Writes `n` (< 8) zero padding bytes to align the next section.
-fn write_padding(out: &mut impl Write, n: usize) -> io::Result<()> {
-    const ZEROS: [u8; 8] = [0u8; 8];
-    if n > 0 {
-        out.write_all(&ZEROS[..n])?;
-    }
-    Ok(())
 }
 
 /// Maps an existing run file and parses its header.
@@ -294,7 +251,7 @@ fn load_run<K: Pod + Ord, V: Pod>(path: PathBuf) -> io::Result<MmapRun<K, V>> {
     let values_off = read(40..48);
     Ok(MmapRun {
         mmap,
-        path,
+        path: Some(path),
         entries_count,
         values_len,
         keys_off,
@@ -313,20 +270,11 @@ pub struct MmapLsmMultiMap<K, V> {
     len: usize,
     memtable_limit: usize,
     level_fanout: usize,
-    dir: PathBuf,
+    /// Where a persistent map (see [`Self::open`]) keeps its run files. A
+    /// temporary map has none: its runs live in unlinked files under the
+    /// temporary directory.
+    dir: Option<PathBuf>,
     next_run_id: u64,
-    is_temp: bool,
-    dir_created: bool,
-}
-
-impl<K, V> Drop for MmapLsmMultiMap<K, V> {
-    fn drop(&mut self) {
-        if self.is_temp && self.dir_created {
-            // Drop the mappings before removing the directory.
-            self.levels.clear();
-            let _ = fs::remove_dir_all(&self.dir);
-        }
-    }
 }
 
 impl<K: Pod + Ord, V: Pod> Default for MmapLsmMultiMap<K, V> {
@@ -339,8 +287,8 @@ impl<K: Pod + Ord, V: Pod> Default for MmapLsmMultiMap<K, V> {
 }
 
 impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
-    /// Creates a zero-copy LSM in a unique temporary directory. The directory is
-    /// created lazily, on the first flush.
+    /// Creates a temporary zero-copy LSM, whose runs are unlinked files under
+    /// [`std::env::temp_dir`].
     pub fn with_memtable_limit(memtable_limit: usize) -> Self {
         Self::with_memtable_limit_and_level_fanout(memtable_limit, DEFAULT_LEVEL_FANOUT)
     }
@@ -349,8 +297,6 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         memtable_limit: usize,
         level_fanout: usize,
     ) -> Self {
-        let id = NEXT_DISK_DIR_ID.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("lsm-mmap-{}-{id}", std::process::id()));
         Self {
             memtable: BTreeMap::new(),
             levels: Vec::new(),
@@ -358,10 +304,8 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
             len: 0,
             memtable_limit: memtable_limit.max(1),
             level_fanout: level_fanout.max(1),
-            dir,
+            dir: None,
             next_run_id: 0,
-            is_temp: true,
-            dir_created: false,
         }
     }
 
@@ -405,10 +349,8 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
             len,
             memtable_limit: memtable_limit.max(1),
             level_fanout: level_fanout.max(1),
-            dir,
+            dir: Some(dir),
             next_run_id,
-            is_temp: false,
-            dir_created: true,
         })
     }
 
@@ -491,7 +433,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     pub fn clear(&mut self) {
         self.memtable.clear();
         for run in std::mem::take(&mut self.levels).into_iter().flatten() {
-            let _ = fs::remove_file(run.path);
+            run.delete();
         }
         self.memtable_len = 0;
         self.len = 0;
@@ -502,31 +444,38 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         if self.memtable_len == 0 {
             return Ok(());
         }
-        self.ensure_dir()?;
         let memtable = std::mem::take(&mut self.memtable);
+        let values_len = self.memtable_len;
         self.memtable_len = 0;
         // The memtable iterates ascending — stream it straight to a run.
-        let mut builder = RunBuilder::new(self.new_run_path(0))?;
+        let mut writer = self.new_run_writer(0, memtable.len(), values_len)?;
         for (key, vals) in &memtable {
-            builder.start_key(key)?;
-            builder.append_values(vals)?;
+            writer.start_key(key);
+            writer.append_values(vals);
         }
-        let run = builder.finish()?;
+        let run = writer.finish()?;
         self.push_disk_run(0, run)
     }
 
-    fn ensure_dir(&mut self) -> io::Result<()> {
-        if !self.dir_created {
-            fs::create_dir_all(&self.dir)?;
-            self.dir_created = true;
-        }
-        Ok(())
-    }
-
-    fn new_run_path(&mut self, level: usize) -> PathBuf {
-        let id = self.next_run_id;
-        self.next_run_id += 1;
-        self.dir.join(format!("run_{level}_{id}.lsm"))
+    fn new_run_writer(
+        &mut self,
+        level: usize,
+        entries_count: usize,
+        values_len: usize,
+    ) -> io::Result<RunWriter> {
+        let (path, keep_file) = match &self.dir {
+            Some(dir) => {
+                let id = self.next_run_id;
+                self.next_run_id += 1;
+                (dir.join(format!("run_{level}_{id}.lsm")), true)
+            }
+            None => {
+                let id = NEXT_TEMP_RUN_ID.fetch_add(1, Ordering::Relaxed);
+                let name = format!("lsm-mmap-{}-{id}.run", std::process::id());
+                (std::env::temp_dir().join(name), false)
+            }
+        };
+        RunWriter::create::<K, V>(path, keep_file, entries_count, values_len)
     }
 
     fn push_disk_run(&mut self, level: usize, run: MmapRun<K, V>) -> io::Result<()> {
@@ -544,44 +493,57 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
 
     /// Streaming k-way merge of several runs into one. Each run is already sorted
     /// ascending by key, so we repeatedly pick the smallest head key across the
-    /// runs and stream that key's values (concatenated from every run holding it)
-    /// straight to the [`RunBuilder`]. Memory stays bounded by the cursors plus
-    /// the I/O buffers — the merged run is never materialized.
+    /// runs and copy that key's values (concatenated from every run holding it)
+    /// straight into the new run's mapping. A first pass over the keys alone
+    /// counts the distinct keys, which fixes the new run's layout.
     fn merge_runs(&mut self, level: usize, runs: Vec<MmapRun<K, V>>) -> io::Result<MmapRun<K, V>> {
-        let mut builder = RunBuilder::new(self.new_run_path(level))?;
-        // Per-run cursor: index of the next unconsumed entry.
-        let mut cursors: Vec<usize> = vec![0; runs.len()];
-
-        loop {
-            // Smallest key currently at any run's cursor head.
-            let mut min_key: Option<K> = None;
-            for (r, run) in runs.iter().enumerate() {
-                if cursors[r] < run.entries_count {
-                    let key = run.keys()[cursors[r]];
-                    if min_key.is_none_or(|current| key < current) {
-                        min_key = Some(key);
-                    }
-                }
+        let values_len = runs.iter().map(|run| run.values_len).sum();
+        let mut entries_count = 0;
+        merge_keys(&runs, |_, _| entries_count += 1);
+        let mut writer = self.new_run_writer(level, entries_count, values_len)?;
+        merge_keys(&runs, |key, holders| {
+            writer.start_key(key);
+            for &(r, i) in holders {
+                writer.append_values(runs[r].entry(i).1);
             }
-            let Some(min_key) = min_key else { break };
-
-            builder.start_key(&min_key)?;
-            // Append the values from every run whose head equals `min_key`,
-            // writing the mmap'd slices straight through.
-            for (r, run) in runs.iter().enumerate() {
-                if cursors[r] < run.entries_count && run.keys()[cursors[r]] == min_key {
-                    let (_, vals) = run.entry(cursors[r]);
-                    builder.append_values(vals)?;
-                    cursors[r] += 1;
-                }
-            }
-        }
-
-        let new_run = builder.finish()?;
+        });
+        let new_run = writer.finish()?;
         for run in runs {
-            let _ = fs::remove_file(&run.path);
+            run.delete();
         }
         Ok(new_run)
+    }
+}
+
+/// Visits the distinct keys of `runs` in ascending order, each with the
+/// `(run, entry)` positions that hold it, in run order.
+fn merge_keys<K: Pod + Ord, V: Pod>(
+    runs: &[MmapRun<K, V>],
+    mut visit: impl FnMut(&K, &[(usize, usize)]),
+) {
+    // Per-run cursor: index of the next unconsumed entry.
+    let mut cursors: Vec<usize> = vec![0; runs.len()];
+    let mut holders: Vec<(usize, usize)> = Vec::with_capacity(runs.len());
+    loop {
+        // Smallest key currently at any run's cursor head.
+        let mut min_key: Option<&K> = None;
+        for (r, run) in runs.iter().enumerate() {
+            if cursors[r] < run.entries_count {
+                let key = &run.keys()[cursors[r]];
+                if min_key.is_none_or(|current| key < current) {
+                    min_key = Some(key);
+                }
+            }
+        }
+        let Some(min_key) = min_key else { break };
+        holders.clear();
+        for (r, run) in runs.iter().enumerate() {
+            if cursors[r] < run.entries_count && run.keys()[cursors[r]] == *min_key {
+                holders.push((r, cursors[r]));
+                cursors[r] += 1;
+            }
+        }
+        visit(min_key, &holders);
     }
 }
 
@@ -641,7 +603,7 @@ mod tests {
         std::env::temp_dir().join(format!(
             "lsm-mmap-test-{tag}-{}-{}",
             std::process::id(),
-            NEXT_DISK_DIR_ID.fetch_add(1, Ordering::Relaxed)
+            NEXT_TEMP_RUN_ID.fetch_add(1, Ordering::Relaxed)
         ))
     }
 
