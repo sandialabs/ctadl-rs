@@ -4,4 +4,4 @@ pub mod disk;
 pub mod mmap;
 
 pub use disk::{DiskLsmMultiMap, LsmDiskCodec};
-pub use mmap::{IterAllRefs, MmapLsmMultiMap, ValsRefs};
+pub use mmap::{IterAllRefs, KeysIter, MmapLsmMultiMap, PrefixGroups, ValsRefs};

@@ -64,12 +64,17 @@ impl Bloom {
     }
 }
 
-/// The hash a [`Bloom`] is keyed on: the key's bytes, a word at a time, through a
-/// multiply-rotate round and a final avalanche, so both halves are well mixed.
+/// The hash a [`Bloom`] is keyed on: the key's bytes (see [`hash_bytes`]).
 #[inline]
 pub(crate) fn hash_key<K: Pod>(key: &K) -> u64 {
+    hash_bytes(bytemuck::bytes_of(key))
+}
+
+/// A hash of `bytes`, a word at a time, through a multiply-rotate round and a
+/// final avalanche, so both halves are well mixed.
+#[inline]
+pub(crate) fn hash_bytes(bytes: &[u8]) -> u64 {
     const K0: u64 = 0x9e37_79b9_7f4a_7c15;
-    let bytes = bytemuck::bytes_of(key);
     let mut h = K0 ^ bytes.len() as u64;
     let mut words = bytes.chunks_exact(8);
     for word in &mut words {

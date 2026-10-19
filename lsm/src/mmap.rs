@@ -27,7 +27,7 @@ use hashbrown::HashTable;
 use memmap2::{Mmap, MmapMut};
 use smallvec::SmallVec;
 
-use crate::bloom::{Bloom, hash_key};
+use crate::bloom::{Bloom, hash_bytes, hash_key};
 
 const DEFAULT_LEVEL_FANOUT: usize = 4;
 const RUN_MAGIC: &[u8; 4] = b"LSMM";
@@ -83,7 +83,7 @@ fn align8(n: usize) -> usize {
 /// the mapping plus the section offsets parsed from the header.
 #[derive(Debug)]
 struct MmapRun<K, V> {
-    mmap: Mmap,
+    bytes: Mmap,
     /// The run's file, for a persistent map. A temporary run's file is unlinked
     /// as soon as it is mapped, so it needs no cleanup.
     path: Option<PathBuf>,
@@ -94,17 +94,20 @@ struct MmapRun<K, V> {
     values_off: usize,
     /// The run's keys, for skipping the run on a lookup of a key it lacks.
     bloom: Bloom,
+    /// For each key prefix length (in bytes) the map was asked to filter, the
+    /// run's key prefixes of that length.
+    prefix_blooms: SmallVec<[(usize, Bloom); 2]>,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
     fn keys(&self) -> &[K] {
-        let bytes = &self.mmap[self.keys_off..self.keys_off + self.entries_count * size_of::<K>()];
+        let bytes = &self.bytes[self.keys_off..self.keys_off + self.entries_count * size_of::<K>()];
         bytemuck::cast_slice(bytes)
     }
 
     fn offsets(&self) -> &[u64] {
-        let bytes = &self.mmap
+        let bytes = &self.bytes
             [self.offsets_off..self.offsets_off + (self.entries_count + 1) * size_of::<u64>()];
         bytemuck::cast_slice(bytes)
     }
@@ -118,12 +121,21 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
                 std::slice::from_raw_parts(std::ptr::NonNull::dangling().as_ptr(), self.values_len)
             };
         }
-        let bytes = &self.mmap[self.values_off..self.values_off + self.values_len * size_of::<V>()];
+        let bytes =
+            &self.bytes[self.values_off..self.values_off + self.values_len * size_of::<V>()];
         bytemuck::cast_slice(bytes)
     }
 
     fn contains_key(&self, key: &K, hash: u64) -> bool {
         self.bloom.may_contain(hash) && self.keys().binary_search(key).is_ok()
+    }
+
+    /// False only if no key starts with a prefix of `len` bytes hashing to `hash`.
+    fn may_have_prefix(&self, len: usize, hash: u64) -> bool {
+        self.prefix_blooms
+            .iter()
+            .find(|(l, _)| *l == len)
+            .is_none_or(|(_, bloom)| bloom.may_contain(hash))
     }
 
     /// Values for `key`, as a zero-copy slice into the mapping, or `None`.
@@ -166,7 +178,7 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
 /// syscalls. Entries short of the bound leave the tail of the key and offset
 /// sections unwritten, which costs address space but no disk.
 struct RunWriter {
-    mmap: MmapMut,
+    bytes: MmapMut,
     path: PathBuf,
     keep_file: bool,
     max_entries: usize,
@@ -178,6 +190,7 @@ struct RunWriter {
     keys_written: usize,
     values_written: usize,
     bloom: Bloom,
+    prefix_blooms: SmallVec<[(usize, Bloom); 2]>,
 }
 
 impl RunWriter {
@@ -190,6 +203,7 @@ impl RunWriter {
         keep_file: bool,
         max_entries: usize,
         values_len: usize,
+        prefix_lens: &[usize],
     ) -> io::Result<Self> {
         let keys_off = align8(HEADER_LEN);
         let offsets_off = align8(keys_off + max_entries * size_of::<K>());
@@ -206,7 +220,7 @@ impl RunWriter {
         // it while this mapping lives.
         let mmap = unsafe { MmapMut::map_mut(&file)? };
         Ok(Self {
-            mmap,
+            bytes: mmap,
             path,
             keep_file,
             max_entries,
@@ -217,12 +231,16 @@ impl RunWriter {
             keys_written: 0,
             values_written: 0,
             bloom: Bloom::with_capacity(max_entries),
+            prefix_blooms: prefix_lens
+                .iter()
+                .map(|&len| (len, Bloom::with_capacity(max_entries)))
+                .collect(),
         })
     }
 
     fn write_offset(&mut self, i: usize, offset: usize) {
         let at = self.offsets_off + i * size_of::<u64>();
-        self.mmap[at..at + size_of::<u64>()].copy_from_slice(&(offset as u64).to_ne_bytes());
+        self.bytes[at..at + size_of::<u64>()].copy_from_slice(&(offset as u64).to_ne_bytes());
     }
 
     /// Begins a new entry. Must be called in ascending key order, then followed
@@ -230,8 +248,11 @@ impl RunWriter {
     fn start_key<K: Pod>(&mut self, key: &K) {
         assert!(self.keys_written < self.max_entries, "run overflow: keys");
         let at = self.keys_off + self.keys_written * size_of::<K>();
-        self.mmap[at..at + size_of::<K>()].copy_from_slice(bytemuck::bytes_of(key));
+        self.bytes[at..at + size_of::<K>()].copy_from_slice(bytemuck::bytes_of(key));
         self.bloom.insert(hash_key(key));
+        for (len, bloom) in &mut self.prefix_blooms {
+            bloom.insert(hash_bytes(&bytemuck::bytes_of(key)[..*len]));
+        }
         self.write_offset(self.keys_written, self.values_written);
         self.keys_written += 1;
     }
@@ -245,7 +266,7 @@ impl RunWriter {
         );
         let bytes: &[u8] = bytemuck::cast_slice(vals);
         let at = self.values_off + self.values_written * size_of::<V>();
-        self.mmap[at..at + bytes.len()].copy_from_slice(bytes);
+        self.bytes[at..at + bytes.len()].copy_from_slice(bytes);
         self.values_written += vals.len();
     }
 
@@ -257,7 +278,7 @@ impl RunWriter {
         let entries_count = self.keys_written;
         // Closing sentinel offset (== total values).
         self.write_offset(entries_count, self.values_len);
-        let header = &mut self.mmap[..HEADER_LEN];
+        let header = &mut self.bytes[..HEADER_LEN];
         header[0..4].copy_from_slice(RUN_MAGIC);
         // header[4..8] stays the zero version/pad.
         header[8..16].copy_from_slice(&(entries_count as u64).to_ne_bytes());
@@ -265,7 +286,7 @@ impl RunWriter {
         header[24..32].copy_from_slice(&(self.keys_off as u64).to_ne_bytes());
         header[32..40].copy_from_slice(&(self.offsets_off as u64).to_ne_bytes());
         header[40..48].copy_from_slice(&(self.values_off as u64).to_ne_bytes());
-        let mmap = self.mmap.make_read_only()?;
+        let mmap = self.bytes.make_read_only()?;
         let path = if self.keep_file {
             Some(self.path)
         } else {
@@ -273,7 +294,7 @@ impl RunWriter {
             None
         };
         Ok(MmapRun {
-            mmap,
+            bytes: mmap,
             path,
             entries_count,
             values_len: self.values_len,
@@ -281,6 +302,7 @@ impl RunWriter {
             offsets_off: self.offsets_off,
             values_off: self.values_off,
             bloom: self.bloom,
+            prefix_blooms: self.prefix_blooms,
             _marker: PhantomData,
         })
     }
@@ -309,7 +331,7 @@ fn load_run<K: Pod + Ord, V: Pod>(path: PathBuf) -> io::Result<MmapRun<K, V>> {
     let offsets_off = read(32..40);
     let values_off = read(40..48);
     let mut run = MmapRun {
-        mmap,
+        bytes: mmap,
         path: Some(path),
         entries_count,
         values_len,
@@ -317,6 +339,7 @@ fn load_run<K: Pod + Ord, V: Pod>(path: PathBuf) -> io::Result<MmapRun<K, V>> {
         offsets_off,
         values_off,
         bloom: Bloom::with_capacity(0),
+        prefix_blooms: SmallVec::new(),
         _marker: PhantomData,
     };
     let mut bloom = Bloom::with_capacity(entries_count);
@@ -342,21 +365,27 @@ type MemtableEntry<K, V> = (K, SmallVec<[V; 1]>);
 /// resident, so a memtable that has been flushed would still hold its peak.
 /// A table's bucket array is touched all over as soon as it fills a little;
 /// keeping its buckets at four bytes keeps that cost small next to the entries.
+///
+/// For each prefix length a [`MmapLsmMultiMap::keys_with_prefix`] read may ask
+/// for, a [`PrefixChains`] links the entries that share a prefix, so the read
+/// finds them without the memtable ever being sorted.
 struct Memtable<K, V> {
     index: HashTable<u32>,
     chunks: Vec<Vec<MemtableEntry<K, V>>>,
     len: usize,
+    prefixes: SmallVec<[PrefixChains; 2]>,
 }
 
-impl<K, V> Default for Memtable<K, V> {
-    fn default() -> Self {
-        Self {
-            index: HashTable::new(),
-            chunks: Vec::new(),
-            len: 0,
-        }
-    }
+/// The entries of a [`Memtable`] that share a key prefix of `len` bytes, as a
+/// chain through `next` from the head the table holds for that prefix.
+struct PrefixChains {
+    len: usize,
+    heads: HashTable<u32>,
+    /// Per entry, the next older entry with the same prefix, or [`NO_ENTRY`].
+    next: Vec<u32>,
 }
+
+const NO_ENTRY: u32 = u32::MAX;
 
 impl<K: std::fmt::Debug, V: std::fmt::Debug> std::fmt::Debug for Memtable<K, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -371,6 +400,31 @@ impl<K: Pod + Ord, V: Pod> Memtable<K, V> {
         let n = MEMTABLE_CHUNK_BYTES / size_of::<MemtableEntry<K, V>>();
         if n == 0 { 1 } else { n }
     };
+
+    /// An empty memtable that chains its entries by prefixes of each of
+    /// `prefix_lens` bytes.
+    fn new(prefix_lens: &[usize]) -> Self {
+        Self {
+            index: HashTable::new(),
+            chunks: Vec::new(),
+            len: 0,
+            prefixes: prefix_lens
+                .iter()
+                .map(|&len| PrefixChains {
+                    len,
+                    heads: HashTable::new(),
+                    next: Vec::new(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Takes the entries out, leaving an empty memtable that chains the same
+    /// prefixes.
+    fn take(&mut self) -> Self {
+        let lens: SmallVec<[usize; 2]> = self.prefixes.iter().map(|p| p.len).collect();
+        std::mem::replace(self, Self::new(&lens))
+    }
 
     fn entry(&self, i: u32) -> &MemtableEntry<K, V> {
         let i = i as usize;
@@ -388,6 +442,7 @@ impl<K: Pod + Ord, V: Pod> Memtable<K, V> {
             return;
         }
         let i = u32::try_from(self.len).expect("memtable over u32::MAX keys");
+        assert!(i != NO_ENTRY, "memtable over u32::MAX keys");
         if self.len.is_multiple_of(Self::CHUNK) {
             self.chunks.push(Vec::with_capacity(Self::CHUNK));
         }
@@ -397,10 +452,31 @@ impl<K: Pod + Ord, V: Pod> Memtable<K, V> {
             .push((key, smallvec::smallvec![value]));
         self.len += 1;
         let chunks = &self.chunks;
-        self.index.insert_unique(hash, i, |&j| {
+        let key_bytes = |j: u32| {
             let j = j as usize;
-            hash_key(&chunks[j / Self::CHUNK][j % Self::CHUNK].0)
-        });
+            bytemuck::bytes_of(&chunks[j / Self::CHUNK][j % Self::CHUNK].0)
+        };
+        self.index
+            .insert_unique(hash, i, |&j| hash_bytes(key_bytes(j)));
+        let bytes = bytemuck::bytes_of(&key);
+        for chains in &mut self.prefixes {
+            let len = chains.len;
+            let prefix = &bytes[..len];
+            match chains.heads.entry(
+                hash_bytes(prefix),
+                |&j| &key_bytes(j)[..len] == prefix,
+                |&j| hash_bytes(&key_bytes(j)[..len]),
+            ) {
+                hashbrown::hash_table::Entry::Occupied(mut head) => {
+                    chains.next.push(*head.get());
+                    *head.get_mut() = i;
+                }
+                hashbrown::hash_table::Entry::Vacant(head) => {
+                    chains.next.push(NO_ENTRY);
+                    head.insert(i);
+                }
+            }
+        }
     }
 
     fn get(&self, hash: u64, key: &K) -> Option<&[V]> {
@@ -423,9 +499,18 @@ impl<K: Pod + Ord, V: Pod> Memtable<K, V> {
         entries
     }
 
-    /// The entries in insertion order, consuming the memtable.
-    fn into_entries(self) -> impl Iterator<Item = MemtableEntry<K, V>> {
-        self.chunks.into_iter().flatten()
+    /// The entries whose keys start with `prefix` (hashing to `hash`), if this
+    /// memtable chains prefixes of its length.
+    fn prefix_chain(&self, prefix: &[u8], hash: u64) -> Option<(&[u32], u32)> {
+        let chains = self.prefixes.iter().find(|c| c.len == prefix.len())?;
+        let head = chains
+            .heads
+            .find(hash, |&j| {
+                &bytemuck::bytes_of(&self.entry(j).0)[..prefix.len()] == prefix
+            })
+            .copied()
+            .unwrap_or(NO_ENTRY);
+        Some((&chains.next, head))
     }
 }
 
@@ -443,6 +528,9 @@ pub struct MmapLsmMultiMap<K, V> {
     /// temporary directory.
     dir: Option<PathBuf>,
     next_run_id: u64,
+    /// The key prefix lengths, in bytes, whose prefixes each run filters for
+    /// [`Self::keys_with_prefix`].
+    prefix_blooms: SmallVec<[usize; 2]>,
 }
 
 impl<K: Pod + Ord, V: Pod> Default for MmapLsmMultiMap<K, V> {
@@ -466,7 +554,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         level_fanout: usize,
     ) -> Self {
         Self {
-            memtable: Memtable::default(),
+            memtable: Memtable::new(&[]),
             levels: Vec::new(),
             memtable_len: 0,
             len: 0,
@@ -474,7 +562,20 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
             level_fanout: level_fanout.max(1),
             dir: None,
             next_run_id: 0,
+            prefix_blooms: SmallVec::new(),
         }
+    }
+
+    /// Prepares the map for [`Self::keys_with_prefix`] reads by prefixes of each
+    /// of `lens` bytes: the memtable links its entries by those prefixes, and
+    /// every run keeps a Bloom filter of them, so a read finds the memtable's
+    /// matches without a scan and skips the runs that hold none. Reads by other
+    /// lengths still work, by scanning the memtable.
+    pub fn with_prefix_reads(mut self, lens: &[usize]) -> Self {
+        assert!(self.is_empty(), "with_prefix_reads on a non-empty map");
+        self.prefix_blooms = lens.iter().copied().collect();
+        self.memtable = Memtable::new(lens);
+        self
     }
 
     /// Opens or creates a zero-copy LSM in `dir`, mapping any existing run files.
@@ -511,7 +612,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         }
 
         Ok(Self {
-            memtable: Memtable::default(),
+            memtable: Memtable::new(&[]),
             levels,
             memtable_len: 0,
             len,
@@ -519,6 +620,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
             level_fanout: level_fanout.max(1),
             dir: Some(dir),
             next_run_id,
+            prefix_blooms: SmallVec::new(),
         })
     }
 
@@ -593,6 +695,84 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
             .any(|run| run.find(key, hash).is_some_and(|vals| vals.contains(value)))
     }
 
+    /// Every key, from the memtable and every run, in no particular order. A key
+    /// several runs hold comes once from each.
+    pub fn keys(&self) -> KeysIter<'_, K, V> {
+        KeysIter {
+            memtable: &self.memtable,
+            mem: MemKeys::All(0..self.memtable.len as u32),
+            runs: self.levels.iter().flatten().map(|run| run.keys()).collect(),
+            next_run: 0,
+            current: [].iter(),
+        }
+    }
+
+    /// The keys that begin with the words of `prefix`, from the memtable and
+    /// every run, in no particular order. `K` must be made of `u64` words, whose
+    /// lexicographic order is `K`'s own, as the Ascent provider's keys are.
+    pub fn keys_with_prefix(&self, prefix: &[u64]) -> KeysIter<'_, K, V> {
+        let before = |k: &K| cmp_prefix(words(k), prefix).is_lt();
+        let matches = |k: &K| cmp_prefix(words(k), prefix).is_eq();
+        let in_range = |keys: &[K]| {
+            let lo = keys.partition_point(before);
+            let len = keys[lo..].partition_point(matches);
+            lo..lo + len
+        };
+        let prefix_bytes: &[u8] = bytemuck::cast_slice(prefix);
+        let hash = hash_bytes(prefix_bytes);
+        let mem = match self.memtable.prefix_chain(prefix_bytes, hash) {
+            Some((next, head)) => MemKeys::Chain { next, at: head },
+            None => MemKeys::List(
+                (0..self.memtable.len as u32)
+                    .filter(|&i| matches(&self.memtable.entry(i).0))
+                    .collect::<Vec<_>>()
+                    .into(),
+                0,
+            ),
+        };
+        let mut runs: SmallVec<[&[K]; 4]> = SmallVec::new();
+        for run in self.levels.iter().flatten() {
+            if !run.may_have_prefix(prefix_bytes.len(), hash) {
+                continue;
+            }
+            let keys = run.keys();
+            let range = in_range(keys);
+            if !range.is_empty() {
+                runs.push(&keys[range]);
+            }
+        }
+        KeysIter {
+            memtable: &self.memtable,
+            mem,
+            runs,
+            next_run: 0,
+            current: [].iter(),
+        }
+    }
+
+    /// Every key, grouped by its first `prefix_len` words: each group is one
+    /// prefix's keys out of the memtable or out of one run. A prefix several of
+    /// them hold comes as several groups, in no particular order; each comes with
+    /// one of its keys, whose leading words are the prefix.
+    pub fn prefix_groups(&self, prefix_len: usize) -> PrefixGroups<'_, K, V> {
+        let bytes = prefix_len * size_of::<u64>();
+        let mem_heads: Vec<u32> = match self.memtable.prefixes.iter().find(|c| c.len == bytes) {
+            Some(chains) => chains.heads.iter().copied().collect(),
+            // Without chains for this length, one group per memtable key.
+            None => (0..self.memtable.len as u32).collect(),
+        };
+        let chained = self.memtable.prefixes.iter().any(|c| c.len == bytes);
+        PrefixGroups {
+            map: self,
+            prefix_len,
+            mem_heads: mem_heads.into_iter(),
+            chained,
+            runs: self.levels.iter().flatten().map(|run| run.keys()).collect(),
+            next_run: 0,
+            current: &[],
+        }
+    }
+
     /// Borrowing scan over every distinct key with all of its values, merged
     /// across the memtable and runs. Keys and values are references into the
     /// memtable / memory-mapped runs.
@@ -611,7 +791,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
 
     /// Empties the map (deleting any run files), keeping it usable.
     pub fn clear(&mut self) {
-        self.memtable = Memtable::default();
+        self.memtable.take();
         for run in std::mem::take(&mut self.levels).into_iter().flatten() {
             run.delete();
         }
@@ -629,7 +809,8 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         if other.memtable_len >= self.memtable_limit / 4 {
             other.flush().expect("failed to flush mmap LSM memtable");
         }
-        for (key, vals) in std::mem::take(&mut other.memtable).into_entries() {
+        let memtable = other.memtable.take();
+        for (key, vals) in memtable.chunks.into_iter().flatten() {
             for value in vals {
                 self.insert(key, value);
             }
@@ -651,7 +832,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         if self.memtable_len == 0 {
             return Ok(());
         }
-        let memtable = std::mem::take(&mut self.memtable);
+        let memtable = self.memtable.take();
         let values_len = self.memtable_len;
         self.memtable_len = 0;
         let mut writer = self.new_run_writer(0, memtable.keys_len(), values_len)?;
@@ -681,7 +862,13 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
                 (std::env::temp_dir().join(name), false)
             }
         };
-        RunWriter::create::<K, V>(path, keep_file, entries_count, values_len)
+        RunWriter::create::<K, V>(
+            path,
+            keep_file,
+            entries_count,
+            values_len,
+            &self.prefix_blooms,
+        )
     }
 
     fn push_disk_run(&mut self, level: usize, run: MmapRun<K, V>) -> io::Result<()> {
@@ -751,6 +938,157 @@ fn merge_keys<K: Ord>(lists: &[&[K]], mut visit: impl FnMut(&K, &[(usize, usize)
             }
         }
         visit(min_key, &holders);
+    }
+}
+
+/// A key's `u64` words.
+fn words<K: Pod>(key: &K) -> &[u64] {
+    bytemuck::cast_slice(bytemuck::bytes_of(key))
+}
+
+/// How the leading words of `key` compare with `prefix`. A loop rather than a
+/// slice comparison, which calls out to `memcmp` for these few words.
+#[inline]
+fn cmp_prefix(key: &[u64], prefix: &[u64]) -> std::cmp::Ordering {
+    for (k, p) in key.iter().zip(prefix) {
+        match k.cmp(p) {
+            std::cmp::Ordering::Equal => {}
+            other => return other,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+/// Keys out of the memtable and out of a list of run slices. Cheap to clone,
+/// which the Ascent `Ind*ValsIter` associated types require.
+pub struct KeysIter<'a, K, V> {
+    memtable: &'a Memtable<K, V>,
+    mem: MemKeys<'a>,
+    runs: SmallVec<[&'a [K]; 4]>,
+    next_run: usize,
+    current: std::slice::Iter<'a, K>,
+}
+
+/// Which of the memtable's entries a [`KeysIter`] yields.
+#[derive(Clone)]
+enum MemKeys<'a> {
+    /// All of them.
+    All(std::ops::Range<u32>),
+    /// One prefix's, along its chain from `at`.
+    Chain { next: &'a [u32], at: u32 },
+    /// Those listed, from the `usize`th on.
+    List(std::rc::Rc<[u32]>, usize),
+}
+
+impl MemKeys<'_> {
+    fn next(&mut self) -> Option<u32> {
+        match self {
+            MemKeys::All(range) => range.next(),
+            MemKeys::Chain { next, at } => {
+                let i = *at;
+                if i == NO_ENTRY {
+                    return None;
+                }
+                *at = next[i as usize];
+                Some(i)
+            }
+            MemKeys::List(list, at) => {
+                let i = *list.get(*at)?;
+                *at += 1;
+                Some(i)
+            }
+        }
+    }
+}
+
+impl<K, V> Clone for KeysIter<'_, K, V> {
+    fn clone(&self) -> Self {
+        Self {
+            memtable: self.memtable,
+            mem: self.mem.clone(),
+            runs: self.runs.clone(),
+            next_run: self.next_run,
+            current: self.current.clone(),
+        }
+    }
+}
+
+impl<'a, K: Pod + Ord, V: Pod> Iterator for KeysIter<'a, K, V> {
+    type Item = &'a K;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a K> {
+        if let Some(i) = self.mem.next() {
+            return Some(&self.memtable.entry(i).0);
+        }
+        loop {
+            if let Some(key) = self.current.next() {
+                return Some(key);
+            }
+            let keys = self.runs.get(self.next_run)?;
+            self.next_run += 1;
+            self.current = keys.iter();
+        }
+    }
+}
+
+/// The groups of [`MmapLsmMultiMap::prefix_groups`].
+pub struct PrefixGroups<'a, K, V> {
+    map: &'a MmapLsmMultiMap<K, V>,
+    prefix_len: usize,
+    mem_heads: std::vec::IntoIter<u32>,
+    /// Whether the memtable heads start chains (or stand alone).
+    chained: bool,
+    runs: SmallVec<[&'a [K]; 4]>,
+    next_run: usize,
+    /// The rest of the run being grouped.
+    current: &'a [K],
+}
+
+impl<'a, K: Pod + Ord, V: Pod> Iterator for PrefixGroups<'a, K, V> {
+    type Item = (&'a K, KeysIter<'a, K, V>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let memtable = &self.map.memtable;
+        if let Some(head) = self.mem_heads.next() {
+            let mem = if self.chained {
+                let bytes = self.prefix_len * size_of::<u64>();
+                let chains = memtable.prefixes.iter().find(|c| c.len == bytes).unwrap();
+                MemKeys::Chain {
+                    next: &chains.next,
+                    at: head,
+                }
+            } else {
+                MemKeys::All(head..head + 1)
+            };
+            let keys = KeysIter {
+                memtable,
+                mem,
+                runs: SmallVec::new(),
+                next_run: 0,
+                current: [].iter(),
+            };
+            return Some((&memtable.entry(head).0, keys));
+        }
+        while self.current.is_empty() {
+            self.current = self.runs.get(self.next_run)?;
+            self.next_run += 1;
+        }
+        let first = &self.current[0];
+        let prefix = &words(first)[..self.prefix_len];
+        let len = self
+            .current
+            .partition_point(|k| cmp_prefix(words(k), prefix).is_eq());
+        let (group, rest) = self.current.split_at(len);
+        self.current = rest;
+        let keys = KeysIter {
+            memtable,
+            mem: MemKeys::All(0..0),
+            runs: smallvec::smallvec![group],
+            next_run: 0,
+            current: [].iter(),
+        };
+        Some((first, keys))
     }
 }
 
@@ -909,6 +1247,59 @@ mod tests {
                 assert_eq!(got, want, "key {k}");
             }
         }
+    }
+
+    /// Prefix reads see every key with the prefix, whether in a run or the
+    /// memtable, including keys added after an earlier read sorted it.
+    #[test]
+    fn keys_with_prefix_across_runs_and_memtable() {
+        for prefix_lens in [&[][..], &[8, 16]] {
+            keys_with_prefix_reads_back(prefix_lens);
+        }
+    }
+
+    fn keys_with_prefix_reads_back(prefix_lens: &[usize]) {
+        let mut set = MmapLsmMultiMap::<[u64; 3], ()>::with_memtable_limit_and_level_fanout(16, 2)
+            .with_prefix_reads(prefix_lens);
+        let mut all = BTreeSet::new();
+        let check = |set: &MmapLsmMultiMap<[u64; 3], ()>, all: &BTreeSet<[u64; 3]>| {
+            for a in 0..5u64 {
+                let got: BTreeSet<_> = set.keys_with_prefix(&[a]).copied().collect();
+                let want: BTreeSet<_> = all.iter().filter(|k| k[0] == a).copied().collect();
+                assert_eq!(got, want, "prefix [{a}]");
+                for b in 0..4u64 {
+                    let got: BTreeSet<_> = set.keys_with_prefix(&[a, b]).copied().collect();
+                    let want: BTreeSet<_> = all
+                        .iter()
+                        .filter(|k| k[0] == a && k[1] == b)
+                        .copied()
+                        .collect();
+                    assert_eq!(got, want, "prefix [{a}, {b}]");
+                }
+            }
+            let every: BTreeSet<_> = set.keys().copied().collect();
+            assert_eq!(&every, all);
+            for len in 1..=2 {
+                let mut grouped = BTreeSet::new();
+                for (first, keys) in set.prefix_groups(len) {
+                    for key in keys {
+                        assert_eq!(key[..len], first[..len], "group by {len} words");
+                        assert!(grouped.insert(*key), "{key:?} in two groups");
+                    }
+                }
+                assert_eq!(&grouped, all);
+            }
+        };
+        for i in 0..200u64 {
+            let key = [i * 7 % 5, i * 3 % 4, i];
+            set.insert(key, ());
+            all.insert(key);
+            if i % 23 == 0 {
+                check(&set, &all);
+            }
+        }
+        assert!(!set.levels.is_empty());
+        check(&set, &all);
     }
 
     #[test]
