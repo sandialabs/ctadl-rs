@@ -318,7 +318,7 @@ fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
 const REPORT_TOTAL_SITES: u64 = 178_310;
 const REPORT_VIRTUAL_SITES: u64 = 99_551;
 const REPORT_CHA_EDGES: u64 = 2_080_404;
-const REPORT_RTA_EDGES: u64 = 2_026_676;
+const REPORT_RTA_EDGES: u64 = 2_026_852;
 
 /// The sections this app's report must carry. `com.noto` is a Java APK, so every section
 /// applies; a program with no class hierarchy would legitimately have only the first few.

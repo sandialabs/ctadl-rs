@@ -16,7 +16,7 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-const KEYWORDS = ['var', 'def', 'where', 'summaries', 'byref', 'byval', 'goto', 'return', 'ptr'];
+const KEYWORDS = ['var', 'def', 'where', 'summaries', 'copied', 'shared', 'shared_fields', 'goto', 'return', 'ptr'];
 
 /** `rule ++ ","` */
 const commaSep1 = (rule) => seq(rule, repeat(seq(',', rule)));
@@ -48,9 +48,9 @@ module.exports = grammar({
 
     params: $ => seq('(', optional(commaSep1($.param)), ')'),
 
-    param: $ => seq(field('name', $._name), optional($.passing_style)),
+    param: $ => seq(field('name', $._name), optional($.param_type)),
 
-    passing_style: _ => choice('byref', 'byval'),
+    param_type: _ => choice('copied', 'shared_fields', 'shared'),
 
     // peg reads the arity as a `u8`, so it cannot be negative.
     return_arity: $ => seq(':', alias(/\+?[0-9]+/, $.int)),

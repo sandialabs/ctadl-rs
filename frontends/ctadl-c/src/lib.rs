@@ -1917,7 +1917,7 @@ fn define_extern_functions(program: &mut Program) {
         let fdat = &mut program.functions[fidx];
         fdat.name = name;
         for _ in 0..arity {
-            fdat.params.push(ParameterType::ByVal);
+            fdat.params.push(ParameterType::SharedFields);
         }
     }
 }
@@ -3355,8 +3355,9 @@ impl<'a> Context<'a> {
             let Some(declarator) = decl.child_by_field_name("declarator") else {
                 continue;
             };
-            // Every parameter is `ByVal`; writes through a pointer still flow out (`isout`).
-            fdat.params.push(ParameterType::ByVal);
+            // Every parameter is `SharedFields`: a store through it (`p.deref`) reaches the
+            // caller, rebinding it does not.
+            fdat.params.push(ParameterType::SharedFields);
             match param_head(declarator) {
                 Some(param_name) => {
                     let pn = to_str(&param_name, source);

@@ -1,0 +1,2 @@
+[alias]
+dump = "run --quiet --package cil-dump --features cli --"

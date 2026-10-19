@@ -1,0 +1,5347 @@
+cil virtual method table
+[System.Private.CoreLib]System.Exception::.ctor has signature ()->System.Void: [System.Private.CoreLib]System.Exception::.ctor()->System.Void
+[System.Private.CoreLib]System.Object::.ctor has signature ()->System.Void: [System.Private.CoreLib]System.Object::.ctor()->System.Void
+[exec]Exec.Arith::AddBytes has signature (System.Byte,System.Byte)->System.Byte: [exec]Exec.Arith::AddBytes(System.Byte,System.Byte)->System.Byte
+[exec]Exec.Arith::AddMul has signature (System.Int32,System.Int32,System.Int32)->System.Int32: [exec]Exec.Arith::AddMul(System.Int32,System.Int32,System.Int32)->System.Int32
+[exec]Exec.Arith::Bits has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Arith::Bits(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Arith::Checked has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Arith::Checked(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Arith::CheckedConv has signature (System.Int64)->System.Int32: [exec]Exec.Arith::CheckedConv(System.Int64)->System.Int32
+[exec]Exec.Arith::CheckedFloat has signature (System.Double)->System.Int32: [exec]Exec.Arith::CheckedFloat(System.Double)->System.Int32
+[exec]Exec.Arith::CheckedL has signature (System.Int64,System.Int64)->System.Int64: [exec]Exec.Arith::CheckedL(System.Int64,System.Int64)->System.Int64
+[exec]Exec.Arith::CheckedNarrow has signature (System.Int32)->System.SByte: [exec]Exec.Arith::CheckedNarrow(System.Int32)->System.SByte
+[exec]Exec.Arith::CheckedToUnsigned has signature (System.Int32)->System.UInt32: [exec]Exec.Arith::CheckedToUnsigned(System.Int32)->System.UInt32
+[exec]Exec.Arith::CheckedU has signature (System.UInt32,System.UInt32)->System.UInt32: [exec]Exec.Arith::CheckedU(System.UInt32,System.UInt32)->System.UInt32
+[exec]Exec.Arith::CheckedUL has signature (System.UInt64,System.UInt64)->System.UInt64: [exec]Exec.Arith::CheckedUL(System.UInt64,System.UInt64)->System.UInt64
+[exec]Exec.Arith::Cmp has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Arith::Cmp(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Arith::Convs has signature (System.Int64)->System.Int32: [exec]Exec.Arith::Convs(System.Int64)->System.Int32
+[exec]Exec.Arith::Dbl has signature (System.Double,System.Double)->System.Double: [exec]Exec.Arith::Dbl(System.Double,System.Double)->System.Double
+[exec]Exec.Arith::DivRem has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Arith::DivRem(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Arith::FCmp has signature (System.Double,System.Double)->System.Int32: [exec]Exec.Arith::FCmp(System.Double,System.Double)->System.Int32
+[exec]Exec.Arith::FloatToInt has signature (System.Double)->System.Int32: [exec]Exec.Arith::FloatToInt(System.Double)->System.Int32
+[exec]Exec.Arith::FloatToLong has signature (System.Single)->System.Int64: [exec]Exec.Arith::FloatToLong(System.Single)->System.Int64
+[exec]Exec.Arith::FloatToUInt has signature (System.Double)->System.UInt32: [exec]Exec.Arith::FloatToUInt(System.Double)->System.UInt32
+[exec]Exec.Arith::Flt has signature (System.Single,System.Single)->System.Single: [exec]Exec.Arith::Flt(System.Single,System.Single)->System.Single
+[exec]Exec.Arith::IntToFloat has signature (System.Int64,System.UInt64,System.UInt32)->System.Double: [exec]Exec.Arith::IntToFloat(System.Int64,System.UInt64,System.UInt32)->System.Double
+[exec]Exec.Arith::LCmp has signature (System.Int64,System.UInt64)->System.Int32: [exec]Exec.Arith::LCmp(System.Int64,System.UInt64)->System.Int32
+[exec]Exec.Arith::LDivRem has signature (System.Int64,System.Int64)->System.Int64: [exec]Exec.Arith::LDivRem(System.Int64,System.Int64)->System.Int64
+[exec]Exec.Arith::LShifts has signature (System.Int64,System.Int32)->System.Int64: [exec]Exec.Arith::LShifts(System.Int64,System.Int32)->System.Int64
+[exec]Exec.Arith::Logic has signature (System.Boolean,System.Boolean,System.Int32)->System.Boolean: [exec]Exec.Arith::Logic(System.Boolean,System.Boolean,System.Int32)->System.Boolean
+[exec]Exec.Arith::Mixed has signature (System.Int32,System.Int64)->System.Int64: [exec]Exec.Arith::Mixed(System.Int32,System.Int64)->System.Int64
+[exec]Exec.Arith::MixedFloat has signature (System.Single,System.Double,System.Int32,System.Int64)->System.Double: [exec]Exec.Arith::MixedFloat(System.Single,System.Double,System.Int32,System.Int64)->System.Double
+[exec]Exec.Arith::MulShorts has signature (System.Int16,System.Int16)->System.Int16: [exec]Exec.Arith::MulShorts(System.Int16,System.Int16)->System.Int16
+[exec]Exec.Arith::Neg has signature (System.Int32,System.Int64)->System.Int32: [exec]Exec.Arith::Neg(System.Int32,System.Int64)->System.Int32
+[exec]Exec.Arith::NextChar has signature (System.Char)->System.Char: [exec]Exec.Arith::NextChar(System.Char)->System.Char
+[exec]Exec.Arith::Precision has signature (System.Single,System.Single)->System.Double: [exec]Exec.Arith::Precision(System.Single,System.Single)->System.Double
+[exec]Exec.Arith::Shifts has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Arith::Shifts(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Arith::UDivRem has signature (System.UInt32,System.UInt32)->System.UInt32: [exec]Exec.Arith::UDivRem(System.UInt32,System.UInt32)->System.UInt32
+[exec]Exec.Arith::ULDivRem has signature (System.UInt64,System.UInt64)->System.UInt64: [exec]Exec.Arith::ULDivRem(System.UInt64,System.UInt64)->System.UInt64
+[exec]Exec.Arith::ULong has signature (System.UInt64,System.UInt64)->System.UInt64: [exec]Exec.Arith::ULong(System.UInt64,System.UInt64)->System.UInt64
+[exec]Exec.Arith::ULongToFloat has signature (System.UInt64)->System.Single: [exec]Exec.Arith::ULongToFloat(System.UInt64)->System.Single
+[exec]Exec.Arith::Widen has signature (System.Int32,System.UInt32,System.Int16,System.Byte,System.Char,System.SByte,System.UInt16)->System.Int64: [exec]Exec.Arith::Widen(System.Int32,System.UInt32,System.Int16,System.Byte,System.Char,System.SByte,System.UInt16)->System.Int64
+[exec]Exec.Arr::ArrayOfBags has signature (Exec.Bag[],System.Int32)->System.Int32: [exec]Exec.Arr::ArrayOfBags(Exec.Bag[],System.Int32)->System.Int32
+[exec]Exec.Arr::Avg has signature (System.Double[])->System.Double: [exec]Exec.Arr::Avg(System.Double[])->System.Double
+[exec]Exec.Arr::FloatArr has signature (System.Single[],System.Int32)->System.Single: [exec]Exec.Arr::FloatArr(System.Single[],System.Int32)->System.Single
+[exec]Exec.Arr::Make has signature (System.Int32)->System.Int32[]: [exec]Exec.Arr::Make(System.Int32)->System.Int32[]
+[exec]Exec.Arr::Narrow has signature (System.Byte[],System.SByte[],System.Int16[],System.UInt16[],System.Char[],System.Boolean[])->System.Int32: [exec]Exec.Arr::Narrow(System.Byte[],System.SByte[],System.Int16[],System.UInt16[],System.Char[],System.Boolean[])->System.Int32
+[exec]Exec.Arr::NativeIndex has signature (System.Int64[],System.Int64)->System.Int64: [exec]Exec.Arr::NativeIndex(System.Int64[],System.Int64)->System.Int64
+[exec]Exec.Arr::NegLen has signature (System.Int32)->System.Int32: [exec]Exec.Arr::NegLen(System.Int32)->System.Int32
+[exec]Exec.Arr::Objects has signature (Exec.Node[])->System.Int32: [exec]Exec.Arr::Objects(Exec.Node[])->System.Int32
+[exec]Exec.Arr::Reverse has signature (System.Int32[])->System.Void: [exec]Exec.Arr::Reverse(System.Int32[])->System.Void
+[exec]Exec.Arr::Sort has signature (System.Int64[])->System.Void: [exec]Exec.Arr::Sort(System.Int64[])->System.Void
+[exec]Exec.Arr::Statics has signature (System.Int32)->System.Int32: [exec]Exec.Arr::Statics(System.Int32)->System.Int32
+[exec]Exec.Arr::Sum has signature (System.Int32[])->System.Int32: [exec]Exec.Arr::Sum(System.Int32[])->System.Int32
+[exec]Exec.Bag::.ctor has signature ()->System.Void: [exec]Exec.Bag::.ctor()->System.Void
+[exec]Exec.Ctl::BoolReturn has signature (System.Int32)->System.Boolean: [exec]Exec.Ctl::BoolReturn(System.Int32)->System.Boolean
+[exec]Exec.Ctl::Collatz has signature (System.Int32)->System.Int32: [exec]Exec.Ctl::Collatz(System.Int32)->System.Int32
+[exec]Exec.Ctl::Fib has signature (System.Int32)->System.Int32: [exec]Exec.Ctl::Fib(System.Int32)->System.Int32
+[exec]Exec.Ctl::Gcd has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Ctl::Gcd(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Ctl::Goto has signature (System.Int32)->System.Int32: [exec]Exec.Ctl::Goto(System.Int32)->System.Int32
+[exec]Exec.Ctl::Loop has signature (System.Int32)->System.Int32: [exec]Exec.Ctl::Loop(System.Int32)->System.Int32
+[exec]Exec.Ctl::Nested has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Ctl::Nested(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Ctl::NestedTernary has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Ctl::NestedTernary(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Ctl::Params has signature (System.Byte,System.SByte,System.Int16,System.UInt16,System.Char,System.Boolean,System.UInt32,System.UInt64,System.Single,System.Double)->System.Int32: [exec]Exec.Ctl::Params(System.Byte,System.SByte,System.Int16,System.UInt16,System.Char,System.Boolean,System.UInt32,System.UInt64,System.Single,System.Double)->System.Int32
+[exec]Exec.Ctl::Pick has signature (System.Int32,System.Int32,System.Int32)->System.Int32: [exec]Exec.Ctl::Pick(System.Int32,System.Int32,System.Int32)->System.Int32
+[exec]Exec.Ctl::ShortCircuit has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Ctl::ShortCircuit(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Ctl::SparseSwitch has signature (System.Int64)->System.Int64: [exec]Exec.Ctl::SparseSwitch(System.Int64)->System.Int64
+[exec]Exec.Ctl::StackAcrossJoin has signature (System.Int32,System.Int64)->System.Int64: [exec]Exec.Ctl::StackAcrossJoin(System.Int32,System.Int64)->System.Int64
+[exec]Exec.Ctl::StargArg has signature (System.Int32)->System.Int32: [exec]Exec.Ctl::StargArg(System.Int32)->System.Int32
+[exec]Exec.Ctl::Switch has signature (System.Int32)->System.Int32: [exec]Exec.Ctl::Switch(System.Int32)->System.Int32
+[exec]Exec.Ctl::SwitchFall has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Ctl::SwitchFall(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Ctl::Ternary has signature (System.Int32,System.Int32,System.Int32)->System.Int32: [exec]Exec.Ctl::Ternary(System.Int32,System.Int32,System.Int32)->System.Int32
+[exec]Exec.Ctl::VoidReturn has signature (System.Int32)->System.Void: [exec]Exec.Ctl::VoidReturn(System.Int32)->System.Void
+[exec]Exec.Dels::<Closure>g__Run|3_1 has signature (Exec.IntFn,System.Int32)->System.Int32: [exec]Exec.Dels::<Closure>g__Run|3_1(Exec.IntFn,System.Int32)->System.Int32
+[exec]Exec.Dels::Closure has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Dels::Closure(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Dels::Field has signature (Exec.Scaler,System.Int32)->System.Int32: [exec]Exec.Dels::Field(Exec.Scaler,System.Int32)->System.Int32
+[exec]Exec.Dels::Instance has signature (Exec.Scaler,System.Int32)->System.Int32: [exec]Exec.Dels::Instance(Exec.Scaler,System.Int32)->System.Int32
+[exec]Exec.Dels::Lambda has signature (System.Int32)->System.Int32: [exec]Exec.Dels::Lambda(System.Int32)->System.Int32
+[exec]Exec.Dels::Static has signature (System.Int32)->System.Int32: [exec]Exec.Dels::Static(System.Int32)->System.Int32
+[exec]Exec.Dels::Twice has signature (System.Int32)->System.Int32: [exec]Exec.Dels::Twice(System.Int32)->System.Int32
+[exec]Exec.Dels/<>c::.cctor has signature ()->System.Void: [exec]Exec.Dels/<>c::.cctor()->System.Void
+[exec]Exec.Dels/<>c::.ctor has signature ()->System.Void: [exec]Exec.Dels/<>c::.ctor()->System.Void
+[exec]Exec.Dels/<>c::<Lambda>b__4_0 has signature (System.Int32)->System.Int32: [exec]Exec.Dels/<>c::<Lambda>b__4_0(System.Int32)->System.Int32
+[exec]Exec.Dels/<>c__DisplayClass3_0::.ctor has signature ()->System.Void: [exec]Exec.Dels/<>c__DisplayClass3_0::.ctor()->System.Void
+[exec]Exec.Dels/<>c__DisplayClass3_0::<Closure>b__0 has signature (System.Int32)->System.Int32: [exec]Exec.Dels/<>c__DisplayClass3_0::<Closure>b__0(System.Int32)->System.Int32
+[exec]Exec.Disk::.ctor has signature ()->System.Void: [exec]Exec.Disk::.ctor()->System.Void
+[exec]Exec.Disk::Area has signature ()->System.Int32: [exec]Exec.Disk::Area()->System.Int32
+[exec]Exec.Disk::Exec.IGrow.Grow has signature (System.Int32)->System.Void: [exec]Exec.Disk::Exec.IGrow.Grow(System.Int32)->System.Void
+[exec]Exec.Disk::Grow has signature (System.Int32)->System.Void: [exec]Exec.Disk::Exec.IGrow.Grow(System.Int32)->System.Void
+[exec]Exec.Exc::BreakThroughFinally has signature (System.Int32)->System.Int32: [exec]Exec.Exc::BreakThroughFinally(System.Int32)->System.Int32
+[exec]Exec.Exc::CatchAll has signature (System.Int32)->System.Int32: [exec]Exec.Exc::CatchAll(System.Int32)->System.Int32
+[exec]Exec.Exc::CatchBase has signature (System.Int32)->System.Int32: [exec]Exec.Exc::CatchBase(System.Int32)->System.Int32
+[exec]Exec.Exc::CatchDiv has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Exc::CatchDiv(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Exc::CaughtObject has signature (System.Int32)->System.Int32: [exec]Exec.Exc::CaughtObject(System.Int32)->System.Int32
+[exec]Exec.Exc::Filter has signature (System.Int32)->System.Int32: [exec]Exec.Exc::Filter(System.Int32)->System.Int32
+[exec]Exec.Exc::FilterThrows has signature (System.Int32)->System.Int32: [exec]Exec.Exc::FilterThrows(System.Int32)->System.Int32
+[exec]Exec.Exc::Finally has signature (System.Int32)->System.Int32: [exec]Exec.Exc::Finally(System.Int32)->System.Int32
+[exec]Exec.Exc::Ior has signature (System.Int32[],System.Int32)->System.Int32: [exec]Exec.Exc::Ior(System.Int32[],System.Int32)->System.Int32
+[exec]Exec.Exc::LoopWithTry has signature (System.Int32)->System.Int32: [exec]Exec.Exc::LoopWithTry(System.Int32)->System.Int32
+[exec]Exec.Exc::NestedFinally has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Exc::NestedFinally(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Exc::Nre has signature (Exec.Node)->System.Int32: [exec]Exec.Exc::Nre(Exec.Node)->System.Int32
+[exec]Exec.Exc::Record has signature (System.Int32)->System.Boolean: [exec]Exec.Exc::Record(System.Int32)->System.Boolean
+[exec]Exec.Exc::Rethrow has signature (System.Int32)->System.Int32: [exec]Exec.Exc::Rethrow(System.Int32)->System.Int32
+[exec]Exec.Exc::ReturnInTry has signature (System.Int32)->System.Int32: [exec]Exec.Exc::ReturnInTry(System.Int32)->System.Int32
+[exec]Exec.Exc::StaticException has signature (System.Int32)->System.Int32: [exec]Exec.Exc::StaticException(System.Int32)->System.Int32
+[exec]Exec.Exc::Stores has signature (Exec.Bag,System.Int32)->System.Int32: [exec]Exec.Exc::Stores(Exec.Bag,System.Int32)->System.Int32
+[exec]Exec.Exc::ThrowInCatch has signature (System.Int32)->System.Int32: [exec]Exec.Exc::ThrowInCatch(System.Int32)->System.Int32
+[exec]Exec.Exc::ThrowInFinally has signature (System.Int32)->System.Int32: [exec]Exec.Exc::ThrowInFinally(System.Int32)->System.Int32
+[exec]Exec.Exc::Throws has signature (System.Int32)->System.Int32: [exec]Exec.Exc::Throws(System.Int32)->System.Int32
+[exec]Exec.Exc::TwoPass has signature (System.Int32)->System.Int64: [exec]Exec.Exc::TwoPass(System.Int32)->System.Int64
+[exec]Exec.Exc::Uncaught has signature (System.Int32)->System.Int32: [exec]Exec.Exc::Uncaught(System.Int32)->System.Int32
+[exec]Exec.Hider::.ctor has signature ()->System.Void: [exec]Exec.Hider::.ctor()->System.Void
+[exec]Exec.Hider::Area has signature ()->System.Int32: [exec]Exec.Hider::Area()->System.Int32
+[exec]Exec.Holder::.ctor has signature ()->System.Void: [exec]Exec.Holder::.ctor()->System.Void
+[exec]Exec.Ifaces::Explicit has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Ifaces::Explicit(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Ifaces::Pick has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Ifaces::Pick(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Ifaces::Through has signature (Exec.Disk,System.Int32)->System.Int32: [exec]Exec.Ifaces::Through(Exec.Disk,System.Int32)->System.Int32
+[exec]Exec.Inst::.ctor has signature ()->System.Void: [exec]Exec.Inst::.ctor()->System.Void
+[exec]Exec.Inst::Add has signature (System.Int32)->System.Int32: [exec]Exec.Inst::Add(System.Int32)->System.Int32
+[exec]Exec.Inst::Hook has signature (System.Int32)->System.Int32: [exec]Exec.Inst::Hook(System.Int32)->System.Int32
+[exec]Exec.Inst::Push has signature (System.Int32)->System.Void: [exec]Exec.Inst::Push(System.Int32)->System.Void
+[exec]Exec.Inst::Twice has signature (System.Int32)->System.Int32: [exec]Exec.Inst::Twice(System.Int32)->System.Int32
+[exec]Exec.IntFn::.ctor has signature (System.Object,System.IntPtr)->System.Void: [exec]Exec.IntFn::.ctor(System.Object,System.IntPtr)->System.Void
+[exec]Exec.IntFn::BeginInvoke has signature (System.Int32,System.AsyncCallback,System.Object)->System.IAsyncResult: [exec]Exec.IntFn::BeginInvoke(System.Int32,System.AsyncCallback,System.Object)->System.IAsyncResult
+[exec]Exec.IntFn::Clone has signature ()->System.Object: [System.Private.CoreLib]System.Delegate::Clone()->System.Object
+[exec]Exec.IntFn::EndInvoke has signature (System.IAsyncResult)->System.Int32: [exec]Exec.IntFn::EndInvoke(System.IAsyncResult)->System.Int32
+[exec]Exec.IntFn::GetObjectData has signature (System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void: [System.Private.CoreLib]System.MulticastDelegate::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void
+[exec]Exec.IntFn::Invoke has signature (System.Int32)->System.Int32: [exec]Exec.IntFn::Invoke(System.Int32)->System.Int32
+[exec]Exec.MyEx::.ctor has signature (System.Int32)->System.Void: [exec]Exec.MyEx::.ctor(System.Int32)->System.Void
+[exec]Exec.MyEx::GetObjectData has signature (System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void: [System.Private.CoreLib]System.Exception::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void
+[exec]Exec.Node::.ctor has signature ()->System.Void: [exec]Exec.Node::.ctor()->System.Void
+[exec]Exec.Obj::Aliasing has signature (Exec.Bag,Exec.Bag)->System.Int32: [exec]Exec.Obj::Aliasing(Exec.Bag,Exec.Bag)->System.Int32
+[exec]Exec.Obj::AsCast has signature (Exec.Shape)->System.Int32: [exec]Exec.Obj::AsCast(Exec.Shape)->System.Int32
+[exec]Exec.Obj::BoxStruct has signature (System.Int32)->System.Int32: [exec]Exec.Obj::BoxStruct(System.Int32)->System.Int32
+[exec]Exec.Obj::Boxing has signature (System.Int32)->System.Int32: [exec]Exec.Obj::Boxing(System.Int32)->System.Int32
+[exec]Exec.Obj::Build has signature (System.Int32)->Exec.Node: [exec]Exec.Obj::Build(System.Int32)->Exec.Node
+[exec]Exec.Obj::Cast has signature (Exec.Shape)->System.Int32: [exec]Exec.Obj::Cast(Exec.Shape)->System.Int32
+[exec]Exec.Obj::ChainNew has signature (System.Int32)->System.Int32: [exec]Exec.Obj::ChainNew(System.Int32)->System.Int32
+[exec]Exec.Obj::ChainedAssign has signature (Exec.Bag,Exec.Bag,System.Int32)->System.Int32: [exec]Exec.Obj::ChainedAssign(Exec.Bag,Exec.Bag,System.Int32)->System.Int32
+[exec]Exec.Obj::Compound has signature (Exec.Bag,System.Int32[],System.Int32)->System.Int32: [exec]Exec.Obj::Compound(Exec.Bag,System.Int32[],System.Int32)->System.Int32
+[exec]Exec.Obj::Incr has signature (Exec.Bag,System.Int32)->System.Int32: [exec]Exec.Obj::Incr(Exec.Bag,System.Int32)->System.Int32
+[exec]Exec.Obj::Instance has signature (Exec.Shape)->System.Int32: [exec]Exec.Obj::Instance(Exec.Shape)->System.Int32
+[exec]Exec.Obj::MakeShapes has signature (System.Int32)->System.Int32: [exec]Exec.Obj::MakeShapes(System.Int32)->System.Int32
+[exec]Exec.Obj::ObjectField has signature (Exec.Bag,System.Int32)->System.Object: [exec]Exec.Obj::ObjectField(Exec.Bag,System.Int32)->System.Object
+[exec]Exec.Obj::Reverse has signature (Exec.Node)->Exec.Node: [exec]Exec.Obj::Reverse(Exec.Node)->Exec.Node
+[exec]Exec.Obj::Statics has signature (System.Int32)->System.Int32: [exec]Exec.Obj::Statics(System.Int32)->System.Int32
+[exec]Exec.Obj::StructField has signature (Exec.Bag,System.Int32)->System.Int32: [exec]Exec.Obj::StructField(Exec.Bag,System.Int32)->System.Int32
+[exec]Exec.Obj::SumList has signature (Exec.Node)->System.Int32: [exec]Exec.Obj::SumList(Exec.Node)->System.Int32
+[exec]Exec.Obj::SwapFields has signature (Exec.Bag)->System.Void: [exec]Exec.Obj::SwapFields(Exec.Bag)->System.Void
+[exec]Exec.Obj::Unboxing has signature (System.Object)->System.Int32: [exec]Exec.Obj::Unboxing(System.Object)->System.Int32
+[exec]Exec.Obj::Virt has signature (Exec.Shape)->System.Int32: [exec]Exec.Obj::Virt(Exec.Shape)->System.Int32
+[exec]Exec.OtherEx::.ctor has signature (System.Int32)->System.Void: [exec]Exec.OtherEx::.ctor(System.Int32)->System.Void
+[exec]Exec.OtherEx::GetObjectData has signature (System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void: [System.Private.CoreLib]System.Exception::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void
+[exec]Exec.Plate::.ctor has signature ()->System.Void: [exec]Exec.Plate::.ctor()->System.Void
+[exec]Exec.Plate::Area has signature ()->System.Int32: [exec]Exec.Plate::Area()->System.Int32
+[exec]Exec.Pt::.ctor has signature (System.Int32,System.Int32)->System.Void: [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void
+[exec]Exec.Pt::Scale has signature (System.Int32)->System.Void: [exec]Exec.Pt::Scale(System.Int32)->System.Void
+[exec]Exec.Pt::Sum has signature ()->System.Int32: [exec]Exec.Pt::Sum()->System.Int32
+[exec]Exec.Rc::.ctor has signature ()->System.Void: [exec]Exec.Rc::.ctor()->System.Void
+[exec]Exec.Rc::Area has signature ()->System.Int32: [exec]Exec.Rc::Area()->System.Int32
+[exec]Exec.Rc::Kind has signature ()->System.Int32: [exec]Exec.Rc::Kind()->System.Int32
+[exec]Exec.Scaler::.ctor has signature ()->System.Void: [exec]Exec.Scaler::.ctor()->System.Void
+[exec]Exec.Scaler::Apply has signature (System.Int32)->System.Int32: [exec]Exec.Scaler::Apply(System.Int32)->System.Int32
+[exec]Exec.Shape::.ctor has signature ()->System.Void: [exec]Exec.Shape::.ctor()->System.Void
+[exec]Exec.Shape::Area has signature ()->System.Int32: [exec]Exec.Shape::Area()->System.Int32
+[exec]Exec.Shape::Describe has signature ()->System.Int32: [exec]Exec.Shape::Describe()->System.Int32
+[exec]Exec.Shape::Kind has signature ()->System.Int32: [exec]Exec.Shape::Kind()->System.Int32
+[exec]Exec.Sq::.ctor has signature ()->System.Void: [exec]Exec.Sq::.ctor()->System.Void
+[exec]Exec.Sq::Area has signature ()->System.Int32: [exec]Exec.Sq::Area()->System.Int32
+[exec]Exec.Val::ArrayOfStructs has signature (System.Int32)->System.Int32: [exec]Exec.Val::ArrayOfStructs(System.Int32)->System.Int32
+[exec]Exec.Val::CallSwap has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Val::CallSwap(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Val::Copy has signature (System.Int32)->System.Int32: [exec]Exec.Val::Copy(System.Int32)->System.Int32
+[exec]Exec.Val::Ctor has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Val::Ctor(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Val::CtorAsArgument has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Val::CtorAsArgument(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Val::Default has signature (System.Int32)->System.Int32: [exec]Exec.Val::Default(System.Int32)->System.Int32
+[exec]Exec.Val::ElemRef has signature (System.Int32[],System.Int32)->System.Int32: [exec]Exec.Val::ElemRef(System.Int32[],System.Int32)->System.Int32
+[exec]Exec.Val::Inc has signature (System.Int32&,System.Int32)->System.Void: [exec]Exec.Val::Inc(System.Int32&,System.Int32)->System.Void
+[exec]Exec.Val::Inc has signature (System.Int64&,System.Int32)->System.Void: [exec]Exec.Val::Inc(System.Int64&,System.Int32)->System.Void
+[exec]Exec.Val::Jagged has signature (System.Int32)->System.Int32: [exec]Exec.Val::Jagged(System.Int32)->System.Int32
+[exec]Exec.Val::Multi has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Val::Multi(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Val::NestedStruct has signature (Exec.Rect)->System.Int32: [exec]Exec.Val::NestedStruct(Exec.Rect)->System.Int32
+[exec]Exec.Val::PtrToStatic has signature (System.Int32)->System.Int64: [exec]Exec.Val::PtrToStatic(System.Int32)->System.Int64
+[exec]Exec.Val::RefBytes has signature (System.Byte&,System.Int64&,System.Double&,System.Boolean&)->System.Void: [exec]Exec.Val::RefBytes(System.Byte&,System.Int64&,System.Double&,System.Boolean&)->System.Void
+[exec]Exec.Val::RefJoin has signature (System.Int32,System.Int32&)->System.Int32: [exec]Exec.Val::RefJoin(System.Int32,System.Int32&)->System.Int32
+[exec]Exec.Val::RefLocal has signature (System.Int32)->System.Int32: [exec]Exec.Val::RefLocal(System.Int32)->System.Int32
+[exec]Exec.Val::RefParam has signature (Exec.Pt&,System.Int32)->System.Int32: [exec]Exec.Val::RefParam(Exec.Pt&,System.Int32)->System.Int32
+[exec]Exec.Val::Scale has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Val::Scale(System.Int32,System.Int32)->System.Int32
+[exec]Exec.Val::StaticStruct has signature (System.Int32)->System.Int32: [exec]Exec.Val::StaticStruct(System.Int32)->System.Int32
+[exec]Exec.Val::Swap has signature (System.Int32&,System.Int32&)->System.Void: [exec]Exec.Val::Swap(System.Int32&,System.Int32&)->System.Void
+[exec]Exec.Val::Take has signature (Exec.Pt,Exec.Pt)->System.Int32: [exec]Exec.Val::Take(Exec.Pt,Exec.Pt)->System.Int32
+[exec]Exec.Val::TryDiv has signature (System.Int32,System.Int32,System.Int32&)->System.Boolean: [exec]Exec.Val::TryDiv(System.Int32,System.Int32,System.Int32&)->System.Boolean
+[exec]Exec.Val::UseTry has signature (System.Int32,System.Int32)->System.Int32: [exec]Exec.Val::UseTry(System.Int32,System.Int32)->System.Int32
+[exec]Exec.IArea is an interface
+[exec]Exec.IGrow is an interface
+[exec]Exec.IArea::Area has signature ()->System.Int32: abstract
+[exec]Exec.IGrow::Grow has signature (System.Int32)->System.Void: abstract
+[exec]Exec.Arith extends [System.Private.CoreLib]System.Object
+[exec]Exec.Arr extends [System.Private.CoreLib]System.Object
+[exec]Exec.Bag extends [System.Private.CoreLib]System.Object
+[exec]Exec.Ctl extends [System.Private.CoreLib]System.Object
+[exec]Exec.Dels extends [System.Private.CoreLib]System.Object
+[exec]Exec.Dels/<>O extends [System.Private.CoreLib]System.Object
+[exec]Exec.Dels/<>c extends [System.Private.CoreLib]System.Object
+[exec]Exec.Dels/<>c__DisplayClass3_0 extends [System.Private.CoreLib]System.Object
+[exec]Exec.Disk extends [System.Private.CoreLib]System.Object
+[exec]Exec.Disk extends [exec]Exec.IArea
+[exec]Exec.Disk extends [exec]Exec.IGrow
+[exec]Exec.Exc extends [System.Private.CoreLib]System.Object
+[exec]Exec.G extends [System.Private.CoreLib]System.Object
+[exec]Exec.Hider extends [exec]Exec.Rc
+[exec]Exec.Holder extends [System.Private.CoreLib]System.Object
+[exec]Exec.Ifaces extends [System.Private.CoreLib]System.Object
+[exec]Exec.Inst extends [System.Private.CoreLib]System.Object
+[exec]Exec.IntFn extends [System.Private.CoreLib]System.MulticastDelegate
+[exec]Exec.MyEx extends [System.Private.CoreLib]System.Exception
+[exec]Exec.Node extends [System.Private.CoreLib]System.Object
+[exec]Exec.Obj extends [System.Private.CoreLib]System.Object
+[exec]Exec.OtherEx extends [exec]Exec.MyEx
+[exec]Exec.Plate extends [System.Private.CoreLib]System.Object
+[exec]Exec.Plate extends [exec]Exec.IArea
+[exec]Exec.Pt extends [System.Private.CoreLib]System.ValueType
+[exec]Exec.Rc extends [exec]Exec.Sq
+[exec]Exec.Rect extends [System.Private.CoreLib]System.ValueType
+[exec]Exec.Scaler extends [System.Private.CoreLib]System.Object
+[exec]Exec.Shape extends [System.Private.CoreLib]System.Object
+[exec]Exec.Sq extends [exec]Exec.Shape
+[exec]Exec.Val extends [System.Private.CoreLib]System.Object
+end cil virtual method table
+
+define [exec]Exec.Node::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [1]
+assign %s0 = @p0 [1]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Object::.ctor()->System.Void(%s0) [2]
+assign %excout = %excout, %throwval [2]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Bag::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [4]
+assign %s0 = @p0 [4]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Object::.ctor()->System.Void(%s0) [5]
+assign %excout = %excout, %throwval [5]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void(@p0[shared], @p1[shared_fields], @p2[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=pt_1
+begin block_0 [start]:
+assign %excout = <const: []> [7]
+assign %s0 = @p0 [7]
+assign %s1 = @p1 [8]
+%pt_0 = load %s0.deref [9]
+store %pt_0.<[exec]Exec\.Pt::X> := %s1 [9]
+assign %s0 = @p0 [10]
+assign %s1 = @p2 [11]
+%pt_1 = load %s0.deref [12]
+store %pt_1.<[exec]Exec\.Pt::Y> := %s1 [12]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Pt::Sum()->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=pt_0 %L3=s1 %L4=pt_1
+begin block_0 [start]:
+assign %excout = <const: []> [14]
+assign %s0 = @p0 [14]
+%pt_0 = load %s0.deref [15]
+%s0 = load %pt_0.<[exec]Exec\.Pt::X> [15]
+assign %s1 = @p0 [16]
+%pt_1 = load %s1.deref [17]
+%s1 = load %pt_1.<[exec]Exec\.Pt::Y> [17]
+assign %s0 = %s0, %s1 [18]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Pt::Scale(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=pt_2 %L7=pt_3
+begin block_0 [start]:
+assign %excout = <const: []> [20]
+assign %s0 = @p0 [20]
+assign %s1 = @p0 [21]
+%pt_0 = load %s1.deref [22]
+%s1 = load %pt_0.<[exec]Exec\.Pt::X> [22]
+assign %s2 = @p1 [23]
+assign %s1 = %s1, %s2 [24]
+%pt_1 = load %s0.deref [25]
+store %pt_1.<[exec]Exec\.Pt::X> := %s1 [25]
+assign %s0 = @p0 [26]
+assign %s1 = @p0 [27]
+%pt_2 = load %s1.deref [28]
+%s1 = load %pt_2.<[exec]Exec\.Pt::Y> [28]
+assign %s2 = @p1 [29]
+assign %s1 = %s1, %s2 [30]
+%pt_3 = load %s0.deref [31]
+store %pt_3.<[exec]Exec\.Pt::Y> := %s1 [31]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Shape::Area()->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0
+begin block_0 [start]:
+assign %excout = <const: []> [33]
+assign %s0 = @p0 [33]
+%s0 = load %s0.<[exec]Exec\.Shape::Id> [34]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Shape::Kind()->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0
+begin block_0 [start]:
+assign %excout = <const: []> [36]
+assign %s0 = <const: 1> [36]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Shape::Describe()->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1
+begin block_0 [start]:
+assign %excout = <const: []> [38]
+assign %s0 = @p0 [38]
+%retval, %throwval = cil-call %s0.<[exec]Exec.Shape::Area()->System.Int32>() [39]
+assign %excout = %excout, %throwval [39]
+assign %s0 = %retval [39]
+assign %s1 = <const: 10> [40]
+assign %s0 = %s0, %s1 [41]
+assign %s1 = @p0 [42]
+%retval, %throwval = cil-call %s1.<[exec]Exec.Shape::Kind()->System.Int32>() [43]
+assign %excout = %excout, %throwval [43]
+assign %s1 = %retval [43]
+assign %s0 = %s0, %s1 [44]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Shape::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [46]
+assign %s0 = @p0 [46]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Object::.ctor()->System.Void(%s0) [47]
+assign %excout = %excout, %throwval [47]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Sq::Area()->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [49]
+assign %s0 = @p0 [49]
+%s0 = load %s0.<[exec]Exec\.Sq::S> [50]
+assign %s1 = @p0 [51]
+%s1 = load %s1.<[exec]Exec\.Sq::S> [52]
+assign %s0 = %s0, %s1 [53]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Sq::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [55]
+assign %s0 = @p0 [55]
+%retval, %throwval = direct-call [exec]Exec.Shape::.ctor()->System.Void(%s0) [56]
+assign %excout = %excout, %throwval [56]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Rc::Area()->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [58]
+assign %s0 = @p0 [58]
+%s0 = load %s0.<[exec]Exec\.Sq::S> [59]
+assign %s1 = @p0 [60]
+%s1 = load %s1.<[exec]Exec\.Rc::W> [61]
+assign %s0 = %s0, %s1 [62]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Rc::Kind()->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1
+begin block_0 [start]:
+assign %excout = <const: []> [64]
+assign %s0 = @p0 [64]
+%retval, %throwval = direct-call [exec]Exec.Shape::Kind()->System.Int32(%s0) [65]
+assign %excout = %excout, %throwval [65]
+assign %s0 = %retval [65]
+assign %s1 = <const: 2> [66]
+assign %s0 = %s0, %s1 [67]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Rc::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [69]
+assign %s0 = @p0 [69]
+%retval, %throwval = direct-call [exec]Exec.Sq::.ctor()->System.Void(%s0) [70]
+assign %excout = %excout, %throwval [70]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Hider::Area()->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0
+begin block_0 [start]:
+assign %excout = <const: []> [72]
+assign %s0 = <const: -1> [72]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Hider::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [74]
+assign %s0 = @p0 [74]
+%retval, %throwval = direct-call [exec]Exec.Rc::.ctor()->System.Void(%s0) [75]
+assign %excout = %excout, %throwval [75]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1
+begin block_0 [start]:
+assign %excout = <const: []> [77]
+assign %s0 = @p0 [77]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Exception::.ctor()->System.Void(%s0) [78]
+assign %excout = %excout, %throwval [78]
+assign %s0 = @p0 [79]
+assign %s1 = @p1 [80]
+store %s0.<[exec]Exec\.MyEx::Code> := %s1 [81]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.OtherEx::.ctor(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=retval %L5=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [83]
+assign %s0 = @p0 [83]
+assign %s1 = @p1 [84]
+assign %s2 = <const: 1> [85]
+assign %s1 = %s1, %s2 [86]
+%retval, %throwval = direct-call [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(%s0, %s1) [87]
+assign %excout = %excout, %throwval [87]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Arith::AddMul(System.Int32,System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [89]
+assign %s0 = @p0 [89]
+assign %s1 = @p1 [90]
+assign %s2 = @p2 [91]
+assign %s1 = %s1, %s2 [92]
+assign %s0 = %s0, %s1 [93]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::DivRem(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [95]
+assign %s0 = @p0 [95]
+assign %s1 = @p1 [96]
+assign %s0 = %s0, %s1 [97]
+assign %s1 = @p0 [98]
+assign %s2 = @p1 [99]
+assign %s1 = %s1, %s2 [100]
+assign %s0 = %s0, %s1 [101]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::UDivRem(System.UInt32,System.UInt32)->System.UInt32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [103]
+assign %s0 = @p0 [103]
+assign %s1 = @p1 [104]
+assign %s0 = %s0, %s1 [105]
+assign %s1 = @p0 [106]
+assign %s2 = @p1 [107]
+assign %s1 = %s1, %s2 [108]
+assign %s0 = %s0, %s1 [109]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::LDivRem(System.Int64,System.Int64)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [111]
+assign %s0 = @p0 [111]
+assign %s1 = @p1 [112]
+assign %s0 = %s0, %s1 [113]
+assign %s1 = @p0 [114]
+assign %s2 = @p1 [115]
+assign %s1 = %s1, %s2 [116]
+assign %s0 = %s0, %s1 [117]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::ULDivRem(System.UInt64,System.UInt64)->System.UInt64(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [119]
+assign %s0 = @p0 [119]
+assign %s1 = @p1 [120]
+assign %s0 = %s0, %s1 [121]
+assign %s1 = @p0 [122]
+assign %s2 = @p1 [123]
+assign %s1 = %s1, %s2 [124]
+assign %s0 = %s0, %s1 [125]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::Mixed(System.Int32,System.Int64)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [127]
+assign %s0 = @p0 [127]
+assign %s0 = %s0 [128]
+assign %s1 = @p1 [129]
+assign %s0 = %s0, %s1 [130]
+assign %s1 = @p1 [131]
+assign %s2 = <const: 3> [132]
+assign %s1 = %s1, %s2 [133]
+assign %s0 = %s0, %s1 [134]
+assign %s1 = @p0 [135]
+assign %s2 = <const: 2> [136]
+assign %s1 = %s1, %s2 [137]
+assign %s1 = %s1 [138]
+assign %s0 = %s0, %s1 [139]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::ULong(System.UInt64,System.UInt64)->System.UInt64(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [141]
+assign %s0 = @p0 [141]
+assign %s1 = <const: 7> [142]
+assign %s0 = %s0, %s1 [143]
+assign %s1 = @p1 [144]
+assign %s2 = <const: 3> [145]
+assign %s2 = %s2 [146]
+assign %s1 = %s1, %s2 [147]
+assign %s0 = %s0, %s1 [148]
+assign %s1 = @p0 [149]
+assign %s2 = <const: 61> [150]
+assign %s1 = %s1, %s2 [151]
+assign %s0 = %s0, %s1 [152]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::Shifts(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3 %L5=s4
+begin block_0 [start]:
+assign %excout = <const: []> [154]
+assign %s0 = @p0 [154]
+assign %s1 = @p1 [155]
+assign %s2 = <const: 31> [156]
+assign %s1 = %s1, %s2 [157]
+assign %s0 = %s0, %s1 [158]
+assign %s1 = @p0 [159]
+assign %s2 = @p1 [160]
+assign %s3 = <const: 31> [161]
+assign %s2 = %s2, %s3 [162]
+assign %s1 = %s1, %s2 [163]
+assign %s2 = @p0 [164]
+assign %s3 = @p1 [165]
+assign %s4 = <const: 31> [166]
+assign %s3 = %s3, %s4 [167]
+assign %s2 = %s2, %s3 [168]
+assign %s1 = %s1, %s2 [169]
+assign %s0 = %s0, %s1 [170]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::LShifts(System.Int64,System.Int32)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3
+begin block_0 [start]:
+assign %excout = <const: []> [172]
+assign %s0 = @p0 [172]
+assign %s1 = @p1 [173]
+assign %s2 = <const: 63> [174]
+assign %s1 = %s1, %s2 [175]
+assign %s0 = %s0, %s1 [176]
+assign %s1 = @p0 [177]
+assign %s2 = @p1 [178]
+assign %s3 = <const: 63> [179]
+assign %s2 = %s2, %s3 [180]
+assign %s1 = %s1, %s2 [181]
+assign %s0 = %s0, %s1 [182]
+assign %s1 = @p0 [183]
+assign %s2 = @p1 [184]
+assign %s3 = <const: 63> [185]
+assign %s2 = %s2, %s3 [186]
+assign %s1 = %s1, %s2 [187]
+assign %s0 = %s0, %s1 [188]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::Checked(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [190]
+assign %s0 = @p0 [190]
+assign %s1 = @p1 [191]
+assign %s0 = %s0, %s1 [192]
+assign %s1 = @p0 [193]
+assign %s0 = %s0, %s1 [194]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::CheckedL(System.Int64,System.Int64)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [196]
+assign %s0 = @p0 [196]
+assign %s1 = @p1 [197]
+assign %s2 = <const: 2> [198]
+assign %s2 = %s2 [199]
+assign %s1 = %s1, %s2 [200]
+assign %s0 = %s0, %s1 [201]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::CheckedU(System.UInt32,System.UInt32)->System.UInt32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [203]
+assign %s0 = @p0 [203]
+assign %s1 = @p1 [204]
+assign %s0 = %s0, %s1 [205]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::CheckedUL(System.UInt64,System.UInt64)->System.UInt64(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [207]
+assign %s0 = @p0 [207]
+assign %s1 = @p1 [208]
+assign %s0 = %s0, %s1 [209]
+assign %s1 = <const: 1> [210]
+assign %s1 = %s1 [211]
+assign %s0 = %s0, %s1 [212]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::Convs(System.Int64)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [214]
+assign %s0 = @p0 [214]
+assign %s0 = %s0 [215]
+assign %s1 = @p0 [216]
+assign %s1 = %s1 [217]
+assign %s0 = %s0, %s1 [218]
+assign %s1 = @p0 [219]
+assign %s1 = %s1 [220]
+assign %s0 = %s0, %s1 [221]
+assign %s1 = @p0 [222]
+assign %s1 = %s1 [223]
+assign %s0 = %s0, %s1 [224]
+assign %s1 = @p0 [225]
+assign %s1 = %s1 [226]
+assign %s0 = %s0, %s1 [227]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::Widen(System.Int32,System.UInt32,System.Int16,System.Byte,System.Char,System.SByte,System.UInt16)->System.Int64(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields], @p3[shared_fields], @p4[shared_fields], @p5[shared_fields], @p6[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [229]
+assign %s0 = @p0 [229]
+assign %s0 = %s0 [230]
+assign %s1 = @p1 [231]
+assign %s1 = %s1 [232]
+assign %s0 = %s0, %s1 [233]
+assign %s1 = @p2 [234]
+assign %s1 = %s1 [235]
+assign %s0 = %s0, %s1 [236]
+assign %s1 = @p3 [237]
+assign %s1 = %s1 [238]
+assign %s0 = %s0, %s1 [239]
+assign %s1 = @p4 [240]
+assign %s1 = %s1 [241]
+assign %s0 = %s0, %s1 [242]
+assign %s1 = @p5 [243]
+assign %s1 = %s1 [244]
+assign %s0 = %s0, %s1 [245]
+assign %s1 = @p6 [246]
+assign %s1 = %s1 [247]
+assign %s0 = %s0, %s1 [248]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::CheckedConv(System.Int64)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [250]
+assign %s0 = @p0 [250]
+assign %s0 = %s0 [251]
+assign %s1 = @p0 [252]
+assign %s2 = <const: 511> [253]
+assign %s2 = %s2 [254]
+assign %s1 = %s1, %s2 [255]
+assign %s1 = %s1 [256]
+assign %s0 = %s0, %s1 [257]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::CheckedToUnsigned(System.Int32)->System.UInt32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [259]
+assign %s0 = @p0 [259]
+assign %s0 = %s0 [260]
+assign %s1 = @p0 [261]
+assign %s2 = <const: 4> [262]
+assign %s1 = %s1, %s2 [263]
+assign %s1 = %s1 [264]
+assign %s0 = %s0, %s1 [265]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::CheckedNarrow(System.Int32)->System.SByte(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0
+begin block_0 [start]:
+assign %excout = <const: []> [267]
+assign %s0 = @p0 [267]
+assign %s0 = %s0 [268]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::Dbl(System.Double,System.Double)->System.Double(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [270]
+assign %s0 = @p0 [270]
+assign %s1 = @p1 [271]
+assign %s0 = %s0, %s1 [272]
+assign %s1 = @p0 [273]
+assign %s2 = @p1 [274]
+assign %s1 = %s1, %s2 [275]
+assign %s0 = %s0, %s1 [276]
+assign %s1 = @p1 [277]
+assign %s2 = @p0 [278]
+assign %s1 = %s1, %s2 [279]
+assign %s0 = %s0, %s1 [280]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::Flt(System.Single,System.Single)->System.Single(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [282]
+assign %s0 = @p0 [282]
+assign %s1 = @p1 [283]
+assign %s0 = %s0, %s1 [284]
+assign %s1 = @p0 [285]
+assign %s2 = @p1 [286]
+assign %s1 = %s1, %s2 [287]
+assign %s0 = %s0, %s1 [288]
+assign %s1 = @p1 [289]
+assign %s2 = @p0 [290]
+assign %s1 = %s1, %s2 [291]
+assign %s0 = %s0, %s1 [292]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::MixedFloat(System.Single,System.Double,System.Int32,System.Int64)->System.Double(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields], @p3[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [294]
+assign %s0 = @p0 [294]
+assign %s0 = %s0 [295]
+assign %s1 = @p1 [296]
+assign %s2 = @p2 [297]
+assign %s2 = %s2 [298]
+assign %s1 = %s1, %s2 [299]
+assign %s0 = %s0, %s1 [300]
+assign %s1 = @p3 [301]
+assign %s1 = %s1 [302]
+assign %s2 = <const: 4613937818241073152> [303]
+assign %s1 = %s1, %s2 [304]
+assign %s0 = %s0, %s1 [305]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::Cmp(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [307]
+assign %s0 = @p0 [307]
+assign %s1 = @p1 [308]
+assign %s0 = %s0, %s1 [309]
+assign %s1 = @p0 [310]
+assign %s2 = @p1 [311]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s1 = <const: 0> [313]
+goto 3
+end block_1
+begin block_2:
+assign %s1 = <const: 2> [315]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %s0, %s1 [316]
+assign %s1 = @p0 [317]
+assign %s2 = @p1 [318]
+goto 5, 4
+end block_3
+begin block_4:
+assign %s1 = <const: 0> [320]
+goto 6
+end block_4
+begin block_5:
+assign %s1 = <const: 4> [322]
+goto 6
+end block_5
+begin block_6:
+assign %s0 = %s0, %s1 [323]
+assign %s1 = @p0 [324]
+assign %s2 = @p1 [325]
+goto 8, 7
+end block_6
+begin block_7:
+assign %s1 = <const: 0> [327]
+goto 9
+end block_7
+begin block_8:
+assign %s1 = <const: 8> [329]
+goto 9
+end block_8
+begin block_9:
+assign %s0 = %s0, %s1 [330]
+assign %s1 = @p0 [331]
+assign %s2 = @p1 [332]
+goto 11, 10
+end block_9
+begin block_10:
+assign %s1 = <const: 0> [334]
+goto 12
+end block_10
+begin block_11:
+assign %s1 = <const: 16> [336]
+goto 12
+end block_11
+begin block_12:
+assign %s0 = %s0, %s1 [337]
+assign %s1 = @p0 [338]
+assign %s2 = @p1 [339]
+goto 14, 13
+end block_12
+begin block_13:
+assign %s1 = <const: 0> [341]
+goto 15
+end block_13
+begin block_14:
+assign %s1 = <const: 32> [343]
+goto 15
+end block_14
+begin block_15:
+assign %s0 = %s0, %s1 [344]
+return %s0, %excout
+end block_15
+
+define [exec]Exec.Arith::LCmp(System.Int64,System.UInt64)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [346]
+assign %s0 = @p0 [346]
+assign %s1 = <const: 0> [347]
+assign %s1 = %s1 [348]
+assign %s0 = %s0, %s1 [349]
+assign %s1 = @p0 [350]
+assign %s2 = @p1 [351]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s1 = <const: 0> [353]
+goto 3
+end block_1
+begin block_2:
+assign %s1 = <const: 2> [355]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %s0, %s1 [356]
+assign %s1 = @p0 [357]
+assign %s2 = @p1 [358]
+goto 5, 4
+end block_3
+begin block_4:
+assign %s1 = <const: 0> [360]
+goto 6
+end block_4
+begin block_5:
+assign %s1 = <const: 4> [362]
+goto 6
+end block_5
+begin block_6:
+assign %s0 = %s0, %s1 [363]
+return %s0, %excout
+end block_6
+
+define [exec]Exec.Arith::FCmp(System.Double,System.Double)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [365]
+assign %s0 = @p0 [365]
+assign %s1 = @p1 [366]
+assign %s0 = %s0, %s1 [367]
+assign %s1 = @p0 [368]
+assign %s2 = @p1 [369]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s1 = <const: 0> [371]
+goto 3
+end block_1
+begin block_2:
+assign %s1 = <const: 2> [373]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %s0, %s1 [374]
+assign %s1 = @p0 [375]
+assign %s2 = @p1 [376]
+goto 5, 4
+end block_3
+begin block_4:
+assign %s1 = <const: 0> [378]
+goto 6
+end block_4
+begin block_5:
+assign %s1 = <const: 4> [380]
+goto 6
+end block_5
+begin block_6:
+assign %s0 = %s0, %s1 [381]
+assign %s1 = @p0 [382]
+assign %s2 = @p1 [383]
+goto 8, 7
+end block_6
+begin block_7:
+assign %s1 = <const: 0> [385]
+goto 9
+end block_7
+begin block_8:
+assign %s1 = <const: 8> [387]
+goto 9
+end block_8
+begin block_9:
+assign %s0 = %s0, %s1 [388]
+assign %s1 = @p0 [389]
+assign %s2 = @p1 [390]
+goto 11, 10
+end block_9
+begin block_10:
+assign %s1 = <const: 0> [392]
+goto 12
+end block_10
+begin block_11:
+assign %s1 = <const: 16> [394]
+goto 12
+end block_11
+begin block_12:
+assign %s0 = %s0, %s1 [395]
+assign %s1 = @p0 [396]
+assign %s2 = @p1 [397]
+goto 14, 13
+end block_12
+begin block_13:
+assign %s1 = <const: 0> [399]
+goto 15
+end block_13
+begin block_14:
+assign %s1 = <const: 32> [401]
+goto 15
+end block_14
+begin block_15:
+assign %s0 = %s0, %s1 [402]
+assign %s1 = @p0 [403]
+assign %s2 = @p1 [404]
+goto 17, 16
+end block_15
+begin block_16:
+assign %s1 = <const: 0> [406]
+goto 18
+end block_16
+begin block_17:
+assign %s1 = <const: 64> [408]
+goto 18
+end block_17
+begin block_18:
+assign %s0 = %s0, %s1 [409]
+return %s0, %excout
+end block_18
+
+define [exec]Exec.Arith::FloatToInt(System.Double)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [411]
+assign %s0 = @p0 [411]
+assign %s1 = <const: -4481700220488384512> [412]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = @p0 [414]
+assign %s1 = <const: 4741671816366391296> [415]
+goto 3, 2
+end block_1
+begin block_2:
+assign %s0 = <const: -7> [417]
+return %s0, %excout
+end block_2
+begin block_3:
+assign %s0 = @p0 [419]
+assign %s0 = %s0 [420]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Arith::FloatToLong(System.Single)->System.Int64(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [422]
+assign %s0 = @p0 [422]
+assign %s1 = <const: 3630391209> [423]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = @p0 [425]
+assign %s1 = <const: 1482907561> [426]
+goto 3, 2
+end block_1
+begin block_2:
+assign %s0 = <const: 3> [428]
+assign %s0 = %s0 [429]
+return %s0, %excout
+end block_2
+begin block_3:
+assign %s0 = @p0 [431]
+assign %s0 = %s0 [432]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Arith::FloatToUInt(System.Double)->System.UInt32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [434]
+assign %s0 = @p0 [434]
+assign %s1 = <const: -4620693217682128896> [435]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = @p0 [437]
+assign %s1 = <const: 4750679015621132288> [438]
+goto 3, 2
+end block_1
+begin block_2:
+assign %s0 = <const: 9> [440]
+return %s0, %excout
+end block_2
+begin block_3:
+assign %s0 = @p0 [442]
+assign %s0 = %s0 [443]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Arith::CheckedFloat(System.Double)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=caught0 %L4=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [445]
+assign %s0 = @p0 [445]
+assign %s0 = %s0 [446]
+assign %loc0 = %s0 [447]
+goto 2, 1
+end block_0
+begin block_1:
+assign %caught0 = %throwval [449]
+assign %s0 = %caught0 [449]
+assign %s0 = <const: -11> [450]
+assign %loc0 = %s0 [451]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc0 [453]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Arith::IntToFloat(System.Int64,System.UInt64,System.UInt32)->System.Double(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [455]
+assign %s0 = @p0 [455]
+assign %s0 = %s0 [456]
+assign %s1 = @p1 [457]
+assign %s1 = %s1 [458]
+assign %s1 = %s1 [459]
+assign %s0 = %s0, %s1 [460]
+assign %s1 = @p0 [461]
+assign %s1 = %s1 [462]
+assign %s1 = %s1 [463]
+assign %s0 = %s0, %s1 [464]
+assign %s1 = @p2 [465]
+assign %s1 = %s1 [466]
+assign %s1 = %s1 [467]
+assign %s0 = %s0, %s1 [468]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::ULongToFloat(System.UInt64)->System.Single(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0
+begin block_0 [start]:
+assign %excout = <const: []> [470]
+assign %s0 = @p0 [470]
+assign %s0 = %s0 [471]
+assign %s0 = %s0 [472]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::Logic(System.Boolean,System.Boolean,System.Int32)->System.Boolean(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [474]
+assign %s0 = @p0 [474]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = @p1 [476]
+goto 5, 2
+end block_1
+begin block_2:
+assign %s0 = @p2 [478]
+assign %s1 = <const: 3> [479]
+goto 4, 3
+end block_2
+begin block_3:
+assign %s0 = @p0 [481]
+assign %s1 = @p1 [482]
+assign %s0 = %s0, %s1 [483]
+return %s0, %excout
+end block_3
+begin block_4:
+assign %s0 = <const: 0> [485]
+return %s0, %excout
+end block_4
+begin block_5:
+assign %s0 = <const: 1> [487]
+return %s0, %excout
+end block_5
+
+define [exec]Exec.Arith::Neg(System.Int32,System.Int64)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [489]
+assign %s0 = @p0 [489]
+assign %s0 = %s0 [490]
+assign %s1 = @p1 [491]
+assign %s1 = %s1 [492]
+assign %s1 = %s1 [493]
+assign %s0 = %s0, %s1 [494]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::NextChar(System.Char)->System.Char(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [496]
+assign %s0 = @p0 [496]
+assign %s1 = <const: 1> [497]
+assign %s0 = %s0, %s1 [498]
+assign %s0 = %s0 [499]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::AddBytes(System.Byte,System.Byte)->System.Byte(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [501]
+assign %s0 = @p0 [501]
+assign %s1 = @p1 [502]
+assign %s0 = %s0, %s1 [503]
+assign %s0 = %s0 [504]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::MulShorts(System.Int16,System.Int16)->System.Int16(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [506]
+assign %s0 = @p0 [506]
+assign %s1 = @p1 [507]
+assign %s0 = %s0, %s1 [508]
+assign %s0 = %s0 [509]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::Bits(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [511]
+assign %s0 = @p0 [511]
+assign %s1 = @p1 [512]
+assign %s0 = %s0, %s1 [513]
+assign %s1 = @p0 [514]
+assign %s2 = @p1 [515]
+assign %s2 = %s2 [516]
+assign %s1 = %s1, %s2 [517]
+assign %s0 = %s0, %s1 [518]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arith::Precision(System.Single,System.Single)->System.Double(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0
+begin block_0 [start]:
+assign %excout = <const: []> [520]
+assign %s0 = @p0 [520]
+assign %s1 = @p1 [521]
+assign %s0 = %s0, %s1 [522]
+assign %loc0 = %s0 [523]
+assign %s0 = @p0 [524]
+assign %s0 = %s0 [525]
+assign %s1 = @p1 [526]
+assign %s1 = %s1 [527]
+assign %s0 = %s0, %s1 [528]
+assign %s1 = %loc0 [529]
+assign %s1 = %s1 [530]
+assign %s0 = %s0, %s1 [531]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Ctl::Loop(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2
+begin block_0 [start]:
+assign %excout = <const: []> [533]
+assign %s0 = <const: 0> [533]
+assign %loc0 = %s0 [534]
+assign %s0 = <const: 0> [535]
+assign %loc1 = %s0 [536]
+goto 2
+end block_0
+begin block_1:
+assign %s0 = %loc0 [538]
+assign %s1 = %loc1 [539]
+assign %s2 = %loc1 [540]
+assign %s1 = %s1, %s2 [541]
+assign %s0 = %s0, %s1 [542]
+assign %loc0 = %s0 [543]
+assign %s0 = %loc1 [544]
+assign %s1 = <const: 1> [545]
+assign %s0 = %s0, %s1 [546]
+assign %loc1 = %s0 [547]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc1 [548]
+assign %s1 = @p0 [549]
+assign %s2 = <const: 31> [550]
+assign %s1 = %s1, %s2 [551]
+goto 1, 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [553]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Ctl::Collatz(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0
+begin block_0 [start]:
+assign %excout = <const: []> [555]
+assign %s0 = @p0 [555]
+assign %s1 = <const: 65535> [556]
+assign %s0 = %s0, %s1 [557]
+assign @p0 = %s0 [558]
+assign %s0 = <const: 0> [559]
+assign %loc0 = %s0 [560]
+goto 5
+end block_0
+begin block_1:
+assign %s0 = @p0 [562]
+assign %s1 = <const: 2> [563]
+assign %s0 = %s0, %s1 [564]
+goto 3, 2
+end block_1
+begin block_2:
+assign %s0 = <const: 3> [566]
+assign %s1 = @p0 [567]
+assign %s0 = %s0, %s1 [568]
+assign %s1 = <const: 1> [569]
+assign %s0 = %s0, %s1 [570]
+goto 4
+end block_2
+begin block_3:
+assign %s0 = @p0 [572]
+assign %s1 = <const: 2> [573]
+assign %s0 = %s0, %s1 [574]
+goto 4
+end block_3
+begin block_4:
+assign @p0 = %s0 [575]
+assign %s0 = %loc0 [576]
+assign %s1 = <const: 1> [577]
+assign %s0 = %s0, %s1 [578]
+assign %loc0 = %s0 [579]
+goto 5
+end block_4
+begin block_5:
+assign %s0 = @p0 [580]
+assign %s1 = <const: 1> [581]
+goto 8, 6
+end block_5
+begin block_6:
+assign %s0 = @p0 [583]
+goto 8, 7
+end block_6
+begin block_7:
+assign %s0 = %loc0 [585]
+assign %s1 = <const: 200> [586]
+goto 1, 8
+end block_7
+begin block_8:
+assign %s0 = %loc0 [588]
+return %s0, %excout
+end block_8
+
+define [exec]Exec.Ctl::Switch(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [590]
+assign %s0 = @p0 [590]
+goto 2, 3, 4, 7, 5, 6, 1
+end block_0
+begin block_1:
+goto 7
+end block_1
+begin block_2:
+assign %s0 = <const: 10> [593]
+return %s0, %excout
+end block_2
+begin block_3:
+assign %s0 = <const: 11> [595]
+return %s0, %excout
+end block_3
+begin block_4:
+assign %s0 = <const: 23> [597]
+return %s0, %excout
+end block_4
+begin block_5:
+assign %s0 = <const: 55> [599]
+return %s0, %excout
+end block_5
+begin block_6:
+assign %s0 = @p0 [601]
+assign %s1 = <const: 7> [602]
+assign %s0 = %s0, %s1 [603]
+return %s0, %excout
+end block_6
+begin block_7:
+assign %s0 = <const: -1> [605]
+return %s0, %excout
+end block_7
+
+define [exec]Exec.Ctl::SwitchFall(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc1 %L4=loc0
+begin block_0 [start]:
+assign %excout = <const: []> [607]
+assign %s0 = @p0 [607]
+assign %s1 = <const: 7> [608]
+assign %s0 = %s0, %s1 [609]
+assign %loc1 = %s0 [610]
+assign %s0 = %loc1 [611]
+goto 2, 3, 4, 6, 5, 1
+end block_0
+begin block_1:
+goto 6
+end block_1
+begin block_2:
+assign %s0 = @p1 [614]
+assign %loc0 = %s0 [615]
+goto 7
+end block_2
+begin block_3:
+assign %s0 = @p1 [617]
+assign %s1 = <const: 2> [618]
+assign %s0 = %s0, %s1 [619]
+assign %loc0 = %s0 [620]
+goto 7
+end block_3
+begin block_4:
+assign %s0 = @p1 [622]
+assign %s0 = %s0 [623]
+assign %loc0 = %s0 [624]
+goto 7
+end block_4
+begin block_5:
+assign %s0 = @p1 [626]
+assign %s1 = <const: 5> [627]
+assign %s0 = %s0, %s1 [628]
+assign %loc0 = %s0 [629]
+goto 7
+end block_5
+begin block_6:
+assign %s0 = <const: 99> [631]
+assign %loc0 = %s0 [632]
+goto 7
+end block_6
+begin block_7:
+assign %s0 = %loc0 [633]
+assign %s1 = @p0 [634]
+assign %s0 = %s0, %s1 [635]
+return %s0, %excout
+end block_7
+
+define [exec]Exec.Ctl::SparseSwitch(System.Int64)->System.Int64(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [637]
+assign %s0 = @p0 [637]
+assign %s1 = <const: 7> [638]
+assign %s1 = %s1 [639]
+goto 4, 1
+end block_0
+begin block_1:
+assign %s0 = @p0 [641]
+assign %s1 = <const: -100> [642]
+assign %s1 = %s1 [643]
+goto 9, 2
+end block_1
+begin block_2:
+assign %s0 = @p0 [645]
+assign %s1 = <const: 7> [646]
+assign %s1 = %s1 [647]
+goto 10, 3
+end block_2
+begin block_3:
+goto 15
+end block_3
+begin block_4:
+assign %s0 = @p0 [650]
+assign %s1 = <const: 1000> [651]
+assign %s1 = %s1 [652]
+assign %s0 = %s0, %s1 [653]
+assign %s0 = %s0 [654]
+assign %s1 = %s0 [654]
+assign %s2 = <const: 2> [655]
+assign %s2 = %s2 [656]
+goto 6, 5
+end block_4
+begin block_5:
+goto 7
+end block_5
+begin block_6:
+assign %s0 = %s0 [660]
+goto 11, 12, 13, 7
+end block_6
+begin block_7:
+assign %s0 = @p0 [662]
+assign %s1 = <const: 9223372036854775807> [663]
+goto 14, 8
+end block_7
+begin block_8:
+goto 15
+end block_8
+begin block_9:
+assign %s0 = <const: 1> [666]
+assign %s0 = %s0 [667]
+return %s0, %excout
+end block_9
+begin block_10:
+assign %s0 = <const: 2> [669]
+assign %s0 = %s0 [670]
+return %s0, %excout
+end block_10
+begin block_11:
+assign %s0 = <const: 3> [672]
+assign %s0 = %s0 [673]
+return %s0, %excout
+end block_11
+begin block_12:
+assign %s0 = <const: 4> [675]
+assign %s0 = %s0 [676]
+return %s0, %excout
+end block_12
+begin block_13:
+assign %s0 = <const: 5> [678]
+assign %s0 = %s0 [679]
+return %s0, %excout
+end block_13
+begin block_14:
+assign %s0 = <const: 6> [681]
+assign %s0 = %s0 [682]
+return %s0, %excout
+end block_14
+begin block_15:
+assign %s0 = <const: 0> [684]
+assign %s0 = %s0 [685]
+return %s0, %excout
+end block_15
+
+define [exec]Exec.Ctl::Ternary(System.Int32,System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3 %L5=retval %L6=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [687]
+assign %s0 = @p0 [687]
+assign %s1 = @p1 [688]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = @p1 [690]
+goto 3
+end block_1
+begin block_2:
+assign %s0 = @p0 [692]
+goto 3
+end block_2
+begin block_3:
+assign %s1 = @p2 [693]
+assign %s2 = <const: 0> [694]
+goto 5, 4
+end block_3
+begin block_4:
+assign %s1 = @p2 [696]
+assign %s1 = %s1 [697]
+goto 6
+end block_4
+begin block_5:
+assign %s1 = @p2 [699]
+goto 6
+end block_5
+begin block_6:
+assign %s2 = @p0 [700]
+assign %s3 = @p2 [701]
+goto 8, 7
+end block_6
+begin block_7:
+assign %s2 = <const: 2> [703]
+goto 9
+end block_7
+begin block_8:
+assign %s2 = <const: 1> [705]
+goto 9
+end block_8
+begin block_9:
+%retval, %throwval = direct-call [exec]Exec.Ctl::Pick(System.Int32,System.Int32,System.Int32)->System.Int32(%s0, %s1, %s2) [706]
+assign %excout = %excout, %throwval [706]
+assign %s0 = %retval [706]
+return %s0, %excout
+end block_9
+
+define [exec]Exec.Ctl::Pick(System.Int32,System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [708]
+assign %s0 = @p0 [708]
+assign %s1 = <const: 100> [709]
+assign %s0 = %s0, %s1 [710]
+assign %s1 = @p1 [711]
+assign %s2 = <const: 10> [712]
+assign %s1 = %s1, %s2 [713]
+assign %s0 = %s0, %s1 [714]
+assign %s1 = @p2 [715]
+assign %s0 = %s0, %s1 [716]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Ctl::NestedTernary(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3
+begin block_0 [start]:
+assign %excout = <const: []> [718]
+assign %s0 = @p0 [718]
+assign %s1 = @p1 [719]
+assign %s2 = <const: 0> [720]
+goto 4, 1
+end block_0
+begin block_1:
+assign %s1 = @p0 [722]
+assign %s2 = <const: 0> [723]
+goto 3, 2
+end block_1
+begin block_2:
+assign %s1 = <const: 4> [725]
+goto 7
+end block_2
+begin block_3:
+assign %s1 = <const: 3> [727]
+goto 7
+end block_3
+begin block_4:
+assign %s1 = @p0 [729]
+assign %s2 = <const: 0> [730]
+goto 6, 5
+end block_4
+begin block_5:
+assign %s1 = <const: 2> [732]
+goto 7
+end block_5
+begin block_6:
+assign %s1 = <const: 1> [734]
+goto 7
+end block_6
+begin block_7:
+assign %s2 = @p1 [735]
+assign %s3 = <const: 1> [736]
+assign %s2 = %s2, %s3 [737]
+assign %s1 = %s1, %s2 [738]
+assign %s0 = %s0, %s1 [739]
+return %s0, %excout
+end block_7
+
+define [exec]Exec.Ctl::StackAcrossJoin(System.Int32,System.Int64)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3 %L5=retval %L6=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [741]
+assign %s0 = @p1 [741]
+assign %s1 = @p0 [742]
+assign %s2 = <const: 0> [743]
+goto 4, 1
+end block_0
+begin block_1:
+assign %s1 = @p0 [745]
+assign %s2 = <const: -5> [746]
+goto 3, 2
+end block_1
+begin block_2:
+assign %s1 = <const: 7> [748]
+assign %s1 = %s1 [749]
+goto 5
+end block_2
+begin block_3:
+assign %s1 = @p1 [751]
+assign %s2 = <const: 1> [752]
+assign %s2 = %s2 [753]
+assign %s1 = %s1, %s2 [754]
+goto 5
+end block_3
+begin block_4:
+assign %s1 = @p1 [756]
+assign %s2 = <const: 1> [757]
+assign %s2 = %s2 [758]
+assign %s1 = %s1, %s2 [759]
+goto 5
+end block_4
+begin block_5:
+assign %s0 = %s0, %s1 [760]
+assign %s1 = @p0 [761]
+assign %s2 = <const: 1> [762]
+assign %s1 = %s1, %s2 [763]
+assign %s1 = %s1 [764]
+assign %s0 = %s0, %s1 [765]
+assign %s1 = @p0 [766]
+assign %s2 = @p0 [767]
+assign %s3 = <const: 3> [768]
+assign %s2 = %s2, %s3 [769]
+assign %s3 = @p1 [770]
+assign %s3 = %s3 [771]
+%retval, %throwval = direct-call [exec]Exec.Ctl::Pick(System.Int32,System.Int32,System.Int32)->System.Int32(%s1, %s2, %s3) [772]
+assign %excout = %excout, %throwval [772]
+assign %s1 = %retval [772]
+assign %s1 = %s1 [773]
+assign %s0 = %s0, %s1 [774]
+return %s0, %excout
+end block_5
+
+define [exec]Exec.Ctl::Goto(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2
+begin block_0 [start]:
+assign %excout = <const: []> [776]
+assign %s0 = <const: 0> [776]
+assign %loc0 = %s0 [777]
+goto 1
+end block_0
+begin block_1:
+assign %s0 = %loc0 [778]
+assign %s1 = @p0 [779]
+assign %s2 = <const: 3> [780]
+assign %s1 = %s1, %s2 [781]
+assign %s0 = %s0, %s1 [782]
+assign %loc0 = %s0 [783]
+assign %s0 = %loc0 [784]
+assign %s1 = <const: 20> [785]
+goto 3, 2
+end block_1
+begin block_2:
+assign %s0 = @p0 [787]
+assign %s1 = <const: 3> [788]
+assign %s0 = %s0, %s1 [789]
+goto 1, 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [791]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Ctl::Fib(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval %L5=s2
+begin block_0 [start]:
+assign %excout = <const: []> [793]
+assign %s0 = @p0 [793]
+assign %s1 = <const: 15> [794]
+assign %s0 = %s0, %s1 [795]
+assign @p0 = %s0 [796]
+assign %s0 = @p0 [797]
+assign %s1 = <const: 1> [798]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = @p0 [800]
+assign %s1 = <const: 1> [801]
+assign %s0 = %s0, %s1 [802]
+%retval, %throwval = direct-call [exec]Exec.Ctl::Fib(System.Int32)->System.Int32(%s0) [803]
+assign %excout = %excout, %throwval [803]
+assign %s0 = %retval [803]
+assign %s1 = @p0 [804]
+assign %s2 = <const: 2> [805]
+assign %s1 = %s1, %s2 [806]
+%retval, %throwval = direct-call [exec]Exec.Ctl::Fib(System.Int32)->System.Int32(%s1) [807]
+assign %excout = %excout, %throwval [807]
+assign %s1 = %retval [807]
+assign %s0 = %s0, %s1 [808]
+return %s0, %excout
+end block_1
+begin block_2:
+assign %s0 = @p0 [810]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Ctl::Gcd(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=s2
+begin block_0 [start]:
+assign %excout = <const: []> [812]
+assign %s0 = @p0 [812]
+assign %s1 = <const: 2147483647> [813]
+assign %s0 = %s0, %s1 [814]
+assign @p0 = %s0 [815]
+assign %s0 = @p1 [816]
+assign %s1 = <const: 2147483647> [817]
+assign %s0 = %s0, %s1 [818]
+assign @p1 = %s0 [819]
+assign %s0 = <const: 0> [820]
+assign %loc0 = %s0 [821]
+goto 2
+end block_0
+begin block_1:
+assign %s0 = @p0 [823]
+assign %s1 = @p1 [824]
+assign %s0 = %s0, %s1 [825]
+assign %s1 = @p1 [826]
+assign @p0 = %s1 [827]
+assign @p1 = %s0 [828]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = @p1 [829]
+goto 4, 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [831]
+assign %s0 = %s0 [832]
+assign %s1 = %s0 [832]
+assign %s2 = <const: 1> [833]
+assign %s1 = %s1, %s2 [834]
+assign %loc0 = %s1 [835]
+assign %s1 = <const: 100> [836]
+goto 1, 4
+end block_3
+begin block_4:
+assign %s0 = @p0 [838]
+return %s0, %excout
+end block_4
+
+define [exec]Exec.Ctl::ShortCircuit(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [840]
+assign %s0 = @p0 [840]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = @p1 [842]
+assign %s1 = @p0 [843]
+assign %s0 = %s0, %s1 [844]
+assign %s1 = <const: 2> [845]
+goto 6, 2
+end block_1
+begin block_2:
+assign %s0 = @p1 [847]
+goto 5, 3
+end block_2
+begin block_3:
+assign %s0 = @p0 [849]
+assign %s1 = @p1 [850]
+assign %s0 = %s0, %s1 [851]
+assign %s1 = <const: 0> [852]
+goto 5, 4
+end block_3
+begin block_4:
+assign %s0 = <const: 3> [854]
+return %s0, %excout
+end block_4
+begin block_5:
+assign %s0 = <const: 2> [856]
+return %s0, %excout
+end block_5
+begin block_6:
+assign %s0 = <const: 1> [858]
+return %s0, %excout
+end block_6
+
+define [exec]Exec.Ctl::Nested(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=loc2 %L5=s1 %L6=s2
+begin block_0 [start]:
+assign %excout = <const: []> [860]
+assign %s0 = <const: 0> [860]
+assign %loc0 = %s0 [861]
+assign %s0 = <const: 0> [862]
+assign %loc1 = %s0 [863]
+goto 8
+end block_0
+begin block_1:
+assign %s0 = <const: 0> [865]
+assign %loc2 = %s0 [866]
+goto 6
+end block_1
+begin block_2:
+assign %s0 = %loc1 [868]
+assign %s1 = %loc2 [869]
+assign %s0 = %s0, %s1 [870]
+assign %s1 = <const: 1> [871]
+assign %s0 = %s0, %s1 [872]
+goto 5, 3
+end block_2
+begin block_3:
+assign %s0 = %loc1 [874]
+assign %s1 = %loc2 [875]
+assign %s0 = %s0, %s1 [876]
+assign %s1 = <const: 12> [877]
+goto 7, 4
+end block_3
+begin block_4:
+assign %s0 = %loc0 [879]
+assign %s1 = %loc1 [880]
+assign %s2 = %loc2 [881]
+assign %s1 = %s1, %s2 [882]
+assign %s0 = %s0, %s1 [883]
+assign %loc0 = %s0 [884]
+goto 5
+end block_4
+begin block_5:
+assign %s0 = %loc2 [885]
+assign %s1 = <const: 1> [886]
+assign %s0 = %s0, %s1 [887]
+assign %loc2 = %s0 [888]
+goto 6
+end block_5
+begin block_6:
+assign %s0 = %loc2 [889]
+assign %s1 = @p1 [890]
+assign %s2 = <const: 7> [891]
+assign %s1 = %s1, %s2 [892]
+goto 2, 7
+end block_6
+begin block_7:
+assign %s0 = %loc1 [894]
+assign %s1 = <const: 1> [895]
+assign %s0 = %s0, %s1 [896]
+assign %loc1 = %s0 [897]
+goto 8
+end block_7
+begin block_8:
+assign %s0 = %loc1 [898]
+assign %s1 = @p0 [899]
+assign %s2 = <const: 7> [900]
+assign %s1 = %s1, %s2 [901]
+goto 1, 9
+end block_8
+begin block_9:
+assign %s0 = %loc0 [903]
+return %s0, %excout
+end block_9
+
+define [exec]Exec.Ctl::BoolReturn(System.Int32)->System.Boolean(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [905]
+assign %s0 = @p0 [905]
+assign %s1 = <const: 3> [906]
+assign %s0 = %s0, %s1 [907]
+assign %s1 = @p0 [908]
+assign %s2 = <const: 1> [909]
+assign %s1 = %s1, %s2 [910]
+assign %s2 = <const: 0> [911]
+assign %s1 = %s1, %s2 [912]
+assign %s0 = %s0, %s1 [913]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Ctl::VoidReturn(System.Int32)->System.Void(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [915]
+assign %s0 = @p0 [915]
+assign %s1 = <const: 0> [916]
+goto 2, 1
+end block_0
+begin block_1:
+return <const: []>, %excout
+end block_1
+begin block_2:
+assign %s0 = @p0 [919]
+store $globals.<[exec]Exec\.G::Counter> := %s0 [920]
+return <const: []>, %excout
+end block_2
+
+define [exec]Exec.Ctl::Params(System.Byte,System.SByte,System.Int16,System.UInt16,System.Char,System.Boolean,System.UInt32,System.UInt64,System.Single,System.Double)->System.Int32(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields], @p3[shared_fields], @p4[shared_fields], @p5[shared_fields], @p6[shared_fields], @p7[shared_fields], @p8[shared_fields], @p9[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [922]
+assign %s0 = @p0 [922]
+assign %s1 = @p1 [923]
+assign %s0 = %s0, %s1 [924]
+assign %s1 = @p2 [925]
+assign %s0 = %s0, %s1 [926]
+assign %s1 = @p3 [927]
+assign %s0 = %s0, %s1 [928]
+assign %s1 = @p4 [929]
+assign %s0 = %s0, %s1 [930]
+assign %s1 = @p5 [931]
+assign %s2 = <const: 0> [932]
+assign %s1 = %s1, %s2 [933]
+assign %s0 = %s0, %s1 [934]
+assign %s1 = @p6 [935]
+assign %s0 = %s0, %s1 [936]
+assign %s1 = @p7 [937]
+assign %s1 = %s1 [938]
+assign %s0 = %s0, %s1 [939]
+assign %s1 = @p8 [940]
+assign %s2 = <const: 0> [941]
+assign %s1 = %s1, %s2 [942]
+assign %s0 = %s0, %s1 [943]
+assign %s1 = @p9 [944]
+assign %s2 = <const: 0> [945]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s1 = <const: 0> [947]
+goto 3
+end block_1
+begin block_2:
+assign %s1 = <const: 2> [949]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %s0, %s1 [950]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Ctl::StargArg(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [952]
+assign %s0 = @p0 [952]
+assign %s1 = <const: 5> [953]
+assign %s0 = %s0, %s1 [954]
+assign @p0 = %s0 [955]
+assign %s0 = @p0 [956]
+assign %s1 = <const: 2> [957]
+assign %s0 = %s0, %s1 [958]
+assign @p0 = %s0 [959]
+assign %s0 = @p0 [960]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Exc::CatchDiv(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=caught0 %L5=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [962]
+assign %s0 = @p0 [962]
+assign %s1 = @p1 [963]
+assign %s0 = %s0, %s1 [964]
+assign %loc0 = %s0 [965]
+goto 2, 1
+end block_0
+begin block_1:
+assign %caught0 = %throwval [967]
+assign %s0 = %caught0 [967]
+assign %s0 = <const: -1> [968]
+assign %loc0 = %s0 [969]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc0 [971]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Exc::Finally(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1
+begin block_0 [start]:
+assign %excout = <const: []> [973]
+assign %s0 = <const: 0> [973]
+assign %loc0 = %s0 [974]
+goto 1
+end block_0
+begin block_1:
+assign %s0 = <const: 10> [975]
+assign %s1 = @p0 [976]
+assign %s0 = %s0, %s1 [977]
+assign %loc0 = %s0 [978]
+goto 3, 2
+end block_1
+begin block_2:
+%s0 = load $globals.<[exec]Exec\.G::Counter> [980]
+assign %s1 = <const: 1> [981]
+assign %s0 = %s0, %s1 [982]
+store $globals.<[exec]Exec\.G::Counter> := %s0 [983]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [985]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Exc::ReturnInTry(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0
+begin block_0 [start]:
+assign %excout = <const: []> [987]
+assign %s0 = @p0 [987]
+assign %s1 = <const: 0> [988]
+goto 2, 1, 3
+end block_0
+begin block_1:
+assign %s0 = @p0 [990]
+assign %loc0 = %s0 [991]
+goto 5, 3
+end block_1
+begin block_2:
+%s0 = load $globals.<[exec]Exec\.G::Counter> [993]
+assign %s1 = <const: 2> [994]
+assign %s0 = %s0, %s1 [995]
+store $globals.<[exec]Exec\.G::Counter> := %s0 [996]
+goto 4, 3
+end block_2
+begin block_3:
+%s0 = load $globals.<[exec]Exec\.G::Counter> [998]
+assign %s1 = <const: 3> [999]
+assign %s0 = %s0, %s1 [1000]
+store $globals.<[exec]Exec\.G::Counter> := %s0 [1001]
+goto 5, 4
+end block_3
+begin block_4:
+assign %s0 = @p0 [1003]
+assign %s0 = %s0 [1004]
+return %s0, %excout
+end block_4
+begin block_5:
+assign %s0 = %loc0 [1006]
+return %s0, %excout
+end block_5
+
+define [exec]Exec.Exc::NestedFinally(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=caught1 %L5=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [1008]
+assign %s0 = <const: 0> [1008]
+assign %loc0 = %s0 [1009]
+goto 1
+end block_0
+begin block_1:
+assign %s0 = @p0 [1010]
+assign %s1 = @p1 [1011]
+assign %s0 = %s0, %s1 [1012]
+assign %loc0 = %s0 [1013]
+goto 3, 2, 4
+end block_1
+begin block_2:
+assign %s0 = %loc0 [1015]
+assign %s1 = <const: 100> [1016]
+assign %s0 = %s0, %s1 [1017]
+assign %loc0 = %s0 [1018]
+assign %s0 = %loc0 [1019]
+store $globals.<[exec]Exec\.G::Counter> := %s0 [1020]
+goto 3, 4
+end block_2
+begin block_3:
+goto 5, 4
+end block_3
+begin block_4:
+assign %caught1 = %throwval [1023]
+assign %s0 = %caught1 [1023]
+assign %s0 = %loc0 [1024]
+assign %s1 = <const: 7> [1025]
+assign %s0 = %s0, %s1 [1026]
+assign %loc0 = %s0 [1027]
+goto 5
+end block_4
+begin block_5:
+assign %s0 = %loc0 [1029]
+return %s0, %excout
+end block_5
+
+define [exec]Exec.Exc::Filter(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught0 %L6=s1 %L7=loc0 %L8=loc1 %L9=caught1
+begin block_0 [start]:
+assign %excout = <const: []> [1031]
+assign %s0 = @p0 [1031]
+assign %t0 = cil<[exec]Exec.MyEx> [1032]
+%retval, %throwval = direct-call [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(%t0, %s0) [1032]
+assign %excout = %excout, %throwval [1032]
+assign %s0 = %t0 [1032]
+goto 1, 2, 7
+end block_0
+begin block_1:
+assign %throwval = %s0 [1033]
+assign %excout = %excout, %throwval [1033]
+goto 2, 7
+end block_1
+begin block_2:
+assign %caught0 = %throwval [1034]
+assign %s0 = %caught0 [1034]
+assign %s0 = %s0 [1035]
+assign %s0 = %s0 [1036]
+assign %s1 = %s0 [1036]
+goto 4, 3
+end block_2
+begin block_3:
+assign %s0 = <const: 0> [1039]
+goto 5
+end block_3
+begin block_4:
+assign %loc0 = %s0 [1041]
+assign %s0 = %loc0 [1042]
+%s0 = load %s0.<[exec]Exec\.MyEx::Code> [1043]
+assign %s1 = <const: 3> [1044]
+assign %s0 = %s0, %s1 [1045]
+assign %s1 = <const: 0> [1046]
+assign %s0 = %s0, %s1 [1047]
+goto 5
+end block_4
+begin block_5:
+goto 6
+end block_5
+begin block_6:
+assign %s0 = %caught0 [1049]
+assign %s0 = %loc0 [1050]
+%s0 = load %s0.<[exec]Exec\.MyEx::Code> [1051]
+assign %loc1 = %s0 [1052]
+goto 8
+end block_6
+begin block_7:
+assign %caught1 = %throwval [1054]
+assign %s0 = %caught1 [1054]
+%s0 = load %s0.<[exec]Exec\.MyEx::Code> [1055]
+assign %s0 = %s0 [1056]
+assign %loc1 = %s0 [1057]
+goto 8
+end block_7
+begin block_8:
+assign %s0 = %loc1 [1059]
+return %s0, %excout
+end block_8
+
+define [exec]Exec.Exc::FilterThrows(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught0 %L6=s1 %L7=loc0 %L8=loc1 %L9=caught1
+begin block_0 [start]:
+assign %excout = <const: []> [1061]
+assign %s0 = @p0 [1061]
+assign %t0 = cil<[exec]Exec.MyEx> [1062]
+%retval, %throwval = direct-call [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(%t0, %s0) [1062]
+assign %s0 = %t0 [1062]
+goto 1, 2, 7
+end block_0
+begin block_1:
+assign %throwval = %s0 [1063]
+goto 2, 7
+end block_1
+begin block_2:
+assign %caught0 = %throwval [1064]
+assign %s0 = %caught0 [1064]
+assign %s0 = %s0 [1065]
+assign %s0 = %s0 [1066]
+assign %s1 = %s0 [1066]
+goto 4, 3
+end block_2
+begin block_3:
+assign %s0 = <const: 0> [1069]
+goto 5
+end block_3
+begin block_4:
+assign %loc0 = %s0 [1071]
+assign %s0 = <const: 10> [1072]
+assign %s1 = %loc0 [1073]
+%s1 = load %s1.<[exec]Exec\.MyEx::Code> [1074]
+assign %s0 = %s0, %s1 [1075]
+assign %s1 = <const: 2> [1076]
+assign %s0 = %s0, %s1 [1077]
+assign %s1 = <const: 0> [1078]
+assign %s0 = %s0, %s1 [1079]
+goto 5
+end block_4
+begin block_5:
+goto 6
+end block_5
+begin block_6:
+assign %s0 = %caught0 [1081]
+assign %s0 = <const: 1> [1082]
+assign %loc1 = %s0 [1083]
+goto 8
+end block_6
+begin block_7:
+assign %caught1 = %throwval [1085]
+assign %s0 = %caught1 [1085]
+assign %s0 = <const: 2> [1086]
+assign %loc1 = %s0 [1087]
+goto 8
+end block_7
+begin block_8:
+assign %s0 = %loc1 [1089]
+return %s0, %excout
+end block_8
+
+define [exec]Exec.Exc::Rethrow(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval %L6=loc0 %L7=caught0 %L8=caught1
+begin block_0 [start]:
+assign %excout = <const: []> [1091]
+assign %s0 = @p0 [1091]
+assign %s1 = <const: 0> [1092]
+goto 3, 1, 4, 5
+end block_0
+begin block_1:
+assign %s0 = @p0 [1094]
+assign %t0 = cil<[exec]Exec.MyEx> [1095]
+%retval, %throwval = direct-call [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(%t0, %s0) [1095]
+assign %s0 = %t0 [1095]
+goto 2, 4, 5
+end block_1
+begin block_2:
+assign %throwval = %s0 [1096]
+goto 4, 5
+end block_2
+begin block_3:
+assign %s0 = @p0 [1097]
+assign %loc0 = %s0 [1098]
+goto 6, 4, 5
+end block_3
+begin block_4:
+assign %caught0 = %throwval [1100]
+assign %s0 = %caught0 [1100]
+%s0 = load $globals.<[exec]Exec\.G::Counter> [1101]
+assign %s1 = <const: 1> [1102]
+assign %s0 = %s0, %s1 [1103]
+store $globals.<[exec]Exec\.G::Counter> := %s0 [1104]
+assign %throwval = %caught0 [1105]
+goto 5
+end block_4
+begin block_5:
+assign %caught1 = %throwval [1106]
+assign %s0 = %caught1 [1106]
+assign %s0 = <const: 77> [1107]
+assign %loc0 = %s0 [1108]
+goto 6
+end block_5
+begin block_6:
+assign %s0 = %loc0 [1110]
+return %s0, %excout
+end block_6
+
+define [exec]Exec.Exc::Throws(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [1112]
+assign %s0 = @p0 [1112]
+assign %s1 = <const: 5> [1113]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = @p0 [1115]
+assign %t0 = cil<[exec]Exec.OtherEx> [1116]
+%retval, %throwval = direct-call [exec]Exec.OtherEx::.ctor(System.Int32)->System.Void(%t0, %s0) [1116]
+assign %excout = %excout, %throwval [1116]
+assign %s0 = %t0 [1116]
+assign %throwval = %s0 [1117]
+assign %excout = %excout, %throwval [1117]
+return <const: []>, %excout
+end block_1
+begin block_2:
+assign %s0 = @p0 [1118]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Exc::CatchBase(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=loc0 %L5=caught0 %L6=s1
+begin block_0 [start]:
+assign %excout = <const: []> [1120]
+assign %s0 = @p0 [1120]
+%retval, %throwval = direct-call [exec]Exec.Exc::Throws(System.Int32)->System.Int32(%s0) [1121]
+assign %excout = %excout, %throwval [1121]
+assign %s0 = %retval [1121]
+goto 1, 2
+end block_0
+begin block_1:
+assign %loc0 = %s0 [1122]
+goto 3, 2
+end block_1
+begin block_2:
+assign %caught0 = %throwval [1124]
+assign %s0 = %caught0 [1124]
+%s0 = load %s0.<[exec]Exec\.MyEx::Code> [1125]
+assign %s1 = <const: 2> [1126]
+assign %s0 = %s0, %s1 [1127]
+assign %loc0 = %s0 [1128]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [1130]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Exc::Uncaught(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1
+begin block_0 [start]:
+assign %excout = <const: []> [1132]
+assign %s0 = @p0 [1132]
+%retval, %throwval = direct-call [exec]Exec.Exc::Throws(System.Int32)->System.Int32(%s0) [1133]
+assign %excout = %excout, %throwval [1133]
+assign %s0 = %retval [1133]
+assign %s1 = <const: 1> [1134]
+assign %s0 = %s0, %s1 [1135]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Exc::Nre(Exec.Node)->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=caught0 %L4=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [1137]
+assign %s0 = @p0 [1137]
+%s0 = load %s0.<[exec]Exec\.Node::Value> [1138]
+assign %loc0 = %s0 [1139]
+goto 2, 1
+end block_0
+begin block_1:
+assign %caught0 = %throwval [1141]
+assign %s0 = %caught0 [1141]
+assign %s0 = <const: -5> [1142]
+assign %loc0 = %s0 [1143]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc0 [1145]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Exc::Ior(System.Int32[],System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=caught0 %L5=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [1147]
+assign %s0 = @p0 [1147]
+assign %s1 = @p1 [1148]
+%s0 = load %s0.\[] [1149]
+assign %loc0 = %s0 [1150]
+goto 3, 2, 1
+end block_0
+begin block_1:
+assign %caught0 = %throwval [1152]
+assign %s0 = %caught0 [1152]
+assign %s0 = <const: -6> [1153]
+assign %loc0 = %s0 [1154]
+goto 3, 2
+end block_1
+begin block_2:
+%s0 = load $globals.<[exec]Exec\.G::Counter> [1156]
+assign %s1 = <const: 1> [1157]
+assign %s0 = %s0, %s1 [1158]
+store $globals.<[exec]Exec\.G::Counter> := %s0 [1159]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [1161]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Exc::LoopWithTry(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2 %L6=s3 %L7=caught0 %L8=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [1163]
+assign %s0 = <const: 0> [1163]
+assign %loc0 = %s0 [1164]
+assign %s0 = <const: 0> [1165]
+assign %loc1 = %s0 [1166]
+goto 7
+end block_0
+begin block_1:
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc0 [1169]
+assign %s1 = <const: 10> [1170]
+assign %s2 = %loc1 [1171]
+assign %s3 = <const: 2> [1172]
+assign %s2 = %s2, %s3 [1173]
+assign %s1 = %s1, %s2 [1174]
+assign %s0 = %s0, %s1 [1175]
+assign %loc0 = %s0 [1176]
+goto 5, 4, 3
+end block_2
+begin block_3:
+assign %caught0 = %throwval [1178]
+assign %s0 = %caught0 [1178]
+assign %s0 = %loc0 [1179]
+assign %s1 = <const: 1000> [1180]
+assign %s0 = %s0, %s1 [1181]
+assign %loc0 = %s0 [1182]
+goto 6, 4
+end block_3
+begin block_4:
+assign %s0 = %loc0 [1184]
+assign %s1 = <const: 1> [1185]
+assign %s0 = %s0, %s1 [1186]
+assign %loc0 = %s0 [1187]
+goto 5, 6
+end block_4
+begin block_5:
+assign %s0 = %loc0 [1189]
+assign %s1 = <const: 2> [1190]
+assign %s0 = %s0, %s1 [1191]
+assign %loc0 = %s0 [1192]
+goto 6
+end block_5
+begin block_6:
+assign %s0 = %loc1 [1193]
+assign %s1 = <const: 1> [1194]
+assign %s0 = %s0, %s1 [1195]
+assign %loc1 = %s0 [1196]
+goto 7
+end block_6
+begin block_7:
+assign %s0 = %loc1 [1197]
+assign %s1 = @p0 [1198]
+assign %s2 = <const: 7> [1199]
+assign %s1 = %s1, %s2 [1200]
+goto 1, 8
+end block_7
+begin block_8:
+assign %s0 = %loc0 [1202]
+return %s0, %excout
+end block_8
+
+define [exec]Exec.Exc::BreakThroughFinally(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2
+begin block_0 [start]:
+assign %excout = <const: []> [1204]
+assign %s0 = <const: 0> [1204]
+assign %loc0 = %s0 [1205]
+goto 1
+end block_0
+begin block_1:
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc0 [1207]
+assign %s1 = <const: 1> [1208]
+assign %s0 = %s0, %s1 [1209]
+assign %loc0 = %s0 [1210]
+assign %s0 = %loc0 [1211]
+assign %s1 = @p0 [1212]
+assign %s2 = <const: 7> [1213]
+assign %s1 = %s1, %s2 [1214]
+goto 4, 3, 5
+end block_2
+begin block_3:
+goto 6, 5
+end block_3
+begin block_4:
+goto 1, 5
+end block_4
+begin block_5:
+assign %s0 = %loc0 [1218]
+assign %s1 = <const: 10> [1219]
+assign %s0 = %s0, %s1 [1220]
+assign %loc0 = %s0 [1221]
+goto 6, 1
+end block_5
+begin block_6:
+assign %s0 = %loc0 [1223]
+return %s0, %excout
+end block_6
+
+define [exec]Exec.Exc::ThrowInFinally(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=s1 %L6=caught1 %L7=loc0
+begin block_0 [start]:
+assign %excout = <const: []> [1225]
+assign %s0 = @p0 [1225]
+goto 3, 1, 4, 9
+end block_0
+begin block_1:
+assign %s0 = <const: 1> [1227]
+assign %t0 = cil<[exec]Exec.MyEx> [1228]
+%retval, %throwval = direct-call [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(%t0, %s0) [1228]
+assign %excout = %excout, %throwval [1228]
+assign %s0 = %t0 [1228]
+goto 2, 4, 9
+end block_1
+begin block_2:
+assign %throwval = %s0 [1229]
+assign %excout = %excout, %throwval [1229]
+goto 4, 9
+end block_2
+begin block_3:
+goto 8, 4, 9
+end block_3
+begin block_4:
+assign %s0 = @p0 [1231]
+assign %s1 = <const: 0> [1232]
+goto 7, 5, 9
+end block_4
+begin block_5:
+assign %s0 = <const: 2> [1234]
+assign %t0 = cil<[exec]Exec.MyEx> [1235]
+%retval, %throwval = direct-call [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(%t0, %s0) [1235]
+assign %excout = %excout, %throwval [1235]
+assign %s0 = %t0 [1235]
+goto 6, 9
+end block_5
+begin block_6:
+assign %throwval = %s0 [1236]
+assign %excout = %excout, %throwval [1236]
+goto 9
+end block_6
+begin block_7:
+goto 8, 9
+end block_7
+begin block_8:
+goto 10, 9
+end block_8
+begin block_9:
+assign %caught1 = %throwval [1239]
+assign %s0 = %caught1 [1239]
+%s0 = load %s0.<[exec]Exec\.MyEx::Code> [1240]
+assign %loc0 = %s0 [1241]
+goto 11
+end block_9
+begin block_10:
+assign %s0 = <const: 0> [1243]
+return %s0, %excout
+end block_10
+begin block_11:
+assign %s0 = %loc0 [1245]
+return %s0, %excout
+end block_11
+
+define [exec]Exec.Exc::ThrowInCatch(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=caught0 %L5=throwval %L6=t0 %L7=retval %L8=caught2
+begin block_0 [start]:
+assign %excout = <const: []> [1247]
+assign %s0 = <const: 10> [1248]
+assign %s1 = @p0 [1249]
+assign %s0 = %s0, %s1 [1250]
+assign %loc0 = %s0 [1251]
+goto 5, 3, 1, 4
+end block_0
+begin block_1:
+assign %caught0 = %throwval [1253]
+assign %s0 = %caught0 [1253]
+assign %s0 = @p0 [1254]
+assign %s1 = <const: 40> [1255]
+assign %s0 = %s0, %s1 [1256]
+assign %t0 = cil<[exec]Exec.MyEx> [1257]
+%retval, %throwval = direct-call [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(%t0, %s0) [1257]
+assign %excout = %excout, %throwval [1257]
+assign %s0 = %t0 [1257]
+goto 2, 3, 4
+end block_1
+begin block_2:
+assign %throwval = %s0 [1258]
+assign %excout = %excout, %throwval [1258]
+goto 3, 4
+end block_2
+begin block_3:
+%s0 = load $globals.<[exec]Exec\.G::Counter> [1259]
+assign %s1 = <const: 5> [1260]
+assign %s0 = %s0, %s1 [1261]
+store $globals.<[exec]Exec\.G::Counter> := %s0 [1262]
+goto 5, 4
+end block_3
+begin block_4:
+assign %caught2 = %throwval [1264]
+assign %s0 = %caught2 [1264]
+%s0 = load %s0.<[exec]Exec\.MyEx::Code> [1265]
+assign %loc0 = %s0 [1266]
+goto 5
+end block_4
+begin block_5:
+assign %s0 = %loc0 [1268]
+return %s0, %excout
+end block_5
+
+define [exec]Exec.Exc::CatchAll(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1 %L5=s2 %L6=s3 %L7=loc0 %L8=caught0
+begin block_0 [start]:
+assign %excout = <const: []> [1270]
+assign %s0 = @p0 [1270]
+%retval, %throwval = direct-call [exec]Exec.Exc::Throws(System.Int32)->System.Int32(%s0) [1271]
+assign %s0 = %retval [1271]
+goto 1, 2
+end block_0
+begin block_1:
+assign %s1 = <const: 100> [1272]
+assign %s2 = @p0 [1273]
+assign %s3 = <const: 1> [1274]
+assign %s2 = %s2, %s3 [1275]
+assign %s1 = %s1, %s2 [1276]
+assign %s0 = %s0, %s1 [1277]
+assign %loc0 = %s0 [1278]
+goto 3, 2
+end block_1
+begin block_2:
+assign %caught0 = %throwval [1280]
+assign %s0 = %caught0 [1280]
+assign %s0 = <const: -3> [1281]
+assign %loc0 = %s0 [1282]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [1284]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Exc::TwoPass(System.Int32)->System.Int64(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught1 %L6=s1 %L7=loc0
+begin block_0 [start]:
+assign %excout = <const: []> [1286]
+assign %s0 = <const: 0> [1286]
+store $globals.<[exec]Exec\.G::Counter> := %s0 [1287]
+goto 1
+end block_0
+begin block_1:
+assign %s0 = @p0 [1288]
+assign %t0 = cil<[exec]Exec.MyEx> [1289]
+%retval, %throwval = direct-call [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(%t0, %s0) [1289]
+assign %excout = %excout, %throwval [1289]
+assign %s0 = %t0 [1289]
+goto 2, 3, 4
+end block_1
+begin block_2:
+assign %throwval = %s0 [1290]
+assign %excout = %excout, %throwval [1290]
+goto 3, 4
+end block_2
+begin block_3:
+assign %s0 = <const: 1> [1291]
+store $globals.<[exec]Exec\.G::Counter> := %s0 [1292]
+goto 4
+end block_3
+begin block_4:
+assign %caught1 = %throwval [1294]
+assign %s0 = %caught1 [1294]
+assign %s0 = %s0 [1295]
+assign %s0 = %s0 [1296]
+assign %s1 = %s0 [1296]
+goto 6, 5
+end block_4
+begin block_5:
+assign %s0 = <const: 0> [1299]
+goto 7
+end block_5
+begin block_6:
+%s0 = load %s0.<[exec]Exec\.MyEx::Code> [1301]
+%retval, %throwval = direct-call [exec]Exec.Exc::Record(System.Int32)->System.Boolean(%s0) [1302]
+assign %excout = %excout, %throwval [1302]
+assign %s0 = %retval [1302]
+assign %s1 = <const: 0> [1303]
+assign %s0 = %s0, %s1 [1304]
+goto 7
+end block_6
+begin block_7:
+goto 8
+end block_7
+begin block_8:
+assign %s0 = %caught1 [1306]
+%s0 = load $globals.<[exec]Exec\.G::Total> [1307]
+assign %s1 = <const: 10> [1308]
+assign %s1 = %s1 [1309]
+assign %s0 = %s0, %s1 [1310]
+%s1 = load $globals.<[exec]Exec\.G::Counter> [1311]
+assign %s1 = %s1 [1312]
+assign %s0 = %s0, %s1 [1313]
+assign %loc0 = %s0 [1314]
+goto 9
+end block_8
+begin block_9:
+assign %s0 = %loc0 [1316]
+return %s0, %excout
+end block_9
+
+define [exec]Exec.Exc::Record(System.Int32)->System.Boolean(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [1318]
+%s0 = load $globals.<[exec]Exec\.G::Counter> [1319]
+assign %s1 = @p0 [1320]
+assign %s0 = %s0, %s1 [1321]
+assign %s0 = %s0 [1322]
+store $globals.<[exec]Exec\.G::Total> := %s0 [1323]
+assign %s0 = @p0 [1324]
+assign %s1 = <const: 3> [1325]
+assign %s0 = %s0, %s1 [1326]
+assign %s1 = <const: 0> [1327]
+assign %s0 = %s0, %s1 [1328]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Exc::CaughtObject(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=retval %L4=throwval %L5=caught0
+begin block_0 [start]:
+assign %excout = <const: []> [1330]
+assign %s0 = <const: 0> [1330]
+assign %loc0 = %s0 [1331]
+goto 1
+end block_0
+begin block_1:
+assign %s0 = @p0 [1332]
+%retval, %throwval = direct-call [exec]Exec.Exc::Throws(System.Int32)->System.Int32(%s0) [1333]
+assign %excout = %excout, %throwval [1333]
+assign %s0 = %retval [1333]
+goto 2, 3
+end block_1
+begin block_2:
+goto 4, 3
+end block_2
+begin block_3:
+assign %caught0 = %throwval [1336]
+assign %s0 = %caught0 [1336]
+assign %loc0 = %s0 [1336]
+goto 4
+end block_3
+begin block_4:
+assign %s0 = %loc0 [1338]
+goto 6, 5
+end block_4
+begin block_5:
+assign %s0 = %loc0 [1340]
+%s0 = load %s0.<[exec]Exec\.MyEx::Code> [1341]
+return %s0, %excout
+end block_5
+begin block_6:
+assign %s0 = <const: 0> [1343]
+return %s0, %excout
+end block_6
+
+define [exec]Exec.Exc::Stores(Exec.Bag,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=caught0 %L5=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [1345]
+assign %s0 = @p0 [1345]
+assign %s1 = @p1 [1346]
+store %s0.<[exec]Exec\.Bag::A> := %s1 [1347]
+assign %s0 = @p0 [1348]
+assign %s1 = <const: 100> [1349]
+assign %s2 = @p1 [1350]
+assign %s1 = %s1, %s2 [1351]
+assign %s1 = %s1 [1352]
+store %s0.<[exec]Exec\.Bag::B> := %s1 [1353]
+assign %s0 = @p0 [1354]
+assign %s1 = <const: 4609434218613702656> [1355]
+store %s0.<[exec]Exec\.Bag::C> := %s1 [1356]
+goto 2, 1
+end block_0
+begin block_1:
+assign %caught0 = %throwval [1358]
+assign %s0 = %caught0 [1358]
+assign %s0 = @p0 [1359]
+assign %s1 = <const: 7> [1360]
+store %s0.<[exec]Exec\.Bag::U8> := %s1 [1361]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = @p0 [1363]
+%s0 = load %s0.<[exec]Exec\.Bag::A> [1364]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Exc::StaticException(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught0 %L6=s1 %L7=loc0
+begin block_0 [start]:
+assign %excout = <const: []> [1366]
+assign %s0 = @p0 [1366]
+assign %t0 = cil<[exec]Exec.MyEx> [1367]
+%retval, %throwval = direct-call [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(%t0, %s0) [1367]
+assign %excout = %excout, %throwval [1367]
+assign %s0 = %t0 [1367]
+goto 1, 2
+end block_0
+begin block_1:
+store $globals.<[exec]Exec\.G::O> := %s0 [1368]
+%s0 = load $globals.<[exec]Exec\.G::O> [1369]
+assign %s0 = %s0 [1370]
+assign %throwval = %s0 [1371]
+assign %excout = %excout, %throwval [1371]
+goto 2
+end block_1
+begin block_2:
+assign %caught0 = %throwval [1372]
+assign %s0 = %caught0 [1372]
+assign %s0 = %s0 [1373]
+assign %s0 = %s0 [1374]
+assign %s1 = %s0 [1374]
+goto 4, 3
+end block_2
+begin block_3:
+assign %s0 = <const: 0> [1377]
+goto 5
+end block_3
+begin block_4:
+%s1 = load $globals.<[exec]Exec\.G::O> [1379]
+assign %s0 = %s0, %s1 [1380]
+assign %s1 = <const: 0> [1381]
+assign %s0 = %s0, %s1 [1382]
+goto 5
+end block_4
+begin block_5:
+goto 6
+end block_5
+begin block_6:
+assign %s0 = %caught0 [1384]
+assign %s0 = <const: 1> [1385]
+assign %loc0 = %s0 [1386]
+goto 7
+end block_6
+begin block_7:
+assign %s0 = %loc0 [1388]
+return %s0, %excout
+end block_7
+
+define [exec]Exec.Obj::Incr(Exec.Bag,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [1390]
+assign %s0 = @p0 [1390]
+assign %s0 = %s0 [1391]
+assign %s1 = %s0 [1391]
+%s1 = load %s1.<[exec]Exec\.Bag::A> [1392]
+assign %s2 = @p1 [1393]
+assign %s1 = %s1, %s2 [1394]
+store %s0.<[exec]Exec\.Bag::A> := %s1 [1395]
+assign %s0 = @p0 [1396]
+assign %s0 = %s0 [1397]
+assign %s1 = %s0 [1397]
+%s1 = load %s1.<[exec]Exec\.Bag::B> [1398]
+assign %s2 = <const: 1> [1399]
+assign %s2 = %s2 [1400]
+assign %s1 = %s1, %s2 [1401]
+store %s0.<[exec]Exec\.Bag::B> := %s1 [1402]
+assign %s0 = @p0 [1403]
+assign %s0 = %s0 [1404]
+assign %s1 = %s0 [1404]
+%s1 = load %s1.<[exec]Exec\.Bag::U8> [1405]
+assign %s2 = @p1 [1406]
+assign %s2 = %s2 [1407]
+assign %s1 = %s1, %s2 [1408]
+assign %s1 = %s1 [1409]
+store %s0.<[exec]Exec\.Bag::U8> := %s1 [1410]
+assign %s0 = @p0 [1411]
+assign %s0 = %s0 [1412]
+assign %s1 = %s0 [1412]
+%s1 = load %s1.<[exec]Exec\.Bag::S8> [1413]
+assign %s2 = <const: 3> [1414]
+assign %s1 = %s1, %s2 [1415]
+assign %s1 = %s1 [1416]
+store %s0.<[exec]Exec\.Bag::S8> := %s1 [1417]
+assign %s0 = @p0 [1418]
+assign %s0 = %s0 [1419]
+assign %s1 = %s0 [1419]
+%s1 = load %s1.<[exec]Exec\.Bag::S16> [1420]
+assign %s2 = <const: 3> [1421]
+assign %s1 = %s1, %s2 [1422]
+assign %s1 = %s1 [1423]
+store %s0.<[exec]Exec\.Bag::S16> := %s1 [1424]
+assign %s0 = @p0 [1425]
+assign %s0 = %s0 [1426]
+assign %s1 = %s0 [1426]
+%s1 = load %s1.<[exec]Exec\.Bag::U16> [1427]
+assign %s2 = <const: 255> [1428]
+assign %s1 = %s1, %s2 [1429]
+assign %s1 = %s1 [1430]
+store %s0.<[exec]Exec\.Bag::U16> := %s1 [1431]
+assign %s0 = @p0 [1432]
+assign %s0 = %s0 [1433]
+assign %s1 = %s0 [1433]
+%s1 = load %s1.<[exec]Exec\.Bag::Ch> [1434]
+assign %s2 = <const: 1> [1435]
+assign %s1 = %s1, %s2 [1436]
+assign %s1 = %s1 [1437]
+store %s0.<[exec]Exec\.Bag::Ch> := %s1 [1438]
+assign %s0 = @p0 [1439]
+assign %s0 = %s0 [1440]
+assign %s1 = %s0 [1440]
+%s1 = load %s1.<[exec]Exec\.Bag::F> [1441]
+assign %s2 = <const: 1073741824> [1442]
+assign %s1 = %s1, %s2 [1443]
+store %s0.<[exec]Exec\.Bag::F> := %s1 [1444]
+assign %s0 = @p0 [1445]
+assign %s0 = %s0 [1446]
+assign %s1 = %s0 [1446]
+%s1 = load %s1.<[exec]Exec\.Bag::C> [1447]
+assign %s2 = @p1 [1448]
+assign %s2 = %s2 [1449]
+assign %s1 = %s1, %s2 [1450]
+store %s0.<[exec]Exec\.Bag::C> := %s1 [1451]
+assign %s0 = @p0 [1452]
+assign %s0 = %s0 [1453]
+assign %s1 = %s0 [1453]
+%s1 = load %s1.<[exec]Exec\.Bag::U32> [1454]
+assign %s2 = @p1 [1455]
+assign %s1 = %s1, %s2 [1456]
+store %s0.<[exec]Exec\.Bag::U32> := %s1 [1457]
+assign %s0 = @p0 [1458]
+assign %s0 = %s0 [1459]
+assign %s1 = %s0 [1459]
+%s1 = load %s1.<[exec]Exec\.Bag::U64> [1460]
+assign %s2 = <const: 5> [1461]
+assign %s2 = %s2 [1462]
+assign %s1 = %s1, %s2 [1463]
+store %s0.<[exec]Exec\.Bag::U64> := %s1 [1464]
+assign %s0 = @p0 [1465]
+assign %s1 = @p0 [1466]
+%s1 = load %s1.<[exec]Exec\.Bag::Flag> [1467]
+assign %s2 = <const: 0> [1468]
+assign %s1 = %s1, %s2 [1469]
+store %s0.<[exec]Exec\.Bag::Flag> := %s1 [1470]
+assign %s0 = @p0 [1471]
+%s0 = load %s0.<[exec]Exec\.Bag::A> [1472]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Obj::Build(System.Int32)->Exec.Node(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=retval %L5=throwval %L6=s1 %L7=s2 %L8=s3
+begin block_0 [start]:
+assign %excout = <const: []> [1474]
+assign %s0 = <const: 0> [1474]
+assign %loc0 = %s0 [1475]
+assign %s0 = <const: 0> [1476]
+assign %loc1 = %s0 [1477]
+goto 2
+end block_0
+begin block_1:
+assign %s0 = cil<[exec]Exec.Node> [1479]
+%retval, %throwval = direct-call [exec]Exec.Node::.ctor()->System.Void(%s0) [1479]
+assign %excout = %excout, %throwval [1479]
+assign %s0 = %s0 [1480]
+assign %s1 = %s0 [1480]
+assign %s2 = %loc1 [1481]
+assign %s3 = @p0 [1482]
+assign %s2 = %s2, %s3 [1483]
+store %s1.<[exec]Exec\.Node::Value> := %s2 [1484]
+assign %s0 = %s0 [1485]
+assign %s1 = %s0 [1485]
+assign %s2 = %loc0 [1486]
+store %s1.<[exec]Exec\.Node::Next> := %s2 [1487]
+assign %loc0 = %s0 [1488]
+assign %s0 = %loc1 [1489]
+assign %s1 = <const: 1> [1490]
+assign %s0 = %s0, %s1 [1491]
+assign %loc1 = %s0 [1492]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc1 [1493]
+assign %s1 = @p0 [1494]
+assign %s2 = <const: 7> [1495]
+assign %s1 = %s1, %s2 [1496]
+goto 1, 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [1498]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Obj::SumList(Exec.Node)->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2
+begin block_0 [start]:
+assign %excout = <const: []> [1500]
+assign %s0 = <const: 0> [1500]
+assign %loc0 = %s0 [1501]
+assign %s0 = <const: 0> [1502]
+assign %loc1 = %s0 [1503]
+goto 2
+end block_0
+begin block_1:
+assign %s0 = %loc0 [1505]
+assign %s1 = @p0 [1506]
+%s1 = load %s1.<[exec]Exec\.Node::Value> [1507]
+assign %s0 = %s0, %s1 [1508]
+assign %loc0 = %s0 [1509]
+assign %s0 = @p0 [1510]
+%s0 = load %s0.<[exec]Exec\.Node::Next> [1511]
+assign @p0 = %s0 [1512]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = @p0 [1513]
+goto 4, 3
+end block_2
+begin block_3:
+assign %s0 = %loc1 [1515]
+assign %s0 = %s0 [1516]
+assign %s1 = %s0 [1516]
+assign %s2 = <const: 1> [1517]
+assign %s1 = %s1, %s2 [1518]
+assign %loc1 = %s1 [1519]
+assign %s1 = <const: 10> [1520]
+goto 1, 4
+end block_3
+begin block_4:
+assign %s0 = %loc0 [1522]
+return %s0, %excout
+end block_4
+
+define [exec]Exec.Obj::Reverse(Exec.Node)->Exec.Node(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2
+begin block_0 [start]:
+assign %excout = <const: []> [1524]
+assign %s0 = <const: 0> [1524]
+assign %loc0 = %s0 [1525]
+assign %s0 = <const: 0> [1526]
+assign %loc1 = %s0 [1527]
+goto 2
+end block_0
+begin block_1:
+assign %s0 = @p0 [1529]
+%s0 = load %s0.<[exec]Exec\.Node::Next> [1530]
+assign %s1 = @p0 [1531]
+assign %s2 = %loc0 [1532]
+store %s1.<[exec]Exec\.Node::Next> := %s2 [1533]
+assign %s1 = @p0 [1534]
+assign %loc0 = %s1 [1535]
+assign @p0 = %s0 [1536]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = @p0 [1537]
+goto 4, 3
+end block_2
+begin block_3:
+assign %s0 = %loc1 [1539]
+assign %s0 = %s0 [1540]
+assign %s1 = %s0 [1540]
+assign %s2 = <const: 1> [1541]
+assign %s1 = %s1, %s2 [1542]
+assign %loc1 = %s1 [1543]
+assign %s1 = <const: 10> [1544]
+goto 1, 4
+end block_3
+begin block_4:
+assign %s0 = %loc0 [1546]
+return %s0, %excout
+end block_4
+
+define [exec]Exec.Obj::Virt(Exec.Shape)->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1 %L5=s2
+begin block_0 [start]:
+assign %excout = <const: []> [1548]
+assign %s0 = @p0 [1548]
+%retval, %throwval = cil-call %s0.<[exec]Exec.Shape::Area()->System.Int32>() [1549]
+assign %excout = %excout, %throwval [1549]
+assign %s0 = %retval [1549]
+assign %s1 = @p0 [1550]
+%retval, %throwval = cil-call %s1.<[exec]Exec.Shape::Kind()->System.Int32>() [1551]
+assign %excout = %excout, %throwval [1551]
+assign %s1 = %retval [1551]
+assign %s2 = <const: 1000> [1552]
+assign %s1 = %s1, %s2 [1553]
+assign %s0 = %s0, %s1 [1554]
+assign %s1 = @p0 [1555]
+%retval, %throwval = direct-call [exec]Exec.Shape::Describe()->System.Int32(%s1) [1556]
+assign %excout = %excout, %throwval [1556]
+assign %s1 = %retval [1556]
+assign %s0 = %s0, %s1 [1557]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Obj::MakeShapes(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval %L5=s2 %L6=s3 %L7=loc0 %L8=loc1
+begin block_0 [start]:
+assign %excout = <const: []> [1559]
+assign %s0 = @p0 [1559]
+assign %s1 = <const: 1> [1560]
+assign %s0 = %s0, %s1 [1561]
+goto 4, 1
+end block_0
+begin block_1:
+assign %s0 = @p0 [1563]
+assign %s1 = <const: 2> [1564]
+assign %s0 = %s0, %s1 [1565]
+goto 3, 2
+end block_1
+begin block_2:
+assign %s0 = cil<[exec]Exec.Hider> [1567]
+%retval, %throwval = direct-call [exec]Exec.Hider::.ctor()->System.Void(%s0) [1567]
+assign %excout = %excout, %throwval [1567]
+assign %s0 = %s0 [1568]
+assign %s1 = %s0 [1568]
+assign %s2 = <const: 2> [1569]
+store %s1.<[exec]Exec\.Sq::S> := %s2 [1570]
+assign %s0 = %s0 [1571]
+assign %s1 = %s0 [1571]
+assign %s2 = @p0 [1572]
+store %s1.<[exec]Exec\.Rc::W> := %s2 [1573]
+goto 5
+end block_2
+begin block_3:
+assign %s0 = cil<[exec]Exec.Rc> [1575]
+%retval, %throwval = direct-call [exec]Exec.Rc::.ctor()->System.Void(%s0) [1575]
+assign %excout = %excout, %throwval [1575]
+assign %s0 = %s0 [1576]
+assign %s1 = %s0 [1576]
+assign %s2 = @p0 [1577]
+assign %s3 = <const: 255> [1578]
+assign %s2 = %s2, %s3 [1579]
+store %s1.<[exec]Exec\.Sq::S> := %s2 [1580]
+assign %s0 = %s0 [1581]
+assign %s1 = %s0 [1581]
+assign %s2 = <const: 3> [1582]
+store %s1.<[exec]Exec\.Rc::W> := %s2 [1583]
+goto 5
+end block_3
+begin block_4:
+assign %s0 = cil<[exec]Exec.Sq> [1585]
+%retval, %throwval = direct-call [exec]Exec.Sq::.ctor()->System.Void(%s0) [1585]
+assign %excout = %excout, %throwval [1585]
+assign %s0 = %s0 [1586]
+assign %s1 = %s0 [1586]
+assign %s2 = @p0 [1587]
+assign %s3 = <const: 255> [1588]
+assign %s2 = %s2, %s3 [1589]
+store %s1.<[exec]Exec\.Sq::S> := %s2 [1590]
+goto 5
+end block_4
+begin block_5:
+assign %loc0 = %s0 [1591]
+assign %s0 = %loc0 [1592]
+%retval, %throwval = direct-call [exec]Exec.Obj::Virt(Exec.Shape)->System.Int32(%s0) [1593]
+assign %excout = %excout, %throwval [1593]
+assign %s0 = %retval [1593]
+assign %s1 = %loc0 [1594]
+assign %s1 = %s1 [1595]
+assign %s2 = <const: 0> [1596]
+assign %s1 = %s1, %s2 [1597]
+assign %s0 = %s0, %s1 [1598]
+assign %s1 = %loc0 [1599]
+assign %s1 = %s1 [1600]
+assign %loc1 = %s1 [1601]
+assign %s1 = %loc1 [1602]
+goto 7, 6
+end block_5
+begin block_6:
+assign %s1 = <const: 0> [1604]
+goto 8
+end block_6
+begin block_7:
+assign %s1 = %loc1 [1606]
+%retval, %throwval = cil-call %s1.<[exec]Exec.Hider::Area()->System.Int32>() [1607]
+assign %excout = %excout, %throwval [1607]
+assign %s1 = %retval [1607]
+goto 8
+end block_7
+begin block_8:
+assign %s0 = %s0, %s1 [1608]
+return %s0, %excout
+end block_8
+
+define [exec]Exec.Obj::Cast(Exec.Shape)->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=caught0 %L4=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [1610]
+assign %s0 = @p0 [1610]
+assign %s0 = %s0 [1611]
+%s0 = load %s0.<[exec]Exec\.Rc::W> [1612]
+assign %loc0 = %s0 [1613]
+goto 2, 1
+end block_0
+begin block_1:
+assign %caught0 = %throwval [1615]
+assign %s0 = %caught0 [1615]
+assign %s0 = <const: -1> [1616]
+assign %loc0 = %s0 [1617]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc0 [1619]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Obj::AsCast(Exec.Shape)->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0
+begin block_0 [start]:
+assign %excout = <const: []> [1621]
+assign %s0 = @p0 [1621]
+assign %s0 = %s0 [1622]
+assign %loc0 = %s0 [1623]
+assign %s0 = %loc0 [1624]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = %loc0 [1626]
+%s0 = load %s0.<[exec]Exec\.Sq::S> [1627]
+return %s0, %excout
+end block_1
+begin block_2:
+assign %s0 = <const: -2> [1629]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Obj::Aliasing(Exec.Bag,Exec.Bag)->System.Int32(@p0[shared], @p1[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [1631]
+assign %s0 = @p0 [1631]
+assign %s1 = <const: 1> [1632]
+store %s0.<[exec]Exec\.Bag::A> := %s1 [1633]
+assign %s0 = @p1 [1634]
+assign %s1 = <const: 2> [1635]
+store %s0.<[exec]Exec\.Bag::A> := %s1 [1636]
+assign %s0 = @p0 [1637]
+%s0 = load %s0.<[exec]Exec\.Bag::A> [1638]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Obj::SwapFields(Exec.Bag)->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1
+begin block_0 [start]:
+assign %excout = <const: []> [1640]
+assign %s0 = @p0 [1640]
+%s0 = load %s0.<[exec]Exec\.Bag::A> [1641]
+assign %loc0 = %s0 [1642]
+assign %s0 = @p0 [1643]
+assign %s1 = @p0 [1644]
+%s1 = load %s1.<[exec]Exec\.Bag::B> [1645]
+assign %s1 = %s1 [1646]
+store %s0.<[exec]Exec\.Bag::A> := %s1 [1647]
+assign %s0 = @p0 [1648]
+assign %s1 = %loc0 [1649]
+assign %s1 = %s1 [1650]
+store %s0.<[exec]Exec\.Bag::B> := %s1 [1651]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Obj::Statics(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [1653]
+%s0 = load $globals.<[exec]Exec\.G::Counter> [1654]
+assign %s1 = @p0 [1655]
+assign %s0 = %s0, %s1 [1656]
+store $globals.<[exec]Exec\.G::Counter> := %s0 [1657]
+%s0 = load $globals.<[exec]Exec\.G::Total> [1658]
+%s1 = load $globals.<[exec]Exec\.G::Counter> [1659]
+assign %s1 = %s1 [1660]
+assign %s0 = %s0, %s1 [1661]
+store $globals.<[exec]Exec\.G::Total> := %s0 [1662]
+%s0 = load $globals.<[exec]Exec\.G::D> [1663]
+assign %s1 = <const: 4602678819172646912> [1664]
+assign %s0 = %s0, %s1 [1665]
+assign %s1 = @p0 [1666]
+assign %s1 = %s1 [1667]
+assign %s0 = %s0, %s1 [1668]
+store $globals.<[exec]Exec\.G::D> := %s0 [1669]
+%s0 = load $globals.<[exec]Exec\.G::Counter> [1670]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Obj::Boxing(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=loc2 %L5=s1 %L6=s2
+begin block_0 [start]:
+assign %excout = <const: []> [1672]
+assign %s0 = @p0 [1672]
+assign %s0 = %s0, cil<[System.Private.CoreLib]System.Int32> [1673]
+assign %loc0 = %s0 [1674]
+assign %s0 = @p0 [1675]
+assign %s0 = %s0 [1676]
+assign %s0 = %s0, cil<[System.Private.CoreLib]System.Int64> [1677]
+assign %loc1 = %s0 [1678]
+assign %s0 = %loc0 [1679]
+assign %s0 = %s0 [1680]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = %loc0 [1682]
+assign %s0 = %s0 [1683]
+assign %loc2 = %s0 [1684]
+goto 3
+end block_1
+begin block_2:
+assign %s0 = <const: -1> [1686]
+goto 4
+end block_2
+begin block_3:
+assign %s0 = %loc2 [1688]
+goto 4
+end block_3
+begin block_4:
+assign %s1 = %loc1 [1689]
+assign %s1 = %s1 [1690]
+assign %s2 = <const: 0> [1691]
+assign %s1 = %s1, %s2 [1692]
+assign %s0 = %s0, %s1 [1693]
+assign %s1 = %loc1 [1694]
+assign %s1 = %s1 [1695]
+assign %s1 = %s1 [1696]
+assign %s0 = %s0, %s1 [1697]
+return %s0, %excout
+end block_4
+
+define [exec]Exec.Obj::Unboxing(System.Object)->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=caught0 %L4=throwval %L5=caught1
+begin block_0 [start]:
+assign %excout = <const: []> [1699]
+assign %s0 = @p0 [1699]
+assign %s0 = %s0 [1700]
+assign %loc0 = %s0 [1701]
+goto 3, 1, 2
+end block_0
+begin block_1:
+assign %caught0 = %throwval [1703]
+assign %s0 = %caught0 [1703]
+assign %s0 = <const: -1> [1704]
+assign %loc0 = %s0 [1705]
+goto 3
+end block_1
+begin block_2:
+assign %caught1 = %throwval [1707]
+assign %s0 = %caught1 [1707]
+assign %s0 = <const: -2> [1708]
+assign %loc0 = %s0 [1709]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [1711]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Obj::BoxStruct(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=cell_0 %L5=c_1 %L6=retval %L7=throwval %L8=u_2 %L9=loc0 %L10=s2 %L11=s3 %L12=pt_3
+begin block_0 [start]:
+assign %excout = <const: []> [1713]
+assign %s0 = @p0 [1713]
+assign %s1 = <const: 2> [1714]
+assign %t0 = cil<[exec]Exec.Pt> [1715]
+assign %c_1 = %t0 [1715]
+store %cell_0.deref := %c_1 [1715]
+%retval, %throwval = direct-call [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void(%cell_0, %s0, %s1) [1715]
+assign %excout = %excout, %throwval [1715]
+%u_2 = load %cell_0.deref [1715]
+assign %t0 = %u_2 [1715]
+assign %s0 = %t0 [1715]
+assign %s0 = %s0, cil<[exec]Exec.Pt> [1716]
+assign %s0 = %s0 [1717]
+assign %s1 = %s0 [1717]
+assign %s1 = %s1 [1718]
+assign %loc0 = %s1 [1719]
+assign %s1 = %s1 [1722]
+assign %s2 = %s1 [1722]
+%s2 = load %loc0.<[exec]Exec\.Pt::X> [1723]
+assign %s3 = <const: 1> [1724]
+assign %s2 = %s2, %s3 [1725]
+store %loc0.<[exec]Exec\.Pt::X> := %s2 [1726]
+assign %s0 = %s0 [1727]
+%pt_3 = load %s0.deref [1728]
+%s0 = load %pt_3.<[exec]Exec\.Pt::X> [1728]
+assign %s1 = <const: 100> [1729]
+assign %s0 = %s0, %s1 [1730]
+assign %s1 = %loc0 [1731]
+%s1 = load %s1.<[exec]Exec\.Pt::X> [1732]
+assign %s0 = %s0, %s1 [1733]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Obj::ChainNew(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1 %L5=s2 %L6=s3 %L7=s4 %L8=s5
+begin block_0 [start]:
+assign %excout = <const: []> [1735]
+assign %s0 = cil<[exec]Exec.Node> [1736]
+%retval, %throwval = direct-call [exec]Exec.Node::.ctor()->System.Void(%s0) [1736]
+assign %excout = %excout, %throwval [1736]
+assign %s0 = %s0 [1737]
+assign %s1 = %s0 [1737]
+assign %s2 = @p0 [1738]
+store %s1.<[exec]Exec\.Node::Value> := %s2 [1739]
+assign %s0 = %s0 [1740]
+assign %s1 = %s0 [1740]
+assign %s2 = cil<[exec]Exec.Node> [1741]
+%retval, %throwval = direct-call [exec]Exec.Node::.ctor()->System.Void(%s2) [1741]
+assign %excout = %excout, %throwval [1741]
+assign %s2 = %s2 [1742]
+assign %s3 = %s2 [1742]
+assign %s4 = @p0 [1743]
+assign %s5 = <const: 1> [1744]
+assign %s4 = %s4, %s5 [1745]
+store %s3.<[exec]Exec\.Node::Value> := %s4 [1746]
+store %s1.<[exec]Exec\.Node::Next> := %s2 [1747]
+%s0 = load %s0.<[exec]Exec\.Node::Next> [1748]
+%s0 = load %s0.<[exec]Exec\.Node::Value> [1749]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Obj::Compound(Exec.Bag,System.Int32[],System.Int32)->System.Int32(@p0[shared], @p1[shared], @p2[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=ab0_8
+begin block_0 [start]:
+assign %excout = <const: []> [1751]
+assign %s0 = @p0 [1751]
+assign %s1 = @p1 [1752]
+store %s0.<[exec]Exec\.Bag::Arr> := %s1 [1753]
+assign %s0 = @p0 [1754]
+%s0 = load %s0.<[exec]Exec\.Bag::Arr> [1755]
+assign %s1 = @p2 [1756]
+assign %s2 = <const: 3> [1757]
+assign %s1 = %s1, %s2 [1758]
+assign %ab0_8 = %s0 [1759]
+assign %s0 = %s0 [1760]
+assign %s1 = %s0 [1760]
+%s1 = load %ab0_8.\[] [1761]
+assign %s2 = <const: 1> [1762]
+assign %s1 = %s1, %s2 [1763]
+store %ab0_8.\[] := %s1 [1764]
+assign %s0 = @p1 [1765]
+assign %s1 = @p2 [1766]
+assign %s2 = <const: 1> [1767]
+assign %s1 = %s1, %s2 [1768]
+assign %s2 = <const: 3> [1769]
+assign %s1 = %s1, %s2 [1770]
+assign %s0 = %s0 [1772]
+assign %s1 = %s0 [1772]
+%s1 = load @p1.\[] [1773]
+assign %s2 = @p0 [1774]
+%s2 = load %s2.<[exec]Exec\.Bag::A> [1775]
+assign %s1 = %s1, %s2 [1776]
+store @p1.\[] := %s1 [1777]
+assign %s0 = @p1 [1778]
+%s0 = load %s0.length [1779]
+assign %s0 = %s0 [1780]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Obj::ChainedAssign(Exec.Bag,Exec.Bag,System.Int32)->System.Int32(@p0[shared], @p1[shared], @p2[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3 %L5=loc0 %L6=loc1
+begin block_0 [start]:
+assign %excout = <const: []> [1782]
+assign %s0 = @p0 [1782]
+assign %s1 = @p1 [1783]
+assign %s2 = @p2 [1784]
+assign %s2 = %s2 [1785]
+assign %s3 = %s2 [1785]
+assign %loc0 = %s3 [1786]
+store %s1.<[exec]Exec\.Bag::A> := %s2 [1787]
+assign %s1 = %loc0 [1788]
+store %s0.<[exec]Exec\.Bag::A> := %s1 [1789]
+assign %s0 = @p0 [1790]
+assign %s1 = @p1 [1791]
+assign %s2 = @p2 [1792]
+assign %s3 = <const: 300> [1793]
+assign %s2 = %s2, %s3 [1794]
+assign %s2 = %s2 [1795]
+assign %s2 = %s2 [1796]
+assign %s3 = %s2 [1796]
+assign %loc1 = %s3 [1797]
+store %s1.<[exec]Exec\.Bag::U8> := %s2 [1798]
+assign %s1 = %loc1 [1799]
+store %s0.<[exec]Exec\.Bag::U8> := %s1 [1800]
+assign %s0 = @p0 [1801]
+%s0 = load %s0.<[exec]Exec\.Bag::A> [1802]
+assign %s1 = @p1 [1803]
+%s1 = load %s1.<[exec]Exec\.Bag::U8> [1804]
+assign %s0 = %s0, %s1 [1805]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Obj::Instance(Exec.Shape)->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [1807]
+assign %s0 = @p0 [1807]
+%retval, %throwval = direct-call [exec]Exec.Shape::Describe()->System.Int32(%s0) [1808]
+assign %excout = %excout, %throwval [1808]
+assign %s0 = %retval [1808]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Obj::ObjectField(Exec.Bag,System.Int32)->System.Object(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=retval %L5=throwval %L6=s3
+begin block_0 [start]:
+assign %excout = <const: []> [1810]
+assign %s0 = @p0 [1810]
+assign %s1 = @p1 [1811]
+assign %s2 = <const: 0> [1812]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s1 = @p0 [1814]
+goto 3
+end block_1
+begin block_2:
+assign %s1 = cil<[exec]Exec.Node> [1816]
+%retval, %throwval = direct-call [exec]Exec.Node::.ctor()->System.Void(%s1) [1816]
+assign %excout = %excout, %throwval [1816]
+assign %s1 = %s1 [1817]
+assign %s2 = %s1 [1817]
+assign %s3 = @p1 [1818]
+store %s2.<[exec]Exec\.Node::Value> := %s3 [1819]
+goto 3
+end block_2
+begin block_3:
+store %s0.<[exec]Exec\.Bag::O> := %s1 [1820]
+assign %s0 = @p0 [1821]
+%s0 = load %s0.<[exec]Exec\.Bag::O> [1822]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Obj::StructField(Exec.Bag,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=cell_2 %L7=c_3 %L8=retval %L9=throwval %L10=u_4 %L11=loc0 %L12=pt_5
+begin block_0 [start]:
+assign %excout = <const: []> [1824]
+assign %s0 = @p0 [1824]
+assign %s0 = %s0 [1827]
+assign %s1 = %s0 [1827]
+%pt_0 = load @p0.<[exec]Exec\.Bag::P> [1828]
+%s1 = load %pt_0.<[exec]Exec\.Pt::X> [1828]
+assign %s2 = @p1 [1829]
+assign %s1 = %s1, %s2 [1830]
+%pt_1 = load @p0.<[exec]Exec\.Bag::P> [1831]
+store %pt_1.<[exec]Exec\.Pt::X> := %s1 [1831]
+assign %s0 = @p0 [1832]
+assign %s1 = <const: 3> [1834]
+%c_3 = load @p0.<[exec]Exec\.Bag::P> [1835]
+store %cell_2.deref := %c_3 [1835]
+%retval, %throwval = direct-call [exec]Exec.Pt::Scale(System.Int32)->System.Void(%cell_2, %s1) [1835]
+assign %excout = %excout, %throwval [1835]
+%u_4 = load %cell_2.deref [1835]
+store @p0.<[exec]Exec\.Bag::P> := %u_4 [1835]
+assign %s0 = @p0 [1836]
+%s0 = load %s0.<[exec]Exec\.Bag::P> [1837]
+assign %loc0 = %s0 [1838]
+assign %s1 = <const: 1> [1840]
+store %loc0.<[exec]Exec\.Pt::Y> := %s1 [1841]
+assign %s0 = @p0 [1842]
+%pt_5 = load @p0.<[exec]Exec\.Bag::P> [1844]
+%s0 = load %pt_5.<[exec]Exec\.Pt::Y> [1844]
+assign %s1 = %loc0 [1845]
+%s1 = load %s1.<[exec]Exec\.Pt::Y> [1846]
+assign %s0 = %s0, %s1 [1847]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::Ctor(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s1 %L2=s2 %L3=loc0 %L4=cell_0 %L5=c_1 %L6=retval %L7=throwval %L8=u_2 %L9=cell_3 %L10=c_4 %L11=s0 %L12=u_5
+begin block_0 [start]:
+assign %excout = <const: []> [1849]
+assign %s1 = @p0 [1851]
+assign %s2 = @p1 [1852]
+assign %c_1 = %loc0 [1853]
+store %cell_0.deref := %c_1 [1853]
+%retval, %throwval = direct-call [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void(%cell_0, %s1, %s2) [1853]
+assign %excout = %excout, %throwval [1853]
+%u_2 = load %cell_0.deref [1853]
+assign %loc0 = %u_2 [1853]
+assign %c_4 = %loc0 [1855]
+store %cell_3.deref := %c_4 [1855]
+%retval, %throwval = direct-call [exec]Exec.Pt::Sum()->System.Int32(%cell_3) [1855]
+assign %excout = %excout, %throwval [1855]
+assign %s0 = %retval [1855]
+%u_5 = load %cell_3.deref [1855]
+assign %loc0 = %u_5 [1855]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::CtorAsArgument(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=cell_0 %L5=c_1 %L6=retval %L7=throwval %L8=u_2 %L9=s2 %L10=cell_3 %L11=c_4 %L12=u_5 %L13=s3 %L14=cell_6 %L15=c_7 %L16=u_8 %L17=loc0 %L18=cell_9 %L19=c_10 %L20=u_11
+begin block_0 [start]:
+assign %excout = <const: []> [1857]
+assign %s0 = @p0 [1857]
+assign %s1 = @p1 [1858]
+assign %t0 = cil<[exec]Exec.Pt> [1859]
+assign %c_1 = %t0 [1859]
+store %cell_0.deref := %c_1 [1859]
+%retval, %throwval = direct-call [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void(%cell_0, %s0, %s1) [1859]
+assign %excout = %excout, %throwval [1859]
+%u_2 = load %cell_0.deref [1859]
+assign %t0 = %u_2 [1859]
+assign %s0 = %t0 [1859]
+assign %s1 = @p1 [1860]
+assign %s2 = @p0 [1861]
+assign %t0 = cil<[exec]Exec.Pt> [1862]
+assign %c_4 = %t0 [1862]
+store %cell_3.deref := %c_4 [1862]
+%retval, %throwval = direct-call [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void(%cell_3, %s1, %s2) [1862]
+assign %excout = %excout, %throwval [1862]
+%u_5 = load %cell_3.deref [1862]
+assign %t0 = %u_5 [1862]
+assign %s1 = %t0 [1862]
+%retval, %throwval = direct-call [exec]Exec.Val::Take(Exec.Pt,Exec.Pt)->System.Int32(%s0, %s1) [1863]
+assign %excout = %excout, %throwval [1863]
+assign %s0 = %retval [1863]
+assign %s1 = @p0 [1864]
+assign %s2 = @p1 [1865]
+assign %s3 = <const: 1> [1866]
+assign %t0 = cil<[exec]Exec.Pt> [1867]
+assign %c_7 = %t0 [1867]
+store %cell_6.deref := %c_7 [1867]
+%retval, %throwval = direct-call [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void(%cell_6, %s2, %s3) [1867]
+assign %excout = %excout, %throwval [1867]
+%u_8 = load %cell_6.deref [1867]
+assign %t0 = %u_8 [1867]
+assign %s2 = %t0 [1867]
+assign %loc0 = %s2 [1868]
+assign %c_10 = %loc0 [1870]
+store %cell_9.deref := %c_10 [1870]
+%retval, %throwval = direct-call [exec]Exec.Pt::Sum()->System.Int32(%cell_9) [1870]
+assign %excout = %excout, %throwval [1870]
+assign %s2 = %retval [1870]
+%u_11 = load %cell_9.deref [1870]
+assign %loc0 = %u_11 [1870]
+assign %s3 = <const: 3> [1871]
+%retval, %throwval = direct-call [exec]Exec.Ctl::Pick(System.Int32,System.Int32,System.Int32)->System.Int32(%s1, %s2, %s3) [1872]
+assign %excout = %excout, %throwval [1872]
+assign %s1 = %retval [1872]
+assign %s0 = %s0, %s1 [1873]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::Take(Exec.Pt,Exec.Pt)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [1875]
+assign %s0 = @p0 [1875]
+%s0 = load %s0.<[exec]Exec\.Pt::X> [1876]
+assign %s1 = <const: 3> [1877]
+assign %s0 = %s0, %s1 [1878]
+assign %s1 = @p1 [1879]
+%s1 = load %s1.<[exec]Exec\.Pt::Y> [1880]
+assign %s0 = %s0, %s1 [1881]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::Scale(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s1 %L2=s2 %L3=s3 %L4=loc0 %L5=cell_0 %L6=c_1 %L7=retval %L8=throwval %L9=u_2 %L10=cell_3 %L11=c_4 %L12=u_5 %L13=s0
+begin block_0 [start]:
+assign %excout = <const: []> [1883]
+assign %s1 = @p0 [1885]
+assign %s2 = @p0 [1886]
+assign %s3 = <const: 1> [1887]
+assign %s2 = %s2, %s3 [1888]
+assign %c_1 = %loc0 [1889]
+store %cell_0.deref := %c_1 [1889]
+%retval, %throwval = direct-call [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void(%cell_0, %s1, %s2) [1889]
+assign %excout = %excout, %throwval [1889]
+%u_2 = load %cell_0.deref [1889]
+assign %loc0 = %u_2 [1889]
+assign %s1 = @p1 [1891]
+assign %c_4 = %loc0 [1892]
+store %cell_3.deref := %c_4 [1892]
+%retval, %throwval = direct-call [exec]Exec.Pt::Scale(System.Int32)->System.Void(%cell_3, %s1) [1892]
+assign %excout = %excout, %throwval [1892]
+%u_5 = load %cell_3.deref [1892]
+assign %loc0 = %u_5 [1892]
+assign %s0 = %loc0 [1893]
+%s0 = load %s0.<[exec]Exec\.Pt::X> [1894]
+assign %s1 = <const: 7> [1895]
+assign %s0 = %s0, %s1 [1896]
+assign %s1 = %loc0 [1897]
+%s1 = load %s1.<[exec]Exec\.Pt::Y> [1898]
+assign %s0 = %s0, %s1 [1899]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::Copy(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=cell_0 %L5=c_1 %L6=retval %L7=throwval %L8=u_2 %L9=loc0 %L10=s2
+begin block_0 [start]:
+assign %excout = <const: []> [1901]
+assign %s0 = @p0 [1901]
+assign %s1 = <const: 2> [1902]
+assign %t0 = cil<[exec]Exec.Pt> [1903]
+assign %c_1 = %t0 [1903]
+store %cell_0.deref := %c_1 [1903]
+%retval, %throwval = direct-call [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void(%cell_0, %s0, %s1) [1903]
+assign %excout = %excout, %throwval [1903]
+%u_2 = load %cell_0.deref [1903]
+assign %t0 = %u_2 [1903]
+assign %s0 = %t0 [1903]
+assign %s0 = %s0 [1904]
+assign %s1 = %s0 [1904]
+assign %loc0 = %s1 [1905]
+assign %s2 = <const: 100> [1907]
+store %loc0.<[exec]Exec\.Pt::X> := %s2 [1908]
+%s0 = load %s0.<[exec]Exec\.Pt::X> [1909]
+assign %s1 = %loc0 [1910]
+%s1 = load %s1.<[exec]Exec\.Pt::X> [1911]
+assign %s0 = %s0, %s1 [1912]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::NestedStruct(Exec.Rect)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=cell_2 %L7=c_3 %L8=retval %L9=throwval %L10=u_4
+begin block_0 [start]:
+assign %excout = <const: []> [1914]
+assign %s0 = %s0 [1918]
+assign %s1 = %s0 [1918]
+%pt_0 = load @p0.<[exec]Exec\.Rect::Lo> [1919]
+%s1 = load %pt_0.<[exec]Exec\.Pt::X> [1919]
+assign %s2 = <const: 5> [1920]
+assign %s1 = %s1, %s2 [1921]
+%pt_1 = load @p0.<[exec]Exec\.Rect::Lo> [1922]
+store %pt_1.<[exec]Exec\.Pt::X> := %s1 [1922]
+assign %s1 = <const: 2> [1925]
+%c_3 = load @p0.<[exec]Exec\.Rect::Hi> [1926]
+store %cell_2.deref := %c_3 [1926]
+%retval, %throwval = direct-call [exec]Exec.Pt::Scale(System.Int32)->System.Void(%cell_2, %s1) [1926]
+assign %excout = %excout, %throwval [1926]
+%u_4 = load %cell_2.deref [1926]
+store @p0.<[exec]Exec\.Rect::Hi> := %u_4 [1926]
+assign %s0 = %s0 [1929]
+assign %s1 = %s0 [1929]
+%s1 = load @p0.<[exec]Exec\.Rect::Tag> [1930]
+assign %s2 = <const: 200> [1931]
+assign %s1 = %s1, %s2 [1932]
+assign %s1 = %s1 [1933]
+store @p0.<[exec]Exec\.Rect::Tag> := %s1 [1934]
+assign %s0 = @p0 [1935]
+%s0 = load %s0.<[exec]Exec\.Rect::Lo> [1936]
+%s0 = load %s0.<[exec]Exec\.Pt::X> [1937]
+assign %s1 = @p0 [1938]
+%s1 = load %s1.<[exec]Exec\.Rect::Hi> [1939]
+%s1 = load %s1.<[exec]Exec\.Pt::Y> [1940]
+assign %s0 = %s0, %s1 [1941]
+assign %s1 = @p0 [1942]
+%s1 = load %s1.<[exec]Exec\.Rect::Tag> [1943]
+assign %s0 = %s0, %s1 [1944]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::RefParam(Exec.Pt&,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=retval %L7=throwval %L8=pt_2
+begin block_0 [start]:
+assign %excout = <const: []> [1946]
+assign %s0 = @p0 [1946]
+assign %s0 = %s0 [1948]
+assign %s1 = %s0 [1948]
+%pt_0 = load @p0.deref [1949]
+%s1 = load %pt_0.<[exec]Exec\.Pt::X> [1949]
+assign %s2 = @p1 [1950]
+assign %s1 = %s1, %s2 [1951]
+%pt_1 = load @p0.deref [1952]
+store %pt_1.<[exec]Exec\.Pt::X> := %s1 [1952]
+assign %s0 = @p0 [1953]
+assign %s1 = <const: 2> [1954]
+%retval, %throwval = direct-call [exec]Exec.Pt::Scale(System.Int32)->System.Void(%s0, %s1) [1955]
+assign %excout = %excout, %throwval [1955]
+assign %s0 = @p0 [1956]
+%pt_2 = load %s0.deref [1957]
+%s0 = load %pt_2.<[exec]Exec\.Pt::Y> [1957]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::Swap(System.Int32&,System.Int32&)->System.Void(@p0[shared], @p1[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1
+begin block_0 [start]:
+assign %excout = <const: []> [1959]
+assign %s0 = @p0 [1959]
+%s0 = load %s0.deref [1960]
+assign %loc0 = %s0 [1961]
+assign %s0 = @p0 [1962]
+assign %s1 = @p1 [1963]
+%s1 = load %s1.deref [1964]
+store %s0.deref := %s1 [1965]
+assign %s0 = @p1 [1966]
+assign %s1 = %loc0 [1967]
+store %s0.deref := %s1 [1968]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Val::TryDiv(System.Int32,System.Int32,System.Int32&)->System.Boolean(@p0[shared_fields], @p1[shared_fields], @p2[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [1970]
+assign %s0 = @p1 [1970]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = @p2 [1972]
+assign %s1 = <const: 0> [1973]
+store %s0.deref := %s1 [1974]
+assign %s0 = <const: 0> [1975]
+return %s0, %excout
+end block_1
+begin block_2:
+assign %s0 = @p2 [1977]
+assign %s1 = @p0 [1978]
+assign %s2 = @p1 [1979]
+assign %s1 = %s1, %s2 [1980]
+store %s0.deref := %s1 [1981]
+assign %s0 = <const: 1> [1982]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Val::UseTry(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=cell_0 %L5=c_1 %L6=retval %L7=throwval %L8=u_2
+begin block_0 [start]:
+assign %excout = <const: []> [1984]
+assign %s0 = @p0 [1984]
+assign %s1 = @p1 [1985]
+assign %c_1 = %loc0 [1987]
+store %cell_0.deref := %c_1 [1987]
+%retval, %throwval = direct-call [exec]Exec.Val::TryDiv(System.Int32,System.Int32,System.Int32&)->System.Boolean(%s0, %s1, %cell_0) [1987]
+assign %excout = %excout, %throwval [1987]
+assign %s0 = %retval [1987]
+%u_2 = load %cell_0.deref [1987]
+assign %loc0 = %u_2 [1987]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = <const: -1> [1989]
+return %s0, %excout
+end block_1
+begin block_2:
+assign %s0 = %loc0 [1991]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Val::CallSwap(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=cell_0 %L2=c_1 %L3=cell_2 %L4=c_3 %L5=retval %L6=throwval %L7=u_4 %L8=u_5 %L9=s0 %L10=s1
+begin block_0 [start]:
+assign %excout = <const: []> [1993]
+assign %c_1 = @p0 [1996]
+store %cell_0.deref := %c_1 [1996]
+assign %c_3 = @p1 [1996]
+store %cell_2.deref := %c_3 [1996]
+%retval, %throwval = direct-call [exec]Exec.Val::Swap(System.Int32&,System.Int32&)->System.Void(%cell_0, %cell_2) [1996]
+assign %excout = %excout, %throwval [1996]
+%u_4 = load %cell_0.deref [1996]
+assign @p0 = %u_4 [1996]
+%u_5 = load %cell_2.deref [1996]
+assign @p1 = %u_5 [1996]
+assign %s0 = @p0 [1997]
+assign %s1 = <const: 1000> [1998]
+assign %s0 = %s0, %s1 [1999]
+assign %s1 = @p1 [2000]
+assign %s0 = %s0, %s1 [2001]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::RefBytes(System.Byte&,System.Int64&,System.Double&,System.Boolean&)->System.Void(@p0[shared], @p1[shared], @p2[shared], @p3[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [2003]
+assign %s0 = @p0 [2003]
+assign %s1 = @p0 [2004]
+%s1 = load %s1.deref [2005]
+assign %s2 = <const: 250> [2006]
+assign %s1 = %s1, %s2 [2007]
+assign %s1 = %s1 [2008]
+store %s0.deref := %s1 [2009]
+assign %s0 = @p1 [2010]
+assign %s1 = @p1 [2011]
+%s1 = load %s1.deref [2012]
+assign %s1 = %s1 [2013]
+store %s0.deref := %s1 [2014]
+assign %s0 = @p2 [2015]
+assign %s1 = @p2 [2016]
+%s1 = load %s1.deref [2017]
+assign %s2 = <const: 4613937818241073152> [2018]
+assign %s1 = %s1, %s2 [2019]
+store %s0.deref := %s1 [2020]
+assign %s0 = @p3 [2021]
+assign %s1 = @p3 [2022]
+%s1 = load %s1.deref [2023]
+assign %s2 = <const: 0> [2024]
+assign %s1 = %s1, %s2 [2025]
+store %s0.deref := %s1 [2026]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Val::ArrayOfStructs(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2 %L6=pt_0 %L7=cell_1 %L8=c_2 %L9=retval %L10=throwval %L11=u_3 %L12=s3 %L13=s4 %L14=t0 %L15=cell_4 %L16=c_5 %L17=u_6 %L18=pt_7 %L19=pt_8
+begin block_0 [start]:
+assign %excout = <const: []> [2028]
+assign %s0 = <const: 4> [2028]
+assign %s0 = cil<Exec.Pt[]> [2029]
+assign %loc0 = %s0 [2030]
+assign %s0 = <const: 0> [2031]
+assign %loc1 = %s0 [2032]
+goto 2
+end block_0
+begin block_1:
+assign %s0 = %loc0 [2034]
+assign %s1 = %loc1 [2035]
+assign %s1 = %loc1 [2037]
+assign %s2 = @p0 [2038]
+assign %s1 = %s1, %s2 [2039]
+%pt_0 = load %loc0.\[] [2040]
+store %pt_0.<[exec]Exec\.Pt::X> := %s1 [2040]
+assign %s0 = %loc1 [2041]
+assign %s1 = <const: 1> [2042]
+assign %s0 = %s0, %s1 [2043]
+assign %loc1 = %s0 [2044]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc1 [2045]
+assign %s1 = %loc0 [2046]
+%s1 = load %s1.length [2047]
+assign %s1 = %s1 [2048]
+goto 1, 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [2050]
+assign %s1 = <const: 2> [2051]
+assign %s1 = <const: 3> [2053]
+%c_2 = load %loc0.\[] [2054]
+store %cell_1.deref := %c_2 [2054]
+%retval, %throwval = direct-call [exec]Exec.Pt::Scale(System.Int32)->System.Void(%cell_1, %s1) [2054]
+assign %excout = %excout, %throwval [2054]
+%u_3 = load %cell_1.deref [2054]
+store %loc0.\[] := %u_3 [2054]
+assign %s0 = %loc0 [2055]
+assign %s1 = <const: 3> [2056]
+assign %s2 = @p0 [2057]
+assign %s3 = @p0 [2058]
+assign %s4 = <const: 1> [2059]
+assign %s3 = %s3, %s4 [2060]
+assign %t0 = cil<[exec]Exec.Pt> [2061]
+assign %c_5 = %t0 [2061]
+store %cell_4.deref := %c_5 [2061]
+%retval, %throwval = direct-call [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void(%cell_4, %s2, %s3) [2061]
+assign %excout = %excout, %throwval [2061]
+%u_6 = load %cell_4.deref [2061]
+assign %t0 = %u_6 [2061]
+assign %s2 = %t0 [2061]
+store %s0.\[] := %s2 [2062]
+assign %s0 = %loc0 [2063]
+assign %s1 = <const: 2> [2064]
+%pt_7 = load %loc0.\[] [2066]
+%s0 = load %pt_7.<[exec]Exec\.Pt::X> [2066]
+assign %s1 = %loc0 [2067]
+assign %s2 = <const: 3> [2068]
+%pt_8 = load %loc0.\[] [2070]
+%s1 = load %pt_8.<[exec]Exec\.Pt::Y> [2070]
+assign %s0 = %s0, %s1 [2071]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Val::StaticStruct(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=cell_2 %L7=c_3 %L8=retval %L9=throwval %L10=u_4 %L11=pt_5
+begin block_0 [start]:
+assign %excout = <const: []> [2073]
+assign %s0 = %s0 [2076]
+assign %s1 = %s0 [2076]
+%pt_0 = load $globals.<[exec]Exec\.G::P> [2077]
+%s1 = load %pt_0.<[exec]Exec\.Pt::X> [2077]
+assign %s2 = @p0 [2078]
+assign %s1 = %s1, %s2 [2079]
+%pt_1 = load $globals.<[exec]Exec\.G::P> [2080]
+store %pt_1.<[exec]Exec\.Pt::X> := %s1 [2080]
+assign %s1 = <const: 2> [2082]
+%c_3 = load $globals.<[exec]Exec\.G::P> [2083]
+store %cell_2.deref := %c_3 [2083]
+%retval, %throwval = direct-call [exec]Exec.Pt::Scale(System.Int32)->System.Void(%cell_2, %s1) [2083]
+assign %excout = %excout, %throwval [2083]
+%u_4 = load %cell_2.deref [2083]
+store $globals.<[exec]Exec\.G::P> := %u_4 [2083]
+%pt_5 = load $globals.<[exec]Exec\.G::P> [2085]
+%s0 = load %pt_5.<[exec]Exec\.Pt::Y> [2085]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::Default(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=loc0 %L2=s1 %L3=s0
+begin block_0 [start]:
+assign %excout = <const: []> [2087]
+assign %loc0 =  [2089]
+assign %s1 = @p0 [2091]
+store %loc0.<[exec]Exec\.Pt::Y> := %s1 [2092]
+assign %s0 = %loc0 [2093]
+assign %loc0 =  [2095]
+%s0 = load %s0.<[exec]Exec\.Pt::Y> [2096]
+assign %s1 = %loc0 [2097]
+%s1 = load %s1.<[exec]Exec\.Pt::Y> [2098]
+assign %s0 = %s0, %s1 [2099]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::ElemRef(System.Int32[],System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3
+begin block_0 [start]:
+assign %excout = <const: []> [2101]
+assign %s0 = @p0 [2101]
+assign %s1 = @p1 [2102]
+assign %s2 = <const: 1> [2103]
+assign %s1 = %s1, %s2 [2104]
+assign %s0 = %s0 [2106]
+assign %s1 = %s0 [2106]
+assign %s1 = %s1 [2107]
+assign %s2 = %s1 [2107]
+%s2 = load @p0.\[] [2108]
+assign %s3 = <const: 5> [2109]
+assign %s2 = %s2, %s3 [2110]
+store @p0.\[] := %s2 [2111]
+%s0 = load @p0.\[] [2112]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::RefLocal(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=cell_0 %L6=c_1 %L7=cell_2 %L8=c_3 %L9=s2
+begin block_0 [start]:
+assign %excout = <const: []> [2114]
+assign %s0 = @p0 [2114]
+assign %loc0 = %s0 [2115]
+assign %s0 = @p0 [2116]
+assign %s0 = %s0 [2117]
+assign %loc1 = %s0 [2118]
+assign %s0 = @p0 [2119]
+assign %s1 = <const: 0> [2120]
+goto 2, 1
+end block_0
+begin block_1:
+assign %c_1 = %loc1 [2122]
+store %cell_0.deref := %c_1 [2122]
+assign %s0 = %cell_0 [2122]
+goto 3
+end block_1
+begin block_2:
+assign %c_3 = %loc0 [2124]
+store %cell_2.deref := %c_3 [2124]
+assign %s0 = %cell_2 [2124]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %s0 [2125]
+assign %s1 = %s0 [2125]
+%s1 = load %s1.deref [2126]
+assign %s2 = <const: 3> [2127]
+assign %s1 = %s1, %s2 [2128]
+store %s0.deref := %s1 [2129]
+assign %s0 = %loc0 [2130]
+assign %s1 = <const: 10> [2131]
+assign %s0 = %s0, %s1 [2132]
+assign %s1 = %loc1 [2133]
+assign %s0 = %s0, %s1 [2134]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Val::RefJoin(System.Int32,System.Int32&)->System.Int32(@p0[shared_fields], @p1[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=cell_0 %L5=c_1 %L6=s2
+begin block_0 [start]:
+assign %excout = <const: []> [2136]
+assign %s0 = @p0 [2136]
+assign %s1 = <const: 3> [2137]
+assign %s0 = %s0, %s1 [2138]
+assign %loc0 = %s0 [2139]
+assign %s0 = @p0 [2140]
+assign %s1 = <const: 0> [2141]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = @p1 [2143]
+goto 3
+end block_1
+begin block_2:
+assign %c_1 = %loc0 [2145]
+store %cell_0.deref := %c_1 [2145]
+assign %s0 = %cell_0 [2145]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %s0 [2146]
+assign %s1 = %s0 [2146]
+%s1 = load %s1.deref [2147]
+assign %s2 = <const: 7> [2148]
+assign %s1 = %s1, %s2 [2149]
+store %s0.deref := %s1 [2150]
+assign %s0 = %loc0 [2151]
+assign %s1 = <const: 100> [2152]
+assign %s0 = %s0, %s1 [2153]
+assign %s1 = @p1 [2154]
+%s1 = load %s1.deref [2155]
+assign %s0 = %s0, %s1 [2156]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Val::Multi(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=loc1 %L5=loc2 %L6=s2 %L7=s3 %L8=s4 %L9=s5
+begin block_0 [start]:
+assign %excout = <const: []> [2158]
+assign %s0 = <const: 3> [2158]
+assign %s1 = <const: 4> [2159]
+assign %s0 = cil<System.Int32[,]> [2160]
+assign %loc0 = %s0 [2161]
+assign %s0 = <const: 0> [2162]
+assign %loc1 = %s0 [2163]
+goto 5
+end block_0
+begin block_1:
+assign %s0 = <const: 0> [2165]
+assign %loc2 = %s0 [2166]
+goto 3
+end block_1
+begin block_2:
+assign %s0 = %loc0 [2168]
+assign %s1 = %loc1 [2169]
+assign %s2 = %loc2 [2170]
+assign %s3 = %loc1 [2171]
+assign %s4 = @p0 [2172]
+assign %s3 = %s3, %s4 [2173]
+assign %s4 = %loc2 [2174]
+assign %s5 = @p1 [2175]
+assign %s4 = %s4, %s5 [2176]
+assign %s3 = %s3, %s4 [2177]
+store %s0.\[] := %s3 [2178]
+assign %s0 = %loc2 [2179]
+assign %s1 = <const: 1> [2180]
+assign %s0 = %s0, %s1 [2181]
+assign %loc2 = %s0 [2182]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %loc2 [2183]
+assign %s1 = <const: 4> [2184]
+goto 2, 4
+end block_3
+begin block_4:
+assign %s0 = %loc1 [2186]
+assign %s1 = <const: 1> [2187]
+assign %s0 = %s0, %s1 [2188]
+assign %loc1 = %s0 [2189]
+goto 5
+end block_4
+begin block_5:
+assign %s0 = %loc1 [2190]
+assign %s1 = <const: 3> [2191]
+goto 1, 6
+end block_5
+begin block_6:
+assign %s0 = %loc0 [2193]
+assign %s1 = <const: 1> [2194]
+assign %s2 = <const: 2> [2195]
+assign %s0 = %s0 [2197]
+assign %s1 = %s0 [2197]
+%s1 = load %loc0.\[] [2198]
+assign %s2 = <const: 7> [2199]
+assign %s1 = %s1, %s2 [2200]
+store %loc0.\[] := %s1 [2201]
+assign %s0 = %loc0 [2202]
+assign %s1 = <const: 2> [2203]
+assign %s2 = <const: 3> [2204]
+assign %s0 = %s0 [2206]
+assign %s1 = %s0 [2206]
+%s1 = load %loc0.\[] [2207]
+assign %s2 = <const: 85> [2208]
+assign %s1 = %s1, %s2 [2209]
+store %loc0.\[] := %s1 [2210]
+assign %s0 = %loc0 [2211]
+assign %s1 = <const: 1> [2212]
+assign %s2 = <const: 2> [2213]
+%s0 = load %s0.\[] [2214]
+assign %s1 = %loc0 [2215]
+assign %s2 = <const: 2> [2216]
+assign %s3 = <const: 3> [2217]
+%s1 = load %s1.\[] [2218]
+assign %s0 = %s0, %s1 [2219]
+return %s0, %excout
+end block_6
+
+define [exec]Exec.Val::Jagged(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2 %L5=s3
+begin block_0 [start]:
+assign %excout = <const: []> [2221]
+assign %s0 = <const: 3> [2221]
+assign %s0 = cil<System.Int32[]> [2222]
+assign %loc0 = %s0 [2223]
+assign %s0 = %loc0 [2224]
+assign %s1 = <const: 1> [2225]
+assign %s2 = @p0 [2226]
+assign %s3 = <const: 3> [2227]
+assign %s2 = %s2, %s3 [2228]
+assign %s3 = <const: 1> [2229]
+assign %s2 = %s2, %s3 [2230]
+assign %s2 = cil<System.Int32[]> [2231]
+store %s0.\[] := %s2 [2232]
+assign %s0 = %loc0 [2233]
+assign %s1 = <const: 1> [2234]
+%s0 = load %s0.\[] [2235]
+assign %s1 = @p0 [2236]
+assign %s2 = <const: 3> [2237]
+assign %s1 = %s1, %s2 [2238]
+assign %s2 = @p0 [2239]
+store %s0.\[] := %s2 [2240]
+assign %s0 = %loc0 [2241]
+assign %s1 = <const: 1> [2242]
+%s0 = load %s0.\[] [2243]
+assign %s1 = @p0 [2244]
+assign %s2 = <const: 3> [2245]
+assign %s1 = %s1, %s2 [2246]
+%s0 = load %s0.\[] [2247]
+assign %s1 = %loc0 [2248]
+assign %s2 = <const: 1> [2249]
+%s1 = load %s1.\[] [2250]
+%s1 = load %s1.length [2251]
+assign %s1 = %s1 [2252]
+assign %s0 = %s0, %s1 [2253]
+assign %s1 = %loc0 [2254]
+assign %s2 = <const: 0> [2255]
+%s1 = load %s1.\[] [2256]
+assign %s2 = <const: 0> [2257]
+assign %s1 = %s1, %s2 [2258]
+assign %s0 = %s0, %s1 [2259]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::PtrToStatic(System.Int32)->System.Int64(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s1 %L2=cell_0 %L3=c_1 %L4=retval %L5=throwval %L6=u_2 %L7=cell_3 %L8=c_4 %L9=u_5 %L10=s0
+begin block_0 [start]:
+assign %excout = <const: []> [2261]
+assign %s1 = @p0 [2263]
+%c_1 = load $globals.<[exec]Exec\.G::Total> [2264]
+store %cell_0.deref := %c_1 [2264]
+%retval, %throwval = direct-call [exec]Exec.Val::Inc(System.Int64&,System.Int32)->System.Void(%cell_0, %s1) [2264]
+assign %excout = %excout, %throwval [2264]
+%u_2 = load %cell_0.deref [2264]
+store $globals.<[exec]Exec\.G::Total> := %u_2 [2264]
+assign %s1 = @p0 [2266]
+%c_4 = load $globals.<[exec]Exec\.G::Counter> [2267]
+store %cell_3.deref := %c_4 [2267]
+%retval, %throwval = direct-call [exec]Exec.Val::Inc(System.Int32&,System.Int32)->System.Void(%cell_3, %s1) [2267]
+assign %excout = %excout, %throwval [2267]
+%u_5 = load %cell_3.deref [2267]
+store $globals.<[exec]Exec\.G::Counter> := %u_5 [2267]
+%s0 = load $globals.<[exec]Exec\.G::Total> [2268]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Val::Inc(System.Int64&,System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [2270]
+assign %s0 = @p0 [2270]
+assign %s1 = @p0 [2271]
+%s1 = load %s1.deref [2272]
+assign %s2 = @p1 [2273]
+assign %s2 = %s2 [2274]
+assign %s1 = %s1, %s2 [2275]
+store %s0.deref := %s1 [2276]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Val::Inc(System.Int32&,System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [2278]
+assign %s0 = @p0 [2278]
+assign %s1 = @p0 [2279]
+%s1 = load %s1.deref [2280]
+assign %s2 = @p1 [2281]
+assign %s1 = %s1, %s2 [2282]
+store %s0.deref := %s1 [2283]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Arr::Sum(System.Int32[])->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=loc2 %L5=s1 %L6=loc3
+begin block_0 [start]:
+assign %excout = <const: []> [2285]
+assign %s0 = <const: 0> [2285]
+assign %loc0 = %s0 [2286]
+assign %s0 = @p0 [2287]
+assign %loc1 = %s0 [2288]
+assign %s0 = <const: 0> [2289]
+assign %loc2 = %s0 [2290]
+goto 2
+end block_0
+begin block_1:
+assign %s0 = %loc1 [2292]
+assign %s1 = %loc2 [2293]
+%s0 = load %s0.\[] [2294]
+assign %loc3 = %s0 [2295]
+assign %s0 = %loc0 [2296]
+assign %s1 = %loc3 [2297]
+assign %s0 = %s0, %s1 [2298]
+assign %loc0 = %s0 [2299]
+assign %s0 = %loc2 [2300]
+assign %s1 = <const: 1> [2301]
+assign %s0 = %s0, %s1 [2302]
+assign %loc2 = %s0 [2303]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc2 [2304]
+assign %s1 = %loc1 [2305]
+%s1 = load %s1.length [2306]
+assign %s1 = %s1 [2307]
+goto 1, 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [2309]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Arr::Reverse(System.Int32[])->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=loc1 %L5=loc2 %L6=s2 %L7=s3
+begin block_0 [start]:
+assign %excout = <const: []> [2311]
+assign %s0 = <const: 0> [2311]
+assign %loc0 = %s0 [2312]
+assign %s0 = @p0 [2313]
+%s0 = load %s0.length [2314]
+assign %s0 = %s0 [2315]
+assign %s1 = <const: 1> [2316]
+assign %s0 = %s0, %s1 [2317]
+assign %loc1 = %s0 [2318]
+goto 2
+end block_0
+begin block_1:
+assign %s0 = @p0 [2320]
+assign %s1 = %loc0 [2321]
+%s0 = load %s0.\[] [2322]
+assign %loc2 = %s0 [2323]
+assign %s0 = @p0 [2324]
+assign %s1 = %loc0 [2325]
+assign %s2 = @p0 [2326]
+assign %s3 = %loc1 [2327]
+%s2 = load %s2.\[] [2328]
+store %s0.\[] := %s2 [2329]
+assign %s0 = @p0 [2330]
+assign %s1 = %loc1 [2331]
+assign %s2 = %loc2 [2332]
+store %s0.\[] := %s2 [2333]
+assign %s0 = %loc0 [2334]
+assign %s1 = <const: 1> [2335]
+assign %s0 = %s0, %s1 [2336]
+assign %loc0 = %s0 [2337]
+assign %s0 = %loc1 [2338]
+assign %s1 = <const: 1> [2339]
+assign %s0 = %s0, %s1 [2340]
+assign %loc1 = %s0 [2341]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc0 [2342]
+assign %s1 = %loc1 [2343]
+goto 1, 3
+end block_2
+begin block_3:
+return <const: []>, %excout
+end block_3
+
+define [exec]Exec.Arr::Sort(System.Int64[])->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2 %L6=s3 %L7=loc2 %L8=s4
+begin block_0 [start]:
+assign %excout = <const: []> [2346]
+assign %s0 = <const: 0> [2346]
+assign %loc0 = %s0 [2347]
+goto 7
+end block_0
+begin block_1:
+assign %s0 = <const: 0> [2349]
+assign %loc1 = %s0 [2350]
+goto 5
+end block_1
+begin block_2:
+assign %s0 = @p0 [2352]
+assign %s1 = %loc1 [2353]
+%s0 = load %s0.\[] [2354]
+assign %s1 = @p0 [2355]
+assign %s2 = %loc1 [2356]
+assign %s3 = <const: 1> [2357]
+assign %s2 = %s2, %s3 [2358]
+%s1 = load %s1.\[] [2359]
+goto 4, 3
+end block_2
+begin block_3:
+assign %s0 = @p0 [2361]
+assign %s1 = %loc1 [2362]
+%s0 = load %s0.\[] [2363]
+assign %loc2 = %s0 [2364]
+assign %s0 = @p0 [2365]
+assign %s1 = %loc1 [2366]
+assign %s2 = @p0 [2367]
+assign %s3 = %loc1 [2368]
+assign %s4 = <const: 1> [2369]
+assign %s3 = %s3, %s4 [2370]
+%s2 = load %s2.\[] [2371]
+store %s0.\[] := %s2 [2372]
+assign %s0 = @p0 [2373]
+assign %s1 = %loc1 [2374]
+assign %s2 = <const: 1> [2375]
+assign %s1 = %s1, %s2 [2376]
+assign %s2 = %loc2 [2377]
+store %s0.\[] := %s2 [2378]
+goto 4
+end block_3
+begin block_4:
+assign %s0 = %loc1 [2379]
+assign %s1 = <const: 1> [2380]
+assign %s0 = %s0, %s1 [2381]
+assign %loc1 = %s0 [2382]
+goto 5
+end block_4
+begin block_5:
+assign %s0 = %loc1 [2383]
+assign %s1 = <const: 1> [2384]
+assign %s0 = %s0, %s1 [2385]
+assign %s1 = @p0 [2386]
+%s1 = load %s1.length [2387]
+assign %s1 = %s1 [2388]
+assign %s2 = %loc0 [2389]
+assign %s1 = %s1, %s2 [2390]
+goto 2, 6
+end block_5
+begin block_6:
+assign %s0 = %loc0 [2392]
+assign %s1 = <const: 1> [2393]
+assign %s0 = %s0, %s1 [2394]
+assign %loc0 = %s0 [2395]
+goto 7
+end block_6
+begin block_7:
+assign %s0 = %loc0 [2396]
+assign %s1 = @p0 [2397]
+%s1 = load %s1.length [2398]
+assign %s1 = %s1 [2399]
+goto 1, 8
+end block_7
+begin block_8:
+return <const: []>, %excout
+end block_8
+
+define [exec]Exec.Arr::Avg(System.Double[])->System.Double(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2
+begin block_0 [start]:
+assign %excout = <const: []> [2402]
+assign %s0 = <const: 0> [2403]
+assign %loc0 = %s0 [2404]
+assign %s0 = <const: 0> [2405]
+assign %loc1 = %s0 [2406]
+goto 2
+end block_0
+begin block_1:
+assign %s0 = %loc0 [2408]
+assign %s1 = @p0 [2409]
+assign %s2 = %loc1 [2410]
+%s1 = load %s1.\[] [2411]
+assign %s0 = %s0, %s1 [2412]
+assign %loc0 = %s0 [2413]
+assign %s0 = %loc1 [2414]
+assign %s1 = <const: 1> [2415]
+assign %s0 = %s0, %s1 [2416]
+assign %loc1 = %s0 [2417]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc1 [2418]
+assign %s1 = @p0 [2419]
+%s1 = load %s1.length [2420]
+assign %s1 = %s1 [2421]
+goto 1, 3
+end block_2
+begin block_3:
+assign %s0 = @p0 [2423]
+%s0 = load %s0.length [2424]
+goto 5, 4
+end block_3
+begin block_4:
+assign %s0 = %loc0 [2426]
+assign %s1 = @p0 [2427]
+%s1 = load %s1.length [2428]
+assign %s1 = %s1 [2429]
+assign %s1 = %s1 [2430]
+assign %s0 = %s0, %s1 [2431]
+return %s0, %excout
+end block_4
+begin block_5:
+assign %s0 = <const: 0> [2433]
+return %s0, %excout
+end block_5
+
+define [exec]Exec.Arr::Make(System.Int32)->System.Int32[](@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=loc1 %L5=s2 %L6=s3
+begin block_0 [start]:
+assign %excout = <const: []> [2435]
+assign %s0 = @p0 [2435]
+assign %s1 = <const: 7> [2436]
+assign %s0 = %s0, %s1 [2437]
+assign %s0 = cil<System.Int32[]> [2438]
+assign %loc0 = %s0 [2439]
+assign %s0 = <const: 0> [2440]
+assign %loc1 = %s0 [2441]
+goto 2
+end block_0
+begin block_1:
+assign %s0 = %loc0 [2443]
+assign %s1 = %loc1 [2444]
+assign %s2 = %loc1 [2445]
+assign %s3 = @p0 [2446]
+assign %s2 = %s2, %s3 [2447]
+store %s0.\[] := %s2 [2448]
+assign %s0 = %loc1 [2449]
+assign %s1 = <const: 1> [2450]
+assign %s0 = %s0, %s1 [2451]
+assign %loc1 = %s0 [2452]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc1 [2453]
+assign %s1 = %loc0 [2454]
+%s1 = load %s1.length [2455]
+assign %s1 = %s1 [2456]
+goto 1, 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [2458]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Arr::NegLen(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [2460]
+assign %s0 = @p0 [2460]
+assign %s1 = <const: 50> [2461]
+assign %s0 = %s0, %s1 [2462]
+assign %s0 = cil<System.Byte[]> [2463]
+%s0 = load %s0.length [2464]
+assign %s0 = %s0 [2465]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arr::Narrow(System.Byte[],System.SByte[],System.Int16[],System.UInt16[],System.Char[],System.Boolean[])->System.Int32(@p0[shared], @p1[shared], @p2[shared], @p3[shared], @p4[shared], @p5[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2 %L5=s3
+begin block_0 [start]:
+assign %excout = <const: []> [2467]
+assign %s0 = <const: 0> [2467]
+assign %loc0 = %s0 [2468]
+assign %s0 = @p0 [2469]
+%s0 = load %s0.length [2470]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = @p0 [2472]
+assign %s1 = <const: 0> [2473]
+assign %s0 = %s0 [2475]
+assign %s1 = %s0 [2475]
+%s1 = load @p0.\[] [2476]
+assign %s2 = <const: 200> [2477]
+assign %s1 = %s1, %s2 [2478]
+assign %s1 = %s1 [2479]
+store @p0.\[] := %s1 [2480]
+assign %s0 = %loc0 [2481]
+assign %s1 = @p0 [2482]
+assign %s2 = <const: 0> [2483]
+%s1 = load %s1.\[] [2484]
+assign %s0 = %s0, %s1 [2485]
+assign %loc0 = %s0 [2486]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = @p1 [2487]
+%s0 = load %s0.length [2488]
+goto 4, 3
+end block_2
+begin block_3:
+assign %s0 = @p1 [2490]
+assign %s1 = <const: 0> [2491]
+assign %s0 = %s0 [2493]
+assign %s1 = %s0 [2493]
+%s1 = load @p1.\[] [2494]
+assign %s2 = <const: 100> [2495]
+assign %s1 = %s1, %s2 [2496]
+assign %s1 = %s1 [2497]
+store @p1.\[] := %s1 [2498]
+assign %s0 = %loc0 [2499]
+assign %s1 = @p1 [2500]
+assign %s2 = <const: 0> [2501]
+%s1 = load %s1.\[] [2502]
+assign %s0 = %s0, %s1 [2503]
+assign %loc0 = %s0 [2504]
+goto 4
+end block_3
+begin block_4:
+assign %s0 = @p2 [2505]
+%s0 = load %s0.length [2506]
+goto 6, 5
+end block_4
+begin block_5:
+assign %s0 = @p2 [2508]
+assign %s1 = <const: 0> [2509]
+assign %s0 = %s0 [2511]
+assign %s1 = %s0 [2511]
+%s1 = load @p2.\[] [2512]
+assign %s2 = <const: 1000> [2513]
+assign %s1 = %s1, %s2 [2514]
+assign %s1 = %s1 [2515]
+store @p2.\[] := %s1 [2516]
+assign %s0 = %loc0 [2517]
+assign %s1 = @p2 [2518]
+assign %s2 = <const: 0> [2519]
+%s1 = load %s1.\[] [2520]
+assign %s0 = %s0, %s1 [2521]
+assign %loc0 = %s0 [2522]
+goto 6
+end block_5
+begin block_6:
+assign %s0 = @p3 [2523]
+%s0 = load %s0.length [2524]
+goto 8, 7
+end block_6
+begin block_7:
+assign %s0 = @p3 [2526]
+assign %s1 = <const: 0> [2527]
+assign %s2 = @p3 [2528]
+assign %s3 = <const: 0> [2529]
+%s2 = load %s2.\[] [2530]
+assign %s3 = <const: 7> [2531]
+assign %s2 = %s2, %s3 [2532]
+assign %s2 = %s2 [2533]
+store %s0.\[] := %s2 [2534]
+assign %s0 = %loc0 [2535]
+assign %s1 = @p3 [2536]
+assign %s2 = <const: 0> [2537]
+%s1 = load %s1.\[] [2538]
+assign %s0 = %s0, %s1 [2539]
+assign %loc0 = %s0 [2540]
+goto 8
+end block_7
+begin block_8:
+assign %s0 = @p4 [2541]
+%s0 = load %s0.length [2542]
+goto 10, 9
+end block_8
+begin block_9:
+assign %s0 = @p4 [2544]
+assign %s1 = <const: 0> [2545]
+assign %s0 = %s0 [2547]
+assign %s1 = %s0 [2547]
+%s1 = load @p4.\[] [2548]
+assign %s2 = <const: 1> [2549]
+assign %s1 = %s1, %s2 [2550]
+assign %s1 = %s1 [2551]
+store @p4.\[] := %s1 [2552]
+assign %s0 = %loc0 [2553]
+assign %s1 = @p4 [2554]
+assign %s2 = <const: 0> [2555]
+%s1 = load %s1.\[] [2556]
+assign %s0 = %s0, %s1 [2557]
+assign %loc0 = %s0 [2558]
+goto 10
+end block_9
+begin block_10:
+assign %s0 = @p5 [2559]
+%s0 = load %s0.length [2560]
+goto 12, 11
+end block_10
+begin block_11:
+assign %s0 = @p5 [2562]
+assign %s1 = <const: 0> [2563]
+assign %s2 = @p5 [2564]
+assign %s3 = <const: 0> [2565]
+%s2 = load %s2.\[] [2566]
+assign %s3 = <const: 0> [2567]
+assign %s2 = %s2, %s3 [2568]
+store %s0.\[] := %s2 [2569]
+assign %s0 = %loc0 [2570]
+assign %s1 = @p5 [2571]
+assign %s2 = <const: 0> [2572]
+%s1 = load %s1.\[] [2573]
+assign %s2 = <const: 0> [2574]
+assign %s1 = %s1, %s2 [2575]
+assign %s0 = %s0, %s1 [2576]
+assign %loc0 = %s0 [2577]
+goto 12
+end block_11
+begin block_12:
+assign %s0 = %loc0 [2578]
+return %s0, %excout
+end block_12
+
+define [exec]Exec.Arr::FloatArr(System.Single[],System.Int32)->System.Single(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3 %L5=s4
+begin block_0 [start]:
+assign %excout = <const: []> [2580]
+assign %s0 = @p0 [2580]
+assign %s1 = @p1 [2581]
+assign %s2 = <const: 1> [2582]
+assign %s1 = %s1, %s2 [2583]
+assign %s2 = @p0 [2584]
+assign %s3 = @p1 [2585]
+assign %s4 = <const: 1> [2586]
+assign %s3 = %s3, %s4 [2587]
+%s2 = load %s2.\[] [2588]
+assign %s3 = <const: 1077936128> [2589]
+assign %s2 = %s2, %s3 [2590]
+assign %s3 = <const: 1065353216> [2591]
+assign %s2 = %s2, %s3 [2592]
+store %s0.\[] := %s2 [2593]
+assign %s0 = @p0 [2594]
+assign %s1 = <const: 0> [2595]
+%s0 = load %s0.\[] [2596]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arr::Objects(Exec.Node[])->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2 %L6=retval %L7=throwval %L8=s3 %L9=s4
+begin block_0 [start]:
+assign %excout = <const: []> [2598]
+assign %s0 = <const: 0> [2598]
+assign %loc0 = %s0 [2599]
+assign %s0 = <const: 0> [2600]
+assign %loc1 = %s0 [2601]
+goto 4
+end block_0
+begin block_1:
+assign %s0 = @p0 [2603]
+assign %s1 = %loc1 [2604]
+%s0 = load %s0.\[] [2605]
+goto 3, 2
+end block_1
+begin block_2:
+assign %s0 = @p0 [2607]
+assign %s1 = %loc1 [2608]
+assign %s2 = cil<[exec]Exec.Node> [2609]
+%retval, %throwval = direct-call [exec]Exec.Node::.ctor()->System.Void(%s2) [2609]
+assign %excout = %excout, %throwval [2609]
+assign %s2 = %s2 [2610]
+assign %s3 = %s2 [2610]
+assign %s4 = %loc1 [2611]
+store %s3.<[exec]Exec\.Node::Value> := %s4 [2612]
+store %s0.\[] := %s2 [2613]
+goto 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [2614]
+assign %s1 = @p0 [2615]
+assign %s2 = %loc1 [2616]
+%s1 = load %s1.\[] [2617]
+%s1 = load %s1.<[exec]Exec\.Node::Value> [2618]
+assign %s0 = %s0, %s1 [2619]
+assign %loc0 = %s0 [2620]
+assign %s0 = %loc1 [2621]
+assign %s1 = <const: 1> [2622]
+assign %s0 = %s0, %s1 [2623]
+assign %loc1 = %s0 [2624]
+goto 4
+end block_3
+begin block_4:
+assign %s0 = %loc1 [2625]
+assign %s1 = @p0 [2626]
+%s1 = load %s1.length [2627]
+assign %s1 = %s1 [2628]
+goto 1, 5
+end block_4
+begin block_5:
+assign %s0 = %loc0 [2630]
+return %s0, %excout
+end block_5
+
+define [exec]Exec.Arr::Statics(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=ab0_15 %L5=s3 %L6=s4
+begin block_0 [start]:
+assign %excout = <const: []> [2632]
+assign %s0 = <const: 4> [2632]
+assign %s0 = cil<System.Int32[]> [2633]
+store $globals.<[exec]Exec\.G::Data> := %s0 [2634]
+%s0 = load $globals.<[exec]Exec\.G::Data> [2635]
+assign %s1 = @p0 [2636]
+assign %s2 = <const: 3> [2637]
+assign %s1 = %s1, %s2 [2638]
+assign %s2 = @p0 [2639]
+store %s0.\[] := %s2 [2640]
+%s0 = load $globals.<[exec]Exec\.G::Data> [2641]
+assign %s1 = @p0 [2642]
+assign %s2 = <const: 1> [2643]
+assign %s1 = %s1, %s2 [2644]
+assign %s2 = <const: 3> [2645]
+assign %s1 = %s1, %s2 [2646]
+assign %ab0_15 = %s0 [2647]
+assign %s0 = %s0 [2648]
+assign %s1 = %s0 [2648]
+%s1 = load %ab0_15.\[] [2649]
+%s2 = load $globals.<[exec]Exec\.G::Data> [2650]
+assign %s3 = @p0 [2651]
+assign %s4 = <const: 3> [2652]
+assign %s3 = %s3, %s4 [2653]
+%s2 = load %s2.\[] [2654]
+assign %s3 = <const: 1> [2655]
+assign %s2 = %s2, %s3 [2656]
+assign %s1 = %s1, %s2 [2657]
+store %ab0_15.\[] := %s1 [2658]
+%s0 = load $globals.<[exec]Exec\.G::Data> [2659]
+assign %s1 = <const: 3> [2660]
+%s0 = load %s0.\[] [2661]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arr::NativeIndex(System.Int64[],System.Int64)->System.Int64(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [2663]
+assign %s0 = @p0 [2663]
+assign %s1 = @p1 [2664]
+assign %s1 = %s1 [2665]
+%s0 = load %s0.\[] [2666]
+assign %s1 = @p0 [2667]
+%s1 = load %s1.length [2668]
+assign %s1 = %s1 [2669]
+assign %s1 = %s1 [2670]
+assign %s0 = %s0, %s1 [2671]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Arr::ArrayOfBags(Exec.Bag[],System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=ab2_15 %L5=pt_0
+begin block_0 [start]:
+assign %excout = <const: []> [2673]
+assign %s0 = @p0 [2673]
+%s0 = load %s0.length [2674]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = <const: 0> [2676]
+return %s0, %excout
+end block_1
+begin block_2:
+assign %s0 = @p0 [2678]
+assign %s1 = <const: 0> [2679]
+%s0 = load %s0.\[] [2680]
+assign %s0 = %s0 [2681]
+assign %s1 = %s0 [2681]
+%s1 = load %s1.<[exec]Exec\.Bag::A> [2682]
+assign %s2 = @p1 [2683]
+assign %s1 = %s1, %s2 [2684]
+store %s0.<[exec]Exec\.Bag::A> := %s1 [2685]
+assign %s0 = @p0 [2686]
+assign %s1 = @p0 [2687]
+%s1 = load %s1.length [2688]
+assign %s1 = %s1 [2689]
+assign %s2 = <const: 1> [2690]
+assign %s1 = %s1, %s2 [2691]
+%s0 = load %s0.\[] [2692]
+assign %ab2_15 = %s0 [2693]
+assign %s1 = @p1 [2694]
+%pt_0 = load %ab2_15.<[exec]Exec\.Bag::P> [2695]
+store %pt_0.<[exec]Exec\.Pt::X> := %s1 [2695]
+assign %s0 = @p0 [2696]
+assign %s1 = <const: 0> [2697]
+%s0 = load %s0.\[] [2698]
+%s0 = load %s0.<[exec]Exec\.Bag::A> [2699]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Inst::Add(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [2701]
+assign %s0 = @p0 [2701]
+assign %s1 = @p0 [2702]
+%s1 = load %s1.<[exec]Exec\.Inst::Total> [2703]
+assign %s2 = @p1 [2704]
+assign %s1 = %s1, %s2 [2705]
+store %s0.<[exec]Exec\.Inst::Total> := %s1 [2706]
+assign %s0 = @p0 [2707]
+%s0 = load %s0.<[exec]Exec\.Inst::Total> [2708]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Inst::Push(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval %L5=s2 %L6=s3
+begin block_0 [start]:
+assign %excout = <const: []> [2710]
+assign %s0 = @p0 [2710]
+assign %s1 = cil<[exec]Exec.Node> [2711]
+%retval, %throwval = direct-call [exec]Exec.Node::.ctor()->System.Void(%s1) [2711]
+assign %excout = %excout, %throwval [2711]
+assign %s1 = %s1 [2712]
+assign %s2 = %s1 [2712]
+assign %s3 = @p1 [2713]
+store %s2.<[exec]Exec\.Node::Value> := %s3 [2714]
+assign %s1 = %s1 [2715]
+assign %s2 = %s1 [2715]
+assign %s3 = @p0 [2716]
+%s3 = load %s3.<[exec]Exec\.Inst::Head> [2717]
+store %s2.<[exec]Exec\.Node::Next> := %s3 [2718]
+store %s0.<[exec]Exec\.Inst::Head> := %s1 [2719]
+assign %s0 = @p0 [2720]
+assign %s1 = @p0 [2721]
+%s1 = load %s1.<[exec]Exec\.Inst::Total> [2722]
+assign %s2 = <const: 1> [2723]
+assign %s1 = %s1, %s2 [2724]
+store %s0.<[exec]Exec\.Inst::Total> := %s1 [2725]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Inst::Twice(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval %L5=s2
+begin block_0 [start]:
+assign %excout = <const: []> [2727]
+assign %s0 = @p0 [2727]
+assign %s1 = @p1 [2728]
+%retval, %throwval = direct-call [exec]Exec.Inst::Add(System.Int32)->System.Int32(%s0, %s1) [2729]
+assign %excout = %excout, %throwval [2729]
+assign %s0 = %retval [2729]
+assign %s1 = @p0 [2730]
+assign %s2 = @p1 [2731]
+%retval, %throwval = direct-call [exec]Exec.Inst::Add(System.Int32)->System.Int32(%s1, %s2) [2732]
+assign %excout = %excout, %throwval [2732]
+assign %s1 = %retval [2732]
+assign %s0 = %s0, %s1 [2733]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Inst::Hook(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [2735]
+assign %s0 = @p1 [2735]
+assign %s1 = @p0 [2736]
+%s1 = load %s1.<[exec]Exec\.Inst::Total> [2737]
+assign %s0 = %s0, %s1 [2738]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Inst::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [2740]
+assign %s0 = @p0 [2740]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Object::.ctor()->System.Void(%s0) [2741]
+assign %excout = %excout, %throwval [2741]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.IArea::Area()->System.Int32(@p0[shared]) -> 2:
+
+define [exec]Exec.IGrow::Grow(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
+
+define [exec]Exec.Disk::Area()->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [2743]
+assign %s0 = <const: 3> [2743]
+assign %s1 = @p0 [2744]
+%s1 = load %s1.<[exec]Exec\.Disk::R> [2745]
+assign %s0 = %s0, %s1 [2746]
+assign %s1 = @p0 [2747]
+%s1 = load %s1.<[exec]Exec\.Disk::R> [2748]
+assign %s0 = %s0, %s1 [2749]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Disk::Exec.IGrow.Grow(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [2751]
+assign %s0 = @p0 [2751]
+assign %s1 = @p0 [2752]
+%s1 = load %s1.<[exec]Exec\.Disk::R> [2753]
+assign %s2 = @p1 [2754]
+assign %s1 = %s1, %s2 [2755]
+store %s0.<[exec]Exec\.Disk::R> := %s1 [2756]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Disk::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [2758]
+assign %s0 = @p0 [2758]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Object::.ctor()->System.Void(%s0) [2759]
+assign %excout = %excout, %throwval [2759]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Plate::Area()->System.Int32(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [2761]
+assign %s0 = @p0 [2761]
+%s0 = load %s0.<[exec]Exec\.Plate::W> [2762]
+assign %s1 = @p0 [2763]
+%s1 = load %s1.<[exec]Exec\.Plate::H> [2764]
+assign %s0 = %s0, %s1 [2765]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Plate::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [2767]
+assign %s0 = @p0 [2767]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Object::.ctor()->System.Void(%s0) [2768]
+assign %excout = %excout, %throwval [2768]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Ifaces::Pick(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval %L5=s2 %L6=loc0 %L7=s3
+begin block_0 [start]:
+assign %excout = <const: []> [2770]
+assign %s0 = @p0 [2770]
+assign %s1 = @p1 [2771]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = cil<[exec]Exec.Plate> [2773]
+%retval, %throwval = direct-call [exec]Exec.Plate::.ctor()->System.Void(%s0) [2773]
+assign %excout = %excout, %throwval [2773]
+assign %s0 = %s0 [2774]
+assign %s1 = %s0 [2774]
+assign %s2 = @p0 [2775]
+store %s1.<[exec]Exec\.Plate::W> := %s2 [2776]
+assign %s0 = %s0 [2777]
+assign %s1 = %s0 [2777]
+assign %s2 = @p1 [2778]
+store %s1.<[exec]Exec\.Plate::H> := %s2 [2779]
+assign %loc0 = %s0 [2780]
+assign %s0 = %loc0 [2781]
+goto 3
+end block_1
+begin block_2:
+assign %s0 = cil<[exec]Exec.Disk> [2783]
+%retval, %throwval = direct-call [exec]Exec.Disk::.ctor()->System.Void(%s0) [2783]
+assign %excout = %excout, %throwval [2783]
+assign %s0 = %s0 [2784]
+assign %s1 = %s0 [2784]
+assign %s2 = @p0 [2785]
+assign %s3 = <const: 1000> [2786]
+assign %s2 = %s2, %s3 [2787]
+store %s1.<[exec]Exec\.Disk::R> := %s2 [2788]
+assign %loc0 = %s0 [2789]
+assign %s0 = %loc0 [2790]
+goto 3
+end block_2
+begin block_3:
+%retval, %throwval = cil-call %s0.<[exec]Exec.IArea::Area()->System.Int32>() [2791]
+assign %excout = %excout, %throwval [2791]
+assign %s0 = %retval [2791]
+return %s0, %excout
+end block_3
+
+define [exec]Exec.Ifaces::Explicit(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1 %L5=s2
+begin block_0 [start]:
+assign %excout = <const: []> [2793]
+assign %s0 = cil<[exec]Exec.Disk> [2794]
+%retval, %throwval = direct-call [exec]Exec.Disk::.ctor()->System.Void(%s0) [2794]
+assign %excout = %excout, %throwval [2794]
+assign %s0 = %s0 [2795]
+assign %s1 = %s0 [2795]
+assign %s2 = @p0 [2796]
+store %s1.<[exec]Exec\.Disk::R> := %s2 [2797]
+assign %s0 = %s0 [2798]
+assign %s1 = %s0 [2798]
+assign %s2 = @p1 [2799]
+%retval, %throwval = cil-call %s1.<[exec]Exec.IGrow::Grow(System.Int32)->System.Void>(%s2) [2800]
+assign %excout = %excout, %throwval [2800]
+%s0 = load %s0.<[exec]Exec\.Disk::R> [2801]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Ifaces::Through(Exec.Disk,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [2803]
+assign %s0 = @p0 [2803]
+assign %s1 = @p1 [2804]
+%retval, %throwval = cil-call %s0.<[exec]Exec.IGrow::Grow(System.Int32)->System.Void>(%s1) [2805]
+assign %excout = %excout, %throwval [2805]
+assign %s0 = @p0 [2806]
+%retval, %throwval = cil-call %s0.<[exec]Exec.IArea::Area()->System.Int32>() [2807]
+assign %excout = %excout, %throwval [2807]
+assign %s0 = %retval [2807]
+assign %s1 = @p0 [2808]
+%s1 = load %s1.<[exec]Exec\.Disk::R> [2809]
+assign %s0 = %s0, %s1 [2810]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.IntFn::.ctor(System.Object,System.IntPtr)->System.Void(@p0[shared], @p1[shared], @p2[shared_fields]) -> 2:
+
+define [exec]Exec.IntFn::Invoke(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+
+define [exec]Exec.IntFn::BeginInvoke(System.Int32,System.AsyncCallback,System.Object)->System.IAsyncResult(@p0[shared], @p1[shared_fields], @p2[shared], @p3[shared]) -> 2:
+
+define [exec]Exec.IntFn::EndInvoke(System.IAsyncResult)->System.Int32(@p0[shared], @p1[shared]) -> 2:
+
+define [exec]Exec.Scaler::Apply(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [2812]
+assign %s0 = @p1 [2812]
+assign %s1 = @p0 [2813]
+%s1 = load %s1.<[exec]Exec\.Scaler::K> [2814]
+assign %s0 = %s0, %s1 [2815]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Scaler::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [2817]
+assign %s0 = @p0 [2817]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Object::.ctor()->System.Void(%s0) [2818]
+assign %excout = %excout, %throwval [2818]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Dels::Twice(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [2820]
+assign %s0 = <const: 2> [2820]
+assign %s1 = @p0 [2821]
+assign %s0 = %s0, %s1 [2822]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Dels::Static(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval %L6=dm_0
+begin block_0 [start]:
+assign %excout = <const: []> [2824]
+%s0 = load $globals.<[exec]Exec\.Dels/<>O::<0>__Twice> [2825]
+assign %s0 = %s0 [2826]
+assign %s1 = %s0 [2826]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = <const: 0> [2829]
+assign %s1 = ptr<[exec]Exec.Dels::Twice(System.Int32)->System.Int32> [2830]
+assign %t0 = cil<[exec]Exec.IntFn> [2831]
+assign %t0 = %s0 [2831]
+store %t0.<delegate::method> := ptr<ctadl$delegate$[exec]Exec.Dels::Twice(System.Int32)->System.Int32> [2831]
+%retval, %throwval = direct-call [exec]Exec.IntFn::.ctor(System.Object,System.IntPtr)->System.Void(%t0, %s0, %s1) [2831]
+assign %excout = %excout, %throwval [2831]
+assign %s0 = %t0 [2831]
+assign %s0 = %s0 [2832]
+assign %s1 = %s0 [2832]
+store $globals.<[exec]Exec\.Dels/<>O::<0>__Twice> := %s1 [2833]
+goto 2
+end block_1
+begin block_2:
+assign %s1 = @p0 [2834]
+%dm_0 = load %s0.<delegate::method> [2835]
+%retval, %throwval = funcptr-call %dm_0 <(System.Int32)->System.Int32>(%s0, %s1) [2835]
+assign %excout = %excout, %throwval [2835]
+assign %s0 = %retval [2835]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Dels::Instance(Exec.Scaler,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval %L6=dm_0
+begin block_0 [start]:
+assign %excout = <const: []> [2837]
+assign %s0 = @p0 [2837]
+assign %s1 = ptr<[exec]Exec.Scaler::Apply(System.Int32)->System.Int32> [2838]
+assign %t0 = cil<[exec]Exec.IntFn> [2839]
+assign %t0 = %s0 [2839]
+store %t0.<delegate::method> := %s1 [2839]
+%retval, %throwval = direct-call [exec]Exec.IntFn::.ctor(System.Object,System.IntPtr)->System.Void(%t0, %s0, %s1) [2839]
+assign %excout = %excout, %throwval [2839]
+assign %s0 = %t0 [2839]
+assign %s1 = @p1 [2840]
+%dm_0 = load %s0.<delegate::method> [2841]
+%retval, %throwval = funcptr-call %dm_0 <(System.Int32)->System.Int32>(%s0, %s1) [2841]
+assign %excout = %excout, %throwval [2841]
+assign %s0 = %retval [2841]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Dels::Closure(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=loc0 %L5=s1 %L6=t0
+begin block_0 [start]:
+assign %excout = <const: []> [2843]
+assign %s0 = cil<[exec]Exec.Dels/<>c__DisplayClass3_0> [2844]
+%retval, %throwval = direct-call [exec]Exec.Dels/<>c__DisplayClass3_0::.ctor()->System.Void(%s0) [2844]
+assign %excout = %excout, %throwval [2844]
+assign %loc0 = %s0 [2845]
+assign %s0 = %loc0 [2846]
+assign %s1 = @p1 [2847]
+store %s0.<[exec]Exec\.Dels/<>c__DisplayClass3_0::b> := %s1 [2848]
+assign %s0 = %loc0 [2849]
+assign %s1 = ptr<[exec]Exec.Dels/<>c__DisplayClass3_0::<Closure>b__0(System.Int32)->System.Int32> [2850]
+assign %t0 = cil<[exec]Exec.IntFn> [2851]
+assign %t0 = %s0 [2851]
+store %t0.<delegate::method> := %s1 [2851]
+%retval, %throwval = direct-call [exec]Exec.IntFn::.ctor(System.Object,System.IntPtr)->System.Void(%t0, %s0, %s1) [2851]
+assign %excout = %excout, %throwval [2851]
+assign %s0 = %t0 [2851]
+assign %s1 = @p0 [2852]
+%retval, %throwval = direct-call [exec]Exec.Dels::<Closure>g__Run|3_1(Exec.IntFn,System.Int32)->System.Int32(%s0, %s1) [2853]
+assign %excout = %excout, %throwval [2853]
+assign %s0 = %retval [2853]
+assign %s1 = %loc0 [2854]
+%s1 = load %s1.<[exec]Exec\.Dels/<>c__DisplayClass3_0::b> [2855]
+assign %s0 = %s0, %s1 [2856]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Dels::Lambda(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval %L6=dm_0
+begin block_0 [start]:
+assign %excout = <const: []> [2858]
+%s0 = load $globals.<[exec]Exec\.Dels/<>c::<>9__4_0> [2859]
+assign %s0 = %s0 [2860]
+assign %s1 = %s0 [2860]
+goto 2, 1
+end block_0
+begin block_1:
+%s0 = load $globals.<[exec]Exec\.Dels/<>c::<>9> [2863]
+assign %s1 = ptr<[exec]Exec.Dels/<>c::<Lambda>b__4_0(System.Int32)->System.Int32> [2864]
+assign %t0 = cil<[exec]Exec.IntFn> [2865]
+assign %t0 = %s0 [2865]
+store %t0.<delegate::method> := %s1 [2865]
+%retval, %throwval = direct-call [exec]Exec.IntFn::.ctor(System.Object,System.IntPtr)->System.Void(%t0, %s0, %s1) [2865]
+assign %excout = %excout, %throwval [2865]
+assign %s0 = %t0 [2865]
+assign %s0 = %s0 [2866]
+assign %s1 = %s0 [2866]
+store $globals.<[exec]Exec\.Dels/<>c::<>9__4_0> := %s1 [2867]
+goto 2
+end block_1
+begin block_2:
+assign %s1 = @p0 [2868]
+%dm_0 = load %s0.<delegate::method> [2869]
+%retval, %throwval = funcptr-call %dm_0 <(System.Int32)->System.Int32>(%s0, %s1) [2869]
+assign %excout = %excout, %throwval [2869]
+assign %s0 = %retval [2869]
+return %s0, %excout
+end block_2
+
+define [exec]Exec.Dels::Field(Exec.Scaler,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1 %L5=s2 %L6=s3 %L7=t0 %L8=dm_0
+begin block_0 [start]:
+assign %excout = <const: []> [2871]
+assign %s0 = cil<[exec]Exec.Holder> [2872]
+%retval, %throwval = direct-call [exec]Exec.Holder::.ctor()->System.Void(%s0) [2872]
+assign %excout = %excout, %throwval [2872]
+assign %s0 = %s0 [2873]
+assign %s1 = %s0 [2873]
+assign %s2 = @p0 [2874]
+assign %s3 = ptr<[exec]Exec.Scaler::Apply(System.Int32)->System.Int32> [2875]
+assign %t0 = cil<[exec]Exec.IntFn> [2876]
+assign %t0 = %s2 [2876]
+store %t0.<delegate::method> := %s3 [2876]
+%retval, %throwval = direct-call [exec]Exec.IntFn::.ctor(System.Object,System.IntPtr)->System.Void(%t0, %s2, %s3) [2876]
+assign %excout = %excout, %throwval [2876]
+assign %s2 = %t0 [2876]
+store %s1.<[exec]Exec\.Holder::Fn> := %s2 [2877]
+%s0 = load %s0.<[exec]Exec\.Holder::Fn> [2878]
+assign %s1 = @p1 [2879]
+%dm_0 = load %s0.<delegate::method> [2880]
+%retval, %throwval = funcptr-call %dm_0 <(System.Int32)->System.Int32>(%s0, %s1) [2880]
+assign %excout = %excout, %throwval [2880]
+assign %s0 = %retval [2880]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Dels::<Closure>g__Run|3_1(Exec.IntFn,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=dm_0 %L4=retval %L5=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [2882]
+assign %s0 = @p0 [2882]
+assign %s1 = @p1 [2883]
+%dm_0 = load %s0.<delegate::method> [2884]
+%retval, %throwval = funcptr-call %dm_0 <(System.Int32)->System.Int32>(%s0, %s1) [2884]
+assign %excout = %excout, %throwval [2884]
+assign %s0 = %retval [2884]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Holder::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [2886]
+assign %s0 = @p0 [2886]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Object::.ctor()->System.Void(%s0) [2887]
+assign %excout = %excout, %throwval [2887]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Dels/<>c::.cctor()->System.Void() -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [2889]
+assign %s0 = cil<[exec]Exec.Dels/<>c> [2890]
+%retval, %throwval = direct-call [exec]Exec.Dels/<>c::.ctor()->System.Void(%s0) [2890]
+assign %excout = %excout, %throwval [2890]
+store $globals.<[exec]Exec\.Dels/<>c::<>9> := %s0 [2891]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Dels/<>c::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [2893]
+assign %s0 = @p0 [2893]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Object::.ctor()->System.Void(%s0) [2894]
+assign %excout = %excout, %throwval [2894]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Dels/<>c::<Lambda>b__4_0(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [2896]
+assign %s0 = @p1 [2896]
+assign %s1 = <const: 1> [2897]
+assign %s0 = %s0, %s1 [2898]
+return %s0, %excout
+end block_0
+
+define [exec]Exec.Dels/<>c__DisplayClass3_0::.ctor()->System.Void(@p0[shared]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [2900]
+assign %s0 = @p0 [2900]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Object::.ctor()->System.Void(%s0) [2901]
+assign %excout = %excout, %throwval [2901]
+return <const: []>, %excout
+end block_0
+
+define [exec]Exec.Dels/<>c__DisplayClass3_0::<Closure>b__0(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [2903]
+assign %s0 = @p1 [2903]
+assign %s1 = @p0 [2904]
+%s1 = load %s1.<[exec]Exec\.Dels/<>c__DisplayClass3_0::b> [2905]
+assign %s0 = %s0, %s1 [2906]
+return %s0, %excout
+end block_0
+
+define [System.Private.CoreLib]System.Exception::.ctor()->System.Void(@p0[shared]) -> 2:
+
+define [System.Private.CoreLib]System.Object::.ctor()->System.Void(@p0[shared]) -> 2:
+
+define ctadl$delegate$[exec]Exec.Dels::Twice(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
+  locals: %L0=retval %L1=throwval
+begin block_0 [start]:
+%retval, %throwval = direct-call [exec]Exec.Dels::Twice(System.Int32)->System.Int32(@p1)
+return %retval, %throwval
+end block_0
+

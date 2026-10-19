@@ -6,5 +6,5 @@ edition = "2024"
 [dependencies]
 zip = "0.6"
 thiserror = "2"
-streaming-iterator = "0.1"
+smallvec = "1"
 log = "0.4"

@@ -1,0 +1,68 @@
+[module]
+name=test.exe
+mvid=4ec45703-9103-4fbf-99c5-d05e09f8b22a
+kind=Console
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000001
+[assembly]
+full-name=test, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Program flags=0x00100000
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void Program::Main() flags=0x0091 impl=0x0000 rva=0x00002050
+0x06000002=System.Void Program::Foo(System.Nullable`1<System.Int32>,System.Nullable`1<System.Int32>,System.Int32) flags=0x0091 impl=0x0000 rva=0x00002079
+	param 0 name=foo flags=0x1010 constant=I4:1234
+	param 1 name=bar flags=0x1010 constant=Null
+	param 2 name=baz flags=0x1010 constant=I4:12
+0x06000003=System.Void Program::.ctor() flags=0x1886 impl=0x0000 rva=0x0000207c
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[security-declarations]
+[il]
+0x06000001 max-stack=3 init-locals=true code-size=29
+	local 0=System.Nullable`1<System.Int32>
+	IL_0000: nop
+	IL_0001: ldc.i4 1234
+	IL_0006: newobj System.Void System.Nullable`1<System.Int32>::.ctor(!0)
+	IL_000b: ldloca.s V_0
+	IL_000d: initobj System.Nullable`1<System.Int32>
+	IL_0013: ldloc.0
+	IL_0014: ldc.i4.s 12
+	IL_0016: call System.Void Program::Foo(System.Nullable`1<System.Int32>,System.Nullable`1<System.Int32>,System.Int32)
+	IL_001b: nop
+	IL_001c: ret
+0x06000002 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000003 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x1b000001 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+[custom-attributes-resolved]
+[fields-resolved]

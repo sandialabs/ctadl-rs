@@ -125,6 +125,7 @@ impl<'a> DexParser<'a> {
             self.proto_ids.clone(),
             self.field_ids.clone(),
             self.method_ids.clone(),
+            self.method_handles.clone().unwrap_or_default(),
         )
     }
 

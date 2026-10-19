@@ -180,12 +180,13 @@ peg::parser! {
         rule params() -> Vec<Param<'input>> = "(" _ ps:(param() ** (_ "," _)) _ ")" { ps }
 
         rule param() -> Param<'input>
-            = name:ident() ty:(_ t:passing_style() { t })?
-            { Param { name, ty: ty.unwrap_or(ParameterType::ByVal) } }
+            = name:ident() ty:(_ t:param_type() { t })?
+            { Param { name, ty: ty.unwrap_or(ParameterType::SharedFields) } }
 
-        rule passing_style() -> ParameterType
-            = kw("byref") { ParameterType::ByRef }
-            / kw("byval") { ParameterType::ByVal }
+        rule param_type() -> ParameterType
+            = kw("copied") { ParameterType::Copied }
+            / kw("shared_fields") { ParameterType::SharedFields }
+            / kw("shared") { ParameterType::Shared }
 
         rule arity() -> u8
             = n:int() {? u8::try_from(n).or(Err("a return arity from 0 to 255")) }

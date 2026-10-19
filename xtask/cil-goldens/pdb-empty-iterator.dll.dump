@@ -1,0 +1,142 @@
+[module]
+name=empty-iterator.dll
+mvid=73a922cf-2298-4f1e-a519-ff9cca11e81b
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=empty-iterator, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Lib flags=0x00100001
+	base=System.Object
+0x02000003=Lib/<EmptyIterator>d__0 flags=0x00100103
+	base=System.Object
+	interface=System.Collections.Generic.IEnumerator`1<System.Int32>
+	interface=System.IDisposable
+	interface=System.Collections.IEnumerator
+[fields]
+0x04000001=System.Int32 Lib/<EmptyIterator>d__0::<>1__state flags=0x0001
+0x04000002=System.Int32 Lib/<EmptyIterator>d__0::<>2__current flags=0x0001
+[methods]
+0x06000001=System.Collections.Generic.IEnumerator`1<System.Int32> Lib::EmptyIterator() flags=0x0096 impl=0x0000 rva=0x00002050
+0x06000002=System.Void Lib::.ctor() flags=0x1886 impl=0x0000 rva=0x00002058
+0x06000003=System.Void Lib/<EmptyIterator>d__0::.ctor(System.Int32) flags=0x1886 impl=0x0000 rva=0x00002061
+	param 1 name=<>1__state flags=0x0000
+0x06000004=System.Void Lib/<EmptyIterator>d__0::System.IDisposable.Dispose() flags=0x01e1 impl=0x0000 rva=0x00002071
+	override=System.Void System.IDisposable::Dispose()
+0x06000005=System.Boolean Lib/<EmptyIterator>d__0::MoveNext() flags=0x01e1 impl=0x0000 rva=0x00002074
+	override=System.Boolean System.Collections.IEnumerator::MoveNext()
+0x06000006=System.Int32 Lib/<EmptyIterator>d__0::System.Collections.Generic.IEnumerator<System.Int32>.get_Current() flags=0x09e1 impl=0x0000 rva=0x0000209a semantics=0x0002
+	override=!0 System.Collections.Generic.IEnumerator`1<System.Int32>::get_Current()
+0x06000007=System.Void Lib/<EmptyIterator>d__0::System.Collections.IEnumerator.Reset() flags=0x01e1 impl=0x0000 rva=0x000020a2
+	override=System.Void System.Collections.IEnumerator::Reset()
+0x06000008=System.Object Lib/<EmptyIterator>d__0::System.Collections.IEnumerator.get_Current() flags=0x09e1 impl=0x0000 rva=0x000020a9 semantics=0x0002
+	override=System.Object System.Collections.IEnumerator::get_Current()
+[properties]
+0x17000001=System.Int32 Lib/<EmptyIterator>d__0::System.Collections.Generic.IEnumerator<System.Int32>.Current() flags=0x0000 getter=0x06000006
+0x17000002=System.Object Lib/<EmptyIterator>d__0::System.Collections.IEnumerator.Current() flags=0x0000 getter=0x06000008
+[events]
+[custom-attributes]
+ca parent=0x06000001 ctor=System.Void System.Runtime.CompilerServices.IteratorStateMachineAttribute::.ctor(System.Type) args=((Type:typeof(Lib/<EmptyIterator>d__0)))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x06000003 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000004 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000006 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000007 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000008 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldc.i4.0
+	IL_0001: newobj System.Void Lib/<EmptyIterator>d__0::.ctor(System.Int32)
+	IL_0006: ret
+0x06000002 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000003 max-stack=8 init-locals=false code-size=15
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ldarg.0
+	IL_0008: ldarg.1
+	IL_0009: stfld System.Int32 Lib/<EmptyIterator>d__0::<>1__state
+	IL_000e: ret
+0x06000004 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x06000005 max-stack=2 init-locals=true code-size=26
+	local 0=System.Int32
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 Lib/<EmptyIterator>d__0::<>1__state
+	IL_0006: stloc.0
+	IL_0007: ldloc.0
+	IL_0008: brfalse.s IL_000c
+	IL_000a: br.s IL_000e
+	IL_000c: br.s IL_0010
+	IL_000e: ldc.i4.0
+	IL_000f: ret
+	IL_0010: ldarg.0
+	IL_0011: ldc.i4.m1
+	IL_0012: stfld System.Int32 Lib/<EmptyIterator>d__0::<>1__state
+	IL_0017: nop
+	IL_0018: ldc.i4.0
+	IL_0019: ret
+0x06000006 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 Lib/<EmptyIterator>d__0::<>2__current
+	IL_0006: ret
+0x06000007 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotSupportedException::.ctor()
+	IL_0005: throw
+0x06000008 max-stack=8 init-locals=false code-size=12
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 Lib/<EmptyIterator>d__0::<>2__current
+	IL_0006: box System.Int32
+	IL_000b: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x1b000001 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+[fields-resolved]

@@ -24,6 +24,7 @@ use anyhow::{bail, Context, Result};
 use crate::android_icc;
 use crate::apk;
 use crate::assertions;
+use crate::cil;
 use crate::dex;
 use crate::discovery::{self, Frontend, Kind, Packaging, TestCase};
 use crate::exec;
@@ -49,53 +50,22 @@ const PCODE_BASE_ADDRESS: i64 = 0x10_0000;
 /// genuinely unimplemented capability, never to paper over a regression.
 const LUA_XFAIL: &[&str] = &[];
 
-/// JVM E2E cases whose failures count toward the suite exit code. All other
-/// `Jvm:*` taint cases run for visibility but report as XFAIL when they fail.
+/// JVM E2E cases known to fail today, quarantined as XFAIL. Every other
+/// `Jvm:*` case is enforced, as in [`C_KNOWN_FAILURES`].
 ///
-/// The four `*Flow` cases covering switch selectors, wide parameters and the
-/// shift family are enforced because each is a known-answer test for a decoder
-/// defect that has already been fixed once: demoting them to XFAIL would let
-/// the same bug come back silently, which is the opposite of why they exist.
-const JVM_E2E_ENFORCED: &[&str] = &[
-    "Jvm:AnotherExample",
-    "Jvm:ArrayFlow",
-    "Jvm:ArrayFlowComplex",
-    "Jvm:ArrayListFlow",
-    "Jvm:ArrayListIteratorFlow",
-    "Jvm:BranchingFlow",
-    "Jvm:CrossClassStaticFieldFlow",
-    "Jvm:ExceptionFlow",
-    "Jvm:FieldFlow",
-    "Jvm:FieldSensitivity",
-    "Jvm:InstanceMethodFlow",
-    "Jvm:LoopFlow",
-    "Jvm:MethodCallFlow",
-    "Jvm:MultiArrayFlow",
-    "Jvm:ObjectSensitivity",
-    "Jvm:Reassignment",
-    "Jvm:ShiftFlow",
-    "Jvm:ShortArrayFlow",
-    "Jvm:SmallConstantFlow",
-    "Jvm:SourceSinkExample",
-    "Jvm:StaticFieldFlow",
-    "Jvm:StringBuilderFlow",
-    "Jvm:StringSwitchFlow",
-    "Jvm:SwitchFlow",
-    "Jvm:WideFieldFlow",
-    "Jvm:WideParamFlow",
-];
+/// Currently empty. Add an entry only for a known, documented gap, and delete
+/// it once the case passes.
+const JVM_KNOWN_FAILURES: &[&str] = &[];
 
 /// Tree-sitter C cases known to fail today, quarantined as XFAIL so the suite
 /// stays green while that frontend matures.
 ///
-/// This is the inverse of [`JVM_E2E_ENFORCED`]: the JVM E2E frontend is mostly
-/// still maturing, so it opts *in* to enforcement case by case; the C frontend
-/// already passes the bulk of the suite, so enforcement is the *default* and
-/// only these named gaps are exempt. Each entry is a current limitation, not a
-/// permanent waiver -- delete it once the case passes so a later regression is
-/// caught rather than silently re-quarantined. These names are the `C:`-prefixed
-/// reporting names, so they cannot collide with the Pcode case over the same
-/// source, and quarantining one never affects that Pcode case.
+/// Enforcement is the default and only these named gaps are exempt. Each entry
+/// is a current limitation, not a permanent waiver -- delete it once the case
+/// passes so a later regression is caught rather than silently re-quarantined.
+/// These names are the `C:`-prefixed reporting names, so they cannot collide
+/// with the Pcode case over the same source, and quarantining one never affects
+/// that Pcode case.
 const C_KNOWN_FAILURES: &[&str] = &[
     // A known-answer test for the *shipped* propagation defaults, so it can only
     // pass for the frontend those defaults are written for. The chain it asserts
@@ -121,6 +91,15 @@ pub struct Options {
     /// Directory holding the model generator schema and the model files checked
     /// against it. `None` auto-detects; see [`resolve_models_dir`].
     pub models_dir: Option<PathBuf>,
+    /// The committed Cecil goldens. `None` auto-detects; see
+    /// [`cil::resolve_goldens`].
+    pub cil_goldens: Option<PathBuf>,
+    /// The Cecil checkout whose test assemblies the `cil:*` checks read.
+    /// `None` auto-detects; see [`cil::resolve_cecil_src`].
+    pub cecil_src: Option<PathBuf>,
+    /// The compiled cil-reader fixtures. `None` auto-detects; see
+    /// [`cil::resolve_fixtures`].
+    pub cil_fixtures: Option<PathBuf>,
     /// How many cases to run concurrently. `None` picks [`default_jobs`].
     pub jobs: Option<usize>,
     /// Build (and run) the release `ctadl` binary instead of the debug one.
@@ -138,6 +117,9 @@ impl Default for Options {
             jvm_samples: None,
             dex_apk: None,
             models_dir: None,
+            cil_goldens: None,
+            cecil_src: None,
+            cil_fixtures: None,
             jobs: None,
             release: false,
         }
@@ -167,12 +149,13 @@ fn default_jobs() -> usize {
 pub(crate) enum Outcome {
     Pass,
     Fail(String),
-    /// A failure the JVM allowlist must not demote to XFAIL. Reported exactly
+    /// A failure no known-failure list may demote to XFAIL. Reported exactly
     /// like [`Outcome::Fail`]; see [`with_valid_sarif`] for the one thing that
     /// raises it.
     HardFail(String),
     Skip(String),
-    /// Expected failure on a non-enforced JVM E2E case; does not fail the suite.
+    /// Expected failure on a case in a known-failure list; does not fail the
+    /// suite.
     Xfail(String),
 }
 
@@ -234,12 +217,27 @@ pub fn run(opts: &Options) -> Result<bool> {
         None
     };
     let models_dir = resolve_models_dir(opts.models_dir.as_deref())?;
+    let wants_cil = opts.frontends.contains(&Frontend::Cil);
+    let (cil_goldens, cecil_src, cil_fixtures) = if wants_cil {
+        let goldens = cil::resolve_goldens(opts.cil_goldens.as_deref())?;
+        // Only for a Cecil checkout cloned by hand into its `extern/cecil`.
+        let cil_dir = cil::resolve_cil_dir(None)?;
+        let cecil = cil::resolve_cecil_src(opts.cecil_src.as_deref(), cil_dir.as_deref())?;
+        let fixtures = cil::resolve_fixtures(opts.cil_fixtures.as_deref())?;
+        (goldens, cecil, fixtures)
+    } else {
+        (None, None, None)
+    };
 
     // Assemble every independent unit of work, in report order. The pool below
     // preserves that order regardless of which worker finishes first.
     let mut tasks: Vec<Task<'_>> = cases.iter().map(Task::Case).collect();
+    let java_cases = tests_dir.join("java");
     if let Some(samples) = samples_dir.as_deref().filter(|_| wants_jvm) {
-        tasks.push(Task::JvmChecks { samples });
+        tasks.push(Task::JvmChecks {
+            samples,
+            cases: Some(java_cases.as_path()).filter(|dir| dir.is_dir()),
+        });
     }
     if let Some(samples) = samples_dir.as_deref().filter(|_| wants_dex) {
         tasks.push(Task::DexChecks {
@@ -256,6 +254,15 @@ pub fn run(opts: &Options) -> Result<bool> {
     }
     if ghidra_selected {
         tasks.push(Task::GhidraProject);
+    }
+    // Always queued when `cil` is selected, so a missing corpus or CecilDump
+    // reports as a Skip rather than vanishing from the report.
+    if wants_cil {
+        tasks.push(Task::CilChecks {
+            goldens: cil_goldens.as_deref(),
+            cecil: cecil_src.as_deref(),
+            fixtures: cil_fixtures.as_deref(),
+        });
     }
     // Schema drift check on the model files ctadl ships. It reads three small
     // files and runs no external tool, so it is never gated on a frontend: the
@@ -323,6 +330,7 @@ enum Task<'a> {
     Case(&'a TestCase),
     JvmChecks {
         samples: &'a Path,
+        cases: Option<&'a Path>,
     },
     DexChecks {
         samples: &'a Path,
@@ -334,6 +342,12 @@ enum Task<'a> {
     /// analyzer, and only the former needs the Java toolchain.
     ApkChecks {
         apk: &'a Path,
+    },
+    /// cil-reader's Cecil parity checks; see [`crate::cil`].
+    CilChecks {
+        goldens: Option<&'a Path>,
+        cecil: Option<&'a Path>,
+        fixtures: Option<&'a Path>,
     },
     /// Hold the shipped model files to the published model generator schema.
     /// `None` means neither `--models-dir` nor the in-tree default was found,
@@ -359,12 +373,12 @@ impl Task<'_> {
                     apply_xfail_allowlists(&case.name, outcome),
                 )]
             }
-            Task::JvmChecks { samples } => {
+            Task::JvmChecks { samples, cases } => {
                 // jvm-reader checks: compile the sample .java and exercise
                 // jvm-reader on the resulting .class files and a jar built from
                 // them.
                 let results = scratch_dir("jvm")
-                    .and_then(|work| jvm::run_checks(samples, &work))
+                    .and_then(|work| jvm::run_checks(samples, *cases, &work))
                     .unwrap_or_else(|err| {
                         vec![("jvm".to_string(), Outcome::Fail(format!("{err:#}")))]
                     });
@@ -387,6 +401,18 @@ impl Task<'_> {
                     .and_then(|work| apk::run_checks(apk, &work))
                     .unwrap_or_else(|err| {
                         vec![("apk:import".to_string(), Outcome::Fail(format!("{err:#}")))]
+                    });
+                retain_filtered(results, opts)
+            }
+            Task::CilChecks {
+                goldens,
+                cecil,
+                fixtures,
+            } => {
+                let results = scratch_dir("cil")
+                    .and_then(|work| cil::run_checks(*goldens, *cecil, *fixtures, &work))
+                    .unwrap_or_else(|err| {
+                        vec![("cil".to_string(), Outcome::Fail(format!("{err:#}")))]
                     });
                 retain_filtered(results, opts)
             }
@@ -580,9 +606,9 @@ fn preflight(cases: &[TestCase], ghidra_selected: bool, release: bool) -> Result
 /// SARIF that does not validate is a defect of its own, so it fails the case
 /// even when the taint assertions were satisfied -- a consumer cannot read a log
 /// it cannot parse, however good the answer inside it is. It fails as
-/// [`Outcome::HardFail`] so [`apply_jvm_allowlist`] cannot turn it into an
-/// XFAIL: the allowlist exists for the JVM frontend's taint precision, which
-/// this says nothing about.
+/// [`Outcome::HardFail`] so [`apply_xfail_allowlists`] cannot turn it into an
+/// XFAIL: the allowlists exist for a frontend's taint precision, which this
+/// says nothing about.
 fn with_valid_sarif(work: &Path, files: &[&Path], outcome: Outcome) -> Result<Outcome> {
     let Some(why) = sarif::validate(work, files)? else {
         return Ok(outcome);
@@ -654,22 +680,17 @@ fn apply_xfail_allowlists(name: &str, outcome: Outcome) -> Outcome {
     apply_c_allowlist(name, apply_jvm_allowlist(name, outcome))
 }
 
-/// Non-enforced JVM E2E failures are reported as XFAIL so the suite can stay
-/// green while the frontend matures. This covers the *taint* answer only:
-/// [`Outcome::HardFail`] (invalid SARIF) is never demoted, since the shape of
-/// the output does not depend on how good the frontend's taint results are.
+/// Known-failing JVM E2E cases are reported as XFAIL; every other JVM case is
+/// enforced. See [`JVM_KNOWN_FAILURES`].
 fn apply_jvm_allowlist(name: &str, outcome: Outcome) -> Outcome {
     match outcome {
-        Outcome::Fail(why) if name.starts_with("Jvm:") && !JVM_E2E_ENFORCED.contains(&name) => {
-            Outcome::Xfail(why)
-        }
+        Outcome::Fail(why) if JVM_KNOWN_FAILURES.contains(&name) => Outcome::Xfail(why),
         other => other,
     }
 }
 
 /// Known-failing tree-sitter C cases are reported as XFAIL; every other C case
-/// is enforced. See [`C_KNOWN_FAILURES`] for why enforcement is the default for
-/// this frontend (the opposite of the JVM allowlist above).
+/// is enforced. See [`C_KNOWN_FAILURES`].
 fn apply_c_allowlist(name: &str, outcome: Outcome) -> Outcome {
     match outcome {
         Outcome::Fail(why) if C_KNOWN_FAILURES.contains(&name) => Outcome::Xfail(why),
@@ -706,7 +727,61 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             worker,
         ),
         Kind::AndroidIcc { spec } => run_android_icc(&case.name, spec),
+        Kind::Cil { source, config } => run_cil(&case.name, source, config),
     }
+}
+
+// --- CIL --------------------------------------------------------------------
+
+/// Run one C# case (see [`crate::cil::cases`]): compile it, import it through the CIL
+/// frontend, index, query with the model its config implies, and judge the code flows by the
+/// sink functions they end in and the source lines they reach.
+fn run_cil(name: &str, source: &Path, config: &Path) -> Result<Outcome> {
+    use crate::cil::cases;
+    let Some(dotnet) = cases::dotnet() else {
+        return Ok(Outcome::Skip(
+            "`dotnet` not on PATH (the dev shell provides it)".to_string(),
+        ));
+    };
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+    let cfg = cases::read_config(config)?;
+    let artifact = cases::compile(&dotnet, source, &work, &work.join("out"))?;
+    let model = work.join("query.json");
+    std::fs::write(
+        &model,
+        serde_json::to_string_pretty(&cases::query_model(&cfg))?,
+    )?;
+    let project = name.replace(':', "_");
+    let sarif = work.join("output.sarif");
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "import",
+            "-l",
+            "cil",
+            "--name",
+            &project,
+            &artifact.to_string_lossy(),
+        ],
+    )?;
+    run_ctadl(&work, &state, &["index", &project])?;
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "query",
+            &project,
+            "-m",
+            &model.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
+    )?;
+    let outcome = cases::check(&cfg, &sarif)?;
+    with_valid_sarif(&work, &[&sarif], outcome)
 }
 
 fn run_android_icc(name: &str, spec_path: &Path) -> Result<Outcome> {
@@ -2551,7 +2626,14 @@ fn scratch_dir(name: &str) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::from_summary_links;
+    use super::{apply_xfail_allowlists, from_summary_links, Outcome};
+
+    /// A failing JVM case fails the suite unless it is a known failure.
+    #[test]
+    fn a_failing_jvm_case_is_enforced() {
+        let outcome = apply_xfail_allowlists("Jvm:NewCase", Outcome::Fail("no flow".into()));
+        assert!(matches!(outcome, Outcome::Fail(_)));
+    }
 
     #[test]
     fn reads_the_from_summary_count_off_the_bridge_line() {

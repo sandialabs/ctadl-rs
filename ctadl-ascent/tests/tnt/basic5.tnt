@@ -1,6 +1,6 @@
 // Requires a summary due to assignments. Tests that value assignments don't
-// induce summaries because pass-by-value is assumed.
-def F(p byval, q byval): 1
+// induce summaries: assigning to a parameter rebinds it, which is local to the callee.
+def F(p shared_fields, q shared_fields): 1
 where summaries [return.foo <- q]
 {
 start:

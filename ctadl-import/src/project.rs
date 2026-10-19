@@ -159,7 +159,9 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   which loading an index result now requires. The pairings' call edges are persisted in
 ///   `resolved_call.parquet`. `call.parquet` holds the pre-fixpoint relation, and a consumer that
 ///   wants the final call graph must union the two, as query does.
-pub const INDEX_FORMAT_VERSION: &str = "4";
+/// - `5`: the CIL front end's call-resolution key space: `CallTargetObject::CilClass` and
+///   `CallDispatchKey::Cil`, each a new parquet tag (3) that an older reader rejects.
+pub const INDEX_FORMAT_VERSION: &str = "5";
 
 /// What [`ArtifactImport::status`] holds once an import has finished.
 pub const IMPORT_STATUS_DONE: &str = "done";
@@ -1068,6 +1070,8 @@ pub enum ArtifactLanguage {
     Pcode,
     /// Treat as Flowy file
     Flowy,
+    /// Treat as a .NET assembly (`.dll`/`.exe` with CLI metadata), or a directory of them
+    Cil,
 }
 
 impl ArtifactLanguage {
@@ -1083,6 +1087,7 @@ impl ArtifactLanguage {
         ArtifactLanguage::Lua,
         ArtifactLanguage::Pcode,
         ArtifactLanguage::Flowy,
+        ArtifactLanguage::Cil,
     ];
 
     /// The lowercase spelling a model generator's `in` block uses. Distinct from the
@@ -1099,27 +1104,7 @@ impl ArtifactLanguage {
             ArtifactLanguage::Lua => "lua",
             ArtifactLanguage::Pcode => "pcode",
             ArtifactLanguage::Flowy => "flowy",
-        }
-    }
-
-    /// Which parameter versions SSA writes back to the formals, for IR from this language's
-    /// front end. See [`ctadl_ir::ssa::ParamWriteBack`].
-    pub fn param_write_back(self) -> ctadl_ir::ssa::ParamWriteBack {
-        use ctadl_ir::ssa::ParamWriteBack;
-        match self {
-            ArtifactLanguage::Jvm
-            | ArtifactLanguage::Jar
-            | ArtifactLanguage::Dex
-            | ArtifactLanguage::Apk
-            | ArtifactLanguage::Xapk => ParamWriteBack::Entry,
-            // A deficiency in the C front end, not a property of C: it lowers `*out = x` to
-            // `out = x` and `&v` to `v` (a pointer stands for its pointee), so out-parameters
-            // reach the caller only through the exit version. With `*p` lowered to `p.deref`
-            // and `&v` to an address, C could use `Entry` too.
-            ArtifactLanguage::C
-            | ArtifactLanguage::Lua
-            | ArtifactLanguage::Pcode
-            | ArtifactLanguage::Flowy => ParamWriteBack::Exit,
+            ArtifactLanguage::Cil => "cil",
         }
     }
 

@@ -25,7 +25,7 @@ untyped parse cannot tell `p + 2` from integer arithmetic, so `q = p + 2` and `p
 lower as a merge of the operands and lose the offset.
 */
 
-use ctadl_ir::ParameterType::ByVal;
+use ctadl_ir::ParameterType::SharedFields;
 use ctadl_ir::{Exp, StatementKind, Variable};
 
 use crate::test_utils::*;
@@ -107,12 +107,12 @@ fn simple_global_assign() {
 
 #[test_log::test]
 fn basic_params() {
-    // Every parameter is by value, a pointer `int *y` included.
+    // Every parameter is `SharedFields`, a pointer `int *y` included.
     let src = r"
             void basic_params(int x, int *y) {}
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByVal, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
 }
 
 #[test_log::test]
@@ -125,7 +125,7 @@ fn basic_param_flow() {
             }
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByVal]);
+    check_params(&prog, &[SharedFields]);
 
     let summary = get_summary(prog).unwrap().0;
     check_summary_count(&summary, 1);
@@ -143,7 +143,7 @@ fn param_flows_through_local() {
             }
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByVal]);
+    check_params(&prog, &[SharedFields]);
     check_assign_or_update(&prog, "b", ["@p0"], None);
 
     let summary = get_summary(prog).unwrap().0;
@@ -160,7 +160,7 @@ fn return_from_pointer() {
             }
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByVal]);
+    check_params(&prog, &[SharedFields]);
     check_loads(&prog, "@p0.deref");
 
     let summary = get_summary(prog).unwrap().0;
@@ -178,7 +178,7 @@ fn return_from_pointer_through_local() {
             }
         ";
     let prog = program_from_string(src).0;
-    check_params(&prog, &[ByVal]);
+    check_params(&prog, &[SharedFields]);
     check_loads(&prog, "@p0.deref");
 
     let summary = get_summary(prog).unwrap().0;
@@ -4561,7 +4561,7 @@ fn pointer_returning_definition_is_collected() {
         "a `char *` definition must be collected\n{dump}"
     );
     check_return_arity(&prog, "dup", 1);
-    check_params(&prog, &[ByVal]);
+    check_params(&prog, &[SharedFields]);
     check_block_count(&prog, 1);
 }
 
@@ -4587,7 +4587,7 @@ fn taint_returns_through_a_call_to_a_pointer_returning_function() {
     check_has_direct_call(&prog, "use", "dup");
     check_return_arity(&prog, "dup", 1);
     assert!(
-        check_no_match(&dump, "define dup(@p0[byref]) -> 0"),
+        check_no_match(&dump, "define dup(@p0[shared]) -> 0"),
         "`dup` must not be an arity-0 stub\n{dump}"
     );
     let (summary, info) = get_summary(prog).expect("must verify");
@@ -4792,7 +4792,7 @@ fn a_double_pointer_parameter_is_bound() {
     // Dropping `v` would take `w` down to `@p0`; both must bind at their own index.
     let src = r"void f(char **v, char *w) { char **a; char *b; a = v; b = w; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByVal, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let (a, b) = (local_render(&prog, "f", "a"), local_render(&prog, "f", "b"));
     assert!(
         check_match(&dump, &format!("assign {a} = @p0")),
@@ -4810,7 +4810,7 @@ fn main_binds_argc_and_argv_in_that_order() {
     // here too, because depth is not a list of cases.
     let src = r"int main(int argc, char **argv) { int n; char **a; n = argc; a = argv; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByVal, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let (n, a) = (
         local_render(&prog, "main", "n"),
         local_render(&prog, "main", "a"),
@@ -4823,7 +4823,7 @@ fn main_binds_argc_and_argv_in_that_order() {
 
     let deep = r"void g(char ***v, int n) { char ***a; int b; a = v; b = n; }";
     let (prog, dump) = program_from_string(deep);
-    check_params(&prog, &[ByVal, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let (a, b) = (local_render(&prog, "g", "a"), local_render(&prog, "g", "b"));
     assert!(
         check_match(&dump, &format!("assign {a} = @p0"))
@@ -4838,7 +4838,7 @@ fn taint_flows_through_a_double_pointer_parameter() {
     // that name and the summary would be empty.
     let src = r"char **argv_of(char **v) { return v; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByVal]);
+    check_params(&prog, &[SharedFields]);
     check_return_arity(&prog, "argv_of", 1);
     assert!(
         check_match(&dump, "return @p0"),
@@ -4849,16 +4849,16 @@ fn taint_flows_through_a_double_pointer_parameter() {
 }
 
 #[test_log::test]
-fn every_parameter_is_by_value_at_every_depth() {
-    // Every parameter is `ByVal`, at any pointer depth.
-    for (src, want) in [
-        (r"void f(int a) { int x; x = a; }", ByVal),
-        (r"void f(char *a) { char *x; x = a; }", ByVal),
-        (r"void f(char **a) { char **x; x = a; }", ByVal),
-        (r"void f(char ***a) { char ***x; x = a; }", ByVal),
-        (r"void f(char *a[]) { char **x; x = a; }", ByVal),
-        (r"void f(char a[10][20]) { char *x; x = a[0]; }", ByVal),
-        (r"void f(struct S **a) { struct S **x; x = a; }", ByVal),
+fn every_parameter_is_shared_fields_at_every_depth() {
+    // Every parameter is `SharedFields`, at any pointer depth.
+    for src in [
+        r"void f(int a) { int x; x = a; }",
+        r"void f(char *a) { char *x; x = a; }",
+        r"void f(char **a) { char **x; x = a; }",
+        r"void f(char ***a) { char ***x; x = a; }",
+        r"void f(char *a[]) { char **x; x = a; }",
+        r"void f(char a[10][20]) { char *x; x = a[0]; }",
+        r"void f(struct S **a) { struct S **x; x = a; }",
     ] {
         let (prog, dump) = program_from_string(src);
         let got = get_only_function(&prog)
@@ -4867,7 +4867,11 @@ fn every_parameter_is_by_value_at_every_depth() {
             .parameters
             .raw
             .as_slice();
-        assert_eq!(got, &[want], "wrong parameter type for `{src}`\n{dump}");
+        assert_eq!(
+            got,
+            &[SharedFields],
+            "wrong parameter type for `{src}`\n{dump}"
+        );
     }
 }
 
@@ -4876,10 +4880,10 @@ fn a_function_pointer_parameter_is_one_parameter() {
     // The boundary in the other direction: `int (*cb)(int a, int b)` declares ONE
     // parameter, `cb` -- `a` and `b` belong to the type. Matching anywhere under the list
     // would give `g` four parameters and put `s` at index 3. A function pointer stays
-    // `ByVal`: what it points at is code, not storage.
+    // `SharedFields`: what it points at is code, not storage.
     let src = r"void g(int (*cb)(int a, int b), char *s) { char *t; t = s; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByVal, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let t = local_render(&prog, "g", "t");
     assert!(
         check_match(&dump, &format!("assign {t} = @p1")),
@@ -4890,7 +4894,7 @@ fn a_function_pointer_parameter_is_one_parameter() {
     // parameter, and so is a pointer to a function returning a pointer.
     let typed = r"void h(int cb(int a), char *s) { char *t; t = s; }";
     let (prog, dump) = program_from_string(typed);
-    check_params(&prog, &[ByVal, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let t = local_render(&prog, "h", "t");
     assert!(
         check_match(&dump, &format!("assign {t} = @p1")),
@@ -4905,7 +4909,7 @@ fn a_nameless_parameter_holds_its_slot_without_binding_a_name() {
     // list, and `Argument(1)` means the second one. The slot is reserved; no name is bound.
     let src = r"void k(char **, int n) { int x; x = n; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByVal, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let x = local_render(&prog, "k", "x");
     assert!(
         check_match(&dump, &format!("assign {x} = @p1")),
@@ -4934,7 +4938,7 @@ fn a_nameless_value_parameter_would_hold_its_slot_too() {
     // parameter for every one of those and dropping this one, practice decides: real
     // definitions do not write it.
     let (prog, _dump) = program_from_string(r"void f(int, int n) { int x; x = n; }");
-    check_params(&prog, &[ByVal, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
 }
 
 #[test_log::test]
@@ -4943,7 +4947,7 @@ fn a_variadic_marker_is_not_a_parameter() {
     // count it as a formal either.
     let src = r"void logmsg(const char *fmt, int level, ...) { int x; x = level; }";
     let (prog, dump) = program_from_string(src);
-    check_params(&prog, &[ByVal, ByVal]);
+    check_params(&prog, &[SharedFields, SharedFields]);
     let x = local_render(&prog, "logmsg", "x");
     assert!(
         check_match(&dump, &format!("assign {x} = @p1")),
