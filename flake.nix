@@ -4,8 +4,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs";
     utils.url = "github:numtide/flake-utils";
     ctadl-souffle.url = "github:sandialabs/ctadl";
-    # The Rust toolchain: fenix serves the upstream release rust-toolchain.toml
-    # pins, where nixpkgs has only its own rustc.
+    # Upstream Rust releases, any version; nixpkgs has only its own rustc.
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
