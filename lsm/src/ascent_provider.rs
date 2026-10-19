@@ -1133,6 +1133,65 @@ impl<T> std::ops::Index<usize> for CountingVec<T> {
     }
 }
 
+/// The physical relation of a `seeded` LSM relation: a [`CountingVec`] that can
+/// also be seeded through the relation's field. Ascent reads a relation's field
+/// exactly once, when it builds the indices at the start of a run, and `iter`
+/// drains the seed then, so the seed rows end up in the relation's store and
+/// not also in its field for the rest of the run.
+pub struct SeedVec<T> {
+    seed: std::cell::RefCell<Vec<T>>,
+    len: usize,
+}
+
+impl<T> Default for SeedVec<T> {
+    fn default() -> Self {
+        Self {
+            seed: std::cell::RefCell::new(Vec::new()),
+            len: 0,
+        }
+    }
+}
+
+impl<T> From<Vec<T>> for SeedVec<T> {
+    fn from(seed: Vec<T>) -> Self {
+        let len = seed.len();
+        Self {
+            seed: std::cell::RefCell::new(seed),
+            len,
+        }
+    }
+}
+
+impl<T> SeedVec<T> {
+    #[inline]
+    pub fn push(&mut self, _v: T) {
+        self.len += 1;
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Drains the seed: the next call sees none.
+    #[inline]
+    pub fn iter(&self) -> std::vec::IntoIter<T> {
+        std::mem::take(&mut *self.seed.borrow_mut()).into_iter()
+    }
+}
+
+impl<T> std::ops::Index<usize> for SeedVec<T> {
+    type Output = T;
+    fn index(&self, _index: usize) -> &T {
+        panic!("lsm::ascent_provider::SeedVec is not indexable")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The provider macros. Reference this module from a relation's `#[ds(...)]`
 // attribute (or the program's `#![ds(...)]`).
@@ -1149,6 +1208,8 @@ impl<T> std::ops::Index<usize> for CountingVec<T> {
 // `#[ds(lsm::ascent_provider::provider: counting)]` drops that last copy too: the
 // field becomes a [`CountingVec`], which keeps only the row count, for a derived
 // relation whose rows are read after the run from its store (or not at all).
+// `: seeded` is the same for a relation that also takes input rows through its
+// field: a [`SeedVec`], which hands them to the indices once and keeps none.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! lsm_nary_rel {
@@ -1157,6 +1218,9 @@ macro_rules! lsm_nary_rel {
     };
     ($name:ident, $field_types:ty, $indices:expr, ser, (counting)) => {
         $crate::ascent_provider::CountingVec<$field_types>
+    };
+    ($name:ident, $field_types:ty, $indices:expr, ser, (seeded)) => {
+        $crate::ascent_provider::SeedVec<$field_types>
     };
 }
 
