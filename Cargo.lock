@@ -1176,6 +1176,7 @@ dependencies = [
  "libc",
  "log",
  "log-once",
+ "lsm",
  "memmap",
  "object",
  "packed_struct",
