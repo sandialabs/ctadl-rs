@@ -30,8 +30,7 @@
   pkgs,
   naersk,
   fenix,
-  # The Rust release rust-toolchain.toml pins: `channel` and the hash of its
-  # manifest.
+  # The pinned Rust release, as fenix's `toolchainOf` takes it.
   rustRelease,
   # The source tree to build; the flake passes its own root.
   src,
