@@ -145,8 +145,9 @@ fn normalize_numeric_literals(line: &str) -> String {
                     j += 1;
                 }
                 let hex: String = chars[i + 3..j].iter().collect();
-                if let Ok(v) = i64::from_str_radix(&hex, 16) {
-                    out.push_str(&(-v).to_string());
+                // u64, so that -0x8000000000000000 (i64::MIN) converts too.
+                if let Ok(v) = u64::from_str_radix(&hex, 16) {
+                    out.push_str(&(-i128::from(v)).to_string());
                     i = j;
                     continue;
                 }
@@ -163,7 +164,7 @@ fn normalize_numeric_literals(line: &str) -> String {
                     j += 1;
                 }
                 let hex: String = chars[i + 2..j].iter().collect();
-                if let Ok(v) = i64::from_str_radix(&hex, 16) {
+                if let Ok(v) = u64::from_str_radix(&hex, 16) {
                     out.push_str(&v.to_string());
                     i = j;
                     continue;
@@ -297,47 +298,22 @@ fn string_literal_code_units(body: &str) -> Vec<u16> {
     units
 }
 
-fn normalize_wide_literal(line: &str) -> String {
-    // const-wide/high16 and const/high16 literals may be shown in different
-    // forms; reduce to opcode + reg + placeholder so we compare structure.
-    if let Some(rest) = line.strip_prefix("const-wide/high16 ") {
-        if let Some((reg_part, _lit)) = rest.split_once(',') {
-            let reg_part = reg_part.trim();
-            if !reg_part.is_empty() {
-                return format!("const-wide/high16 {}, <lit>L", reg_part);
-            }
-        }
-    }
-    if let Some(rest) = line.strip_prefix("const/high16 ") {
-        if let Some((reg_part, _lit)) = rest.split_once(',') {
-            let reg_part = reg_part.trim();
-            if !reg_part.is_empty() {
-                return format!("const/high16 {}, <lit>", reg_part);
-            }
-        }
-    }
-    line.to_string()
-}
-
-/// Normalize unsigned decimal that fits in u32 but represents a negative i32
-/// (array-data, etc.) to signed form so both sides match.
-fn normalize_signed_u32_line(line: &str) -> String {
-    let s = line.trim();
-    if s.is_empty() {
+/// baksmali writes an invoke-custom's call site in full, `call_site_N(name, type, args...)@bsm`;
+/// dex-reader writes only its index, `call<N>`. Reduce baksmali's form to dex-reader's. The
+/// call-site index itself is checked by `dex:dexlib2-decode`, but the call site's contents are
+/// not compared.
+fn normalize_call_site(line: &str) -> String {
+    let Some(start) = line.find("call_site_") else {
+        return line.to_string();
+    };
+    let digits: String = line[start + "call_site_".len()..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    if digits.is_empty() || !line.starts_with("invoke-custom") {
         return line.to_string();
     }
-    if s.starts_with('-') {
-        return line.to_string();
-    }
-    if !s.chars().all(|c| c.is_ascii_digit()) {
-        return line.to_string();
-    }
-    if let Ok(n) = s.parse::<u32>() {
-        if n >= 2147483648 {
-            return (n as i32).to_string();
-        }
-    }
-    line.to_string()
+    format!("{}call<{digits}>", &line[..start])
 }
 
 fn normalize_switch_targets(line: &str) -> String {
@@ -447,11 +423,10 @@ fn normalize_line_common(line: &str) -> Option<String> {
     }
 
     let s = normalize_const_string(s);
-    let s = normalize_wide_literal(&s);
+    let s = normalize_call_site(&s);
     let s = normalize_switch_targets(&s);
     let s = normalize_numeric_literals(&s);
     let s = normalize_branch_targets(&s);
-    let s = normalize_signed_u32_line(&s);
     let s = normalize_register_like_field_name(&s);
     Some(s)
 }
@@ -683,7 +658,20 @@ fn diff_preview(expected: &[String], actual: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_const_string;
+    use super::{normalize_call_site, normalize_const_string};
+
+    /// baksmali's full call site reduces to dex-reader's index form; other lines are untouched.
+    #[test]
+    fn call_site_reduces_to_its_index() {
+        assert_eq!(
+            normalize_call_site(
+                "invoke-custom {v1, v2}, call_site_12(\"run\", (II)V)@LA;->bsm()Ljava/lang/invoke/CallSite;"
+            ),
+            "invoke-custom {v1, v2}, call<12>"
+        );
+        let other = "const-string v0, \"call_site_1\"";
+        assert_eq!(normalize_call_site(other), other);
+    }
 
     /// The two disassemblers write the same constant three different ways, so
     /// the comparison only means anything if both sides canonicalize to the

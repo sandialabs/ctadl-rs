@@ -1,0 +1,18 @@
+{
+  // Flow: n.data = source() (20) -> sink(n.self.data) (22). register() stores
+  // this into its own field, which dx compiles to `iput-object p0, p0`: the value
+  // and the object share a register.
+  "expected_lines": [20, 22],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LSelfReferenceStore;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LSelfReferenceStore;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

@@ -1245,7 +1245,6 @@ dependencies = [
  "log",
  "smallvec",
  "source-info",
- "streaming-iterator",
  "test-log",
 ]
 
@@ -1333,6 +1332,7 @@ dependencies = [
  "log",
  "smallvec",
  "source-info",
+ "tempfile",
 ]
 
 [[package]]
@@ -2181,7 +2181,7 @@ name = "dex-reader"
 version = "0.1.4"
 dependencies = [
  "log",
- "streaming-iterator",
+ "smallvec",
  "thiserror",
  "zip 0.6.6",
 ]

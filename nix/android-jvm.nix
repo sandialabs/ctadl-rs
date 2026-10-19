@@ -1,7 +1,7 @@
 # The dex/Android/JVM toolchain: the Android SDKs (the one the regression suite
 # builds with, and a larger one for debugging apps), the app-debugging tools,
-# the JDK, baksmali, the DroidBench APKs, and the dex-reader and jvm-reader
-# packages and unit tests.
+# the JDK, baksmali, smali, ASM, the DroidBench APKs, and the dex-reader and
+# jvm-reader packages and unit tests.
 {
   pkgs,
   naersk-lib,
@@ -146,6 +146,46 @@ let
       exec ${jdk}/bin/java -jar ${jar} "$@"
     '';
 
+  # smali, the assembler from the same 3.0.9 release, for building .dex
+  # inputs by hand: opcodes that javac + dx never emit, such as
+  # invoke-polymorphic and invoke-custom, which `dex:dexlib2-decode` and
+  # `dex:opcodes-replay` assemble. Fetched like baksmali above, never committed.
+  smali =
+    let
+      jar = pkgs.fetchurl {
+        url = "https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat.jar";
+        hash = "sha256-z2L8JWRqfs27CfHGt2Prx+nfYJKS2Ws7vgP7o6Qs2eQ=";
+      };
+    in
+    pkgs.writeShellScriptBin "smali" ''
+      exec ${jdk}/bin/java -jar ${jar} "$@"
+    '';
+
+  # ASM, the bytecode library, for the jvm-reader checks that need an
+  # independent model of JVM bytecode: its analyzer is the oracle the
+  # `jvm:asm-flow` check compares jvm-reader's dataflow with, and its
+  # class writer builds bytecode javac never emits. nixpkgs packages no
+  # ASM jars, so fetch the pinned release from Maven Central.
+  # `asm-classpath` prints the classpath, which is how xtask finds them.
+  asmClasspath =
+    let
+      jar =
+        name: hash:
+        pkgs.fetchurl {
+          url = "https://repo1.maven.org/maven2/org/ow2/asm/${name}/9.8/${name}-9.8.jar";
+          inherit hash;
+        };
+      jars = [
+        (jar "asm" "sha256-h26raoPa7K1cpn65/KuwY8l7WuuM8fynqYns3hdSIFE=")
+        (jar "asm-tree" "sha256-FLeIDLfIXu0QHicQQy/D/7gydVMqaolNxMQJXUmtWfE=")
+        (jar "asm-analysis" "sha256-5kBzL7zTxicZJaUE8SXjg4Roj037v5LIYi387g0J7bk=")
+        (jar "asm-util" "sha256-i6BGDsso/Q4pgOXz7zQzpROkV7wHf4GlO9x1tYegjRU=")
+      ];
+    in
+    pkgs.writeShellScriptBin "asm-classpath" ''
+      echo ${pkgs.lib.concatStringsSep ":" jars}
+    '';
+
   # The readers' source: the workspace root plus the two readers, not the
   # whole tree, so that editing the rest of the repo does not rebuild
   # them. The root manifest still lists every member, which cargo would
@@ -251,6 +291,8 @@ in
     androidLldb
     fridaServer
     baksmali
+    smali
+    asmClasspath
     dex-reader
     jvm-reader
     droidbenchIccApks

@@ -122,6 +122,8 @@
             android.androidSdk.androidsdk
             android.jdk
             android.baksmali
+            android.smali
+            android.asmClasspath
             pkgs.ghidra-bin
             cil.cecilDump
             cil.flowRun

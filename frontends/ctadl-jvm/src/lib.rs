@@ -54,8 +54,8 @@ fn jvm_descriptor_to_params(descriptor: &str, is_instance: bool) -> Vec<Paramete
     params
 }
 
-//#[cfg(test)]
-//mod tests;
+#[cfg(test)]
+mod tests;
 
 pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
     //let data = read_file_bytes(file)?;
@@ -308,9 +308,16 @@ impl Context {
                     }
                     Some(code_attr) => {
                         log::trace!("Processing code for function {}", method_name);
-                        let basic_blocks = parser
-                            .basic_blocks_with_stack_slots(enc)?
-                            .expect("Non-empty function");
+                        // A method jvm-reader cannot decode keeps its declaration, so calls
+                        // to it still resolve, but gets no body. Failing here would fail the
+                        // import of every other method in the class or JAR.
+                        let basic_blocks = match parser.basic_blocks_with_stack_slots(enc) {
+                            Ok(blocks) => blocks.expect("Non-empty function"),
+                            Err(e) => {
+                                log::warn!("{full_name}: importing without a body: {e}");
+                                continue;
+                            }
+                        };
 
                         let handler_pcs: HashSet<u32> = code_attr
                             .exception_table
@@ -318,9 +325,7 @@ impl Context {
                             .map(|e| e.handler_pc as u32)
                             .collect();
 
-                        let mut stack_aliases: HashMap<String, VariableRef> = HashMap::new();
                         let mut dup_slot_pairs: HashSet<DupSlotPair> = HashSet::new();
-                        let mut last_aload_reg: Option<VariableRef> = None;
 
                         for bb in basic_blocks.clone().blocks() {
                             let mut bb_data = BasicBlockData::new(None);
@@ -341,7 +346,7 @@ impl Context {
                             let block_instrs = bb.instructions(&basic_blocks);
 
                             // Add statements to the basic block
-                            for (instr_idx, instr) in block_instrs.iter().enumerate() {
+                            for instr in block_instrs.iter() {
                                 let source_info =
                                     SourceInfo::new(builders.source_info_builder.span_for(
                                         artifact_key.clone(),
@@ -356,9 +361,11 @@ impl Context {
                                             .expect("Call should be there");
                                         stmt.source_info = source_info;
                                         bb_data.push_back(stmt);
-                                        if let Some(ret_loc) = call_info.return_value.as_ref() {
+                                        // A long or double result takes two slots, and each
+                                        // carries the value, as a `lload` writes both.
+                                        for ret_loc in Self::call_result_slots(call_info) {
                                             let dest = self.convert_location_to_var_ref(
-                                                ret_loc,
+                                                &ret_loc,
                                                 &mut fdat.locals,
                                             );
                                             let ret = Self::ret(&mut fdat.locals);
@@ -370,7 +377,6 @@ impl Context {
                                                     )],
                                                 });
                                             assign.source_info = source_info;
-                                            Self::note_assign_aliases(&assign, &mut stack_aliases);
                                             bb_data.push_back(assign);
                                         }
                                         if let Some(mut link) = Self::init_survivor_link(
@@ -379,20 +385,18 @@ impl Context {
                                             &mut fdat.locals,
                                         ) {
                                             link.source_info = source_info;
-                                            Self::note_assign_aliases(&link, &mut stack_aliases);
                                             bb_data.push_back(link);
                                         }
                                     }
                                 }
-                                let dup_stmts =
-                                    if Self::is_stack_dup_opcode(instr.opcode) {
-                                        Some(self.stack_dup_statements(
-                                            &instr.dataflow,
-                                            &mut fdat.locals,
-                                        ))
-                                    } else {
-                                        None
-                                    };
+                                let dup_stmts = if Self::is_stack_shuffle_opcode(instr.opcode) {
+                                    Some(self.stack_shuffle_statements(
+                                        &instr.dataflow,
+                                        &mut fdat.locals,
+                                    ))
+                                } else {
+                                    None
+                                };
                                 if let Some(stmts) = dup_stmts {
                                     Self::record_dup_slot_pairs(
                                         &mut dup_slot_pairs,
@@ -400,7 +404,6 @@ impl Context {
                                     );
                                     for mut stmt in stmts {
                                         stmt.source_info = source_info;
-                                        Self::note_assign_aliases(&stmt, &mut stack_aliases);
                                         bb_data.push_back(stmt);
                                     }
                                 } else {
@@ -408,22 +411,9 @@ impl Context {
                                         for mut stmt in self.dataflow_to_statements(
                                             instr.opcode,
                                             df,
-                                            &stack_aliases,
-                                            last_aload_reg.as_ref(),
-                                            block_instrs,
-                                            instr_idx,
                                             &mut fdat.locals,
                                         ) {
                                             stmt.source_info = source_info;
-                                            Self::note_assign_aliases(&stmt, &mut stack_aliases);
-                                            if let StatementKind::Assign { dest, sources } =
-                                                &stmt.kind
-                                                && let [Exp::Variable(v)] = sources.as_slice()
-                                                && Self::is_stack_var(dest)
-                                                && Self::aload_source_var(v)
-                                            {
-                                                last_aload_reg = Some(v.clone());
-                                            }
                                             bb_data.push_back(stmt);
                                         }
                                     }
@@ -454,7 +444,10 @@ impl Context {
                                     0xac..=0xb0 => TerminatorKind::Return {
                                         args: smallvec![
                                             self.convert_location_to_exp(
-                                                &Location::StackSlot(0),
+                                                instr
+                                                    .return_value
+                                                    .as_ref()
+                                                    .expect("a value return names its value"),
                                                 &mut fdat.locals,
                                             ),
                                             empty_exp(),
@@ -736,6 +729,22 @@ impl Context {
         VariableRef::new_local_idx(locals.get_or_intern("throwval"))
     }
 
+    /// The stack slots a call's result lands in: none for `void`, the lower
+    /// and upper slot for a long or double.
+    fn call_result_slots(call: &CallInfo) -> Vec<Location> {
+        let Some(Location::StackSlot(n)) = call.return_value else {
+            return call.return_value.iter().cloned().collect();
+        };
+        let descriptor = match call.call_kind {
+            CallKind::Dynamic => call.dynamic_type.as_deref(),
+            _ => call.target.as_ref().map(|t| t.descriptor.as_str()),
+        };
+        let slots = descriptor.map_or(1, jvm_reader::flow::descriptor_return_slot_count);
+        (0..slots.max(1) as u32)
+            .map(|i| Location::StackSlot(n + i))
+            .collect()
+    }
+
     fn allocation_exp(class_name: &str) -> Exp {
         let jclass = if class_name.starts_with('L') || class_name.starts_with('[') {
             class_name.to_string()
@@ -775,170 +784,9 @@ impl Context {
         })
     }
 
-    fn is_register_var(v: &VariableRef) -> bool {
-        v.to_string().starts_with("reg")
-    }
-
-    fn is_stack_var(v: &VariableRef) -> bool {
-        v.to_string().starts_with("stack")
-    }
-
-    fn note_assign_aliases(stmt: &Statement, aliases: &mut HashMap<String, VariableRef>) {
-        if let StatementKind::Assign { dest, sources } = &stmt.kind
-            && let [src] = sources.as_slice()
-        {
-            if let Exp::Variable(v) = src {
-                let base = aliases
-                    .get(&v.to_string())
-                    .cloned()
-                    .unwrap_or_else(|| v.clone());
-                if Self::is_stack_var(dest)
-                    && (Self::is_register_var(v) || Self::aload_source_var(v))
-                {
-                    aliases.insert(dest.to_string(), v.clone());
-                } else {
-                    aliases.insert(dest.to_string(), base);
-                }
-                return;
-            }
-            if matches!(src, Exp::ObjectRef(_)) {
-                aliases.insert(dest.to_string(), dest.clone());
-            }
-        }
-    }
-
-    fn aload_source_var(v: &VariableRef) -> bool {
-        let s = v.to_string();
-        s.starts_with("reg") || s.starts_with("@p")
-    }
-
-    fn stack_slot_alias(
-        loc: &Location,
-        aliases: &HashMap<String, VariableRef>,
-        locals: &mut Locals,
-    ) -> Option<VariableRef> {
-        let stack_var = match loc {
-            Location::StackSlot(n) => {
-                VariableRef::new_local_idx(locals.get_or_intern(&format!("stack{n}")))
-            }
-            _ => return None,
-        };
-        aliases.get(&stack_var.to_string()).cloned()
-    }
-
-    fn aload_for_stack_slot(
-        block_instrs: &[jvm_reader::flow::InstructionFlowInfo<'_>],
-        current_idx: usize,
-        object_loc: &Location,
-        locals: &mut Locals,
-    ) -> Option<VariableRef> {
-        let target_slot = Self::stack_slot_index(object_loc)?;
-        for inst in block_instrs[..current_idx].iter().rev() {
-            if matches!(inst.opcode, 0x15..=0x2d) {
-                for df in &inst.dataflow {
-                    if Self::stack_slot_index(&df.destination) != Some(target_slot) {
-                        continue;
-                    }
-                    for loc in &df.sources {
-                        match loc {
-                            Location::Register(n) => {
-                                return Some(VariableRef::new_local_idx(
-                                    locals.get_or_intern(&format!("reg{n}")),
-                                ));
-                            }
-                            Location::Parameter(n) => {
-                                return Some(VariableRef::new_parameter((*n).into()));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            if matches!(inst.opcode, 0xb4 | 0xb5) {
-                break;
-            }
-        }
-        None
-    }
-
-    fn resolve_object_var(
-        &self,
-        loc: &Location,
-        aliases: &HashMap<String, VariableRef>,
-        locals: &mut Locals,
-    ) -> VariableRef {
-        if let Some(base) = Self::stack_slot_alias(loc, aliases, locals) {
-            return base;
-        }
-        let v = self.convert_location_to_var_ref(loc, locals);
-        aliases.get(&v.to_string()).cloned().unwrap_or(v)
-    }
-
-    fn aload_register_before(
-        block_instrs: &[jvm_reader::flow::InstructionFlowInfo<'_>],
-        current_idx: usize,
-        locals: &mut Locals,
-    ) -> Option<VariableRef> {
-        for inst in block_instrs[..current_idx].iter().rev() {
-            if matches!(inst.opcode, 0x15..=0x2d) {
-                for df in &inst.dataflow {
-                    for loc in &df.sources {
-                        match loc {
-                            Location::Register(n) => {
-                                return Some(VariableRef::new_local_idx(
-                                    locals.get_or_intern(&format!("reg{n}")),
-                                ));
-                            }
-                            Location::Parameter(n) => {
-                                return Some(VariableRef::new_parameter((*n).into()));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                return None;
-            }
-            if matches!(inst.opcode, 0xb4 | 0xb5) {
-                break;
-            }
-        }
-        None
-    }
-
-    fn field_object_base(
-        &self,
-        loc: &Location,
-        aliases: &HashMap<String, VariableRef>,
-        last_aload_reg: Option<&VariableRef>,
-        block_instrs: &[jvm_reader::flow::InstructionFlowInfo<'_>],
-        instr_idx: usize,
-        locals: &mut Locals,
-    ) -> VariableRef {
-        // Prefer a stable register/parameter for this stack slot when it differs from the
-        // most recent aload (e.g. aload_0; aload_1; putfield must use this, not the arg).
-        if let Some(slot_base) = Self::stack_slot_alias(loc, aliases, locals)
-            && !Self::is_stack_var(&slot_base)
-        {
-            let conflicts_with_last = last_aload_reg.is_some_and(|r| r != &slot_base);
-            if conflicts_with_last {
-                return slot_base;
-            }
-        }
-        if let Some(reg) = last_aload_reg {
-            return reg.clone();
-        }
-        if let Some(reg) = Self::aload_for_stack_slot(block_instrs, instr_idx, loc, locals) {
-            return reg;
-        }
-        if let Some(reg) = Self::aload_register_before(block_instrs, instr_idx, locals) {
-            return reg;
-        }
-        self.resolve_object_var(loc, aliases, locals)
-    }
-
-    /// Stack-manipulation `dup*` opcodes (JVMS 6.5).
-    fn is_stack_dup_opcode(opcode: u8) -> bool {
-        matches!(opcode, 0x59..=0x5e)
+    /// Stack-manipulation opcodes: `dup*` and `swap` (JVMS 6.5).
+    fn is_stack_shuffle_opcode(opcode: u8) -> bool {
+        matches!(opcode, 0x59..=0x5f)
     }
 
     fn assign_var(dest: VariableRef, src: VariableRef) -> Statement {
@@ -961,14 +809,20 @@ impl Context {
         }
     }
 
+    /// Record each pair of outputs that are copies of one value: they have the
+    /// same sources.
     fn record_dup_slot_pairs(pairs: &mut HashSet<DupSlotPair>, dataflow: &[DataflowInfo]) {
-        let slots: SmallVec<[u32; 4]> = dataflow
-            .iter()
-            .filter_map(|df| Self::stack_slot_index(&df.destination))
-            .collect();
-        for i in 0..slots.len() {
-            for j in (i + 1)..slots.len() {
-                Self::record_dup_slot_pair(pairs, slots[i], slots[j]);
+        for (i, a) in dataflow.iter().enumerate() {
+            for b in &dataflow[i + 1..] {
+                if a.sources != b.sources {
+                    continue;
+                }
+                if let (Some(x), Some(y)) = (
+                    Self::stack_slot_index(&a.destination),
+                    Self::stack_slot_index(&b.destination),
+                ) {
+                    Self::record_dup_slot_pair(pairs, x, y);
+                }
             }
         }
     }
@@ -1007,43 +861,63 @@ impl Context {
         Some(Self::assign_var(survivor, recv_var))
     }
 
-    /// Lower `dup` / `dup_x1` / … so every duplicate stack slot is flow-connected.
-    fn stack_dup_statements(
+    /// Lower `dup*` and `swap`. Every source is read before the instruction, but
+    /// the outputs land on the input slots (`dup_x1` puts `v1` where `v2` was), so
+    /// a source slot that an output overwrites is first copied to a temporary.
+    fn stack_shuffle_statements(
         &self,
         dataflow: &[DataflowInfo],
         locals: &mut Locals,
     ) -> SmallVec<[Statement; 8]> {
+        let moves: SmallVec<[&DataflowInfo; 6]> = dataflow
+            .iter()
+            .filter(|df| df.sources.as_slice() != std::slice::from_ref(&df.destination))
+            .collect();
+        let overwritten: SmallVec<[u32; 6]> = moves
+            .iter()
+            .filter_map(|df| Self::stack_slot_index(&df.destination))
+            .collect();
         let mut stmts = SmallVec::new();
-        let mut dests = SmallVec::<[VariableRef; 4]>::new();
-        for df in dataflow {
-            let mut sources = SmallVec::new();
-            for source_loc in df.sources.iter() {
-                sources.push(self.convert_location_to_exp(source_loc, locals));
+        let mut saved = SmallVec::<[u32; 6]>::new();
+        for df in &moves {
+            for n in df.sources.iter().filter_map(Self::stack_slot_index) {
+                if overwritten.contains(&n) && !saved.contains(&n) {
+                    saved.push(n);
+                    stmts.push(Self::assign_var(
+                        Self::shuffle_temp(n, locals),
+                        self.convert_location_to_var_ref(&Location::StackSlot(n), locals),
+                    ));
+                }
             }
-            let dest = self.convert_location_to_var_ref(&df.destination, locals);
+        }
+        for df in moves {
+            let sources = df
+                .sources
+                .iter()
+                .map(|loc| match Self::stack_slot_index(loc) {
+                    Some(n) if saved.contains(&n) => {
+                        Exp::from(AccessPath::without_fields(Self::shuffle_temp(n, locals)))
+                    }
+                    _ => self.convert_location_to_exp(loc, locals),
+                })
+                .collect();
             stmts.push(Statement::new_kind(StatementKind::Assign {
-                dest: dest.clone(),
+                dest: self.convert_location_to_var_ref(&df.destination, locals),
                 sources,
             }));
-            dests.push(dest);
-        }
-        for i in 0..dests.len() {
-            for j in (i + 1)..dests.len() {
-                stmts.push(Self::assign_var(dests[i].clone(), dests[j].clone()));
-                stmts.push(Self::assign_var(dests[j].clone(), dests[i].clone()));
-            }
         }
         stmts
+    }
+
+    /// The temporary [`Self::stack_shuffle_statements`] saves stack slot `n` in.
+    fn shuffle_temp(n: u32, locals: &mut Locals) -> VariableRef {
+        VariableRef::new_local_idx(locals.get_or_intern(&format!("shuffle{n}")))
     }
 
     fn dataflow_to_statements(
         &mut self,
         opcode: u8,
         data: &DataflowInfo,
-        aliases: &HashMap<String, VariableRef>,
-        last_aload_reg: Option<&VariableRef>,
-        block_instrs: &[jvm_reader::flow::InstructionFlowInfo<'_>],
-        instr_idx: usize,
         locals: &mut Locals,
     ) -> SmallVec<[Statement; 2]> {
         let dest_is_array = matches!(data.destination, Location::ArrayElement { .. });
@@ -1094,14 +968,10 @@ impl Context {
             // getfield
             0xb4 => {
                 let field = Self::field_ref_in(&data.sources).expect("getfield field");
-                let object = self.field_object_base(
+                let object = self.convert_location_to_var_ref(
                     Self::stack_sources(&data.sources)
                         .next()
                         .expect("getfield object"),
-                    aliases,
-                    last_aload_reg,
-                    block_instrs,
-                    instr_idx,
                     locals,
                 );
                 smallvec![Statement::new_kind(StatementKind::load(
@@ -1116,17 +986,11 @@ impl Context {
                     Location::FieldRef(f) => f,
                     _ => panic!("putfield destination"),
                 };
+                // The value is on top (one slot, or two for long/double), the object below it.
                 let mut stacks = Self::stack_sources(&data.sources);
                 let value = self.stack_exp(stacks.next().expect("putfield value"), locals);
-                let object_slot = stacks.next().expect("putfield object");
-                let object = self.field_object_base(
-                    object_slot,
-                    aliases,
-                    last_aload_reg,
-                    block_instrs,
-                    instr_idx,
-                    locals,
-                );
+                let object_slot = stacks.last().expect("putfield object");
+                let object = self.convert_location_to_var_ref(object_slot, locals);
                 smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(object),
                     Self::jvm_field_symbol(field),
@@ -1150,14 +1014,7 @@ impl Context {
             // *aload
             0x2e..=0x35 if Self::array_base(&data.sources).is_some() => {
                 let base = Self::array_base(&data.sources).expect("aload base");
-                let object = self.field_object_base(
-                    base,
-                    aliases,
-                    last_aload_reg,
-                    block_instrs,
-                    instr_idx,
-                    locals,
-                );
+                let object = self.convert_location_to_var_ref(base, locals);
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination, locals),
                     object,
@@ -1175,14 +1032,7 @@ impl Context {
                         .expect("astore value"),
                     locals,
                 );
-                let object = self.field_object_base(
-                    base,
-                    aliases,
-                    last_aload_reg,
-                    block_instrs,
-                    instr_idx,
-                    locals,
-                );
+                let object = self.convert_location_to_var_ref(base, locals);
                 smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(object),
                     mir::FieldRef::symbol("[]"),
@@ -1210,6 +1060,18 @@ impl Context {
             Location::Constant(ConstantValue::Integer(n)) => Exp::new_int(*n as i64),
             Location::Constant(ConstantValue::Long(n)) => Exp::new_int(*n),
             Location::Constant(ConstantValue::String(s)) => Exp::new_str(s),
+            // As ctadl-dex models const-method-handle and const-method-type.
+            Location::Constant(ConstantValue::MethodHandle { .. }) => {
+                Self::allocation_exp("java/lang/invoke/MethodHandle")
+            }
+            Location::Constant(ConstantValue::MethodType(_)) => {
+                Self::allocation_exp("java/lang/invoke/MethodType")
+            }
+            Location::Constant(ConstantValue::Dynamic { descriptor, .. })
+                if descriptor.starts_with('L') || descriptor.starts_with('[') =>
+            {
+                Self::allocation_exp(descriptor)
+            }
             Location::Allocation(class_name) => Self::allocation_exp(class_name),
             // A field read is not expressible as an Exp; genuine field reads are lowered to
             // Load instructions in the getfield/getstatic/aload opcode arms. This &self helper

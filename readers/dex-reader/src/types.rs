@@ -588,6 +588,7 @@ pub struct DexConstantPool<'a> {
     pub proto_ids: Vec<ProtoId>,
     pub field_ids: Vec<FieldId>,
     pub method_ids: Vec<MethodId>,
+    pub method_handles: Vec<MethodHandle>,
 }
 
 impl<'a> DexConstantPool<'a> {
@@ -599,6 +600,7 @@ impl<'a> DexConstantPool<'a> {
         proto_ids: Vec<ProtoId>,
         field_ids: Vec<FieldId>,
         method_ids: Vec<MethodId>,
+        method_handles: Vec<MethodHandle>,
     ) -> Self {
         Self {
             data: file_buf,
@@ -607,6 +609,7 @@ impl<'a> DexConstantPool<'a> {
             proto_ids,
             field_ids,
             method_ids,
+            method_handles,
         }
     }
 }

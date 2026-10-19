@@ -10,9 +10,9 @@ pub mod types;
 pub use error::{ClassFileError, ClassFileResult, MethodContext};
 pub use flow::{
     compute_basic_blocks_for_method, descriptor_parameter_info, descriptor_returns_value,
-    normalize_stack_slots_for_method, BasicBlock, CallInfo, CallKind, ConstantValue, DataflowInfo,
-    FieldRef, InstructionFlowInfo, InstructionKind, Location, MethodBasicBlocks,
-    MethodParameterInfo, MethodParameterKind, MethodTarget, ParameterSlotMap,
+    instruction_stack_effect, normalize_stack_slots_for_method, BasicBlock, CallInfo, CallKind,
+    ConstantValue, DataflowInfo, FieldRef, InstructionFlowInfo, InstructionKind, Location,
+    MethodBasicBlocks, MethodParameterInfo, MethodParameterKind, MethodTarget, ParameterSlotMap,
 };
 pub use instructions::{disassemble_class_file, disassemble_jar_file};
 pub use jar::JarFileParser;

@@ -1,0 +1,18 @@
+{
+  // Flow: a.data = source() (16) -> sink((c ? a : b).data) (17). The object
+  // the getfield reads is a stack value defined on two branches, so the two
+  // definitions meet at a phi.
+  "expected_lines": [16, 17],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LConditionalReceiver;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LConditionalReceiver;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}
