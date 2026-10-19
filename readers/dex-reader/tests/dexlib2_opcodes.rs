@@ -7,7 +7,7 @@
 //! result for `move-result`, and whether it can fall through.
 //!
 //! dexlib2's flags describe writes only, so this says nothing about the registers an instruction
-//! reads (`DataFlow::source`). See `docs/dex-validation.md`.
+//! reads (`DataFlow::source`). `cargo xtask dex-opcodes` checks those against ART.
 
 use dex_reader::instructions::{DALVIK_OPCODES, Format, Instruction};
 

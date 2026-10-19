@@ -2451,7 +2451,7 @@ mod tests {
 
     /// Each output of `dup*` and `swap` copies exactly one input, in the JVMS
     /// 6.5 order. Listing every input as a source of every output mixes the
-    /// values (jvm-reader improvements doc 3.2).
+    /// values, which once let a clean value pick up a tainted one's taint.
     #[test]
     fn test_stack_shuffle_dataflow() {
         use Location::StackInput as In;

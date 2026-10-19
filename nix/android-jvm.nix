@@ -148,8 +148,8 @@ let
 
   # smali, the assembler from the same 3.0.9 release, for building .dex
   # inputs by hand: opcodes that javac + dx never emit, such as
-  # invoke-polymorphic and invoke-custom (see docs/dex-validation.md).
-  # Fetched like baksmali above, never committed.
+  # invoke-polymorphic and invoke-custom, which `dex:dexlib2-decode` and
+  # `dex:opcodes-replay` assemble. Fetched like baksmali above, never committed.
   smali =
     let
       jar = pkgs.fetchurl {
@@ -164,10 +164,9 @@ let
   # ASM, the bytecode library, for the jvm-reader checks that need an
   # independent model of JVM bytecode: its analyzer is the oracle the
   # `jvm:asm-flow` check compares jvm-reader's dataflow with, and its
-  # class writer builds bytecode javac never emits (see
-  # docs/jvm-validation.md). nixpkgs packages no ASM jars, so fetch the
-  # pinned release from Maven Central. `asm-classpath` prints the
-  # classpath, which is how xtask finds them.
+  # class writer builds bytecode javac never emits. nixpkgs packages no
+  # ASM jars, so fetch the pinned release from Maven Central.
+  # `asm-classpath` prints the classpath, which is how xtask finds them.
   asmClasspath =
     let
       jar =

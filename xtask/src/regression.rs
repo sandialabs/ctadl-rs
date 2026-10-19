@@ -54,9 +54,9 @@ const LUA_XFAIL: &[&str] = &[];
 /// `Jvm:*` case is enforced, as in [`C_KNOWN_FAILURES`].
 ///
 /// Currently empty. Enforcement used to be opt-in, case by case, so a new JVM
-/// case that failed was reported as XFAIL and the suite stayed green: the
-/// field-access and `dup_x1` bugs in `docs/dex-jvm-reader-improvements.md`
-/// §3.1 and §3.2 went unnoticed that way. Add an entry only for a known,
+/// case that failed was reported as XFAIL and the suite stayed green: a
+/// field access on a call's result that used the wrong object, and `dup_x1`
+/// sending every input to every output, went unnoticed that way. Add an entry only for a known,
 /// documented gap, and delete it once the case passes.
 const JVM_KNOWN_FAILURES: &[&str] = &[];
 

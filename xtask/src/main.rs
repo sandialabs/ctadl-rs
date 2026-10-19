@@ -457,7 +457,7 @@ Tasks:
   dex-opcodes                Run every Dalvik opcode on ART (an attached device or
                              emulator) and check dex-reader's data_flow() and
                              can_throw() against what it reads, writes and throws.
-                             Opt-in and slow; see docs/dex-validation.md.
+                             Opt-in and slow; see xtask/tests/dex/README.md.
     --out <dir>              Where the generated cases, device log, results and
                              report go (default: target/dex-opcodes).
     --avd <name>             Boot this AVD headless if no device is attached,
