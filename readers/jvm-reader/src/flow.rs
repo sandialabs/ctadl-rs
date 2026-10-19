@@ -1769,8 +1769,15 @@ fn decode_dataflow(
         0xbd => {
             let idx = read_u16_be(code, pc + 1)?;
             let class_name = cf.get_class_name(idx)?;
+            // The operand names an array class by its descriptor (`[I`) and
+            // any other class by its internal name (`java/lang/String`).
+            let element = if class_name.starts_with('[') {
+                class_name.to_string()
+            } else {
+                format!("L{class_name};")
+            };
             sources.push(Location::StackInput(0));
-            sources.push(Location::Allocation(format!("[L{};", class_name)));
+            sources.push(Location::Allocation(format!("[{element}")));
             destinations.push(Location::StackOutput);
         }
         0xc5 => {
@@ -2641,6 +2648,33 @@ mod tests {
             assert_eq!(consumed, dimensions as usize, "{dimensions} dimensions");
             assert_eq!(destinations, vec![Location::StackOutput]);
             assert!(sources.contains(&Location::Allocation("Demo".to_string())));
+        }
+    }
+
+    /// `anewarray`'s operand is a class's internal name, or an array class's
+    /// descriptor. Wrapping the descriptor in `L...;` too made `new int[n][]`
+    /// allocate `[L[I;`.
+    #[test]
+    fn anewarray_allocates_an_array_of_its_class() {
+        let mut cf = constant_pool_only();
+        cf.constant_pool.extend([
+            // 3: Class [I
+            Some(CpEntry::Class { name_index: 4 }),
+            Some(CpEntry::Utf8(JvmString::Utf8("[I".to_string()))),
+        ]);
+        for (index, allocated) in [(CONSTANT_POOL_CLASS_INDEX, "[LDemo;"), (3, "[[I")] {
+            let code = [0xbd, 0x00, index as u8];
+            let (sources, destinations) =
+                decode_dataflow(&code, 0, &cf, 0xbd, &ParameterSlotMap::default(), false)
+                    .expect("decode");
+            assert_eq!(
+                sources,
+                vec![
+                    Location::StackInput(0),
+                    Location::Allocation(allocated.to_string())
+                ]
+            );
+            assert_eq!(destinations, vec![Location::StackOutput]);
         }
     }
 

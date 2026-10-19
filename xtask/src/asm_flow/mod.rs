@@ -106,10 +106,6 @@ pub const KNOWN: &[(u8, &str)] = &[
     (0x0c, "fconst_1 holds the bits 0x1, not 1.0f"),
     (0x0d, "fconst_2 holds the bits 0x2, not 2.0f"),
     (0x0f, "dconst_1 holds the bits 0x1, not 1.0"),
-    (
-        0xbd,
-        "anewarray of an array type allocates [L[I; rather than [[I",
-    ),
 ];
 
 /// What [`compare`] found.
