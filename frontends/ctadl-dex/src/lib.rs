@@ -24,7 +24,7 @@ use ctadl_ir::mir::call::{
 use ctadl_ir::*;
 use dex_reader::basic_blocks::{basic_blocks, block_successors};
 use dex_reader::error::DexError;
-use dex_reader::instructions::{DataFlow, Instruction, Reg};
+use dex_reader::instructions::{DataFlow, Instruction, Reg, TypeIdx};
 use dex_reader::parser::{DecodedCodeItem, decode_code_item};
 use dex_reader::types::{ACC_ABSTRACT, ACC_INTERFACE, ACC_NATIVE, ACC_STATIC, CodeItem, MethodId};
 use dex_reader::{APKParser, DexParser};
@@ -683,6 +683,16 @@ impl Context {
         })
     }
 
+    /// A new object of the class or array type `idx` names, or `None` when the
+    /// type cannot be read.
+    fn allocation_exp(parser: &DexParser<'_>, idx: TypeIdx) -> Option<Exp> {
+        let tid = parser.constant_pool().type_ids.get(idx.0 as usize)?;
+        let desc = tid.descriptor(&parser.constant_pool().strings).ok()?;
+        Some(Exp::new_object_ref(CallObject::JavaObject(JavaClass(
+            desc.into(),
+        ))))
+    }
+
     fn dataflow_to_assign(
         &mut self,
         parser: &DexParser<'_>,
@@ -738,17 +748,11 @@ impl Context {
                 }
             }
             // NewInstance – resolved to a JavaObject reference
-            Instruction::NewInstance(f) => {
-                if let Some(tid) = parser.constant_pool().type_ids.get(f.idx.0 as usize)
-                    && let Ok(desc) = tid.descriptor(&parser.constant_pool().strings)
-                {
-                    Some(Exp::new_object_ref(CallObject::JavaObject(JavaClass(
-                        desc.into(),
-                    ))))
-                } else {
-                    None
-                }
-            }
+            Instruction::NewInstance(f) => Self::allocation_exp(parser, f.idx),
+            // A new-array is a new object of its array type. Its size register does
+            // not flow into it: copying the size in made every array built from one
+            // size register a copy of that register, so taint in one reached the others.
+            Instruction::NewArray(f) => Self::allocation_exp(parser, f.idx),
             // A method handle or method type constant is an object of that class
             Instruction::ConstMethodHandle(_) => Some(Exp::new_object_ref(CallObject::JavaObject(
                 JavaClass("Ljava/lang/invoke/MethodHandle;".into()),
