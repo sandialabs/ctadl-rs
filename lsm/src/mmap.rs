@@ -14,7 +14,6 @@
 //! On-disk bytes are written in **native** endianness (the `mmap` is reinterpreted
 //! directly), so a run file is only portable to machines of the same endianness.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::iter::Peekable;
@@ -24,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytemuck::Pod;
+use hashbrown::HashTable;
 use memmap2::{Mmap, MmapMut};
 use smallvec::SmallVec;
 
@@ -327,10 +327,68 @@ fn load_run<K: Pod + Ord, V: Pod>(path: PathBuf) -> io::Result<MmapRun<K, V>> {
     Ok(run)
 }
 
+/// The in-memory write buffer: each key's values, hashed by [`hash_key`] (the
+/// same hash the runs' Bloom filters take, so a lookup hashes its key once).
+/// Unordered; a flush sorts it.
+struct Memtable<K, V> {
+    table: HashTable<(K, SmallVec<[V; 1]>)>,
+}
+
+impl<K, V> Default for Memtable<K, V> {
+    fn default() -> Self {
+        Self {
+            table: HashTable::new(),
+        }
+    }
+}
+
+impl<K: std::fmt::Debug, V: std::fmt::Debug> std::fmt::Debug for Memtable<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.table.iter().map(|(k, v)| (k, v)))
+            .finish()
+    }
+}
+
+impl<K: Pod + Ord, V: Pod> Memtable<K, V> {
+    fn insert(&mut self, hash: u64, key: K, value: V) {
+        match self
+            .table
+            .entry(hash, |(k, _)| *k == key, |(k, _)| hash_key(k))
+        {
+            hashbrown::hash_table::Entry::Occupied(mut e) => e.get_mut().1.push(value),
+            hashbrown::hash_table::Entry::Vacant(e) => {
+                e.insert((key, smallvec::smallvec![value]));
+            }
+        }
+    }
+
+    fn get(&self, hash: u64, key: &K) -> Option<&[V]> {
+        self.table
+            .find(hash, |(k, _)| k == key)
+            .map(|(_, vals)| vals.as_slice())
+    }
+
+    fn keys_len(&self) -> usize {
+        self.table.len()
+    }
+
+    /// Every entry, by ascending key.
+    fn sorted(&self) -> Vec<(&K, &[V])> {
+        let mut entries: Vec<_> = self
+            .table
+            .iter()
+            .map(|(k, vals)| (k, vals.as_slice()))
+            .collect();
+        entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        entries
+    }
+}
+
 /// A disk-backed LSM multi-map with zero-copy, reference-returning reads.
 #[derive(Debug)]
 pub struct MmapLsmMultiMap<K, V> {
-    memtable: BTreeMap<K, Vec<V>>,
+    memtable: Memtable<K, V>,
     levels: Vec<Vec<MmapRun<K, V>>>,
     memtable_len: usize,
     len: usize,
@@ -364,7 +422,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         level_fanout: usize,
     ) -> Self {
         Self {
-            memtable: BTreeMap::new(),
+            memtable: Memtable::default(),
             levels: Vec::new(),
             memtable_len: 0,
             len: 0,
@@ -409,7 +467,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         }
 
         Ok(Self {
-            memtable: BTreeMap::new(),
+            memtable: Memtable::default(),
             levels,
             memtable_len: 0,
             len,
@@ -421,7 +479,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     }
 
     pub fn insert(&mut self, key: K, value: V) {
-        self.memtable.entry(key).or_default().push(value);
+        self.memtable.insert(hash_key(&key), key, value);
         self.memtable_len += 1;
         self.len += 1;
         if self.memtable_len >= self.memtable_limit {
@@ -441,12 +499,10 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     /// the memtable and the memory-mapped runs (no copying / decoding).
     pub fn get_refs(&self, key: &K) -> Option<ValsRefs<'_, V>> {
         let mut slices: SmallVec<[&[V]; 4]> = SmallVec::new();
-        if let Some(vals) = self.memtable.get(key)
-            && !vals.is_empty()
-        {
+        let hash = hash_key(key);
+        if let Some(vals) = self.memtable.get(hash, key) {
             slices.push(vals);
         }
-        let hash = hash_key(key);
         for run in self.levels.iter().flatten() {
             if let Some(vals) = run.find(key, hash)
                 && !vals.is_empty()
@@ -463,10 +519,10 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
 
     /// Whether any value is stored under `key`.
     pub fn contains_key(&self, key: &K) -> bool {
-        if self.memtable.contains_key(key) {
+        let hash = hash_key(key);
+        if self.memtable.get(hash, key).is_some() {
             return true;
         }
-        let hash = hash_key(key);
         self.levels
             .iter()
             .flatten()
@@ -479,14 +535,14 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     where
         V: PartialEq,
     {
+        let hash = hash_key(key);
         if self
             .memtable
-            .get(key)
+            .get(hash, key)
             .is_some_and(|vals| vals.contains(value))
         {
             return true;
         }
-        let hash = hash_key(key);
         self.levels
             .iter()
             .flatten()
@@ -499,7 +555,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     pub fn iter_all_refs(&self) -> IterAllRefs<'_, K, V> {
         let mut sources: Vec<Peekable<Box<dyn Iterator<Item = (&K, &[V])> + '_>>> = Vec::new();
         let memtable: Box<dyn Iterator<Item = (&K, &[V])>> =
-            Box::new(self.memtable.iter().map(|(k, v)| (k, v.as_slice())));
+            Box::new(self.memtable.sorted().into_iter());
         sources.push(memtable.peekable());
         for run in self.levels.iter().flatten() {
             let run_iter: Box<dyn Iterator<Item = (&K, &[V])>> =
@@ -511,7 +567,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
 
     /// Empties the map (deleting any run files), keeping it usable.
     pub fn clear(&mut self) {
-        self.memtable.clear();
+        self.memtable = Memtable::default();
         for run in std::mem::take(&mut self.levels).into_iter().flatten() {
             run.delete();
         }
@@ -529,7 +585,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         if other.memtable_len >= self.memtable_limit / 4 {
             other.flush().expect("failed to flush mmap LSM memtable");
         }
-        for (key, vals) in std::mem::take(&mut other.memtable) {
+        for (key, vals) in std::mem::take(&mut other.memtable).table {
             for value in vals {
                 self.insert(key, value);
             }
@@ -554,9 +610,8 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         let memtable = std::mem::take(&mut self.memtable);
         let values_len = self.memtable_len;
         self.memtable_len = 0;
-        // The memtable iterates ascending — stream it straight to a run.
-        let mut writer = self.new_run_writer(0, memtable.len(), values_len)?;
-        for (key, vals) in &memtable {
+        let mut writer = self.new_run_writer(0, memtable.keys_len(), values_len)?;
+        for (key, vals) in memtable.sorted() {
             writer.start_key(key);
             writer.append_values(vals);
         }

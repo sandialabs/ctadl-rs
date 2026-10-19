@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 memmap2 = "0.9"
 bytemuck = "1"
+hashbrown = "0.16"
 smallvec = "1"
 ascent = "0.8"
 

@@ -3106,6 +3106,7 @@ dependencies = [
  "ascent",
  "bytemuck",
  "criterion",
+ "hashbrown 0.16.1",
  "memmap2",
  "smallvec",
 ]
