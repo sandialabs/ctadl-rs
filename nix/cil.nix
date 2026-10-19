@@ -1,6 +1,7 @@
 # The CIL/.NET toolchain: ilasm, the dnlib-based fixture tools, the reference
 # runners the `cil:*` checks compare against (CecilDump, FlowRun, ModelRun),
-# and cil-reader's compiled fixtures.
+# and cil-reader's compiled fixtures. None of the .NET builds references a
+# NuGet package, so each restores with no network, inside the sandbox.
 {
   pkgs,
   cecil,
@@ -57,8 +58,7 @@ let
     };
 
   # A dnlib-based fixture tool in readers/cil-reader/tools/<project>,
-  # wrapped as bin/<name>. Like cecilDump, it compiles the pinned dnlib
-  # sources in and needs no NuGet.
+  # wrapped as bin/<name>. It compiles the pinned dnlib sources in.
   dnlibTool =
     name: project:
     pkgs.stdenvNoCC.mkDerivation {
@@ -105,7 +105,6 @@ let
   # FlowRun (readers/cil-reader/tools/FlowRun): runs an assembly's methods
   # on .NET with random arguments, the reference that the `cil:exec`
   # check's interpreter over cil-reader's flow layer is compared against.
-  # No NuGet packages, so it builds offline like cecilDump.
   flowRun = pkgs.stdenvNoCC.mkDerivation {
     # `name` rather than pname/version: see cecilDump.
     name = "flow-run";
@@ -139,8 +138,7 @@ let
 
   # ModelRun (frontends/ctadl-cil/tools/ModelRun): calls the .NET library
   # methods the default CIL models select, with marked arguments, the
-  # reference the `cil:models` check compares the models against. No
-  # NuGet packages, so it builds offline like flowRun.
+  # reference the `cil:models` check compares the models against.
   modelRun = pkgs.stdenvNoCC.mkDerivation {
     # `name` rather than pname/version: see cecilDump.
     name = "model-run";
@@ -173,8 +171,8 @@ let
   };
 
   # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled.
-  # The tests find them through CIL_READER_FIXTURES. Offline (nothing
-  # references a NuGet package) and byte-for-byte reproducible:
+  # The tests find them through CIL_READER_FIXTURES. Byte-for-byte
+  # reproducible:
   # - `.il`: the standalone CoreCLR ilasm, whose flag dialect is
   #   `-dll -output=<file>` (not the Mono-style `/dll /out:` of Cecil's
   #   harness). `-DET` makes the MVID and timestamp content-derived.
@@ -283,8 +281,7 @@ let
   # CecilDump (readers/cil-reader/tools/CecilDump): Mono.Cecil's rendering
   # of an assembly in the cil-dump text format, the reference that
   # cil-reader's output is compared against. The project compiles the
-  # pinned Cecil sources in directly and references no NuGet packages, so
-  # the restore needs no network and runs inside the sandbox as is.
+  # pinned Cecil sources in directly.
   cecilDump = pkgs.stdenvNoCC.mkDerivation {
     # `name` rather than pname/version: MSBuild reads the environment as
     # properties, and a `version` variable lands as $(Version), which

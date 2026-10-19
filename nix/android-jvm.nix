@@ -256,7 +256,6 @@ in
     jvm-reader
     droidbenchIccApks
     ;
-  # The build-tools directories of `androidSdk` and `androidDebugSdk`.
   androidSdkBuildTools = buildToolsDir androidSdk;
   androidDebugSdkBuildTools = buildToolsDir androidDebugSdk;
   # dex-reader's pure-Rust unit tests, built offline by naersk in test

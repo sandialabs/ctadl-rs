@@ -125,18 +125,12 @@
             android.jdk
             android.baksmali
             pkgs.ghidra-bin
-            # The `cil:cecil-compare` check's reference dumper.
             cil.cecilDump
-            # The `cil:exec` check's reference runner.
             cil.flowRun
-            # The `cil:models` check's reference runner.
             cil.modelRun
           ];
         };
 
-        # The distributable `ctadl` binaries, one per released target. What each
-        # one is, why it cannot just be `packages.default`, and which builder
-        # can produce which target all live in ./nix/release.nix.
         release = import ./nix/release.nix {
           inherit
             pkgs
@@ -183,9 +177,10 @@
           }
         );
 
-        # The distributable binaries. They live under `legacyPackages` rather
-        # than `packages` for the same reason the example above does; see
-        # ./nix/release.nix for the rest.
+        # The distributable binaries, under `legacyPackages` for the same reason as
+        # the example above; what each is and which builder produces it are in
+        # ./nix/release.nix. Build one with
+        #   nix build .#legacyPackages.<system>.release.<target>
         legacyPackages.release = release;
 
         # CI/test logic lives under `checks` so the nightly GitHub workflow can run
@@ -269,10 +264,8 @@
           };
 
         formatter = pkgs.nixfmt;
-        # One shell for everything: the day-to-day Rust/Nix tooling plus the
-        # external toolchain the regression suite needs (ghidra, the Android
-        # SDK, a JDK, dex-reader/jvm-reader, ...). `cargo xtask regression`
-        # runs straight from here.
+        # One shell for everything: the day-to-day Rust/Nix tooling plus testEnv,
+        # so `cargo xtask regression` runs straight from here.
         devShells.default =
           with pkgs;
           mkShell {
@@ -319,8 +312,8 @@
             # cil-reader's compiled fixtures, for the same consumers.
             CIL_READER_FIXTURES = "${cil.cilFixtures}";
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
-            # The debugging SDK, a superset of the regression one, so the
-            # emulator finds its system image through this.
+            # The debugging SDK, so the emulator finds its system image through
+            # this.
             ANDROID_SDK_ROOT = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk";
             ANDROID_HOME = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk";
             ANDROID_NDK_ROOT = "${android.androidDebugSdk.androidsdk}/libexec/android-sdk/ndk-bundle";

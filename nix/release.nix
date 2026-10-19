@@ -19,12 +19,6 @@
 # cannot reach is not an error here, it just will not succeed: the attribute set
 # is the same on every system, and the failure comes from the build.
 #
-# The flake exposes these under `legacyPackages.<system>.release.<target>` for
-# the same reason the nginx example lives there: a nested set is skipped by
-# `nix flake check`, which keeps these slow cross builds -- impossible ones, on
-# the wrong builder -- out of the per-PR checks. Build one with
-#   nix build .#legacyPackages.<system>.release.<target>
-#
 # Only `ctadl` ships. `xtask` is the in-tree test harness.
 {
   pkgs,
