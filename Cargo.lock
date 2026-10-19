@@ -841,14 +841,14 @@ dependencies = [
 
 [[package]]
 name = "cil-dump"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "cil-reader",
 ]
 
 [[package]]
 name = "cil-reader"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "flate2",
  "memmap2",
@@ -1222,7 +1222,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-cil"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "cil-reader",
  "ctadl-import",
