@@ -1152,6 +1152,12 @@ impl<T> Default for SeedVec<T> {
     }
 }
 
+impl<T> FromIterator<T> for SeedVec<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        iter.into_iter().collect::<Vec<_>>().into()
+    }
+}
+
 impl<T> From<Vec<T>> for SeedVec<T> {
     fn from(seed: Vec<T>) -> Self {
         let len = seed.len();
