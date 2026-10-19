@@ -47,32 +47,6 @@
             allowUnfree = true;
             android_sdk.accept_license = true;
           };
-          # nixpkgs ships a wrong hash for the Darwin platform-tools zip; fix it
-          # here. This overlay is a no-op on Linux (the URL never matches), so CI
-          # on ubuntu-latest is unaffected.
-          overlays = [
-            (final: prev: {
-              fetchurl =
-                args:
-                if
-                  (args.url or "") == "https://dl.google.com/android/repository/platform-tools_r37.0.0-darwin.zip"
-                then
-                  prev.fetchurl (
-                    (builtins.removeAttrs args [
-                      "sha256"
-                      "sha1"
-                      "sha512"
-                      "md5"
-                      "hash"
-                    ])
-                    // {
-                      hash = "sha1-jEySbQyhkjdrKgSwMYSEckMZ5nw=";
-                    }
-                  )
-                else
-                  prev.fetchurl args;
-            })
-          ];
         };
         # The Rust toolchain rust-toolchain.toml names, the one the `test` workflow
         # runs. Everything here builds and checks with it, so a feature newer

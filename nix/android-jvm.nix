@@ -7,12 +7,40 @@
   workspaceVersion,
 }:
 let
+  # nixpkgs ships a wrong hash for the Darwin platform-tools zip, which both
+  # SDKs below fetch; fix it for them. The URL never matches on Linux, so there
+  # this is a no-op.
+  androidenv =
+    (pkgs.extend (
+      final: prev: {
+        fetchurl =
+          args:
+          if
+            (args.url or "") == "https://dl.google.com/android/repository/platform-tools_r37.0.0-darwin.zip"
+          then
+            prev.fetchurl (
+              (builtins.removeAttrs args [
+                "sha256"
+                "sha1"
+                "sha512"
+                "md5"
+                "hash"
+              ])
+              // {
+                hash = "sha1-jEySbQyhkjdrKgSwMYSEckMZ5nw=";
+              }
+            )
+          else
+            prev.fetchurl args;
+      }
+    )).androidenv;
+
   # --- Nightly regression suite dependencies -------------------------
   # These are only forced when building `checks.<system>.{regression,nightly}`.
 
   # Android SDK, pinned to build-tools 30.0.2 because the DEX tests invoke
   # `dx`, which was removed in build-tools 31+.
-  androidSdk = pkgs.androidenv.composeAndroidPackages {
+  androidSdk = androidenv.composeAndroidPackages {
     buildToolsVersions = [ "30.0.2" ];
     platformVersions = [ "30" ];
     includeEmulator = false;
@@ -39,7 +67,7 @@ let
   # given android:debuggable="true", then `zipalign -p` (page-aligning
   # its native libs) and `apksigner` with any key.
   androidDebugAbi = if pkgs.stdenv.hostPlatform.isAarch64 then "arm64-v8a" else "x86_64";
-  androidDebugSdk = pkgs.androidenv.composeAndroidPackages {
+  androidDebugSdk = androidenv.composeAndroidPackages {
     buildToolsVersions = [ "30.0.2" ];
     platformVersions = [
       "30"
