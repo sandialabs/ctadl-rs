@@ -472,6 +472,6 @@ it. Regression protection: `ArraysOfOneSize`, a no-flow case. Without the fix,
 `CompoundArrayAssign` also gave the right answer by the wrong route: the long
 array's element read the int array's taint.
 
-The JVM frontend still lists `newarray`'s count as a source of the array, so a
-tainted size taints the array there and not on Dex. That is a policy choice
-the two frontends now make differently.
+This matches the JVM frontend. jvm-reader lists `newarray`'s and `anewarray`'s
+count among their sources, but `ctadl-jvm` lowers them as the allocation alone,
+so on both frontends a tainted size does not taint the array.
