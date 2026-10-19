@@ -96,6 +96,8 @@
           dex-reader
           jvm-reader
           droidbenchIccApks
+          androidSdkBuildTools
+          androidDebugSdkBuildTools
           ;
 
         # The CIL/.NET toolchain: ilasm, the reference runners, and
@@ -246,8 +248,7 @@
                   chmod -R u+w ./nightly
                   cd ./nightly
 
-                  # `dx` lives under the SDK's build-tools, not on the default PATH.
-                  export PATH="${androidSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"
+                  export PATH="${androidSdkBuildTools}:$PATH"
                   export ANDROID_SDK_ROOT="${androidSdk.androidsdk}/libexec/android-sdk"
                   # ghidra/javac want a writable HOME; the sandbox HOME is not.
                   export HOME="$TMPDIR"
@@ -364,7 +365,7 @@
             # the stdenv's; ANDROID_LLDB_SERVER names the binary to push for
             # `android-lldb`, and simpleperf is under $ANDROID_NDK_ROOT/simpleperf.
             shellHook = ''
-              export PATH="${androidDebugSdk.androidsdk}/bin:${androidDebugSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"
+              export PATH="${androidDebugSdk.androidsdk}/bin:${androidDebugSdkBuildTools}:$PATH"
               ANDROID_LLDB_SERVER=$(echo "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*/lib/clang/*/lib/linux/${androidLldbArch}/lldb-server)
               export ANDROID_LLDB_SERVER
             '';

@@ -38,10 +38,16 @@ let
   # --- Nightly regression suite dependencies -------------------------
   # These are only forced when building `checks.<system>.{regression,nightly}`.
 
-  # Android SDK, pinned to build-tools 30.0.2 because the DEX tests invoke
-  # `dx`, which was removed in build-tools 31+.
+  # The build-tools both SDKs carry, pinned because the DEX tests invoke `dx`,
+  # which was removed in build-tools 31+.
+  buildToolsVersion = "30.0.2";
+  # An SDK's build-tools directory, where `dx` and the other build tools are;
+  # it is not on PATH by default.
+  buildToolsDir = sdk: "${sdk.androidsdk}/libexec/android-sdk/build-tools/${buildToolsVersion}";
+
+  # Android SDK the regression suite builds with.
   androidSdk = androidenv.composeAndroidPackages {
-    buildToolsVersions = [ "30.0.2" ];
+    buildToolsVersions = [ buildToolsVersion ];
     platformVersions = [ "30" ];
     includeEmulator = false;
     includeNDK = false;
@@ -68,7 +74,7 @@ let
   # its native libs) and `apksigner` with any key.
   androidDebugAbi = if pkgs.stdenv.hostPlatform.isAarch64 then "arm64-v8a" else "x86_64";
   androidDebugSdk = androidenv.composeAndroidPackages {
-    buildToolsVersions = [ "30.0.2" ];
+    buildToolsVersions = [ buildToolsVersion ];
     platformVersions = [
       "30"
       "34"
@@ -242,6 +248,9 @@ in
     jvm-reader
     droidbenchIccApks
     ;
+  # The build-tools directories of `androidSdk` and `androidDebugSdk`.
+  androidSdkBuildTools = buildToolsDir androidSdk;
+  androidDebugSdkBuildTools = buildToolsDir androidDebugSdk;
   # dex-reader's pure-Rust unit tests, built offline by naersk in test
   # mode. No external toolchain needed. The integration-style
   # full-parse checks (compiled samples + the real-world APK) were
