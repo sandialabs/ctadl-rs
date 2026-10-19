@@ -1,0 +1,43 @@
+{
+  // Flow: t = source() (19) -> get().v = t (20) -> sink(h.v) (22). As
+  // CallResultFieldStore, with a long field, whose value fills two stack slots.
+  "expected_lines": [19, 22],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "source",
+          "parent": "LCallResultWideField;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "UserInput",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "sink",
+          "parent": "LCallResultWideField;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "TaintedData",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}

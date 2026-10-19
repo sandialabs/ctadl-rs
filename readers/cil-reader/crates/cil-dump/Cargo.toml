@@ -1,0 +1,22 @@
+[package]
+name = "cil-dump"
+version.workspace = true
+edition = "2024"
+license = "MIT"
+description = "Deterministic text dump of a CIL image (test/compare tool for cil-reader)"
+publish = false
+
+[features]
+default = []
+# The `cil-dump` CLI. Off by default so that building the workspace never
+# produces a binary; the root xtask's `cil:*` checks use the library
+# in-process and do not need it.
+cli = []
+
+[[bin]]
+name = "cil-dump"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[dependencies]
+cil-reader = { path = "../cil-reader" }

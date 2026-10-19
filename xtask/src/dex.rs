@@ -25,6 +25,8 @@ use dex_reader::parser::*;
 use dex_reader::{APKParser, DexParser};
 
 use crate::baksmali;
+use crate::dex_opcodes;
+use crate::dexlib2;
 use crate::exec;
 use crate::regression::Outcome;
 
@@ -54,13 +56,14 @@ pub fn run_checks(
     let missing_tool = ["javac", "dx"]
         .into_iter()
         .find(|t| exec::which(t).is_none());
+    let mut samples = Vec::new();
     if let Some(tool) = missing_tool {
         let why = format!("`{tool}` not on PATH");
         results.push(("dex:samples".to_string(), Outcome::Skip(why.clone())));
         results.push(("dex:line-map".to_string(), Outcome::Skip(why.clone())));
         results.push(("dex:baksmali".to_string(), Outcome::Skip(why)));
     } else {
-        let samples = compile_samples(java_samples, work)?;
+        samples = compile_samples(java_samples, work)?;
         if samples.is_empty() {
             bail!("no .java samples found in {}", java_samples.display());
         }
@@ -89,6 +92,36 @@ pub fn run_checks(
             ));
         }
     }
+
+    // The disassembly check again, over the all-opcodes fixture: the samples
+    // hold only what `dx` emits, so display code for the rest goes unchecked.
+    results.push((
+        "dex:baksmali-all-opcodes".to_string(),
+        match ["smali", "baksmali"]
+            .into_iter()
+            .find(|t| exec::which(t).is_none())
+        {
+            Some(tool) => Outcome::Skip(format!("`{tool}` not on PATH")),
+            None => to_outcome(check_baksmali_all_opcodes(work)),
+        },
+    ));
+
+    results.push((
+        "dex:opcodes-replay".to_string(),
+        match exec::which("smali") {
+            None => Outcome::Skip("`smali` not on PATH".into()),
+            Some(_) => to_outcome(dex_opcodes::replay(&work.join("opcodes-replay"))),
+        },
+    ));
+
+    let existing_apk = apk.filter(|p| p.exists());
+    results.push((
+        "dex:dexlib2-decode".to_string(),
+        match missing_dexlib2_tool() {
+            Some(why) => Outcome::Skip(why),
+            None => to_outcome(check_dexlib2_decode(&samples, existing_apk, work)),
+        },
+    ));
 
     // The real-world APK smoke test: parse every classes*.dex it carries. It is
     // pure-Rust, so it runs even when the JDK/dx toolchain is absent.
@@ -147,8 +180,8 @@ fn compile_samples(java_samples: &Path, work: &Path) -> Result<Vec<SampleDex>> {
         let dir = work.join(&name);
         exec::fresh_dir(&dir)?;
 
-        // Target Java 8 bytecode: dx (build-tools 30.0.2) predates and rejects
-        // newer class-file versions.
+        // Target Java 8 bytecode: dx, from the build-tools nix/android-jvm.nix
+        // pins, predates and rejects newer class-file versions.
         let mut javac = Command::new("javac");
         javac
             .current_dir(&dir)
@@ -323,6 +356,84 @@ fn check_baksmali(samples: &[SampleDex], work: &Path) -> Result<()> {
     }
     if total == 0 {
         bail!("no methods were compared against baksmali across samples");
+    }
+    Ok(())
+}
+
+/// dex-reader's smali disassembly of the all-opcodes fixture matches baksmali.
+fn check_baksmali_all_opcodes(work: &Path) -> Result<()> {
+    let work = work.join("baksmali-all-opcodes");
+    let dex = dexlib2::assemble_all_opcodes(&work)?;
+    let bytes = std::fs::read(&dex).with_context(|| format!("reading {}", dex.display()))?;
+    let methods = baksmali::compare(&dex, &bytes, &work.join("baksmali"))?;
+    if methods == 0 {
+        bail!("no methods of all-opcodes were compared against baksmali");
+    }
+    Ok(())
+}
+
+/// Why `dex:dexlib2-decode` cannot run here, if it cannot.
+fn missing_dexlib2_tool() -> Option<String> {
+    if let Some(tool) = ["java", "smali"]
+        .into_iter()
+        .find(|t| exec::which(t).is_none())
+    {
+        return Some(format!("`{tool}` not on PATH"));
+    }
+    if dexlib2::find_jar().is_none() {
+        return Some(
+            "no dexlib2 jar: set DEXLIB2_JAR or put the `baksmali` wrapper on PATH".into(),
+        );
+    }
+    None
+}
+
+/// dex-reader decodes every instruction the way dexlib2 does: the all-opcodes
+/// fixture (which must hold every opcode), each compiled sample, and each
+/// `classes*.dex` in the APK.
+fn check_dexlib2_decode(samples: &[SampleDex], apk: Option<&Path>, work: &Path) -> Result<()> {
+    let jar = dexlib2::find_jar().context("no dexlib2 jar")?;
+    let work = work.join("dexlib2");
+    let fixture = dexlib2::assemble_all_opcodes(&work.join("all-opcodes"))?;
+    let fixture_bytes =
+        std::fs::read(&fixture).with_context(|| format!("reading {}", fixture.display()))?;
+    let parser = DexParser::new(&fixture_bytes)
+        .map_err(|e| anyhow::anyhow!("DexParser for all-opcodes: {e}"))?;
+    let missing = dexlib2::missing_opcodes(&parser)?;
+    if !missing.is_empty() {
+        bail!("all-opcodes.smali lacks opcodes: {}", missing.join(", "));
+    }
+
+    let mut inputs: Vec<(String, PathBuf, Vec<u8>)> =
+        vec![("all-opcodes".to_string(), fixture, fixture_bytes)];
+    for sample in samples {
+        inputs.push((
+            sample.name.clone(),
+            sample.dex.clone(),
+            sample.bytes.clone(),
+        ));
+    }
+    if let Some(apk) = apk {
+        let buffer = std::fs::read(apk).with_context(|| format!("reading {}", apk.display()))?;
+        let apk_parser =
+            APKParser::new(&buffer).map_err(|e| anyhow::anyhow!("parsing APK: {e}"))?;
+        let dir = work.join("apk");
+        exec::fresh_dir(&dir)?;
+        for (name, parser) in apk_parser.dex_parsers_with_filenames() {
+            let path = dir.join(name);
+            std::fs::write(&path, parser.data)
+                .with_context(|| format!("writing {}", path.display()))?;
+            inputs.push((format!("apk-{name}"), path, parser.data.to_vec()));
+        }
+    }
+
+    let mut compared = 0usize;
+    for (name, dex, bytes) in &inputs {
+        compared += dexlib2::compare(&jar, dex, bytes, &work.join(name))
+            .with_context(|| format!("dexlib2 decode of {name}"))?;
+    }
+    if compared == 0 {
+        bail!("no instructions were compared against dexlib2");
     }
     Ok(())
 }

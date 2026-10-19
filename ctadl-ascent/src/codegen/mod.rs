@@ -131,7 +131,8 @@ pub enum DispatchDisposition {
     Model,
     /// An empty propagation list: the target set is discarded.
     Skip,
-    /// `resolve: "inline"`: hybrid inlining whatever the target count.
+    /// `resolve: "inline"`: hybrid inlining whatever the target count, plus the synthetic
+    /// summary when the model also lists a propagation.
     Inline,
 }
 
@@ -213,7 +214,8 @@ pub fn classify_rung(
     Rung::Inline { by_model: false }
 }
 
-/// Every Java call site lands in exactly one of the four buckets. The invariant is asserted:
+/// Every dispatch site (a Java, Dex or CIL virtual, interface or super call) lands in exactly
+/// one of the four buckets. The invariant is asserted:
 /// `modelled + skipped + cha + inlined == java_sites`.
 ///
 /// Without these counts a mis-scoped dispatch model silently swallows a signature and the only
@@ -264,7 +266,7 @@ impl std::fmt::Display for SiteBuckets {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} java site(s): {} modelled, {} skipped, {} CHA ({} with no target, {} exact \
+            "{} dispatch site(s): {} modelled, {} skipped, {} CHA ({} with no target, {} exact \
              super), {} inlined ({} by model)",
             self.java_sites,
             self.modelled,
@@ -285,7 +287,7 @@ pub struct CodegenReport {
     /// rather than from the matched names, which is the only place that knows a name belonged
     /// to a function this project actually lowered.
     pub skipped_bodies: usize,
-    /// Java call sites by bucket, per [`JavaDispatch::index`].
+    /// Dispatch sites by bucket, per [`JavaDispatch::index`].
     pub buckets: [SiteBuckets; 4],
     /// Signatures whose dispatch model was refused because the CHA target set holds a matched
     /// source or sink, mapped to the endpoint that refused it.
@@ -417,6 +419,9 @@ fn call_target_object(exp: &Exp) -> Option<fx::CallTargetObject> {
         Exp::ObjectRef(CallObject::LuaClass(cls)) => {
             Some(fx::CallTargetObject::LuaClass(cls.clone()))
         }
+        Exp::ObjectRef(CallObject::CilObject(cls)) => {
+            Some(fx::CallTargetObject::CilClass(cls.0.clone()))
+        }
         _ => None,
     }
 }
@@ -444,6 +449,9 @@ impl Visitor for InstantiationFinder<'_> {
             }
             Exp::ObjectRef(CallObject::LuaClass(cls)) => {
                 self.instantiated_classes.insert(cls.clone());
+            }
+            Exp::ObjectRef(CallObject::CilObject(cls)) => {
+                self.instantiated_classes.insert(cls.0.clone());
             }
             _ => {}
         }
@@ -524,8 +532,12 @@ enum SiteAction {
     Cha,
     /// Rung 0: super resolution found the one real target.
     SuperExact(Symbol),
-    /// Rung 3, or a rung-1 `resolve: inline`: hybrid inlining.
-    Defer { by_model: bool },
+    /// Rung 3, or a rung-1 `resolve: inline`: hybrid inlining. `summary` is the signature's
+    /// synthetic function, called as well, when the inline disposition carries a propagation.
+    Defer {
+        by_model: bool,
+        summary: Option<fx::FunctionId>,
+    },
 }
 
 impl<'a> CodegenVisitor<'a> {
@@ -571,14 +583,20 @@ impl<'a> CodegenVisitor<'a> {
     ) -> SiteAction {
         match self.strategy {
             CallResolutionStrategy::Cha => SiteAction::Cha,
-            CallResolutionStrategy::Hi => SiteAction::Defer { by_model: false },
+            CallResolutionStrategy::Hi => SiteAction::Defer {
+                by_model: false,
+                summary: None,
+            },
             CallResolutionStrategy::LegacyMixed => {
                 // A zero-target site emits nothing either way, so it takes the CHA arm; that
                 // is also where the ladder counts it.
                 if self.resolvent_count(key) <= 1 {
                     SiteAction::Cha
                 } else {
-                    SiteAction::Defer { by_model: false }
+                    SiteAction::Defer {
+                        by_model: false,
+                        summary: None,
+                    }
                 }
             }
             CallResolutionStrategy::Mixed => self.classify_ladder(key, dispatch, super_start),
@@ -607,7 +625,14 @@ impl<'a> CodegenVisitor<'a> {
             Rung::Model => SiteAction::Model(self.synthetic(key)),
             Rung::Skip => SiteAction::Skip,
             Rung::Cha => SiteAction::Cha,
-            Rung::Inline { by_model } => SiteAction::Defer { by_model },
+            Rung::Inline { by_model } => {
+                let summary = if by_model && self.inline_has_summary(key) {
+                    Some(self.synthetic(key))
+                } else {
+                    None
+                };
+                SiteAction::Defer { by_model, summary }
+            }
         }
     }
 
@@ -662,19 +687,21 @@ impl<'a> CodegenVisitor<'a> {
                     self.facts.call.push((site, target));
                 }
             }
-            SiteAction::Defer { by_model } => {
+            SiteAction::Defer { by_model, summary } => {
                 buckets.inlined += 1;
                 if by_model {
                     buckets.inlined_by_model += 1;
                 }
+                if let Some(target) = summary {
+                    self.facts.call.push((site, target));
+                }
                 log::trace!("java: hybrid resolve {cls}.{simple_name}{descriptor} (deferred)");
                 self.deferred_dispatch
                     .insert((simple_name.clone(), descriptor.clone()));
-                self.facts.callee_info.push((
-                    site,
-                    FlowVertex(recv_var, fx::Path::empty()),
-                    fx::CallDispatchKey::Java(simple_name.clone(), descriptor.clone()),
-                ));
+                let key = self.cha.dispatch_key(simple_name, descriptor);
+                self.facts
+                    .callee_info
+                    .push((site, FlowVertex(recv_var, fx::Path::empty()), key));
             }
         }
     }
@@ -697,6 +724,19 @@ impl<'a> CodegenVisitor<'a> {
             self.facts.external_function.push((id,));
         }
         id
+    }
+
+    /// Whether `key`'s `resolve: inline` disposition also lists a propagation.
+    fn inline_has_summary(&self, key: &SignatureKey) -> bool {
+        let model_key = (
+            Str::from(key.0.as_ref()),
+            Str::from(key.1.as_ref()),
+            Str::from(key.2.as_ref()),
+        );
+        matches!(
+            self.matches.dispatch.get(&model_key).map(|m| &m.disposition),
+            Some(crate::models::Disposition::Inline(ports)) if !ports.is_empty()
+        )
     }
 
     /// How many methods CHA resolves `key` to.
@@ -732,7 +772,7 @@ impl<'a> CodegenVisitor<'a> {
         let disposition = match self.matches.dispatch.get(&model_key) {
             None => None,
             Some(model) => match &model.disposition {
-                crate::models::Disposition::Inline => Some(DispatchDisposition::Inline),
+                crate::models::Disposition::Inline(_) => Some(DispatchDisposition::Inline),
                 crate::models::Disposition::Model(_) | crate::models::Disposition::Skip => {
                     let endpoint = targets
                         .iter()
@@ -823,6 +863,18 @@ impl Visitor for CodegenVisitor<'_> {
             FlowVariable::formal_index(RETURN_INDEX.into()),
             fx::FormalType::Shared,
         ));
+        // ... and one per further return value, numbered on down (-2, -3, ...) as `Return`
+        // terminators and call sites number them. Without the declaration a return slot
+        // still gets assignments but never a summary: the summary rule joins on
+        // `formal_param`. Java and CIL return `(normal, exception)`, so this is what makes
+        // an exception thrown out of a callee reach the caller's handler.
+        for k in 2..=i16::from(function.return_type.arity) {
+            self.facts.formal_param.push((
+                self.function.unwrap(),
+                FlowVariable::formal_index((-k).into()),
+                fx::FormalType::Shared,
+            ));
+        }
         if skip {
             // `modes: ["skip-analysis"]`: lower the signature, drop the body. The function behaves
             // like a stub.
@@ -1061,6 +1113,26 @@ impl Visitor for CodegenVisitor<'_> {
                         let key = (cls.clone(), simple_name.clone(), descriptor.clone());
                         let action = self.classify(&key, *dispatch, super_start.as_ref());
                         self.apply(site, recv_var, &key, *dispatch, action);
+                    }
+                    CallStyle::CilCall {
+                        receiver,
+                        cls,
+                        simple_name,
+                        descriptor,
+                    } => {
+                        // The `JavaCall` arm, keyed in the CIL space (`ChaLanguage::Cil`).
+                        // The ladder's per-kind policy wants to know which sites dispatch
+                        // through an interface; `interfaces` says.
+                        let recv_var = self.trans_variable_ref(receiver);
+                        args.insert(0, Exp::Variable(receiver.clone()));
+                        let dispatch = if self.cha.is_interface(cls) {
+                            JavaDispatch::Interface
+                        } else {
+                            JavaDispatch::Virtual
+                        };
+                        let key = (cls.clone(), simple_name.clone(), descriptor.clone());
+                        let action = self.classify(&key, dispatch, None);
+                        self.apply(site, recv_var, &key, dispatch, action);
                     }
                     CallStyle::LuaCall { receiver, method } => {
                         // A Lua receiver has no static type, so there is no declared class to key
@@ -1359,12 +1431,10 @@ impl Visitor for CodegenVisitor<'_> {
                     ));
                     self.funcptr_targets.insert(target);
                 }
-                if let Exp::ObjectRef(CallObject::JavaObject(cls)) = value {
-                    self.facts.call_target_assign.push((
-                        site,
-                        dest_vertex.clone(),
-                        fx::CallTargetObject::Symbol(cls.0.clone()),
-                    ));
+                if let Some(object) = call_target_object(value) {
+                    self.facts
+                        .call_target_assign
+                        .push((site, dest_vertex.clone(), object));
                 }
                 // whole-aggregate copy: dest <- source
                 self.facts.assign.push((
@@ -1464,6 +1534,8 @@ pub(crate) enum ChaLanguage {
     #[default]
     Java,
     Lua,
+    /// .NET: the Java scheme, keyed `(CilClass(cls), Cil(name, desc))`.
+    Cil,
 }
 
 /// `(class, method simple name, descriptor) -> targets`. The descriptor is a fixed empty
@@ -1504,6 +1576,9 @@ pub(crate) struct ClassHierarchyAnalysis {
     /// Memo keyed by start signature. Bounded by distinct super-call signatures, about 1% of
     /// the virtual ones.
     super_memo: std::cell::RefCell<hashbrown::HashMap<SignatureKey, SuperResolution>>,
+    /// The types the table declares to be interfaces. Only the CIL arm fills it: a Java site
+    /// says itself whether it dispatches through an interface, and a `callvirt` does not.
+    interfaces: hashbrown::HashSet<Symbol>,
 }
 
 impl ClassHierarchyAnalysis {
@@ -1564,6 +1639,55 @@ impl ClassHierarchyAnalysis {
                     declared,
                     parents,
                     super_memo: Default::default(),
+                    interfaces: Default::default(),
+                }
+            }
+            // CIL is the Java arm over its own table. Override aliases (rows under a class with a
+            // base or interface method's key) are ordinary `method_implemented` rows here: a
+            // class "implementing" the base key is exactly what makes CHA find its override.
+            VirtualMethodTable::Cil {
+                methods,
+                hierarchy,
+                interfaces,
+                ..
+            } => {
+                let mut method_implemented: Vec<(Symbol, Symbol, Symbol, Symbol)> = methods
+                    .iter()
+                    .cloned()
+                    .map(|(a, b, c, d)| (a.into(), b.into(), c.into(), d.into()))
+                    .collect();
+                // An exact override and its alias are the same row.
+                method_implemented.sort_unstable();
+                method_implemented.dedup();
+                let mut direct_superclass: Vec<(Symbol, Symbol)> = hierarchy
+                    .iter()
+                    .flat_map(|(sub, sups)| sups.iter().map(|sup| (sup.0.clone(), sub.0.clone())))
+                    .collect();
+                direct_superclass.sort_unstable();
+                let interface_type = interfaces.iter().map(|c| (c.0.clone(),)).collect();
+                let instantiated_classes_vec =
+                    instantiated_classes.into_iter().map(|s| (s,)).collect();
+                let declared = declared_implementations(&method_implemented);
+                let parents = hierarchy
+                    .iter()
+                    .map(|(sub, sups)| (sub.0.clone(), sups.iter().map(|s| s.0.clone()).collect()))
+                    .collect();
+                let (resolvents, rta_resolvents) = run_cha(
+                    method_implemented,
+                    direct_superclass,
+                    interface_type,
+                    Default::default(),
+                    instantiated_classes_vec,
+                    rta,
+                );
+                Self {
+                    language: ChaLanguage::Cil,
+                    resolvents,
+                    rta_resolvents,
+                    declared,
+                    parents,
+                    super_memo: Default::default(),
+                    interfaces: interfaces.iter().map(|c| c.0.clone()).collect(),
                 }
             }
             // Lua mirrors the Java arm: a Lua method is a `method_implemented` with a fixed
@@ -1610,6 +1734,23 @@ impl ClassHierarchyAnalysis {
 
     pub(crate) fn language(&self) -> ChaLanguage {
         self.language
+    }
+
+    /// Whether the table declares `cls` an interface. Always false outside CIL; see
+    /// [`Self::interfaces`].
+    pub(crate) fn is_interface(&self, cls: &Symbol) -> bool {
+        self.interfaces.contains(cls)
+    }
+
+    /// The `callee_info` key a deferred `(name, descriptor)` site is joined on, in this
+    /// table's language. Lua sites build their own key, since theirs has no descriptor.
+    pub(crate) fn dispatch_key(&self, name: &Symbol, descriptor: &Symbol) -> fx::CallDispatchKey {
+        match self.language {
+            ChaLanguage::Cil => fx::CallDispatchKey::Cil(name.clone(), descriptor.clone()),
+            ChaLanguage::Java | ChaLanguage::Lua => {
+                fx::CallDispatchKey::Java(name.clone(), descriptor.clone())
+            }
+        }
     }
 
     pub(crate) fn java_resolvents(
@@ -1797,6 +1938,10 @@ fn emit_callee_resolvents(
             ChaLanguage::Lua => (
                 fx::CallTargetObject::LuaClass(cls.clone()),
                 fx::CallDispatchKey::Lua(name.clone()),
+            ),
+            ChaLanguage::Cil => (
+                fx::CallTargetObject::CilClass(cls.clone()),
+                fx::CallDispatchKey::Cil(name.clone(), desc.clone()),
             ),
         };
         for target in targets {

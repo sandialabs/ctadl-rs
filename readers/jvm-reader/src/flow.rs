@@ -51,6 +51,22 @@ pub enum ConstantValue {
     Double(u64),
     String(String),
     ClassRef(String),
+    /// A `CONSTANT_MethodType`: the method descriptor it names.
+    MethodType(String),
+    /// A `CONSTANT_MethodHandle`: its reference kind (JVMS 5.4.3.5) and the
+    /// field or method it refers to.
+    MethodHandle {
+        reference_kind: u8,
+        class_name: String,
+        name: String,
+        descriptor: String,
+    },
+    /// A `CONSTANT_Dynamic`: the name and field descriptor of the value its
+    /// bootstrap method produces. The value itself is known only at run time.
+    Dynamic {
+        name: String,
+        descriptor: String,
+    },
     Null,
 }
 
@@ -137,6 +153,11 @@ pub struct InstructionFlowInfo<'a> {
     pub mnemonic: &'static str,
     pub dataflow: Vec<DataflowInfo>,
     pub call: Option<CallInfo>,
+    /// For `ireturn` through `areturn`: the value returned, the top of the
+    /// stack (the lower of a long's or double's two slots). Like a call's
+    /// arguments, it is a `Location::StackInput` at decode time, which
+    /// normalization rewrites to a `StackSlot`.
+    pub return_value: Option<Location>,
 }
 
 // ============== Basic blocks / CFG ==============
@@ -469,7 +490,9 @@ fn returns_value(descriptor: &str) -> bool {
     descriptor_returns_value(descriptor)
 }
 
-fn descriptor_return_slot_count(descriptor: &str) -> usize {
+/// The operand stack slots a method's return value takes: 0 for `void`, 2 for
+/// a long or double, 1 otherwise.
+pub fn descriptor_return_slot_count(descriptor: &str) -> usize {
     match descriptor.rsplit_once(')') {
         Some((_params, "V")) => 0,
         Some((_params, ret)) if ret.starts_with('J') || ret.starts_with('D') => 2,
@@ -602,7 +625,6 @@ pub fn normalize_stack_slots_for_method<'a>(
 fn rewrite_location_stack_inputs(
     loc: &mut Location,
     stack_len: usize,
-    max_stack_input_depth: &mut usize,
     class_name: &str,
     method_name: &str,
     method_desc: &str,
@@ -628,15 +650,11 @@ fn rewrite_location_stack_inputs(
             }
             let slot_index = stack_len - 1 - depth_usize;
             *loc = Location::StackSlot(slot_index as StackSlotId);
-            if depth_usize + 1 > *max_stack_input_depth {
-                *max_stack_input_depth = depth_usize + 1;
-            }
         }
         Location::ArrayElement { base, offset } => {
             rewrite_location_stack_inputs(
                 base.as_mut(),
                 stack_len,
-                max_stack_input_depth,
                 class_name,
                 method_name,
                 method_desc,
@@ -647,7 +665,6 @@ fn rewrite_location_stack_inputs(
             rewrite_location_stack_inputs(
                 offset.as_mut(),
                 stack_len,
-                max_stack_input_depth,
                 class_name,
                 method_name,
                 method_desc,
@@ -659,6 +676,51 @@ fn rewrite_location_stack_inputs(
         _ => {}
     }
     Ok(())
+}
+
+/// The number of operand stack slots an instruction pops and pushes, as
+/// [`normalize_stack_slots_for_method`] simulates it. A category-2 value counts
+/// as two slots.
+///
+/// `inst` must be as decoded, before normalization: the pops are read off its
+/// deepest `StackInput` and the pushes off its `StackOutput`s. Calls take theirs
+/// from the descriptor, and the instructions with neither (branches, returns,
+/// `pop`, `checkcast`, ...) from a table.
+pub fn instruction_stack_effect(inst: &InstructionFlowInfo<'_>) -> (usize, usize) {
+    fn depth(loc: &Location) -> usize {
+        match loc {
+            Location::StackInput(d) => *d as usize + 1,
+            Location::ArrayElement { base, offset } => depth(base).max(depth(offset)),
+            _ => 0,
+        }
+    }
+    let mut consume = 0;
+    let mut produce = 0;
+    for df in &inst.dataflow {
+        for src in &df.sources {
+            consume = consume.max(depth(src));
+        }
+        consume = consume.max(depth(&df.destination));
+        if let Location::StackOutput = df.destination {
+            produce += 1;
+        }
+    }
+    if inst.kind == InstructionKind::Call {
+        if let Some(call) = &inst.call {
+            let ret_desc = match call.call_kind {
+                CallKind::Dynamic => call.dynamic_type.as_deref(),
+                _ => call.target.as_ref().map(|t| t.descriptor.as_str()),
+            };
+            consume = consume.max(call.stack_slots_consumed as usize);
+            produce = produce.max(ret_desc.map_or(0, descriptor_return_slot_count));
+        }
+    }
+    if inst.dataflow.is_empty() && inst.kind != InstructionKind::Call {
+        let (misc_consume, misc_produce) = misc_stack_effect(inst.opcode);
+        consume = consume.max(misc_consume);
+        produce = produce.max(misc_produce);
+    }
+    (consume, produce)
 }
 
 fn simulate_block<'a>(
@@ -684,9 +746,7 @@ fn simulate_block<'a>(
             .this_class_name()
             .unwrap_or("<class-name-error>");
 
-        // Determine stack effect from dataflow and calls.
-        let mut max_stack_input_depth: usize = 0;
-        let mut stack_outputs: usize = 0;
+        let (consume, produce) = instruction_stack_effect(inst);
 
         if !inst.dataflow.is_empty() {
             let stack_len = state.slots.len();
@@ -695,7 +755,6 @@ fn simulate_block<'a>(
                     rewrite_location_stack_inputs(
                         src,
                         stack_len,
-                        &mut max_stack_input_depth,
                         class_name,
                         method_name,
                         method_desc,
@@ -707,7 +766,6 @@ fn simulate_block<'a>(
                 rewrite_location_stack_inputs(
                     &mut df.destination,
                     stack_len,
-                    &mut max_stack_input_depth,
                     class_name,
                     method_name,
                     method_desc,
@@ -715,37 +773,12 @@ fn simulate_block<'a>(
                     inst.opcode,
                     inst.mnemonic,
                 )?;
-
-                if let Location::StackOutput = df.destination {
-                    stack_outputs += 1;
-                }
             }
         }
 
-        // Additional stack effect for call instructions.
-        let mut call_consume: usize = 0;
-        let mut call_produce: usize = 0;
+        // Rewrite receiver/arguments stack locations from StackInput(depth)
+        // into absolute StackSlot ids based on the current stack state.
         if inst.kind == InstructionKind::Call {
-            if let Some(call) = &inst.call {
-                call_consume = call.stack_slots_consumed as usize;
-                let mut ret_slots = 0usize;
-                match call.call_kind {
-                    CallKind::Dynamic => {
-                        if let Some(desc) = &call.dynamic_type {
-                            ret_slots = descriptor_return_slot_count(desc);
-                        }
-                    }
-                    _ => {
-                        if let Some(target) = &call.target {
-                            ret_slots = descriptor_return_slot_count(&target.descriptor);
-                        }
-                    }
-                }
-                call_produce = ret_slots;
-            }
-
-            // Rewrite receiver/arguments stack locations from StackInput(depth)
-            // into absolute StackSlot ids based on the current stack state.
             if let Some(call) = inst.call.as_mut() {
                 let len = state.slots.len();
                 if let Some(receiver) = call.receiver.as_mut() {
@@ -793,17 +826,6 @@ fn simulate_block<'a>(
             }
         }
 
-        // Stack effects for non-Dataflow/non-Call opcodes that still mutate stack depth.
-        let (misc_consume, misc_produce) =
-            if inst.dataflow.is_empty() && inst.kind != InstructionKind::Call {
-                misc_stack_effect(inst.opcode)
-            } else {
-                (0, 0)
-            };
-
-        let consume = max_stack_input_depth.max(call_consume).max(misc_consume);
-        let produce = stack_outputs.max(call_produce).max(misc_produce);
-
         if state.slots.len() < consume {
             return Err(ClassFileError::StackUnderflow {
                 method: Box::new(MethodContext {
@@ -819,29 +841,38 @@ fn simulate_block<'a>(
             });
         }
 
+        // After the underflow check, so that a return of too few slots
+        // reports as one.
+        if let Some(ret) = inst.return_value.as_mut() {
+            rewrite_location_stack_inputs(
+                ret,
+                state.slots.len(),
+                class_name,
+                method_name,
+                method_desc,
+                inst.pc,
+                inst.opcode,
+                inst.mnemonic,
+            )?;
+        }
+
         // Rewrite StackOutput destinations using the *absolute* stack depth position
         // where the produced value will land after consuming `consume` values.
         let old_len = state.slots.len();
         let remaining_len = old_len - consume;
         let mut out_i = 0usize;
-        if !inst.dataflow.is_empty() && stack_outputs > 0 {
-            for df in &mut inst.dataflow {
-                if matches!(df.destination, Location::StackOutput) {
-                    let id = (remaining_len + out_i) as StackSlotId;
-                    df.destination = Location::StackSlot(id);
-                    out_i += 1;
-                }
+        for df in &mut inst.dataflow {
+            if matches!(df.destination, Location::StackOutput) {
+                let id = (remaining_len + out_i) as StackSlotId;
+                df.destination = Location::StackSlot(id);
+                out_i += 1;
             }
         }
 
         // Rewrite call return value location.
-        if call_produce > 0 {
-            if let Some(call) = inst.call.as_mut() {
-                if let Some(ret_loc) = call.return_value.as_mut() {
-                    if matches!(ret_loc, Location::StackOutput) {
-                        *ret_loc = Location::StackSlot(remaining_len as StackSlotId);
-                    }
-                }
+        if let Some(ret_loc) = inst.call.as_mut().and_then(|c| c.return_value.as_mut()) {
+            if matches!(ret_loc, Location::StackOutput) {
+                *ret_loc = Location::StackSlot(remaining_len as StackSlotId);
             }
         }
 
@@ -1390,6 +1421,47 @@ fn resolve_constant(cf: &ClassFile, cp_index: u16) -> ClassFileResult<ConstantVa
             let s = cf.get_utf8(*name_index)?.to_string();
             Ok(ConstantValue::ClassRef(s))
         }
+        CpEntry::MethodType { descriptor_index } => Ok(ConstantValue::MethodType(
+            cf.get_utf8(*descriptor_index)?.to_string(),
+        )),
+        CpEntry::MethodHandle {
+            reference_kind,
+            reference_index,
+        } => match cf.get_cp(*reference_index)? {
+            CpEntry::Fieldref {
+                class_index,
+                name_and_type_index,
+            }
+            | CpEntry::Methodref {
+                class_index,
+                name_and_type_index,
+            }
+            | CpEntry::InterfaceMethodref {
+                class_index,
+                name_and_type_index,
+            } => {
+                let (name, descriptor) = cf.get_name_and_type(*name_and_type_index)?;
+                Ok(ConstantValue::MethodHandle {
+                    reference_kind: *reference_kind,
+                    class_name: cf.get_class_name(*class_index)?.to_string(),
+                    name: name.to_string(),
+                    descriptor: descriptor.to_string(),
+                })
+            }
+            _ => Err(ClassFileError::InvalidClassFile(
+                "MethodHandle must refer to a field or method",
+            )),
+        },
+        CpEntry::Dynamic {
+            name_and_type_index,
+            ..
+        } => {
+            let (name, descriptor) = cf.get_name_and_type(*name_and_type_index)?;
+            Ok(ConstantValue::Dynamic {
+                name: name.to_string(),
+                descriptor: descriptor.to_string(),
+            })
+        }
         _ => Err(ClassFileError::InvalidClassFile("expected constant entry")),
     }
 }
@@ -1400,6 +1472,41 @@ fn split_dataflow_infos(sources: Vec<Location>, destinations: Vec<Location>) -> 
         .map(|destination| DataflowInfo {
             sources: sources.clone(),
             destination,
+        })
+        .collect()
+}
+
+/// What each output of a stack shuffle (`dup*`, `swap`) copies, as JVMS 6.5
+/// gives it: the input depth (0 = top) of each output, deepest output first.
+/// A category-2 value is two slots, so this one table also covers the forms of
+/// `dup2`, `dup2_x1` and `dup2_x2` that move longs and doubles.
+fn stack_shuffle(opcode: u8) -> Option<&'static [u8]> {
+    Some(match opcode {
+        // dup: v1 -> v1, v1
+        0x59 => &[0, 0],
+        // dup_x1: v2, v1 -> v1, v2, v1
+        0x5a => &[0, 1, 0],
+        // dup_x2: v3, v2, v1 -> v1, v3, v2, v1
+        0x5b => &[0, 2, 1, 0],
+        // dup2: v2, v1 -> v2, v1, v2, v1
+        0x5c => &[1, 0, 1, 0],
+        // dup2_x1: v3, v2, v1 -> v2, v1, v3, v2, v1
+        0x5d => &[1, 0, 2, 1, 0],
+        // dup2_x2: v4, v3, v2, v1 -> v2, v1, v4, v3, v2, v1
+        0x5e => &[1, 0, 3, 2, 1, 0],
+        // swap: v2, v1 -> v1, v2
+        0x5f => &[0, 1],
+        _ => return None,
+    })
+}
+
+/// One dataflow per output of a stack shuffle, each with its one source.
+fn stack_shuffle_dataflow(inputs: &[u8]) -> Vec<DataflowInfo> {
+    inputs
+        .iter()
+        .map(|&depth| DataflowInfo {
+            sources: vec![Location::StackInput(depth)],
+            destination: Location::StackOutput,
         })
         .collect()
 }
@@ -1452,7 +1559,9 @@ pub fn decode_flow_instruction<'a>(
         let kind = opcode_kind(opcode);
         let mut dataflow = Vec::new();
         let mut call = None;
-        if kind == InstructionKind::Dataflow {
+        if let Some(inputs) = stack_shuffle(opcode) {
+            dataflow = stack_shuffle_dataflow(inputs);
+        } else if kind == InstructionKind::Dataflow {
             let (sources, destinations) = decode_dataflow(code, pc, cf, opcode, &params, false)?;
             dataflow = split_dataflow_infos(sources, destinations);
         } else if kind == InstructionKind::Call {
@@ -1468,6 +1577,12 @@ pub fn decode_flow_instruction<'a>(
             destination: Location::StackInput(0),
         }];
     }
+
+    let return_value = match logical_opcode {
+        0xac | 0xae | 0xb0 => Some(Location::StackInput(0)),
+        0xad | 0xaf => Some(Location::StackInput(1)),
+        _ => None,
+    };
 
     let code_attr = method
         .code
@@ -1493,6 +1608,7 @@ pub fn decode_flow_instruction<'a>(
         mnemonic: mnem,
         dataflow,
         call,
+        return_value,
     };
     Ok((info, next_pc))
 }
@@ -1640,57 +1756,6 @@ fn decode_dataflow(
                 }
             }
         }
-        0x59 => {
-            sources.push(Location::StackInput(0));
-            destinations.push(Location::StackOutput);
-            destinations.push(Location::StackOutput);
-        }
-        0x5a => {
-            for i in 0..2 {
-                sources.push(Location::StackInput(i));
-            }
-            for _ in 0..3 {
-                destinations.push(Location::StackOutput);
-            }
-        }
-        0x5b => {
-            for i in 0..3 {
-                sources.push(Location::StackInput(i));
-            }
-            for _ in 0..4 {
-                destinations.push(Location::StackOutput);
-            }
-        }
-        0x5c => {
-            for i in 0..2 {
-                sources.push(Location::StackInput(i));
-            }
-            for _ in 0..4 {
-                destinations.push(Location::StackOutput);
-            }
-        }
-        0x5d => {
-            for i in 0..3 {
-                sources.push(Location::StackInput(i));
-            }
-            for _ in 0..5 {
-                destinations.push(Location::StackOutput);
-            }
-        }
-        0x5e => {
-            for i in 0..4 {
-                sources.push(Location::StackInput(i));
-            }
-            for _ in 0..6 {
-                destinations.push(Location::StackOutput);
-            }
-        }
-        0x5f => {
-            sources.push(Location::StackInput(0));
-            sources.push(Location::StackInput(1));
-            destinations.push(Location::StackOutput);
-            destinations.push(Location::StackOutput);
-        }
         0xbb => {
             let idx = read_u16_be(code, pc + 1)?;
             let class_name = cf.get_class_name(idx)?.to_string();
@@ -1706,8 +1771,15 @@ fn decode_dataflow(
         0xbd => {
             let idx = read_u16_be(code, pc + 1)?;
             let class_name = cf.get_class_name(idx)?;
+            // The operand names an array class by its descriptor (`[I`) and
+            // any other class by its internal name (`java/lang/String`).
+            let element = if class_name.starts_with('[') {
+                class_name.to_string()
+            } else {
+                format!("L{class_name};")
+            };
             sources.push(Location::StackInput(0));
-            sources.push(Location::Allocation(format!("[L{};", class_name)));
+            sources.push(Location::Allocation(format!("[{element}")));
             destinations.push(Location::StackOutput);
         }
         0xc5 => {
@@ -2363,59 +2435,36 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_dup_dataflow() {
-        let cf = &constant_pool_only();
-        let (sources, destinations) =
-            decode_dataflow(&[0x59], 0, cf, 0x59, &ParameterSlotMap::default(), false)
-                .expect("decode");
-        assert_eq!(sources, vec![Location::StackInput(0)]);
-        assert_eq!(destinations.len(), 2);
-        assert!(destinations
-            .iter()
-            .all(|d| matches!(d, Location::StackOutput)));
+    /// The one source of each output of a stack shuffle, deepest output first.
+    fn shuffle(opcode: u8) -> Vec<Location> {
+        let dataflow =
+            super::stack_shuffle_dataflow(super::stack_shuffle(opcode).expect("a shuffle"));
+        dataflow
+            .into_iter()
+            .map(|df| {
+                assert_eq!(df.destination, Location::StackOutput);
+                let [source] = <[Location; 1]>::try_from(df.sources).expect("one source");
+                source
+            })
+            .collect()
     }
 
+    /// Each output of `dup*` and `swap` copies exactly one input, in the JVMS
+    /// 6.5 order. Listing every input as a source of every output would mix the
+    /// values, so a clean value would pick up a tainted one's taint.
     #[test]
-    fn test_dup_x1_dataflow() {
-        let cf = &constant_pool_only();
-        let (sources, destinations) =
-            decode_dataflow(&[0x5a], 0, cf, 0x5a, &ParameterSlotMap::default(), false)
-                .expect("decode");
-        assert_eq!(sources.len(), 2);
-        assert_eq!(destinations.len(), 3);
-        assert!(destinations
-            .iter()
-            .all(|d| matches!(d, Location::StackOutput)));
-    }
-
-    #[test]
-    fn test_dup2_dataflow() {
-        let cf = &constant_pool_only();
-        let (sources, destinations) =
-            decode_dataflow(&[0x5c], 0, cf, 0x5c, &ParameterSlotMap::default(), false)
-                .expect("decode");
-        assert_eq!(sources.len(), 2);
-        assert_eq!(destinations.len(), 4);
-        assert!(destinations
-            .iter()
-            .all(|d| matches!(d, Location::StackOutput)));
-    }
-
-    #[test]
-    fn test_swap_dataflow() {
-        let cf = &constant_pool_only();
-        let (sources, destinations) =
-            decode_dataflow(&[0x5f], 0, cf, 0x5f, &ParameterSlotMap::default(), false)
-                .expect("decode");
+    fn test_stack_shuffle_dataflow() {
+        use Location::StackInput as In;
+        assert_eq!(shuffle(0x59), vec![In(0), In(0)]);
+        assert_eq!(shuffle(0x5a), vec![In(0), In(1), In(0)]);
+        assert_eq!(shuffle(0x5b), vec![In(0), In(2), In(1), In(0)]);
+        assert_eq!(shuffle(0x5c), vec![In(1), In(0), In(1), In(0)]);
+        assert_eq!(shuffle(0x5d), vec![In(1), In(0), In(2), In(1), In(0)]);
         assert_eq!(
-            sources,
-            vec![Location::StackInput(0), Location::StackInput(1)]
+            shuffle(0x5e),
+            vec![In(1), In(0), In(3), In(2), In(1), In(0)]
         );
-        assert_eq!(destinations.len(), 2);
-        assert!(destinations
-            .iter()
-            .all(|d| matches!(d, Location::StackOutput)));
+        assert_eq!(shuffle(0x5f), vec![In(0), In(1)]);
     }
 
     #[test]
@@ -2601,6 +2650,32 @@ mod tests {
             assert_eq!(consumed, dimensions as usize, "{dimensions} dimensions");
             assert_eq!(destinations, vec![Location::StackOutput]);
             assert!(sources.contains(&Location::Allocation("Demo".to_string())));
+        }
+    }
+
+    /// `anewarray`'s operand is a class's internal name, or an array class's
+    /// descriptor, so `new int[n][]` allocates `[[I`, not `[L[I;`.
+    #[test]
+    fn anewarray_allocates_an_array_of_its_class() {
+        let mut cf = constant_pool_only();
+        cf.constant_pool.extend([
+            // 3: Class [I
+            Some(CpEntry::Class { name_index: 4 }),
+            Some(CpEntry::Utf8(JvmString::Utf8("[I".to_string()))),
+        ]);
+        for (index, allocated) in [(CONSTANT_POOL_CLASS_INDEX, "[LDemo;"), (3, "[[I")] {
+            let code = [0xbd, 0x00, index as u8];
+            let (sources, destinations) =
+                decode_dataflow(&code, 0, &cf, 0xbd, &ParameterSlotMap::default(), false)
+                    .expect("decode");
+            assert_eq!(
+                sources,
+                vec![
+                    Location::StackInput(0),
+                    Location::Allocation(allocated.to_string())
+                ]
+            );
+            assert_eq!(destinations, vec![Location::StackOutput]);
         }
     }
 
@@ -2896,5 +2971,67 @@ mod tests {
             }
             other => panic!("expected StackUnderflow, got {other:?}"),
         }
+    }
+
+    /// `ldc` of a MethodType, MethodHandle or dynamic constant pushes that
+    /// constant; `ldc2_w` of a `long` dynamic constant pushes it as two words.
+    #[test]
+    fn ldc_decodes_method_handle_type_and_dynamic_constants() {
+        let mut cf = constant_pool_with_fields();
+        cf.constant_pool.extend([
+            // 11: MethodType (J)V, reusing a new Utf8 at 14
+            Some(CpEntry::MethodType {
+                descriptor_index: 14,
+            }),
+            // 12: MethodHandle REF_getField Demo.wide:J
+            Some(CpEntry::MethodHandle {
+                reference_kind: 1,
+                reference_index: WIDE_FIELD_INDEX,
+            }),
+            // 13: Dynamic wide:J (bootstrap method 0)
+            Some(CpEntry::Dynamic {
+                bootstrap_method_attr_index: 0,
+                name_and_type_index: 5,
+            }),
+            Some(CpEntry::Utf8(JvmString::Utf8("(J)V".to_string()))),
+        ]);
+        let decode = |code: &[u8]| {
+            decode_dataflow(code, 0, &cf, code[0], &ParameterSlotMap::default(), false)
+                .expect("decode")
+        };
+
+        let (sources, destinations) = decode(&[0x12, 11]);
+        assert_eq!(
+            sources,
+            vec![Location::Constant(ConstantValue::MethodType(
+                "(J)V".to_string()
+            ))]
+        );
+        assert_eq!(destinations, vec![Location::StackOutput]);
+
+        let (sources, destinations) = decode(&[0x13, 0, 12]);
+        assert_eq!(
+            sources,
+            vec![Location::Constant(ConstantValue::MethodHandle {
+                reference_kind: 1,
+                class_name: "Demo".to_string(),
+                name: "wide".to_string(),
+                descriptor: "J".to_string(),
+            })]
+        );
+        assert_eq!(destinations, vec![Location::StackOutput]);
+
+        let (sources, destinations) = decode(&[0x14, 0, 13]);
+        assert_eq!(
+            sources,
+            vec![Location::Constant(ConstantValue::Dynamic {
+                name: "wide".to_string(),
+                descriptor: "J".to_string(),
+            })]
+        );
+        assert_eq!(
+            destinations,
+            vec![Location::StackOutput, Location::StackOutput]
+        );
     }
 }

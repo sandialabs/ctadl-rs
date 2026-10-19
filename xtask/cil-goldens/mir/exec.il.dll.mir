@@ -1,0 +1,630 @@
+cil virtual method table
+[System.Private.CoreLib]System.Exception::.ctor has signature ()->System.Void: [System.Private.CoreLib]System.Exception::.ctor()->System.Void
+[exec]Cell2::.ctor has signature (System.Int32,System.Int32)->System.Void: [exec]Cell2::.ctor(System.Int32,System.Int32)->System.Void
+[exec]Err::.ctor has signature (System.Int32)->System.Void: [exec]Err::.ctor(System.Int32)->System.Void
+[exec]Err::GetObjectData has signature (System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void: [System.Private.CoreLib]System.Exception::GetObjectData(System.Runtime.Serialization.SerializationInfo,System.Runtime.Serialization.StreamingContext)->System.Void
+[exec]IL::Blocks has signature (System.Int32,System.Int64)->System.Int64: [exec]IL::Blocks(System.Int32,System.Int64)->System.Int64
+[exec]IL::DupBranch has signature (System.Object)->System.Object: [exec]IL::DupBranch(System.Object)->System.Object
+[exec]IL::Fault has signature (System.Int32)->System.Int32: [exec]IL::Fault(System.Int32)->System.Int32
+[exec]IL::FieldAddress has signature (Holder,System.Int64)->System.Int64: [exec]IL::FieldAddress(Holder,System.Int64)->System.Int64
+[exec]IL::FilterStack has signature (System.Int32)->System.Int32: [exec]IL::FilterStack(System.Int32)->System.Int32
+[exec]IL::Finite has signature (System.Double)->System.Double: [exec]IL::Finite(System.Double)->System.Double
+[exec]IL::Ldarga has signature (System.Int32,System.Byte,System.Int16)->System.Int32: [exec]IL::Ldarga(System.Int32,System.Byte,System.Int16)->System.Int32
+[exec]IL::LeaveThroughTwo has signature (System.Int32)->System.Int32: [exec]IL::LeaveThroughTwo(System.Int32)->System.Int32
+[exec]IL::NativeOvf has signature (System.IntPtr,System.UIntPtr,System.Int64)->System.Int64: [exec]IL::NativeOvf(System.IntPtr,System.UIntPtr,System.Int64)->System.Int64
+[exec]IL::NewobjDeep has signature (System.Int32,System.Int64)->System.Int64: [exec]IL::NewobjDeep(System.Int32,System.Int64)->System.Int64
+[exec]IL::RefCompare has signature (System.Object,System.Object)->System.Int32: [exec]IL::RefCompare(System.Object,System.Object)->System.Int32
+[exec]IL::RethrowInFinally has signature (System.Int32)->System.Int32: [exec]IL::RethrowInFinally(System.Int32)->System.Int32
+[exec]IL::StackJoin has signature (System.Int32,System.Int32)->System.Int32: [exec]IL::StackJoin(System.Int32,System.Int32)->System.Int32
+[exec]IL::StackLoop has signature (System.Int32)->System.Int32: [exec]IL::StackLoop(System.Int32)->System.Int32
+[exec]IL::StackSwitch has signature (System.Int32)->System.Int32: [exec]IL::StackSwitch(System.Int32)->System.Int32
+[exec]IL::TryInCatch has signature (System.Int32)->System.Int32: [exec]IL::TryInCatch(System.Int32)->System.Int32
+[exec]IL::UnboxMutate has signature (System.Int32)->System.Int32: [exec]IL::UnboxMutate(System.Int32)->System.Int32
+[exec]IL::Unsigned has signature (System.UInt32,System.UInt64)->System.Double: [exec]IL::Unsigned(System.UInt32,System.UInt64)->System.Double
+[exec]Cell extends [System.Private.CoreLib]System.ValueType
+[exec]Cell2 extends [System.Private.CoreLib]System.ValueType
+[exec]Err extends [System.Private.CoreLib]System.Exception
+[exec]Holder extends [System.Private.CoreLib]System.Object
+[exec]IL extends [System.Private.CoreLib]System.Object
+end cil virtual method table
+
+define [exec]Err::.ctor(System.Int32)->System.Void(@p0[byref], @p1[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1
+begin block_0 [start]:
+assign %excout = <const: []> [1]
+assign %s0 = @p0 [1]
+%retval, %throwval = direct-call [System.Private.CoreLib]System.Exception::.ctor()->System.Void(%s0) [2]
+assign %excout = %excout, %throwval [2]
+assign %s0 = @p0 [3]
+assign %s1 = @p1 [4]
+store %s0.<[exec]Err::Code> := %s1 [5]
+return <const: []>, %excout
+end block_0
+
+define [exec]IL::StackJoin(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [7]
+assign %s0 = <const: 1000> [8]
+assign %s1 = @p1 [9]
+assign %s2 = @p0 [10]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s2 = <const: 2> [12]
+goto 3
+end block_1
+begin block_2:
+assign %s2 = <const: 3> [14]
+goto 3
+end block_2
+begin block_3:
+assign %s1 = %s1, %s2 [15]
+assign %s0 = %s0, %s1 [16]
+return %s0, %excout
+end block_3
+
+define [exec]IL::StackLoop(System.Int32)->System.Int32(@p0[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3
+begin block_0 [start]:
+assign %excout = <const: []> [18]
+assign %s0 = @p0 [18]
+assign %s1 = <const: 7> [19]
+assign %s0 = %s0, %s1 [20]
+assign %s1 = <const: 0> [21]
+goto 1
+end block_0
+begin block_1:
+assign %s2 = @p0 [22]
+assign %s3 = <const: 15> [23]
+assign %s2 = %s2, %s3 [24]
+assign %s3 = <const: 2> [25]
+assign %s2 = %s2, %s3 [26]
+assign %s1 = %s1, %s2 [27]
+assign %s1 = %s1 [28]
+assign %s2 = %s1 [28]
+assign %s3 = <const: 100> [29]
+goto 3, 2
+end block_1
+begin block_2:
+assign %s2 = <const: 1> [31]
+assign %s1 = %s1, %s2 [32]
+goto 1
+end block_2
+begin block_3:
+assign %s0 = %s0, %s1 [34]
+return %s0, %excout
+end block_3
+
+define [exec]IL::StackSwitch(System.Int32)->System.Int32(@p0[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [36]
+assign %s0 = <const: 100> [37]
+assign %s1 = @p0 [38]
+goto 2, 3, 4, 1
+end block_0
+begin block_1:
+assign %s1 = <const: -1> [40]
+goto 5
+end block_1
+begin block_2:
+assign %s1 = <const: 1> [42]
+goto 5
+end block_2
+begin block_3:
+assign %s1 = <const: 2> [44]
+goto 5
+end block_3
+begin block_4:
+assign %s0 = <const: -50> [47]
+assign %s1 = <const: 7> [48]
+goto 5
+end block_4
+begin block_5:
+assign %s0 = %s0, %s1 [49]
+return %s0, %excout
+end block_5
+
+define [exec]IL::DupBranch(System.Object)->System.Object(@p0[byref]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1
+begin block_0 [start]:
+assign %excout = <const: []> [51]
+assign %s0 = @p0 [51]
+assign %s0 = %s0 [52]
+assign %s1 = %s0 [52]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s0 = <const: 5> [55]
+assign %s0 = %s0, cil<[System.Private.CoreLib]System.Int32> [56]
+goto 2
+end block_1
+begin block_2:
+return %s0, %excout
+end block_2
+
+define [exec]IL::NewobjDeep(System.Int32,System.Int64)->System.Int64(@p0[byval], @p1[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=t0 %L5=cell_0 %L6=c_1 %L7=retval %L8=throwval %L9=u_2
+begin block_0 [start]:
+assign %excout = <const: []> [58]
+assign %s0 = @p1 [58]
+assign %s1 = <const: 3> [59]
+assign %s2 = @p0 [60]
+assign %t0 = cil<[exec]Cell2> [61]
+assign %c_1 = %t0 [61]
+store %cell_0.deref := %c_1 [61]
+%retval, %throwval = direct-call [exec]Cell2::.ctor(System.Int32,System.Int32)->System.Void(%cell_0, %s1, %s2) [61]
+assign %excout = %excout, %throwval [61]
+%u_2 = load %cell_0.deref [61]
+assign %t0 = %u_2 [61]
+assign %s1 = %t0 [61]
+%s1 = load %s1.<[exec]Cell2::Y> [62]
+assign %s1 = %s1 [63]
+assign %s0 = %s0, %s1 [64]
+return %s0, %excout
+end block_0
+
+define [exec]IL::Fault(System.Int32)->System.Int32(@p0[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=caught1 %L5=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [66]
+assign %s0 = <const: 10> [67]
+assign %s1 = @p0 [68]
+assign %s0 = %s0, %s1 [69]
+assign %loc0 = %s0 [70]
+goto 2, 1, 3
+end block_0
+begin block_1:
+%s0 = load $globals.<[exec]Holder::Count> [72]
+assign %s1 = <const: 1> [73]
+assign %s0 = %s0, %s1 [74]
+store $globals.<[exec]Holder::Count> := %s0 [75]
+goto 3
+end block_1
+begin block_2:
+goto 4, 3
+end block_2
+begin block_3:
+assign %caught1 = %throwval [78]
+assign %s0 = %caught1 [78]
+assign %s0 = <const: -9> [79]
+assign %loc0 = %s0 [80]
+goto 4
+end block_3
+begin block_4:
+assign %s0 = %loc0 [82]
+return %s0, %excout
+end block_4
+
+define [exec]IL::LeaveThroughTwo(System.Int32)->System.Int32(@p0[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught0 %L6=s1 %L7=loc0 %L8=s2
+begin block_0 [start]:
+assign %excout = <const: []> [84]
+assign %s0 = @p0 [84]
+assign %t0 = cil<[exec]Err> [85]
+%retval, %throwval = direct-call [exec]Err::.ctor(System.Int32)->System.Void(%t0, %s0) [85]
+assign %excout = %excout, %throwval [85]
+assign %s0 = %t0 [85]
+goto 1, 2, 6, 7
+end block_0
+begin block_1:
+assign %throwval = %s0 [86]
+assign %excout = %excout, %throwval [86]
+goto 2, 6, 7
+end block_1
+begin block_2:
+assign %caught0 = %throwval [87]
+assign %s0 = %caught0 [87]
+assign %s0 = %s0 [87]
+assign %s1 = %s0 [87]
+%s1 = load %s1.<[exec]Err::Code> [88]
+assign %loc0 = %s1 [89]
+assign %s1 = %loc0 [90]
+assign %s2 = <const: 0> [91]
+goto 4, 3, 6, 7
+end block_2
+begin block_3:
+goto 8, 6, 7
+end block_3
+begin block_4:
+goto 5, 6, 7
+end block_4
+begin block_5:
+assign %s0 = %loc0 [95]
+assign %s1 = <const: 2> [96]
+assign %s0 = %s0, %s1 [97]
+assign %loc0 = %s0 [98]
+goto 8, 6, 7
+end block_5
+begin block_6:
+assign %s0 = %loc0 [100]
+assign %s1 = <const: 10> [101]
+assign %s0 = %s0, %s1 [102]
+assign %loc0 = %s0 [103]
+goto 7
+end block_6
+begin block_7:
+assign %s0 = %loc0 [105]
+assign %s1 = <const: 100> [106]
+assign %s0 = %s0, %s1 [107]
+assign %loc0 = %s0 [108]
+goto 8
+end block_7
+begin block_8:
+assign %s0 = %loc0 [110]
+return %s0, %excout
+end block_8
+
+define [exec]IL::FilterStack(System.Int32)->System.Int32(@p0[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught0 %L6=s1 %L7=loc0 %L8=caught1
+begin block_0 [start]:
+assign %excout = <const: []> [112]
+assign %s0 = @p0 [112]
+assign %t0 = cil<[exec]Err> [113]
+%retval, %throwval = direct-call [exec]Err::.ctor(System.Int32)->System.Void(%t0, %s0) [113]
+assign %s0 = %t0 [113]
+goto 1, 2, 7
+end block_0
+begin block_1:
+assign %throwval = %s0 [114]
+goto 2, 7
+end block_1
+begin block_2:
+assign %caught0 = %throwval [115]
+assign %s0 = %caught0 [115]
+assign %s0 = %s0 [116]
+assign %s0 = %s0 [117]
+assign %s1 = %s0 [117]
+goto 4, 3
+end block_2
+begin block_3:
+assign %s0 = <const: 0> [120]
+goto 5
+end block_3
+begin block_4:
+%s0 = load %s0.<[exec]Err::Code> [122]
+assign %s1 = <const: 3> [123]
+assign %s0 = %s0, %s1 [124]
+assign %s1 = <const: 0> [125]
+assign %s0 = %s0, %s1 [126]
+goto 5
+end block_4
+begin block_5:
+goto 6
+end block_5
+begin block_6:
+assign %s0 = %caught0 [128]
+assign %s0 = %s0 [129]
+%s0 = load %s0.<[exec]Err::Code> [130]
+assign %loc0 = %s0 [131]
+goto 8
+end block_6
+begin block_7:
+assign %caught1 = %throwval [133]
+assign %s0 = %caught1 [133]
+assign %s0 = <const: -1> [134]
+assign %loc0 = %s0 [135]
+goto 8
+end block_7
+begin block_8:
+assign %s0 = %loc0 [137]
+return %s0, %excout
+end block_8
+
+define [exec]IL::UnboxMutate(System.Int32)->System.Int32(@p0[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2
+begin block_0 [start]:
+assign %excout = <const: []> [139]
+assign %s0 = @p0 [139]
+assign %s0 = %s0, cil<[System.Private.CoreLib]System.Int32> [140]
+assign %loc0 = %s0 [141]
+assign %s0 = %loc0 [142]
+assign %s0 = %s0 [143]
+assign %s0 = %s0 [144]
+assign %s1 = %s0 [144]
+%s1 = load %s1.deref [145]
+assign %s2 = <const: 7> [146]
+assign %s1 = %s1, %s2 [147]
+store %s0.deref := %s1 [148]
+assign %s0 = %loc0 [149]
+assign %s0 = %s0 [150]
+return %s0, %excout
+end block_0
+
+define [exec]IL::Ldarga(System.Int32,System.Byte,System.Int16)->System.Int32(@p0[byval], @p1[byval], @p2[byval]) -> 2:
+  locals: %L0=excout %L1=s1 %L2=s2 %L3=s0
+begin block_0 [start]:
+assign %excout = <const: []> [152]
+assign %s1 = <const: 1000> [154]
+assign @p0 = %s1 [155]
+assign %s1 = @p1 [157]
+assign %s2 = <const: 300> [158]
+assign %s1 = %s1, %s2 [159]
+assign @p1 = %s1 [160]
+assign %s1 = <const: 70000> [162]
+assign @p2 = %s1 [163]
+assign %s0 = @p0 [164]
+assign %s1 = @p1 [165]
+assign %s0 = %s0, %s1 [166]
+assign %s1 = @p2 [167]
+assign %s0 = %s0, %s1 [168]
+assign @p0 = %s0 [169]
+assign %s0 = @p0 [170]
+return %s0, %excout
+end block_0
+
+define [exec]IL::Blocks(System.Int32,System.Int64)->System.Int64(@p0[byval], @p1[byval]) -> 2:
+  locals: %L0=excout %L1=s1 %L2=loc0 %L3=t0 %L4=loc1 %L5=s0 %L6=loc2 %L7=s2 %L8=pt_0 %L9=s3
+begin block_0 [start]:
+assign %excout = <const: []> [172]
+assign %s1 = @p0 [174]
+store %loc0.<[exec]Cell::A> := %s1 [175]
+assign %s1 = @p1 [177]
+store %loc0.<[exec]Cell::B> := %s1 [178]
+assign %t0 = %loc0 [181]
+assign %loc1 = %t0 [181]
+assign %loc0 =  [183]
+%s0 = load %loc0.<[exec]Cell::B> [185]
+assign %s1 = <const: 2> [186]
+assign %s1 = cil<Cell[]> [187]
+assign %loc2 = %s1 [188]
+assign %s1 = %loc2 [189]
+assign %s2 = <const: 1> [190]
+assign %s2 = %loc1 [193]
+store %loc2.\[] := %s2 [194]
+assign %s1 = %loc2 [195]
+assign %s2 = <const: 1> [196]
+%pt_0 = load %loc2.\[] [198]
+%s1 = load %pt_0.<[exec]Cell::B> [198]
+assign %s2 = %loc2 [199]
+assign %s3 = <const: 1> [200]
+%s2 = load %s2.\[] [201]
+assign %loc0 = %s2 [202]
+assign %s2 = %loc0 [203]
+%s2 = load %s2.<[exec]Cell::A> [204]
+assign %s2 = %s2 [205]
+assign %s1 = %s1, %s2 [206]
+%s2 = load %loc0.<[exec]Cell::B> [208]
+assign %s1 = %s1, %s2 [209]
+assign %s0 = %s0, %s1 [210]
+return %s0, %excout
+end block_0
+
+define [exec]IL::FieldAddress(Holder,System.Int64)->System.Int64(@p0[byref], @p1[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=loc0
+begin block_0 [start]:
+assign %excout = <const: []> [212]
+assign %s0 = @p0 [212]
+assign %s0 = %s0 [214]
+assign %s1 = %s0 [214]
+%pt_0 = load @p0.<[exec]Holder::C> [215]
+%s1 = load %pt_0.<[exec]Cell::B> [215]
+assign %s2 = @p1 [216]
+assign %s1 = %s1, %s2 [217]
+%pt_1 = load @p0.<[exec]Holder::C> [218]
+store %pt_1.<[exec]Cell::B> := %s1 [218]
+assign %s0 = %s0 [220]
+assign %s1 = %s0 [220]
+%s1 = load $globals.<[exec]Holder::Count> [221]
+assign %s2 = <const: 1> [222]
+assign %s1 = %s1, %s2 [223]
+store $globals.<[exec]Holder::Count> := %s1 [224]
+assign %s0 = @p0 [225]
+%s0 = load %s0.<[exec]Holder::C> [226]
+assign %loc0 = %s0 [227]
+%s0 = load %loc0.<[exec]Cell::B> [229]
+return %s0, %excout
+end block_0
+
+define [exec]IL::Finite(System.Double)->System.Double(@p0[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=caught0 %L4=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [231]
+assign %s0 = @p0 [231]
+assign %s0 = %s0 [232]
+assign %s1 = <const: 4611686018427387904> [233]
+assign %s0 = %s0, %s1 [234]
+assign @p0 = %s0 [235]
+goto 2, 1
+end block_0
+begin block_1:
+assign %caught0 = %throwval [237]
+assign %s0 = %caught0 [237]
+assign %s0 = <const: -4616189618054758400> [238]
+assign @p0 = %s0 [239]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = @p0 [241]
+return %s0, %excout
+end block_2
+
+define [exec]IL::NativeOvf(System.IntPtr,System.UIntPtr,System.Int64)->System.Int64(@p0[byval], @p1[byval], @p2[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=loc0 %L5=caught0 %L6=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [243]
+assign %s0 = @p0 [243]
+assign %s1 = @p1 [244]
+assign %s0 = %s0, %s1 [245]
+assign %s1 = @p0 [246]
+assign %s0 = %s0, %s1 [247]
+assign %s0 = %s0 [248]
+assign %s1 = @p2 [249]
+assign %s1 = %s1 [250]
+assign %s2 = @p1 [251]
+assign %s1 = %s1, %s2 [252]
+assign %s1 = %s1 [253]
+assign %s0 = %s0, %s1 [254]
+assign %loc0 = %s0 [255]
+goto 2, 1
+end block_0
+begin block_1:
+assign %caught0 = %throwval [257]
+assign %s0 = %caught0 [257]
+assign %s0 = <const: -1> [258]
+assign %loc0 = %s0 [259]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = %loc0 [261]
+return %s0, %excout
+end block_2
+
+define [exec]IL::Unsigned(System.UInt32,System.UInt64)->System.Double(@p0[byval], @p1[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [263]
+assign %s0 = @p0 [263]
+assign %s0 = %s0 [264]
+assign %s1 = @p1 [265]
+assign %s1 = %s1 [266]
+assign %s0 = %s0, %s1 [267]
+assign %s1 = @p0 [268]
+assign %s2 = @p1 [269]
+assign %s2 = %s2 [270]
+assign %s1 = %s1, %s2 [271]
+assign %s1 = %s1 [272]
+assign %s0 = %s0, %s1 [273]
+return %s0, %excout
+end block_0
+
+define [exec]IL::RefCompare(System.Object,System.Object)->System.Int32(@p0[byref], @p1[byref]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
+begin block_0 [start]:
+assign %excout = <const: []> [275]
+assign %s0 = @p0 [275]
+assign %s1 = <const: 0> [276]
+assign %s0 = %s0, %s1 [277]
+assign %s1 = @p0 [278]
+assign %s2 = @p1 [279]
+assign %s1 = %s1, %s2 [280]
+assign %s2 = <const: 2> [281]
+assign %s1 = %s1, %s2 [282]
+assign %s0 = %s0, %s1 [283]
+assign %s1 = @p1 [284]
+goto 2, 1
+end block_0
+begin block_1:
+assign %s1 = <const: 4> [286]
+assign %s0 = %s0, %s1 [287]
+goto 2
+end block_1
+begin block_2:
+return %s0, %excout
+end block_2
+
+define [exec]IL::TryInCatch(System.Int32)->System.Int32(@p0[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=caught1 %L5=throwval
+begin block_0 [start]:
+assign %excout = <const: []> [289]
+assign %s0 = <const: 1> [289]
+assign %s1 = @p0 [290]
+assign %s0 = %s0, %s1 [291]
+assign %loc0 = %s0 [292]
+goto 4, 1
+end block_0
+begin block_1:
+assign %caught1 = %throwval [294]
+assign %s0 = %caught1 [294]
+goto 2
+end block_1
+begin block_2:
+assign %s0 = <const: 20> [295]
+assign %loc0 = %s0 [296]
+goto 4, 3
+end block_2
+begin block_3:
+assign %s0 = %loc0 [298]
+assign %s1 = <const: 3> [299]
+assign %s0 = %s0, %s1 [300]
+assign %loc0 = %s0 [301]
+goto 4
+end block_3
+begin block_4:
+assign %s0 = %loc0 [303]
+return %s0, %excout
+end block_4
+
+define [exec]IL::RethrowInFinally(System.Int32)->System.Int32(@p0[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=s1 %L6=caught0 %L7=loc0 %L8=caught2
+begin block_0 [start]:
+assign %excout = <const: []> [305]
+assign %s0 = @p0 [305]
+assign %t0 = cil<[exec]Err> [306]
+%retval, %throwval = direct-call [exec]Err::.ctor(System.Int32)->System.Void(%t0, %s0) [306]
+assign %excout = %excout, %throwval [306]
+assign %s0 = %t0 [306]
+goto 1, 2, 8
+end block_0
+begin block_1:
+assign %throwval = %s0 [307]
+assign %excout = %excout, %throwval [307]
+goto 2, 8
+end block_1
+begin block_2:
+assign %s0 = @p0 [308]
+assign %s1 = <const: 0> [309]
+goto 5, 3, 6, 8
+end block_2
+begin block_3:
+assign %s0 = <const: 7> [311]
+assign %t0 = cil<[exec]Err> [312]
+%retval, %throwval = direct-call [exec]Err::.ctor(System.Int32)->System.Void(%t0, %s0) [312]
+assign %excout = %excout, %throwval [312]
+assign %s0 = %t0 [312]
+goto 4, 6, 8
+end block_3
+begin block_4:
+assign %throwval = %s0 [313]
+assign %excout = %excout, %throwval [313]
+goto 6, 8
+end block_4
+begin block_5:
+goto 7, 6, 8
+end block_5
+begin block_6:
+assign %caught0 = %throwval [315]
+assign %s0 = %caught0 [315]
+%s0 = load %s0.<[exec]Err::Code> [316]
+assign %loc0 = %s0 [317]
+assign %throwval = %caught0 [318]
+assign %excout = %excout, %throwval [318]
+goto 8
+end block_6
+begin block_7:
+goto 8
+end block_7
+begin block_8:
+assign %caught2 = %throwval [320]
+assign %s0 = %caught2 [320]
+%s0 = load %s0.<[exec]Err::Code> [321]
+assign %s1 = %loc0 [322]
+assign %s0 = %s0, %s1 [323]
+assign %loc0 = %s0 [324]
+goto 9
+end block_8
+begin block_9:
+assign %s0 = %loc0 [326]
+return %s0, %excout
+end block_9
+
+define [exec]Cell2::.ctor(System.Int32,System.Int32)->System.Void(@p0[byref], @p1[byval], @p2[byval]) -> 2:
+  locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1
+begin block_0 [start]:
+assign %excout = <const: []> [328]
+assign %s0 = @p0 [328]
+assign %s1 = @p1 [329]
+%pt_0 = load %s0.deref [330]
+store %pt_0.<[exec]Cell2::X> := %s1 [330]
+assign %s0 = @p0 [331]
+assign %s1 = @p2 [332]
+assign %s2 = @p1 [333]
+assign %s1 = %s1, %s2 [334]
+%pt_1 = load %s0.deref [335]
+store %pt_1.<[exec]Cell2::Y> := %s1 [335]
+return <const: []>, %excout
+end block_0
+
+define [System.Private.CoreLib]System.Exception::.ctor()->System.Void(@p0[byref]) -> 2:
+

@@ -1,0 +1,18 @@
+{
+  // No flow: second(t, "clean") (16) returns its second argument, which is
+  // clean. Mapping the stack (or registers) to parameters in the wrong order, or
+  // returning the wrong stack slot, would taint the result.
+  "expected_lines": [],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LCallArgumentOrder;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LCallArgumentOrder;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

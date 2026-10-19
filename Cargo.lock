@@ -840,6 +840,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cil-dump"
+version = "0.1.4"
+dependencies = [
+ "cil-reader",
+]
+
+[[package]]
+name = "cil-reader"
+version = "0.1.4"
+dependencies = [
+ "flate2",
+ "memmap2",
+]
+
+[[package]]
 name = "cipher"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1125,6 +1140,7 @@ dependencies = [
  "clap",
  "csv",
  "ctadl-c",
+ "ctadl-cil",
  "ctadl-dex",
  "ctadl-flowy",
  "ctadl-frontends",
@@ -1205,6 +1221,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctadl-cil"
+version = "0.1.4"
+dependencies = [
+ "cil-reader",
+ "ctadl-import",
+ "ctadl-ir",
+ "hashbrown 0.16.1",
+ "log",
+ "sha1",
+ "smallvec",
+ "source-info",
+]
+
+[[package]]
 name = "ctadl-dex"
 version = "0.1.4"
 dependencies = [
@@ -1215,7 +1245,6 @@ dependencies = [
  "log",
  "smallvec",
  "source-info",
- "streaming-iterator",
  "test-log",
 ]
 
@@ -1240,6 +1269,7 @@ version = "0.1.4"
 dependencies = [
  "bitcode",
  "ctadl-c",
+ "ctadl-cil",
  "ctadl-dex",
  "ctadl-flowy",
  "ctadl-import",
@@ -1256,6 +1286,7 @@ name = "ctadl-import"
 version = "0.1.4"
 dependencies = [
  "bitcode",
+ "cil-reader",
  "ctadl-flowy",
  "ctadl-ir",
  "dex-reader",
@@ -1301,6 +1332,7 @@ dependencies = [
  "log",
  "smallvec",
  "source-info",
+ "tempfile",
 ]
 
 [[package]]
@@ -2149,7 +2181,7 @@ name = "dex-reader"
 version = "0.1.4"
 dependencies = [
  "log",
- "streaming-iterator",
+ "smallvec",
  "thiserror",
  "zip 0.6.6",
 ]
@@ -3106,6 +3138,15 @@ checksum = "6585fd95e7bb50d6cc31e20d4cf9afb4e2ba16c5846fc76793f11218da9c475b"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -5200,10 +5241,15 @@ version = "0.1.4"
 dependencies = [
  "anyhow",
  "boon",
+ "cil-dump",
+ "cil-reader",
  "ctadl-ascent",
+ "ctadl-cil",
+ "ctadl-ir",
  "dex-reader",
  "json5",
  "jvm-reader",
+ "regex",
  "serde",
  "serde_json",
  "zip 0.6.6",
