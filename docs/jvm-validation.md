@@ -67,7 +67,6 @@ bug was fixed and its entry must go).
 | Opcode | jvm-reader | Correct | |
 | --- | --- | --- | --- |
 | `fconst_1`, `fconst_2`, `dconst_1` | `Float(1)`, `Float(2)`, `Double(1)`: the raw bits 1 and 2, tiny denormals | `0x3f800000`, `0x40000000`, `0x3ff0000000000000` | new; `const_for_const_op` casts the integer instead of converting it |
-| `anewarray` of an array type | allocates `[L[I;` | `[[I` | new; `decode_dataflow` always wraps the class in `L...;` |
 
 The samples and nightly cases trip only `dconst_1`.
 
@@ -77,6 +76,9 @@ permutation (improvements §3.2 and §3.4). That was fixed in jvm-reader, and it
 `KNOWN` entries were deleted. Likewise, `ldc` of a MethodType, MethodHandle or
 dynamic constant made the whole method fail to decode (improvements §3.4). It
 now pushes the constant, and the check fails if such a method stops decoding.
+And `anewarray` of an array type allocated `[L[I;` rather than `[[I`, because
+the decoder wrapped the operand in `L...;` even when it was already an array
+descriptor. That was fixed too.
 
 Everything else agrees: every load, store and `iinc` (short, plain and wide
 forms, and stores into parameter slots), every arithmetic, conversion and
@@ -96,11 +98,12 @@ all-opcodes class and in the samples.
   modeling choice, the oracle follows it: an array load reads the element (not
   the index), and `getfield` reads the object and the field. Whether those are
   the right taint rules is not something ASM can say.
-- **It checks jvm-reader, not `ctadl-jvm`.** For example, the frontend takes
+- **It checks jvm-reader, not `ctadl-jvm`.** For example, the frontend took
   the `xreturn` value from the bottom of the stack (improvements §3.4), which
-  is not visible here.
-- **Returns are not compared.** jvm-reader does not model what `xreturn`
-  returns; only its stack effect is checked.
+  was not visible here. Frontend lowering is covered by the nightly Java
+  cases, which run on both the JVM and the Dex frontends.
+- **Returns are not compared.** Only `xreturn`'s stack effect is checked, not
+  the `return_value` slot jvm-reader gives it.
 
 ---
 

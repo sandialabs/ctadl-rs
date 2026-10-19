@@ -3,8 +3,10 @@
 Status: §1 (`dex-reader`) is fixed on branch `dex-jvm-reader-fixes`, except for
 the open items in §1.7. In §2 (`jvm-reader` design), item 5 is fixed and items
 1 and 4 are open. §3 records wrong taint answers from `ctadl-jvm`, confirmed by
-test programs. §3.1 (`24064a85`), §3.2, §3.3, and the `swap` and `ldc` items of
-§3.4 are fixed; the rest are open. These problems were found while designing the CIL reader's dataflow layer
+test programs. §3.1 (`24064a85`), §3.2, §3.3, the `swap`, `ldc` and return
+items of §3.4, and the `anewarray` item of §3.5 are fixed; the rest are open.
+§4 lists the frontend regression cases and the two bugs they found, both fixed.
+These problems were found while designing the CIL reader's dataflow layer
 ([`cil-flow-api.md`](cil-flow-api.md)), which is built to avoid them.
 
 ---
@@ -403,9 +405,14 @@ have since tested the first three items against ASM and the JVM:
   taint passes to the boolean or the length. Their result does depend on the
   object, so both checks accept this. Whether that dependence should carry
   taint is a policy question for the frontend.
-- *Untested:* the `ireturn`..`areturn` terminators return `StackSlot(0)`, the
+- *Fixed:* the `ireturn`..`areturn` terminators returned `StackSlot(0)`, the
   bottom of the stack, which is right only when the return value is alone on the
-  stack. The checks above do not look at the frontend.
+  stack. Verified bytecode may return with other values beneath the result;
+  javac never does, other compilers and bytecode tools can. jvm-reader now gives
+  each value return a `return_value`, the top of the stack (the lower slot of a
+  long or double), normalized like a call's arguments, and `ctadl-jvm` returns
+  that. Regression protection: `value_return_returns_the_top_of_the_stack` in
+  `ctadl-jvm`, which fails before the fix.
 
 ### 3.5 Found by the ASM cross-check
 
@@ -413,5 +420,58 @@ have since tested the first three items against ASM and the JVM:
   `Double(1)`. Those hold raw bits, so the constants are tiny denormals rather
   than 1.0 and 2.0. `const_for_const_op` casts the integer instead of converting
   it.
-- `anewarray` of an array type allocates `[L[I;` rather than `[[I`: the decoder
-  always wraps the class operand in `L...;`.
+- *Fixed:* `anewarray` of an array type allocated `[L[I;` rather than `[[I`:
+  the decoder always wrapped the class operand in `L...;`, but the operand of
+  an array class is already a descriptor. Regression protection:
+  `anewarray_allocates_an_array_of_its_class`, and `jvm:asm-flow`, which no
+  longer lists it as a known disagreement.
+
+---
+
+## 4. Found by the frontend regression cases
+
+The checks in [`dex-validation.md`](dex-validation.md) and
+[`jvm-validation.md`](jvm-validation.md) test the readers one instruction at a
+time, and none of them looks at what `ctadl-dex` or `ctadl-jvm` emit. The
+nightly Java cases do, because each one runs on both frontends. These cases
+were added to cover the lowering shapes the earlier bugs lived in:
+
+| Case | What it covers |
+| --- | --- |
+| `SelfReferenceStore`, `ArrayIndexAsValue` | stores whose value shares a register with the object or index (§1.3) |
+| `CompoundFieldAssign`, `CompoundArrayAssign` | `o.f += t` and `a[i] += t`, int and long: `dup` and `dup2` before a load |
+| `DupX2ArrayChain`, `Dup2X2LongArrayChain` and their `Flow` twins | `x = a[i] = y`: `dup_x2` and `dup2_x2`, with a tainted index that must not reach `x` |
+| `StaticLongChain` | `a = b = source()` on long statics: `dup2` between two `putstatic`s |
+| `CallArgumentOrder`, `ConstructorArgumentOrder` and their `Flow` twins | which argument reaches the result or field, for a call and for `new; dup; invokespecial` |
+| `ConditionalReceiver`, `ConditionalReceiverStore` | a field access whose object is a stack value defined on two branches |
+| `CallResultReceiver` | an instance call whose receiver is another call's result |
+| `TryFinallyReturn` | a return from inside `try` with a `finally` |
+| `ArraysOfOneSize` | two arrays of one size: taint in one must not reach the other |
+
+They found two bugs.
+
+### 4.1 Fixed: `ctadl-jvm` set only one slot of a long or double call result
+
+A long or double takes two stack slots, and `ctadl-jvm` lets both carry the
+value: `lload` writes both. A call result wrote only the lower one. Most code
+does not notice, because the result is stored to a local first. But
+`a = b = source()` on long statics compiles to `invokestatic; dup2; putstatic;
+putstatic`, and `putstatic` reads the upper slot, which nothing had written. The
+flow was lost. Now a two-slot result is assigned to both slots. Regression
+protection: `StaticLongChain`.
+
+### 4.2 Fixed: `ctadl-dex` lowered `new-array` as a copy of its size
+
+`new-array vA, vB, type` fell through to the generic dataflow lowering, which
+assigns every source register to the destination: `vA = vB`. The array was a
+copy of its size, not a new object. dx loads a constant once and reuses the
+register, so two arrays of one size became copies of one value, and taint
+stored into one array reached the other: a false flow. Now `new-array` is a new
+object of its array type, as `new-instance` is, and the size does not flow into
+it. Regression protection: `ArraysOfOneSize`, a no-flow case. Without the fix,
+`CompoundArrayAssign` also gave the right answer by the wrong route: the long
+array's element read the int array's taint.
+
+The JVM frontend still lists `newarray`'s count as a source of the array, so a
+tainted size taints the array there and not on Dex. That is a policy choice
+the two frontends now make differently.
