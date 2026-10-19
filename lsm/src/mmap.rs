@@ -20,7 +20,7 @@ use std::iter::Peekable;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use bytemuck::Pod;
 use hashbrown::HashTable;
@@ -41,6 +41,47 @@ const MAX_PREFIX_FILTERS: usize = 4;
 const HEADER_LEN: usize = 4 + 4 + 8 * 8 + 16 * MAX_PREFIX_FILTERS;
 const DEFAULT_DISK_MEMTABLE_LIMIT: usize = 10_000;
 static NEXT_TEMP_RUN_ID: AtomicU64 = AtomicU64::new(0);
+
+// ---------------------------------------------------------------------------
+// The memory budget, shared by every map in the process.
+// ---------------------------------------------------------------------------
+
+/// The heap all maps' write buffers may hold together, in bytes.
+static MEMORY_BUDGET: AtomicUsize = AtomicUsize::new(usize::MAX);
+/// The heap all maps' write buffers hold now, and the most they have held.
+static MEMORY_IN_USE: AtomicUsize = AtomicUsize::new(0);
+static MEMORY_PEAK: AtomicUsize = AtomicUsize::new(0);
+/// Under the budget, a map writes its buffer out only once it holds this much,
+/// so a buffer that gets an insert while others hold the budget does not write
+/// a run per insert.
+const MIN_BUDGET_FLUSH_BYTES: usize = 64 * 1024;
+
+/// Caps the heap that the write buffers of all maps in the process hold
+/// together, in bytes; `None` lifts the cap. Over the cap, a map that takes an
+/// insert (or absorbs another map) writes its buffer out as a run. The rest of
+/// a map is on disk or in page cache: its runs, their Bloom filters, and its
+/// per-run bookkeeping of a few dozen bytes. Each map's own entry limit still
+/// applies under the cap.
+pub fn set_memory_budget(bytes: Option<usize>) {
+    MEMORY_BUDGET.store(bytes.unwrap_or(usize::MAX), Ordering::Relaxed);
+}
+
+/// The cap [`set_memory_budget`] set, if any.
+pub fn memory_budget() -> Option<usize> {
+    let budget = MEMORY_BUDGET.load(Ordering::Relaxed);
+    (budget != usize::MAX).then_some(budget)
+}
+
+/// The heap all maps' write buffers hold now, in bytes (an estimate, from their
+/// entries, hash tables and prefix chains).
+pub fn memory_in_use() -> usize {
+    MEMORY_IN_USE.load(Ordering::Relaxed)
+}
+
+/// The most [`memory_in_use`] has been.
+pub fn memory_peak() -> usize {
+    MEMORY_PEAK.load(Ordering::Relaxed)
+}
 
 /// Borrowing value iterator over a list of slices, one per source (the memtable
 /// plus each run that holds the key). The list is held inline up to a few
@@ -533,6 +574,20 @@ impl<K: Pod + Ord, V: Pod> Memtable<K, V> {
         self.len
     }
 
+    /// The heap the memtable holds for its keys (its values past each key's
+    /// first are the caller's to count): chunks, hash table and prefix chains.
+    fn key_bytes(&self) -> usize {
+        // A table's buckets are a four-byte position plus a control byte each.
+        let table = |t: &HashTable<u32>| t.capacity() * (size_of::<u32>() + 1);
+        self.chunks.len() * Self::CHUNK * size_of::<MemtableEntry<K, V>>()
+            + table(&self.index)
+            + self
+                .prefixes
+                .iter()
+                .map(|c| table(&c.heads) + c.next.capacity() * size_of::<u32>())
+                .sum::<usize>()
+    }
+
     /// Every entry, by ascending key.
     fn sorted(&self) -> Vec<(&K, &[V])> {
         let mut entries: Vec<_> = self
@@ -577,6 +632,14 @@ pub struct MmapLsmMultiMap<K, V> {
     /// The key prefix lengths, in bytes, whose prefixes each run filters for
     /// [`Self::keys_with_prefix`].
     prefix_lens: SmallVec<[usize; 2]>,
+    /// This map's share of [`memory_in_use`].
+    memory: usize,
+}
+
+impl<K, V> Drop for MmapLsmMultiMap<K, V> {
+    fn drop(&mut self) {
+        MEMORY_IN_USE.fetch_sub(self.memory, Ordering::Relaxed);
+    }
 }
 
 impl<K: Pod + Ord, V: Pod> Default for MmapLsmMultiMap<K, V> {
@@ -609,6 +672,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
             dir: None,
             next_run_id: 0,
             prefix_lens: SmallVec::new(),
+            memory: 0,
         }
     }
 
@@ -668,6 +732,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
             dir: Some(dir),
             next_run_id,
             prefix_lens: SmallVec::new(),
+            memory: 0,
         })
     }
 
@@ -675,7 +740,34 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         self.memtable.insert(hash_key(&key), key, value);
         self.memtable_len += 1;
         self.len += 1;
+        self.count_memory();
         if self.memtable_len >= self.memtable_limit {
+            self.flush().expect("failed to flush mmap LSM memtable");
+        } else {
+            self.keep_to_budget();
+        }
+    }
+
+    /// Brings this map's share of [`memory_in_use`] up to date with its memtable.
+    fn count_memory(&mut self) {
+        let now = self.memtable.key_bytes()
+            + (self.memtable_len - self.memtable.keys_len()) * size_of::<V>();
+        if now >= self.memory {
+            let total =
+                MEMORY_IN_USE.fetch_add(now - self.memory, Ordering::Relaxed) + now - self.memory;
+            MEMORY_PEAK.fetch_max(total, Ordering::Relaxed);
+        } else {
+            MEMORY_IN_USE.fetch_sub(self.memory - now, Ordering::Relaxed);
+        }
+        self.memory = now;
+    }
+
+    /// Writes the memtable out if all maps' memtables are over the budget and
+    /// this one holds enough to be worth a run.
+    fn keep_to_budget(&mut self) {
+        if self.memory >= MIN_BUDGET_FLUSH_BYTES
+            && MEMORY_IN_USE.load(Ordering::Relaxed) > MEMORY_BUDGET.load(Ordering::Relaxed)
+        {
             self.flush().expect("failed to flush mmap LSM memtable");
         }
     }
@@ -844,6 +936,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         }
         self.memtable_len = 0;
         self.len = 0;
+        self.count_memory();
     }
 
     /// Moves every entry of `other` into `self`, leaving `other` empty. A key
@@ -857,6 +950,10 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
             other.flush().expect("failed to flush mmap LSM memtable");
         }
         let memtable = other.memtable.take();
+        let other_values = other.memtable_len;
+        other.memtable_len = 0;
+        other.count_memory();
+        other.memtable_len = other_values;
         for (key, vals) in memtable.chunks.into_iter().flatten() {
             for value in vals {
                 self.insert(key, value);
@@ -872,6 +969,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         }
         other.memtable_len = 0;
         other.len = 0;
+        self.keep_to_budget();
     }
 
     /// Persists the current memtable as a run.
@@ -882,6 +980,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         let memtable = self.memtable.take();
         let values_len = self.memtable_len;
         self.memtable_len = 0;
+        self.count_memory();
         let mut writer = self.new_run_writer(0, memtable.keys_len(), values_len)?;
         for (key, vals) in memtable.sorted() {
             writer.start_key(key);
