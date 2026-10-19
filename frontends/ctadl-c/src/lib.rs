@@ -610,6 +610,9 @@ fn in_cell(mut fields: ThinVec<PathSegment>) -> ThinVec<PathSegment> {
 }
 
 /// A declarator's name and its nearest declarator kind, or `""`.
+///
+/// The kind nearest the name decides what the name is, as in C: `int *a[3]` is an array,
+/// `int (*fp)(int)` a pointer, `int *f(int)` a function, and `""` a plain `int x`.
 fn declarator_shape(declarator: Node<'_>) -> (Option<Node<'_>>, &'static str) {
     let mut node = declarator;
     let mut nearest = "";
@@ -637,6 +640,10 @@ fn declarator_shape(declarator: Node<'_>) -> (Option<Node<'_>>, &'static str) {
 }
 
 /// Scalar locals and parameters whose address is taken (`&x`, `(T) &x`).
+///
+/// Each one's value lives in a cell at `x.deref` ([`in_cell`]), so a write through `&x` reaches
+/// later reads of `x`; records and arrays already name their own storage. The walk is by name,
+/// not scope: `taken` finds the names, and `declared` keeps the ones that are scalar.
 fn addr_taken_scalars(
     params: Node<'_>,
     body: Node<'_>,
@@ -684,7 +691,9 @@ fn addr_taken_scalars(
             }
         }
     }
-    // Every declaration of every name in `names`: is it scalar?
+    // Every declaration of every name in `names`: is it scalar? A pointer, a non-record type,
+    // or an array parameter (it decays to a pointer) is; a local array, a record or a function
+    // is not. Keyed by name, so one non-scalar declaration anywhere in the function excludes it.
     fn declared<'s>(
         node: Node<'_>,
         source: &'s str,
