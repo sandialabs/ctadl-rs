@@ -53,11 +53,8 @@ const LUA_XFAIL: &[&str] = &[];
 /// JVM E2E cases known to fail today, quarantined as XFAIL. Every other
 /// `Jvm:*` case is enforced, as in [`C_KNOWN_FAILURES`].
 ///
-/// Currently empty. Enforcement used to be opt-in, case by case, so a new JVM
-/// case that failed was reported as XFAIL and the suite stayed green: a
-/// field access on a call's result that used the wrong object, and `dup_x1`
-/// sending every input to every output, went unnoticed that way. Add an entry only for a known,
-/// documented gap, and delete it once the case passes.
+/// Currently empty. Add an entry only for a known, documented gap, and delete
+/// it once the case passes.
 const JVM_KNOWN_FAILURES: &[&str] = &[];
 
 /// Tree-sitter C cases known to fail today, quarantined as XFAIL so the suite
@@ -65,9 +62,10 @@ const JVM_KNOWN_FAILURES: &[&str] = &[];
 ///
 /// Enforcement is the default and only these named gaps are exempt. Each entry
 /// is a current limitation, not a permanent waiver -- delete it once the case
-/// passes so a later regression is caught rather than silently re-quarantined. These names are the `C:`-prefixed
-/// reporting names, so they cannot collide with the Pcode case over the same
-/// source, and quarantining one never affects that Pcode case.
+/// passes so a later regression is caught rather than silently re-quarantined.
+/// These names are the `C:`-prefixed reporting names, so they cannot collide
+/// with the Pcode case over the same source, and quarantining one never affects
+/// that Pcode case.
 const C_KNOWN_FAILURES: &[&str] = &[
     // A subscript lowers to an offset address (`arr[2]` is `arr.[2].[]`), so
     // element paths compose, but the binary `+` in `*(p + 2)` does not lower to
