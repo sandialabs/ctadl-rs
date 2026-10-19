@@ -210,28 +210,6 @@ fn test_cli_query_c_sources_and_sinks() {
     });
 }
 
-/// `ptrvalue.c`: exactly the `sink_hit_*` calls are reached. The source taints the pointer
-/// *value*, and `&p[2]` -- an assign whose source path ends in an offset, `p.[2]` -- computes an
-/// address from that value, so the taint carries to the address: to the element address passed
-/// in `main`, and to the one `third` returns. It does not carry through the address to the
-/// memory there, so `p[2]` stays clean. The engine-level version is
-/// `plain_source_value_reaches_offset_address` in `query_engine/search.rs`.
-#[test]
-fn test_cli_query_c_pointer_value_through_offset() {
-    run_store_test(|| {
-        assert_eq!(
-            c_sinks_reached("ptrvalue", &[]),
-            [
-                "sink_hit_element_address",
-                "sink_hit_returned_address",
-                "sink_hit_sum",
-            ]
-            .map(String::from)
-            .into()
-        );
-    });
-}
-
 #[test]
 fn test_android_phase4_explicit_activity_extra_flow() {
     run_store_test(|| {
@@ -921,59 +899,6 @@ fn test_cli_query_c_no_callsite_smear() {
         .collect();
         assert_eq!(reached, expected, "sinks reached: {text}");
     });
-}
-
-/// Imports, indexes (`<stem>.json` + `index_models`) and queries `<stem>.c`; returns the sinks reached.
-fn c_sinks_reached(stem: &str, index_models: &[PathBuf]) -> std::collections::BTreeSet<String> {
-    use ctadl_ascent::codegen::CallResolutionStrategy;
-    use ctadl_ascent::query_engine::formatter::SarifProfile;
-
-    let import_name = format!("test_{stem}_c");
-    let import = ArtifactImport::try_create(
-        &import_name,
-        ArtifactLanguage::C,
-        &c_fixture(&format!("{stem}.c")),
-    )
-    .unwrap();
-    cli::import(&import, cli::ImportOptions::default()).unwrap();
-    let project = AnalysisProject::try_create(
-        &format!("{import_name}_proj"),
-        &[&import_name],
-        SubImports::All,
-    )
-    .unwrap();
-    let models = vec![c_fixture(&format!("{stem}.json"))];
-    let all_index_models: Vec<PathBuf> = models.iter().chain(index_models).cloned().collect();
-    cli::index(
-        &project,
-        &[],
-        &all_index_models,
-        false,
-        cli::IndexOptions {
-            strategy: CallResolutionStrategy::default(),
-            ..Default::default()
-        },
-    )
-    .unwrap();
-
-    let out_dir = tempdir().unwrap();
-    let sarif = out_dir.path().join("out.sarif");
-    cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
-    let doc: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&sarif).unwrap()).unwrap();
-    doc["runs"][0]["results"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|r| {
-            r["ruleId"]
-                .as_str()
-                .is_some_and(|id| id.contains("tainted-path"))
-                && r["kind"].as_str() == Some("fail")
-        })
-        .flat_map(|r| r["properties"]["sinkFunctions"].as_array().unwrap())
-        .filter_map(|f| f.as_str().map(str::to_string))
-        .collect()
 }
 
 /// Writes an APK built from `(entry name, contents)` pairs into `dir`, and returns its

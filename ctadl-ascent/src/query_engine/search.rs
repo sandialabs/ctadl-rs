@@ -881,7 +881,7 @@ mod tests {
     /// the value of `base` -- C's `&base[2]`, pcode's `PTRADD` -- so a taint on that value reaches
     /// `dst`, from a plain source too. Contrast `saturating_source_reaches_offset_read`, whose
     /// edge reads a field `.field`, where a plain source rightly stops. Both engines agree. The
-    /// end-to-end version is `test_cli_query_c_pointer_value_through_offset` in `tests/cli.rs`.
+    /// end-to-end version is `tests/tnt/offset_address.tnt`.
     #[test]
     fn plain_source_value_reaches_offset_address() {
         let (facts, base, dst) = plain_source_through(".[8]");
