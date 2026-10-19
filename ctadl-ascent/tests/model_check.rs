@@ -29,8 +29,8 @@ fn program(names: &[&str]) -> ProgramInfo {
         .map(|name| {
             let mut f = FunctionData::default();
             f.set_name((*name).to_string());
-            f.params.parameters.push(ParameterType::ByVal);
-            f.params.parameters.push(ParameterType::ByVal);
+            f.params.parameters.push(ParameterType::SharedFields);
+            f.params.parameters.push(ParameterType::SharedFields);
             let blocks = f.blocks.blocks_mut();
             let body = blocks.push(BasicBlockData::new(None));
             blocks[body].extend(vec![Statement::new_kind(StatementKind::Nop)]);

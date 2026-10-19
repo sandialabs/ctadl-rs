@@ -438,8 +438,8 @@ fn function_f() -> FunctionData {
     };
 
     let mut fb = FunctionBuilder::new(&mut f);
-    fb.add_param(ParameterType::ByVal);
-    fb.add_param(ParameterType::ByVal);
+    fb.add_param(ParameterType::SharedFields);
+    fb.add_param(ParameterType::SharedFields);
 
     let entry = fb.add_block();
     fb.at_block(entry).create_goto(vec![BasicBlockIdx::new(1)]);
@@ -472,8 +472,8 @@ fn function_j() -> FunctionData {
     };
 
     let mut fb = FunctionBuilder::new(&mut f);
-    fb.add_param(ParameterType::ByVal);
-    fb.add_param(ParameterType::ByVal);
+    fb.add_param(ParameterType::SharedFields);
+    fb.add_param(ParameterType::SharedFields);
 
     let entry = fb.add_block();
     fb.at_block(entry).create_goto(vec![BasicBlockIdx::new(1)]);
@@ -505,7 +505,7 @@ fn function_g() -> FunctionData {
     };
 
     let mut fb = FunctionBuilder::new(&mut f);
-    fb.add_param(ParameterType::ByVal);
+    fb.add_param(ParameterType::SharedFields);
 
     let body = fb.add_block();
     let mut b = fb.at_block(body);
@@ -529,9 +529,11 @@ fn function_g() -> FunctionData {
 //   q = source(Net);
 //   a = q;
 //   p = a;
-//   sink(p, Net);
-//   return p;
+//   return sink(p, Net);
 // }
+//
+// The sink is the returned value, not the formal `p`: rebinding a parameter does not reach the
+// caller, so `p`'s formal is written back as the caller's argument and never sees `q`.
 fn function_h() -> (FunctionData, SourceSinkQuery) {
     let mut f = FunctionData {
         name: "H".to_string(),
@@ -540,8 +542,8 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     };
 
     let mut fb = FunctionBuilder::new(&mut f);
-    fb.add_param(ParameterType::ByVal);
-    fb.add_param(ParameterType::ByVal);
+    fb.add_param(ParameterType::SharedFields);
+    fb.add_param(ParameterType::SharedFields);
 
     let entry = fb.add_block();
     fb.at_block(entry).create_goto(vec![BasicBlockIdx::new(1)]);
@@ -568,7 +570,10 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
         },
         sink: TaintEndpoint {
             infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex(FlowVariable::formal_index(0i8.into()), fx::Path::empty()),
+            vertex: FlowVertex(
+                FlowVariable::formal_index(RETURN_INDEX.into()),
+                fx::Path::empty(),
+            ),
             label: fx::Label("Net".into()),
             direction: fx::TaintDirection::Backward,
         },
@@ -594,9 +599,9 @@ fn function_with_phi() -> FunctionData {
         return_type: ReturnType { arity: 1 },
         ..Default::default()
     };
-    f.params.push(ParameterType::ByVal); // cond
-    f.params.push(ParameterType::ByVal); // a
-    f.params.push(ParameterType::ByVal); // b
+    f.params.push(ParameterType::SharedFields); // cond
+    f.params.push(ParameterType::SharedFields); // a
+    f.params.push(ParameterType::SharedFields); // b
 
     let blocks = f.blocks.blocks_mut();
 
@@ -658,7 +663,7 @@ fn function_with_update() -> FunctionData {
         return_type: ReturnType { arity: 1 },
         ..Default::default()
     };
-    f.params.push(ParameterType::ByVal);
+    f.params.push(ParameterType::SharedFields);
 
     let blocks = f.blocks.blocks_mut();
 
@@ -706,8 +711,8 @@ fn function_with_real_update() -> FunctionData {
         return_type: ReturnType { arity: 1 },
         ..Default::default()
     };
-    f.params.push(ParameterType::ByVal);
-    f.params.push(ParameterType::ByVal);
+    f.params.push(ParameterType::SharedFields);
+    f.params.push(ParameterType::SharedFields);
 
     let blocks = f.blocks.blocks_mut();
     blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
@@ -749,7 +754,7 @@ fn function_with_param_to_global_field() -> FunctionData {
         ..Default::default()
     };
 
-    f.params.push(ParameterType::ByVal);
+    f.params.push(ParameterType::SharedFields);
 
     let blocks = f.blocks.blocks_mut();
 
@@ -786,7 +791,7 @@ fn test_cap_algorithm() {
         return_type: ReturnType { arity: 1 },
         ..Default::default()
     };
-    f.params.push(ParameterType::ByVal);
+    f.params.push(ParameterType::SharedFields);
 
     let blocks = f.blocks.blocks_mut();
     let body = blocks.push(BasicBlockData::new(None));

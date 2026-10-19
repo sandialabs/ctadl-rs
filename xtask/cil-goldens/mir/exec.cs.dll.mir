@@ -225,7 +225,7 @@ cil virtual method table
 [exec]Exec.Val extends [System.Private.CoreLib]System.Object
 end cil virtual method table
 
-define [exec]Exec.Node::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Node::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [1]
@@ -235,7 +235,7 @@ assign %excout = %excout, %throwval [2]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Bag::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Bag::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [4]
@@ -245,7 +245,7 @@ assign %excout = %excout, %throwval [5]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void(@p0[byref], @p1[byval], @p2[byval]) -> 2:
+define [exec]Exec.Pt::.ctor(System.Int32,System.Int32)->System.Void(@p0[shared], @p1[shared_fields], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=pt_1
 begin block_0 [start]:
 assign %excout = <const: []> [7]
@@ -260,7 +260,7 @@ store %pt_1.<[exec]Exec\.Pt::Y> := %s1 [12]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Pt::Sum()->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Pt::Sum()->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=pt_0 %L3=s1 %L4=pt_1
 begin block_0 [start]:
 assign %excout = <const: []> [14]
@@ -274,7 +274,7 @@ assign %s0 = %s0, %s1 [18]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Pt::Scale(System.Int32)->System.Void(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Pt::Scale(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=pt_2 %L7=pt_3
 begin block_0 [start]:
 assign %excout = <const: []> [20]
@@ -297,7 +297,7 @@ store %pt_3.<[exec]Exec\.Pt::Y> := %s1 [31]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Shape::Area()->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Shape::Area()->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0
 begin block_0 [start]:
 assign %excout = <const: []> [33]
@@ -306,7 +306,7 @@ assign %s0 = @p0 [33]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Shape::Kind()->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Shape::Kind()->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0
 begin block_0 [start]:
 assign %excout = <const: []> [36]
@@ -314,7 +314,7 @@ assign %s0 = <const: 1> [36]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Shape::Describe()->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Shape::Describe()->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1
 begin block_0 [start]:
 assign %excout = <const: []> [38]
@@ -332,7 +332,7 @@ assign %s0 = %s0, %s1 [44]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Shape::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Shape::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [46]
@@ -342,7 +342,7 @@ assign %excout = %excout, %throwval [47]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Sq::Area()->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Sq::Area()->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [49]
@@ -354,7 +354,7 @@ assign %s0 = %s0, %s1 [53]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Sq::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Sq::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [55]
@@ -364,7 +364,7 @@ assign %excout = %excout, %throwval [56]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Rc::Area()->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Rc::Area()->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [58]
@@ -376,7 +376,7 @@ assign %s0 = %s0, %s1 [62]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Rc::Kind()->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Rc::Kind()->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1
 begin block_0 [start]:
 assign %excout = <const: []> [64]
@@ -389,7 +389,7 @@ assign %s0 = %s0, %s1 [67]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Rc::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Rc::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [69]
@@ -399,7 +399,7 @@ assign %excout = %excout, %throwval [70]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Hider::Area()->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Hider::Area()->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0
 begin block_0 [start]:
 assign %excout = <const: []> [72]
@@ -407,7 +407,7 @@ assign %s0 = <const: -1> [72]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Hider::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Hider::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [74]
@@ -417,7 +417,7 @@ assign %excout = %excout, %throwval [75]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.MyEx::.ctor(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1
 begin block_0 [start]:
 assign %excout = <const: []> [77]
@@ -430,7 +430,7 @@ store %s0.<[exec]Exec\.MyEx::Code> := %s1 [81]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.OtherEx::.ctor(System.Int32)->System.Void(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.OtherEx::.ctor(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=retval %L5=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [83]
@@ -443,7 +443,7 @@ assign %excout = %excout, %throwval [87]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Arith::AddMul(System.Int32,System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval], @p2[byval]) -> 2:
+define [exec]Exec.Arith::AddMul(System.Int32,System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [89]
@@ -455,7 +455,7 @@ assign %s0 = %s0, %s1 [93]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::DivRem(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::DivRem(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [95]
@@ -469,7 +469,7 @@ assign %s0 = %s0, %s1 [101]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::UDivRem(System.UInt32,System.UInt32)->System.UInt32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::UDivRem(System.UInt32,System.UInt32)->System.UInt32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [103]
@@ -483,7 +483,7 @@ assign %s0 = %s0, %s1 [109]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::LDivRem(System.Int64,System.Int64)->System.Int64(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::LDivRem(System.Int64,System.Int64)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [111]
@@ -497,7 +497,7 @@ assign %s0 = %s0, %s1 [117]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::ULDivRem(System.UInt64,System.UInt64)->System.UInt64(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::ULDivRem(System.UInt64,System.UInt64)->System.UInt64(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [119]
@@ -511,7 +511,7 @@ assign %s0 = %s0, %s1 [125]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::Mixed(System.Int32,System.Int64)->System.Int64(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::Mixed(System.Int32,System.Int64)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [127]
@@ -531,7 +531,7 @@ assign %s0 = %s0, %s1 [139]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::ULong(System.UInt64,System.UInt64)->System.UInt64(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::ULong(System.UInt64,System.UInt64)->System.UInt64(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [141]
@@ -550,7 +550,7 @@ assign %s0 = %s0, %s1 [152]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::Shifts(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::Shifts(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3 %L5=s4
 begin block_0 [start]:
 assign %excout = <const: []> [154]
@@ -574,7 +574,7 @@ assign %s0 = %s0, %s1 [170]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::LShifts(System.Int64,System.Int32)->System.Int64(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::LShifts(System.Int64,System.Int32)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3
 begin block_0 [start]:
 assign %excout = <const: []> [172]
@@ -598,7 +598,7 @@ assign %s0 = %s0, %s1 [188]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::Checked(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::Checked(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [190]
@@ -610,7 +610,7 @@ assign %s0 = %s0, %s1 [194]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::CheckedL(System.Int64,System.Int64)->System.Int64(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::CheckedL(System.Int64,System.Int64)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [196]
@@ -623,7 +623,7 @@ assign %s0 = %s0, %s1 [201]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::CheckedU(System.UInt32,System.UInt32)->System.UInt32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::CheckedU(System.UInt32,System.UInt32)->System.UInt32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [203]
@@ -633,7 +633,7 @@ assign %s0 = %s0, %s1 [205]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::CheckedUL(System.UInt64,System.UInt64)->System.UInt64(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::CheckedUL(System.UInt64,System.UInt64)->System.UInt64(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [207]
@@ -646,7 +646,7 @@ assign %s0 = %s0, %s1 [212]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::Convs(System.Int64)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Arith::Convs(System.Int64)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [214]
@@ -667,7 +667,7 @@ assign %s0 = %s0, %s1 [227]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::Widen(System.Int32,System.UInt32,System.Int16,System.Byte,System.Char,System.SByte,System.UInt16)->System.Int64(@p0[byval], @p1[byval], @p2[byval], @p3[byval], @p4[byval], @p5[byval], @p6[byval]) -> 2:
+define [exec]Exec.Arith::Widen(System.Int32,System.UInt32,System.Int16,System.Byte,System.Char,System.SByte,System.UInt16)->System.Int64(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields], @p3[shared_fields], @p4[shared_fields], @p5[shared_fields], @p6[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [229]
@@ -694,7 +694,7 @@ assign %s0 = %s0, %s1 [248]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::CheckedConv(System.Int64)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Arith::CheckedConv(System.Int64)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [250]
@@ -709,7 +709,7 @@ assign %s0 = %s0, %s1 [257]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::CheckedToUnsigned(System.Int32)->System.UInt32(@p0[byval]) -> 2:
+define [exec]Exec.Arith::CheckedToUnsigned(System.Int32)->System.UInt32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [259]
@@ -723,7 +723,7 @@ assign %s0 = %s0, %s1 [265]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::CheckedNarrow(System.Int32)->System.SByte(@p0[byval]) -> 2:
+define [exec]Exec.Arith::CheckedNarrow(System.Int32)->System.SByte(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0
 begin block_0 [start]:
 assign %excout = <const: []> [267]
@@ -732,7 +732,7 @@ assign %s0 = %s0 [268]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::Dbl(System.Double,System.Double)->System.Double(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::Dbl(System.Double,System.Double)->System.Double(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [270]
@@ -750,7 +750,7 @@ assign %s0 = %s0, %s1 [280]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::Flt(System.Single,System.Single)->System.Single(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::Flt(System.Single,System.Single)->System.Single(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [282]
@@ -768,7 +768,7 @@ assign %s0 = %s0, %s1 [292]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::MixedFloat(System.Single,System.Double,System.Int32,System.Int64)->System.Double(@p0[byval], @p1[byval], @p2[byval], @p3[byval]) -> 2:
+define [exec]Exec.Arith::MixedFloat(System.Single,System.Double,System.Int32,System.Int64)->System.Double(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields], @p3[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [294]
@@ -787,7 +787,7 @@ assign %s0 = %s0, %s1 [305]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::Cmp(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::Cmp(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [307]
@@ -867,7 +867,7 @@ assign %s0 = %s0, %s1 [344]
 return %s0, %excout
 end block_15
 
-define [exec]Exec.Arith::LCmp(System.Int64,System.UInt64)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::LCmp(System.Int64,System.UInt64)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [346]
@@ -906,7 +906,7 @@ assign %s0 = %s0, %s1 [363]
 return %s0, %excout
 end block_6
 
-define [exec]Exec.Arith::FCmp(System.Double,System.Double)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::FCmp(System.Double,System.Double)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [365]
@@ -1000,7 +1000,7 @@ assign %s0 = %s0, %s1 [409]
 return %s0, %excout
 end block_18
 
-define [exec]Exec.Arith::FloatToInt(System.Double)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Arith::FloatToInt(System.Double)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [411]
@@ -1023,7 +1023,7 @@ assign %s0 = %s0 [420]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Arith::FloatToLong(System.Single)->System.Int64(@p0[byval]) -> 2:
+define [exec]Exec.Arith::FloatToLong(System.Single)->System.Int64(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [422]
@@ -1047,7 +1047,7 @@ assign %s0 = %s0 [432]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Arith::FloatToUInt(System.Double)->System.UInt32(@p0[byval]) -> 2:
+define [exec]Exec.Arith::FloatToUInt(System.Double)->System.UInt32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [434]
@@ -1070,7 +1070,7 @@ assign %s0 = %s0 [443]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Arith::CheckedFloat(System.Double)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Arith::CheckedFloat(System.Double)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=caught0 %L4=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [445]
@@ -1091,7 +1091,7 @@ assign %s0 = %loc0 [453]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Arith::IntToFloat(System.Int64,System.UInt64,System.UInt32)->System.Double(@p0[byval], @p1[byval], @p2[byval]) -> 2:
+define [exec]Exec.Arith::IntToFloat(System.Int64,System.UInt64,System.UInt32)->System.Double(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [455]
@@ -1112,7 +1112,7 @@ assign %s0 = %s0, %s1 [468]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::ULongToFloat(System.UInt64)->System.Single(@p0[byval]) -> 2:
+define [exec]Exec.Arith::ULongToFloat(System.UInt64)->System.Single(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0
 begin block_0 [start]:
 assign %excout = <const: []> [470]
@@ -1122,7 +1122,7 @@ assign %s0 = %s0 [472]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::Logic(System.Boolean,System.Boolean,System.Int32)->System.Boolean(@p0[byval], @p1[byval], @p2[byval]) -> 2:
+define [exec]Exec.Arith::Logic(System.Boolean,System.Boolean,System.Int32)->System.Boolean(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [474]
@@ -1153,7 +1153,7 @@ assign %s0 = <const: 1> [487]
 return %s0, %excout
 end block_5
 
-define [exec]Exec.Arith::Neg(System.Int32,System.Int64)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::Neg(System.Int32,System.Int64)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [489]
@@ -1166,7 +1166,7 @@ assign %s0 = %s0, %s1 [494]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::NextChar(System.Char)->System.Char(@p0[byval]) -> 2:
+define [exec]Exec.Arith::NextChar(System.Char)->System.Char(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [496]
@@ -1177,7 +1177,7 @@ assign %s0 = %s0 [499]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::AddBytes(System.Byte,System.Byte)->System.Byte(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::AddBytes(System.Byte,System.Byte)->System.Byte(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [501]
@@ -1188,7 +1188,7 @@ assign %s0 = %s0 [504]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::MulShorts(System.Int16,System.Int16)->System.Int16(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::MulShorts(System.Int16,System.Int16)->System.Int16(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [506]
@@ -1199,7 +1199,7 @@ assign %s0 = %s0 [509]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::Bits(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::Bits(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [511]
@@ -1214,7 +1214,7 @@ assign %s0 = %s0, %s1 [518]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arith::Precision(System.Single,System.Single)->System.Double(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Arith::Precision(System.Single,System.Single)->System.Double(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0
 begin block_0 [start]:
 assign %excout = <const: []> [520]
@@ -1233,7 +1233,7 @@ assign %s0 = %s0, %s1 [531]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Ctl::Loop(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Ctl::Loop(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2
 begin block_0 [start]:
 assign %excout = <const: []> [533]
@@ -1268,7 +1268,7 @@ assign %s0 = %loc0 [553]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Ctl::Collatz(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Ctl::Collatz(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0
 begin block_0 [start]:
 assign %excout = <const: []> [555]
@@ -1327,7 +1327,7 @@ assign %s0 = %loc0 [588]
 return %s0, %excout
 end block_8
 
-define [exec]Exec.Ctl::Switch(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Ctl::Switch(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [590]
@@ -1364,7 +1364,7 @@ assign %s0 = <const: -1> [605]
 return %s0, %excout
 end block_7
 
-define [exec]Exec.Ctl::SwitchFall(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Ctl::SwitchFall(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc1 %L4=loc0
 begin block_0 [start]:
 assign %excout = <const: []> [607]
@@ -1415,7 +1415,7 @@ assign %s0 = %s0, %s1 [635]
 return %s0, %excout
 end block_7
 
-define [exec]Exec.Ctl::SparseSwitch(System.Int64)->System.Int64(@p0[byval]) -> 2:
+define [exec]Exec.Ctl::SparseSwitch(System.Int64)->System.Int64(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [637]
@@ -1501,7 +1501,7 @@ assign %s0 = %s0 [685]
 return %s0, %excout
 end block_15
 
-define [exec]Exec.Ctl::Ternary(System.Int32,System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval], @p2[byval]) -> 2:
+define [exec]Exec.Ctl::Ternary(System.Int32,System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3 %L5=retval %L6=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [687]
@@ -1551,7 +1551,7 @@ assign %s0 = %retval [706]
 return %s0, %excout
 end block_9
 
-define [exec]Exec.Ctl::Pick(System.Int32,System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval], @p2[byval]) -> 2:
+define [exec]Exec.Ctl::Pick(System.Int32,System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [708]
@@ -1567,7 +1567,7 @@ assign %s0 = %s0, %s1 [716]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Ctl::NestedTernary(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Ctl::NestedTernary(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3
 begin block_0 [start]:
 assign %excout = <const: []> [718]
@@ -1611,7 +1611,7 @@ assign %s0 = %s0, %s1 [739]
 return %s0, %excout
 end block_7
 
-define [exec]Exec.Ctl::StackAcrossJoin(System.Int32,System.Int64)->System.Int64(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Ctl::StackAcrossJoin(System.Int32,System.Int64)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3 %L5=retval %L6=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [741]
@@ -1665,7 +1665,7 @@ assign %s0 = %s0, %s1 [774]
 return %s0, %excout
 end block_5
 
-define [exec]Exec.Ctl::Goto(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Ctl::Goto(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2
 begin block_0 [start]:
 assign %excout = <const: []> [776]
@@ -1695,7 +1695,7 @@ assign %s0 = %loc0 [791]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Ctl::Fib(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Ctl::Fib(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval %L5=s2
 begin block_0 [start]:
 assign %excout = <const: []> [793]
@@ -1728,7 +1728,7 @@ assign %s0 = @p0 [810]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Ctl::Gcd(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Ctl::Gcd(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=s2
 begin block_0 [start]:
 assign %excout = <const: []> [812]
@@ -1772,7 +1772,7 @@ assign %s0 = @p0 [838]
 return %s0, %excout
 end block_4
 
-define [exec]Exec.Ctl::ShortCircuit(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Ctl::ShortCircuit(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [840]
@@ -1810,7 +1810,7 @@ assign %s0 = <const: 1> [858]
 return %s0, %excout
 end block_6
 
-define [exec]Exec.Ctl::Nested(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Ctl::Nested(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=loc2 %L5=s1 %L6=s2
 begin block_0 [start]:
 assign %excout = <const: []> [860]
@@ -1882,7 +1882,7 @@ assign %s0 = %loc0 [903]
 return %s0, %excout
 end block_9
 
-define [exec]Exec.Ctl::BoolReturn(System.Int32)->System.Boolean(@p0[byval]) -> 2:
+define [exec]Exec.Ctl::BoolReturn(System.Int32)->System.Boolean(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [905]
@@ -1898,7 +1898,7 @@ assign %s0 = %s0, %s1 [913]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Ctl::VoidReturn(System.Int32)->System.Void(@p0[byval]) -> 2:
+define [exec]Exec.Ctl::VoidReturn(System.Int32)->System.Void(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [915]
@@ -1915,7 +1915,7 @@ store $globals.<[exec]Exec\.G::Counter> := %s0 [920]
 return <const: []>, %excout
 end block_2
 
-define [exec]Exec.Ctl::Params(System.Byte,System.SByte,System.Int16,System.UInt16,System.Char,System.Boolean,System.UInt32,System.UInt64,System.Single,System.Double)->System.Int32(@p0[byval], @p1[byval], @p2[byval], @p3[byval], @p4[byval], @p5[byval], @p6[byval], @p7[byval], @p8[byval], @p9[byval]) -> 2:
+define [exec]Exec.Ctl::Params(System.Byte,System.SByte,System.Int16,System.UInt16,System.Char,System.Boolean,System.UInt32,System.UInt64,System.Single,System.Double)->System.Int32(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields], @p3[shared_fields], @p4[shared_fields], @p5[shared_fields], @p6[shared_fields], @p7[shared_fields], @p8[shared_fields], @p9[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [922]
@@ -1958,7 +1958,7 @@ assign %s0 = %s0, %s1 [950]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Ctl::StargArg(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Ctl::StargArg(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [952]
@@ -1974,7 +1974,7 @@ assign %s0 = @p0 [960]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Exc::CatchDiv(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Exc::CatchDiv(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=caught0 %L5=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [962]
@@ -1996,7 +1996,7 @@ assign %s0 = %loc0 [971]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Exc::Finally(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::Finally(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1
 begin block_0 [start]:
 assign %excout = <const: []> [973]
@@ -2023,7 +2023,7 @@ assign %s0 = %loc0 [985]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Exc::ReturnInTry(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::ReturnInTry(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0
 begin block_0 [start]:
 assign %excout = <const: []> [987]
@@ -2060,7 +2060,7 @@ assign %s0 = %loc0 [1006]
 return %s0, %excout
 end block_5
 
-define [exec]Exec.Exc::NestedFinally(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Exc::NestedFinally(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=caught1 %L5=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [1008]
@@ -2101,7 +2101,7 @@ assign %s0 = %loc0 [1029]
 return %s0, %excout
 end block_5
 
-define [exec]Exec.Exc::Filter(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::Filter(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught0 %L6=s1 %L7=loc0 %L8=loc1 %L9=caught1
 begin block_0 [start]:
 assign %excout = <const: []> [1031]
@@ -2162,7 +2162,7 @@ assign %s0 = %loc1 [1059]
 return %s0, %excout
 end block_8
 
-define [exec]Exec.Exc::FilterThrows(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::FilterThrows(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught0 %L6=s1 %L7=loc0 %L8=loc1 %L9=caught1
 begin block_0 [start]:
 assign %excout = <const: []> [1061]
@@ -2221,7 +2221,7 @@ assign %s0 = %loc1 [1089]
 return %s0, %excout
 end block_8
 
-define [exec]Exec.Exc::Rethrow(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::Rethrow(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval %L6=loc0 %L7=caught0 %L8=caught1
 begin block_0 [start]:
 assign %excout = <const: []> [1091]
@@ -2267,7 +2267,7 @@ assign %s0 = %loc0 [1110]
 return %s0, %excout
 end block_6
 
-define [exec]Exec.Exc::Throws(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::Throws(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [1112]
@@ -2290,7 +2290,7 @@ assign %s0 = @p0 [1118]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Exc::CatchBase(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::CatchBase(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=loc0 %L5=caught0 %L6=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1120]
@@ -2318,7 +2318,7 @@ assign %s0 = %loc0 [1130]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Exc::Uncaught(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::Uncaught(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1132]
@@ -2331,7 +2331,7 @@ assign %s0 = %s0, %s1 [1135]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Exc::Nre(Exec.Node)->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Exc::Nre(Exec.Node)->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=caught0 %L4=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [1137]
@@ -2352,7 +2352,7 @@ assign %s0 = %loc0 [1145]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Exc::Ior(System.Int32[],System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Exc::Ior(System.Int32[],System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=caught0 %L5=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [1147]
@@ -2381,7 +2381,7 @@ assign %s0 = %loc0 [1161]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Exc::LoopWithTry(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::LoopWithTry(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2 %L6=s3 %L7=caught0 %L8=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [1163]
@@ -2447,7 +2447,7 @@ assign %s0 = %loc0 [1202]
 return %s0, %excout
 end block_8
 
-define [exec]Exec.Exc::BreakThroughFinally(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::BreakThroughFinally(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2
 begin block_0 [start]:
 assign %excout = <const: []> [1204]
@@ -2487,7 +2487,7 @@ assign %s0 = %loc0 [1223]
 return %s0, %excout
 end block_6
 
-define [exec]Exec.Exc::ThrowInFinally(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::ThrowInFinally(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=s1 %L6=caught1 %L7=loc0
 begin block_0 [start]:
 assign %excout = <const: []> [1225]
@@ -2550,7 +2550,7 @@ assign %s0 = %loc0 [1245]
 return %s0, %excout
 end block_11
 
-define [exec]Exec.Exc::ThrowInCatch(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::ThrowInCatch(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=caught0 %L5=throwval %L6=t0 %L7=retval %L8=caught2
 begin block_0 [start]:
 assign %excout = <const: []> [1247]
@@ -2596,7 +2596,7 @@ assign %s0 = %loc0 [1268]
 return %s0, %excout
 end block_5
 
-define [exec]Exec.Exc::CatchAll(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::CatchAll(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1 %L5=s2 %L6=s3 %L7=loc0 %L8=caught0
 begin block_0 [start]:
 assign %excout = <const: []> [1270]
@@ -2627,7 +2627,7 @@ assign %s0 = %loc0 [1284]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Exc::TwoPass(System.Int32)->System.Int64(@p0[byval]) -> 2:
+define [exec]Exec.Exc::TwoPass(System.Int32)->System.Int64(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught1 %L6=s1 %L7=loc0
 begin block_0 [start]:
 assign %excout = <const: []> [1286]
@@ -2694,7 +2694,7 @@ assign %s0 = %loc0 [1316]
 return %s0, %excout
 end block_9
 
-define [exec]Exec.Exc::Record(System.Int32)->System.Boolean(@p0[byval]) -> 2:
+define [exec]Exec.Exc::Record(System.Int32)->System.Boolean(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1318]
@@ -2711,7 +2711,7 @@ assign %s0 = %s0, %s1 [1328]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Exc::CaughtObject(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::CaughtObject(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=retval %L4=throwval %L5=caught0
 begin block_0 [start]:
 assign %excout = <const: []> [1330]
@@ -2749,7 +2749,7 @@ assign %s0 = <const: 0> [1343]
 return %s0, %excout
 end block_6
 
-define [exec]Exec.Exc::Stores(Exec.Bag,System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Exc::Stores(Exec.Bag,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=caught0 %L5=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [1345]
@@ -2781,7 +2781,7 @@ assign %s0 = @p0 [1363]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Exc::StaticException(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Exc::StaticException(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught0 %L6=s1 %L7=loc0
 begin block_0 [start]:
 assign %excout = <const: []> [1366]
@@ -2833,7 +2833,7 @@ assign %s0 = %loc0 [1388]
 return %s0, %excout
 end block_7
 
-define [exec]Exec.Obj::Incr(Exec.Bag,System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Obj::Incr(Exec.Bag,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [1390]
@@ -2934,7 +2934,7 @@ assign %s0 = @p0 [1471]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Obj::Build(System.Int32)->Exec.Node(@p0[byval]) -> 2:
+define [exec]Exec.Obj::Build(System.Int32)->Exec.Node(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=retval %L5=throwval %L6=s1 %L7=s2 %L8=s3
 begin block_0 [start]:
 assign %excout = <const: []> [1474]
@@ -2977,7 +2977,7 @@ assign %s0 = %loc0 [1498]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Obj::SumList(Exec.Node)->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Obj::SumList(Exec.Node)->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2
 begin block_0 [start]:
 assign %excout = <const: []> [1500]
@@ -3017,7 +3017,7 @@ assign %s0 = %loc0 [1522]
 return %s0, %excout
 end block_4
 
-define [exec]Exec.Obj::Reverse(Exec.Node)->Exec.Node(@p0[byref]) -> 2:
+define [exec]Exec.Obj::Reverse(Exec.Node)->Exec.Node(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2
 begin block_0 [start]:
 assign %excout = <const: []> [1524]
@@ -3057,7 +3057,7 @@ assign %s0 = %loc0 [1546]
 return %s0, %excout
 end block_4
 
-define [exec]Exec.Obj::Virt(Exec.Shape)->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Obj::Virt(Exec.Shape)->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1 %L5=s2
 begin block_0 [start]:
 assign %excout = <const: []> [1548]
@@ -3080,7 +3080,7 @@ assign %s0 = %s0, %s1 [1557]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Obj::MakeShapes(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Obj::MakeShapes(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval %L5=s2 %L6=s3 %L7=loc0 %L8=loc1
 begin block_0 [start]:
 assign %excout = <const: []> [1559]
@@ -3170,7 +3170,7 @@ assign %s0 = %s0, %s1 [1608]
 return %s0, %excout
 end block_8
 
-define [exec]Exec.Obj::Cast(Exec.Shape)->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Obj::Cast(Exec.Shape)->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=caught0 %L4=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [1610]
@@ -3192,7 +3192,7 @@ assign %s0 = %loc0 [1619]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Obj::AsCast(Exec.Shape)->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Obj::AsCast(Exec.Shape)->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0
 begin block_0 [start]:
 assign %excout = <const: []> [1621]
@@ -3212,7 +3212,7 @@ assign %s0 = <const: -2> [1629]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Obj::Aliasing(Exec.Bag,Exec.Bag)->System.Int32(@p0[byref], @p1[byref]) -> 2:
+define [exec]Exec.Obj::Aliasing(Exec.Bag,Exec.Bag)->System.Int32(@p0[shared], @p1[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1631]
@@ -3227,7 +3227,7 @@ assign %s0 = @p0 [1637]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Obj::SwapFields(Exec.Bag)->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Obj::SwapFields(Exec.Bag)->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1640]
@@ -3246,7 +3246,7 @@ store %s0.<[exec]Exec\.Bag::B> := %s1 [1651]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Obj::Statics(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Obj::Statics(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1653]
@@ -3270,7 +3270,7 @@ store $globals.<[exec]Exec\.G::D> := %s0 [1669]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Obj::Boxing(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Obj::Boxing(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=loc2 %L5=s1 %L6=s2
 begin block_0 [start]:
 assign %excout = <const: []> [1672]
@@ -3312,7 +3312,7 @@ assign %s0 = %s0, %s1 [1697]
 return %s0, %excout
 end block_4
 
-define [exec]Exec.Obj::Unboxing(System.Object)->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Obj::Unboxing(System.Object)->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=caught0 %L4=throwval %L5=caught1
 begin block_0 [start]:
 assign %excout = <const: []> [1699]
@@ -3340,7 +3340,7 @@ assign %s0 = %loc0 [1711]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Obj::BoxStruct(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Obj::BoxStruct(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=cell_0 %L5=c_1 %L6=retval %L7=throwval %L8=u_2 %L9=loc0 %L10=s2 %L11=s3 %L12=pt_3
 begin block_0 [start]:
 assign %excout = <const: []> [1713]
@@ -3376,7 +3376,7 @@ assign %s0 = %s0, %s1 [1733]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Obj::ChainNew(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Obj::ChainNew(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1 %L5=s2 %L6=s3 %L7=s4 %L8=s5
 begin block_0 [start]:
 assign %excout = <const: []> [1735]
@@ -3404,7 +3404,7 @@ store %s1.<[exec]Exec\.Node::Next> := %s2 [1747]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Obj::Compound(Exec.Bag,System.Int32[],System.Int32)->System.Int32(@p0[byref], @p1[byref], @p2[byval]) -> 2:
+define [exec]Exec.Obj::Compound(Exec.Bag,System.Int32[],System.Int32)->System.Int32(@p0[shared], @p1[shared], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=ab0_8
 begin block_0 [start]:
 assign %excout = <const: []> [1751]
@@ -3442,7 +3442,7 @@ assign %s0 = %s0 [1780]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Obj::ChainedAssign(Exec.Bag,Exec.Bag,System.Int32)->System.Int32(@p0[byref], @p1[byref], @p2[byval]) -> 2:
+define [exec]Exec.Obj::ChainedAssign(Exec.Bag,Exec.Bag,System.Int32)->System.Int32(@p0[shared], @p1[shared], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3 %L5=loc0 %L6=loc1
 begin block_0 [start]:
 assign %excout = <const: []> [1782]
@@ -3475,7 +3475,7 @@ assign %s0 = %s0, %s1 [1805]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Obj::Instance(Exec.Shape)->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Obj::Instance(Exec.Shape)->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [1807]
@@ -3486,7 +3486,7 @@ assign %s0 = %retval [1808]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Obj::ObjectField(Exec.Bag,System.Int32)->System.Object(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Obj::ObjectField(Exec.Bag,System.Int32)->System.Object(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=retval %L5=throwval %L6=s3
 begin block_0 [start]:
 assign %excout = <const: []> [1810]
@@ -3516,7 +3516,7 @@ assign %s0 = @p0 [1821]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Obj::StructField(Exec.Bag,System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Obj::StructField(Exec.Bag,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=cell_2 %L7=c_3 %L8=retval %L9=throwval %L10=u_4 %L11=loc0 %L12=pt_5
 begin block_0 [start]:
 assign %excout = <const: []> [1824]
@@ -3551,7 +3551,7 @@ assign %s0 = %s0, %s1 [1847]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::Ctor(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Val::Ctor(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s1 %L2=s2 %L3=loc0 %L4=cell_0 %L5=c_1 %L6=retval %L7=throwval %L8=u_2 %L9=cell_3 %L10=c_4 %L11=s0 %L12=u_5
 begin block_0 [start]:
 assign %excout = <const: []> [1849]
@@ -3573,7 +3573,7 @@ assign %loc0 = %u_5 [1855]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::CtorAsArgument(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Val::CtorAsArgument(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=cell_0 %L5=c_1 %L6=retval %L7=throwval %L8=u_2 %L9=s2 %L10=cell_3 %L11=c_4 %L12=u_5 %L13=s3 %L14=cell_6 %L15=c_7 %L16=u_8 %L17=loc0 %L18=cell_9 %L19=c_10 %L20=u_11
 begin block_0 [start]:
 assign %excout = <const: []> [1857]
@@ -3627,7 +3627,7 @@ assign %s0 = %s0, %s1 [1873]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::Take(Exec.Pt,Exec.Pt)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Val::Take(Exec.Pt,Exec.Pt)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1875]
@@ -3641,7 +3641,7 @@ assign %s0 = %s0, %s1 [1881]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::Scale(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Val::Scale(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s1 %L2=s2 %L3=s3 %L4=loc0 %L5=cell_0 %L6=c_1 %L7=retval %L8=throwval %L9=u_2 %L10=cell_3 %L11=c_4 %L12=u_5 %L13=s0
 begin block_0 [start]:
 assign %excout = <const: []> [1883]
@@ -3672,7 +3672,7 @@ assign %s0 = %s0, %s1 [1899]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::Copy(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Val::Copy(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=cell_0 %L5=c_1 %L6=retval %L7=throwval %L8=u_2 %L9=loc0 %L10=s2
 begin block_0 [start]:
 assign %excout = <const: []> [1901]
@@ -3698,7 +3698,7 @@ assign %s0 = %s0, %s1 [1912]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::NestedStruct(Exec.Rect)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Val::NestedStruct(Exec.Rect)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=cell_2 %L7=c_3 %L8=retval %L9=throwval %L10=u_4
 begin block_0 [start]:
 assign %excout = <const: []> [1914]
@@ -3737,7 +3737,7 @@ assign %s0 = %s0, %s1 [1944]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::RefParam(Exec.Pt&,System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Val::RefParam(Exec.Pt&,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=retval %L7=throwval %L8=pt_2
 begin block_0 [start]:
 assign %excout = <const: []> [1946]
@@ -3760,7 +3760,7 @@ assign %s0 = @p0 [1956]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::Swap(System.Int32&,System.Int32&)->System.Void(@p0[byref], @p1[byref]) -> 2:
+define [exec]Exec.Val::Swap(System.Int32&,System.Int32&)->System.Void(@p0[shared], @p1[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1959]
@@ -3777,7 +3777,7 @@ store %s0.deref := %s1 [1968]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Val::TryDiv(System.Int32,System.Int32,System.Int32&)->System.Boolean(@p0[byval], @p1[byval], @p2[byref]) -> 2:
+define [exec]Exec.Val::TryDiv(System.Int32,System.Int32,System.Int32&)->System.Boolean(@p0[shared_fields], @p1[shared_fields], @p2[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [1970]
@@ -3801,7 +3801,7 @@ assign %s0 = <const: 1> [1982]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Val::UseTry(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Val::UseTry(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=cell_0 %L5=c_1 %L6=retval %L7=throwval %L8=u_2
 begin block_0 [start]:
 assign %excout = <const: []> [1984]
@@ -3825,7 +3825,7 @@ assign %s0 = %loc0 [1991]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Val::CallSwap(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Val::CallSwap(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=cell_0 %L2=c_1 %L3=cell_2 %L4=c_3 %L5=retval %L6=throwval %L7=u_4 %L8=u_5 %L9=s0 %L10=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1993]
@@ -3847,7 +3847,7 @@ assign %s0 = %s0, %s1 [2001]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::RefBytes(System.Byte&,System.Int64&,System.Double&,System.Boolean&)->System.Void(@p0[byref], @p1[byref], @p2[byref], @p3[byref]) -> 2:
+define [exec]Exec.Val::RefBytes(System.Byte&,System.Int64&,System.Double&,System.Boolean&)->System.Void(@p0[shared], @p1[shared], @p2[shared], @p3[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [2003]
@@ -3878,7 +3878,7 @@ store %s0.deref := %s1 [2026]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Val::ArrayOfStructs(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Val::ArrayOfStructs(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2 %L6=pt_0 %L7=cell_1 %L8=c_2 %L9=retval %L10=throwval %L11=u_3 %L12=s3 %L13=s4 %L14=t0 %L15=cell_4 %L16=c_5 %L17=u_6 %L18=pt_7 %L19=pt_8
 begin block_0 [start]:
 assign %excout = <const: []> [2028]
@@ -3947,7 +3947,7 @@ assign %s0 = %s0, %s1 [2071]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Val::StaticStruct(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Val::StaticStruct(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=cell_2 %L7=c_3 %L8=retval %L9=throwval %L10=u_4 %L11=pt_5
 begin block_0 [start]:
 assign %excout = <const: []> [2073]
@@ -3971,7 +3971,7 @@ store $globals.<[exec]Exec\.G::P> := %u_4 [2083]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::Default(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Val::Default(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=loc0 %L2=s1 %L3=s0
 begin block_0 [start]:
 assign %excout = <const: []> [2087]
@@ -3987,7 +3987,7 @@ assign %s0 = %s0, %s1 [2099]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::ElemRef(System.Int32[],System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Val::ElemRef(System.Int32[],System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3
 begin block_0 [start]:
 assign %excout = <const: []> [2101]
@@ -4007,7 +4007,7 @@ store @p0.\[] := %s2 [2111]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::RefLocal(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Val::RefLocal(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=cell_0 %L6=c_1 %L7=cell_2 %L8=c_3 %L9=s2
 begin block_0 [start]:
 assign %excout = <const: []> [2114]
@@ -4047,7 +4047,7 @@ assign %s0 = %s0, %s1 [2134]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Val::RefJoin(System.Int32,System.Int32&)->System.Int32(@p0[byval], @p1[byref]) -> 2:
+define [exec]Exec.Val::RefJoin(System.Int32,System.Int32&)->System.Int32(@p0[shared_fields], @p1[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=cell_0 %L5=c_1 %L6=s2
 begin block_0 [start]:
 assign %excout = <const: []> [2136]
@@ -4085,7 +4085,7 @@ assign %s0 = %s0, %s1 [2156]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Val::Multi(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Val::Multi(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=loc1 %L5=loc2 %L6=s2 %L7=s3 %L8=s4 %L9=s5
 begin block_0 [start]:
 assign %excout = <const: []> [2158]
@@ -4168,7 +4168,7 @@ assign %s0 = %s0, %s1 [2219]
 return %s0, %excout
 end block_6
 
-define [exec]Exec.Val::Jagged(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Val::Jagged(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2 %L5=s3
 begin block_0 [start]:
 assign %excout = <const: []> [2221]
@@ -4214,7 +4214,7 @@ assign %s0 = %s0, %s1 [2259]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::PtrToStatic(System.Int32)->System.Int64(@p0[byval]) -> 2:
+define [exec]Exec.Val::PtrToStatic(System.Int32)->System.Int64(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s1 %L2=cell_0 %L3=c_1 %L4=retval %L5=throwval %L6=u_2 %L7=cell_3 %L8=c_4 %L9=u_5 %L10=s0
 begin block_0 [start]:
 assign %excout = <const: []> [2261]
@@ -4236,7 +4236,7 @@ store $globals.<[exec]Exec\.G::Counter> := %u_5 [2267]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Val::Inc(System.Int64&,System.Int32)->System.Void(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Val::Inc(System.Int64&,System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [2270]
@@ -4250,7 +4250,7 @@ store %s0.deref := %s1 [2276]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Val::Inc(System.Int32&,System.Int32)->System.Void(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Val::Inc(System.Int32&,System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [2278]
@@ -4263,7 +4263,7 @@ store %s0.deref := %s1 [2283]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Arr::Sum(System.Int32[])->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Arr::Sum(System.Int32[])->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=loc2 %L5=s1 %L6=loc3
 begin block_0 [start]:
 assign %excout = <const: []> [2285]
@@ -4302,7 +4302,7 @@ assign %s0 = %loc0 [2309]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Arr::Reverse(System.Int32[])->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Arr::Reverse(System.Int32[])->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=loc1 %L5=loc2 %L6=s2 %L7=s3
 begin block_0 [start]:
 assign %excout = <const: []> [2311]
@@ -4350,7 +4350,7 @@ begin block_3:
 return <const: []>, %excout
 end block_3
 
-define [exec]Exec.Arr::Sort(System.Int64[])->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Arr::Sort(System.Int64[])->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2 %L6=s3 %L7=loc2 %L8=s4
 begin block_0 [start]:
 assign %excout = <const: []> [2346]
@@ -4431,7 +4431,7 @@ begin block_8:
 return <const: []>, %excout
 end block_8
 
-define [exec]Exec.Arr::Avg(System.Double[])->System.Double(@p0[byref]) -> 2:
+define [exec]Exec.Arr::Avg(System.Double[])->System.Double(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2
 begin block_0 [start]:
 assign %excout = <const: []> [2402]
@@ -4480,7 +4480,7 @@ assign %s0 = <const: 0> [2433]
 return %s0, %excout
 end block_5
 
-define [exec]Exec.Arr::Make(System.Int32)->System.Int32[](@p0[byval]) -> 2:
+define [exec]Exec.Arr::Make(System.Int32)->System.Int32[](@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=loc1 %L5=s2 %L6=s3
 begin block_0 [start]:
 assign %excout = <const: []> [2435]
@@ -4518,7 +4518,7 @@ assign %s0 = %loc0 [2458]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Arr::NegLen(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Arr::NegLen(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [2460]
@@ -4531,7 +4531,7 @@ assign %s0 = %s0 [2465]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arr::Narrow(System.Byte[],System.SByte[],System.Int16[],System.UInt16[],System.Char[],System.Boolean[])->System.Int32(@p0[byref], @p1[byref], @p2[byref], @p3[byref], @p4[byref], @p5[byref]) -> 2:
+define [exec]Exec.Arr::Narrow(System.Byte[],System.SByte[],System.Int16[],System.UInt16[],System.Char[],System.Boolean[])->System.Int32(@p0[shared], @p1[shared], @p2[shared], @p3[shared], @p4[shared], @p5[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2 %L5=s3
 begin block_0 [start]:
 assign %excout = <const: []> [2467]
@@ -4680,7 +4680,7 @@ assign %s0 = %loc0 [2578]
 return %s0, %excout
 end block_12
 
-define [exec]Exec.Arr::FloatArr(System.Single[],System.Int32)->System.Single(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Arr::FloatArr(System.Single[],System.Int32)->System.Single(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3 %L5=s4
 begin block_0 [start]:
 assign %excout = <const: []> [2580]
@@ -4704,7 +4704,7 @@ assign %s1 = <const: 0> [2595]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arr::Objects(Exec.Node[])->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Arr::Objects(Exec.Node[])->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=loc1 %L4=s1 %L5=s2 %L6=retval %L7=throwval %L8=s3 %L9=s4
 begin block_0 [start]:
 assign %excout = <const: []> [2598]
@@ -4759,7 +4759,7 @@ assign %s0 = %loc0 [2630]
 return %s0, %excout
 end block_5
 
-define [exec]Exec.Arr::Statics(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Arr::Statics(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=ab0_15 %L5=s3 %L6=s4
 begin block_0 [start]:
 assign %excout = <const: []> [2632]
@@ -4797,7 +4797,7 @@ assign %s1 = <const: 3> [2660]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arr::NativeIndex(System.Int64[],System.Int64)->System.Int64(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Arr::NativeIndex(System.Int64[],System.Int64)->System.Int64(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [2663]
@@ -4813,7 +4813,7 @@ assign %s0 = %s0, %s1 [2671]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Arr::ArrayOfBags(Exec.Bag[],System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Arr::ArrayOfBags(Exec.Bag[],System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=ab2_15 %L5=pt_0
 begin block_0 [start]:
 assign %excout = <const: []> [2673]
@@ -4853,7 +4853,7 @@ assign %s1 = <const: 0> [2697]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Inst::Add(System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Inst::Add(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [2701]
@@ -4868,7 +4868,7 @@ assign %s0 = @p0 [2707]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Inst::Push(System.Int32)->System.Void(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Inst::Push(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval %L5=s2 %L6=s3
 begin block_0 [start]:
 assign %excout = <const: []> [2710]
@@ -4895,7 +4895,7 @@ store %s0.<[exec]Exec\.Inst::Total> := %s1 [2725]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Inst::Twice(System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Inst::Twice(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval %L5=s2
 begin block_0 [start]:
 assign %excout = <const: []> [2727]
@@ -4913,7 +4913,7 @@ assign %s0 = %s0, %s1 [2733]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Inst::Hook(System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Inst::Hook(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [2735]
@@ -4924,7 +4924,7 @@ assign %s0 = %s0, %s1 [2738]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Inst::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Inst::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [2740]
@@ -4934,11 +4934,11 @@ assign %excout = %excout, %throwval [2741]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.IArea::Area()->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.IArea::Area()->System.Int32(@p0[shared]) -> 2:
 
-define [exec]Exec.IGrow::Grow(System.Int32)->System.Void(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.IGrow::Grow(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
 
-define [exec]Exec.Disk::Area()->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Disk::Area()->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [2743]
@@ -4952,7 +4952,7 @@ assign %s0 = %s0, %s1 [2749]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Disk::Exec.IGrow.Grow(System.Int32)->System.Void(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Disk::Exec.IGrow.Grow(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [2751]
@@ -4965,7 +4965,7 @@ store %s0.<[exec]Exec\.Disk::R> := %s1 [2756]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Disk::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Disk::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [2758]
@@ -4975,7 +4975,7 @@ assign %excout = %excout, %throwval [2759]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Plate::Area()->System.Int32(@p0[byref]) -> 2:
+define [exec]Exec.Plate::Area()->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [2761]
@@ -4987,7 +4987,7 @@ assign %s0 = %s0, %s1 [2765]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Plate::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Plate::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [2767]
@@ -4997,7 +4997,7 @@ assign %excout = %excout, %throwval [2768]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Ifaces::Pick(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Ifaces::Pick(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval %L5=s2 %L6=loc0 %L7=s3
 begin block_0 [start]:
 assign %excout = <const: []> [2770]
@@ -5042,7 +5042,7 @@ assign %s0 = %retval [2791]
 return %s0, %excout
 end block_3
 
-define [exec]Exec.Ifaces::Explicit(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Ifaces::Explicit(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1 %L5=s2
 begin block_0 [start]:
 assign %excout = <const: []> [2793]
@@ -5062,7 +5062,7 @@ assign %excout = %excout, %throwval [2800]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Ifaces::Through(Exec.Disk,System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Ifaces::Through(Exec.Disk,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [2803]
@@ -5080,15 +5080,15 @@ assign %s0 = %s0, %s1 [2810]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.IntFn::.ctor(System.Object,System.IntPtr)->System.Void(@p0[byref], @p1[byref], @p2[byval]) -> 2:
+define [exec]Exec.IntFn::.ctor(System.Object,System.IntPtr)->System.Void(@p0[shared], @p1[shared], @p2[shared_fields]) -> 2:
 
-define [exec]Exec.IntFn::Invoke(System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.IntFn::Invoke(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
 
-define [exec]Exec.IntFn::BeginInvoke(System.Int32,System.AsyncCallback,System.Object)->System.IAsyncResult(@p0[byref], @p1[byval], @p2[byref], @p3[byref]) -> 2:
+define [exec]Exec.IntFn::BeginInvoke(System.Int32,System.AsyncCallback,System.Object)->System.IAsyncResult(@p0[shared], @p1[shared_fields], @p2[shared], @p3[shared]) -> 2:
 
-define [exec]Exec.IntFn::EndInvoke(System.IAsyncResult)->System.Int32(@p0[byref], @p1[byref]) -> 2:
+define [exec]Exec.IntFn::EndInvoke(System.IAsyncResult)->System.Int32(@p0[shared], @p1[shared]) -> 2:
 
-define [exec]Exec.Scaler::Apply(System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Scaler::Apply(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [2812]
@@ -5099,7 +5099,7 @@ assign %s0 = %s0, %s1 [2815]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Scaler::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Scaler::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [2817]
@@ -5109,7 +5109,7 @@ assign %excout = %excout, %throwval [2818]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Dels::Twice(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Dels::Twice(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [2820]
@@ -5119,7 +5119,7 @@ assign %s0 = %s0, %s1 [2822]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Dels::Static(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Dels::Static(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval %L6=dm_0
 begin block_0 [start]:
 assign %excout = <const: []> [2824]
@@ -5151,7 +5151,7 @@ assign %s0 = %retval [2835]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Dels::Instance(Exec.Scaler,System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Dels::Instance(Exec.Scaler,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval %L6=dm_0
 begin block_0 [start]:
 assign %excout = <const: []> [2837]
@@ -5171,7 +5171,7 @@ assign %s0 = %retval [2841]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Dels::Closure(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]Exec.Dels::Closure(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=loc0 %L5=s1 %L6=t0
 begin block_0 [start]:
 assign %excout = <const: []> [2843]
@@ -5200,7 +5200,7 @@ assign %s0 = %s0, %s1 [2856]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Dels::Lambda(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]Exec.Dels::Lambda(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval %L6=dm_0
 begin block_0 [start]:
 assign %excout = <const: []> [2858]
@@ -5232,7 +5232,7 @@ assign %s0 = %retval [2869]
 return %s0, %excout
 end block_2
 
-define [exec]Exec.Dels::Field(Exec.Scaler,System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Dels::Field(Exec.Scaler,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1 %L5=s2 %L6=s3 %L7=t0 %L8=dm_0
 begin block_0 [start]:
 assign %excout = <const: []> [2871]
@@ -5259,7 +5259,7 @@ assign %s0 = %retval [2880]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Dels::<Closure>g__Run|3_1(Exec.IntFn,System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Dels::<Closure>g__Run|3_1(Exec.IntFn,System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=dm_0 %L4=retval %L5=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [2882]
@@ -5272,7 +5272,7 @@ assign %s0 = %retval [2884]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Holder::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Holder::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [2886]
@@ -5293,7 +5293,7 @@ store $globals.<[exec]Exec\.Dels/<>c::<>9> := %s0 [2891]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Dels/<>c::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Dels/<>c::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [2893]
@@ -5303,7 +5303,7 @@ assign %excout = %excout, %throwval [2894]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Dels/<>c::<Lambda>b__4_0(System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Dels/<>c::<Lambda>b__4_0(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [2896]
@@ -5313,7 +5313,7 @@ assign %s0 = %s0, %s1 [2898]
 return %s0, %excout
 end block_0
 
-define [exec]Exec.Dels/<>c__DisplayClass3_0::.ctor()->System.Void(@p0[byref]) -> 2:
+define [exec]Exec.Dels/<>c__DisplayClass3_0::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [2900]
@@ -5323,7 +5323,7 @@ assign %excout = %excout, %throwval [2901]
 return <const: []>, %excout
 end block_0
 
-define [exec]Exec.Dels/<>c__DisplayClass3_0::<Closure>b__0(System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [exec]Exec.Dels/<>c__DisplayClass3_0::<Closure>b__0(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [2903]
@@ -5334,11 +5334,11 @@ assign %s0 = %s0, %s1 [2906]
 return %s0, %excout
 end block_0
 
-define [System.Private.CoreLib]System.Exception::.ctor()->System.Void(@p0[byref]) -> 2:
+define [System.Private.CoreLib]System.Exception::.ctor()->System.Void(@p0[shared]) -> 2:
 
-define [System.Private.CoreLib]System.Object::.ctor()->System.Void(@p0[byref]) -> 2:
+define [System.Private.CoreLib]System.Object::.ctor()->System.Void(@p0[shared]) -> 2:
 
-define ctadl$delegate$[exec]Exec.Dels::Twice(System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define ctadl$delegate$[exec]Exec.Dels::Twice(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=retval %L1=throwval
 begin block_0 [start]:
 %retval, %throwval = direct-call [exec]Exec.Dels::Twice(System.Int32)->System.Int32(@p1)

@@ -8,7 +8,7 @@
   "ptr"
 ] @keyword
 
-(passing_style) @keyword
+(param_type) @keyword
 
 (function_def name: (ident) @function)
 (function_ptr name: (ident) @function)

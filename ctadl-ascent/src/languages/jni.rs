@@ -1242,7 +1242,7 @@ fn emit_bridge(
         facts.formal_param.push((
             java_id,
             FlowVariable::formal_index(*java_index),
-            FormalType::ByRef,
+            FormalType::Shared,
         ));
     }
 }

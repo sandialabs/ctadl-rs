@@ -172,13 +172,13 @@ fn codegen_propagations(
             facts.formal_param.push((
                 func_id,
                 FlowVariable::formal_index(*dst_index),
-                FormalType::ByRef,
+                FormalType::Shared,
             ));
             for src_index in &src_index {
                 facts.formal_param.push((
                     func_id,
                     FlowVariable::formal_index(*src_index),
-                    FormalType::ByRef,
+                    FormalType::Shared,
                 ));
                 if dst_index == src_index {
                     continue;
@@ -417,12 +417,12 @@ fn emit_bridge(
         facts.formal_param.push((
             a,
             FlowVariable::formal_index(port.from.index),
-            FormalType::ByRef,
+            FormalType::Shared,
         ));
         facts.formal_param.push((
             b,
             FlowVariable::formal_index(port.to.index),
-            FormalType::ByRef,
+            FormalType::Shared,
         ));
 
         if collapses(port) {

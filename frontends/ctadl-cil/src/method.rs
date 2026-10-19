@@ -5,9 +5,9 @@
 //!
 //! | CIL                                         | `FunctionData`                    |
 //! | ------------------------------------------- | --------------------------------- |
-//! | `has_this`                                  | param 0, `ByRef`                  |
-//! | reference type, `T&`, `T*`, generic param   | `ByRef`                           |
-//! | primitive or value type                     | `ByVal`                           |
+//! | `has_this`                                  | param 0, `Shared`                 |
+//! | reference type, `T&`, `T*`, generic param   | `Shared`                          |
+//! | primitive or value type                     | `SharedFields`                    |
 //! | return                                      | `ReturnType { arity: 2 }`         |
 //!
 //! Variables, all unversioned, as `ssa::transform` requires:
@@ -155,15 +155,15 @@ impl<'f> Emitter<'f> {
     }
 }
 
-/// `ByRef` or `ByVal` for a parameter of this type. A generic parameter is `ByRef`
+/// `Shared` or `SharedFields` for a parameter of this type. A generic parameter is `Shared`
 /// because it may be instantiated with a reference type.
 pub fn parameter_type(sig: &TypeSig) -> ParameterType {
     match sig.unwrap_modifiers() {
         TypeSig::Named { is_value_type, .. } | TypeSig::GenericInst { is_value_type, .. } => {
             if *is_value_type {
-                ParameterType::ByVal
+                ParameterType::SharedFields
             } else {
-                ParameterType::ByRef
+                ParameterType::Shared
             }
         }
         TypeSig::String
@@ -173,7 +173,7 @@ pub fn parameter_type(sig: &TypeSig) -> ParameterType {
         | TypeSig::Var(_)
         | TypeSig::MVar(_)
         | TypeSig::ByRef(_)
-        | TypeSig::Ptr(_) => ParameterType::ByRef,
+        | TypeSig::Ptr(_) => ParameterType::Shared,
         TypeSig::Void
         | TypeSig::Boolean
         | TypeSig::Char
@@ -190,7 +190,7 @@ pub fn parameter_type(sig: &TypeSig) -> ParameterType {
         | TypeSig::IntPtr
         | TypeSig::UIntPtr
         | TypeSig::TypedByRef
-        | TypeSig::FnPtr(_) => ParameterType::ByVal,
+        | TypeSig::FnPtr(_) => ParameterType::SharedFields,
         TypeSig::CModReq { .. }
         | TypeSig::CModOpt { .. }
         | TypeSig::Pinned(_)
@@ -208,7 +208,7 @@ pub fn holds_address(sig: &TypeSig) -> bool {
 pub fn parameters(sig: &MethodSig) -> Vec<ParameterType> {
     let mut params = Vec::with_capacity(sig.params.len() + 1);
     if sig.has_this {
-        params.push(ParameterType::ByRef);
+        params.push(ParameterType::Shared);
     }
     for p in &sig.params {
         if p.is_sentinel() {

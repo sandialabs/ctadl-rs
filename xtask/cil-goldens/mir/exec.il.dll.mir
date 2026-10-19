@@ -28,7 +28,7 @@ cil virtual method table
 [exec]IL extends [System.Private.CoreLib]System.Object
 end cil virtual method table
 
-define [exec]Err::.ctor(System.Int32)->System.Void(@p0[byref], @p1[byval]) -> 2:
+define [exec]Err::.ctor(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1
 begin block_0 [start]:
 assign %excout = <const: []> [1]
@@ -41,7 +41,7 @@ store %s0.<[exec]Err::Code> := %s1 [5]
 return <const: []>, %excout
 end block_0
 
-define [exec]IL::StackJoin(System.Int32,System.Int32)->System.Int32(@p0[byval], @p1[byval]) -> 2:
+define [exec]IL::StackJoin(System.Int32,System.Int32)->System.Int32(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [7]
@@ -64,7 +64,7 @@ assign %s0 = %s0, %s1 [16]
 return %s0, %excout
 end block_3
 
-define [exec]IL::StackLoop(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]IL::StackLoop(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=s3
 begin block_0 [start]:
 assign %excout = <const: []> [18]
@@ -96,7 +96,7 @@ assign %s0 = %s0, %s1 [34]
 return %s0, %excout
 end block_3
 
-define [exec]IL::StackSwitch(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]IL::StackSwitch(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [36]
@@ -126,7 +126,7 @@ assign %s0 = %s0, %s1 [49]
 return %s0, %excout
 end block_5
 
-define [exec]IL::DupBranch(System.Object)->System.Object(@p0[byref]) -> 2:
+define [exec]IL::DupBranch(System.Object)->System.Object(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [51]
@@ -144,7 +144,7 @@ begin block_2:
 return %s0, %excout
 end block_2
 
-define [exec]IL::NewobjDeep(System.Int32,System.Int64)->System.Int64(@p0[byval], @p1[byval]) -> 2:
+define [exec]IL::NewobjDeep(System.Int32,System.Int64)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=t0 %L5=cell_0 %L6=c_1 %L7=retval %L8=throwval %L9=u_2
 begin block_0 [start]:
 assign %excout = <const: []> [58]
@@ -165,7 +165,7 @@ assign %s0 = %s0, %s1 [64]
 return %s0, %excout
 end block_0
 
-define [exec]IL::Fault(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]IL::Fault(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=caught1 %L5=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [66]
@@ -197,7 +197,7 @@ assign %s0 = %loc0 [82]
 return %s0, %excout
 end block_4
 
-define [exec]IL::LeaveThroughTwo(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]IL::LeaveThroughTwo(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught0 %L6=s1 %L7=loc0 %L8=s2
 begin block_0 [start]:
 assign %excout = <const: []> [84]
@@ -256,7 +256,7 @@ assign %s0 = %loc0 [110]
 return %s0, %excout
 end block_8
 
-define [exec]IL::FilterStack(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]IL::FilterStack(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=caught0 %L6=s1 %L7=loc0 %L8=caught1
 begin block_0 [start]:
 assign %excout = <const: []> [112]
@@ -312,7 +312,7 @@ assign %s0 = %loc0 [137]
 return %s0, %excout
 end block_8
 
-define [exec]IL::UnboxMutate(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]IL::UnboxMutate(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2
 begin block_0 [start]:
 assign %excout = <const: []> [139]
@@ -332,7 +332,7 @@ assign %s0 = %s0 [150]
 return %s0, %excout
 end block_0
 
-define [exec]IL::Ldarga(System.Int32,System.Byte,System.Int16)->System.Int32(@p0[byval], @p1[byval], @p2[byval]) -> 2:
+define [exec]IL::Ldarga(System.Int32,System.Byte,System.Int16)->System.Int32(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s1 %L2=s2 %L3=s0
 begin block_0 [start]:
 assign %excout = <const: []> [152]
@@ -354,7 +354,7 @@ assign %s0 = @p0 [170]
 return %s0, %excout
 end block_0
 
-define [exec]IL::Blocks(System.Int32,System.Int64)->System.Int64(@p0[byval], @p1[byval]) -> 2:
+define [exec]IL::Blocks(System.Int32,System.Int64)->System.Int64(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s1 %L2=loc0 %L3=t0 %L4=loc1 %L5=s0 %L6=loc2 %L7=s2 %L8=pt_0 %L9=s3
 begin block_0 [start]:
 assign %excout = <const: []> [172]
@@ -391,7 +391,7 @@ assign %s0 = %s0, %s1 [210]
 return %s0, %excout
 end block_0
 
-define [exec]IL::FieldAddress(Holder,System.Int64)->System.Int64(@p0[byref], @p1[byval]) -> 2:
+define [exec]IL::FieldAddress(Holder,System.Int64)->System.Int64(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1 %L6=loc0
 begin block_0 [start]:
 assign %excout = <const: []> [212]
@@ -417,7 +417,7 @@ assign %loc0 = %s0 [227]
 return %s0, %excout
 end block_0
 
-define [exec]IL::Finite(System.Double)->System.Double(@p0[byval]) -> 2:
+define [exec]IL::Finite(System.Double)->System.Double(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=caught0 %L4=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [231]
@@ -440,7 +440,7 @@ assign %s0 = @p0 [241]
 return %s0, %excout
 end block_2
 
-define [exec]IL::NativeOvf(System.IntPtr,System.UIntPtr,System.Int64)->System.Int64(@p0[byval], @p1[byval], @p2[byval]) -> 2:
+define [exec]IL::NativeOvf(System.IntPtr,System.UIntPtr,System.Int64)->System.Int64(@p0[shared_fields], @p1[shared_fields], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=loc0 %L5=caught0 %L6=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [243]
@@ -471,7 +471,7 @@ assign %s0 = %loc0 [261]
 return %s0, %excout
 end block_2
 
-define [exec]IL::Unsigned(System.UInt32,System.UInt64)->System.Double(@p0[byval], @p1[byval]) -> 2:
+define [exec]IL::Unsigned(System.UInt32,System.UInt64)->System.Double(@p0[shared_fields], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [263]
@@ -489,7 +489,7 @@ assign %s0 = %s0, %s1 [273]
 return %s0, %excout
 end block_0
 
-define [exec]IL::RefCompare(System.Object,System.Object)->System.Int32(@p0[byref], @p1[byref]) -> 2:
+define [exec]IL::RefCompare(System.Object,System.Object)->System.Int32(@p0[shared], @p1[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [275]
@@ -514,7 +514,7 @@ begin block_2:
 return %s0, %excout
 end block_2
 
-define [exec]IL::TryInCatch(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]IL::TryInCatch(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=loc0 %L4=caught1 %L5=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [289]
@@ -546,7 +546,7 @@ assign %s0 = %loc0 [303]
 return %s0, %excout
 end block_4
 
-define [exec]IL::RethrowInFinally(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [exec]IL::RethrowInFinally(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=t0 %L3=retval %L4=throwval %L5=s1 %L6=caught0 %L7=loc0 %L8=caught2
 begin block_0 [start]:
 assign %excout = <const: []> [305]
@@ -609,7 +609,7 @@ assign %s0 = %loc0 [326]
 return %s0, %excout
 end block_9
 
-define [exec]Cell2::.ctor(System.Int32,System.Int32)->System.Void(@p0[byref], @p1[byval], @p2[byval]) -> 2:
+define [exec]Cell2::.ctor(System.Int32,System.Int32)->System.Void(@p0[shared], @p1[shared_fields], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0 %L4=s2 %L5=pt_1
 begin block_0 [start]:
 assign %excout = <const: []> [328]
@@ -626,5 +626,5 @@ store %pt_1.<[exec]Cell2::Y> := %s1 [335]
 return <const: []>, %excout
 end block_0
 
-define [System.Private.CoreLib]System.Exception::.ctor()->System.Void(@p0[byref]) -> 2:
+define [System.Private.CoreLib]System.Exception::.ctor()->System.Void(@p0[shared]) -> 2:
 

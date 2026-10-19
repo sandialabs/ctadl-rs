@@ -541,7 +541,7 @@ impl Context {
                 self.program[tidx].params.iter_params().copied().collect();
             let fidx = self.program.new_function();
             let fdat = &mut self.program[fidx];
-            let mut params = vec![ParameterType::ByRef];
+            let mut params = vec![ParameterType::Shared];
             params.extend(target_params.iter().copied());
             method::shape(fdat, thunk, params);
             method::thunk_body(fdat, &target, target_params.len());

@@ -855,13 +855,13 @@ impl Visitor for CodegenVisitor<'_> {
         self.facts.formal_param.push((
             self.function.unwrap(),
             FlowVariable::formal_index(GLOBALS_INDEX.into()),
-            fx::FormalType::ByRef,
+            fx::FormalType::Shared,
         ));
         // Gens return parameter
         self.facts.formal_param.push((
             self.function.unwrap(),
             FlowVariable::formal_index(RETURN_INDEX.into()),
-            fx::FormalType::ByRef,
+            fx::FormalType::Shared,
         ));
         // ... and one per further return value, numbered on down (-2, -3, ...) as `Return`
         // terminators and call sites number them. Without the declaration a return slot
@@ -872,7 +872,7 @@ impl Visitor for CodegenVisitor<'_> {
             self.facts.formal_param.push((
                 self.function.unwrap(),
                 FlowVariable::formal_index((-k).into()),
-                fx::FormalType::ByRef,
+                fx::FormalType::Shared,
             ));
         }
         if skip {

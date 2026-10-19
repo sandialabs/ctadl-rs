@@ -19,30 +19,30 @@ fn named(is_value_type: bool) -> TypeSig {
     }
 }
 
-/// Reference types, addresses and generic parameters are `ByRef`; primitives and
-/// value types `ByVal`.
+/// Reference types, addresses and generic parameters are `Shared`; primitives and
+/// value types `SharedFields`.
 #[test]
 fn parameter_types() {
     use ParameterType::*;
     let cases = [
-        (TypeSig::I4, ByVal),
-        (TypeSig::R8, ByVal),
-        (TypeSig::IntPtr, ByVal),
-        (named(true), ByVal),
-        (named(false), ByRef),
-        (TypeSig::String, ByRef),
-        (TypeSig::Object, ByRef),
-        (TypeSig::SzArray(Box::new(TypeSig::I4)), ByRef),
-        (TypeSig::ByRef(Box::new(TypeSig::I4)), ByRef),
-        (TypeSig::Ptr(Box::new(TypeSig::I4)), ByRef),
-        (TypeSig::Var(0), ByRef),
-        (TypeSig::MVar(1), ByRef),
+        (TypeSig::I4, SharedFields),
+        (TypeSig::R8, SharedFields),
+        (TypeSig::IntPtr, SharedFields),
+        (named(true), SharedFields),
+        (named(false), Shared),
+        (TypeSig::String, Shared),
+        (TypeSig::Object, Shared),
+        (TypeSig::SzArray(Box::new(TypeSig::I4)), Shared),
+        (TypeSig::ByRef(Box::new(TypeSig::I4)), Shared),
+        (TypeSig::Ptr(Box::new(TypeSig::I4)), Shared),
+        (TypeSig::Var(0), Shared),
+        (TypeSig::MVar(1), Shared),
         (
             TypeSig::CModOpt {
                 modifier: MetadataToken(0x0100_0001),
                 inner: Box::new(TypeSig::I4),
             },
-            ByVal,
+            SharedFields,
         ),
     ];
     for (sig, want) in cases {
@@ -80,9 +80,9 @@ fn parameters_of_a_signature() {
     assert_eq!(
         parameters(&sig),
         vec![
-            ParameterType::ByRef,
-            ParameterType::ByVal,
-            ParameterType::ByRef
+            ParameterType::Shared,
+            ParameterType::SharedFields,
+            ParameterType::Shared
         ]
     );
 }

@@ -1290,9 +1290,11 @@ fn compute_alias_of_formal(
     formal_param: &[(FunctionId, FlowVariable, FormalType)],
     mut copy_edge: Vec<(FunctionId, FlowVariable, FlowVariable)>,
 ) -> Vec<(FunctionId, FlowVariable, FormalIndex)> {
-    // Base case: a formal whole-aliases itself.
+    // Base case: a formal whole-aliases itself. A `Copied` formal shares nothing with the caller,
+    // so a store through it or its aliases is no summary, and it gets no aliases at all.
     let alias_base: Vec<_> = formal_param
         .iter()
+        .filter(|(_, _, ty)| *ty != FormalType::Copied)
         .filter_map(|(infunc, v1, _)| v1.as_formal().map(|i| (*infunc, *v1, i)))
         .collect();
     // Keep only the copies that flow AWAY from a formal.
@@ -2733,7 +2735,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let p = fb.add_param(ParameterType::ByVal);
+        let p = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let ret: Exp = if pass_through {
@@ -2758,7 +2760,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let x = fb.add_param(ParameterType::ByVal);
+        let x = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (fp, r, x) = (
@@ -2794,8 +2796,8 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let callee = fb.add_param(ParameterType::ByVal);
-        let x = fb.add_param(ParameterType::ByVal);
+        let callee = fb.add_param(ParameterType::SharedFields);
+        let x = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (r, callee, x) = (
@@ -2824,7 +2826,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let a = fb.add_param(ParameterType::ByVal);
+        let a = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (r, a) = (b.new_local_var("r"), b.new_param_var(a));
@@ -2868,7 +2870,7 @@ mod tests {
         };
         {
             let mut fb = FunctionBuilder::new(&mut thrower);
-            let x = fb.add_param(ParameterType::ByVal);
+            let x = fb.add_param(ParameterType::SharedFields);
             let body = fb.add_block();
             let mut b = fb.at_block(body);
             let x = b.new_param_var(x);
@@ -2881,7 +2883,7 @@ mod tests {
         };
         {
             let mut fb = FunctionBuilder::new(&mut catcher);
-            let a = fb.add_param(ParameterType::ByVal);
+            let a = fb.add_param(ParameterType::SharedFields);
             let body = fb.add_block();
             let mut b = fb.at_block(body);
             let (r, e, a) = (

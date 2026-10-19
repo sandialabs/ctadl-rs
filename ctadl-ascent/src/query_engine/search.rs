@@ -855,9 +855,9 @@ mod tests {
                 (
                     receiver,
                     FlowVariable::formal_index(FormalIndex::new(0)),
-                    FormalType::ByRef,
+                    FormalType::Shared,
                 ),
-                (sender, put_extra_value, FormalType::ByRef),
+                (sender, put_extra_value, FormalType::Shared),
             ],
             call: vec![(
                 PackedInsnSiteId::try_from_parts(sender, InsnId::new(20)).unwrap(),

@@ -43,12 +43,12 @@ fn jvm_class_symbol(name: &str) -> String {
 fn jvm_descriptor_to_params(descriptor: &str, is_instance: bool) -> Vec<ParameterType> {
     let mut params = Vec::new();
     if is_instance {
-        params.push(ParameterType::ByRef);
+        params.push(ParameterType::Shared);
     }
     for p in jvm_reader::descriptor_parameter_info(descriptor) {
         match p.kind {
-            jvm_reader::MethodParameterKind::Primitive => params.push(ParameterType::ByVal),
-            jvm_reader::MethodParameterKind::Reference => params.push(ParameterType::ByRef),
+            jvm_reader::MethodParameterKind::Primitive => params.push(ParameterType::SharedFields),
+            jvm_reader::MethodParameterKind::Reference => params.push(ParameterType::Shared),
         }
     }
     params

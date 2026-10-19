@@ -517,7 +517,7 @@ fn program(rows: &[Row]) -> ProgramInfo {
             let mut f = FunctionData::default();
             f.set_name(r.fid.clone().unwrap_or_default());
             for _ in 0..r.arity.unwrap_or(0) {
-                f.params.parameters.push(ParameterType::ByRef);
+                f.params.parameters.push(ParameterType::Shared);
             }
             let blocks = f.blocks.blocks_mut();
             let body = blocks.push(BasicBlockData::new(None));

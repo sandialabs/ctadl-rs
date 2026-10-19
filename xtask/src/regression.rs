@@ -83,6 +83,12 @@ const C_KNOWN_FAILURES: &[&str] = &[
     // Delete this entry if `-l c` imports ever get a default model file of their
     // own.
     "C:defaultmodels",
+    // The frontend lowers `*out = x` to `out = x`, a rebinding of the parameter,
+    // and rebinding a parameter never reaches the caller (SSA writes every
+    // parameter back at its entry version). Lowering the write to
+    // `store out.deref := x` fixes it; un-ignore the frontend's
+    // `out_param_write_propagates` test along with deleting this entry.
+    "C:outparam",
 ];
 
 pub struct Options {

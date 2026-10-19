@@ -39,8 +39,8 @@ fn implementation(cls: &str) -> FunctionData {
         name: format!("{cls}->{NAME}{DESC}"),
         ..Default::default()
     };
-    f.params.parameters.push(ParameterType::ByRef);
-    f.params.parameters.push(ParameterType::ByRef);
+    f.params.parameters.push(ParameterType::Shared);
+    f.params.parameters.push(ParameterType::Shared);
     let mut fb = FunctionBuilder::new(&mut f);
     fb.set_return_arity(1);
     let body = fb.add_block();
@@ -57,8 +57,8 @@ fn caller() -> FunctionData {
         name: CALLER.to_string(),
         ..Default::default()
     };
-    f.params.parameters.push(ParameterType::ByRef);
-    f.params.parameters.push(ParameterType::ByRef);
+    f.params.parameters.push(ParameterType::Shared);
+    f.params.parameters.push(ParameterType::Shared);
     let mut fb = FunctionBuilder::new(&mut f);
     fb.set_return_arity(1);
     let body = fb.add_block();

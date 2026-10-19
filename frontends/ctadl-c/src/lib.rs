@@ -1525,9 +1525,14 @@ fn is_statement_expression(node: Node<'_>) -> bool {
 /// (`void f(char **)`), or parse debris. That is not the same as "there is no parameter":
 /// see [`Context::collect_params`], which still owns the slot.
 ///
-/// A pointer or an array parameter is [`ParameterType::ByRef`] -- it is a handle on storage
+/// A pointer or an array parameter is [`ParameterType::Shared`] -- it is a handle on storage
 /// the caller can see written -- at every depth. A function pointer is not: what it points at
-/// is code, so `int (*cb)(int, int)` stays `ByVal`.
+/// is code, so `int (*cb)(int, int)` stays `SharedFields`.
+///
+/// A write through a `Shared` parameter reaches the caller only as a store on the parameter's
+/// entry version: rebinding the parameter does not. This front end still lowers `*out = x` to
+/// `out = x`, a rebinding, so such a write does not yet reach the caller. Lowering it to
+/// `store out.deref := x` is the fix.
 fn param_head(declarator: Node<'_>) -> (Option<Node<'_>>, ParameterType) {
     let mut node = declarator;
     let (mut is_ref, mut is_function, mut name) = (false, false, None);
@@ -1552,9 +1557,9 @@ fn param_head(declarator: Node<'_>) -> (Option<Node<'_>>, ParameterType) {
         }
     }
     let param_type = if is_ref && !is_function {
-        ParameterType::ByRef
+        ParameterType::Shared
     } else {
-        ParameterType::ByVal
+        ParameterType::SharedFields
     };
     (name, param_type)
 }
@@ -1646,7 +1651,7 @@ fn define_extern_functions(program: &mut Program) {
         let fdat = &mut program.functions[fidx];
         fdat.name = name;
         for _ in 0..arity {
-            fdat.params.push(ParameterType::ByVal);
+            fdat.params.push(ParameterType::SharedFields);
         }
     }
 }

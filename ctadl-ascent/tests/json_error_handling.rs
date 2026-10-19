@@ -231,7 +231,7 @@ fn make_function(name: &str, num_params: usize, force_body: bool, fields: &[&str
     let mut f = FunctionData::default();
     f.set_name(name.to_string());
     for _ in 0..num_params {
-        f.params.parameters.push(ParameterType::ByVal);
+        f.params.parameters.push(ParameterType::SharedFields);
     }
     if force_body || !fields.is_empty() {
         let blocks = f.blocks.blocks_mut();

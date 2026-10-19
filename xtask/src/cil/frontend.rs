@@ -3,9 +3,9 @@
 //!
 //! - **sweep**: every corpus assembly (Cecil's and the compiled fixtures) imported on its own,
 //!   which runs `Program::verify`, and then put through the SSA pipeline `ctadl index` runs
-//!   (`Pipeline::index_default` with CIL's `Entry` write-back). Neither may panic, and an
-//!   assembly cil-reader reads must import. `ssa::transform` asserts `FunctionData::verify`
-//!   itself, so this also checks every function the frontend makes is well formed.
+//!   (`Pipeline::index_default`). Neither may panic, and an assembly cil-reader reads must
+//!   import. `ssa::transform` asserts `FunctionData::verify` itself, so this also checks every
+//!   function the frontend makes is well formed.
 //! - **goldens**: the IR of the frontend fixtures against `xtask/cil-goldens/mir`, reviewed
 //!   when blessed with `cargo xtask cil bless-mir`.
 //!
@@ -18,7 +18,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use ctadl_ir::ssa::{self, ParamWriteBack, Pipeline};
+use ctadl_ir::ssa::{self, Pipeline};
 
 use super::cecil_tests::install_panic_hook;
 use super::parity::Input;
@@ -122,21 +122,13 @@ fn sweep(path: &Path, opts: &ctadl_cil::ImportOptions) -> Result<Swept, String> 
     let (mut info, stats) = imported.map_err(|e| format!("import failed: {e:#}"))?;
     let functions = info.program.functions.len();
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        ssa::run_pipeline(&mut info.program, index_pipeline())
+        ssa::run_pipeline(&mut info.program, Pipeline::index_default())
     }))
     .map_err(|p| format!("the SSA pipeline panicked: {}", panic_message(&p)))?;
     Ok(Swept {
         functions,
         stats: Some(stats),
     })
-}
-
-/// The passes `ctadl index` runs on a CIL import.
-fn index_pipeline() -> Pipeline {
-    Pipeline {
-        param_write_back: ParamWriteBack::Entry,
-        ..Pipeline::index_default()
-    }
 }
 
 fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
