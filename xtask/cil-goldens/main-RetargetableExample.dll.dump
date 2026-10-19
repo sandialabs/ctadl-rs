@@ -1,0 +1,93 @@
+[module]
+name=RetargetableExample.dll
+mvid=457d57da-5722-4479-a68f-4e1f25943eef
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=RetargetableExample, Version=1.0.5872.20321, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=969db8053d3322ac flags=0x00000000
+0x23000002=System.Data, Version=3.5.0.0, Culture=neutral, PublicKeyToken=969db8053d3322ac, Retargetable=Yes flags=0x00000100
+0x23000003=System, Version=3.5.0.0, Culture=neutral, PublicKeyToken=969db8053d3322ac, Retargetable=Yes flags=0x00000100
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=RetargetableExample.RetargetableExample flags=0x00100101
+	base=System.Object
+[fields]
+0x04000001=System.Data.UpdateRowSource RetargetableExample.RetargetableExample::_updateRowSource flags=0x0001
+[methods]
+0x06000001=System.Data.UpdateRowSource RetargetableExample.RetargetableExample::get_UpdatedRowSource() flags=0x0886 impl=0x0000 rva=0x00002050 semantics=0x0002
+0x06000002=System.Void RetargetableExample.RetargetableExample::set_UpdatedRowSource(System.Data.UpdateRowSource) flags=0x0886 impl=0x0000 rva=0x00002068 semantics=0x0001
+	param 1 name=value flags=0x0000
+0x06000003=System.Void RetargetableExample.RetargetableExample::.ctor() flags=0x1886 impl=0x0000 rva=0x00002072
+[properties]
+0x17000001=System.Data.UpdateRowSource RetargetableExample.RetargetableExample::UpdatedRowSource() flags=0x0000 getter=0x06000001 setter=0x06000002
+[events]
+[custom-attributes]
+ca parent=0x17000001 ctor=System.Void System.ComponentModel.DefaultValueAttribute::.ctor(System.Object) args=!unresolved blob=0100557d53797374656d2e446174612e557064617465526f77536f757263652c2053797374656d2e446174612c2056657273696f6e3d332e352e302e302c2043756c747572653d6e65757472616c2c205075626c69634b6579546f6b656e3d393639646238303533643333323261632c20526574617267657461626c653d596573000000000000
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyDescriptionAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"RetargetableExample"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"RetargetableExample"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCopyrightAttribute::.ctor(System.String) args=((String:"Copyright ©  2016"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTrademarkAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.ComVisibleAttribute::.ctor(System.Boolean) args=((Boolean:False))
+ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.GuidAttribute::.ctor(System.String) args=((String:"3746790f-00e8-4cf7-8e6f-08f845bae5a2"))
+[security-declarations]
+[il]
+0x06000001 max-stack=1 init-locals=true code-size=12
+	local 0=System.Data.UpdateRowSource
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldfld System.Data.UpdateRowSource RetargetableExample.RetargetableExample::_updateRowSource
+	IL_0007: stloc.0
+	IL_0008: br.s IL_000a
+	IL_000a: ldloc.0
+	IL_000b: ret
+0x06000002 max-stack=8 init-locals=false code-size=9
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldarg.1
+	IL_0003: stfld System.Data.UpdateRowSource RetargetableExample.RetargetableExample::_updateRowSource
+	IL_0008: ret
+0x06000003 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+[custom-attributes-resolved]
+ca parent=0x17000001 ctor=System.Void System.ComponentModel.DefaultValueAttribute::.ctor(System.Object) args=()
+[fields-resolved]

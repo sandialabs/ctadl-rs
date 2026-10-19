@@ -1,0 +1,888 @@
+[module]
+name=PdbTarget.exe
+mvid=55289fcb-3164-401d-9ae1-9f7c51a6250b
+kind=Console
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000002
+[assembly]
+full-name=PdbTarget, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+0x23000002=System.Xml, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+0x23000003=System.Core, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+0x23000004=Microsoft.CSharp, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=PdbTarget.B flags=0x00100000
+	base=System.Object
+0x02000003=PdbTarget.Program flags=0x00100000
+	base=System.Object
+0x02000004=PdbTarget.Program/<Where>d__3`1 flags=0x00100103
+	base=System.Object
+	interface=System.Collections.Generic.IEnumerable`1<T>
+	interface=System.Collections.IEnumerable
+	interface=System.Collections.Generic.IEnumerator`1<T>
+	interface=System.IDisposable
+	interface=System.Collections.IEnumerator
+	generic-param 0 name=T flags=0x0000
+0x02000005=PdbTarget.Program/<Baz>d__7 flags=0x00100103
+	base=System.Object
+	interface=System.Runtime.CompilerServices.IAsyncStateMachine
+0x02000006=PdbTarget.Program/<>o__8 flags=0x00100183
+	base=System.Object
+[fields]
+0x04000001=System.String PdbTarget.B::s flags=0x0001
+0x04000002=System.Int32 PdbTarget.B::a flags=0x0001
+0x04000003=System.Int32 PdbTarget.B::b flags=0x0001
+0x04000004=System.Xml.XmlDocument PdbTarget.Program::document flags=0x0016
+0x04000005=System.Xml.XmlDocumentType PdbTarget.Program::foo flags=0x0016
+0x04000006=System.Int32 PdbTarget.Program::a flags=0x8051 constant=I4:2
+0x04000007=System.Int32 PdbTarget.Program/<Where>d__3`1::<>1__state flags=0x0001
+0x04000008=T PdbTarget.Program/<Where>d__3`1::<>2__current flags=0x0001
+0x04000009=System.Int32 PdbTarget.Program/<Where>d__3`1::<>l__initialThreadId flags=0x0001
+0x0400000a=System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1::enumerable flags=0x0001
+0x0400000b=System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1::<>3__enumerable flags=0x0006
+0x0400000c=System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1::filter flags=0x0001
+0x0400000d=System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1::<>3__filter flags=0x0006
+0x0400000e=System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1::<>s__1 flags=0x0001
+0x0400000f=T PdbTarget.Program/<Where>d__3`1::<item>5__2 flags=0x0001
+0x04000010=System.Boolean PdbTarget.Program/<Where>d__3`1::<f>5__3 flags=0x0001
+0x04000011=System.Int32 PdbTarget.Program/<Baz>d__7::<>1__state flags=0x0006
+0x04000012=System.Runtime.CompilerServices.AsyncTaskMethodBuilder PdbTarget.Program/<Baz>d__7::<>t__builder flags=0x0006
+0x04000013=System.IO.StreamReader PdbTarget.Program/<Baz>d__7::sr flags=0x0006
+0x04000014=System.String PdbTarget.Program/<Baz>d__7::<s>5__1 flags=0x0001
+0x04000015=System.String PdbTarget.Program/<Baz>d__7::<>s__2 flags=0x0001
+0x04000016=System.String PdbTarget.Program/<Baz>d__7::<u>5__3 flags=0x0001
+0x04000017=System.String PdbTarget.Program/<Baz>d__7::<>s__4 flags=0x0001
+0x04000018=System.Runtime.CompilerServices.TaskAwaiter`1<System.String> PdbTarget.Program/<Baz>d__7::<>u__1 flags=0x0001
+0x04000019=System.Runtime.CompilerServices.CallSite`1<System.Func`4<System.Runtime.CompilerServices.CallSite,System.Object,System.Object,System.Object>> PdbTarget.Program/<>o__8::<>p__0 flags=0x0016
+[methods]
+0x06000001=System.Void PdbTarget.B::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+0x06000002=System.Void PdbTarget.Program::Main(System.String[]) flags=0x0091 impl=0x0000 rva=0x00002080
+	param 0 name=args flags=0x0000
+0x06000003=System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program::Where(System.Collections.Generic.IEnumerable`1<T>,System.Func`2<T,System.Boolean>) flags=0x0091 impl=0x0000 rva=0x000020b2
+	generic-param 0 name=T flags=0x0000
+	param 0 name=enumerable flags=0x0000
+	param 1 name=filter flags=0x0000
+0x06000004=System.Void PdbTarget.Program::Foo() flags=0x0091 impl=0x0000 rva=0x000020c9
+0x06000005=System.Void PdbTarget.Program::Bar(System.Int32) flags=0x0091 impl=0x0000 rva=0x000020e0
+	param 0 name=i flags=0x0000
+0x06000006=System.Threading.Tasks.Task PdbTarget.Program::Baz(System.IO.StreamReader) flags=0x0091 impl=0x0000 rva=0x0000212c
+	param 0 name=sr flags=0x0000
+0x06000007=System.Object PdbTarget.Program::Gazonk() flags=0x0091 impl=0x0000 rva=0x00002174
+0x06000008=System.Void PdbTarget.Program::GazonkRef(System.Object&) flags=0x0091 impl=0x0000 rva=0x00002243
+	param 0 name=d flags=0x0000
+0x06000009=System.Void PdbTarget.Program::.ctor() flags=0x1886 impl=0x0000 rva=0x0000224f
+0x0600000a=System.Void PdbTarget.Program::.cctor() flags=0x1891 impl=0x0000 rva=0x00002258
+0x0600000b=System.Void PdbTarget.Program/<Where>d__3`1::.ctor(System.Int32) flags=0x1886 impl=0x0000 rva=0x00002266
+	param 1 name=<>1__state flags=0x0000
+0x0600000c=System.Void PdbTarget.Program/<Where>d__3`1::System.IDisposable.Dispose() flags=0x01e1 impl=0x0000 rva=0x00002284
+	override=System.Void System.IDisposable::Dispose()
+0x0600000d=System.Boolean PdbTarget.Program/<Where>d__3`1::MoveNext() flags=0x01e1 impl=0x0000 rva=0x000022c4
+	override=System.Boolean System.Collections.IEnumerator::MoveNext()
+0x0600000e=System.Void PdbTarget.Program/<Where>d__3`1::<>m__Finally1() flags=0x0081 impl=0x0000 rva=0x000023ac
+0x0600000f=T PdbTarget.Program/<Where>d__3`1::System.Collections.Generic.IEnumerator<T>.get_Current() flags=0x09e1 impl=0x0000 rva=0x000023c9 semantics=0x0002
+	override=!0 System.Collections.Generic.IEnumerator`1<T>::get_Current()
+0x06000010=System.Void PdbTarget.Program/<Where>d__3`1::System.Collections.IEnumerator.Reset() flags=0x01e1 impl=0x0000 rva=0x000023d1
+	override=System.Void System.Collections.IEnumerator::Reset()
+0x06000011=System.Object PdbTarget.Program/<Where>d__3`1::System.Collections.IEnumerator.get_Current() flags=0x09e1 impl=0x0000 rva=0x000023d8 semantics=0x0002
+	override=System.Object System.Collections.IEnumerator::get_Current()
+0x06000012=System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1::System.Collections.Generic.IEnumerable<T>.GetEnumerator() flags=0x01e1 impl=0x0000 rva=0x000023e8
+	override=System.Collections.Generic.IEnumerator`1<!0> System.Collections.Generic.IEnumerable`1<T>::GetEnumerator()
+0x06000013=System.Collections.IEnumerator PdbTarget.Program/<Where>d__3`1::System.Collections.IEnumerable.GetEnumerator() flags=0x01e1 impl=0x0000 rva=0x00002437
+	override=System.Collections.IEnumerator System.Collections.IEnumerable::GetEnumerator()
+0x06000014=System.Void PdbTarget.Program/<Baz>d__7::.ctor() flags=0x1886 impl=0x0000 rva=0x0000224f
+0x06000015=System.Void PdbTarget.Program/<Baz>d__7::MoveNext() flags=0x01e1 impl=0x0000 rva=0x00002440
+	override=System.Void System.Runtime.CompilerServices.IAsyncStateMachine::MoveNext()
+0x06000016=System.Void PdbTarget.Program/<Baz>d__7::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine) flags=0x01e1 impl=0x0000 rva=0x000025fc
+	override=System.Void System.Runtime.CompilerServices.IAsyncStateMachine::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+	param 1 name=stateMachine flags=0x0000
+[properties]
+0x17000001=T PdbTarget.Program/<Where>d__3`1::System.Collections.Generic.IEnumerator<T>.Current() flags=0x0000 getter=0x0600000f
+0x17000002=System.Object PdbTarget.Program/<Where>d__3`1::System.Collections.IEnumerator.Current() flags=0x0000 getter=0x06000011
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"PortablePdbTarget"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyDescriptionAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"PortablePdbTarget"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCopyrightAttribute::.ctor(System.String) args=((String:"Copyright ©  2016"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTrademarkAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.ComVisibleAttribute::.ctor(System.Boolean) args=((Boolean:False))
+ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.GuidAttribute::.ctor(System.String) args=((String:"6a9eb60b-160f-46d4-aa58-5164678bc55d"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"1.0.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETFramework,Version=v4.5.2")) property FrameworkDisplayName=(String:".NET Framework 4.5.2")
+ca parent=0x06000003 ctor=System.Void System.Runtime.CompilerServices.IteratorStateMachineAttribute::.ctor(System.Type) args=((Type:typeof(PdbTarget.Program/<Where>d__3`1)))
+ca parent=0x02000004 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000005 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000006 ctor=System.Void System.Runtime.CompilerServices.AsyncStateMachineAttribute::.ctor(System.Type) args=((Type:typeof(PdbTarget.Program/<Baz>d__7)))
+ca parent=0x06000006 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x02000006 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x08000006 ctor=System.Void System.Runtime.CompilerServices.DynamicAttribute::.ctor() args=()
+ca parent=0x08000007 ctor=System.Void System.Runtime.CompilerServices.DynamicAttribute::.ctor(System.Boolean[]) args=((Boolean[]:{(Boolean:False), (Boolean:True)}))
+ca parent=0x0600000b ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000c ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000f ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000010 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000011 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000012 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000013 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000016 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=45
+	IL_0000: ldarg.0
+	IL_0001: ldstr ""
+	IL_0006: stfld System.String PdbTarget.B::s
+	IL_000b: ldarg.0
+	IL_000c: ldc.i4.2
+	IL_000d: stfld System.Int32 PdbTarget.B::a
+	IL_0012: ldarg.0
+	IL_0013: ldc.i4.3
+	IL_0014: stfld System.Int32 PdbTarget.B::b
+	IL_0019: ldarg.0
+	IL_001a: call System.Void System.Object::.ctor()
+	IL_001f: nop
+	IL_0020: nop
+	IL_0021: ldstr "B"
+	IL_0026: call System.Void System.Console::WriteLine(System.String)
+	IL_002b: nop
+	IL_002c: ret
+0x06000002 max-stack=2 init-locals=true code-size=38
+	local 0=System.Int32
+	local 1=System.String[]
+	local 2=System.Int32
+	local 3=System.String
+	IL_0000: nop
+	IL_0001: nop
+	IL_0002: ldarg.0
+	IL_0003: stloc.1
+	IL_0004: ldc.i4.0
+	IL_0005: stloc.2
+	IL_0006: br.s IL_0017
+	IL_0008: ldloc.1
+	IL_0009: ldloc.2
+	IL_000a: ldelem.ref
+	IL_000b: stloc.3
+	IL_000c: ldloc.3
+	IL_000d: call System.Void System.Console::WriteLine(System.String)
+	IL_0012: nop
+	IL_0013: ldloc.2
+	IL_0014: ldc.i4.1
+	IL_0015: add
+	IL_0016: stloc.2
+	IL_0017: ldloc.2
+	IL_0018: ldloc.1
+	IL_0019: ldlen
+	IL_001a: conv.i4
+	IL_001b: blt.s IL_0008
+	IL_001d: ldc.i4.1
+	IL_001e: ldc.i4.2
+	IL_001f: call System.Int32 System.Math::Min(System.Int32,System.Int32)
+	IL_0024: stloc.0
+	IL_0025: ret
+0x06000003 max-stack=8 init-locals=false code-size=22
+	IL_0000: ldc.i4.s -2
+	IL_0002: newobj System.Void PdbTarget.Program/<Where>d__3`1<T>::.ctor(System.Int32)
+	IL_0007: dup
+	IL_0008: ldarg.0
+	IL_0009: stfld System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1<T>::<>3__enumerable
+	IL_000e: dup
+	IL_000f: ldarg.1
+	IL_0010: stfld System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1<T>::<>3__filter
+	IL_0015: ret
+0x06000004 max-stack=8 init-locals=false code-size=20
+	IL_0000: nop
+	IL_0001: ldstr "const string"
+	IL_0006: call System.Void System.Console::WriteLine(System.String)
+	IL_000b: nop
+	IL_000c: ldc.i4.2
+	IL_000d: call System.Void System.Console::WriteLine(System.Int32)
+	IL_0012: nop
+	IL_0013: ret
+0x06000005 max-stack=2 init-locals=true code-size=64
+	local 0=System.Int32
+	local 1=System.Boolean
+	local 2=System.Int32
+	local 3=System.Int32
+	local 4=System.Boolean
+	local 5=System.Int32
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldc.i4.0
+	IL_0003: clt
+	IL_0005: stloc.1
+	IL_0006: ldloc.1
+	IL_0007: brfalse.s IL_0011
+	IL_0009: nop
+	IL_000a: ldc.i4.1
+	IL_000b: stloc.2
+	IL_000c: ldloc.2
+	IL_000d: stloc.0
+	IL_000e: nop
+	IL_000f: br.s IL_0038
+	IL_0011: nop
+	IL_0012: ldc.i4.m1
+	IL_0013: stloc.3
+	IL_0014: ldloc.3
+	IL_0015: ldc.i4.s 12
+	IL_0017: add
+	IL_0018: ldc.i4.s 74
+	IL_001a: add
+	IL_001b: stloc.0
+	IL_001c: ldloc.0
+	IL_001d: ldc.i4.s 12
+	IL_001f: cgt
+	IL_0021: stloc.s V_4
+	IL_0023: ldloc.s V_4
+	IL_0025: brfalse.s IL_0037
+	IL_0027: nop
+	IL_0028: ldloc.0
+	IL_0029: ldc.i4.s 12
+	IL_002b: mul
+	IL_002c: stloc.s V_5
+	IL_002e: ldloc.s V_5
+	IL_0030: call System.Void System.Console::WriteLine(System.Int32)
+	IL_0035: nop
+	IL_0036: nop
+	IL_0037: nop
+	IL_0038: ldloc.0
+	IL_0039: call System.Void System.Console::WriteLine(System.Int32)
+	IL_003e: nop
+	IL_003f: ret
+0x06000006 max-stack=2 init-locals=true code-size=59
+	local 0=PdbTarget.Program/<Baz>d__7
+	local 1=System.Runtime.CompilerServices.AsyncTaskMethodBuilder
+	IL_0000: newobj System.Void PdbTarget.Program/<Baz>d__7::.ctor()
+	IL_0005: stloc.0
+	IL_0006: ldloc.0
+	IL_0007: ldarg.0
+	IL_0008: stfld System.IO.StreamReader PdbTarget.Program/<Baz>d__7::sr
+	IL_000d: ldloc.0
+	IL_000e: call System.Runtime.CompilerServices.AsyncTaskMethodBuilder System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Create()
+	IL_0013: stfld System.Runtime.CompilerServices.AsyncTaskMethodBuilder PdbTarget.Program/<Baz>d__7::<>t__builder
+	IL_0018: ldloc.0
+	IL_0019: ldc.i4.m1
+	IL_001a: stfld System.Int32 PdbTarget.Program/<Baz>d__7::<>1__state
+	IL_001f: ldloc.0
+	IL_0020: ldfld System.Runtime.CompilerServices.AsyncTaskMethodBuilder PdbTarget.Program/<Baz>d__7::<>t__builder
+	IL_0025: stloc.1
+	IL_0026: ldloca.s V_1
+	IL_0028: ldloca.s V_0
+	IL_002a: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Start<PdbTarget.Program/<Baz>d__7>(!!0&)
+	IL_002f: ldloc.0
+	IL_0030: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder PdbTarget.Program/<Baz>d__7::<>t__builder
+	IL_0035: call System.Threading.Tasks.Task System.Runtime.CompilerServices.AsyncTaskMethodBuilder::get_Task()
+	IL_003a: ret
+0x06000007 max-stack=8 init-locals=true code-size=195
+	local 0=System.Object
+	local 1=System.Object
+	local 2=System.Object[]
+	local 3=System.Collections.Generic.List`1<System.Object>
+	local 4=System.Object
+	IL_0000: nop
+	IL_0001: ldc.i4.s 13
+	IL_0003: box System.Int32
+	IL_0008: stloc.0
+	IL_0009: ldc.i4.s 12
+	IL_000b: box System.Int32
+	IL_0010: stloc.1
+	IL_0011: ldc.i4.3
+	IL_0012: newarr System.Object
+	IL_0017: dup
+	IL_0018: ldc.i4.0
+	IL_0019: ldc.i4.1
+	IL_001a: box System.Int32
+	IL_001f: stelem.ref
+	IL_0020: dup
+	IL_0021: ldc.i4.1
+	IL_0022: ldc.i4.2
+	IL_0023: box System.Int32
+	IL_0028: stelem.ref
+	IL_0029: dup
+	IL_002a: ldc.i4.2
+	IL_002b: ldc.i4.3
+	IL_002c: box System.Int32
+	IL_0031: stelem.ref
+	IL_0032: stloc.2
+	IL_0033: newobj System.Void System.Collections.Generic.List`1<System.Object>::.ctor()
+	IL_0038: dup
+	IL_0039: ldc.i4.1
+	IL_003a: box System.Int32
+	IL_003f: callvirt System.Void System.Collections.Generic.List`1<System.Object>::Add(!0)
+	IL_0044: nop
+	IL_0045: dup
+	IL_0046: ldc.i4.2
+	IL_0047: box System.Int32
+	IL_004c: callvirt System.Void System.Collections.Generic.List`1<System.Object>::Add(!0)
+	IL_0051: nop
+	IL_0052: dup
+	IL_0053: ldc.i4.3
+	IL_0054: box System.Int32
+	IL_0059: callvirt System.Void System.Collections.Generic.List`1<System.Object>::Add(!0)
+	IL_005e: nop
+	IL_005f: stloc.3
+	IL_0060: ldloca.s V_1
+	IL_0062: call System.Void PdbTarget.Program::GazonkRef(System.Object&)
+	IL_0067: nop
+	IL_0068: ldsfld System.Runtime.CompilerServices.CallSite`1<System.Func`4<System.Runtime.CompilerServices.CallSite,System.Object,System.Object,System.Object>> PdbTarget.Program/<>o__8::<>p__0
+	IL_006d: brfalse.s IL_0071
+	IL_006f: br.s IL_00a6
+	IL_0071: ldc.i4.0
+	IL_0072: ldc.i4.0
+	IL_0073: ldtoken PdbTarget.Program
+	IL_0078: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_007d: ldc.i4.2
+	IL_007e: newarr Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfo
+	IL_0083: dup
+	IL_0084: ldc.i4.0
+	IL_0085: ldc.i4.0
+	IL_0086: ldnull
+	IL_0087: call Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfo Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfo::Create(Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfoFlags,System.String)
+	IL_008c: stelem.ref
+	IL_008d: dup
+	IL_008e: ldc.i4.1
+	IL_008f: ldc.i4.0
+	IL_0090: ldnull
+	IL_0091: call Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfo Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfo::Create(Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfoFlags,System.String)
+	IL_0096: stelem.ref
+	IL_0097: call System.Runtime.CompilerServices.CallSiteBinder Microsoft.CSharp.RuntimeBinder.Binder::BinaryOperation(Microsoft.CSharp.RuntimeBinder.CSharpBinderFlags,System.Linq.Expressions.ExpressionType,System.Type,System.Collections.Generic.IEnumerable`1<Microsoft.CSharp.RuntimeBinder.CSharpArgumentInfo>)
+	IL_009c: call System.Runtime.CompilerServices.CallSite`1<!0> System.Runtime.CompilerServices.CallSite`1<System.Func`4<System.Runtime.CompilerServices.CallSite,System.Object,System.Object,System.Object>>::Create(System.Runtime.CompilerServices.CallSiteBinder)
+	IL_00a1: stsfld System.Runtime.CompilerServices.CallSite`1<System.Func`4<System.Runtime.CompilerServices.CallSite,System.Object,System.Object,System.Object>> PdbTarget.Program/<>o__8::<>p__0
+	IL_00a6: ldsfld System.Runtime.CompilerServices.CallSite`1<System.Func`4<System.Runtime.CompilerServices.CallSite,System.Object,System.Object,System.Object>> PdbTarget.Program/<>o__8::<>p__0
+	IL_00ab: ldfld !0 System.Runtime.CompilerServices.CallSite`1<System.Func`4<System.Runtime.CompilerServices.CallSite,System.Object,System.Object,System.Object>>::Target
+	IL_00b0: ldsfld System.Runtime.CompilerServices.CallSite`1<System.Func`4<System.Runtime.CompilerServices.CallSite,System.Object,System.Object,System.Object>> PdbTarget.Program/<>o__8::<>p__0
+	IL_00b5: ldloc.0
+	IL_00b6: ldloc.1
+	IL_00b7: callvirt !3 System.Func`4<System.Runtime.CompilerServices.CallSite,System.Object,System.Object,System.Object>::Invoke(!0,!1,!2)
+	IL_00bc: stloc.s V_4
+	IL_00be: br.s IL_00c0
+	IL_00c0: ldloc.s V_4
+	IL_00c2: ret
+0x06000008 max-stack=8 init-locals=false code-size=11
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldc.i4.s 12
+	IL_0004: box System.Int32
+	IL_0009: stind.ref
+	IL_000a: ret
+0x06000009 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x0600000a max-stack=8 init-locals=false code-size=13
+	IL_0000: ldnull
+	IL_0001: stsfld System.Xml.XmlDocument PdbTarget.Program::document
+	IL_0006: ldnull
+	IL_0007: stsfld System.Xml.XmlDocumentType PdbTarget.Program::foo
+	IL_000c: ret
+0x0600000b max-stack=8 init-locals=false code-size=26
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ldarg.0
+	IL_0008: ldarg.1
+	IL_0009: stfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>1__state
+	IL_000e: ldarg.0
+	IL_000f: call System.Int32 System.Environment::get_CurrentManagedThreadId()
+	IL_0014: stfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>l__initialThreadId
+	IL_0019: ret
+0x0600000c max-stack=2 init-locals=true code-size=33
+	local 0=System.Int32
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>1__state
+	IL_0006: stloc.0
+	IL_0007: ldloc.0
+	IL_0008: ldc.i4.s -3
+	IL_000a: beq.s IL_0014
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ldc.i4.1
+	IL_0010: beq.s IL_0014
+	IL_0012: br.s IL_0020
+	IL_0014: nop
+	IL_0015: leave.s IL_001e
+	IL_0017: ldarg.0
+	IL_0018: call System.Void PdbTarget.Program/<Where>d__3`1<T>::<>m__Finally1()
+	IL_001d: endfinally
+	IL_001e: br.s IL_0020
+	IL_0020: ret
+	.try IL_0015 to IL_0017 finally handler IL_0017 to IL_001e
+0x0600000d max-stack=3 init-locals=true code-size=203
+	local 0=System.Boolean
+	local 1=System.Int32
+	local 2=System.Boolean
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>1__state
+	IL_0006: stloc.1
+	IL_0007: ldloc.1
+	IL_0008: brfalse.s IL_0012
+	IL_000a: br.s IL_000c
+	IL_000c: ldloc.1
+	IL_000d: ldc.i4.1
+	IL_000e: beq.s IL_0014
+	IL_0010: br.s IL_0016
+	IL_0012: br.s IL_001d
+	IL_0014: br.s IL_008c
+	IL_0016: ldc.i4.0
+	IL_0017: stloc.0
+	IL_0018: leave IL_00c9
+	IL_001d: ldarg.0
+	IL_001e: ldc.i4.m1
+	IL_001f: stfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>1__state
+	IL_0024: nop
+	IL_0025: nop
+	IL_0026: ldarg.0
+	IL_0027: ldarg.0
+	IL_0028: ldfld System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1<T>::enumerable
+	IL_002d: callvirt System.Collections.Generic.IEnumerator`1<!0> System.Collections.Generic.IEnumerable`1<T>::GetEnumerator()
+	IL_0032: stfld System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1<T>::<>s__1
+	IL_0037: ldarg.0
+	IL_0038: ldc.i4.s -3
+	IL_003a: stfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>1__state
+	IL_003f: br.s IL_00a2
+	IL_0041: ldarg.0
+	IL_0042: ldarg.0
+	IL_0043: ldfld System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1<T>::<>s__1
+	IL_0048: callvirt !0 System.Collections.Generic.IEnumerator`1<T>::get_Current()
+	IL_004d: stfld T PdbTarget.Program/<Where>d__3`1<T>::<item>5__2
+	IL_0052: nop
+	IL_0053: ldarg.0
+	IL_0054: ldarg.0
+	IL_0055: ldfld System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1<T>::filter
+	IL_005a: ldarg.0
+	IL_005b: ldfld T PdbTarget.Program/<Where>d__3`1<T>::<item>5__2
+	IL_0060: callvirt !1 System.Func`2<T,System.Boolean>::Invoke(!0)
+	IL_0065: stfld System.Boolean PdbTarget.Program/<Where>d__3`1<T>::<f>5__3
+	IL_006a: ldarg.0
+	IL_006b: ldfld System.Boolean PdbTarget.Program/<Where>d__3`1<T>::<f>5__3
+	IL_0070: stloc.2
+	IL_0071: ldloc.2
+	IL_0072: brfalse.s IL_0095
+	IL_0074: nop
+	IL_0075: ldarg.0
+	IL_0076: ldarg.0
+	IL_0077: ldfld T PdbTarget.Program/<Where>d__3`1<T>::<item>5__2
+	IL_007c: stfld T PdbTarget.Program/<Where>d__3`1<T>::<>2__current
+	IL_0081: ldarg.0
+	IL_0082: ldc.i4.1
+	IL_0083: stfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>1__state
+	IL_0088: ldc.i4.1
+	IL_0089: stloc.0
+	IL_008a: leave.s IL_00c9
+	IL_008c: ldarg.0
+	IL_008d: ldc.i4.s -3
+	IL_008f: stfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>1__state
+	IL_0094: nop
+	IL_0095: nop
+	IL_0096: ldarg.0
+	IL_0097: ldflda T PdbTarget.Program/<Where>d__3`1<T>::<item>5__2
+	IL_009c: initobj T
+	IL_00a2: ldarg.0
+	IL_00a3: ldfld System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1<T>::<>s__1
+	IL_00a8: callvirt System.Boolean System.Collections.IEnumerator::MoveNext()
+	IL_00ad: brtrue.s IL_0041
+	IL_00af: ldarg.0
+	IL_00b0: call System.Void PdbTarget.Program/<Where>d__3`1<T>::<>m__Finally1()
+	IL_00b5: nop
+	IL_00b6: ldarg.0
+	IL_00b7: ldnull
+	IL_00b8: stfld System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1<T>::<>s__1
+	IL_00bd: ldc.i4.0
+	IL_00be: stloc.0
+	IL_00bf: leave.s IL_00c9
+	IL_00c1: ldarg.0
+	IL_00c2: call System.Void PdbTarget.Program/<Where>d__3`1<T>::System.IDisposable.Dispose()
+	IL_00c7: nop
+	IL_00c8: endfinally
+	IL_00c9: ldloc.0
+	IL_00ca: ret
+	.try IL_0000 to IL_00c1 fault handler IL_00c1 to IL_00c9
+0x0600000e max-stack=8 init-locals=false code-size=28
+	IL_0000: ldarg.0
+	IL_0001: ldc.i4.m1
+	IL_0002: stfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>1__state
+	IL_0007: ldarg.0
+	IL_0008: ldfld System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1<T>::<>s__1
+	IL_000d: brfalse.s IL_001b
+	IL_000f: ldarg.0
+	IL_0010: ldfld System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1<T>::<>s__1
+	IL_0015: callvirt System.Void System.IDisposable::Dispose()
+	IL_001a: nop
+	IL_001b: ret
+0x0600000f max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld T PdbTarget.Program/<Where>d__3`1<T>::<>2__current
+	IL_0006: ret
+0x06000010 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotSupportedException::.ctor()
+	IL_0005: throw
+0x06000011 max-stack=8 init-locals=false code-size=12
+	IL_0000: ldarg.0
+	IL_0001: ldfld T PdbTarget.Program/<Where>d__3`1<T>::<>2__current
+	IL_0006: box T
+	IL_000b: ret
+0x06000012 max-stack=2 init-locals=true code-size=67
+	local 0=PdbTarget.Program/<Where>d__3`1<T>
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>1__state
+	IL_0006: ldc.i4.s -2
+	IL_0008: bne.un.s IL_0022
+	IL_000a: ldarg.0
+	IL_000b: ldfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>l__initialThreadId
+	IL_0010: call System.Int32 System.Environment::get_CurrentManagedThreadId()
+	IL_0015: bne.un.s IL_0022
+	IL_0017: ldarg.0
+	IL_0018: ldc.i4.0
+	IL_0019: stfld System.Int32 PdbTarget.Program/<Where>d__3`1<T>::<>1__state
+	IL_001e: ldarg.0
+	IL_001f: stloc.0
+	IL_0020: br.s IL_0029
+	IL_0022: ldc.i4.0
+	IL_0023: newobj System.Void PdbTarget.Program/<Where>d__3`1<T>::.ctor(System.Int32)
+	IL_0028: stloc.0
+	IL_0029: ldloc.0
+	IL_002a: ldarg.0
+	IL_002b: ldfld System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1<T>::<>3__enumerable
+	IL_0030: stfld System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1<T>::enumerable
+	IL_0035: ldloc.0
+	IL_0036: ldarg.0
+	IL_0037: ldfld System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1<T>::<>3__filter
+	IL_003c: stfld System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1<T>::filter
+	IL_0041: ldloc.0
+	IL_0042: ret
+0x06000013 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1<T>::System.Collections.Generic.IEnumerable<T>.GetEnumerator()
+	IL_0006: ret
+0x06000014 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000015 max-stack=3 init-locals=true code-size=404
+	local 0=System.Int32
+	local 1=System.Runtime.CompilerServices.TaskAwaiter`1<System.String>
+	local 2=System.String
+	local 3=PdbTarget.Program/<Baz>d__7
+	local 4=System.Boolean
+	local 5=System.Runtime.CompilerServices.TaskAwaiter`1<System.String>
+	local 6=System.Exception
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 PdbTarget.Program/<Baz>d__7::<>1__state
+	IL_0006: stloc.0
+	IL_0007: ldloc.0
+	IL_0008: brfalse.s IL_0012
+	IL_000a: br.s IL_000c
+	IL_000c: ldloc.0
+	IL_000d: ldc.i4.1
+	IL_000e: beq.s IL_0014
+	IL_0010: br.s IL_0019
+	IL_0012: br.s IL_005b
+	IL_0014: br IL_00fc
+	IL_0019: nop
+	IL_001a: ldarg.0
+	IL_001b: ldfld System.IO.StreamReader PdbTarget.Program/<Baz>d__7::sr
+	IL_0020: callvirt System.Threading.Tasks.Task`1<System.String> System.IO.TextReader::ReadToEndAsync()
+	IL_0025: callvirt System.Runtime.CompilerServices.TaskAwaiter`1<!0> System.Threading.Tasks.Task`1<System.String>::GetAwaiter()
+	IL_002a: stloc.1
+	IL_002b: ldloca.s V_1
+	IL_002d: call System.Boolean System.Runtime.CompilerServices.TaskAwaiter`1<System.String>::get_IsCompleted()
+	IL_0032: brtrue.s IL_0077
+	IL_0034: ldarg.0
+	IL_0035: ldc.i4.0
+	IL_0036: dup
+	IL_0037: stloc.0
+	IL_0038: stfld System.Int32 PdbTarget.Program/<Baz>d__7::<>1__state
+	IL_003d: ldarg.0
+	IL_003e: ldloc.1
+	IL_003f: stfld System.Runtime.CompilerServices.TaskAwaiter`1<System.String> PdbTarget.Program/<Baz>d__7::<>u__1
+	IL_0044: ldarg.0
+	IL_0045: stloc.3
+	IL_0046: ldarg.0
+	IL_0047: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder PdbTarget.Program/<Baz>d__7::<>t__builder
+	IL_004c: ldloca.s V_1
+	IL_004e: ldloca.s V_3
+	IL_0050: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::AwaitUnsafeOnCompleted<System.Runtime.CompilerServices.TaskAwaiter`1<System.String>,PdbTarget.Program/<Baz>d__7>(!!0&,!!1&)
+	IL_0055: nop
+	IL_0056: leave IL_0193
+	IL_005b: ldarg.0
+	IL_005c: ldfld System.Runtime.CompilerServices.TaskAwaiter`1<System.String> PdbTarget.Program/<Baz>d__7::<>u__1
+	IL_0061: stloc.1
+	IL_0062: ldarg.0
+	IL_0063: ldflda System.Runtime.CompilerServices.TaskAwaiter`1<System.String> PdbTarget.Program/<Baz>d__7::<>u__1
+	IL_0068: initobj System.Runtime.CompilerServices.TaskAwaiter`1<System.String>
+	IL_006e: ldarg.0
+	IL_006f: ldc.i4.m1
+	IL_0070: dup
+	IL_0071: stloc.0
+	IL_0072: stfld System.Int32 PdbTarget.Program/<Baz>d__7::<>1__state
+	IL_0077: ldloca.s V_1
+	IL_0079: call !0 System.Runtime.CompilerServices.TaskAwaiter`1<System.String>::GetResult()
+	IL_007e: stloc.2
+	IL_007f: ldloca.s V_1
+	IL_0081: initobj System.Runtime.CompilerServices.TaskAwaiter`1<System.String>
+	IL_0087: ldarg.0
+	IL_0088: ldloc.2
+	IL_0089: stfld System.String PdbTarget.Program/<Baz>d__7::<>s__2
+	IL_008e: ldarg.0
+	IL_008f: ldarg.0
+	IL_0090: ldfld System.String PdbTarget.Program/<Baz>d__7::<>s__2
+	IL_0095: stfld System.String PdbTarget.Program/<Baz>d__7::<s>5__1
+	IL_009a: ldarg.0
+	IL_009b: ldnull
+	IL_009c: stfld System.String PdbTarget.Program/<Baz>d__7::<>s__2
+	IL_00a1: ldarg.0
+	IL_00a2: ldfld System.String PdbTarget.Program/<Baz>d__7::<s>5__1
+	IL_00a7: callvirt System.Int32 System.String::get_Length()
+	IL_00ac: ldc.i4.0
+	IL_00ad: cgt
+	IL_00af: stloc.s V_4
+	IL_00b1: ldloc.s V_4
+	IL_00b3: brfalse IL_0157
+	IL_00b8: nop
+	IL_00b9: ldarg.0
+	IL_00ba: ldfld System.IO.StreamReader PdbTarget.Program/<Baz>d__7::sr
+	IL_00bf: callvirt System.Threading.Tasks.Task`1<System.String> System.IO.TextReader::ReadLineAsync()
+	IL_00c4: callvirt System.Runtime.CompilerServices.TaskAwaiter`1<!0> System.Threading.Tasks.Task`1<System.String>::GetAwaiter()
+	IL_00c9: stloc.s V_5
+	IL_00cb: ldloca.s V_5
+	IL_00cd: call System.Boolean System.Runtime.CompilerServices.TaskAwaiter`1<System.String>::get_IsCompleted()
+	IL_00d2: brtrue.s IL_0119
+	IL_00d4: ldarg.0
+	IL_00d5: ldc.i4.1
+	IL_00d6: dup
+	IL_00d7: stloc.0
+	IL_00d8: stfld System.Int32 PdbTarget.Program/<Baz>d__7::<>1__state
+	IL_00dd: ldarg.0
+	IL_00de: ldloc.s V_5
+	IL_00e0: stfld System.Runtime.CompilerServices.TaskAwaiter`1<System.String> PdbTarget.Program/<Baz>d__7::<>u__1
+	IL_00e5: ldarg.0
+	IL_00e6: stloc.3
+	IL_00e7: ldarg.0
+	IL_00e8: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder PdbTarget.Program/<Baz>d__7::<>t__builder
+	IL_00ed: ldloca.s V_5
+	IL_00ef: ldloca.s V_3
+	IL_00f1: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::AwaitUnsafeOnCompleted<System.Runtime.CompilerServices.TaskAwaiter`1<System.String>,PdbTarget.Program/<Baz>d__7>(!!0&,!!1&)
+	IL_00f6: nop
+	IL_00f7: leave IL_0193
+	IL_00fc: ldarg.0
+	IL_00fd: ldfld System.Runtime.CompilerServices.TaskAwaiter`1<System.String> PdbTarget.Program/<Baz>d__7::<>u__1
+	IL_0102: stloc.s V_5
+	IL_0104: ldarg.0
+	IL_0105: ldflda System.Runtime.CompilerServices.TaskAwaiter`1<System.String> PdbTarget.Program/<Baz>d__7::<>u__1
+	IL_010a: initobj System.Runtime.CompilerServices.TaskAwaiter`1<System.String>
+	IL_0110: ldarg.0
+	IL_0111: ldc.i4.m1
+	IL_0112: dup
+	IL_0113: stloc.0
+	IL_0114: stfld System.Int32 PdbTarget.Program/<Baz>d__7::<>1__state
+	IL_0119: ldloca.s V_5
+	IL_011b: call !0 System.Runtime.CompilerServices.TaskAwaiter`1<System.String>::GetResult()
+	IL_0120: stloc.2
+	IL_0121: ldloca.s V_5
+	IL_0123: initobj System.Runtime.CompilerServices.TaskAwaiter`1<System.String>
+	IL_0129: ldarg.0
+	IL_012a: ldloc.2
+	IL_012b: stfld System.String PdbTarget.Program/<Baz>d__7::<>s__4
+	IL_0130: ldarg.0
+	IL_0131: ldarg.0
+	IL_0132: ldfld System.String PdbTarget.Program/<Baz>d__7::<>s__4
+	IL_0137: stfld System.String PdbTarget.Program/<Baz>d__7::<u>5__3
+	IL_013c: ldarg.0
+	IL_013d: ldnull
+	IL_013e: stfld System.String PdbTarget.Program/<Baz>d__7::<>s__4
+	IL_0143: ldarg.0
+	IL_0144: ldfld System.String PdbTarget.Program/<Baz>d__7::<u>5__3
+	IL_0149: call System.Void System.Console::WriteLine(System.String)
+	IL_014e: nop
+	IL_014f: nop
+	IL_0150: ldarg.0
+	IL_0151: ldnull
+	IL_0152: stfld System.String PdbTarget.Program/<Baz>d__7::<u>5__3
+	IL_0157: ldarg.0
+	IL_0158: ldfld System.String PdbTarget.Program/<Baz>d__7::<s>5__1
+	IL_015d: call System.Void System.Console::WriteLine(System.String)
+	IL_0162: nop
+	IL_0163: leave.s IL_017f
+	IL_0165: stloc.s V_6
+	IL_0167: ldarg.0
+	IL_0168: ldc.i4.s -2
+	IL_016a: stfld System.Int32 PdbTarget.Program/<Baz>d__7::<>1__state
+	IL_016f: ldarg.0
+	IL_0170: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder PdbTarget.Program/<Baz>d__7::<>t__builder
+	IL_0175: ldloc.s V_6
+	IL_0177: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetException(System.Exception)
+	IL_017c: nop
+	IL_017d: leave.s IL_0193
+	IL_017f: ldarg.0
+	IL_0180: ldc.i4.s -2
+	IL_0182: stfld System.Int32 PdbTarget.Program/<Baz>d__7::<>1__state
+	IL_0187: ldarg.0
+	IL_0188: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder PdbTarget.Program/<Baz>d__7::<>t__builder
+	IL_018d: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetResult()
+	IL_0192: nop
+	IL_0193: ret
+	.try IL_0007 to IL_0165 catch System.Exception handler IL_0165 to IL_017f
+0x06000016 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x01000012 -> -
+0x01000013 -> -
+0x01000014 -> -
+0x01000015 -> -
+0x01000016 -> -
+0x01000017 -> -
+0x01000018 -> -
+0x01000019 -> -
+0x0100001a -> -
+0x0100001b -> -
+0x0100001c -> -
+0x0100001d -> -
+0x0100001e -> -
+0x0100001f -> -
+0x01000020 -> -
+0x01000021 -> -
+0x01000022 -> -
+0x01000023 -> -
+0x01000024 -> -
+0x01000025 -> -
+0x01000026 -> -
+0x01000027 -> -
+0x01000028 -> -
+0x01000029 -> -
+0x0100002a -> -
+0x0100002b -> -
+0x0100002c -> -
+0x0100002d -> -
+0x0100002e -> -
+0x0100002f -> -
+0x01000030 -> -
+0x01000031 -> -
+0x01000032 -> -
+0x01000033 -> -
+0x01000034 -> -
+0x01000035 -> -
+0x01000036 -> -
+0x01000037 -> -
+0x01000038 -> -
+0x01000039 -> -
+0x0100003a -> -
+0x1b000001 -> -
+0x1b000002 -> -
+0x1b000003 -> PdbTarget.exe!0x02000004 PdbTarget.Program/<Where>d__3`1
+0x1b000004 -> -
+0x1b000005 -> -
+0x1b000006 -> -
+0x1b000007 -> PdbTarget.exe!0x02000004 PdbTarget.Program/<Where>d__3`1
+0x1b000008 -> -
+0x1b000009 -> -
+0x1b00000a -> -
+0x1b00000b -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> -
+0x0a000013 -> -
+0x0a000014 -> -
+0x0a000015 -> -
+0x0a000016 -> -
+0x0a000017 -> -
+0x0a000018 -> -
+0x0a000019 -> -
+0x0a00001a -> -
+0x0a00001b -> -
+0x0a00001c -> -
+0x0a00001d -> -
+0x0a00001e -> -
+0x0a00001f -> -
+0x0a000020 -> -
+0x0a000021 -> -
+0x0a000022 -> PdbTarget.exe!0x0600000b System.Void PdbTarget.Program/<Where>d__3`1::.ctor(System.Int32)
+0x0a000023 -> PdbTarget.exe!0x0400000b System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1::<>3__enumerable
+0x0a000024 -> PdbTarget.exe!0x0400000d System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1::<>3__filter
+0x0a000025 -> -
+0x0a000026 -> -
+0x0a000027 -> -
+0x0a000028 -> -
+0x0a000029 -> -
+0x0a00002a -> -
+0x0a00002b -> -
+0x0a00002c -> -
+0x0a00002d -> -
+0x0a00002e -> -
+0x0a00002f -> -
+0x0a000030 -> -
+0x0a000031 -> PdbTarget.exe!0x04000007 System.Int32 PdbTarget.Program/<Where>d__3`1::<>1__state
+0x0a000032 -> -
+0x0a000033 -> PdbTarget.exe!0x04000009 System.Int32 PdbTarget.Program/<Where>d__3`1::<>l__initialThreadId
+0x0a000034 -> PdbTarget.exe!0x0600000e System.Void PdbTarget.Program/<Where>d__3`1::<>m__Finally1()
+0x0a000035 -> PdbTarget.exe!0x0400000a System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1::enumerable
+0x0a000036 -> PdbTarget.exe!0x0400000e System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1::<>s__1
+0x0a000037 -> PdbTarget.exe!0x0400000f T PdbTarget.Program/<Where>d__3`1::<item>5__2
+0x0a000038 -> PdbTarget.exe!0x0400000c System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1::filter
+0x0a000039 -> -
+0x0a00003a -> PdbTarget.exe!0x04000010 System.Boolean PdbTarget.Program/<Where>d__3`1::<f>5__3
+0x0a00003b -> PdbTarget.exe!0x04000008 T PdbTarget.Program/<Where>d__3`1::<>2__current
+0x0a00003c -> PdbTarget.exe!0x0600000c System.Void PdbTarget.Program/<Where>d__3`1::System.IDisposable.Dispose()
+0x0a00003d -> -
+0x0a00003e -> PdbTarget.exe!0x0600000b System.Void PdbTarget.Program/<Where>d__3`1::.ctor(System.Int32)
+0x0a00003f -> PdbTarget.exe!0x0400000b System.Collections.Generic.IEnumerable`1<T> PdbTarget.Program/<Where>d__3`1::<>3__enumerable
+0x0a000040 -> PdbTarget.exe!0x0400000d System.Func`2<T,System.Boolean> PdbTarget.Program/<Where>d__3`1::<>3__filter
+0x0a000041 -> PdbTarget.exe!0x06000012 System.Collections.Generic.IEnumerator`1<T> PdbTarget.Program/<Where>d__3`1::System.Collections.Generic.IEnumerable<T>.GetEnumerator()
+0x0a000042 -> -
+0x0a000043 -> -
+0x0a000044 -> -
+0x0a000045 -> -
+0x0a000046 -> -
+0x0a000047 -> -
+0x0a000048 -> -
+0x0a000049 -> -
+0x0a00004a -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+[fields-resolved]

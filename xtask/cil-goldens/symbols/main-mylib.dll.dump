@@ -1,0 +1,4 @@
+[symbols]
+document 0x30000001 name=/Users/vidondai/Downloads/linker_test-master/mylib/Library.fs hash-algorithm=406ea660-64cf-4c82-b6f0-42d48172a799 hash=ba1027e695a6f66bd5a07b3b9f978c21 language=ab4f38c9-b6e6-43ba-be3b-58080b2ccce3
+0x06000001
+	IL_0000 0x30000001 5,9-5,32

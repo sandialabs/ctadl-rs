@@ -1,0 +1,16 @@
+{
+  expected_sinks: [
+    "Sink1", "Sink2", "Sink3", "Sink4", "Sink5", "Sink6", "Sink7",
+    "Sink8", "Sink9", "Sink10", "Sink11", "Sink12", "Sink13", "Sink14",
+  ],
+  // `string.IsNullOrEmpty` has no model; the other dictionary is never written with taint.
+  unexpected_sinks: ["Clean1", "Clean2"],
+  // Each scenario's source and sink lines. Every one of these flows goes through a library
+  // call, so none is found with `--no-default-models`.
+  expected_lines: [
+    38, 40, 47, 48, 58, 59, 60, 67, 69, 76, 78, 84, 86, 92, 93,
+    99, 100, 106, 107, 113, 114, 120, 121, 127, 128, 134, 135,
+  ],
+  // The clean sinks' lines.
+  unexpected_lines: [141, 149],
+}

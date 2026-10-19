@@ -1073,7 +1073,10 @@ mod ladder {
     fn over_the_threshold_defers() {
         assert_eq!(
             classify(40, JavaDispatch::Virtual, None, CallPolicy::default()),
-            SiteAction::Defer { by_model: false }
+            SiteAction::Defer {
+                by_model: false,
+                summary: None
+            }
         );
     }
 
@@ -1113,7 +1116,10 @@ mod ladder {
         );
         assert_eq!(
             classify(8, JavaDispatch::Interface, None, policy),
-            SiteAction::Defer { by_model: false }
+            SiteAction::Defer {
+                by_model: false,
+                summary: None
+            }
         );
     }
 
@@ -1158,24 +1164,45 @@ mod ladder {
     fn inline_defers_in_both_orders_but_never_a_monomorphic_site() {
         for policy in [CallPolicy::default(), threshold_first()] {
             assert_eq!(
-                classify(1, JavaDispatch::Virtual, Some(Disposition::Inline), policy),
+                classify(
+                    1,
+                    JavaDispatch::Virtual,
+                    Some(Disposition::Inline(Vec::new())),
+                    policy
+                ),
                 SiteAction::Cha,
                 "one target stays exact"
             );
             assert_eq!(
-                classify(4, JavaDispatch::Virtual, Some(Disposition::Inline), policy),
-                SiteAction::Defer { by_model: true },
+                classify(
+                    4,
+                    JavaDispatch::Virtual,
+                    Some(Disposition::Inline(Vec::new())),
+                    policy
+                ),
+                SiteAction::Defer {
+                    by_model: true,
+                    summary: None
+                },
                 "under the threshold, and still deferred"
             );
             assert_eq!(
-                classify(40, JavaDispatch::Virtual, Some(Disposition::Inline), policy),
-                SiteAction::Defer { by_model: true }
+                classify(
+                    40,
+                    JavaDispatch::Virtual,
+                    Some(Disposition::Inline(Vec::new())),
+                    policy
+                ),
+                SiteAction::Defer {
+                    by_model: true,
+                    summary: None
+                }
             );
         }
         // Zero targets still defer: hybrid inlining can find a callee from the allocated
         // class where the static type resolves to nothing.
         let vmt = vmt_with(2);
-        let matches = matches_with(Some(Disposition::Inline));
+        let matches = matches_with(Some(Disposition::Inline(Vec::new())));
         let mut facts = IndexFacts::default();
         let mut source_info = IndexSourceInfo::default();
         let cha = ClassHierarchyAnalysis::new(&vmt, Default::default());
@@ -1191,7 +1218,10 @@ mod ladder {
         // pointing at a name the table does not have under that key.
         assert_eq!(
             v.classify(&key(), JavaDispatch::Virtual, None),
-            SiteAction::Defer { by_model: true }
+            SiteAction::Defer {
+                by_model: true,
+                summary: None
+            }
         );
     }
 
@@ -1207,7 +1237,10 @@ mod ladder {
         ));
         assert_eq!(
             classify(40, JavaDispatch::Interface, Some(model()), policy),
-            SiteAction::Defer { by_model: false }
+            SiteAction::Defer {
+                by_model: false,
+                summary: None
+            }
         );
     }
 
@@ -1219,11 +1252,17 @@ mod ladder {
             (CallResolutionStrategy::Cha, SiteAction::Cha),
             (
                 CallResolutionStrategy::Hi,
-                SiteAction::Defer { by_model: false },
+                SiteAction::Defer {
+                    by_model: false,
+                    summary: None,
+                },
             ),
             (
                 CallResolutionStrategy::LegacyMixed,
-                SiteAction::Defer { by_model: false },
+                SiteAction::Defer {
+                    by_model: false,
+                    summary: None,
+                },
             ),
         ] {
             let mut facts = IndexFacts::default();
@@ -1246,7 +1285,13 @@ mod ladder {
     fn legacy_mixed_resolves_only_a_single_target() {
         for (targets, expected) in [
             (1, SiteAction::Cha),
-            (2, SiteAction::Defer { by_model: false }),
+            (
+                2,
+                SiteAction::Defer {
+                    by_model: false,
+                    summary: None,
+                },
+            ),
         ] {
             let vmt = vmt_with(targets);
             let matches = ProgramModelMatches::default();
@@ -1383,7 +1428,10 @@ mod ladder {
         );
         assert_eq!(
             v.classify(&key(), JavaDispatch::Virtual, None),
-            SiteAction::Defer { by_model: false },
+            SiteAction::Defer {
+                by_model: false,
+                summary: None
+            },
             "refused, so the site falls through the ladder"
         );
         assert_eq!(

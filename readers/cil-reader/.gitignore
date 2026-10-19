@@ -1,0 +1,12 @@
+/target
+/extern/cecil
+tools/CecilDump/bin
+tools/CecilDump/obj
+target/
+/extern/dnlib
+tools/PtrGen/bin
+tools/PtrGen/obj
+tools/GapGen/bin
+tools/GapGen/obj
+tools/FlowRun/bin
+tools/FlowRun/obj
