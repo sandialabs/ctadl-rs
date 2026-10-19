@@ -382,7 +382,7 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
                 .map(|f| format!("{} -> {}", show(f), show(&flow.to)))
                 .collect();
             let accepted = known_flows.iter().position(|(rx, k)| {
-                rx.is_match(&run.fid) && rendered.iter().any(|r| *r == k.flow)
+                rx.is_match(&run.fid) && rendered.contains(&k.flow)
             });
             match accepted {
                 Some(i) => {
