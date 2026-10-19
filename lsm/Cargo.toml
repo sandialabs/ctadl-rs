@@ -15,5 +15,9 @@ criterion = { version = "0.8", features = ["html_reports"] }
 name = "lsm_benchmarks"
 harness = false
 
+[[bench]]
+name = "mmap_benchmarks"
+harness = false
+
 [lints]
 workspace = true
