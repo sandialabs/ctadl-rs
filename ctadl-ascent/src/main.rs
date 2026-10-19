@@ -186,6 +186,15 @@ pub struct ImportArgs {
     /// of arm64-v8a, armeabi-v7a, armeabi, x86_64, x86.
     #[arg(long, value_name = "ABI")]
     pub native_abi: Option<String>,
+
+    /// Import a .NET directory's framework and BCL assemblies too (`System.*`,
+    /// `Microsoft.Extensions.*`, `mscorlib`, ...).
+    ///
+    /// By default only the application's own assemblies are imported, and the framework's
+    /// are read for their metadata alone: base types, interfaces, type forwarders. A
+    /// self-contained publish ships some 200 of them.
+    #[arg(long)]
+    pub include_framework: bool,
 }
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
@@ -212,6 +221,8 @@ pub enum ImportLanguage {
     Pcode,
     /// Treat as Flowy file
     Flowy,
+    /// Treat as a .NET assembly (`.dll`/`.exe`), or a directory of them (a published app)
+    Cil,
     /// Infer from extension/content
     Auto,
 }
@@ -592,6 +603,11 @@ pub struct GoArgs {
     /// See `ctadl import --help`.
     #[arg(long, value_name = "ABI")]
     pub native_abi: Option<String>,
+
+    /// Import a .NET directory's framework and BCL assemblies too.
+    /// See `ctadl import --help`.
+    #[arg(long)]
+    pub include_framework: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -668,6 +684,7 @@ fn main() -> anyhow::Result<()> {
                     force: args.force,
                     no_native_libs: args.no_native_libs,
                     native_abi: args.native_abi.clone(),
+                    include_framework: args.include_framework,
                 };
                 let name = import_artifact_to_store(&import_args).with_context(|| {
                     format!("importing artifact from: '{}'", artifact.display())
@@ -824,6 +841,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 // Not an APK: this legacy path imports a directory of pcode facts.
                 no_native_libs: false,
                 native_abi: None,
+                include_framework: false,
             };
             import_artifact_to_store(&import_args)?;
 
@@ -899,6 +917,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             ImportLanguage::Lua => Lua,
             ImportLanguage::Pcode => Pcode,
             ImportLanguage::Flowy => Flowy,
+            ImportLanguage::Cil => Cil,
             ImportLanguage::Auto => unreachable!(),
         }
     };
@@ -930,6 +949,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             skip_existing,
             native_libs: !args.no_native_libs,
             native_abi: args.native_abi.as_deref(),
+            cil_include_framework: args.include_framework,
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote
@@ -1168,6 +1188,10 @@ fn autodetect_import_language<P: AsRef<Path>>(
             if path.is_dir() && dir_contains_lua(path) {
                 return Ok(ImportLanguage::Lua);
             }
+            // A published .NET app is a directory of assemblies.
+            if path.is_dir() && ctadl_ascent::languages::cil::dir_has_cli_image(path) {
+                return Ok(ImportLanguage::Cil);
+            }
 
             let ext = path.extension().and_then(|e| OsStr::to_str(e));
 
@@ -1179,6 +1203,10 @@ fn autodetect_import_language<P: AsRef<Path>>(
                 Some("jar") => ImportLanguage::Jar,
                 Some("lua") => ImportLanguage::Lua,
                 Some("tnt") => ImportLanguage::Flowy,
+                // A PE file is .NET when it has CLI metadata, and native otherwise.
+                Some("dll" | "exe") if ctadl_ascent::languages::cil::is_cli_image(path) => {
+                    ImportLanguage::Cil
+                }
                 // A Ghidra project file: export pcode from the existing project.
                 Some("gpr") => ImportLanguage::Pcode,
                 // A C source file or header.

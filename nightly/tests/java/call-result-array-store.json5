@@ -1,0 +1,43 @@
+{
+  // Flow: t = source() (18) -> get()[0] = t (19) -> sink(h[0]) (21). As
+  // CallResultFieldStore, for an array element.
+  "expected_lines": [18, 21],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "source",
+          "parent": "LCallResultArrayStore;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "UserInput",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "sink",
+          "parent": "LCallResultArrayStore;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "TaintedData",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}

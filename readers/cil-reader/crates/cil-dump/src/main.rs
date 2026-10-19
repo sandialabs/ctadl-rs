@@ -1,0 +1,92 @@
+//! CLI: deterministic text dump of a CIL image.
+//!
+//! Usage: cil-dump [--sections a,b,c] [--no-il] [--flow | --symbols] <file>
+//!
+//! `--flow` prints the flow layer's view of every method body instead of the
+//! Cecil parity dump; `--symbols` prints the sequence points of the module's
+//! portable PDB, which `CecilDump --symbols` prints too.
+
+use cil_dump::{ALL_SECTIONS, Section, dump};
+use cil_reader::Module;
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    let mut sections: Vec<Section> = ALL_SECTIONS.iter().map(|&(_, s)| s).collect();
+    let mut path = None;
+    let mut flow = false;
+    let mut symbols = false;
+
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--sections" => {
+                let Some(list) = args.next() else {
+                    eprintln!("--sections needs a value");
+                    return ExitCode::FAILURE;
+                };
+                sections = Vec::new();
+                for name in list.split(',') {
+                    match ALL_SECTIONS.iter().find(|(n, _)| *n == name) {
+                        Some(&(_, s)) => sections.push(s),
+                        None => {
+                            eprintln!("unknown section: {name}");
+                            return ExitCode::FAILURE;
+                        }
+                    }
+                }
+            }
+            "--no-il" => sections.retain(|&s| s != Section::Il),
+            "--flow" => flow = true,
+            "--symbols" => symbols = true,
+            other if path.is_none() => path = Some(other.to_string()),
+            other => {
+                eprintln!("unexpected argument: {other}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let Some(path) = path else {
+        eprintln!("usage: cil-dump [--sections a,b,c] [--no-il] [--flow | --symbols] <file>");
+        return ExitCode::FAILURE;
+    };
+
+    let data = match std::fs::read(&path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("cannot read {path}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let module = match Module::read(&data) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("cannot load {path}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let dir = std::path::Path::new(&path).parent().map(|d| {
+        if d.as_os_str().is_empty() {
+            std::path::Path::new(".")
+        } else {
+            d
+        }
+    });
+    let text = if symbols {
+        Ok(cil_dump::dump_symbols(&module, std::path::Path::new(&path)))
+    } else if flow {
+        cil_dump::flow::dump_flow(&module)
+    } else {
+        dump(&module, &sections, dir)
+    };
+    match text {
+        Ok(text) => {
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("dump failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}

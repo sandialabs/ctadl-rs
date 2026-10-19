@@ -1,0 +1,72 @@
+[module]
+name=longtypename.dll
+mvid=e5b7453b-afbd-4947-8bf9-7eb432cedcd9
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=longtypename, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=ThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeName flags=0x00100000
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void ThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeName::ThisIsAVeryLongMethodNameThisIsAVeryLongMethodNameThisIsAVeryLongMethodNameThisIsAVeryLongMethodNameThisIsAVeryLongMethodNameThisIsAVeryLongMethodNameThisIsAVeryLongMethodNameThisIsAVeryLongMethodNameThisIsAVeryLongMethodNameThisIsAVeryLongMethodNameThisIsAVeryLongMethodName() flags=0x0096 impl=0x0000 rva=0x00002050
+0x06000002=System.Void ThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeNameThisIsAVeryLongTypeName::.ctor() flags=0x1886 impl=0x0000 rva=0x00002070
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+[security-declarations]
+[il]
+0x06000001 max-stack=2 init-locals=true code-size=20
+	local 0=System.Int32
+	local 1=System.Int32
+	IL_0000: nop
+	IL_0001: ldc.i4.2
+	IL_0002: stloc.0
+	IL_0003: nop
+	IL_0004: ldc.i4.s 12
+	IL_0006: stloc.1
+	IL_0007: ldloc.0
+	IL_0008: ldloc.1
+	IL_0009: add
+	IL_000a: stloc.0
+	IL_000b: nop
+	IL_000c: ldloc.0
+	IL_000d: call System.Void System.Console::WriteLine(System.Int32)
+	IL_0012: nop
+	IL_0013: ret
+0x06000002 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+[fields-resolved]

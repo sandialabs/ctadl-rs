@@ -1,0 +1,85 @@
+[module]
+name=mylib.dll
+mvid=59a70fb1-6400-61bd-a745-0383b10fa759
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=mylib, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00008000
+public-key=-
+[assembly-refs]
+0x23000001=netstandard, Version=2.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51 flags=0x00000000
+0x23000002=FSharp.Core, Version=4.4.1.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+[module-refs]
+[resources]
+embedded name=FSharpSignatureData.mylib flags=0x00000001 size=717
+embedded name=FSharpOptimizationData.mylib flags=0x00000001 size=225
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+	base=System.Object
+0x02000002=<StartupCode$mylib>.$.NETStandard,Version=v2.0.AssemblyAttributes flags=0x00000180
+	base=System.Object
+0x02000003=mylib.Say flags=0x00000181
+	base=System.Object
+0x02000004=<StartupCode$mylib>.$Library flags=0x00000180
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void mylib.Say::hello(System.String) flags=0x0016 impl=0x0000 rva=0x00002050
+	param 0 name=name flags=0x0000
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void Microsoft.FSharp.Core.FSharpInterfaceDataVersionAttribute::.ctor(System.Int32,System.Int32,System.Int32) args=((I4:2), (I4:0), (I4:0))
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETStandard,Version=v2.0")) property FrameworkDisplayName=(String:"")
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100030100000000
+ca parent=0x02000003 ctor=System.Void Microsoft.FSharp.Core.CompilationMappingAttribute::.ctor(Microsoft.FSharp.Core.SourceConstructFlags) args=!unresolved blob=0100070000000000
+[security-declarations]
+[il]
+0x06000001 max-stack=4 init-locals=true code-size=28
+	local 0=Microsoft.FSharp.Core.FSharpFunc`2<System.String,Microsoft.FSharp.Core.Unit>
+	local 1=System.String
+	IL_0000: ldstr "Hello %s"
+	IL_0005: newobj System.Void Microsoft.FSharp.Core.PrintfFormat`5<Microsoft.FSharp.Core.FSharpFunc`2<System.String,Microsoft.FSharp.Core.Unit>,System.IO.TextWriter,Microsoft.FSharp.Core.Unit,Microsoft.FSharp.Core.Unit,System.String>::.ctor(System.String)
+	IL_000a: call !!0 Microsoft.FSharp.Core.ExtraTopLevelOperators::PrintFormatLine<Microsoft.FSharp.Core.FSharpFunc`2<System.String,Microsoft.FSharp.Core.Unit>>(Microsoft.FSharp.Core.PrintfFormat`4<!!0,System.IO.TextWriter,Microsoft.FSharp.Core.Unit,Microsoft.FSharp.Core.Unit>)
+	IL_000f: stloc.0
+	IL_0010: nop
+	IL_0011: ldarg.0
+	IL_0012: stloc.1
+	IL_0013: ldloc.0
+	IL_0014: ldloc.1
+	IL_0015: callvirt !1 Microsoft.FSharp.Core.FSharpFunc`2<System.String,Microsoft.FSharp.Core.Unit>::Invoke(!0)
+	IL_001a: pop
+	IL_001b: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> FSharp.Core.dll!0x02000020 Microsoft.FSharp.Core.FSharpInterfaceDataVersionAttribute
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> FSharp.Core.dll!0x02000075 Microsoft.FSharp.Core.FSharpFunc`2
+0x01000007 -> FSharp.Core.dll!0x02000002 Microsoft.FSharp.Core.Unit
+0x01000008 -> FSharp.Core.dll!0x020000f7 Microsoft.FSharp.Core.PrintfFormat`5
+0x01000009 -> -
+0x0100000a -> FSharp.Core.dll!0x02000168 Microsoft.FSharp.Core.ExtraTopLevelOperators
+0x0100000b -> FSharp.Core.dll!0x020000f6 Microsoft.FSharp.Core.PrintfFormat`4
+0x0100000c -> FSharp.Core.dll!0x02000021 Microsoft.FSharp.Core.CompilationMappingAttribute
+0x0100000d -> FSharp.Core.dll!0x02000003 Microsoft.FSharp.Core.SourceConstructFlags
+0x1b000001 -> FSharp.Core.dll!0x020000f7 Microsoft.FSharp.Core.PrintfFormat`5
+0x1b000002 -> FSharp.Core.dll!0x02000075 Microsoft.FSharp.Core.FSharpFunc`2
+0x0a000001 -> FSharp.Core.dll!0x0600002b System.Void Microsoft.FSharp.Core.FSharpInterfaceDataVersionAttribute::.ctor(System.Int32,System.Int32,System.Int32)
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> FSharp.Core.dll!0x060003cf System.Void Microsoft.FSharp.Core.PrintfFormat`5::.ctor(System.String)
+0x0a000005 -> FSharp.Core.dll!0x0600064d T Microsoft.FSharp.Core.ExtraTopLevelOperators::PrintFormatLine(Microsoft.FSharp.Core.PrintfFormat`4<T,System.IO.TextWriter,Microsoft.FSharp.Core.Unit,Microsoft.FSharp.Core.Unit>)
+0x0a000006 -> FSharp.Core.dll!0x06000150 TResult Microsoft.FSharp.Core.FSharpFunc`2::Invoke(T)
+0x0a000007 -> FSharp.Core.dll!0x06000033 System.Void Microsoft.FSharp.Core.CompilationMappingAttribute::.ctor(Microsoft.FSharp.Core.SourceConstructFlags)
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+ca parent=0x02000003 ctor=System.Void Microsoft.FSharp.Core.CompilationMappingAttribute::.ctor(Microsoft.FSharp.Core.SourceConstructFlags) args=((Microsoft.FSharp.Core.SourceConstructFlags:7))
+[fields-resolved]

@@ -19,17 +19,13 @@
 # cannot reach is not an error here, it just will not succeed: the attribute set
 # is the same on every system, and the failure comes from the build.
 #
-# The flake exposes these under `legacyPackages.<system>.release.<target>` for
-# the same reason the nginx example lives there: a nested set is skipped by
-# `nix flake check`, which keeps these slow cross builds -- impossible ones, on
-# the wrong builder -- out of the per-PR checks. Build one with
-#   nix build .#legacyPackages.<system>.release.<target>
-#
 # Only `ctadl` ships. `xtask` is the in-tree test harness.
 {
   pkgs,
   naersk,
   fenix,
+  # The pinned Rust release, as fenix's `toolchainOf` takes it.
+  rustRelease,
   # The source tree to build; the flake passes its own root.
   src,
   # The workspace version, so these derivations are named for what they are.
@@ -50,15 +46,17 @@ let
 
   # naersk runs cargo on the builder, so what varies per target is the
   # toolchain, not the stdenv: a cargo and rustc that run here, plus the std of
-  # the target being built. nixpkgs' rustc carries std only for its own host,
-  # which is what fenix is here to supply.
+  # the target being built, all from the pinned release. nixpkgs' rustc
+  # carries std only for its own host, which is what fenix is here to supply.
   toolchainFor =
     target:
-    with fenix.packages.${system};
-    combine [
-      stable.rustc
-      stable.cargo
-      targets.${target}.stable.rust-std
+    let
+      host = fenix.packages.${system}.toolchainOf rustRelease;
+    in
+    fenix.packages.${system}.combine [
+      host.rustc
+      host.cargo
+      (fenix.packages.${system}.targets.${target}.toolchainOf rustRelease).rust-std
     ];
 
   buildFor =

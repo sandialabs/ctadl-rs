@@ -75,6 +75,7 @@ chosen by the frontend's method table:
 | dex, apk, jvm, jar | `java-index.jsonl` |
 | pcode | `native-index.jsonl` |
 | lua | `lua-index.jsonl` |
+| cil | `cil-index.jsonl` |
 | flowy | *(none)* |
 
 Your `--models` files are unioned on top of the selected default. Pass
@@ -415,6 +416,7 @@ port must match:
 | Frontend | Array element segment | Port spelling |
 | --- | --- | --- |
 | dex, jvm | `Symbol("[]")` | `Argument(0).\[]` — JSON `"Argument(0).\\[]"` |
+| cil | `Symbol("[]")`, and `deref` for what a struct receiver or a `ref`/`out` parameter points at | `Argument(0).\[]`, `Argument(2).deref` |
 | lua | `Symbol("[_elem_]")`, and `Symbol("[3]")` for a literal key | `Argument(0).\[_elem_]`, `Argument(0).\[3]` |
 | C (tree-sitter) | a real `Offset` then `Symbol("[]")` — `a[3]` is `.[3].\[]`, and `a[0]` and `a[n]` are both a bare `.\[]` | `Argument(0).[3].\[]`, `Argument(0).\[]` |
 | pcode | a real `Offset` | `Argument(0).[8]` |
@@ -927,13 +929,14 @@ call sites' signature keys contain it by construction.
 a function, and a signature is not one. (`in_function` is refused for a second reason — the
 policy is deliberately per signature, not per site.)
 
-`model` carries **exactly one** of:
+`model` carries **exactly one** of these, except that `resolve` may come with a `propagation`:
 
 | Key | Meaning |
 | --- | --- |
 | `propagation` | The site's summary, with the same port semantics as a `find: methods` propagation: the receiver is `Argument(0)`, the nth argument `Argument(n)`, the result `Return`. |
 | `propagation: []` | An **empty** list is the spelling of "this call moves nothing". Written explicitly, so "forgot the model" and "meant to discard" are different documents. |
 | `resolve: "inline"` | Send every site of this signature to hybrid inlining whatever its target count, except a site with exactly one target, which stays exact. For a signature whose bodies must stay reachable but whose target set is too wide for CHA — `close`, `dispose`, and the rest of the resource contract. |
+| `resolve: "inline"` + `propagation` | Both: the site goes to hybrid inlining *and* calls the synthetic summary. For a contract implemented both by the program, whose bodies inlining reaches, and by a library, whose objects have no methods in the import for inlining to find — `IEnumerable<T>.GetEnumerator` over a `yield` iterator or over a `List<T>`. The summary adds flows and hides nothing, so the source/sink guard does not refuse it. |
 | `closure_shaped: true` | A note for `ctadl report`, not a resolution rule. Marks arbitrary code behind a one-method interface, which is what hybrid inlining is for, so the report can say which closure-shaped signatures no model covers. |
 
 Omitting all four is a load error, and so is any other `model` key: an endpoint and a `modes`
@@ -942,7 +945,7 @@ directive live on a function, and there is none here.
 When several generators match one signature, the disposition that keeps the most of the program
 reachable wins: `inline` > `propagation` > empty. So a user overrides a shipped discard by
 adding a propagation and a shipped model by adding `resolve: inline`; going the other way needs
-`--no-default-models`. Two propagation lists on one signature union.
+`--no-default-models`. Two propagation lists on one signature union, as do two `inline` ones'.
 
 ### What not to model
 
@@ -961,6 +964,7 @@ design is drawn on.
 | Take a contract method's callees out of the call graph | `dispatch` | `propagation` |
 | Discard a call whose only output is a shape primitive | `dispatch` | `propagation: []` |
 | Keep a signature's bodies reachable but off CHA | `dispatch` | `resolve: "inline"` |
+| ... and summarize it for receivers the program does not implement | `dispatch` | `resolve: "inline"` + `propagation` |
 | Mark a function's output as untrusted input | `methods` | `sources` |
 | Mark a whole value (all offsets/fields) as untrusted, e.g. `argv` | `methods` | `sources` + `saturating: true` |
 | Flag a dangerous API | `methods` | `sinks` |

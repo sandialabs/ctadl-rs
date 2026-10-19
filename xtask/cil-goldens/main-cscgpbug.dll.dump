@@ -1,0 +1,119 @@
+[module]
+name=test.dll
+mvid=2a86625d-aa0b-4cc5-b38e-ff3deb5aeacf
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=test, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=BaseListViewModel`1 flags=0x00100001
+	base=System.Object
+	generic-param 0 name=T flags=0x0000
+0x02000003=ListViewModel flags=0x00100001
+	base=BaseListViewModel`1<System.Object>
+[fields]
+0x04000001=T BaseListViewModel`1::<SelectedItem>k__BackingField flags=0x0001
+[methods]
+0x06000001=T BaseListViewModel`1::get_SelectedItem() flags=0x09c6 impl=0x0000 rva=0x00002050 semantics=0x0002
+0x06000002=System.Void BaseListViewModel`1::set_SelectedItem(T) flags=0x09c6 impl=0x0000 rva=0x00002067 semantics=0x0001
+	param 1 name=value flags=0x0000
+0x06000003=System.Void BaseListViewModel`1::.ctor() flags=0x1886 impl=0x0000 rva=0x00002070
+0x06000004=System.Void ListViewModel::DoSomething() flags=0x0086 impl=0x0000 rva=0x00002090
+0x06000005=System.Void ListViewModel::.ctor() flags=0x1886 impl=0x0000 rva=0x000020ab
+0x06000006=!0 ListViewModel::<>n__FabricatedMethod1() flags=0x0081 impl=0x0000 rva=0x000020b4
+0x06000007=System.Void ListViewModel::<>n__FabricatedMethod2(!0) flags=0x0081 impl=0x0000 rva=0x000020cb
+0x06000008=System.Void ListViewModel::<DoSomething>b__0() flags=0x0081 impl=0x0000 rva=0x00002078
+[properties]
+0x17000001=T BaseListViewModel`1::SelectedItem() flags=0x0000 getter=0x06000001 setter=0x06000002
+[events]
+[custom-attributes]
+ca parent=0x06000001 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x04000001 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x06000002 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000006 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000007 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000008 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+[security-declarations]
+[il]
+0x06000001 max-stack=1 init-locals=true code-size=11
+	local 0=T
+	IL_0000: ldarg.0
+	IL_0001: ldfld T BaseListViewModel`1<T>::<SelectedItem>k__BackingField
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x06000002 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: stfld T BaseListViewModel`1<T>::<SelectedItem>k__BackingField
+	IL_0007: ret
+0x06000003 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000004 max-stack=3 init-locals=true code-size=15
+	local 0=System.Action
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldftn System.Void ListViewModel::<DoSomething>b__0()
+	IL_0008: newobj System.Void System.Action::.ctor(System.Object,System.IntPtr)
+	IL_000d: stloc.0
+	IL_000e: ret
+0x06000005 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void BaseListViewModel`1<System.Object>::.ctor()
+	IL_0006: ret
+0x06000006 max-stack=1 init-locals=true code-size=11
+	local 0=!0
+	IL_0000: ldarg.0
+	IL_0001: call T BaseListViewModel`1<System.Object>::get_SelectedItem()
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x06000007 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: ldarg.1
+	IL_0002: call System.Void BaseListViewModel`1<System.Object>::set_SelectedItem(T)
+	IL_0007: ret
+0x06000008 max-stack=1 init-locals=true code-size=9
+	local 0=System.Object
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call !0 ListViewModel::<>n__FabricatedMethod1()
+	IL_0007: stloc.0
+	IL_0008: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x1b000001 -> test.dll!0x02000002 BaseListViewModel`1
+0x1b000002 -> test.dll!0x02000002 BaseListViewModel`1
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> test.dll!0x04000001 T BaseListViewModel`1::<SelectedItem>k__BackingField
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> test.dll!0x06000003 System.Void BaseListViewModel`1::.ctor()
+0x0a000008 -> test.dll!0x06000001 T BaseListViewModel`1::get_SelectedItem()
+0x0a000009 -> test.dll!0x06000002 System.Void BaseListViewModel`1::set_SelectedItem(T)
+[custom-attributes-resolved]
+[fields-resolved]

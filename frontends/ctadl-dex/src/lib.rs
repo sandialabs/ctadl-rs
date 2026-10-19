@@ -15,7 +15,6 @@ use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
 use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
-use streaming_iterator::StreamingIterator; // needed for DataFlow.dest.owned()
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
@@ -25,7 +24,7 @@ use ctadl_ir::mir::call::{
 use ctadl_ir::*;
 use dex_reader::basic_blocks::{basic_blocks, block_successors};
 use dex_reader::error::DexError;
-use dex_reader::instructions::{DataFlow, Instruction, Reg};
+use dex_reader::instructions::{DataFlow, Instruction, Reg, TypeIdx};
 use dex_reader::parser::{DecodedCodeItem, decode_code_item};
 use dex_reader::types::{ACC_ABSTRACT, ACC_INTERFACE, ACC_NATIVE, ACC_STATIC, CodeItem, MethodId};
 use dex_reader::{APKParser, DexParser};
@@ -313,7 +312,7 @@ impl Context {
                     if !ACC_STATIC.is_set_in(enc.access_flags)
                         && !ACC_NATIVE.is_set_in(enc.access_flags)
                     {
-                        fdat.params.push(ParameterType::ByRef);
+                        fdat.params.push(ParameterType::Shared);
                     }
                     for param_idx in param_types.into_iter() {
                         let ty = parser.get_type(param_idx.into()).unwrap();
@@ -326,9 +325,9 @@ impl Context {
                         };
                         for _ in 0..reg_count {
                             fdat.params.push(if !descr.starts_with("L") {
-                                ParameterType::ByVal
+                                ParameterType::SharedFields
                             } else {
-                                ParameterType::ByRef
+                                ParameterType::Shared
                             });
                         }
                     }
@@ -504,9 +503,9 @@ impl Context {
                     let ty = parser.get_type(ty.into()).unwrap();
                     let descr = parser.get_string(ty.descriptor_idx.try_into().unwrap())?;
                     fdat.params.push(if !descr.starts_with("L") {
-                        ParameterType::ByVal
+                        ParameterType::SharedFields
                     } else {
-                        ParameterType::ByRef
+                        ParameterType::Shared
                     });
                 }
                 // All functions return 2 values: (normal_return, exception_return)
@@ -584,6 +583,20 @@ impl Context {
         // If this instruction is not a call, bail out.
         let args_regs = inst.call_args()?; // returns &[Reg]
 
+        // invoke-custom names a call site, not a method: a bootstrap method picks the target at
+        // run time. Record the call with an unknown target, so that the move-result after it
+        // reads this call's result rather than an earlier call's.
+        if matches!(
+            inst,
+            Instruction::InvokeCustom(_) | Instruction::InvokeCustomRange(_)
+        ) {
+            let args = args_regs
+                .iter()
+                .map(|reg| AccessPath::without_fields(reg_to_var(code, *reg, locals)).into())
+                .collect();
+            return Some(self.call_assign(CallStyle::Unknown, args, locals));
+        }
+
         // Resolve the method index from the specific invoke variant, and with it the
         // dispatch kind.
         let (method_idx, dispatch) = match inst {
@@ -597,6 +610,12 @@ impl Context {
             Instruction::InvokeDirectRange(fmt) => (fmt.idx, None),
             Instruction::InvokeStaticRange(fmt) => (fmt.idx, None),
             Instruction::InvokeInterfaceRange(fmt) => (fmt.idx, Some(JavaDispatch::Interface)),
+            // invoke-polymorphic calls a signature-polymorphic method (`MethodHandle.invoke`,
+            // `invokeExact`, ...) on the handle in its first argument, like invoke-virtual.
+            Instruction::InvokePolymorphic(fmt) => (fmt.method_id, Some(JavaDispatch::Virtual)),
+            Instruction::InvokePolymorphicRange(fmt) => {
+                (fmt.method_id, Some(JavaDispatch::Virtual))
+            }
             _ => return None,
         };
         let is_static = dispatch.is_none();
@@ -636,20 +655,42 @@ impl Context {
             }
         };
 
+        let args = if is_static {
+            args
+        } else {
+            args.into_iter().skip(1).collect()
+        };
+        Some(self.call_assign(style, args, locals))
+    }
+
+    /// A call statement returning into the result and exception temporaries, which the next
+    /// move-result or move-exception reads.
+    fn call_assign(
+        &mut self,
+        style: CallStyle,
+        args: ctadl_ir::ThinVec<Exp>,
+        locals: &mut Locals,
+    ) -> Statement {
         // Dex returns into a special register, so just create a temporary.
         let retval = Context::ret(locals);
         let throwval = Context::except(locals);
         self.call_result = Some(retval.clone());
         self.catch_result = Some(throwval.clone());
-        Some(Statement::new_kind(StatementKind::CallAssign {
+        Statement::new_kind(StatementKind::CallAssign {
             style,
             rets: ctadl_ir::thin_vec![retval, throwval],
-            args: if is_static {
-                args
-            } else {
-                args.into_iter().skip(1).collect()
-            },
-        }))
+            args,
+        })
+    }
+
+    /// A new object of the class or array type `idx` names, or `None` when the
+    /// type cannot be read.
+    fn allocation_exp(parser: &DexParser<'_>, idx: TypeIdx) -> Option<Exp> {
+        let tid = parser.constant_pool().type_ids.get(idx.0 as usize)?;
+        let desc = tid.descriptor(&parser.constant_pool().strings).ok()?;
+        Some(Exp::new_object_ref(CallObject::JavaObject(JavaClass(
+            desc.into(),
+        ))))
     }
 
     fn dataflow_to_assign(
@@ -659,15 +700,8 @@ impl Context {
         inst: &Instruction,
         locals: &mut Locals,
     ) -> Result<Vec<Statement>, DexError> {
-        let DataFlow {
-            source,
-            dest,
-            ret: _,
-        } = inst.data_flow();
+        let DataFlow { source, dest } = inst.data_flow();
         let mut stmts: Vec<Statement> = Vec::new();
-
-        // We have to iterate over dest multiple times, sadly, so we need to store the dest items.
-        let dest: SmallVec<[Reg; 4]> = dest.owned().collect();
 
         if let Some(const_exp) = match inst {
             // 8-bit signed constant
@@ -714,17 +748,19 @@ impl Context {
                 }
             }
             // NewInstance – resolved to a JavaObject reference
-            Instruction::NewInstance(f) => {
-                if let Some(tid) = parser.constant_pool().type_ids.get(f.idx.0 as usize)
-                    && let Ok(desc) = tid.descriptor(&parser.constant_pool().strings)
-                {
-                    Some(Exp::new_object_ref(CallObject::JavaObject(JavaClass(
-                        desc.into(),
-                    ))))
-                } else {
-                    None
-                }
-            }
+            Instruction::NewInstance(f) => Self::allocation_exp(parser, f.idx),
+            // A new-array is a new object of its array type. Its size register does
+            // not flow into it: copying the size in would make every array built from
+            // one size register a copy of that register, so taint in one would reach the
+            // others.
+            Instruction::NewArray(f) => Self::allocation_exp(parser, f.idx),
+            // A method handle or method type constant is an object of that class
+            Instruction::ConstMethodHandle(_) => Some(Exp::new_object_ref(CallObject::JavaObject(
+                JavaClass("Ljava/lang/invoke/MethodHandle;".into()),
+            ))),
+            Instruction::ConstMethodType(_) => Some(Exp::new_object_ref(CallObject::JavaObject(
+                JavaClass("Ljava/lang/invoke/MethodType;".into()),
+            ))),
             _ => None,
         } {
             for d in dest {
@@ -761,7 +797,7 @@ impl Context {
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
                     source
-                        .cloned()
+                        .into_iter()
                         .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 // flow temp into field update
@@ -802,12 +838,13 @@ impl Context {
             | Instruction::IPutObject(f)
             | Instruction::IPutWide(f) => {
                 let temp_var = self.counter.temp(locals);
-                // flow sources to temp
+                // flow the stored value to temp. Take it from vA by position, not by filtering the
+                // object out of `source`: in `iput-object p0, p0, F` the value is the object.
+                let value = stored_value_regs(f.a, matches!(inst, Instruction::IPutWide(_)));
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
-                    source
-                        .cloned()
-                        .filter(|r| *r != f.b)
+                    value
+                        .into_iter()
                         .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 let object = reg_to_var(code_item, f.b, locals);
@@ -870,11 +907,13 @@ impl Context {
             | Instruction::APutObject(f)
             | Instruction::APutWide(f) => {
                 let temp_var = self.counter.temp(locals);
+                // As for iput: the value is vA by position, since it may share a register with
+                // the array (`a[i] = a`) or the index (`a[i] = i`).
+                let value = stored_value_regs(f.a, matches!(inst, Instruction::APutWide(_)));
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
-                    source
-                        .cloned()
-                        .filter(|r| *r != f.b && *r != f.c)
+                    value
+                        .into_iter()
                         .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 let array_var = reg_to_var(code_item, f.b, locals);
@@ -895,13 +934,12 @@ impl Context {
             }
             _ => {
                 // Flows all the sources to each dest
-                let sources: Vec<_> = source.copied().collect();
-                if !sources.is_empty() {
+                if !source.is_empty() {
                     for dest in dest.iter() {
                         let dst_var = reg_to_var(code_item, *dest, locals);
                         stmts.push(Statement::new_kind(StatementKind::assign(
                             dst_var,
-                            sources
+                            source
                                 .iter()
                                 .map(|s| reg_to_var(code_item, *s, locals).into()),
                         )));
@@ -951,6 +989,15 @@ impl Context {
 
     fn except(locals: &mut Locals) -> VariableRef {
         VariableRef::new_local_idx(locals.get_or_intern("throwval"))
+    }
+}
+
+/// The registers holding the value a store writes: `a`, or the pair `a, a+1` when `wide`.
+fn stored_value_regs(a: Reg, wide: bool) -> SmallVec<[Reg; 2]> {
+    if wide {
+        smallvec![a, a.next_reg()]
+    } else {
+        smallvec![a]
     }
 }
 

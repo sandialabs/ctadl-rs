@@ -22,8 +22,8 @@ fn function_f() -> FunctionData {
     let mut f = FunctionData::default();
     f.set_name("F".to_string());
     f.set_return_type(ReturnType { arity: 1 });
-    f.params.push(ParameterType::ByVal);
-    f.params.push(ParameterType::ByVal);
+    f.params.push(ParameterType::SharedFields);
+    f.params.push(ParameterType::SharedFields);
     let a_idx = f.intern_local("a");
     let blocks = f.blocks.blocks_mut();
     blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
@@ -73,7 +73,7 @@ fn function_g() -> FunctionData {
         ..Default::default()
     };
     g.set_return_type(ReturnType { arity: 1 });
-    g.params.push(ParameterType::ByVal);
+    g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let a = AccessPath {
@@ -124,7 +124,7 @@ fn function_g1() -> FunctionData {
         ..Default::default()
     };
     g.set_return_type(ReturnType { arity: 1 });
-    g.params.push(ParameterType::ByVal);
+    g.params.push(ParameterType::SharedFields);
     let a_idx = g.intern_local("a");
     let c_idx = g.intern_local("c");
     let c1_idx = g.intern_local("c1");
@@ -173,7 +173,7 @@ fn program_h() -> Program {
     program.functions.push(FunctionData::default());
     let h = &mut program.functions[0.into()];
     h.set_name("F".to_string());
-    h.params.push(ParameterType::ByVal);
+    h.params.push(ParameterType::SharedFields);
     let blocks = h.blocks.blocks_mut();
     blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Goto {

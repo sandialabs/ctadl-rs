@@ -2813,7 +2813,9 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     let mut code_flows_by_span: BTreeMap<SpanKey, Vec<CodeFlow>> = BTreeMap::new();
     for (path, (span_key, details)) in &results_by_path {
         let mut thread_flow_locations = Vec::new();
+        // The previous step's location identity, and its instruction.
         let mut last_loc_id: Option<(String, Option<String>)> = None;
+        let mut last_site: Option<(u32, u64)> = None;
         // Monotonic step counter for the whole flow, surfaced as SARIF `executionOrder`
         // so a viewer/`jq` can order steps unambiguously across the (possibly several)
         // code flows a result carries.
@@ -2828,14 +2830,19 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .unwrap_or_else(|| format!("func#{}", fid.id))
         };
         // Emit a located code-flow step for a call instruction, deduping against the
-        // previous step's location. `message` describes the step (the full vertex —
+        // previous step's location. An `endpoint` step (`source ...`/`sink ...`) is deduped
+        // only against a step at the same instruction: a source-level location can be a
+        // whole statement (a CIL sequence point), so in `Sink(F(Source()))` every call has
+        // the one location, and deduping by it alone would drop the sink step. `message` describes the step (the full vertex —
         // variable *and* access path — its function, and the edge kind); `kinds` are the
         // SARIF well-known step categories (`call`/`return`/`taint`); `exec_order` is
         // bumped so every emitted step carries its temporal order.
         let push_site_step = |thread_flow_locations: &mut Vec<ThreadFlowLocation>,
                               last_loc_id: &mut Option<(String, Option<String>)>,
+                              last_site: &mut Option<(u32, u64)>,
                               exec_order: &mut i64,
                               site: &InsnSiteId,
+                              endpoint: bool,
                               kinds: Vec<String>,
                               message: String| {
             let Some(loc) = source_data
@@ -2873,10 +2880,15 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 };
                 Some((uri, pos))
             });
-            if current_loc_id.is_some() && current_loc_id == *last_loc_id {
+            let current_site = Some((site.func_id.id, site.insn_id.id));
+            if current_loc_id.is_some()
+                && current_loc_id == *last_loc_id
+                && (!endpoint || current_site == *last_site)
+            {
                 return;
             }
             *last_loc_id = current_loc_id;
+            *last_site = current_site;
             *exec_order += 1;
             let mut loc_with_msg = loc.clone();
             loc_with_msg.message = Some(Message::builder().text(message).build());
@@ -2899,8 +2911,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
+                    &mut last_site,
                     &mut exec_order,
                     &site,
+                    true,
                     vec!["taint".to_string()],
                     format!(
                         "source {}{} in {}",
@@ -2954,8 +2968,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
+                    &mut last_site,
                     &mut exec_order,
                     site,
+                    false,
                     vec![kind.to_string()],
                     format!(
                         "{} {}{} in {}",
@@ -2992,8 +3008,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
+                    &mut last_site,
                     &mut exec_order,
                     &site,
+                    false,
                     vec!["call".to_string()],
                     format!(
                         "call {}{} in {}",
@@ -3013,8 +3031,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
+                    &mut last_site,
                     &mut exec_order,
                     &site,
+                    true,
                     vec!["taint".to_string()],
                     format!(
                         "sink {}{} in {}",

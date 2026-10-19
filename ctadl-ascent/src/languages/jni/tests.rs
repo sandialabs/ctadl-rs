@@ -310,7 +310,7 @@ fn fact_base(functions: &[(&str, i16)]) -> (IndexFacts, IndexSourceInfo) {
             facts.formal_param.push((
                 id,
                 FlowVariable::formal_index(FormalIndex::new(i)),
-                FormalType::ByRef,
+                FormalType::Shared,
             ));
         }
     }

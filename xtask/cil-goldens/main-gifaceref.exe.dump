@@ -1,0 +1,188 @@
+[module]
+name=test.exe
+mvid=06e8b7bd-bcff-465a-97bd-1fb7253073ff
+kind=Console
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000003
+[assembly]
+full-name=test, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Program flags=0x00100000
+	base=System.Object
+	interface=System.Collections.Generic.IEnumerable`1<System.Int32>
+	interface=System.Collections.IEnumerable
+0x02000003=Program/<GetEnumerator>d__0 flags=0x00100103
+	base=System.Object
+	interface=System.Collections.Generic.IEnumerator`1<System.Int32>
+	interface=System.Collections.IEnumerator
+	interface=System.IDisposable
+[fields]
+0x04000001=System.Int32 Program/<GetEnumerator>d__0::<>2__current flags=0x0001
+0x04000002=System.Int32 Program/<GetEnumerator>d__0::<>1__state flags=0x0001
+0x04000003=Program Program/<GetEnumerator>d__0::<>4__this flags=0x0006
+[methods]
+0x06000001=System.Collections.Generic.IEnumerator`1<System.Int32> Program::GetEnumerator() flags=0x01e6 impl=0x0000 rva=0x000020f4
+0x06000002=System.Collections.IEnumerator Program::System.Collections.IEnumerable.GetEnumerator() flags=0x01e1 impl=0x0000 rva=0x00002114
+	override=System.Collections.IEnumerator System.Collections.IEnumerable::GetEnumerator()
+0x06000003=System.Void Program::Main() flags=0x0091 impl=0x0000 rva=0x0000212c
+0x06000004=System.Void Program::.ctor() flags=0x1886 impl=0x0000 rva=0x0000212f
+0x06000005=System.Boolean Program/<GetEnumerator>d__0::MoveNext() flags=0x01e1 impl=0x0000 rva=0x00002050
+	override=System.Boolean System.Collections.IEnumerator::MoveNext()
+0x06000006=System.Int32 Program/<GetEnumerator>d__0::System.Collections.Generic.IEnumerator<System.Int32>.get_Current() flags=0x09e1 impl=0x0000 rva=0x000020a4 semantics=0x0002
+	override=!0 System.Collections.Generic.IEnumerator`1<System.Int32>::get_Current()
+0x06000007=System.Void Program/<GetEnumerator>d__0::System.Collections.IEnumerator.Reset() flags=0x01e1 impl=0x0000 rva=0x000020bb
+	override=System.Void System.Collections.IEnumerator::Reset()
+0x06000008=System.Void Program/<GetEnumerator>d__0::System.IDisposable.Dispose() flags=0x01e1 impl=0x0000 rva=0x000020c2
+	override=System.Void System.IDisposable::Dispose()
+0x06000009=System.Object Program/<GetEnumerator>d__0::System.Collections.IEnumerator.get_Current() flags=0x09e1 impl=0x0000 rva=0x000020c8 semantics=0x0002
+	override=System.Object System.Collections.IEnumerator::get_Current()
+0x0600000a=System.Void Program/<GetEnumerator>d__0::.ctor(System.Int32) flags=0x1886 impl=0x0000 rva=0x000020e4
+	param 1 name=<>1__state flags=0x0000
+[properties]
+0x17000001=System.Int32 Program/<GetEnumerator>d__0::System.Collections.Generic.IEnumerator<System.Int32>.Current() flags=0x0000 getter=0x06000006
+0x17000002=System.Object Program/<GetEnumerator>d__0::System.Collections.IEnumerator.Current() flags=0x0000 getter=0x06000009
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000006 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000007 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000009 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
+[il]
+0x06000001 max-stack=2 init-locals=true code-size=20
+	local 0=Program/<GetEnumerator>d__0
+	local 1=System.Collections.Generic.IEnumerator`1<System.Int32>
+	IL_0000: ldc.i4.0
+	IL_0001: newobj System.Void Program/<GetEnumerator>d__0::.ctor(System.Int32)
+	IL_0006: stloc.0
+	IL_0007: ldloc.0
+	IL_0008: ldarg.0
+	IL_0009: stfld Program Program/<GetEnumerator>d__0::<>4__this
+	IL_000e: ldloc.0
+	IL_000f: stloc.1
+	IL_0010: br.s IL_0012
+	IL_0012: ldloc.1
+	IL_0013: ret
+0x06000002 max-stack=1 init-locals=true code-size=12
+	local 0=System.Collections.IEnumerator
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Collections.Generic.IEnumerator`1<System.Int32> Program::GetEnumerator()
+	IL_0007: stloc.0
+	IL_0008: br.s IL_000a
+	IL_000a: ldloc.0
+	IL_000b: ret
+0x06000003 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000004 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000005 max-stack=2 init-locals=true code-size=70
+	local 0=System.Boolean
+	local 1=System.Int32
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 Program/<GetEnumerator>d__0::<>1__state
+	IL_0006: stloc.1
+	IL_0007: ldloc.1
+	IL_0008: switch (IL_0019, IL_0017)
+	IL_0015: br.s IL_001b
+	IL_0017: br.s IL_0038
+	IL_0019: br.s IL_001d
+	IL_001b: br.s IL_0040
+	IL_001d: ldarg.0
+	IL_001e: ldc.i4.m1
+	IL_001f: stfld System.Int32 Program/<GetEnumerator>d__0::<>1__state
+	IL_0024: nop
+	IL_0025: ldarg.0
+	IL_0026: ldc.i4.s 42
+	IL_0028: stfld System.Int32 Program/<GetEnumerator>d__0::<>2__current
+	IL_002d: ldarg.0
+	IL_002e: ldc.i4.1
+	IL_002f: stfld System.Int32 Program/<GetEnumerator>d__0::<>1__state
+	IL_0034: ldc.i4.1
+	IL_0035: stloc.0
+	IL_0036: br.s IL_0044
+	IL_0038: ldarg.0
+	IL_0039: ldc.i4.m1
+	IL_003a: stfld System.Int32 Program/<GetEnumerator>d__0::<>1__state
+	IL_003f: nop
+	IL_0040: ldc.i4.0
+	IL_0041: stloc.0
+	IL_0042: br.s IL_0044
+	IL_0044: ldloc.0
+	IL_0045: ret
+0x06000006 max-stack=1 init-locals=true code-size=11
+	local 0=System.Int32
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 Program/<GetEnumerator>d__0::<>2__current
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x06000007 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotSupportedException::.ctor()
+	IL_0005: throw
+0x06000008 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000009 max-stack=1 init-locals=true code-size=16
+	local 0=System.Object
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 Program/<GetEnumerator>d__0::<>2__current
+	IL_0006: box System.Int32
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x0600000a max-stack=8 init-locals=false code-size=14
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ldarg.0
+	IL_0007: ldarg.1
+	IL_0008: stfld System.Int32 Program/<GetEnumerator>d__0::<>1__state
+	IL_000d: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x1b000001 -> -
+0x1b000002 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+[custom-attributes-resolved]
+[fields-resolved]

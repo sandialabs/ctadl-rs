@@ -1,0 +1,17 @@
+{
+  // Flow: new Pair(t, "clean") (20) -> sink(p.first) (21). The positive twin of
+  // ConstructorArgumentOrder.
+  "expected_lines": [20, 21],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LConstructorArgumentOrderFlow;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LConstructorArgumentOrderFlow;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

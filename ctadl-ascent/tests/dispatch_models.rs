@@ -39,8 +39,8 @@ fn implementation(cls: &str) -> FunctionData {
         name: format!("{cls}->{NAME}{DESC}"),
         ..Default::default()
     };
-    f.params.parameters.push(ParameterType::ByRef);
-    f.params.parameters.push(ParameterType::ByRef);
+    f.params.parameters.push(ParameterType::Shared);
+    f.params.parameters.push(ParameterType::Shared);
     let mut fb = FunctionBuilder::new(&mut f);
     fb.set_return_arity(1);
     let body = fb.add_block();
@@ -57,8 +57,8 @@ fn caller() -> FunctionData {
         name: CALLER.to_string(),
         ..Default::default()
     };
-    f.params.parameters.push(ParameterType::ByRef);
-    f.params.parameters.push(ParameterType::ByRef);
+    f.params.parameters.push(ParameterType::Shared);
+    f.params.parameters.push(ParameterType::Shared);
     let mut fb = FunctionBuilder::new(&mut f);
     fb.set_return_arity(1);
     let body = fb.add_block();
@@ -336,6 +336,28 @@ fn inline_defers_the_site_to_hybrid_inlining() {
     assert!(
         !indexed.facts.callee_resolvents.is_empty(),
         "a deferred signature keeps the rows the engine resolves it with"
+    );
+}
+
+/// `resolve: inline` with a propagation does both: the site is deferred, and it also calls the
+/// synthetic function, whose summary the caller propagates through. The receiver here is a
+/// parameter, whose class no allocation names, which is the case the summary is for.
+#[test]
+fn inline_with_a_propagation_also_carries_the_summary() {
+    let indexed = index_with(
+        vec![generator(serde_json::json!({
+            "resolve": "inline",
+            "propagation": [{"input": "Argument(1)", "output": "Return"}]
+        }))],
+        &[],
+    );
+    assert_eq!(indexed.callees(), vec![SYNTHETIC.to_string()]);
+    assert_eq!(indexed.facts.callee_info.len(), 1);
+    assert!(indexed.caller_propagates());
+    let buckets = indexed.report.buckets[JavaDispatch::Interface.index()];
+    assert_eq!(
+        (buckets.java_sites, buckets.inlined, buckets.modelled),
+        (1, 1, 0)
     );
 }
 

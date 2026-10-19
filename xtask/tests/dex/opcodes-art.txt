@@ -1,0 +1,1845 @@
+# ART's observations of every `cargo xtask dex-opcodes` case. The `dex:opcodes-replay`
+# check judges dex-reader against them. After changing a case, H.java or Driver.java,
+# rerun on a device: `cargo xtask dex-opcodes --avd <name> --save`.
+device api 34 arm64-v8a google/sdk_gphone64_arm64/emu64a:14/UE1A.230829.050/12077443:userdebug/dev-keys
+harness a218149130007029
+fingerprint Case_0 de6262ce62070ba1
+fingerprint Case_1 1833a5f6bc83e903
+fingerprint Case_2 6940cea95b61f6c1
+fingerprint Case_3 d59f97e268019ae5
+fingerprint Case_4 cbb15ca4e9929f21
+fingerprint Case_5 a3d000437ebf9bfb
+fingerprint Case_6 d83e3d89184e9bee
+fingerprint Case_7 346aea2a2d0b2839
+fingerprint Case_8 f58518f3cfbd50a9
+fingerprint Case_9 7f05f471ca98f1bd
+fingerprint Case_10 fca95d0fe49b95c4
+fingerprint Case_11 9aae134cc8f3597b
+fingerprint Case_12 0fdf36d5a58cbd4b
+fingerprint Case_13 4e0f81842a0eb948
+fingerprint Case_14 3384db5aaa812dcf
+fingerprint Case_15 35498ea0e6d12e2e
+fingerprint Case_16 a33d4276420ebbc6
+fingerprint Case_17 49103fcd35fa162a
+fingerprint Case_18 4cf57198cd425792
+fingerprint Case_19 ef20a5f789b0b54f
+fingerprint Case_20 e347c8cbfae8da53
+fingerprint Case_21 0f86c1dd0d2f9ae5
+fingerprint Case_22 67b347c1c1d2d034
+fingerprint Case_23 a19a4d68afa8aeb6
+fingerprint Case_24 428e48086e112562
+fingerprint Case_25 b928e69351b60b72
+fingerprint Case_26 85f705689af59c8a
+fingerprint Case_27 8a79e6c3455bf018
+fingerprint Case_28 98a52c13851fa3e3
+fingerprint Case_29 b1dd3814ece376a1
+fingerprint Case_30 babe8095e20677fb
+fingerprint Case_31 6dbbd472c0abbe91
+fingerprint Case_32 13271a960d72c7ac
+fingerprint Case_33 cb3855b277c6d4a4
+fingerprint Case_34 623cc81fb62d6df7
+fingerprint Case_35 525485c4abefb15c
+fingerprint Case_36 f25b8d42e9525236
+fingerprint Case_37 9e72a22d5f834728
+fingerprint Case_38 de54f11c2bc5f689
+fingerprint Case_39 33a2c3f386d187ef
+fingerprint Case_40 40236c41e459ad09
+fingerprint Case_41 e91afe2ed214c710
+fingerprint Case_42 67d887022e00cbc2
+fingerprint Case_43 571743d4c4ae0172
+fingerprint Case_44 e3f1fc1357867664
+fingerprint Case_45 a6ff3e1995a02f6b
+fingerprint Case_46 ff99f84a7801ee9b
+fingerprint Case_47 7bd3fd6ac06ec842
+fingerprint Case_48 dbd97d1818cec0af
+fingerprint Case_49 f40b7fa780955638
+fingerprint Case_50 e7ca191be04ff3bf
+fingerprint Case_51 277432c2660b3065
+fingerprint Case_52 811b37bbf3dc7480
+fingerprint Case_53 a3735387385cfc79
+fingerprint Case_54 1fa5be91e59ed216
+fingerprint Case_55 dbb087be6c73070e
+fingerprint Case_56 f7dfa5f269a9886f
+fingerprint Case_57 929b16a4532a6323
+fingerprint Case_58 bb48256dec57d7d6
+fingerprint Case_59 862f74e6fbe18601
+fingerprint Case_60 c492663e895a3112
+fingerprint Case_61 70600b3b52045464
+fingerprint Case_62 61f759c5d47c548f
+fingerprint Case_63 95c858e876090335
+fingerprint Case_64 dff9f4d44de7b6b1
+fingerprint Case_65 685ec233004394cc
+fingerprint Case_66 e7de0a783afa4745
+fingerprint Case_67 aefed07e42e89d92
+fingerprint Case_68 e1d1e5e9411c0a0e
+fingerprint Case_69 c700aea1e0cc5ac3
+fingerprint Case_70 021131f4d4a9551d
+fingerprint Case_71 911a62a82c9f8c60
+fingerprint Case_72 538e2ddb08cc1f96
+fingerprint Case_73 36c3a03267fdb294
+fingerprint Case_74 a3d6b7190b6e02dc
+fingerprint Case_75 0a2edc7cba5fae42
+fingerprint Case_76 e373c9c9f42c9c7e
+fingerprint Case_77 61ec9c8e86d72dab
+fingerprint Case_78 c820a3e7c5bf8e3a
+fingerprint Case_79 3e137779d46005b7
+fingerprint Case_80 9c0e71410e2b4b43
+fingerprint Case_81 adb555c7557b958f
+fingerprint Case_82 6ae6e71087d0f210
+fingerprint Case_83 98e4dad72573c72b
+fingerprint Case_84 439ffbb479857e27
+fingerprint Case_85 5a94bc39e674425e
+fingerprint Case_86 b8068afb1d02dd41
+fingerprint Case_87 883110e858a899fa
+fingerprint Case_88 d79154ea6b4a08be
+fingerprint Case_89 7cad0bda4b31933f
+fingerprint Case_90 23a6ef55926e42bf
+fingerprint Case_91 ae7cc39d520f7694
+fingerprint Case_92 acd1070a37c6a442
+fingerprint Case_93 e58ccc4ba1617f09
+fingerprint Case_94 8e258d5e5286015b
+fingerprint Case_95 20e929b5cd9d2af1
+fingerprint Case_96 6cf87220a882bcc2
+fingerprint Case_97 c2f6a0bef56430b2
+fingerprint Case_98 e35b3a5d7280d3b3
+fingerprint Case_99 13560f0f5603315d
+fingerprint Case_100 47028cb93cbe84ea
+fingerprint Case_101 aa4084c58ca2ecca
+fingerprint Case_102 3fdf501d6322b4a1
+fingerprint Case_103 26c25ed96042b326
+fingerprint Case_104 78a55006d8ef5664
+fingerprint Case_105 4cf2504529e58bf1
+fingerprint Case_106 7734fb014798d749
+fingerprint Case_107 35772dfe7074dd66
+fingerprint Case_108 fc0769ceb8d4746c
+fingerprint Case_109 088e6f98f957d4e9
+fingerprint Case_110 da42d54337fb59f4
+fingerprint Case_111 d5478faca6c4e6de
+fingerprint Case_112 fdf9e655343593db
+fingerprint Case_113 d734314af8890b3f
+fingerprint Case_114 ab29b60536f053d2
+fingerprint Case_115 4622993f09dd2a30
+fingerprint Case_116 ab6014b9cd4ffedb
+fingerprint Case_117 e90ba5cd1c7f6e44
+fingerprint Case_118 d4ede5a7cd8e7854
+fingerprint Case_119 70695e8ea2569d14
+fingerprint Case_120 4d21ce2d940ba645
+fingerprint Case_121 0b233f2bcc448d67
+fingerprint Case_122 ae16579064c4605a
+fingerprint Case_123 03a4f30805b30d42
+fingerprint Case_124 cdd76fe79cdb8c75
+fingerprint Case_125 3db0b4f03a3c616d
+fingerprint Case_126 61311e9aba9dca09
+fingerprint Case_127 d88fdfd3c3ac2771
+fingerprint Case_128 5fdd3cc81cc1966a
+fingerprint Case_129 09c6b90c397e661d
+fingerprint Case_130 e330ecdfa9c41e59
+fingerprint Case_131 6cf4029d6ab9e034
+fingerprint Case_132 4a7812f5631b355e
+fingerprint Case_133 4cb9491d78c7a327
+fingerprint Case_134 556d64413e9096e9
+fingerprint Case_135 b408d1a95b6d20c3
+fingerprint Case_136 c05473638998ec78
+fingerprint Case_137 e7898b1930d2178d
+fingerprint Case_138 3527d6471683fce8
+fingerprint Case_139 895fd6a609aec1da
+fingerprint Case_140 b70b18fcd95d6c38
+fingerprint Case_141 55bc7af4e63044ce
+fingerprint Case_142 6c3c0421193bf861
+fingerprint Case_143 1aa85c664661475b
+fingerprint Case_144 e98f7c600abeea4b
+fingerprint Case_145 72482b49ca0c4667
+fingerprint Case_146 ad21be4409e3b53a
+fingerprint Case_147 b1e2d8bb6516e88e
+fingerprint Case_148 286dc22a595bbd36
+fingerprint Case_149 f828f0921ebc4609
+fingerprint Case_150 6a624fb73370221b
+fingerprint Case_151 fdba6db793b75e80
+fingerprint Case_152 6e06a01ca50457b0
+fingerprint Case_153 93a5706212a03c14
+fingerprint Case_154 1ae3e044f07d32a0
+fingerprint Case_155 947ea8f5080dd2f0
+fingerprint Case_156 8584b8ccfcfeaa90
+fingerprint Case_157 285a2827841c803f
+fingerprint Case_158 c3853387f525feb3
+fingerprint Case_159 d32717fa613ca55d
+fingerprint Case_160 fa19d4054d4442f7
+fingerprint Case_161 cdaa6b6f440ed4b5
+fingerprint Case_162 6e9404e5564c8d63
+fingerprint Case_163 5d8b93afc6198dcf
+fingerprint Case_164 967e50a39620f607
+fingerprint Case_165 5273864b5a9f7cf8
+fingerprint Case_166 8351a9f01085ebbc
+fingerprint Case_167 25a21f17c5c88f7e
+fingerprint Case_168 8f95d95321c94e26
+fingerprint Case_169 6643679fe5ad1e41
+fingerprint Case_170 8b588e8b28bb626f
+fingerprint Case_171 c16d8ae9cf8ab35f
+fingerprint Case_172 36faf495ac7f1710
+fingerprint Case_173 237b4937b2f58408
+fingerprint Case_174 2aa72307166800d3
+fingerprint Case_175 86cfd50c887a4c7c
+fingerprint Case_176 8ce3fefad2d0fc83
+fingerprint Case_177 e7f2a08bc33a9ee6
+fingerprint Case_178 9b6142dac32bd801
+fingerprint Case_179 86531da187fde273
+fingerprint Case_180 2da1f270d2fd84f0
+fingerprint Case_181 b86b15b0d4c5e40b
+fingerprint Case_182 af7d8999ac8400f2
+fingerprint Case_183 c7742bd8ce90d74f
+fingerprint Case_184 ea30f24f938258a0
+fingerprint Case_185 962b96a7cec2e92b
+fingerprint Case_186 1d9a6e6e2dce0832
+fingerprint Case_187 63db5988147019b3
+fingerprint Case_188 9adc7102b16e08f6
+fingerprint Case_189 a7d28f82aa4101f9
+fingerprint Case_190 d6cc71799df81764
+fingerprint Case_191 9e19796abe3c41be
+fingerprint Case_192 5c24f08351703d9b
+fingerprint Case_193 29884af80a7b545f
+fingerprint Case_194 445c4f573e2288cf
+fingerprint Case_195 9443830f95c118d8
+fingerprint Case_196 e058f5fcad0933c0
+fingerprint Case_197 9c990d11b148d99c
+fingerprint Case_198 6346f6c4c2538e7c
+fingerprint Case_199 eb187e748947d4bf
+fingerprint Case_200 087a4fef1ac303a7
+fingerprint Case_201 4f4b2b78a8b10c6a
+fingerprint Case_202 50f01bccbab0dc0a
+fingerprint Case_203 c6eb2981276ea34c
+fingerprint Case_204 9928a074bb49a86a
+fingerprint Case_205 ae69516905dc4e35
+fingerprint Case_206 47a4fcf594889e69
+fingerprint Case_207 5663b7dc298cf241
+fingerprint Case_208 d2d8ec7bf9372115
+fingerprint Case_209 c375dbea6964af3c
+fingerprint Case_210 a896271ba62e0e7a
+fingerprint Case_211 63eafbf5e4c4ebf5
+fingerprint Case_212 e6e653195223d30b
+fingerprint Case_213 e154fd01025ee036
+fingerprint Case_214 fd4bbcbb7a4c6512
+fingerprint Case_215 d96eaa8861eeb663
+fingerprint Case_216 6e4ed921d0afe838
+fingerprint Case_217 acf62f88d89851c1
+fingerprint Case_218 086d694079fdeafa
+fingerprint Case_219 d2effd9dcb57ec76
+fingerprint Case_220 f3883ef82223d7d0
+fingerprint Case_221 ab422393dcf0a3d3
+fingerprint Case_222 5f467efcd1f11410
+fingerprint Case_223 cfd686bbaa960088
+fingerprint Case_224 3720f86e600c70a7
+fingerprint Case_225 348a74dc1a9ef976
+fingerprint Case_226 b3892e1732b754e1
+fingerprint Case_227 657e723441b1d5eb
+fingerprint Case_228 d1e08d42c82c4ce5
+fingerprint Case_229 4be2eb8aae9864a5
+fingerprint Case_230 e4f91dcd210e16ef
+fingerprint Case_231 5738908f401068c2
+fingerprint Case_232 3cc113ea71dd7551
+fingerprint Case_233 af4fab4b0e239214
+fingerprint Case_234 8946dae069b1a07a
+fingerprint Case_235 f50cef2a1171ce81
+fingerprint Case_236 ffb693532ef3149b
+fingerprint Case_237 e834cf511fb1d51b
+fingerprint Case_238 b04c2e454b4d3bd4
+fingerprint Case_239 ddfd52328f8cd427
+fingerprint Case_240 853b7586146f1469
+fingerprint Case_241 609152387bf07454
+fingerprint Case_242 3a4514c4c0d82e46
+fingerprint Case_243 8320323c08af132f
+fingerprint Case_244 7a1ff57f5ddf2796
+fingerprint Case_245 9713325a8facb672
+fingerprint Case_246 9c7ab9bccb98d027
+fingerprint Case_247 9fbd86139fda0615
+fingerprint Case_248 3e2abced3433a83b
+fingerprint Case_249 d60bf1f5356f602d
+case Case_0
+baseline v1=117908335 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_1
+baseline v1=117908335 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_2
+baseline v1=117908335 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_3
+baseline v1=3455027627 v2=19071267 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5
+threw 
+end
+case Case_4
+baseline v1=3455027627 v2=19071267 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5
+threw 
+end
+case Case_5
+baseline v1=3455027627 v2=19071267 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5
+threw 
+end
+case Case_6
+baseline v5=3455027627 v6=19071267 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 5,6
+influence 4,5
+threw 
+end
+case Case_7
+baseline v1=#4.0:H$Obj{0,1000,4294967296,o0,false,10,97,300} rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_8
+baseline v1=#4.0:H$Obj{0,1000,4294967296,o0,false,10,97,300} rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_9
+baseline v1=#4.0:H$Obj{0,1000,4294967296,o0,false,10,97,300} rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_10
+baseline v1=6184542 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_11
+baseline v1=591751049 v2=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 
+threw 
+end
+case Case_12
+baseline v1=new:"returned" rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_13
+baseline v1=new:java.lang.IllegalArgumentException:caught rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_14
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw 
+end
+case Case_15
+baseline ret=new:Integer:67379308 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1
+threw 
+end
+case Case_16
+baseline ret=new:Long:82002086568058110 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2
+threw 
+end
+case Case_17
+baseline ret=#1.0:H$Obj{0,1000,4294967296,o0,false,10,97,300} rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1
+threw 
+end
+case Case_18
+baseline v1=5 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_19
+baseline v1=1234 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_20
+baseline v1=305419896 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_21
+baseline v1=305397760 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_22
+baseline v1=1234 v2=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 
+threw 
+end
+case Case_23
+baseline v1=1193046 v2=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 
+threw 
+end
+case Case_24
+baseline v1=1450744508 v2=4660 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 
+threw 
+end
+case Case_25
+baseline v1=0 v2=305397760 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 
+threw 
+end
+case Case_26
+baseline v1=new:"s" rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_27
+baseline v1=new:"s" rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_28
+baseline v1=new:class H$Obj rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_29
+baseline v1=new:MH(int,int)void rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_30
+baseline v1=new:MT(int,int)void rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_31
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_32
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw 
+end
+case Case_33
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1
+threw java.lang.ClassCastException
+fault 0 java.lang.ClassCastException
+end
+case Case_34
+baseline v1=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_35
+baseline v1=3 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_36
+baseline v1=new:H$Obj{0,0,0,null,false,0,0,0} rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_37
+baseline v1=new:[0, 0, 0] rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+fault 0 java.lang.NegativeArraySizeException
+end
+case Case_38
+baseline v15=new:[67379308, 117908335, 168439394] rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1,4,7
+threw 
+end
+case Case_39
+baseline v15=new:[117908335, 134753376, 151596385] rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 4,5,6
+threw 
+end
+case Case_40
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_41
+baseline exc=java.lang.RuntimeException:#1.0:java.lang.RuntimeException:t0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1
+threw java.lang.RuntimeException
+fault 0 java.lang.NullPointerException
+end
+case Case_42
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw 
+end
+case Case_43
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw 
+end
+case Case_44
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw 
+end
+case Case_45
+baseline v15=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1
+threw 
+end
+case Case_46
+baseline v15=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1
+threw 
+end
+case Case_47
+baseline v1=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_48
+baseline v1=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_49
+baseline v1=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,5,7,8
+threw 
+end
+case Case_50
+baseline v1=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,5,7,8
+threw 
+end
+case Case_51
+baseline v1=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,5,7,8
+threw 
+end
+case Case_52
+baseline v15=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1,4
+threw 
+end
+case Case_53
+baseline v15=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1,4
+threw 
+end
+case Case_54
+baseline v15=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1,4
+threw 
+end
+case Case_55
+baseline v15=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1,4
+threw 
+end
+case Case_56
+baseline v15=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1,4
+threw 
+end
+case Case_57
+baseline v15=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1,4
+threw 
+end
+case Case_58
+baseline v15=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1
+threw 
+end
+case Case_59
+baseline v15=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1
+threw 
+end
+case Case_60
+baseline v15=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1
+threw 
+end
+case Case_61
+baseline v15=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1
+threw 
+end
+case Case_62
+baseline v15=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1
+threw 
+end
+case Case_63
+baseline v15=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 15
+influence 1
+threw 
+end
+case Case_64
+baseline v1=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_65
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:[67379308, 2, 3];
+written 
+influence 1,4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_66
+baseline v1=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_67
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:[1234568.0, 0.25, 0.5];
+written 
+influence 1,4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_68
+baseline v1=0 v2=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_69
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:[82002086568058110, 4294967297, 4294967298];
+written 
+influence 1,2,4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_70
+baseline v1=0 v2=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_71
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:[1.0737418265E9, 0.125, 0.25];
+written 
+influence 1,2,4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_72
+baseline v1=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_73
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_74
+baseline v1=4294967246 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_75
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:[5, -49, -48];
+written 
+influence 1,4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_76
+baseline v1=65 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_77
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_78
+baseline v1=4294965296 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_79
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:[300, -1999, -1998];
+written 
+influence 1,4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_80
+baseline v1=new:"e00" rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+end
+case Case_81
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:[any0, s01, s02];
+written 
+influence 1,4,7
+threw java.lang.ArrayStoreException
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.ArrayIndexOutOfBoundsException
+fault 2 java.lang.ArrayStoreException
+end
+case Case_82
+baseline v1=1000 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_83
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:H$Obj{0,67379308,4294967296,o0,false,10,97,300};
+written 
+influence 1,4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_84
+baseline v1=41 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_85
+baseline rec=null S=67379308,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1
+threw 
+end
+case Case_86
+baseline v1=0 v2=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_87
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:H$Obj{0,1000,82002086568058110,o0,false,10,97,300};
+written 
+influence 1,2,4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_88
+baseline v1=67 v2=66 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 
+threw 
+end
+case Case_89
+baseline rec=null S=41,82002086568058110,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2
+threw 
+end
+case Case_90
+baseline v1=new:"o0" rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_91
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:H$Obj{0,1000,4294967296,str0,false,10,97,300};
+written 
+influence 1,4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_92
+baseline v1=new:"static" rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_93
+baseline rec=null S=41,283467841603,#1.0:"str0",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1
+threw 
+end
+case Case_94
+baseline v1=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_95
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:H$Obj{0,1000,4294967296,o0,true,10,97,300};
+written 
+influence 1,4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_96
+baseline v1=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_97
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1
+threw 
+end
+case Case_98
+baseline v1=10 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_99
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:H$Obj{0,1000,4294967296,o0,false,5,97,300};
+written 
+influence 1,4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_100
+baseline v1=44 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_101
+baseline rec=null S=41,283467841603,new:"static",true,5,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1
+threw 
+end
+case Case_102
+baseline v1=97 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_103
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=#4.0:H$Obj{0,1000,4294967296,o0,false,10,65,300};
+written 
+influence 1,4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_104
+baseline v1=69 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_105
+baseline rec=null S=41,283467841603,new:"static",true,44,65,46,1083703296,4632022585494732800 in=
+written 
+influence 1
+threw 
+end
+case Case_106
+baseline v1=300 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_107
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,4
+threw 
+fault 0 java.lang.NullPointerException
+end
+case Case_108
+baseline v1=46 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_109
+baseline rec=null S=41,283467841603,new:"static",true,44,69,300,1083703296,4632022585494732800 in=
+written 
+influence 1
+threw 
+end
+case Case_110
+baseline v1=1083703296 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 
+threw 
+end
+case Case_111
+baseline v1=0 v2=1078476800 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 
+threw 
+end
+case Case_112
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1234613312,4632022585494732800 in=
+written 
+influence 1
+threw 
+end
+case Case_113
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4742290407631618048 in=
+written 
+influence 1,2
+threw 
+end
+case Case_114
+baseline rec=virtual#0(new:Integer:84222317,new:Long:82039324502720220,#5.0:"str0") S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3,4,5
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.IllegalStateException
+end
+case Case_115
+baseline rec=virtual#0(new:Integer:84222317,new:Long:82039324502720220,#5.0:"str0") S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3,4,5
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.IllegalStateException
+end
+case Case_116
+baseline rec=virtual#0(new:Integer:84222317,new:Long:82039324502720220,#5.0:"str0") S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3,4,5
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.IllegalStateException
+end
+case Case_117
+baseline rec=virtual#0(new:Integer:84222317,new:Long:82039324502720220,#5.0:"str0") S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3,4,5
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.IllegalStateException
+end
+case Case_118
+baseline rec=direct#0(new:Integer:84222317,new:Long:82039324502720220,#5.0:"str0") S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3,4,5
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.IllegalStateException
+end
+case Case_119
+baseline rec=direct#0(new:Integer:84222317,new:Long:82039324502720220,#5.0:"str0") S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3,4,5
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.IllegalStateException
+end
+case Case_120
+baseline rec=virtual#0(new:Integer:84222317,new:Long:82039324502720220,#5.0:"str0") S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3,4,5
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.IllegalStateException
+end
+case Case_121
+baseline rec=virtual#0(new:Integer:84222317,new:Long:82039324502720220,#5.0:"str0") S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3,4,5
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.IllegalStateException
+end
+case Case_122
+baseline rec=static(new:Integer:67379308,new:Integer:84222317,new:Long:82039324502720220,#5.0:"str0") S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3,4,5
+threw 
+fault 0 java.lang.IllegalStateException
+end
+case Case_123
+baseline rec=static(new:Integer:67379308,new:Integer:84222317,new:Long:82039324502720220,#5.0:"str0") S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3,4,5
+threw 
+fault 0 java.lang.IllegalStateException
+end
+case Case_124
+baseline rec=mh0(new:Integer:84222317,new:Integer:101065326) S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.IllegalStateException
+end
+case Case_125
+baseline rec=mh0(new:Integer:84222317,new:Integer:101065326) S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2,3
+threw 
+fault 0 java.lang.NullPointerException
+fault 1 java.lang.IllegalStateException
+end
+case Case_126
+baseline rec=cs(new:Integer:67379308,new:Integer:84222317) S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2
+threw 
+fault 0 java.lang.IllegalStateException
+end
+case Case_127
+baseline rec=cs(new:Integer:67379308,new:Integer:84222317) S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 1,2
+threw 
+fault 0 java.lang.IllegalStateException
+end
+case Case_128
+baseline v1=4177058961 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_129
+baseline v1=4177058960 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_130
+baseline v1=839939669 v2=4275896028 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5
+threw 
+end
+case Case_131
+baseline v1=839939668 v2=4275896028 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5
+threw 
+end
+case Case_132
+baseline v1=3382096984 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_133
+baseline v1=23068672 v2=3251634176 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5
+threw 
+end
+case Case_134
+baseline v1=117908335 v2=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4
+threw 
+end
+case Case_135
+baseline v1=1289806958 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_136
+baseline v1=3154116608 v2=1100749965 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4
+threw 
+end
+case Case_137
+baseline v1=3455027627 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_138
+baseline v1=1234613304 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,5
+threw 
+end
+case Case_139
+baseline v1=1021245595 v2=1131556882 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5
+threw 
+end
+case Case_140
+baseline v1=1234571 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_141
+baseline v1=1234571 v2=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4
+threw 
+end
+case Case_142
+baseline v1=0 v2=1093850763 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4
+threw 
+end
+case Case_143
+baseline v1=1073741829 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,5
+threw 
+end
+case Case_144
+baseline v1=1073741829 v2=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5
+threw 
+end
+case Case_145
+baseline v1=1317011456 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,5
+threw 
+end
+case Case_146
+baseline v1=111 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_147
+baseline v1=9071 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_148
+baseline v1=9071 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_149
+baseline v1=286347729 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_150
+baseline v1=235818702 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_151
+baseline v1=4244436237 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_152
+baseline v1=4193907210 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_153
+baseline v1=2976875134 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_154
+baseline v1=3282030936 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_155
+baseline v1=39302778 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+fault 0 java.lang.ArithmeticException
+end
+case Case_156
+baseline v1=22459769 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+fault 0 java.lang.ArithmeticException
+end
+case Case_157
+baseline v1=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+fault 0 java.lang.ArithmeticException
+end
+case Case_158
+baseline v1=1 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+fault 0 java.lang.ArithmeticException
+end
+case Case_159
+baseline v1=33694306 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_160
+baseline v1=8288 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_161
+baseline v1=252653423 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_162
+baseline v1=235810414 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_163
+baseline v1=218959117 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_164
+baseline v1=235802126 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_165
+baseline v1=943266680 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_166
+baseline v1=539034464 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_167
+baseline v1=14738541 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_168
+baseline v1=8422413 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_169
+baseline v1=14738541 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_170
+baseline v1=8422413 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_171
+baseline v1=3435938883 v2=38155060 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+end
+case Case_172
+baseline v1=2543294358 v2=38176391 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+end
+case Case_173
+baseline v1=3474116371 v2=4294954770 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+end
+case Case_174
+baseline v1=2581471846 v2=8805 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+end
+case Case_175
+baseline v1=1228143496 v2=3253884420 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+end
+case Case_176
+baseline v1=1640743632 v2=3646842140 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+end
+case Case_177
+baseline v1=1151675875 v2=6357089 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+fault 0 java.lang.ArithmeticException
+end
+case Case_178
+baseline v1=2285783466 v2=6364199 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+fault 0 java.lang.ArithmeticException
+end
+case Case_179
+baseline v1=2 v2=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+fault 0 java.lang.ArithmeticException
+end
+case Case_180
+baseline v1=0 v2=0 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+fault 0 java.lang.ArithmeticException
+end
+case Case_181
+baseline v1=3435956360 v2=19070976 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+end
+case Case_182
+baseline v1=2560137368 v2=19075088 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+end
+case Case_183
+baseline v1=4294949819 v2=19084083 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+end
+case Case_184
+baseline v1=4278124286 v2=19101302 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+end
+case Case_185
+baseline v1=858993459 v2=13107 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+end
+case Case_186
+baseline v1=1717986918 v2=26214 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+end
+case Case_187
+baseline v1=1870417240 v2=152570142 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7
+threw 
+end
+case Case_188
+baseline v1=3319195632 v2=152740788 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7
+threw 
+end
+case Case_189
+baseline v1=2042491189 v2=2383908 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7
+threw 
+end
+case Case_190
+baseline v1=3541523359 v2=2386574 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7
+threw 
+end
+case Case_191
+baseline v1=2042491189 v2=2383908 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7
+threw 
+end
+case Case_192
+baseline v1=3541523359 v2=2386574 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7
+threw 
+end
+case Case_193
+baseline v1=1243001956 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_194
+baseline v1=1243001944 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_195
+baseline v1=3225419776 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_196
+baseline v1=3233808384 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_197
+baseline v1=1404137417 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_198
+baseline v1=1404137388 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_199
+baseline v1=1065353175 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_200
+baseline v1=1065353134 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_201
+baseline v1=1234613336 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4,7
+threw 
+end
+case Case_202
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 1,7
+threw 
+end
+case Case_203
+baseline v1=29360128 v2=1105199104 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+end
+case Case_204
+baseline v1=23068672 v2=1105199104 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+end
+case Case_205
+baseline v1=0 v2=3221749760 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+end
+case Case_206
+baseline v1=0 v2=3222798336 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+end
+case Case_207
+baseline v1=58720256 v2=1135607808 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+end
+case Case_208
+baseline v1=46137344 v2=1135607808 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+end
+case Case_209
+baseline v1=4269801472 v2=1072693247 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+end
+case Case_210
+baseline v1=4244635648 v2=1072693247 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+end
+case Case_211
+baseline v1=23068672 v2=1104150528 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 4,5,7,8
+threw 
+end
+case Case_212
+baseline rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1,2
+influence 1,2,7,8
+threw 
+end
+case Case_213
+baseline v1=117908626 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_214
+baseline v1=4177059252 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_215
+baseline v1=4246554413 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_216
+baseline v1=405183 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_217
+baseline v1=82 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_218
+baseline v1=291 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_219
+baseline v1=117908335 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_220
+baseline v1=117908044 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_221
+baseline v1=117908348 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_222
+baseline v1=4177058974 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_223
+baseline v1=1532808355 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_224
+baseline v1=9069871 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_225
+baseline v1=12 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_226
+baseline v1=13 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_227
+baseline v1=117908335 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_228
+baseline v1=117908322 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_229
+baseline v1=3832406016 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_230
+baseline v1=14393 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_231
+baseline v1=14393 rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 1
+influence 4
+threw 
+end
+case Case_232
+baseline exc=java.lang.ArithmeticException:new:java.lang.ArithmeticException:divide by zero rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.ArithmeticException
+end
+case Case_233
+baseline exc=java.lang.ArithmeticException:new:java.lang.ArithmeticException:divide by zero rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.ArithmeticException
+end
+case Case_234
+baseline exc=java.lang.ArithmeticException:new:java.lang.ArithmeticException:divide by zero rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.ArithmeticException
+end
+case Case_235
+baseline exc=java.lang.ArithmeticException:new:java.lang.ArithmeticException:divide by zero rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.ArithmeticException
+end
+case Case_236
+baseline exc=java.lang.NoClassDefFoundError:new:java.lang.NoClassDefFoundError:Failed resolution of: LMissing; rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoClassDefFoundError
+end
+case Case_237
+baseline exc=java.lang.NoClassDefFoundError:new:java.lang.NoClassDefFoundError:Failed resolution of: LMissing; rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoClassDefFoundError
+end
+case Case_238
+baseline exc=java.lang.NoClassDefFoundError:new:java.lang.NoClassDefFoundError:Failed resolution of: LMissing; rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoClassDefFoundError
+end
+case Case_239
+baseline exc=java.lang.NoClassDefFoundError:new:java.lang.NoClassDefFoundError:Failed resolution of: LMissing; rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoClassDefFoundError
+end
+case Case_240
+baseline exc=java.lang.NoClassDefFoundError:new:java.lang.NoClassDefFoundError:Failed resolution of: [LMissing; rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoClassDefFoundError
+end
+case Case_241
+baseline exc=java.lang.NoClassDefFoundError:new:java.lang.NoClassDefFoundError:Failed resolution of: [LMissing; rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoClassDefFoundError
+end
+case Case_242
+baseline exc=java.lang.NoClassDefFoundError:new:java.lang.NoClassDefFoundError:Failed resolution of: [LMissing; rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoClassDefFoundError
+end
+case Case_243
+baseline exc=java.lang.NoSuchFieldError:new:java.lang.NoSuchFieldError:No static field missing of type I in class LH$S; or its superclasses (declaration of 'H$S' appears in /data/local/tmp/ctadl-dex-opcodes/driver.dex) rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoSuchFieldError
+end
+case Case_244
+baseline exc=java.lang.NoSuchFieldError:new:java.lang.NoSuchFieldError:No field missing of type I in class LH$S; or its superclasses (declaration of 'H$S' appears in /data/local/tmp/ctadl-dex-opcodes/driver.dex) rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoSuchFieldError
+end
+case Case_245
+baseline exc=java.lang.NoSuchFieldError:new:java.lang.NoSuchFieldError:No instance field missing of type I in class LH$Obj; or its superclasses (declaration of 'H$Obj' appears in /data/local/tmp/ctadl-dex-opcodes/driver.dex) rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoSuchFieldError
+end
+case Case_246
+baseline exc=java.lang.NoSuchFieldError:new:java.lang.NoSuchFieldError:No field missing of type I in class LH$Obj; or its superclasses (declaration of 'H$Obj' appears in /data/local/tmp/ctadl-dex-opcodes/driver.dex) rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoSuchFieldError
+end
+case Case_247
+baseline exc=java.lang.NoSuchMethodError:new:java.lang.NoSuchMethodError:No static method missing()V in class LH; or its super classes (declaration of 'H' appears in /data/local/tmp/ctadl-dex-opcodes/driver.dex) rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoSuchMethodError
+end
+case Case_248
+baseline exc=java.lang.NoClassDefFoundError:new:java.lang.NoClassDefFoundError:Failed resolution of: LMissing; rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.NoClassDefFoundError
+end
+case Case_249
+baseline exc=java.lang.IllegalMonitorStateException:new:java.lang.IllegalMonitorStateException:did not lock monitor on object of type 'H$Obj' before unlocking rec=null S=41,283467841603,new:"static",true,44,69,46,1083703296,4632022585494732800 in=
+written 
+influence 
+threw java.lang.IllegalMonitorStateException
+end

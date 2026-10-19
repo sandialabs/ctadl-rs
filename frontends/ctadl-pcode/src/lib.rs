@@ -429,7 +429,7 @@ impl Context {
                     for _ in 0..proto_data.parameters.len() {
                         func.params
                             .parameters
-                            .push(ctadl_ir::mir::ParameterType::ByRef);
+                            .push(ctadl_ir::mir::ParameterType::Shared);
                     }
                 }
             } else {
