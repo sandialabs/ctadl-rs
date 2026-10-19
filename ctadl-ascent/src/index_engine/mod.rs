@@ -2328,9 +2328,9 @@ pub fn taint_index_with_config(
         include_source!(index_rules);
     }
     // `Storage::Lsm`: the same rules, with the store-backed relations redeclared onto the LSM
-    // provider (Ascent keeps a relation's last declaration). `assign_like` keeps its rows in its
-    // field, since it is seeded through it and returned from it; the others are derived and read
-    // back, if at all, from their store.
+    // provider (Ascent keeps a relation's last declaration). None keeps its rows in its field:
+    // `assign_like` is seeded through it and hands the seed to its indices once, and every one
+    // is read back, if at all, from its store.
     ascent! {
         #![measure_rule_times]
         #![generate_run_timeout]
@@ -2338,7 +2338,7 @@ pub fn taint_index_with_config(
         include_source!(index_rules);
         #[ds(lsm::ascent_provider::provider: counting)]
         relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
-        #[ds(lsm::ascent_provider::provider)]
+        #[ds(lsm::ascent_provider::provider: seeded)]
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
         #[ds(lsm::ascent_provider::provider: counting)]
         relation locals_key(FunctionId, FlowVariable, Path, Path, Path);
@@ -2399,10 +2399,16 @@ pub fn taint_index_with_config(
             // `FromRows` keeps one of each.
             rows.sort_unstable();
             rows.dedup();
-            self.assign_like = rows;
+            self.assign_like = rows.into();
         }
         fn take_assign_like(&mut self) -> Vec<AssignLikeRow> {
-            std::mem::take(&mut self.assign_like)
+            let rows = self
+                .__assign_like_ind_common
+                .iter()
+                .map(|(f, vd, pd, vs, ps)| (*f, *vd, *pd, *vs, *ps))
+                .collect();
+            self.__assign_like_ind_common = Default::default();
+            rows
         }
         fn store_sizes(&self) -> StoreSizes {
             StoreSizes {
@@ -2629,7 +2635,17 @@ pub fn taint_index_with_config(
             if parallelism != Parallelism::Serial {
                 log::warn!("the LSM storage runs the serial engine only; ignoring {parallelism}");
             }
-            run_engine!(LsmIndexProg)
+            let result = run_engine!(LsmIndexProg);
+            let mib = |bytes: usize| bytes as f64 / f64::from(1 << 20);
+            let budget = lsm::memory_budget().map_or_else(
+                || "no budget".to_string(),
+                |b| format!("budget {:.1} MiB", mib(b)),
+            );
+            log::info!(
+                "LSM write buffers peaked at {:.1} MiB ({budget})",
+                mib(lsm::memory_peak())
+            );
+            result
         }
         (Storage::Memory, Parallelism::Serial) => run_engine!(IndexProg),
         (Storage::Memory, Parallelism::Threads(threads)) => {

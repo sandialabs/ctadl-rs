@@ -465,6 +465,44 @@ pub struct IndexArgs {
     /// a run file. Larger buffers mean fewer, larger runs (faster lookups) and more memory.
     #[arg(long, requires = "lsm", value_name = "ENTRIES")]
     pub lsm_memtable_limit: Option<usize>,
+
+    /// With `--lsm`, the most memory the LSM's write buffers may hold at once, all of them
+    /// together, e.g. `512M` or `4G` (powers of 1024; a bare number is bytes).
+    ///
+    /// Over the budget, a buffer that takes a new tuple is written out as a run file, so a
+    /// machine with little RAM can index a program that would otherwise not fit. The runs
+    /// themselves are read through the page cache, which the OS shrinks under pressure. The
+    /// budget does not cover the rest of the index: the relations kept in memory and the
+    /// program's facts still take what they take.
+    #[arg(long, requires = "lsm", value_name = "SIZE", value_parser = parse_size)]
+    pub lsm_memory_budget: Option<usize>,
+}
+
+/// Parses a size like `512M`, `1.5G` or `4096`: a number with an optional `K`, `M`, `G` or
+/// `T` suffix (powers of 1024, any case, optionally followed by `B` or `iB`).
+fn parse_size(s: &str) -> Result<usize, String> {
+    let s = s.trim();
+    let digits = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(s.len());
+    let (number, unit) = s.split_at(digits);
+    let number: f64 = number
+        .parse()
+        .map_err(|_| format!("`{s}` is not a size, like 512M or 4G"))?;
+    let unit = unit.trim().to_ascii_uppercase();
+    let unit = unit
+        .strip_suffix("IB")
+        .or_else(|| unit.strip_suffix('B'))
+        .unwrap_or(&unit);
+    let scale: u64 = match unit {
+        "" => 1,
+        "K" => 1 << 10,
+        "M" => 1 << 20,
+        "G" => 1 << 30,
+        "T" => 1 << 40,
+        _ => return Err(format!("unknown size unit in `{s}`; use K, M, G or T")),
+    };
+    Ok((number * scale as f64) as usize)
 }
 
 impl IndexArgs {
@@ -729,6 +767,7 @@ fn main() -> anyhow::Result<()> {
                 jobs: None,
                 lsm: false,
                 lsm_memtable_limit: None,
+                lsm_memory_budget: None,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -885,6 +924,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 jobs: None,
                 lsm: false,
                 lsm_memtable_limit: None,
+                lsm_memory_budget: None,
             };
             index_artifacts_to_store(&index_args)?;
         }
@@ -992,6 +1032,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
     if let Some(limit) = args.lsm_memtable_limit {
         lsm::ascent_provider::set_memtable_limit(limit);
     }
+    lsm::set_memory_budget(args.lsm_memory_budget);
     // Determine the list of program names to index. If the user did not supply any, use the project name.
     let import_names: Vec<String> = if args.progs.is_empty() {
         vec![args.name.clone()]
@@ -1299,6 +1340,17 @@ fn file_looks_binary(path: &Path) -> bool {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn sizes_parse() {
+        assert_eq!(parse_size("4096"), Ok(4096));
+        assert_eq!(parse_size("512M"), Ok(512 << 20));
+        assert_eq!(parse_size("4g"), Ok(4 << 30));
+        assert_eq!(parse_size("1.5GiB"), Ok(3 << 29));
+        assert_eq!(parse_size("64 KB"), Ok(64 << 10));
+        assert!(parse_size("4X").is_err());
+        assert!(parse_size("lots").is_err());
+    }
 
     /// The two dump modes read different things -- one an import's IR, the other a project's
     /// index -- so asking for both at once is a usage error, not a silent pick.
