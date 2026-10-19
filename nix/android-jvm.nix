@@ -45,10 +45,13 @@ let
   # it is not on PATH by default.
   buildToolsDir = sdk: "${sdk.androidsdk}/libexec/android-sdk/build-tools/${buildToolsVersion}";
 
+  # The platform both SDKs carry, the one the regression suite builds against.
+  platformVersion = "30";
+
   # Android SDK the regression suite builds with.
   androidSdk = androidenv.composeAndroidPackages {
     buildToolsVersions = [ buildToolsVersion ];
-    platformVersions = [ "30" ];
+    platformVersions = [ platformVersion ];
     includeEmulator = false;
     includeNDK = false;
   };
@@ -64,7 +67,7 @@ let
   #
   # The SDK is read-only in the store, so `sdkmanager --install` cannot
   # add to it; change this list instead. AVDs live in ~/.android/avd:
-  #   avdmanager create avd -n dbg -k "system-images;android-34;google_apis;arm64-v8a"
+  #   avdmanager create avd -n dbg -k "$ANDROID_DEBUG_SYSTEM_IMAGE"
   #   emulator -avd dbg -no-window -no-audio &
   #
   # Frida works on any app on this image after `adb root`. JDWP (jdb) does
@@ -73,11 +76,15 @@ let
   # given android:debuggable="true", then `zipalign -p` (page-aligning
   # its native libs) and `apksigner` with any key.
   androidDebugAbi = if pkgs.stdenv.hostPlatform.isAarch64 then "arm64-v8a" else "x86_64";
+  # The platform of the debugging SDK's system image, alongside `platformVersion`.
+  debugPlatformVersion = "34";
+  # The system image's sdkmanager name, which `avdmanager create avd -k` takes.
+  androidDebugSystemImage = "system-images;android-${debugPlatformVersion};google_apis;${androidDebugAbi}";
   androidDebugSdk = androidenv.composeAndroidPackages {
     buildToolsVersions = [ buildToolsVersion ];
     platformVersions = [
-      "30"
-      "34"
+      platformVersion
+      debugPlatformVersion
     ];
     includeEmulator = true;
     includeSystemImages = true;
@@ -240,6 +247,7 @@ in
     androidSdk
     jdk
     androidDebugSdk
+    androidDebugSystemImage
     androidLldbArch
     androidLldb
     fridaServer

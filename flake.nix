@@ -89,6 +89,7 @@
           androidSdk
           jdk
           androidDebugSdk
+          androidDebugSystemImage
           androidLldbArch
           androidLldb
           fridaServer
@@ -353,6 +354,8 @@
             ANDROID_SDK_ROOT = "${androidDebugSdk.androidsdk}/libexec/android-sdk";
             ANDROID_HOME = "${androidDebugSdk.androidsdk}/libexec/android-sdk";
             ANDROID_NDK_ROOT = "${androidDebugSdk.androidsdk}/libexec/android-sdk/ndk-bundle";
+            # What to pass `avdmanager create avd -k`; see ./nix/android-jvm.nix.
+            ANDROID_DEBUG_SYSTEM_IMAGE = androidDebugSystemImage;
             FRIDA_SERVER = "${fridaServer}";
             CTADL_ANDROID_ICC_APKS = "${droidbenchIccApks}";
             DOTNET_NOLOGO = "1";
