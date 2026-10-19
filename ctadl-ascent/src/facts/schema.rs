@@ -278,6 +278,13 @@ mod tests {
                 Path::empty(),
                 CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
             ),
+            (
+                FunctionId::new(4),
+                InsnId::new(40),
+                var,
+                Path::empty(),
+                CallTargetObject::CilClass(ctadl_ir::Symbol::from("[App]Acme.Gadget")),
+            ),
         ];
 
         let dir = tempfile::tempdir().unwrap();
@@ -318,6 +325,16 @@ mod tests {
                 Path::empty(),
                 CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
             ),
+            (
+                FunctionId::new(4),
+                InsnId::new(40),
+                var,
+                Path::empty(),
+                CallDispatchKey::Cil(
+                    ctadl_ir::Symbol::from("Parse"),
+                    ctadl_ir::Symbol::from("(System.String)->System.Int32"),
+                ),
+            ),
         ];
 
         let dir = tempfile::tempdir().unwrap();
@@ -351,6 +368,14 @@ mod tests {
                 CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
                 CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
                 FunctionId::new(42),
+            ),
+            (
+                CallTargetObject::CilClass(ctadl_ir::Symbol::from("[App]Acme.Gadget")),
+                CallDispatchKey::Cil(
+                    ctadl_ir::Symbol::from("Parse"),
+                    ctadl_ir::Symbol::from("(System.String)->System.Int32"),
+                ),
+                FunctionId::new(43),
             ),
         ];
 

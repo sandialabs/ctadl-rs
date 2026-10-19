@@ -522,7 +522,7 @@ fn program_text(w: &mut dyn Write, r: &CallGraphReport) -> Result<()> {
             p.cha_threshold, p.cha_threshold_interface, p.order
         )?;
         let b = &p.buckets;
-        writeln!(w, "  java call sites           {:>12}", b.java_sites)?;
+        writeln!(w, "  dispatch sites            {:>12}", b.java_sites)?;
         writeln!(
             w,
             "    modelled                {:>12}   {}",

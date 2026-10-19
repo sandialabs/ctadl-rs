@@ -1,0 +1,50 @@
+[module]
+name=modb.netmodule
+mvid=46c5c577-11b2-4ea0-bb3c-3c71f1331dd0
+kind=NetModule
+runtime=v2.0.50727
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+0x1a000001=moda.netmodule
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Module.B.Baz flags=0x00100001
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.String Module.B.Baz::Gazonk() flags=0x0096 impl=0x0000 rva=0x00002050
+0x06000002=System.Void Module.B.Baz::.ctor() flags=0x1886 impl=0x0000 rva=0x00002067
+[properties]
+[events]
+[custom-attributes]
+[security-declarations]
+[il]
+0x06000001 max-stack=1 init-locals=true code-size=11
+	local 0=System.String
+	IL_0000: nop
+	IL_0001: call System.String Module.A.Foo::Bar()
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x06000002 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+[custom-attributes-resolved]
+[fields-resolved]

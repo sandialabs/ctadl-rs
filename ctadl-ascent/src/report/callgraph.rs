@@ -577,7 +577,7 @@ fn policy_section(
             None
         } else {
             model.map(|m| match m.disposition {
-                Disposition::Inline => DispatchDisposition::Inline,
+                Disposition::Inline(_) => DispatchDisposition::Inline,
                 Disposition::Model(_) => DispatchDisposition::Model,
                 Disposition::Skip => DispatchDisposition::Skip,
             })
@@ -950,6 +950,20 @@ fn walk(program: &ctadl_ir::mir::Program) -> Walk {
                         );
                         w.caller_keys[caller as usize].push((id, JavaDispatch::Unknown));
                     }
+                    CallStyle::CilCall {
+                        cls,
+                        simple_name,
+                        descriptor,
+                        receiver: _,
+                    } => {
+                        // `callvirt` has no dispatch kind of its own, the way Lua has none.
+                        w.census.virtual_ += 1;
+                        let id = w.key(
+                            (cls.clone(), simple_name.clone(), descriptor.clone()),
+                            JavaDispatch::Unknown,
+                        );
+                        w.caller_keys[caller as usize].push((id, JavaDispatch::Unknown));
+                    }
                     CallStyle::FuncPtrCall { .. } => w.census.func_ptr += 1,
                     CallStyle::Unknown => w.census.unknown += 1,
                 }
@@ -972,6 +986,7 @@ pub fn measure(
     let language = match &program_info.vmt {
         ctadl_ir::call::VirtualMethodTable::Java { .. } => Language::Java,
         ctadl_ir::call::VirtualMethodTable::Lua { .. } => Language::Lua,
+        // `callvirt` records no dispatch kind, so CIL has no per-kind split to report.
         _ => Language::Other,
     };
     let program = &program_info.program;

@@ -11,6 +11,16 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Mono.Cecil, for testing cil-reader.
+    cecil = {
+      url = "github:jbevain/cecil/882ca5eedda1e62eb41bd5869aeb15d8f1538e51";
+      flake = false;
+    };
+    # dnlib, for cil-reader's Ptr-table fixtures (see ptrGen).
+    dnlib = {
+      url = "github:0xd4d/dnlib/9ab9b58ab31b99b3f6cdef36efec613fc11ddbe2";
+      flake = false;
+    };
   };
 
   outputs =
@@ -21,6 +31,8 @@
       naersk,
       ctadl-souffle,
       fenix,
+      cecil,
+      dnlib,
     }:
     utils.lib.eachDefaultSystem (
       system:
@@ -91,6 +103,315 @@
           exec ${ctadl-souffle.packages.${system}.ctadlPackages.ctadl-full}/bin/ctadl "$@"
         '';
         checksarif = pkgs.callPackage ./nix/sarif-multitool/checksarif.nix { };
+
+        # The standalone CoreCLR IL assembler, which cil-reader's `.il` fixtures
+        # are assembled with. It ships only as a NuGet package per runtime
+        # identifier -- a plain zip holding one native binary -- so it is
+        # fetched by hash rather than restored.
+        ilasm =
+          let
+            version = "10.0.11";
+            rid =
+              {
+                aarch64-darwin = "osx-arm64";
+                x86_64-darwin = "osx-x64";
+                x86_64-linux = "linux-x64";
+                aarch64-linux = "linux-arm64";
+              }
+              .${system};
+            hash =
+              {
+                osx-arm64 = "sha256-PspYHXxmIqjKPoomWcV8QCwuJJH2l5qi+WRLVoikrNw=";
+                osx-x64 = "sha256-y2bQ9Q53gOzHfibUFyPDLZdICY5UdPJz3UL9LbhOWh8=";
+                linux-x64 = "sha256-rurF5fJ8rh5M19yPfcFa1TohojXW3QBSNU79CF3/EoE=";
+                linux-arm64 = "sha256-MEXawy+UO90M79QL1EqCaM0l2Kq2utDWoE3q/mUPB2k=";
+              }
+              .${rid};
+          in
+          pkgs.stdenv.mkDerivation {
+            pname = "ilasm";
+            inherit version;
+            src = pkgs.fetchurl {
+              name = "runtime.${rid}.Microsoft.NETCore.ILAsm.${version}.nupkg";
+              url = "https://www.nuget.org/api/v2/package/runtime.${rid}.Microsoft.NETCore.ILAsm/${version}";
+              inherit hash;
+            };
+            nativeBuildInputs = [
+              pkgs.unzip
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.autoPatchelfHook ];
+            buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+              pkgs.stdenv.cc.cc.lib
+            ];
+            unpackPhase = ''
+              unzip -q "$src"
+            '';
+            installPhase = ''
+              install -Dm755 runtimes/${rid}/native/ilasm "$out/bin/ilasm"
+            '';
+          };
+
+        # A dnlib-based fixture tool in readers/cil-reader/tools/<project>,
+        # wrapped as bin/<name>. Like cecilDump, it compiles the pinned dnlib
+        # sources in and needs no NuGet.
+        dnlibTool =
+          name: project:
+          pkgs.stdenvNoCC.mkDerivation {
+            # `name` rather than pname/version: see cecilDump.
+            name = "${name}-${builtins.substring 0 7 dnlib.rev}";
+            src = ./readers/cil-reader/tools + "/${project}";
+            nativeBuildInputs = [
+              pkgs.dotnet-sdk_8
+              pkgs.makeWrapper
+            ];
+            env = {
+              DOTNET_NOLOGO = "1";
+              DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+              DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+            };
+            buildPhase = ''
+              runHook preBuild
+              export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
+              dotnet build -c Release --nologo -p:UseAppHost=false -p:DnlibSrc=${dnlib} -o out
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p "$out/lib/${name}" "$out/bin"
+              cp -R out/. "$out/lib/${name}/"
+              makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/${name}" \
+                --add-flags "$out/lib/${name}/${project}.dll" \
+                --set DOTNET_NOLOGO 1 \
+                --set DOTNET_CLI_TELEMETRY_OPTOUT 1
+              runHook postInstall
+            '';
+          };
+
+        # PtrGen: rewrites a module with dnlib so its member tables go through
+        # FieldPtr/MethodPtr/ParamPtr/PropertyPtr/EventPtr, which neither
+        # Roslyn nor ilasm emit.
+        ptrGen = dnlibTool "ptr-gen" "PtrGen";
+
+        # GapGen: writes small modules with metadata shapes that Roslyn and
+        # ilasm do not emit but obfuscators do, each reproducing a divergence
+        # from Cecil.
+        gapGen = dnlibTool "gap-gen" "GapGen";
+
+        # FlowRun (readers/cil-reader/tools/FlowRun): runs an assembly's methods
+        # on .NET with random arguments, the reference that the `cil:exec`
+        # check's interpreter over cil-reader's flow layer is compared against.
+        # No NuGet packages, so it builds offline like cecilDump.
+        flowRun = pkgs.stdenvNoCC.mkDerivation {
+          # `name` rather than pname/version: see cecilDump.
+          name = "flow-run";
+          src = ./readers/cil-reader/tools/FlowRun;
+          nativeBuildInputs = [
+            pkgs.dotnet-sdk_8
+            pkgs.makeWrapper
+          ];
+          env = {
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+          };
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
+            dotnet build -c Release --nologo -p:UseAppHost=false -o out
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/lib/flow-run" "$out/bin"
+            cp -R out/. "$out/lib/flow-run/"
+            makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/flow-run" \
+              --add-flags "$out/lib/flow-run/FlowRun.dll" \
+              --set DOTNET_NOLOGO 1 \
+              --set DOTNET_CLI_TELEMETRY_OPTOUT 1
+            runHook postInstall
+          '';
+        };
+
+        # ModelRun (frontends/ctadl-cil/tools/ModelRun): calls the .NET library
+        # methods the default CIL models select, with marked arguments, the
+        # reference the `cil:models` check compares the models against. No
+        # NuGet packages, so it builds offline like flowRun.
+        modelRun = pkgs.stdenvNoCC.mkDerivation {
+          # `name` rather than pname/version: see cecilDump.
+          name = "model-run";
+          src = ./frontends/ctadl-cil/tools/ModelRun;
+          nativeBuildInputs = [
+            pkgs.dotnet-sdk_8
+            pkgs.makeWrapper
+          ];
+          env = {
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+          };
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
+            dotnet build -c Release --nologo -p:UseAppHost=false -o out
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/lib/model-run" "$out/bin"
+            cp -R out/. "$out/lib/model-run/"
+            makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/model-run" \
+              --add-flags "$out/lib/model-run/ModelRun.dll" \
+              --set DOTNET_NOLOGO 1 \
+              --set DOTNET_CLI_TELEMETRY_OPTOUT 1
+            runHook postInstall
+          '';
+        };
+
+        # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled.
+        # The tests find them through CIL_READER_FIXTURES. Offline (nothing
+        # references a NuGet package) and byte-for-byte reproducible:
+        # - `.il`: the standalone CoreCLR ilasm, whose flag dialect is
+        #   `-dll -output=<file>` (not the Mono-style `/dll /out:` of Cecil's
+        #   harness). `-DET` makes the MVID and timestamp content-derived.
+        # - `.cs`: one generated csproj per source, matching Cecil's
+        #   RoslynCompilationService (library, Release, NET_CORE, assembly
+        #   named after the source). Deterministic, with no PDB, so no build
+        #   path leaks into the bytes.
+        # - `ptr-<name>.cs.dll`: each `.cs` fixture rewritten by ptrGen, so the
+        #   corpus has images with Ptr tables. dnlib's output is deterministic.
+        # - `gap-<name>.il.dll` and `gap-<name>.dll`: cil-reader's own fixtures,
+        #   repros of divergences from Cecil: the `.il` sources in
+        #   readers/cil-reader/fixtures, assembled as Cecil's are, and the
+        #   modules gapGen writes.
+        # - `<name>.cs.dll` and `<name>-debug.cs.dll`: the `.cs` sources in
+        #   readers/cil-reader/fixtures, compiled as Cecil's are and again
+        #   unoptimized, since Debug and Release shape the IL differently
+        #   (the `cil:exec` check runs both).
+        cilFixtures = pkgs.stdenvNoCC.mkDerivation {
+          # `name` rather than pname/version: see cecilDump.
+          name = "cil-fixtures-${builtins.substring 0 7 cecil.rev}";
+          dontUnpack = true;
+          nativeBuildInputs = [
+            pkgs.dotnet-sdk_8
+            ilasm
+            ptrGen
+            gapGen
+          ];
+          env = {
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+            DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
+          };
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
+            mkdir -p "$out" work
+
+            for il in ${cecil}/Test/Resources/il/*.il ${./readers/cil-reader/fixtures}/*.il; do
+              name=$(basename "$il")
+              ilasm -nologo -quiet -dll -DET "-output=$out/$name.dll" "$il" >/dev/null
+              echo "assembled $name.dll"
+            done
+
+            # compile <source> <assembly name> <Release|Debug>: builds one
+            # source into work/<assembly name>/bin/<config>/<assembly name>.dll.
+            compile() {
+              local cs=$1 project=$2 config=$3 optimize=true
+              if [ "$config" = Debug ]; then optimize=false; fi
+              local build=work/$project
+              mkdir -p "$build"
+              cat >"$build/$project.csproj" <<EOF
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net8.0</TargetFramework>
+                <AssemblyName>$project</AssemblyName>
+                <DefineConstants>NET_CORE</DefineConstants>
+                <Optimize>$optimize</Optimize>
+                <Deterministic>true</Deterministic>
+                <DebugType>none</DebugType>
+                <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+                <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+                <Nullable>disable</Nullable>
+                <LangVersion>latest</LangVersion>
+                <NoWarn>CS0169;CS0649;CS0067;CS0414;CS0659;CS0661</NoWarn>
+                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+              </PropertyGroup>
+              <ItemGroup>
+                <Compile Include="$cs" />
+              </ItemGroup>
+            </Project>
+            EOF
+              if ! (cd "$build" && dotnet build -c "$config" --nologo -v q >build.log 2>&1); then
+                cat "$build/build.log" >&2
+                exit 1
+              fi
+            }
+
+            for cs in ${cecil}/Test/Resources/cs/*.cs; do
+              name=$(basename "$cs")
+              stem=''${name%.cs}
+              compile "$cs" "$stem" Release
+              cp "work/$stem/bin/Release/$stem.dll" "$out/$name.dll"
+              echo "compiled $name.dll"
+              ptr-gen "$out/$name.dll" "$out/ptr-$name.dll"
+              echo "rewrote ptr-$name.dll"
+            done
+
+            for cs in ${./readers/cil-reader/fixtures}/*.cs; do
+              name=$(basename "$cs")
+              stem=''${name%.cs}
+              compile "$cs" "$stem" Release
+              cp "work/$stem/bin/Release/$stem.dll" "$out/$name.dll"
+              echo "compiled $name.dll"
+              compile "$cs" "$stem-debug" Debug
+              cp "work/$stem-debug/bin/Debug/$stem-debug.dll" "$out/$stem-debug.cs.dll"
+              echo "compiled $stem-debug.cs.dll"
+            done
+
+            gap-gen "$out"
+            runHook postBuild
+          '';
+          dontInstall = true;
+        };
+
+        # CecilDump (readers/cil-reader/tools/CecilDump): Mono.Cecil's rendering
+        # of an assembly in the cil-dump text format, the reference that
+        # cil-reader's output is compared against. The project compiles the
+        # pinned Cecil sources in directly and references no NuGet packages, so
+        # the restore needs no network and runs inside the sandbox as is.
+        cecilDump = pkgs.stdenvNoCC.mkDerivation {
+          # `name` rather than pname/version: MSBuild reads the environment as
+          # properties, and a `version` variable lands as $(Version), which
+          # must be a NuGet version string.
+          name = "cecil-dump-${builtins.substring 0 7 cecil.rev}";
+          src = ./readers/cil-reader/tools/CecilDump;
+          nativeBuildInputs = [
+            pkgs.dotnet-sdk_8
+            pkgs.makeWrapper
+          ];
+          env = {
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+          };
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
+            dotnet build -c Release --nologo -p:UseAppHost=false -p:CecilSrc=${cecil} -o out
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/lib/cecil-dump" "$out/bin"
+            cp -R out/. "$out/lib/cecil-dump/"
+            makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/cecil-dump" \
+              --add-flags "$out/lib/cecil-dump/CecilDump.dll" \
+              --set DOTNET_NOLOGO 1 \
+              --set DOTNET_CLI_TELEMETRY_OPTOUT 1
+            runHook postInstall
+          '';
+        };
 
         # --- Nightly regression suite dependencies -------------------------
         # These are only forced when building `checks.<system>.{regression,nightly}`.
@@ -309,6 +630,12 @@
             jdk
             baksmali
             pkgs.ghidra-bin
+            # The `cil:cecil-compare` check's reference dumper.
+            cecilDump
+            # The `cil:exec` check's reference runner.
+            flowRun
+            # The `cil:models` check's reference runner.
+            modelRun
           ];
         };
 
@@ -349,6 +676,13 @@
       in
       {
         packages.default = naersk-lib.buildPackage ./.;
+        # Exposed so `nix build .#cecil-dump` can warm the cache on its own.
+        packages.cecil-dump = cecilDump;
+        packages.cil-fixtures = cilFixtures;
+        packages.flow-run = flowRun;
+        packages.model-run = modelRun;
+        packages.ptr-gen = ptrGen;
+        packages.gap-gen = gapGen;
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
         # Run a wrapper around ctadl-ascent that lets Ghidra process pcode
@@ -440,11 +774,17 @@
                   # no source tree, so point xtask at them explicitly or they
                   # would self-skip here -- which is the one place the drift is
                   # meant to be caught.
+                  # The `cil:*` checks read Cecil's test corpus (the pinned
+                  # input), the Cecil goldens and the built fixtures, and diff
+                  # against the `cecil-dump` that testEnv puts on PATH.
                   ${self.packages.${system}.default}/bin/xtask regression \
-                    --frontend dex,jvm,pcode,lua,jni,c,android-icc \
+                    --frontend dex,jvm,pcode,lua,jni,c,android-icc,cil \
                     --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
-                    --models-dir ${./ctadl-ascent/src/models}
+                    --models-dir ${./ctadl-ascent/src/models} \
+                    --cil-goldens ${./xtask/cil-goldens} \
+                    --cecil-src ${cecil} \
+                    --cil-fixtures ${cilFixtures}
 
                   mkdir -p "$out"
                 '';
@@ -511,7 +851,11 @@
             };
           in
           {
-            inherit regression dex-reader-tests jvm-reader-tests;
+            inherit
+              regression
+              dex-reader-tests
+              jvm-reader-tests
+              ;
           };
 
         formatter = pkgs.nixfmt;
@@ -551,10 +895,19 @@
               jadx
               scrcpy
               androidLldb
+              # The SDK the fixtures and CecilDump build with, for building and
+              # running .NET code by hand (ildasm/ilasm round trips, harnesses
+              # that run fixture methods for real).
+              dotnet-sdk_8
             ];
             packages = [ testEnv ];
 
             RUST_SRC_PATH = "${rustDist.rust-src}/lib/rustlib/src/rust/library";
+            # The pinned Mono.Cecil checkout: cil-reader's tests, the `cil:*`
+            # checks and `cargo xtask cil` read it.
+            CECIL_SRC = "${cecil}";
+            # cil-reader's compiled fixtures, for the same consumers.
+            CIL_READER_FIXTURES = "${cilFixtures}";
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
             # The debugging SDK, a superset of the regression one, so the
             # emulator finds its system image through this.
@@ -563,6 +916,9 @@
             ANDROID_NDK_ROOT = "${androidDebugSdk.androidsdk}/libexec/android-sdk/ndk-bundle";
             FRIDA_SERVER = "${fridaServer}";
             CTADL_ANDROID_ICC_APKS = "${droidbenchIccApks}";
+            DOTNET_NOLOGO = "1";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
 
             # The debugging SDK's bin/ (adb, emulator, avdmanager, ...) goes
             # ahead of testEnv's, which carries the regression SDK's adb too.

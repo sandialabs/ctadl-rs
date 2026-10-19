@@ -1,0 +1,86 @@
+[module]
+name=marshal.dll
+mvid=6a180078-95de-4c2d-8801-51ed81696bcd
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=marshal, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+0x1a000001=foo.dll
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Boc flags=0x00100108 valuetype
+	base=System.ValueType
+0x02000003=SomeMethod flags=0x00000100
+	base=System.MulticastDelegate
+0x02000004=Bar flags=0x00100000
+	base=System.Object
+[fields]
+0x04000001=System.Object Boc::a flags=0x1006 marshal=fixedsysstring(42)
+0x04000002=System.Object Boc::b flags=0x1006 marshal=fixedarray(size=12,elem=0x02)
+[methods]
+0x06000001=System.Void SomeMethod::.ctor(System.Object,System.IntPtr) flags=0x1886 impl=0x0003 rva=0x00000000
+	param 1 name=object flags=0x0000
+	param 2 name=method flags=0x0000
+0x06000002=System.Void SomeMethod::Invoke(System.IntPtr,System.Byte[]) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=cookie flags=0x0000
+	param 2 name=value flags=0x2002 marshal=array(elem=0x50,size=20,index=0,mult=0)
+0x06000003=System.IAsyncResult SomeMethod::BeginInvoke(System.IntPtr,System.Byte[],System.AsyncCallback,System.Object) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=cookie flags=0x0000
+	param 2 name=value flags=0x2002 marshal=array(elem=0x50,size=20,index=0,mult=0)
+	param 3 name=callback flags=0x0000
+	param 4 name=object flags=0x0000
+0x06000004=System.Void SomeMethod::EndInvoke(System.IAsyncResult) flags=0x01c6 impl=0x0003 rva=0x00000000
+	param 1 name=result flags=0x0000
+0x06000005=System.Void Bar::Pan(System.Int32) flags=0x2096 impl=0x0080 rva=0x00000000 pinvoke=(foo.dll,Pan,0x0100)
+	param 0 name=i flags=0x2000 marshal=native(0x07)
+0x06000006=System.Object Bar::PanPan(System.Object,System.Object,System.Int32,System.Object) flags=0x2096 impl=0x0080 rva=0x00000000 pinvoke=(foo.dll,PanPan,0x0100)
+	param 0 name=f flags=0x2000 marshal=custom(guid=00000000-0000-0000-0000-000000000000,unmanaged=,managed=Boc,cookie=nomnom)
+	param 1 name=c flags=0x2000 marshal=array(elem=0x09,size=66,index=2,mult=1)
+	param 2 name=i flags=0x0000
+	param 3 name=d flags=0x2000 marshal=array(elem=0x05,size=-1,index=-1,mult=-1)
+0x06000007=System.Void Bar::.ctor() flags=0x1886 impl=0x0000 rva=0x00002050
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+[security-declarations]
+[il]
+0x06000007 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+[custom-attributes-resolved]
+[fields-resolved]

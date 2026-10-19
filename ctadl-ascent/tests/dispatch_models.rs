@@ -339,6 +339,28 @@ fn inline_defers_the_site_to_hybrid_inlining() {
     );
 }
 
+/// `resolve: inline` with a propagation does both: the site is deferred, and it also calls the
+/// synthetic function, whose summary the caller propagates through. The receiver here is a
+/// parameter, whose class no allocation names, which is the case the summary is for.
+#[test]
+fn inline_with_a_propagation_also_carries_the_summary() {
+    let indexed = index_with(
+        vec![generator(serde_json::json!({
+            "resolve": "inline",
+            "propagation": [{"input": "Argument(1)", "output": "Return"}]
+        }))],
+        &[],
+    );
+    assert_eq!(indexed.callees(), vec![SYNTHETIC.to_string()]);
+    assert_eq!(indexed.facts.callee_info.len(), 1);
+    assert!(indexed.caller_propagates());
+    let buckets = indexed.report.buckets[JavaDispatch::Interface.index()];
+    assert_eq!(
+        (buckets.java_sites, buckets.inlined, buckets.modelled),
+        (1, 1, 0)
+    );
+}
+
 /// A sink inside one of the targets refuses the model, so those bodies stay in the graph.
 #[test]
 fn a_sink_in_the_target_set_refuses_the_model() {
