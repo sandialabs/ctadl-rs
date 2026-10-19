@@ -813,6 +813,17 @@ impl<'a> FieldDef<'a> {
     /// `GetFieldTypeSize`: primitives by their size, anything else by the
     /// class size of the type it resolves to.
     fn field_type_size(&self, ty: &TypeSig, cache: &AssemblyCache<'_>) -> Result<usize> {
+        // Cecil reads a TypeRef to a primitive as that primitive.
+        if let TypeSig::Named { token, .. } = ty
+            && token.token_type() == Some(TokenType::TypeRef)
+            && let Some(primitive) = (TypeRef {
+                m: self.m,
+                rid: token.rid(),
+            })
+            .primitive()?
+        {
+            return self.field_type_size(&primitive, cache);
+        }
         Ok(match ty {
             TypeSig::Boolean | TypeSig::U1 | TypeSig::I1 => 1,
             TypeSig::U2 | TypeSig::I2 | TypeSig::Char => 2,
@@ -823,17 +834,6 @@ impl<'a> FieldDef<'a> {
             TypeSig::Ptr(_) | TypeSig::FnPtr(_) => 8,
             TypeSig::CModReq { inner, .. } | TypeSig::CModOpt { inner, .. } => {
                 self.field_type_size(inner, cache)?
-            }
-            // Cecil reads a TypeRef to a primitive as that primitive.
-            TypeSig::Named { token, .. }
-                if token.token_type() == Some(TokenType::TypeRef)
-                    && let Some(primitive) = (TypeRef {
-                        m: self.m,
-                        rid: token.rid(),
-                    })
-                    .primitive()? =>
-            {
-                self.field_type_size(&primitive, cache)?
             }
             // `TypeReference.Resolve()`, through the element type; a generic
             // instance resolves to its generic type.
