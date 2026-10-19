@@ -42,7 +42,7 @@ cil virtual method table
 [flow]Point extends [System.Private.CoreLib]System.ValueType
 end cil virtual method table
 
-define [flow]Point::.ctor(System.Int32)->System.Void(@p0[byref], @p1[byval]) -> 2:
+define [flow]Point::.ctor(System.Int32)->System.Void(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=pt_0
 begin block_0 [start]:
 assign %excout = <const: []> [1]
@@ -53,7 +53,7 @@ store %pt_0.<[flow]Point::X> := %s1 [3]
 return <const: []>, %excout
 end block_0
 
-define [flow]Holder::.ctor()->System.Void(@p0[byref]) -> 2:
+define [flow]Holder::.ctor()->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [5]
@@ -63,7 +63,7 @@ assign %excout = %excout, %throwval [6]
 return <const: []>, %excout
 end block_0
 
-define [flow]Holder::.ctor(System.Object,System.Int32)->System.Void(@p0[byref], @p1[byref], @p2[byval]) -> 2:
+define [flow]Holder::.ctor(System.Object,System.Int32)->System.Void(@p0[shared], @p1[shared], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1
 begin block_0 [start]:
 assign %excout = <const: []> [8]
@@ -79,7 +79,7 @@ store %s0.<[flow]Holder::g> := %s1 [15]
 return <const: []>, %excout
 end block_0
 
-define [flow]Holder::Twice(System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [flow]Holder::Twice(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [17]
@@ -89,18 +89,18 @@ assign %s0 = %s0, %s1 [19]
 return %s0, %excout
 end block_0
 
-define [flow]Fn::.ctor(System.Object,System.IntPtr)->System.Void(@p0[byref], @p1[byref], @p2[byval]) -> 2:
+define [flow]Fn::.ctor(System.Object,System.IntPtr)->System.Void(@p0[shared], @p1[shared], @p2[shared_fields]) -> 2:
 
-define [flow]Fn::Invoke(System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define [flow]Fn::Invoke(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
 
-define [flow]Flow::Sink(System.Object)->System.Void(@p0[byref]) -> 2:
+define [flow]Flow::Sink(System.Object)->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout
 begin block_0 [start]:
 assign %excout = <const: []> [21]
 return <const: []>, %excout
 end block_0
 
-define [flow]Flow::Twice(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [flow]Flow::Twice(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [22]
@@ -110,7 +110,7 @@ assign %s0 = %s0, %s1 [24]
 return %s0, %excout
 end block_0
 
-define [flow]Flow::OutParam(System.String)->System.Int32(@p0[byref]) -> 2:
+define [flow]Flow::OutParam(System.String)->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=cell_0 %L4=c_1 %L5=retval %L6=throwval %L7=u_2
 begin block_0 [start]:
 assign %excout = <const: []> [26]
@@ -126,7 +126,7 @@ assign %s0 = %loc0 [30]
 return %s0, %excout
 end block_0
 
-define [flow]Flow::Inc(System.Int32&)->System.Void(@p0[byref]) -> 2:
+define [flow]Flow::Inc(System.Int32&)->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2
 begin block_0 [start]:
 assign %excout = <const: []> [32]
@@ -163,7 +163,7 @@ store %loc0.<[flow]Point::X> := %s1 [47]
 return %s0, %excout
 end block_0
 
-define [flow]Flow::ClearCopy(Point&)->System.Void(@p0[byref]) -> 2:
+define [flow]Flow::ClearCopy(Point&)->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=loc0 %L2=s0 %L3=t0 %L4=s1
 begin block_0 [start]:
 assign %excout = <const: []> [51]
@@ -180,7 +180,7 @@ store %s0.deref := %s1 [62]
 return <const: []>, %excout
 end block_0
 
-define [flow]Flow::NestedField(Holder)->System.Int32(@p0[byref]) -> 2:
+define [flow]Flow::NestedField(Holder)->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=pt_0
 begin block_0 [start]:
 assign %excout = <const: []> [64]
@@ -190,7 +190,7 @@ assign %s0 = @p0 [64]
 return %s0, %excout
 end block_0
 
-define [flow]Flow::Constrained``1(!!0)->System.String(@p0[byref]) -> 2:
+define [flow]Flow::Constrained``1(!!0)->System.String(@p0[shared]) -> 2:
   locals: %L0=excout %L1=cell_0 %L2=c_1 %L3=retval %L4=throwval %L5=s0 %L6=u_2
 begin block_0 [start]:
 assign %excout = <const: []> [68]
@@ -204,7 +204,7 @@ assign @p0 = %u_2 [70]
 return %s0, %excout
 end block_0
 
-define [flow]Flow::Delegates(Holder)->System.Int32(@p0[byref]) -> 2:
+define [flow]Flow::Delegates(Holder)->System.Int32(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval %L6=dm_0
 begin block_0 [start]:
 assign %excout = <const: []> [72]
@@ -224,7 +224,7 @@ assign %s0 = %retval [76]
 return %s0, %excout
 end block_0
 
-define [flow]Flow::Lambdas(Holder)->Fn(@p0[byref]) -> 2:
+define [flow]Flow::Lambdas(Holder)->Fn(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=t0 %L4=retval %L5=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [78]
@@ -273,7 +273,7 @@ assign %s2 = <const: 2> [103]
 return %s0, %excout
 end block_0
 
-define [flow]Flow::Filter(System.Object)->System.Void(@p0[byref]) -> 2:
+define [flow]Flow::Filter(System.Object)->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=caught0 %L5=s1
 begin block_0 [start]:
 assign %excout = <const: []> [107]
@@ -303,7 +303,7 @@ begin block_4:
 return <const: []>, %excout
 end block_4
 
-define [flow]Flow::CatchFinally(System.Object)->System.Void(@p0[byref]) -> 2:
+define [flow]Flow::CatchFinally(System.Object)->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=caught0 %L5=loc0
 begin block_0 [start]:
 assign %excout = <const: []> [119]
@@ -347,7 +347,7 @@ begin block_7:
 return <const: []>, %excout
 end block_7
 
-define [flow]Flow::Calli(System.Int32)->System.Int32(@p0[byval]) -> 2:
+define [flow]Flow::Calli(System.Int32)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [132]
@@ -359,7 +359,7 @@ assign %s0 = %retval [134]
 return %s0, %excout
 end block_0
 
-define [flow]Flow::NewobjArgs(System.Object)->System.Object(@p0[byref]) -> 2:
+define [flow]Flow::NewobjArgs(System.Object)->System.Object(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=s2 %L4=t0 %L5=retval %L6=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [136]
@@ -374,7 +374,7 @@ store $globals.<[flow]Holder::s> := %s1 [140]
 return %s0, %excout
 end block_0
 
-define [flow]Flow::DupStfld(System.Object)->Holder(@p0[byref]) -> 2:
+define [flow]Flow::DupStfld(System.Object)->Holder(@p0[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=retval %L3=throwval %L4=s1 %L5=s2
 begin block_0 [start]:
 assign %excout = <const: []> [142]
@@ -388,7 +388,7 @@ store %s1.<[flow]Holder::f> := %s2 [146]
 return %s0, %excout
 end block_0
 
-define [flow]Flow::AddressJoin(System.Boolean)->System.Int32(@p0[byval]) -> 2:
+define [flow]Flow::AddressJoin(System.Boolean)->System.Int32(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=cell_0 %L4=c_1 %L5=loc1 %L6=cell_2 %L7=c_3 %L8=s1
 begin block_0 [start]:
 assign %excout = <const: []> [148]
@@ -428,7 +428,7 @@ assign %s0 = %s0, %s1 [164]
 return %s0, %excout
 end block_6
 
-define [flow]Flow::HeightMismatch(System.Boolean)->System.Void(@p0[byval]) -> 2:
+define [flow]Flow::HeightMismatch(System.Boolean)->System.Void(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1
 begin block_0 [start]:
 assign %excout = <const: []> [166]
@@ -448,7 +448,7 @@ begin block_3:
 return <const: []>, %excout
 end block_3
 
-define [flow]Flow::VarArgs(System.Int32,...)->System.Void(@p0[byval]) -> 2:
+define [flow]Flow::VarArgs(System.Int32,...)->System.Void(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0
 begin block_0 [start]:
 assign %excout = <const: []> [174]
@@ -468,7 +468,7 @@ assign %excout = %excout, %throwval [181]
 return <const: []>, %excout
 end block_0
 
-define [flow]Flow::Blocks(System.IntPtr)->System.Void(@p0[byval]) -> 2:
+define [flow]Flow::Blocks(System.IntPtr)->System.Void(@p0[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2 %L5=t0
 begin block_0 [start]:
 assign %excout = <const: []> [183]
@@ -487,7 +487,7 @@ store %s0.deref := %t0 [194]
 return <const: []>, %excout
 end block_0
 
-define [flow]Flow::Prefixes(Holder,System.Int32[])->System.Int32(@p0[byref], @p1[byref]) -> 2:
+define [flow]Flow::Prefixes(Holder,System.Int32[])->System.Int32(@p0[shared], @p1[shared]) -> 2:
   locals: %L0=excout %L1=s0 %L2=s1 %L3=retval %L4=throwval
 begin block_0 [start]:
 assign %excout = <const: []> [196]
@@ -501,7 +501,7 @@ assign %s0 = %retval [202]
 return %s0, %excout
 end block_0
 
-define [flow]Flow::Misc(System.Object,System.Int32,System.Double)->System.Object(@p0[byref], @p1[byval], @p2[byval]) -> 2:
+define [flow]Flow::Misc(System.Object,System.Int32,System.Double)->System.Object(@p0[shared], @p1[shared_fields], @p2[shared_fields]) -> 2:
   locals: %L0=excout %L1=s0 %L2=loc0 %L3=s1 %L4=s2 %L5=loc1 %L6=cell_0 %L7=c_1 %L8=loc2
 begin block_0 [start]:
 assign %excout = <const: []> [204]
@@ -549,7 +549,7 @@ assign %s0 = @p0 [245]
 return %s0, %excout
 end block_2
 
-define [flow]Flow::Jump(System.Object)->System.Void(@p0[byref]) -> 2:
+define [flow]Flow::Jump(System.Object)->System.Void(@p0[shared]) -> 2:
   locals: %L0=excout %L1=throwval %L2=retval
 begin block_0 [start]:
 assign %excout = <const: []> [247]
@@ -558,15 +558,15 @@ assign %excout = %excout, %throwval [248]
 return %retval, %excout
 end block_0
 
-define [System.Private.CoreLib]System.Exception::get_Message()->System.String(@p0[byref]) -> 2:
+define [System.Private.CoreLib]System.Exception::get_Message()->System.String(@p0[shared]) -> 2:
 
-define [System.Private.CoreLib]System.Int32::TryParse(System.String,System.Int32&)->System.Boolean(@p0[byref], @p1[byref]) -> 2:
+define [System.Private.CoreLib]System.Int32::TryParse(System.String,System.Int32&)->System.Boolean(@p0[shared], @p1[shared]) -> 2:
 
-define [System.Private.CoreLib]System.Object::.ctor()->System.Void(@p0[byref]) -> 2:
+define [System.Private.CoreLib]System.Object::.ctor()->System.Void(@p0[shared]) -> 2:
 
-define [System.Private.CoreLib]System.Object::ToString()->System.String(@p0[byref]) -> 2:
+define [System.Private.CoreLib]System.Object::ToString()->System.String(@p0[shared]) -> 2:
 
-define ctadl$delegate$[flow]Flow::Twice(System.Int32)->System.Int32(@p0[byref], @p1[byval]) -> 2:
+define ctadl$delegate$[flow]Flow::Twice(System.Int32)->System.Int32(@p0[shared], @p1[shared_fields]) -> 2:
   locals: %L0=retval %L1=throwval
 begin block_0 [start]:
 %retval, %throwval = direct-call [flow]Flow::Twice(System.Int32)->System.Int32(@p1)
