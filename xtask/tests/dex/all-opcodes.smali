@@ -5,8 +5,8 @@
 # distinct registers in every field (so a swapped field shows), the largest
 # register each field can hold, negative and extreme literals, backward and
 # forward branches, and switch and array payloads. It is assembled with
-# `smali assemble --api 28` and decoded by both dex-reader and dexlib2
-# (`dex:dexlib2-decode`); it is never run, so it need not verify.
+# `smali assemble --api 28` and decoded by dex-reader, dexlib2 and baksmali;
+# it is never run, so it need not verify.
 
 .field public i:I
 .field public j:J
