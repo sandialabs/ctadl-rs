@@ -27,13 +27,18 @@ use hashbrown::HashTable;
 use memmap2::{Mmap, MmapMut};
 use smallvec::SmallVec;
 
-use crate::bloom::{Bloom, hash_bytes, hash_key};
+use crate::bloom::{self, Block, hash_bytes, hash_key};
 
 const DEFAULT_LEVEL_FANOUT: usize = 4;
 const RUN_MAGIC: &[u8; 4] = b"LSMM";
+const RUN_VERSION: u32 = 2;
+/// The most key prefix lengths a map can keep filters for.
+const MAX_PREFIX_FILTERS: usize = 4;
 /// Fixed run header: magic(4) + version(4) + entries_count(8) + values_len(8) +
-/// keys_off(8) + offsets_off(8) + values_off(8).
-const HEADER_LEN: usize = 4 + 4 + 8 * 5;
+/// keys_off(8) + offsets_off(8) + values_off(8) + filter_off(8) +
+/// filter_blocks(8) + prefix filter count(8) + per prefix filter, its length and
+/// offset (8 + 8).
+const HEADER_LEN: usize = 4 + 4 + 8 * 8 + 16 * MAX_PREFIX_FILTERS;
 const DEFAULT_DISK_MEMTABLE_LIMIT: usize = 10_000;
 static NEXT_TEMP_RUN_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -92,11 +97,15 @@ struct MmapRun<K, V> {
     keys_off: usize,
     offsets_off: usize,
     values_off: usize,
-    /// The run's keys, for skipping the run on a lookup of a key it lacks.
-    bloom: Bloom,
-    /// For each key prefix length (in bytes) the map was asked to filter, the
-    /// run's key prefixes of that length.
-    prefix_blooms: SmallVec<[(usize, Bloom); 2]>,
+    /// Where the Bloom filter of the run's keys starts, for skipping the run on
+    /// a lookup of a key it lacks. The filters are in the run's own bytes, so
+    /// they cost page cache rather than heap.
+    filter_off: usize,
+    /// The number of blocks in each of the run's filters.
+    filter_blocks: usize,
+    /// For each key prefix length (in bytes) the map was asked to filter, where
+    /// the filter of the run's key prefixes of that length starts.
+    prefix_filters: SmallVec<[(usize, usize); 2]>,
     _marker: PhantomData<(K, V)>,
 }
 
@@ -126,22 +135,27 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
         bytemuck::cast_slice(bytes)
     }
 
+    fn filter(&self, off: usize) -> &[Block] {
+        bytemuck::cast_slice(&self.bytes[off..off + self.filter_blocks * size_of::<Block>()])
+    }
+
     fn contains_key(&self, key: &K, hash: u64) -> bool {
-        self.bloom.may_contain(hash) && self.keys().binary_search(key).is_ok()
+        bloom::may_contain(self.filter(self.filter_off), hash)
+            && self.keys().binary_search(key).is_ok()
     }
 
     /// False only if no key starts with a prefix of `len` bytes hashing to `hash`.
     fn may_have_prefix(&self, len: usize, hash: u64) -> bool {
-        self.prefix_blooms
+        self.prefix_filters
             .iter()
             .find(|(l, _)| *l == len)
-            .is_none_or(|(_, bloom)| bloom.may_contain(hash))
+            .is_none_or(|&(_, off)| bloom::may_contain(self.filter(off), hash))
     }
 
     /// Values for `key`, as a zero-copy slice into the mapping, or `None`.
     /// `hash` is the key's [`hash_key`].
     fn find(&self, key: &K, hash: u64) -> Option<&[V]> {
-        if !self.bloom.may_contain(hash) {
+        if !bloom::may_contain(self.filter(self.filter_off), hash) {
             return None;
         }
         let keys = self.keys();
@@ -189,8 +203,9 @@ struct RunWriter {
     /// Entries and values written so far.
     keys_written: usize,
     values_written: usize,
-    bloom: Bloom,
-    prefix_blooms: SmallVec<[(usize, Bloom); 2]>,
+    filter_off: usize,
+    filter_blocks: usize,
+    prefix_filters: SmallVec<[(usize, usize); 2]>,
 }
 
 impl RunWriter {
@@ -208,7 +223,15 @@ impl RunWriter {
         let keys_off = align8(HEADER_LEN);
         let offsets_off = align8(keys_off + max_entries * size_of::<K>());
         let values_off = align8(offsets_off + (max_entries + 1) * size_of::<u64>());
-        let file_len = values_off + values_len * size_of::<V>();
+        let filter_off = align8(values_off + values_len * size_of::<V>());
+        let filter_blocks = bloom::blocks_for(max_entries);
+        let filter_bytes = filter_blocks * size_of::<Block>();
+        let prefix_filters: SmallVec<[(usize, usize); 2]> = prefix_lens
+            .iter()
+            .enumerate()
+            .map(|(i, &len)| (len, filter_off + (i + 1) * filter_bytes))
+            .collect();
+        let file_len = filter_off + (1 + prefix_filters.len()) * filter_bytes;
         let file = fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -230,11 +253,9 @@ impl RunWriter {
             values_off,
             keys_written: 0,
             values_written: 0,
-            bloom: Bloom::with_capacity(max_entries),
-            prefix_blooms: prefix_lens
-                .iter()
-                .map(|&len| (len, Bloom::with_capacity(max_entries)))
-                .collect(),
+            filter_off,
+            filter_blocks,
+            prefix_filters,
         })
     }
 
@@ -249,9 +270,17 @@ impl RunWriter {
         assert!(self.keys_written < self.max_entries, "run overflow: keys");
         let at = self.keys_off + self.keys_written * size_of::<K>();
         self.bytes[at..at + size_of::<K>()].copy_from_slice(bytemuck::bytes_of(key));
-        self.bloom.insert(hash_key(key));
-        for (len, bloom) in &mut self.prefix_blooms {
-            bloom.insert(hash_bytes(&bytemuck::bytes_of(key)[..*len]));
+        let filter_bytes = self.filter_blocks * size_of::<Block>();
+        let off = self.filter_off;
+        bloom::insert(
+            bytemuck::cast_slice_mut(&mut self.bytes[off..off + filter_bytes]),
+            hash_key(key),
+        );
+        for &(len, off) in &self.prefix_filters {
+            bloom::insert(
+                bytemuck::cast_slice_mut(&mut self.bytes[off..off + filter_bytes]),
+                hash_bytes(&bytemuck::bytes_of(key)[..len]),
+            );
         }
         self.write_offset(self.keys_written, self.values_written);
         self.keys_written += 1;
@@ -280,12 +309,20 @@ impl RunWriter {
         self.write_offset(entries_count, self.values_len);
         let header = &mut self.bytes[..HEADER_LEN];
         header[0..4].copy_from_slice(RUN_MAGIC);
-        // header[4..8] stays the zero version/pad.
+        header[4..8].copy_from_slice(&RUN_VERSION.to_ne_bytes());
         header[8..16].copy_from_slice(&(entries_count as u64).to_ne_bytes());
         header[16..24].copy_from_slice(&(self.values_len as u64).to_ne_bytes());
         header[24..32].copy_from_slice(&(self.keys_off as u64).to_ne_bytes());
         header[32..40].copy_from_slice(&(self.offsets_off as u64).to_ne_bytes());
         header[40..48].copy_from_slice(&(self.values_off as u64).to_ne_bytes());
+        header[48..56].copy_from_slice(&(self.filter_off as u64).to_ne_bytes());
+        header[56..64].copy_from_slice(&(self.filter_blocks as u64).to_ne_bytes());
+        header[64..72].copy_from_slice(&(self.prefix_filters.len() as u64).to_ne_bytes());
+        for (i, &(len, off)) in self.prefix_filters.iter().enumerate() {
+            let at = 72 + 16 * i;
+            header[at..at + 8].copy_from_slice(&(len as u64).to_ne_bytes());
+            header[at + 8..at + 16].copy_from_slice(&(off as u64).to_ne_bytes());
+        }
         let mmap = self.bytes.make_read_only()?;
         let path = if self.keep_file {
             Some(self.path)
@@ -301,8 +338,9 @@ impl RunWriter {
             keys_off: self.keys_off,
             offsets_off: self.offsets_off,
             values_off: self.values_off,
-            bloom: self.bloom,
-            prefix_blooms: self.prefix_blooms,
+            filter_off: self.filter_off,
+            filter_blocks: self.filter_blocks,
+            prefix_filters: self.prefix_filters,
             _marker: PhantomData,
         })
     }
@@ -314,7 +352,10 @@ fn load_run<K: Pod + Ord, V: Pod>(path: PathBuf) -> io::Result<MmapRun<K, V>> {
     // SAFETY: run files are immutable once written and are never modified while
     // mapped, so the mapping's bytes do not change under us.
     let mmap = unsafe { Mmap::map(&file)? };
-    if mmap.len() < HEADER_LEN || &mmap[0..4] != RUN_MAGIC {
+    if mmap.len() < HEADER_LEN
+        || &mmap[0..4] != RUN_MAGIC
+        || mmap[4..8] != RUN_VERSION.to_ne_bytes()
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "invalid mmap LSM run magic",
@@ -330,7 +371,17 @@ fn load_run<K: Pod + Ord, V: Pod>(path: PathBuf) -> io::Result<MmapRun<K, V>> {
     let keys_off = read(24..32);
     let offsets_off = read(32..40);
     let values_off = read(40..48);
-    let mut run = MmapRun {
+    let filter_off = read(48..56);
+    let filter_blocks = read(56..64);
+    let prefix_filters = (0..read(64..72).min(MAX_PREFIX_FILTERS))
+        .map(|i| {
+            (
+                read(72 + 16 * i..80 + 16 * i),
+                read(80 + 16 * i..88 + 16 * i),
+            )
+        })
+        .collect();
+    Ok(MmapRun {
         bytes: mmap,
         path: Some(path),
         entries_count,
@@ -338,16 +389,11 @@ fn load_run<K: Pod + Ord, V: Pod>(path: PathBuf) -> io::Result<MmapRun<K, V>> {
         keys_off,
         offsets_off,
         values_off,
-        bloom: Bloom::with_capacity(0),
-        prefix_blooms: SmallVec::new(),
+        filter_off,
+        filter_blocks,
+        prefix_filters,
         _marker: PhantomData,
-    };
-    let mut bloom = Bloom::with_capacity(entries_count);
-    for key in run.keys() {
-        bloom.insert(hash_key(key));
-    }
-    run.bloom = bloom;
-    Ok(run)
+    })
 }
 
 /// Bytes per chunk of a [`Memtable`]'s entries.
@@ -530,7 +576,7 @@ pub struct MmapLsmMultiMap<K, V> {
     next_run_id: u64,
     /// The key prefix lengths, in bytes, whose prefixes each run filters for
     /// [`Self::keys_with_prefix`].
-    prefix_blooms: SmallVec<[usize; 2]>,
+    prefix_lens: SmallVec<[usize; 2]>,
 }
 
 impl<K: Pod + Ord, V: Pod> Default for MmapLsmMultiMap<K, V> {
@@ -562,7 +608,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
             level_fanout: level_fanout.max(1),
             dir: None,
             next_run_id: 0,
-            prefix_blooms: SmallVec::new(),
+            prefix_lens: SmallVec::new(),
         }
     }
 
@@ -573,7 +619,8 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     /// lengths still work, by scanning the memtable.
     pub fn with_prefix_reads(mut self, lens: &[usize]) -> Self {
         assert!(self.is_empty(), "with_prefix_reads on a non-empty map");
-        self.prefix_blooms = lens.iter().copied().collect();
+        assert!(lens.len() <= MAX_PREFIX_FILTERS, "too many prefix lengths");
+        self.prefix_lens = lens.iter().copied().collect();
         self.memtable = Memtable::new(lens);
         self
     }
@@ -620,7 +667,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
             level_fanout: level_fanout.max(1),
             dir: Some(dir),
             next_run_id,
-            prefix_blooms: SmallVec::new(),
+            prefix_lens: SmallVec::new(),
         })
     }
 
@@ -867,7 +914,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
             keep_file,
             entries_count,
             values_len,
-            &self.prefix_blooms,
+            &self.prefix_lens,
         )
     }
 

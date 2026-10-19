@@ -1,5 +1,6 @@
 //! A split-block Bloom filter over a run's keys, so a lookup can skip the runs
-//! that cannot hold its key without searching them.
+//! that cannot hold its key without searching them. A filter is a slice of
+//! [`Block`]s, which a run keeps in its own file.
 //!
 //! Each key sets one bit in each of the eight 32-bit words of one 256-bit block,
 //! as Parquet's filters do: a probe reads a single cache line. At
@@ -21,50 +22,44 @@ const SALT: [u32; 8] = [
     0x5c6b_fb31,
 ];
 
-#[derive(Debug)]
-pub(crate) struct Bloom {
-    blocks: Vec<[u32; 8]>,
+/// One block of a filter.
+pub(crate) type Block = [u32; 8];
+
+/// The number of blocks in a filter sized for `keys` keys.
+pub(crate) fn blocks_for(keys: usize) -> usize {
+    (keys.max(1) * BITS_PER_KEY).div_ceil(BLOCK_BITS)
 }
 
-impl Bloom {
-    /// An empty filter sized for `keys` keys.
-    pub(crate) fn with_capacity(keys: usize) -> Self {
-        let blocks = (keys.max(1) * BITS_PER_KEY).div_ceil(BLOCK_BITS);
-        Self {
-            blocks: vec![[0; 8]; blocks],
-        }
-    }
+fn block(blocks: usize, hash: u64) -> usize {
+    // The high half picks the block, by multiply-shift over the block count.
+    (((hash >> 32) * blocks as u64) >> 32) as usize
+}
 
-    fn block(&self, hash: u64) -> usize {
-        // The high half picks the block, by multiply-shift over the block count.
-        (((hash >> 32) * self.blocks.len() as u64) >> 32) as usize
-    }
+fn masks(hash: u64) -> [u32; 8] {
+    // The low half picks one bit per word.
+    let low = hash as u32;
+    SALT.map(|salt| 1 << (low.wrapping_mul(salt) >> 27))
+}
 
-    fn masks(hash: u64) -> [u32; 8] {
-        // The low half picks one bit per word.
-        let low = hash as u32;
-        SALT.map(|salt| 1 << (low.wrapping_mul(salt) >> 27))
-    }
-
-    pub(crate) fn insert(&mut self, hash: u64) {
-        let block = self.block(hash);
-        for (word, mask) in self.blocks[block].iter_mut().zip(Self::masks(hash)) {
-            *word |= mask;
-        }
-    }
-
-    /// False only if no key with this hash was inserted.
-    #[inline]
-    pub(crate) fn may_contain(&self, hash: u64) -> bool {
-        let block = &self.blocks[self.block(hash)];
-        block
-            .iter()
-            .zip(Self::masks(hash))
-            .all(|(word, mask)| word & mask != 0)
+/// Adds a key with this hash to the filter `blocks`.
+pub(crate) fn insert(blocks: &mut [Block], hash: u64) {
+    let block = block(blocks.len(), hash);
+    for (word, mask) in blocks[block].iter_mut().zip(masks(hash)) {
+        *word |= mask;
     }
 }
 
-/// The hash a [`Bloom`] is keyed on: the key's bytes (see [`hash_bytes`]).
+/// False only if no key with this hash was added to the filter `blocks`.
+#[inline]
+pub(crate) fn may_contain(blocks: &[Block], hash: u64) -> bool {
+    let block = &blocks[block(blocks.len(), hash)];
+    block
+        .iter()
+        .zip(masks(hash))
+        .all(|(word, mask)| word & mask != 0)
+}
+
+/// The hash a filter is keyed on: the key's bytes (see [`hash_bytes`]).
 #[inline]
 pub(crate) fn hash_key<K: Pod>(key: &K) -> u64 {
     hash_bytes(bytemuck::bytes_of(key))
@@ -102,15 +97,15 @@ mod tests {
     #[test]
     fn no_false_negatives_and_few_false_positives() {
         let keys = 10_000u64;
-        let mut bloom = Bloom::with_capacity(keys as usize);
+        let mut bloom = vec![[0; 8]; blocks_for(keys as usize)];
         for k in 0..keys {
-            bloom.insert(hash_key(&[k, k ^ 0xabcd]));
+            insert(&mut bloom, hash_key(&[k, k ^ 0xabcd]));
         }
         for k in 0..keys {
-            assert!(bloom.may_contain(hash_key(&[k, k ^ 0xabcd])));
+            assert!(may_contain(&bloom, hash_key(&[k, k ^ 0xabcd])));
         }
         let false_positives = (keys..keys * 11)
-            .filter(|&k| bloom.may_contain(hash_key(&[k, k ^ 0xabcd])))
+            .filter(|&k| may_contain(&bloom, hash_key(&[k, k ^ 0xabcd])))
             .count();
         let rate = false_positives as f64 / (keys * 10) as f64;
         assert!(rate < 0.03, "false-positive rate {rate}");
