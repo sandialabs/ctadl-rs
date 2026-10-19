@@ -1,4 +1,5 @@
 pub mod ascent_provider;
+mod bloom;
 pub mod disk;
 pub mod mmap;
 

@@ -27,6 +27,8 @@ use bytemuck::Pod;
 use memmap2::{Mmap, MmapMut};
 use smallvec::SmallVec;
 
+use crate::bloom::{Bloom, hash_key};
+
 const DEFAULT_LEVEL_FANOUT: usize = 4;
 const RUN_MAGIC: &[u8; 4] = b"LSMM";
 /// Fixed run header: magic(4) + version(4) + entries_count(8) + values_len(8) +
@@ -90,6 +92,8 @@ struct MmapRun<K, V> {
     keys_off: usize,
     offsets_off: usize,
     values_off: usize,
+    /// The run's keys, for skipping the run on a lookup of a key it lacks.
+    bloom: Bloom,
     _marker: PhantomData<(K, V)>,
 }
 
@@ -118,12 +122,16 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
         bytemuck::cast_slice(bytes)
     }
 
-    fn contains_key(&self, key: &K) -> bool {
-        self.keys().binary_search(key).is_ok()
+    fn contains_key(&self, key: &K, hash: u64) -> bool {
+        self.bloom.may_contain(hash) && self.keys().binary_search(key).is_ok()
     }
 
     /// Values for `key`, as a zero-copy slice into the mapping, or `None`.
-    fn find(&self, key: &K) -> Option<&[V]> {
+    /// `hash` is the key's [`hash_key`].
+    fn find(&self, key: &K, hash: u64) -> Option<&[V]> {
+        if !self.bloom.may_contain(hash) {
+            return None;
+        }
         let keys = self.keys();
         match keys.binary_search(key) {
             Ok(i) => {
@@ -167,6 +175,7 @@ struct RunWriter {
     /// Entries and values written so far.
     keys_written: usize,
     values_written: usize,
+    bloom: Bloom,
 }
 
 impl RunWriter {
@@ -213,6 +222,7 @@ impl RunWriter {
             values_off,
             keys_written: 0,
             values_written: 0,
+            bloom: Bloom::with_capacity(entries_count),
         })
     }
 
@@ -227,6 +237,7 @@ impl RunWriter {
         assert!(self.keys_written < self.entries_count, "run overflow: keys");
         let at = self.keys_off + self.keys_written * size_of::<K>();
         self.mmap[at..at + size_of::<K>()].copy_from_slice(bytemuck::bytes_of(key));
+        self.bloom.insert(hash_key(key));
         self.write_offset(self.keys_written, self.values_written);
         self.keys_written += 1;
     }
@@ -267,6 +278,7 @@ impl RunWriter {
             keys_off: self.keys_off,
             offsets_off: self.offsets_off,
             values_off: self.values_off,
+            bloom: self.bloom,
             _marker: PhantomData,
         })
     }
@@ -294,7 +306,7 @@ fn load_run<K: Pod + Ord, V: Pod>(path: PathBuf) -> io::Result<MmapRun<K, V>> {
     let keys_off = read(24..32);
     let offsets_off = read(32..40);
     let values_off = read(40..48);
-    Ok(MmapRun {
+    let mut run = MmapRun {
         mmap,
         path: Some(path),
         entries_count,
@@ -302,8 +314,15 @@ fn load_run<K: Pod + Ord, V: Pod>(path: PathBuf) -> io::Result<MmapRun<K, V>> {
         keys_off,
         offsets_off,
         values_off,
+        bloom: Bloom::with_capacity(0),
         _marker: PhantomData,
-    })
+    };
+    let mut bloom = Bloom::with_capacity(entries_count);
+    for key in run.keys() {
+        bloom.insert(hash_key(key));
+    }
+    run.bloom = bloom;
+    Ok(run)
 }
 
 /// A disk-backed LSM multi-map with zero-copy, reference-returning reads.
@@ -425,8 +444,9 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         {
             slices.push(vals);
         }
+        let hash = hash_key(key);
         for run in self.levels.iter().flatten() {
-            if let Some(vals) = run.find(key)
+            if let Some(vals) = run.find(key, hash)
                 && !vals.is_empty()
             {
                 slices.push(vals);
@@ -441,12 +461,14 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
 
     /// Whether any value is stored under `key`.
     pub fn contains_key(&self, key: &K) -> bool {
-        self.memtable.contains_key(key)
-            || self
-                .levels
-                .iter()
-                .flatten()
-                .any(|run| run.contains_key(key))
+        if self.memtable.contains_key(key) {
+            return true;
+        }
+        let hash = hash_key(key);
+        self.levels
+            .iter()
+            .flatten()
+            .any(|run| run.contains_key(key, hash))
     }
 
     /// Membership test for a `(key, value)` pair across memtable and runs,
@@ -462,10 +484,11 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         {
             return true;
         }
+        let hash = hash_key(key);
         self.levels
             .iter()
             .flatten()
-            .any(|run| run.find(key).is_some_and(|vals| vals.contains(value)))
+            .any(|run| run.find(key, hash).is_some_and(|vals| vals.contains(value)))
     }
 
     /// Borrowing scan over every distinct key with all of its values, merged
