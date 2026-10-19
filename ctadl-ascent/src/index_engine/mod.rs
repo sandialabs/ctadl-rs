@@ -985,11 +985,11 @@ impl LocalsProbe
     }
 }
 
-impl LocalsProbe
-    for lsm::ascent_provider::LsmFullIndex<(FunctionId, FlowVariable, Path, FormalIndex, Path)>
+impl<const P: u32> LocalsProbe
+    for lsm::ascent_provider::LsmStore<(FunctionId, FlowVariable, Path, FormalIndex, Path), P>
 {
     fn has(&self, f: &FunctionId, v: &FlowVariable, p: &Path, a: &FormalIndex, p4: &Path) -> bool {
-        ascent::internal::RelFullIndexRead::contains_key(self, &(*f, *v, *p, *a, *p4))
+        self.contains(&(*f, *v, *p, *a, *p4))
     }
 }
 
@@ -2330,7 +2330,7 @@ pub fn taint_index_with_config(
     // `Storage::Lsm`: the same rules, with the store-backed relations redeclared onto the LSM
     // provider (Ascent keeps a relation's last declaration). `assign_like` keeps its rows in its
     // field, since it is seeded through it and returned from it; the others are derived and read
-    // back, if at all, from their full index.
+    // back, if at all, from their store.
     ascent! {
         #![measure_rule_times]
         #![generate_run_timeout]
@@ -2417,15 +2417,14 @@ pub fn taint_index_with_config(
             Vec::new()
         }
         fn num_reached_variables(&self) -> usize {
-            use ascent::internal::RelIndexReadAll;
             let mut reached = hashbrown::HashSet::new();
-            for ((f, v, ..), _) in self.locals_indices_0_1_2_3_4.iter_all() {
+            for (f, v, ..) in self.__locals_ind_common.iter() {
                 reached.insert((*f, *v));
             }
             reached.len()
         }
         fn locals_probe(&self) -> &dyn LocalsProbe {
-            &self.locals_indices_0_1_2_3_4
+            &self.__locals_ind_common
         }
     }
 

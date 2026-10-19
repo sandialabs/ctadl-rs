@@ -1,11 +1,10 @@
 //! Moving relations of a shared `ascent_source!` onto the LSM provider by
 //! redeclaring them after `include_source!` (Ascent keeps the last declaration of
 //! a relation). Covers the `counting` physical relation, whose rows are read back
-//! from the full index, and a pair-valued column.
+//! from the relation's store, and a pair-valued column.
 
 use std::collections::BTreeSet;
 
-use ascent::internal::RelIndexReadAll;
 use ascent::{ascent, ascent_source};
 
 ascent_source! {
@@ -56,9 +55,9 @@ fn redeclared_relations_match_default() {
 
     let def_reach: BTreeSet<_> = def.reach.iter().copied().collect();
     let lsm_reach: BTreeSet<_> = lsm
-        .reach_indices_0_1
-        .iter_all()
-        .map(|((x, y), _)| (*x, *y))
+        .__reach_ind_common
+        .iter()
+        .map(|(x, y)| (*x, *y))
         .collect();
     assert_eq!(lsm.reach.len(), def.reach.len());
     assert_eq!(lsm_reach, def_reach);

@@ -8,10 +8,12 @@
 //! tuple data is therefore duplicated across every index *in memory* — which is
 //! exactly what blows the heap on large inputs.
 //!
-//! This provider keeps the same shape (each index owns its own storage, the
-//! shared `rel_ind_common` is `()`) but replaces each `HashMap` with an
-//! [`MmapLsmMultiMap`]. The bulk of every index therefore lives in `mmap`'d run
-//! files (off the heap, in the page cache); only a small write buffer is in RAM.
+//! This provider stores each relation's tuples once, in an [`LsmStore`] (the
+//! relation's `rel_ind_common`), and serves from it every index whose key
+//! columns are a prefix of the relation's, including the full index; only the
+//! other indices get an [`MmapLsmMultiMap`] of their own ([`LsmIndex`]). The
+//! bulk of every store and index lives in `mmap`'d run files (off the heap, in
+//! the page cache); only a small write buffer is in RAM.
 //!
 //! # Encoding
 //!
@@ -37,17 +39,19 @@ use ascent::internal::{
     RelIndexWrite, ToRelIndex,
 };
 use bytemuck::{Pod, Zeroable};
+use smallvec::SmallVec;
 
-use crate::mmap::{IterAllRefs, MmapLsmMultiMap, ValsRefs};
+use crate::mmap::{IterAllRefs, KeysIter, MmapLsmMultiMap, PrefixGroups, ValsRefs};
 
 // ---------------------------------------------------------------------------
 // Process-wide per-map memtable limit.
 //
-// Every index map this provider creates (one per index pattern Ascent
-// generates, times three versions: new/delta/total) uses the same memtable
-// limit: the map's in-memory write buffer flushes to a run file once it holds
-// this many entries. Callers pick the value (e.g. derived from available RAM)
-// via [`set_memtable_limit`]; this crate stays policy-free.
+// Every map this provider creates (a relation's store, and an index of its own
+// for each non-prefix index pattern, each in three versions: new/delta/total)
+// uses the same memtable limit: the map's in-memory write buffer flushes to a
+// run file once it holds this many entries. Callers pick the value (e.g.
+// derived from available RAM) via [`set_memtable_limit`]; this crate stays
+// policy-free.
 // ---------------------------------------------------------------------------
 
 /// Per-map memtable limit (entries) used until [`set_memtable_limit`] overrides it.
@@ -57,7 +61,7 @@ pub const DEFAULT_MEMTABLE_LIMIT: usize = 100_000;
 static MEMTABLE_LIMIT: AtomicUsize = AtomicUsize::new(DEFAULT_MEMTABLE_LIMIT);
 
 /// Sets the per-map memtable limit, in entries (`(key, value)` insertions): each
-/// index map flushes its in-memory buffer to disk once it holds this many. Larger
+/// map flushes its in-memory buffer to disk once it holds this many. Larger
 /// values mean fewer, larger run files — less dedup-scan overhead during the
 /// fixpoint — at the cost of more resident RAM per map. Set it before
 /// building/running the Ascent program. Minimum 1.
@@ -244,6 +248,9 @@ pub trait LsmTuple {
     /// # Safety
     /// `a` must have been produced by [`LsmTuple::encode`] from live values.
     unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_>;
+
+    /// The width of each column's slots, in bytes.
+    const COLUMN_BYTES: &'static [usize];
 }
 
 // arity 0 — only ever a *key* (the "no index" full scan). Uses a one-slot
@@ -260,6 +267,7 @@ impl LsmTuple for () {
     }
     #[inline]
     unsafe fn decode(_a: &[u64; 1]) {}
+    const COLUMN_BYTES: &'static [usize] = &[];
 }
 
 // Arities 1..=6. The `Arr` is a right-folded `Cat` of each column's slots, e.g.
@@ -269,6 +277,7 @@ impl LsmTuple for () {
 
 impl<A: LsmCol> LsmTuple for (A,) {
     type Arr = A::Slots;
+    const COLUMN_BYTES: &'static [usize] = &[size_of::<A::Slots>()];
     type Ref<'a>
         = (&'a A,)
     where
@@ -287,6 +296,7 @@ impl<A: LsmCol> LsmTuple for (A,) {
 
 impl<A: LsmCol, B: LsmCol> LsmTuple for (A, B) {
     type Arr = Cat<A::Slots, B::Slots>;
+    const COLUMN_BYTES: &'static [usize] = &[size_of::<A::Slots>(), size_of::<B::Slots>()];
     type Ref<'a>
         = (&'a A, &'a B)
     where
@@ -305,6 +315,11 @@ impl<A: LsmCol, B: LsmCol> LsmTuple for (A, B) {
 
 impl<A: LsmCol, B: LsmCol, C: LsmCol> LsmTuple for (A, B, C) {
     type Arr = Cat<A::Slots, Cat<B::Slots, C::Slots>>;
+    const COLUMN_BYTES: &'static [usize] = &[
+        size_of::<A::Slots>(),
+        size_of::<B::Slots>(),
+        size_of::<C::Slots>(),
+    ];
     type Ref<'a>
         = (&'a A, &'a B, &'a C)
     where
@@ -323,6 +338,12 @@ impl<A: LsmCol, B: LsmCol, C: LsmCol> LsmTuple for (A, B, C) {
 
 impl<A: LsmCol, B: LsmCol, C: LsmCol, D: LsmCol> LsmTuple for (A, B, C, D) {
     type Arr = Cat<A::Slots, Cat<B::Slots, Cat<C::Slots, D::Slots>>>;
+    const COLUMN_BYTES: &'static [usize] = &[
+        size_of::<A::Slots>(),
+        size_of::<B::Slots>(),
+        size_of::<C::Slots>(),
+        size_of::<D::Slots>(),
+    ];
     type Ref<'a>
         = (&'a A, &'a B, &'a C, &'a D)
     where
@@ -351,6 +372,13 @@ impl<A: LsmCol, B: LsmCol, C: LsmCol, D: LsmCol> LsmTuple for (A, B, C, D) {
 
 impl<A: LsmCol, B: LsmCol, C: LsmCol, D: LsmCol, E: LsmCol> LsmTuple for (A, B, C, D, E) {
     type Arr = Cat<A::Slots, Cat<B::Slots, Cat<C::Slots, Cat<D::Slots, E::Slots>>>>;
+    const COLUMN_BYTES: &'static [usize] = &[
+        size_of::<A::Slots>(),
+        size_of::<B::Slots>(),
+        size_of::<C::Slots>(),
+        size_of::<D::Slots>(),
+        size_of::<E::Slots>(),
+    ];
     type Ref<'a>
         = (&'a A, &'a B, &'a C, &'a D, &'a E)
     where
@@ -385,6 +413,14 @@ impl<A: LsmCol, B: LsmCol, C: LsmCol, D: LsmCol, E: LsmCol, F: LsmCol> LsmTuple
     for (A, B, C, D, E, F)
 {
     type Arr = Cat<A::Slots, Cat<B::Slots, Cat<C::Slots, Cat<D::Slots, Cat<E::Slots, F::Slots>>>>>;
+    const COLUMN_BYTES: &'static [usize] = &[
+        size_of::<A::Slots>(),
+        size_of::<B::Slots>(),
+        size_of::<C::Slots>(),
+        size_of::<D::Slots>(),
+        size_of::<E::Slots>(),
+        size_of::<F::Slots>(),
+    ];
     type Ref<'a>
         = (&'a A, &'a B, &'a C, &'a D, &'a E, &'a F)
     where
@@ -463,24 +499,25 @@ impl<'a, K: LsmTuple + 'a, V: LsmTuple + 'a> Iterator for AllIter<'a, K, V> {
     }
 }
 
-/// Iterator over every key of an [`LsmFullIndex`] (values are unit).
-pub struct FullAllIter<'a, K: LsmTuple> {
-    inner: IterAllRefs<'a, K::Arr, ()>,
+/// Iterator over every tuple of an [`LsmStore`], as the full index's keys.
+pub struct FullAllIter<'a, T: LsmTuple> {
+    inner: KeysIter<'a, T::Arr, ()>,
 }
 
-impl<'a, K: LsmTuple + 'a> Iterator for FullAllIter<'a, K> {
-    type Item = (K::Ref<'a>, Once<()>);
+impl<'a, T: LsmTuple + 'a> Iterator for FullAllIter<'a, T> {
+    type Item = (T::Ref<'a>, Once<()>);
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        // SAFETY: the stored key blob was produced by `K::encode`.
+        // SAFETY: the stored blob was produced by `T::encode`.
         self.inner
             .next()
-            .map(|(k, _)| (unsafe { K::decode(k) }, once(())))
+            .map(|k| (unsafe { T::decode(k) }, once(())))
     }
 }
 
 // ---------------------------------------------------------------------------
-// A non-full index: key -> remaining columns, backed by one LSM map.
+// An index whose key columns are not a prefix of the relation's: key ->
+// remaining columns, backed by an LSM map of its own.
 // ---------------------------------------------------------------------------
 
 /// An Ascent index for key columns `K` mapping to value columns `V`, backed by a
@@ -573,135 +610,474 @@ impl<K: LsmTuple, V: LsmTuple, Rel> ToRelIndex<Rel> for LsmIndex<K, V> {
 }
 
 // ---------------------------------------------------------------------------
-// The full index: a set of full tuples, used for dedup / membership.
+// The shared store: one set of full tuples per relation, and the indices that
+// are views of it.
+//
+// A tuple's slot blob is its columns' `u64` words in column order, and the
+// blobs' order is the lexicographic order of those words. So the tuples whose
+// first `k` columns are given are one contiguous range of the set, and their
+// remaining columns are the tail words of each blob. Every index whose key
+// columns are a prefix of the relation's (including the empty "none" index and
+// the full index itself) is therefore served by the one set, as a range read,
+// and only the other indices need storage of their own ([`LsmIndex`]).
+//
+// The protocol is Ascent's BYODS one, as in ctadl's in-memory tries: the set is
+// the relation's `ind_common`, and the view indices are zero-sized markers
+// whose read views borrow it. Tuples enter the set only through the full
+// index's write target, and only the `ind_common` merges; the views' write
+// targets and merges do nothing, since a second merge of the same data would
+// corrupt semi-naive evaluation.
 // ---------------------------------------------------------------------------
 
-/// An Ascent full index over key columns `K` (the whole tuple), backed by an LSM
-/// map used as a set (`K -> ()`). Analogue of the default provider's
-/// `RelFullIndexType<K, ()>`.
-pub struct LsmFullIndex<K: LsmTuple> {
-    map: MmapLsmMultiMap<K::Arr, ()>,
+/// A relation's tuples, once: the `ind_common` of an LSM-provided relation.
+///
+/// Bit `k` of `PREFIXES` says some index reads the tuples by their first `k`
+/// columns (see [`prefix_mask`]); the runs keep a Bloom filter of those
+/// prefixes, so a read skips the runs that hold none of its prefix.
+pub struct LsmStore<T: LsmTuple, const PREFIXES: u32> {
+    set: MmapLsmMultiMap<T::Arr, ()>,
 }
 
-impl<K: LsmTuple> Default for LsmFullIndex<K> {
+impl<T: LsmTuple, const PREFIXES: u32> Default for LsmStore<T, PREFIXES> {
     fn default() -> Self {
+        let mut lens: SmallVec<[usize; 2]> = SmallVec::new();
+        for k in 1..T::COLUMN_BYTES.len() {
+            if PREFIXES & (1 << k) != 0 {
+                lens.push(T::COLUMN_BYTES[..k].iter().sum());
+            }
+        }
         Self {
-            map: MmapLsmMultiMap::with_memtable_limit(memtable_limit()),
+            set: MmapLsmMultiMap::with_memtable_limit(memtable_limit()).with_prefix_reads(&lens),
         }
     }
 }
 
-impl<K: LsmTuple> LsmFullIndex<K> {
-    #[inline]
-    fn contains_arr(&self, arr: &K::Arr) -> bool {
-        self.map.contains_key(arr)
-    }
-}
-
-impl<'a, K: LsmTuple + 'a> RelIndexRead<'a> for LsmFullIndex<K> {
-    type Key = K;
-    type Value = ();
-    type IteratorType = Once<()>;
-
-    #[inline]
-    fn index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
-        if self.contains_arr(&key.encode()) {
-            Some(once(()))
-        } else {
-            None
+/// The prefix indices among a relation's `indices` (the key columns of each), as
+/// a bit set over the prefix lengths: bit `k` for an index on columns `0..k`.
+pub const fn prefix_mask(indices: &[&[usize]]) -> u32 {
+    let mut mask = 0;
+    let mut i = 0;
+    while i < indices.len() {
+        let cols = indices[i];
+        let mut is_prefix = true;
+        let mut c = 0;
+        while c < cols.len() {
+            if cols[c] != c {
+                is_prefix = false;
+            }
+            c += 1;
         }
-    }
-
-    #[inline]
-    fn len_estimate(&'a self) -> usize {
-        self.map.len()
-    }
-
-    #[inline]
-    fn is_empty(&'a self) -> bool {
-        self.map.is_empty()
-    }
-}
-
-impl<'a, K: LsmTuple + 'a> RelIndexReadAll<'a> for LsmFullIndex<K> {
-    type Key = K::Ref<'a>;
-    type Value = ();
-    type ValueIteratorType = Once<()>;
-    type AllIteratorType = FullAllIter<'a, K>;
-
-    #[inline]
-    fn iter_all(&'a self) -> Self::AllIteratorType {
-        FullAllIter {
-            inner: self.map.iter_all_refs(),
+        if is_prefix && cols.len() < 32 {
+            mask |= 1 << cols.len();
         }
+        i += 1;
     }
+    mask
 }
 
-impl<'a, K: LsmTuple> RelFullIndexRead<'a> for LsmFullIndex<K> {
-    type Key = K;
-    #[inline]
-    fn contains_key(&'a self, key: &Self::Key) -> bool {
-        self.contains_arr(&key.encode())
+impl<T: LsmTuple, const PREFIXES: u32> LsmStore<T, PREFIXES> {
+    /// The number of tuples.
+    pub fn len(&self) -> usize {
+        self.set.len()
     }
-}
 
-impl<K: LsmTuple + Clone> RelFullIndexWrite for LsmFullIndex<K> {
-    type Key = K;
-    type Value = ();
+    pub fn is_empty(&self) -> bool {
+        self.set.is_empty()
+    }
 
-    #[inline]
-    fn insert_if_not_present(&mut self, key: &Self::Key, _v: Self::Value) -> bool {
-        let arr = key.encode();
-        if self.contains_arr(&arr) {
+    pub fn contains(&self, tuple: &T) -> bool {
+        self.set.contains_key(&tuple.encode())
+    }
+
+    /// Every tuple, as column references, in no particular order.
+    pub fn iter(&self) -> impl Iterator<Item = T::Ref<'_>> {
+        // SAFETY: every stored blob was produced by `T::encode`.
+        self.set.keys().map(|a| unsafe { T::decode(a) })
+    }
+
+    fn insert_if_not_present(&mut self, tuple: &T) -> bool {
+        let arr = tuple.encode();
+        if self.set.contains_key(&arr) {
             false
         } else {
-            self.map.insert(arr, ());
+            self.set.insert(arr, ());
             true
         }
     }
 }
 
-impl<K: LsmTuple> RelIndexWrite for LsmFullIndex<K> {
-    type Key = K;
-    type Value = ();
+impl<T: LsmTuple, const PREFIXES: u32> RelIndexMerge for LsmStore<T, PREFIXES> {
+    // Ascent only moves `delta` into `total`, and a tuple enters `new` (the next
+    // `delta`) only when neither `total` nor `delta` has it, so the two never
+    // share a tuple: the runs move over without a membership check.
+    fn move_index_contents(from: &mut Self, to: &mut Self) {
+        to.set.absorb(&mut from.set);
+    }
+}
 
+/// A key's `u64` words.
+fn words<K: Pod>(key: &K) -> &[u64] {
+    bytemuck::cast_slice(bytemuck::bytes_of(key))
+}
+
+/// The marker of the full index.
+pub struct ToFull<T>(PhantomData<T>);
+/// The marker of an index on the first columns, `K`, with the rest, `V`, as
+/// values.
+pub struct ToPrefix<T, K, V>(PhantomData<(T, K, V)>);
+/// The marker of the index on no columns: every tuple, under the key `()`.
+pub struct ToScan<T>(PhantomData<T>);
+
+impl<T> Default for ToFull<T> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+impl<T, K, V> Default for ToPrefix<T, K, V> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+impl<T> Default for ToScan<T> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+/// The full index's read view.
+pub struct FullView<'a, T: LsmTuple, const P: u32>(&'a LsmStore<T, P>);
+/// A prefix index's read view.
+pub struct PrefixView<'a, T: LsmTuple, K, V, const P: u32>(&'a LsmStore<T, P>, PhantomData<(K, V)>);
+/// The "none" index's read view.
+pub struct ScanView<'a, T: LsmTuple, const P: u32>(&'a LsmStore<T, P>);
+
+/// The full index's write target: the one way tuples enter the store.
+pub struct FullWrite<'a, T: LsmTuple, const P: u32>(&'a mut LsmStore<T, P>);
+/// The write target of a view index, which has nothing of its own to write.
+pub struct NoopWrite<K, V>(PhantomData<(K, V)>);
+
+impl<T: LsmTuple, const P: u32> ToRelIndex<LsmStore<T, P>> for ToFull<T> {
+    type RelIndex<'a>
+        = FullView<'a, T, P>
+    where
+        Self: 'a,
+        LsmStore<T, P>: 'a;
     #[inline]
-    fn index_insert(&mut self, key: Self::Key, _value: Self::Value) {
-        let arr = key.encode();
-        if !self.contains_arr(&arr) {
-            self.map.insert(arr, ());
+    fn to_rel_index<'a>(&'a self, store: &'a LsmStore<T, P>) -> Self::RelIndex<'a> {
+        FullView(store)
+    }
+
+    type RelIndexWrite<'a>
+        = FullWrite<'a, T, P>
+    where
+        Self: 'a,
+        LsmStore<T, P>: 'a;
+    #[inline]
+    fn to_rel_index_write<'a>(
+        &'a mut self,
+        store: &'a mut LsmStore<T, P>,
+    ) -> Self::RelIndexWrite<'a> {
+        FullWrite(store)
+    }
+}
+
+impl<T: LsmTuple, K: LsmTuple, V: LsmTuple, const P: u32> ToRelIndex<LsmStore<T, P>>
+    for ToPrefix<T, K, V>
+{
+    type RelIndex<'a>
+        = PrefixView<'a, T, K, V, P>
+    where
+        Self: 'a,
+        LsmStore<T, P>: 'a;
+    #[inline]
+    fn to_rel_index<'a>(&'a self, store: &'a LsmStore<T, P>) -> Self::RelIndex<'a> {
+        const {
+            assert!(
+                size_of::<K::Arr>() + size_of::<V::Arr>() == size_of::<T::Arr>(),
+                "a prefix index's key and value must split the tuple's slots",
+            );
+        }
+        PrefixView(store, PhantomData)
+    }
+
+    type RelIndexWrite<'a>
+        = NoopWrite<K, V>
+    where
+        Self: 'a,
+        LsmStore<T, P>: 'a;
+    #[inline]
+    fn to_rel_index_write<'a>(
+        &'a mut self,
+        _store: &'a mut LsmStore<T, P>,
+    ) -> Self::RelIndexWrite<'a> {
+        NoopWrite(PhantomData)
+    }
+}
+
+impl<T: LsmTuple, const P: u32> ToRelIndex<LsmStore<T, P>> for ToScan<T> {
+    type RelIndex<'a>
+        = ScanView<'a, T, P>
+    where
+        Self: 'a,
+        LsmStore<T, P>: 'a;
+    #[inline]
+    fn to_rel_index<'a>(&'a self, store: &'a LsmStore<T, P>) -> Self::RelIndex<'a> {
+        ScanView(store)
+    }
+
+    type RelIndexWrite<'a>
+        = NoopWrite<(), T>
+    where
+        Self: 'a,
+        LsmStore<T, P>: 'a;
+    #[inline]
+    fn to_rel_index_write<'a>(
+        &'a mut self,
+        _store: &'a mut LsmStore<T, P>,
+    ) -> Self::RelIndexWrite<'a> {
+        NoopWrite(PhantomData)
+    }
+}
+
+// ---- write targets ----
+
+impl<T: LsmTuple + Clone, const P: u32> RelFullIndexWrite for FullWrite<'_, T, P> {
+    type Key = T;
+    type Value = ();
+    #[inline]
+    fn insert_if_not_present(&mut self, key: &T, _v: ()) -> bool {
+        self.0.insert_if_not_present(key)
+    }
+}
+
+impl<T: LsmTuple, const P: u32> RelIndexWrite for FullWrite<'_, T, P> {
+    type Key = T;
+    type Value = ();
+    #[inline]
+    fn index_insert(&mut self, key: T, _value: ()) {
+        self.0.insert_if_not_present(&key);
+    }
+}
+
+impl<T: LsmTuple, const P: u32> RelIndexMerge for FullWrite<'_, T, P> {
+    #[inline(always)]
+    fn move_index_contents(_from: &mut Self, _to: &mut Self) {}
+    #[inline(always)]
+    fn merge_delta_to_total_new_to_delta(_new: &mut Self, _delta: &mut Self, _total: &mut Self) {}
+}
+
+impl<K, V> RelIndexWrite for NoopWrite<K, V> {
+    type Key = K;
+    type Value = V;
+    #[inline(always)]
+    fn index_insert(&mut self, _key: K, _value: V) {}
+}
+
+impl<K, V> RelIndexMerge for NoopWrite<K, V> {
+    #[inline(always)]
+    fn move_index_contents(_from: &mut Self, _to: &mut Self) {}
+    #[inline(always)]
+    fn merge_delta_to_total_new_to_delta(_new: &mut Self, _delta: &mut Self, _total: &mut Self) {}
+}
+
+// ---- read views ----
+
+impl<'a, T: LsmTuple + 'a, const P: u32> RelIndexRead<'a> for FullView<'a, T, P> {
+    type Key = T;
+    type Value = ();
+    type IteratorType = Once<()>;
+    #[inline]
+    fn index_get(&'a self, key: &T) -> Option<Once<()>> {
+        self.0.contains(key).then(|| once(()))
+    }
+    #[inline]
+    fn len_estimate(&'a self) -> usize {
+        self.0.len()
+    }
+    #[inline]
+    fn is_empty(&'a self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<'a, T: LsmTuple + 'a, const P: u32> RelFullIndexRead<'a> for FullView<'a, T, P> {
+    type Key = T;
+    #[inline]
+    fn contains_key(&'a self, key: &T) -> bool {
+        self.0.contains(key)
+    }
+}
+
+impl<'a, T: LsmTuple + 'a, const P: u32> RelIndexReadAll<'a> for FullView<'a, T, P> {
+    type Key = T::Ref<'a>;
+    type Value = ();
+    type ValueIteratorType = Once<()>;
+    type AllIteratorType = FullAllIter<'a, T>;
+    #[inline]
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        FullAllIter {
+            inner: self.0.set.keys(),
         }
     }
 }
 
-impl<K: LsmTuple> RelIndexMerge for LsmFullIndex<K> {
-    // Ascent only moves `delta` into `total`, and a tuple enters `new` (the next
-    // `delta`) only when neither `total` nor `delta` has it, so the two never
-    // share a key: the runs move over without a membership check.
-    fn move_index_contents(from: &mut Self, to: &mut Self) {
-        to.map.absorb(&mut from.map);
+impl<'a, T: LsmTuple + 'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const P: u32> RelIndexRead<'a>
+    for PrefixView<'a, T, K, V, P>
+{
+    type Key = K;
+    type Value = V::Ref<'a>;
+    type IteratorType = SuffixIter<'a, T, V>;
+    #[inline]
+    fn index_get(&'a self, key: &K) -> Option<Self::IteratorType> {
+        let prefix = key.encode();
+        let mut keys = self.0.set.keys_with_prefix(words(&prefix)).peekable();
+        keys.peek()?;
+        Some(SuffixIter {
+            keys,
+            skip: size_of::<K::Arr>(),
+            _marker: PhantomData,
+        })
+    }
+    #[inline]
+    fn len_estimate(&'a self) -> usize {
+        self.0.len()
+    }
+    #[inline]
+    fn is_empty(&'a self) -> bool {
+        self.0.is_empty()
     }
 }
 
-impl<K: LsmTuple, Rel> ToRelIndex<Rel> for LsmFullIndex<K> {
-    type RelIndex<'a>
-        = &'a LsmFullIndex<K>
-    where
-        Self: 'a,
-        Rel: 'a;
+impl<'a, T: LsmTuple + 'a, K: LsmTuple + 'a, V: LsmTuple + 'a, const P: u32> RelIndexReadAll<'a>
+    for PrefixView<'a, T, K, V, P>
+{
+    type Key = K::Ref<'a>;
+    type Value = V::Ref<'a>;
+    type ValueIteratorType = SuffixIter<'a, T, V>;
+    type AllIteratorType = PrefixGroupsIter<'a, T, K, V>;
+    /// The tuples, grouped by prefix. A prefix the memtable and several runs
+    /// hold comes as several groups, which suits Ascent: it reads an index whole
+    /// to join each group against another relation, and joining a prefix's
+    /// tuples in parts gives the same result.
     #[inline]
-    fn to_rel_index<'a>(&'a self, _rel: &'a Rel) -> Self::RelIndex<'a> {
-        self
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        let skip = size_of::<K::Arr>();
+        PrefixGroupsIter {
+            groups: self.0.set.prefix_groups(skip / size_of::<u64>()),
+            skip,
+            _marker: PhantomData,
+        }
     }
+}
 
-    type RelIndexWrite<'a>
-        = &'a mut LsmFullIndex<K>
-    where
-        Self: 'a,
-        Rel: 'a;
+/// The groups of a [`PrefixView`]'s `iter_all`.
+pub struct PrefixGroupsIter<'a, T: LsmTuple, K, V> {
+    groups: PrefixGroups<'a, T::Arr, ()>,
+    skip: usize,
+    _marker: PhantomData<(K, V)>,
+}
+
+impl<'a, T: LsmTuple + 'a, K: LsmTuple + 'a, V: LsmTuple + 'a> Iterator
+    for PrefixGroupsIter<'a, T, K, V>
+{
+    type Item = (K::Ref<'a>, SuffixIter<'a, T, V>);
     #[inline]
-    fn to_rel_index_write<'a>(&'a mut self, _rel: &'a mut Rel) -> Self::RelIndexWrite<'a> {
-        self
+    fn next(&mut self) -> Option<Self::Item> {
+        let (first, keys) = self.groups.next()?;
+        let head = &bytemuck::bytes_of(first)[..self.skip];
+        // SAFETY: `head` is the leading `K` slots of a blob `T::encode` wrote.
+        let key = unsafe { K::decode(bytemuck::from_bytes(head)) };
+        let values = SuffixIter {
+            keys: keys.peekable(),
+            skip: self.skip,
+            _marker: PhantomData,
+        };
+        Some((key, values))
+    }
+}
+
+impl<'a, T: LsmTuple + 'a, const P: u32> RelIndexRead<'a> for ScanView<'a, T, P> {
+    type Key = ();
+    type Value = T::Ref<'a>;
+    type IteratorType = ScanIter<'a, T>;
+    #[inline]
+    fn index_get(&'a self, _key: &()) -> Option<Self::IteratorType> {
+        if self.0.is_empty() {
+            return None;
+        }
+        Some(ScanIter {
+            keys: self.0.set.keys(),
+        })
+    }
+    #[inline]
+    fn len_estimate(&'a self) -> usize {
+        1
+    }
+    #[inline]
+    fn is_empty(&'a self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<'a, T: LsmTuple + 'a, const P: u32> RelIndexReadAll<'a> for ScanView<'a, T, P> {
+    type Key = ();
+    type Value = T::Ref<'a>;
+    type ValueIteratorType = ScanIter<'a, T>;
+    type AllIteratorType = std::option::IntoIter<((), ScanIter<'a, T>)>;
+    #[inline]
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        self.index_get(&()).map(|vals| ((), vals)).into_iter()
+    }
+}
+
+/// The value columns of the tuples a prefix read found: each tuple's slots past
+/// its first `skip` bytes, decoded as a `V`.
+pub struct SuffixIter<'a, T: LsmTuple, V> {
+    keys: std::iter::Peekable<KeysIter<'a, T::Arr, ()>>,
+    skip: usize,
+    _marker: PhantomData<V>,
+}
+
+impl<T: LsmTuple, V> Clone for SuffixIter<'_, T, V> {
+    fn clone(&self) -> Self {
+        Self {
+            keys: self.keys.clone(),
+            skip: self.skip,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'a, T: LsmTuple + 'a, V: LsmTuple + 'a> Iterator for SuffixIter<'a, T, V> {
+    type Item = V::Ref<'a>;
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let tuple = self.keys.next()?;
+        let tail = &bytemuck::bytes_of(tuple)[self.skip..];
+        // SAFETY: `tail` is the trailing `V` slots of a blob `T::encode` wrote.
+        Some(unsafe { V::decode(bytemuck::from_bytes(tail)) })
+    }
+}
+
+/// Every tuple of a store, decoded.
+pub struct ScanIter<'a, T: LsmTuple> {
+    keys: KeysIter<'a, T::Arr, ()>,
+}
+
+impl<T: LsmTuple> Clone for ScanIter<'_, T> {
+    fn clone(&self) -> Self {
+        Self {
+            keys: self.keys.clone(),
+        }
+    }
+}
+
+impl<'a, T: LsmTuple + 'a> Iterator for ScanIter<'a, T> {
+    type Item = T::Ref<'a>;
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        // SAFETY: every stored blob was produced by `T::encode`.
+        self.keys.next().map(|a| unsafe { T::decode(a) })
     }
 }
 
@@ -766,14 +1142,13 @@ impl<T> std::ops::Index<usize> for CountingVec<T> {
 // Ascent reads input facts from it (`update_indices`), pushes derived tuples into
 // it, and the user reads results from it. The memory win comes from the
 // *indices*: Ascent builds several per relation, each in three versions
-// (new/delta/total), and this provider keeps those in `mmap`'d LSM files instead
-// of in-RAM hash maps — so the data is no longer duplicated across many heap
-// structures.
+// (new/delta/total), and this provider keeps those in one `mmap`'d LSM store
+// (plus a map per non-prefix index) instead of in-RAM hash maps — so the data is
+// no longer duplicated across many heap structures.
 //
 // `#[ds(lsm::ascent_provider::provider: counting)]` drops that last copy too: the
 // field becomes a [`CountingVec`], which keeps only the row count, for a derived
-// relation whose rows are read after the run through its full index (or not at
-// all).
+// relation whose rows are read after the run from its store (or not at all).
 #[doc(hidden)]
 #[macro_export]
 macro_rules! lsm_nary_rel {
@@ -794,8 +1169,11 @@ macro_rules! lsm_nary_rel_codegen {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! lsm_nary_rel_ind_common {
-    ($name:ident, $field_types:ty, $indices:expr, ser, $args:tt) => {
-        ()
+    ($name:ident, $field_types:ty, [$([$($col:literal),*]),*], ser, $args:tt) => {
+        $crate::ascent_provider::LsmStore<
+            $field_types,
+            { $crate::ascent_provider::prefix_mask(&[$(&[$($col),*]),*]) },
+        >
     };
 }
 
@@ -803,14 +1181,42 @@ macro_rules! lsm_nary_rel_ind_common {
 #[macro_export]
 macro_rules! lsm_nary_rel_full_ind {
     ($name:ident, $field_types:ty, $indices:expr, ser, $args:tt, $key:ty, $val:ty) => {
-        $crate::ascent_provider::LsmFullIndex<$key>
+        $crate::ascent_provider::ToFull<$field_types>
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! lsm_nary_rel_ind {
-    ($name:ident, $field_types:ty, $indices:expr, ser, $args:tt, $ind:expr, $key:ty, $val:ty) => {
+    ($name:ident, $field_types:ty, $indices:expr, ser, $args:tt, $ind:tt, $key:ty, $val:ty) => {
+        $crate::lsm_nary_index_for!($ind, $field_types, $key, $val)
+    };
+}
+
+/// The index type for the key columns `$ind`: a view of the relation's store
+/// when they are a prefix of its columns, its own [`LsmIndex`] otherwise.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! lsm_nary_index_for {
+    ([], $t:ty, $key:ty, $val:ty) => {
+        $crate::ascent_provider::ToScan<$t>
+    };
+    ([0], $t:ty, $key:ty, $val:ty) => {
+        $crate::ascent_provider::ToPrefix<$t, $key, $val>
+    };
+    ([0, 1], $t:ty, $key:ty, $val:ty) => {
+        $crate::ascent_provider::ToPrefix<$t, $key, $val>
+    };
+    ([0, 1, 2], $t:ty, $key:ty, $val:ty) => {
+        $crate::ascent_provider::ToPrefix<$t, $key, $val>
+    };
+    ([0, 1, 2, 3], $t:ty, $key:ty, $val:ty) => {
+        $crate::ascent_provider::ToPrefix<$t, $key, $val>
+    };
+    ([0, 1, 2, 3, 4], $t:ty, $key:ty, $val:ty) => {
+        $crate::ascent_provider::ToPrefix<$t, $key, $val>
+    };
+    ($ind:tt, $t:ty, $key:ty, $val:ty) => {
         $crate::ascent_provider::LsmIndex<$key, $val>
     };
 }
