@@ -17,15 +17,15 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::iter::{Flatten, Peekable};
+use std::iter::Peekable;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::vec;
 
 use bytemuck::Pod;
 use memmap2::{Mmap, MmapMut};
+use smallvec::SmallVec;
 
 const DEFAULT_LEVEL_FANOUT: usize = 4;
 const RUN_MAGIC: &[u8; 4] = b"LSMM";
@@ -35,10 +35,43 @@ const HEADER_LEN: usize = 4 + 4 + 8 * 5;
 const DEFAULT_DISK_MEMTABLE_LIMIT: usize = 10_000;
 static NEXT_TEMP_RUN_ID: AtomicU64 = AtomicU64::new(0);
 
-/// Borrowing value iterator: a flattened list of slices, one per source (the
-/// memtable plus each run that holds the key). Cheap to clone, which the Ascent
+/// Borrowing value iterator over a list of slices, one per source (the memtable
+/// plus each run that holds the key). The list is held inline up to a few
+/// sources, so a lookup does not allocate. Cheap to clone, which the Ascent
 /// `Ind*ValsIter` associated types require.
-pub type ValsRefs<'a, V> = Flatten<vec::IntoIter<&'a [V]>>;
+#[derive(Clone)]
+pub struct ValsRefs<'a, V> {
+    slices: SmallVec<[&'a [V]; 4]>,
+    /// The next slice to start once `current` runs out.
+    next: usize,
+    current: std::slice::Iter<'a, V>,
+}
+
+impl<'a, V> ValsRefs<'a, V> {
+    fn new(slices: SmallVec<[&'a [V]; 4]>) -> Self {
+        Self {
+            slices,
+            next: 0,
+            current: [].iter(),
+        }
+    }
+}
+
+impl<'a, V> Iterator for ValsRefs<'a, V> {
+    type Item = &'a V;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a V> {
+        loop {
+            if let Some(v) = self.current.next() {
+                return Some(v);
+            }
+            let slice = self.slices.get(self.next)?;
+            self.next += 1;
+            self.current = slice.iter();
+        }
+    }
+}
 
 fn align8(n: usize) -> usize {
     (n + 7) & !7
@@ -73,8 +106,20 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
     }
 
     fn values(&self) -> &[V] {
+        if size_of::<V>() == 0 {
+            // A set's values are zero-sized, which `cast_slice` refuses to make.
+            // SAFETY: any non-null aligned pointer is a valid slice of zero-sized
+            // values, of any length.
+            return unsafe {
+                std::slice::from_raw_parts(std::ptr::NonNull::dangling().as_ptr(), self.values_len)
+            };
+        }
         let bytes = &self.mmap[self.values_off..self.values_off + self.values_len * size_of::<V>()];
         bytemuck::cast_slice(bytes)
+    }
+
+    fn contains_key(&self, key: &K) -> bool {
+        self.keys().binary_search(key).is_ok()
     }
 
     /// Values for `key`, as a zero-copy slice into the mapping, or `None`.
@@ -374,7 +419,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     /// Values for `key` as a borrowing iterator that yields `&V` straight out of
     /// the memtable and the memory-mapped runs (no copying / decoding).
     pub fn get_refs(&self, key: &K) -> Option<ValsRefs<'_, V>> {
-        let mut slices: Vec<&[V]> = Vec::new();
+        let mut slices: SmallVec<[&[V]; 4]> = SmallVec::new();
         if let Some(vals) = self.memtable.get(key)
             && !vals.is_empty()
         {
@@ -390,8 +435,18 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         if slices.is_empty() {
             None
         } else {
-            Some(slices.into_iter().flatten())
+            Some(ValsRefs::new(slices))
         }
+    }
+
+    /// Whether any value is stored under `key`.
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.memtable.contains_key(key)
+            || self
+                .levels
+                .iter()
+                .flatten()
+                .any(|run| run.contains_key(key))
     }
 
     /// Membership test for a `(key, value)` pair across memtable and runs,
@@ -570,7 +625,7 @@ impl<'a, K: Ord, V> Iterator for IterAllRefs<'a, K, V> {
         let min_key = min_key?;
 
         // Collect (and advance) every source whose head equals `min_key`.
-        let mut slices: Vec<&'a [V]> = Vec::new();
+        let mut slices: SmallVec<[&'a [V]; 4]> = SmallVec::new();
         for source in &mut self.sources {
             if source.peek().is_some_and(|&(key, _)| *key == *min_key) {
                 let (_, vals) = source.next().unwrap();
@@ -579,7 +634,7 @@ impl<'a, K: Ord, V> Iterator for IterAllRefs<'a, K, V> {
                 }
             }
         }
-        Some((min_key, slices.into_iter().flatten()))
+        Some((min_key, ValsRefs::new(slices)))
     }
 }
 
@@ -656,6 +711,24 @@ mod tests {
         );
         let total: usize = lsm.iter_all_refs().map(|(_, vals)| vals.count()).sum();
         assert_eq!(total, 7);
+    }
+
+    /// A set: zero-sized values, spread over the memtable and several runs.
+    #[test]
+    fn unit_values_across_runs() {
+        let mut set = MmapLsmMultiMap::<u64, ()>::with_memtable_limit_and_level_fanout(3, 2);
+        for k in (0..40u64).step_by(2) {
+            set.insert(k, ());
+        }
+        assert!(!set.levels.is_empty());
+        for k in 0..40u64 {
+            assert_eq!(set.contains_key(&k), k % 2 == 0, "key {k}");
+            assert_eq!(
+                set.get_refs(&k).map(Iterator::count),
+                (k % 2 == 0).then_some(1)
+            );
+        }
+        assert_eq!(set.iter_all_refs().count(), 20);
     }
 
     #[test]

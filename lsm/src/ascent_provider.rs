@@ -465,7 +465,7 @@ impl<'a, K: LsmTuple + 'a, V: LsmTuple + 'a> Iterator for AllIter<'a, K, V> {
 
 /// Iterator over every key of an [`LsmFullIndex`] (values are unit).
 pub struct FullAllIter<'a, K: LsmTuple> {
-    inner: IterAllRefs<'a, K::Arr, u8>,
+    inner: IterAllRefs<'a, K::Arr, ()>,
 }
 
 impl<'a, K: LsmTuple + 'a> Iterator for FullAllIter<'a, K> {
@@ -585,7 +585,7 @@ impl<K: LsmTuple, V: LsmTuple, Rel> ToRelIndex<Rel> for LsmIndex<K, V> {
 /// map used as a set (`K -> ()`). Analogue of the default provider's
 /// `RelFullIndexType<K, ()>`.
 pub struct LsmFullIndex<K: LsmTuple> {
-    map: MmapLsmMultiMap<K::Arr, u8>,
+    map: MmapLsmMultiMap<K::Arr, ()>,
 }
 
 impl<K: LsmTuple> Default for LsmFullIndex<K> {
@@ -599,7 +599,7 @@ impl<K: LsmTuple> Default for LsmFullIndex<K> {
 impl<K: LsmTuple> LsmFullIndex<K> {
     #[inline]
     fn contains_arr(&self, arr: &K::Arr) -> bool {
-        self.map.get_refs(arr).is_some()
+        self.map.contains_key(arr)
     }
 }
 
@@ -660,7 +660,7 @@ impl<K: LsmTuple + Clone> RelFullIndexWrite for LsmFullIndex<K> {
         if self.contains_arr(&arr) {
             false
         } else {
-            self.map.insert(arr, 0u8);
+            self.map.insert(arr, ());
             true
         }
     }
@@ -674,7 +674,7 @@ impl<K: LsmTuple> RelIndexWrite for LsmFullIndex<K> {
     fn index_insert(&mut self, key: Self::Key, _value: Self::Value) {
         let arr = key.encode();
         if !self.contains_arr(&arr) {
-            self.map.insert(arr, 0u8);
+            self.map.insert(arr, ());
         }
     }
 }
@@ -682,8 +682,8 @@ impl<K: LsmTuple> RelIndexWrite for LsmFullIndex<K> {
 impl<K: LsmTuple> RelIndexMerge for LsmFullIndex<K> {
     fn move_index_contents(from: &mut Self, to: &mut Self) {
         for (k, _) in from.map.iter_all_refs() {
-            if to.map.get_refs(k).is_none() {
-                to.map.insert(*k, 0u8);
+            if !to.map.contains_key(k) {
+                to.map.insert(*k, ());
             }
         }
         from.map.clear();

@@ -3107,6 +3107,7 @@ dependencies = [
  "bytemuck",
  "criterion",
  "memmap2",
+ "smallvec",
 ]
 
 [[package]]
