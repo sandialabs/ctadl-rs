@@ -1,5 +1,4 @@
-//! The flat edge view (`docs/cil-flow-api.md` §4.3): "A flows to B" pairs
-//! derived from the effects.
+//! The flat edge view: "A flows to B" pairs derived from the effects.
 //!
 //! Unlike the effects, this view applies a policy, the one the Dex and JVM
 //! frontends use: calls, constants, tests and clears give no intra-instruction

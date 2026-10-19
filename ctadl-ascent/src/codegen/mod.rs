@@ -1121,8 +1121,8 @@ impl Visitor for CodegenVisitor<'_> {
                         descriptor,
                     } => {
                         // The `JavaCall` arm, keyed in the CIL space (`ChaLanguage::Cil`).
-                        // `callvirt` does not say whether it dispatches through an interface;
-                        // the table does, and the ladder's per-kind policy wants to know.
+                        // The ladder's per-kind policy wants to know which sites dispatch
+                        // through an interface; `interfaces` says.
                         let recv_var = self.trans_variable_ref(receiver);
                         args.insert(0, Exp::Variable(receiver.clone()));
                         let dispatch = if self.cha.is_interface(cls) {

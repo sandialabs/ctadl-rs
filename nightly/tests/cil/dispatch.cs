@@ -1,4 +1,4 @@
-// Slice 5 (translation §11): the hierarchy, virtual calls and CHA. Interface
+// The hierarchy, virtual calls and CHA. Interface
 // dispatch with two implementations, a virtual override, and a non-virtual
 // `callvirt` lowered as a direct call.
 namespace Cases

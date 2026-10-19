@@ -1,10 +1,11 @@
 //! cil-reader regression checks: Cecil parity over Mono.Cecil's own test
-//! corpus plus cil-reader's fixtures (Cecil's .il/.cs test sources, compiled
-//! by the flake's `cilFixtures`).
+//! corpus plus the compiled fixtures (Cecil's .il/.cs test sources and
+//! cil-reader's own, built by the flake's `cilFixtures`).
 //!
 //! The dump format is the contract: `cil-dump` renders an assembly with
 //! cil-reader, `tools/CecilDump` renders it with Mono.Cecil, and the two must
-//! be byte-identical. Six checks of that, and two of the flow layer:
+//! be byte-identical. The first six checks are of that; the rest check the
+//! flow layer, the frontend and the default models:
 //!
 //! - `cil:must-fail`     — non-CLI inputs (`text_file.txt`) are rejected.
 //! - `cil:cecil-tests`   — cil-reader's ports of Cecil's own test suites, which
@@ -464,7 +465,7 @@ pub fn resolve_fixtures(override_dir: Option<&Path>) -> Result<Option<PathBuf>> 
 
 /// Locate the Cecil checkout: `--cecil-src`, else `extern/cecil` under the
 /// cil-reader directory, else `$CECIL_SRC`. A checkout cloned there by hand is
-/// a deliberate override of the pin, as it is for cil-reader's tests.
+/// a deliberate override of the pin.
 pub fn resolve_cecil_src(
     override_dir: Option<&Path>,
     cil_dir: Option<&Path>,

@@ -4,8 +4,7 @@
 //! for the source-sink taint regression tests, and is what CI runs. `report-eval` sweeps
 //! `ctadl report` across a directory of real apps and keeps the per-app JSON; it is a
 //! measurement tool rather than a check, and nothing depends on it passing. `cil`
-//! regenerates cil-reader's committed artifacts (goldens, opcode table) from
-//! Mono.Cecil.
+//! regenerates the CIL goldens and opcode table, and runs single CIL checks.
 //!
 //! Usage:
 //!     cargo xtask regression

@@ -1,4 +1,4 @@
-//! Layer 0: raw, zero-allocation access to the PE image, metadata streams,
+//! Raw, zero-allocation access to the PE image, metadata streams,
 //! heaps, and tables. Nothing here resolves names or builds an object graph;
 //! see the crate root for the Cecil-shaped model layer.
 

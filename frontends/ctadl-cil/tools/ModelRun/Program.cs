@@ -6,7 +6,7 @@
 //     model-run run [--trials N] [--seed S] <fids-file>
 //
 // `list` reads one class per line in ctadl's spelling (`[Asm]Ns.Outer/Inner`1`,
-// docs/cil-frontend-translation.md §3) and prints one JSON object per public
+// as the frontend's `names.rs` defines it) and prints one JSON object per public
 // method and constructor the class declares, spelled as the CIL frontend
 // spells it:
 //
@@ -212,7 +212,8 @@ static class Names
 
     public static string Fid (MethodBase m) => Cls (m.DeclaringType) + "::" + Simple (m) + Descriptor (m);
 
-    // §3.2: Cecil's full names, generic parameters by position, no assembly.
+    // A type inside a descriptor: Cecil's full names, generic parameters by position, no
+    // assembly.
     public static string Spell (Type t)
     {
         if (t.IsByRef)
@@ -721,7 +722,7 @@ static class Runner
         for (int i = 0; i < ps.Length; i++)
             types [i + shift] = ps [i].ParameterType;
         // The prefix of what each port's walk sees: a `ref`/`out` parameter's pointee, and a struct
-        // receiver, which the frontend passes as a pointer to it (translation §6.3).
+        // receiver, which the frontend passes as a pointer to it.
         var prefix = new string [types.Length];
         for (int k = 0; k < types.Length; k++)
             prefix [k] = types [k].IsByRef || (k == 0 && shift == 1 && types [0].IsValueType) ? "deref" : "";

@@ -2,7 +2,7 @@
 //! Each assertion goes through the layer Cecil's does: `module.Image.*` and
 //! the heaps through [`PeImage`], anything on `ModuleDefinition` or the
 //! assembly through [`Module`]. Skipped here: LocallyScopedConstantArray
-//! (portable PDB, M8).
+//! (portable PDB).
 
 use super::{read_resource, Test};
 use cil_reader::raw::heaps::GuidIndex;

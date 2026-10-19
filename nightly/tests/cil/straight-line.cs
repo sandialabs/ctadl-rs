@@ -1,4 +1,4 @@
-// Slice 1 (translation §11): straight-line static methods. Arguments, locals,
+// Straight-line static methods. Arguments, locals,
 // copies, constants and returns.
 namespace Cases
 {

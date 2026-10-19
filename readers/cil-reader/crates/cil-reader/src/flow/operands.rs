@@ -297,7 +297,7 @@ impl Operands for MethodBody<'_> {
     }
 }
 
-// ---- names (§3.4) ----------------------------------------------------------
+// ---- names -----------------------------------------------------------------
 
 impl<'a> MethodBody<'a> {
     fn names_context(&self) -> Result<GenericContext> {

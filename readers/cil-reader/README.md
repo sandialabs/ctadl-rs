@@ -48,8 +48,8 @@ for ty in module.types()? {
 - **Dataflow** (`flow`): what each instruction reads and writes as a small
   closed set of effects (`MethodBody::flows`), and per method the CFG with
   exception edges, stack heights and kinds, and effects bound to
-  depth-named variables (`MethodFlow`). Design: `docs/cil-flow-api.md`;
-  `cargo dump --flow <assembly>` prints both layers.
+  depth-named variables (`MethodFlow`); `cargo dump --flow <assembly>`
+  prints both layers.
 - **Portable PDB** (`model::pdb`): documents and sequence points, from a
   `.pdb` beside the assembly, an embedded PDB, or debug tables in the
   assembly itself, found and matched to the assembly as Cecil's

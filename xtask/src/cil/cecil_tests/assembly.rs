@@ -2,7 +2,7 @@
 //!
 //! Skipped: ParseLowerCaseNameParts/ZeroVersion/NoBuildOrMajor (construct
 //! AssemblyNameReference values, no reading), Retargetable's custom-attribute
-//! half (ported with M5; the FullName half is covered below),
+//! half (the FullName half is covered below),
 //! MismatchedLibraryAndSymbols (symbols).
 
 use super::{read_resource, Test};
@@ -21,7 +21,7 @@ fn name() {
 }
 
 // Test/Mono.Cecil.Tests/AssemblyTests.cs:60 (Retargetable) — the FullName
-// rendering half; the attribute-argument navigation is ported with M5.
+// rendering half.
 fn retargetable_full_name() {
     let data = read_resource("RetargetableExample.dll");
     let module = Module::read(&data).unwrap();

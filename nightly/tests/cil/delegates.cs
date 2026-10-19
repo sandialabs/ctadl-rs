@@ -1,4 +1,4 @@
-// Slice 9 (translation §11): delegates and lambdas. A lambda, a closure over a
+// Delegates and lambdas. A lambda, a closure over a
 // local, a static method group (bound through a thunk, `calls.rs`), a handler
 // held in a field, and a lambda that writes the local it captured.
 using System;

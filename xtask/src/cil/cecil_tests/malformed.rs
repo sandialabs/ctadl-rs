@@ -824,11 +824,10 @@ fn operand_tokens_not_found() {
         .is_none());
 }
 
-// Values that fail to read, where cil-dump used to fail the whole dump and
-// now prints `!error` for the value and dumps the rest. First, blobs at
-// index 0, which Cecil's SignatureReader reads from the start of the #Blob
-// heap, past the empty blob's end, giving whatever the bytes there decode
-// to, where the reader fails the one value: a constant, a parameter's
+// Values that fail to read, which cil-dump prints as `!error` while it
+// dumps the rest. First, blobs at index 0, which Cecil's SignatureReader
+// reads from the start of the #Blob heap, past the empty blob's end, giving
+// whatever the bytes there decode to, where the reader fails the one value: a constant, a parameter's
 // marshal info, and a base type's TypeSpec signature, which `is_value_type`
 // and `is_enum` read too.
 fn dump_survives_bad_values() {
@@ -873,9 +872,8 @@ fn dump_survives_bad_values() {
 
 // InterfaceImpl and GenericParamConstraint types of rid 0, past their
 // table, and with the TypeDefOrRef tag 3, which names no table. Cecil's
-// LookupToken is null for each, and the entry stays with a null type; it
-// used to fail the type's whole list. CecilDump dereferences the null, so
-// only this test covers it.
+// LookupToken is null for each, and the entry stays with a null type.
+// CecilDump dereferences the null, so only this test covers it.
 fn null_interfaces_and_constraints() {
     let sections: Vec<_> = cil_dump::ALL_SECTIONS.iter().map(|&(_, s)| s).collect();
     // Each row's second column, after Class or Owner.
@@ -916,8 +914,8 @@ fn null_interfaces_and_constraints() {
 
 // A ManifestResource whose Implementation is an AssemblyRef past its
 // table. Cecil's GetTypeReferenceScope is null there, and the resource
-// stays with a null Assembly; it used to be left out. CecilDump
-// dereferences the null, so only this test covers it.
+// stays with a null Assembly. CecilDump dereferences the null, so only
+// this test covers it.
 fn resource_assembly_refs_out_of_range() {
     let sections: Vec<_> = cil_dump::ALL_SECTIONS.iter().map(|&(_, s)| s).collect();
     // Implementation is the fourth column, after Offset, Flags and Name.

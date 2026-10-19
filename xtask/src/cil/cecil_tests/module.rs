@@ -3,8 +3,8 @@
 //! Skipped (write-side or environment-specific): CreateModuleEscapesAssemblyName,
 //! Win32FileVersion (Win32 version resources), OwnedStreamModuleFileName,
 //! OpenModule{Immediate,Deferred}*, ImmediateRead*, ReadAndWriteFile,
-//! ExceptionInWriteDoesNotKeepLockOnFile. NestedTypeForwarder and
-//! HasTypeReference come with the compiled TestCSharp fixtures.
+//! ExceptionInWriteDoesNotKeepLockOnFile. Not ported: NestedTypeForwarder and
+//! HasTypeReference.
 
 use super::{read_resource, Test};
 use cil_reader::raw::ModuleKind;

@@ -22,10 +22,10 @@
 //!   `ckfinite`, and `newarr` vs a multi-dimensional array's constructor.
 //!
 //! Every value carries a shadow ([`Sh`]) beside it, the labels `cil:taint`
-//! tracks (translation §12.2). Shadows never change what runs; `cil:exec`
+//! tracks. Shadows never change what runs; `cil:exec`
 //! starts with none and so carries none.
 //!
-//! Delegates are modeled as the frontend reads them (translation §7): a
+//! Delegates are modeled as the frontend reads them: a
 //! delegate constructor binds a target and a function pointer, and `Invoke`
 //! calls the method with the target as `this` when it has one. The static
 //! fields of compiler-generated types (the caches of lambdas and method
@@ -1503,7 +1503,7 @@ impl<'m, 'd> Interp<'m, 'd> {
         }
     }
 
-    /// An `Assign`'s value and its shadow (§12.2): a copy, cast, box or unbox keeps its
+    /// An `Assign`'s value and its shadow: a copy, cast, box or unbox keeps its
     /// operand's labels, and a computed value takes the union of its operands'.
     fn transfer(
         &mut self,
@@ -1518,7 +1518,7 @@ impl<'m, 'd> Interp<'m, 'd> {
             Transfer::Copy | Transfer::Cast(_) => operand,
             Transfer::Box(_) => {
                 // A fresh box holds the operand; the reference carries its labels too, since
-                // the frontend lowers `box` as a copy (§6.1).
+                // the frontend lowers `box` as a copy.
                 if let (Value::Ref(o), [old]) = (&v, vals.as_slice()) {
                     if *old != v {
                         if let Some(SObj::Boxed(content)) = self.sheap.get_mut(*o) {
@@ -1668,8 +1668,8 @@ impl<'m, 'd> Interp<'m, 'd> {
         Ok((a, flat))
     }
 
-    /// The value at a path, and the shadow of the location it is read from (§12.2: a load
-    /// takes the loaded location's labels; statics carry none, §12.6).
+    /// The value at a path, and the shadow of the location it is read from (a load takes
+    /// the loaded location's labels; statics carry none).
     fn load(&mut self, fi: usize, p: &Path<Var>) -> R<(Value, Sh)> {
         let (base, base_sh) = match p.root {
             Root::Static => {
@@ -1760,7 +1760,7 @@ impl<'m, 'd> Interp<'m, 'd> {
         }
     }
 
-    /// Stores a value and its shadow at a path (§12.2: a store gives the location the stored
+    /// Stores a value and its shadow at a path (a store gives the location the stored
     /// value's labels).
     fn store(&mut self, fi: usize, p: &Path<Var>, v: Value, sh: Sh) -> R<()> {
         let base = match p.root {

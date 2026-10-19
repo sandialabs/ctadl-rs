@@ -1,8 +1,8 @@
-// Slice 10 (translation §11): multiple assemblies and forwarding. The app calls
+// Multiple assemblies and forwarding. The app calls
 // into a library imported beside it, overrides one of its virtual methods, and
 // overrides `ToString` of `System.Object`, which the app references through the
 // `System.Runtime` facade and the frontend canonicalizes to
-// `System.Private.CoreLib` (§3.3).
+// `System.Private.CoreLib`.
 namespace Cases
 {
     public static class Taint

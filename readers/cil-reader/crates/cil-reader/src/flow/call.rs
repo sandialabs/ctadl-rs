@@ -1,6 +1,6 @@
-//! Call sites (`docs/cil-flow-api.md` §5.8): `call`, `callvirt`, `newobj` and
-//! `calli`, including the runtime methods of multi-dimensional arrays (§5.5),
-//! which become element accesses instead of calls.
+//! Call sites: `call`, `callvirt`, `newobj` and `calli`, including the
+//! runtime methods of multi-dimensional arrays, which become element accesses
+//! instead of calls.
 
 use super::opcode::{Builder, token};
 use super::operands::{ArrayMethod, FlowCx, ResolvedMethod};

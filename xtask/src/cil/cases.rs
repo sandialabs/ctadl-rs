@@ -3,10 +3,10 @@
 //!
 //! A case is compiled with `dotnet build` (Release, like the exec fixtures, with a portable PDB
 //! beside each assembly), imported with `ctadl import -l cil` (the output directory, for a
-//! multi-assembly case), indexed and queried. The query model is generated from the config: `Source()` and `SourceInt()` return
-//! a source, and each function the config names among `expected_sinks` and
-//! `unexpected_sinks` sinks its argument 0. A config may give its own `model_generators` too,
-//! which are added.
+//! multi-assembly case), indexed and queried. The query model is generated from the config:
+//! `Source()` and `SourceInt()` return a source, and each function the config names among
+//! `expected_sinks` and `unexpected_sinks` sinks its argument 0. A config may give its own
+//! `model_generators` too, which are added.
 //!
 //! A case is judged twice. By the sinks its code flows end in: every simple name in
 //! `expected_sinks` must be the sink of a code flow that starts at a source, and no name in

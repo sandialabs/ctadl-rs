@@ -1,8 +1,8 @@
 //! Per-instruction dataflow for CIL: what each instruction reads, what it
 //! writes, and how values move between them.
 //!
-//! The design is `docs/cil-flow-api.md`. Two layers share one effect
-//! vocabulary, [`Effect`], generic over the slot type:
+//! Two layers share one effect vocabulary, [`Effect`], generic over the slot
+//! type:
 //!
 //! - Layer 1, [`InsFlow`]: one instruction at a time, with operands named by
 //!   position ([`Slot::In`], [`Slot::Out`]). A pure function of the

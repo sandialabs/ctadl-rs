@@ -8,9 +8,9 @@ publish = false
 
 [features]
 default = []
-# The `cil-dump` CLI. Off by default so that building the workspace (or
-# depending on cil-reader from an outer workspace) never produces a binary;
-# the root xtask's `cil:*` checks use the library in-process and do not need it.
+# The `cil-dump` CLI. Off by default so that building the workspace never
+# produces a binary; the root xtask's `cil:*` checks use the library
+# in-process and do not need it.
 cli = []
 
 [[bin]]

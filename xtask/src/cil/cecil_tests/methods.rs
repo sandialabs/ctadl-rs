@@ -1,10 +1,10 @@
 //! Ported from Test/Mono.Cecil.Tests/MethodTests.cs (read subset).
 //!
-//! Deferred to M4 (need method bodies): the body-reading halves of VarArgs,
-//! GenericInstanceMethod, MethodRefDeclaredOnGenerics — see tests/method_body.rs.
+//! The body-reading halves of VarArgs, GenericInstanceMethod and
+//! MethodRefDeclaredOnGenerics are in method_body.rs.
 //! Skipped: ReturnParameterMethod (reflection round-trip),
 //! InstanceAndStaticMethodComparison / FunctionPointerArgumentOverload /
-//! PrivateScope* (need MetadataResolver, M7).
+//! PrivateScope* (not ported).
 
 use super::{read_fixture, read_resource, Test};
 use cil_reader::model::{method_attributes, sig::calling_convention, MethodDef, TypeDef};
@@ -136,7 +136,7 @@ fn simple_overrides() {
 }
 
 // Test/Mono.Cecil.Tests/MethodTests.cs:144 (VarArgs) — signature half; the
-// call-site half needs bodies (M4).
+// call-site half is in method_body.rs.
 fn varargs() {
     let data = read_resource("varargs.exe");
     let module = Module::read(&data).unwrap();

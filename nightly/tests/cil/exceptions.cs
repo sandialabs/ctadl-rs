@@ -1,5 +1,5 @@
-// Slice 7 (translation §11): exceptions. A value carried by a thrown object
-// reaches the handler, through a call that throws (split-block CFG, §8) and
+// Exceptions. A value carried by a thrown object
+// reaches the handler, through a call that throws (split-block CFG) and
 // out of a method whose catch does not match.
 using System;
 

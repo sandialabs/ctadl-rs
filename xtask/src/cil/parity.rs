@@ -17,8 +17,9 @@ pub const CECIL_CORPUS_DIRS: &[(&str, &str)] = &[
     ("pdb", "symbols/pdb/Test/Resources/assemblies"),
 ];
 
-/// Tag of cil-reader's own fixtures: Cecil's .il/.cs test sources, compiled
-/// by the root flake's `cilFixtures` derivation rather than committed.
+/// Tag of the compiled fixtures: Cecil's .il/.cs test sources and
+/// cil-reader's own, built by the root flake's `cilFixtures` derivation
+/// rather than committed.
 pub const FIXTURES_TAG: &str = "fixtures";
 
 /// Environment variable naming the compiled fixtures directory; the dev shell

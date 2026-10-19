@@ -1,4 +1,4 @@
-// Slice 4 (translation §11): direct calls and extern stubs. Static, instance and
+// Direct calls and extern stubs. Static, instance and
 // constructor calls; a callee in the BCL, which the frontend stubs.
 namespace Cases
 {

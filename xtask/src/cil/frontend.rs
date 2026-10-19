@@ -1,5 +1,5 @@
 //! `cil:frontend`: the CIL frontend (`frontends/ctadl-cil`) checked against what it does not
-//! control (`docs/cil-frontend-translation.md` §1.5). Two parts:
+//! control. Two parts:
 //!
 //! - **sweep**: every corpus assembly (Cecil's and the compiled fixtures) imported on its own,
 //!   which runs `Program::verify`, and then put through the SSA pipeline `ctadl index` runs

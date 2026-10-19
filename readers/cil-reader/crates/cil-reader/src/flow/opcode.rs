@@ -1,9 +1,8 @@
-//! The per-opcode table of Layer 1 (`docs/cil-flow-api.md` §5): what each
-//! CIL instruction reads and writes, as [`Effect`]s over positional
-//! [`Slot`]s.
+//! The per-opcode table of Layer 1: what each CIL instruction reads and
+//! writes, as [`Effect`]s over positional [`Slot`]s.
 //!
 //! The `match` on [`Code`] has no `_` arm, so a new opcode is a compile
-//! error here rather than a silent gap (invariant 7.6).
+//! error here rather than a silent gap (invariant 7.6 of [`super::check`]).
 
 use super::call;
 use super::operands::FlowCx;
@@ -339,7 +338,7 @@ fn field_access(b: &mut Builder, ins: &Ins<'_>, cx: &FlowCx<'_>) {
 fn table(b: &mut Builder, ins: &Ins<'_>, prefixes: Prefixes, cx: &FlowCx<'_>) {
     use Code::*;
     match ins.opcode.code {
-        // §5.1 Locals, arguments, constants, stack
+        // Locals, arguments, constants, stack
         Nop | Break => {}
         Ldarg_0 => ldarg(b, 0),
         Ldarg_1 => ldarg(b, 1),
@@ -426,7 +425,7 @@ fn table(b: &mut Builder, ins: &Ins<'_>, prefixes: Prefixes, cx: &FlowCx<'_>) {
         }
         Pop => b.pops(&[Role::Discarded]),
 
-        // §5.2 Arithmetic, logic, conversion, comparison
+        // Arithmetic, logic, conversion, comparison
         Add => binary(b, Op::Add(PLAIN)),
         Add_Ovf => binary(b, Op::Add(OVF)),
         Add_Ovf_Un => binary(b, Op::Add(OVF_UN)),
@@ -489,7 +488,7 @@ fn table(b: &mut Builder, ins: &Ins<'_>, prefixes: Prefixes, cx: &FlowCx<'_>) {
         Clt => binary(b, Op::Cmp(CmpOp::Lt, PLAIN)),
         Clt_Un => binary(b, Op::Cmp(CmpOp::Lt, UN)),
 
-        // §5.3 Branches and control
+        // Branches and control
         Br_S | Br => b.control = Control::Goto(target(ins)),
         Brfalse_S | Brtrue_S | Brfalse | Brtrue => cond1(b, ins),
         Beq_S | Bge_S | Bgt_S | Ble_S | Blt_S | Bne_Un_S | Bge_Un_S | Bgt_Un_S | Ble_Un_S
@@ -538,10 +537,10 @@ fn table(b: &mut Builder, ins: &Ins<'_>, prefixes: Prefixes, cx: &FlowCx<'_>) {
             b.control = Control::Jump;
         }
 
-        // §5.4 Fields
+        // Fields
         Ldfld | Stfld | Ldflda | Ldsfld | Stsfld | Ldsflda => field_access(b, ins, cx),
 
-        // §5.5 Arrays (multi-dimensional ones are calls, in call.rs)
+        // Arrays (multi-dimensional ones are calls, in call.rs)
         Newarr => {
             b.pops(&[Role::Size]);
             b.pushes(1);
@@ -573,7 +572,7 @@ fn table(b: &mut Builder, ins: &Ins<'_>, prefixes: Prefixes, cx: &FlowCx<'_>) {
             });
         }
 
-        // §5.6 Indirect access and value types
+        // Indirect access and value types
         Ldind_I1 | Ldind_U1 | Ldind_I2 | Ldind_U2 | Ldind_I4 | Ldind_U4 | Ldind_I8 | Ldind_I
         | Ldind_R4 | Ldind_R8 | Ldind_Ref | Ldobj => ldind(b),
         Stind_Ref | Stind_I1 | Stind_I2 | Stind_I4 | Stind_I8 | Stind_R4 | Stind_R8 | Stind_I
@@ -622,7 +621,7 @@ fn table(b: &mut Builder, ins: &Ins<'_>, prefixes: Prefixes, cx: &FlowCx<'_>) {
             });
         }
 
-        // §5.7 Objects, casts, boxing, typed references
+        // Objects, casts, boxing, typed references
         Castclass | Isinst => unary(b, Role::Object, Transfer::Cast(type_op(ins))),
         Box => unary(b, Role::Value, Transfer::Box(type_op(ins))),
         // A pointer into the box, which aliases it.
@@ -647,7 +646,7 @@ fn table(b: &mut Builder, ins: &Ins<'_>, prefixes: Prefixes, cx: &FlowCx<'_>) {
         ),
         Refanytype => unary(b, Role::Value, Transfer::Derived(Op::RefAnyType)),
 
-        // §5.8 Calls and function pointers
+        // Calls and function pointers
         Call | Callvirt | Newobj | Calli => call::call(b, ins, prefixes, cx),
         Ldftn | Ldvirtftn => {
             if ins.opcode.code == Ldvirtftn {
@@ -665,7 +664,7 @@ fn table(b: &mut Builder, ins: &Ins<'_>, prefixes: Prefixes, cx: &FlowCx<'_>) {
             }
         }
 
-        // §5.9 Prefixes: folded into the next instruction by
+        // Prefixes: folded into the next instruction by
         // MethodBody::flows. Met alone (at the end of a body, or through
         // instruction_flow), they do nothing.
         Unaligned | Volatile | Tail | Constrained | No | Readonly => {}

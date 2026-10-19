@@ -1,18 +1,25 @@
-//! Names (translation §3): the contract between the frontend, CHA, the model files and SARIF.
-//! Every spelling the frontend emits comes from here.
+//! Names: the contract between the frontend, CHA, the model files and SARIF. Every spelling
+//! the frontend emits comes from here.
 //!
-//! | Thing       | Spelling                                  |
-//! | ----------- | ----------------------------------------- |
-//! | class       | `[Asm]Ns.Outer/Inner`, open definition    |
-//! | simple name | metadata name, `` ``n`` for generic methods |
-//! | descriptor  | `(P1,P2)->Ret`, types as in [`ModNames::spell`] |
-//! | function id | `{cls}::{simple}{descriptor}`             |
-//! | field       | `<{cls}::{name}>`                         |
+//! | Thing       | Spelling                                  | Example                                   |
+//! | ----------- | ----------------------------------------- | ----------------------------------------- |
+//! | class       | `[Asm]Ns.Outer/Inner`, generic arity kept, open definition | `[System.Collections]System.Collections.Generic.List`1` |
+//! | simple name | metadata name, `` ``n`` for generic methods | `Parse`, `Select``2`, `.ctor`, `get_Item` |
+//! | descriptor  | `(P1,P2)->Ret`, types as in [`ModNames::spell`] | `(System.String,!!0&)->System.Boolean` |
+//! | function id | `{cls}::{simple}{descriptor}`             | `[MyApp]Acme.Gadget::Parse(System.String)->System.Int32` |
+//! | field       | `<{cls}::{name}>`                         | `<[MyApp]Acme.Gadget::_name>`             |
+//! | allocation  | `cil<{cls}>`                              | `cil<[MyApp]Acme.Gadget>`                 |
 //!
-//! `Asm` is the simple assembly name, canonicalized through type forwarders: a reference to
-//! `[System.Runtime]System.Object` names `[System.Private.CoreLib]System.Object` when the
-//! `System.Runtime` facade can be read. The translation doc puts that rewrite in `finish`;
-//! doing it when a name is built gives the same names without a second walk over the IR.
+//! `Asm` is the simple assembly name, without version or public key token, canonicalized
+//! through type forwarders as the name is built: a reference to `[System.Runtime]System.Object`
+//! names `[System.Private.CoreLib]System.Object` when the `System.Runtime` facade can be read.
+//! The canonical name is the forwarding target. A TypeRef with a null resolution scope takes
+//! the assembly this module's `ExportedType` table sends it to; an array names itself without
+//! an assembly (`System.Int32[]`), which is the class `newarr` allocates.
+//!
+//! Generic instantiations are erased everywhere: a class is its open definition, a call
+//! through a `TypeSpec` names the generic type definition, and a `MethodSpec` names its
+//! method.
 
 use std::cell::RefCell;
 
@@ -27,7 +34,7 @@ use hashbrown::HashMap;
 /// a generic parameter, say. Still a class, so a row keyed on it is well formed.
 pub const UNKNOWN_CLASS: &str = "[?]?";
 
-/// The field a delegate carries (translation §7): the function pointer `ldftn` made. A fixed
+/// The field a delegate carries: the function pointer `ldftn` made. A fixed
 /// internal symbol, so models can name it. A delegate is its own target (`calls.rs`), so there
 /// is no field for that.
 pub const DELEGATE_METHOD: &str = "<delegate::method>";
@@ -262,8 +269,15 @@ impl<'n, 'm, 'c, 'l> ModNames<'n, 'm, 'c, 'l> {
 
     // ---- descriptors ---------------------------------------------------------------------
 
-    /// A type as descriptors spell it (translation §3.2): no assembly, generic parameters by
-    /// position, modifiers dropped. With `vars`, each type parameter `!n` is spelled
+    /// A type as descriptors spell it: no assembly, generic parameters by position (`!n`,
+    /// `!!n`), modifiers dropped. Primitives, `String` and `Object` are Cecil's full names
+    /// (`System.Int32`), a named type `Ns.Outer/Inner`, an instance ``Ns.Type`1<A,B>``, arrays
+    /// `T[]` and `T[,]` (rank only), addresses and pointers `T&` and `T*`.
+    ///
+    /// Without assemblies a descriptor is immune to facade forwarding. By position rather
+    /// than by name, the definition ``List`1::Add(!0)`` and a call site ``List`1<String>::Add(!0)``
+    /// spell the same descriptor with no substitution, because a `MemberRef` on a generic
+    /// `TypeSpec` is written in terms of `!0`. With `vars`, each type parameter `!n` is spelled
     /// `vars[n]` instead, which is how a base type's signature is read in a subclass.
     pub fn spell(&self, sig: &TypeSig, vars: Option<&[String]>) -> String {
         let mut out = String::new();

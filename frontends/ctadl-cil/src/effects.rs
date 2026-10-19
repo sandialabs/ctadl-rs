@@ -1,38 +1,43 @@
-//! Effects to statements (translation §6). One `match` over [`Effect`] with no `_` arm, so a
-//! review compares a row of the table to an arm.
+//! Effects to statements. One `match` over [`Effect`] with no `_` arm, so a review compares a
+//! row of the table to an arm.
 //!
 //! `F(field)` is the field symbol: `<cls::f>` for a named field, `[]` for an element,
-//! `length`, and `DEREF_FIELD` for `Deref` and `Block`.
+//! `length`, and `DEREF_FIELD` for `Deref` and `Block`. The dereference is never spelled as a
+//! string literal: `DEREF_FIELD` is the field the index and the query treat as a pointer
+//! target.
 //!
 //! | Effect                                        | Statements                                    |
 //! | --------------------------------------------- | --------------------------------------------- |
 //! | `Assign { Copy \| Cast \| Unbox \| Derived }` | `dst := srcs`                                 |
-//! | `Assign { Box(T) }`                           | `dst := srcs, cil<T>` (T instantiated, §9)    |
+//! | `Assign { Box(T) }`                           | `dst := srcs, cil<T>` (T instantiated)        |
 //! | `Const { I4 \| I8 }`                          | `dst := v`                                    |
 //! | `Const { R4 \| R8 }`                          | `dst := bits`                                 |
 //! | `Const { Null \| SizeOf \| ArgList }`         | `dst := 0`                                    |
 //! | `Const { String(tok) }`                       | `dst := "text"`                               |
 //! | `Const { Token(tok) }`                        | `dst := "name of tok"`                        |
-//! | `Load { Slot(b).f }`                          | `dst := load b.F(f)`, or §6.3 through a pointer |
+//! | `Load { Slot(b).f }`                          | `dst := load b.F(f)`, or `ptr.rs` through a pointer |
 //! | `Load { Static.f }`                           | `dst := load global.F(f)`                     |
-//! | `Store { Slot(b).f := src }`                  | `store b.F(f) := src`, or §6.3                |
+//! | `Store { Slot(b).f := src }`                  | `store b.F(f) := src`, or `ptr.rs`            |
 //! | `Store { Static.f := src }`                   | `store global.F(f) := src`                    |
-//! | `AddressOf { dst, place }`                    | nothing; if it escapes resolution, a cell (§6.3) |
+//! | `AddressOf { dst, place }`                    | nothing; if it escapes resolution, a cell (`ptr.rs`) |
 //! | `New { Object \| ValueType, T }`              | `dst := cil<T>`                               |
 //! | `New { Array, T }`                            | `dst := cil<T[]>`                             |
 //! | `New { StackAlloc }`                          | `dst := 0`                                    |
 //! | `FunctionPtr { dst, m }`                      | `dst := ptr<fid(m)>`                          |
 //! | `Clear { addr }`                              | resolved to a local or argument: `P := ()`; else nothing |
-//! | `Call(site)`                                  | §7, `calls.rs`                                |
+//! | `Call(site)`                                  | `calls.rs`                                    |
 //! | `Throw { src }`                               | `throwval := src`, into `excout` if it may leave the method; the terminator routes it |
-//! | `Return` / `Jump`                             | terminators (§8)                              |
-//! | `Test`                                        | nothing (§9)                                  |
+//! | `Return` / `Jump`                             | terminators (`method.rs`)                     |
+//! | `Test`                                        | nothing: a branch taints nothing              |
 //! | `Opaque { srcs, dsts }`                       | each `d := srcs`; counted                     |
 //!
+//! A struct is lowered like an object: `ldloc` of a struct local is an assign and `ldfld` on
+//! it a load, so a copy carries its fields' taint, and two copies of one struct alias.
+//!
 //! An operand that holds a resolved address is materialized wherever it is used as a value
-//! (`ptr.rs`). One more row the doc does not have: a copy into a `ref` local of a resolved
-//! address also materializes it into the local's `D`, so a place through the local
-//! (`Field(loc, f)` with `loc` a `ref` local, `loc.D.f`) has something to read.
+//! (`ptr.rs`). So is a copy into a `ref` local of a resolved address, into the local's `D`,
+//! so that a place through the local (`Field(loc, f)` with `loc` a `ref` local, `loc.D.f`)
+//! has something to read.
 
 use cil_reader::flow::{
     BoundIns, Const, Effect, Field, InsId, NewKind, Path, Place, Root, Transfer, Var,
@@ -146,7 +151,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                 {
                     // A use of this address does not resolve (a join of two addresses):
                     // give the pointer a cell holding the place's value, so reads through it
-                    // see it. Writes through it reach only the cell (§6.3).
+                    // see it. Writes through it reach only the cell.
                     self.out.stats.unresolved_address_writes += 1;
                     let p = self.place_path(em, &a);
                     let cell = em.fresh("cell");
@@ -246,7 +251,7 @@ impl Lower<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// `dst := root.field`, through a pointer root per §6.3.
+    /// `dst := root.field`, through a pointer root as `ptr.rs` lowers it.
     fn load(&mut self, em: &mut Emitter<'_>, ins: &BoundIns, dst: Var, src: &Path<Var>) {
         let d = em.var(dst);
         let b = match src.root {
@@ -281,7 +286,7 @@ impl Lower<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// `store root.field := value`, through a pointer root per §6.3.
+    /// `store root.field := value`, through a pointer root as `ptr.rs` lowers it.
     fn store(&mut self, em: &mut Emitter<'_>, ins: &BoundIns, dst: &Path<Var>, value: Exp) {
         let b = match dst.root {
             Root::Static => {

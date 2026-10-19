@@ -1,4 +1,4 @@
-// Iterators (plan §9): a `yield return` method compiles to a state machine class
+// Iterators: a `yield return` method compiles to a state machine class
 // whose `MoveNext` holds the whole body, and whose `Current` reads a generated
 // field. A `foreach` over it reaches both through the `IEnumerator<T>` interface.
 using System.Collections.Generic;

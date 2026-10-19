@@ -1,5 +1,5 @@
-// Slice 8 (translation §11): managed pointers. `out` and `ref` parameters
-// (copy-in/copy-out, §6.3), a struct's fields through `ldloca`, a struct method
+// Managed pointers. `out` and `ref` parameters
+// (copy-in/copy-out), a struct's fields through `ldloca`, a struct method
 // writing `this`, `a[i] op= x` through `ldelema`, and a `T*` field.
 namespace Cases
 {

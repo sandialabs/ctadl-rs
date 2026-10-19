@@ -1,4 +1,4 @@
-//! Prefix folding (`docs/cil-flow-api.md` §5.9) and [`MethodBody::flows`].
+//! Prefix folding and [`MethodBody::flows`].
 //!
 //! `volatile.` `unaligned.` `tail.` `readonly.` `no.` `constrained.` produce
 //! no [`InsFlow`] of their own: they are folded into the next instruction's

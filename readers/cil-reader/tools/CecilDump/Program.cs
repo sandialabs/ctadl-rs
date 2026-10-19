@@ -2,8 +2,7 @@
 //
 // The output format is the contract shared with crates/cil-dump; the root
 // `cargo xtask regression --frontend cil` diffs the two, and `cargo xtask cil
-// bless` saves this side as the
-// goldens in xtask/cil-goldens/.
+// bless` saves this side as the goldens in xtask/cil-goldens/.
 //
 // Determinism notes:
 // - No assembly resolution outside [resolve] and [custom-attributes-resolved]:

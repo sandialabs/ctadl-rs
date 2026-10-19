@@ -1,6 +1,7 @@
 //! Targeted tests of the flow layer on the `flow.il` fixture
-//! (`readers/cil-reader/fixtures/flow.il`), one per case of
-//! `docs/cil-flow-api.md` §9. Each is a plain `fn()` that panics on failure.
+//! (`readers/cil-reader/fixtures/flow.il`), one per case the fixture lists:
+//! what the Cecil corpus barely exercises. Each is a plain `fn()` that panics
+//! on failure.
 
 use cil_reader::cil::{Code, RawOperand};
 use cil_reader::flow::check::layer2_violations;
@@ -352,7 +353,7 @@ fn names() {
 
 // ---- Layer 2 ---------------------------------------------------------------
 
-/// Layer 2 of `Flow::name`, checked against §7.7–7.9.
+/// Layer 2 of `Flow::name`, checked by `layer2_violations`.
 fn method_flow(module: &Module<'_>, name: &str) -> (MethodFlow, Vec<String>) {
     method_flow_with(module, name, FlowOptions::default())
 }
@@ -657,8 +658,8 @@ fn l2_kinds() {
 }
 
 fn l2_whole_fixture() {
-    // Every method of the fixture holds §7.7–7.9, and only HeightMismatch
-    // warns.
+    // Every method of the fixture has no Layer 2 violations, and only
+    // HeightMismatch warns.
     with_module(|module| {
         for ty in module.types().unwrap() {
             for m in ty.methods().unwrap() {
@@ -677,8 +678,8 @@ fn l2_whole_fixture() {
     });
 }
 
-/// The acceptance criterion of §9: a client that matches only on Effect,
-/// CallKind and Control (see `client.rs`) answers a real question.
+/// A client that matches only on Effect, CallKind and Control (see
+/// `client.rs`) answers a real question.
 fn client_without_code() {
     with_module(|module| {
         let reaching = |name: &str| {

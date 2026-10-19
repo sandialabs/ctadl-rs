@@ -1162,7 +1162,7 @@ namespace Exec
         public virtual int Hook(int a) => a + Total;
     }
 
-    // Interfaces (translation §11, slice 5): dispatch through an interface with
+    // Interfaces: dispatch through an interface with
     // two implementations, and an explicit implementation.
     public interface IArea
     {
@@ -1216,7 +1216,7 @@ namespace Exec
         }
     }
 
-    // Delegates (translation §11, slice 9): bound to a static method (through
+    // Delegates: bound to a static method (through
     // the frontend's thunk), to an instance method, to a closure, and to a
     // lambda that captures nothing (cached in a compiler-generated static).
     public delegate int IntFn(int x);

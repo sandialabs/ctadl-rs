@@ -300,8 +300,7 @@ fn load_string() {
     );
 }
 
-// Test/Mono.Cecil.Tests/TypeTests.cs:163 (TypeReferenceValueType) — deferred
-// from tests/types.rs; needs bodies.
+// Test/Mono.Cecil.Tests/TypeTests.cs:163 (TypeReferenceValueType)
 fn type_reference_value_type() {
     use cil_reader::model::TypeSig;
     let data = read_fixture("Methods.cs.dll");
@@ -332,8 +331,7 @@ fn type_reference_value_type() {
     }
 }
 
-// Test/Mono.Cecil.Tests/MethodTests.cs:178 (GenericInstanceMethod) — deferred
-// from tests/methods.rs.
+// Test/Mono.Cecil.Tests/MethodTests.cs:178 (GenericInstanceMethod)
 fn generic_instance_method() {
     use cil_reader::TokenType;
     let data = read_fixture("Generics.cs.dll");
@@ -353,8 +351,7 @@ fn generic_instance_method() {
     assert_ne!(spec_token.rid(), 0);
 }
 
-// Test/Mono.Cecil.Tests/MethodTests.cs:200 (MethodRefDeclaredOnGenerics) —
-// deferred from tests/methods.rs.
+// Test/Mono.Cecil.Tests/MethodTests.cs:200 (MethodRefDeclaredOnGenerics)
 fn method_ref_declared_on_generics() {
     use cil_reader::TokenType;
     let data = read_fixture("Generics.cs.dll");
@@ -385,9 +382,8 @@ fn method_ref_declared_on_generics() {
     }
 }
 
-// Test/Mono.Cecil.Tests/MethodTests.cs:144 (VarArgs) — body half deferred from
-// tests/methods.rs: call-site references to vararg methods render with the
-// sentinel.
+// Test/Mono.Cecil.Tests/MethodTests.cs:144 (VarArgs) — body half: call-site
+// references to vararg methods render with the sentinel.
 fn varargs_call_sites() {
     let data = read_resource("varargs.exe");
     let module = Module::read(&data).unwrap();

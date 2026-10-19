@@ -1,10 +1,9 @@
-//! Unit tests of the frontend's pure tables (translation §1.5).
+//! Unit tests of the frontend's pure tables.
 //!
-//! The doc plans per-table tests on synthetic `MethodFlow`s. A `MethodFlow` cannot be built
-//! outside cil-reader (its address facts are private), so the lowering tables are checked
-//! instead by the IR goldens and corpus sweep of `cil:frontend`, the `Cil:*` taint cases, and
-//! `cil:taint` (all in `cargo xtask regression --frontend cil`). What is tested here needs no
-//! assembly.
+//! A `MethodFlow` cannot be built outside cil-reader (its address facts are private), so the
+//! lowering tables are checked by the IR goldens and corpus sweep of `cil:frontend`, the
+//! `Cil:*` taint cases, and `cil:taint` (all in `cargo xtask regression --frontend cil`).
+//! What is tested here needs no assembly.
 
 use cil_reader::MetadataToken;
 use cil_reader::model::{MethodSig, TypeSig};
@@ -20,7 +19,7 @@ fn named(is_value_type: bool) -> TypeSig {
     }
 }
 
-/// §5.1: reference types, addresses and generic parameters are `ByRef`; primitives and
+/// Reference types, addresses and generic parameters are `ByRef`; primitives and
 /// value types `ByVal`.
 #[test]
 fn parameter_types() {
@@ -88,7 +87,7 @@ fn parameters_of_a_signature() {
     );
 }
 
-/// §3.1: a generic method's arity is part of its simple name, and the function id joins
+/// A generic method's arity is part of its simple name, and the function id joins
 /// class, simple name and descriptor.
 #[test]
 fn names() {
@@ -105,7 +104,7 @@ fn names() {
     );
 }
 
-/// §9: the assembly-selection policy.
+/// The assembly-selection policy.
 #[test]
 fn framework_assemblies() {
     for name in [

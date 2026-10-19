@@ -1,6 +1,5 @@
-//! Layer 2 (`docs/cil-flow-api.md` §4): a method's CFG, its stack heights and
-//! kinds, and the Layer 1 effects with stack positions bound to depth-named
-//! variables.
+//! Layer 2: a method's CFG, its stack heights and kinds, and the Layer 1
+//! effects with stack positions bound to depth-named variables.
 //!
 //! An instruction at entry height `h` that pops `p` binds `In(i)` to
 //! `Stack(h - p + i)` and `Out(j)` to `Stack(h - p + j)`. The bound code is
@@ -395,7 +394,7 @@ impl MethodFlow {
         self.escaping.contains(&at)
     }
 
-    /// The edge view (§4.3) of every bound effect, in code order.
+    /// The edge view ([`Edge`]) of every bound effect, in code order.
     pub fn edges(&self) -> impl Iterator<Item = Edge<Var>> + '_ {
         self.blocks
             .iter()
@@ -1352,7 +1351,7 @@ pub(crate) fn bind_effects(
     (effects, inputs, outputs)
 }
 
-// ---- managed pointers (§6.3) ------------------------------------------------
+// ---- managed pointers ------------------------------------------------------
 
 /// What the address analysis knows at a program point.
 #[derive(Clone, Default, PartialEq)]

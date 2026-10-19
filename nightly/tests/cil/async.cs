@@ -1,4 +1,4 @@
-// Async methods (plan §9): an `async` method compiles to a state machine struct
+// Async methods: an `async` method compiles to a state machine struct
 // whose `MoveNext` holds the whole body. The method itself only builds the struct
 // and hands it to its builder's `Start`, which runs `MoveNext` inside the library;
 // the result travels through the builder's task.

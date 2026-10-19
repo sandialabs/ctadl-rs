@@ -1,4 +1,4 @@
-// Slice 2 (translation §11): branches and loops. Values that cross a join on
+// Branches and loops. Values that cross a join on
 // the stack (Release keeps `?:` operands there) and loop-carried locals.
 namespace Cases
 {
@@ -31,7 +31,7 @@ namespace Cases
             Taint.Sink3(r);
         }
 
-        // A branch on tainted data taints nothing (§9: `Test` emits nothing).
+        // A branch on tainted data taints nothing (`Test` emits nothing).
         public static void Implicit()
         {
             string x = Taint.Source();

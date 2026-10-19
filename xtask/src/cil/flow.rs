@@ -1,12 +1,13 @@
-//! `cil:flow`: the acceptance gate of cil-reader's flow layer
-//! (`docs/cil-flow-api.md` §9). Three parts:
+//! `cil:flow`: the acceptance gate of cil-reader's flow layer. Three parts:
 //!
-//! - **property**: the invariants of §7 over every method body in the corpus
-//!   (Cecil's assemblies and the compiled fixtures). Layer 1: §7.1–7.5 via
-//!   `cil_reader::flow::check`, plus coverage of every instruction byte.
-//!   Layer 2: §7.7–7.9 via `MethodFlow::build` on every body.
+//! - **property**: the invariants `cil_reader::flow::check` states, over every
+//!   method body in the corpus (Cecil's assemblies and the compiled fixtures).
+//!   Layer 1 via `layer1_violations` on every instruction, plus coverage of
+//!   every instruction byte; Layer 2 via `layer2_violations` on
+//!   `MethodFlow::build` of every body.
 //! - **fixtures**: targeted tests on `flow.il` (in
-//!   `readers/cil-reader/fixtures`), one per case §9 lists.
+//!   `readers/cil-reader/fixtures`), for what the Cecil corpus barely
+//!   exercises; see `flow/fixtures.rs`.
 //! - **goldens**: `cil-dump --flow` of the flow fixtures against
 //!   `xtask/cil-goldens/flow`, reviewed when blessed with
 //!   `cargo xtask cil bless-flow`.

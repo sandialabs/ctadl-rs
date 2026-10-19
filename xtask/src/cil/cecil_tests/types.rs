@@ -1,7 +1,7 @@
 //! Ported from Test/Mono.Cecil.Tests/TypeTests.cs (read subset).
 //!
-//! Deferred to M4 (need method bodies): TypeReferenceValueType,
-//! GenericMultidimensionalArray — see tests/method_body.rs once it exists.
+//! TypeReferenceValueType, which needs method bodies, is in method_body.rs;
+//! GenericMultidimensionalArray is not ported.
 //! Skipped: CorlibPrimitive/DeferredCorlibTypeDef/CorlibTypesMetadataType
 //! (read the running framework's corlib; corlib-sensitive tests are pinned
 //! to the mdb mscorlib fixture instead where they matter).

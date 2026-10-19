@@ -1,5 +1,13 @@
-//! Managed pointers (translation §6.3). A pointer lowers to the place it points at whenever
-//! that can be traced, and to the dereference field `DEREF_FIELD` (`D` below) when it cannot.
+//! Managed pointers. A pointer lowers to the place it points at whenever that can be traced,
+//! and to the dereference field `DEREF_FIELD` (`D` below) when it cannot.
+//!
+//! | Effect on pointer `v`      | Resolved to `P`                    | Unresolved                       |
+//! | -------------------------- | ---------------------------------- | -------------------------------- |
+//! | `Load dst := v.*`          | read `P` into `dst`                | `dst := load v.D`                |
+//! | `Store v.* := x`           | write `x` into `P`                 | `store v.D := x`                 |
+//! | `Load dst := v.f`          | field `f` of `P`                   | `t := load v.D; dst := load t.f` |
+//! | `Store v.f := x`           | field `f` of `P`                   | `t := load v.D; store t.f := x`  |
+//! | `Clear v`                  | `P := ()` for a local or argument; else nothing | nothing             |
 //!
 //! Reading and writing a resolved place `P`:
 //!
@@ -13,22 +21,22 @@
 //!
 //! # Tracing addresses
 //!
-//! The doc has the frontend use the flow layer's `MethodFlow::resolve_address`. That analysis
-//! names a place by the variables that held its base and indices, and forgets the place when
-//! one of them is written. Two writes that are routine in compiled C# make it forget:
+//! The flow layer's `MethodFlow::resolve_address` names a place by the variables that held its
+//! base and indices, and forgets the place when one of them is written. Two writes that are
+//! routine in compiled C# make it forget:
 //!
 //! - `ldelema` and `ldflda` push their address over their base's own stack slot, so
 //!   `ldfld Arr; ldarg i; ldelema` names a base no variable holds any more;
 //! - `a[i*3] += x` is `ldelema; dup; ldind; ...; stind`, and the `dup` overwrites the
 //!   computed index's slot.
 //!
-//! Either way the address escapes resolution, and the fallback (a cell holding a copy of the
-//! place) loses the write. In `exec.cs`, 21 of the 22 addresses the layer could not trace were
-//! these, and one was a real join of two addresses.
+//! Either way the address would escape resolution, and the fallback (a cell holding a copy of
+//! the place) loses the write. Most addresses that escape the layer's analysis in compiled C#
+//! are these, not real joins of two addresses.
 //!
 //! So this module runs the same must-analysis ([`Addresses`]) with two changes the frontend is
 //! free to make and the layer is not. Element indices are not part of a place, since the
-//! frontend's policy is that an index does not taint the element (§9). And a base held in a
+//! frontend's policy is that an index does not taint the element. And a base held in a
 //! stack slot is saved into a frontend local, `ab{block}_{index}`, by the instruction that
 //! takes the address, so the place names a variable nothing overwrites. A place is then an
 //! [`Addr`]: a root (an argument, a local, the global heap or a saved base) and the fields
@@ -38,9 +46,16 @@
 //!
 //! An address used as a *value* (an argument, a returned `ref`, a stored pointer) is
 //! materialized when it resolves: `c := read P; store cell.D := c`, and `cell` is used in its
-//! place. A call copies the cell back out afterwards (§6.3, copy-in/copy-out). An address
-//! taken where it may reach a use that does not resolve is materialized into its own
-//! variable when it is taken (§6.3, "the rare case").
+//! place. A call copies the cell back out afterwards, `u := load cell.D`, then writes `u` into
+//! `P`. That works because CIL's parameters are written back at `Entry`
+//! (`ArtifactLanguage::param_write_back`): the callee's `store p.D := v` on its parameter's
+//! entry version comes back to the caller's `cell`. An unresolved address argument is passed
+//! as is: it is already a pointer variable, and writes through its `D` come back to it.
+//!
+//! An address taken where it may reach a use that does not resolve (two addresses merged at a
+//! join, as in C#'s `ref (c ? ref a : ref b)`) is materialized into its own variable when it
+//! is taken. Reads through the merged pointer see both places; writes through it reach only
+//! the cell, a known false negative counted as `unresolved_address_writes`.
 
 use std::collections::VecDeque;
 

@@ -1,5 +1,5 @@
-// Slice 6 (translation §11): generic overrides and explicit implementations.
-// CIL has no bridge methods, so each needs an override alias (§4.2) for CHA to
+// Generic overrides and explicit implementations.
+// CIL has no bridge methods, so each needs an override alias (`hierarchy.rs`) for CHA to
 // find it under the key the call site uses.
 using System.Collections.Generic;
 
@@ -47,7 +47,7 @@ namespace Cases
         public string Put(string x) => x;
     }
 
-    // A BCL interface whose metadata comes from the framework (§4.3).
+    // A BCL interface whose metadata comes from the framework.
     public class FirstWins : IComparer<string>
     {
         public string Last;

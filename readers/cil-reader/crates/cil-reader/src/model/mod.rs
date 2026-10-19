@@ -1,4 +1,4 @@
-//! Layer 1: the Cecil-shaped, lazy, borrow-based object model.
+//! The Cecil-shaped, lazy, borrow-based object model.
 
 pub mod body;
 pub mod custom_attributes;

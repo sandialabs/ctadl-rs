@@ -1,6 +1,6 @@
-// Fixture for cil_reader::flow (docs/cil-flow-api.md §9): what the Cecil
-// corpus barely exercises. out/ref arguments, constrained. calls, delegates,
-// multi-dimensional arrays, filters, cpobj/initobj, calli, prefixes, and the
+// Fixture for cil_reader::flow: what the Cecil corpus barely exercises. out/ref
+// arguments, constrained. calls, delegates, multi-dimensional arrays, filters,
+// cpobj/initobj, calli, prefixes, and the
 // Layer 2 cases: newobj on a non-empty stack, dup + stfld, an address across
 // a ?: join, and a join whose stack heights disagree. The xtask `cil:flow`
 // check tests these methods by name, and its goldens hold `cil-dump --flow`

@@ -1,11 +1,48 @@
-//! The Layer 1 invariants of `docs/cil-flow-api.md` §7.1–7.5, as a checker
-//! that the unit tests and the corpus property test (`cil:flow` in xtask)
-//! share.
+//! The invariants of the flow layer, as a checker that the unit tests and the
+//! corpus property test (`cil:flow` in xtask) share. They are numbered 7.1–7.9,
+//! and each violation names the number it breaks.
 //!
-//! The pop and push counts come from Cecil's opcode table
-//! ([`StackBehaviour`]), with `Varpop`/`Varpush` resolved from the operand's
-//! signature, independently of the per-opcode table in `opcode.rs`. That is
-//! the external oracle §7.1 asks for.
+//! Layer 1, for each instruction's [`InsFlow`] ([`layer1_violations`]):
+//!
+//! - **7.1** The instruction has as many inputs as it pops and as many outputs
+//!   as it pushes. The counts come from Cecil's opcode table
+//!   ([`StackBehaviour`]), with `Varpop`/`Varpush` resolved from the operand's
+//!   signature ([`stack_counts`]), independently of the per-opcode table in
+//!   `opcode.rs`, so they are an external oracle. An `Opaque` fallback for a
+//!   signature that does not resolve has no counts to check.
+//! - **7.2** Every `In(i)` is read by some effect, unless its role is
+//!   `Discarded`; a `Discarded` input is read by none.
+//! - **7.3** Every `Out(i)` is written by exactly one effect.
+//! - **7.4** Every `Temp` is written before it is read, within the instruction.
+//! - **7.5** An input's [`Role`] allows each of its uses. `Value` is only an
+//!   assign or store source. `Object` is a path root, an address base, the
+//!   source of a cast or unbox (castclass, isinst, unbox), or ldvirtftn's
+//!   receiver. `Address` is a path root, a cleared address, or mkrefany's
+//!   source. `SrcAddress` is only a path root. `Receiver` is a call's receiver,
+//!   or a path root or address base (the runtime methods of multi-dimensional
+//!   arrays). `Arg(k)` is only argument `k`, `Index` only an element index, and
+//!   `Size` only a `New` size or a block size. `Lhs`/`Rhs` are the source of a
+//!   derived value or of a test, and `Condition` only of a test. `Callee`,
+//!   `Exception` and `ReturnValue` are only calli's callee, the thrown value
+//!   and the returned value. Any input may be an `Opaque` source.
+//! - **7.6** The per-opcode table's `match` on [`Code`] has no `_` arm, so a
+//!   new opcode is a compile error. The compiler checks this one.
+//!
+//! Layer 2, for each [`MethodFlow`] ([`layer2_violations`]):
+//!
+//! - **7.7** No instruction pops more than its entry height holds or leaves
+//!   more than `max_stack`, and every edge into a block other than a handler
+//!   entry leaves the height the block starts at, unless a [`FlowWarning`]
+//!   records it.
+//! - **7.8** Binding by depth changes nothing an instruction does. Its effects
+//!   bound to depth-named variables, and its Layer 1 effects with every slot
+//!   named apart, run through a small symbolic interpreter, must give the same
+//!   events (memory writes, calls, tests and exits, with the values they read),
+//!   the same outputs, and the same arguments, locals and thrown value. This is
+//!   what checks the collision rule of `method::bind_effects`.
+//! - **7.9** `succs` and `preds` agree, every catch and filter entry has
+//!   height 1, every finally and fault entry has height 0, and every `leave`
+//!   target has height 0.
 
 use super::operands::FlowCx;
 use super::{CallKind, Effect, Field, InsFlow, Op, Place, Role, Root, Slot, Transfer};
@@ -159,12 +196,7 @@ fn uses(e: &Effect<Slot>, out: &mut Vec<(Slot, Use)>) {
     }
 }
 
-/// Whether an input of `role` may be used as `u` (invariant 7.5). An
-/// `Object` is a path root or an address base, or the source of a cast or
-/// unbox (castclass, isinst, unbox) or the receiver of ldvirtftn. An
-/// `Address` is a path root or a cleared place, or the source of mkrefany.
-/// A `Value` is only ever an assign or store source. Any input may be an
-/// `Opaque` source.
+/// Whether an input of `role` may be used as `u` (invariant 7.5).
 fn allowed(role: Role, u: Use) -> bool {
     use TransferKind as T;
     use Use::*;
@@ -281,7 +313,7 @@ pub fn layer1_violations(ins: &Ins<'_>, flow: &InsFlow, cx: &FlowCx<'_>) -> Vec<
     v
 }
 
-// ---- Layer 2 (§7.7–7.9) ------------------------------------------------------
+// ---- Layer 2 (7.7–7.9) -------------------------------------------------------
 
 use super::method::{BoundIns, FlowWarning, HandlerKind, MethodFlow, Var};
 use super::{Control as Ctl, Transfer as Tr};
@@ -558,7 +590,8 @@ mod tests {
 
     #[test]
     fn newobj_with_arguments_goes_through_a_temp() {
-        // The design's example: newobj C::.ctor(a, b) at entry height 2.
+        // newobj C::.ctor(a, b) at entry height 2: the new object shares s0
+        // with the first argument.
         let ins = bound(newobj(2), 2);
         assert_eq!(
             rendered(&ins),

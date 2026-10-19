@@ -1,7 +1,7 @@
-//! Function shape (translation §5) and control (§8): one `FunctionData` per method, its
-//! blocks one-to-one with the `MethodFlow`'s, and a terminator for each.
+//! Function shape and control: one `FunctionData` per method, its blocks one-to-one with the
+//! `MethodFlow`'s, and a terminator for each.
 //!
-//! Signature (§5.1):
+//! Signature:
 //!
 //! | CIL                                         | `FunctionData`                    |
 //! | ------------------------------------------- | --------------------------------- |
@@ -10,7 +10,7 @@
 //! | primitive or value type                     | `ByVal`                           |
 //! | return                                      | `ReturnType { arity: 2 }`         |
 //!
-//! Variables (§5.2):
+//! Variables, all unversioned, as `ssa::transform` requires:
 //!
 //! | `Var`       | `VariableRef`        |
 //! | ----------- | -------------------- |
@@ -26,7 +26,7 @@
 //! The frontend's own temporaries are `{prefix}_{n}` (`cell_3`, `c_4`), so they never collide
 //! with the flow layer's `t{k}`.
 //!
-//! Control (§8):
+//! Control:
 //!
 //! | Last `Control` of the block | Terminator                                         |
 //! | --------------------------- | -------------------------------------------------- |
@@ -35,15 +35,13 @@
 //! | `Throw`                     | `Goto { exc_succs }`; unprotected: `Return [empty, excout]` |
 //! | `Jump m`                    | call `m` with every parameter, `Return [retval, excout]` |
 //!
-//! The exceptional slot of every return is `excout`, where the doc has `throwval` at a throw
-//! and `empty` elsewhere. An exception leaves a method from more places than a `throw` with
-//! no handler: from any call that is not in a `try`, and from a protected point whose
-//! handlers may not take it (a typed catch, a filter, a finally). Each such point adds its
-//! `throwval` into `excout` (`excout := excout, throwval`), defined empty at entry, and the
-//! value reaches the caller through whichever return the method takes. Ending a block after
-//! every call instead would give each its own edge out, but would cut the load chains the
-//! index composes paths along within a block (§12.3). `cil:taint` found the gap:
-//! `Exc.Uncaught` is `Throws(a) + 1`, whose callee's exception had no way out.
+//! The exceptional slot of every return is `excout`. An exception leaves a method from more
+//! places than a `throw` with no handler: from any call that is not in a `try`, and from a
+//! protected point whose handlers may not take it (a typed catch, a filter, a finally). Each
+//! such point adds its `throwval` into `excout` (`excout := excout, throwval`), defined empty
+//! at entry, and the value reaches the caller through whichever return the method takes.
+//! Ending a block after every call instead would give each its own edge out, but would cut
+//! the load chains the index composes field paths along, which it does within a block only.
 
 use cil_reader::flow::{
     BlockId, BoundIns, Control, Effect, FlowOptions, HandlerKind, InsId, MethodFlow, Var,
@@ -61,7 +59,8 @@ use crate::names::{ModNames, Namer};
 use crate::ptr::{Addresses, VarInfo};
 
 /// The flow layer options this frontend builds with: a block ends after every call and
-/// throw inside a protected range (§8, "precise exception edges").
+/// throw inside a protected range, so the handler is reached from each throwing point with
+/// that point's `throwval` and local versions, not only the block's last.
 pub const FLOW_OPTIONS: FlowOptions = FlowOptions {
     split_after_throwing_in_try: true,
 };
@@ -84,7 +83,7 @@ impl<'f> Emitter<'f> {
         }
     }
 
-    /// The `VariableRef` for a flow-layer variable (§5.2).
+    /// The `VariableRef` for a flow-layer variable.
     pub fn var(&mut self, v: Var) -> VariableRef {
         match v {
             // Code that names an argument past its signature does not verify; a local of
@@ -156,7 +155,7 @@ impl<'f> Emitter<'f> {
     }
 }
 
-/// `ByRef` or `ByVal` for a parameter of this type (§5.1). A generic parameter is `ByRef`
+/// `ByRef` or `ByVal` for a parameter of this type. A generic parameter is `ByRef`
 /// because it may be instantiated with a reference type.
 pub fn parameter_type(sig: &TypeSig) -> ParameterType {
     match sig.unwrap_modifiers() {
@@ -244,7 +243,7 @@ pub struct Lower<'x, 'n, 'm, 'c, 'l> {
     /// The value-type `New` of the current instruction, whose constructor gets an address.
     pub new_value: Option<Var>,
     /// Within the current block, which variables hold a function pointer to a static method,
-    /// and to which: what a delegate constructor needs to bind it through a thunk (§7).
+    /// and to which: what a delegate constructor needs to bind it through a thunk.
     pub static_fnptrs: hashbrown::HashMap<Var, String>,
     /// Where each instruction input points (`ptr.rs`).
     pub addrs: Addresses,
@@ -343,7 +342,7 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
     }
 }
 
-/// The body of a delegate thunk (§7): call `target` with every parameter but the first,
+/// The body of a delegate thunk (`calls.rs`): call `target` with every parameter but the first,
 /// the ignored target, and return what it returns.
 pub fn thunk_body(fdat: &mut FunctionData, target: &str, target_arity: usize) {
     fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
@@ -370,7 +369,7 @@ fn empty() -> Exp {
 }
 
 impl Lower<'_, '_, '_, '_, '_> {
-    /// The terminator of block `b` (§8).
+    /// The terminator of block `b`.
     fn terminator(&mut self, em: &mut Emitter<'_>, b: BlockId) -> TerminatorKind {
         let block = &self.flow.blocks[b];
         let last = block.instrs.last();

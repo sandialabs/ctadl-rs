@@ -1,5 +1,5 @@
 //! `cil:taint`: the index's summaries checked against the data flows a run of the exec
-//! fixtures shows (`docs/cil-frontend-translation.md` §12).
+//! fixtures shows.
 //!
 //! **Static side.** Each exec fixture is imported and indexed by `ctadl` (CIL turns on
 //! `deref_paths`), and the summary rows of its methods are read back, with the admitted paths
@@ -14,25 +14,27 @@
 //! The concrete end state is still compared with .NET's; a trial whose state differs is
 //! `cil:exec`'s to report and is left out here.
 //!
-//! **Comparison** (§12.4). A dynamic flow `(i, p) -> (j, q)` is covered by a row
+//! **Comparison.** A dynamic flow `(i, p) -> (j, q)` is covered by a row
 //! `(i, p', j, q')` with `p = p'·s` and `q = q'·s`. An uncovered flow is sorted:
 //!
 //! 1. *unknown field*, a fail: a field of `p` or `q` no admitted path mentions;
 //! 2. *not admitted*, reported: `p` or `q` is not an admitted path, so the index cannot have
-//!    the row (§12.3);
-//! 3. *known*, XFAIL: it matches an entry of `xtask/cil-taint-known.json5` (§12.5);
+//!    the row. The index works over a closed set of paths fixed before the run, and drops a
+//!    flow whose path falls outside it, keeping no shorter one in its place;
+//! 3. *known*, XFAIL: it matches an entry of `xtask/cil-taint-known.json5`;
 //! 4. otherwise a fail.
 //!
 //! Only the most general uncovered flows are sorted: a flow that is another uncovered flow
 //! extended by a common suffix follows from it. An entry of the known-miss file that matches
 //! no uncovered flow is an XPASS, and fails.
 //!
-//! What CTADL leaves out by design is left out of the shadow too, each mirroring a §9 policy:
-//! a branch condition taints nothing (`Test` emits nothing), and an array index does not taint
-//! the element read. Statics carry no labels and are not outputs (§12.6).
+//! What CTADL leaves out by design is left out of the shadow too, each mirroring a lowering
+//! policy: a branch condition taints nothing (`Test` emits nothing), and an array index does
+//! not taint the element read. Statics carry no labels and are not outputs: flows through them go
+//! through the `global` formal, and nothing yet checks how the index summarizes it.
 //!
-//! The doc's known-miss file is TOML; this one is JSON5, which xtask already reads, so the
-//! offline Nix build needs no new crate.
+//! The known-miss file is JSON5, which xtask already reads, so the offline Nix build needs no
+//! new crate.
 //!
 //! Everything is written under `<work>/cil-taint/`: per fixture the dynamic flows, the
 //! summary rows, the admitted paths and the sorted uncovered flows, and `summary.txt` with
@@ -67,7 +69,7 @@ const MAX_LISTED: usize = 10;
 /// The known-miss file, under the xtask directory.
 pub const KNOWN_FILE: &str = "cil-taint-known.json5";
 
-/// The kinds a known miss may have, each tied to a section of the doc or a reproducer.
+/// The kinds a known miss may have; the known-miss file's header says what each means.
 const KINDS: &[&str] = &[
     "engine:path-composition",
     "engine:alias-rule",
@@ -215,7 +217,7 @@ impl Shadow<'_, '_, '_, '_, '_> {
                 }
             }
             // A box holds its value at the box's own path: the frontend lowers `box` as a
-            // copy (§6.1).
+            // copy.
             Obj::Boxed { value, .. } => {
                 let csh = self.label_value(k, &value, path, seen);
                 if let SObj::Boxed(c) = &mut self.interp.sheap[o] {

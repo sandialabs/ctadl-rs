@@ -1,4 +1,4 @@
-// Slice 3 (translation §11): fields, statics, arrays.
+// Fields, statics, arrays.
 namespace Cases
 {
     public static class Taint

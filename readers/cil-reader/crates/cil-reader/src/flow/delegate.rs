@@ -1,4 +1,4 @@
-//! Delegate construction and invocation (`docs/cil-flow-api.md` §3.5).
+//! Delegate construction and invocation.
 //!
 //! These are not separate [`CallKind`]s: recognizing them needs the declaring
 //! type's base class, which can live in another assembly. [`classify`] asks

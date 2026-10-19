@@ -1,6 +1,6 @@
-//! VMT rows (translation §4): methods, parents, interfaces, abstract methods, override aliases
-//! and P/Invoke, and the walks over loaded metadata that both the aliases and virtual-call
-//! lowering (§7) need.
+//! VMT rows: methods, parents, interfaces, abstract methods, override aliases and P/Invoke,
+//! and the walks over loaded metadata that both the aliases and virtual-call lowering
+//! (`calls.rs`) need.
 //!
 //! | Source                                   | Row                                       |
 //! | ---------------------------------------- | ----------------------------------------- |
@@ -9,12 +9,27 @@
 //! | each method that is not `abstract`       | `methods.push((cls, simple, desc, fid))`  |
 //! | each `abstract` method                   | `abstract_methods.push((cls, simple, desc))` |
 //! | each `pinvoke` method                    | `pinvokes.push((.., module, entry_point))` |
-//! | override aliases (§4.2)                  | `methods.push((cls, base simple, base desc, fid))` |
+//! | override aliases                         | `methods.push((cls, base simple, base desc, fid))` |
 //!
-//! §4.1 lists methods "with a body, or pinvoke, or internalcall". Every non-abstract method
-//! gets the row here, runtime-implemented ones (a delegate's `Invoke`) included: like a Dex
-//! `native` method, a bodyless implementation still needs a row for a virtual call to
-//! resolve to it.
+//! Every non-abstract method gets a row, runtime-implemented ones (a delegate's `Invoke`)
+//! included: like a Dex `native` method, a bodyless implementation still needs a row for a
+//! virtual call to resolve to it.
+//!
+//! # Override aliases
+//!
+//! CHA keys on `(simple name, descriptor)`. Java gets overrides across generics for free,
+//! because erasure and `javac`'s bridge methods make the descriptors match. CIL has neither:
+//!
+//! ```text
+//! class B<T> { public virtual void M(T x) {} }                 // B`1::M(!0)->System.Void
+//! class D : B<string> { public override void M(string x) {} }  // D::M(System.String)->System.Void
+//! ```
+//!
+//! so a ``callvirt B`1<string>::M(!0)`` would never reach `D::M`. An explicit implementation
+//! (`void IFoo.Bar()`, a `MethodImpl` row) has a different name from the method it
+//! implements. [`aliases`] adds, under `D`'s class, a row with the *base's* key for each such
+//! override, so CHA walking up from the receiver's class finds `D::M` under the key the call
+//! site uses. A plain override that matches exactly makes a duplicate row, which is harmless.
 
 use cil_reader::model::{MethodDef, MethodSig, TypeDef};
 use cil_reader::token::MetadataToken;
@@ -161,7 +176,7 @@ fn virtual_method(
     })
 }
 
-/// The override-alias rows of one type (§4.2), as `(base simple, base desc, fid)` under the
+/// The override-alias rows of one type, as `(base simple, base desc, fid)` under the
 /// type's own class. Also counts the base types and interfaces whose metadata could not be
 /// read, which make no aliases.
 pub struct Aliases {

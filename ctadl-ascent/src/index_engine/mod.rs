@@ -2857,8 +2857,8 @@ mod tests {
     /// `fn thrower(x) -> (normal, exception) { return ((), x); }` and
     /// `fn catcher(a) { r, e = thrower(a); return (e, ()); }`: a value thrown out of a callee
     /// reaches the caller's exception slot, and from there anything the caller does with it.
-    /// Java and CIL functions return arity 2, and the second slot is a formal like the first:
-    /// without its `formal_param` row, no summary through it was ever derived.
+    /// Java and CIL functions return arity 2, and the second slot is a formal like the first,
+    /// with a `formal_param` row of its own.
     #[test]
     fn exceptional_return_is_summarized() {
         let mut thrower = FunctionData {

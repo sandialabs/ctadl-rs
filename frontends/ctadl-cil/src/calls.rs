@@ -1,7 +1,7 @@
-//! Calls (translation §7). Each call is one `CallAssign { style, rets: [retval, throwval],
-//! args }`, with copy-in/copy-out around it for operands that hold a resolved address (§6.3),
-//! `excout := excout, throwval` after it when its exception may leave the method (§8,
-//! `method.rs`), and `site.result := retval`.
+//! Calls. Each call is one `CallAssign { style, rets: [retval, throwval], args }`, with
+//! copy-in/copy-out around it for operands that hold a resolved address (`ptr.rs`),
+//! `excout := excout, throwval` after it when its exception may leave the method
+//! (`method.rs`), and `site.result := retval`.
 //!
 //! | `CallKind`                        | `args`             | `style`                                 |
 //! | --------------------------------- | ------------------ | --------------------------------------- |
@@ -20,8 +20,7 @@
 //!
 //! The receiver of a value type's method is an address, and is copied in and out like any
 //! other: a resolved `&loc` by its place, and the fresh struct of a value-type `newobj`
-//! through the `New`'s variable (the doc's table passes it as is, but the constructor writes
-//! through `this.D`).
+//! through the `New`'s variable, since the constructor writes through `this.D`.
 //!
 //! Delegates, after [`delegate::classify`]:
 //!
@@ -30,21 +29,21 @@
 //! | `Ctor { target, fnptr }`          | `recv := target`, `store recv.<delegate::method> := fnptr`, then the ctor call |
 //! | `Invoke`                          | `m := load recv.<delegate::method>`, `FuncPtrCall { m }` with `[recv] ++ args` |
 //!
-//! Two departures from the doc's table. First, the delegate *is* its target, where the doc
-//! stores the target in a field `<delegate::target>` and passes that field's value at the
-//! call. A closure's captured variables are fields of its target (the display class), and
-//! the bound method reads them as `this.x`; through a field, the caller's flow would need the
-//! path `.<delegate::target>.x`, which no statement spells and the index does not admit
-//! (`path_composition_store.tnt`), so a closure's captured value was lost. With the delegate
-//! being the target, `this.x` is the target's own `x`, and a lambda's writes to captured
-//! variables reach the method that captured them. Two delegates over one target share its
-//! `<delegate::method>`, which only adds call targets.
+//! The engine resolves the `FuncPtrCall` through the `ptr<fid>` that `ldftn` made.
 //!
-//! Second, the doc passes the target as argument 0 to every bound method, "an extra the
-//! callee ignores" for a static one. Arguments are positional, so that would hand a static
-//! method the target as its first parameter. A delegate bound to a static method stores a
-//! pointer to a thunk instead, `ctadl$delegate$<fid>`, whose parameter 0 is the ignored
-//! target and which calls the method with the rest.
+//! The delegate *is* its target, rather than holding it in a field. A closure's captured
+//! variables are fields of its target (the display class), and the bound method reads them as
+//! `this.x`; through a field, the caller's flow would need the path `.<delegate::target>.x`,
+//! which no statement spells and the index does not admit (`path_composition_store.tnt`).
+//! With the delegate being the target, `this.x` is the target's own `x`, and a lambda's
+//! writes to captured variables reach the method that captured them. Two delegates over one
+//! target share its `<delegate::method>`, which only adds call targets.
+//!
+//! `Invoke` passes the delegate as argument 0, which a static method has no parameter for.
+//! A delegate bound to a static method stores a pointer to a thunk instead,
+//! `ctadl$delegate$<fid>`, whose parameter 0 is the ignored target and which calls the method
+//! with the rest. `ldvirtftn` binds the method its token names, so a delegate over a virtual
+//! method reaches only that declaration.
 
 use cil_reader::Entity;
 use cil_reader::flow::delegate::{self, DelegateOp, ModuleTypes};

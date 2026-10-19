@@ -5,7 +5,7 @@
 // `find: "dispatch"` entry, at the end, is checked only to select a method .NET has.
 //
 // NAMES. `parents` is the class DECLARED AT THE CALL SITE, spelled as the frontend spells it
-// (docs/cil-frontend-translation.md §3): `[Asm]Ns.Type`, generic arity kept, nested `Outer/Inner`,
+// (frontends/ctadl-cil/src/names.rs): `[Asm]Ns.Type`, generic arity kept, nested `Outer/Inner`,
 // and the assembly the type is DEFINED in, after forwarders -- `[System.Private.CoreLib]System.String`,
 // never `[System.Runtime]` or `[mscorlib]`. The frontend canonicalizes through the shared framework of
 // the `dotnet` on PATH (or $CTADL_CIL_REFERENCE_DIRS), so a .NET Framework or Mono assembly's calls land
@@ -17,8 +17,8 @@
 // - `.\[]` is an element: of an array, of a collection, of a dictionary (keys and values alike).
 //   A write `... -> Argument(0).\[]` and a read `Argument(0).\[] -> Return` are the two halves of one
 //   prefix substitution, so they compose; a bare port carries the element level along with it.
-// - `.deref` is what a pointer points at. A STRUCT receiver arrives as a pointer (`ldloca; call`,
-//   translation §6.3), and so does a `ref`/`out` parameter: `int.ToString()` reads
+// - `.deref` is what a pointer points at. A STRUCT receiver arrives as a pointer (`ldloca; call`),
+//   and so does a `ref`/`out` parameter: `int.ToString()` reads
 //   `Argument(0).deref`, `TryGetValue(k, out v)` writes `Argument(2).deref`, and a struct
 //   constructor writes `Argument(0).deref`.
 // - Nothing else. A library type's own fields are invisible to the analysis, so its contents ARE the

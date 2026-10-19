@@ -1,10 +1,16 @@
-// The misses `cil:taint` accepts (docs/cil-frontend-translation.md §12.5), one entry per flow.
+// The misses `cil:taint` accepts, one entry per flow.
 //
 // - `method`: `Ns.Class::Method`, with the descriptor if it is overloaded, in any fixture.
 // - `flow`: `src -> dst`, each `argN`, `ret` or `throw` and then `.segment`s; a field may drop
 //   its assembly and namespace (`<Node::Value>`), and `seg*` matches it zero or more times.
-// - `kind`: one of `engine:path-composition`, `engine:alias-rule`,
-//   `design:unresolved-address-write`. The report counts XFAILs per kind.
+// - `kind`: one of
+//   - `engine:path-composition`: the index composes no path for the flow, as along a field
+//     a loop walks;
+//   - `engine:alias-rule`: the aliasing rule summarizes only paths the program stores through;
+//   - `design:unresolved-address-write`: a write through an address the frontend cannot
+//     resolve (two addresses merged at a join) reaches the pointer's target, not the places
+//     the address may name.
+//   The report counts XFAILs per kind, so an engine fix shows as its kind going to zero.
 // - `why`: required; an `engine:` entry names the `.tnt` reproducer in
 //   `ctadl-ascent/tests/tnt` that shows the limitation without CIL.
 //

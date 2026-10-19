@@ -1,19 +1,41 @@
 /*! .NET (CIL) language front end.
 
 Turns .NET assemblies into CTADL IR, through `cil-reader`'s dataflow layer
-([`cil_reader::flow::MethodFlow`]). The design is `docs/cil-frontend-translation.md`; the
-module docs here carry its tables, one per file:
+([`cil_reader::flow::MethodFlow`]). The reader describes what CIL does; this crate decides how
+CTADL says it. It consumes only `MethodFlow` (blocks of `Effect<Var>`, `CallKind`, `Control`,
+stack kinds) and never matches on `Code`.
+
+Each step is a total mapping written down as a table in its file's module docs, and each
+table is one `match` with no `_` arm, so a review compares a row to an arm:
 
 | File           | Owns                                                              |
 | -------------- | ----------------------------------------------------------------- |
 | `lib.rs`       | [`import_path`], [`Context`], assembly selection                  |
-| `names.rs`     | every spelling: classes, methods, descriptors, fields (§3)        |
-| `hierarchy.rs` | VMT rows and override aliases (§4)                                |
-| `method.rs`    | `FunctionData` shape, blocks, terminators (§5, §8)                |
-| `effects.rs`   | `Effect<Var>` to statements (§6)                                  |
-| `ptr.rs`       | managed pointers (§6.3)                                           |
-| `calls.rs`     | calls, delegates, extern stubs (§7)                               |
+| `names.rs`     | every spelling: classes, methods, descriptors, fields             |
+| `hierarchy.rs` | VMT rows and override aliases                                     |
+| `method.rs`    | `FunctionData` shape, variables, blocks, terminators              |
+| `effects.rs`   | `Effect<Var>` to statements                                       |
+| `ptr.rs`       | managed pointers                                                  |
+| `calls.rs`     | calls, delegates, extern stubs                                    |
 | `lines.rs`     | spans: source lines from the portable PDB, else IL bytes          |
+
+The IR is naive: one obvious statement per effect, every copy kept, no merging of
+temporaries. `ssa::run_pipeline` in `ctadl index` does the cleanup (copy coalescing, pruned
+SSA, copy propagation), and gives each definition of a depth-named stack variable `s{d}` its
+own version, so "which object does this `stfld` write to" is answered by copy propagation.
+
+Every lowering choice the IR does not force is a policy, made in one place:
+
+| Policy                         | Choice                                                     | Where         |
+| ------------------------------ | ---------------------------------------------------------- | ------------- |
+| Pointer lowering               | the traced place, else `DEREF_FIELD`; byref arguments copied in and out | `ptr.rs` |
+| Array index                    | does not taint the element read (as Dex and JVM)           | `ptr.rs`, `effects.rs` |
+| Branch conditions              | `Test` emits nothing                                       | `effects.rs`  |
+| `box`                          | contents-preserving assign; the boxed type instantiated    | `effects.rs`  |
+| Value types                    | lowered like objects, so two copies of a struct alias      | `effects.rs`  |
+| Non-virtual or sealed `callvirt` | `DirectCall`                                             | `calls.rs`    |
+| Generic instantiation          | erased: a class is its open definition                     | `names.rs`    |
+| Assembly selection             | framework and BCL not imported by default ([`is_framework_assembly`]); their metadata always read | `lib.rs` |
 
 Like the Dex front end, a [`Context`] is made once, given each assembly with
 [`Context::process`], and turned into one [`ProgramInfo`] by [`Context::finish`]: a
@@ -57,7 +79,7 @@ use names::{MethodKey, ModNames, Namer};
 /// from: a path list, like `PATH`.
 pub const REFERENCE_DIRS_ENV: &str = "CTADL_CIL_REFERENCE_DIRS";
 
-/// The prefix of a delegate thunk's name (§7, `calls.rs`).
+/// The prefix of a delegate thunk's name (`calls.rs`).
 pub const THUNK_PREFIX: &str = "ctadl$delegate$";
 
 /// Settings for an import.
@@ -218,7 +240,7 @@ pub fn dir_has_cli_image(dir: &Path) -> bool {
     })
 }
 
-/// The assembly-selection policy (§9): whether an assembly of this simple name belongs to
+/// The assembly-selection policy: whether an assembly of this simple name belongs to
 /// the framework or the BCL.
 pub fn is_framework_assembly(name: &str) -> bool {
     const EXACT: [&str; 6] = [
@@ -291,7 +313,7 @@ fn version_key(p: &Path) -> Vec<u64> {
 pub struct Collected {
     /// Every callee, by function id, with the shape its stub gets if nothing defines it.
     pub ext: BTreeMap<String, (MethodKey, Vec<ParameterType>)>,
-    /// Thunk function id -> the static method it calls (§7).
+    /// Thunk function id -> the static method it calls.
     pub thunks: BTreeMap<String, String>,
     pub stats: Stats,
 }
@@ -325,7 +347,7 @@ pub struct Stats {
     pub override_aliases: usize,
     /// `Opaque` effects lowered conservatively.
     pub opaque_effects: usize,
-    /// Addresses merged at a join, whose writes reach only their cell (§6.3).
+    /// Addresses merged at a join, whose writes reach only their cell (`ptr.rs`).
     pub unresolved_address_writes: usize,
     /// Inputs the flow layer's `resolve_address` traces and the frontend's analysis does not
     /// (`ptr.rs`). Expected to be zero.

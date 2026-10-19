@@ -1,4 +1,4 @@
-//! Per-opcode tests of Layer 1 (`docs/cil-flow-api.md` §5), one per family,
+//! Per-opcode tests of Layer 1, one per family of the per-opcode table,
 //! on hand-assembled IL bytes and a stub [`Operands`]: no assembly needed.
 
 use super::check::layer1_violations;
@@ -203,8 +203,8 @@ fn void_method() -> MethodSig {
     sig(false, TypeSig::Void, vec![])
 }
 
-/// Layer 1 of the first instruction of `code`, checked against the §7
-/// invariants.
+/// Layer 1 of the first instruction of `code`, checked against the Layer 1
+/// invariants of [`super::check`].
 fn flow_with(code: &[u8], prefixes: Prefixes, method_sig: &MethodSig) -> InsFlow {
     let ins = InstructionDecoder::new(code).next().unwrap().unwrap();
     let cx = FlowCx::new(&Stub, method_sig);
@@ -233,7 +233,7 @@ fn check(f: &InsFlow, roles: &[Role], outputs: u8, expected: &[&str]) {
 use Role::*;
 use opcodes as op;
 
-// ---- §5.1 ------------------------------------------------------------------
+// ---- Locals, arguments, constants, stack ------------------------------------
 
 #[test]
 fn locals_arguments_constants_stack() {
@@ -348,7 +348,7 @@ fn locals_arguments_constants_stack() {
     check(&flow(op::POP, A::None), &[Discarded], 0, &[]);
 }
 
-// ---- §5.2 ------------------------------------------------------------------
+// ---- Arithmetic, logic, conversion, comparison ------------------------------
 
 #[test]
 fn arithmetic_logic_conversion_comparison() {
@@ -412,7 +412,7 @@ fn arithmetic_logic_conversion_comparison() {
     );
 }
 
-// ---- §5.3 ------------------------------------------------------------------
+// ---- Branches and control ---------------------------------------------------
 
 #[test]
 fn branches_and_control() {
@@ -456,7 +456,7 @@ fn branches_and_control() {
     assert_eq!(f.control, Control::Jump);
 }
 
-// ---- §5.4 ------------------------------------------------------------------
+// ---- Fields -----------------------------------------------------------------
 
 #[test]
 fn fields() {
@@ -547,7 +547,7 @@ fn unresolved_operands_are_opaque() {
     );
 }
 
-// ---- §5.5 ------------------------------------------------------------------
+// ---- Arrays -----------------------------------------------------------------
 
 #[test]
 fn arrays() {
@@ -634,7 +634,7 @@ fn multi_dimensional_arrays() {
     );
 }
 
-// ---- §5.6 ------------------------------------------------------------------
+// ---- Indirect access and value types ----------------------------------------
 
 #[test]
 fn indirect_access_and_value_types() {
@@ -693,7 +693,7 @@ fn indirect_access_and_value_types() {
     );
 }
 
-// ---- §5.7 ------------------------------------------------------------------
+// ---- Objects, casts, boxing, typed references -------------------------------
 
 #[test]
 fn objects_casts_boxing_typed_references() {
@@ -779,7 +779,7 @@ fn objects_casts_boxing_typed_references() {
     );
 }
 
-// ---- §5.8 ------------------------------------------------------------------
+// ---- Calls and function pointers --------------------------------------------
 
 #[test]
 fn calls_and_function_pointers() {
@@ -867,7 +867,7 @@ fn call_prefixes_reach_the_call_site() {
     assert_eq!(site.kind, CallKind::Static);
 }
 
-// ---- §5.10 and the whole table -----------------------------------------------
+// ---- Undefined opcodes and the whole table ----------------------------------
 
 #[test]
 fn undefined_opcodes_are_opaque_branches() {
@@ -904,7 +904,6 @@ fn any_operand(o: OpCode) -> A {
 
 #[test]
 fn every_opcode_holds_the_invariants() {
-    // flow_with asserts §7.1–7.5 for each.
     let mut n = 0;
     for o in opcodes::ONE_BYTE.iter().chain(&opcodes::TWO_BYTE).flatten() {
         let f = flow_with(

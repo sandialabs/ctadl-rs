@@ -1,6 +1,6 @@
-//! A client of the flow layer written as `docs/cil-flow-api.md` §9 says one
-//! can be: it matches only on `Effect`, `CallKind` and `Control`, never on
-//! `Code` (this module imports nothing from `cil_reader::cil`). It answers
+//! A client of the flow layer that shows one needs no opcode knowledge: it
+//! matches only on `Effect`, `CallKind` and `Control`, never on `Code` (this
+//! module imports nothing from `cil_reader::cil`). It answers
 //! "which arguments reach the return value", a small may-taint analysis over
 //! a `MethodFlow`, with these policies of its own:
 //!

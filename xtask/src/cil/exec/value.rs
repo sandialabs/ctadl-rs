@@ -14,7 +14,7 @@ use cil_reader::flow::{CmpOp, ConvTarget, ConvType, Op, Var};
 /// A set of taint labels (`cil:taint`): indices into the labeler's table of input locations.
 pub type Labels = BTreeSet<u32>;
 
-/// The shadow of a value (`cil:taint`, translation §12.2): the labels of the input locations
+/// The shadow of a value (`cil:taint`): the labels of the input locations
 /// it carries data from, and for a struct value, the shadows of its fields. An object's fields
 /// are not here: they are locations of their own, shadowed on the heap.
 ///
