@@ -37,10 +37,9 @@
       let
         pkgs = import nixpkgs {
           inherit system;
-          # The nightly regression suite pulls in unfree components (the Android
-          # SDK and ghidra-bin) and needs the Android SDK license accepted
-          # non-interactively. These only matter for `checks.<system>.nightly`;
-          # the cheap checks and packages build the same as before.
+          # The regression check and the dev shell pull in unfree components
+          # (the Android SDKs and ghidra-bin), and the Android SDKs need their
+          # license accepted non-interactively.
           config = {
             allowUnfree = true;
             android_sdk.accept_license = true;
@@ -84,9 +83,8 @@
 
         cil = import ./nix/cil.nix { inherit pkgs cecil dnlib; };
 
-        # The external toolchain the regression scripts expect on PATH
-        # (dex-reader, jvm-reader, javac, dx, gcc/addr2line, ghidra, jq,
-        # python3). Deliberately excludes this repo's own package so that the
+        # The external toolchain `xtask regression` expects on PATH.
+        # Deliberately excludes this repo's own package so that the
         # dev shell can be used to run parts of the suite against a locally
         # built ctadl/xtask; the `regression` check adds the Nix-built package
         # on top.
@@ -183,9 +181,9 @@
         #   nix build .#legacyPackages.<system>.release.<target>
         legacyPackages.release = release;
 
-        # CI/test logic lives under `checks` so the nightly GitHub workflow can run
-        #   nix build .#checks.<system>.regression .#checks.<system>.dex-reader-tests
-        # instead of duplicating the test harness in YAML. This does not rely on
+        # CI/test logic lives under `checks` so the nightly GitHub workflow can
+        # `nix build .#checks.<system>.<name>` instead of duplicating the test
+        # harness in YAML. This does not rely on
         # `nix flake check`; the check is an ordinary buildable derivation. The
         # cheap per-PR checks (fmt/clippy/unit tests) are intentionally NOT here:
         # they run as a plain cargo job in the `test` workflow. Nix is reserved
@@ -193,12 +191,13 @@
         # the Android SDK) is what makes a reproducible Nix environment worthwhile.
         checks =
           let
-            # The expensive regression suite: source-sink taint tests over Java
-            # (DEX) and pcode (C) inputs. The orchestration lives in the `xtask`
-            # crate (`cargo xtask regression`); here we just run the prebuilt
-            # `xtask` binary that ships in packages.default. This is a full
-            # (non-local) derivation because it runs ctadl + ghidra + the Android
-            # toolchain. The Nix sandbox has no network, so every tool comes from
+            # The expensive regression suite: every frontend's source-sink taint
+            # cases plus the reader and model checks. The orchestration lives in
+            # the `xtask` crate (`cargo xtask regression`); here we just run the
+            # prebuilt `xtask` binary that ships in packages.default. This is a
+            # full (non-local) derivation because it runs ctadl + ghidra + the
+            # Android toolchain. The Nix sandbox has no network, so every tool
+            # comes from testEnv.
             regression =
               pkgs.runCommand "ctadl-checks-regression"
                 {

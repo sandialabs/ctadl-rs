@@ -36,8 +36,7 @@ let
       }
     )).androidenv;
 
-  # --- Nightly regression suite dependencies -------------------------
-  # These are only forced when building `checks.<system>.regression`.
+  # --- Regression suite dependencies -----------------------------------
 
   # The build-tools both SDKs carry, pinned because the DEX tests invoke `dx`,
   # which was removed in build-tools 31+.
@@ -222,8 +221,8 @@ let
 
   # The DroidBench ICC APKs the `android-icc` regression specs name, fetched
   # at the commit the specs pin instead of being committed to this repo.
-  # xtask finds them through CTADL_ANDROID_ICC_APKS, which the dev shell
-  # and the regression check both set; without it those cases SKIP.
+  # xtask finds them through CTADL_ANDROID_ICC_APKS; without it those cases
+  # SKIP.
   droidbenchIccApks =
     let
       rev = "a57fa6f42f278591695672f1aa8b37c275139370";
