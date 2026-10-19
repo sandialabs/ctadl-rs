@@ -57,14 +57,26 @@ let
       '';
     };
 
-  # A dnlib-based fixture tool in readers/cil-reader/tools/<project>,
-  # wrapped as bin/<name>. It compiles the pinned dnlib sources in.
-  dnlibTool =
-    name: project:
+  # A .NET console project, the directory `src`, built in Release and wrapped
+  # as bin/<bin> to run on the .NET 8 runtime. `buildFlags` are extra
+  # `dotnet build` arguments; `tag`, if given, is appended to the derivation
+  # name.
+  dotnetTool =
+    {
+      bin,
+      src,
+      buildFlags ? "",
+      tag ? null,
+    }:
+    let
+      project = baseNameOf src;
+    in
     pkgs.stdenvNoCC.mkDerivation {
-      # `name` rather than pname/version: see cecilDump.
-      name = "${name}-${builtins.substring 0 7 dnlib.rev}";
-      src = ../readers/cil-reader/tools + "/${project}";
+      # `name` rather than pname/version: MSBuild reads the environment as
+      # properties, and a `version` variable lands as $(Version), which
+      # must be a NuGet version string.
+      name = if tag == null then bin else "${bin}-${tag}";
+      inherit src;
       nativeBuildInputs = [
         pkgs.dotnet-sdk_8
         pkgs.makeWrapper
@@ -77,19 +89,30 @@ let
       buildPhase = ''
         runHook preBuild
         export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
-        dotnet build -c Release --nologo -p:UseAppHost=false -p:DnlibSrc=${dnlib} -o out
+        dotnet build -c Release --nologo -p:UseAppHost=false ${buildFlags} -o out
         runHook postBuild
       '';
       installPhase = ''
         runHook preInstall
-        mkdir -p "$out/lib/${name}" "$out/bin"
-        cp -R out/. "$out/lib/${name}/"
-        makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/${name}" \
-          --add-flags "$out/lib/${name}/${project}.dll" \
+        mkdir -p "$out/lib/${bin}" "$out/bin"
+        cp -R out/. "$out/lib/${bin}/"
+        makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/${bin}" \
+          --add-flags "$out/lib/${bin}/${project}.dll" \
           --set DOTNET_NOLOGO 1 \
           --set DOTNET_CLI_TELEMETRY_OPTOUT 1
         runHook postInstall
       '';
+    };
+
+  # A fixture tool in readers/cil-reader/tools/<project> that compiles the
+  # pinned dnlib sources in.
+  dnlibTool =
+    bin: project:
+    dotnetTool {
+      inherit bin;
+      src = ../readers/cil-reader/tools + "/${project}";
+      buildFlags = "-p:DnlibSrc=${dnlib}";
+      tag = builtins.substring 0 7 dnlib.rev;
     };
 
   # PtrGen: rewrites a module with dnlib so its member tables go through
@@ -102,72 +125,20 @@ let
   # from Cecil.
   gapGen = dnlibTool "gap-gen" "GapGen";
 
-  # FlowRun (readers/cil-reader/tools/FlowRun): runs an assembly's methods
-  # on .NET with random arguments, the reference that the `cil:exec`
-  # check's interpreter over cil-reader's flow layer is compared against.
-  flowRun = pkgs.stdenvNoCC.mkDerivation {
-    # `name` rather than pname/version: see cecilDump.
-    name = "flow-run";
+  # FlowRun: runs an assembly's methods on .NET with random arguments, the
+  # reference that the `cil:exec` check's interpreter over cil-reader's flow
+  # layer is compared against.
+  flowRun = dotnetTool {
+    bin = "flow-run";
     src = ../readers/cil-reader/tools/FlowRun;
-    nativeBuildInputs = [
-      pkgs.dotnet-sdk_8
-      pkgs.makeWrapper
-    ];
-    env = {
-      DOTNET_NOLOGO = "1";
-      DOTNET_CLI_TELEMETRY_OPTOUT = "1";
-      DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
-    };
-    buildPhase = ''
-      runHook preBuild
-      export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
-      dotnet build -c Release --nologo -p:UseAppHost=false -o out
-      runHook postBuild
-    '';
-    installPhase = ''
-      runHook preInstall
-      mkdir -p "$out/lib/flow-run" "$out/bin"
-      cp -R out/. "$out/lib/flow-run/"
-      makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/flow-run" \
-        --add-flags "$out/lib/flow-run/FlowRun.dll" \
-        --set DOTNET_NOLOGO 1 \
-        --set DOTNET_CLI_TELEMETRY_OPTOUT 1
-      runHook postInstall
-    '';
   };
 
-  # ModelRun (frontends/ctadl-cil/tools/ModelRun): calls the .NET library
-  # methods the default CIL models select, with marked arguments, the
-  # reference the `cil:models` check compares the models against.
-  modelRun = pkgs.stdenvNoCC.mkDerivation {
-    # `name` rather than pname/version: see cecilDump.
-    name = "model-run";
+  # ModelRun: calls the .NET library methods the default CIL models select,
+  # with marked arguments, the reference the `cil:models` check compares the
+  # models against.
+  modelRun = dotnetTool {
+    bin = "model-run";
     src = ../frontends/ctadl-cil/tools/ModelRun;
-    nativeBuildInputs = [
-      pkgs.dotnet-sdk_8
-      pkgs.makeWrapper
-    ];
-    env = {
-      DOTNET_NOLOGO = "1";
-      DOTNET_CLI_TELEMETRY_OPTOUT = "1";
-      DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
-    };
-    buildPhase = ''
-      runHook preBuild
-      export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
-      dotnet build -c Release --nologo -p:UseAppHost=false -o out
-      runHook postBuild
-    '';
-    installPhase = ''
-      runHook preInstall
-      mkdir -p "$out/lib/model-run" "$out/bin"
-      cp -R out/. "$out/lib/model-run/"
-      makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/model-run" \
-        --add-flags "$out/lib/model-run/ModelRun.dll" \
-        --set DOTNET_NOLOGO 1 \
-        --set DOTNET_CLI_TELEMETRY_OPTOUT 1
-      runHook postInstall
-    '';
   };
 
   # cil-reader's test fixtures: Cecil's .il/.cs test sources, compiled.
@@ -191,7 +162,7 @@ let
   #   unoptimized, since Debug and Release shape the IL differently
   #   (the `cil:exec` check runs both).
   cilFixtures = pkgs.stdenvNoCC.mkDerivation {
-    # `name` rather than pname/version: see cecilDump.
+    # `name` rather than pname/version: see dotnetTool.
     name = "cil-fixtures-${builtins.substring 0 7 cecil.rev}";
     dontUnpack = true;
     nativeBuildInputs = [
@@ -278,41 +249,14 @@ let
     dontInstall = true;
   };
 
-  # CecilDump (readers/cil-reader/tools/CecilDump): Mono.Cecil's rendering
-  # of an assembly in the cil-dump text format, the reference that
-  # cil-reader's output is compared against. The project compiles the
-  # pinned Cecil sources in directly.
-  cecilDump = pkgs.stdenvNoCC.mkDerivation {
-    # `name` rather than pname/version: MSBuild reads the environment as
-    # properties, and a `version` variable lands as $(Version), which
-    # must be a NuGet version string.
-    name = "cecil-dump-${builtins.substring 0 7 cecil.rev}";
+  # CecilDump: Mono.Cecil's rendering of an assembly in the cil-dump text
+  # format, the reference that cil-reader's output is compared against. The
+  # project compiles the pinned Cecil sources in directly.
+  cecilDump = dotnetTool {
+    bin = "cecil-dump";
     src = ../readers/cil-reader/tools/CecilDump;
-    nativeBuildInputs = [
-      pkgs.dotnet-sdk_8
-      pkgs.makeWrapper
-    ];
-    env = {
-      DOTNET_NOLOGO = "1";
-      DOTNET_CLI_TELEMETRY_OPTOUT = "1";
-      DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
-    };
-    buildPhase = ''
-      runHook preBuild
-      export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
-      dotnet build -c Release --nologo -p:UseAppHost=false -p:CecilSrc=${cecil} -o out
-      runHook postBuild
-    '';
-    installPhase = ''
-      runHook preInstall
-      mkdir -p "$out/lib/cecil-dump" "$out/bin"
-      cp -R out/. "$out/lib/cecil-dump/"
-      makeWrapper ${pkgs.dotnet-runtime_8}/bin/dotnet "$out/bin/cecil-dump" \
-        --add-flags "$out/lib/cecil-dump/CecilDump.dll" \
-        --set DOTNET_NOLOGO 1 \
-        --set DOTNET_CLI_TELEMETRY_OPTOUT 1
-      runHook postInstall
-    '';
+    buildFlags = "-p:CecilSrc=${cecil}";
+    tag = builtins.substring 0 7 cecil.rev;
   };
 
 in
