@@ -361,9 +361,11 @@ impl Context {
                                             .expect("Call should be there");
                                         stmt.source_info = source_info;
                                         bb_data.push_back(stmt);
-                                        if let Some(ret_loc) = call_info.return_value.as_ref() {
+                                        // A long or double result takes two slots, and each
+                                        // carries the value, as a `lload` writes both.
+                                        for ret_loc in Self::call_result_slots(call_info) {
                                             let dest = self.convert_location_to_var_ref(
-                                                ret_loc,
+                                                &ret_loc,
                                                 &mut fdat.locals,
                                             );
                                             let ret = Self::ret(&mut fdat.locals);
@@ -725,6 +727,22 @@ impl Context {
 
     fn except(locals: &mut Locals) -> VariableRef {
         VariableRef::new_local_idx(locals.get_or_intern("throwval"))
+    }
+
+    /// The stack slots a call's result lands in: none for `void`, the lower
+    /// and upper slot for a long or double.
+    fn call_result_slots(call: &CallInfo) -> Vec<Location> {
+        let Some(Location::StackSlot(n)) = call.return_value else {
+            return call.return_value.iter().cloned().collect();
+        };
+        let descriptor = match call.call_kind {
+            CallKind::Dynamic => call.dynamic_type.as_deref(),
+            _ => call.target.as_ref().map(|t| t.descriptor.as_str()),
+        };
+        let slots = descriptor.map_or(1, jvm_reader::flow::descriptor_return_slot_count);
+        (0..slots.max(1) as u32)
+            .map(|i| Location::StackSlot(n + i))
+            .collect()
     }
 
     fn allocation_exp(class_name: &str) -> Exp {

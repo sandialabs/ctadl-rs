@@ -490,7 +490,9 @@ fn returns_value(descriptor: &str) -> bool {
     descriptor_returns_value(descriptor)
 }
 
-fn descriptor_return_slot_count(descriptor: &str) -> usize {
+/// The operand stack slots a method's return value takes: 0 for `void`, 2 for
+/// a long or double, 1 otherwise.
+pub fn descriptor_return_slot_count(descriptor: &str) -> usize {
     match descriptor.rsplit_once(')') {
         Some((_params, "V")) => 0,
         Some((_params, ret)) if ret.starts_with('J') || ret.starts_with('D') => 2,
