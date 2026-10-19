@@ -517,6 +517,33 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         self.len = 0;
     }
 
+    /// Moves every entry of `other` into `self`, leaving `other` empty. A key
+    /// both maps hold ends up with both maps' values.
+    ///
+    /// `other`'s runs move over as they are, with no copying. Its memtable is
+    /// inserted into `self`'s when it is small next to `self`'s write buffer, and
+    /// otherwise written out as a run of its own and moved like the others.
+    pub fn absorb(&mut self, other: &mut Self) {
+        if other.memtable_len >= self.memtable_limit / 4 {
+            other.flush().expect("failed to flush mmap LSM memtable");
+        }
+        for (key, vals) in std::mem::take(&mut other.memtable) {
+            for value in vals {
+                self.insert(key, value);
+            }
+        }
+        // `insert` counted the memtable's entries already.
+        self.len += other.len - other.memtable_len;
+        for (level, runs) in std::mem::take(&mut other.levels).into_iter().enumerate() {
+            for run in runs {
+                self.push_disk_run(level, run)
+                    .expect("failed to compact mmap LSM runs");
+            }
+        }
+        other.memtable_len = 0;
+        other.len = 0;
+    }
+
     /// Persists the current memtable as a run.
     pub fn flush(&mut self) -> io::Result<()> {
         if self.memtable_len == 0 {
@@ -752,6 +779,34 @@ mod tests {
             );
         }
         assert_eq!(set.iter_all_refs().count(), 20);
+    }
+
+    /// `absorb` keeps every value of both maps, whether it sat in a memtable or a
+    /// run, and leaves the source empty.
+    #[test]
+    fn absorb_moves_runs_and_memtable() {
+        for other_entries in [3u64, 50] {
+            let mut to = MmapLsmMultiMap::<u64, u64>::with_memtable_limit_and_level_fanout(8, 2);
+            let mut from = MmapLsmMultiMap::<u64, u64>::with_memtable_limit_and_level_fanout(8, 2);
+            for i in 0..30u64 {
+                to.insert(i % 7, i);
+            }
+            for i in 0..other_entries {
+                from.insert(i % 5, 1000 + i);
+            }
+            to.absorb(&mut from);
+            assert!(from.is_empty());
+            assert_eq!(from.iter_all_refs().count(), 0);
+            assert_eq!(to.len() as u64, 30 + other_entries);
+            for k in 0..7u64 {
+                let got: BTreeSet<u64> = to.get_refs(&k).into_iter().flatten().copied().collect();
+                let want: BTreeSet<u64> = (0..30)
+                    .filter(|i| i % 7 == k)
+                    .chain((0..other_entries).filter(|i| i % 5 == k).map(|i| 1000 + i))
+                    .collect();
+                assert_eq!(got, want, "key {k}");
+            }
+        }
     }
 
     #[test]

@@ -546,12 +546,7 @@ impl<K: LsmTuple, V: LsmTuple> RelIndexWrite for LsmIndex<K, V> {
 
 impl<K: LsmTuple, V: LsmTuple> RelIndexMerge for LsmIndex<K, V> {
     fn move_index_contents(from: &mut Self, to: &mut Self) {
-        for (k, vals) in from.map.iter_all_refs() {
-            for v in vals {
-                to.map.insert(*k, *v);
-            }
-        }
-        from.map.clear();
+        to.map.absorb(&mut from.map);
     }
 }
 
@@ -680,13 +675,11 @@ impl<K: LsmTuple> RelIndexWrite for LsmFullIndex<K> {
 }
 
 impl<K: LsmTuple> RelIndexMerge for LsmFullIndex<K> {
+    // Ascent only moves `delta` into `total`, and a tuple enters `new` (the next
+    // `delta`) only when neither `total` nor `delta` has it, so the two never
+    // share a key: the runs move over without a membership check.
     fn move_index_contents(from: &mut Self, to: &mut Self) {
-        for (k, _) in from.map.iter_all_refs() {
-            if !to.map.contains_key(k) {
-                to.map.insert(*k, ());
-            }
-        }
-        from.map.clear();
+        to.map.absorb(&mut from.map);
     }
 }
 
