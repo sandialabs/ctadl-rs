@@ -4,11 +4,9 @@
     nixpkgs.url = "github:NixOS/nixpkgs";
     utils.url = "github:numtide/flake-utils";
     ctadl-souffle.url = "github:sandialabs/ctadl";
-    # Only the release builds use fenix: they cross-compile, and cross-compiling
-    # with naersk needs a rustc that carries the *target's* std alongside a cargo
-    # that runs on the builder. fenix serves those upstream Rust artifacts per
-    # target; nixpkgs' rustc only ships std for its own host. Everything else in
-    # this flake still builds with the nixpkgs toolchain.
+    # The Rust toolchain: fenix serves the upstream release rust-toolchain.toml
+    # pins, where nixpkgs has only its own rustc. The release builds also take
+    # each target's std from it, since they cross-compile.
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -64,7 +62,31 @@
             })
           ];
         };
-        naersk-lib = pkgs.callPackage naersk { };
+        # The Rust toolchain rust-toolchain.toml names, the one the `test` workflow
+        # runs. Everything here builds and checks with it, so a feature newer
+        # than the pinned release fails locally the same way it fails in CI.
+        # `sha256` is the hash of that release's manifest; update it with the
+        # channel.
+        rustToolchainFile = (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain;
+        rustRelease = {
+          inherit (rustToolchainFile) channel;
+          sha256 = "sha256-zC8E38iDVJ1oPIzCqTk/Ujo9+9kx9dXq7wAwPMpkpg0=";
+        };
+        rustDist = fenix.packages.${system}.toolchainOf rustRelease;
+        rustToolchain = fenix.packages.${system}.combine (
+          map (c: rustDist.${c}) (
+            [
+              "rustc"
+              "cargo"
+              "rust-std"
+            ]
+            ++ rustToolchainFile.components
+          )
+        );
+        naersk-lib = pkgs.callPackage naersk {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        };
         ctadl-souffle-wrapper = pkgs.writeShellScriptBin "ctadl-souffle" ''
           exec ${ctadl-souffle.packages.${system}.ctadlPackages.ctadl-full}/bin/ctadl "$@"
         '';
@@ -260,8 +282,7 @@
           paths = [
             pkgs.bash
             pkgs.coreutils
-            pkgs.cargo
-            pkgs.rustc
+            rustToolchain
             pkgs.jq
             pkgs.python3
             # `xtask regression` validates the SARIF each taint case emits by
@@ -316,7 +337,12 @@
         # one is, why it cannot just be `packages.default`, and which builder
         # can produce which target all live in ./nix/release.nix.
         release = import ./nix/release.nix {
-          inherit pkgs naersk fenix;
+          inherit
+            pkgs
+            naersk
+            fenix
+            rustRelease
+            ;
           src = ./.;
           version = workspaceVersion;
         };
@@ -498,11 +524,8 @@
           mkShell {
             buildInputs = [
               pre-commit
-              cargo
+              rustToolchain
               cargo-typify
-              rustc
-              rustfmt
-              rustPackages.clippy
               rust-analyzer
               cargo-expand
               sarif-tools
@@ -531,7 +554,7 @@
             ];
             packages = [ testEnv ];
 
-            RUST_SRC_PATH = rustPlatform.rustLibSrc;
+            RUST_SRC_PATH = "${rustDist.rust-src}/lib/rustlib/src/rust/library";
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
             # The debugging SDK, a superset of the regression one, so the
             # emulator finds its system image through this.

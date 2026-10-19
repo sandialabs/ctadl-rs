@@ -30,6 +30,9 @@
   pkgs,
   naersk,
   fenix,
+  # The Rust release rust-toolchain.toml pins: `channel` and the hash of its
+  # manifest.
+  rustRelease,
   # The source tree to build; the flake passes its own root.
   src,
   # The workspace version, so these derivations are named for what they are.
@@ -50,15 +53,17 @@ let
 
   # naersk runs cargo on the builder, so what varies per target is the
   # toolchain, not the stdenv: a cargo and rustc that run here, plus the std of
-  # the target being built. nixpkgs' rustc carries std only for its own host,
-  # which is what fenix is here to supply.
+  # the target being built, all from the pinned release. nixpkgs' rustc
+  # carries std only for its own host, which is what fenix is here to supply.
   toolchainFor =
     target:
-    with fenix.packages.${system};
-    combine [
-      stable.rustc
-      stable.cargo
-      targets.${target}.stable.rust-std
+    let
+      host = fenix.packages.${system}.toolchainOf rustRelease;
+    in
+    fenix.packages.${system}.combine [
+      host.rustc
+      host.cargo
+      (fenix.packages.${system}.targets.${target}.toolchainOf rustRelease).rust-std
     ];
 
   buildFor =
