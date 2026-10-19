@@ -72,13 +72,15 @@ pub mod path_set;
 pub mod source_info;
 
 // Column encodings for the relations that `Storage::Lsm` moves onto the `lsm` provider. Each
-// column is stored as its raw bits in 8-byte slots. All four are `Copy`, fixed-width and free of
-// padding; `Path` is an interned `&'static` pointer whose interner is never freed, so its bits
+// column is stored as its raw bits in 8-byte slots. All of them are `Copy`, fixed-width and free
+// of padding; `Path` is an interned `&'static` pointer whose interner is never freed, so its bits
 // stay valid for the whole process, which is as long as the provider's run files live.
 lsm::lsm_col!(FunctionId, 1);
 lsm::lsm_col!(FlowVariable, 1);
 lsm::lsm_col!(Path, 1);
 lsm::lsm_col!(FormalIndex, 1);
+lsm::lsm_col!(PackedInsnSiteId, 1);
+lsm::lsm_col!(FlowVertex, 2);
 
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
@@ -2346,6 +2348,21 @@ pub fn taint_index_with_config(
         relation edge_split(FunctionId, FlowVariable, Path, Path, (FlowVariable, Path));
         #[ds(lsm::ascent_provider::provider: counting)]
         relation ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path);
+        // The next largest: the derived relations that reach hundreds of thousands of rows,
+        // and the inputs that do. The rest stay in memory, where a relation of a few thousand
+        // rows costs less than the LSM's per-index maps.
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation reach_vp(FunctionId, FlowVariable, Path);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation locals_key_wild(FunctionId, FlowVariable, Path, Path, Path);
+        #[ds(lsm::ascent_provider::provider: seeded)]
+        relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex);
+        #[ds(lsm::ascent_provider::provider: seeded)]
+        relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
+        #[ds(lsm::ascent_provider::provider: seeded)]
+        relation prog_store(FunctionId, FlowVariable, Path);
     }
 
     macro_rules! trie_stores {
