@@ -750,8 +750,9 @@ impl Context {
             // NewInstance – resolved to a JavaObject reference
             Instruction::NewInstance(f) => Self::allocation_exp(parser, f.idx),
             // A new-array is a new object of its array type. Its size register does
-            // not flow into it: copying the size in made every array built from one
-            // size register a copy of that register, so taint in one reached the others.
+            // not flow into it: copying the size in would make every array built from
+            // one size register a copy of that register, so taint in one would reach the
+            // others.
             Instruction::NewArray(f) => Self::allocation_exp(parser, f.idx),
             // A method handle or method type constant is an object of that class
             Instruction::ConstMethodHandle(_) => Some(Exp::new_object_ref(CallObject::JavaObject(

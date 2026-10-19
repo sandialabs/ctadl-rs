@@ -2450,8 +2450,8 @@ mod tests {
     }
 
     /// Each output of `dup*` and `swap` copies exactly one input, in the JVMS
-    /// 6.5 order. Listing every input as a source of every output mixes the
-    /// values, which once let a clean value pick up a tainted one's taint.
+    /// 6.5 order. Listing every input as a source of every output would mix the
+    /// values, so a clean value would pick up a tainted one's taint.
     #[test]
     fn test_stack_shuffle_dataflow() {
         use Location::StackInput as In;
@@ -2654,8 +2654,7 @@ mod tests {
     }
 
     /// `anewarray`'s operand is a class's internal name, or an array class's
-    /// descriptor. Wrapping the descriptor in `L...;` too made `new int[n][]`
-    /// allocate `[L[I;`.
+    /// descriptor, so `new int[n][]` allocates `[[I`, not `[L[I;`.
     #[test]
     fn anewarray_allocates_an_array_of_its_class() {
         let mut cf = constant_pool_only();
@@ -2976,7 +2975,6 @@ mod tests {
 
     /// `ldc` of a MethodType, MethodHandle or dynamic constant pushes that
     /// constant; `ldc2_w` of a `long` dynamic constant pushes it as two words.
-    /// These used to be decode errors, which lost the whole method.
     #[test]
     fn ldc_decodes_method_handle_type_and_dynamic_constants() {
         let mut cf = constant_pool_with_fields();
