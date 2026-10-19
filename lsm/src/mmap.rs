@@ -65,8 +65,8 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
     }
 
     fn offsets(&self) -> &[u64] {
-        let bytes =
-            &self.mmap[self.offsets_off..self.offsets_off + (self.entries_count + 1) * size_of::<u64>()];
+        let bytes = &self.mmap
+            [self.offsets_off..self.offsets_off + (self.entries_count + 1) * size_of::<u64>()];
         bytemuck::cast_slice(bytes)
     }
 
@@ -196,8 +196,10 @@ impl RunBuilder {
     fn reserve(&mut self, incoming: usize) -> io::Result<()> {
         if !self.spilled && self.mem_total() + incoming > SPILL_THRESHOLD {
             self.keys.spill(self.out_path.with_extension("keys.tmp"))?;
-            self.offsets.spill(self.out_path.with_extension("offsets.tmp"))?;
-            self.values.spill(self.out_path.with_extension("values.tmp"))?;
+            self.offsets
+                .spill(self.out_path.with_extension("offsets.tmp"))?;
+            self.values
+                .spill(self.out_path.with_extension("values.tmp"))?;
             self.spilled = true;
         }
         Ok(())
@@ -329,7 +331,10 @@ impl<K, V> Drop for MmapLsmMultiMap<K, V> {
 
 impl<K: Pod + Ord, V: Pod> Default for MmapLsmMultiMap<K, V> {
     fn default() -> Self {
-        Self::with_memtable_limit_and_level_fanout(DEFAULT_DISK_MEMTABLE_LIMIT, DEFAULT_LEVEL_FANOUT)
+        Self::with_memtable_limit_and_level_fanout(
+            DEFAULT_DISK_MEMTABLE_LIMIT,
+            DEFAULT_LEVEL_FANOUT,
+        )
     }
 }
 
@@ -340,7 +345,10 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         Self::with_memtable_limit_and_level_fanout(memtable_limit, DEFAULT_LEVEL_FANOUT)
     }
 
-    pub fn with_memtable_limit_and_level_fanout(memtable_limit: usize, level_fanout: usize) -> Self {
+    pub fn with_memtable_limit_and_level_fanout(
+        memtable_limit: usize,
+        level_fanout: usize,
+    ) -> Self {
         let id = NEXT_DISK_DIR_ID.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("lsm-mmap-{}-{id}", std::process::id()));
         Self {
@@ -425,16 +433,16 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     /// the memtable and the memory-mapped runs (no copying / decoding).
     pub fn get_refs(&self, key: &K) -> Option<ValsRefs<'_, V>> {
         let mut slices: Vec<&[V]> = Vec::new();
-        if let Some(vals) = self.memtable.get(key) {
-            if !vals.is_empty() {
-                slices.push(vals);
-            }
+        if let Some(vals) = self.memtable.get(key)
+            && !vals.is_empty()
+        {
+            slices.push(vals);
         }
         for run in self.levels.iter().flatten() {
-            if let Some(vals) = run.find(key) {
-                if !vals.is_empty() {
-                    slices.push(vals);
-                }
+            if let Some(vals) = run.find(key)
+                && !vals.is_empty()
+            {
+                slices.push(vals);
             }
         }
         if slices.is_empty() {
@@ -450,7 +458,11 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     where
         V: PartialEq,
     {
-        if self.memtable.get(key).is_some_and(|vals| vals.contains(value)) {
+        if self
+            .memtable
+            .get(key)
+            .is_some_and(|vals| vals.contains(value))
+        {
             return true;
         }
         self.levels
@@ -637,7 +649,15 @@ mod tests {
     fn reads_across_memtable_and_runs() {
         // Small limit forces several flushes and a compaction.
         let mut lsm = MmapLsmMultiMap::<u64, u64>::with_memtable_limit_and_level_fanout(2, 2);
-        for (k, v) in [(3, 30), (1, 10), (3, 31), (2, 20), (1, 11), (4, 40), (1, 12)] {
+        for (k, v) in [
+            (3, 30),
+            (1, 10),
+            (3, 31),
+            (2, 20),
+            (1, 11),
+            (4, 40),
+            (1, 12),
+        ] {
             lsm.insert(k, v);
         }
         assert_eq!(lsm.len(), 7);
@@ -646,7 +666,10 @@ mod tests {
         assert_eq!(got, BTreeSet::from([10, 11, 12]));
         let got: BTreeSet<u64> = lsm.get_refs(&3).unwrap().copied().collect();
         assert_eq!(got, BTreeSet::from([30, 31]));
-        assert_eq!(lsm.get_refs(&4).unwrap().copied().collect::<Vec<_>>(), vec![40]);
+        assert_eq!(
+            lsm.get_refs(&4).unwrap().copied().collect::<Vec<_>>(),
+            vec![40]
+        );
         assert!(lsm.get_refs(&99).is_none());
 
         assert!(lsm.contains_value(&2, &20));
@@ -702,8 +725,7 @@ mod tests {
         const KEYS: u64 = 300;
         const VALUES_PER_KEY: u64 = 4;
         {
-            let mut lsm =
-                MmapLsmMultiMap::<u64, u64>::open_with_level_fanout(&dir, 8, 2).unwrap();
+            let mut lsm = MmapLsmMultiMap::<u64, u64>::open_with_level_fanout(&dir, 8, 2).unwrap();
             // Interleave keys so values for one key land in many different runs.
             for v in 0..VALUES_PER_KEY {
                 for k in 0..KEYS {

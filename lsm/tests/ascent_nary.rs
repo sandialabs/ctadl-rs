@@ -61,12 +61,16 @@ fn sample_edges() -> Vec<(u32, u32, Lab)> {
 fn lsm_provider_matches_default() {
     let edges = sample_edges();
 
-    let mut lsm = LsmProg::default();
-    lsm.edge = edges.clone();
+    let mut lsm = LsmProg {
+        edge: edges.clone(),
+        ..Default::default()
+    };
     lsm.run();
 
-    let mut def = DefaultProg::default();
-    def.edge = edges;
+    let mut def = DefaultProg {
+        edge: edges,
+        ..Default::default()
+    };
     def.run();
 
     let lsm_reach: BTreeSet<_> = lsm.reach.iter().cloned().collect();
@@ -99,21 +103,31 @@ fn tiny_memtable_limit_still_correct() {
 
     let edges = sample_edges();
 
-    let mut lsm = LsmProg::default();
-    lsm.edge = edges.clone();
+    let mut lsm = LsmProg {
+        edge: edges.clone(),
+        ..Default::default()
+    };
     lsm.run();
 
-    let mut def = DefaultProg::default();
-    def.edge = edges;
+    let mut def = DefaultProg {
+        edge: edges,
+        ..Default::default()
+    };
     def.run();
 
     let lsm_reach: BTreeSet<_> = lsm.reach.iter().cloned().collect();
     let def_reach: BTreeSet<_> = def.reach.iter().cloned().collect();
-    assert_eq!(lsm_reach, def_reach, "reach differs under tiny memtable limit");
+    assert_eq!(
+        lsm_reach, def_reach,
+        "reach differs under tiny memtable limit"
+    );
 
     let lsm_quint: BTreeSet<_> = lsm.quint.iter().cloned().collect();
     let def_quint: BTreeSet<_> = def.quint.iter().cloned().collect();
-    assert_eq!(lsm_quint, def_quint, "quint differs under tiny memtable limit");
+    assert_eq!(
+        lsm_quint, def_quint,
+        "quint differs under tiny memtable limit"
+    );
 
     set_memtable_limit(DEFAULT_MEMTABLE_LIMIT);
 }
@@ -124,8 +138,10 @@ fn lsm_provider_dedups() {
     let mut edges = sample_edges();
     edges.extend(sample_edges());
 
-    let mut lsm = LsmProg::default();
-    lsm.edge = edges;
+    let mut lsm = LsmProg {
+        edge: edges,
+        ..Default::default()
+    };
     lsm.run();
 
     let unique: BTreeSet<_> = lsm.reach.iter().cloned().collect();

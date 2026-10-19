@@ -131,7 +131,9 @@ where
             std::iter::repeat(key).zip(values)
         }
 
-        self.by_left.iter_all_refs().flat_map(pair::<T0, T1> as fn(_) -> _)
+        self.by_left
+            .iter_all_refs()
+            .flat_map(pair::<T0, T1> as fn(_) -> _)
     }
 
     fn len_estimate(&self) -> usize {
@@ -249,8 +251,10 @@ ascent! {
 }
 
 pub fn run_transitive_closure_default(edges: Vec<(Node, Node)>) -> usize {
-    let mut program = DefaultDsProgram::default();
-    program.edge = edges;
+    let mut program = DefaultDsProgram {
+        edge: edges,
+        ..Default::default()
+    };
 
     program.run();
     program.reachable.len()

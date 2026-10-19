@@ -208,13 +208,16 @@ pub trait LsmTuple {
 // sentinel so the storage is never a zero-sized type.
 impl LsmTuple for () {
     type Arr = [u64; 1];
-    type Ref<'a> = () where Self: 'a;
+    type Ref<'a>
+        = ()
+    where
+        Self: 'a;
     #[inline]
     fn encode(&self) -> [u64; 1] {
         [0]
     }
     #[inline]
-    unsafe fn decode(_a: &[u64; 1]) -> () {}
+    unsafe fn decode(_a: &[u64; 1]) {}
 }
 
 // Arities 1..=6. The `Arr` is a right-folded `Cat` of each column's slots, e.g.
@@ -224,84 +227,115 @@ impl LsmTuple for () {
 
 impl<A: LsmCol> LsmTuple for (A,) {
     type Arr = A::Slots;
-    type Ref<'a> = (&'a A,) where Self: 'a;
+    type Ref<'a>
+        = (&'a A,)
+    where
+        Self: 'a;
     #[inline]
     fn encode(&self) -> Self::Arr {
         self.0.to_slots()
     }
     #[inline]
     unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        (unsafe { A::ref_from(a) },)
+        // SAFETY: forwarded from the caller: `a` came from `encode` of live
+        // values, so each field holds slots `to_slots` wrote for that column.
+        unsafe { (A::ref_from(a),) }
     }
 }
 
 impl<A: LsmCol, B: LsmCol> LsmTuple for (A, B) {
     type Arr = Cat<A::Slots, B::Slots>;
-    type Ref<'a> = (&'a A, &'a B) where Self: 'a;
+    type Ref<'a>
+        = (&'a A, &'a B)
+    where
+        Self: 'a;
     #[inline]
     fn encode(&self) -> Self::Arr {
         Cat(self.0.to_slots(), self.1.to_slots())
     }
     #[inline]
     unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        (unsafe { A::ref_from(&a.0) }, unsafe { B::ref_from(&a.1) })
+        // SAFETY: forwarded from the caller: `a` came from `encode` of live
+        // values, so each field holds slots `to_slots` wrote for that column.
+        unsafe { (A::ref_from(&a.0), B::ref_from(&a.1)) }
     }
 }
 
 impl<A: LsmCol, B: LsmCol, C: LsmCol> LsmTuple for (A, B, C) {
     type Arr = Cat<A::Slots, Cat<B::Slots, C::Slots>>;
-    type Ref<'a> = (&'a A, &'a B, &'a C) where Self: 'a;
+    type Ref<'a>
+        = (&'a A, &'a B, &'a C)
+    where
+        Self: 'a;
     #[inline]
     fn encode(&self) -> Self::Arr {
         Cat(self.0.to_slots(), Cat(self.1.to_slots(), self.2.to_slots()))
     }
     #[inline]
     unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        (
-            unsafe { A::ref_from(&a.0) },
-            unsafe { B::ref_from(&a.1.0) },
-            unsafe { C::ref_from(&a.1.1) },
-        )
+        // SAFETY: forwarded from the caller: `a` came from `encode` of live
+        // values, so each field holds slots `to_slots` wrote for that column.
+        unsafe { (A::ref_from(&a.0), B::ref_from(&a.1.0), C::ref_from(&a.1.1)) }
     }
 }
 
 impl<A: LsmCol, B: LsmCol, C: LsmCol, D: LsmCol> LsmTuple for (A, B, C, D) {
     type Arr = Cat<A::Slots, Cat<B::Slots, Cat<C::Slots, D::Slots>>>;
-    type Ref<'a> = (&'a A, &'a B, &'a C, &'a D) where Self: 'a;
+    type Ref<'a>
+        = (&'a A, &'a B, &'a C, &'a D)
+    where
+        Self: 'a;
     #[inline]
     fn encode(&self) -> Self::Arr {
-        Cat(self.0.to_slots(), Cat(self.1.to_slots(), Cat(self.2.to_slots(), self.3.to_slots())))
+        Cat(
+            self.0.to_slots(),
+            Cat(self.1.to_slots(), Cat(self.2.to_slots(), self.3.to_slots())),
+        )
     }
     #[inline]
     unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        (
-            unsafe { A::ref_from(&a.0) },
-            unsafe { B::ref_from(&a.1.0) },
-            unsafe { C::ref_from(&a.1.1.0) },
-            unsafe { D::ref_from(&a.1.1.1) },
-        )
+        // SAFETY: forwarded from the caller: `a` came from `encode` of live
+        // values, so each field holds slots `to_slots` wrote for that column.
+        unsafe {
+            (
+                A::ref_from(&a.0),
+                B::ref_from(&a.1.0),
+                C::ref_from(&a.1.1.0),
+                D::ref_from(&a.1.1.1),
+            )
+        }
     }
 }
 
 impl<A: LsmCol, B: LsmCol, C: LsmCol, D: LsmCol, E: LsmCol> LsmTuple for (A, B, C, D, E) {
     type Arr = Cat<A::Slots, Cat<B::Slots, Cat<C::Slots, Cat<D::Slots, E::Slots>>>>;
-    type Ref<'a> = (&'a A, &'a B, &'a C, &'a D, &'a E) where Self: 'a;
+    type Ref<'a>
+        = (&'a A, &'a B, &'a C, &'a D, &'a E)
+    where
+        Self: 'a;
     #[inline]
     fn encode(&self) -> Self::Arr {
         Cat(
             self.0.to_slots(),
-            Cat(self.1.to_slots(), Cat(self.2.to_slots(), Cat(self.3.to_slots(), self.4.to_slots()))),
+            Cat(
+                self.1.to_slots(),
+                Cat(self.2.to_slots(), Cat(self.3.to_slots(), self.4.to_slots())),
+            ),
         )
     }
     #[inline]
     unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        (
-            unsafe { A::ref_from(&a.0) },
-            unsafe { B::ref_from(&a.1.0) },
-            unsafe { C::ref_from(&a.1.1.0) },
-            unsafe { D::ref_from(&a.1.1.1.0) },
-            unsafe { E::ref_from(&a.1.1.1.1) },
-        )
+        // SAFETY: forwarded from the caller: `a` came from `encode` of live
+        // values, so each field holds slots `to_slots` wrote for that column.
+        unsafe {
+            (
+                A::ref_from(&a.0),
+                B::ref_from(&a.1.0),
+                C::ref_from(&a.1.1.0),
+                D::ref_from(&a.1.1.1.0),
+                E::ref_from(&a.1.1.1.1),
+            )
+        }
     }
 }
 
@@ -309,27 +343,37 @@ impl<A: LsmCol, B: LsmCol, C: LsmCol, D: LsmCol, E: LsmCol, F: LsmCol> LsmTuple
     for (A, B, C, D, E, F)
 {
     type Arr = Cat<A::Slots, Cat<B::Slots, Cat<C::Slots, Cat<D::Slots, Cat<E::Slots, F::Slots>>>>>;
-    type Ref<'a> = (&'a A, &'a B, &'a C, &'a D, &'a E, &'a F) where Self: 'a;
+    type Ref<'a>
+        = (&'a A, &'a B, &'a C, &'a D, &'a E, &'a F)
+    where
+        Self: 'a;
     #[inline]
     fn encode(&self) -> Self::Arr {
         Cat(
             self.0.to_slots(),
             Cat(
                 self.1.to_slots(),
-                Cat(self.2.to_slots(), Cat(self.3.to_slots(), Cat(self.4.to_slots(), self.5.to_slots()))),
+                Cat(
+                    self.2.to_slots(),
+                    Cat(self.3.to_slots(), Cat(self.4.to_slots(), self.5.to_slots())),
+                ),
             ),
         )
     }
     #[inline]
     unsafe fn decode(a: &Self::Arr) -> Self::Ref<'_> {
-        (
-            unsafe { A::ref_from(&a.0) },
-            unsafe { B::ref_from(&a.1.0) },
-            unsafe { C::ref_from(&a.1.1.0) },
-            unsafe { D::ref_from(&a.1.1.1.0) },
-            unsafe { E::ref_from(&a.1.1.1.1.0) },
-            unsafe { F::ref_from(&a.1.1.1.1.1) },
-        )
+        // SAFETY: forwarded from the caller: `a` came from `encode` of live
+        // values, so each field holds slots `to_slots` wrote for that column.
+        unsafe {
+            (
+                A::ref_from(&a.0),
+                B::ref_from(&a.1.0),
+                C::ref_from(&a.1.1.0),
+                D::ref_from(&a.1.1.1.0),
+                E::ref_from(&a.1.1.1.1.0),
+                F::ref_from(&a.1.1.1.1.1),
+            )
+        }
     }
 }
 
@@ -346,7 +390,9 @@ pub struct ValIter<'a, V: LsmTuple> {
 
 impl<V: LsmTuple> Clone for ValIter<'_, V> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -385,7 +431,9 @@ impl<'a, K: LsmTuple + 'a> Iterator for FullAllIter<'a, K> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         // SAFETY: the stored key blob was produced by `K::encode`.
-        self.inner.next().map(|(k, _)| (unsafe { K::decode(k) }, once(())))
+        self.inner
+            .next()
+            .map(|(k, _)| (unsafe { K::decode(k) }, once(())))
     }
 }
 
@@ -402,7 +450,9 @@ pub struct LsmIndex<K: LsmTuple, V: LsmTuple> {
 
 impl<K: LsmTuple, V: LsmTuple> Default for LsmIndex<K, V> {
     fn default() -> Self {
-        Self { map: MmapLsmMultiMap::with_memtable_limit(memtable_limit()) }
+        Self {
+            map: MmapLsmMultiMap::with_memtable_limit(memtable_limit()),
+        }
     }
 }
 
@@ -436,7 +486,9 @@ impl<'a, K: LsmTuple + 'a, V: LsmTuple + 'a> RelIndexReadAll<'a> for LsmIndex<K,
 
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        AllIter { inner: self.map.iter_all_refs() }
+        AllIter {
+            inner: self.map.iter_all_refs(),
+        }
     }
 }
 
@@ -496,7 +548,9 @@ pub struct LsmFullIndex<K: LsmTuple> {
 
 impl<K: LsmTuple> Default for LsmFullIndex<K> {
     fn default() -> Self {
-        Self { map: MmapLsmMultiMap::with_memtable_limit(memtable_limit()) }
+        Self {
+            map: MmapLsmMultiMap::with_memtable_limit(memtable_limit()),
+        }
     }
 }
 
@@ -514,7 +568,11 @@ impl<'a, K: LsmTuple + 'a> RelIndexRead<'a> for LsmFullIndex<K> {
 
     #[inline]
     fn index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
-        if self.contains_arr(&key.encode()) { Some(once(())) } else { None }
+        if self.contains_arr(&key.encode()) {
+            Some(once(()))
+        } else {
+            None
+        }
     }
 
     #[inline]
@@ -536,7 +594,9 @@ impl<'a, K: LsmTuple + 'a> RelIndexReadAll<'a> for LsmFullIndex<K> {
 
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        FullAllIter { inner: self.map.iter_all_refs() }
+        FullAllIter {
+            inner: self.map.iter_all_refs(),
+        }
     }
 }
 

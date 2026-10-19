@@ -34,11 +34,7 @@ fn sweep_leftover_run_dirs() {
         return;
     };
     for entry in entries.flatten() {
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with("lsm-mmap-")
-        {
+        if entry.file_name().to_string_lossy().starts_with("lsm-mmap-") {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
