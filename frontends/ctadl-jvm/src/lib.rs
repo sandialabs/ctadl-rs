@@ -442,7 +442,10 @@ impl Context {
                                     0xac..=0xb0 => TerminatorKind::Return {
                                         args: smallvec![
                                             self.convert_location_to_exp(
-                                                &Location::StackSlot(0),
+                                                instr
+                                                    .return_value
+                                                    .as_ref()
+                                                    .expect("a value return names its value"),
                                                 &mut fdat.locals,
                                             ),
                                             empty_exp(),

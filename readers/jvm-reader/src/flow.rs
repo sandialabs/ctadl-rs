@@ -153,6 +153,11 @@ pub struct InstructionFlowInfo<'a> {
     pub mnemonic: &'static str,
     pub dataflow: Vec<DataflowInfo>,
     pub call: Option<CallInfo>,
+    /// For `ireturn` through `areturn`: the value returned, the top of the
+    /// stack (the lower of a long's or double's two slots). Like a call's
+    /// arguments, it is a `Location::StackInput` at decode time, which
+    /// normalization rewrites to a `StackSlot`.
+    pub return_value: Option<Location>,
 }
 
 // ============== Basic blocks / CFG ==============
@@ -832,6 +837,21 @@ fn simulate_block<'a>(
                 consumed: consume,
                 stack_len: state.slots.len(),
             });
+        }
+
+        // After the underflow check, so that a return of too few slots
+        // reports as one.
+        if let Some(ret) = inst.return_value.as_mut() {
+            rewrite_location_stack_inputs(
+                ret,
+                state.slots.len(),
+                class_name,
+                method_name,
+                method_desc,
+                inst.pc,
+                inst.opcode,
+                inst.mnemonic,
+            )?;
         }
 
         // Rewrite StackOutput destinations using the *absolute* stack depth position
@@ -1556,6 +1576,12 @@ pub fn decode_flow_instruction<'a>(
         }];
     }
 
+    let return_value = match logical_opcode {
+        0xac | 0xae | 0xb0 => Some(Location::StackInput(0)),
+        0xad | 0xaf => Some(Location::StackInput(1)),
+        _ => None,
+    };
+
     let code_attr = method
         .code
         .as_ref()
@@ -1580,6 +1606,7 @@ pub fn decode_flow_instruction<'a>(
         mnemonic: mnem,
         dataflow,
         call,
+        return_value,
     };
     Ok((info, next_pc))
 }
