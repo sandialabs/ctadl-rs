@@ -4710,6 +4710,23 @@ impl<'a> Context<'a> {
                 self.report_missing_name(node, scope_view)?;
                 Ok(self.dead_temp_path(program, scope_view))
             }
+            // An initialized declarator (`T *p = v`, `int (*fp)(int) = f`) stores to the name it
+            // declares. `flatten_nested_decl` would load the name, and for a cell the store
+            // would then land on that temp.
+            "pointer_declarator" | "function_declarator" | "array_declarator" => {
+                let (Some(name), _) = declarator_shape(node) else {
+                    return self.not_a_location(program, node, scope_view);
+                };
+                let name = to_str(&name, source);
+                self.scope_tree
+                    .add_variable(scope_view.sidx, name.to_string(), VarKind::Local);
+                Ok(self.build_access_path(
+                    name,
+                    Default::default(),
+                    scope_view,
+                    &mut program[scope_view.fidx].locals,
+                ))
+            }
             "identifier" => Ok(self.build_access_path(
                 to_str(&node, source),
                 Default::default(),

@@ -2794,6 +2794,56 @@ fn addr_of_alias_does_not_cross_basic_blocks() {
 }
 
 #[test_log::test]
+fn addr_of_a_struct_pointer_is_a_cell() {
+    // `struct S *p` is a pointer, not a record, so `init(&p, v)` writes `p` itself.
+    let src = r"
+        struct S { int f; };
+        void init(struct S **out, struct S *v) { *out = v; }
+        struct S *f(struct S *v) { struct S *p = 0; init(&p, v); return p; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn addr_of_a_function_pointer_is_a_cell() {
+    // The declarator nearest `fp` is the pointer, so `fp` is a scalar: `pick(&fp)` sets it.
+    let src = r"
+        int id(int p) { return p; }
+        void pick(int (**out)(int)) { *out = id; }
+        int f(int x) { int (*fp)(int) = 0; pick(&fp); return fp(x); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn addr_of_a_local_array_is_not_a_cell() {
+    // A local array names its own storage: `&a` is `a`, and `a[0]` loads `a.deref`.
+    let src = r"
+        void put(int *out, int v) { *out = v; }
+        int f(int v) { int a[4]; put((int *)&a, v); return a[0]; }";
+    let (prog, dump) = program_from_string(src);
+    let a = local_render(&prog, "f", "a");
+    assert!(check_match(&dump, &format!("load {a}.deref")), "{dump}");
+    assert!(check_no_match(&dump, &format!("{a}.deref.deref")), "{dump}");
+    let (s, si) = get_summary(prog).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn an_initializer_reaches_an_address_taken_pointer() {
+    // `char *p = q` stores `q` into `p`'s cell, as `p = q` does; likewise a function pointer.
+    let src = r"
+        void touch(char **pp);
+        char *f(char *q) { char *p = q; touch(&p); return p; }
+        void touch_fp(int (**pp)(int));
+        int id(int p) { return p; }
+        int g(int x) { int (*fp)(int) = id; touch_fp(&fp); return fp(x); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+    check_returns_param_in(&s, &si, "g", 0, "");
+}
+
+#[test_log::test]
 fn union_member_write_aliases_other_member() {
     // Soundness: a union's members share storage, so a write to `u.a` is observable at a
     // read of `u.b`. Union members collapse to the single synthetic field `$union`, so
