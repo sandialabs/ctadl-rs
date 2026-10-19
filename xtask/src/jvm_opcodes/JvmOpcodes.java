@@ -616,8 +616,6 @@ public class JvmOpcodes implements Opcodes {
             load(il, type, id, cls);
             int store = "IXFJDL".indexOf(type.charAt(0));
             il.add(new VarInsnNode(new int[] {ISTORE, ISTORE, FSTORE, LSTORE, DSTORE, ASTORE}[store], n));
-            // jvm-reader names a wide local by its first slot, so both input
-            // slots of one carry that name.
             int w = addSlots(b, "local", n, type, id, false);
             if (w == 2) b.slots.get(b.slots.size() - 1).atom = "local" + n;
             id += w;
@@ -843,7 +841,6 @@ public class JvmOpcodes implements Opcodes {
                 }
             }
         }
-        // A long or double is one value: what changes either half changes it.
         TreeSet<String> changedWide = new TreeSet<>();
         for (int p : base.wide) {
             String lo = "out" + p, hi = "out" + (p + 1);

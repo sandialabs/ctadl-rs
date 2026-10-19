@@ -383,8 +383,6 @@ pub(crate) fn claims(info: &InstructionFlowInfo<'_>, before: usize, locals: &Loc
         None => format!("in?{depth}"),
     };
 
-    // The object a field access acts on: the stack source of `getfield`, the
-    // deepest stack source of `putfield`.
     let object = info
         .dataflow
         .first()

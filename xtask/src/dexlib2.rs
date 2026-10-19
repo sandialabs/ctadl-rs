@@ -24,7 +24,6 @@ use crate::exec;
 
 const DUMPER: &str = include_str!("DumpDexlib2Instructions.java");
 
-/// Every opcode, with edge-case operands. Assembled with `smali` at test time.
 pub const ALL_OPCODES_SMALI: &str = include_str!("../tests/dex/all-opcodes.smali");
 
 /// Each method's instruction lines, keyed by method index.

@@ -2,9 +2,8 @@
 //!
 //! Each case names one instruction under test and the type of every register it touches, taken
 //! from the Dalvik bytecode spec, not from dex-reader. The generator loads every other register
-//! v0..v13 with an int, so a perturbation can reach any register; v14 and v15 belong to the
-//! harness. Operands are vA = v1, vB = v4, vC = v7 wherever the format allows, so a wide operand's
-//! pair never overlaps another operand.
+//! v0..v13 with an int, so a perturbation can reach any register. Operands are vA = v1, vB = v4,
+//! vC = v7 wherever the format allows, so a wide operand's pair never overlaps another operand.
 
 use std::collections::BTreeMap;
 

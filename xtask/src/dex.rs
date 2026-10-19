@@ -106,8 +106,6 @@ pub fn run_checks(
         },
     ));
 
-    // dex-reader's data_flow() and can_throw() against what ART did when
-    // `cargo xtask dex-opcodes --save` last ran every opcode on a device.
     results.push((
         "dex:opcodes-replay".to_string(),
         match exec::which("smali") {
@@ -116,8 +114,6 @@ pub fn run_checks(
         },
     ));
 
-    // Differential decoding against dexlib2, over the all-opcodes fixture plus
-    // whatever else this run has: the compiled samples and the APK.
     let existing_apk = apk.filter(|p| p.exists());
     results.push((
         "dex:dexlib2-decode".to_string(),
