@@ -22,8 +22,9 @@ csv = "1.3.*"
 ctadl-flowy = { path = "../frontends/ctadl-flowy", features = ["serde"] }
 ctadl-c = { path = "../frontends/ctadl-c" }
 ctadl-dex = { path = "../frontends/ctadl-dex" }
-ctadl-frontends = { path = "../ctadl-frontends", features = ["apk", "xapk", "pcode", "lua", "c", "flowy"] }
-ctadl-import = { path = "../ctadl-import", features = ["dex", "jvm", "pcode", "ts", "flowy"] }
+ctadl-cil = { path = "../frontends/ctadl-cil" }
+ctadl-frontends = { path = "../ctadl-frontends", features = ["apk", "xapk", "pcode", "lua", "c", "flowy", "cil"] }
+ctadl-import = { path = "../ctadl-import", features = ["dex", "jvm", "pcode", "ts", "flowy", "cil"] }
 ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
 ctadl-jvm = { path = "../frontends/ctadl-jvm" }
 ctadl-lua = { path = "../frontends/ctadl-lua" }

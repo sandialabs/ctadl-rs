@@ -1,0 +1,570 @@
+[module]
+name=ComplexPdb.dll
+mvid=7ca92566-9981-4a6b-8cae-528b3dd3ae26
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=ComplexPdb, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=ComplexPdb.Program flags=0x00100001
+	base=System.Object
+0x02000003=ComplexPdb.Program/<TestAsync>d__2 flags=0x00100103
+	base=System.Object
+	interface=System.Runtime.CompilerServices.IAsyncStateMachine
+0x02000004=ComplexPdb.Program/<TestIterator>d__3 flags=0x00100103
+	base=System.Object
+	interface=System.Collections.Generic.IEnumerable`1<System.String>
+	interface=System.Collections.IEnumerable
+	interface=System.Collections.Generic.IEnumerator`1<System.String>
+	interface=System.IDisposable
+	interface=System.Collections.IEnumerator
+[fields]
+0x04000001=System.Int32 ComplexPdb.Program/<TestAsync>d__2::<>1__state flags=0x0006
+0x04000002=System.Runtime.CompilerServices.AsyncTaskMethodBuilder ComplexPdb.Program/<TestAsync>d__2::<>t__builder flags=0x0006
+0x04000003=ComplexPdb.Program ComplexPdb.Program/<TestAsync>d__2::<>4__this flags=0x0006
+0x04000004=System.Int32 ComplexPdb.Program/<TestAsync>d__2::<i>5__1 flags=0x0001
+0x04000005=System.Runtime.CompilerServices.TaskAwaiter ComplexPdb.Program/<TestAsync>d__2::<>u__1 flags=0x0001
+0x04000006=System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>1__state flags=0x0001
+0x04000007=System.String ComplexPdb.Program/<TestIterator>d__3::<>2__current flags=0x0001
+0x04000008=System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>l__initialThreadId flags=0x0001
+0x04000009=ComplexPdb.Program ComplexPdb.Program/<TestIterator>d__3::<>4__this flags=0x0006
+0x0400000a=System.Int32 ComplexPdb.Program/<TestIterator>d__3::<i>5__1 flags=0x0001
+[methods]
+0x06000001=System.Void ComplexPdb.Program::Foo() flags=0x0091 impl=0x0000 rva=0x00002050
+0x06000002=System.Void ComplexPdb.Program::Bar(System.Int32) flags=0x0091 impl=0x0000 rva=0x00002068
+	param 0 name=i flags=0x0000
+0x06000003=System.Threading.Tasks.Task ComplexPdb.Program::TestAsync() flags=0x0086 impl=0x0000 rva=0x000020b4
+0x06000004=System.Collections.Generic.IEnumerable`1<System.String> ComplexPdb.Program::TestIterator() flags=0x0086 impl=0x0000 rva=0x000020fb
+0x06000005=System.Void ComplexPdb.Program::.ctor() flags=0x1886 impl=0x0000 rva=0x0000210b
+0x06000006=System.Void ComplexPdb.Program/<TestAsync>d__2::.ctor() flags=0x1886 impl=0x0000 rva=0x0000210b
+0x06000007=System.Void ComplexPdb.Program/<TestAsync>d__2::MoveNext() flags=0x01e1 impl=0x0000 rva=0x00002114
+	override=System.Void System.Runtime.CompilerServices.IAsyncStateMachine::MoveNext()
+0x06000008=System.Void ComplexPdb.Program/<TestAsync>d__2::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine) flags=0x01e1 impl=0x0000 rva=0x000022ac
+	override=System.Void System.Runtime.CompilerServices.IAsyncStateMachine::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+	param 1 name=stateMachine flags=0x0000
+0x06000009=System.Void ComplexPdb.Program/<TestIterator>d__3::.ctor(System.Int32) flags=0x1886 impl=0x0000 rva=0x000022ae
+	param 1 name=<>1__state flags=0x0000
+0x0600000a=System.Void ComplexPdb.Program/<TestIterator>d__3::System.IDisposable.Dispose() flags=0x01e1 impl=0x0000 rva=0x000022ac
+	override=System.Void System.IDisposable::Dispose()
+0x0600000b=System.Boolean ComplexPdb.Program/<TestIterator>d__3::MoveNext() flags=0x01e1 impl=0x0000 rva=0x000022cc
+	override=System.Boolean System.Collections.IEnumerator::MoveNext()
+0x0600000c=System.String ComplexPdb.Program/<TestIterator>d__3::System.Collections.Generic.IEnumerator<System.String>.get_Current() flags=0x09e1 impl=0x0000 rva=0x00002384 semantics=0x0002
+	override=!0 System.Collections.Generic.IEnumerator`1<System.String>::get_Current()
+0x0600000d=System.Void ComplexPdb.Program/<TestIterator>d__3::System.Collections.IEnumerator.Reset() flags=0x01e1 impl=0x0000 rva=0x0000238c
+	override=System.Void System.Collections.IEnumerator::Reset()
+0x0600000e=System.Object ComplexPdb.Program/<TestIterator>d__3::System.Collections.IEnumerator.get_Current() flags=0x09e1 impl=0x0000 rva=0x00002384 semantics=0x0002
+	override=System.Object System.Collections.IEnumerator::get_Current()
+0x0600000f=System.Collections.Generic.IEnumerator`1<System.String> ComplexPdb.Program/<TestIterator>d__3::System.Collections.Generic.IEnumerable<System.String>.GetEnumerator() flags=0x01e1 impl=0x0000 rva=0x00002394
+	override=System.Collections.Generic.IEnumerator`1<!0> System.Collections.Generic.IEnumerable`1<System.String>::GetEnumerator()
+0x06000010=System.Collections.IEnumerator ComplexPdb.Program/<TestIterator>d__3::System.Collections.IEnumerable.GetEnumerator() flags=0x01e1 impl=0x0000 rva=0x000023d7
+	override=System.Collections.IEnumerator System.Collections.IEnumerable::GetEnumerator()
+[properties]
+0x17000001=System.String ComplexPdb.Program/<TestIterator>d__3::System.Collections.Generic.IEnumerator<System.String>.Current() flags=0x0000 getter=0x0600000c
+0x17000002=System.Object ComplexPdb.Program/<TestIterator>d__3::System.Collections.IEnumerator.Current() flags=0x0000 getter=0x0600000e
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"ComplexPdb"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyDescriptionAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyConfigurationAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"ComplexPdb"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCopyrightAttribute::.ctor(System.String) args=((String:"Copyright ©  2017"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTrademarkAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.ComVisibleAttribute::.ctor(System.Boolean) args=((Boolean:False))
+ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.GuidAttribute::.ctor(System.String) args=((String:"b7b66121-dbd4-4eaf-8348-767aca8b824b"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"1.0.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETFramework,Version=v4.5.2")) property FrameworkDisplayName=(String:".NET Framework 4.5.2")
+ca parent=0x06000003 ctor=System.Void System.Runtime.CompilerServices.AsyncStateMachineAttribute::.ctor(System.Type) args=((Type:typeof(ComplexPdb.Program/<TestAsync>d__2)))
+ca parent=0x06000003 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000004 ctor=System.Void System.Runtime.CompilerServices.IteratorStateMachineAttribute::.ctor(System.Type) args=((Type:typeof(ComplexPdb.Program/<TestIterator>d__3)))
+ca parent=0x02000004 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000008 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000009 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000c ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000d ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000e ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000f ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000010 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=20
+	IL_0000: nop
+	IL_0001: ldstr "const string"
+	IL_0006: call System.Void System.Console::WriteLine(System.String)
+	IL_000b: nop
+	IL_000c: ldc.i4.2
+	IL_000d: call System.Void System.Console::WriteLine(System.Int32)
+	IL_0012: nop
+	IL_0013: ret
+0x06000002 max-stack=2 init-locals=true code-size=64
+	local 0=System.Int32
+	local 1=System.Boolean
+	local 2=System.Int32
+	local 3=System.Int32
+	local 4=System.Boolean
+	local 5=System.Int32
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldc.i4.0
+	IL_0003: clt
+	IL_0005: stloc.1
+	IL_0006: ldloc.1
+	IL_0007: brfalse.s IL_0011
+	IL_0009: nop
+	IL_000a: ldc.i4.1
+	IL_000b: stloc.2
+	IL_000c: ldloc.2
+	IL_000d: stloc.0
+	IL_000e: nop
+	IL_000f: br.s IL_0038
+	IL_0011: nop
+	IL_0012: ldc.i4.m1
+	IL_0013: stloc.3
+	IL_0014: ldloc.3
+	IL_0015: ldc.i4.s 12
+	IL_0017: add
+	IL_0018: ldc.i4.s 74
+	IL_001a: add
+	IL_001b: stloc.0
+	IL_001c: ldloc.0
+	IL_001d: ldc.i4.s 12
+	IL_001f: cgt
+	IL_0021: stloc.s V_4
+	IL_0023: ldloc.s V_4
+	IL_0025: brfalse.s IL_0037
+	IL_0027: nop
+	IL_0028: ldloc.0
+	IL_0029: ldc.i4.s 12
+	IL_002b: mul
+	IL_002c: stloc.s V_5
+	IL_002e: ldloc.s V_5
+	IL_0030: call System.Void System.Console::WriteLine(System.Int32)
+	IL_0035: nop
+	IL_0036: nop
+	IL_0037: nop
+	IL_0038: ldloc.0
+	IL_0039: call System.Void System.Console::WriteLine(System.Int32)
+	IL_003e: nop
+	IL_003f: ret
+0x06000003 max-stack=2 init-locals=true code-size=59
+	local 0=ComplexPdb.Program/<TestAsync>d__2
+	local 1=System.Runtime.CompilerServices.AsyncTaskMethodBuilder
+	IL_0000: newobj System.Void ComplexPdb.Program/<TestAsync>d__2::.ctor()
+	IL_0005: stloc.0
+	IL_0006: ldloc.0
+	IL_0007: ldarg.0
+	IL_0008: stfld ComplexPdb.Program ComplexPdb.Program/<TestAsync>d__2::<>4__this
+	IL_000d: ldloc.0
+	IL_000e: call System.Runtime.CompilerServices.AsyncTaskMethodBuilder System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Create()
+	IL_0013: stfld System.Runtime.CompilerServices.AsyncTaskMethodBuilder ComplexPdb.Program/<TestAsync>d__2::<>t__builder
+	IL_0018: ldloc.0
+	IL_0019: ldc.i4.m1
+	IL_001a: stfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<>1__state
+	IL_001f: ldloc.0
+	IL_0020: ldfld System.Runtime.CompilerServices.AsyncTaskMethodBuilder ComplexPdb.Program/<TestAsync>d__2::<>t__builder
+	IL_0025: stloc.1
+	IL_0026: ldloca.s V_1
+	IL_0028: ldloca.s V_0
+	IL_002a: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::Start<ComplexPdb.Program/<TestAsync>d__2>(!!0&)
+	IL_002f: ldloc.0
+	IL_0030: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder ComplexPdb.Program/<TestAsync>d__2::<>t__builder
+	IL_0035: call System.Threading.Tasks.Task System.Runtime.CompilerServices.AsyncTaskMethodBuilder::get_Task()
+	IL_003a: ret
+0x06000004 max-stack=8 init-locals=false code-size=15
+	IL_0000: ldc.i4.s -2
+	IL_0002: newobj System.Void ComplexPdb.Program/<TestIterator>d__3::.ctor(System.Int32)
+	IL_0007: dup
+	IL_0008: ldarg.0
+	IL_0009: stfld ComplexPdb.Program ComplexPdb.Program/<TestIterator>d__3::<>4__this
+	IL_000e: ret
+0x06000005 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000006 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+0x06000007 max-stack=3 init-locals=true code-size=368
+	local 0=System.Int32
+	local 1=System.Runtime.CompilerServices.TaskAwaiter
+	local 2=ComplexPdb.Program/<TestAsync>d__2
+	local 3=System.Runtime.CompilerServices.TaskAwaiter
+	local 4=System.Int32
+	local 5=System.Boolean
+	local 6=System.Exception
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<>1__state
+	IL_0006: stloc.0
+	IL_0007: ldloc.0
+	IL_0008: brfalse.s IL_0012
+	IL_000a: br.s IL_000c
+	IL_000c: ldloc.0
+	IL_000d: ldc.i4.1
+	IL_000e: beq.s IL_0014
+	IL_0010: br.s IL_0019
+	IL_0012: br.s IL_0062
+	IL_0014: br IL_00e3
+	IL_0019: nop
+	IL_001a: ldstr "Hello1"
+	IL_001f: call System.Void System.Console::WriteLine(System.String)
+	IL_0024: nop
+	IL_0025: ldc.i4.s 100
+	IL_0027: call System.Threading.Tasks.Task System.Threading.Tasks.Task::Delay(System.Int32)
+	IL_002c: callvirt System.Runtime.CompilerServices.TaskAwaiter System.Threading.Tasks.Task::GetAwaiter()
+	IL_0031: stloc.1
+	IL_0032: ldloca.s V_1
+	IL_0034: call System.Boolean System.Runtime.CompilerServices.TaskAwaiter::get_IsCompleted()
+	IL_0039: brtrue.s IL_007e
+	IL_003b: ldarg.0
+	IL_003c: ldc.i4.0
+	IL_003d: dup
+	IL_003e: stloc.0
+	IL_003f: stfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<>1__state
+	IL_0044: ldarg.0
+	IL_0045: ldloc.1
+	IL_0046: stfld System.Runtime.CompilerServices.TaskAwaiter ComplexPdb.Program/<TestAsync>d__2::<>u__1
+	IL_004b: ldarg.0
+	IL_004c: stloc.2
+	IL_004d: ldarg.0
+	IL_004e: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder ComplexPdb.Program/<TestAsync>d__2::<>t__builder
+	IL_0053: ldloca.s V_1
+	IL_0055: ldloca.s V_2
+	IL_0057: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::AwaitUnsafeOnCompleted<System.Runtime.CompilerServices.TaskAwaiter,ComplexPdb.Program/<TestAsync>d__2>(!!0&,!!1&)
+	IL_005c: nop
+	IL_005d: leave IL_016f
+	IL_0062: ldarg.0
+	IL_0063: ldfld System.Runtime.CompilerServices.TaskAwaiter ComplexPdb.Program/<TestAsync>d__2::<>u__1
+	IL_0068: stloc.1
+	IL_0069: ldarg.0
+	IL_006a: ldflda System.Runtime.CompilerServices.TaskAwaiter ComplexPdb.Program/<TestAsync>d__2::<>u__1
+	IL_006f: initobj System.Runtime.CompilerServices.TaskAwaiter
+	IL_0075: ldarg.0
+	IL_0076: ldc.i4.m1
+	IL_0077: dup
+	IL_0078: stloc.0
+	IL_0079: stfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<>1__state
+	IL_007e: ldloca.s V_1
+	IL_0080: call System.Void System.Runtime.CompilerServices.TaskAwaiter::GetResult()
+	IL_0085: nop
+	IL_0086: ldloca.s V_1
+	IL_0088: initobj System.Runtime.CompilerServices.TaskAwaiter
+	IL_008e: ldarg.0
+	IL_008f: ldc.i4.0
+	IL_0090: stfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<i>5__1
+	IL_0095: br IL_012d
+	IL_009a: nop
+	IL_009b: ldstr "Hello2"
+	IL_00a0: call System.Void System.Console::WriteLine(System.String)
+	IL_00a5: nop
+	IL_00a6: ldc.i4.s 100
+	IL_00a8: call System.Threading.Tasks.Task System.Threading.Tasks.Task::Delay(System.Int32)
+	IL_00ad: callvirt System.Runtime.CompilerServices.TaskAwaiter System.Threading.Tasks.Task::GetAwaiter()
+	IL_00b2: stloc.3
+	IL_00b3: ldloca.s V_3
+	IL_00b5: call System.Boolean System.Runtime.CompilerServices.TaskAwaiter::get_IsCompleted()
+	IL_00ba: brtrue.s IL_00ff
+	IL_00bc: ldarg.0
+	IL_00bd: ldc.i4.1
+	IL_00be: dup
+	IL_00bf: stloc.0
+	IL_00c0: stfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<>1__state
+	IL_00c5: ldarg.0
+	IL_00c6: ldloc.3
+	IL_00c7: stfld System.Runtime.CompilerServices.TaskAwaiter ComplexPdb.Program/<TestAsync>d__2::<>u__1
+	IL_00cc: ldarg.0
+	IL_00cd: stloc.2
+	IL_00ce: ldarg.0
+	IL_00cf: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder ComplexPdb.Program/<TestAsync>d__2::<>t__builder
+	IL_00d4: ldloca.s V_3
+	IL_00d6: ldloca.s V_2
+	IL_00d8: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::AwaitUnsafeOnCompleted<System.Runtime.CompilerServices.TaskAwaiter,ComplexPdb.Program/<TestAsync>d__2>(!!0&,!!1&)
+	IL_00dd: nop
+	IL_00de: leave IL_016f
+	IL_00e3: ldarg.0
+	IL_00e4: ldfld System.Runtime.CompilerServices.TaskAwaiter ComplexPdb.Program/<TestAsync>d__2::<>u__1
+	IL_00e9: stloc.3
+	IL_00ea: ldarg.0
+	IL_00eb: ldflda System.Runtime.CompilerServices.TaskAwaiter ComplexPdb.Program/<TestAsync>d__2::<>u__1
+	IL_00f0: initobj System.Runtime.CompilerServices.TaskAwaiter
+	IL_00f6: ldarg.0
+	IL_00f7: ldc.i4.m1
+	IL_00f8: dup
+	IL_00f9: stloc.0
+	IL_00fa: stfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<>1__state
+	IL_00ff: ldloca.s V_3
+	IL_0101: call System.Void System.Runtime.CompilerServices.TaskAwaiter::GetResult()
+	IL_0106: nop
+	IL_0107: ldloca.s V_3
+	IL_0109: initobj System.Runtime.CompilerServices.TaskAwaiter
+	IL_010f: ldstr "Hello3"
+	IL_0114: call System.Void System.Console::WriteLine(System.String)
+	IL_0119: nop
+	IL_011a: nop
+	IL_011b: ldarg.0
+	IL_011c: ldfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<i>5__1
+	IL_0121: ldc.i4.1
+	IL_0122: add
+	IL_0123: stloc.s V_4
+	IL_0125: ldarg.0
+	IL_0126: ldloc.s V_4
+	IL_0128: stfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<i>5__1
+	IL_012d: ldarg.0
+	IL_012e: ldfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<i>5__1
+	IL_0133: ldc.i4.4
+	IL_0134: clt
+	IL_0136: stloc.s V_5
+	IL_0138: ldloc.s V_5
+	IL_013a: brtrue IL_009a
+	IL_013f: leave.s IL_015b
+	IL_0141: stloc.s V_6
+	IL_0143: ldarg.0
+	IL_0144: ldc.i4.s -2
+	IL_0146: stfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<>1__state
+	IL_014b: ldarg.0
+	IL_014c: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder ComplexPdb.Program/<TestAsync>d__2::<>t__builder
+	IL_0151: ldloc.s V_6
+	IL_0153: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetException(System.Exception)
+	IL_0158: nop
+	IL_0159: leave.s IL_016f
+	IL_015b: ldarg.0
+	IL_015c: ldc.i4.s -2
+	IL_015e: stfld System.Int32 ComplexPdb.Program/<TestAsync>d__2::<>1__state
+	IL_0163: ldarg.0
+	IL_0164: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder ComplexPdb.Program/<TestAsync>d__2::<>t__builder
+	IL_0169: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder::SetResult()
+	IL_016e: nop
+	IL_016f: ret
+	.try IL_0007 to IL_0141 catch System.Exception handler IL_0141 to IL_015b
+0x06000008 max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x06000009 max-stack=8 init-locals=false code-size=26
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ldarg.0
+	IL_0008: ldarg.1
+	IL_0009: stfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>1__state
+	IL_000e: ldarg.0
+	IL_000f: call System.Int32 System.Environment::get_CurrentManagedThreadId()
+	IL_0014: stfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>l__initialThreadId
+	IL_0019: ret
+0x0600000a max-stack=8 init-locals=false code-size=1
+	IL_0000: ret
+0x0600000b max-stack=2 init-locals=true code-size=172
+	local 0=System.Int32
+	local 1=System.Int32
+	local 2=System.Boolean
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>1__state
+	IL_0006: stloc.0
+	IL_0007: ldloc.0
+	IL_0008: switch (IL_001b, IL_001d, IL_001f)
+	IL_0019: br.s IL_0021
+	IL_001b: br.s IL_0023
+	IL_001d: br.s IL_004a
+	IL_001f: br.s IL_007a
+	IL_0021: ldc.i4.0
+	IL_0022: ret
+	IL_0023: ldarg.0
+	IL_0024: ldc.i4.m1
+	IL_0025: stfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>1__state
+	IL_002a: nop
+	IL_002b: ldstr "Hello1"
+	IL_0030: call System.Void System.Console::WriteLine(System.String)
+	IL_0035: nop
+	IL_0036: ldarg.0
+	IL_0037: ldstr "Hello1"
+	IL_003c: stfld System.String ComplexPdb.Program/<TestIterator>d__3::<>2__current
+	IL_0041: ldarg.0
+	IL_0042: ldc.i4.1
+	IL_0043: stfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>1__state
+	IL_0048: ldc.i4.1
+	IL_0049: ret
+	IL_004a: ldarg.0
+	IL_004b: ldc.i4.m1
+	IL_004c: stfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>1__state
+	IL_0051: ldarg.0
+	IL_0052: ldc.i4.0
+	IL_0053: stfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<i>5__1
+	IL_0058: br.s IL_009d
+	IL_005a: nop
+	IL_005b: ldstr "Hello1"
+	IL_0060: call System.Void System.Console::WriteLine(System.String)
+	IL_0065: nop
+	IL_0066: ldarg.0
+	IL_0067: ldstr "Hello2"
+	IL_006c: stfld System.String ComplexPdb.Program/<TestIterator>d__3::<>2__current
+	IL_0071: ldarg.0
+	IL_0072: ldc.i4.2
+	IL_0073: stfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>1__state
+	IL_0078: ldc.i4.1
+	IL_0079: ret
+	IL_007a: ldarg.0
+	IL_007b: ldc.i4.m1
+	IL_007c: stfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>1__state
+	IL_0081: ldstr "Hello3"
+	IL_0086: call System.Void System.Console::WriteLine(System.String)
+	IL_008b: nop
+	IL_008c: nop
+	IL_008d: ldarg.0
+	IL_008e: ldfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<i>5__1
+	IL_0093: ldc.i4.1
+	IL_0094: add
+	IL_0095: stloc.1
+	IL_0096: ldarg.0
+	IL_0097: ldloc.1
+	IL_0098: stfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<i>5__1
+	IL_009d: ldarg.0
+	IL_009e: ldfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<i>5__1
+	IL_00a3: ldc.i4.4
+	IL_00a4: clt
+	IL_00a6: stloc.2
+	IL_00a7: ldloc.2
+	IL_00a8: brtrue.s IL_005a
+	IL_00aa: ldc.i4.0
+	IL_00ab: ret
+0x0600000c max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.String ComplexPdb.Program/<TestIterator>d__3::<>2__current
+	IL_0006: ret
+0x0600000d max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotSupportedException::.ctor()
+	IL_0005: throw
+0x0600000e max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.String ComplexPdb.Program/<TestIterator>d__3::<>2__current
+	IL_0006: ret
+0x0600000f max-stack=2 init-locals=true code-size=55
+	local 0=ComplexPdb.Program/<TestIterator>d__3
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>1__state
+	IL_0006: ldc.i4.s -2
+	IL_0008: bne.un.s IL_0022
+	IL_000a: ldarg.0
+	IL_000b: ldfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>l__initialThreadId
+	IL_0010: call System.Int32 System.Environment::get_CurrentManagedThreadId()
+	IL_0015: bne.un.s IL_0022
+	IL_0017: ldarg.0
+	IL_0018: ldc.i4.0
+	IL_0019: stfld System.Int32 ComplexPdb.Program/<TestIterator>d__3::<>1__state
+	IL_001e: ldarg.0
+	IL_001f: stloc.0
+	IL_0020: br.s IL_0035
+	IL_0022: ldc.i4.0
+	IL_0023: newobj System.Void ComplexPdb.Program/<TestIterator>d__3::.ctor(System.Int32)
+	IL_0028: stloc.0
+	IL_0029: ldloc.0
+	IL_002a: ldarg.0
+	IL_002b: ldfld ComplexPdb.Program ComplexPdb.Program/<TestIterator>d__3::<>4__this
+	IL_0030: stfld ComplexPdb.Program ComplexPdb.Program/<TestIterator>d__3::<>4__this
+	IL_0035: ldloc.0
+	IL_0036: ret
+0x06000010 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Collections.Generic.IEnumerator`1<System.String> ComplexPdb.Program/<TestIterator>d__3::System.Collections.Generic.IEnumerable<System.String>.GetEnumerator()
+	IL_0006: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x01000012 -> -
+0x01000013 -> -
+0x01000014 -> -
+0x01000015 -> -
+0x01000016 -> -
+0x01000017 -> -
+0x01000018 -> -
+0x01000019 -> -
+0x0100001a -> -
+0x0100001b -> -
+0x0100001c -> -
+0x0100001d -> -
+0x0100001e -> -
+0x0100001f -> -
+0x01000020 -> -
+0x01000021 -> -
+0x01000022 -> -
+0x01000023 -> -
+0x01000024 -> -
+0x1b000001 -> -
+0x1b000002 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> -
+0x0a000013 -> -
+0x0a000014 -> -
+0x0a000015 -> -
+0x0a000016 -> -
+0x0a000017 -> -
+0x0a000018 -> -
+0x0a000019 -> -
+0x0a00001a -> -
+0x0a00001b -> -
+0x0a00001c -> -
+0x0a00001d -> -
+0x0a00001e -> -
+0x0a00001f -> -
+0x0a000020 -> -
+0x0a000021 -> -
+0x0a000022 -> -
+0x0a000023 -> -
+0x0a000024 -> -
+0x0a000025 -> -
+0x0a000026 -> -
+0x0a000027 -> -
+0x0a000028 -> -
+0x0a000029 -> -
+0x0a00002a -> -
+0x0a00002b -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+[fields-resolved]

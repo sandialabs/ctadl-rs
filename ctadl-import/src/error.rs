@@ -41,6 +41,9 @@ pub enum Error {
     #[cfg(feature = "flowy")]
     #[error("flowy error")]
     Flowy(#[from] ctadl_flowy::FlowyError),
+    #[cfg(feature = "cil")]
+    #[error("cil decoding error: {0}")]
+    Cil(#[from] cil_reader::Error),
     #[cfg(feature = "pcode")]
     #[error("pcode fact reading error: {0}")]
     PcodeFactRead(String),

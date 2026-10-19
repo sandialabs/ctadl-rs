@@ -1,0 +1,63 @@
+[module]
+name=deterministic.dll
+mvid=5ff2585f-83e1-47ac-aac7-b00a2e135da7
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=deterministic, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Library flags=0x00100000
+	base=System.Object
+[fields]
+[methods]
+0x06000001=System.Void Library::Do() flags=0x0096 impl=0x0000 rva=0x00002050
+0x06000002=System.Void Library::.ctor() flags=0x1886 impl=0x0000 rva=0x0000206b
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+[security-declarations]
+[il]
+0x06000001 max-stack=1 init-locals=true code-size=15
+	local 0=System.Boolean
+	IL_0000: nop
+	IL_0001: br.s IL_000b
+	IL_0003: nop
+	IL_0004: call System.Void Library::Do()
+	IL_0009: nop
+	IL_000a: nop
+	IL_000b: ldc.i4.1
+	IL_000c: stloc.0
+	IL_000d: br.s IL_0003
+0x06000002 max-stack=8 init-locals=false code-size=8
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: nop
+	IL_0007: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+[fields-resolved]

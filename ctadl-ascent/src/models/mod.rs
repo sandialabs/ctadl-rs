@@ -51,6 +51,10 @@ pub const LUA_DEFAULT_MODELS: (&str, &[u8]) = (
     "lua-index.jsonl",
     include_bytes!("defaults/lua-index.jsonl"),
 );
+pub const CIL_DEFAULT_MODELS: (&str, &[u8]) = (
+    "cil-index.jsonl",
+    include_bytes!("defaults/cil-index.jsonl"),
+);
 
 /// Every shipped default file, whether or not a given import loads it. Exists so a test can
 /// parse all of them against one program: the loader hard-errors on unknown keys and on
@@ -60,6 +64,7 @@ pub const DEFAULT_MODEL_FILES: &[(&str, &[u8])] = &[
     JAVA_DEFAULT_MODELS,
     NATIVE_DEFAULT_MODELS,
     LUA_DEFAULT_MODELS,
+    CIL_DEFAULT_MODELS,
 ];
 
 /// Returns the built-in default models for the program `index` was built from, selected by its
@@ -98,6 +103,7 @@ pub fn default_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'s
         VirtualMethodTable::Java { .. } => Some(JAVA_DEFAULT_MODELS),
         VirtualMethodTable::Native { .. } => Some(NATIVE_DEFAULT_MODELS),
         VirtualMethodTable::Lua { .. } => Some(LUA_DEFAULT_MODELS),
+        VirtualMethodTable::Cil { .. } => Some(CIL_DEFAULT_MODELS),
         // flowy, and anything else with no method table: a default model file has nothing to
         // match against, and shipping one would be a language guess.
         VirtualMethodTable::Unknown => None,

@@ -1,0 +1,14 @@
+// A known limitation: the index admits a path only if a statement spells it or a chain of loads
+// in one block builds it. Storing an object whose own field was stored earlier does neither:
+// after `n.g = x; o.f = n`, `o.f.g <- x` holds, but no statement spells `.f.g`, so the index
+// derives no such summary. `cil:taint` meets this in
+// `Exec.Obj::ObjectField` (`b.O = new Node { Value = a }; return b.O`); its known-miss file
+// points here. `flowy_tests.rs` skips this file until the index composes such paths.
+def F(o, x)
+where summaries [o.f.g <- x]
+{
+start:
+  n.g = x;
+  o.f = n;
+  return;
+}

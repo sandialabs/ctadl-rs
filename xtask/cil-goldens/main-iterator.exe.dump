@@ -1,0 +1,319 @@
+[module]
+name=iterator.exe
+mvid=a570f330-0884-447a-bf99-17b50293705f
+kind=Console
+runtime=v2.0.50727
+architecture=I386
+module-attributes=0x00000001
+entry-point=0x06000002
+[assembly]
+full-name=iterator, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=Program flags=0x00100000
+	base=System.Object
+0x02000003=Program/<GetLittleArgs>d__0 flags=0x00100103
+	base=System.Object
+	interface=System.Collections.Generic.IEnumerable`1<System.String>
+	interface=System.Collections.IEnumerable
+	interface=System.Collections.Generic.IEnumerator`1<System.String>
+	interface=System.Collections.IEnumerator
+	interface=System.IDisposable
+[fields]
+0x04000001=System.String Program/<GetLittleArgs>d__0::<>2__current flags=0x0001
+0x04000002=System.Int32 Program/<GetLittleArgs>d__0::<>1__state flags=0x0001
+0x04000003=System.Int32 Program/<GetLittleArgs>d__0::<>l__initialThreadId flags=0x0001
+0x04000004=System.String[] Program/<GetLittleArgs>d__0::args flags=0x0006
+0x04000005=System.String[] Program/<GetLittleArgs>d__0::<>3__args flags=0x0006
+0x04000006=System.Int32 Program/<GetLittleArgs>d__0::<i>5__1 flags=0x0006
+0x04000007=System.String Program/<GetLittleArgs>d__0::<little_arg>5__2 flags=0x0006
+[methods]
+0x06000001=System.Collections.Generic.IEnumerable`1<System.String> Program::GetLittleArgs(System.String[]) flags=0x0091 impl=0x0000 rva=0x000021c0
+	param 0 name=args flags=0x0000
+0x06000002=System.Void Program::Main(System.String[]) flags=0x0091 impl=0x0000 rva=0x000021e4
+	param 0 name=args flags=0x0000
+0x06000003=System.Void Program::.ctor() flags=0x1886 impl=0x0000 rva=0x0000223c
+0x06000004=System.Collections.Generic.IEnumerator`1<System.String> Program/<GetLittleArgs>d__0::System.Collections.Generic.IEnumerable<System.String>.GetEnumerator() flags=0x01e1 impl=0x0000 rva=0x00002050
+	override=System.Collections.Generic.IEnumerator`1<!0> System.Collections.Generic.IEnumerable`1<System.String>::GetEnumerator()
+0x06000005=System.Collections.IEnumerator Program/<GetLittleArgs>d__0::System.Collections.IEnumerable.GetEnumerator() flags=0x01e1 impl=0x0000 rva=0x000020a8
+	override=System.Collections.IEnumerator System.Collections.IEnumerable::GetEnumerator()
+0x06000006=System.Boolean Program/<GetLittleArgs>d__0::MoveNext() flags=0x01e1 impl=0x0000 rva=0x000020c0
+	override=System.Boolean System.Collections.IEnumerator::MoveNext()
+0x06000007=System.String Program/<GetLittleArgs>d__0::System.Collections.Generic.IEnumerator<System.String>.get_Current() flags=0x09e1 impl=0x0000 rva=0x00002164 semantics=0x0002
+	override=!0 System.Collections.Generic.IEnumerator`1<System.String>::get_Current()
+0x06000008=System.Void Program/<GetLittleArgs>d__0::System.Collections.IEnumerator.Reset() flags=0x01e1 impl=0x0000 rva=0x0000217b
+	override=System.Void System.Collections.IEnumerator::Reset()
+0x06000009=System.Void Program/<GetLittleArgs>d__0::System.IDisposable.Dispose() flags=0x01e1 impl=0x0000 rva=0x00002182
+	override=System.Void System.IDisposable::Dispose()
+0x0600000a=System.Object Program/<GetLittleArgs>d__0::System.Collections.IEnumerator.get_Current() flags=0x09e1 impl=0x0000 rva=0x00002188 semantics=0x0002
+	override=System.Object System.Collections.IEnumerator::get_Current()
+0x0600000b=System.Void Program/<GetLittleArgs>d__0::.ctor(System.Int32) flags=0x1886 impl=0x0000 rva=0x0000219f
+	param 1 name=<>1__state flags=0x0000
+[properties]
+0x17000001=System.String Program/<GetLittleArgs>d__0::System.Collections.Generic.IEnumerator<System.String>.Current() flags=0x0000 getter=0x06000007
+0x17000002=System.Object Program/<GetLittleArgs>d__0::System.Collections.IEnumerator.Current() flags=0x0000 getter=0x0600000a
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x02000003 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000004 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000005 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000007 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000008 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000b ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
+[il]
+0x06000001 max-stack=2 init-locals=true code-size=21
+	local 0=Program/<GetLittleArgs>d__0
+	local 1=System.Collections.Generic.IEnumerable`1<System.String>
+	IL_0000: ldc.i4.s -2
+	IL_0002: newobj System.Void Program/<GetLittleArgs>d__0::.ctor(System.Int32)
+	IL_0007: stloc.0
+	IL_0008: ldloc.0
+	IL_0009: ldarg.0
+	IL_000a: stfld System.String[] Program/<GetLittleArgs>d__0::<>3__args
+	IL_000f: ldloc.0
+	IL_0010: stloc.1
+	IL_0011: br.s IL_0013
+	IL_0013: ldloc.1
+	IL_0014: ret
+0x06000002 max-stack=2 init-locals=true code-size=60
+	local 0=System.String
+	local 1=System.Collections.Generic.IEnumerator`1<System.String>
+	local 2=System.Boolean
+	IL_0000: nop
+	IL_0001: nop
+	IL_0002: ldarg.0
+	IL_0003: call System.Collections.Generic.IEnumerable`1<System.String> Program::GetLittleArgs(System.String[])
+	IL_0008: callvirt System.Collections.Generic.IEnumerator`1<!0> System.Collections.Generic.IEnumerable`1<System.String>::GetEnumerator()
+	IL_000d: stloc.1
+	IL_000e: br.s IL_001e
+	IL_0010: ldloc.1
+	IL_0011: callvirt !0 System.Collections.Generic.IEnumerator`1<System.String>::get_Current()
+	IL_0016: stloc.0
+	IL_0017: ldloc.0
+	IL_0018: call System.Void System.Console::WriteLine(System.String)
+	IL_001d: nop
+	IL_001e: ldloc.1
+	IL_001f: callvirt System.Boolean System.Collections.IEnumerator::MoveNext()
+	IL_0024: stloc.2
+	IL_0025: ldloc.2
+	IL_0026: brtrue.s IL_0010
+	IL_0028: leave.s IL_003a
+	IL_002a: ldloc.1
+	IL_002b: ldnull
+	IL_002c: ceq
+	IL_002e: stloc.2
+	IL_002f: ldloc.2
+	IL_0030: brtrue.s IL_0039
+	IL_0032: ldloc.1
+	IL_0033: callvirt System.Void System.IDisposable::Dispose()
+	IL_0038: nop
+	IL_0039: endfinally
+	IL_003a: nop
+	IL_003b: ret
+	.try IL_000e to IL_002a finally handler IL_002a to IL_003a
+0x06000003 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000004 max-stack=2 init-locals=true code-size=74
+	local 0=Program/<GetLittleArgs>d__0
+	local 1=System.Collections.Generic.IEnumerator`1<System.String>
+	local 2=System.Boolean
+	IL_0000: call System.Threading.Thread System.Threading.Thread::get_CurrentThread()
+	IL_0005: callvirt System.Int32 System.Threading.Thread::get_ManagedThreadId()
+	IL_000a: ldarg.0
+	IL_000b: ldfld System.Int32 Program/<GetLittleArgs>d__0::<>l__initialThreadId
+	IL_0010: bne.un.s IL_0021
+	IL_0012: ldarg.0
+	IL_0013: ldfld System.Int32 Program/<GetLittleArgs>d__0::<>1__state
+	IL_0018: ldc.i4.s -2
+	IL_001a: ceq
+	IL_001c: ldc.i4.0
+	IL_001d: ceq
+	IL_001f: br.s IL_0022
+	IL_0021: ldc.i4.1
+	IL_0022: stloc.2
+	IL_0023: ldloc.2
+	IL_0024: brtrue.s IL_0031
+	IL_0026: ldarg.0
+	IL_0027: ldc.i4.0
+	IL_0028: stfld System.Int32 Program/<GetLittleArgs>d__0::<>1__state
+	IL_002d: ldarg.0
+	IL_002e: stloc.0
+	IL_002f: br.s IL_0038
+	IL_0031: ldc.i4.0
+	IL_0032: newobj System.Void Program/<GetLittleArgs>d__0::.ctor(System.Int32)
+	IL_0037: stloc.0
+	IL_0038: ldloc.0
+	IL_0039: ldarg.0
+	IL_003a: ldfld System.String[] Program/<GetLittleArgs>d__0::<>3__args
+	IL_003f: stfld System.String[] Program/<GetLittleArgs>d__0::args
+	IL_0044: ldloc.0
+	IL_0045: stloc.1
+	IL_0046: br.s IL_0048
+	IL_0048: ldloc.1
+	IL_0049: ret
+0x06000005 max-stack=1 init-locals=true code-size=11
+	local 0=System.Collections.IEnumerator
+	IL_0000: ldarg.0
+	IL_0001: call System.Collections.Generic.IEnumerator`1<System.String> Program/<GetLittleArgs>d__0::System.Collections.Generic.IEnumerable<System.String>.GetEnumerator()
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x06000006 max-stack=3 init-locals=true code-size=149
+	local 0=System.Boolean
+	local 1=System.Int32
+	local 2=System.Boolean
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.Int32 Program/<GetLittleArgs>d__0::<>1__state
+	IL_0006: stloc.1
+	IL_0007: ldloc.1
+	IL_0008: switch (IL_0019, IL_0017)
+	IL_0015: br.s IL_001b
+	IL_0017: br.s IL_0064
+	IL_0019: br.s IL_001d
+	IL_001b: br.s IL_008f
+	IL_001d: ldarg.0
+	IL_001e: ldc.i4.m1
+	IL_001f: stfld System.Int32 Program/<GetLittleArgs>d__0::<>1__state
+	IL_0024: nop
+	IL_0025: ldarg.0
+	IL_0026: ldc.i4.0
+	IL_0027: stfld System.Int32 Program/<GetLittleArgs>d__0::<i>5__1
+	IL_002c: br.s IL_007a
+	IL_002e: nop
+	IL_002f: call System.Void System.Diagnostics.Debugger::Break()
+	IL_0034: nop
+	IL_0035: ldarg.0
+	IL_0036: ldarg.0
+	IL_0037: ldfld System.String[] Program/<GetLittleArgs>d__0::args
+	IL_003c: ldarg.0
+	IL_003d: ldfld System.Int32 Program/<GetLittleArgs>d__0::<i>5__1
+	IL_0042: ldelem.ref
+	IL_0043: callvirt System.String System.String::ToLower()
+	IL_0048: stfld System.String Program/<GetLittleArgs>d__0::<little_arg>5__2
+	IL_004d: ldarg.0
+	IL_004e: ldarg.0
+	IL_004f: ldfld System.String Program/<GetLittleArgs>d__0::<little_arg>5__2
+	IL_0054: stfld System.String Program/<GetLittleArgs>d__0::<>2__current
+	IL_0059: ldarg.0
+	IL_005a: ldc.i4.1
+	IL_005b: stfld System.Int32 Program/<GetLittleArgs>d__0::<>1__state
+	IL_0060: ldc.i4.1
+	IL_0061: stloc.0
+	IL_0062: br.s IL_0093
+	IL_0064: ldarg.0
+	IL_0065: ldc.i4.m1
+	IL_0066: stfld System.Int32 Program/<GetLittleArgs>d__0::<>1__state
+	IL_006b: nop
+	IL_006c: ldarg.0
+	IL_006d: dup
+	IL_006e: ldfld System.Int32 Program/<GetLittleArgs>d__0::<i>5__1
+	IL_0073: ldc.i4.1
+	IL_0074: add
+	IL_0075: stfld System.Int32 Program/<GetLittleArgs>d__0::<i>5__1
+	IL_007a: ldarg.0
+	IL_007b: ldfld System.Int32 Program/<GetLittleArgs>d__0::<i>5__1
+	IL_0080: ldarg.0
+	IL_0081: ldfld System.String[] Program/<GetLittleArgs>d__0::args
+	IL_0086: ldlen
+	IL_0087: conv.i4
+	IL_0088: clt
+	IL_008a: stloc.2
+	IL_008b: ldloc.2
+	IL_008c: brtrue.s IL_002e
+	IL_008e: nop
+	IL_008f: ldc.i4.0
+	IL_0090: stloc.0
+	IL_0091: br.s IL_0093
+	IL_0093: ldloc.0
+	IL_0094: ret
+0x06000007 max-stack=1 init-locals=true code-size=11
+	local 0=System.String
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.String Program/<GetLittleArgs>d__0::<>2__current
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x06000008 max-stack=8 init-locals=false code-size=6
+	IL_0000: newobj System.Void System.NotSupportedException::.ctor()
+	IL_0005: throw
+0x06000009 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x0600000a max-stack=1 init-locals=true code-size=11
+	local 0=System.Object
+	IL_0000: ldarg.0
+	IL_0001: ldfld System.String Program/<GetLittleArgs>d__0::<>2__current
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x0600000b max-stack=8 init-locals=false code-size=30
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ldarg.0
+	IL_0007: ldarg.1
+	IL_0008: stfld System.Int32 Program/<GetLittleArgs>d__0::<>1__state
+	IL_000d: ldarg.0
+	IL_000e: call System.Threading.Thread System.Threading.Thread::get_CurrentThread()
+	IL_0013: callvirt System.Int32 System.Threading.Thread::get_ManagedThreadId()
+	IL_0018: stfld System.Int32 Program/<GetLittleArgs>d__0::<>l__initialThreadId
+	IL_001d: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x1b000001 -> -
+0x1b000002 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> -
+0x0a000013 -> -
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+[fields-resolved]
