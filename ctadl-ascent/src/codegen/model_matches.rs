@@ -458,7 +458,7 @@ fn emit_bridge(
         // `assign` is keyed on the packed instruction site, from which the function is derived.
         // (The function-keyed shape is the persisted parquet form only.)
         if port.direction.inward() {
-            facts.assign.push((site, callee.clone(), caller.clone()));
+            facts.assign.push((site, callee, caller));
         }
         if port.direction.outward() {
             facts.assign.push((site, caller, callee));
