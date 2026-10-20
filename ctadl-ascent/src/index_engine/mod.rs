@@ -1423,10 +1423,10 @@ macro_rules! call_arg {
 /// Whether the call-target transitive rule joins on `cta_key` (S11), the default. An experiment
 /// switch for S12 in things-to-improve.md: `CTADL_CTA_UNKEYED=1` runs the unkeyed join S11
 /// replaced instead, joined on `(f, v2)` and tested with `substitute_prefix`. It has no wild half,
-/// so it is only meaningful on programs without offset paths (JVM and Dex).
-fn keyed_cta() -> bool {
+/// so a program with offset paths keeps the keyed join regardless.
+fn keyed_cta(ps: &path_set::PathSet) -> bool {
     static KEYED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *KEYED.get_or_init(|| std::env::var_os("CTADL_CTA_UNKEYED").is_none())
+    ps.has_offsets() || *KEYED.get_or_init(|| std::env::var_os("CTADL_CTA_UNKEYED").is_none())
 }
 
 /// Creates a data flow graph for taint analysis.
@@ -1724,19 +1724,27 @@ ascent_source! {
         reach_vp(f, v, p),
         path_set(ps),
         for (key, rest) in ps.splits(p).exact.iter().filter(|(_, rest)| !rest.is_empty());
+    // Every wild relation is empty when no path has an offset (JVM and Dex programs), so each
+    // wild rule tests `has_offsets` before it scans its delta: on Java the scans cost seconds and
+    // derived nothing (P6 in things-to-improve.md).
     relation locals_key_wild(FunctionId, FlowVariable, Path, Path, Path);
     locals_key_wild(f, v, key, rest, p) <--
-        reach_vp(f, v, p),
         path_set(ps),
+        if ps.has_offsets(),
+        reach_vp(f, v, p),
         for (key, rest) in &ps.splits(p).wild;
     // A `locals` path ending in an offset, keyed without it, for the wild match.
     relation locals_wild(FunctionId, FlowVariable, Path, i64, Path);
     locals_wild(f, v, key, m, p) <--
+        path_set(ps),
+        if ps.has_offsets(),
         reach_vp(f, v, p),
         if let Some((key, m)) = p.split_trailing_offset();
     // An edge whose source path ends in an offset, keyed without it, for the wild match.
     relation assign_wild(FunctionId, FlowVariable, Path, i64, FlowVariable, Path);
     assign_wild(f, v2, key, m, v1, p1) <--
+        path_set(ps),
+        if ps.has_offsets(),
         assign_like(f, v1, p1, v2, p2),
         if let Some((key, m)) = p2.split_trailing_offset();
     // The exact and wild keys of an edge's source path. The destination vertex rides as one
@@ -1749,8 +1757,9 @@ ascent_source! {
         for (key, rest) in &ps.splits(p2).exact;
     relation edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path);
     edge_split_wild(f, v2, key, rest, v1, p1) <--
-        assign_like(f, v1, p1, v2, p2),
         path_set(ps),
+        if ps.has_offsets(),
+        assign_like(f, v1, p1, v2, p2),
         for (key, rest) in &ps.splits(p2).wild;
 
     // Destination side: `v1.p1 = v2.p2` and a `locals` path `p23 = p2·rest` give `v1.(p1·rest)`
@@ -1995,14 +2004,16 @@ ascent_source! {
     // No context is recorded, so the effect is shared by every caller that reaches the site;
     // rules 3.2-3.4 then have nothing to do. Same body shape as the local-dispatch bypass
     // below, with the target arriving through a resolvent instead of a local store.
+    // The mode test comes first: placed after the join, it ran rule 3.1's whole scan in every
+    // other mode and threw each row away (P31 in things-to-improve.md).
     assign_like(caller, v1, p1_sum.clone(), v2, p2_sum.clone()) <--
+        config(c),
+        if c.hybrid_context == HybridContext::None,
         callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
         locals(caller, v_rec, p_rec, n, p),
         resolvent(caller, n, p, resolvent_obj, _),
         callee_resolvents(resolvent_obj, dispatch_key, resolvent_func),
         summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
-        config(c),
-        if c.hybrid_context == HybridContext::None,
         let v2 = call_arg!(*call_insn, *n2_sum),
         let v1 = call_arg!(*call_insn, *n1_sum);
 
@@ -2168,6 +2179,8 @@ ascent_source! {
     // than adding a stale twin), and the `locals` probes are exact.
     lattice ctx_edge_wild(FunctionId, FlowVariable, Path, i64, FlowVariable, Path, DecisionSet);
     ctx_edge_wild(f, v2, key, m, v1, p1, *ds) <--
+        path_set(ps),
+        if ps.has_offsets(),
         context_assign(f, v1, p1, v2, p2, ds),
         if !decision::spills(*ds),
         if let Some((key, m)) = p2.split_trailing_offset();
@@ -2179,9 +2192,10 @@ ascent_source! {
         for (key, rest) in &ps.splits(p2).exact;
     lattice ctx_edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path, DecisionSet);
     ctx_edge_split_wild(f, v2, key, rest, v1, p1, *ds) <--
+        path_set(ps),
+        if ps.has_offsets(),
         context_assign(f, v1, p1, v2, p2, ds),
         if !decision::spills(*ds),
-        path_set(ps),
         for (key, rest) in &ps.splits(p2).wild;
     lattice ctx_ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path, DecisionSet);
     ctx_ext_dst(f, v1, p13, v2, p23, *ds) <--
@@ -2289,23 +2303,24 @@ ascent_source! {
     // `tag_closure_func` gates the split: the transitive rule only runs in those functions.
     relation cta_key(FunctionId, FlowVariable, Path, Path, CallTargetObject);
     cta_key(f, v, key, rest, tgt) <--
-        call_target_assign_like(f, v, p, tgt),
-        if keyed_cta(),
-        tag_closure_func(f),
         path_set(ps),
+        if keyed_cta(ps),
+        call_target_assign_like(f, v, p, tgt),
+        tag_closure_func(f),
         for (key, rest) in ps.splits_any(p).exact.iter();
     relation cta_key_wild(FunctionId, FlowVariable, Path, Path, CallTargetObject);
     cta_key_wild(f, v, key, rest, tgt) <--
-        call_target_assign_like(f, v, p, tgt),
-        if keyed_cta(),
-        tag_closure_func(f),
         path_set(ps),
+        if ps.has_offsets() && keyed_cta(ps),
+        call_target_assign_like(f, v, p, tgt),
+        tag_closure_func(f),
         for (key, rest) in ps.splits_any(p).wild.iter();
     // The unkeyed rule this replaced, kept behind `CTADL_CTA_UNKEYED` to measure S12 (see
     // `keyed_cta`). With the switch on, `cta_key` stays empty and so do the keyed rules below.
     call_target_assign_like(f, v1, p_new, tgt) <--
+        path_set(ps),
+        if !keyed_cta(ps),
         tag_closure_func(f),
-        if !keyed_cta(),
         call_target_assign_like(f, v2, p_context, tgt),
         assign_like(f, v1, p1, v2, p2),
         if let Some(p_new) = p_context.substitute_prefix(p2, p1),

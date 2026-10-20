@@ -6,14 +6,14 @@ small apps with native code (see "M7. Small apps with native code"). The measure
 index the Dex-only imports in `small/r8-general/`; M7-M8 index whole APKs again. M9-M11 run on a
 Windows machine with 7.9 GB of RAM: M11 is a second corpus of ten F-Droid apps, Dex only, in
 `tmp/corpus2/`. M12 runs on a Linux machine with 62 GB of RAM: three apps 1-8x the size of the
-largest in M11, Dex only.
+largest in M11, Dex only. M13 measures S12, S27's wildcard skip and S36 on the same machine.
 
 The document has four parts:
 
-- **Problems** (P1-P32): each problem found, what causes it and where it shows up.
-- **Solutions** (S1-S37): each fix tried or proposed, which problems it applies to, and whether it
+- **Problems** (P1-P33): each problem found, what causes it and where it shows up.
+- **Solutions** (S1-S38): each fix tried or proposed, which problems it applies to, and whether it
   is done, rejected or undecided. An entry merged into another keeps its number and a pointer.
-- **Measurements** (M1-M12): the investigations, in the order they were done, with their tables.
+- **Measurements** (M1-M13): the investigations, in the order they were done, with their tables.
 - **Data**: where every investigation's output is, and the experiment switches.
 
 ## Status at a glance
@@ -25,7 +25,7 @@ The document has four parts:
 | P3. Live phi operands at interpreter loops | S5 | Open |
 | P4. Recursive parsers give cross-product summaries | S6 done, S7, S8 | Fixed for the demangler; open for BoringSSL |
 | P5. Native function pointers mint decisions | S9 | Open |
-| P6. Wild relations | S27 | Open |
+| P6. Wild relations | S27 (wildcard skip done) | Fixed on Java (M13); open on native code |
 | P7. Summary growth | none | Open, cause unknown |
 | P8. Large native libraries fail at import | none | Open |
 | P9. R8-merged Kotlin lambdas are dispatch hubs | S10 done, S15 rejected | Fixed |
@@ -50,8 +50,9 @@ The document has four parts:
 | P28. The globals slot of every call in a large static initializer | S34 | Open |
 | P29. Rhino's interpreter loop in the hybrid context | S14 | Open |
 | P30. The transient at the end of scc 4 | S33 | Open; located (M10) |
-| P31. The context-free call rule joins before it tests the mode | S36 | Open; time only |
+| P31. The context-free call rule joins before it tests the mode | S36 done | Fixed (M13) |
 | P32. The memory checkpoints read -1 on Linux | S37 | Open; tooling |
+| P33. Query results depend on the order of the index's rows | S38 | Open |
 
 # Problems
 
@@ -192,6 +193,7 @@ rule).
 `assign_wild`, `edge_split_wild`, `locals_wild` and `locals_key_wild` scan every `assign_like` or
 `reach_vp` delta, but Java paths have no trailing offsets. (Moved here from P21.) In M12 the six
 wildcard rules cost 2.0 s (WhatsApp), 9.2 s (OsmAnd~) and 14.1 s (Element), and derive nothing.
+S27's wildcard skip removes them on programs without offset paths (M13).
 
 ### P7. Summary growth
 
@@ -536,8 +538,8 @@ scc 4's 495-567 iterations.
 
 ### P31. The context-free call rule joins before it tests the mode
 
-**Seen in:** WhatsApp, Element, OsmAnd~ (every run with a hybrid context). **Measured in:** M12.
-**Solutions:** S36.
+**Seen in:** WhatsApp, Element, OsmAnd~ (every run with a hybrid context). **Measured in:** M12,
+M13. **Solutions:** S36 (done).
 
 Rule 3.1 has a twin for `HybridContext::None` that writes the same instantiation to `assign_like`
 (`index_engine/mod.rs`, "3.1 without context"). Its `config(c), if c.hybrid_context ==
@@ -599,6 +601,18 @@ returns -1.0 everywhere else, so on Linux every `[mem cp]` line reads `-1.0 MB` 
 fixpoint" and "Returns" columns of M10 and M11 cannot be read from the log. M12 takes them from the
 cap's samples instead.
 
+### P33. Query results depend on the order of the index's rows
+
+**Seen in:** WhatsApp, Element, OsmAnd~. **Measured in:** M13. **Solutions:** S38.
+
+Two indexes of the same import hold the same rows in every file, but the rows of `assign`,
+`summary`, `paths`, `resolved_call` and `index_source_map` come out in a different order on each
+run (P23). A query of one index is repeatable, but the same broad query on the two indexes differs
+in 0.3-0.5% of its tainted-instruction results (WhatsApp: 97 and 79 of 35,837, between two runs of
+one binary); sources and sinks are the same. So the query, not the index, is order-dependent, and a
+results diff cannot tell an index change from a rerun. M13 compares the index files as row sets
+instead.
+
 # Solutions
 
 | Solution | Problems | Status |
@@ -614,7 +628,7 @@ cap's samples instead.
 | S9. Confirm the function-pointer mechanism | P5 | Undecided, investigation |
 | S10. Split R8 class-merged classes at import | P9 | Done (`a7d716e8`) |
 | S11. Key the call-target transitive rule (`cta_key`) | P16 | Done (`76982fc4`); causes P17 |
-| S12. Turn off `cta_key` except where it pays | P17 | Undecided; measured −4 GB, and −0.24 GB on Tusky |
+| S12. Turn off `cta_key` except where it pays | P17 | Undecided; saves memory, but +44 s on Element (M13); keyed stays the default |
 | S13. Store call-target tags compactly | P17 | Undecided |
 | S14. Bound decision-set churn | P15, P29 | Rejected for P15; reopened for P29, never measured |
 | S15. Change the hybrid context mode | P9, P15 | Rejected |
@@ -629,7 +643,7 @@ cap's samples instead.
 | S24. Fold `reach_vp` into its consumers | P18 | Undecided; est. −2.3 GB |
 | S25. Free `actual_param` after scc 1 | P19 | Undecided; est. −1.6 GB |
 | S26. Find the memory held around the fixpoint | P20 | Undecided |
-| S27. Reorder scanning joins; skip wildcard rules without offsets | P21, P6 | Undecided |
+| S27. Reorder scanning joins; skip wildcard rules without offsets | P21, P6 | Wildcard skip done (uncommitted); reordering undecided |
 | S28. Make the suite fail on a lost flow | P22 | Done (`31594e08`) |
 | S29. Prune each R8 clone at import | P24 | Done (uncommitted) |
 | S30. Leave out a merged class's union methods when no site needs them | P25 | Undecided |
@@ -638,6 +652,9 @@ cap's samples instead.
 | S33. Size the BYODS stores' outer maps before the fixpoint | P30 | Undecided |
 | S34. Bound the globals slot at calls | P28 | Undecided, not started |
 | S35. (Merged into S14) | P29 | Merged into S14 |
+| S36. Test the mode first in the context-free call rule | P31 | Done (uncommitted) |
+| S37. Read the footprint on Linux | P32 | Undecided |
+| S38. Make the query independent of row order | P33 | Undecided |
 
 ### S1. Merged into S2
 
@@ -774,6 +791,13 @@ On Tusky (M10), with `CTADL_CTA_UNKEYED=1` against the same binary: peak 3.41 to
 relations 2,187 to 1,964 MB (`cta_key` held 784 k rows, 222 MB), scc 4 30.9 to 27.6 s in the same
 265 iterations, and the same 460,563 `call_target_assign_like` rows. The index and a query's
 4,848 results are the same. A third app where keying saves no time and costs memory.
+
+**On Element and OsmAnd~ the unkeyed join is slower (M13).** It saves 1.3 GB and 0.75 GB of peak
+(15.40 to 14.10 GB, 11.44 to 10.69 GB), but its rule takes 56.4 s and 25.2 s, against about 12.5 s
+and 9 s for the keyed join and its `cta_key` rules. So P16's wasted pairs are back on large apps,
+and S12 trades time for memory rather than winning both. Keyed stays the default. The switch
+`CTADL_CTA_UNKEYED=1` now leaves a program with offset paths keyed, since the unkeyed rule has no
+wild half. Keying only the high-fan-out vertices is still the open option.
 
 ### S13. Store call-target tags compactly
 
@@ -912,8 +936,16 @@ The transient above the fixpoint is a separate problem now, P30, with S33.
 
 ### S27. Reorder or key the scanning joins, and skip the wildcard rules when no path has an offset
 
-**Applies to:** P21, and P6's cost on Java-only imports. **Status:** undecided. Time only: 35-50 s
-of rule time on `cash.p.terminal`.
+**Applies to:** P21, and P6's cost on Java-only imports. **Status:** the wildcard skip is done
+(uncommitted); reordering the scanning joins is undecided. Time only: 35-50 s of rule time on
+`cash.p.terminal`.
+
+**The wildcard skip** (M13): `PathSet::has_offsets` records whether any admissible path has an
+offset component, and each wild producer (`locals_key_wild`, `locals_wild`, `assign_wild`,
+`edge_split_wild`, `ctx_edge_wild`, `ctx_edge_split_wild`, `cta_key_wild`) tests it before it
+scans its delta. Every consumer of a wild relation also joins one built from admissible paths,
+so without offsets none of them can derive a row. It saves 2.1, 15.0 and 11.5 s of rule time on
+WhatsApp, Element and OsmAnd~, with identical indexes.
 
 S12, S24 and S25 together come to about 8 GB on `cash.p.terminal`, 20% of the peak. Only S12 was
 measured.
@@ -1016,8 +1048,8 @@ already exists as `--hybrid-context bounded:k` and `spill:k`; see S14.
 
 ### S36. Test the mode first in the context-free call rule
 
-**Applies to:** P31. **Status:** undecided, not tried; about −30 s of rule time on Element, −12.6 s
-on OsmAnd~, estimated from M12.
+**Applies to:** P31. **Status:** done, uncommitted. Measured in M13: −28.7 s of rule time on
+Element, −18.7 s on OsmAnd~, −0.7 s on WhatsApp, with identical indexes.
 
 Move `config(c), if c.hybrid_context == HybridContext::None` to the front of the body. The rule
 derives the same rows in every mode, and with a hybrid context it stops at the test. Rule 3.1's own
@@ -1030,6 +1062,14 @@ test could move to the front the same way, though there it only matters under `N
 Read `VmRSS` from `/proc/self/status` (or the resident pages in `/proc/self/statm`) in the Linux
 branch of `phys_footprint_mb`, so that the `[mem cp]` lines are comparable across the three
 platforms.
+
+### S38. Make the query independent of row order
+
+**Applies to:** P33. **Status:** undecided, not investigated.
+
+Find the step in the query whose output depends on the order it reads the index's rows, or sort
+the relations on load (or at save, which would also make index files comparable byte for byte).
+Until then, check an index change with a row-set comparison of the index files, not a results diff.
 
 # Measurements
 
@@ -1742,6 +1782,37 @@ the samples are too coarse to separate the transient (P30) from what scc 4 retur
   `result.try_save`, and 56 s of saving, against 4-13 s for both in M11. OsmAnd~ takes 92 s
   before and 61 s after.
 
+## M13. The quick wins: S36, the wildcard skip and S12 (2026-10-19)
+
+**Problems:** P6, P16, P17, P21, P23, P31, P33. **Solutions:** S12, S27, S36, S38.
+
+The three changes M12 pointed to, on M12's machine, apps and imports, under a 32 GB cap. Each app
+was indexed by the baseline binary (`4e30de1c`) and the new one back to back, alternating which
+went first, each into its own store. This machine's speed drifts: OsmAnd~'s scc 4 took 176 s on
+2026-10-13 and 224-236 s here, and rules a change does not touch move by up to 10% between the
+two runs of a pair. So the saving is read off the rules removed, which derived nothing.
+
+| App | Rule time | scc 4 | Wall | Peak | Removed rules |
+|---|---|---|---|---|---|
+| WhatsApp | 23.0 → 21.0 s | 235 it | 63.2 → 61.9 s | 2.70 → 2.70 GB | 2.8 s |
+| Element | 258.8 → 206.0 s | 301.3 → 245.8 s | 582.9 → 522.8 s | 15.40 → 15.40 GB | 44.5 s |
+| OsmAnd~ | 181.2 → 164.8 s | 236.1 → 224.2 s | 430.2 → 428.6 s | 11.45 → 11.43 GB | 31.3 s |
+
+- **S36 and the wildcard skip save what M12 predicted.** The `HybridContext::None` rule cost 0.7,
+  28.7 and 18.7 s, the wildcard rules 2.1, 15.0 and 11.5 s. On Element that is 17% of scc 4's rule
+  time. `cta_key_wild` (about 1 s on the large apps) was gated after this pair and checked on
+  WhatsApp alone. Neither change touches memory.
+- **S12, unkeyed by default, was tried first and reverted** (see S12): it saved 0.75-1.3 GB of peak
+  and cost 44 s of rule time on Element.
+- **The indexes are identical.** Every parquet file of each new index holds the same multiset of
+  rows as the baseline's, on all three apps (`idxcmp.py`), and WhatsApp's `--dump-index-graph`
+  dumps are byte-identical. The rows of five files come out in a different order on every run,
+  of either binary (P23).
+- **A results diff could not have shown this (P33).** The broad query differs in 0.3-0.5% of its
+  tainted-instruction results between the baseline and the new index, but by as much between two
+  baseline runs, and not at all between two queries of one index. `cargo test -p ctadl-ascent`
+  passes.
+
 # Data
 
 ## Experiment switches
@@ -1986,3 +2057,18 @@ On the Linux machine, under `/home/ubuntu/`:
   `scripts/memguard.ps1`'s `[memguard]` line with the cgroup's `memory.peak` and `oom_kill` count,
   and samples `memory.current` under `MEMGUARD_SAMPLE_MS`. `ladder.sh APK OUTDIR LIMIT_GB "T1 T2 ..."`
   does what `scripts/blowup-ladder.ps1` does.
+
+## M13: the quick wins
+
+On the Linux machine, under `/home/ubuntu/ctadl-rs/tmp/`:
+
+- `base/ctadl`: the baseline binary (`4e30de1c`). `ab/<app>-{base,new}/`: each run's store
+  (`state/`, a copy of M12's import), `index.log` and `broad.sarif`; `ab/whatsapp-final/` is the
+  build with `cta_key_wild` gated. `ab/ab.sh` runs the pairs and the queries.
+- `blowup-<app>/after.log`, `accuracy/<app>-after.sarif`: the first try, with S12 unkeyed by
+  default (OsmAnd~'s query is missing).
+- `accuracy/broad-model.json`: the broad query (10 source and 9 sink families: `Cursor`, `Intent`,
+  `SharedPreferences`, `TextView` ... into `Log`, streams, SQL, `URL`, `WebView`, `Runtime.exec`).
+  `accuracy/compare.py A B` diffs two SARIF result sets, `accuracy/idxcmp.py A B` two index
+  directories as row sets (needs `pyarrow`), `accuracy/ruled.py BEFORE AFTER` per-rule time and
+  row deltas, `accuracy/relsizes.py` final relation sizes.

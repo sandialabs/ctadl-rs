@@ -144,6 +144,9 @@ pub struct PathSet {
     /// rules ask, and a split costs a lookup instead of interning each prefix anew.
     splits: Map<Path, Splits>,
     len: usize,
+    /// Whether any path has an offset component. Without one, every wild split and every
+    /// trailing-offset key is empty, so the wild rules can be skipped whole.
+    has_offsets: bool,
 }
 
 impl PathSet {
@@ -152,6 +155,7 @@ impl PathSet {
             table: Map::default(),
             splits: Map::default(),
             len: 0,
+            has_offsets: false,
         };
         for p in paths {
             let h = hash_segs(normalized(p.iter().map(Seg::Sym)));
@@ -166,6 +170,7 @@ impl PathSet {
                     },
                 );
                 set.len += 1;
+                set.has_offsets |= p.iter().any(|c| matches!(c, PathSegment::Offset(_)));
             }
         }
         set
@@ -200,6 +205,12 @@ impl PathSet {
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// Whether any admissible path has an offset component; see the field.
+    #[inline]
+    pub fn has_offsets(&self) -> bool {
+        self.has_offsets
     }
 
     #[inline]
