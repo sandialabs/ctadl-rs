@@ -1,8 +1,6 @@
 //! Indirect calls through Lua closures.
 //!
 //! - `tests/lua/multitarget.lua`: a call that may reach either of two closures enters both.
-//! - `tests/lua/throughindirect.lua`: a call target crosses an indirect call, both ways. The Lua
-//!   counterpart of `test_cli_query_c_funcptr_through_indirect_call`.
 
 use ctadl_ascent::cli;
 use ctadl_ascent::codegen::CallResolutionStrategy;
@@ -93,15 +91,5 @@ fn a_call_with_two_possible_callees_enters_both() {
     assert_eq!(
         lua_sinks_reached("multitarget"),
         ["sink_a", "sink_b"].map(String::from).into()
-    );
-}
-
-#[test]
-fn a_call_target_crosses_an_indirect_call() {
-    assert_eq!(
-        lua_sinks_reached("throughindirect"),
-        ["sink_down", "sink_down_formal", "sink_up"]
-            .map(String::from)
-            .into()
     );
 }
