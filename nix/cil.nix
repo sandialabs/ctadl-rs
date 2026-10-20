@@ -49,6 +49,11 @@ let
       buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         pkgs.stdenv.cc.cc.lib
       ];
+      # On Linux, ilasm dlopens libcrypto for `-DET`, which autoPatchelf
+      # cannot see; put OpenSSL on its RPATH.
+      runtimeDependencies = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+        (pkgs.lib.getLib pkgs.openssl)
+      ];
       unpackPhase = ''
         unzip -q "$src"
       '';
