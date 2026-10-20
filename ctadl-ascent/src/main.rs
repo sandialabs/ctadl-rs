@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ctadl_ascent::cli;
 use ctadl_ascent::codegen::{CallPolicy, CallResolutionStrategy, DispatchOrder};
-use ctadl_ascent::index_engine::{ContextJoin, HybridContext, Parallelism};
+use ctadl_ascent::index_engine::{ContextJoin, HybridContext, Parallelism, Storage};
 use ctadl_ascent::project;
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use ctadl_ascent::report::ReportFormat;
@@ -450,6 +450,60 @@ pub struct IndexArgs {
     /// reports. Both engines evaluate the same rules and derive the same relations.
     #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
     pub jobs: Option<usize>,
+
+    /// Experimental: keep the largest relations in memory-mapped LSM files instead of in-memory
+    /// tries.
+    ///
+    /// The relations that dominate the index's memory (`locals`, `assign_like` and the
+    /// propagation relations built from them) then live mostly in run files under `$TMPDIR`,
+    /// read through the page cache, with only a write buffer per index in memory: a run that
+    /// would not fit in RAM can finish, at some cost in time. Runs the serial engine, so it
+    /// cannot be combined with `-j`.
+    #[arg(long, conflicts_with = "jobs")]
+    pub lsm: bool,
+
+    /// With `--lsm`, how many entries each index buffers in memory before writing them out as
+    /// a run file. Larger buffers mean fewer, larger runs (faster lookups) and more memory.
+    #[arg(long, requires = "lsm", value_name = "ENTRIES")]
+    pub lsm_memtable_limit: Option<usize>,
+
+    /// With `--lsm`, the most memory the LSM's write buffers may hold at once, all of them
+    /// together, e.g. `512M` or `4G` (powers of 1024; a bare number is bytes).
+    ///
+    /// Over the budget, a buffer that takes a new tuple is written out as a run file, so a
+    /// machine with little RAM can index a program that would otherwise not fit. The runs
+    /// themselves are read through the page cache, which the OS shrinks under pressure. The
+    /// budget does not cover the rest of the index: the relations kept in memory and the
+    /// program's facts still take what they take.
+    #[arg(long, requires = "lsm", value_name = "SIZE", value_parser = parse_size)]
+    pub lsm_memory_budget: Option<usize>,
+}
+
+/// Parses a size like `512M`, `1.5G` or `4096`: a number with an optional `K`, `M`, `G` or
+/// `T` suffix (powers of 1024, any case, optionally followed by `B` or `iB`).
+fn parse_size(s: &str) -> Result<usize, String> {
+    let s = s.trim();
+    let digits = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(s.len());
+    let (number, unit) = s.split_at(digits);
+    let number: f64 = number
+        .parse()
+        .map_err(|_| format!("`{s}` is not a size, like 512M or 4G"))?;
+    let unit = unit.trim().to_ascii_uppercase();
+    let unit = unit
+        .strip_suffix("IB")
+        .or_else(|| unit.strip_suffix('B'))
+        .unwrap_or(&unit);
+    let scale: u64 = match unit {
+        "" => 1,
+        "K" => 1 << 10,
+        "M" => 1 << 20,
+        "G" => 1 << 30,
+        "T" => 1 << 40,
+        _ => return Err(format!("unknown size unit in `{s}`; use K, M, G or T")),
+    };
+    Ok((number * scale as f64) as usize)
 }
 
 impl IndexArgs {
@@ -712,6 +766,9 @@ fn main() -> anyhow::Result<()> {
                 hybrid_context: HybridContext::default(),
                 context_join: ContextJoin::default(),
                 jobs: None,
+                lsm: false,
+                lsm_memtable_limit: None,
+                lsm_memory_budget: None,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -866,6 +923,9 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 hybrid_context: HybridContext::default(),
                 context_join: ContextJoin::default(),
                 jobs: None,
+                lsm: false,
+                lsm_memtable_limit: None,
+                lsm_memory_budget: None,
             };
             index_artifacts_to_store(&index_args)?;
         }
@@ -970,6 +1030,13 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
 ///
 /// If there ary any loading or writing errors
 fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
+    if args.lsm {
+        log::warn!("--lsm is experimental");
+    }
+    if let Some(limit) = args.lsm_memtable_limit {
+        lsm::ascent_provider::set_memtable_limit(limit);
+    }
+    lsm::set_memory_budget(args.lsm_memory_budget);
     // Determine the list of program names to index. If the user did not supply any, use the project name.
     let import_names: Vec<String> = if args.progs.is_empty() {
         vec![args.name.clone()]
@@ -997,6 +1064,11 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
             hybrid_context: args.hybrid_context,
             context_join: args.context_join,
             parallelism: Parallelism::from_jobs(args.jobs.unwrap_or(1)),
+            storage: if args.lsm {
+                Storage::Lsm
+            } else {
+                Storage::Memory
+            },
         },
     )?;
     Ok(())
@@ -1272,6 +1344,17 @@ fn file_looks_binary(path: &Path) -> bool {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn sizes_parse() {
+        assert_eq!(parse_size("4096"), Ok(4096));
+        assert_eq!(parse_size("512M"), Ok(512 << 20));
+        assert_eq!(parse_size("4g"), Ok(4 << 30));
+        assert_eq!(parse_size("1.5GiB"), Ok(3 << 29));
+        assert_eq!(parse_size("64 KB"), Ok(64 << 10));
+        assert!(parse_size("4X").is_err());
+        assert!(parse_size("lots").is_err());
+    }
 
     /// The two dump modes read different things -- one an import's IR, the other a project's
     /// index -- so asking for both at once is a usage error, not a silent pick.

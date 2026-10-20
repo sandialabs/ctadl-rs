@@ -441,6 +441,29 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(p13.clone());
 
+        // Address computations: `addr_of(f, dst, dp, src, k)` for an edge `dst.dp =
+        // src.(k·[n])` -- C's `&a[2]`, pcode's `PTRADD`. The address depends on the value at
+        // `src.k`, so a taint on that value reaches `dst.dp`, and a demand on the address
+        // reaches the value. The rules above carry only taint that lies under the offset.
+        relation addr_of(FunctionId, FlowVariable, Path, FlowVariable, Path);
+        addr_of(f, dst.clone(), dp.clone(), src.clone(), key) <--
+            assign_like(f, dst, dp, src, sp),
+            if let Some((key, _)) = sp.split_trailing_offset();
+
+        taint(infunc, ts, v1.clone(), p1.clone(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, v1.clone(), p1.clone(), infunc, v2.clone(), p2.clone(), a.direction) <--
+            taint(infunc, ts, v2, p2, a),
+            if a.direction == TaintDirection::Forward,
+            addr_of(infunc, v1, p1, v2, p2),
+            paths(p1.clone());
+
+        taint(infunc, ts, v1.clone(), p1.clone(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, v1.clone(), p1.clone(), infunc, v2.clone(), p2.clone(), a.direction) <--
+            taint(infunc, ts, v2, p2, a),
+            if a.direction == TaintDirection::Backward,
+            addr_of(infunc, v2, p2, v1, p1),
+            paths(p1.clone());
+
         // Formal-to-actual (Return in forward mode, Call in backward mode).
         taint(func_id, TaintState::Free, v1.clone(), p2.clone(), a.clone()),
         taint_edge_directed(if a.direction == TaintDirection::Forward { FlowEdge::Return(*site_id) } else { FlowEdge::Call(*site_id) }, func_id, v1.clone(), p2.clone(), infunc, v2.clone(), p2.clone(), a.direction) <--
