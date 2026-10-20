@@ -149,7 +149,8 @@ def terminate(r: Running, reason: str) -> None:
     for sig in (signal.SIGTERM, signal.SIGCONT):
         try:
             os.killpg(r.pid, sig)
-        except ProcessLookupError:
+        # macOS reports EPERM for a group whose members have all exited but not been reaped.
+        except (ProcessLookupError, PermissionError):
             return
 
 
