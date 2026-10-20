@@ -301,7 +301,7 @@ struct MergeCursor<K, V> {
 }
 
 /// A disk-backed LSM multi-map. Immutable runs are stored as files; memory only
-/// keeps the active memtable plus each run's key/offset index.
+/// keeps the active memtable plus a few fields per run.
 #[derive(Debug)]
 pub struct DiskLsmMultiMap<K, V> {
     memtable: BTreeMap<K, Vec<V>>,
@@ -352,8 +352,7 @@ where
     K: Ord + Clone + LsmDiskCodec,
     V: Clone + LsmDiskCodec,
 {
-    /// Creates a disk-backed LSM in a unique temporary directory. This is the
-    /// constructor used by the Ascent disk provider.
+    /// Creates a disk-backed LSM in a unique temporary directory.
     pub fn with_memtable_limit(memtable_limit: usize) -> Self {
         Self::with_memtable_limit_and_level_fanout(memtable_limit, DEFAULT_LEVEL_FANOUT)
     }
@@ -381,15 +380,14 @@ where
         }
     }
 
-    /// Opens or creates a disk-backed LSM in `dir`. Existing `.lsm` run files
-    /// are scanned to rebuild the in-memory key/offset indexes.
+    /// Opens or creates a disk-backed LSM in `dir`, picking up existing `.lsm`
+    /// run files by their footers.
     pub fn open(dir: impl Into<PathBuf>, memtable_limit: usize) -> io::Result<Self> {
         Self::open_with_level_fanout(dir, memtable_limit, DEFAULT_LEVEL_FANOUT)
     }
 
     /// Opens or creates a disk-backed LSM in `dir` with an explicit per-level
-    /// run fanout. Existing `.lsm` run files are scanned to rebuild the
-    /// in-memory key/offset indexes.
+    /// run fanout, picking up existing `.lsm` run files by their footers.
     pub fn open_with_level_fanout(
         dir: impl Into<PathBuf>,
         memtable_limit: usize,
@@ -474,8 +472,7 @@ where
             })
     }
 
-    /// Returns all grouped entries. This intentionally decodes payloads from
-    /// disk each time; it is used by Ascent's all-index iteration path.
+    /// Returns all grouped entries, decoding payloads from disk each time.
     pub fn iter_all_owned(&self) -> io::Result<Vec<(K, Vec<V>)>> {
         let mut all = Vec::new();
         all.extend(self.memtable.iter().map(|(k, v)| (k.clone(), v.clone())));
@@ -498,7 +495,7 @@ where
     /// references straight into the memtable rather than decoding owned values
     /// like [`get`](Self::get). It is therefore only a *complete* view while
     /// nothing has spilled to disk; callers that need run data too must use
-    /// `get`/`iter_all_owned` (or the future mmap-backed borrowing path).
+    /// `get`/`iter_all_owned`.
     pub fn memtable_get(&self, key: &K) -> Option<std::slice::Iter<'_, V>> {
         debug_assert!(
             self.levels.iter().all(|level| level.is_empty()),
@@ -537,8 +534,7 @@ where
     }
 
     /// Drops all entries, deleting any on-disk runs, while keeping the map usable
-    /// (and its backing directory, if already created). Used to empty an index in
-    /// place without reallocating a fresh disk-backed map.
+    /// (and its backing directory, if already created).
     pub fn clear(&mut self) {
         self.memtable.clear();
         for run in std::mem::take(&mut self.levels).into_iter().flatten() {

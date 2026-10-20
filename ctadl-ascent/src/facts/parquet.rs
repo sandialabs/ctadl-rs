@@ -173,7 +173,7 @@ impl Reader {
     }
 }
 
-/// Rows per row group of a written file, and so per batch held in memory while writing.
+/// Rows per row group of a written file.
 pub const ROWS_PER_GROUP: usize = 64 * 1024;
 
 pub struct Writer {

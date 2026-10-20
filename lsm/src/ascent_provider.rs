@@ -26,9 +26,8 @@
 //!
 //! For pointer-backed interned types the slot holds the raw pointer bits. This is
 //! only valid **within a single process run** (the run files are per-process temp
-//! files and the interner is never freed) and assumes a **little-endian** target
-//! so that the value's bytes occupy the low end of each slot. Both hold for the
-//! intended use (one `ctadl index` run on x86-64 / arm64).
+//! files, and the pointees must outlive them) and assumes a **little-endian**
+//! target so that the value's bytes occupy the low end of each slot.
 
 use std::iter::{Once, once};
 use std::marker::PhantomData;
@@ -48,10 +47,8 @@ use crate::mmap::{IterAllRefs, KeysIter, MmapLsmMultiMap, PrefixGroups, ValsRefs
 //
 // Every map this provider creates (a relation's store, and an index of its own
 // for each non-prefix index pattern, each in three versions: new/delta/total)
-// uses the same memtable limit: the map's in-memory write buffer flushes to a
-// run file once it holds this many entries. Callers pick the value (e.g.
-// derived from available RAM) via [`set_memtable_limit`]; this crate stays
-// policy-free.
+// uses the same memtable limit. Callers pick the value (e.g. derived from
+// available RAM) via [`set_memtable_limit`]; this crate stays policy-free.
 // ---------------------------------------------------------------------------
 
 /// Per-map memtable limit (entries) used until [`set_memtable_limit`] overrides it.
@@ -171,9 +168,7 @@ macro_rules! lsm_col {
     };
 }
 
-// Built-in column encodings for the integer types used by tests / primitive
-// columns. (Downstream crates implement `LsmCol` for their own column types via
-// the `lsm_col!` macro.)
+// Column encodings for the primitive integer types.
 lsm_col!(u8, 1);
 lsm_col!(u16, 1);
 lsm_col!(u32, 1);
@@ -621,12 +616,11 @@ impl<K: LsmTuple, V: LsmTuple, Rel> ToRelIndex<Rel> for LsmIndex<K, V> {
 // the full index itself) is therefore served by the one set, as a range read,
 // and only the other indices need storage of their own ([`LsmIndex`]).
 //
-// The protocol is Ascent's BYODS one, as in ctadl's in-memory tries: the set is
-// the relation's `ind_common`, and the view indices are zero-sized markers
-// whose read views borrow it. Tuples enter the set only through the full
-// index's write target, and only the `ind_common` merges; the views' write
-// targets and merges do nothing, since a second merge of the same data would
-// corrupt semi-naive evaluation.
+// The protocol is Ascent's BYODS one: the set is the relation's `ind_common`,
+// and the view indices are zero-sized markers whose read views borrow it.
+// Tuples enter the set only through the full index's write target, and only
+// the `ind_common` merges; the views' write targets and merges do nothing,
+// since a second merge of the same data would corrupt semi-naive evaluation.
 // ---------------------------------------------------------------------------
 
 /// A relation's tuples, once: the `ind_common` of an LSM-provided relation.
@@ -1205,11 +1199,7 @@ impl<T> std::ops::Index<usize> for SeedVec<T> {
 
 // By default the relation's own field stays an ordinary `Vec` (one in-RAM copy).
 // Ascent reads input facts from it (`update_indices`), pushes derived tuples into
-// it, and the user reads results from it. The memory win comes from the
-// *indices*: Ascent builds several per relation, each in three versions
-// (new/delta/total), and this provider keeps those in one `mmap`'d LSM store
-// (plus a map per non-prefix index) instead of in-RAM hash maps — so the data is
-// no longer duplicated across many heap structures.
+// it, and the user reads results from it.
 //
 // `#[ds(lsm::ascent_provider::provider: counting)]` drops that last copy too: the
 // field becomes a [`CountingVec`], which keeps only the row count, for a derived

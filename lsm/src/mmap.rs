@@ -85,8 +85,7 @@ pub fn memory_peak() -> usize {
 
 /// Borrowing value iterator over a list of slices, one per source (the memtable
 /// plus each run that holds the key). The list is held inline up to a few
-/// sources, so a lookup does not allocate. Cheap to clone, which the Ascent
-/// `Ind*ValsIter` associated types require.
+/// sources, so a lookup does not allocate. Cheap to clone.
 #[derive(Clone)]
 pub struct ValsRefs<'a, V> {
     slices: SmallVec<[&'a [V]; 4]>,
@@ -848,7 +847,7 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
 
     /// The keys that begin with the words of `prefix`, from the memtable and
     /// every run, in no particular order. `K` must be made of `u64` words, whose
-    /// lexicographic order is `K`'s own, as the Ascent provider's keys are.
+    /// lexicographic order is `K`'s own.
     pub fn keys_with_prefix(&self, prefix: &[u64]) -> KeysIter<'_, K, V> {
         let before = |k: &K| cmp_prefix(words(k), prefix).is_lt();
         let matches = |k: &K| cmp_prefix(words(k), prefix).is_eq();
@@ -1105,8 +1104,7 @@ fn cmp_prefix(key: &[u64], prefix: &[u64]) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
-/// Keys out of the memtable and out of a list of run slices. Cheap to clone,
-/// which the Ascent `Ind*ValsIter` associated types require.
+/// Keys out of the memtable and out of a list of run slices. Cheap to clone.
 pub struct KeysIter<'a, K, V> {
     memtable: &'a Memtable<K, V>,
     mem: MemKeys<'a>,
@@ -1396,7 +1394,7 @@ mod tests {
     }
 
     /// Prefix reads see every key with the prefix, whether in a run or the
-    /// memtable, including keys added after an earlier read sorted it.
+    /// memtable, including keys added after an earlier read.
     #[test]
     fn keys_with_prefix_across_runs_and_memtable() {
         for prefix_lens in [&[][..], &[8, 16]] {
