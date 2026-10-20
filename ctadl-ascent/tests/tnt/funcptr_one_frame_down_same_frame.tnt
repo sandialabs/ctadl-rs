@@ -3,8 +3,8 @@
 // the call from a third function instead.
 //
 // The sinks in `sink_strips` and `sink_tiles` must both be reached. `put_never` is installed in
-// the sibling field `put`, which is never called, so `sink_clean` must stay silent. Each sink is
-// one call below its target so that reaching it means entering the target.
+// the sibling field `put`, which is never called, so `sink_clean` must stay silent. Sinks sit one
+// call below their targets, as in `funcptr_two_targets.tnt`.
 
 def sink_strips(v) {
 start:

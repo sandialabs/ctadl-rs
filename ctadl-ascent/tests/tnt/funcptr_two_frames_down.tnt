@@ -4,8 +4,8 @@
 // The sinks in `sink_strips` and `sink_tiles` must both be reached. `begin` only forwards the
 // object and makes no indirect call of its own; the call-target tag climbs through it to the
 // frame that makes the call. `put_never` is installed in the sibling field `put`, which is
-// never called, so `sink_clean` must stay silent. As in `funcptr_two_targets.tnt`, each sink
-// is one call below its target so that reaching it means entering the target.
+// never called, so `sink_clean` must stay silent. Sinks sit one call below their targets, as in
+// `funcptr_two_targets.tnt`.
 
 def sink_strips(v) {
 start:
