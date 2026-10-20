@@ -22,7 +22,42 @@ LIMIT=$(( LIMIT_GIB * 1024 * 1024 * 1024 ))
 PID=$!
 
 is_uint() { case "$1" in ''|*[!0-9]*) return 1;; *) return 0;; esac; }
-fpbytes() { footprint -p "$1" -f bytes 2>/dev/null | awk '/phys_footprint:/{print $2; exit}'; }
+
+# `footprint -p` can block indefinitely -- while macOS waits for someone at the console to
+# authorize developer-tools access to other processes -- which would leave the guard, and
+# whoever waits on it, hung long after the command is done. Each reading gets FP_TIMEOUT
+# seconds; once one runs out, the rest of the run reads the resident size from ps instead,
+# which undercounts compressed memory but keeps the cap in force.
+FP_TIMEOUT=30
+FP_OUT=$(mktemp "${TMPDIR:-/tmp}/memguard.XXXXXX")
+FP_BLIND="$FP_OUT.blind"  # a file, since readings are taken in subshells
+trap 'rm -f "$FP_OUT" "$FP_BLIND"' EXIT
+rssbytes() {
+  local kb=$(ps -o rss= -p "$1" 2>/dev/null | tr -d ' ')
+  is_uint "$kb" && echo $(( kb * 1024 ))
+}
+fpbytes() {
+  if [ -e "$FP_BLIND" ]; then
+    rssbytes "$1"
+    return
+  fi
+  footprint -p "$1" -f bytes >"$FP_OUT" 2>/dev/null &
+  local fp=$! waited=0
+  while kill -0 $fp 2>/dev/null; do
+    if (( waited >= FP_TIMEOUT * 10 )); then
+      kill -9 $fp 2>/dev/null
+      wait $fp 2>/dev/null
+      touch "$FP_BLIND"
+      echo "memguard: footprint gave no reading in ${FP_TIMEOUT}s; using ps rss from now on" >&2
+      rssbytes "$1"
+      return
+    fi
+    sleep 0.1
+    waited=$(( waited + 1 ))
+  done
+  wait $fp 2>/dev/null
+  awk '/phys_footprint:/{print $2; exit}' "$FP_OUT"
+}
 
 # The command may be a wrapper — `/usr/bin/time -l ./analysis`, a `sh -c`, a
 # cargo runner — whose own footprint is a megabyte while the process doing the
