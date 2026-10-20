@@ -12,10 +12,11 @@ Two kinds of work, never mixed:
 Tiers follow the activity gate:
 
 * p tier (normal priority) only after the machine has been quiet for `required_quiet_s`.
-* When the user comes back during p-tier work: an index/query pass unit is killed and requeued
-  (at most 30 minutes lost); an import, a build or a sweep unit is demoted in place. A pass
-  unit killed `max_activity_kills` times runs on the e tier from then on.
-* e-tier work is promoted when the machine goes quiet; its wall time is then not clean.
+* When the user comes back, every run started on the p tier -- builds, imports, sweep units
+  alike -- is killed and requeued, so the cores are theirs at once. A unit killed
+  `max_activity_kills` times runs on the e tier from then on.
+* e-tier work is promoted when the machine goes quiet, and demoted again when the user comes
+  back; its wall time is then not clean.
 * Memory pressure: exclusive work is stopped (SIGSTOP) until pressure is normal; sweep workers
   are shed youngest first (killed and requeued) down to one.
 
@@ -234,7 +235,8 @@ class Daemon:
                 n = suites.enqueue_pass(self.cfg, self.inputs, self.conn, sha)
                 self.log("build-ok", f"{sha[:10]}; queued {n} units")
             else:
-                status = "pending" if a.run.kill_reason == "daemon stopping" else "failed"
+                killed = a.run.kill_reason not in (None, "timeout")
+                status = "pending" if killed else "failed"
                 self.conn.execute("UPDATE commits SET build_status=?, build_log=? WHERE sha=?",
                                   (status, str(log), sha))
                 self.log("build-failed", f"{sha[:10]} rc={rc} {a.run.kill_reason or ''} log={log}")
@@ -243,6 +245,8 @@ class Daemon:
             shutil.copy2(self.root / "target-bench" / "release" / "xtask", out)
             self.xtask = str(out)
             self.log("build-ok", f"xtask {sha[:10]}")
+        elif a.run.kill_reason not in (None, "timeout"):
+            self.log("build-killed", f"xtask: {a.run.kill_reason}")
         else:
             # Only TaintBench scoring needs xtask; keep measuring and try again in an hour.
             self.xtask_retry_at = time.time() + 3600
@@ -476,17 +480,30 @@ class Daemon:
                 a.paused = False
                 self.log("continue", self.describe(a))
             return
-        if r.tier == "p" and user_here:
-            if a.kind == "build" or a.sweep or a.unit["phase"] == "import":
-                proc.demote(r)
-                if not a.sweep:
-                    self.log("demote", self.describe(a))
-            else:
-                proc.kill(r, "user active: " + "; ".join(snap.busy_reasons(self.gate)))
-        elif r.tier == "e" and p_ok and not self.forced_e(a):
+        if r.tier == "e" and p_ok and not user_here and not self.forced_e(a):
             proc.promote(r)
             if not a.sweep:
                 self.log("promote", self.describe(a))
+
+    def yield_cores(self, snap) -> None:
+        """The user is here: kill and requeue everything started on the p tier, all at once
+        rather than one by one, and put promoted e-tier work back."""
+        reason = "user active: " + "; ".join(snap.busy_reasons(self.gate))
+        victims = []
+        for a in self.active:
+            r = a.run
+            if r.tier != "p" or r.kill_reason is not None:
+                continue
+            if r.start_tier == "e":
+                proc.demote(r)
+                self.log("demote", self.describe(a))
+            else:
+                proc.terminate(r, reason)
+                victims.append(a)
+        for a in victims:
+            proc.kill(a.run, reason)  # reaped and requeued on the next tick
+        if victims:
+            self.log("yield", f"killed {len(victims)} p-tier run(s): {reason}")
 
     def relieve_pressure(self, snap) -> None:
         if snap.pressure == 1:
@@ -578,6 +595,8 @@ class Daemon:
                     self.poll()
                 if time.time() >= self.next_gc:
                     self.gc_stores()
+                if user_here:
+                    self.yield_cores(snap)
                 for a in list(self.active):
                     self.supervise(a, snap, user_here, p_ok)
                 self.relieve_pressure(snap)

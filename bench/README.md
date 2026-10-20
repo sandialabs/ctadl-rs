@@ -54,8 +54,9 @@ daemon, and foreign CPU use averaged over a minute. System daemons our own work 
 * **e tier**: `taskpolicy -b`, i.e. the efficiency cores and throttled I/O. Instruction
   counts, cycles and peak memory are recorded on either tier; instruction counts agree across
   tiers to well under 1%.
-* User returns during p-tier work: index/query units are killed and requeued; imports, builds
-  and sweep units are demoted in place. After 3 such kills a unit runs on the e tier.
+* User returns during p-tier work: every run started on the p tier (builds, imports and sweep
+  units included) is killed and requeued, so the cores are free at once; e-tier work that was
+  promoted is demoted back. After 3 such kills a unit runs on the e tier.
 * Memory pressure: sweep workers are shed (youngest first); other work is paused.
 * Commit passes and builds run alone; the sweep uses 12 workers when quiet, 3 otherwise.
 * Every benchmark run is capped at 16 GiB by memguard (builds at 48 GiB); a run over the cap

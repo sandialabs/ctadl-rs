@@ -143,13 +143,20 @@ def cont(r: Running) -> None:
     r.notes.append(f"continued at {time.time():.0f}")
 
 
-def kill(r: Running, reason: str) -> None:
+def terminate(r: Running, reason: str) -> None:
+    """Ask the run to exit, without waiting; `kill` finishes the job."""
     r.kill_reason = reason
     for sig in (signal.SIGTERM, signal.SIGCONT):
         try:
             os.killpg(r.pid, sig)
         except ProcessLookupError:
             return
+
+
+def kill(r: Running, reason: str) -> None:
+    terminate(r, reason)
+    if r.popen.poll() is not None:
+        return
     # Anything that escaped the process group (none should) goes by tree.
     try:
         r.popen.wait(timeout=20)
