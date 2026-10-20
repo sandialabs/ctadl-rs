@@ -1054,8 +1054,8 @@ impl Visitor for CodegenVisitor<'_> {
                 let mut seen_phi = BTreeSet::new();
                 for (_, op) in operands {
                     let src = FlowVertex(self.trans_variable_ref(op), fx::Path::empty());
-                    if seen_phi.insert(src.clone()) {
-                        self.facts.assign.push((site, dst.clone(), src));
+                    if seen_phi.insert(src) {
+                        self.facts.assign.push((site, dst, src));
                     }
                 }
             }
@@ -1378,22 +1378,18 @@ impl Visitor for CodegenVisitor<'_> {
                     let target = self.source_info.sites.get_or_add_function(target);
                     self.facts.call_target_assign.push((
                         site,
-                        dest.clone(),
+                        dest,
                         fx::CallTargetObject::FunctionId(target),
                     ));
                     self.funcptr_targets.insert(target);
                 }
                 if let Some(object) = call_target_object(value) {
-                    self.facts
-                        .call_target_assign
-                        .push((site, dest.clone(), object));
+                    self.facts.call_target_assign.push((site, dest, object));
                 }
                 if let Exp::Str(value) = value {
-                    self.facts.const_str_assign.push((
-                        site,
-                        dest.clone(),
-                        Str::from(value.clone()),
-                    ));
+                    self.facts
+                        .const_str_assign
+                        .push((site, dest, Str::from(value.clone())));
                 }
                 if let Some(value) = self.trans_exp(value) {
                     self.facts.assign.push((site, dest, value));
@@ -1426,7 +1422,7 @@ impl Visitor for CodegenVisitor<'_> {
                     let target = self.source_info.sites.get_or_add_function(target);
                     self.facts.call_target_assign.push((
                         site,
-                        dest_vertex.clone(),
+                        dest_vertex,
                         fx::CallTargetObject::FunctionId(target),
                     ));
                     self.funcptr_targets.insert(target);
@@ -1434,7 +1430,7 @@ impl Visitor for CodegenVisitor<'_> {
                 if let Some(object) = call_target_object(value) {
                     self.facts
                         .call_target_assign
-                        .push((site, dest_vertex.clone(), object));
+                        .push((site, dest_vertex, object));
                 }
                 // whole-aggregate copy: dest <- source
                 self.facts.assign.push((

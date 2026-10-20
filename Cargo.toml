@@ -18,6 +18,8 @@ members = [
     "readers/cil-reader/crates/cil-reader",
     "readers/cil-reader/crates/cil-dump",
     "immortal",
+    "lsm",
+    "lsm/crates/ascent-tc-lsm-bench",
     "tailshare",
     "trie",
     "xtask",

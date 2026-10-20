@@ -71,6 +71,17 @@ pub mod path_group;
 pub mod path_set;
 pub mod source_info;
 
+// Column encodings for the relations that `Storage::Lsm` moves onto the `lsm` provider. Each
+// column is stored as its raw bits in 8-byte slots. All of them are `Copy`, fixed-width and free
+// of padding; `Path` is an interned `&'static` pointer whose interner is never freed, so its bits
+// stay valid for the whole process, which is as long as the provider's run files live.
+lsm::lsm_col!(FunctionId, 1);
+lsm::lsm_col!(FlowVariable, 1);
+lsm::lsm_col!(Path, 1);
+lsm::lsm_col!(FormalIndex, 1);
+lsm::lsm_col!(PackedInsnSiteId, 1);
+lsm::lsm_col!(FlowVertex, 2);
+
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
 pub type FunctionSummary = (FunctionId, FormalIndex, Path, FormalIndex, Path);
@@ -320,6 +331,8 @@ pub struct IndexConfig {
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
+    /// Where the large relations are stored. In memory by default.
+    pub storage: Storage,
     /// When set, every program path `p` also admits `p.deref`, as if a loaded summary mentioned
     /// `.deref`.
     pub deref_paths: bool,
@@ -332,6 +345,7 @@ impl Default for IndexConfig {
             hybrid_context: HybridContext::default(),
             context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
+            storage: Storage::Memory,
             deref_paths: false,
         }
     }
@@ -483,6 +497,19 @@ impl Parallelism {
             _ => Parallelism::Serial,
         }
     }
+}
+
+/// Where the index engine keeps the relations that dominate its memory: `locals`, `assign_like`
+/// and the three propagation relations that share their stores (`locals_key`, `edge_split`,
+/// `ext_dst`). Every other relation is an ordinary in-memory Ascent relation either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum Storage {
+    /// The in-memory tries of [`locals_trie`] and [`assign_like_trie`].
+    #[default]
+    Memory,
+    /// The memory-mapped LSM maps of the `lsm` crate, which hold each index of a relation in
+    /// run files under `$TMPDIR` and only a write buffer in memory. Serial engine only.
+    Lsm,
 }
 
 impl std::fmt::Display for Parallelism {
@@ -958,6 +985,41 @@ impl LocalsProbe
     fn has(&self, f: &FunctionId, v: &FlowVariable, p: &Path, a: &FormalIndex, p4: &Path) -> bool {
         self.contains(f, v, p, a, p4)
     }
+}
+
+impl<const P: u32> LocalsProbe
+    for lsm::ascent_provider::LsmStore<(FunctionId, FlowVariable, Path, FormalIndex, Path), P>
+{
+    fn has(&self, f: &FunctionId, v: &FlowVariable, p: &Path, a: &FormalIndex, p4: &Path) -> bool {
+        self.contains(&(*f, *v, *p, *a, *p4))
+    }
+}
+
+/// What `run_engine!` does with the stores of the large relations, which differ by [`Storage`]:
+/// the trie engines keep each in one shared store (its `ind_common`), and the LSM engine in
+/// Ascent's own index fields.
+trait EngineStores {
+    /// Seeds `assign_like` with the program's assignments, before the run.
+    fn seed_assign_like(&mut self, rows: Vec<AssignLikeRow>);
+    /// Takes `assign_like`'s rows out, after the run.
+    fn take_assign_like(&mut self) -> Vec<AssignLikeRow>;
+    /// Row counts of the store-backed relations.
+    fn store_sizes(&self) -> StoreSizes;
+    /// One line per store about the heap it holds, where the storage reports one.
+    fn heap_reports(&self) -> Vec<String>;
+    /// The distinct `(f, v)` that `locals` reaches.
+    fn num_reached_variables(&self) -> usize;
+    fn locals_probe(&self) -> &dyn LocalsProbe;
+}
+
+type AssignLikeRow = (FunctionId, FlowVariable, Path, FlowVariable, Path);
+
+struct StoreSizes {
+    assign_like: usize,
+    locals: usize,
+    edge_split: usize,
+    locals_key: usize,
+    ext_dst: usize,
 }
 
 fn dropped_compositions(
@@ -2081,6 +2143,7 @@ pub fn taint_index_with_config(
     id_map: Option<&IdMap>,
 ) -> IndexResult {
     let parallelism = config.parallelism;
+    let storage = config.storage;
     // The widening bound is process-global (sets are interned process-wide); one kind of set
     // per run.
     decision::set_widen_bound(match config.hybrid_context {
@@ -2252,7 +2315,7 @@ pub fn taint_index_with_config(
         paths.len(),
         phys_footprint_mb()
     );
-    log::info!("index engine: {parallelism}");
+    log::info!("index engine: {parallelism}, {storage:?} storage");
 
     ascent! {
         #![measure_rule_times]
@@ -2265,6 +2328,127 @@ pub fn taint_index_with_config(
         #![generate_run_timeout]
         struct ParIndexProg;
         include_source!(index_rules);
+    }
+    // `Storage::Lsm`: the same rules, with the store-backed relations redeclared onto the LSM
+    // provider (Ascent keeps a relation's last declaration). None keeps its rows in its field:
+    // `assign_like` is seeded through it and hands the seed to its indices once, and every one
+    // is read back, if at all, from its store.
+    ascent! {
+        #![measure_rule_times]
+        #![generate_run_timeout]
+        struct LsmIndexProg;
+        include_source!(index_rules);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
+        #[ds(lsm::ascent_provider::provider: seeded)]
+        relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation locals_key(FunctionId, FlowVariable, Path, Path, Path);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation edge_split(FunctionId, FlowVariable, Path, Path, (FlowVariable, Path));
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation ext_dst(FunctionId, FlowVariable, Path, FlowVariable, Path);
+        // The next largest: the derived relations that reach hundreds of thousands of rows,
+        // and the inputs that do. The rest stay in memory, where a relation of a few thousand
+        // rows costs less than the LSM's per-index maps.
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation reach_vp(FunctionId, FlowVariable, Path);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation edge_split_wild(FunctionId, FlowVariable, Path, Path, FlowVariable, Path);
+        #[ds(lsm::ascent_provider::provider: counting)]
+        relation locals_key_wild(FunctionId, FlowVariable, Path, Path, Path);
+        #[ds(lsm::ascent_provider::provider: seeded)]
+        relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex);
+        #[ds(lsm::ascent_provider::provider: seeded)]
+        relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
+        #[ds(lsm::ascent_provider::provider: seeded)]
+        relation prog_store(FunctionId, FlowVariable, Path);
+    }
+
+    macro_rules! trie_stores {
+        ($prog_ty:ty) => {
+            impl EngineStores for $prog_ty {
+                fn seed_assign_like(&mut self, rows: Vec<AssignLikeRow>) {
+                    // Through the `FromRows` trait rather than naming a store type: the field's
+                    // type selects the serial `AssignTrie` or the concurrent `CAssignTrie` impl.
+                    self.__assign_like_ind_common = FromRows::from_rows(rows);
+                }
+                fn take_assign_like(&mut self) -> Vec<AssignLikeRow> {
+                    // The physical relation is a `SeedVec` holding no tuples. Take the store by
+                    // value so it drains (frees) as the output Vec fills: this reconstruction is
+                    // the run's peak, so a draining rebuild keeps the transient to ~1x.
+                    std::mem::take(&mut self.__assign_like_ind_common).into_vec()
+                }
+                fn store_sizes(&self) -> StoreSizes {
+                    StoreSizes {
+                        assign_like: self.__assign_like_ind_common.len(),
+                        locals: self.__locals_ind_common.len(),
+                        edge_split: self.__edge_split_ind_common.len(),
+                        locals_key: self.__locals_key_ind_common.len(),
+                        ext_dst: self.__ext_dst_ind_common.len(),
+                    }
+                }
+                fn heap_reports(&self) -> Vec<String> {
+                    // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd
+                    // vs inv.
+                    vec![
+                        self.__locals_ind_common.heap_report().to_string(),
+                        self.__assign_like_ind_common.heap_report().to_string(),
+                    ]
+                }
+                fn num_reached_variables(&self) -> usize {
+                    // The store's `(F, V)` outer keys: the same (func, var) key `num_variables`
+                    // counts, so the two are directly comparable.
+                    self.__locals_ind_common.num_reached_variables()
+                }
+                fn locals_probe(&self) -> &dyn LocalsProbe {
+                    &self.__locals_ind_common
+                }
+            }
+        };
+    }
+    trie_stores!(IndexProg);
+    trie_stores!(ParIndexProg);
+
+    impl EngineStores for LsmIndexProg {
+        fn seed_assign_like(&mut self, mut rows: Vec<AssignLikeRow>) {
+            // Ascent returns a seeded field as given, duplicates included, where the trie's
+            // `FromRows` keeps one of each.
+            rows.sort_unstable();
+            rows.dedup();
+            self.assign_like = rows.into();
+        }
+        fn take_assign_like(&mut self) -> Vec<AssignLikeRow> {
+            let rows = self
+                .__assign_like_ind_common
+                .iter()
+                .map(|(f, vd, pd, vs, ps)| (*f, *vd, *pd, *vs, *ps))
+                .collect();
+            self.__assign_like_ind_common = Default::default();
+            rows
+        }
+        fn store_sizes(&self) -> StoreSizes {
+            StoreSizes {
+                assign_like: self.assign_like.len(),
+                locals: self.locals.len(),
+                edge_split: self.edge_split.len(),
+                locals_key: self.locals_key.len(),
+                ext_dst: self.ext_dst.len(),
+            }
+        }
+        fn heap_reports(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn num_reached_variables(&self) -> usize {
+            let mut reached = hashbrown::HashSet::new();
+            for (f, v, ..) in self.__locals_ind_common.iter() {
+                reached.insert((*f, *v));
+            }
+            reached.len()
+        }
+        fn locals_probe(&self) -> &dyn LocalsProbe {
+            &self.__locals_ind_common
+        }
     }
 
     // Optional wall-clock cap on the fixpoint, gated by env var so normal runs are unaffected
@@ -2328,10 +2512,7 @@ pub fn taint_index_with_config(
         prog.intent_filter = facts.intent_filter.into_iter().collect();
         prog.intent_component = facts.intent_component.into_iter().collect();
         prog.config = config_val.into_iter().collect();
-        // Seeding goes through the `FromRows` trait rather than naming a store type, so this line is
-        // the same under `ascent!` and `ascent_par!`: the field's type selects the serial `AssignTrie`
-        // or the concurrent `CAssignTrie` impl.
-        prog.__assign_like_ind_common = FromRows::from_rows(assign_like);
+        prog.seed_assign_like(assign_like);
         prog.prog_store = prog_store.into_iter().collect();
         prog.alias_of_formal = alias_of_formal.into_iter().collect();
         prog.paths = paths.iter().cloned().collect();
@@ -2363,13 +2544,14 @@ pub fn taint_index_with_config(
             "[relsizes] index relation sizes:\n{}",
             prog.relation_sizes_summary()
         );
+        let sizes = prog.store_sizes();
         log::debug!(
             "[relsizes] byods-backed: assign_like size: {}\nlocals size: {}\nedge_split size: {}\nlocals_key size: {}\next_dst size: {}",
-            prog.__assign_like_ind_common.len(),
-            prog.__locals_ind_common.len(),
-            prog.__edge_split_ind_common.len(),
-            prog.__locals_key_ind_common.len(),
-            prog.__ext_dst_ind_common.len()
+            sizes.assign_like,
+            sizes.locals,
+            sizes.edge_split,
+            sizes.locals_key,
+            sizes.ext_dst
         );
         log::debug!(
             "[mem cp] after relation census (nothing drained yet): {:.1} MB",
@@ -2379,18 +2561,18 @@ pub fn taint_index_with_config(
             "propagation relations: reach_vp={} locals_key={} locals_key_wild={} locals_wild={} \
              assign_wild={} edge_split={} edge_split_wild={} ext_dst={} ext_fml={}",
             prog.reach_vp.len(),
-            prog.__locals_key_ind_common.len(),
+            sizes.locals_key,
             prog.locals_key_wild.len(),
             prog.locals_wild.len(),
             prog.assign_wild.len(),
-            prog.__edge_split_ind_common.len(),
+            sizes.edge_split,
             prog.edge_split_wild.len(),
-            prog.__ext_dst_ind_common.len(),
+            sizes.ext_dst,
             prog.ext_fml.len()
         );
-        // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
-        log::debug!("{}", prog.__locals_ind_common.heap_report());
-        log::debug!("{}", prog.__assign_like_ind_common.heap_report());
+        for report in prog.heap_reports() {
+            log::debug!("{report}");
+        }
         // The formatter reads these through the `Rows` trait, so this call is the same under `ascent!`
         // (plain `Vec`s) and `ascent_par!` (`boxcar::Vec`s, with lattices as
         // `boxcar::Vec<RwLock<..>>`): each field's own type selects the impl, and nothing is copied in
@@ -2408,17 +2590,8 @@ pub fn taint_index_with_config(
             }
         );
 
-        // `assign_like` is stored in the BYODS trie (`__assign_like_ind_common`); its physical
-        // relation is a `SeedVec` holding no tuples. Reconstruct the saved output Vec from the store,
-        // and take the row count from the store rather than the (empty) physical relation. Take the
-        // store by value so it drains (frees) as the output Vec fills — this reconstruction is the
-        // run's peak, so a draining rebuild keeps the transient to ~1×.
-        let assign_like_out = std::mem::take(&mut prog.__assign_like_ind_common).into_vec();
-
-        // `locals` lives in the trie (`__locals_ind_common`); its physical relation holds no
-        // tuples, so the distinct subjects come from the store's `(F, V)` outer keys — the same
-        // (func, var) key `num_variables` counts, so the two are directly comparable.
-        let reached_variables = prog.__locals_ind_common.num_reached_variables();
+        let assign_like_out = prog.take_assign_like();
+        let reached_variables = prog.num_reached_variables();
 
         let stats = IndexStats {
             initial_assign,
@@ -2451,7 +2624,7 @@ pub fn taint_index_with_config(
                 dropped_compositions(
                     &prog.context_assign,
                     &prog.context_locals,
-                    &prog.__locals_ind_common,
+                    prog.locals_probe(),
                     &path_set.0,
                     id_map
                 )
@@ -2474,9 +2647,25 @@ pub fn taint_index_with_config(
         }};
     }
 
-    let result = match parallelism {
-        Parallelism::Serial => run_engine!(IndexProg),
-        Parallelism::Threads(threads) => {
+    let result = match (storage, parallelism) {
+        (Storage::Lsm, parallelism) => {
+            if parallelism != Parallelism::Serial {
+                log::warn!("the LSM storage runs the serial engine only; ignoring {parallelism}");
+            }
+            let result = run_engine!(LsmIndexProg);
+            let mib = |bytes: usize| bytes as f64 / f64::from(1 << 20);
+            let budget = lsm::memory_budget().map_or_else(
+                || "no budget".to_string(),
+                |b| format!("budget {:.1} MiB", mib(b)),
+            );
+            log::info!(
+                "LSM write buffers peaked at {:.1} MiB ({budget})",
+                mib(lsm::memory_peak())
+            );
+            result
+        }
+        (Storage::Memory, Parallelism::Serial) => run_engine!(IndexProg),
+        (Storage::Memory, Parallelism::Threads(threads)) => {
             // A dedicated pool rather than rayon's global one, so `-j N` means exactly N index
             // threads no matter what else in the process has touched rayon. The parallel program
             // runs its rules with `rayon::scope` / `par_iter`, which pick up the pool they are
@@ -2625,9 +2814,46 @@ mod tests {
             id_map,
         );
 
+        // The fixture only proves anything if the hybrid machinery actually ran.
+        assert!(
+            serial.stats.hybrid_resolvent > 0,
+            "fixture derived no resolvents"
+        );
+        assert!(
+            serial.stats.hybrid_context_assign > 0,
+            "fixture derived no context_assign rows"
+        );
+        assert_same_index(serial, parallel);
+    }
+
+    /// The LSM storage holds the same relations as the tries, so the engine must derive the
+    /// same index. A tiny write buffer makes every index spill into several runs and merge them.
+    #[test_log::test]
+    fn lsm_storage_matches_memory() {
+        let (program, _) = program_from_string(SRC);
+        let (facts, source_info) = index_program(program);
+        let id_map = Some(&source_info.sites);
+
+        let config = IndexConfig::default();
+        let memory = taint_index_with_config(facts.clone(), config.clone(), id_map);
+        lsm::ascent_provider::set_memtable_limit(4);
+        let on_lsm = taint_index_with_config(
+            facts,
+            IndexConfig {
+                storage: Storage::Lsm,
+                ..config
+            },
+            id_map,
+        );
+        lsm::ascent_provider::set_memtable_limit(lsm::ascent_provider::DEFAULT_MEMTABLE_LIMIT);
+        assert_same_index(memory, on_lsm);
+    }
+
+    /// Asserts two runs of the same facts derived the same index.
+    fn assert_same_index(a: IndexResult, b: IndexResult) {
         // The internal relations first: a count that differs points straight at the rule group
         // that diverged, which the output diff below would only show as a symptom.
-        let (s, p) = (&serial.stats, &parallel.stats);
+        let (s, p) = (&a.stats, &b.stats);
         assert_eq!(s.final_locals, p.final_locals, "locals");
         assert_eq!(
             s.reached_variables, p.reached_variables,
@@ -2650,14 +2876,7 @@ mod tests {
             s.hybrid_context_summary, p.hybrid_context_summary,
             "context_summary"
         );
-        // The fixture only proves anything if the hybrid machinery actually ran.
-        assert!(s.hybrid_resolvent > 0, "fixture derived no resolvents");
-        assert!(
-            s.hybrid_context_assign > 0,
-            "fixture derived no context_assign rows"
-        );
-
-        assert_eq!(canonical(serial), canonical(parallel));
+        assert_eq!(canonical(a), canonical(b));
     }
 
     /// The three context joins are three ways to pair the same two relations, so they must

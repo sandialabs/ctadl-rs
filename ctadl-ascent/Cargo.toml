@@ -43,6 +43,7 @@ lazy_static = "1"
 libc = "0.2"
 log = "0.4"
 log-once = "0.4"
+lsm = { path = "../lsm" }
 memmap = "0.7"
 object = { version = "0.37", default-features = false, features = ["read_core", "elf", "std"] }
 packed_struct = "0.10"
