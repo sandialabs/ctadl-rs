@@ -66,7 +66,8 @@ daemon, and foreign CPU use averaged over a minute. System daemons our own work 
   machine to itself; other runs record `wall_shared_s`, which is never compared. Instruction
   counts are what regressions are judged on.
 * Every benchmark run is capped at 16 GiB by memguard (builds at 48 GiB); a run over the cap
-  is killed and recorded as `oom`.
+  is killed and recorded as `oom`. A unit that ran out of memory on its last commit runs at the end of
+  the pass.
 
 ## Index memory budget
 

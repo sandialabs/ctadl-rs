@@ -267,8 +267,9 @@ class Daemon:
 
     def pass_candidates(self) -> list:
         """Pass units ready to run, in the order to run them: the pass in progress before
-        another, then the newest built commit, each in its own order. A unit whose prerequisite
-        did not succeed is skipped here."""
+        another, then the newest built commit, each in its own order except that a unit that
+        ran out of memory last time goes last -- it most likely will again, and it holds its
+        whole cap while it does. A unit whose prerequisite did not succeed is skipped here."""
         while True:
             rows = self.conn.execute(
                 "SELECT u.*, a.status AS after_status, c.committed_at FROM units u "
@@ -284,7 +285,10 @@ class Daemon:
         started = {r["sha"] for r in self.conn.execute(
             "SELECT DISTINCT sha FROM units WHERE suite!=? AND status IN ('done','failed','skipped')",
             (SWEEP,))}
-        return sorted(rows, key=lambda u: (u["sha"] not in started, -u["committed_at"], u["seq"]))
+        def oomed(u) -> bool:
+            return self.peaks.get((u["suite"], u["bench"], u["phase"]), (None, None))[1] == "oom"
+        return sorted(rows, key=lambda u: (u["sha"] not in started, -u["committed_at"], oomed(u),
+                                           u["seq"]))
 
     def load_peaks(self) -> dict[tuple, tuple]:
         """(suite, bench, phase) -> (peak footprint in bytes or None, outcome) of the latest
