@@ -451,7 +451,8 @@ pub struct IndexArgs {
     #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
     pub jobs: Option<usize>,
 
-    /// Keep the largest relations in memory-mapped LSM files instead of in-memory tries.
+    /// Experimental: keep the largest relations in memory-mapped LSM files instead of in-memory
+    /// tries.
     ///
     /// The relations that dominate the index's memory (`locals`, `assign_like` and the
     /// propagation relations built from them) then live mostly in run files under `$TMPDIR`,
@@ -1029,6 +1030,9 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
 ///
 /// If there ary any loading or writing errors
 fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
+    if args.lsm {
+        log::warn!("--lsm is experimental");
+    }
     if let Some(limit) = args.lsm_memtable_limit {
         lsm::ascent_provider::set_memtable_limit(limit);
     }
