@@ -198,6 +198,8 @@ let
       ../Cargo.lock
       ../readers/dex-reader
       ../readers/jvm-reader
+      # naersk copies every root `[patch]` source into its stub tree and fails on a missing one.
+      ../vendor/ascent_macro
     ];
   };
   readersPreBuild = ''
