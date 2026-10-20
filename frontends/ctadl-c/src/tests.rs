@@ -798,6 +798,22 @@ fn array_declaration_element_flows_to_return() {
 }
 
 #[test_log::test]
+fn array_declarations_lower_without_a_report() {
+    // #24: `int x[3];` in a body was "Unsupported expression type: array_declarator". Strict,
+    // so any report is a failure; the other shapes take the same declaration arm.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int foo() {
+            int x[3];
+            int y[2][4];
+            char *names[3];
+            int z[] = {1, 2};
+            return 0;
+        }";
+    program_from_string(src);
+}
+
+#[test_log::test]
 fn array_of_struct_field_is_index_and_field_sensitive() {
     // `a[i].f` composes the subscript's `.[i]` segment with the field: one slot named by an
     // index *and* a field. The three fixtures pin precision in both dimensions: taint at
