@@ -126,7 +126,7 @@ pub struct TaintSearchGraph {
     /// `x`, regardless of whether `q` matches the tainted path.
     loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>>,
     /// Address computations `dst.dp = src.(k·[n])` -- edges whose source path
-    /// ends in an offset -- indexed by source and keyed by the path `k` before
+    /// ends in an offset, like C's `&a[2]` or pcode's `PTRADD` -- indexed by source and keyed by the path `k` before
     /// the offset: `(f, src) -> [(k, dst, dp)]`. The address depends on the
     /// value at `src.k`, so a taint on that value reaches `dst.dp`; the direct
     /// `assign_by_src` step only carries taint that lies under the offset.
@@ -316,9 +316,7 @@ impl LazySuccessors for TaintSearchGraph {
             }
         }
 
-        // Address computation: `dst.dp = src.(p·[n])` -- C's `&a[2]`, pcode's
-        // `PTRADD` -- is an address computed from the value at `src.p`, so a
-        // taint on that value is a taint on the address. A fresh derivation, so
+        // Address computation off the tainted value: a fresh derivation, so
         // `All`.
         if let Some(addrs) = self.addrs_by_src.get(&(f, v)) {
             for (key, dst, dp) in addrs {
