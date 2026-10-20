@@ -18,13 +18,13 @@ start:
   return;
 }
 
-def get_a(im byref, h):1 {
+def get_a(im shared, h):1 {
 start:
   sink_a(h);
   return h;
 }
 
-def get_b(im byref, h):1 {
+def get_b(im shared, h):1 {
 start:
   sink_b(h);
   return h;

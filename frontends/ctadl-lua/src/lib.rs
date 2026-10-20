@@ -1246,7 +1246,7 @@ impl<'a> Lowerer<'a> {
         self.program[self.fidx]
             .params
             .parameters
-            .push(ParameterType::ByVal);
+            .push(ParameterType::SharedFields);
         self.scopes
             .last_mut()
             .unwrap()

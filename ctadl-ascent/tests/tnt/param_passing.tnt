@@ -1,0 +1,66 @@
+// Rebinding a parameter is local to the callee, whatever its parameter type: SSA writes every
+// parameter back at the version the caller passed in. Writes to that version reach the caller.
+
+// Rebinding a `shared_fields` parameter does not reach the caller, not even the fields of what
+// it was rebound to.
+def SharedFieldsRebind(p shared_fields, q)
+where summaries [p.f </- q.f]
+{
+start:
+  p = q;
+  return;
+}
+
+// Nor does rebinding a `shared` parameter: the caller's argument still names the same object.
+def SharedRebind(p shared, q)
+where summaries [p </- q, p.f </- q.f]
+{
+start:
+  p = q;
+  return;
+}
+
+// A write after the rebinding lands on the new object, not on the caller's.
+def SharedRebindThenWrite(p shared, q, v)
+where summaries [p.f </- v]
+{
+start:
+  p = q;
+  p.f = v;
+  return;
+}
+
+// A field write reaches the caller whether or not the root is shared.
+def FieldWriteSharedFields(p shared_fields, v)
+where summaries [p.f <- v]
+{
+start:
+  p.f = v;
+  return;
+}
+
+def FieldWriteShared(p shared, v)
+where summaries [p.f <- v]
+{
+start:
+  p.f = v;
+  return;
+}
+
+// Nothing a callee writes to a `copied` parameter reaches the caller: not a field write,
+def FieldWriteCopied(p copied, v)
+where summaries [p.f </- v]
+{
+start:
+  p.f = v;
+  return;
+}
+
+// nor a callee's write to the argument it was passed, though that write reaches this function.
+def CallWritesCopied(p copied, v)
+where summaries [p.f </- v]
+{
+start:
+  FieldWriteSharedFields(p, v);
+  return;
+}

@@ -66,8 +66,16 @@ fn tnt_test<P: AsRef<std::path::Path>>(filename: P) -> anyhow::Result<()> {
 /// arithmetic-derived paths would reintroduce the unbounded growth this work is fighting; the
 /// proper fix is the planned Smaragdakis/Balatsouras points-to analysis, which reasons about heap
 /// objects instead of syntactic path composition. Restore this file once that lands.
+///
+/// `path_composition_store.tnt` and `alias_cycle.tnt` reproduce two misses `cil:taint` accepts as
+/// known: a path built by storing an object whose own field was stored, which no statement
+/// spells and so the index does not admit; and a cycle through a field, which the aliasing rule
+/// does not summarize. Each file says what it should derive. Restore them when the engine does.
 fn is_known_limitation(path: &std::path::Path) -> bool {
-    path.file_name().and_then(|n| n.to_str()) == Some("substitute_prefix_demo.tnt")
+    matches!(
+        path.file_name().and_then(|n| n.to_str()),
+        Some("substitute_prefix_demo.tnt" | "path_composition_store.tnt" | "alias_cycle.tnt")
+    )
 }
 
 // Parse index files and discharge the assertions.

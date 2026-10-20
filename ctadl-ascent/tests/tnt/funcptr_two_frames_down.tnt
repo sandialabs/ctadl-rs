@@ -25,26 +25,26 @@ start:
   return;
 }
 
-def get_strips(im byref, h):1 {
+def get_strips(im shared, h):1 {
 start:
   sink_strips(h);
   return h;
 }
 
-def get_tiles(im byref, h):1 {
+def get_tiles(im shared, h):1 {
 start:
   sink_tiles(h);
   return h;
 }
 
-def put_never(im byref, h):1 {
+def put_never(im shared, h):1 {
 start:
   sink_clean(h);
   return h;
 }
 
 // Installs the targets. No indirect call here.
-def pick(im byref) {
+def pick(im shared) {
 start:
   goto tiled, strips;
 tiled:
@@ -58,13 +58,13 @@ done:
   return;
 }
 
-def begin(im byref) {
+def begin(im shared) {
 start:
   pick(im);
   return;
 }
 
-def get(im byref, h):1 {
+def get(im shared, h):1 {
 start:
   f = im.get;
   r = f(im, h);

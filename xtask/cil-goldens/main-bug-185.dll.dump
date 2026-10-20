@@ -1,0 +1,263 @@
+[module]
+name=bug-185.dll
+mvid=4a3d78ea-1b2a-42a3-b87f-b85a98c9735c
+kind=Dll
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00000001
+entry-point=-
+[assembly]
+full-name=bug-185, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+[module-refs]
+[resources]
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=IFoo`1 flags=0x000000a1
+	generic-param 0 name=T flags=0x0000
+0x02000003=Foo flags=0x00100001
+	base=System.Object
+	interface=IFoo`1<System.Byte[]>
+0x02000004=IFunction`2 flags=0x000000a1
+	generic-param 0 name=TArg flags=0x0000
+	generic-param 1 name=TResult flags=0x0000
+0x02000005=Function`1 flags=0x00100001
+	base=System.Object
+	interface=IFunction`2<System.Byte[],System.Threading.Tasks.Task`1<T[]>>
+	generic-param 0 name=T flags=0x0004
+0x02000006=Foo/<IFoo<System.Byte[]>.Do>d__0 flags=0x00100103 valuetype
+	base=System.ValueType
+	interface=System.Runtime.CompilerServices.IAsyncStateMachine
+0x02000007=Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0 flags=0x00100103 valuetype
+	base=System.ValueType
+	interface=System.Runtime.CompilerServices.IAsyncStateMachine
+	generic-param 0 name=T flags=0x0004
+[fields]
+0x04000001=System.Int32 Foo/<IFoo<System.Byte[]>.Do>d__0::<>1__state flags=0x0006
+0x04000002=System.Runtime.CompilerServices.AsyncVoidMethodBuilder Foo/<IFoo<System.Byte[]>.Do>d__0::<>t__builder flags=0x0006
+0x04000003=Foo Foo/<IFoo<System.Byte[]>.Do>d__0::<>4__this flags=0x0006
+0x04000004=System.Int32 Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::<>1__state flags=0x0006
+0x04000005=System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::<>t__builder flags=0x0006
+0x04000006=Function`1<T> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::<>4__this flags=0x0006
+0x04000007=System.Byte[] Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::b flags=0x0006
+[methods]
+0x06000001=System.Void IFoo`1::Do() flags=0x05c6 impl=0x0000 rva=0x00000000
+0x06000002=System.Void Foo::IFoo<System.Byte[]>.Do() flags=0x01e1 impl=0x0000 rva=0x000020b4
+	override=System.Void IFoo`1<System.Byte[]>::Do()
+0x06000003=System.Void Foo::.ctor() flags=0x1886 impl=0x0000 rva=0x000020f0
+0x06000004=TResult IFunction`2::Apply(TArg) flags=0x05c6 impl=0x0000 rva=0x00000000
+	param 1 name=arg flags=0x0000
+0x06000005=System.Threading.Tasks.Task`1<T[]> Function`1::IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply(System.Byte[]) flags=0x01e1 impl=0x0000 rva=0x00002160
+	override=TResult IFunction`2<System.Byte[],System.Threading.Tasks.Task`1<T[]>>::Apply(TArg)
+	param 1 name=b flags=0x0000
+0x06000006=System.Void Function`1::.ctor() flags=0x1886 impl=0x0000 rva=0x000021b2
+0x06000007=System.Void Foo/<IFoo<System.Byte[]>.Do>d__0::MoveNext() flags=0x01e1 impl=0x0000 rva=0x00002050
+	override=System.Void System.Runtime.CompilerServices.IAsyncStateMachine::MoveNext()
+0x06000008=System.Void Foo/<IFoo<System.Byte[]>.Do>d__0::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine) flags=0x01e1 impl=0x0000 rva=0x000020a4
+	override=System.Void System.Runtime.CompilerServices.IAsyncStateMachine::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+	param 1 name=param0 flags=0x0000
+0x06000009=System.Void Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::MoveNext() flags=0x01e1 impl=0x0000 rva=0x000020f8
+	override=System.Void System.Runtime.CompilerServices.IAsyncStateMachine::MoveNext()
+0x0600000a=System.Void Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine) flags=0x01e1 impl=0x0000 rva=0x00002150
+	override=System.Void System.Runtime.CompilerServices.IAsyncStateMachine::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+	param 1 name=param0 flags=0x0000
+[properties]
+[events]
+[custom-attributes]
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x06000002 ctor=System.Void System.Runtime.CompilerServices.AsyncStateMachineAttribute::.ctor(System.Type) args=((Type:typeof(Foo/<IFoo<System.Byte[]>.Do>d__0)))
+ca parent=0x06000002 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000005 ctor=System.Void System.Diagnostics.DebuggerStepThroughAttribute::.ctor() args=()
+ca parent=0x06000005 ctor=System.Void System.Runtime.CompilerServices.AsyncStateMachineAttribute::.ctor(System.Type) args=((Type:typeof(Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0)))
+ca parent=0x02000006 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000007 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x06000008 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x0600000a ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+[security-declarations]
+[il]
+0x06000002 max-stack=2 init-locals=true code-size=48
+	local 0=Foo/<IFoo<System.Byte[]>.Do>d__0
+	local 1=System.Runtime.CompilerServices.AsyncVoidMethodBuilder
+	IL_0000: ldloca.s V_0
+	IL_0002: ldarg.0
+	IL_0003: stfld Foo Foo/<IFoo<System.Byte[]>.Do>d__0::<>4__this
+	IL_0008: ldloca.s V_0
+	IL_000a: call System.Runtime.CompilerServices.AsyncVoidMethodBuilder System.Runtime.CompilerServices.AsyncVoidMethodBuilder::Create()
+	IL_000f: stfld System.Runtime.CompilerServices.AsyncVoidMethodBuilder Foo/<IFoo<System.Byte[]>.Do>d__0::<>t__builder
+	IL_0014: ldloca.s V_0
+	IL_0016: ldc.i4.m1
+	IL_0017: stfld System.Int32 Foo/<IFoo<System.Byte[]>.Do>d__0::<>1__state
+	IL_001c: ldloca.s V_0
+	IL_001e: ldfld System.Runtime.CompilerServices.AsyncVoidMethodBuilder Foo/<IFoo<System.Byte[]>.Do>d__0::<>t__builder
+	IL_0023: stloc.1
+	IL_0024: ldloca.s V_1
+	IL_0026: ldloca.s V_0
+	IL_0028: call System.Void System.Runtime.CompilerServices.AsyncVoidMethodBuilder::Start<Foo/<IFoo<System.Byte[]>.Do>d__0>(!!0&)
+	IL_002d: br.s IL_002f
+	IL_002f: ret
+0x06000003 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000005 max-stack=2 init-locals=true code-size=70
+	local 0=Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>
+	local 1=System.Threading.Tasks.Task`1<T[]>
+	local 2=System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]>
+	IL_0000: ldloca.s V_0
+	IL_0002: ldarg.0
+	IL_0003: stfld Function`1<T> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>::<>4__this
+	IL_0008: ldloca.s V_0
+	IL_000a: ldarg.1
+	IL_000b: stfld System.Byte[] Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>::b
+	IL_0010: ldloca.s V_0
+	IL_0012: call System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<!0> System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]>::Create()
+	IL_0017: stfld System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>::<>t__builder
+	IL_001c: ldloca.s V_0
+	IL_001e: ldc.i4.m1
+	IL_001f: stfld System.Int32 Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>::<>1__state
+	IL_0024: ldloca.s V_0
+	IL_0026: ldfld System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>::<>t__builder
+	IL_002b: stloc.2
+	IL_002c: ldloca.s V_2
+	IL_002e: ldloca.s V_0
+	IL_0030: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]>::Start<Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>>(!!0&)
+	IL_0035: ldloca.s V_0
+	IL_0037: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>::<>t__builder
+	IL_003c: call System.Threading.Tasks.Task`1<!0> System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]>::get_Task()
+	IL_0041: stloc.1
+	IL_0042: br.s IL_0044
+	IL_0044: ldloc.1
+	IL_0045: ret
+0x06000006 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000007 max-stack=2 init-locals=true code-size=56
+	local 0=System.Boolean
+	local 1=System.Exception
+	IL_0000: ldc.i4.1
+	IL_0001: stloc.0
+	IL_0002: br.s IL_0004
+	IL_0004: br.s IL_0006
+	IL_0006: nop
+	IL_0007: leave.s IL_0021
+	IL_0009: stloc.1
+	IL_000a: ldarg.0
+	IL_000b: ldc.i4.s -2
+	IL_000d: stfld System.Int32 Foo/<IFoo<System.Byte[]>.Do>d__0::<>1__state
+	IL_0012: ldarg.0
+	IL_0013: ldflda System.Runtime.CompilerServices.AsyncVoidMethodBuilder Foo/<IFoo<System.Byte[]>.Do>d__0::<>t__builder
+	IL_0018: ldloc.1
+	IL_0019: call System.Void System.Runtime.CompilerServices.AsyncVoidMethodBuilder::SetException(System.Exception)
+	IL_001e: nop
+	IL_001f: leave.s IL_0036
+	IL_0021: nop
+	IL_0022: ldarg.0
+	IL_0023: ldc.i4.s -2
+	IL_0025: stfld System.Int32 Foo/<IFoo<System.Byte[]>.Do>d__0::<>1__state
+	IL_002a: ldarg.0
+	IL_002b: ldflda System.Runtime.CompilerServices.AsyncVoidMethodBuilder Foo/<IFoo<System.Byte[]>.Do>d__0::<>t__builder
+	IL_0030: call System.Void System.Runtime.CompilerServices.AsyncVoidMethodBuilder::SetResult()
+	IL_0035: nop
+	IL_0036: nop
+	IL_0037: ret
+	.try IL_0000 to IL_0009 catch System.Exception handler IL_0009 to IL_0021
+0x06000008 max-stack=8 init-locals=false code-size=13
+	IL_0000: ldarg.0
+	IL_0001: ldflda System.Runtime.CompilerServices.AsyncVoidMethodBuilder Foo/<IFoo<System.Byte[]>.Do>d__0::<>t__builder
+	IL_0006: ldarg.1
+	IL_0007: call System.Void System.Runtime.CompilerServices.AsyncVoidMethodBuilder::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+	IL_000c: ret
+0x06000009 max-stack=2 init-locals=true code-size=59
+	local 0=System.Boolean
+	local 1=T[]
+	local 2=System.Exception
+	IL_0000: ldc.i4.1
+	IL_0001: stloc.0
+	IL_0002: br.s IL_0004
+	IL_0004: br.s IL_0006
+	IL_0006: nop
+	IL_0007: ldnull
+	IL_0008: stloc.1
+	IL_0009: leave.s IL_0023
+	IL_000b: stloc.2
+	IL_000c: ldarg.0
+	IL_000d: ldc.i4.s -2
+	IL_000f: stfld System.Int32 Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>::<>1__state
+	IL_0014: ldarg.0
+	IL_0015: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>::<>t__builder
+	IL_001a: ldloc.2
+	IL_001b: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]>::SetException(System.Exception)
+	IL_0020: nop
+	IL_0021: leave.s IL_0039
+	IL_0023: nop
+	IL_0024: ldarg.0
+	IL_0025: ldc.i4.s -2
+	IL_0027: stfld System.Int32 Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>::<>1__state
+	IL_002c: ldarg.0
+	IL_002d: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>::<>t__builder
+	IL_0032: ldloc.1
+	IL_0033: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]>::SetResult(!0)
+	IL_0038: nop
+	IL_0039: nop
+	IL_003a: ret
+	.try IL_0000 to IL_000b catch System.Exception handler IL_000b to IL_0023
+0x0600000a max-stack=8 init-locals=false code-size=13
+	IL_0000: ldarg.0
+	IL_0001: ldflda System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0<T>::<>t__builder
+	IL_0006: ldarg.1
+	IL_0007: call System.Void System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]>::SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+	IL_000c: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x1b000001 -> bug-185.dll!0x02000002 IFoo`1
+0x1b000002 -> bug-185.dll!0x02000004 IFunction`2
+0x1b000003 -> bug-185.dll!0x02000007 Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0
+0x1b000004 -> -
+0x0a000001 -> bug-185.dll!0x06000001 System.Void IFoo`1::Do()
+0x0a000002 -> bug-185.dll!0x06000004 TResult IFunction`2::Apply(TArg)
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> bug-185.dll!0x04000004 System.Int32 Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::<>1__state
+0x0a000012 -> bug-185.dll!0x04000005 System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1<T[]> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::<>t__builder
+0x0a000013 -> -
+0x0a000014 -> -
+0x0a000015 -> -
+0x0a000016 -> bug-185.dll!0x04000006 Function`1<T> Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::<>4__this
+0x0a000017 -> bug-185.dll!0x04000007 System.Byte[] Function`1/<IFunction<System.Byte[],System.Threading.Tasks.Task<T[]>>.Apply>d__0::b
+0x0a000018 -> -
+0x0a000019 -> -
+0x0a00001a -> -
+[custom-attributes-resolved]
+[fields-resolved]

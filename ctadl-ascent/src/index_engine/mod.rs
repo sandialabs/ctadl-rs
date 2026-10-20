@@ -1127,6 +1127,7 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
                 }
                 CallTargetObject::Symbol(cls) => format!("java<{cls}>"),
                 CallTargetObject::LuaClass(cls) => format!("lua<{cls}>"),
+                CallTargetObject::CilClass(cls) => format!("cil<{cls}>"),
             };
 
             writeln!(
@@ -1289,9 +1290,11 @@ fn compute_alias_of_formal(
     formal_param: &[(FunctionId, FlowVariable, FormalType)],
     mut copy_edge: Vec<(FunctionId, FlowVariable, FlowVariable)>,
 ) -> Vec<(FunctionId, FlowVariable, FormalIndex)> {
-    // Base case: a formal whole-aliases itself.
+    // Base case: a formal whole-aliases itself. A `Copied` formal shares nothing with the caller,
+    // so a store through it or its aliases is no summary, and it gets no aliases at all.
     let alias_base: Vec<_> = formal_param
         .iter()
+        .filter(|(_, _, ty)| *ty != FormalType::Copied)
         .filter_map(|(infunc, v1, _)| v1.as_formal().map(|i| (*infunc, *v1, i)))
         .collect();
     // Keep only the copies that flow AWAY from a formal.
@@ -2778,7 +2781,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let p = fb.add_param(ParameterType::ByVal);
+        let p = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let ret: Exp = if pass_through {
@@ -2803,7 +2806,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let x = fb.add_param(ParameterType::ByVal);
+        let x = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (fp, r, x) = (
@@ -2839,8 +2842,8 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let callee = fb.add_param(ParameterType::ByVal);
-        let x = fb.add_param(ParameterType::ByVal);
+        let callee = fb.add_param(ParameterType::SharedFields);
+        let x = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (r, callee, x) = (
@@ -2869,7 +2872,7 @@ mod tests {
             ..Default::default()
         };
         let mut fb = FunctionBuilder::new(&mut f);
-        let a = fb.add_param(ParameterType::ByVal);
+        let a = fb.add_param(ParameterType::SharedFields);
         let body = fb.add_block();
         let mut b = fb.at_block(body);
         let (r, a) = (b.new_local_var("r"), b.new_param_var(a));
@@ -2897,6 +2900,61 @@ mod tests {
         let result =
             taint_index_with_config(facts, IndexConfig::default(), Some(&source_info.sites));
         (result, source_info)
+    }
+
+    /// `fn thrower(x) -> (normal, exception) { return ((), x); }` and
+    /// `fn catcher(a) { r, e = thrower(a); return (e, ()); }`: a value thrown out of a callee
+    /// reaches the caller's exception slot, and from there anything the caller does with it.
+    /// Java and CIL functions return arity 2, and the second slot is a formal like the first,
+    /// with a `formal_param` row of its own.
+    #[test]
+    fn exceptional_return_is_summarized() {
+        let mut thrower = FunctionData {
+            name: "thrower".to_string(),
+            return_type: ReturnType { arity: 2 },
+            ..Default::default()
+        };
+        {
+            let mut fb = FunctionBuilder::new(&mut thrower);
+            let x = fb.add_param(ParameterType::SharedFields);
+            let body = fb.add_block();
+            let mut b = fb.at_block(body);
+            let x = b.new_param_var(x);
+            b.create_ret(vec![Exp::new_bytes(Vec::new()), x.into()]);
+        }
+        let mut catcher = FunctionData {
+            name: "catcher".to_string(),
+            return_type: ReturnType { arity: 2 },
+            ..Default::default()
+        };
+        {
+            let mut fb = FunctionBuilder::new(&mut catcher);
+            let a = fb.add_param(ParameterType::SharedFields);
+            let body = fb.add_block();
+            let mut b = fb.at_block(body);
+            let (r, e, a) = (
+                b.new_local_var("r"),
+                b.new_local_var("e"),
+                b.new_param_var(a),
+            );
+            b.create_call(
+                CallStyle::DirectCall {
+                    call_edges: CallEdges::Explicit(ctadl_ir::thin_vec!["thrower".to_string()]),
+                },
+                vec![r, e.clone()],
+                vec![a.into()],
+            );
+            b.create_ret(vec![e.into(), Exp::new_bytes(Vec::new())]);
+        }
+        let (result, si) = index_functions([thrower, catcher]);
+        let (thrower, catcher) = (func_id(&si.sites, "thrower"), func_id(&si.sites, "catcher"));
+        let has = |f: FunctionId, dst: i16, src: i16| {
+            result.summary.iter().any(|(sf, d, dp, s, sp)| {
+                *sf == f && **d == dst && dp.is_empty() && **s == src && sp.is_empty()
+            })
+        };
+        assert!(has(thrower, -2, 0), "summary = {:?}", result.summary);
+        assert!(has(catcher, -1, 0), "summary = {:?}", result.summary);
     }
 
     /// A site is resolved by either of two rules -- a target stored in the calling function,

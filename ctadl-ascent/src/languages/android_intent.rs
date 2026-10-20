@@ -86,7 +86,7 @@ fn emit_api_summaries(facts: &mut IndexFacts, ids: &IdMap) -> AndroidIntentStats
     facts.formal_param.extend(
         formals
             .into_iter()
-            .map(|(func_id, var)| (func_id, var, FormalType::ByRef)),
+            .map(|(func_id, var)| (func_id, var, FormalType::Shared)),
     );
     facts.summary.extend(summaries);
 

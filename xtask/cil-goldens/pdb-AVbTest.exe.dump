@@ -1,0 +1,496 @@
+[module]
+name=AVbTest.exe
+mvid=379f4025-3f10-41cd-9ffa-d2bb4c591670
+kind=Console
+runtime=v4.0.30319
+architecture=I386
+module-attributes=0x00020003
+entry-point=0x06000010
+[assembly]
+full-name=AVbTest, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+hash-algorithm=0x00008004
+flags=0x00000000
+public-key=-
+[assembly-refs]
+0x23000001=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+0x23000002=System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089 flags=0x00000000
+0x23000003=Microsoft.VisualBasic, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a flags=0x00000000
+[module-refs]
+[resources]
+embedded name=AVbTest.Resources.resources flags=0x00000001 size=180
+[exported-types]
+[types]
+0x02000001=<Module> flags=0x00000000
+0x02000002=AVbTest.My.MyApplication flags=0x00000000
+	base=Microsoft.VisualBasic.ApplicationServices.ConsoleApplicationBase
+0x02000003=AVbTest.My.MyComputer flags=0x00000000
+	base=Microsoft.VisualBasic.Devices.Computer
+0x02000004=AVbTest.My.MyProject flags=0x00100100
+	base=System.Object
+0x02000005=AVbTest.My.Resources.Resources flags=0x00000100
+	base=System.Object
+0x02000006=AVbTest.My.MySettings flags=0x00100100
+	base=System.Configuration.ApplicationSettingsBase
+0x02000007=AVbTest.My.MySettingsProperty flags=0x00000100
+	base=System.Object
+0x02000008=AVbTest.Main flags=0x00000001
+	base=System.Object
+0x02000009=AVbTest.My.MyProject/MyWebServices flags=0x00000105
+	base=System.Object
+0x0200000a=AVbTest.My.MyProject/ThreadSafeObjectProvider`1 flags=0x00000105
+	base=System.Object
+	generic-param 0 name=T flags=0x0010
+[fields]
+0x04000001=AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyComputer> AVbTest.My.MyProject::m_ComputerObjectProvider flags=0x0031
+0x04000002=AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyApplication> AVbTest.My.MyProject::m_AppObjectProvider flags=0x0031
+0x04000003=AVbTest.My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User> AVbTest.My.MyProject::m_UserObjectProvider flags=0x0031
+0x04000004=AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyProject/MyWebServices> AVbTest.My.MyProject::m_MyWebServicesObjectProvider flags=0x0031
+0x04000005=System.Resources.ResourceManager AVbTest.My.Resources.Resources::resourceMan flags=0x0011
+0x04000006=System.Globalization.CultureInfo AVbTest.My.Resources.Resources::resourceCulture flags=0x0011
+0x04000007=AVbTest.My.MySettings AVbTest.My.MySettings::defaultInstance flags=0x0011
+0x04000008=T AVbTest.My.MyProject/ThreadSafeObjectProvider`1::m_ThreadStaticValue flags=0x0011
+[methods]
+0x06000001=System.Void AVbTest.My.MyApplication::.ctor() flags=0x1806 impl=0x0000 rva=0x00002050
+0x06000002=System.Void AVbTest.My.MyComputer::.ctor() flags=0x1806 impl=0x0000 rva=0x00002058
+0x06000003=System.Void AVbTest.My.MyProject::.cctor() flags=0x1811 impl=0x0000 rva=0x00002062
+0x06000004=AVbTest.My.MyComputer AVbTest.My.MyProject::get_Computer() flags=0x0813 impl=0x0000 rva=0x0000208c semantics=0x0002
+0x06000005=AVbTest.My.MyApplication AVbTest.My.MyProject::get_Application() flags=0x0813 impl=0x0000 rva=0x000020a8 semantics=0x0002
+0x06000006=Microsoft.VisualBasic.ApplicationServices.User AVbTest.My.MyProject::get_User() flags=0x0813 impl=0x0000 rva=0x000020c4 semantics=0x0002
+0x06000007=AVbTest.My.MyProject/MyWebServices AVbTest.My.MyProject::get_WebServices() flags=0x0813 impl=0x0000 rva=0x000020e0 semantics=0x0002
+0x06000008=System.Resources.ResourceManager AVbTest.My.Resources.Resources::get_ResourceManager() flags=0x0813 impl=0x0000 rva=0x000020fc semantics=0x0002
+0x06000009=System.Globalization.CultureInfo AVbTest.My.Resources.Resources::get_Culture() flags=0x0813 impl=0x0000 rva=0x00002144 semantics=0x0002
+0x0600000a=System.Void AVbTest.My.Resources.Resources::set_Culture(System.Globalization.CultureInfo) flags=0x0813 impl=0x0000 rva=0x0000215b semantics=0x0001
+	param 0 name=Value flags=0x0000
+0x0600000b=System.Void AVbTest.My.MySettings::.cctor() flags=0x1811 impl=0x0000 rva=0x00002164
+0x0600000c=System.Void AVbTest.My.MySettings::.ctor() flags=0x1806 impl=0x0000 rva=0x0000217a
+0x0600000d=AVbTest.My.MySettings AVbTest.My.MySettings::get_Default() flags=0x0816 impl=0x0000 rva=0x00002184 semantics=0x0002
+0x0600000e=AVbTest.My.MySettings AVbTest.My.MySettingsProperty::get_Settings() flags=0x0813 impl=0x0000 rva=0x0000219c semantics=0x0002
+0x0600000f=System.Void AVbTest.Main::.ctor() flags=0x1806 impl=0x0000 rva=0x000021b3
+0x06000010=System.Void AVbTest.Main::Main() flags=0x0016 impl=0x0000 rva=0x000021bb
+0x06000011=System.Boolean AVbTest.My.MyProject/MyWebServices::Equals(System.Object) flags=0x02c6 impl=0x0000 rva=0x000021c0
+	param 1 name=o flags=0x0000
+0x06000012=System.Int32 AVbTest.My.MyProject/MyWebServices::GetHashCode() flags=0x02c6 impl=0x0000 rva=0x000021e0
+0x06000013=System.Type AVbTest.My.MyProject/MyWebServices::GetType() flags=0x0083 impl=0x0000 rva=0x000021f8
+0x06000014=System.String AVbTest.My.MyProject/MyWebServices::ToString() flags=0x02c6 impl=0x0000 rva=0x00002214
+0x06000015=T AVbTest.My.MyProject/MyWebServices::Create__Instance__(T) flags=0x0011 impl=0x0000 rva=0x0000222c
+	generic-param 0 name=T flags=0x0010
+	param 0 name=instance flags=0x0000
+0x06000016=System.Void AVbTest.My.MyProject/MyWebServices::Dispose__Instance__(T&) flags=0x0001 impl=0x0000 rva=0x00002255
+	generic-param 0 name=T flags=0x0000
+	param 1 name=instance flags=0x0000
+0x06000017=System.Void AVbTest.My.MyProject/MyWebServices::.ctor() flags=0x1806 impl=0x0000 rva=0x0000225f
+0x06000018=T AVbTest.My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance() flags=0x0803 impl=0x0000 rva=0x0000226c semantics=0x0002
+0x06000019=System.Void AVbTest.My.MyProject/ThreadSafeObjectProvider`1::.ctor() flags=0x1806 impl=0x0000 rva=0x0000225f
+[properties]
+0x17000001=AVbTest.My.MyComputer AVbTest.My.MyProject::Computer() flags=0x0000 getter=0x06000004
+0x17000002=AVbTest.My.MyApplication AVbTest.My.MyProject::Application() flags=0x0000 getter=0x06000005
+0x17000003=Microsoft.VisualBasic.ApplicationServices.User AVbTest.My.MyProject::User() flags=0x0000 getter=0x06000006
+0x17000004=AVbTest.My.MyProject/MyWebServices AVbTest.My.MyProject::WebServices() flags=0x0000 getter=0x06000007
+0x17000005=System.Resources.ResourceManager AVbTest.My.Resources.Resources::ResourceManager() flags=0x0000 getter=0x06000008
+0x17000006=System.Globalization.CultureInfo AVbTest.My.Resources.Resources::Culture() flags=0x0000 getter=0x06000009 setter=0x0600000a
+0x17000007=AVbTest.My.MySettings AVbTest.My.MySettings::Default() flags=0x0000 getter=0x0600000d
+0x17000008=AVbTest.My.MySettings AVbTest.My.MySettingsProperty::Settings() flags=0x0000 getter=0x0600000e
+0x17000009=T AVbTest.My.MyProject/ThreadSafeObjectProvider`1::GetInstance() flags=0x0000 getter=0x06000018
+[events]
+[custom-attributes]
+ca parent=0x17000001 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.Computer"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.CompilationRelaxationsAttribute::.ctor(System.Int32) args=((I4:8))
+ca parent=0x20000001 ctor=System.Void System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor() args=() property WrapNonExceptionThrows=(Boolean:True)
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=!unresolved blob=0100070100000000
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTitleAttribute::.ctor(System.String) args=((String:"AVbTest"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyDescriptionAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCompanyAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyProductAttribute::.ctor(System.String) args=((String:"AVbTest"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyCopyrightAttribute::.ctor(System.String) args=((String:"Copyright ©  2017"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyTrademarkAttribute::.ctor(System.String) args=((String:""))
+ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.ComVisibleAttribute::.ctor(System.Boolean) args=((Boolean:False))
+ca parent=0x20000001 ctor=System.Void System.Runtime.InteropServices.GuidAttribute::.ctor(System.String) args=((String:"810225ca-e6a2-46e8-a270-2d8e6a209b65"))
+ca parent=0x20000001 ctor=System.Void System.Reflection.AssemblyFileVersionAttribute::.ctor(System.String) args=((String:"1.0.0.0"))
+ca parent=0x20000001 ctor=System.Void System.Runtime.Versioning.TargetFrameworkAttribute::.ctor(System.String) args=((String:".NETFramework,Version=v4.5.2")) property FrameworkDisplayName=(String:".NET Framework 4.5.2")
+ca parent=0x06000002 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000002 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x02000002 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"MyTemplate"), (String:"11.0.0.0"))
+ca parent=0x02000002 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x17000002 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.Application"))
+ca parent=0x02000003 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"MyTemplate"), (String:"11.0.0.0"))
+ca parent=0x02000003 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x17000003 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.User"))
+ca parent=0x06000004 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void Microsoft.VisualBasic.CompilerServices.StandardModuleAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void Microsoft.VisualBasic.HideModuleNameAttribute::.ctor() args=()
+ca parent=0x02000004 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"MyTemplate"), (String:"11.0.0.0"))
+ca parent=0x17000004 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.WebServices"))
+ca parent=0x06000005 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000005 ctor=System.Void Microsoft.VisualBasic.CompilerServices.StandardModuleAttribute::.ctor() args=()
+ca parent=0x02000005 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"System.Resources.Tools.StronglyTypedResourceBuilder"), (String:"15.0.0.0"))
+ca parent=0x02000005 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x02000005 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000005 ctor=System.Void Microsoft.VisualBasic.HideModuleNameAttribute::.ctor() args=()
+ca parent=0x17000005 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100020000000000
+ca parent=0x06000006 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000006 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x02000006 ctor=System.Void System.CodeDom.Compiler.GeneratedCodeAttribute::.ctor(System.String,System.String) args=((String:"Microsoft.VisualStudio.Editors.SettingsDesigner.SettingsSingleFileGenerator"), (String:"15.3.0.0"))
+ca parent=0x02000006 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100020000000000
+ca parent=0x17000006 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100020000000000
+ca parent=0x06000007 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x02000007 ctor=System.Void Microsoft.VisualBasic.CompilerServices.StandardModuleAttribute::.ctor() args=()
+ca parent=0x02000007 ctor=System.Void Microsoft.VisualBasic.HideModuleNameAttribute::.ctor() args=()
+ca parent=0x02000007 ctor=System.Void System.Diagnostics.DebuggerNonUserCodeAttribute::.ctor() args=()
+ca parent=0x02000007 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x04000008 ctor=System.Void System.Runtime.CompilerServices.CompilerGeneratedAttribute::.ctor() args=()
+ca parent=0x04000008 ctor=System.Void System.ThreadStaticAttribute::.ctor() args=()
+ca parent=0x17000008 ctor=System.Void System.ComponentModel.Design.HelpKeywordAttribute::.ctor(System.String) args=((String:"My.Settings"))
+ca parent=0x02000009 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x02000009 ctor=System.Void Microsoft.VisualBasic.MyGroupCollectionAttribute::.ctor(System.String,System.String,System.String,System.String) args=((String:"System.Web.Services.Protocols.SoapHttpClientProtocol"), (String:"Create__Instance__"), (String:"Dispose__Instance__"), (String:""))
+ca parent=0x0200000a ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x0200000a ctor=System.Void System.Runtime.InteropServices.ComVisibleAttribute::.ctor(System.Boolean) args=((Boolean:False))
+ca parent=0x06000010 ctor=System.Void System.STAThreadAttribute::.ctor() args=()
+ca parent=0x06000011 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000011 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000012 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000012 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000013 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000013 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000014 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000014 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000015 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000016 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000017 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000017 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+ca parent=0x06000018 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000019 ctor=System.Void System.Diagnostics.DebuggerHiddenAttribute::.ctor() args=()
+ca parent=0x06000019 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=!unresolved blob=0100010000000000
+[security-declarations]
+[il]
+0x06000001 max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void Microsoft.VisualBasic.ApplicationServices.ConsoleApplicationBase::.ctor()
+	IL_0006: ret
+0x06000002 max-stack=8 init-locals=false code-size=9
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Void Microsoft.VisualBasic.Devices.Computer::.ctor()
+	IL_0007: nop
+	IL_0008: ret
+0x06000003 max-stack=8 init-locals=false code-size=41
+	IL_0000: newobj System.Void AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyComputer>::.ctor()
+	IL_0005: stsfld AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyComputer> AVbTest.My.MyProject::m_ComputerObjectProvider
+	IL_000a: newobj System.Void AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyApplication>::.ctor()
+	IL_000f: stsfld AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyApplication> AVbTest.My.MyProject::m_AppObjectProvider
+	IL_0014: newobj System.Void AVbTest.My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User>::.ctor()
+	IL_0019: stsfld AVbTest.My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User> AVbTest.My.MyProject::m_UserObjectProvider
+	IL_001e: newobj System.Void AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyProject/MyWebServices>::.ctor()
+	IL_0023: stsfld AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyProject/MyWebServices> AVbTest.My.MyProject::m_MyWebServicesObjectProvider
+	IL_0028: ret
+0x06000004 max-stack=1 init-locals=true code-size=16
+	local 0=AVbTest.My.MyComputer
+	IL_0000: nop
+	IL_0001: ldsfld AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyComputer> AVbTest.My.MyProject::m_ComputerObjectProvider
+	IL_0006: callvirt T AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyComputer>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000005 max-stack=1 init-locals=true code-size=16
+	local 0=AVbTest.My.MyApplication
+	IL_0000: nop
+	IL_0001: ldsfld AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyApplication> AVbTest.My.MyProject::m_AppObjectProvider
+	IL_0006: callvirt T AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyApplication>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000006 max-stack=1 init-locals=true code-size=16
+	local 0=Microsoft.VisualBasic.ApplicationServices.User
+	IL_0000: nop
+	IL_0001: ldsfld AVbTest.My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User> AVbTest.My.MyProject::m_UserObjectProvider
+	IL_0006: callvirt T AVbTest.My.MyProject/ThreadSafeObjectProvider`1<Microsoft.VisualBasic.ApplicationServices.User>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000007 max-stack=1 init-locals=true code-size=16
+	local 0=AVbTest.My.MyProject/MyWebServices
+	IL_0000: nop
+	IL_0001: ldsfld AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyProject/MyWebServices> AVbTest.My.MyProject::m_MyWebServicesObjectProvider
+	IL_0006: callvirt T AVbTest.My.MyProject/ThreadSafeObjectProvider`1<AVbTest.My.MyProject/MyWebServices>::get_GetInstance()
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000008 max-stack=2 init-locals=true code-size=60
+	local 0=System.Resources.ResourceManager
+	local 1=System.Boolean
+	local 2=System.Resources.ResourceManager
+	IL_0000: nop
+	IL_0001: ldsfld System.Resources.ResourceManager AVbTest.My.Resources.Resources::resourceMan
+	IL_0006: ldnull
+	IL_0007: call System.Boolean System.Object::ReferenceEquals(System.Object,System.Object)
+	IL_000c: stloc.1
+	IL_000d: ldloc.1
+	IL_000e: brfalse.s IL_0031
+	IL_0010: ldstr "AVbTest.Resources"
+	IL_0015: ldtoken AVbTest.My.Resources.Resources
+	IL_001a: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_001f: callvirt System.Reflection.Assembly System.Type::get_Assembly()
+	IL_0024: newobj System.Void System.Resources.ResourceManager::.ctor(System.String,System.Reflection.Assembly)
+	IL_0029: stloc.2
+	IL_002a: ldloc.2
+	IL_002b: stsfld System.Resources.ResourceManager AVbTest.My.Resources.Resources::resourceMan
+	IL_0030: nop
+	IL_0031: nop
+	IL_0032: ldsfld System.Resources.ResourceManager AVbTest.My.Resources.Resources::resourceMan
+	IL_0037: stloc.0
+	IL_0038: br.s IL_003a
+	IL_003a: ldloc.0
+	IL_003b: ret
+0x06000009 max-stack=1 init-locals=true code-size=11
+	local 0=System.Globalization.CultureInfo
+	IL_0000: nop
+	IL_0001: ldsfld System.Globalization.CultureInfo AVbTest.My.Resources.Resources::resourceCulture
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x0600000a max-stack=8 init-locals=false code-size=8
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: stsfld System.Globalization.CultureInfo AVbTest.My.Resources.Resources::resourceCulture
+	IL_0007: ret
+0x0600000b max-stack=8 init-locals=false code-size=21
+	IL_0000: newobj System.Void AVbTest.My.MySettings::.ctor()
+	IL_0005: call System.Configuration.SettingsBase System.Configuration.SettingsBase::Synchronized(System.Configuration.SettingsBase)
+	IL_000a: castclass AVbTest.My.MySettings
+	IL_000f: stsfld AVbTest.My.MySettings AVbTest.My.MySettings::defaultInstance
+	IL_0014: ret
+0x0600000c max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Configuration.ApplicationSettingsBase::.ctor()
+	IL_0006: ret
+0x0600000d max-stack=1 init-locals=true code-size=11
+	local 0=AVbTest.My.MySettings
+	IL_0000: nop
+	IL_0001: ldsfld AVbTest.My.MySettings AVbTest.My.MySettings::defaultInstance
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x0600000e max-stack=1 init-locals=true code-size=11
+	local 0=AVbTest.My.MySettings
+	IL_0000: nop
+	IL_0001: call AVbTest.My.MySettings AVbTest.My.MySettings::get_Default()
+	IL_0006: stloc.0
+	IL_0007: br.s IL_0009
+	IL_0009: ldloc.0
+	IL_000a: ret
+0x0600000f max-stack=8 init-locals=false code-size=7
+	IL_0000: ldarg.0
+	IL_0001: call System.Void System.Object::.ctor()
+	IL_0006: ret
+0x06000010 max-stack=8 init-locals=false code-size=2
+	IL_0000: nop
+	IL_0001: ret
+0x06000011 max-stack=2 init-locals=true code-size=18
+	local 0=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: ldarg.1
+	IL_0003: call System.Object System.Runtime.CompilerServices.RuntimeHelpers::GetObjectValue(System.Object)
+	IL_0008: call System.Boolean System.Object::Equals(System.Object)
+	IL_000d: stloc.0
+	IL_000e: br.s IL_0010
+	IL_0010: ldloc.0
+	IL_0011: ret
+0x06000012 max-stack=1 init-locals=true code-size=12
+	local 0=System.Int32
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Int32 System.Object::GetHashCode()
+	IL_0007: stloc.0
+	IL_0008: br.s IL_000a
+	IL_000a: ldloc.0
+	IL_000b: ret
+0x06000013 max-stack=1 init-locals=true code-size=16
+	local 0=System.Type
+	IL_0000: nop
+	IL_0001: ldtoken AVbTest.My.MyProject/MyWebServices
+	IL_0006: call System.Type System.Type::GetTypeFromHandle(System.RuntimeTypeHandle)
+	IL_000b: stloc.0
+	IL_000c: br.s IL_000e
+	IL_000e: ldloc.0
+	IL_000f: ret
+0x06000014 max-stack=1 init-locals=true code-size=12
+	local 0=System.String
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.String System.Object::ToString()
+	IL_0007: stloc.0
+	IL_0008: br.s IL_000a
+	IL_000a: ldloc.0
+	IL_000b: ret
+0x06000015 max-stack=2 init-locals=true code-size=29
+	local 0=T
+	local 1=System.Boolean
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: box T
+	IL_0007: ldnull
+	IL_0008: ceq
+	IL_000a: stloc.1
+	IL_000b: ldloc.1
+	IL_000c: brfalse.s IL_0016
+	IL_000e: call !!0 System.Activator::CreateInstance<T>()
+	IL_0013: stloc.0
+	IL_0014: br.s IL_001b
+	IL_0016: nop
+	IL_0017: ldarg.0
+	IL_0018: stloc.0
+	IL_0019: br.s IL_001b
+	IL_001b: ldloc.0
+	IL_001c: ret
+0x06000016 max-stack=8 init-locals=false code-size=9
+	IL_0000: nop
+	IL_0001: ldarg.1
+	IL_0002: initobj T
+	IL_0008: ret
+0x06000017 max-stack=8 init-locals=false code-size=9
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Void System.Object::.ctor()
+	IL_0007: nop
+	IL_0008: ret
+0x06000018 max-stack=2 init-locals=true code-size=38
+	local 0=T
+	local 1=System.Boolean
+	IL_0000: nop
+	IL_0001: ldsfld T AVbTest.My.MyProject/ThreadSafeObjectProvider`1<T>::m_ThreadStaticValue
+	IL_0006: box T
+	IL_000b: ldnull
+	IL_000c: ceq
+	IL_000e: stloc.1
+	IL_000f: ldloc.1
+	IL_0010: brfalse.s IL_001c
+	IL_0012: call !!0 System.Activator::CreateInstance<T>()
+	IL_0017: stsfld T AVbTest.My.MyProject/ThreadSafeObjectProvider`1<T>::m_ThreadStaticValue
+	IL_001c: ldsfld T AVbTest.My.MyProject/ThreadSafeObjectProvider`1<T>::m_ThreadStaticValue
+	IL_0021: stloc.0
+	IL_0022: br.s IL_0024
+	IL_0024: ldloc.0
+	IL_0025: ret
+0x06000019 max-stack=8 init-locals=false code-size=9
+	IL_0000: nop
+	IL_0001: ldarg.0
+	IL_0002: call System.Void System.Object::.ctor()
+	IL_0007: nop
+	IL_0008: ret
+[resolve]
+0x01000001 -> -
+0x01000002 -> -
+0x01000003 -> -
+0x01000004 -> -
+0x01000005 -> -
+0x01000006 -> -
+0x01000007 -> -
+0x01000008 -> -
+0x01000009 -> -
+0x0100000a -> -
+0x0100000b -> -
+0x0100000c -> -
+0x0100000d -> -
+0x0100000e -> -
+0x0100000f -> -
+0x01000010 -> -
+0x01000011 -> -
+0x01000012 -> -
+0x01000013 -> -
+0x01000014 -> -
+0x01000015 -> -
+0x01000016 -> -
+0x01000017 -> -
+0x01000018 -> -
+0x01000019 -> -
+0x0100001a -> -
+0x0100001b -> -
+0x0100001c -> -
+0x0100001d -> -
+0x0100001e -> -
+0x0100001f -> -
+0x01000020 -> -
+0x01000021 -> -
+0x01000022 -> -
+0x01000023 -> -
+0x01000024 -> -
+0x01000025 -> -
+0x01000026 -> -
+0x01000027 -> -
+0x1b000001 -> AVbTest.exe!0x0200000a AVbTest.My.MyProject/ThreadSafeObjectProvider`1
+0x1b000002 -> AVbTest.exe!0x0200000a AVbTest.My.MyProject/ThreadSafeObjectProvider`1
+0x1b000003 -> AVbTest.exe!0x0200000a AVbTest.My.MyProject/ThreadSafeObjectProvider`1
+0x1b000004 -> AVbTest.exe!0x0200000a AVbTest.My.MyProject/ThreadSafeObjectProvider`1
+0x1b000005 -> -
+0x1b000006 -> AVbTest.exe!0x0200000a AVbTest.My.MyProject/ThreadSafeObjectProvider`1
+0x1b000007 -> -
+0x0a000001 -> -
+0x0a000002 -> -
+0x0a000003 -> -
+0x0a000004 -> -
+0x0a000005 -> -
+0x0a000006 -> -
+0x0a000007 -> -
+0x0a000008 -> -
+0x0a000009 -> -
+0x0a00000a -> -
+0x0a00000b -> -
+0x0a00000c -> -
+0x0a00000d -> -
+0x0a00000e -> -
+0x0a00000f -> -
+0x0a000010 -> -
+0x0a000011 -> -
+0x0a000012 -> -
+0x0a000013 -> -
+0x0a000014 -> -
+0x0a000015 -> -
+0x0a000016 -> -
+0x0a000017 -> -
+0x0a000018 -> -
+0x0a000019 -> -
+0x0a00001a -> -
+0x0a00001b -> AVbTest.exe!0x06000019 System.Void AVbTest.My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a00001c -> AVbTest.exe!0x06000019 System.Void AVbTest.My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a00001d -> AVbTest.exe!0x06000019 System.Void AVbTest.My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a00001e -> AVbTest.exe!0x06000019 System.Void AVbTest.My.MyProject/ThreadSafeObjectProvider`1::.ctor()
+0x0a00001f -> AVbTest.exe!0x06000018 T AVbTest.My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a000020 -> AVbTest.exe!0x06000018 T AVbTest.My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a000021 -> AVbTest.exe!0x06000018 T AVbTest.My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a000022 -> AVbTest.exe!0x06000018 T AVbTest.My.MyProject/ThreadSafeObjectProvider`1::get_GetInstance()
+0x0a000023 -> -
+0x0a000024 -> -
+0x0a000025 -> -
+0x0a000026 -> -
+0x0a000027 -> -
+0x0a000028 -> -
+0x0a000029 -> -
+0x0a00002a -> -
+0x0a00002b -> -
+0x0a00002c -> -
+0x0a00002d -> -
+0x0a00002e -> -
+0x0a00002f -> AVbTest.exe!0x04000008 T AVbTest.My.MyProject/ThreadSafeObjectProvider`1::m_ThreadStaticValue
+[custom-attributes-resolved]
+ca parent=0x20000001 ctor=System.Void System.Diagnostics.DebuggableAttribute::.ctor(System.Diagnostics.DebuggableAttribute/DebuggingModes) args=()
+ca parent=0x06000002 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x02000002 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x02000003 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x17000005 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x02000006 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x17000006 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x02000009 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x0200000a ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x06000011 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x06000012 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x06000013 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x06000014 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x06000017 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+ca parent=0x06000019 ctor=System.Void System.ComponentModel.EditorBrowsableAttribute::.ctor(System.ComponentModel.EditorBrowsableState) args=()
+[fields-resolved]

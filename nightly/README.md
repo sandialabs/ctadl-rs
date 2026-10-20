@@ -94,7 +94,14 @@ both — the same reasons the taint cases are nightly:
 - **`dex:*`** — `dex-reader` over the compiled samples (parse, line map, UTF-8 constants) and
   against `baksmali` as ground truth, plus `dex:apk`, which parses every `classes*.dex` in the
   real-world APK. Needs `javac`/`dx` for the sample-derived checks; `dex:apk` does not.
+  `dex:opcodes-replay` judges dex-reader's `data_flow()` and `can_throw()` against ART's
+  saved observations of every opcode (`xtask/tests/dex/opcodes-art.txt`); it needs `smali`.
 - **`jvm:*`** — `jvm-reader` over the same samples compiled to `.class`/`.jar`. Needs `javac`.
+  `jvm:asm-flow` compares jvm-reader's dataflow for every instruction with ASM's analyzer, over
+  the samples, the Java cases in `tests/java` and a generated class that holds every opcode
+  (`xtask/src/asm_flow/`). `jvm:opcodes` runs each opcode on the JVM, changing one input at
+  a time, and checks that every input that changes an output is one jvm-reader lists as a source.
+  Both need ASM (`asm-classpath`, from the flake).
 - **`apk:*`** — `ctadl` itself, end to end, over that same real-world APK
   (`xtask/tests/dex/com.noto_54.apk`). Needs no toolchain at all: the APK is prebuilt and checked
   in, so all these need is the `ctadl` binary.
@@ -278,9 +285,9 @@ consumer cannot read is a defect on its own. The report lists every diagnostic
 and the path to the validation log, which is left in the case's scratch
 directory as `checksarif-log.sarif`.
 
-This is the one check the JVM allowlist cannot demote to XFAIL. The allowlist
-exists for the maturity of that frontend's *taint results*, which the shape of
-the log says nothing about.
+This is the one check the known-failure lists (`JVM_KNOWN_FAILURES`,
+`C_KNOWN_FAILURES`) cannot demote to XFAIL. Those lists exist for a frontend's
+*taint results*, which the shape of the log says nothing about.
 
 Rules are configured in `nix/sarif-multitool/sarif-validation.xml`. A rule that
 cannot apply to a binary/bytecode analyzer belongs there, turned off with a
