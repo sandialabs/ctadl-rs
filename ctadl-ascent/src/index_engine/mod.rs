@@ -71,10 +71,10 @@ pub mod path_group;
 pub mod path_set;
 pub mod source_info;
 
-// Column encodings for the relations that `Storage::Lsm` moves onto the `lsm` provider. Each
-// column is stored as its raw bits in 8-byte slots. All of them are `Copy`, fixed-width and free
-// of padding; `Path` is an interned `&'static` pointer whose interner is never freed, so its bits
-// stay valid for the whole process, which is as long as the provider's run files live.
+// Column encodings for the relations that `Storage::Lsm` moves onto the `lsm` provider. All of
+// them are `Copy`, fixed-width and free of padding; `Path` is an interned `&'static` pointer
+// whose interner is never freed, so its bits stay valid for the whole process, which is as long
+// as the provider's run files live.
 lsm::lsm_col!(FunctionId, 1);
 lsm::lsm_col!(FlowVariable, 1);
 lsm::lsm_col!(Path, 1);
@@ -501,7 +501,8 @@ impl Parallelism {
 
 /// Where the index engine keeps the relations that dominate its memory: `locals`, `assign_like`
 /// and the three propagation relations that share their stores (`locals_key`, `edge_split`,
-/// `ext_dst`). Every other relation is an ordinary in-memory Ascent relation either way.
+/// `ext_dst`). `Lsm` also moves the next largest few relations onto the LSM; every other
+/// relation is an ordinary in-memory Ascent relation either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Storage {
     /// The in-memory tries of [`locals_trie`] and [`assign_like_trie`].
@@ -996,8 +997,8 @@ impl<const P: u32> LocalsProbe
 }
 
 /// What `run_engine!` does with the stores of the large relations, which differ by [`Storage`]:
-/// the trie engines keep each in one shared store (its `ind_common`), and the LSM engine in
-/// Ascent's own index fields.
+/// each relation's tuples are in its `ind_common`, a trie or an `LsmStore`, and an LSM
+/// relation's field counts its rows and, when seeded, takes its input rows.
 trait EngineStores {
     /// Seeds `assign_like` with the program's assignments, before the run.
     fn seed_assign_like(&mut self, rows: Vec<AssignLikeRow>);
@@ -2376,9 +2377,9 @@ pub fn taint_index_with_config(
         include_source!(index_rules);
     }
     // `Storage::Lsm`: the same rules, with the store-backed relations redeclared onto the LSM
-    // provider (Ascent keeps a relation's last declaration). None keeps its rows in its field:
-    // `assign_like` is seeded through it and hands the seed to its indices once, and every one
-    // is read back, if at all, from its store.
+    // provider (Ascent keeps a relation's last declaration). Each is `counting`, or `seeded` if it
+    // takes input rows, so none keeps its rows in its field; every one is read back, if at all,
+    // from its store.
     ascent! {
         #![measure_rule_times]
         #![generate_run_timeout]
@@ -2435,16 +2436,12 @@ pub fn taint_index_with_config(
                     }
                 }
                 fn heap_reports(&self) -> Vec<String> {
-                    // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd
-                    // vs inv.
                     vec![
                         self.__locals_ind_common.heap_report().to_string(),
                         self.__assign_like_ind_common.heap_report().to_string(),
                     ]
                 }
                 fn num_reached_variables(&self) -> usize {
-                    // The store's `(F, V)` outer keys: the same (func, var) key `num_variables`
-                    // counts, so the two are directly comparable.
                     self.__locals_ind_common.num_reached_variables()
                 }
                 fn locals_probe(&self) -> &dyn LocalsProbe {

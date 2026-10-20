@@ -24,24 +24,26 @@ const NODES: u64 = 100;
 /// (see the `memory_comparison` example), not beating RAM.
 const MEMTABLE_LIMIT: usize = 64;
 
-/// Best-effort sweep of provider run directories left in the temp dir. Each LSM
-/// map deletes its own directory on drop, but Criterion's final timed iteration
-/// isn't always dropped before the process exits, so a few can survive a run.
-/// Sweeping at startup keeps them from accumulating across benchmark invocations.
-/// (Assumes benchmarks aren't run concurrently, which holds for this repo.)
-fn sweep_leftover_run_dirs() {
+/// Best-effort sweep of provider run files left in the temp dir. A run file is
+/// unlinked as soon as it is mapped, but one whose writer was interrupted (a
+/// killed benchmark) is left behind. Sweeping at startup keeps them from
+/// accumulating across benchmark invocations. (Assumes benchmarks aren't run
+/// concurrently, which holds for this repo.)
+fn sweep_leftover_run_files() {
     let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
         return;
     };
     for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().starts_with("lsm-mmap-") {
-            let _ = std::fs::remove_dir_all(entry.path());
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("lsm-mmap-") && name.ends_with(".run") {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }
 
 fn bench_transitive_closure(c: &mut Criterion) {
-    sweep_leftover_run_dirs();
+    sweep_leftover_run_files();
     // Configure the provider with the limit this benchmark depends on.
     set_memtable_limit(MEMTABLE_LIMIT);
 
