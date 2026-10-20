@@ -1,13 +1,17 @@
 """The daemon: watch the tracked branch, build each commit, work through its pass, and sweep the
 whole firmware corpus in the background -- without getting in the user's way.
 
-Two kinds of work, never mixed:
+When the machine is quiet, one **pool** fills it: builds, units of commits' passes (the pass
+in progress first, then the newest commit), and in whatever room is left, sweep units -- up to
+`[pool] workers` runs at once and `[pool] mem_gib` of predicted peak memory. A unit's
+prediction is its peak on the last commit that ran it, and its memory cap when it ran out or
+has not run; a sweep unit's is `sweep_est_gib`, and a build's `[build] est_gib`.
 
-* **Exclusive** work -- a build, or a unit of a commit's pass -- runs alone, so a p-tier
-  measurement never shares the machine with our own work. Pass work always goes first: while
-  any is waiting, no new sweep worker starts, and running ones drain.
-* **Sweep** units run several at a time (`workers_p` when quiet, `workers_e` otherwise). Their
-  wall times are shared, so they are kept as `wall_shared_s` and never compared.
+Otherwise, on the e tier, two kinds of work are never mixed:
+
+* **Exclusive** work -- a build, or a unit of a commit's pass -- runs alone. Pass work always
+  goes first: while any is waiting, no new sweep worker starts, and running ones drain.
+* **Sweep** units run `workers_e` at a time.
 
 Tiers follow the activity gate:
 
@@ -17,11 +21,14 @@ Tiers follow the activity gate:
   `max_activity_kills` times runs on the e tier from then on.
 * e-tier work is promoted when the machine goes quiet, and demoted again when the user comes
   back; its wall time is then not clean.
-* Memory pressure: exclusive work is stopped (SIGSTOP) until pressure is normal; sweep workers
-  are shed youngest first (killed and requeued) down to one.
+* Memory pressure: no new work starts; units are shed youngest first (killed and requeued)
+  down to one, and then the rest of the exclusive work is stopped (SIGSTOP) until pressure is
+  normal.
 
-Wall time is recorded only for clean runs: started on p, never demoted, promoted or stopped.
-Instruction counts, cycles and peak footprint are recorded for every run that finishes.
+Instruction counts, cycles and peak footprint are recorded for every run that finishes, and
+those are what get compared. Wall time is recorded as `wall_s` only for clean runs: started on
+p, never demoted, promoted or stopped, and alone on the machine throughout. Any other run that
+finishes records it as `wall_shared_s`, which is never compared.
 
 Disk: a benchmark's store (its import and index) is deleted as soon as its last phase is over,
 however it ended, and a periodic pass removes any store nothing will read again.
@@ -57,6 +64,8 @@ class Active:
     paused: bool = False
     effective_s: float = 0.0   # time charged against the timeout; e-tier time counts less
     last_tick: float = 0.0
+    est_gib: float = 0.0       # predicted peak memory, held against the pool's budget
+    shared: bool = False       # another of our runs was active alongside it at some point
 
     @property
     def sweep(self) -> bool:
@@ -81,6 +90,8 @@ class Daemon:
         self.xtask_retry_at = 0.0
         self.last_gate_state = None
         self.foreign_cpu: deque[tuple[float, float]] = deque()
+        self.next_shed = 0.0
+        self.peaks = self.load_peaks()
         self.git = inputs.get("git", "git")
         for d in ("tmp", "home"):
             (self.root / d).mkdir(parents=True, exist_ok=True)
@@ -189,7 +200,7 @@ class Daemon:
 
     # --- builds --------------------------------------------------------------------------------
 
-    def start_build(self, target: str, sha: str, tier: str) -> None:
+    def start_build(self, target: str, sha: str, tier: str, est_gib: float = 0.0) -> None:
         """Build `ctadl` at a tracked commit, or `xtask` from the bench repo, with cargo in the
         commit's own pinned dev shell. cargo runs as our child, so it moves between tiers like
         everything else, and the shared target dir keeps rebuilds incremental."""
@@ -220,7 +231,7 @@ class Daemon:
         run = proc.launch(argv, cwd=src, env=env, log_path=log, time_file=log.with_suffix(".time"),
                           memguard=self.memguard, mem_cap_gib=self.cfg["build"]["mem_cap_gib"], tier=tier)
         self.active.append(Active(kind="build", run=run, timeout_s=self.cfg["build"]["timeout_s"],
-                                  sha=sha, target=target, last_tick=time.time()))
+                                  sha=sha, target=target, last_tick=time.time(), est_gib=est_gib))
         self.log("build-start", f"{target} {sha[:10]} tier={tier}")
 
     def finish_build(self, a: Active, rc: int) -> None:
@@ -254,16 +265,49 @@ class Daemon:
 
     # --- units ---------------------------------------------------------------------------------
 
-    def pass_commit(self) -> str | None:
-        """The commit whose pass to work on: finish the one in progress before starting
-        another, then the newest built commit."""
-        row = self.conn.execute(
-            "SELECT u.sha FROM units u JOIN commits c ON c.sha=u.sha "
-            "WHERE u.status='pending' AND u.suite!=? AND c.build_status='ok' "
-            "ORDER BY EXISTS (SELECT 1 FROM units d WHERE d.sha=u.sha AND d.suite!=? "
-            "                 AND d.status IN ('done','failed','skipped')) DESC, "
-            "c.committed_at DESC LIMIT 1", (SWEEP, SWEEP)).fetchone()
-        return row["sha"] if row else None
+    def pass_candidates(self) -> list:
+        """Pass units ready to run, in the order to run them: the pass in progress before
+        another, then the newest built commit, each in its own order. A unit whose prerequisite
+        did not succeed is skipped here."""
+        while True:
+            rows = self.conn.execute(
+                "SELECT u.*, a.status AS after_status, c.committed_at FROM units u "
+                "JOIN commits c ON c.sha=u.sha LEFT JOIN units a ON a.id=u.after "
+                "WHERE u.status='pending' AND u.suite!=? AND c.build_status='ok' "
+                "AND (u.after IS NULL OR a.status NOT IN ('pending','running'))", (SWEEP,)).fetchall()
+            doomed = [u for u in rows if u["after"] is not None and u["after_status"] != "done"]
+            for u in doomed:
+                self.conn.execute("UPDATE units SET status='skipped' WHERE id=?", (u["id"],))
+                self.maybe_clean(u)
+            if not doomed:
+                break
+        started = {r["sha"] for r in self.conn.execute(
+            "SELECT DISTINCT sha FROM units WHERE suite!=? AND status IN ('done','failed','skipped')",
+            (SWEEP,))}
+        return sorted(rows, key=lambda u: (u["sha"] not in started, -u["committed_at"], u["seq"]))
+
+    def load_peaks(self) -> dict[tuple, tuple]:
+        """(suite, bench, phase) -> (peak footprint in bytes or None, outcome) of the latest
+        pass run of that unit that ran to the end or out of memory."""
+        peaks = {}
+        for r in self.conn.execute(
+                "SELECT u.suite, u.bench, u.phase, r.outcome, m.value FROM runs r "
+                "JOIN units u ON u.id=r.unit_id "
+                "LEFT JOIN metrics m ON m.run_id=r.id AND m.name='peak_footprint_b' "
+                "WHERE u.suite!=? AND r.outcome IN ('ok','oom') ORDER BY r.ended_at", (SWEEP,)):
+            peaks[(r["suite"], r["bench"], r["phase"])] = (r["value"], r["outcome"])
+        return peaks
+
+    def estimate_gib(self, u) -> float:
+        """The peak memory to hold for a unit in the pool."""
+        pool = self.cfg["pool"]
+        cap = json.loads(u["spec"])["mem_cap_gib"]
+        if u["suite"] == SWEEP:
+            return min(cap, pool["sweep_est_gib"])
+        peak, outcome = self.peaks.get((u["suite"], u["bench"], u["phase"]), (None, None))
+        if peak is None or outcome != "ok":
+            return cap
+        return min(cap, max(pool["min_est_gib"], 1.25 * peak / 2**30))
 
     def next_unit(self, sha: str, sweep: bool):
         op = "=" if sweep else "!="
@@ -320,7 +364,7 @@ class Daemon:
         return self.conn.execute("SELECT count(*) FROM runs WHERE unit_id=? AND outcome='killed' "
                                  "AND reason LIKE 'user active%'", (unit_id,)).fetchone()[0]
 
-    def start_unit(self, u, tier: str) -> None:
+    def start_unit(self, u, tier: str, est_gib: float = 0.0) -> None:
         spec = json.loads(u["spec"])
         work = self.work_dir(u)
         work.mkdir(parents=True, exist_ok=True)
@@ -337,7 +381,7 @@ class Daemon:
         self.conn.execute("UPDATE runs SET log_path=? WHERE id=?", (str(log), run_id))
         self.conn.execute("UPDATE units SET status='running', attempts=attempts+1 WHERE id=?", (u["id"],))
         self.active.append(Active(kind="unit", run=run, timeout_s=spec["timeout_s"], unit=dict(u),
-                                  run_id=run_id, last_tick=time.time()))
+                                  run_id=run_id, last_tick=time.time(), est_gib=est_gib))
         if u["suite"] != SWEEP:
             self.log("unit-start", f"{u['sha'][:10]} {u['suite']}/{u['bench']}/{u['phase']} "
                      f"tier={tier} run={run_id}")
@@ -365,11 +409,13 @@ class Daemon:
         metrics = proc.parse_time_file(r.time_file)
         real = metrics.pop("real_s", None)
         if real is not None and outcome == "ok":
-            if a.sweep:
-                metrics["wall_shared_s"] = real
-            elif r.start_tier == "p" and not (r.demoted or r.promoted or r.stopped):
+            if r.start_tier == "p" and not (a.sweep or a.shared or r.demoted or r.promoted or r.stopped):
                 metrics["wall_s"] = real
+            else:
+                metrics["wall_shared_s"] = real
         self.put_metrics(run_id, metrics)
+        if not a.sweep and outcome in ("ok", "oom"):
+            self.peaks[(u["suite"], u["bench"], u["phase"])] = (metrics.get("peak_footprint_b"), outcome)
         if outcome in ("ok", "oom") and u["phase"] in ("import", "index"):
             self.check_budget(a, run_id, metrics, outcome)
         self.conn.execute("UPDATE units SET status=? WHERE id=?",
@@ -439,7 +485,7 @@ class Daemon:
             pending = self.conn.execute("SELECT count(*) FROM units WHERE sha=? AND suite=? "
                                         "AND status IN ('pending','running')", (sha, SWEEP)).fetchone()[0]
             if cursor < total or pending:
-                if pending < 3 * self.cfg["sweep"]["workers_p"] and cursor < total:
+                if pending < 3 * self.cfg["pool"]["workers"] and cursor < total:
                     n = suites.enqueue(self.conn, sha, suites.sweep_batch(self.cfg, self.inputs, cursor,
                                                                           s["batch"]))
                     dbm.set_state(self.conn, "sweep.cursor", str(min(total, cursor + s["batch"])))
@@ -506,13 +552,15 @@ class Daemon:
             self.log("yield", f"killed {len(victims)} p-tier run(s): {reason}")
 
     def relieve_pressure(self, snap) -> None:
-        if snap.pressure == 1:
+        if snap.pressure == 1 or time.time() < self.next_shed:
             return
-        sweepers = sorted((a for a in self.active if a.sweep and a.run.kill_reason is None),
-                          key=lambda a: a.run.started_at)
-        if len(sweepers) > 1:
-            proc.kill(sweepers[-1].run, "memory pressure")  # requeued, like a user kill
-            self.log("shed", f"memory pressure {snap.pressure}: {self.describe(sweepers[-1])}")
+        units = sorted((a for a in self.active if a.kind == "unit" and a.run.kill_reason is None),
+                       key=lambda a: a.run.started_at)
+        if len(units) > 1:
+            proc.kill(units[-1].run, "memory pressure")  # requeued, like a user kill
+            self.log("shed", f"memory pressure {snap.pressure}: {self.describe(units[-1])}")
+            # Give the freed memory time to show before shedding more.
+            self.next_shed = time.time() + 10
             return
         for a in self.active:
             if not a.paused and not a.sweep:
@@ -531,25 +579,82 @@ class Daemon:
         return f"{u['suite']}/{u['bench']}/{u['phase']} run={a.run_id}"
 
     def schedule(self, snap, p_ok: bool) -> None:
-        tier = "p" if p_ok else "e"
+        if p_ok:
+            self.fill_pool(snap)
+        else:
+            self.schedule_e(snap)
+
+    def xtask_ready(self, start_build) -> bool:
+        """Whether xtask (for TaintBench scoring) is built; if not, `start_build(head)` is
+        called to build it unless a build of it is already running."""
+        if self.xtask is not None:
+            return True
+        if time.time() < self.xtask_retry_at:
+            return True  # its build failed; measure without it meanwhile
+        head = self.git_out("rev-parse", "HEAD", repo=self.bench_repo)
+        built = self.root / "builds" / head / "xtask"
+        if built.exists():
+            self.xtask = str(built)
+            return True
+        if not any(a.kind == "build" and a.target == "xtask" for a in self.active):
+            start_build(head)
+        return False
+
+    def fill_pool(self, snap) -> None:
+        """Quiet: start runs until the pool is out of workers or memory."""
+        if snap.pressure > 1:
+            return
+        pool = self.cfg["pool"]
+        build_gib = self.cfg["build"]["est_gib"]
+
+        def room(est: float) -> bool:
+            if not self.active:
+                return True
+            return (len(self.active) < pool["workers"]
+                    and sum(a.est_gib for a in self.active) + est <= pool["mem_gib"])
+
+        if not self.xtask_ready(lambda head: room(build_gib) and self.start_build("xtask", head, "p", build_gib)):
+            return
+        if not any(a.kind == "build" and a.target == "ctadl" for a in self.active):
+            pending_build = self.conn.execute("SELECT sha FROM commits WHERE build_status='pending' "
+                                              "ORDER BY committed_at DESC LIMIT 1").fetchone()
+            if pending_build and room(build_gib):
+                self.start_build("ctadl", pending_build["sha"], "p", build_gib)
+        # Pass units in order; one that does not fit holds back everything after it, sweep
+        # units included, so a large unit is not starved by small ones.
+        for u in self.pass_candidates():
+            est = self.estimate_gib(u)
+            if not room(est):
+                return
+            self.start_unit(u, self.start_tier(u), est)
+        ssha = self.sweep_sha()
+        while ssha is not None:
+            u = self.next_unit(ssha, sweep=True)
+            if u is None:
+                return
+            est = self.estimate_gib(u)
+            if not room(est):
+                # Back on the queue for later: next_unit only reads, so nothing to undo.
+                return
+            self.start_unit(u, self.start_tier(u), est)
+
+    def start_tier(self, u) -> str:
+        return "e" if self.activity_kills(u["id"]) >= self.gate["max_activity_kills"] else "p"
+
+    def schedule_e(self, snap) -> None:
+        """Not quiet: everything new starts on the e tier, pass work and builds one at a time."""
+        tier = "e"
         exclusive = [a for a in self.active if not a.sweep]
         if exclusive:
             return
         sweeping = [a for a in self.active if a.sweep]
-        if self.xtask is None and time.time() >= self.xtask_retry_at:
-            head = self.git_out("rev-parse", "HEAD", repo=self.bench_repo)
-            built = self.root / "builds" / head / "xtask"
-            if built.exists():
-                self.xtask = str(built)
-            elif not sweeping:
-                self.start_build("xtask", head, tier)
-                return
-            else:
-                return
+        if not self.xtask_ready(lambda head: sweeping or self.start_build("xtask", head, tier)):
+            return
         # Exclusive work waiting: let the sweep drain, then run it alone.
         pending_build = self.conn.execute("SELECT sha FROM commits WHERE build_status='pending' "
                                           "ORDER BY committed_at DESC LIMIT 1").fetchone()
-        sha = self.pass_commit()
+        candidates = self.pass_candidates()
+        sha = candidates[0]["sha"] if candidates else None
         if pending_build or sha:
             if sweeping:
                 return
@@ -560,11 +665,8 @@ class Daemon:
             elif pending_build:
                 self.start_build("ctadl", pending_build["sha"], tier)
                 return
-            u = self.next_unit(sha, sweep=False)
-            if u is not None:
-                if self.activity_kills(u["id"]) >= self.gate["max_activity_kills"]:
-                    tier = "e"
-                self.start_unit(u, tier)
+            if candidates:
+                self.start_unit(candidates[0], tier, self.estimate_gib(candidates[0]))
             return
         # Nothing exclusive: fill the sweep's worker slots.
         if snap.pressure > 1:
@@ -572,12 +674,12 @@ class Daemon:
         ssha = self.sweep_sha()
         if ssha is None:
             return
-        limit = self.cfg["sweep"]["workers_p" if p_ok else "workers_e"]
+        limit = self.cfg["sweep"]["workers_e"]
         while len([a for a in self.active if a.sweep]) < limit:
             u = self.next_unit(ssha, sweep=True)
             if u is None:
                 break
-            self.start_unit(u, tier)
+            self.start_unit(u, tier, self.estimate_gib(u))
 
     def run(self) -> None:
         self.recover()
@@ -599,6 +701,9 @@ class Daemon:
                     self.yield_cores(snap)
                 for a in list(self.active):
                     self.supervise(a, snap, user_here, p_ok)
+                if len(self.active) > 1:
+                    for a in self.active:
+                        a.shared = True
                 self.relieve_pressure(snap)
                 self.schedule(snap, p_ok)
             except SystemExit:

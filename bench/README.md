@@ -19,7 +19,7 @@ scratch. Logs are kept; a benchmark's ctadl store is deleted as soon as its last
 
 ## What runs
 
-Per commit, a **pass** (`bench.toml` `[suites.*]`):
+Per first-parent commit, a **pass** (`bench.toml` `[suites.*]`):
 
 | suite | benchmarks | quality measured |
 |---|---|---|
@@ -35,7 +35,7 @@ change in *which* flows are reported is flagged even when the number holds still
 
 And continuously, a **firmware sweep** over every sink-bearing executable in the Operation
 Mango dataset - 32,559 binaries (`suites/firmware-sweep.json`) - pinned to one commit, run in
-parallel whenever no pass work is waiting, restarted at the newest commit when complete.
+parallel in whatever room pass work leaves, restarted at the newest commit when complete.
 
 The JSON lists are frozen with the `suites/gen_*.py` scripts; regenerate on purpose.
 `suites/android-privacy.json`, the fdroid and apps query model, is the framework-class rules of
@@ -50,15 +50,21 @@ time is useless over ssh/mosh, so it reads the access time of every tty with a p
 daemon, and foreign CPU use averaged over a minute. System daemons our own work wakes
 (Spotlight, XProtect, `sysmond`; `[gate] ignore_cpu`) do not count as foreign.
 
-* **p tier** (normal priority, performance cores) only after 15 minutes of quiet. Only p-tier runs record wall time, and only if never moved.
+* **p tier** (normal priority, all cores) only after 15 minutes of quiet. Then one pool
+  saturates the machine: builds, pass units (the pass in progress, then newest commit first)
+  and sweep units, up to 16 runs and 96 GiB of predicted peak memory (`[pool]`). A pass unit's
+  prediction is its peak on the last commit that ran it.
 * **e tier**: `taskpolicy -b`, i.e. the efficiency cores and throttled I/O. Instruction
   counts, cycles and peak memory are recorded on either tier; instruction counts agree across
   tiers to well under 1%.
 * User returns during p-tier work: every run started on the p tier (builds, imports and sweep
   units included) is killed and requeued, so the cores are free at once; e-tier work that was
   promoted is demoted back. After 3 such kills a unit runs on the e tier.
-* Memory pressure: sweep workers are shed (youngest first); other work is paused.
-* Commit passes and builds run alone; the sweep uses 12 workers when quiet, 3 otherwise.
+* Memory pressure: nothing new starts; units are shed youngest first, and the last is paused.
+* Off the p tier, commit passes and builds run alone, and the sweep uses 3 workers.
+* Wall time is recorded as `wall_s` only for a run that started on p, never moved, and had the
+  machine to itself; other runs record `wall_shared_s`, which is never compared. Instruction
+  counts are what regressions are judged on.
 * Every benchmark run is capped at 16 GiB by memguard (builds at 48 GiB); a run over the cap
   is killed and recorded as `oom`.
 
