@@ -1,0 +1,27 @@
+// A tainted pointer *value* reaches an address computed from it.
+//
+// `a = p.[8]` is C's `&p[2]`, pcode's PTRADD: an address computed from the value of `p`, so a
+// taint on `p` itself is a taint on `a`. It is not a taint on the memory at that address,
+// `p.[8].deref`; only a saturating source reaches that.
+def third(q): 1 {
+s:
+  r = q.[8];
+  return r;
+}
+
+def main() {
+s:
+  p = source(Ptr);
+  a = p.[8];
+  sink(a, Ptr);
+
+  // The same address, computed in a callee.
+  p2 = source(Ptr);
+  b = third(p2);
+  sink(b, Ptr);
+
+  // The memory at the address stays clean.
+  e = p.[8].deref;
+  errsink(e, Ptr);
+  return;
+}
