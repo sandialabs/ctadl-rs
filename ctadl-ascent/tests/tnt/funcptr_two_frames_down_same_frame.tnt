@@ -1,0 +1,75 @@
+// A function pointer installed in a struct field two frames below the frame that owns the
+// struct, then called through that field in that same frame. `funcptr_two_frames_down.tnt` makes
+// the call from a third function instead.
+//
+// The sinks in `sink_strips` and `sink_tiles` must both be reached. `begin` only forwards the
+// object and makes no indirect call of its own; the call-target tag climbs through it to `main`,
+// which makes the call. `put_never` is installed in the sibling field `put`, which is never
+// called, so `sink_clean` must stay silent. Each sink is one call below its target so that
+// reaching it means entering the target.
+
+def sink_strips(v) {
+start:
+  sink(v, Height);
+  return;
+}
+
+def sink_tiles(v) {
+start:
+  sink(v, Height);
+  return;
+}
+
+def sink_clean(v) {
+start:
+  errsink(v, Height);
+  return;
+}
+
+def get_strips(im shared, h):1 {
+start:
+  sink_strips(h);
+  return h;
+}
+
+def get_tiles(im shared, h):1 {
+start:
+  sink_tiles(h);
+  return h;
+}
+
+def put_never(im shared, h):1 {
+start:
+  sink_clean(h);
+  return h;
+}
+
+// Installs the targets. No indirect call here.
+def pick(im shared) {
+start:
+  goto tiled, strips;
+tiled:
+  im.get = ptr<get_tiles>;
+  goto done;
+strips:
+  im.get = ptr<get_strips>;
+  goto done;
+done:
+  im.put = ptr<put_never>;
+  return;
+}
+
+def begin(im shared) {
+start:
+  pick(im);
+  return;
+}
+
+def main() {
+start:
+  h = source(Height);
+  begin(im);
+  f = im.get;
+  r = f(im, h);
+  return;
+}
