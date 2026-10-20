@@ -1434,8 +1434,8 @@ fn keyed_cta(ps: &path_set::PathSet) -> bool {
 /// Activity Monitor's "Memory" column and `footprint(1)` report) in MB. Used for the
 /// `[mem cp]` derivation checkpoints so we can attribute the pre-fixpoint memory spike to the
 /// individual transient buffers in-process (an external sampler can't see sub-second phases).
-/// Windows reports its closest equivalent, the commit charge (see the Windows version below).
-/// Returns -1.0 on other platforms or on error.
+/// Windows and Linux report their closest equivalents (see their versions below). Returns -1.0 on
+/// other platforms or on error.
 #[cfg(target_os = "macos")]
 pub(crate) fn phys_footprint_mb() -> f64 {
     // SAFETY: `proc_pid_rusage` fills a caller-provided `rusage_info_v2` for our own pid. The C
@@ -1486,7 +1486,26 @@ pub(crate) fn phys_footprint_mb() -> f64 {
         -1.0
     }
 }
-#[cfg(not(any(target_os = "macos", windows)))]
+/// The Linux `phys_footprint_mb`: this process's private anonymous memory, resident (`RssAnon`) plus
+/// swapped out (`VmSwap`), from `/proc/self/status`, in MB. The closest match to the other two: it
+/// leaves out file-backed pages such as the binary's own text, which `VmRSS` would count.
+#[cfg(target_os = "linux")]
+pub(crate) fn phys_footprint_mb() -> f64 {
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return -1.0;
+    };
+    let kb = |field: &str| {
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix(field))
+            .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse::<f64>().ok())
+    };
+    match kb("RssAnon:") {
+        Some(anon) => (anon + kb("VmSwap:").unwrap_or(0.0)) / 1024.0,
+        None => -1.0,
+    }
+}
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub(crate) fn phys_footprint_mb() -> f64 {
     -1.0
 }

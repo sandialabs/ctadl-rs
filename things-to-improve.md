@@ -51,7 +51,7 @@ The document has four parts:
 | P29. Rhino's interpreter loop in the hybrid context | S14 | Open |
 | P30. The transient at the end of scc 4 | S33 | Open; located (M10) |
 | P31. The context-free call rule joins before it tests the mode | S36 done | Fixed (M13) |
-| P32. The memory checkpoints read -1 on Linux | S37 | Open; tooling |
+| P32. The memory checkpoints read -1 on Linux | S37 done | Fixed |
 | P33. Query results depend on the order of the index's rows | S38 | Open |
 
 # Problems
@@ -653,7 +653,7 @@ instead.
 | S34. Bound the globals slot at calls | P28 | Undecided, not started |
 | S35. (Merged into S14) | P29 | Merged into S14 |
 | S36. Test the mode first in the context-free call rule | P31 | Done (uncommitted) |
-| S37. Read the footprint on Linux | P32 | Undecided |
+| S37. Read the footprint on Linux | P32 | Done |
 | S38. Make the query independent of row order | P33 | Undecided |
 
 ### S1. Merged into S2
@@ -1057,11 +1057,14 @@ test could move to the front the same way, though there it only matters under `N
 
 ### S37. Read the footprint on Linux
 
-**Applies to:** P32. **Status:** undecided, not started.
+**Applies to:** P32. **Status:** done.
 
-Read `VmRSS` from `/proc/self/status` (or the resident pages in `/proc/self/statm`) in the Linux
-branch of `phys_footprint_mb`, so that the `[mem cp]` lines are comparable across the three
-platforms.
+The Linux branch of `phys_footprint_mb` reads `RssAnon` plus `VmSwap` from `/proc/self/status`:
+private anonymous memory, the closest match to macOS's footprint and Windows' commit charge
+(`VmRSS` would add the binary's file-backed pages). On WhatsApp the `[mem cp]` lines agree with
+the cap's cgroup samples within a few percent at every phase (336 vs 329 MB after SSA, 580 vs
+602 MB entering the fixpoint), except where `ascent_run` returns: 2,287 MB against a 2,769 MB
+sample taken just before, which still held P30's transient.
 
 ### S38. Make the query independent of row order
 

@@ -35,14 +35,17 @@ M13 settled on this protocol; every step below should follow it.
 4. **Run the tests.** `cargo test --release -p ctadl-ascent` (about 45 minutes here), and the C and
    pcode regression families for anything that touches offset paths.
 
-Benchmarks on this machine (Dex only; Ghidra is not installed): WhatsApp (small, 1 min),
-OsmAnd~ (6-7 min) and Element (9-10 min), imported under `tmp/blowup-*/state`. F-Droid is
-reachable, so the Java apps of M11 (Conversations, LibreTube, DAVx⁵) can be fetched. The native
-corpus and `cash.p.terminal` are on other machines.
+Benchmarks on this machine: WhatsApp (small, 1 min), OsmAnd~ (6-7 min) and Element (9-10 min),
+imported Dex only under `tmp/blowup-*/state`. F-Droid is reachable, so the Java apps of M11
+(Conversations, LibreTube, DAVx⁵) can be fetched. Ghidra 12.1.4 is installed (`GHIDRA_HOME`,
+JDK 21), so an APK import now disassembles its native libraries too: pass `--no-native-libs` to
+`ctadl import` for a Dex-only import comparable with M10-M13. The native corpus and
+`cash.p.terminal` are on other machines, but Element's and OsmAnd~'s 65 MB of native code each
+can stand in.
 
 ## Step 0. Commit the quick wins
 
-Commit S36, the wildcard skip and the `CTADL_CTA_UNKEYED` safety fix, with the M13 write-up.
+Done in `8d02f0e7`.
 
 ## Step 1. Tooling that every later step needs
 
@@ -184,8 +187,8 @@ OpenKeychain.
 
 ## Step 7. Native-code blowups
 
-The largest wins and the most research. Needs Ghidra and the native corpus, which are not on this
-machine.
+The largest wins and the most research. Ghidra is installed here; the native corpus of M7 is not,
+but whole-APK imports of Element and OsmAnd~ (with their native libraries) give native benchmarks.
 
 - **P1, the stack mixing pool: S4,** promote escaped stack slots and spill them around their
   escapes. The `libgdx` apps peak at 20-23 GB; `androidudpbus` is still 5x over budget.
@@ -197,7 +200,6 @@ machine.
 
 ## Decisions needed
 
-- Whether to commit the quick wins now (step 0).
 - S38: fix the order dependence at its source (option C) or sort at save (option A).
-- Whether steps 5-7 should wait for access to the native corpus and Ghidra, or whether to install
-  Ghidra here.
+- Whether step 7 needs the original native corpus, or whether whole-APK imports of the apps here
+  are enough to start.
