@@ -246,6 +246,17 @@ fn get_line_num(node: &Node<'_>) -> usize {
     node.start_position().row //hmm our tests always start w/ a lf.
 }
 
+/// `file:line:col` (1-based, the column in bytes), the form compilers print and editors jump
+/// to. Every report leads with one. An in-memory unit ([`parse_c_program`]) is `<input>`.
+fn location(path: Option<&str>, at: tree_sitter::Point) -> String {
+    format!(
+        "{}:{}:{}",
+        path.unwrap_or("<input>"),
+        at.row + 1,
+        at.column + 1
+    )
+}
+
 /// The name of the local every synthesized return reads. Angle brackets are not legal in a C
 /// identifier, so this can never collide with a name from the source (the same trick
 /// [`TempAllocator::next_temp`] uses for `<tN>`). One per function is enough: it is never
@@ -352,11 +363,12 @@ fn link_blocks(
 /// fully parse (`body_holds_recovery`) those are patched but NOT reported: the loss belongs
 /// to the parse-recovery output, already reported once by
 /// `Context::report_unanalyzed_recovery`. In a cleanly parsed body a stranded label block is
-/// still a gap and still reported.
+/// still a gap and still reported. `at` is the body's [`location`].
 fn finalize_terminators(
     program: &mut Program,
     fidx: FunctionIdx,
     func_name: &str,
+    at: &str,
     stranded_labels: &HashSet<BasicBlockIdx>,
     body_holds_recovery: bool,
 ) -> Result<(), Error> {
@@ -378,12 +390,15 @@ fn finalize_terminators(
         patched.push(bb);
     }
     if !patched.is_empty() {
-        unexpected_ast(format!(
-            "function `{func_name}`: {} block(s) left without a terminator by the walk \
+        unexpected_ast(
+            at,
+            format!(
+                "function `{func_name}`: {} block(s) left without a terminator by the walk \
              ({patched:?}); their statements (e.g. code under a label after a `return`) \
              were dropped. Gave them an implicit empty `return`.",
-            patched.len(),
-        ))?;
+                patched.len(),
+            ),
+        )?;
     }
     Ok(())
 }
@@ -490,6 +505,8 @@ struct Definition<'a> {
     /// The definition's source text: two definitions that quote the same characters lower to
     /// the same IR, which makes deduplication exact rather than a guess.
     text: &'a str,
+    /// Where the definition starts, for a report.
+    start: tree_sitter::Point,
 }
 
 /// What [`plan_definitions`] decided about ONE translation unit's definitions. The first two
@@ -792,6 +809,8 @@ struct Context<'a> {
     /// The artifact spans in this unit are recorded under, with the unit's length in bytes so
     /// a span can be clamped to it; `None` when spans are not recorded.
     unit_key: Option<(ArtifactKey, usize)>,
+    /// This unit's display path, which reports name ([`Context::at`]); `None` in memory.
+    unit_path: Option<String>,
     /// Span attached to every IR statement emitted while lowering the C statement currently
     /// being walked. Set once per source statement in [`Context::walk_statement`] so that all
     /// the IR it expands into (calls, loads, stores) points back at that statement.
@@ -1051,7 +1070,14 @@ fn lower_units(
     let query = function_definition_query();
     let mut defs: Vec<Definition<'_>> = Vec::new();
     for (index, (unit, tree)) in units.iter().zip(&trees).enumerate() {
-        collect_definitions(index, &unit.source, tree, &query, &mut defs)?;
+        collect_definitions(
+            index,
+            unit.path.as_deref(),
+            &unit.source,
+            tree,
+            &query,
+            &mut defs,
+        )?;
     }
     let mut plans = plan_definitions(units, &defs)?;
     // Names first: a positional brace initializer in any body needs the layout of a record
@@ -1097,6 +1123,7 @@ fn lower_units(
             } else {
                 None
             },
+            unit_path: unit.path.clone(),
             source_info: builder.take(),
             ..Default::default()
         };
@@ -1144,6 +1171,7 @@ fn function_definition_query() -> Query {
 /// left to be noticed as a bodyless `define` -- and not collected.
 fn collect_definitions<'a>(
     unit: usize,
+    path: Option<&str>,
     source: &'a str,
     tree: &Tree,
     query: &Query,
@@ -1164,10 +1192,13 @@ fn collect_definitions<'a>(
             } else {
                 String::new()
             };
-            unexpected_ast(format!(
-                "unsupported declarator in a function definition{elision}; the function it \
+            unexpected_ast(
+                &location(path, decl_node.start_position()),
+                format!(
+                    "unsupported declarator in a function definition{elision}; the function it \
                  defines has no body in the IR -- declarator: {quote}"
-            ))?;
+                ),
+            )?;
             continue;
         };
         defs.push(Definition {
@@ -1175,6 +1206,7 @@ fn collect_definitions<'a>(
             id: def_node.id(),
             name: to_str(&head.name, source),
             text: to_str(&def_node, source),
+            start: def_node.start_position(),
         });
     }
     Ok(())
@@ -1286,16 +1318,16 @@ fn plan_definitions(
                 // the name means here, which is the first one.
                 let minted = effective;
                 let first = held.clone();
-                let place = match &units[defs[i].unit].path {
-                    Some(file) => format!("`{file}`"),
-                    None => "this translation unit".to_string(),
-                };
-                malformed_source(format!(
-                    "`{}` is defined more than once in {place}; C gives a name one \
-                     definition per translation unit, so this one is analyzed as \
-                     `{minted}` and a call to `{}` here resolves to `{first}`",
-                    def.name, def.name
-                ))?;
+                let path = units[defs[i].unit].path.as_deref();
+                malformed_source(
+                    &location(path, defs[i].start),
+                    format!(
+                        "`{}` is defined more than once in this translation unit; C gives \
+                         a name one definition per translation unit, so this one is \
+                         analyzed as `{minted}` and a call to `{}` here resolves to `{first}`",
+                        def.name, def.name
+                    ),
+                )?;
             }
         }
     }
@@ -1955,6 +1987,11 @@ struct ScopeView {
 }
 
 impl<'a> Context<'a> {
+    /// Where `node` starts in this unit, for a report: see [`location`].
+    fn at(&self, node: Node<'_>) -> String {
+        location(self.unit_path.as_deref(), node.start_position())
+    }
+
     fn collect_assignment(
         &mut self,
         source: &'a str,
@@ -2468,10 +2505,10 @@ impl<'a> Context<'a> {
                 return Ok(true);
             }
             "break_statement" => {
-                return self.walk_break(program, scope_view);
+                return self.walk_break(program, scope_view, child);
             }
             "continue_statement" => {
-                return self.walk_continue(program, scope_view);
+                return self.walk_continue(program, scope_view, child);
             }
             // Unlike break/continue, a `goto` does NOT end the compound: code after it
             // is unreachable but may hold labels that must still lower, so it updates
@@ -2519,9 +2556,10 @@ impl<'a> Context<'a> {
         } else {
             String::new()
         };
-        malformed_source(format!(
-            "parse error{elision}; construct not parsed -- ERROR: {quote}"
-        ))
+        malformed_source(
+            &self.at(error_node),
+            format!("parse error{elision}; construct not parsed -- ERROR: {quote}"),
+        )
     }
 
     /// Report that a function's body contains parse-recovery output that is not analyzed,
@@ -2531,16 +2569,19 @@ impl<'a> Context<'a> {
     /// Deliberately without an `ERROR: <text>` tail: on this path an `ERROR` is a shard of
     /// the recovery, not the construct that failed -- that one is reported by
     /// [`Context::report_unparsable_construct`]; what a reader needs here is which function
-    /// is not trustworthy.
-    fn report_unanalyzed_recovery(&mut self, func_name: &str) -> Result<(), Error> {
+    /// is not trustworthy. It is located at `node`, the first recovery output met.
+    fn report_unanalyzed_recovery(&mut self, node: Node<'_>, func_name: &str) -> Result<(), Error> {
         if self.functions_with_recovery.contains(func_name) {
             return Ok(());
         }
         self.functions_with_recovery.insert(func_name.to_string());
-        malformed_source(format!(
-            "function `{func_name}`: tree-sitter parse-recovery output in this body is not \
-             analyzed (the code it displaced is not in the parse tree)"
-        ))
+        malformed_source(
+            &self.at(node),
+            format!(
+                "function `{func_name}`: tree-sitter parse-recovery output in this body is \
+                 not analyzed (the code it displaced is not in the parse tree)"
+            ),
+        )
     }
 
     /// Report a name node that quotes to the empty string, and say whose fault it is.
@@ -2555,12 +2596,15 @@ impl<'a> Context<'a> {
     fn report_missing_name(&mut self, node: Node<'_>, scope_view: &ScopeView) -> Result<(), Error> {
         if recovery_region(node).is_some() {
             let func_name = scope_view.func_name.clone();
-            self.report_unanalyzed_recovery(&func_name)
+            self.report_unanalyzed_recovery(node, &func_name)
         } else {
-            unexpected_ast(format!(
-                "{} with no name (a zero-width node names no object)",
-                node.kind()
-            ))
+            unexpected_ast(
+                &self.at(node),
+                format!(
+                    "{} with no name (a zero-width node names no object)",
+                    node.kind()
+                ),
+            )
         }
     }
 
@@ -2618,9 +2662,10 @@ impl<'a> Context<'a> {
                 // it is neither lowered nor routed to `flatten_gnu_asm`.
                 "gnu_asm_expression" => continue,
                 _ => {
-                    unexpected_ast(format!(
-                        "Declaration declarator had an unexpected kind {decl_kind}"
-                    ))?;
+                    unexpected_ast(
+                        &self.at(nest_decl),
+                        format!("Declaration declarator had an unexpected kind {decl_kind}"),
+                    )?;
                     continue;
                 }
             };
@@ -2701,10 +2746,10 @@ impl<'a> Context<'a> {
             child.child_by_field_name("condition").or(empty_clause),
             child.child_by_field_name("update").or(empty_clause),
         ) else {
-            return malformed_source(format!(
-                "for statement at line {} has no parsable clauses",
-                get_line_num(&child) + 1
-            ));
+            return malformed_source(
+                &self.at(child),
+                "for statement has no parsable clauses".to_string(),
+            );
         };
         let body_node = child.child_by_field_name("body").expect("always has body");
 
@@ -3010,7 +3055,12 @@ impl<'a> Context<'a> {
     /// `scope_view.break_target` — no stack to consult. Returns whether the block was
     /// terminated: a stray `break` outside any switch/loop (a source problem) recovers
     /// as a no-op, so following statements keep lowering into the same block.
-    fn walk_break(&self, program: &mut Program, scope_view: &ScopeView) -> Result<bool, Error> {
+    fn walk_break(
+        &self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        node: Node<'_>,
+    ) -> Result<bool, Error> {
         match scope_view.break_target {
             Some(target) => {
                 let mut to = scope_view.clone();
@@ -3019,7 +3069,10 @@ impl<'a> Context<'a> {
                 Ok(true)
             }
             None => {
-                malformed_source("`break` outside of a switch or loop".to_string())?;
+                malformed_source(
+                    &self.at(node),
+                    "`break` outside of a switch or loop".to_string(),
+                )?;
                 Ok(false)
             }
         }
@@ -3028,7 +3081,12 @@ impl<'a> Context<'a> {
     /// `continue`: terminate the current block with a goto to the innermost enclosing
     /// loop's re-test/update block (`scope_view.continue_target`). Termination and
     /// stray-`continue` recovery mirror [`Self::walk_break`].
-    fn walk_continue(&self, program: &mut Program, scope_view: &ScopeView) -> Result<bool, Error> {
+    fn walk_continue(
+        &self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        node: Node<'_>,
+    ) -> Result<bool, Error> {
         match scope_view.continue_target {
             Some(target) => {
                 let mut to = scope_view.clone();
@@ -3037,7 +3095,7 @@ impl<'a> Context<'a> {
                 Ok(true)
             }
             None => {
-                malformed_source("`continue` outside of a loop".to_string())?;
+                malformed_source(&self.at(node), "`continue` outside of a loop".to_string())?;
                 Ok(false)
             }
         }
@@ -3060,7 +3118,10 @@ impl<'a> Context<'a> {
             .expect("goto_statement always has a label");
         let label = to_str(&label_node, source);
         let Some(&target) = self.label_blocks.get(label) else {
-            malformed_source(format!("`goto` to undefined label `{label}`"))?;
+            malformed_source(
+                &self.at(child),
+                format!("`goto` to undefined label `{label}`"),
+            )?;
             // Recover as a no-op: with no target block to jump to, lowering simply
             // falls through to the next statement in the current block.
             return Ok(());
@@ -3651,13 +3712,13 @@ impl<'a> Context<'a> {
                 // recovery output and skip the wreckage silently.
                 if recovery_region(node).is_some() {
                     let func_name = scope_view.func_name.clone();
-                    self.report_unanalyzed_recovery(&func_name)?;
+                    self.report_unanalyzed_recovery(node, &func_name)?;
                 } else {
                     debug_print_tree(node, 0, None, None);
-                    unexpected_ast(format!(
-                        "ERR 78: Unsupported expression type: {}",
-                        node.kind()
-                    ))?;
+                    unexpected_ast(
+                        &self.at(node),
+                        format!("ERR 78: Unsupported expression type: {}", node.kind()),
+                    )?;
                 }
                 // Recover with a fresh temp nothing else reads or writes: this
                 // expression's value becomes opaque (no flows in or out), but the
@@ -3871,7 +3932,10 @@ impl<'a> Context<'a> {
         for label_node in labels {
             let label = to_str(&label_node, source);
             let Some(&target) = self.label_blocks.get(label) else {
-                malformed_source(format!("`asm goto` to undefined label `{label}`"))?;
+                malformed_source(
+                    &self.at(label_node),
+                    format!("`asm goto` to undefined label `{label}`"),
+                )?;
                 continue;
             };
             if linked.contains(&target) {
@@ -3923,6 +3987,7 @@ impl<'a> Context<'a> {
         } else {
             debug_print_tree(node, 0, None, None);
             unexpected_ast(
+                &self.at(node),
                 "Surprised, Pointer Declarators dont always have a declarators".to_string(),
             )?;
             // Recover as an opaque temp, like `flatten_expr`'s catch-all.
@@ -4136,20 +4201,26 @@ impl<'a> Context<'a> {
             // Zero operands can only be a call: a cast needs something to cast.
             if is_type {
                 let (quote, _) = quote_construct(to_str(&node, source));
-                malformed_source(format!(
-                    "`{quote}` casts nothing: `{name}` is a type here and a cast needs an \
-                     operand; lowered as a call to `{name}`"
-                ))?;
+                malformed_source(
+                    &self.at(node),
+                    format!(
+                        "`{quote}` casts nothing: `{name}` is a type here and a cast needs an \
+                         operand; lowered as a call to `{name}`"
+                    ),
+                )?;
             }
             return Ok(None);
         }
         if !is_type {
             let (quote, _) = quote_construct(to_str(&node, source));
-            unexpected_ast(format!(
-                "cast-shaped call `{quote}`: this unit neither defines, declares, nor uses \
-                 `{name}` as a type, so it cannot be told from a cast; lowered as a call -- \
-                 if `{name}` is a type, the operand's taint stops here"
-            ))?;
+            unexpected_ast(
+                &self.at(node),
+                format!(
+                    "cast-shaped call `{quote}`: this unit neither defines, declares, nor uses \
+                     `{name}` as a type, so it cannot be told from a cast; lowered as a call \
+                     -- if `{name}` is a type, the operand's taint stops here"
+                ),
+            )?;
             return Ok(None);
         }
         Ok(operands)
@@ -4570,9 +4641,17 @@ impl<'a> Context<'a> {
             .collect();
         let body_holds_recovery = body_node.has_error();
         if body_holds_recovery && !stranded.is_empty() {
-            self.report_unanalyzed_recovery(func_name)?;
+            self.report_unanalyzed_recovery(body_node, func_name)?;
         }
-        finalize_terminators(program, fidx, func_name, &stranded, body_holds_recovery)?;
+        let at = self.at(body_node);
+        finalize_terminators(
+            program,
+            fidx,
+            func_name,
+            &at,
+            &stranded,
+            body_holds_recovery,
+        )?;
         Ok(())
     }
 
@@ -4949,9 +5028,9 @@ impl<'a> Context<'a> {
     ) -> Result<RawPath, Error> {
         if recovery_region(node).is_some() {
             let func_name = scope_view.func_name.clone();
-            self.report_unanalyzed_recovery(&func_name)?;
+            self.report_unanalyzed_recovery(node, &func_name)?;
         } else {
-            unexpected_ast(format!("not an lvalue: {}", node.kind()))?;
+            unexpected_ast(&self.at(node), format!("not an lvalue: {}", node.kind()))?;
         }
         Ok(self.dead_temp_path(program, scope_view))
     }
@@ -5128,16 +5207,16 @@ fn quote_construct(text: &str) -> (String, usize) {
 /// An AST shape the frontend does not lower (unknown statement kinds, unsupported
 /// expressions, declarators we don't recognize) — a gap in the frontend, not a
 /// problem in the analyzed source. Call sites recover by skipping the construct or
-/// substituting a fresh opaque temp.
-fn unexpected_ast(msg: String) -> Result<(), Error> {
-    recoverable_report(FRONTEND_GAP, msg)
+/// substituting a fresh opaque temp. `at` is the construct's [`location`].
+fn unexpected_ast(at: &str, msg: String) -> Result<(), Error> {
+    recoverable_report(FRONTEND_GAP, format!("{at}: {msg}"))
 }
 
 /// A construct the analyzed source itself misuses (`break` outside a loop, `goto` to
 /// an undefined label) — a problem in that code, not a frontend gap. Same switch as
 /// [`unexpected_ast`]; the warning attributes the fault to the source.
-fn malformed_source(msg: String) -> Result<(), Error> {
-    recoverable_report(SOURCE_PROBLEM, msg)
+fn malformed_source(at: &str, msg: String) -> Result<(), Error> {
+    recoverable_report(SOURCE_PROBLEM, format!("{at}: {msg}"))
 }
 
 /// Splits a `generic_expression` into its controlling expression and the *values* of its
