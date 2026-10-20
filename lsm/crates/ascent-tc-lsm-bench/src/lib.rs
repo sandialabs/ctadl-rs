@@ -8,19 +8,15 @@ use ascent_byods_rels::adaptor::bin_rel::ByodsBinRel;
 use bytemuck::Pod;
 use lsm::{IterAllRefs, MmapLsmMultiMap, ValsRefs};
 
-/// Implementation default for the LSM write-buffer size. This is an ordinary
-/// default — it can be changed freely without affecting the benchmarks, which
-/// set the limit they depend on explicitly via [`set_memtable_limit`].
+/// The LSM write-buffer size until [`set_memtable_limit`] changes it.
 const DEFAULT_MEMTABLE_LIMIT: usize = 1024;
 
 /// The write-buffer size used by [`DiskLsmBinRel::default`]. Because Ascent
 /// constructs the provider through `Default` (no parameters), this is held in a
-/// process-global so the benchmark can configure it before running.
+/// process-global that can be set before the program runs.
 static MEMTABLE_LIMIT: AtomicUsize = AtomicUsize::new(DEFAULT_MEMTABLE_LIMIT);
 
-/// Sets the LSM write-buffer size used when the provider is created. Benchmarks
-/// call this so their results depend on a value they own, not on
-/// [`DEFAULT_MEMTABLE_LIMIT`].
+/// Sets the LSM write-buffer size used when the provider is created.
 pub fn set_memtable_limit(limit: usize) {
     MEMTABLE_LIMIT.store(limit.max(1), Ordering::Relaxed);
 }
@@ -46,15 +42,9 @@ pub mod lsm_bin_rel_provider {
 /// mirror at all. The two maps `by_left` (left → rights) and `by_right`
 /// (right → lefts) are the left/right indices the `ByodsBinRel` trait needs.
 ///
-/// Reads are served straight out of [`MmapLsmMultiMap`], whose `get_refs` /
-/// `iter_all_refs` hand back `&T` references that point either into the small
-/// in-RAM memtable or directly into memory-mapped run files — no decoding into
-/// owned `Vec`s. So with a small memtable limit the bulk of the data lives in
-/// `mmap`'d pages (off the heap, in the page cache) while the trait still gets
-/// the borrowed references it requires.
-///
-/// Keys and values are constrained to `bytemuck::Pod` so the on-disk bytes can
-/// be reinterpreted in place.
+/// Reads are served by [`MmapLsmMultiMap`]'s borrowing reads, so with a small
+/// memtable limit the bulk of the data lives in `mmap`'d pages while the trait
+/// still gets the borrowed references it requires.
 #[derive(Debug)]
 pub struct DiskLsmBinRel<T0, T1>
 where
