@@ -67,11 +67,6 @@ const JVM_KNOWN_FAILURES: &[&str] = &[];
 /// with the Pcode case over the same source, and quarantining one never affects
 /// that Pcode case.
 const C_KNOWN_FAILURES: &[&str] = &[
-    // A subscript lowers to an offset address (`arr[2]` is `arr.[2].[]`), so
-    // element paths compose, but the binary `+` in `*(p + 2)` does not lower to
-    // an offset address yet. Taint stored that way is not resolved back to the
-    // aliased array slot, so no source -> sink flow is traced.
-    "C:ptrarith",
     // A known-answer test for the *shipped* propagation defaults, so it can only
     // pass for the frontend those defaults are written for. The chain it asserts
     // (`strcpy`/`strcat`/`strdup`) lives in `models/defaults/native-index.jsonl`,
@@ -83,12 +78,6 @@ const C_KNOWN_FAILURES: &[&str] = &[
     // Delete this entry if `-l c` imports ever get a default model file of their
     // own.
     "C:defaultmodels",
-    // The frontend lowers `*out = x` to `out = x`, a rebinding of the parameter,
-    // and rebinding a parameter never reaches the caller (SSA writes every
-    // parameter back at its entry version). Lowering the write to
-    // `store out.deref := x` fixes it; un-ignore the frontend's
-    // `out_param_write_propagates` test along with deleting this entry.
-    "C:outparam",
 ];
 
 pub struct Options {

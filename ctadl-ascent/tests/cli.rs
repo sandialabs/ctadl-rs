@@ -901,6 +901,81 @@ fn test_cli_query_c_no_callsite_smear() {
     });
 }
 
+/// Imports, indexes (`<stem>.json` + `index_models`) and queries `<stem>.c`; returns the sinks reached.
+fn c_sinks_reached(stem: &str, index_models: &[PathBuf]) -> std::collections::BTreeSet<String> {
+    use ctadl_ascent::codegen::CallResolutionStrategy;
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    let import_name = format!("test_{stem}_c");
+    let import = ArtifactImport::try_create(
+        &import_name,
+        ArtifactLanguage::C,
+        &c_fixture(&format!("{stem}.c")),
+    )
+    .unwrap();
+    cli::import(&import, cli::ImportOptions::default()).unwrap();
+    let project = AnalysisProject::try_create(
+        &format!("{import_name}_proj"),
+        &[&import_name],
+        SubImports::All,
+    )
+    .unwrap();
+    let models = vec![c_fixture(&format!("{stem}.json"))];
+    let all_index_models: Vec<PathBuf> = models.iter().chain(index_models).cloned().collect();
+    cli::index(
+        &project,
+        &[],
+        &all_index_models,
+        false,
+        cli::IndexOptions {
+            strategy: CallResolutionStrategy::default(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let out_dir = tempdir().unwrap();
+    let sarif = out_dir.path().join("out.sarif");
+    cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sarif).unwrap()).unwrap();
+    doc["runs"][0]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| {
+            r["ruleId"]
+                .as_str()
+                .is_some_and(|id| id.contains("tainted-path"))
+                && r["kind"].as_str() == Some("fail")
+        })
+        .flat_map(|r| r["properties"]["sinkFunctions"].as_array().unwrap())
+        .filter_map(|f| f.as_str().map(str::to_string))
+        .collect()
+}
+
+/// `pointers.c`: exactly the `sink_hit_*` calls are reached.
+#[test]
+fn test_cli_query_c_pointer_model() {
+    run_store_test(|| {
+        assert_eq!(
+            c_sinks_reached("pointers", &[]),
+            [
+                "sink_hit_copy",
+                "sink_hit_index_star",
+                "sink_hit_loop",
+                "sink_hit_moved",
+                "sink_hit_offset",
+                "sink_hit_out",
+                "sink_hit_rest",
+                "sink_hit_star_index",
+            ]
+            .map(String::from)
+            .into()
+        );
+    });
+}
+
 /// Writes an APK built from `(entry name, contents)` pairs into `dir`, and returns its
 /// path. Enough of an APK for the import path: a ZIP whose entry names are what the Dex
 /// and native-library passes look for.

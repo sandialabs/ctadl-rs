@@ -197,11 +197,8 @@ to a sink, and no `unexpected_lines` entry is reached. The `c` frontend is still
 maturing, so a short quarantine list in `xtask/src/regression.rs`
 (`C_KNOWN_FAILURES`) reports its current gaps as **XFAIL** instead of failing the
 suite; every other `C:` case is enforced. Remove an entry once its case passes so
-a later regression is caught. Two cases are quarantined today:
+a later regression is caught. One case is quarantined today:
 
-- `C:ptrarith` — a *subscript* now lowers to an offset address, so `arr[2]` and
-  `&arr[2]` compose, but the binary `+` in `*(p + 2)` does not yet, so taint
-  stored that way is not resolved back to the aliased array slot.
 - `C:defaultmodels` — a known-answer test for the *shipped* propagation defaults,
   which only a Native (pcode) import loads. Its chain lives in
   `native-index.jsonl`, and a `-l c` import has no method table, so it gets no

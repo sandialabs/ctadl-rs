@@ -1,0 +1,88 @@
+{
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "source_buf"
+          ]
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "ptr",
+            "port": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "source_byte",
+            "source_int"
+          ]
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "ptr",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "sink_hit_rest"
+          ]
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "ptr",
+            "port": "Argument(0).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "sink_hit_moved",
+            "sink_hit_star_index",
+            "sink_hit_index_star",
+            "sink_hit_copy",
+            "sink_hit_loop",
+            "sink_hit_out",
+            "sink_hit_offset",
+            "sink_clean_caller"
+          ]
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "ptr",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}
