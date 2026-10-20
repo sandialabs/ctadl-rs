@@ -10,7 +10,8 @@ remote = "origin"
 branch = "main"
 poll_s = 300                        # how often to fetch
 # On first start only the tip is queued. Older commits can be queued by hand with
-# `ctbench enqueue <sha>`, and `backfill` fills in skipped first-parent commits when idle.
+# `ctbench enqueue <sha>`. `backfill` queues every first-parent commit from the oldest known one
+# to the tip, so each is measured; passes run newest first.
 backfill = true
 
 [gate]

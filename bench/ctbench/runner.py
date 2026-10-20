@@ -159,6 +159,7 @@ class Daemon:
         except (subprocess.SubprocessError, OSError) as e:
             self.log("fetch-failed", str(e)[:300])
         self.add_commit(self.git_out("rev-parse", f"{t['remote']}/{t['branch']}"))
+        self.backfill()
 
     def add_commit(self, sha: str) -> bool:
         if self.conn.execute("SELECT 1 FROM commits WHERE sha=?", (sha,)).fetchone():
@@ -169,23 +170,21 @@ class Daemon:
         self.log("commit", f"{sha[:10]} {subject}")
         return True
 
-    def backfill(self) -> bool:
-        """Queue the commit in the middle of the longest unmeasured stretch of first-parent
-        history between the oldest measured commit and the tip."""
+    def backfill(self) -> None:
+        """Queue every first-parent commit between the oldest known commit and the tip, so
+        commits pushed together, or while the daemon was down, are each measured."""
         if not self.cfg["track"].get("backfill"):
-            return False
+            return
         known = {r["sha"] for r in self.conn.execute("SELECT sha FROM commits")}
         t = self.cfg["track"]
         history = self.git_out("rev-list", "--first-parent", f"{t['remote']}/{t['branch']}").split()
         history.reverse()  # oldest first
         idx = [i for i, s in enumerate(history) if s in known]
-        gaps = [(b - a, a, b) for a, b in zip(idx, idx[1:]) if b - a >= 2]
-        if not gaps:
-            return False
-        _, a, b = max(gaps)
-        mid = history[(a + b) // 2]
-        self.log("backfill", f"{mid[:10]} between {history[a][:10]} and {history[b][:10]}")
-        return self.add_commit(mid)
+        if not idx:
+            return
+        for sha in history[idx[0]:]:
+            if sha not in known:
+                self.add_commit(sha)
 
     # --- builds --------------------------------------------------------------------------------
 
@@ -555,8 +554,6 @@ class Daemon:
             return
         ssha = self.sweep_sha()
         if ssha is None:
-            if not sweeping:
-                self.backfill()
             return
         limit = self.cfg["sweep"]["workers_p" if p_ok else "workers_e"]
         while len([a for a in self.active if a.sweep]) < limit:
