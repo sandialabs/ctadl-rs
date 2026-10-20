@@ -20,8 +20,9 @@ jobs:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     # A cold cache builds the whole dependency tree (datafusion, arrow, ascent)
-    # plus, for the cross targets, the toolchain that compiles it.
-    timeout-minutes: 180
+    # plus, for the cross targets, the toolchain that compiles it. The macOS
+    # runner is the slow one. 360 is the most a GitHub-hosted job may run.
+    timeout-minutes: 360
 
     permissions:
       contents: read
