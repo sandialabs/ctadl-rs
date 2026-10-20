@@ -944,7 +944,9 @@ impl TryFrom<&mir::VariableRef> for FlowVariable {
 }
 
 /// Variable and access path
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Serialize, Deserialize,
+)]
 pub struct FlowVertex(pub FlowVariable, pub Path);
 
 impl Display for FlowVertex {

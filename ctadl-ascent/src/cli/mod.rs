@@ -22,8 +22,8 @@ use crate::error::{Error, ErrorContext};
 use crate::facts;
 use crate::facts::FlowVariable;
 use crate::index_engine::{
-    ContextJoin, HybridContext, IndexFacts, IndexResult, Parallelism, source_info::IndexSourceInfo,
-    taint_index_with_config,
+    ContextJoin, HybridContext, IndexFacts, IndexResult, Parallelism, Storage,
+    source_info::IndexSourceInfo, taint_index_with_config,
 };
 use crate::languages::{android_intent, android_manifest, jni};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
@@ -88,6 +88,8 @@ pub struct IndexOptions {
     /// Which engine computes the flow relation, and on how many threads. Serial by default; see
     /// [`Parallelism::from_jobs`] for the `-j N` convention.
     pub parallelism: Parallelism,
+    /// Where the large relations are stored; see [`Storage`].
+    pub storage: Storage,
 }
 
 impl Default for IndexOptions {
@@ -102,6 +104,7 @@ impl Default for IndexOptions {
             hybrid_context: HybridContext::default(),
             context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
+            storage: Storage::Memory,
         }
     }
 }
@@ -130,6 +133,7 @@ pub fn index(
         hybrid_context,
         context_join,
         parallelism,
+        storage,
     } = opts;
     use crate::index_engine::phys_footprint_mb;
     log::info!(
@@ -441,6 +445,7 @@ pub fn index(
         hybrid_context,
         context_join,
         parallelism,
+        storage,
         deref_paths,
     };
     log::info!("indexing (computing the flow relation)");

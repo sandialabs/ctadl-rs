@@ -173,6 +173,9 @@ impl Reader {
     }
 }
 
+/// Rows per row group of a written file, and so per batch held in memory while writing.
+pub const ROWS_PER_GROUP: usize = 64 * 1024;
+
 pub struct Writer {
     path: std::path::PathBuf,
 }
@@ -185,28 +188,59 @@ impl Writer {
         }
     }
 
-    /// Write the vec to a parquet file. The vec rows are written using the given column names
-    pub fn write_vec<T>(&mut self, column_names: &[&str], data: Vec<T>) -> Result<(), Error>
+    /// Writes the rows to a parquet file, using the given column names, [`ROWS_PER_GROUP`] rows
+    /// at a time: each batch is encoded, written out as a row group of its own and dropped
+    /// before the next is taken, so memory holds one batch's columns, not the whole table's.
+    pub fn write_iter<T>(
+        &mut self,
+        column_names: &[&str],
+        rows: impl IntoIterator<Item = T>,
+    ) -> Result<(), Error>
     where
         DefaultEncoder: EncodeColumns<T>,
     {
-        let (fields, arrays) = DefaultEncoder::encode_all(column_names, data);
-        let batch = RecordBatch::try_new(Arc::new(arrowd::Schema::new(fields)), arrays)
-            .map_err(Error::Arrow)?;
-
+        let context = || format!("writing parquet file: {}", self.path.display());
         let file = File::create(&self.path)
             .map_err(Error::from)
             .err_context(|| format!("creating parquet file: {}", self.path.display()))?;
         let props = WriterProperties::builder()
             .set_compression(Compression::SNAPPY)
+            .set_max_row_group_row_count(Some(ROWS_PER_GROUP))
             .build();
-        ArrowWriter::try_new(file, batch.schema(), Some(props))
-            .and_then(|mut wtr| {
-                wtr.write(&batch)?;
-                wtr.close()
-            })
+        let mut file = Some(file);
+        let mut writer: Option<ArrowWriter<File>> = None;
+        let mut rows = rows.into_iter();
+        loop {
+            let batch: Vec<T> = rows.by_ref().take(ROWS_PER_GROUP).collect();
+            let last = batch.len() < ROWS_PER_GROUP;
+            // Past the first batch, an empty one has nothing to add.
+            if batch.is_empty() && writer.is_some() {
+                break;
+            }
+            let (fields, arrays) = DefaultEncoder::encode_all(column_names, batch);
+            let batch = RecordBatch::try_new(Arc::new(arrowd::Schema::new(fields)), arrays)
+                .map_err(Error::Arrow)?;
+            if writer.is_none() {
+                writer = Some(
+                    ArrowWriter::try_new(file.take().unwrap(), batch.schema(), Some(props.clone()))
+                        .map_err(Error::Parquet)
+                        .err_context(context)?,
+                );
+            }
+            let wtr = writer.as_mut().unwrap();
+            wtr.write(&batch)
+                .and_then(|()| wtr.flush())
+                .map_err(Error::Parquet)
+                .err_context(context)?;
+            if last {
+                break;
+            }
+        }
+        writer
+            .unwrap()
+            .close()
             .map_err(Error::Parquet)
-            .err_context(|| format!("writing parquet file: {}", self.path.display()))?;
+            .err_context(context)?;
         Ok(())
     }
 }
