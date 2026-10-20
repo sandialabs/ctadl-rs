@@ -86,9 +86,9 @@ let
           # Fat LTO for what ships: optimize the whole program as one LLVM
           # module rather than thin LTO's per-unit summaries. It buys a smaller
           # binary for a longer link. Set here, as a profile override, rather
-          # than in `[profile.release]`, so only these three derivations pay
+          # than in `[profile.release]`, so only the release derivations pay
           # for it -- a developer's `cargo build --release` keeps the tree's
-          # `lto = "thin"`.
+          # `lto = "thin"`. The Darwin target opts back out; see there.
           CARGO_PROFILE_RELEASE_LTO = "fat";
         }
         // attrs
@@ -164,6 +164,11 @@ in
       # re-signs (ad-hoc) in fixupPhase what the rewrite below breaks.
       pkgs.darwin.autoSignDarwinBinariesHook
     ];
+    # Thin LTO, not fat. A fat link optimizes and generates code for the whole
+    # program in one single-threaded LLVM process, which on the small macOS
+    # runner (3 cores, 7 GB) takes longer than the release job can wait. Thin
+    # LTO spreads that work over the cores, in less memory.
+    CARGO_PROFILE_RELEASE_LTO = "thin";
     # rustc links libiconv out of /nix/store. Point it back at the system copy:
     # macOS resolves /usr/lib/libiconv.2.dylib from the dyld shared cache, so
     # that path works even though no such file exists. Then fail the build if
