@@ -1,0 +1,107 @@
+// Call targets crossing an indirect call, both ways.
+//
+//   - up:          `init` installs `encode` and is reached only through `setup`'s pointer.
+//   - down:        `run` hands `cb` to `apply`, reached only through `op`.
+//   - down_formal: `run2` hands on its own formal `f` the same way.
+//   - `sink_clean` is in `decode`, installed beside `encode` but never called.
+
+def sink_up(v) {
+start:
+  sink(v, Height);
+  return;
+}
+
+def sink_down(v) {
+start:
+  sink(v, Height);
+  return;
+}
+
+def sink_down_formal(v) {
+start:
+  sink(v, Height);
+  return;
+}
+
+def sink_clean(v) {
+start:
+  errsink(v, Height);
+  return;
+}
+
+def encode(c shared, v) {
+start:
+  sink_up(v);
+  return;
+}
+
+def decode(c shared, v) {
+start:
+  sink_clean(v);
+  return;
+}
+
+def init(c shared) {
+start:
+  c.enc = ptr<encode>;
+  c.dec = ptr<decode>;
+  return;
+}
+
+def setup(c shared, fn) {
+start:
+  fn(c);
+  return;
+}
+
+def cb(v) {
+start:
+  sink_down(v);
+  return;
+}
+
+def apply(f, v) {
+start:
+  f(v);
+  return;
+}
+
+def run(op, v) {
+start:
+  k = ptr<cb>;
+  op(k, v);
+  return;
+}
+
+def cb2(v) {
+start:
+  sink_down_formal(v);
+  return;
+}
+
+def apply2(f, v) {
+start:
+  f(v);
+  return;
+}
+
+def run2(op, f, v) {
+start:
+  op(f, v);
+  return;
+}
+
+def main() {
+start:
+  v = source(Height);
+  i = ptr<init>;
+  setup(c, i);
+  e = c.enc;
+  e(c, v);
+  a = ptr<apply>;
+  run(a, v);
+  a2 = ptr<apply2>;
+  k2 = ptr<cb2>;
+  run2(a2, k2, v);
+  return;
+}
