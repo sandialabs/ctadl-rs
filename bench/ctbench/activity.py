@@ -9,7 +9,11 @@ typed anything, over any transport. Unattached ptys are skipped -- macOS leaves 
 
 An agent or build left running while the user is away types nothing, so two more signals
 catch work without keystrokes: processes from a configured list of development tools, and CPU
-used by processes that are not ours.
+used by processes that are not ours. System daemons that our own work wakes (Spotlight indexing
+what we write, XProtect scanning the binaries we build) are configured out of that CPU figure.
+
+Memory pressure is not a sign of the user: our own work can cause it, and the scheduler sheds
+work under pressure on its own.
 """
 
 from __future__ import annotations
@@ -48,8 +52,6 @@ class Snapshot:
             why.append("dev processes: " + ", ".join(self.dev_procs[:5]))
         if self.foreign_cpu > cfg["foreign_cpu_pct"]:
             why.append(f"foreign cpu {self.foreign_cpu:.0f}%")
-        if self.pressure > 1:
-            why.append(f"memory pressure level {self.pressure}")
         return why
 
 
@@ -109,18 +111,20 @@ def pressure_level() -> int:
         return 1
 
 
-def snapshot(cfg, ours: set[int]) -> Snapshot:
-    """`ours` are the pids whose trees belong to the benchmark job, excluded everywhere."""
+def snapshot(cfg, ours: set[int], building: bool = False) -> Snapshot:
+    """`ours` are the pids whose trees belong to the benchmark job, excluded everywhere.
+    `building`: one of ours is a build, whose `nix develop` gets its own nix-daemon worker."""
     now = time.time()
     procs = list_procs()
     mine = descendants(procs, ours | {os.getpid()})
     dev_names = set(cfg["dev_processes"])
+    ignored = set(cfg.get("ignore_cpu", []))
     # The nix daemon itself always runs (a child of launchd); its per-build workers are what
-    # mean someone is building.
+    # mean someone is building -- unless we are, since a worker's parent is the daemon, not us.
     dev = [f"{p.comm}({p.pid})" for p in procs
            if p.pid not in mine and p.comm in dev_names
-           and not (p.comm == "nix-daemon" and p.ppid == 1)]
-    foreign = sum(p.cpu for p in procs if p.pid not in mine)
+           and not (p.comm == "nix-daemon" and (p.ppid == 1 or building))]
+    foreign = sum(p.cpu for p in procs if p.pid not in mine and p.comm not in ignored)
     return Snapshot(
         at=now,
         input_age_s=input_age_s(now),

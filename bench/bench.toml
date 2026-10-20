@@ -16,9 +16,10 @@ backfill = true
 [gate]
 tick_s = 2
 input_idle_s = 120          # a keystroke this recent means the user is here
-foreign_cpu_pct = 150       # CPU (percent of one core) used by processes that are not ours
+foreign_cpu_pct = 150       # CPU (percent of one core) used by processes that are not ours,
+foreign_cpu_window_s = 60   # averaged over this long
 quiet_night_s = 900         # quiet this long before a p-tier run starts, at night...
-quiet_day_s = 2400          # ...and during the day
+quiet_day_s = 900           # ...and during the day
 night_start_hour = 23
 night_end_hour = 7
 # A unit killed this many times because the user came back runs on the e tier from then on,
@@ -30,6 +31,12 @@ dev_processes = [
   "cargo", "rustc", "ld", "ld64", "clang", "cc", "gcc", "make", "ninja",
   "java", "gradle", "ctadl", "souffle", "nix", "nix-daemon", "nix-build",
   "xcodebuild", "swift", "swiftc", "go",
+]
+# Left out of foreign CPU: system daemons our own work wakes -- Spotlight indexing what we write,
+# XProtect and syspolicyd checking binaries we build, sysmond answering our ps.
+ignore_cpu = [
+  "mds", "mds_stores", "mdworker", "mdworker_shared", "mdsync", "XprotectService",
+  "syspolicyd", "sysmond", "kernel_task", "fseventsd",
 ]
 
 [build]

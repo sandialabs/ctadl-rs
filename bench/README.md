@@ -47,10 +47,10 @@ are queried for the same kinds of leak TaintBench scores.
 The activity gate (`ctbench/activity.py`) decides when the machine is in use. Keyboard idle
 time is useless over ssh/mosh, so it reads the access time of every tty with a process attached
 (any keystroke over any transport updates it), plus development processes not started by the
-daemon, foreign CPU use, and memory pressure.
+daemon, and foreign CPU use averaged over a minute. System daemons our own work wakes
+(Spotlight, XProtect, `sysmond`; `[gate] ignore_cpu`) do not count as foreign.
 
-* **p tier** (normal priority, performance cores) only after 15 minutes of quiet at night or
-  40 during the day. Only p-tier runs record wall time, and only if never moved.
+* **p tier** (normal priority, performance cores) only after 15 minutes of quiet. Only p-tier runs record wall time, and only if never moved.
 * **e tier**: `taskpolicy -b`, i.e. the efficiency cores and throttled I/O. Instruction
   counts, cycles and peak memory are recorded on either tier; instruction counts agree across
   tiers to well under 1%.

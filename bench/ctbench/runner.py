@@ -35,6 +35,7 @@ import signal
 import subprocess
 import time
 import traceback
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -78,6 +79,7 @@ class Daemon:
         self.xtask: str | None = None
         self.xtask_retry_at = 0.0
         self.last_gate_state = None
+        self.foreign_cpu: deque[tuple[float, float]] = deque()
         self.git = inputs.get("git", "git")
         for d in ("tmp", "home"):
             (self.root / d).mkdir(parents=True, exist_ok=True)
@@ -121,8 +123,14 @@ class Daemon:
 
     def observe(self) -> tuple[activity.Snapshot, bool, bool]:
         """Returns (snapshot, user_here, p_ok)."""
-        snap = activity.snapshot(self.gate, {a.run.pid for a in self.active})
+        snap = activity.snapshot(self.gate, {a.run.pid for a in self.active},
+                                 building=any(a.kind == "build" for a in self.active))
         now = snap.at
+        # A single sample spikes with anything that wakes briefly; average over a window.
+        self.foreign_cpu.append((now, snap.foreign_cpu))
+        while self.foreign_cpu[0][0] < now - self.gate["foreign_cpu_window_s"]:
+            self.foreign_cpu.popleft()
+        snap.foreign_cpu = sum(c for _, c in self.foreign_cpu) / len(self.foreign_cpu)
         reasons = snap.busy_reasons(self.gate)
         if any(not r.startswith("typed") for r in reasons):
             self.last_busy = now
