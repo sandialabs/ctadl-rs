@@ -51,7 +51,7 @@ use hashbrown::hash_map::HashMap;
 use packed_struct::prelude::*;
 use streaming_iterator::StreamingIterator;
 
-use crate::error::Error;
+use crate::error::{Error, ErrorContext};
 use crate::facts::{
     CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex,
     FormalType, FunctionId, IdMap, InsnId, InsnSiteId, IntentKind, IntentPairKind, PackedCallArg,
@@ -69,6 +69,7 @@ pub mod hybrid_set;
 pub mod locals_trie;
 pub mod path_group;
 pub mod path_set;
+pub mod profile;
 pub mod source_info;
 
 // Column encodings for the relations that `Storage::Lsm` moves onto the `lsm` provider. All of
@@ -524,6 +525,7 @@ impl std::fmt::Display for Parallelism {
 
 #[derive(Debug, Clone, Default)]
 pub struct IndexStats {
+    pub profile: profile::IndexProfile,
     pub initial_assign: usize,
     pub final_assign_like: usize,
     pub initial_formals: usize,
@@ -655,6 +657,11 @@ impl IndexResult {
         external_function::try_save(&dir, self.external_function)?;
         resolved_call::try_save(&dir, self.resolved_call)?;
         intent_pair::try_save(&dir, self.intent_pair)?;
+        let profile_path = dir.as_ref().join(profile::PROFILE_FILE);
+        let file = std::fs::File::create(&profile_path)
+            .err_context(|| format!("creating {}", profile_path.display()))?;
+        serde_json::to_writer_pretty(std::io::BufWriter::new(file), &self.stats.profile)
+            .err_context(|| format!("writing {}", profile_path.display()))?;
         log::debug!(
             "[mem cp] result.try_save done: {:.1} MB",
             phys_footprint_mb()
@@ -2561,7 +2568,9 @@ pub fn taint_index_with_config(
         prog.paths = paths.iter().cloned().collect();
         prog.path_set = vec![(path_set.clone(),)].into_iter().collect();
 
+        let fixpoint_start = std::time::Instant::now();
         let reached_fixpoint = prog.run_timeout(index_timeout);
+        let fixpoint_secs = fixpoint_start.elapsed().as_secs_f64();
         if !reached_fixpoint {
             log::warn!(
                 "index run TIMED OUT after {:?} without reaching fixpoint; results and stats below are PARTIAL",
@@ -2596,6 +2605,22 @@ pub fn taint_index_with_config(
             sizes.locals_key,
             sizes.ext_dst
         );
+        let profile = profile::IndexProfile {
+            reached_fixpoint,
+            timeout_secs: (index_timeout != std::time::Duration::MAX).then(|| index_timeout.as_secs()),
+            fixpoint_secs,
+            ..profile::IndexProfile::from_summaries(
+                &prog.relation_sizes_summary(),
+                &prog.scc_times_summary(),
+                &[
+                    ("assign_like", sizes.assign_like),
+                    ("locals", sizes.locals),
+                    ("edge_split", sizes.edge_split),
+                    ("locals_key", sizes.locals_key),
+                    ("ext_dst", sizes.ext_dst),
+                ],
+            )
+        };
         log::debug!(
             "[mem cp] after relation census (nothing drained yet): {:.1} MB",
             phys_footprint_mb()
@@ -2637,6 +2662,7 @@ pub fn taint_index_with_config(
         let reached_variables = prog.num_reached_variables();
 
         let stats = IndexStats {
+            profile,
             initial_assign,
             final_assign_like: assign_like_out.len(),
             initial_formals,
