@@ -9,9 +9,8 @@ bridge exists.
 
 The `where` constraints stay as raw [`serde_json::Value`]: they are evaluated later by the
 shared evaluator ([`super::json::ModelGeneratorIngest`]) against the shared
-[`super::match_index::ProgramMatchIndex`], so nothing here has to understand them. There must
-not be a second implementation of `where`; that is how `signature_match` ends up meaning two
-different things in two places.
+[`super::match_index::ProgramMatchIndex`], so nothing here has to understand them.
+[`super::match_index`] says why there is only one evaluator.
 
 # Loader hardening
 
