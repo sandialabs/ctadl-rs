@@ -866,7 +866,7 @@ impl VariableRef {
         }
     }
 
-    /// Clones the variable and uses the given version
+    /// The same variable, with the given version
     #[inline]
     pub fn with_version(&self, version: u32) -> Self {
         let variable = self.variable;
