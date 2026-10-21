@@ -1303,11 +1303,18 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
 
 /// Returns a FlowVariable for the call argument from the instruction side ID and the formal number
 macro_rules! call_arg {
-    ($insn:expr, $n:expr) => {
-        crate::facts::FlowVariable::call_arg_packed(
-            crate::facts::PackedCallArg::try_from_parts($insn, $n).unwrap(),
-        )
-    };
+    ($insn:expr, $n:expr) => {{
+        let n = $n;
+        if n == crate::codegen::GLOBALS_INDEX.into() {
+            // The global heap already aliases the caller's formal at every call site.
+            // Use that vertex directly instead of materializing a heap copy per call.
+            crate::facts::FlowVariable::formal_index(n)
+        } else {
+            crate::facts::FlowVariable::call_arg_packed(
+                crate::facts::PackedCallArg::try_from_parts($insn, n).unwrap(),
+            )
+        }
+    }};
 }
 
 /// Creates a data flow graph for taint analysis.

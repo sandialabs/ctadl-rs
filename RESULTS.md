@@ -124,6 +124,109 @@ following a jump in `summary` (iteration 13: +0.66M; iteration 25: +3.6M; iterat
 3. Optionally, skip deriving global summaries for functions with no callers (`main`: 276k
    rows), if nothing downstream reads them.
 
+## Experiment: change only `call_arg!` (2026-10-21)
+
+The index engine's `call_arg!` now returns `formal(GLOBALS_INDEX)` for the global heap
+slot and constructs the original per-site vertex for every other slot. No codegen,
+propagation, query, or summary rules were changed. In particular, codegen already passes
+the heap formal; it is the actual-parameter rule's use of `call_arg!` that creates the copy.
+
+### Benchmark impact
+
+Compared the preserved pre-change release binary with a release build of the macro-only
+change, using the benchmark database's index argv and separate stores copied from the same
+existing import. Both use serial in-memory indexing and the same firmware model. The table
+reports medians of three alternating before/after runs; timings include ordinary shared-machine
+load. Peak footprint is `/usr/bin/time -l`'s `peak memory footprint`, not sampled RSS.
+
+| Metric | Before | Macro only |
+|---|---:|---:|
+| Index command wall time | 11.36 s | 2.46 s |
+| Fixpoint time | 10.934 s | 2.092 s |
+| Peak physical footprint | 1,865,664,672 B | 354,878,352 B |
+| Footprint when `ascent_run` returns | 1779.1 MiB | 334.2 MiB |
+| Reachability SCC iterations | 160 | 80 |
+| `locals` | 32,332,477 | 4,645,617 |
+| `locals_key` | 733,392 | 75,132 |
+| `reach_vp` | 249,694 | 49,574 |
+| `ext_dst` | 515,220 | 116,793 |
+| `assign_like` | 106,130 | 98,907 |
+| `summary` (stored rows) | 300,003 | 300,003 |
+
+This removes exactly 27,686,860 `locals` rows (85.6%), reduces peak footprint by 81.0%,
+and makes the index command 4.62 times faster. It leaves more rows than the general SCC
+estimate because it does not merge the heap formal with `$globals_0` or other copy classes.
+The measured peak is still about 1.9 times the 183 MB budget, rather than the estimate's
+roughly 1.25 times.
+
+For this benchmark, sorting and comparing the full `locals` dumps shows that the new relation
+is **exactly** the old relation with all `call-arg(*, -32768)` rows removed: no surviving
+vertex gains or loses a fact. Set comparisons of saved Parquet facts also find identical
+`summary`, `call`, `resolved_call`, `call_target_assign`, `actual_param`, and `formal_param`
+relations. There are 299,963 distinct summary facts in both runs (300,003 stored rows).
+This establishes the observed benchmark equivalence, not equivalence for all programs.
+
+### Test results and semantic limitation
+
+`nix develop --command ... cargo test --workspace --no-fail-fast` completed with
+1,258 tests passing, two failing, and four ignored. The failures are both in `ctadl-c`:
+
+- `an_argument_of_a_call_through_a_global_field_reaches_the_callee_parameter`
+- `an_argument_of_a_statement_expression_callee_reaches_the_callee_parameter`
+
+Both lose the expected `wrap` summary from argument 1 to the global `.taken` cell.
+Running the C examples extracted from those tests through both release binaries confirms
+that the baseline produces this summary and the macro-only binary does not.
+
+The cause is the local indirect-call bypass rule in `index_engine/mod.rs`: it constructs
+`FlowVariableKind::CallArg` directly instead of using `call_arg!`. Its global summary effects
+therefore still land on per-site heap vertices, while the actual-parameter rule now connects
+the actual heap only to its formal. Those effects are disconnected. A consistent implementation
+must also canonicalize that rule's global endpoints; the macro-only change is not a passing
+or semantics-preserving fix for the whole analyzer.
+
+The full regression suite completed with **240 passed, four failed, two skipped, and two
+expected failures**, out of 248 cases. The four failures are:
+
+- `C:globalflow`
+- `C:globalstruct`
+- `CallResultFieldStore` (Dex)
+- `Jvm:CallResultFieldStore`
+
+All four report that no flow connects source to sink. Re-running these four cases with
+`ctadl-before` passes all four, confirming that they are introduced by this change.
+They expose a second integration issue beyond the indirect-call bypass: the query engine
+still implements call/return transitions using per-site global `CallArg` vertices.
+For example, `query_engine/search.rs`'s formal-to-actual step returns from the callee's heap
+formal to `call-arg(site, GLOBALS_INDEX)`, which no longer has the symmetric actual-parameter
+edges connecting it to the caller's heap. Preserving index summaries therefore does not
+by itself preserve end-to-end query results. A complete fix must also handle these query
+boundaries consistently, while retaining their call-site labels.
+
+The initial `cargo xtask regression --release` invocation used a debug harness and was
+stopped during the expensive CIL corpus sweep. The completed run used an optimized harness
+in the same Nix environment:
+
+```sh
+export CARGO_TARGET_DIR=/Volumes/Shampoo/cargo-target/ct-index-instrument
+export TMPDIR=/Volumes/Shampoo/ct-index-instrument/call-arg-globals/tmp
+export CTADL_BIN=/Volumes/Shampoo/ct-index-instrument/call-arg-globals/ctadl-macro-only
+cargo run --release -p xtask -- regression --release
+```
+
+`rustfmt --check --edition 2024 --config skip_children=true
+ctadl-ascent/src/index_engine/mod.rs` and `git diff --check` pass.
+`cargo fmt --all -- --check` reports existing formatting differences in the unchanged
+`index_engine/instrument.rs`; no unrelated formatting changes were made. The code change
+remains confined to `call_arg!`; the failing tests have not been weakened or skipped.
+
+Experiment artifacts are under `/Volumes/Shampoo/ct-index-instrument/call-arg-globals/`:
+`benchmark.json` and `paired-*.log` / `paired-*.profile.json`, `tests-all.log`,
+`regression.log`, `regression-before-{globals,field-store}.log`, `after-dump/`,
+`locals-comparison.json`, `saved-facts-comparison.json`,
+and the two extracted C examples with their before/after dumps. `benchmark.py` records the
+exact measured commands; `ctadl-before` and `ctadl-macro-only` preserve the compared binaries.
+
 ## Reproducing
 
 Working data is in `/Volumes/Shampoo/tmp/inv-0f99`: `full.log`, `t{2,4,6,8}.log`, `trace.log`,
