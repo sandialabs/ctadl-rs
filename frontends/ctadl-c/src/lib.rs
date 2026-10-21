@@ -47,7 +47,8 @@ use source_info::{ArtifactEncoding, ArtifactKey, ArtifactMetadata, SourceInfoBui
 
 use internment::ArcIntern;
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Parser, Query, QueryCursor, QueryMatch, Tree};
+use anyhow::Result;
+use tree_sitter::{Node, Parser, Query, QueryCursor, QueryMatch, Tree};
 
 #[cfg(test)]
 pub(crate) mod test_utils;
@@ -98,8 +99,10 @@ enum BlockTypeRequest {
 struct VarDecl {
     pub name: String,
     pub kind: VarKind,
-    pub shadows: bool, // this is set at creation time, because at the time of the declaration is when the shadowing occurs,
-    // so assigns that have already happened will never ask about the variable again.  you will never add a VarDecl that doesn't shadow, and then later "upgrade it to shadow"
+    /// Whether this declaration shadows another of the same name. Set at creation time,
+    /// because the declaration is when the shadowing occurs: assigns that already happened
+    /// never ask about the variable again, so a `VarDecl` is never later "upgraded" to shadow.
+    pub shadows: bool,
     pub sidx: usize,
 }
 
@@ -210,7 +213,7 @@ impl<'a> CompoundProxy<'a> {
             "expression_statement" => {
                 let child = body_node.child(0);
                 if let Some(c) = child
-                    && _is_empty(&c)
+                    && is_empty_statement(&c)
                 {
                     return Self {
                         nodes: vec![],
@@ -232,7 +235,7 @@ impl<'a> CompoundProxy<'a> {
     }
 }
 /// Is `node` an empty statement (`;`)?
-fn _is_empty(node: &Node<'_>) -> bool {
+fn is_empty_statement(node: &Node<'_>) -> bool {
     node.kind() == ";" || node.kind() == "empty_statement"
 }
 
@@ -1923,18 +1926,18 @@ struct ScopeView {
     pub fidx: FunctionIdx,
     pub blidx: BasicBlockIdx,
     pub sidx: usize,
-    // `None` is the fall-off-the-end sentinel: a continuation link to `None` becomes
-    // an implicit `return` rather than a `goto` back to the entry block.
+    /// `None` is the fall-off-the-end sentinel: a continuation link to `None` becomes
+    /// an implicit `return` rather than a `goto` back to the entry block.
     pub continuation_blidx: Option<BasicBlockIdx>,
-    // Where a `break` jumps: the innermost enclosing `switch`/loop continuation.
-    // `None` means there is no enclosing breakable construct (a `break` here is an
-    // error). Like `continuation_blidx`, this rides along by value as we descend, so
-    // a child scope that overrides it has the parent's value automatically restored
-    // on return — no explicit stack/push/pop is needed.
+    /// Where a `break` jumps: the innermost enclosing `switch`/loop continuation.
+    /// `None` means there is no enclosing breakable construct (a `break` here is an
+    /// error). Like `continuation_blidx`, this rides along by value as we descend, so
+    /// a child scope that overrides it has the parent's value automatically restored
+    /// on return — no explicit stack/push/pop is needed.
     pub break_target: Option<BasicBlockIdx>,
-    // Where a `continue` jumps: the innermost enclosing loop's re-test/update block.
-    // A `switch` deliberately leaves this untouched, so a `continue` inside a switch
-    // arm still targets the enclosing loop (matching C semantics).
+    /// Where a `continue` jumps: the innermost enclosing loop's re-test/update block.
+    /// A `switch` deliberately leaves this untouched, so a `continue` inside a switch
+    /// arm still targets the enclosing loop (matching C semantics).
     pub continue_target: Option<BasicBlockIdx>,
     pub explainer: String,
 }
@@ -2406,7 +2409,7 @@ impl<'a> Context<'a> {
                 // `expression_statement` holding only the `;` token: nothing to lower, and
                 // the bare token must not reach `flatten_expr`'s catch-all.
                 if let Some(inner_child) = child.child(0)
-                    && !_is_empty(&inner_child)
+                    && !is_empty_statement(&inner_child)
                 {
                     self.flatten_expr(program, inner_child, source, scope_view)?;
                 }
@@ -3682,7 +3685,7 @@ impl<'a> Context<'a> {
             Some(last) if last.kind() == "expression_statement" => {
                 self.cur_span = self.span_for_node(last);
                 // `({ ...; ; })` -- a trailing empty statement carries no expression.
-                last.child(0).filter(|inner| !_is_empty(inner))
+                last.child(0).filter(|inner| !is_empty_statement(inner))
             }
             // A `void`-valued statement expression, e.g.
             // `({ do { } while (0); })`. Well-defined C, not a gap: lower the statement here
@@ -4565,9 +4568,8 @@ impl<'a> Context<'a> {
         left_op: &Exp,
         right_op: Option<&Exp>,
     ) {
-        let val_exp = left_op; //todo get rid of val_exp and just use left_op
         if target.is_pathless() {
-            let mut fa: Vec<Exp> = [val_exp.clone()].into();
+            let mut fa: Vec<Exp> = [left_op.clone()].into();
             if let Some(righty) = right_op {
                 fa.push(righty.clone());
             }
@@ -4592,7 +4594,7 @@ impl<'a> Context<'a> {
             ctadl_ir::mir::store_access_path(
                 target.base.clone(),
                 fields,
-                val_exp.clone(),
+                left_op.clone(),
                 &mut stmts,
                 || VariableRef::new_local_idx(locals.get_or_intern(&allocator.next_temp())),
             );
@@ -4926,9 +4928,6 @@ impl<'a> Context<'a> {
         v
     }
 }
-
-use anyhow::Result;
-use tree_sitter::Node;
 
 /// Generates a function's temp names, `<t0>`, `<t1>`, ...
 #[derive(Debug, Default)]
