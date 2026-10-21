@@ -531,15 +531,6 @@ class HighFunctionExporter {
 		}
 	}
 
-//	private void initializeSet(SymbolTable table) {
-//		vtables.clear();
-//		SymbolIterator iter = table.getSymbols("vtable");
-//		while (iter.hasNext()) {
-//			Symbol sym2 = iter.next();
-//			vtables.add(sym2.getAddress());
-//		}
-//	}
-
 	private HighFunction getHighFunction(DecompileResults res, Function func, DecompInterface decompiler) {
 		HighFunction high = res.getHighFunction();
 		if (high == null) {
@@ -927,13 +918,6 @@ class HighFunctionExporter {
 			export(PredicateFile.PROTO_PARAMETER_DATATYPE, hsid, dtID(param.getDataType()));
 			exportType(param.getDataType());
 		}
-		/*
-		 * ParameterDefinition[] parameterDefinitions = proto.getParameterDefinitions();
-		 * if (parameterDefinitions != null) { for (ParameterDefinition def :
-		 * parameterDefinitions) { exportN("PROTO_PARAMETER_DEFINITION", id,
-		 * def.getOrdinal(), def.getName()); export("PROTO_PARAMETER_DATATYPE",
-		 * def.getName(), dtID(def.getDataType())); exportType(def.getDataType()); } }
-		 */
 		DataType returnType = proto.getReturnType();
 		if (returnType != null) {
 			export(PredicateFile.PROTO_RETTYPE, id, dtID(returnType));
@@ -1069,50 +1053,6 @@ class HighFunctionExporter {
 	}
 }
 
-//class ResultWriter implements Runnable {
-//	BlockingQueue<DecompileResults> q = new ArrayBlockingQueue<>(50);
-//	
-//	HighFunctionExporter ex;
-//	DecompilerConfigurer configurer;
-//	
-//	boolean shutDown = false;
-//
-//	private TaskMonitor monitor;
-//	
-//	public ResultWriter(HighFunctionExporter ex, DecompilerConfigurer configurer, TaskMonitor tMonitor) {
-//		this.ex = ex;
-//		this.configurer = configurer;
-//		this.monitor = tMonitor;
-//	}
-//	
-//	BlockingQueue<DecompileResults> getQueue() {
-//		return q;
-//	}
-//
-//	@Override
-//	public void run() {
-//        try {
-//        	int count = 0;
-//            while(!(shutDown && q.isEmpty())){
-//            	monitor.checkCancelled();
-//            	DecompileResults results = q.take();
-//
-//            	ex.processFunction(results, results.getFunction(), configurer.getInteface());
-//            	
-//            	count++;
-//            	if (count > 50) {
-//                  ex.writeFacts();
-//            		count = 0;
-//            	}
-//            }
-//        } catch (InterruptedException | IOException | CancelledException e) {}
-//	}
-//	
-//	public void done() {
-//		shutDown = true;
-//	}
-//}
-
 public class ExportPcode extends GhidraScript {
 
 	File outputDirectory;
@@ -1154,12 +1094,6 @@ public class ExportPcode extends GhidraScript {
 			// results will stall.
 			public synchronized DecompileResults process(DecompileResults results, TaskMonitor tMonitor)
 					throws Exception {
-				// This routine could pass the results to another thread's queue to add to the
-				// DB
-				// then there is only one DB writer and no synchronization needed. Decompiler
-				// threads can go as fast as they can without waiting for writing.
-				// With the chunking method, all decompiler threads would stall until the write
-				// was finished and a new chunk of functions could be gotten.
 				ex.processFunction(results, results.getFunction(), configurer.getInteface());
 				count++;
 				if (count > 20) {
