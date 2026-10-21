@@ -2033,9 +2033,6 @@ impl<'a> Context<'a> {
         // The declaration's own record layout, if its type names a record we know.
         let own = declaration_type_tag(decl_node, source)
             .and_then(|tag| self.struct_layouts.get(tag).cloned());
-        // An array declarator's *rank*: `struct Q qs[2]` is 1, `int m[2][2]` is 2, a
-        // non-array 0. The declared type describes the innermost element, so its layout
-        // applies only once that many brace levels have been entered.
         let rank = array_declarator_rank(decl_ident);
 
         let base_ap = self.flatten_lvalue(program, decl_ident, source, scope_view)?;
@@ -2122,8 +2119,7 @@ impl<'a> Context<'a> {
                 continue; // skip the `{`, `,`, `}` tokens
             }
             // Pick this element's target sub-path, its value node, and the layout to lower a
-            // nested brace with: a member's own record type, or the array element layout once
-            // `depth` array levels have been entered.
+            // nested brace with.
             let (fields, value_node, nested) = if elem.kind() == "initializer_pair" {
                 // Designated: `.member = e` or `[n] = e`.
                 let designator = elem
@@ -2443,9 +2439,7 @@ impl<'a> Context<'a> {
                 self.walk_switch(source, program, scope_view, child)?;
             }
             // `return`/`break`/`continue` terminate the current block and have no
-            // fall-through, so they end the compound (skipping its end link). A stray
-            // `break`/`continue` outside any loop/switch recovers as a no-op and
-            // reports `false`, so the compound continues normally.
+            // fall-through, so they end the compound (skipping its end link).
             "return_statement" => {
                 self.walk_return(source, program, scope_view, child)?;
                 return Ok(true);
@@ -2456,12 +2450,7 @@ impl<'a> Context<'a> {
             "continue_statement" => {
                 return self.walk_continue(program, scope_view);
             }
-            // Unlike break/continue, a `goto` does NOT end the compound: code after it
-            // is unreachable but may hold labels that must still lower, so it updates
-            // `scope_view` (to a fresh block) and we fall through to the next sibling.
             "goto_statement" => self.walk_goto(source, program, scope_view, child)?,
-            // A label's body diverges iff its inner statement does; propagate that so a
-            // `L: return x;` at the tail of a compound doesn't leave a dangling block.
             "labeled_statement" => {
                 return self.walk_labeled_statement(source, program, scope_view, child);
             }
@@ -2470,9 +2459,7 @@ impl<'a> Context<'a> {
                 return self.walk_nested_case(source, program, scope_view, child);
             }
             // A syntax error in statement position: a problem in the analyzed source,
-            // not a gap in this frontend. This is the position in which tree-sitter's
-            // ERROR node still names the construct that defeated it, so it is quoted --
-            // see `Context::report_unparsable_construct`.
+            // not a gap in this frontend (see `Context::report_unparsable_construct`).
             "ERROR" => {
                 self.report_unparsable_construct(child, source)?;
             }
@@ -3401,8 +3388,6 @@ impl<'a> Context<'a> {
                     .is_none()
                     && (self.functions.contains_key(text) || self.declared_functions.contains(text))
                 {
-                    // Which definition of `text` this file means, when more than one file
-                    // defines one (see `Context::resolve_reference`).
                     let target = self.resolve_reference(text);
                     Ok(Exp::ObjectRef(CallObject::FunctionPtr(target.into())))
                 } else {
@@ -3558,10 +3543,9 @@ impl<'a> Context<'a> {
                     program[scope_view.fidx].locals.get_or_intern(&temp_name),
                 )))
             }
-            // A GNU statement expression `({ s1; s2; value; })`. tree-sitter-c 0.24.1 has no
-            // node for the construct: it parses as a `parenthesized_expression` wrapping a
-            // `compound_statement`, so it lands here with `node.kind() == "compound_statement"`.
-            // See `lower_statement_expression_effects`.
+            // A GNU statement expression `({ s1; s2; value; })`, reached through the
+            // `parenthesized_expression` arm (see `is_statement_expression`). See
+            // `lower_statement_expression_effects`.
             "compound_statement" => {
                 let outer_sidx = scope_view.sidx;
                 let outer_span = self.cur_span;
@@ -4225,9 +4209,6 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         temp_name: String,
     ) -> Result<Exp, Error> {
-        // Grouping parentheses around the callee are peeled first: they change nothing about
-        // what is called, but a callee is named by its source text here, so `(f)(x)` without
-        // the peel names a function `(f)` that does not exist. See [`unparenthesized_callee`].
         let mut func_node =
             unparenthesized_callee(node.child_by_field_name("function").expect("always has"));
         // `(*fp)(x)` calls through `fp`, like `fp(x)`.
@@ -4241,8 +4222,6 @@ impl<'a> Context<'a> {
         }
         let func_name = to_str(&func_node, source);
 
-        // A call names the definition the *caller's* file holds when several files define
-        // that name; `resolve_reference` is the identity function for every other name.
         let call_edges =
             CallEdges::Explicit(ctadl_ir::thin_vec![self.resolve_reference(func_name)]);
 
@@ -4375,7 +4354,6 @@ impl<'a> Context<'a> {
         let mut matches_iter = cursor.matches(query, tree.root_node(), source.as_bytes());
         while let Some(m) = matches_iter.next() {
             let extract = MatchExtractor::new(query, m);
-            //boo, so TREE_SITTER doesn't add a node for an implicit int function type
             let return_type = extract.get_opt("return_type");
             let body_node = extract.get("body")?;
             let def_node = extract.get("func.def")?;
@@ -4426,8 +4404,7 @@ impl<'a> Context<'a> {
         let fdat = &mut program.functions[fidx];
         fdat.name = func_name.to_string();
 
-        //return type, remember C can have an implicit int return type. boo
-        // A pointer return is a return: `void *xmalloc(size_t)` has `type: void` and an
+        // No return type node is an implicit `int`, arity 1. A pointer return is a return: `void *xmalloc(size_t)` has `type: void` and an
         // arity of 1, because the `void` describes the pointee, not the function.
         let ret_ct = if head.returns_pointer {
             1
@@ -4472,13 +4449,9 @@ impl<'a> Context<'a> {
         self.scope_tree.add_block(&block_scope_view);
         let cp = CompoundProxy::from_node(body_node);
 
-        // Pre-create a block for every `goto` label in this function so forward
-        // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
         self.label_blocks.clear();
         self.walked_label_blocks.clear();
-        // Address-of aliases are function-local and confined to a straight-line block.
         self.addr_alias.clear();
-        // Union-typed locals are function-scoped.
         self.union_vars.clear();
         // Address-taken scalars live in memory; copy each such parameter into its cell.
         self.cells = addr_taken_scalars(
@@ -4515,6 +4488,8 @@ impl<'a> Context<'a> {
                 None,
             );
         }
+        // Pre-create a block for every `goto` label in this function so forward
+        // jumps (a `goto L` appearing before `L:`) resolve.
         let mut labels = Vec::new();
         collect_labels(body_node, source, &mut labels);
         for label in labels {
