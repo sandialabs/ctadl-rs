@@ -1047,9 +1047,7 @@ pub mod param_attributes {
 }
 
 impl<'a> MethodDef<'a> {
-    /// Cecil's `IsDeleted`: a SpecialName member named `_Deleted`, which
-    /// edit-and-continue leaves behind. Cecil reads it, but leaves it out of
-    /// its type's members.
+    /// `IsDeleted`, as [`FieldDef::is_deleted`].
     pub fn is_deleted(&self) -> Result<bool> {
         Ok(self.attributes()? & method_attributes::SPECIAL_NAME != 0 && self.name()? == "_Deleted")
     }
@@ -1312,9 +1310,7 @@ pub struct PInvokeInfo<'a> {
 }
 
 impl<'a> PropertyDef<'a> {
-    /// Cecil's `IsDeleted`: a SpecialName member named `_Deleted`, which
-    /// edit-and-continue leaves behind. Cecil reads it, but leaves it out of
-    /// its type's members.
+    /// `IsDeleted`, as [`FieldDef::is_deleted`].
     pub fn is_deleted(&self) -> Result<bool> {
         Ok(self.attributes()? & SPECIAL_NAME != 0 && self.name()? == "_Deleted")
     }
@@ -1412,9 +1408,7 @@ impl<'a> PropertyDef<'a> {
 }
 
 impl<'a> EventDef<'a> {
-    /// Cecil's `IsDeleted`: a SpecialName member named `_Deleted`, which
-    /// edit-and-continue leaves behind. Cecil reads it, but leaves it out of
-    /// its type's members.
+    /// `IsDeleted`, as [`FieldDef::is_deleted`].
     pub fn is_deleted(&self) -> Result<bool> {
         Ok(self.attributes()? & SPECIAL_NAME != 0 && self.name()? == "_Deleted")
     }
