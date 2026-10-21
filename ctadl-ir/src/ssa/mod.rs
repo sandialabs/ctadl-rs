@@ -79,11 +79,8 @@ pub struct Pipeline {
 impl Pipeline {
     /// The passes `ctadl index` runs. This function is the only definition of that set.
     ///
-    /// Dead-temp elimination runs first for two reasons. It removes definitions that coalescing
-    /// cannot remove, because a dead temporary has no use to merge it into. And it makes the
-    /// program smaller before coalescing scans it. Both passes do nothing to a program that is
-    /// already in SSA form, such as a flowy import. SSA conversion itself must not run twice;
-    /// see [`transform`].
+    /// Dead-temp elimination runs before coalescing (see [`eliminate_dead_temps`]). SSA
+    /// conversion itself must not run twice; see [`transform`].
     #[inline]
     pub fn index_default() -> Self {
         Pipeline {
