@@ -114,7 +114,7 @@ lazy_static::lazy_static! {
 ///
 /// The access path is represented as a stack of accesses, innermost first. So an access path like
 /// x.foo.bar.baz is represented as `cons(.foo, cons(.bar, cons(.baz)))`. This representation allows
-/// common suffix sharing, something provided by the [`SuffixSeq`] datatype.
+/// common suffix sharing, something provided by the [`tailshare::Seq`] datatype.
 ///
 /// Access paths are composed of field and offset accesses. Contiguous runs of offset accesses are
 /// summed, so there is never more than one offset access in a row. In effect, the offsets are

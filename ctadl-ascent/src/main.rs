@@ -1130,7 +1130,7 @@ fn report_project(args: &ReportArgs) -> anyhow::Result<()> {
 ///
 /// `ctadl index app` creates a project named `app` out of the import named `app`, so before it
 /// has ever run there is no project to load -- and that is exactly when checking a model file
-/// against the import is most useful. Falling back to [`AnalysisProject::ephemeral`] gives
+/// against the import is most useful. Falling back to [`project::AnalysisProject::ephemeral`] gives
 /// `ctadl query` the same import list, with the same `sub_imports` expansion (an APK's native
 /// libraries), and writes nothing to the store. The query itself then finds no index and says
 /// so; see [`cli::query`].
