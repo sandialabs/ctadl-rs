@@ -232,31 +232,11 @@ fn check_cecil_compare(
             parity::CECIL_DUMP_ENV
         )));
     };
-    let compared: Vec<(&Input, &String)> = inputs
-        .iter()
-        .zip(dumps)
-        .filter(|(input, _)| !parity::compare_skip(&input.name()))
-        .filter_map(|(input, dump)| dump.as_ref().ok().map(|d| (input, d)))
-        .collect();
-    let cecil_dumps = parallel_map(&compared, |(input, _)| cecil_dump.dump(&input.path));
-
-    // Both sides of every mismatch are kept, since a diff of a multi-megabyte
-    // dump is not something to reconstruct from the summary.
     let diffs = work.join("cecil-compare");
     let mut failures = Vec::new();
-    for ((input, rust), cecil) in compared.iter().zip(&cecil_dumps) {
-        let name = input.id();
-        match cecil {
-            Err(e) => failures.push(format!("{name}: {}", e.trim_end())),
-            Ok(cecil) if cecil == *rust => {}
-            Ok(cecil) => {
-                std::fs::create_dir_all(&diffs)?;
-                std::fs::write(diffs.join(format!("{name}.cecil")), cecil)?;
-                std::fs::write(diffs.join(format!("{name}.rust")), rust)?;
-                failures.push(describe_diff(&name, "cecil", cecil, rust));
-            }
-        }
-    }
+    live_compare(inputs, dumps, &diffs, &mut failures, |path| {
+        cecil_dump.dump(path)
+    })?;
     let mut outcome = to_outcome(failures, "input(s)");
     if let Outcome::Fail(why) = &mut outcome {
         let _ = write!(
@@ -318,27 +298,13 @@ fn check_symbols(goldens: &Path, inputs: &[Input], work: &Path) -> Result<Outcom
             .is_some_and(|d| d.starts_with("[symbols]"))
     });
     if let Some(cecil_dump) = &live {
-        let compared: Vec<(&Input, &String)> = inputs
-            .iter()
-            .zip(&dumps)
-            .filter(|(input, _)| !parity::compare_skip(&input.name()))
-            .filter_map(|(input, dump)| dump.as_ref().ok().map(|d| (input, d)))
-            .collect();
-        let cecil_dumps = parallel_map(&compared, |(input, _)| cecil_dump.symbols(&input.path));
-        let diffs = work.join("symbols-compare");
-        for ((input, rust), cecil) in compared.iter().zip(&cecil_dumps) {
-            let name = input.id();
-            match cecil {
-                Err(e) => failures.push(format!("{name}: {}", e.trim_end())),
-                Ok(cecil) if cecil == *rust => {}
-                Ok(cecil) => {
-                    std::fs::create_dir_all(&diffs)?;
-                    std::fs::write(diffs.join(format!("{name}.cecil")), cecil)?;
-                    std::fs::write(diffs.join(format!("{name}.rust")), rust)?;
-                    failures.push(describe_diff(&name, "cecil", cecil, rust));
-                }
-            }
-        }
+        live_compare(
+            inputs,
+            &dumps,
+            &work.join("symbols-compare"),
+            &mut failures,
+            |path| cecil_dump.symbols(path),
+        )?;
     }
     let mut outcome = to_outcome(failures, "input(s)");
     if let Outcome::Fail(why) = &mut outcome {
@@ -349,6 +315,40 @@ fn check_symbols(goldens: &Path, inputs: &[Input], work: &Path) -> Result<Outcom
         );
     }
     Ok(outcome)
+}
+
+/// Compares each input's Rust dump against the one `cecil` produces live,
+/// skipping inputs whose Rust dump failed or that `parity::compare_skip` names.
+/// Both sides of every mismatch are written to `diffs`, since a diff of a
+/// multi-megabyte dump is not something to reconstruct from the summary.
+fn live_compare(
+    inputs: &[Input],
+    dumps: &[Result<String, String>],
+    diffs: &Path,
+    failures: &mut Vec<String>,
+    cecil: impl Fn(&Path) -> Result<String, String> + Sync,
+) -> Result<()> {
+    let compared: Vec<(&Input, &String)> = inputs
+        .iter()
+        .zip(dumps)
+        .filter(|(input, _)| !parity::compare_skip(&input.name()))
+        .filter_map(|(input, dump)| dump.as_ref().ok().map(|d| (input, d)))
+        .collect();
+    let cecil_dumps = parallel_map(&compared, |(input, _)| cecil(&input.path));
+    for ((input, rust), cecil) in compared.iter().zip(&cecil_dumps) {
+        let name = input.id();
+        match cecil {
+            Err(e) => failures.push(format!("{name}: {}", e.trim_end())),
+            Ok(cecil) if cecil == *rust => {}
+            Ok(cecil) => {
+                std::fs::create_dir_all(diffs)?;
+                std::fs::write(diffs.join(format!("{name}.cecil")), cecil)?;
+                std::fs::write(diffs.join(format!("{name}.rust")), rust)?;
+                failures.push(describe_diff(&name, "cecil", cecil, rust));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn describe_diff(name: &str, expected_label: &str, expected: &str, actual: &str) -> String {
