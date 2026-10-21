@@ -14,17 +14,10 @@
 //! ## Seeding, and why the physical relation holds nothing
 //!
 //! `assign_like` is seeded with the original program assignments — about 94% of the final relation
-//! on binary targets. Serial Ascent iterates the physical relation exactly once during index
-//! build, so [`super::assign_like_trie::SeedVec`] can hold a seed: its `iter()` *drains* the seed
-//! into the trie, so the seed is never held in a second full-size buffer.
-//!
-//! Parallel codegen builds indices differently. It does not iterate; it runs
-//! `(0..rel.len()).into_par_iter()` and *random-accesses* `rel[i]`, which a draining store cannot
-//! serve. So the seed goes into the store directly, before the run, through
-//! [`CAssignTrie::from_rows`] — which consumes the input `Vec` and frees it, so here too the seed
-//! is never held twice. The physical relation is then a pure counter
-//! ([`CSeedVec`]), holding no tuples and iterating nothing, so index build has nothing to do for
-//! it.
+//! on binary targets. The seed goes into the store directly, before the run, through
+//! [`CAssignTrie::from_rows`], which consumes the input `Vec` and frees it, so the seed is never
+//! held twice. The physical relation is then a pure counter ([`CSeedVec`]), holding no tuples and
+//! iterating nothing, so index build has nothing to do for it.
 
 use std::hash::Hash;
 use std::marker::PhantomData;

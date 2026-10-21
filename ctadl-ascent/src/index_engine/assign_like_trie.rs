@@ -31,7 +31,6 @@
 //! it is a *saved output*. Its physical `Vec` is a [`SeedVec`] that retains no tuples, so we
 //! rebuild the result Vec from the store after the run, using [`AssignTrie::into_vec`].
 
-use std::cell::{Cell, RefCell};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Index;
@@ -56,80 +55,45 @@ pub trait FromRows<R> {
 }
 
 // ---------------------------------------------------------------------------
-// Physical `rel!` storage.
-//
-// `locals` is a derived relation whose physical store is a pure `CountingVec` holding no tuples.
-// `assign_like` differs: it starts out holding the original program assignments, most of the
-// final relation. A `SeedVec` built with `SeedVec::from(..)` holds such seed rows: Ascent's seed
-// path assigns the physical store, then, exactly once during index build, iterates it and calls
-// `index_insert` on each tuple, which for this BYODS provider routes into the shared trie through
-// the full index's write target. The trie can also be seeded directly, with [`FromRows`], and
-// the physical store left empty.
-//
-// `SeedVec` exploits that single pass: `iter()` *drains* the seed out. So after index build the
-// seed lives only in the trie, never in a second full-size buffer. We discard every later
-// derived-row `push`, because the row is already in the trie, and keep only the row count, so that
-// `prog.assign_like.len()` and Ascent's synthetic row indices stay well-defined.
+// Physical `rel!` storage. Like `locals_trie::CountingVec`, it stores no tuples and only counts
+// the rows, so that `prog.assign_like.len()` and Ascent's synthetic row indices stay
+// well-defined. Every derived row is already in the trie, and the seed rows go into the trie
+// directly, through [`FromRows`].
 // ---------------------------------------------------------------------------
 pub struct SeedVec<T> {
-    /// The seed tuples. The single index-build `iter()` pass drains them into the trie. They need
-    /// interior mutability because that pass borrows the physical store as `&self`.
-    seed: RefCell<Vec<T>>,
-    /// Logical row count: the seed size plus the pushes we discarded. `len` reads it through
-    /// `&self` and `push` bumps it through `&mut self`, so a plain field suffices.
-    count: usize,
-    /// Set the first time `iter()` runs. It catches a future Ascent codegen change that would call
-    /// `iter()` twice, where the second call would silently see an already-drained, empty seed.
-    drained: Cell<bool>,
+    len: usize,
+    _p: PhantomData<T>,
 }
 impl<T> Default for SeedVec<T> {
     fn default() -> Self {
         Self {
-            seed: RefCell::new(Vec::new()),
-            count: 0,
-            drained: Cell::new(false),
-        }
-    }
-}
-impl<T> From<Vec<T>> for SeedVec<T> {
-    fn from(v: Vec<T>) -> Self {
-        let count = v.len();
-        Self {
-            seed: RefCell::new(v),
-            count,
-            drained: Cell::new(false),
+            len: 0,
+            _p: PhantomData,
         }
     }
 }
 impl<T> SeedVec<T> {
     #[inline(always)]
     pub fn push(&mut self, _v: T) {
-        self.count += 1;
+        self.len += 1;
     }
     #[inline(always)]
     pub fn len(&self) -> usize {
-        self.count
+        self.len
     }
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        self.count == 0
+        self.len == 0
     }
-    /// Drain the seed. Ascent calls this exactly once, during index build and before any `push`,
-    /// to route the seed into the trie through the full index's write target. Draining is what
-    /// keeps the seed from being retained for the rest of the run.
-    #[inline]
-    pub fn iter(&self) -> std::vec::IntoIter<T> {
-        debug_assert!(
-            !self.drained.replace(true),
-            "assign_like_trie::SeedVec::iter called more than once; the seed would be lost"
-        );
-        std::mem::take(&mut *self.seed.borrow_mut()).into_iter()
+    #[inline(always)]
+    pub fn iter(&self) -> std::iter::Empty<&T> {
+        std::iter::empty()
     }
 }
 impl<T> Index<usize> for SeedVec<T> {
     type Output = T;
     fn index(&self, _index: usize) -> &T {
-        panic!("assign_like_trie::SeedVec is not randomly indexable")
+        panic!("assign_like_trie::SeedVec stores no tuples")
     }
 }
 
