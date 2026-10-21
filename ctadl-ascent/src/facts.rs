@@ -1260,7 +1260,7 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> 
 /// without rebuilding and re-interning `suffix`.
 ///
 /// Every `Path` in the system is built through [`Path::from_accesses`], which collapses runs of
-/// adjacent [`PathSegment::Offset`]s, so neither an interned `new_prefix` nor a `suffix` returned
+/// adjacent [`mir::PathSegment::Offset`]s, so neither an interned `new_prefix` nor a `suffix` returned
 /// by [`match_prefix`] (a tail of an interned path, possibly with an offset-adjusted head) ever
 /// contains internal adjacent offsets. The *only* place `from_accesses` could merge is therefore
 /// the `new_prefix`/`suffix` junction — which this handles explicitly — so the result is
@@ -1302,8 +1302,8 @@ fn prepend_onto(
 /// Returns the suffix solving the equation ap = prefix + suffix, if there is one. The suffix may
 /// be empty. Otherwise returns none.
 ///
-/// This supports offset arithmetic. For example, if ap = .x.[2] and prefix = .x.[1],
-/// the suffix is .[1].
+/// This supports offset arithmetic. For example, if `ap = .x.[2]` and `prefix = .x.[1]`,
+/// the suffix is `.[1]`.
 #[inline]
 pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<tailshare::Seq<mir::PathSegment>> {
     use mir::{Offset, PathSegment};
