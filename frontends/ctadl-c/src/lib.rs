@@ -4407,8 +4407,9 @@ impl<'a> Context<'a> {
         let fdat = &mut program.functions[fidx];
         fdat.name = func_name.to_string();
 
-        // No return type node is an implicit `int`, arity 1. A pointer return is a return: `void *xmalloc(size_t)` has `type: void` and an
-        // arity of 1, because the `void` describes the pointee, not the function.
+        // No return type node is an implicit `int`, arity 1. A pointer return is a return:
+        // `void *xmalloc(size_t)` has `type: void` and an arity of 1, because the `void`
+        // describes the pointee, not the function.
         let ret_ct = if head.returns_pointer {
             1
         } else if let Some(rt) = return_type
