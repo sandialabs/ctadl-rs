@@ -279,8 +279,8 @@ fn record_sub_imports(import: &ArtifactImport, sub_imports: Vec<String>) -> Resu
 /// `artifact` is the file on disk. `name` is what the import is called in the store. The import
 /// is redone when the store holds nothing under that name, or when the content hash recorded
 /// for it no longer matches `artifact`. The IR then comes back through
-/// [`ctadl_import::open_import`], so the version check and the preprocessing passes are the
-/// same ones `ctadl index` uses.
+/// [`ctadl_import::open_import`], so it gets the same version check as `ctadl index`, and the
+/// passes `pipeline` names.
 pub fn open_or_import(
     name: &str,
     artifact: &std::path::Path,
@@ -290,8 +290,7 @@ pub fn open_or_import(
 ) -> Result<ProgramInfo, Error> {
     if !ArtifactImport::is_up_to_date(name, artifact)? {
         let import = ArtifactImport::try_create(name, language, artifact)?;
-        let program_info = import_artifact(&import, opts)?;
-        ctadl_import::save_program_info(program_info, &import)?;
+        import_and_save(&import, opts)?;
         // `import_artifact` may have rewritten the config, adding sub-imports or a Ghidra
         // image base. So record the hash on a freshly loaded copy, not on the one created
         // above.

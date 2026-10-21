@@ -206,7 +206,7 @@ pub fn import_native_libs(
     // The APK is not needed past this point and can be tens of megabytes.
     drop(apk_bytes);
 
-    let dest_dir = parent.import_path().join("native").join(abi);
+    let dest_dir = extracted_libs_dir(parent).join(abi);
     std::fs::create_dir_all(&dest_dir)
         .map_err(Error::Io)
         .err_context(|| format!("creating native library dir: '{}'", dest_dir.display()))?;
