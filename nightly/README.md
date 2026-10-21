@@ -8,7 +8,7 @@ repo root (`xtask/src/`), not in shell scripts.
 ## Running
 
 Run the suite through the flake check. It is one hermetic derivation that does
-**everything** — builds `ctadl` and `dex-reader` and supplies every other tool
+**everything** — builds `ctadl` and the reader dumpers and supplies every other tool
 (javac, dx, Ghidra, gcc/addr2line, the Android SDK) from Nix, then runs all the
 cases. No dev shell, no PATH setup, no prebuilt binaries:
 
@@ -27,7 +27,7 @@ cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, `jni`, or `android-icc` (comma-separated, or
+`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, `jni`, `android-icc`, or `cil` (comma-separated, or
 repeated) and defaults to all of them. It selects *before* anything runs, so
 `--frontend pcode` never invokes the Java toolchain, `--frontend jvm,dex` never
 starts Ghidra, and `--frontend lua` needs no external toolchain at all. `jni` is
@@ -35,7 +35,7 @@ the odd one out: its cases build both halves of a JNI boundary, so they need the
 Java toolchain *and* Ghidra. Use it with `--filter` to narrow further:
 `--frontend pcode --filter funcptr`.
 
-`android-icc` discovers Phase 5 external benchmark specs under `tests/android-icc/`. Their APKs
+`android-icc` discovers external benchmark specs under `tests/android-icc/`. Their APKs
 come from the flake (`CTADL_ANDROID_ICC_APKS`, set in the dev shell); without it they report `SKIP`.
 
 > **Note:** the `lua` frontend lowers its `tests/lua/` cases end to end, including
@@ -43,7 +43,7 @@ come from the flake (`CTADL_ANDROID_ICC_APKS`, set in the dev shell); without it
 > metatable-based OOP (method calls resolve through the recovered `__index` hierarchy;
 > instance fields flow across calls). All of them are expected to pass — there are no Lua
 > XFAILs. `closure-flow` (a closure returned out of one function and called in another)
-> was one until the engine gained return-direction propagation of call-target objects;
+> needs call-target objects to propagate in the return direction;
 > `tests/c/funcptrfactory.c` is the language-neutral regression guard on that rule.
 
 Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
@@ -57,7 +57,7 @@ they are picked up automatically; no list to edit.
   the config name is the kebab-case of the class (`ArrayListIteratorFlow` →
   `array-list-iterator-flow.json`). A `.java` with no matching config is ignored.
 - **Pcode / C** — `tests/c/foo.c` pairs with `tests/c/foo-query.json`, or falls
-  back to a shared `tests/c/query.json`.The pair registers under *both* C
+  back to a shared `tests/c/query.json`. The pair registers under *both* C
   frontends: a `pcode` case named `foo` and a tree-sitter `c` case named `C:foo`.
 
 - **Lua** — `tests/lua/foo.lua` pairs with `tests/lua/foo-query.json`. A `.lua`
@@ -87,7 +87,7 @@ they are picked up automatically; no list to edit.
 
 ## Checks that are not taint cases
 
-Not everything the suite reports comes from `tests/`. Four families are written in Rust in the
+Not everything the suite reports comes from `tests/`. These families are written in Rust in the
 `xtask` crate and folded into the same report, because they are expensive, or need a toolchain, or
 both — the same reasons the taint cases are nightly:
 
@@ -113,9 +113,8 @@ both — the same reasons the taint cases are nightly:
 
 The `apk:*` checks are where the analyzer meets a real app rather than a fixture: 6.4 MB, two
 `classes*.dex`, some 50,000 functions. Importing it costs about 13 seconds, which is why they live
-here — they used to be `#[test]`s in `ctadl-ascent/tests/cli.rs`, where they accounted for ~60 s of
-the ~77 s the workspace's tests spent executing, and moving them out halved `cargo test
---workspace`. The import is done **once** and the checks below read the store it wrote:
+here rather than in `cargo test`. The import is done **once** and the checks below read the store
+it wrote:
 
 | Check | What it claims |
 | --- | --- |
@@ -210,8 +209,8 @@ a later regression is caught. One case is quarantined today:
 1. Write `tests/jni/Foo.java` with a `source()`, a `sink(...)`, and one or more
    `native` methods, plus `tests/jni/Foo.c` implementing them under their mangled
    `Java_…` names. Declare the JNI types locally (`typedef void *jstring;` and
-   friends) rather than including `<jni.h>`: the flake ships no NDK, and only the
-   arity and the dataflow shape matter.
+   friends) rather than including `<jni.h>`: the regression check's SDK has no NDK,
+   and only the arity and the dataflow shape matter.
 2. Write `tests/jni/foo.json` exactly as a Java/DEX config. `expected_lines` and
    `unexpected_lines` there refer to the **Java** source; the optional
    `expected_native_lines` refers to the **C** source (see below).
