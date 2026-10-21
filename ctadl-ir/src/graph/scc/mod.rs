@@ -331,7 +331,7 @@ where
             .map(|node| match this.start_walk_from(node) {
                 WalkReturn::Complete { scc_index, .. } => scc_index,
                 WalkReturn::Cycle { min_depth, .. } => {
-                    panic!("`start_walk_node({node:?})` returned cycle with depth {min_depth:?}")
+                    panic!("`start_walk_from({node:?})` returned cycle with depth {min_depth:?}")
                 }
             })
             .collect();
