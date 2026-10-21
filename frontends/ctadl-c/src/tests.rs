@@ -884,7 +884,7 @@ fn returned_blend_operands_flow() {
 fn implicit_return() {
     // `foo` declares `int` and never returns, so `link_blocks` closes its body with a
     // synthesized return that must satisfy the declared arity. The other synthesis sites
-    // and the precision pin live in the implicit-return section at the end of this file.
+    // and the precision pin live in the implicit-return section further down this file.
     let src = r"
             int foo() {
             //no explicit_return
