@@ -16,14 +16,12 @@ tree-sitter = "0.26"
 tree-sitter-c = "0.24"
 
 # The engine, used by the tests only. This makes a dependency cycle, which Cargo allows for
-# dev-dependencies. It is needed because 143 of the 264 tests in `tests.rs` call
-# `index_program`, `get_summary` or `check_flow`, all of which run the datalog engine. Those
-# tests check the C front end's lowering, so moving them into another crate would mean making
-# whatever they reach through `super::` public, and moving 5,000 lines of test code away from
-# the code it tests. The cost of the cycle is that `cargo test -p ctadl-c` builds the engine,
-# and that the cycle has to be broken before either crate can be published with a version
-# instead of a path. Both are fine for now. See `ctadl-lib-update.md` section 1.2 for the two
-# alternatives.
+# dev-dependencies. It is needed because most tests in `tests.rs` call `index_program`,
+# `get_summary` or `check_flow`, all of which run the datalog engine. Those tests check the C
+# front end's lowering, so moving them into another crate would mean making whatever they reach
+# through `super::` public, and moving thousands of lines of test code away from the code it
+# tests. The cost of the cycle is that `cargo test -p ctadl-c` builds the engine, and that the
+# cycle has to be broken before either crate can be published with a version instead of a path.
 [dev-dependencies]
 ctadl-ascent = { path = "../../ctadl-ascent" }
 env_logger = "0.11"
