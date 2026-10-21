@@ -417,13 +417,6 @@ pub enum Variable {
     Param(ParameterIdx),
 }
 
-impl AsRef<Variable> for Variable {
-    #[inline]
-    fn as_ref(&self) -> &Variable {
-        self
-    }
-}
-
 /// A reference to a variable, possibly with version. Versions are computed by SSA conversion.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

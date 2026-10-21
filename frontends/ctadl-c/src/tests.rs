@@ -207,7 +207,7 @@ fn unique_temps() {
         .iter()
         .flat_map(|b| b.statements.iter())
         .filter_map(|stmt| match &stmt.kind {
-            StatementKind::Assign { dest, .. } => match dest.variable.as_ref() {
+            StatementKind::Assign { dest, .. } => match &dest.variable {
                 Variable::Local(idx) => {
                     let name = fun.locals.name(*idx);
                     name.starts_with("<t").then(|| name.to_string())

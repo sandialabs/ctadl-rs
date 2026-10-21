@@ -61,7 +61,7 @@ fn removable_dest(kind: &StatementKind) -> Option<&Variable> {
         StatementKind::Load { dest, .. } => dest,
         _ => return None,
     };
-    (dest.version.is_none() && matches!(dest.variable.as_ref(), Variable::Local(_)))
+    (dest.version.is_none() && matches!(&dest.variable, Variable::Local(_)))
         .then_some(&dest.variable)
 }
 

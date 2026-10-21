@@ -791,7 +791,7 @@ impl FlowyCtx {
                         signature: None,
                     }
                 } else {
-                    let is_direct = match variable.variable.as_ref() {
+                    let is_direct = match &variable.variable {
                         Variable::Local(idx) => {
                             let name = local_table.name(*idx);
                             name == "source"
@@ -802,7 +802,7 @@ impl FlowyCtx {
                     };
 
                     if is_direct {
-                        let Variable::Local(idx) = variable.variable.as_ref() else {
+                        let Variable::Local(idx) = &variable.variable else {
                             unreachable!()
                         };
                         let name = local_table.name(*idx);
@@ -893,7 +893,7 @@ impl FlowyCtx {
                         signature: None,
                     }
                 } else {
-                    let is_direct = match variable.variable.as_ref() {
+                    let is_direct = match &variable.variable {
                         Variable::Local(idx) => {
                             let name = local_table.name(*idx);
                             name == "sink" || name == "errsink" || defined_functions.contains(name)
@@ -902,7 +902,7 @@ impl FlowyCtx {
                     };
 
                     if is_direct {
-                        let Variable::Local(idx) = variable.variable.as_ref() else {
+                        let Variable::Local(idx) = &variable.variable else {
                             unreachable!()
                         };
                         let name = local_table.name(*idx);
@@ -1107,7 +1107,7 @@ fn label_string(local_table: &Locals, r: &ParsedRef) -> String {
         ParsedRef::Value(e) => format!("{e}"),
         ParsedRef::Ap(base, segments) => {
             let mut s = String::new();
-            match base.variable.as_ref() {
+            match &base.variable {
                 Variable::Local(idx) => {
                     let _ = write!(s, "%{}", local_table.name(*idx));
                     if let Some(v) = base.version {
@@ -1284,7 +1284,7 @@ impl ExtractSpec {
 
     /// The parameter index `var` (transitively) holds, if known.
     fn formal_of(&self, var: &VariableRef) -> Option<i16> {
-        match var.variable.as_ref() {
+        match &var.variable {
             Variable::Param(idx) => idx.index().try_into().ok(),
             _ => self.param_of.get(var).copied(),
         }

@@ -1509,7 +1509,7 @@ impl CodegenVisitor<'_> {
 
     #[inline]
     fn trans_variable_ref(&mut self, v: &VariableRef) -> FlowVariable {
-        match (v.variable.as_ref(), v.version) {
+        match (&v.variable, v.version) {
             // The one global heap maps to the globals index
             (Variable::GlobalHeap, None) => FlowVariable::formal_index(GLOBALS_INDEX.into()),
             // A versioned global heap is a local variable
