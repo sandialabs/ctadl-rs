@@ -17,8 +17,8 @@ This is one structure spanning two phases, and each field is consumed by exactly
 - [`ProgramModelMatches::bridges`] -- index time. Phase 2 pairs the two sides and emits the
   `call`/`actual_param`/`assign`/`formal_param` rows.
 - [`ProgramModelMatches::dispatch`] -- index time, and also read by phase *1*:
-  codegen classifies every Java call site against it before it emits anything for the site,
-  and phase 2 writes the matched summaries against the synthetic functions phase 1 named.
+  codegen classifies every Java and CIL call site against it before it emits anything for the
+  site, and phase 2 writes the matched summaries against the synthetic functions phase 1 named.
 - [`ProgramModelMatches::closure_shaped`] -- report time. A note about what hybrid inlining is
   for; nothing resolves differently for being on it.
 - [`ProgramModelMatches::endpoints`] -- query time. Stage 2
@@ -316,7 +316,7 @@ pub struct ProgramModelMatches {
     /// Matched bridge sides, parallel to the scanned specs.
     pub bridges: BridgeMatches,
     /// Signatures a `find: "dispatch"` generator matched. Index time, and also read by phase
-    /// *1*: codegen classifies each Java call site against this map before it
+    /// *1*: codegen classifies each Java and CIL call site against this map before it
     /// emits anything for the site.
     ///
     /// A `BTreeMap` so iteration order does not depend on hashing: the synthetic functions
