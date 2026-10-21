@@ -1,14 +1,15 @@
 //! The parallel twin of [`super::locals_trie`], for `ascent_par!`.
 //!
 //! [`super::locals_trie`] holds `locals` in one shared store: a forward map `(F,V) -> {(P,M,Fp)}`
-//! whose groups are [`HybridSet`]s, plus a side-index `fidx: F -> {V}` that narrows the derived
+//! whose groups are [`PathGroup`]s, plus a side-index `fidx: F -> {V}` that narrows the derived
 //! `0_3_4` probe. Every logical index is a lightweight *view* over that store. This module keeps
 //! all of that and changes exactly one thing: the two outer maps become `DashMap`s, so many rayon
 //! threads can insert at once.
 //!
-//! The groups stay [`HybridSet`]s, so the whole reason `locals_trie` exists survives: two-word
-//! groups, 24 B packed leaves, one allocation per group, and Swiss promotion above
-//! [`SMALL_THRESHOLD`] that keeps the delta->total merge at O(delta). `DashMap`'s own overhead is
+//! The groups stay [`PathGroup`]s, so the whole reason `locals_trie` exists survives: 24 B
+//! packed leaves, one allocation per small group, and promotion above
+//! [`SMALL_THRESHOLD`](super::hybrid_set::SMALL_THRESHOLD) that keeps the delta->total merge at
+//! O(delta). `DashMap`'s own overhead is
 //! per *shard* (`shards_count()` ~ 4x cores), which is nothing against a store measured in
 //! gigabytes.
 //!
@@ -32,7 +33,7 @@
 //! ## Reads are frozen; writes take one shard lock
 //!
 //! A concurrent insert takes the `DashMap` entry for `(f, v)` — one shard write lock — and
-//! inserts the leaf into that group's [`HybridSet`] under it. The lock makes the winner unique,
+//! inserts the leaf into that group's [`PathGroup`] under it. The lock makes the winner unique,
 //! so exactly one thread sees `true`, pushes the physical row, and sets `changed`. That
 //! uniqueness is what keeps semi-naive evaluation and the physical row count correct.
 //!
@@ -52,9 +53,8 @@
 //! `DashMapViewParIter`, which is where the real scaling has to come from. A *keyed* probe
 //! (`0_1`, `0_1_2`, `0_3_4`) instead collects its matches into a [`CollectedParIter`]: the median
 //! group holds one leaf, `0_3_4` is cold, and the allocation only happens when a keyed clause
-//! drives a parallel loop. A native `HybridSet` par-iterator (splitting the slot range, which
-//! both representations store as a flat array) would remove those collects; do that only if a
-//! profile asks for it.
+//! drives a parallel loop. A native `PathGroup` par-iterator would remove those collects; do
+//! that only if a profile asks for it.
 
 use std::hash::{BuildHasherDefault, Hash};
 use std::marker::PhantomData;
@@ -80,7 +80,7 @@ use super::path_group::PathGroup;
 /// the same hasher ascent's own concurrent indices use, so shard counts line up.
 pub type Hasher = BuildHasherDefault<FxHasher>;
 type Set<T> = hashbrown::HashSet<T, Hasher>;
-/// The leaves of one `(F,V)` group. See [`super::locals_trie`] for why this is a [`HybridSet`].
+/// The leaves of one `(F,V)` group. See [`super::locals_trie`] for why this is a [`PathGroup`].
 type Group<P, M, Fp> = PathGroup<P, M, Fp>;
 
 // ---------------------------------------------------------------------------
@@ -390,7 +390,7 @@ where
     /// store, and true for exactly one caller when several race on the same tuple.
     ///
     /// The `(f, v)` entry is one shard write lock, held across the group insert (including a
-    /// possible Swiss promotion). That lock is the store's contention point: the pessimal shape is
+    /// possible promotion). That lock is the store's contention point: the pessimal shape is
     /// many threads hitting one huge group. `fidx` is touched only when the group is new, and
     /// strictly after the `fwd` shard lock is released, so the two maps are never held at once.
     fn c_insert(&self, key: &(F, V, P, M, Fp)) -> bool {
@@ -426,7 +426,7 @@ where
     /// Merge `from` into `self`, taking the union. This is the delta->total move, and Ascent runs
     /// it single-threaded on `&mut` with both sides unfrozen.
     ///
-    /// Reusing [`HybridSet::merge`] keeps the merge O(delta) rather than O(accumulated total),
+    /// Reusing [`PathGroup::merge`] keeps the merge O(delta) rather than O(accumulated total),
     /// which is the whole point of promoting large groups.
     fn absorb(&mut self, from: &mut Self) {
         use ascent::dashmap::mapref::entry::Entry;
@@ -544,7 +544,7 @@ where
 
 /// A `Vec` of already-collected items, exposed as a `ParallelIterator`.
 ///
-/// This is how the *keyed* probes return their matches. A group is a `HybridSet`, which has no
+/// This is how the *keyed* probes return their matches. A group is a `PathGroup`, which has no
 /// native parallel iterator, and rayon needs a nameable `ParallelIterator + Clone` type. Since the
 /// median group holds one leaf, collecting is cheap; and it only ever happens when a keyed clause
 /// drives a parallel loop, which is rare.
@@ -1109,7 +1109,7 @@ where
 //
 // Derived, not materialized. For the probed function `f` we visit only its flow-variables, found
 // through `fidx`, and yield every `(v, p)` whose group holds a leaf with this `(m, fp)`. A cold
-// path: rule 2.2 makes on the order of tens of probes.
+// path.
 impl<'a, F, V, P, M, Fp> RelIndexRead<'a> for CView034<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
@@ -1632,7 +1632,7 @@ mod tests {
         let mut dup = rows(2, 4, 2);
         dup.extend_from_slice(&dup.clone());
         check_views(&dup);
-        // Straddle the small -> Swiss transition inside a group.
+        // Straddle the small -> by-path transition inside a group.
         for group in [
             SMALL_THRESHOLD - 1,
             SMALL_THRESHOLD,
@@ -1704,7 +1704,7 @@ mod tests {
         use rayon::prelude::*;
 
         // Keys chosen so threads collide: few groups, many overlapping leaves, and group sizes
-        // that straddle the Swiss promotion.
+        // that straddle the promotion.
         let base: Vec<Row> = rows(8, SMALL_THRESHOLD + 5, 3);
         // Every row is offered by 4 different "threads' worth" of work, in different orders.
         let batches: Vec<Vec<Row>> = (0..4)

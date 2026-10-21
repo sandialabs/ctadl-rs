@@ -20,7 +20,7 @@
 //!
 //! - **Flat.** At most [`SMALL_THRESHOLD`] leaves, held in one [`HybridSet`] over the full leaf.
 //!   That is the overwhelmingly common case (67 to 100% of groups hold exactly one leaf), and it
-//!   keeps the group two words wide with one allocation. An exact probe scans, which at this
+//!   keeps the group to one allocation. An exact probe scans, which at this
 //!   size is cheaper than a second hash lookup.
 //! - **By path.** Above the threshold the leaves move into a map from path to a [`HybridSet`] of
 //!   the remaining columns. An exact probe is now one hash lookup, and the leaves shrink by the

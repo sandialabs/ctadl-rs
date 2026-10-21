@@ -1,4 +1,4 @@
-//! A flat, CSR-style BYODS data structure for the `locals` relation.
+//! A shared-store BYODS data structure for the `locals` relation.
 //!
 //! `locals(FunctionId, FlowVariable, Path, FormalIndex, Path)` uses more memory than anything
 //! else in the index phase. As a normal Ascent relation it is stored about 6 times over: once
@@ -11,25 +11,24 @@
 //!
 //! ## Why flat, not a nested trie
 //!
-//! The earlier design stored `(F,V) -> P -> {(M,Fp)}` as `HashMap<(F,V), HashMap<P,
-//! HashSet<(M,Fp)>>>`. On a representative workload the groups turned out to be *tiny*: about
-//! 5 leaves per `(F,V)` group, spread over about 2 distinct `P`. That left the two inner hash
-//! levels nearly empty. Each one pays hashbrown's minimum **4**-bucket allocation, plus
-//! control bytes, to hold about 2 elements. Most of the store's bytes went to that structural
-//! slack rather than to the data itself: 36k inner maps were about 53%, 70k leaf sets about
-//! 38%, and only about 13% was real data plus the outer map.
+//! A nested trie would store `(F,V) -> P -> {(M,Fp)}` as `HashMap<(F,V), HashMap<P,
+//! HashSet<(M,Fp)>>>`. On a representative workload the groups are *tiny*: about 5 leaves per
+//! `(F,V)` group, spread over about 2 distinct `P`. That leaves the two inner hash levels
+//! nearly empty. Each one pays hashbrown's minimum **4**-bucket allocation, plus control
+//! bytes, to hold about 2 elements, so most of the store's bytes go to that structural slack
+//! rather than to the data itself: measured, 36k inner maps were about 53%, 70k leaf sets
+//! about 38%, and only about 13% was real data plus the outer map.
 //!
 //! Flattening does not win all of that back. The flat form stores `P` inline on every leaf,
-//! where the nested form shared one `P` per leaf set. Measured against a faithful rebuild of
-//! the nested design over identical data, the flat design is 1.1–2.3× smaller, not about 10×.
+//! where the nested form shares one `P` per leaf set. Measured against a faithful nested store
+//! over identical data, the flat design is 1.1–2.3× smaller, not about 10×.
 //!
-//! We collapse both inner levels into one **[`HybridSet`] of `(P,M,Fp)` per `(F,V)` group**.
-//! That gives us:
-//!   - one heap allocation per group, instead of `1 + (#distinct P)` tiny hash tables;
+//! We collapse both inner levels into one **[`PathGroup`] of `(P,M,Fp)` per `(F,V)` group**,
+//! which is a single [`super::hybrid_set::HybridSet`] over the whole leaf while the group is
+//! small. That gives us:
+//!   - one heap allocation per small group, instead of `1 + (#distinct P)` tiny hash tables;
 //!   - leaves packed 24 B each, with no per-element control bytes. In the small
 //!     representation the whole occupancy map is a single `u64` word beside the slots;
-//!   - a group that is only two words wide, so the outer map entry is 32 B rather than 48.
-//!     One structure changes regime as it grows; it is not an enum over two representations;
 //!   - existence checks that probe rather than scan, at every group size.
 //!
 //! ## Large groups
@@ -37,19 +36,19 @@
 //! No single representation serves both ends of the group-size distribution. A function with
 //! dense aliasing is *rare*, but its `(F,V)` group grows to tens of thousands of leaves. If
 //! the delta->total merge re-copies the whole accumulated group, then building a group of size
-//! `G` costs O(G^2). On such inputs that dominates everything else: profiling put it at about
-//! 55% of index time (see memory-investigation.md §7/§8).
+//! `G` costs O(G^2). On such inputs that dominates everything else.
 //!
-//! So a group that grows past [`SMALL_THRESHOLD`] switches to Swiss probing, using this
-//! crate's own table (see [`super::hybrid_set::swiss`]). There the merge is O(delta), because
-//! it inserts only the new leaves. Below the threshold the group probes linearly over an
+//! So a group that grows past [`SMALL_THRESHOLD`] switches to its by-path regime: a map from
+//! `P` to a set of `(M,Fp)`, each set switching to Swiss probing in turn once it is large (see
+//! [`PathGroup`] and [`super::hybrid_set::swiss`]). There the merge is O(delta), because it
+//! inserts only the new leaves. Below the threshold the group probes linearly over an
 //! allocation that holds its element slots plus one occupancy word. The switch changes the
 //! regime *within* one structure; it does not change the type. See [`super::hybrid_set`] for
 //! why that is the right small representation, why it is not an enum, and how the transition
 //! is made cheap.
 //!
 //! The forward map `(F,V) -> [ (P,M,Fp) ]` serves `none`, `0_1`, `0_1_2`, existence, and
-//! iteration. We do not materialize a full inverse. As before, the `0_3_4` view is *derived*
+//! iteration. We do not materialize a full inverse. The `0_3_4` view is *derived*
 //! by scanning, and a small side-index `fidx: F -> {V}` narrows each `0_3_4` probe to the
 //! flow-variables of the function being probed.
 //!
@@ -87,8 +86,7 @@ type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 // The store's leaves live in `HybridSet`s, and those report their own bytes. But the maps
 // holding those sets are hashbrown's, and hashbrown reports only `capacity()`. These three
 // items turn a capacity into bytes. They live here because this store is what they were
-// written for, and what the counting-allocator bench validates them against. `assign_like_trie`
-// and `hybrid_set`'s tests use them from here.
+// written for, and what the counting-allocator bench validates them against.
 
 /// Width in bytes of hashbrown's SIMD control group.
 ///
@@ -153,16 +151,9 @@ pub fn hb_bytes(capacity: usize, elem: usize) -> usize {
 // A single `(F,V)` group's leaves.
 // ---------------------------------------------------------------------------
 
-/// The leaves of one `(F,V)` group, held in a [`PathGroup`] keyed on `P`.
-///
-/// While the group holds at most [`SMALL_THRESHOLD`] leaves it is one two-word
-/// [`super::hybrid_set::HybridSet`] over the whole leaf, probing linearly over its bare element
-/// slots. That is by far the common case: 67 to 100% of the groups hold exactly *one* leaf, in
-/// every store we have measured, whatever the largest group in it was. Above the threshold the
-/// leaves move into a map from `P` to the `(M, Fp)` pairs at that path, so that the exact
-/// `0_1_2` probe the local propagation rules make is one lookup rather than a scan of the group, and
-/// the per-iteration delta->total merge stays O(delta) instead of re-copying the whole
-/// accumulated group every round.
+/// The leaves of one `(F,V)` group, held in a [`PathGroup`] keyed on `P`, so that the exact
+/// `0_1_2` probe the local propagation rules make is one lookup on a large group rather than a
+/// scan of it.
 type Group<P, M, Fp> = PathGroup<P, M, Fp>;
 
 // ---------------------------------------------------------------------------
@@ -255,12 +246,8 @@ where
     M: Clone + Eq + Hash,
     Fp: Clone + Eq + Hash,
 {
-    /// Forward map: `(F,V)` -> the set of `(P, M, Fp)` leaves for that group. It serves the
-    /// `none`, `0_1`, `0_1_2`, and existence views directly, and the `0_3_4` view by
-    /// *scanning*. Because a group is a set, existence is a probe, and `0_1_2` filters the
-    /// group for its `P` rather than slicing a run. One heap allocation per group replaces
-    /// the old nested `HashMap<P, HashSet<(M,Fp)>>`, which on tiny groups was mostly
-    /// hashbrown slack.
+    /// Forward map: `(F,V)` -> the `(P, M, Fp)` leaves for that group. It serves the `none`,
+    /// `0_1`, `0_1_2`, and existence views directly, and the `0_3_4` view by *scanning*.
     fwd: Map<(F, V), Group<P, M, Fp>>,
     /// Side-index: `F` -> the set of `V` present for that function. It lets a `0_3_4` probe
     /// restrict its scan to the flow-variables of the function being probed, instead of
@@ -297,13 +284,13 @@ where
         self.fwd.len()
     }
 
-    /// Phase-0 instrumentation. Estimates the heap bytes held by the forward store against
+    /// Estimates the heap bytes held by the forward store against
     /// those held by the `fidx` side-index, so we can see *which* structure dominates before
     /// we optimize. An external `phys_footprint` cannot attribute bytes to a sub-structure,
     /// so we count them here.
     ///
     /// Hash-table bytes include load-factor slack ([`hb_bytes`], which is exact for these
-    /// element types), and group bytes come from [`HybridSet::heap_bytes`]. The whole report
+    /// element types), and group bytes come from [`PathGroup::heap_bytes`]. The whole report
     /// therefore accounts for allocation sizes, not for payload. It takes one pass, O(rows).
     pub fn heap_report(&self) -> HeapReport {
         let sz_outer = std::mem::size_of::<((F, V), Group<P, M, Fp>)>();
@@ -822,7 +809,7 @@ where
     type Key = (F, V, P);
     type Value = (&'a M, &'a Fp);
     // The concrete iterator, not a boxed one: this is the probe the local propagation rules make
-    // once per derived row, and a box plus an `Rc` per probe was a measurable share of it.
+    // once per derived row, and a box plus an `Rc` per probe is a measurable share of it.
     type IteratorType = super::path_group::Get<'a, P, M, Fp>;
     #[inline]
     fn index_get(&'a self, key: &(F, V, P)) -> Option<Self::IteratorType> {
@@ -885,9 +872,9 @@ where
         // This view is derived; there is no materialized inverse. For the probed function `f`,
         // we visit only its flow-variables, found through the `fidx` side-index, and yield
         // every `(v, p)` whose group holds a leaf with this `(m, fp)`. That touches one
-        // function's `(F,V)` groups instead of scanning all of `fwd`. It is a cold path: rule
-        // 2.2 makes on the order of tens of probes. We return `Some` of an iterator that may be
-        // empty, which for a join means the same thing as `None`.
+        // function's `(F,V)` groups instead of scanning all of `fwd`. It is a cold path. We
+        // return `Some` of an iterator that may be empty, which for a join means the same thing
+        // as `None`.
         let c = self.0;
         let (f, m, fp) = key.clone();
         Some(DynIter::new(move || {
@@ -936,8 +923,7 @@ where
     type ValueIteratorType = DynIter<'a, Self::Value>;
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        // This is not on any hot path. Rule 2.2 only ever point-probes `0_3_4`; nothing
-        // iterates it as a driver. So we give a correct fallback by inverting `fwd` on demand
+        // This is not on any hot path: nothing iterates `0_3_4` as a driver. So we give a correct fallback by inverting `fwd` on demand
         // and throwing the result away. If this ever shows up in a profile, some rule has
         // started iterating `0_3_4`, and we should reconsider materializing the inverse.
         let mut groups: Map<(&'a F, &'a M, &'a Fp), Vec<(&'a V, &'a P)>> = Map::default();
@@ -1111,11 +1097,8 @@ mod tests {
 
     type Store = LocalsIndCommon<u32, u64, u64, i16, u64>;
 
-    /// Builds a store from `rows` and checks every read view against those rows.
-    ///
-    /// The views are the part of this module that changed when groups stopped being sorted.
-    /// `0_1_2` now filters where it used to slice a run, and `iter_all` buckets where it used
-    /// to split one. Callers exercise groups on both sides of `SMALL_THRESHOLD`.
+    /// Builds a store from `rows` and checks every read view against those rows. Callers
+    /// exercise groups on both sides of `SMALL_THRESHOLD`.
     fn check_views(rows: &[(u32, u64, u64, i16, u64)]) {
         let mut store = Store::default();
         for row in rows {
@@ -1255,7 +1238,7 @@ mod tests {
         let mut dup = rows(2, 4, 2);
         dup.extend_from_slice(&dup.clone());
         check_views(&dup);
-        // Straddle the small -> Swiss transition inside a group.
+        // Straddle the small -> by-path transition inside a group.
         for group in [
             SMALL_THRESHOLD - 1,
             SMALL_THRESHOLD,
