@@ -56,6 +56,7 @@ pub fn run_checks(
         let why = format!("`{tool}` not on PATH");
         results.push(("dex:samples".to_string(), Outcome::Skip(why.clone())));
         results.push(("dex:line-map".to_string(), Outcome::Skip(why.clone())));
+        results.push(("dex:utf8-constants".to_string(), Outcome::Skip(why.clone())));
         results.push(("dex:baksmali".to_string(), Outcome::Skip(why)));
     } else {
         samples = compile_samples(java_samples, work)?;
