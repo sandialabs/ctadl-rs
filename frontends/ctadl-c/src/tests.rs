@@ -398,7 +398,7 @@ fn field_write_flows() {
 }
 
 #[test_log::test]
-fn field_assignment_is_update() {
+fn field_assignment_is_store() {
     // Storing into a struct field (`v.f2 = x;`). In the IR this is a `store` into the base
     // (`@p0` at `.f2`), not a plain `assign`. The summary can't see this distinction, so it's
     // checked on the IR; one representative case is enough.
@@ -1966,9 +1966,9 @@ fn increment_decrement_reassign_local() {
 }
 
 #[test_log::test]
-fn field_increment_is_update() {
+fn field_increment_is_store() {
     // Incrementing through a field (`p->x++`) is a `store` into the formal, exactly like a field
-    // assignment (see `field_assignment_is_update`) -- it is not a plain assign. The new value is
+    // assignment (see `field_assignment_is_store`) -- it is not a plain assign. The new value is
     // a flatten temp (`@p0.x + 1`), so we assert only that exactly one write to `@p0.x` exists,
     // leaving the temp source unpinned.
     let src = r"
