@@ -1,7 +1,7 @@
 //! Nightly Android ICC external-suite runner.
 //!
-//! Phase 5 keeps DroidBench / ICC-Bench style fixtures out of the fast default
-//! regression path, but gives them a first-class runner. The APKs are not in
+//! DroidBench / ICC-Bench style fixtures stay out of the fast default
+//! regression path, but get a first-class runner. The APKs are not in
 //! the repo: the flake fetches them at a pinned commit and names the directory
 //! in `CTADL_ANDROID_ICC_APKS`, which the dev shell and the regression check set.
 

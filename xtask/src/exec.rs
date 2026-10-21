@@ -79,14 +79,9 @@ pub fn capture_stdout(cmd: Command, what: &str) -> Result<String> {
 
 /// Run `cmd` to completion, killing it if it takes longer than `timeout`.
 ///
-/// Used for probes that must never become the hang they are meant to detect: a
-/// JDK-less macOS answers some `java` invocations by spinning forever rather
-/// than failing, and a probe that inherits that behaviour is worthless.
-///
 /// Output is captured, so `cmd` must not produce more than a pipe buffer's worth
-/// (~64 KB) before exiting -- we only read the pipes once it has finished. That
-/// holds for the version probes this is used for; do not reuse it for chatty
-/// commands without draining the pipes concurrently.
+/// (~64 KB) before exiting -- we only read the pipes once it has finished. Do not
+/// use it for chatty commands without draining the pipes concurrently.
 pub fn run_with_timeout(mut cmd: Command, what: &str, timeout: Duration) -> Result<Output> {
     let mut child = cmd
         .stdin(Stdio::null())
@@ -116,8 +111,7 @@ pub fn run_with_timeout(mut cmd: Command, what: &str, timeout: Duration) -> Resu
         .with_context(|| format!("failed to collect output of `{what}`"))
 }
 
-/// Remove `dir` if it exists, then recreate it empty. Used for per-test scratch
-/// directories so each run starts clean (matching the old scripts' `rm -rf`).
+/// Remove `dir` if it exists, then recreate it empty.
 pub fn fresh_dir(dir: &Path) -> Result<()> {
     if dir.exists() {
         std::fs::remove_dir_all(dir)
