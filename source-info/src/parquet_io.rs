@@ -33,7 +33,7 @@ pub enum ParquetError {
     Parquet(parquet::errors::ParquetError),
     Arrow(arrow::error::ArrowError),
     Io(io::Error),
-    MissingMetadata(String),
+    EmptyMetadata,
     InvalidData(String),
 }
 
@@ -43,7 +43,7 @@ impl std::fmt::Display for ParquetError {
             ParquetError::Parquet(e) => write!(f, "parquet error: {e}"),
             ParquetError::Arrow(e) => write!(f, "arrow error: {e}"),
             ParquetError::Io(e) => write!(f, "io error: {e}"),
-            ParquetError::MissingMetadata(k) => write!(f, "missing metadata key: {k}"),
+            ParquetError::EmptyMetadata => write!(f, "metadata.parquet has no rows"),
             ParquetError::InvalidData(m) => write!(f, "invalid data: {m}"),
         }
     }
@@ -298,9 +298,7 @@ fn read_metadata_file(dir: &Path) -> Result<ArtifactMetadata> {
         let hash_lens = column::<UInt8Array>(&batch, 1, "hash_len")?;
         let versions = column::<UInt32Array>(&batch, 2, "version")?;
         if batch.num_rows() == 0 {
-            return Err(ParquetError::MissingMetadata(
-                "metadata.parquet has no rows".to_string(),
-            ));
+            return Err(ParquetError::EmptyMetadata);
         }
         return Ok(ArtifactMetadata {
             hash_algorithm: HashAlgorithm::from_u8(hash_algorithms.value(0)),
@@ -308,9 +306,7 @@ fn read_metadata_file(dir: &Path) -> Result<ArtifactMetadata> {
             version: versions.value(0) as u16,
         });
     }
-    Err(ParquetError::MissingMetadata(
-        "metadata.parquet has no rows".to_string(),
-    ))
+    Err(ParquetError::EmptyMetadata)
 }
 
 fn read_artifacts_file(dir: &Path) -> Result<Vec<ArtifactRecord>> {
