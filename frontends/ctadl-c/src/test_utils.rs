@@ -33,14 +33,18 @@ pub(crate) fn program_from_string(src: &str) -> (Program, String) {
         !result.1,
         "Input Program failed to parse without error from Tree-sitter"
     );
-    // A block with no terminator is always a CFG defect, so fail loudly here rather
-    // than let a test silently pass on a malformed control-flow graph.
-    assert!(
-        !result.2.contains("<no terminator>"),
-        "Parsed IR contains a block with no terminator:\n{}",
-        result.2
-    );
+    assert_all_terminated(&result.2);
     (result.0, result.2)
+}
+
+/* A block with no terminator is always a CFG defect, so fail loudly rather than let a test
+silently pass on a malformed control-flow graph. */
+#[track_caller]
+fn assert_all_terminated(dump: &str) {
+    assert!(
+        !dump.contains("<no terminator>"),
+        "Parsed IR contains a block with no terminator:\n{dump}"
+    );
 }
 
 /* Lower several named files, each a translation unit of its own, into ONE program -- what
@@ -54,12 +58,7 @@ pub(crate) fn program_from_files(files: &[(&str, &str)]) -> (Program, String) {
         .map(|(name, src)| ((*name).to_string(), (*src).to_string()))
         .collect();
     let (program, dump) = tree_sitter_c::parse_c_files(&owned).expect("Failed to parse C program.");
-    // A block with no terminator is always a CFG defect, so fail loudly here rather than
-    // let a test silently pass on a malformed control-flow graph.
-    assert!(
-        !dump.contains("<no terminator>"),
-        "Parsed IR contains a block with no terminator:\n{dump}"
-    );
+    assert_all_terminated(&dump);
     (program, dump)
 }
 
@@ -105,32 +104,28 @@ written in terms of the readable source name rather than a hard-coded, hard-to-f
 if the function or local does not exist. */
 #[track_caller]
 pub(crate) fn local_render(prog: &Program, func: &str, local: &str) -> String {
-    let f =
-        function_named(prog, func).unwrap_or_else(|| panic!("no function named {func:?}\n{prog}"));
-    let idx = f
-        .locals
-        .iter_enumerated()
-        .find(|(_, decl)| decl.name.as_str() == local)
-        .map(|(idx, _)| idx)
-        .unwrap_or_else(|| panic!("no local named {local:?} in function {func:?}\n{prog}"));
-    format!("%L{}", idx.index())
+    format!("%L{}", local_idx(prog, func, local).index())
 }
 
 /* The `VariableRef` of the local named `local` in function `func`, for assertions that compare a
 statement's variable directly (a call argument, a store destination) rather than through the dump.
-The name-to-`LocalIdx` lookup is `local_render`'s, minus the rendering. Panics if the function or
-local does not exist. */
+Panics if the function or local does not exist. */
 #[track_caller]
 pub(crate) fn local_ref(prog: &Program, func: &str, local: &str) -> VariableRef {
+    VariableRef::new_local_idx(local_idx(prog, func, local))
+}
+
+/* The interned `LocalIdx` of the local named `local` in function `func`. Panics if the function
+or local does not exist. */
+#[track_caller]
+fn local_idx(prog: &Program, func: &str, local: &str) -> LocalIdx {
     let f =
         function_named(prog, func).unwrap_or_else(|| panic!("no function named {func:?}\n{prog}"));
-    let idx = f
-        .locals
+    f.locals
         .iter_enumerated()
         .find(|(_, decl)| decl.name.as_str() == local)
         .map(|(idx, _)| idx)
-        .unwrap_or_else(|| panic!("no local named {local:?} in function {func:?}\n{prog}"));
-    VariableRef::new_local_idx(idx)
+        .unwrap_or_else(|| panic!("no local named {local:?} in function {func:?}\n{prog}"))
 }
 
 /* The argument list of the (first) direct call to `callee` in function `caller`. The narrow
