@@ -1093,8 +1093,6 @@ impl Exp {
 
     /// Builds an expression from an access path. A pathless access path is a bare
     /// [`Exp::Variable`]; an offset-only path is an [`Exp::AccessPath`] (pointer arithmetic).
-    /// Panics on a path that carries a symbolic (non-offset) field — read those through a
-    /// [`StatementKind::Load`].
     #[inline]
     pub fn access_path(ap: AccessPath) -> Self {
         if ap.accesses.is_empty() {
@@ -1895,7 +1893,7 @@ impl From<AccessPath> for Exp {
     /// Converts an access path into an expression. A pathless path becomes an [`Exp::Variable`]
     /// and an offset-only path becomes an [`Exp::AccessPath`] (address arithmetic). A symbolic
     /// field read cannot be expressed as an [`Exp`]; lower it into a [`StatementKind::Load`] first
-    /// (see [`load_access_path`]). Panics if the access path carries a symbolic field.
+    /// (see [`load_access_path`]).
     fn from(ap: AccessPath) -> Self {
         Exp::access_path(ap)
     }
