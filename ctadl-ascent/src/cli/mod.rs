@@ -276,19 +276,11 @@ pub fn index(
             phys_footprint_mb()
         );
     }
-    // Measured, not assumed. Streaming matching retains only the *matches* -- one interned
-    // name plus two (tag, index, path) triples per propagation -- and drops each import's
-    // match index and IR with the import. On a 6.4 MB APK (`com.noto_54.apk`, 1224 propagation
-    // matches from the shipped Java defaults plus a bridge spec) this checkpoint reads the same
-    // 406.7 MB as the `after codegen_program` one immediately before it: the retained matches
-    // are below the resolution of the gauge. Peak physical footprint for that whole run was
-    // 2.27 GB, in `ascent_run`, not here.
-    //
-    // Still unquantified: the APK + `.so` pair. It is no longer an exotic shape -- importing
-    // an APK now imports its native libraries as pcode sub-imports (see
-    // [`ctadl_frontends::apk_native`]), so a project naming one APK routinely walks several
-    // programs here -- but the loop drops each import's IR before loading the next, so the
-    // posture is per-import peak rather than the sum.
+    // Streaming matching retains only the *matches* -- one interned name plus two
+    // (tag, index, path) triples per propagation -- and drops each import's match index and IR
+    // with the import, so memory here stays near the per-import peak rather than the sum, even
+    // when an APK brings its native libraries in as pcode sub-imports (see
+    // [`ctadl_frontends::apk_native`]).
     log::debug!(
         "[mem cp] after import loop ({} propagation match(es), {} declared path(s), {} bridge \
          spec(s) retained): {:.1} MB",
