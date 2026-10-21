@@ -57,9 +57,7 @@ const JVM_KNOWN_FAILURES: &[&str] = &[];
 /// Enforcement is the default and only these named gaps are exempt. Each entry
 /// is a current limitation, not a permanent waiver -- delete it once the case
 /// passes so a later regression is caught rather than silently re-quarantined.
-/// These names are the `C:`-prefixed reporting names, so they cannot collide
-/// with the Pcode case over the same source, and quarantining one never affects
-/// that Pcode case.
+/// These names are the `C:`-prefixed reporting names.
 const C_KNOWN_FAILURES: &[&str] = &[
     // A known-answer test for the *shipped* propagation defaults, so it can only
     // pass for the frontend those defaults are written for. The chain it asserts
