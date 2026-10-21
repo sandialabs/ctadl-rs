@@ -4,7 +4,6 @@ Takes an artifact and returns a [`ctadl_ir::ProgramInfo`], and does nothing else
 touch the store, choose a front end, or run the engine. Reading `.class` and `.jar` files is
 `jvm-reader`'s job. What lives here is the lowering to MIR.
 */
-// Mostly copied from the dex language frontend
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -58,7 +57,6 @@ fn jvm_descriptor_to_params(descriptor: &str, is_instance: bool) -> Vec<Paramete
 mod tests;
 
 pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
-    //let data = read_file_bytes(file)?;
     let parser =
         JarFileParser::open(file).err_context(|| format!("reading jar: {}", file.display()))?;
     let mut ctx = Context::new();
@@ -121,7 +119,7 @@ impl Builders {
 
 #[derive(Debug)]
 struct Context {
-    // vmt entries for externs so far
+    /// VMT entries for the externs seen so far.
     ext: HashMap<
         String,
         (
@@ -135,10 +133,7 @@ struct Context {
     >,
     call_result: Option<VariableRef>,
     catch_result: Option<VariableRef>,
-    /// The class whose methods are being lowered, and its direct parents. Set once per class in
-    /// [`Context::process`] and read when lowering an `invokespecial` to fill in `super_start`:
-    /// a `super.m()` begins lookup at the enclosing class's superclass, which the instruction
-    /// itself does not name.
+    /// The class whose methods are being lowered. Set once per class in [`Context::process`].
     enclosing: Option<EnclosingClass>,
 }
 
@@ -191,7 +186,6 @@ impl Context {
         artifact_key: ArtifactKey,
         builders: &mut Builders,
     ) -> Result<(), Error> {
-        // Iterate over all classes (no artificial limit).
         for class_def in parser.classes() {
             let class_name = jvm_class_symbol(parser.class_name()?);
             log::trace!("Class: {}", class_name);
@@ -245,15 +239,11 @@ impl Context {
                 let sig = parser.method_signature(enc)?;
                 let method_name = parser.method_name(enc)?;
                 let fidx = builders.program.new_function();
-                // Reset temporaries per function.
                 let fdat = &mut builders.program[fidx];
 
                 // ---------------------------------------------------------------------
-                // Collect Java virtual method information for the VMT.
-                // Insert entry into the virtual method table stored in the context.
-                // Compute a JavaSignature that contains only the parameter types and return type.
-                // The full method signature (`sig`) includes the enclosing class; we want the proto
-                // pretty‑signature, e.g. "(I)I". Use the parser's `proto_signature` helper.
+                // Collect Java virtual method information for the VMT. `java_sig` is the
+                // descriptor alone, e.g. "(I)I"; `full_name` is `class->name(descriptor)`.
                 let java_sig = parser.method_proto(enc)?;
                 let full_name: String = class_name.to_owned() + "->" + &sig;
                 fdat.name = full_name.clone();
@@ -285,10 +275,8 @@ impl Context {
                         JavaSignature(java_sig.clone().into()),
                     ));
                 }
-                // Native methods are additionally listed in `natives`, the column the JNI
-                // bridge reads. They are already in `methods` above -- this frontend walks
-                // every declared method, code or not -- so the extra row is only there to
-                // carry the staticness the bridge needs to know whether slot 0 is `this`.
+                // Native methods are also listed in `natives`. They are already in `methods`
+                // above: this frontend walks every declared method, code or not.
                 if enc.access_flags & JVM_ACC_NATIVE != 0
                     && let VirtualMethodTable::Java { natives, .. } = &mut builders.vmt
                 {
@@ -552,13 +540,12 @@ impl Context {
             None => {
                 match call.call_kind {
                     CallKind::Dynamic => {
-                        // I don't know why dynamic calls with no reciever exist, but apparently makeConcatWithContants does this
+                        // I don't know why dynamic calls with no receiver exist, but apparently makeConcatWithConstants does this
                         let class_name = "?unknown";
                         let method_name = call.dynamic_name.as_ref().unwrap();
                         let descr = call.dynamic_type.as_ref().unwrap();
                         let java_sig = "L".to_owned() + class_name + ";->" + method_name + descr;
                         let out_params = jvm_descriptor_to_params(descr, false);
-                        // All functions return 2 values: (normal_return, exception_return)
                         self.ext.insert(
                             java_sig.clone(),
                             (
@@ -603,7 +590,6 @@ impl Context {
                         let descr = &call.target.as_ref().unwrap().descriptor;
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
                         let out_params = jvm_descriptor_to_params(descr, false);
-                        // All functions return 2 values: (normal_return, exception_return)
                         self.ext.insert(
                             java_sig.clone(),
                             (
@@ -632,7 +618,6 @@ impl Context {
                         let descr = call.dynamic_type.as_ref().unwrap();
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
                         let out_params = jvm_descriptor_to_params(descr, true);
-                        // All functions return 2 values: (normal_return, exception_return)
                         self.ext.insert(
                             java_sig.clone(),
                             (
@@ -664,7 +649,6 @@ impl Context {
                         let descr = &call.target.as_ref().unwrap().descriptor;
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
                         let out_params = jvm_descriptor_to_params(descr, true);
-                        // All functions return 2 values: (normal_return, exception_return)
                         self.ext.insert(
                             java_sig.clone(),
                             (
