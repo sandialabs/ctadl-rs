@@ -644,36 +644,9 @@ where
         global_edge_attrs.push(("fontcolor".into(), LabelText::LabelStr("white".into())));
     }
 
-    if !global_graph_attrs.is_empty() {
-        write!(w, "    graph [")?;
-        for (i, (name, value)) in global_graph_attrs.into_iter().enumerate() {
-            if i > 0 {
-                write!(w, ", ")?;
-            }
-            write!(w, "{}={}", name, value.to_dot_string())?;
-        }
-        writeln!(w, "];")?;
-    }
-    if !global_node_attrs.is_empty() {
-        write!(w, "    node [")?;
-        for (i, (name, value)) in global_node_attrs.into_iter().enumerate() {
-            if i > 0 {
-                write!(w, ", ")?;
-            }
-            write!(w, "{}={}", name, value.to_dot_string())?;
-        }
-        writeln!(w, "];")?;
-    }
-    if !global_edge_attrs.is_empty() {
-        write!(w, "    edge [")?;
-        for (i, (name, value)) in global_edge_attrs.into_iter().enumerate() {
-            if i > 0 {
-                write!(w, ", ")?;
-            }
-            write!(w, "{}={}", name, value.to_dot_string())?;
-        }
-        writeln!(w, "];")?;
-    }
+    write_global_attrs(w, "graph", global_graph_attrs)?;
+    write_global_attrs(w, "node", global_node_attrs)?;
+    write_global_attrs(w, "edge", global_edge_attrs)?;
 
     let mut text = Vec::new();
     for n in g.nodes().iter() {
@@ -747,6 +720,25 @@ where
     }
 
     writeln!(w, "}}")
+}
+
+/// Writes `attrs` as a `kind [name=value, ...];` statement, or nothing if empty.
+fn write_global_attrs<W: Write>(
+    w: &mut W,
+    kind: &str,
+    attrs: Vec<(Cow<'_, str>, LabelText<'_>)>,
+) -> io::Result<()> {
+    if attrs.is_empty() {
+        return Ok(());
+    }
+    write!(w, "    {kind} [")?;
+    for (i, (name, value)) in attrs.into_iter().enumerate() {
+        if i > 0 {
+            write!(w, ", ")?;
+        }
+        write!(w, "{}={}", name, value.to_dot_string())?;
+    }
+    writeln!(w, "];")
 }
 
 #[cfg(test)]
