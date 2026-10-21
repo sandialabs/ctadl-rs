@@ -574,7 +574,7 @@ impl FlowyCtx {
             let index = params.last_index().unwrap();
             locals.parameters.insert(
                 formal.name.name.to_string(),
-                VariableRef::new(Variable::Param(index)),
+                VariableRef::new_parameter(index),
             );
         }
     }

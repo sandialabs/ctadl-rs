@@ -361,10 +361,7 @@ fn transform_with(function: &mut FunctionData, prune: bool, mode: PhiMode) {
     // Set version 0 of global heap to global
     {
         let blocks = function.blocks.blocks_mut_preserves_cfg();
-        let variable = VariableRef {
-            variable: Variable::GlobalHeap,
-            version: None,
-        };
+        let variable = VariableRef::new_global();
         blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
             dest: variable.with_version(0),
             sources: smallvec![Exp::Variable(variable)],
