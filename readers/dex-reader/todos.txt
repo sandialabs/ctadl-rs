@@ -5,4 +5,4 @@
   - Spot checks for a few routines
   
 - Add simpler IR that hides details of instruction sizes
-  - Many instructions are teh same as one another but they permit different operand sizes.  These could be unified into a smaller set of instructions
+  - Many instructions are the same as one another but they permit different operand sizes.  These could be unified into a smaller set of instructions

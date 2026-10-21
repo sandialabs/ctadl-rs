@@ -216,7 +216,7 @@ pub struct AbiChoice<'a> {
 /// lexicographically first ABI present -- skipping any ABI whose every entry fails
 /// [`looks_like_object_file`]. `None` when `entries` is empty.
 ///
-/// If *no* ABI is usable, the plain preference order is returned as before: the caller's
+/// If *no* ABI is usable, the plain preference order is returned: the caller's
 /// per-library reporting is what explains that case, and there is nothing better to pick.
 pub fn preferred_abi<'a>(apk_bytes: &[u8], entries: &'a [NativeLibEntry]) -> Option<AbiChoice<'a>> {
     let plain = |entries: &'a [NativeLibEntry]| -> Option<&'a str> {
@@ -254,8 +254,8 @@ pub fn preferred_abi<'a>(apk_bytes: &[u8], entries: &'a [NativeLibEntry]) -> Opt
             .iter()
             .filter(|e| e.abi == abi)
             .any(|e| match archive.as_mut() {
-                // Unreadable is not the same as unusable: without an archive to look in, keep
-                // the old behavior rather than skipping every ABI.
+                // Unreadable is not the same as unusable: without an archive to look in, treat
+                // every ABI as usable rather than skipping them all.
                 None => true,
                 Some(archive) => entry_looks_like_object_file(archive, &e.entry_name),
             });
@@ -576,8 +576,7 @@ mod native_lib_tests {
     }
 
     /// Listing from disk sees exactly what listing from bytes sees. Written by hand
-    /// rather than with `tempfile`: this crate is workspace-excluded and built offline
-    /// from its own lockfile, so one test is not worth a dependency.
+    /// rather than with `tempfile`: one test is not worth a dependency.
     #[test]
     fn listing_from_a_file_matches_listing_from_bytes() {
         let path = std::env::temp_dir().join("dex_reader_native_lib_listing_test.apk");
@@ -636,8 +635,8 @@ mod native_lib_tests {
         assert_eq!(chosen_abi(&apk, &[]), None);
     }
 
-    /// The Chrome trap: the preferred ABI holds one zero-length placeholder and the real code
-    /// is built for the next ABI down. Picking by preference order alone yields an import with
+    /// The preferred ABI holds one zero-length placeholder and the real code is built for the
+    /// next ABI down. Picking by preference order alone yields an import with
     /// no native libraries in it at all.
     #[test]
     fn an_abi_with_no_loadable_object_file_is_skipped() {
@@ -666,8 +665,9 @@ mod native_lib_tests {
         assert!(choice.unusable.is_empty());
     }
 
-    /// When nothing anywhere is loadable, the choice is the old one: the caller's per-library
-    /// reporting explains that case, and skipping every ABI would leave nothing to report.
+    /// When nothing anywhere is loadable, the choice is the plain preference order: the caller's
+    /// per-library reporting explains that case, and skipping every ABI would leave nothing to
+    /// report.
     #[test]
     fn no_usable_abi_falls_back_to_the_preference_order() {
         let apk = zip_of(&[
