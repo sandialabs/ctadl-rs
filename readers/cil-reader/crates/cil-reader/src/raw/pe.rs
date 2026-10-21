@@ -448,7 +448,7 @@ fn read_aligned_string<'a>(cur: &mut Cur<'a>, max: usize) -> Result<Cow<'a, str>
     let consumed = cur.pos() - start;
     let aligned = (read + 4) & !3;
     cur.skip(aligned - consumed)?;
-    let mut end = Cur::at(cur_data(cur), start);
+    let mut end = Cur::at(cur.data(), start);
     Ok(latin1(end.bytes(read)?))
 }
 
@@ -458,11 +458,6 @@ fn latin1(bytes: &[u8]) -> Cow<'_, str> {
         Ok(s) if s.is_ascii() => Cow::Borrowed(s),
         _ => Cow::Owned(bytes.iter().map(|&b| char::from(b)).collect()),
     }
-}
-
-// Small helper so read_aligned_string can re-slice the original buffer.
-fn cur_data<'a>(cur: &Cur<'a>) -> &'a [u8] {
-    cur.data()
 }
 
 #[cfg(test)]
