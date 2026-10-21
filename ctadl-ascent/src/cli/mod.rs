@@ -1293,28 +1293,22 @@ fn load_and_map_summaries(
     let mut discarded_summaries = 0;
 
     for (source_func_id, dst_index, dst_path, src_index, src_path) in source_summaries {
-        let source_func_name = match source_id_map.get_function(source_func_id) {
-            Some(func) => func,
-            None => {
-                log::warn!(
-                    "Source function ID {} not found in source id map",
-                    source_func_id.id
-                );
-                discarded_summaries += 1;
-                continue;
-            }
+        let Some(source_func_name) = source_id_map.get_function(source_func_id) else {
+            log::warn!(
+                "Source function ID {} not found in source id map",
+                source_func_id.id
+            );
+            discarded_summaries += 1;
+            continue;
         };
 
-        let target_func_id = match current_id_map.get_function_id(source_func_name.clone()) {
-            Some(func_id) => func_id,
-            None => {
-                log::trace!(
-                    "Function {} not found in current project, discarding summary",
-                    source_func_name
-                );
-                discarded_summaries += 1;
-                continue;
-            }
+        let Some(target_func_id) = current_id_map.get_function_id(source_func_name.clone()) else {
+            log::trace!(
+                "Function {} not found in current project, discarding summary",
+                source_func_name
+            );
+            discarded_summaries += 1;
+            continue;
         };
 
         current_facts
