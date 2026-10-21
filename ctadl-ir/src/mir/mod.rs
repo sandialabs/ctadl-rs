@@ -841,7 +841,7 @@ impl VariableRef {
     /// Creates a reference to the variable with no version
     pub fn new(variable: Variable) -> Self {
         VariableRef {
-            variable: variable.into(),
+            variable,
             version: None,
         }
     }
@@ -858,7 +858,7 @@ impl VariableRef {
     #[inline]
     pub fn new_local_idx(idx: LocalIdx) -> Self {
         VariableRef {
-            variable: Variable::new_local(idx).into(),
+            variable: Variable::new_local(idx),
             version: None,
         }
     }
@@ -867,7 +867,7 @@ impl VariableRef {
     #[inline]
     pub fn new_global() -> Self {
         VariableRef {
-            variable: Variable::GlobalHeap.into(),
+            variable: Variable::GlobalHeap,
             version: None,
         }
     }
@@ -876,7 +876,7 @@ impl VariableRef {
     #[inline]
     pub fn new_parameter(param: ParameterIdx) -> Self {
         VariableRef {
-            variable: Variable::Param(param).into(),
+            variable: Variable::Param(param),
             version: None,
         }
     }
@@ -884,7 +884,7 @@ impl VariableRef {
     /// Clones the variable and uses the given version
     #[inline]
     pub fn with_version(&self, version: u32) -> Self {
-        let variable = self.variable.clone();
+        let variable = self.variable;
         let version = Some(version);
         VariableRef { variable, version }
     }

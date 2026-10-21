@@ -80,15 +80,15 @@ pub fn eliminate_dead_temps_function(function: &mut FunctionData) -> usize {
     for (bb, block) in function.blocks.iter_enumerated() {
         for (pos, stmt) in block.statements.iter().enumerate() {
             for v in stmt.iter_src_var() {
-                *uses.entry(v.variable.clone()).or_default() += 1;
+                *uses.entry(v.variable).or_default() += 1;
             }
             if let Some(var) = removable_dest(&stmt.kind) {
-                def_sites.entry(var.clone()).or_default().push((bb, pos));
+                def_sites.entry(*var).or_default().push((bb, pos));
             }
         }
         if let Some(term) = block.terminator_opt() {
             for v in term.iter_src_var() {
-                *uses.entry(v.variable.clone()).or_default() += 1;
+                *uses.entry(v.variable).or_default() += 1;
             }
         }
     }
@@ -112,7 +112,7 @@ pub fn eliminate_dead_temps_function(function: &mut FunctionData) -> usize {
     while let Some((bb, pos)) = worklist.pop() {
         let read: SmallVec<[Variable; 4]> = function.blocks[bb].statements[StatementIdx::new(pos)]
             .iter_src_var()
-            .map(|v| v.variable.clone())
+            .map(|v| v.variable)
             .collect();
         for var in read {
             let count = uses.get_mut(&var).expect("use was counted");

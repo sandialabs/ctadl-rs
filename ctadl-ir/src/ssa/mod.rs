@@ -573,23 +573,23 @@ impl PhiPlace {
             killed.clear();
             used.clear();
             let mut note_use = |v: &VariableRef, killed: &HashSet<_>| {
-                if !killed.contains(&v.variable) && used.insert(v.variable.clone()) {
-                    upward_uses.entry(v.variable.clone()).or_default().push(bb);
+                if !killed.contains(&v.variable) && used.insert(v.variable) {
+                    upward_uses.entry(v.variable).or_default().push(bb);
                 }
             };
             for stmt in data.iter() {
                 for v in stmt.iter_src_var().filter(|v| v.version.is_none()) {
-                    variables.insert(v.variable.clone());
+                    variables.insert(v.variable);
                     note_use(v, &killed);
                 }
                 for v in stmt.iter_dst_var() {
-                    a.entry(v.variable.clone()).or_default().push(bb);
-                    variables.insert(v.variable.clone());
-                    killed.insert(v.variable.clone());
+                    a.entry(v.variable).or_default().push(bb);
+                    variables.insert(v.variable);
+                    killed.insert(v.variable);
                 }
             }
             for v in data.terminator().iter_src_var() {
-                variables.insert(v.variable.clone());
+                variables.insert(v.variable);
                 note_use(v, &killed);
             }
         }
@@ -659,11 +659,11 @@ impl PhiPlace {
                             let operands = function
                                 .blocks
                                 .predecessors(y)
-                                .map(|pred| (pred, VariableRef::new_var_ref(v.clone())))
+                                .map(|pred| (pred, VariableRef::new_var_ref(v)))
                                 .collect();
                             let block_data = &mut function.blocks.blocks_mut_preserves_cfg()[y];
                             block_data.push_front(Statement::new_kind(StatementKind::Phi {
-                                dest: VariableRef::new_var_ref(v.clone()),
+                                dest: VariableRef::new_var_ref(v),
                                 operands,
                             }));
                         }
@@ -690,8 +690,8 @@ impl SsaRename {
         let mut s: HashMap<_, _> = Default::default();
         // Initialize so that version 0 is the already-set version of each variable.
         for v in &place.variables {
-            s.insert(v.clone(), vec![0]);
-            c.insert(v.clone(), 1);
+            s.insert(*v, vec![0]);
+            c.insert(*v, 1);
         }
         // Rewrite all the blocks
         let mut result = Self { s, c };

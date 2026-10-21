@@ -68,23 +68,21 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
     for (_, block) in function.blocks.iter_enumerated() {
         for stmt in block.statements.iter() {
             for v in stmt.iter_src_var() {
-                *uses.entry(v.variable.clone()).or_default() += 1;
+                *uses.entry(v.variable).or_default() += 1;
             }
             for v in stmt.iter_dst_var() {
-                *defs.entry(v.variable.clone()).or_default() += 1;
+                *defs.entry(v.variable).or_default() += 1;
             }
         }
         if let Some(term) = block.terminator_opt() {
             for v in term.iter_src_var() {
-                *uses.entry(v.variable.clone()).or_default() += 1;
+                *uses.entry(v.variable).or_default() += 1;
             }
         }
     }
 
     let is_candidate_var = |var: &Variable| {
-        matches!(var.as_ref(), Variable::Local(_))
-            && defs.get(var) == Some(&1)
-            && uses.get(var) == Some(&1)
+        matches!(var, Variable::Local(_)) && defs.get(var) == Some(&1) && uses.get(var) == Some(&1)
     };
 
     let mut removed = 0usize;
@@ -110,7 +108,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                         && v.version.is_none()
                         && pending.contains_key(&v.variable)
                     {
-                        Some(v.variable.clone())
+                        Some(v.variable)
                     } else {
                         None
                     };
@@ -149,9 +147,9 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
             // arguments (by-ref), so treat their reads as writes too.
             if !pending.is_empty() {
                 let mut written: SmallVec<[Variable; 4]> =
-                    stmt.iter_dst_var().map(|v| v.variable.clone()).collect();
+                    stmt.iter_dst_var().map(|v| v.variable).collect();
                 if matches!(stmt.kind, StatementKind::CallAssign { .. }) {
-                    written.extend(stmt.iter_src_var().map(|v| v.variable.clone()));
+                    written.extend(stmt.iter_src_var().map(|v| v.variable));
                 }
                 if !written.is_empty() {
                     pending.retain(|_, p| !p.src_vars.iter().any(|sv| written.contains(sv)));
@@ -175,12 +173,12 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
                             ok = false;
                             break;
                         }
-                        src_vars.push(v.variable.clone());
+                        src_vars.push(v.variable);
                     }
                 }
                 if ok {
                     pending.insert(
-                        dest.variable.clone(),
+                        dest.variable,
                         Pending {
                             stmt_pos: pos,
                             sources: sources.clone(),
