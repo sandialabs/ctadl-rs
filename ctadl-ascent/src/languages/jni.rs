@@ -282,7 +282,7 @@ impl SlotModel {
     /// How many slots a parameter of this type descriptor occupies.
     fn width(self, descriptor: &str) -> i16 {
         match self {
-            SlotModel::Register if descriptor == "J" || descriptor == "D" => 2,
+            SlotModel::Register if is_wide(descriptor) => 2,
             _ => 1,
         }
     }
