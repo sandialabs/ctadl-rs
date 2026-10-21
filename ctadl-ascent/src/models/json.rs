@@ -477,6 +477,29 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         self.errors.push(error);
     }
 
+    /// The string field `field` of `value`, or `None` after reporting it missing or not a string.
+    fn required_str<'v>(
+        &mut self,
+        n: usize,
+        value: &'v serde_json::Value,
+        field: &str,
+    ) -> Option<&'v str> {
+        let Some(v) = value.get(field) else {
+            self.add_json_error(crate::error::JsonModelError::MissingField {
+                index: n,
+                field_name: field.to_string(),
+            });
+            return None;
+        };
+        if v.as_str().is_none() {
+            self.add_json_error(crate::error::JsonModelError::FieldNotString {
+                index: n,
+                field_name: field.to_string(),
+            });
+        }
+        v.as_str()
+    }
+
     /// Validates the key set of a leaf constraint object: every key must be one the visitor
     /// actually honors, and at least one honored key must be present.
     ///
@@ -1219,37 +1242,16 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         n: usize,
         value: &serde_json::Value,
     ) -> Option<(matches::ModelPort, matches::ModelPort)> {
-        let read = |ingest: &mut Self, field: &str| -> Option<String> {
-            match value.get(field) {
-                Some(v) => match v.as_str() {
-                    Some(s) => Some(s.to_string()),
-                    None => {
-                        ingest.add_json_error(crate::error::JsonModelError::FieldNotString {
-                            index: n,
-                            field_name: field.to_string(),
-                        });
-                        None
-                    }
-                },
-                None => {
-                    ingest.add_json_error(crate::error::JsonModelError::MissingField {
-                        index: n,
-                        field_name: field.to_string(),
-                    });
-                    None
-                }
-            }
-        };
-        let input_str = read(self, "input")?;
-        let output_str = read(self, "output")?;
-        let input = match parse_port(&input_str, n) {
+        let input_str = self.required_str(n, value, "input")?;
+        let output_str = self.required_str(n, value, "output")?;
+        let input = match parse_port(input_str, n) {
             Ok(p) => p,
             Err(e) => {
                 self.add_json_error(e);
                 return None;
             }
         };
-        let output = match parse_port(&output_str, n) {
+        let output = match parse_port(output_str, n) {
             Ok(p) => p,
             Err(e) => {
                 self.add_json_error(e);
@@ -2097,15 +2099,12 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                 _ => None,
             }
         };
-        if supers_of("").is_none() {
-            log::warn!(
-                "'extends' constraint needs a class hierarchy (Java or CIL); matching nothing \
-                 on this frontend"
-            );
-            self.target_set_mut(n).intersect_with(UniverseSet::empty());
-            return;
-        }
-        let Some(classes) = self.class_entries(n) else {
+        let classes = if supers_of("").is_some() {
+            self.class_entries(n)
+        } else {
+            None
+        };
+        let Some(classes) = classes else {
             log::warn!(
                 "'extends' constraint needs a class hierarchy (Java or CIL); matching nothing \
                  on this frontend"
@@ -2156,44 +2155,12 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             return;
         }
         if let Some(FindMethod::Methods) = self.find_method.get(&n) {
-            let input_str = match value.get("input") {
-                Some(v) => match v.as_str() {
-                    Some(s) => s,
-                    None => {
-                        self.add_json_error(crate::error::JsonModelError::FieldNotString {
-                            index: n,
-                            field_name: "input".to_string(),
-                        });
-                        return;
-                    }
-                },
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::MissingField {
-                        index: n,
-                        field_name: "input".to_string(),
-                    });
-                    return;
-                }
+            let Some(input_str) = self.required_str(n, value, "input") else {
+                return;
             };
 
-            let output_str = match value.get("output") {
-                Some(v) => match v.as_str() {
-                    Some(s) => s,
-                    None => {
-                        self.add_json_error(crate::error::JsonModelError::FieldNotString {
-                            index: n,
-                            field_name: "output".to_string(),
-                        });
-                        return;
-                    }
-                },
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::MissingField {
-                        index: n,
-                        field_name: "output".to_string(),
-                    });
-                    return;
-                }
+            let Some(output_str) = self.required_str(n, value, "output") else {
+                return;
             };
 
             match parse_port(input_str, n) {
@@ -2253,44 +2220,12 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     }
 
     fn visit_source(&mut self, n: usize, value: &serde_json::Value) {
-        let label = match value.get("kind") {
-            Some(v) => match v.as_str() {
-                Some(s) => s,
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::FieldNotString {
-                        index: n,
-                        field_name: "kind".to_string(),
-                    });
-                    return;
-                }
-            },
-            None => {
-                self.add_json_error(crate::error::JsonModelError::MissingField {
-                    index: n,
-                    field_name: "kind".to_string(),
-                });
-                return;
-            }
+        let Some(label) = self.required_str(n, value, "kind") else {
+            return;
         };
 
-        let port_str = match value.get("port") {
-            Some(v) => match v.as_str() {
-                Some(s) => s,
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::FieldNotString {
-                        index: n,
-                        field_name: "port".to_string(),
-                    });
-                    return;
-                }
-            },
-            None => {
-                self.add_json_error(crate::error::JsonModelError::MissingField {
-                    index: n,
-                    field_name: "port".to_string(),
-                });
-                return;
-            }
+        let Some(port_str) = self.required_str(n, value, "port") else {
+            return;
         };
 
         // `wildcard` is sink-only; reject it here.
@@ -2343,44 +2278,12 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     }
 
     fn visit_sink(&mut self, n: usize, value: &serde_json::Value) {
-        let label = match value.get("kind") {
-            Some(v) => match v.as_str() {
-                Some(s) => s,
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::FieldNotString {
-                        index: n,
-                        field_name: "kind".to_string(),
-                    });
-                    return;
-                }
-            },
-            None => {
-                self.add_json_error(crate::error::JsonModelError::MissingField {
-                    index: n,
-                    field_name: "kind".to_string(),
-                });
-                return;
-            }
+        let Some(label) = self.required_str(n, value, "kind") else {
+            return;
         };
 
-        let port_str = match value.get("port") {
-            Some(v) => match v.as_str() {
-                Some(s) => s,
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::FieldNotString {
-                        index: n,
-                        field_name: "port".to_string(),
-                    });
-                    return;
-                }
-            },
-            None => {
-                self.add_json_error(crate::error::JsonModelError::MissingField {
-                    index: n,
-                    field_name: "port".to_string(),
-                });
-                return;
-            }
+        let Some(port_str) = self.required_str(n, value, "port") else {
+            return;
         };
 
         // `saturating` is source-only; reject it here.
