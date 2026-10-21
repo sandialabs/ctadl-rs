@@ -248,9 +248,13 @@ pub fn index(
             import.name,
             program_info.program.functions.len()
         );
-        ssa::run_pipeline(
+        ssa::run_pipeline_with_threads(
             &mut program_info.program,
             ssa::Pipeline::index_default().prune(prune_unreachable_cfg_nodes),
+            match parallelism {
+                Parallelism::Serial => 1,
+                Parallelism::Threads(n) => n.get(),
+            },
         );
         log::debug!(
             "[mem cp] after SSA transform: {:.1} MB",

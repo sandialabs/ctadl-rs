@@ -945,7 +945,7 @@ impl TryFrom<&mir::VariableRef> for FlowVariable {
     fn try_from(v: &mir::VariableRef) -> Result<FlowVariable, Self::Error> {
         let mir::VariableRef { variable, version } = v;
         match version {
-            None => variable.as_ref().try_into(),
+            None => variable.try_into(),
             Some(version) => {
                 let name = format!("{variable}_{version}");
                 Ok(FlowVariableKind::Local(Str::from(name)).into())

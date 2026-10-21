@@ -405,7 +405,7 @@ pub struct SourceInfo {
 }
 
 /// A variable name or parameter reference
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Variable {
     /// A global variable represents a heap for storing globals. This variable may only be written
@@ -421,7 +421,8 @@ pub enum Variable {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VariableRef {
-    pub variable: ArcIntern<Variable>,
+    /// The referenced variable.
+    pub variable: Variable,
     pub version: Option<u32>,
 }
 
@@ -833,14 +834,6 @@ impl VariableRef {
     /// Creates a reference to the variable with no version
     pub fn new(variable: Variable) -> Self {
         VariableRef {
-            variable: variable.into(),
-            version: None,
-        }
-    }
-
-    /// Creates a reference to the variable with no version
-    pub fn new_var_ref(variable: ArcIntern<Variable>) -> Self {
-        VariableRef {
             variable,
             version: None,
         }
@@ -850,7 +843,7 @@ impl VariableRef {
     #[inline]
     pub fn new_local_idx(idx: LocalIdx) -> Self {
         VariableRef {
-            variable: Variable::new_local(idx).into(),
+            variable: Variable::new_local(idx),
             version: None,
         }
     }
@@ -859,7 +852,7 @@ impl VariableRef {
     #[inline]
     pub fn new_global() -> Self {
         VariableRef {
-            variable: Variable::GlobalHeap.into(),
+            variable: Variable::GlobalHeap,
             version: None,
         }
     }
@@ -868,15 +861,15 @@ impl VariableRef {
     #[inline]
     pub fn new_parameter(param: ParameterIdx) -> Self {
         VariableRef {
-            variable: Variable::Param(param).into(),
+            variable: Variable::Param(param),
             version: None,
         }
     }
 
-    /// Clones the variable and uses the given version
+    /// The same variable, with the given version
     #[inline]
     pub fn with_version(&self, version: u32) -> Self {
-        let variable = self.variable.clone();
+        let variable = self.variable;
         let version = Some(version);
         VariableRef { variable, version }
     }

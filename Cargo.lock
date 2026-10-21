@@ -1322,6 +1322,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "internment",
  "log",
+ "rayon",
  "serde",
  "smallvec",
  "source-info",

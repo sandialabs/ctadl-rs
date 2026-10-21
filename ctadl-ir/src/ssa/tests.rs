@@ -184,7 +184,7 @@ fn program_h() -> Program {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
-        let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
+        let global_ref = VariableRef::new_global();
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
                 AccessPath::without_fields(global_ref.clone()),
@@ -227,7 +227,7 @@ fn program_h_update() -> Program {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
-        let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
+        let global_ref = VariableRef::new_global();
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::update(
                 AccessPath::without_fields(global_ref.clone()),
@@ -726,6 +726,30 @@ fn test_pipeline_tag() {
     assert_eq!(Pipeline::none().prune(true).tag(), "none");
 }
 
+/// Running the pipeline on several threads hands each thread whole functions, so it has to give
+/// the same program as running it on one.
+#[test]
+fn test_pipeline_threads_match_serial() {
+    let program = || {
+        let mut program = Program::default();
+        for _ in 0..16 {
+            program
+                .functions
+                .extend(program_f().functions.iter().cloned());
+            program
+                .functions
+                .extend(program_h().functions.iter().cloned());
+        }
+        program
+    };
+    let mut serial = program();
+    run_pipeline(&mut serial, Pipeline::index_default());
+    let mut parallel = program();
+    run_pipeline_with_threads(&mut parallel, Pipeline::index_default(), 4);
+    assert!(serial.to_string().contains("phi "), "SSA ran");
+    assert_eq!(serial.to_string(), parallel.to_string());
+}
+
 /// Checks that `Pipeline::none()` really runs no passes.
 #[test]
 fn test_pipeline_none_is_identity() {
@@ -837,7 +861,7 @@ fn function_loop() -> FunctionData {
     f
 }
 
-type Placement = (BasicBlockIdx, ArcIntern<Variable>);
+type Placement = (BasicBlockIdx, Variable);
 
 /// Every phi in `f`, as (block, unversioned variable).
 fn phi_placements(f: &FunctionData) -> HashSet<Placement> {
@@ -846,7 +870,7 @@ fn phi_placements(f: &FunctionData) -> HashSet<Placement> {
         for s in data.iter() {
             if let StatementKind::Phi { dest, .. } = &s.kind {
                 assert!(
-                    out.insert((bb, dest.variable.clone())),
+                    out.insert((bb, dest.variable)),
                     "two phis for {dest} in {bb:?}"
                 );
             }
@@ -879,9 +903,7 @@ fn live_phi_placements(f: &FunctionData) -> HashSet<Placement> {
             work.extend(ops.iter().cloned());
         }
     }
-    live.into_iter()
-        .map(|v| (phis[&v].0, v.variable.clone()))
-        .collect()
+    live.into_iter().map(|v| (phis[&v].0, v.variable)).collect()
 }
 
 fn placements_named(p: &HashSet<Placement>, f: &FunctionData, name: &str) -> usize {
@@ -991,9 +1013,52 @@ fn test_pruned_loop() {
     let i = local(&mut f.clone(), "i").variable;
     let d = local(&mut f.clone(), "d").variable;
     assert!(
-        minimal.contains(&(header, d.clone())),
+        minimal.contains(&(header, d)),
         "minimal SSA merges the dead `d`"
     );
     assert!(!pruned.contains(&(header, d)), "`d` is never read");
     assert!(pruned.contains(&(header, i)), "`i` is loop-carried");
+}
+
+/// Phi placement visits variables in a fixed order, so transforming the same function twice gives
+/// the same phis in the same order.
+#[test]
+fn test_phi_order_deterministic() {
+    // def Wide() { if (..) { x0 = 1; ..; x11 = 1; } else { x0 = 2; ..; x11 = 2; } y = x0..x11; return y; }
+    let wide = || {
+        let mut f = FunctionData {
+            name: "Wide".to_string(),
+            ..Default::default()
+        };
+        f.set_return_type(ReturnType { arity: 1 });
+        let xs: Vec<_> = (0..12).map(|i| local(&mut f, &format!("x{i}"))).collect();
+        let y = local(&mut f, "y");
+        let blocks = f.blocks.blocks_mut();
+        blocks.push(BasicBlockData::new(goto(&[1, 2])));
+        let mut b1 = BasicBlockData::new(goto(&[3]));
+        b1.extend(xs.iter().map(|x| assign(x, [konst(1)])));
+        blocks.push(b1);
+        let mut b2 = BasicBlockData::new(goto(&[3]));
+        b2.extend(xs.iter().map(|x| assign(x, [konst(2)])));
+        blocks.push(b2);
+        let mut b3 = BasicBlockData::new(Some(Terminator::new_kind(TerminatorKind::Return {
+            args: smallvec![Exp::Variable(y.clone())],
+        })));
+        b3.extend([assign(&y, xs.iter().map(|x| Exp::Variable(x.clone())))]);
+        blocks.push(b3);
+        f
+    };
+    let transformed = || {
+        let mut f = wide();
+        transform(&mut f, true);
+        f.to_string()
+    };
+    let first = transformed();
+    assert!(
+        first.matches("phi ").count() >= 12,
+        "join block has a phi per x_i"
+    );
+    for _ in 0..20 {
+        assert_eq!(first, transformed());
+    }
 }

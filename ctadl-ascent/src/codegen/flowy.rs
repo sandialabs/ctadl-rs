@@ -554,7 +554,7 @@ fn port_to_index(port: &Port) -> anyhow::Result<(fx::FormalIndex, fx::Path)> {
     let path = fx::Path::from_accesses(fields.iter().cloned());
     match base {
         PortBase::Return => Ok(((-1i16).into(), path)),
-        PortBase::Var(v) => match v.variable.as_ref() {
+        PortBase::Var(v) => match &v.variable {
             Variable::Param(idx) => Ok((idx.index().try_into().unwrap(), path)),
             Variable::Local(_) => {
                 panic!("summary requires refers to local")
