@@ -86,17 +86,14 @@ where
     let type_id = TypeId::of::<T>();
 
     // L1: thread-local, lock-free, hash-free linear scan.
-    if let Some(interner) =
-        LOCAL_INTERNERS.with_borrow(|v| v.iter().find(|(tid, _)| *tid == type_id).map(|(_, i)| *i))
-    {
-        return interner
-            .downcast_ref::<immortal::Interner<Node<T>>>()
-            .expect("Type mismatch in interner registry");
-    }
-
-    // L2: global registry (populates once per type), then cache into L1.
-    let interner = resolve_global_interner::<T>(type_id);
-    LOCAL_INTERNERS.with_borrow_mut(|v| v.push((type_id, interner)));
+    let cached =
+        LOCAL_INTERNERS.with_borrow(|v| v.iter().find(|(tid, _)| *tid == type_id).map(|(_, i)| *i));
+    let interner = cached.unwrap_or_else(|| {
+        // L2: global registry (populates once per type), then cache into L1.
+        let interner = resolve_global_interner::<T>(type_id);
+        LOCAL_INTERNERS.with_borrow_mut(|v| v.push((type_id, interner)));
+        interner
+    });
     interner
         .downcast_ref::<immortal::Interner<Node<T>>>()
         .expect("Type mismatch in interner registry")
@@ -179,19 +176,7 @@ where
 
     /// Returns the length of the sequence. $O(n)$ complexity.
     pub fn len(&self) -> usize {
-        let mut node = self;
-        let mut len = 0;
-        loop {
-            match node.0 {
-                Node::Nil => {
-                    return len;
-                }
-                Node::Cons(_, tail) => {
-                    len += 1;
-                    node = tail
-                }
-            }
-        }
+        self.iter().count()
     }
 
     /// Returns a new `Seq` with `item` appended to the current sequence.
@@ -211,14 +196,9 @@ where
     /// Returns a new `Seq` containing all but the last element of the current sequence.
     /// $O(n)$ complexity.
     pub fn all_but_last(&self) -> Option<Self> {
-        if self.is_empty() {
-            return None;
-        }
-        let items: Vec<_> = self.iter().cloned().collect();
-        if items.is_empty() {
-            return Some(Self::new());
-        }
-        Some(items[..items.len() - 1].iter().cloned().collect())
+        let mut items: Vec<_> = self.iter().cloned().collect();
+        items.pop()?;
+        Some(items.into_iter().collect())
     }
 
     /// Returns a new `Seq` that is the concatenation of `self` and `other`.
