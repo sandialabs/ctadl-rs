@@ -123,10 +123,10 @@ impl Default for Options {
 ///
 /// A case is mostly spent inside external processes that are already parallel on
 /// their own (Ghidra's JVM, ctadl's rayon pool), so workers stop buying wall clock
-/// well before they stop buying cores: on a 20-core machine the full suite ran in
-/// 3m24s at 1 job, 52s at 4, 34s at 8, and 30s at 16. Past this the extra Ghidra
-/// JVMs -- each asking for a large heap -- cost more memory than the seconds are
-/// worth. Raise it with `--jobs` on a machine with headroom to spare.
+/// well before they stop buying cores: wall clock falls steeply up to a handful of
+/// jobs and flattens out past about eight. Past this the extra Ghidra JVMs -- each
+/// asking for a large heap -- cost more memory than the seconds are worth. Raise it
+/// with `--jobs` on a machine with headroom to spare.
 const MAX_DEFAULT_JOBS: usize = 8;
 
 /// Worker count when `--jobs` is not given: one per available core, capped.

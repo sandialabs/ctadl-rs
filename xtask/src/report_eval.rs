@@ -210,9 +210,8 @@ fn measure_one(
 
     // Also keep the human-readable form: the JSON is what a later run diffs against, but the
     // text is what a person reads when the diff moves. Together with the stability check
-    // below this is three reports per app rather than one -- on a 1.9-million-function app
-    // that is four minutes instead of ninety seconds, which is a fair price for having both
-    // artifacts and a reproducibility result.
+    // below this is three reports per app rather than one, roughly tripling the report time,
+    // which is a fair price for having both artifacts and a reproducibility result.
     let text = exec::capture_stdout(ctadl(&["report", "app", "--top", &top]), "ctadl report")?;
     std::fs::write(json_dir.join(format!("{slug}.txt")), &text)
         .with_context(|| format!("writing the text report for {slug}"))?;
