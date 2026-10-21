@@ -38,7 +38,7 @@ The document has four parts:
 | P16. The unkeyed call-target join | S11 done | Fixed, but S11 causes P17 |
 | P17. Call-target tags are stored many times | S12, S13 | Open; S12 measured |
 | P18. `reach_vp` is stored three times | S24 | Open |
-| P19. `actual_param` outlives its only use | S25 | Open |
+| P19. `actual_param` outlives its only use | S25 done | Fixed |
 | P20. Memory held around the fixpoint | S26 | Open |
 | P21. Joins that scan a whole relation every iteration | S27 | Open |
 | P22. The regression suite hid a lost flow | S28 done | Fixed |
@@ -487,7 +487,8 @@ every new `locals` row to find a few new `(f, v, p)`.
 
 ### P19. `actual_param` outlives its only use
 
-**Seen in:** `cash.p.terminal`. **Measured in:** M6. **Solutions:** S25.
+**Seen in:** `cash.p.terminal`, Element, OsmAnd~. **Measured in:** M6, M12. **Solutions:** S25
+(done).
 
 Only scc 1's call-arg rule reads `actual_param`, but it is held through scc 4: 1.56 GB on
 `cash.p.terminal`, 13.8 M rows, about 10 per call site (arguments, returns and the globals slot).
@@ -658,14 +659,14 @@ actuals; reads `call` in a fixed order, so deterministic but incomplete).
 | S22. Build critical summaries from identity flows only | P14 | Undecided |
 | S23. A Jackson model | P10, P14 | Rejected |
 | S24. Fold `reach_vp` into its consumers | P18 | Undecided; est. −2.3 GB |
-| S25. Free `actual_param` after scc 1 | P19 | Undecided; est. −1.6 GB |
+| S25. Free `actual_param` after scc 1 | P19 | Done (uncommitted): −0.62 GB peak on Element |
 | S26. Find the memory held around the fixpoint | P20 | Undecided |
 | S27. Reorder scanning joins; skip wildcard rules without offsets | P21, P6 | Wildcard skip done (uncommitted); reordering undecided |
 | S28. Make the suite fail on a lost flow | P22 | Done (`31594e08`) |
 | S29. Prune each R8 clone at import | P24 | Done (uncommitted) |
 | S30. Leave out a merged class's union methods when no site needs them | P25 | Undecided |
 | S31. Leave the `(p, [])` split out of `locals_key` | P27 | Done (uncommitted) |
-| S32. Size input relations exactly | P26 | Undecided |
+| S32. Size input relations exactly | P26 | Undecided; tens of MB at most after S25 |
 | S33. Size the BYODS stores' outer maps before the fixpoint | P30 | Undecided |
 | S34. Bound the globals slot at calls | P28 | Undecided, not started |
 | S35. (Merged into S14) | P29 | Merged into S14 |
@@ -939,9 +940,23 @@ Derive `locals_key`, `locals_key_wild` and `locals_wild` from the `locals` delta
 
 ### S25. Free `actual_param` after scc 1
 
-**Applies to:** P19. **Status:** undecided; −1.6 GB on `cash.p.terminal`, estimated.
+**Applies to:** P19. **Status:** done, uncommitted.
 
-One option is to generate the call-arg edges in Rust before `ascent_run`.
+The call-arg edges, both ways between each actual `v.p` and its call-arg vertex, are pushed onto the
+`assign_like` seed before `ascent_run` (the store deduplicates as the rule's output did), and the
+`actual_param` relation and its rule are gone from the program. `IndexFacts::try_save` still
+writes `actual_param.parquet`, from the facts, before the run. A/B with the same protocol as M13,
+every index file identical as row sets:
+
+| App | Peak | `ascent_run` returns | Wall |
+|---|---|---|---|
+| WhatsApp | 2.71 → 2.58 GB | 2,288 → 2,156 MB | 61.2 → 58.1 s |
+| Element | 15.39 → 14.77 GB | 13,182 → 12,538 MB | 561.1 → 542.7 s |
+| OsmAnd~ | 11.45 → 10.90 GB | 9,445 → 8,889 MB | 386.9 → 358.0 s |
+
+The saving is `actual_param`'s 195-779 MB less the seed's larger `Vec` before it drains into the
+store (+280 MB on Element at the checkpoint before the run). The program loses a stratum, so scc
+4 is numbered scc 3 from here on.
 
 ### S26. Find the memory held around the fixpoint
 
@@ -1031,7 +1046,10 @@ so only the formal side derives a row across a whole-path match. The contextual 
 **Applies to:** P26. **Status:** undecided.
 
 Seed the input relations (`actual_param`, `formal_param`, `alias_of_formal`, `call`, ...) with
-their final length, or shrink them once seeded. Saves up to half of each; on the apps in M10
+their final length, or shrink them once seeded. **Small after S25:** on Element the only row stores
+still sized to a power of two are `alias_of_formal` (67 MB) and `formal_param` (34 MB); most of an
+input relation's bytes are in Ascent's hash indices (238 and 147 MB), which exact sizing does not
+touch. Saves up to half of each; on the apps in M10
 `actual_param` alone is 195 MB with its two indices, but S25 would free `actual_param` after scc 1
 altogether, so with S25 the saving is in the other input relations.
 

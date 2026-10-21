@@ -49,6 +49,8 @@ Done in `8d02f0e7`.
 
 ## Step 1. Tooling that every later step needs
 
+Done: S37 in `7f273fe1`, S38 in `ad7c910b` (the cause was a lost-flow bug; see P33).
+
 ### S37: read the footprint on Linux (P32)
 
 `phys_footprint_mb` (`ctadl-ascent/src/index_engine/mod.rs`) has macOS and Windows branches and
@@ -86,6 +88,8 @@ These lower the floor for every app, are mechanical, and come to about 4 GB on
 
 ### S25: free `actual_param` after scc 1 (P19)
 
+Done with option A: −0.62 GB peak on Element, −0.55 GB on OsmAnd~, identical indexes.
+
 Only the call-arg rule ("Compute assignments from call sites" in `index_engine/mod.rs`) reads
 `actual_param`, but Ascent holds it, with its `_indices_none` copy and `_0_1_2` index, through scc
 4: 779 MB on Element and OsmAnd~, 1.56 GB on `cash.p.terminal`.
@@ -113,6 +117,9 @@ Element, 2.34 GB on `cash.p.terminal`.
 Recommendation: B first; it is the safer half of the saving.
 
 ### S32: size input relations exactly (P26)
+
+Measured after S25: tens of MB at most on Element, since the indices, not the row stores, hold
+most of an input relation. Moved after S24 and S13.
 
 Input relations are `Vec`s grown by doubling, so they hold up to twice their rows: `actual_param`'s
 row store and copy are exactly 256 MiB each on Element. Seed them with their final length (it is

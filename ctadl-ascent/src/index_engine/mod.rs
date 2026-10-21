@@ -1615,7 +1615,6 @@ ascent_source! {
     // Facts:
 
     relation formal_param(FunctionId, FlowVariable, FormalType);
-    relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex);
     relation call(FunctionId, InsnId, FunctionId);
     // A call target stored at a vertex: a function pointer (`v = ptr<function_id>`,
     // `CallTargetObject::FunctionId`) or a Java object (`x = new Foo()`,
@@ -1831,13 +1830,8 @@ ascent_source! {
         path_set(ps),
         if let Some(p43) = ps.concat(p4, Some(*adj), rest);
 
-    // Compute assignments from call sites
-    assign_like(func_id, v.clone(), p, cv.clone(), Path::empty()),
-    assign_like(func_id, cv.clone(), Path::empty(), v.clone(), p) <--
-        actual_param(call_site_slice, n, vx),
-        let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**call_site_slice).unwrap(),
-        let cv = call_arg!(insn_id, *n),
-        let FlowVertex(v, p) = vx;
+    // The assignments between call sites' arguments and their actuals are seeded with
+    // `assign_like`, before the run (see `taint_index_with_config`).
 
     // Compute assignments from summaries
     assign_like(func_id, v1, p1, v2, p2) <--
@@ -2657,8 +2651,6 @@ pub fn taint_index_with_config(
         #[ds(lsm::ascent_provider::provider: counting)]
         relation locals_key_wild(FunctionId, FlowVariable, Path, Path, Path);
         #[ds(lsm::ascent_provider::provider: seeded)]
-        relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex);
-        #[ds(lsm::ascent_provider::provider: seeded)]
         relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
         #[ds(lsm::ascent_provider::provider: seeded)]
         relation prog_store(FunctionId, FlowVariable, Path);
@@ -2779,11 +2771,28 @@ pub fn taint_index_with_config(
     // nothing under `ascent!` (`Vec` to `Vec` reuses the allocation) and is what `ascent_par!`
     // needs, where a plain relation's physical store is a `boxcar::Vec` (a lock-free append-only
     // vector) instead of a `std::vec::Vec`.
+    // The assignments from call sites, both ways between each actual `v.p` and its call-arg
+    // vertex, are seeded with `assign_like` rather than derived by a rule. `actual_param` fed only
+    // that rule, in scc 1, but as a relation Ascent held it, with an index and a full copy,
+    // through the whole run: 779 MB on Element (S25 in things-to-improve.md).
+    let mut assign_like = assign_like;
+    assign_like.reserve(2 * facts.actual_param.len());
+    for (site, n, FlowVertex(v, p)) in facts.actual_param {
+        let InsnSiteId { func_id, insn_id } = InsnSiteId::unpack_from_slice(&*site).unwrap();
+        let cv = call_arg!(insn_id, n);
+        assign_like.push((func_id, v, p, cv, Path::empty()));
+        assign_like.push((func_id, cv, Path::empty(), v, p));
+    }
+    log::debug!(
+        "[mem cp] + call-arg assignments ({} assign_like rows, actual_param consumed): {:.1} MB",
+        assign_like.len(),
+        phys_footprint_mb()
+    );
+
     macro_rules! run_engine {
         ($prog_ty:ty) => {{
             let mut prog = <$prog_ty>::default();
         prog.formal_param = facts.formal_param.into_iter().collect();
-        prog.actual_param = facts.actual_param.into_iter().collect();
         prog.call = call.into_iter().collect();
         prog.call_target_assign = facts
             .call_target_assign
