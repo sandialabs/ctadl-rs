@@ -1602,6 +1602,12 @@ fn fan_in(w: &Walk, targets: &Targets, top: usize, split: bool) -> FanIn {
 ///
 /// [`run_cha`]: crate::codegen::run_cha
 ///
+/// It runs Tarjan twice: once over the whole graph and once with the interface-dispatched
+/// edges removed, which is what says how much of a program's largest cycle is interface
+/// resolution rather than the program. On the run above that went from 95 s to 114 s and did
+/// not move the peak, because both passes read one successor array -- each caller's
+/// class-virtual targets are stored first and the second pass stops there.
+///
 /// Node and SCC indices are `u32` rather than `usize`. The successor lists and [`Sccs`]'s
 /// own concatenated successor array each use one machine word per edge, so this halves the
 /// graph's footprint, even though it does not move the measured peak.

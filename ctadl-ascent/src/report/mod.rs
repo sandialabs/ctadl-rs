@@ -80,21 +80,9 @@ pub struct ReportOptions {
     pub top: usize,
     /// Measure recursion and strongly connected components.
     ///
-    /// On by default, and the one section worth turning off. It is the only part of the
-    /// report that has to materialize the CHA call graph, whose size is not the size of the
-    /// program: we have observed 5.2 million virtual call sites expand to 1.21 billion
-    /// deduplicated edges, and turning this section off took that run from 89 s to 55 s.
-    ///
-    /// It buys wall time, not headroom. The peak is reached earlier, inside `run_cha`, and
-    /// the graph fits underneath it -- the same run peaked at 24.9 GiB with this section and
-    /// 24.1 GiB without.
-    ///
-    /// It runs Tarjan twice: once over the whole graph and once with the
-    /// interface-dispatched edges removed, which is what says how much of a program's largest
-    /// cycle is interface resolution rather than the program. On the run above that went from
-    /// 95 s to 114 s and did not move the peak, because both passes read one successor array
-    /// -- each caller's class-virtual targets are stored first and the second pass stops
-    /// there.
+    /// On by default, and the one section worth turning off: it is the only part of the
+    /// report that has to materialize the CHA call graph, which can be far larger than the
+    /// program. Turning it off buys wall time, not memory headroom.
     pub recursion: bool,
     /// Suppress the built-in default models when simulating the call-resolution policy, so
     /// `--models` is the complete set. Mirrors `ctadl index`.
