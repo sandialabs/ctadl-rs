@@ -183,8 +183,7 @@ where
     }
 
     fn insert(&mut self, x0: Self::T0, x1: Self::T1) -> bool {
-        // Dedup against the store itself (memtable + runs); a present (x0, x1)
-        // means the pair already exists.
+        // Dedup against the store itself (memtable + runs).
         if self.contains(&x0, &x1) {
             return false;
         }
