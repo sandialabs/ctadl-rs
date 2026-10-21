@@ -212,9 +212,9 @@ pub fn run_pipeline_with_threads(program: &mut Program, p: Pipeline, threads: us
             .thread_name(|i| format!("ctadl-ssa-{i}"))
             .build()
             .expect("spawning the IR pass thread pool");
-        // Function sizes are skewed: in native code one function can take a quarter of the
-        // pipeline's time. Starting the largest functions first keeps one of them from being
-        // picked up last and leaving every other thread idle while it runs.
+        // Function sizes are skewed: one function can take a large share of the pipeline's
+        // time. Starting the largest functions first keeps one of them from being picked up last
+        // and leaving every other thread idle while it runs.
         let mut work: Vec<&mut FunctionData> = functions.iter_mut().collect();
         work.sort_by_cached_key(|f| {
             std::cmp::Reverse(
