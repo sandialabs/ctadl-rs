@@ -20,9 +20,7 @@ use crate::project::{ArtifactImport, IMPORT_CONFIG_FILE, StorePaths};
 /// Says whether [`load_import`] should read an import's source-info database.
 ///
 /// That database is stored as parquet, and it is by far the largest part of an import
-/// directory. Code that only wants the IR, such as a fact generator, a pass, or another
-/// analysis, never looks at it. `ctadl index` reads it on its own, one import at a time, at the
-/// point where it needs source spans.
+/// directory, so code that only wants the IR can skip reading it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SourceInfoMode {
     /// Leave [`ProgramInfo::source_info`] empty.

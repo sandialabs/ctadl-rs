@@ -83,9 +83,7 @@ pub enum Error {
         artifact_path: PathBuf,
     },
     /// No index has been written for the project yet. This is different from
-    /// [`Error::IncompatibleIndex`], which means an index exists but cannot be read. `ctadl
-    /// query` never raises this error when it is given model files, because it checks those
-    /// files against the imports instead. See `ctadl_ascent::cli::query`.
+    /// [`Error::IncompatibleIndex`], which means an index exists but cannot be read.
     #[error(
         "project '{project}' has no index; run `ctadl index {project}` first. \
          With `--models` given, `ctadl query {project}` reports what those files match in the \

@@ -50,10 +50,8 @@ use ctadl_ir::{ProgramInfo, ssa};
 #[derive(Debug, Clone, Copy)]
 pub struct ImportOptions<'a> {
     /// Reuse a sub-import that was already done, when the artifact hash stored with it still
-    /// matches, instead of importing it again. `main` does the same check for the parent
-    /// artifact. The `ctadl` CLI sets it unless given `--force`; [`Default`] leaves it off. This
-    /// field carries it down to the sub-imports, where skipping the work saves much more time,
-    /// because each one is a full disassembly run.
+    /// matches, instead of importing it again. [`Default`] leaves it off. Skipping saves much
+    /// time, because each sub-import is a full disassembly run.
     pub skip_existing: bool,
     /// Import the native libraries packaged inside an APK. On by default.
     pub native_libs: bool,

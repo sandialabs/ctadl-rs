@@ -315,9 +315,6 @@ pub enum VirtualMethodTable {
     /// Table for the Lua frontend. Structurally mirrors [`VirtualMethodTable::Java`]
     /// but has no descriptors/overloading: a Lua method is uniquely named within its
     /// class table, and the `__index` chain plays the role of `direct_superclass`.
-    /// Where the shared CHA wants a `descriptor` column, the Lua codegen arm feeds a
-    /// fixed empty sentinel so the existing 3-key `(cls, name, desc)` resolvent map is
-    /// reused untouched.
     Lua {
         /// The columns are as follows:
         /// - Class table symbol defining the method (e.g. `lua$class$Account`)

@@ -112,10 +112,6 @@ fn absolutize(path: &Path) -> PathBuf {
 pub const IMPORT_FORMAT_VERSION: &str = "9";
 
 /// Filename of the serialized IR program inside an import directory.
-///
-/// Shared with the `inspect` command, which recognizes a raw path into the store by filename
-/// rather than by resolving an [`ArtifactImport`]. Keeping the spelling in one place means
-/// renaming an artifact file cannot silently desync the writer from the inspector.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 
 /// Filename of the serialized virtual method table inside an import directory.
@@ -393,11 +389,8 @@ impl ArtifactImport {
 
     /// Whether the store holds an import under `name` at all, without reading it.
     ///
-    /// This is the difference between "there is no such import" and "there is one and it
-    /// cannot be read", which callers that fall back from a project name to an import name
-    /// have to tell apart: a stale import is a real import, and its error -- which says to
-    /// re-import it -- is the one worth showing. Deciding that on the config file's existence
-    /// keeps the store's layout in this module rather than spreading it into `main.rs`.
+    /// This tells "there is no such import" apart from "there is one and it cannot be read":
+    /// a stale import still exists.
     pub fn exists_by_name(name: &str) -> bool {
         Self::config_path_by_name(name).is_file()
     }
@@ -702,10 +695,8 @@ impl AnalysisProject {
 
     /// The same project value [`Self::try_create`] would build, without writing anything.
     ///
-    /// This is what lets `ctadl query my-import -m models.json5` work on a name that was only
-    /// ever imported: the query has an import list to match models against, and the store is
-    /// left exactly as it was. Nothing that reads or writes the project's directory may be
-    /// called on the result -- notably [`Self::index_path`], which creates it.
+    /// Nothing that reads or writes the project's directory may be called on the result --
+    /// notably [`Self::index_path`], which creates it.
     ///
     /// `sub_imports` says which expanded sub-imports to keep; see [`SubImports`].
     pub fn ephemeral<S: AsRef<str>>(

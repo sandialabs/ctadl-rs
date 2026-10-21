@@ -683,7 +683,7 @@ mod local_names {
     }
 
     /// Publishes `locals` for the nested render. Returns `None` — allocating nothing — when name
-    /// resolution is off, which is every render but `ctadl inspect`'s.
+    /// resolution is off.
     pub(super) fn push(locals: &Locals) -> Option<FrameGuard> {
         if !is_enabled() {
             return None;
