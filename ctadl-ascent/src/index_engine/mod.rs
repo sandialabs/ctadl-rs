@@ -54,7 +54,7 @@ use streaming_iterator::StreamingIterator;
 use crate::error::{Error, ErrorContext};
 use crate::facts::{
     CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex,
-    FormalType, FunctionId, IdMap, InsnId, InsnSiteId, IntentKind, IntentPairKind, PackedCallArg,
+    FormalType, FunctionId, IdMap, InsnId, InsnSiteId, IntentKind, IntentPairKind,
     PackedInsnSiteId, Path, Str, isout,
 };
 use crate::index_engine::assign_like_trie::FromRows;
@@ -1303,9 +1303,7 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
 /// Returns a FlowVariable for the call argument from the instruction side ID and the formal number
 macro_rules! call_arg {
     ($insn:expr, $n:expr) => {
-        crate::facts::FlowVariable::call_arg_packed(
-            crate::facts::PackedCallArg::try_from_parts($insn, $n).unwrap(),
-        )
+        crate::facts::FlowVariable::call_actual($insn, $n)
     };
 }
 
@@ -2090,10 +2088,8 @@ ascent_source! {
         callee_resolvents(cto, dispatch_key, resolve_tgt),
         let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
         summary(resolve_tgt, n1, p1, n2, p2),
-        let n2_id = PackedCallArg::try_from_parts(*insn_id, *n2).unwrap(),
-        let n1_id = PackedCallArg::try_from_parts(*insn_id, *n1).unwrap(),
-        let v2 = FlowVariableKind::CallArg(n2_id),
-        let v1 = FlowVariableKind::CallArg(n1_id);
+        let v2 = call_arg!(*insn_id, *n2),
+        let v1 = call_arg!(*insn_id, *n1);
 
     // Functions whose tag closure we bother to compute. `critical_call` alone is too narrow:
     // a pure factory (`h = lookup()`, `Account.new`) contains no indirect call and calls

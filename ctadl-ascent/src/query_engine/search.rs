@@ -50,7 +50,7 @@ type HashSet<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 
 use crate::facts::{
     CallArgId, FlowEdge, FlowVariable, FormalType, FunctionId, IdMap, InsnSiteId, Label,
-    PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintLevel, TaintState, isout,
+    PackedInsnSiteId, Path, TaintDirection, TaintLevel, TaintState, isout,
 };
 
 use super::{QueryEndpoint, QueryFacts, QueryResult};
@@ -138,6 +138,9 @@ pub struct TaintSearchGraph {
     /// Callees of each call site, for actual-to-formal (call entry) steps. Several when the
     /// index resolved an indirect or virtual call to more than one target.
     callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>>,
+    /// Calls accepting a heap, keyed by caller. Their actual vertex is the caller's
+    /// heap formal, so it cannot encode the site as an ordinary `CallArg` does.
+    heap_calls_by_caller: HashMap<FunctionId, Vec<(PackedInsnSiteId, FunctionId)>>,
     /// The materialized access paths; a step producing a non-materialized path
     /// is dropped, the same gate the closure engine's `paths(p)` premises apply.
     paths: HashSet<Path>,
@@ -223,7 +226,7 @@ impl TaintSearchGraph {
             }
         }
 
-        let formal_ty = facts
+        let formal_ty: HashMap<_, _> = facts
             .formal_param
             .iter()
             .map(|(f, v, ty)| ((*f, *v), *ty))
@@ -231,9 +234,18 @@ impl TaintSearchGraph {
 
         let mut callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>> = HashMap::default();
         let mut callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>> = HashMap::default();
+        let mut heap_calls_by_caller: HashMap<_, Vec<_>> = HashMap::default();
+        let heap = FlowVariable::formal_index(crate::codegen::GLOBALS_INDEX.into());
         for (site, callee) in &facts.call {
             callers_by_callee.entry(*callee).or_default().push(*site);
             callee_by_site.entry(*site).or_default().push(*callee);
+            if formal_ty.contains_key(&(*callee, heap)) {
+                let caller = InsnSiteId::try_from(site).unwrap().func_id;
+                heap_calls_by_caller
+                    .entry(caller)
+                    .or_default()
+                    .push((*site, *callee));
+            }
         }
 
         let paths = facts.paths.iter().map(|(p,)| *p).collect();
@@ -278,6 +290,7 @@ impl TaintSearchGraph {
             formal_ty,
             callers_by_callee,
             callee_by_site,
+            heap_calls_by_caller,
             paths,
             copies_by_dst,
             sink_ext_by_var,
@@ -413,7 +426,8 @@ impl LazySuccessors for TaintSearchGraph {
         }
 
         // Formal-to-actual (function exit): taint on an out-flowing formal
-        // continues at the corresponding call-arg vertex of every caller. The
+        // continues at the corresponding call vertex of every caller (the caller's
+        // heap formal for globals, a per-site call-arg for other parameters). The
         // `Return` label makes the edge traversable only in the `Free` state,
         // enforcing call/return matching exactly as the closure engine's
         // `TaintState::Free` premise did.
@@ -424,14 +438,13 @@ impl LazySuccessors for TaintSearchGraph {
         {
             for site in sites {
                 let InsnSiteId { func_id, insn_id } = InsnSiteId::try_from(site).unwrap();
-                let call_arg = PackedCallArg::try_from_parts(insn_id, formal).unwrap();
                 // The call-arg vertex holds the actual's object, and an out-flowing
                 // write through the formal is visible to every alias of that
                 // object in the caller, so the taint re-enters at `All`.
                 out.push((
                     (
                         func_id,
-                        FlowVariable::call_arg_packed(call_arg),
+                        FlowVariable::call_actual(insn_id, formal),
                         p,
                         level,
                         ObjectScope::All,
@@ -457,6 +470,14 @@ impl LazySuccessors for TaintSearchGraph {
                         FlowEdge::Call(site),
                     ));
                 }
+            }
+        }
+        if v.as_formal() == Some(crate::codegen::GLOBALS_INDEX.into()) {
+            for (site, callee) in self.heap_calls_by_caller.get(&f).into_iter().flatten() {
+                out.push((
+                    (*callee, v, p, level, ObjectScope::All),
+                    FlowEdge::Call(*site),
+                ));
             }
         }
 
@@ -729,7 +750,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::facts::{FlowVertex, FormalIndex, InsnId, Label};
+    use crate::facts::{FlowVertex, FormalIndex, InsnId, Label, PackedCallArg};
 
     /// A single-field access path `.field`.
     fn field_path(field: &str) -> Path {
