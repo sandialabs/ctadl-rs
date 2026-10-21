@@ -1226,7 +1226,7 @@ impl<'a> MethodDef<'a> {
         }
     }
 
-    /// `MethodReference.FullName`: "<ret> <declaring>::<name>(<params>)".
+    /// `MethodReference.FullName`: `<ret> <declaring>::<name>(<params>)`.
     pub fn full_name(&self) -> Result<String> {
         let ctx = self.generic_context()?;
         let sig = self.signature()?;
@@ -1383,7 +1383,7 @@ impl<'a> PropertyDef<'a> {
         Ok(Vec::new())
     }
 
-    /// `PropertyDefinition.FullName`: "<type> <declaring>::<name>(<params>)",
+    /// `PropertyDefinition.FullName`: `<type> <declaring>::<name>(<params>)`,
     /// with the [`parameters`](Self::parameters).
     pub fn full_name(&self) -> Result<String> {
         let sig = self.signature()?;
@@ -1670,7 +1670,7 @@ impl<'a> MethodSpec<'a> {
     }
 
     /// `GenericInstanceMethod.FullName`:
-    /// "<ret> <declaring>::<name><args>(<element params>)", everything
+    /// `<ret> <declaring>::<name><args>(<element params>)`, everything
     /// rendered against the *element* method's signature.
     pub fn full_name(&self) -> Result<String> {
         let method = self.raw()?.method;
