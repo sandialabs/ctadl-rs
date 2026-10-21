@@ -430,7 +430,7 @@ pub struct VariableRef {
 /// An access path is a variable and an **offset-only** sequence of field accesses (pointer
 /// arithmetic, e.g. `x.[50].[4]`). Symbolic fields never appear in an access path: a field is
 /// reachable only through a [`StatementKind::Load`] (read) or [`StatementKind::Store`] (write),
-/// whose field operand is a [`FieldRef`]. The offset-only invariant is checked by verification.
+/// whose field operand is a [`FieldRef`]. The types enforce this: [`OffsetAccess`] is offset-only.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AccessPath {
@@ -438,7 +438,7 @@ pub struct AccessPath {
     pub accesses: OffsetAccesses,
 }
 
-/// A sequence of field accesses. The first or innermost field is index 0.
+/// A sequence of offset accesses. The first or innermost offset is index 0.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OffsetAccesses {
@@ -448,8 +448,7 @@ pub struct OffsetAccesses {
 /// A **field path**: the single *symbolic* field read by a
 /// [`StatementKind::Load`] or written by a [`StatementKind::Store`] (e.g. the `.deref` in
 /// `Load(dest, x.[50], .deref)`). This is the counterpart to [`AccessPath`]: offsets live in an
-/// access path, symbolic fields live in a field path, and the two meet only at a load/store. The
-/// symbolic-only invariant is checked by verification.
+/// access path, symbolic fields live in a field path, and the two meet only at a load/store.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FieldRef {

@@ -181,7 +181,6 @@ impl Visitor for MirVerify {
         if let Variable::Param(idx) = &variable.variable
             && *idx >= self.params_len.unwrap()
         {
-            //self.error = Some(Box::new(VerifyError::ParameterDoesNotExist));
             self.add_error(VerifyError::ParameterDoesNotExist {
                 function: self.name.clone(),
                 parameter: *idx,
