@@ -10,10 +10,6 @@
 //!    under `xtask/tests/dex/`. It is third-party input that cannot be rebuilt
 //!    from any source we hold, so it stays a binary fixture; its job is to prove
 //!    dex-reader survives a real, large, multi-`classes*.dex` app.
-//!
-//! This is the port of the former `dex-reader/tests/integration_test.rs`
-//! (`test_dex_files_do_not_crash`), restructured to report pass/fail rather than
-//! panic and to drive freshly compiled inputs instead of a committed `.dex`.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -41,8 +37,7 @@ struct SampleDex {
 
 /// Compile the Java samples to DEX and run all dex-reader checks. Returns named
 /// (case, outcome) pairs to fold into the regression report. The Java-derived
-/// checks Skip if the JDK / `dx` toolchain is missing (mirrors the jvm Skip);
-/// the APK check runs regardless, since it needs no external tools.
+/// checks Skip if the JDK / `dx` toolchain is missing; the APK check runs regardless, since it needs no external tools.
 pub fn run_checks(
     java_samples: &Path,
     apk: Option<&Path>,
@@ -123,8 +118,7 @@ pub fn run_checks(
         },
     ));
 
-    // The real-world APK smoke test: parse every classes*.dex it carries. It is
-    // pure-Rust, so it runs even when the JDK/dx toolchain is absent.
+    // The real-world APK smoke test: parse every classes*.dex it carries.
     match apk {
         Some(path) if path.exists() => {
             results.push(("dex:apk".to_string(), to_outcome(check_apk(path))));
@@ -274,10 +268,9 @@ fn check_line_map(samples: &[SampleDex]) -> Result<()> {
 
 /// Modified-UTF-8 string constants survive the string-table decode.
 ///
-/// The twin of `jvm:utf8-constants`, over the same two sources: no taint case
-/// can stand in for either, because an unpaired surrogate in a constant is
-/// inert data and a decoder that mangles it changes no flow. dex-reader has its
-/// own decoder, so covering one frontend says nothing about the other.
+/// The twin of `jvm:utf8-constants`, over the same two sources and for the same
+/// reason. dex-reader has its own decoder, so covering one frontend says nothing
+/// about the other.
 fn check_utf8_constants(samples: &[SampleDex]) -> Result<()> {
     // A supplementary character arrives as a CESU-8 pair and must recombine.
     let parser = parser_for(samples, "PairedOnly")?;
@@ -493,9 +486,7 @@ fn check_apk_manifest(apk: &Path) -> Result<()> {
 }
 
 /// Parse a DEX buffer end to end, exercising every table plus class data, code
-/// items, and catch-handler lookups. This is the body of the former
-/// `integration_test.rs::test_dex_buffer`, returning `Result` instead of
-/// panicking.
+/// items, and catch-handler lookups.
 fn parse_dex_fully(label: &str, buffer: &[u8]) -> Result<()> {
     let header = parse_dex_header(buffer).with_context(|| format!("header for {label}"))?;
     let map = parse_map_list(buffer, &header).with_context(|| format!("map list for {label}"))?;
