@@ -43,9 +43,9 @@ pub enum ClassFileError {
     /// A well-formed modified-UTF-8 constant that holds unpaired UTF-16
     /// surrogate code units, used where a Rust `str` is required.
     ///
-    /// Such a constant is legal in a class file -- generated lexers use string
-    /// constants as packed UTF-16 tables -- but it is not a Unicode scalar
-    /// sequence, so `str` cannot hold it. Class, method, field and descriptor
+    /// Such a constant is legal in a class file (see [`crate::types::JvmString`])
+    /// but it is not a Unicode scalar sequence, so `str` cannot hold it. Class,
+    /// method, field and descriptor
     /// names can never legally contain one, so this is a hard error at those
     /// call sites; string *constants* keep their code units and go through
     /// [`crate::types::JvmString::to_string_lossy`] instead.
@@ -314,9 +314,9 @@ mod tests {
         }
     }
 
-    /// The layout join error used to be a bare `&'static str`, so the one shape
-    /// it can report -- a block reached from both a handler and a normal edge --
-    /// was the one thing it did not say.
+    /// The layout join error says whether the edge is an exception edge: the one
+    /// shape it can report is a block reached from both a handler and a normal
+    /// edge.
     #[test]
     fn stack_layout_mismatch_names_the_edge_and_the_layouts() {
         let err = ClassFileError::StackLayoutMismatch {
