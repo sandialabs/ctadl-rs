@@ -182,8 +182,7 @@ fn const_high16_assign() {
 }
 
 /// This is what `Exp::Int` is for: one value has one representation, no matter which opcode
-/// produced it. Under the old byte encoding these two were `[0x01]` and `[0x00, 0x01]`, which
-/// counted as two different constants.
+/// produced it.
 #[test]
 fn same_value_from_different_opcodes_is_one_constant() {
     let (four, _) = assign_from(Instruction::Const4(Format11n { a: Reg(0), lit: 1 }));

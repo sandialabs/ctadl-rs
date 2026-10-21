@@ -113,6 +113,20 @@ impl Builders {
     }
 }
 
+/// The translation of dex files into CTADL IR.
+///
+/// The expectation is to call [`Context::new`], then [`Context::process`] possibly many times,
+/// then [`Context::finish`] exactly once. The reason is that we have to handle both multiple dex
+/// files and open programs, programs that call functions for which we don't have a definition.
+///
+/// During `process`, the context records methods that are "external," meaning we haven't so
+/// far seen a definition for them. We also stub them out in the program. Since we might see a
+/// definition for them during a later call to process, we also clear those entries when we
+/// process the defined methods. We record the VMT entry for such methods in the
+/// [`Context::ext`] member.
+///
+/// During `finish`, any methods still-undefined are added to the VMT using what we recorded
+/// during processing.
 #[derive(Debug)]
 struct Context {
     counter: Counter,
@@ -120,12 +134,9 @@ struct Context {
     catch_result: Option<VariableRef>,
     call_to: HashSet<MethodId>,
     defined: HashMap<String, FunctionIdx>,
-    // vmt entries for externs so far
+    /// VMT entries for the externs seen so far.
     ext: HashMap<String, (JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
-    /// The class whose methods are being lowered, and its direct parents. Set once per class in
-    /// [`Context::process`] and read by [`Context::decode_call`] to fill in `super_start`: an
-    /// `invoke-super` begins lookup at the enclosing class's superclass, which the instruction
-    /// itself does not name.
+    /// The class whose methods are being lowered. Set once per class in [`Context::process`].
     enclosing: Option<EnclosingClass>,
 }
 
@@ -139,20 +150,6 @@ struct EnclosingClass {
 }
 
 impl Context {
-    /// The context manages translation from dex into CTADL IR.
-    ///
-    /// The expectation is to call `new`, then [`Context::process`] possibly many times, then
-    /// [`Context::finish`] exactly once. The reason is that we have to handle both multiple dex
-    /// files and open programs, programs that call functions for which we don't have a definition.
-    ///
-    /// During `process`, the context records methods that are "external," meaning we haven't so
-    /// far seen a definition for them. We also stub them out in the program. Since we might see a
-    /// definition for them during a later call to process, we also clear those entries when we
-    /// process the defined methods. We record the VMT entry for such methods in the
-    /// [`Context::ext`] member.
-    ///
-    /// During `finish`, any methods still-undefined are added to the VMT using what we recorded
-    /// during processing.
     fn new() -> Self {
         Self {
             counter: Default::default(),
@@ -174,7 +171,6 @@ impl Context {
         artifact_key: ArtifactKey,
         builders: &mut Builders,
     ) -> Result<(), Error> {
-        // Iterate over all classes.
         for class_def in parser.classes() {
             let class_name = parser.class_name(class_def)?;
             log::trace!("Class: {}", class_name);
@@ -287,8 +283,6 @@ impl Context {
                         ));
                     }
                 }
-
-                // Handle instructions
 
                 // Parse the instruction stream for the method.
                 if let Some(code) = parser.method_code(enc)? {
@@ -474,30 +468,19 @@ impl Context {
 
         // define extern funcs and parameters/return value
         {
-            let funcs: HashSet<String> = builders
-                .program
-                .functions
-                .iter()
-                .map(|f| f.name.clone())
-                .collect();
-            let mut call_to: Vec<_> = self.call_to.iter().cloned().collect();
-            // Clear so that multiple calls to 'process' don't work on old data
-            self.call_to.clear();
+            // Drained so that a later `process` does not work on old data.
+            let mut call_to: Vec<_> = self.call_to.drain().collect();
             call_to.sort();
-            for extern_id in call_to.drain(..) {
-                let full_sig = parser
+            for extern_id in call_to {
+                let java_sig = parser
                     .method_signature(&extern_id)
                     .err_context(|| format!("method_signature: {extern_id:?}"))?;
-                if funcs.contains(&full_sig) {
-                    continue;
-                }
-                if self.defined.contains_key(&full_sig) {
+                if self.defined.contains_key(&java_sig) {
                     continue;
                 }
                 let fidx = builders.program.new_function();
-                self.defined.insert(full_sig.clone(), fidx);
+                self.defined.insert(java_sig.clone(), fidx);
                 let fdat = &mut builders.program.functions[fidx];
-                let java_sig = parser.method_signature(&extern_id)?;
                 fdat.name = java_sig.clone();
                 for ty in parser.method_parameters(&extern_id)?.types {
                     let ty = parser.get_type(ty.into()).unwrap();
@@ -569,10 +552,8 @@ impl Context {
         enclosing.superclass.clone()
     }
 
-    /// Decode a call instruction into a `StatementKind::CallAssign`.
-    /// Returns `None` for non‑call instructions.
-    /// The return value is a single element which can be used to process subsequent 'move-result'
-    /// type instructions. It is stored into `self.call_result`
+    /// Decodes a call instruction into a `StatementKind::CallAssign` (see
+    /// [`Context::call_assign`]); `None` for an instruction that is not a call.
     fn decode_call(
         &mut self,
         parser: &DexParser<'_>,
@@ -621,15 +602,10 @@ impl Context {
         let is_static = dispatch.is_none();
 
         // Resolve the callee name (human‑readable signature).
-        let (cls, simple_name, descriptor) = {
-            let mi = parser.get_method(method_idx.0 as usize)?;
-            self.call_to.insert(*mi);
-            parser.method_triple(mi).ok()?
-        };
-        let method_id = {
-            let mi = parser.get_method(method_idx.0 as usize)?;
-            parser.method_signature(mi).ok()?
-        };
+        let mi = parser.get_method(method_idx.0 as usize)?;
+        self.call_to.insert(*mi);
+        let (cls, simple_name, descriptor) = parser.method_triple(mi).ok()?;
+        let method_id = parser.method_signature(mi).ok()?;
 
         // Convert argument registers into IR expressions.
         let args: ctadl_ir::ThinVec<Exp> = args_regs
@@ -982,7 +958,7 @@ impl Context {
         Ok(stmts)
     }
 
-    /// Returns 'ret' temporary for move-result
+    /// The `retval` temporary a call returns into and `move-result` reads.
     fn ret(locals: &mut Locals) -> VariableRef {
         VariableRef::new_local_idx(locals.get_or_intern("retval"))
     }
