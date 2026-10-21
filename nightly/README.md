@@ -107,6 +107,11 @@ both — the same reasons the taint cases are nightly:
   in, so all these need is the `ctadl` binary.
 - **`models:*`** — the model files ctadl ships, validated against the model generator schema it
   publishes. Reads three small files and runs no tool.
+- **`cil:*`** — `cil-reader` held to Mono.Cecil (byte-identical dumps over Cecil's own test corpus
+  and the compiled fixtures, against committed goldens and a live CecilDump), plus the flow layer,
+  the `ctadl-cil` frontend and the default .NET models checked against .NET itself. Needs the Cecil
+  checkout and the compiled fixtures (the dev shell and the flake check supply both); without them
+  the checks skip. `xtask/src/cil.rs` lists each check.
 - **`AndroidIcc:*`** — pinned external DroidBench/ICC-Bench APK specs under
   `tests/android-icc/`. Each spec names a flake-fetched APK, a model file, whether a flow is expected,
   and optional `intent_pair.parquet` counts.
