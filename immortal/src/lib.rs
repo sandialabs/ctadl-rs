@@ -10,13 +10,11 @@ pub struct Interner<T: ?Sized + 'static> {
 
 impl<T: ?Sized + Hash + Eq + Send + Sync + 'static> Interner<T> {
     pub fn new(num_shards: usize) -> Self {
-        let mut shards = Vec::with_capacity(num_shards);
-        for _ in 0..num_shards {
-            shards.push(RwLock::new(HashTable::new()));
-        }
         Self {
             state: FxBuildHasher,
-            shards: shards.into_boxed_slice(),
+            shards: (0..num_shards)
+                .map(|_| RwLock::new(HashTable::new()))
+                .collect(),
         }
     }
 
