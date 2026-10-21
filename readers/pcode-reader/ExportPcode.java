@@ -493,7 +493,7 @@ class HighFunctionExporter {
 		BigInteger funPtrInt;
 		Address funPtrAddr;
 		while (true) {
-			// Breaks if we hit another vtable
+			// Breaks if we hit another vtable (vtables is never populated)
 			if (vtables.contains(addr))
 				break;
 
