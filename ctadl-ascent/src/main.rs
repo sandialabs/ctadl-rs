@@ -156,7 +156,7 @@ pub struct ImportArgs {
     #[arg(long, short)]
     pub name: Option<String>,
 
-    /// Language/IR family for the artifact: jvm, dex, or auto
+    /// Language/IR family for the artifact, or auto to detect it
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
 
@@ -349,8 +349,8 @@ pub struct IndexArgs {
     ///
     /// When a Java/Dex artifact is co-indexed with native code, CTADL joins each `native` method
     /// to the `Java_…` symbol implementing it, mapping arguments across the JNI ABI's two-slot
-    /// shift so taint flows both ways. Pass this to reproduce the pre-bridge behaviour, or to
-    /// measure what the bridge contributes. See `ctadl_ascent::languages::jni`.
+    /// shift so taint flows both ways. Pass this to measure what the bridge contributes. See
+    /// `ctadl_ascent::languages::jni`.
     #[arg(long)]
     pub no_jni_bridge: bool,
 
@@ -640,7 +640,7 @@ pub struct GoArgs {
     #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
     pub dispatch_order: DispatchOrder,
 
-    /// Language/IR family for the artifact: jvm, dex, or auto
+    /// Language/IR family for the artifact, or auto to detect it
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
 
@@ -1029,7 +1029,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
 ///
 /// # Errors
 ///
-/// If there ary any loading or writing errors
+/// If there are any loading or writing errors
 fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
     if args.lsm {
         log::warn!("--lsm is experimental");
