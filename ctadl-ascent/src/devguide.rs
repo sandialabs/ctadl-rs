@@ -41,7 +41,7 @@ store it in a binary format.
 - [crate::query_engine] - datalog, datatypes for core CTADL taint analysis phase
 - [crate::query_engine::formatter] - datalog, takes taint results and associates them with instructions
 
-We don't maintain the dex-parser or jvm-parser crates. They're vendored.
+The DEX and class-file parsers are the in-tree [dex_reader] and [jvm_reader] crates.
 
 # Users
 
@@ -52,7 +52,6 @@ with [`ascent::ascent`] or [`ascent::ascent_run`].
 
 # Code Development
 
-- All code is native rust; no external dependencies. This means we can vendor-dependencies-and-build basically anywhere we care about.
 - The code is research-grade. We don't really strive for backward compatibility. We do strive for well-defined problems that deal with practical messiness gracefully.
 - Strive for good error messages for users.
 - We designed CTADL with the following types of change in mind:
