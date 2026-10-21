@@ -370,7 +370,7 @@ struct Lowerer<'a> {
     fidx: FunctionIdx,
     /// Upvalue names captured by the function currently being lowered; each resolves to a field of
     /// the closure's self-parameter rather than to a local or global.
-    cur_upvalues: HashMap<String, ()>,
+    cur_upvalues: HashSet<String>,
     /// Lexical scope stack; innermost last.
     scopes: Vec<HashMap<String, Binding>>,
     /// Name -> the qualified name it denotes, per lexical scope (pushed and popped with `scopes`).
@@ -423,7 +423,7 @@ impl<'a> Lowerer<'a> {
             called_names: HashSet::new(),
             vmt: VirtualMethodTable::new_lua(),
             fidx: FunctionIdx::new(0),
-            cur_upvalues: HashMap::new(),
+            cur_upvalues: HashSet::new(),
             scopes: Vec::new(),
             alias_scopes: Vec::new(),
             labels: HashMap::new(),
@@ -1185,7 +1185,7 @@ impl<'a> Lowerer<'a> {
         self.loop_breaks = Vec::new();
         self.temp_counter = 0;
         self.cur_span = SourceInfo::default();
-        self.cur_upvalues = HashMap::new();
+        self.cur_upvalues = HashSet::new();
 
         // Parameters.
         let mut param_idx = 0usize;
@@ -1199,9 +1199,7 @@ impl<'a> Lowerer<'a> {
         if let Some(upvalues) = self.closure_upvalues.get(&entry.fidx).cloned() {
             self.add_param("%self", param_idx);
             param_idx += 1;
-            for u in upvalues {
-                self.cur_upvalues.insert(u, ());
-            }
+            self.cur_upvalues.extend(upvalues);
         }
         if let Some(params) = entry.params {
             let mut cursor = params.walk();
@@ -2010,13 +2008,13 @@ impl<'a> Lowerer<'a> {
         // Determine captured upvalues: names referenced free in the body that resolve to a local or
         // parameter of the *enclosing* function (globals and the closure's own parameters are not
         // captured).
-        let params: HashMap<String, ()> = node
+        let params: HashSet<String> = node
             .child_by_field_name("parameters")
             .map(|p| {
                 named_of(p)
                     .into_iter()
                     .filter(|n| n.kind() == "identifier")
-                    .map(|n| (self.node_text(n).to_string(), ()))
+                    .map(|n| self.node_text(n).to_string())
                     .collect()
             })
             .unwrap_or_default();
@@ -2027,13 +2025,13 @@ impl<'a> Lowerer<'a> {
             &mut names,
         );
         let mut upvalues: Vec<String> = Vec::new();
-        let mut seen: HashMap<String, ()> = HashMap::new();
+        let mut seen: HashSet<String> = HashSet::new();
         for name in names {
-            if params.contains_key(&name) || seen.contains_key(&name) {
+            if params.contains(&name) || seen.contains(&name) {
                 continue;
             }
             if matches!(self.lookup(&name), Some(Binding::Local | Binding::Param(_))) {
-                seen.insert(name.clone(), ());
+                seen.insert(name.clone());
                 upvalues.push(name);
             }
         }
@@ -2387,7 +2385,7 @@ impl<'a> Lowerer<'a> {
     /// name is a field of the global heap (`$globals.name`), modeling `_ENV`.
     fn build_var(&mut self, name: &str) -> RawPath {
         // A captured upvalue is stored in a field of the closure's self-parameter.
-        if self.cur_upvalues.contains_key(name)
+        if self.cur_upvalues.contains(name)
             && let Some(Binding::Param(idx)) = self.lookup("%self")
         {
             return RawPath {
