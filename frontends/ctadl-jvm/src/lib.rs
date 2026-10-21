@@ -529,6 +529,28 @@ impl Context {
         })
     }
 
+    /// Records the method `java_sig` as an extern in the VMT.
+    fn declare_extern(
+        &mut self,
+        java_sig: &str,
+        class_name: &str,
+        method_name: &str,
+        descr: &str,
+        is_instance: bool,
+    ) {
+        self.ext.insert(
+            java_sig.to_owned(),
+            (
+                JavaClass(class_name.into()),
+                JavaSimpleName(method_name.into()),
+                JavaSignature(descr.into()),
+                JavaMethod(java_sig.into()),
+                jvm_descriptor_to_params(descr, is_instance),
+                ReturnType { arity: 2 },
+            ),
+        );
+    }
+
     fn decode_call(
         &mut self,
         _parser: &ClassFileParser,
@@ -545,18 +567,7 @@ impl Context {
                         let method_name = call.dynamic_name.as_ref().unwrap();
                         let descr = call.dynamic_type.as_ref().unwrap();
                         let java_sig = "L".to_owned() + class_name + ";->" + method_name + descr;
-                        let out_params = jvm_descriptor_to_params(descr, false);
-                        self.ext.insert(
-                            java_sig.clone(),
-                            (
-                                JavaClass(class_name.into()),
-                                JavaSimpleName(method_name.clone().into()),
-                                JavaSignature(descr.clone().into()),
-                                JavaMethod(java_sig.clone().into()),
-                                out_params,
-                                ReturnType { arity: 2 },
-                            ),
-                        );
+                        self.declare_extern(&java_sig, class_name, method_name, descr, false);
                         CallStyle::DirectCall {
                             call_edges: CallEdges::Explicit([java_sig].into_iter().collect()),
                         }
@@ -567,18 +578,7 @@ impl Context {
                         let method_name = &target.method_name;
                         let descr = &target.descriptor;
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let out_params = jvm_descriptor_to_params(descr, true);
-                        self.ext.insert(
-                            java_sig.clone(),
-                            (
-                                JavaClass(class_name.clone().into()),
-                                JavaSimpleName(method_name.clone().into()),
-                                JavaSignature(descr.clone().into()),
-                                JavaMethod(java_sig.clone().into()),
-                                out_params,
-                                ReturnType { arity: 2 },
-                            ),
-                        );
+                        self.declare_extern(&java_sig, &class_name, method_name, descr, true);
                         CallStyle::DirectCall {
                             call_edges: CallEdges::Explicit([java_sig].into_iter().collect()),
                         }
@@ -589,18 +589,7 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let out_params = jvm_descriptor_to_params(descr, false);
-                        self.ext.insert(
-                            java_sig.clone(),
-                            (
-                                JavaClass(class_name.clone().into()),
-                                JavaSimpleName(method_name.clone().into()),
-                                JavaSignature(descr.clone().into()),
-                                JavaMethod(java_sig.clone().into()),
-                                out_params,
-                                ReturnType { arity: 2 },
-                            ),
-                        );
+                        self.declare_extern(&java_sig, &class_name, method_name, descr, false);
                         CallStyle::DirectCall {
                             call_edges: CallEdges::Explicit([java_sig].into_iter().collect()),
                         }
@@ -617,18 +606,7 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = call.dynamic_type.as_ref().unwrap();
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let out_params = jvm_descriptor_to_params(descr, true);
-                        self.ext.insert(
-                            java_sig.clone(),
-                            (
-                                JavaClass(class_name.clone().into()),
-                                JavaSimpleName(method_name.clone().into()),
-                                JavaSignature(descr.clone().into()),
-                                JavaMethod(java_sig.clone().into()),
-                                out_params,
-                                ReturnType { arity: 2 },
-                            ),
-                        );
+                        self.declare_extern(&java_sig, &class_name, method_name, descr, true);
                         CallStyle::JavaCall {
                             receiver: self.convert_location_to_var_ref(recv, locals),
                             cls: class_name.clone().into(),
@@ -648,18 +626,7 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let out_params = jvm_descriptor_to_params(descr, true);
-                        self.ext.insert(
-                            java_sig.clone(),
-                            (
-                                JavaClass(class_name.clone().into()),
-                                JavaSimpleName(method_name.clone().into()),
-                                JavaSignature(descr.clone().into()),
-                                JavaMethod(java_sig.clone().into()),
-                                out_params,
-                                ReturnType { arity: 2 },
-                            ),
-                        );
+                        self.declare_extern(&java_sig, &class_name, method_name, descr, true);
                         CallStyle::JavaCall {
                             receiver: self.convert_location_to_var_ref(recv, locals),
                             cls: class_name.clone().into(),
