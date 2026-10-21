@@ -395,7 +395,6 @@ impl Context {
         }
     }
 
-    /// Translates one assembly into the program.
     /// Translates one assembly into the program, its spans from `spans`.
     pub fn process<'m>(
         &mut self,

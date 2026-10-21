@@ -8,8 +8,7 @@ end, so that SARIF regions are `.cs` lines and columns.
 A document is used only if its file is on disk under the path the PDB gives and hashes to the hash
 the PDB records: a span into a file that has changed since the build would point at the wrong
 line. Without a PDB, before the first sequence point, under a hidden one (compiler-generated code
-with no line), and in a document that is missing or changed, the span is the instruction's bytes,
-as it was before PDBs were read.
+with no line), and in a document that is missing or changed, the span is the instruction's bytes.
 
 Lines are counted at `\n`, as the SARIF formatter's line map counts them; columns count UTF-16
 code units, as the compiler wrote them, and are converted to UTF-8 bytes here.
