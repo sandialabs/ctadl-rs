@@ -53,7 +53,7 @@ fn test_store_verifies() {
     assert!(result.is_ok());
 }
 
-// Test for ParameterDoesNotExist (no assertions, just runs verification)
+// Test for ParameterDoesNotExist
 #[test]
 fn test_parameter_does_not_exist_error() {
     let mut prog = make_program();
@@ -64,11 +64,10 @@ fn test_parameter_does_not_exist_error() {
     // Reference a non‑existent parameter.
     let var = VariableRef::new_parameter(ParameterIdx::new(0));
     let tmp = VariableRef::new_local_idx(f.locals.get_or_intern("tmp"));
-    // Add an assign that uses the nonexistent parameter (as an access path).
+    // Add an assign that uses the nonexistent parameter.
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
     let stmt = Statement::new_kind(StatementKind::assign(tmp, [Exp::Variable(var.clone())]));
     block.statements.push_back(stmt);
-    // Run verification; we don't assert on the result because the behavior may be buggy.
     let result = prog.verify();
     assert!(
         matches!(&result, Err(e) if e.iter().any(|err| matches!(err, VerifyError::ParameterDoesNotExist { .. }))),
@@ -229,17 +228,16 @@ fn test_offset_newtype() {
 }
 
 /// The IR's `Display` impls emit the canonical access-path grammar, so an IR dump can be pasted
-/// into a model port or a `.flowy` file and mean the same thing. Before this, none of them
-/// escaped anything: a C field literally named `a.b` rendered as `.a.b`, indistinguishable from
-/// two segments, and the frontends' `Symbol("[3]")` rendered as `.[3]`, indistinguishable from
-/// an offset.
+/// into a model port or a `.flowy` file and mean the same thing: a C field literally named `a.b`
+/// does not render like two segments, and the frontends' `Symbol("[3]")` does not render like an
+/// offset.
 #[test]
 fn test_display_uses_canonical_grammar() {
     // A leading '[' is escaped; a '[' inside a name needs no escape.
     assert_eq!(PathSegment::symbol("[_elem_]").to_string(), r"\[_elem_]");
     assert_eq!(PathSegment::symbol("[3]").to_string(), r"\[3]");
     assert_eq!(PathSegment::symbol("a[3]").to_string(), "a[3]");
-    // ... so a bracketed symbol and a real offset are now distinguishable.
+    // ... so a bracketed symbol and a real offset are distinguishable.
     assert_ne!(
         PathSegment::symbol("[3]").to_string(),
         PathSegment::offset(3).to_string()
