@@ -14,7 +14,8 @@
       url = "github:jbevain/cecil/882ca5eedda1e62eb41bd5869aeb15d8f1538e51";
       flake = false;
     };
-    # dnlib, for cil-reader's Ptr-table fixtures (see ptrGen in ./nix/cil.nix).
+    # dnlib, for the tools that write cil-reader's Ptr-table and gap fixtures
+    # (dnlibTool in ./nix/cil.nix).
     dnlib = {
       url = "github:0xd4d/dnlib/9ab9b58ab31b99b3f6cdef36efec613fc11ddbe2";
       flake = false;
@@ -197,7 +198,8 @@
         checks =
           let
             # The expensive regression suite: every frontend's source-sink taint
-            # cases plus the reader and model checks. The orchestration lives in
+            # cases plus the checks that are not taint cases (nightly/README.md
+            # lists them). The orchestration lives in
             # the `xtask` crate (`cargo xtask regression`); here we just run the
             # prebuilt `xtask` binary that ships in packages.default. This is a
             # full (non-local) derivation because it runs ctadl + ghidra + the
@@ -237,10 +239,8 @@
                   # the JDK and Android SDK in testEnv / PATH.
                   # `--dex-apk` feeds a second family too: the `apk:*` checks,
                   # which drive ctadl itself over that same app -- import it,
-                  # read the store back, model-check it unindexed. They were
-                  # `#[test]`s in ctadl-ascent until the ~13 s import made them
-                  # most of `cargo test`'s wall clock. They need no toolchain,
-                  # only the CTADL_BIN below.
+                  # read the store back, model-check it unindexed. They need no
+                  # toolchain, only the CTADL_BIN below.
                   # xtask normally rebuilds ctadl from source to guard against a
                   # stale binary, but the Nix sandbox has no source tree or cargo.
                   # Point it at the ctadl that ships in packages.default instead.
