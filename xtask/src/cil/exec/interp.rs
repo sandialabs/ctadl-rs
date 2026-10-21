@@ -202,6 +202,8 @@ pub struct Interp<'m, 'd> {
     module: &'m Module<'d>,
     /// How methods' flow is built.
     options: FlowOptions,
+    /// The reference runtime's measured ulong-to-double rounding behavior.
+    pub uint64_double_via_signed: bool,
     /// Full names of the module's types.
     types: HashMap<String, u32>,
     methods: HashMap<u32, Rc<Prepared>>,
@@ -242,6 +244,7 @@ impl<'m, 'd> Interp<'m, 'd> {
         Interp {
             module,
             options,
+            uint64_double_via_signed: false,
             types,
             methods: HashMap::new(),
             field_tys: HashMap::new(),
@@ -1622,7 +1625,7 @@ impl<'m, 'd> Interp<'m, 'd> {
                     return unsupported(format!("{op}"));
                 }
                 let r = match vals.as_slice() {
-                    [a] => value::unary(op, a),
+                    [a] => value::unary(op, a, self.uint64_double_via_signed),
                     [a, b] => value::binary(op, a, b),
                     _ => return bug(format!("{op} of {} values", vals.len())),
                 };

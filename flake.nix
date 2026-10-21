@@ -125,6 +125,9 @@
             android.smali
             android.asmClasspath
             pkgs.ghidra-bin
+            # The source cases need the SDK, and CIL imports discover framework
+            # metadata through dotnet on PATH (the wrapped runners alone do not).
+            pkgs.dotnet-sdk_8
             cil.cecilDump
             cil.flowRun
             cil.modelRun
@@ -213,6 +216,12 @@
                 ''
                   cp -R "$src" ./nightly
                   chmod -R u+w ./nightly
+                  # Keep the known exceptions beside the goldens where xtask's
+                  # resolver expects them. These files are outside ./nightly.
+                  mkdir xtask
+                  ln -s ${./xtask/cil-goldens} xtask/cil-goldens
+                  ln -s ${./xtask/cil-taint-known.json5} xtask/cil-taint-known.json5
+                  ln -s ${./xtask/cil-models-known.json5} xtask/cil-models-known.json5
                   cd ./nightly
 
                   export PATH="${android.androidSdkBuildTools}:$PATH"
@@ -299,10 +308,6 @@
               jadx
               scrcpy
               android.androidLldb
-              # The SDK the fixtures and CecilDump build with, for building and
-              # running .NET code by hand (ildasm/ilasm round trips, harnesses
-              # that run fixture methods for real).
-              dotnet-sdk_8
             ];
             packages = [ testEnv ];
 
