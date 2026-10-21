@@ -689,6 +689,24 @@ impl std::fmt::Display for IndexResult {
     }
 }
 
+/// The name of `f` in `id_map`, or `"unknown"` when there is no map or `f` is not in it.
+pub(crate) fn func_name(id_map: Option<&IdMap>, f: FunctionId) -> &str {
+    id_map
+        .and_then(|m| m.get_function(f))
+        .map(|f| f.0.as_ref())
+        .unwrap_or("unknown")
+}
+
+/// `v` followed by `p` in dot notation, with a local variable shown by its name.
+pub(crate) fn vertex_str(v: &FlowVariable, p: &Path) -> String {
+    let var_str = if let Some(name) = v.as_local() {
+        name.to_string()
+    } else {
+        format!("{}", v)
+    };
+    format!("{}{}", var_str, p.to_dot_string())
+}
+
 pub struct IndexResultDisplay<'a> {
     result: &'a IndexResult,
     id_map: Option<&'a IdMap>,
@@ -699,45 +717,19 @@ impl<'a> std::fmt::Display for IndexResultDisplay<'a> {
         writeln!(f, "Summary:")?;
         for s in &self.result.summary {
             if let Some(id_map) = self.id_map {
-                let func_name = id_map
-                    .get_function(s.0)
-                    .map(|f| f.0.as_ref())
-                    .unwrap_or("unknown");
-                writeln!(f, "{}({}): {:?}", func_name, s.0.id, s)?;
+                writeln!(f, "{}({}): {:?}", func_name(Some(id_map), s.0), s.0.id, s)?;
             } else {
                 writeln!(f, "{:?}", s)?;
             }
         }
         writeln!(f, "\nAssign-like:")?;
         for (func_id, dest_var, dest_path, src_var, src_path) in &self.result.assign_like {
-            let dest_str = {
-                let var_str = if let Some(name) = dest_var.as_local() {
-                    name.to_string()
-                } else {
-                    format!("{}", dest_var)
-                };
-                format!("{}{}", var_str, dest_path.to_dot_string())
-            };
-            let src_str = {
-                let var_str = if let Some(name) = src_var.as_local() {
-                    name.to_string()
-                } else {
-                    format!("{}", src_var)
-                };
-                format!("{}{}", var_str, src_path.to_dot_string())
-            };
+            let dest_str = vertex_str(dest_var, dest_path);
+            let src_str = vertex_str(src_var, src_path);
 
-            let func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let name = func_name(self.id_map, *func_id);
 
-            writeln!(
-                f,
-                "{}({}): {} = {}",
-                func_name, func_id.id, dest_str, src_str
-            )?;
+            writeln!(f, "{}({}): {} = {}", name, func_id.id, dest_str, src_str)?;
         }
         writeln!(f, "\nPaths:")?;
         for (p,) in &self.result.paths {
@@ -940,10 +932,7 @@ fn context_histogram(
     let mut top: Vec<(&FunctionId, &Per)> = per.iter().filter(|(_, p)| p.rows > 0).collect();
     top.sort_by_key(|(_, p)| std::cmp::Reverse(p.rows));
     for (f, p) in top.into_iter().take(12) {
-        let name = id_map
-            .and_then(|m| m.get_function(*f))
-            .map(|f| f.0.as_ref())
-            .unwrap_or("unknown");
+        let name = func_name(id_map, *f);
         let _ = writeln!(
             out,
             "  rows={:>9} top={:>9} memberships={:>10} sets={:>6} max_set={:>5} decisions={:>5} {}({})",
@@ -1091,10 +1080,7 @@ fn dropped_compositions(
     let mut top: Vec<(&FunctionId, &Per)> = per.iter().collect();
     top.sort_by_key(|(_, p)| std::cmp::Reverse(p.rows));
     for (f, p) in top.into_iter().take(12) {
-        let name = id_map
-            .and_then(|m| m.get_function(*f))
-            .map(|f| f.0.as_ref())
-            .unwrap_or("unknown");
+        let name = func_name(id_map, *f);
         let _ = writeln!(
             out,
             "  rows={:>8} shared={:>8} disjoint={:>8} vertices={:>6} {}({})",
@@ -1124,16 +1110,12 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
         writeln!(f, "Critical Summary ({}):", self.critical_summary.len())?;
         let mut rows = self.critical_summary.stream();
         while let Some((func_id, formal_index, path)) = rows.next() {
-            let func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let name = func_name(self.id_map, *func_id);
 
             writeln!(
                 f,
                 "  {}({}): arg{} {}",
-                func_name,
+                name,
                 func_id.id,
                 formal_index,
                 path.to_dot_string(),
@@ -1143,16 +1125,12 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
         writeln!(f, "\nResolvent ({}):", self.resolvent.len())?;
         let mut rows = self.resolvent.stream();
         while let Some((func_id, formal_index, path, resolvent, _)) = rows.next() {
-            let func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let name = func_name(self.id_map, *func_id);
 
             writeln!(
                 f,
                 "  {}({}): arg{} {} resolves to {}",
-                func_name,
+                name,
                 func_id.id,
                 formal_index,
                 path.to_dot_string(),
@@ -1167,24 +1145,10 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
         )?;
         let mut rows = self.call_target_assign_like.stream();
         while let Some((func_id, var, path, tgt)) = rows.next() {
-            let var_str = if let Some(name) = var.as_local() {
-                name.to_string()
-            } else {
-                format!("{}", var)
-            };
-
-            let func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let name = func_name(self.id_map, *func_id);
             let tgt_str = match tgt {
                 CallTargetObject::FunctionId(tgt) => {
-                    let tgt_name = self
-                        .id_map
-                        .and_then(|m| m.get_function(*tgt))
-                        .map(|f| f.0.as_ref())
-                        .unwrap_or("unknown");
+                    let tgt_name = func_name(self.id_map, *tgt);
                     format!("ptr {}({})", tgt_name, tgt.id)
                 }
                 CallTargetObject::Symbol(cls) => format!("java<{cls}>"),
@@ -1194,11 +1158,10 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
 
             writeln!(
                 f,
-                "  {}({}): {}{} = {}",
-                func_name,
+                "  {}({}): {} = {}",
+                name,
                 func_id.id,
-                var_str,
-                path.to_dot_string(),
+                vertex_str(var, path),
                 tgt_str
             )?;
         }
@@ -1207,33 +1170,15 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
         let mut rows = self.context_assign.stream();
         while let Some((func_id, dest_var, dest_path, src_var, src_path, ds)) = rows.next() {
             let cs = ds.to_string();
-            let dest_str = {
-                let var_str = if let Some(name) = dest_var.as_local() {
-                    name.to_string()
-                } else {
-                    format!("{}", dest_var)
-                };
-                format!("{}{}", var_str, dest_path.to_dot_string())
-            };
-            let src_str = {
-                let var_str = if let Some(name) = src_var.as_local() {
-                    name.to_string()
-                } else {
-                    format!("{}", src_var)
-                };
-                format!("{}{}", var_str, src_path.to_dot_string())
-            };
+            let dest_str = vertex_str(dest_var, dest_path);
+            let src_str = vertex_str(src_var, src_path);
 
-            let func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let name = func_name(self.id_map, *func_id);
 
             writeln!(
                 f,
                 "  {} {}({}): {} = {}",
-                cs, func_name, func_id.id, dest_str, src_str
+                cs, name, func_id.id, dest_str, src_str
             )?;
         }
 
@@ -1241,26 +1186,15 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
         let mut rows = self.context_locals.stream();
         while let Some((func_id, var, path, formal_idx, formal_path, ds)) = rows.next() {
             let cs = ds.to_string();
-            let var_str = if let Some(name) = var.as_local() {
-                name.to_string()
-            } else {
-                format!("{}", var)
-            };
-
-            let func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let name = func_name(self.id_map, *func_id);
 
             writeln!(
                 f,
-                "  {} {}({}): {}{} from arg{}{}",
+                "  {} {}({}): {} from arg{}{}",
                 cs,
-                func_name,
+                name,
                 func_id.id,
-                var_str,
-                path.to_dot_string(),
+                vertex_str(var, path),
                 formal_idx,
                 formal_path.to_dot_string()
             )?;
@@ -1270,17 +1204,13 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
         let mut rows = self.context_summary.stream();
         while let Some((func_id, dest_idx, dest_path, src_idx, src_path, ds)) = rows.next() {
             let cs = ds.to_string();
-            let func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let name = func_name(self.id_map, *func_id);
 
             writeln!(
                 f,
                 "  {} {}({}): arg{}{} = arg{}{}",
                 cs,
-                func_name,
+                name,
                 func_id.id,
                 dest_idx,
                 dest_path.to_dot_string(),

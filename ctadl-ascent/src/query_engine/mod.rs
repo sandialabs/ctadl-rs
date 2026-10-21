@@ -22,10 +22,11 @@ use derive_builder::Builder;
 use packed_struct::prelude::*;
 
 use crate::facts::{
-    CallArgId, FlowEdge, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
-    FunctionId, IdMap, InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection,
-    TaintEndpoint, TaintState, isout,
+    CallArgId, FlowEdge, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap,
+    InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintEndpoint,
+    TaintState, isout,
 };
+use crate::index_engine::{func_name, vertex_str};
 
 /// A [`TaintEndpoint`] keyed by [`FunctionId`], plus the call site it is anchored at and
 /// whether it saturates.
@@ -261,25 +262,15 @@ pub struct QueryResultDisplay<'a> {
 impl<'a> std::fmt::Display for QueryResultDisplay<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (func_id, taint_state, flow_var, path, endpoint) in &self.result.taint {
-            let var_path_str = {
-                let var_str = match flow_var.kind() {
-                    FlowVariableKind::Local(name) => name.to_string(),
-                    _ => format!("{}", flow_var),
-                };
-                format!("{}{}", var_str, path.to_dot_string())
-            };
+            let var_path_str = vertex_str(flow_var, path);
 
-            let func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let name = func_name(self.id_map, *func_id);
 
             let taint_state_str = format!("{:?}", taint_state);
             writeln!(
                 f,
                 "{}({}): {:<10} {} <-- {}",
-                func_name,
+                name,
                 func_id.id,
                 taint_state_str,
                 var_path_str,
@@ -671,16 +662,12 @@ impl<'a> std::fmt::Display for DisplayTaint<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Taint output")?;
         for (func_id, ts, var, path, endpoint) in self.taint {
-            let func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let name = func_name(self.id_map, *func_id);
 
             writeln!(
                 f,
                 "  {}({}) {:?} {}{} <- {}",
-                func_name,
+                name,
                 func_id.id,
                 ts,
                 var,
@@ -714,15 +701,11 @@ impl<'a> std::fmt::Display for QueryEndpointDisplay<'a> {
             saturating: _,
         } = self.endpoint;
 
-        let func_name = self
-            .id_map
-            .and_then(|m| m.get_function(*infunc))
-            .map(|f| f.0.as_ref())
-            .unwrap_or("unknown");
+        let name = func_name(self.id_map, *infunc);
 
         write!(
             f,
-            "{label} {direction} {func_name}({}) {}{}",
+            "{label} {direction} {name}({}) {}{}",
             infunc.id,
             vertex.0,
             vertex.1.to_dot_string()
