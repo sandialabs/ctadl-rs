@@ -406,7 +406,12 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
         push("+summary", Packaging::SummaryApk, None, false);
         let bridge = jni_dir.join(format!("{kebab}.bridge.jsonl"));
         if bridge.is_file() {
-            push("+bridge", Packaging::Separate, Some(absolute(&bridge)?), false);
+            push(
+                "+bridge",
+                Packaging::Separate,
+                Some(absolute(&bridge)?),
+                false,
+            );
         }
         // The library again with its debug info stripped, so Ghidra recovers no types and a
         // `long` on a 32-bit ABI shows up as two parameters. Co-indexed only: stripped, Ghidra
