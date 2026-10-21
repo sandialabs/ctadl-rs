@@ -136,16 +136,13 @@ impl ScopeTree {
     fn get_explainers(blocks: &[ScopeView], target_func: &str, target_blidx: u32) -> String {
         blocks
             .iter()
-            // 1. Keep only the ones that match your criteria
             .filter(|sv| sv.func_name == target_func && sv.blidx.get() == target_blidx)
-            // 2. Extract just the explainer string as a string slice (&str)
             .map(|sv| sv.explainer.as_str())
-            // 3. Collect them into a temporary Vec, then join them with a newline
             .collect::<Vec<&str>>()
             .join("&")
     }
 
-    // this returns just 'symbol' //name, or scope_name.sidx.var
+    /// The variable's IR name: its bare name, or `scope_name.sidx.name` when it shadows another.
     fn to_string(&self, var: &VarDecl) -> String {
         if var.shadows {
             if let Some(scope) = self.scopes.get(var.sidx) {
@@ -177,16 +174,13 @@ impl ScopeTree {
         while let Some(idx) = current_idx {
             let scope = &self.scopes[idx];
 
-            // Look for the variable in the current scope
             if let Some(var) = scope.variables.iter().find(|v| v.name == target_name) {
-                return Some(var); // Found it! Return a reference to the VarDecl
+                return Some(var);
             }
-
-            // Move up the linked list to the parent scope
             current_idx = scope.parent_idx;
         }
 
-        None // Variable not found in this scope or any parents
+        None
     }
 }
 
@@ -899,13 +893,12 @@ impl<'query, 'cursor, 'tree> MatchExtractor<'query, 'cursor, 'tree> {
     }
 }
 fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
-    let mut result = String::with_capacity(ir_text.len() + 500); // Pre-allocate some space
+    let mut result = String::with_capacity(ir_text.len() + 500);
     let mut current_func = String::new();
 
     for line in ir_text.lines() {
         let trimmed = line.trim_start();
 
-        // 1. Track the current function name
         if trimmed.starts_with("define ") {
             // Extracts "simple_elif" from "define simple_elif(@p0..."
             if let Some(name_part) = trimmed.split(' ').nth(1)
@@ -918,7 +911,6 @@ fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
             continue;
         }
 
-        // 2. Find the blocks and inject the explainer
         if trimmed.starts_with("begin block_") {
             let mut explainer_text = String::from("**MISSING**");
 
@@ -931,7 +923,6 @@ fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
                     .collect();
 
                 if let Ok(blidx_val) = num_str.parse::<u32>() {
-                    // Fetch the explainer using your ScopeTree logic
                     let explainer = ScopeTree::get_explainers(views, &current_func, blidx_val);
                     if !explainer.is_empty() {
                         // Flatten newlines so it stays a single-line comment in the IR
@@ -940,12 +931,10 @@ fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
                 }
             }
 
-            // Push exactly ONCE: The original line + comment + newline
             result.push_str(&format!("{} // {}\n", line, explainer_text));
             continue;
         }
 
-        // 3. Keep all other lines exactly as they are
         result.push_str(line);
         result.push('\n');
     }
@@ -1937,7 +1926,7 @@ struct ScopeView {
     pub func_name: String,
     pub fidx: FunctionIdx,
     pub blidx: BasicBlockIdx,
-    pub sidx: usize, // i tried to make my own idx like the blockidx, and fidx, but couldn't figure out how ot import newindex_type. or wahtever
+    pub sidx: usize,
     // `None` is the fall-off-the-end sentinel: a continuation link to `None` becomes
     // an implicit `return` rather than a `goto` back to the entry block.
     pub continuation_blidx: Option<BasicBlockIdx>,
@@ -2246,8 +2235,6 @@ impl<'a> Context<'a> {
         explainer: &str,
     ) -> Result<(ScopeView, CompoundProxy<'b>), Error> {
         let cp = CompoundProxy::from_node(node);
-        //is it this guy's job to add blocks? i should think so.
-
         match block_type {
             BlockTypeRequest::NewBlockOrScopedBlock => {
                 if cp.was_compound {
@@ -2273,7 +2260,7 @@ impl<'a> Context<'a> {
                         cp,
                     ))
                 }
-            } //end BTR::NewBLock
+            }
             BlockTypeRequest::JustScope => {
                 if cp.was_compound {
                     Ok((add_scope(scope_view, &mut self.scope_tree, explainer), cp))
@@ -2282,7 +2269,7 @@ impl<'a> Context<'a> {
                         "Requested JustScope on a non-compound node".to_string(),
                     ))
                 }
-            } // end BTR::JustScope
+            }
             BlockTypeRequest::JustBlock => Ok((
                 add_block(
                     program,
@@ -2838,8 +2825,6 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
-    // there is a lot of commonality between the top of the while and the top of the if.. then the if descends into madness.
-    // hopefully we can use "walk_while" more generically for all the looping constructs
     fn walk_while(
         &mut self,
         source: &'a str,
@@ -3251,8 +3236,6 @@ impl<'a> Context<'a> {
 
     fn get_param_idx(&self, func_name: &str, var_name: &str) -> Option<ParameterIdx> {
         let param_vec = self.param_names.get(func_name).unwrap();
-        // Find returns Option<(ParameterIdx, &String)>
-        // Map transforms it into Option<ParameterIdx>
         param_vec
             .iter_enumerated()
             .find(|&(_, &p)| p == var_name)
@@ -3318,7 +3301,7 @@ impl<'a> Context<'a> {
                     panic!("no parameter index for parameters");
                 }
             }
-        } // end match
+        }
     }
 
     fn toplevel(
@@ -3397,7 +3380,7 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> Result<Exp, Error> {
-        let text = to_str(&node, source); //.to_string();
+        let text = to_str(&node, source);
         match node.kind() {
             // A name tree-sitter inserted to repair the parse, quoting to the empty string.
             // It cannot become a path segment (see `report_missing_name`), so the read is
@@ -3901,10 +3884,7 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
-        //how come only this declarator came up in expr? see pointer_decl way?
-        // ... well function_declarators come up too.  see the logic there
         if let Some(iden) = node.child_by_field_name("declarator") {
-            //oh noes.. look whats under that! a pointer declarator!
             if iden.kind() == "identifier" {
                 let symbol = to_str(&iden, source);
                 self.scope_tree
@@ -3941,13 +3921,10 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
-        // 1. Extract the children
         let left_node = node.child_by_field_name("left").expect("missing left");
         let right_node = node.child_by_field_name("right").expect("missing right");
-        // 2. Recurse down! (Bottom-up evaluation)
         let left_val = self.flatten_expr(program, left_node, source, scope_view)?;
         let right_val = self.flatten_expr(program, right_node, source, scope_view)?;
-        // 3. Generate a new temporary for this specific operation
         let temp_name = self.allocator.next_temp();
         let target = self.build_access_path(
             temp_name.as_str(),
@@ -5201,16 +5178,13 @@ fn debug_print_tree(
     field_name: Option<&str>,
     depth_limit: Option<usize>,
 ) {
-    // 1. Create the visual indentation
     let indent = "  ".repeat(depth);
 
-    // 2. Format the field name nicely if it exists
     let field_prefix = match field_name {
         Some(name) => format!("{name}: "),
         None => String::new(),
     };
 
-    // 3. Print the current node
     log::debug!("{}|-- {}{}", indent, field_prefix, node.kind());
 
     if let Some(dl) = depth_limit
@@ -5218,14 +5192,11 @@ fn debug_print_tree(
     {
         return;
     }
-    // 4. Recurse into all children
     for i in 0..node.child_count() {
         let child = node
             .child(i.try_into().unwrap())
             .expect("Child node should exist");
         let child_field = node.field_name_for_child(i as u32);
-
-        // Increase the depth by 1 for the next level down
         debug_print_tree(child, depth + 1, child_field, depth_limit);
     }
 }
