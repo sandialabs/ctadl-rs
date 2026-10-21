@@ -399,9 +399,9 @@ fn field_write_flows() {
 
 #[test_log::test]
 fn field_assignment_is_update() {
-    // Storing into a struct field (`v.f2 = x;`). In the IR this is a functional `update` on the base
-    // value (`@p0` updated at `.f2`), not a plain `assign`. The summary can't see this distinction,
-    // so it's checked on the IR; one representative case is enough.
+    // Storing into a struct field (`v.f2 = x;`). In the IR this is a `store` into the base
+    // (`@p0` at `.f2`), not a plain `assign`. The summary can't see this distinction, so it's
+    // checked on the IR; one representative case is enough.
     let src = r"
         int f(Donkey v, int x) {
             v.f2 = x;
@@ -1294,9 +1294,9 @@ fn taint_flows_through_direct_call() {
 
 #[test_log::test]
 fn taint_flows_through_indirect_call() {
-    // The same flow through an INDIRECT call via a local function pointer
-    // initialized to `id`. Resolves because
-    // the RHS `id` lowers to a function-pointer object, emitting `func_ptr_assign`.
+    // The same flow through an INDIRECT call via a local function pointer initialized to
+    // `id`. Resolves because the RHS `id` lowers to a function-pointer object, emitting
+    // `call_target_assign`.
     let src = r"
         int id(int p) { return p; }
         int wrap(int a, int b) {
@@ -1398,7 +1398,6 @@ fn nested_aggregate_initializer_lowers_recursively() {
     let prog = program_from_string(src).0;
     let dump = format!("{prog}");
     check_loads(&prog, "m.deref"); // the outer element is loaded to address the inner one
-    // The dump renders locals as `%L{idx}`, so resolve `s` to its interned rendering.
     let s = local_render(&prog, "f", "s");
     assert!(
         dump.contains(&format!(".deref := {s}")),
@@ -1531,7 +1530,7 @@ fn bare_block_then_statement_recovers() {
 
 #[test_log::test]
 fn if_chain_then_bare_block_then_if_recovers() {
-    // THE regression pin for the bare-block wiring bug: an if/else-if/else chain, a bare
+    // The bare-block wiring pin: an if/else-if/else chain, a bare
     // `{ }` block (the remnant of a compiled-out `#if`), then a trailing `if`. The
     // bare-block-then-IF pair is the trigger: only a compound-bearing follower asks for
     // the end-of-compound link that would install a bogus implicit `return` and orphan
@@ -1580,7 +1579,7 @@ fn bare_block_then_if_reports_no_gap() {
 
 #[test_log::test]
 fn bare_block_then_if_keeps_branch_edge() {
-    // The wiring fix, stated as a CFG assertion: a bare `{ ... }` shares the enclosing
+    // The wiring, stated as a CFG assertion: a bare `{ ... }` shares the enclosing
     // basic block, so when the walk leaves it the enclosing block must still be open and
     // must branch into the following `if` -- not carry an implicit `return` that orphans
     // everything after the braces.
@@ -1968,17 +1967,15 @@ fn increment_decrement_reassign_local() {
 
 #[test_log::test]
 fn field_increment_is_update() {
-    // Incrementing through a field (`p->x++`) routes through the functional `update` path on the
-    // formal, exactly like a field store does (see `field_assignment_is_update`) -- it is not a plain
-    // assign. The new value is a flatten temp (`@p0.x + 1`), so we assert only that an `update` of
-    // `@p0.x` exists, leaving the temp source unpinned.
+    // Incrementing through a field (`p->x++`) is a `store` into the formal, exactly like a field
+    // assignment (see `field_assignment_is_update`) -- it is not a plain assign. The new value is
+    // a flatten temp (`@p0.x + 1`), so we assert only that exactly one write to `@p0.x` exists,
+    // leaving the temp source unpinned.
     let src = r"
         void f(Field *p) {
             p->x++;
         }";
     let prog = program_from_string(src).0;
-    // The field increment routes through an `update` of @p0.x (not a plain assign); the new value is
-    // an unpinnable flatten temp, so we assert only that exactly one such update exists.
     check_writes_to(&prog, "@p0.x", 1);
 }
 
@@ -1987,12 +1984,11 @@ fn field_increment_is_update() {
 // A second store into the same aggregate creates a new SSA version of the receiver, and
 // the stored target must propagate across it to reach the indirect call: the transitive
 // rule gates on `paths(p_new)`, so a call's *receiver* path must be registered as a
-// program path (ctadl-ascent/src/index_engine/mod.rs):
-//     program_paths(p) <-- callee_info(_, _, _, p, _);
+// program path.
 //
 // Each test routes param 1 through `id` and back; a `return <- @p1` summary can only come
-// from `wrap`. Remove the rule above and the two `*_multistore_flows` tests fail while
-// `funcptr_single_store_flows` still passes -- that contrast IS the bug guarded.
+// from `wrap`. Without the receiver path the two `*_multistore_flows` tests fail while
+// `funcptr_single_store_flows` still passes -- that contrast is what these guard.
 
 #[test_log::test]
 fn funcptr_single_store_flows() {
@@ -2622,7 +2618,7 @@ fn union_write_overlaps_other_field() {
 fn vararg_call_carries_argument() {
     // A tainted value passed as a variadic argument (`printf("%d", src)`) must at least be *captured*
     // as an argument of the lowered call -- the prerequisite for any varargs taint modeling. printf is
-    // an unresolved external (no summary), so this is a Category-A call-shape assertion: f emits a
+    // an unresolved external (no summary), so this is a call-shape assertion: f emits a
     // direct call to printf, and src (@p0) appears among its arguments.
     let src = r#"
         int f(int src) {
@@ -2674,8 +2670,8 @@ fn global_flows_across_functions() {
 #[test_log::test]
 fn transitive_call_depth_returns_param() {
     // Summary composition through three call hops: `a` calls `b` calls `c`, each returning its param.
-    // The param->return summary must propagate all the way out, so every function reports @p0 -> return
-    // (we only ever tested a single call hop before). Pinned per-function.
+    // The param->return summary must propagate all the way out, so every function reports
+    // @p0 -> return. Pinned per-function.
     let src = r"
         int c(int z) { return z; }
         int b(int y) { return c(y); }
@@ -2872,7 +2868,7 @@ fn union_member_write_aliases_other_member() {
 
 #[test_log::test]
 fn struct_members_stay_disjoint() {
-    // Control for the union fix: a *struct*'s members are genuinely disjoint, so writing
+    // Control for the union collapse: a *struct*'s members are genuinely disjoint, so writing
     // `s.a` must NOT taint `s.b`. Structs are not collapsed (only `union_specifier`-typed
     // vars are), so field sensitivity is preserved and there is no param->return flow.
     let src = r"
@@ -2891,8 +2887,7 @@ fn struct_members_stay_disjoint() {
 #[test_log::test]
 fn char_literal_ingests_as_constant() {
     // A character literal (`'a'`) is a compile-time constant, lowered like a numeric literal
-    // (no taint). `program_from_string` asserts a
-    // clean parse; we also confirm the adjacent real dataflow (`r = s`) still lowers.
+    // (no taint). `program_from_string` asserts a clean parse; we also confirm the adjacent real dataflow (`r = s`) still lowers.
     let src = r"
         int f(int s) {
             char c = 'a';
@@ -3389,9 +3384,8 @@ fn asm_input_flows_to_output() {
 #[test_log::test]
 fn asm_readwrite_operand_keeps_identity_flow() {
     // A `"+"` constraint is one operand that is both read and written. The old value must be
-    // read *before* the
-    // write, so `x -> x` survives; treating `"+r"` as write-only would kill the taint on `x`
-    // instead of passing it through.
+    // read *before* the write, so `x -> x` survives; treating `"+r"` as write-only would kill
+    // the taint on `x` instead of passing it through.
     let src = r#"
         int f(int a) {
             int x = a;
@@ -3404,9 +3398,9 @@ fn asm_readwrite_operand_keeps_identity_flow() {
 
 #[test_log::test]
 fn asm_multiple_outputs_all_written() {
-    // Four outputs fed by one input. Every output operand is a write (the
-    // asm defines it), and each receives the blended inputs, so `i` reaches all four. Pins both
-    // halves: one write apiece, and the transfer from the single input.
+    // Four outputs fed by one input. Every output operand is a write (the asm defines it), and
+    // each receives the blended inputs, so `i` reaches all four. Pins both halves: one write
+    // apiece, and the transfer from the single input.
     let src = r#"
         int f(int i) {
             int eax, ebx, ecx, edx;
@@ -3423,9 +3417,9 @@ fn asm_multiple_outputs_all_written() {
 
 #[test_log::test]
 fn asm_without_operands_lowers() {
-    // Assembly with no operand lists at all. There is nothing to
-    // transfer, so the only requirement is that it is not a gap and does not disturb the
-    // surrounding function -- the flow across it still lowers.
+    // Assembly with no operand lists at all. There is nothing to transfer, so the only
+    // requirement is that it is not a gap and does not disturb the surrounding function -- the
+    // flow across it still lowers.
     let src = r#"
         int f(int a) {
             int x = a;
@@ -3521,8 +3515,8 @@ fn asm_goto_also_falls_through() {
 #[test_log::test]
 fn asm_goto_multiple_labels_all_link() {
     // The label list is a list: GNU allows any number of targets, and real code uses more
-    // than one. Every one of them is an edge, so linking only the first
-    // would leave the rest of the arms dead.
+    // than one. Every one of them is an edge, so linking only the first would leave the rest of
+    // the arms dead.
     let src = r#"
         int f(int a) {
             int r = 0;
@@ -3581,8 +3575,7 @@ fn statement_expression_side_effect_is_observed() {
 #[test_log::test]
 fn nested_statement_expression_flows() {
     // Statement expressions nest -- real macro expansions put one inside another. The value
-    // expression is lowered by an ordinary
-    // `flatten_expr` call, so the arm must be re-entrant.
+    // expression is lowered by an ordinary `flatten_expr` call, so the arm must be re-entrant.
     let src = r"
         int f(int a) { return ({ int t = ({ int u = a; u; }); t; }); }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
@@ -3747,9 +3740,8 @@ fn reports_for(src: &str) -> Vec<(&'static str, String)> {
 #[test_log::test]
 fn parse_error_is_a_source_problem_not_a_frontend_gap() {
     // `case A ... B:` is a GNU case range, which tree-sitter-c 0.24.1 has no rule for. The
-    // parse error is a fact
-    // about the analyzed source, so the one report it draws is attributed to the source --
-    // not to the frontend, which no change could make parse it.
+    // parse error is a fact about the analyzed source, so the one report it draws is
+    // attributed to the source -- not to the frontend, which no change could make parse it.
     let src = r"
         int f(int c) { switch (c) { case 1 ... 3: return 1; default: return 0; } }
         struct S { int x; };
@@ -4078,9 +4070,8 @@ fn a_non_lvalue_store_in_clean_source_is_still_a_frontend_gap() {
 #[test_log::test]
 fn inserted_identifier_does_not_become_an_empty_path_segment() {
     // `typeof` of a dereference is a tree-sitter-c 0.24.1 grammar limit (a shape
-    // macro-generated accessors produce), and recovering from it leaves
-    // the cast's `*` parsed as a multiplication whose right operand the parser has to
-    // invent.
+    // macro-generated accessors produce), and recovering from it leaves the cast's `*` parsed
+    // as a multiplication whose right operand the parser has to invent.
     let src = r"
         struct S { unsigned long f; };
         struct S fixed;
@@ -4749,9 +4740,8 @@ fn a_parenthesized_declarator_declares_what_it_wraps() {
     // The other wrapper a naive query could not follow. A definition whose name is protected
     // by a function-like macro -- `#define f(x) (impl_f(x))` -- preprocesses to parentheses
     // around the whole function declarator:
-    // `static unsigned (impl_f(unsigned char *p)) { ... }`.
-    // `(f)(int)`, parentheses around just the name, is
-    // the same idiom written on purpose. Both declare `f`, so both are collected.
+    // `static unsigned (impl_f(unsigned char *p)) { ... }`. `(f)(int)`, parentheses around
+    // just the name, is the same idiom written on purpose. Both declare `f`, so both are collected.
     let whole = r"static unsigned (impl_f(unsigned char *msgp)) { return *msgp; }";
     let (prog, dump) = program_from_string(whole);
     assert!(
@@ -5346,12 +5336,11 @@ fn a_parenthesized_variable_minus_one_is_a_subtraction() {
 #[test_log::test]
 fn a_statement_expression_callee_is_an_indirect_call() {
     // A macro can expand to a GNU statement expression in callee position,
-    // `({ ...; (&fp_object); })(args)`, which is a
-    // `parenthesized_expression` wrapping a `compound_statement` -- the cast shape's grammar,
-    // and not a cast. Those parentheses are part of the construct, so `unparenthesized_callee`
-    // does not peel them; naming the callee by its own source text would invent a function
-    // per call site. The value it yields is a function
-    // pointer, so the answer is an indirect call through it.
+    // `({ ...; (&fp_object); })(args)`, which is a `parenthesized_expression` wrapping a
+    // `compound_statement` -- the cast shape's grammar, and not a cast. Those parentheses are
+    // part of the construct, so `unparenthesized_callee` does not peel them; naming the callee
+    // by its own source text would invent a function per call site. The value it yields is a
+    // function pointer, so the answer is an indirect call through it.
     let src = r"
         void target(int x);
         void fire(int x) { ({ target; })(x); }";
@@ -5535,8 +5524,7 @@ fn a_call_through_a_field_of_a_global_pointer_is_indirect() {
 #[test_log::test]
 fn a_call_through_a_field_of_a_global_array_element_is_indirect() {
     // `array[i].field` -- a global dispatch table. A non-constant index carries no offset
-    // segment
-    // (see the module header), so the element is the `deref` performed at the array's address
+    // segment (see the module header), so the element is the `deref` performed at the array's address
     // and the field is loaded from what that yields.
     let src = r"
         struct ops { void (*f)(int); };
@@ -5564,9 +5552,8 @@ fn a_call_through_a_field_of_a_global_array_element_is_indirect() {
 #[test_log::test]
 fn a_call_through_a_field_of_a_local_or_parameter_is_unchanged() {
     // The boundary: the same three shapes with a LOCAL or PARAMETER base lower as indirect
-    // calls by the
-    // same rule -- the callee is a location, not a name -- never by the base's storage
-    // class.
+    // calls by the same rule -- the callee is a location, not a name -- never by the base's
+    // storage class.
     let src = r"
         struct ops { void (*f)(int); };
         void via_local(int x) { struct ops s; s.f(x); }
@@ -5856,9 +5843,8 @@ fn a_statement_expression_callee_is_not_a_frontend_gap() {
 #[test_log::test]
 fn the_other_statement_expression_positions_and_the_call_shapes_are_unchanged() {
     // The boundary, in one fixture. A statement expression in VALUE position and in
-    // LVALUE position must not move; a genuine direct call and
-    // a cast written with parentheses must not be dragged onto the indirect path by a
-    // rule that keys on the callee's construct. Exactly one call here is indirect.
+    // LVALUE position must not move; a genuine direct call and a cast written with parentheses
+    // must not be dragged onto the indirect path by a rule that keys on the callee's construct. Exactly one call here is indirect.
     let src = r"
         typedef unsigned short width_t;
         struct S { int f; };
