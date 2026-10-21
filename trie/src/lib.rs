@@ -328,7 +328,8 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
         self.get(sequence).is_some()
     }
 
-    /// Returns `true` if the `Trie` contains a prefix of the given sequence.
+    /// Returns `true` if the given sequence is a path from the root: empty, or a prefix of
+    /// some sequence in the `Trie`.
     pub fn contains_prefix<I>(&self, sequence: I) -> bool
     where
         I: IntoIterator,
