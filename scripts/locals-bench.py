@@ -19,9 +19,8 @@ What is reported, per configuration:
                       and codegen, which dominate the process at these sizes.
   * process memory -- physical footprint before/after the fixpoint (`[mem cp]` log lines),
                       plus the peak physical footprint and peak RSS of the whole index run.
-                      Physical footprint, not RSS, is the real number on macOS (see
-                      `.claude/skills/measure-process-memory`); RSS is kept only as a
-                      cross-check.
+                      Physical footprint, not RSS, is the real number on macOS: RSS
+                      leaves out compressed memory. RSS is kept only as a cross-check.
 
 Usage:
     scripts/locals-bench.py                        # default sweep
@@ -73,7 +72,7 @@ def sh(cmd, env=None, cwd=None):
                 if "phys_footprint:" in line:
                     fields = line.split()
                     # "phys_footprint: 1868136 B" -- the value is field 1, NOT the last field
-                    # (which is the unit "B"). Reading $NF here silently yields 0.
+                    # (which is the unit "B").
                     if len(fields) >= 2 and fields[1].isdigit():
                         peak_fp = max(peak_fp, int(fields[1]))
                     break
@@ -100,10 +99,9 @@ HEAP_RE = re.compile(
     r"fidx ([\d.]+) MB \((\d+)%\): (\d+) funcs, (\d+) V entries \| "
     r"groups: max (\d+), large (\d+), mean ([\d.]+), log2hist \[([^\]]*)\]"
 )
-# A build from before this branch (e.g. `main`) logs the same line without the `groups:` shape
-# suffix, which `HeapReport` grew here. Parse it too, so `main` itself can be measured; note that
-# its `hb_bytes` assumed hashbrown's minimum table was 8 buckets rather than 4, so it reports
-# every table of <=3 elements at twice its real size.
+# An older build logs the same line without the `groups:` shape suffix. Parse it too, so such a
+# build can be measured; note that its `hb_bytes` assumed hashbrown's minimum table was 8 buckets
+# rather than 4, so it reports every table of <=3 elements at twice its real size.
 LEGACY_HEAP_RE = re.compile(
     r"locals store estimate: total ([\d.]+) MB over (\d+) rows \(([\d.]+) B/row\) \| "
     r"fwd ([\d.]+) MB \((\d+)%\): (\d+) \(F,V\) groups, (\d+) \(F,V,P\) entries, (\d+) leaves \| "
@@ -187,10 +185,9 @@ def run_config(ctadl, workdir, funcs, group_size, paths, keep):
     if rc != 0:
         raise RuntimeError(f"import failed for group_size={group_size}:\n{out}")
 
-    # The store estimate, the scc times and the `[mem cp]` lines all live in
-    # `ctadl_ascent::index_engine` and moved from INFO to DEBUG in main `e27e1466`. Raise that
-    # one module rather than the whole log, so no other module's DEBUG output lands in the
-    # fixpoint's hot path and taxes the time being measured.
+    # The store estimate, the scc times and the `[mem cp]` lines are all logged at DEBUG by
+    # `ctadl_ascent::index_engine`. Raise that one module rather than the whole log, so no other
+    # module's DEBUG output lands in the fixpoint's hot path and taxes the time being measured.
     env = dict(os.environ, RUST_LOG="info,ctadl_ascent::index_engine=debug")
     rc, out, wall, peak_fp, peak_rss = sh(
         [ctadl, "--store", str(store), "index", "bench"], env=env)
