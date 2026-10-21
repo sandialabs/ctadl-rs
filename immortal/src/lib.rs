@@ -71,7 +71,7 @@ macro_rules! immortal {
         $vis struct $name(&'static $inner);
 
         impl $name {
-            /// Interns a value into a thread-local static interner for this type.
+            /// Interns a value into this type's process-wide static interner.
             #[inline]
             $vis fn intern(val: &$inner) -> Self {
                 static INTERNER: ::std::sync::OnceLock<$crate::Interner<$inner>> = ::std::sync::OnceLock::new();
