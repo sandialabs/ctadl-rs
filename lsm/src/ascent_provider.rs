@@ -19,8 +19,8 @@
 //!
 //! Reads from `MmapLsmMultiMap` hand back `&T` references straight into the
 //! mapping, so keys and values must be fixed-width `bytemuck::Pod`. Relation
-//! columns generally are *not* `Pod` (e.g. interned `&'static` pointers like
-//! `Path`/`CallString`). Each column type implements [`LsmCol`], which encodes a
+//! columns generally are *not* `Pod` (e.g. interned `&'static` pointers such as
+//! `immortal::StringRef` or `tailshare::Seq`). Each column type implements [`LsmCol`], which encodes a
 //! value into a fixed number of `u64` "slots" and reinterprets those slots back
 //! as a `&Column`.
 //!
@@ -1080,7 +1080,7 @@ impl<'a, T: LsmTuple + 'a> Iterator for ScanIter<'a, T> {
 // ---------------------------------------------------------------------------
 
 /// The physical relation of a `counting` LSM relation: it keeps the row count
-/// and nothing else, since every row is already in the relation's LSM indices.
+/// and nothing else, since every row is already in the relation's [`LsmStore`].
 /// Ascent pushes each newly derived row exactly once, so `len` is the relation's
 /// size. Such a relation cannot be seeded through its field; its rows are
 /// derived.
