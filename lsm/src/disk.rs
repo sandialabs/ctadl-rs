@@ -326,8 +326,6 @@ pub struct DiskLsmMultiMap<K, V> {
 
 impl<K, V> Drop for DiskLsmMultiMap<K, V> {
     fn drop(&mut self) {
-        // Only remove directories we created and own; never touch the filesystem
-        // for a temp map that never flushed.
         if self.is_temp && self.dir_created {
             let _ = fs::remove_dir_all(&self.dir);
         }
@@ -365,7 +363,6 @@ where
     ) -> Self {
         let id = NEXT_DISK_DIR_ID.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("lsm-disk-{}-{id}", std::process::id()));
-        // Lazily created: no directory is touched on disk until the first flush.
         Self {
             memtable: BTreeMap::new(),
             levels: Vec::new(),
@@ -523,8 +520,7 @@ where
         memtable
     }
 
-    /// Creates the backing directory on first use. Temp-directory maps defer this
-    /// syscall until they actually need to spill a run to disk.
+    /// Creates the backing directory on first use.
     fn ensure_dir(&mut self) -> io::Result<()> {
         if !self.dir_created {
             fs::create_dir_all(&self.dir)?;
