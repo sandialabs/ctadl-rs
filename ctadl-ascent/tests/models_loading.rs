@@ -415,7 +415,7 @@ fn escaped_bracketed_port_stays_a_symbol() {
 // `cli::query` accumulates one batch per (import x model file) pair. Accumulating must not
 // let one pair's trailing port path reach another pair's endpoint -- a source or sink that is
 // silently widened, narrowed, or moved is indistinguishable from one the user wrote that way.
-// See `removing-modelbuilders-plan.md` §2 for the two triggers pinned below.
+// The two ways it could happen are pinned below.
 // ---------------------------------------------------------------------------
 
 /// One model file declaring one source on `func`, whose port carries `path`.
