@@ -6,8 +6,7 @@
 //! the contextual relations: a contextual row `(f, v, p, a, p4)` holds under every decision in
 //! its set, and a row derived from it inherits the set. Two decisions whose flows meet at a row
 //! share the row instead of duplicating it, so the contextual relations are bounded by the
-//! context-free ones (one row per `(f, v, p, a, p4)`), as the old call-string lattice bounded
-//! them, without dropping any decision the way the call-string lattice did.
+//! context-free ones (one row per `(f, v, p, a, p4)`) without dropping any decision.
 //!
 //! Decisions are interned to a dense [`DecisionId`] and sets are interned as sorted slices, so
 //! a set is a `Copy` pointer, equality is a pointer compare, and rows that hold the same set
@@ -139,7 +138,8 @@ static SETS: LazyLock<immortal::Interner<[DecisionId]>> =
 /// [`set_widen_bound`] before the run.
 static WIDEN_BOUND: AtomicUsize = AtomicUsize::new(0);
 
-/// Sets the widening bound for exact sets (`HybridContext::Bounded(k)`); `0` removes it.
+/// Sets the widening bound for exact sets (`HybridContext::Bounded(k)` and `Spill(k)`); `0`
+/// removes it.
 pub fn set_widen_bound(k: usize) {
     WIDEN_BOUND.store(k, Ordering::Relaxed);
 }
@@ -168,7 +168,7 @@ static UNIONS_GREW: AtomicUsize = AtomicUsize::new(0);
 /// and a writer that loses the race simply does not cache. Sets are interned, so the same two
 /// addresses meet again and again (every row's set against the set of every row that feeds
 /// it), and the lookup is the hot path of the whole contextual closure: a thread-local hash
-/// map here cost more than the joins around it.
+/// map here would cost more than the joins around it.
 struct UnionSlot {
     seq: AtomicUsize,
     a: AtomicUsize,
