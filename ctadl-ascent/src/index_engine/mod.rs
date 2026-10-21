@@ -2506,187 +2506,187 @@ pub fn taint_index_with_config(
     macro_rules! run_engine {
         ($prog_ty:ty) => {{
             let mut prog = <$prog_ty>::default();
-        prog.formal_param = facts.formal_param.into_iter().collect();
-        prog.actual_param = facts.actual_param.into_iter().collect();
-        prog.call = call.into_iter().collect();
-        prog.call_target_assign = facts
-            .call_target_assign
-            .into_iter()
-            .map(|(site_id, vx, obj)| {
-                let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-                (func_id, vx, obj)
-            })
-            .collect();
-        prog.callee_info = facts
-            .callee_info
-            .into_iter()
-            .map(|(site_id, vx, dispatch_key)| {
-                let InsnSiteId { func_id, insn_id } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-                (func_id, insn_id, vx.0, vx.1, dispatch_key)
-            })
-            .collect();
-        prog.callee_resolvents = facts.callee_resolvents.into_iter().collect();
-        prog.summary = facts.summary.into_iter().collect();
-        prog.const_str_assign = facts
-            .const_str_assign
-            .into_iter()
-            .map(|(site_id, vx, value)| {
-                let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-                (func_id, vx.0, vx.1, value)
-            })
-            .collect();
-        prog.intent_frame = facts.intent_frame.into_iter().collect();
-        prog.intent_send = facts.intent_send.into_iter().collect();
-        prog.intent_filter = facts.intent_filter.into_iter().collect();
-        prog.intent_component = facts.intent_component.into_iter().collect();
-        prog.config = config_val.into_iter().collect();
-        prog.seed_assign_like(assign_like);
-        prog.prog_store = prog_store.into_iter().collect();
-        prog.alias_of_formal = alias_of_formal.into_iter().collect();
-        prog.paths = paths.iter().cloned().collect();
-        prog.path_set = vec![(path_set.clone(),)].into_iter().collect();
+            prog.formal_param = facts.formal_param.into_iter().collect();
+            prog.actual_param = facts.actual_param.into_iter().collect();
+            prog.call = call.into_iter().collect();
+            prog.call_target_assign = facts
+                .call_target_assign
+                .into_iter()
+                .map(|(site_id, vx, obj)| {
+                    let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+                    (func_id, vx, obj)
+                })
+                .collect();
+            prog.callee_info = facts
+                .callee_info
+                .into_iter()
+                .map(|(site_id, vx, dispatch_key)| {
+                    let InsnSiteId { func_id, insn_id } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+                    (func_id, insn_id, vx.0, vx.1, dispatch_key)
+                })
+                .collect();
+            prog.callee_resolvents = facts.callee_resolvents.into_iter().collect();
+            prog.summary = facts.summary.into_iter().collect();
+            prog.const_str_assign = facts
+                .const_str_assign
+                .into_iter()
+                .map(|(site_id, vx, value)| {
+                    let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+                    (func_id, vx.0, vx.1, value)
+                })
+                .collect();
+            prog.intent_frame = facts.intent_frame.into_iter().collect();
+            prog.intent_send = facts.intent_send.into_iter().collect();
+            prog.intent_filter = facts.intent_filter.into_iter().collect();
+            prog.intent_component = facts.intent_component.into_iter().collect();
+            prog.config = config_val.into_iter().collect();
+            prog.seed_assign_like(assign_like);
+            prog.prog_store = prog_store.into_iter().collect();
+            prog.alias_of_formal = alias_of_formal.into_iter().collect();
+            prog.paths = paths.iter().cloned().collect();
+            prog.path_set = vec![(path_set.clone(),)].into_iter().collect();
 
-        let fixpoint_start = std::time::Instant::now();
-        let reached_fixpoint = prog.run_timeout(index_timeout);
-        let fixpoint_secs = fixpoint_start.elapsed().as_secs_f64();
-        if !reached_fixpoint {
-            log::warn!(
-                "index run TIMED OUT after {:?} without reaching fixpoint; results and stats below are PARTIAL",
-                index_timeout
-            );
-        }
-        log::debug!(
-            "[mem cp] ascent_run returned (transient input buffers dropped): {:.1} MB",
-            phys_footprint_mb()
-        );
-        log::debug!("index scc times: {}", prog.scc_times_summary());
-        // Every relation's tuple count, straight from ascent's own generated summary. This is
-        // the census the rule-time ranking is normalized against (time per tuple), so it has to
-        // cover ALL relations, not the hand-picked few the `propagation relations:` line below
-        // lists. Logged BEFORE the `assign_like` store is drained into the output Vec, so the
-        // counts describe the fixpoint's state at the moment it stopped -- which, under
-        // `CTADL_INDEX_TIMEOUT_SECS`, is the partial state we are trying to characterize.
-        //
-        // Five relations read 0 here and are reported separately on the next line: `assign_like`,
-        // `locals`, `edge_split`, `locals_key` and `ext_dst` live in BYODS stores, so their
-        // physical `SeedVec` relation holds no tuples.
-        log::debug!(
-            "[relsizes] index relation sizes:\n{}",
-            prog.relation_sizes_summary()
-        );
-        let sizes = prog.store_sizes();
-        log::debug!(
-            "[relsizes] byods-backed: assign_like size: {}\nlocals size: {}\nedge_split size: {}\nlocals_key size: {}\next_dst size: {}",
-            sizes.assign_like,
-            sizes.locals,
-            sizes.edge_split,
-            sizes.locals_key,
-            sizes.ext_dst
-        );
-        let profile = profile::IndexProfile {
-            reached_fixpoint,
-            timeout_secs: (index_timeout != std::time::Duration::MAX).then(|| index_timeout.as_secs()),
-            fixpoint_secs,
-            ..profile::IndexProfile::from_summaries(
-                &prog.relation_sizes_summary(),
-                &prog.scc_times_summary(),
-                &[
-                    ("assign_like", sizes.assign_like),
-                    ("locals", sizes.locals),
-                    ("edge_split", sizes.edge_split),
-                    ("locals_key", sizes.locals_key),
-                    ("ext_dst", sizes.ext_dst),
-                ],
-            )
-        };
-        log::debug!(
-            "[mem cp] after relation census (nothing drained yet): {:.1} MB",
-            phys_footprint_mb()
-        );
-        log::debug!(
-            "propagation relations: reach_vp={} locals_key={} locals_key_wild={} locals_wild={} \
-             assign_wild={} edge_split={} edge_split_wild={} ext_dst={} ext_fml={}",
-            prog.reach_vp.len(),
-            sizes.locals_key,
-            prog.locals_key_wild.len(),
-            prog.locals_wild.len(),
-            prog.assign_wild.len(),
-            sizes.edge_split,
-            prog.edge_split_wild.len(),
-            sizes.ext_dst,
-            prog.ext_fml.len()
-        );
-        for report in prog.heap_reports() {
-            log::debug!("{report}");
-        }
-        log::trace!(
-            "hybrid inlining relations:\n{}",
-            HybridInliningRelations {
-                critical_summary: &prog.critical_summary,
-                resolvent: &prog.resolvent,
-                call_target_assign_like: &prog.call_target_assign_like,
-                context_assign: &prog.context_assign,
-                context_locals: &prog.context_locals,
-                context_summary: &prog.context_summary,
-                id_map,
+            let fixpoint_start = std::time::Instant::now();
+            let reached_fixpoint = prog.run_timeout(index_timeout);
+            let fixpoint_secs = fixpoint_start.elapsed().as_secs_f64();
+            if !reached_fixpoint {
+                log::warn!(
+                    "index run TIMED OUT after {:?} without reaching fixpoint; results and stats below are PARTIAL",
+                    index_timeout
+                );
             }
-        );
-
-        let assign_like_out = prog.take_assign_like();
-        let reached_variables = prog.num_reached_variables();
-
-        let stats = IndexStats {
-            profile,
-            initial_assign,
-            final_assign_like: assign_like_out.len(),
-            initial_formals,
-            final_locals: prog.locals.len(),
-            initial_call_target_assign,
-            final_call_target_assign_like: prog.call_target_assign_like.len(),
-            initial_summary,
-            final_summary: prog.summary.len(),
-            num_functions,
-            num_variables,
-            reached_variables,
-            initial_callee_info: prog.callee_info.len(),
-            final_resolved_call: prog.resolved_call.len(),
-            hybrid_critical_summary: prog.critical_summary.len(),
-            hybrid_resolvent: prog.resolvent.len(),
-            hybrid_context_assign: prog.context_assign.len(),
-            hybrid_context_locals: prog.context_locals.len(),
-            hybrid_context_summary: prog.context_summary.len(),
-        };
-        stats.log();
-        if stats.hybrid_context_locals > 0 {
             log::debug!(
-                "{}",
-                context_histogram(&prog.context_locals, &prog.resolvent, id_map).trim_end()
+                "[mem cp] ascent_run returned (transient input buffers dropped): {:.1} MB",
+                phys_footprint_mb()
             );
+            log::debug!("index scc times: {}", prog.scc_times_summary());
+            // Every relation's tuple count, straight from ascent's own generated summary. This
+            // is the census the rule-time ranking is normalized against (time per tuple), so it
+            // has to cover ALL relations, not the hand-picked few the `propagation relations:`
+            // line below lists. Logged BEFORE the `assign_like` store is drained into the output
+            // Vec, so the counts describe the fixpoint's state at the moment it stopped --
+            // which, under `CTADL_INDEX_TIMEOUT_SECS`, is the partial state we are trying to
+            // characterize.
+            //
+            // Five relations read 0 here and are reported separately on the next line:
+            // `assign_like`, `locals`, `edge_split`, `locals_key` and `ext_dst` live in BYODS
+            // stores, so their physical `SeedVec` relation holds no tuples.
             log::debug!(
-                "{}",
-                dropped_compositions(
-                    &prog.context_assign,
-                    &prog.context_locals,
-                    prog.locals_probe(),
-                    &path_set.0,
-                    id_map
+                "[relsizes] index relation sizes:\n{}",
+                prog.relation_sizes_summary()
+            );
+            let sizes = prog.store_sizes();
+            log::debug!(
+                "[relsizes] byods-backed: assign_like size: {}\nlocals size: {}\nedge_split size: {}\nlocals_key size: {}\next_dst size: {}",
+                sizes.assign_like,
+                sizes.locals,
+                sizes.edge_split,
+                sizes.locals_key,
+                sizes.ext_dst
+            );
+            let profile = profile::IndexProfile {
+                reached_fixpoint,
+                timeout_secs: (index_timeout != std::time::Duration::MAX).then(|| index_timeout.as_secs()),
+                fixpoint_secs,
+                ..profile::IndexProfile::from_summaries(
+                    &prog.relation_sizes_summary(),
+                    &prog.scc_times_summary(),
+                    &[
+                        ("assign_like", sizes.assign_like),
+                        ("locals", sizes.locals),
+                        ("edge_split", sizes.edge_split),
+                        ("locals_key", sizes.locals_key),
+                        ("ext_dst", sizes.ext_dst),
+                    ],
                 )
-                .trim_end()
+            };
+            log::debug!(
+                "[mem cp] after relation census (nothing drained yet): {:.1} MB",
+                phys_footprint_mb()
             );
-        }
+            log::debug!(
+                "propagation relations: reach_vp={} locals_key={} locals_key_wild={} locals_wild={} \
+                 assign_wild={} edge_split={} edge_split_wild={} ext_dst={} ext_fml={}",
+                prog.reach_vp.len(),
+                sizes.locals_key,
+                prog.locals_key_wild.len(),
+                prog.locals_wild.len(),
+                prog.assign_wild.len(),
+                sizes.edge_split,
+                prog.edge_split_wild.len(),
+                sizes.ext_dst,
+                prog.ext_fml.len()
+            );
+            for report in prog.heap_reports() {
+                log::debug!("{report}");
+            }
+            log::trace!(
+                "hybrid inlining relations:\n{}",
+                HybridInliningRelations {
+                    critical_summary: &prog.critical_summary,
+                    resolvent: &prog.resolvent,
+                    call_target_assign_like: &prog.call_target_assign_like,
+                    context_assign: &prog.context_assign,
+                    context_locals: &prog.context_locals,
+                    context_summary: &prog.context_summary,
+                    id_map,
+                }
+            );
 
-        let result = IndexResult {
-            summary: prog.summary.into_iter().collect(),
-            assign_like: assign_like_out,
-            call_target_assign_like: prog.call_target_assign_like.into_iter().collect(),
-            resolved_call: prog.resolved_call.into_iter().collect(),
-            const_reaches: prog.const_reaches.into_iter().collect(),
-            intent_pair: prog.intent_pair.into_iter().collect(),
-            paths: prog.paths.into_iter().collect(),
-            external_function: facts.external_function,
-            stats,
-        };
-            result
+            let assign_like_out = prog.take_assign_like();
+            let reached_variables = prog.num_reached_variables();
+
+            let stats = IndexStats {
+                profile,
+                initial_assign,
+                final_assign_like: assign_like_out.len(),
+                initial_formals,
+                final_locals: prog.locals.len(),
+                initial_call_target_assign,
+                final_call_target_assign_like: prog.call_target_assign_like.len(),
+                initial_summary,
+                final_summary: prog.summary.len(),
+                num_functions,
+                num_variables,
+                reached_variables,
+                initial_callee_info: prog.callee_info.len(),
+                final_resolved_call: prog.resolved_call.len(),
+                hybrid_critical_summary: prog.critical_summary.len(),
+                hybrid_resolvent: prog.resolvent.len(),
+                hybrid_context_assign: prog.context_assign.len(),
+                hybrid_context_locals: prog.context_locals.len(),
+                hybrid_context_summary: prog.context_summary.len(),
+            };
+            stats.log();
+            if stats.hybrid_context_locals > 0 {
+                log::debug!(
+                    "{}",
+                    context_histogram(&prog.context_locals, &prog.resolvent, id_map).trim_end()
+                );
+                log::debug!(
+                    "{}",
+                    dropped_compositions(
+                        &prog.context_assign,
+                        &prog.context_locals,
+                        prog.locals_probe(),
+                        &path_set.0,
+                        id_map
+                    )
+                    .trim_end()
+                );
+            }
+
+            IndexResult {
+                summary: prog.summary.into_iter().collect(),
+                assign_like: assign_like_out,
+                call_target_assign_like: prog.call_target_assign_like.into_iter().collect(),
+                resolved_call: prog.resolved_call.into_iter().collect(),
+                const_reaches: prog.const_reaches.into_iter().collect(),
+                intent_pair: prog.intent_pair.into_iter().collect(),
+                paths: prog.paths.into_iter().collect(),
+                external_function: facts.external_function,
+                stats,
+            }
         }};
     }
 
@@ -2941,9 +2941,11 @@ mod tests {
             )
         };
         let scan = run(ContextJoin::Scan);
+        let scan_stats = scan.stats.clone();
+        let scan_rows = canonical(scan);
         for other in [ContextJoin::Sets, ContextJoin::Unfold] {
             let r = run(other);
-            let (s, p) = (&scan.stats, &r.stats);
+            let (s, p) = (&scan_stats, &r.stats);
             assert_eq!(s.final_locals, p.final_locals, "{other}: locals");
             assert_eq!(s.hybrid_resolvent, p.hybrid_resolvent, "{other}: resolvent");
             assert_eq!(
@@ -2962,18 +2964,7 @@ mod tests {
                 s.hybrid_context_assign > 0,
                 "fixture derived no context_assign rows"
             );
-            assert_eq!(
-                canonical(taint_index_with_config(
-                    facts.clone(),
-                    IndexConfig {
-                        context_join: ContextJoin::Scan,
-                        ..IndexConfig::default()
-                    },
-                    id_map
-                )),
-                canonical(r),
-                "{other}"
-            );
+            assert_eq!(scan_rows, canonical(r), "{other}");
         }
     }
 
