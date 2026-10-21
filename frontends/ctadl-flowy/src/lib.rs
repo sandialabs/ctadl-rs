@@ -773,49 +773,17 @@ impl FlowyCtx {
             }
             parse::StmtKind::AssignCall { dest, callee, args } => {
                 let (lhs_base, lhs_segments) = parse_path(locals, local_table, dest)?;
-                let (variable, segments) = parse_path(locals, local_table, callee)?;
+                let callee = parse_path(locals, local_table, callee)?;
                 let actuals = parse_actuals(locals, local_table, args, defined_functions)?;
-                let style = if !segments.is_empty() {
-                    // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
-                    let callee = lower_callee_addr(
-                        &mut self.counter,
-                        data,
-                        local_table,
-                        source_info,
-                        variable,
-                        segments,
-                    );
-                    CallStyle::FuncPtrCall {
-                        callee,
-                        signature: None,
-                    }
-                } else {
-                    let is_direct = match &variable.variable {
-                        Variable::Local(idx) => {
-                            let name = local_table.name(*idx);
-                            name == "source"
-                                || name == "errsource"
-                                || defined_functions.contains(name)
-                        }
-                        _ => false,
-                    };
-
-                    if is_direct {
-                        let Variable::Local(idx) = &variable.variable else {
-                            unreachable!()
-                        };
-                        let name = local_table.name(*idx);
-                        CallStyle::DirectCall {
-                            call_edges: CallEdges::Explicit(vec![name.to_string()].into()),
-                        }
-                    } else {
-                        // Indirect call with parameter, global, or undefined function
-                        CallStyle::FuncPtrCall {
-                            callee: AccessPath::without_fields(variable),
-                            signature: None,
-                        }
-                    }
-                };
+                let style = lower_call_style(
+                    &mut self.counter,
+                    data,
+                    local_table,
+                    source_info,
+                    callee,
+                    &["source", "errsource"],
+                    defined_functions,
+                );
 
                 let is_source = matches!(
                     &style,
@@ -874,48 +842,18 @@ impl FlowyCtx {
                 }
             }
             parse::StmtKind::Call { callee, args } => {
-                let (variable, segments) = parse_path(locals, local_table, callee)?;
+                let callee = parse_path(locals, local_table, callee)?;
                 let actuals = parse_actuals(locals, local_table, args, defined_functions)?;
 
-                let style = if !segments.is_empty() {
-                    // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
-                    let callee = lower_callee_addr(
-                        &mut self.counter,
-                        data,
-                        local_table,
-                        source_info,
-                        variable,
-                        segments,
-                    );
-                    CallStyle::FuncPtrCall {
-                        callee,
-                        signature: None,
-                    }
-                } else {
-                    let is_direct = match &variable.variable {
-                        Variable::Local(idx) => {
-                            let name = local_table.name(*idx);
-                            name == "sink" || name == "errsink" || defined_functions.contains(name)
-                        }
-                        _ => false,
-                    };
-
-                    if is_direct {
-                        let Variable::Local(idx) = &variable.variable else {
-                            unreachable!()
-                        };
-                        let name = local_table.name(*idx);
-                        CallStyle::DirectCall {
-                            call_edges: CallEdges::Explicit(vec![name.to_string()].into()),
-                        }
-                    } else {
-                        // Indirect call with parameter, global, or undefined function
-                        CallStyle::FuncPtrCall {
-                            callee: AccessPath::without_fields(variable),
-                            signature: None,
-                        }
-                    }
-                };
+                let style = lower_call_style(
+                    &mut self.counter,
+                    data,
+                    local_table,
+                    source_info,
+                    callee,
+                    &["sink", "errsink"],
+                    defined_functions,
+                );
 
                 let is_sink = matches!(
                     &style,
@@ -1169,6 +1107,39 @@ fn lower_callee_addr(
         data.push_back(s);
     }
     addr
+}
+
+/// Chooses how to call `callee`: directly when it names one of `builtins` or a function defined in
+/// this program, otherwise through a function pointer, lowering any symbolic derefs in the callee
+/// path to loads that leave an offset-only callee.
+fn lower_call_style(
+    counter: &mut Counter,
+    data: &mut BasicBlockData,
+    local_table: &mut Locals,
+    source_info: SourceInfo,
+    (variable, segments): (VariableRef, ThinVec<PathSegment>),
+    builtins: &[&str],
+    defined_functions: &HashSet<String>,
+) -> CallStyle {
+    if !segments.is_empty() {
+        let callee = lower_callee_addr(counter, data, local_table, source_info, variable, segments);
+        return CallStyle::FuncPtrCall {
+            callee,
+            signature: None,
+        };
+    }
+    if let Variable::Local(idx) = &variable.variable {
+        let name = local_table.name(*idx);
+        if builtins.contains(&name) || defined_functions.contains(name) {
+            return CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(vec![name.to_string()].into()),
+            };
+        }
+    }
+    CallStyle::FuncPtrCall {
+        callee: AccessPath::without_fields(variable),
+        signature: None,
+    }
 }
 
 /// Rejects a store whose target is an offset-only location with no symbolic field (e.g. `x.[10]`).
