@@ -610,9 +610,8 @@ where
                 .into_iter()
                 .map(|walk| (*successor_node, Some(walk)));
 
-            let successor_walk = successors.map(|successor_node| {
-                (successor_node, self.inspect_node(successor_node))
-            });
+            let successor_walk = successors
+                .map(|successor_node| (successor_node, self.inspect_node(successor_node)));
             for (successor_node, walk) in returned_walk.chain(successor_walk) {
                 match walk {
                     // The starting node `node` leads to a cycle whose earliest node,
