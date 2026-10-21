@@ -299,6 +299,78 @@ pub struct ReportArgs {
     pub dispatch_order: DispatchOrder,
 }
 
+/// The call-resolution strategy, and the ladder flags `--strategy mixed` reads.
+#[derive(Debug, Clone, Args)]
+pub struct CallPolicyArgs {
+    /// Call resolution strategy: cha, hi, mixed, legacy-mixed
+    ///
+    /// `mixed` is the ladder: an `invoke-super` resolves to its one real target, then a
+    /// dispatch model, then the threshold below, then hybrid inlining. `legacy-mixed` is CHA
+    /// when the site has exactly one target and hybrid inlining otherwise.
+    #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
+    pub strategy: CallResolutionStrategy,
+
+    /// Resolve a call site with CHA when it has at most this many targets, and defer it to
+    /// hybrid inlining above that. `--strategy mixed` only.
+    ///
+    /// `0` resolves nothing with CHA; a very large value never defers. Raising it leaves less
+    /// to hybrid inlining but costs the index engine: on a program with a large recursive
+    /// strongly connected component the CHA edges it adds are superlinear in the fixpoint. The
+    /// default is where that cost starts; going higher is worth it only when the extra
+    /// precision is.
+    #[arg(long, default_value_t = ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD)]
+    pub cha_threshold: usize,
+
+    /// `--cha-threshold` for interface-dispatched sites, which are a different population:
+    /// about a tenth of them resolve to a single target against four fifths of ordinary
+    /// virtual calls. Defaults to `--cha-threshold`.
+    #[arg(long)]
+    pub cha_threshold_interface: Option<usize>,
+
+    /// Ignore `find: "dispatch"` models, so every site takes the threshold instead.
+    #[arg(long)]
+    pub no_dispatch_models: bool,
+
+    /// Ignore `find: "dispatch"` models at interface-dispatched sites only.
+    #[arg(long)]
+    pub no_dispatch_models_interface: bool,
+
+    /// Whether a matched dispatch model beats the threshold or the other way round.
+    ///
+    /// `model-first` takes a modelled signature out of the analysis whatever its target count.
+    /// `threshold-first` resolves a signature with few enough targets exactly even when a model
+    /// matches it, for a precision-sensitive run.
+    #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
+    pub dispatch_order: DispatchOrder,
+}
+
+impl CallPolicyArgs {
+    /// The ladder flags as one policy. `--cha-threshold-interface` defaults to
+    /// `--cha-threshold`, so setting one flag gives one threshold and the second exists only
+    /// for the population that behaves differently.
+    ///
+    /// Warns when a ladder flag is given with a strategy that does not read it: the policy is
+    /// recorded in the index config as given either way, so a silent no-op would be
+    /// indistinguishable from a policy that took effect.
+    pub fn call_policy(&self) -> CallPolicy {
+        let policy = CallPolicy {
+            cha_threshold: self.cha_threshold,
+            cha_threshold_interface: self.cha_threshold_interface.unwrap_or(self.cha_threshold),
+            dispatch_models: !self.no_dispatch_models,
+            dispatch_models_interface: !self.no_dispatch_models
+                && !self.no_dispatch_models_interface,
+            order: self.dispatch_order,
+        };
+        if self.strategy != CallResolutionStrategy::Mixed && policy != CallPolicy::default() {
+            log::warn!(
+                "the call-policy flags apply to --strategy mixed; --strategy {:?} ignores them",
+                self.strategy
+            );
+        }
+        policy
+    }
+}
+
 #[derive(Debug, Args)]
 pub struct IndexArgs {
     /// Name for the analysis project (index name)
@@ -364,46 +436,8 @@ pub struct IndexArgs {
     #[arg(long)]
     pub no_jni_registry: bool,
 
-    /// Call resolution strategy: cha, hi, mixed, legacy-mixed
-    ///
-    /// `mixed` is the ladder: an `invoke-super` resolves to its one real target, then a
-    /// dispatch model, then the threshold below, then hybrid inlining. `legacy-mixed` is CHA
-    /// when the site has exactly one target and hybrid inlining otherwise.
-    #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
-    pub strategy: CallResolutionStrategy,
-
-    /// Resolve a call site with CHA when it has at most this many targets, and defer it to
-    /// hybrid inlining above that. `--strategy mixed` only.
-    ///
-    /// `0` resolves nothing with CHA; a very large value never defers. Raising it leaves less
-    /// to hybrid inlining but costs the index engine: on a program with a large recursive
-    /// strongly connected component the CHA edges it adds are superlinear in the fixpoint. The
-    /// default is where that cost starts; going higher is worth it only when the extra
-    /// precision is.
-    #[arg(long, default_value_t = ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD)]
-    pub cha_threshold: usize,
-
-    /// `--cha-threshold` for interface-dispatched sites, which are a different population:
-    /// about a tenth of them resolve to a single target against four fifths of ordinary
-    /// virtual calls. Defaults to `--cha-threshold`.
-    #[arg(long)]
-    pub cha_threshold_interface: Option<usize>,
-
-    /// Ignore `find: "dispatch"` models, so every site takes the threshold instead.
-    #[arg(long)]
-    pub no_dispatch_models: bool,
-
-    /// Ignore `find: "dispatch"` models at interface-dispatched sites only.
-    #[arg(long)]
-    pub no_dispatch_models_interface: bool,
-
-    /// Whether a matched dispatch model beats the threshold or the other way round.
-    ///
-    /// `model-first` takes a modelled signature out of the analysis whatever its target count.
-    /// `threshold-first` resolves a signature with few enough targets exactly even when a model
-    /// matches it, for a precision-sensitive run.
-    #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
-    pub dispatch_order: DispatchOrder,
+    #[command(flatten)]
+    pub call: CallPolicyArgs,
 
     /// Prune unreachable CFG nodes before SSA transformation.
     ///
@@ -507,33 +541,6 @@ fn parse_size(s: &str) -> Result<usize, String> {
     Ok((number * scale as f64) as usize)
 }
 
-impl IndexArgs {
-    /// The ladder flags as one policy. `--cha-threshold-interface` defaults to
-    /// `--cha-threshold`, so setting one flag gives one threshold and the second exists only
-    /// for the population that behaves differently.
-    ///
-    /// Warns when a ladder flag is given with a strategy that does not read it: the policy is
-    /// recorded in the index config as given either way, so a silent no-op would be
-    /// indistinguishable from a policy that took effect.
-    pub fn call_policy(&self) -> CallPolicy {
-        let policy = CallPolicy {
-            cha_threshold: self.cha_threshold,
-            cha_threshold_interface: self.cha_threshold_interface.unwrap_or(self.cha_threshold),
-            dispatch_models: !self.no_dispatch_models,
-            dispatch_models_interface: !self.no_dispatch_models
-                && !self.no_dispatch_models_interface,
-            order: self.dispatch_order,
-        };
-        if self.strategy != CallResolutionStrategy::Mixed && policy != CallPolicy::default() {
-            log::warn!(
-                "the call-policy flags apply to --strategy mixed; --strategy {:?} ignores them",
-                self.strategy
-            );
-        }
-        policy
-    }
-}
-
 #[derive(Debug, Args)]
 pub struct QueryArgs {
     /// Analysis project (index) name
@@ -599,46 +606,8 @@ pub struct GoArgs {
     #[arg(long)]
     pub dump_taint_graph: Option<PathBuf>,
 
-    /// Call resolution strategy: cha, hi, mixed, legacy-mixed
-    ///
-    /// `mixed` is the ladder: an `invoke-super` resolves to its one real target, then a
-    /// dispatch model, then the threshold below, then hybrid inlining. `legacy-mixed` is CHA
-    /// when the site has exactly one target and hybrid inlining otherwise.
-    #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
-    pub strategy: CallResolutionStrategy,
-
-    /// Resolve a call site with CHA when it has at most this many targets, and defer it to
-    /// hybrid inlining above that. `--strategy mixed` only.
-    ///
-    /// `0` resolves nothing with CHA; a very large value never defers. Raising it leaves less
-    /// to hybrid inlining but costs the index engine: on a program with a large recursive
-    /// strongly connected component the CHA edges it adds are superlinear in the fixpoint. The
-    /// default is where that cost starts; going higher is worth it only when the extra
-    /// precision is.
-    #[arg(long, default_value_t = ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD)]
-    pub cha_threshold: usize,
-
-    /// `--cha-threshold` for interface-dispatched sites, which are a different population:
-    /// about a tenth of them resolve to a single target against four fifths of ordinary
-    /// virtual calls. Defaults to `--cha-threshold`.
-    #[arg(long)]
-    pub cha_threshold_interface: Option<usize>,
-
-    /// Ignore `find: "dispatch"` models, so every site takes the threshold instead.
-    #[arg(long)]
-    pub no_dispatch_models: bool,
-
-    /// Ignore `find: "dispatch"` models at interface-dispatched sites only.
-    #[arg(long)]
-    pub no_dispatch_models_interface: bool,
-
-    /// Whether a matched dispatch model beats the threshold or the other way round.
-    ///
-    /// `model-first` takes a modelled signature out of the analysis whatever its target count.
-    /// `threshold-first` resolves a signature with few enough targets exactly even when a model
-    /// matches it, for a precision-sensitive run.
-    #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
-    pub dispatch_order: DispatchOrder,
+    #[command(flatten)]
+    pub call: CallPolicyArgs,
 
     /// Language/IR family for the artifact, or auto to detect it
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
@@ -756,12 +725,7 @@ fn main() -> anyhow::Result<()> {
                 no_default_models: args.no_default_models,
                 no_jni_bridge: args.no_jni_bridge,
                 no_jni_registry: args.no_jni_registry,
-                strategy: args.strategy,
-                cha_threshold: args.cha_threshold,
-                cha_threshold_interface: args.cha_threshold_interface,
-                no_dispatch_models: args.no_dispatch_models,
-                no_dispatch_models_interface: args.no_dispatch_models_interface,
-                dispatch_order: args.dispatch_order,
+                call: args.call.clone(),
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 hybrid_context: HybridContext::default(),
@@ -913,12 +877,14 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 no_default_models: false,
                 no_jni_bridge: false,
                 no_jni_registry: false,
-                strategy: CallResolutionStrategy::Mixed,
-                cha_threshold: ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD,
-                cha_threshold_interface: None,
-                no_dispatch_models: false,
-                no_dispatch_models_interface: false,
-                dispatch_order: DispatchOrder::ModelFirst,
+                call: CallPolicyArgs {
+                    strategy: CallResolutionStrategy::Mixed,
+                    cha_threshold: ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD,
+                    cha_threshold_interface: None,
+                    no_dispatch_models: false,
+                    no_dispatch_models_interface: false,
+                    dispatch_order: DispatchOrder::ModelFirst,
+                },
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 hybrid_context: HybridContext::default(),
@@ -1058,8 +1024,8 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         cli::IndexOptions {
             no_jni_bridge: args.no_jni_bridge,
             no_jni_registry: args.no_jni_registry,
-            strategy: args.strategy,
-            call_policy: args.call_policy(),
+            strategy: args.call.strategy,
+            call_policy: args.call.call_policy(),
             prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
             alias_rule: args.alias_rule.unwrap_or(true),
             hybrid_context: args.hybrid_context,
