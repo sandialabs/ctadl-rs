@@ -870,7 +870,7 @@ fn phi_placements(f: &FunctionData) -> HashSet<Placement> {
         for s in data.iter() {
             if let StatementKind::Phi { dest, .. } = &s.kind {
                 assert!(
-                    out.insert((bb, dest.variable.clone())),
+                    out.insert((bb, dest.variable)),
                     "two phis for {dest} in {bb:?}"
                 );
             }
@@ -903,9 +903,7 @@ fn live_phi_placements(f: &FunctionData) -> HashSet<Placement> {
             work.extend(ops.iter().cloned());
         }
     }
-    live.into_iter()
-        .map(|v| (phis[&v].0, v.variable.clone()))
-        .collect()
+    live.into_iter().map(|v| (phis[&v].0, v.variable)).collect()
 }
 
 fn placements_named(p: &HashSet<Placement>, f: &FunctionData, name: &str) -> usize {
@@ -1015,7 +1013,7 @@ fn test_pruned_loop() {
     let i = local(&mut f.clone(), "i").variable;
     let d = local(&mut f.clone(), "d").variable;
     assert!(
-        minimal.contains(&(header, d.clone())),
+        minimal.contains(&(header, d)),
         "minimal SSA merges the dead `d`"
     );
     assert!(!pruned.contains(&(header, d)), "`d` is never read");
