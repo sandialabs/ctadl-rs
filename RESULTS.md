@@ -227,6 +227,45 @@ Experiment artifacts are under `/Volumes/Shampoo/ct-index-instrument/call-arg-gl
 and the two extracted C examples with their before/after dumps. `benchmark.py` records the
 exact measured commands; `ctadl-before` and `ctadl-macro-only` preserve the compared binaries.
 
+## Follow-up: query heap boundaries
+
+Rebased the instrumentation commit onto `origin/main` at `1ed8e7b6` (removal of unused
+Pest dependencies), preserving the macro-only experiment and its measurements above.
+The query now follows the index's heap representation directly: returning global taint
+lands on the caller's heap formal, and taint on that formal enters each callee's heap
+formal through the call graph. Both transitions retain their original call-site labels
+and taint-state restrictions. This is implemented in both the default search and the
+Datalog fallback; it does not restore the per-site heap copy edges.
+
+`ctadl-ascent/tests/tnt/global_call_boundary.tnt` pins the failure with a source created
+inside `produce`, a write to global `g`, a read in `main`, and a further read inside
+`consume`. It also requires that an unrelated global remain untainted. The separate index
+rule that bypasses `call_arg!` remains unchanged.
+
+Validation after the query correction:
+
+- Query unit tests: 12 passed.
+- The new TNT case: 12 checks passed in search mode and 12 in Datalog mode; the full
+  Flowy fixture suite also passes.
+- Full regression suite: **246 passed, zero failed, zero skipped, two expected failures**
+  out of 248 cases. All four macro-only query failures now pass. The native `globalflow`
+  and `globalstruct` cases, previously skipped for lack of tainted instructions on Darwin,
+  now pass their strict offset checks too.
+- Workspace tests: 1,258 passed, two failed, four ignored. The only failures remain the
+  two `ctadl-c` index-summary tests listed above; they never invoke the query engine.
+- Formatting checks on the changed Rust files and `git diff --check` pass.
+
+A fresh benchmark index with the rebased release binary still converges to 4,645,617
+`locals` rows, 300,003 summary rows, 922 calls, and six resolved calls. Its measured peak
+footprint is 352,600,976 B. The query fix therefore retains the index storage saving.
+Saved `summary`, `call`, `resolved_call`, `actual_param`, and `formal_param` fact sets
+are identical to the macro-only benchmark run.
+
+Follow-up logs, the preserved release binary (`ctadl-query-fixed`), benchmark profile,
+and fact comparison are under `/Volumes/Shampoo/ct-index-instrument/query-heap-fix/`.
+The regression run uses the release `xtask` harness and the newly built release `ctadl`,
+with both `CARGO_TARGET_DIR` and `TMPDIR` under `/Volumes/Shampoo` as above.
+
 ## Reproducing
 
 Working data is in `/Volumes/Shampoo/tmp/inv-0f99`: `full.log`, `t{2,4,6,8}.log`, `trace.log`,
