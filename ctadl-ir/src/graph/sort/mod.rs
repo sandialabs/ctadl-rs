@@ -38,7 +38,7 @@ impl<N: Idx> TopologicalSort<N> {
     ///
     /// # Arguments
     ///
-    /// * `graph` - A directed graph that implements `Successors` and `Predecessors`
+    /// * `graph` - A directed graph that implements `Successors`
     ///
     /// # Returns
     ///
