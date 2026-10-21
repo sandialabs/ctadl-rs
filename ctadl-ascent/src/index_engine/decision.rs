@@ -255,6 +255,7 @@ impl DecisionSet {
     }
 
     /// `{d}`, exact or collapsing.
+    #[cfg(test)]
     pub fn singleton(d: DecisionId, collapse: bool) -> DecisionSet {
         DecisionSet::intern(&[d], collapse)
     }
