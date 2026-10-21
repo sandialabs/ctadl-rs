@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use dex_reader::apk::{has_dex_entries_of_file, read_bundle_entry, split_apk_entries_of_file};
 
 use crate::ImportOptions;
+use crate::apk_native::sanitize;
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_import::project::{ArtifactImport, ArtifactLanguage};
 
@@ -206,21 +207,6 @@ pub fn splits_dir(parent: &ArtifactImport) -> PathBuf {
 /// own name is not unique -- every bundle has a `config.arm64_v8a.apk`.
 fn sub_import_name(parent: &str, stem: &str) -> String {
     sanitize(&format!("{parent}__{stem}"))
-}
-
-/// Replaces every character that has no business in a directory name. Both the sub-import name
-/// and the extracted file name go through this: the first becomes a directory under the store's
-/// `imports/`, and the second a file under the import's `splits/`.
-fn sanitize(raw: &str) -> String {
-    raw.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]
