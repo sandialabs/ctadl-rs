@@ -13,10 +13,9 @@ and record the result on the parent.
 * **The sub-import list is flat.** [`AnalysisProject::ephemeral`](ctadl_import::project::AnalysisProject::ephemeral) expands exactly
   one level -- `once(name).chain(subs)`, with no recursion. So a bundle's `sub_imports` must
   hold, for each split, *its own name followed by its own `sub_imports`*. Nesting bundle → split
-  → library without flattening drops every `.so` at index time, which looks exactly like the JNI
-  bug this all exists to fix.
-* **A resource-only split is skipped, not fatal.** They are the majority: one real bundle has 23
-  of 30. [`crate::apk_native::require_native_libs`] raises [`Error::NothingToImport`] for a split with
+  → library without flattening drops every `.so` at index time.
+* **A resource-only split is skipped, not fatal.** They are usually the majority of a bundle's
+  splits. [`crate::apk_native::require_native_libs`] raises [`Error::NothingToImport`] for a split with
   neither Dex nor `lib/`; that one error is caught here and logged at debug. Anything else
   propagates.
 */
@@ -106,7 +105,6 @@ pub fn import_bundle(
     for Split { name, path, .. } in &splits {
         match import_split(name, path, opts) {
             Ok(sub_imports) => {
-                // Flat, not nested: `AnalysisProject::ephemeral` expands one level only.
                 names.push(name.clone());
                 names.extend(sub_imports);
             }
@@ -144,8 +142,8 @@ struct Split {
     has_dex: bool,
 }
 
-/// Puts the Dex-bearing splits first, so [`ctadl_import::project::AnalysisProject`]'s per-import source-span scoping
-/// stays in import order and the Java half of a JNI boundary is observed before the native half.
+/// Puts the Dex-bearing splits first, so `ctadl_ascent::cli::index`'s per-import source-span
+/// scoping stays in import order and the Java half of a JNI boundary is observed before the native half.
 ///
 /// A stable sort, so the entry order -- already sorted by name -- decides within each group.
 fn order_splits(splits: &mut [Split]) {
