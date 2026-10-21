@@ -43,7 +43,7 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     out: &'b mut ProgramModelMatches,
     /// Keyed by generator index rather than positional: `find` is optional in the JSON, so a
     /// generator that omits it leaves no entry, and a `Vec` would then misalign every later
-    /// generator (it used to panic outright).
+    /// generator.
     find_method: HashMap<usize, FindMethod>,
     methods: Vec<UniverseSet<&'p str>>,
     /// For `find: callsites`, the set of caller functions matched by `in_function`
@@ -124,7 +124,7 @@ impl MatchedFunctions {
     /// [`matched_functions`], is what makes this safe to call per generator per import. That
     /// function materializes *every* name into a `Vec<String>` before any cap could apply, and
     /// its `All` arm returns an empty `Vec` for [`VirtualMethodTable::Unknown`] -- which is what
-    /// pcode uses -- so a fully live generator would be captured as matching zero functions.
+    /// the C and flowy frontends use -- so a fully live generator would be captured as matching zero functions.
     fn capture(set: &UniverseSet<&str>, cap: usize) -> Self {
         match set {
             UniverseSet::All => MatchedFunctions::All,
@@ -250,9 +250,7 @@ impl IndexTimeModelCounts {
 ///
 /// `ports_declared` and `endpoints_matched` are the two ends of the same fan-out: a model
 /// file declares *ports* (one `{"port": "Argument(0)"}` entry each), and each port matches
-/// zero or more functions, every one of which becomes an endpoint row. Reporting the first
-/// count as though it were the second is what made `CTADL0100` read as nonsense; the SARIF
-/// writer now names the unit of every number it prints.
+/// zero or more functions, every one of which becomes an endpoint row.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EndpointStats {
     /// Ports the generator declared in this direction: one per `sources`/`sinks` entry whose
@@ -284,7 +282,7 @@ impl EndpointStats {
 }
 
 /// Why a declared port produced no endpoint row. The generator matching zero functions is
-/// only one of the ways; `CTADL0004` used to report all of them as that one.
+/// only one of the ways.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum UnmatchedReason {
     /// The generator's `where` constraints selected no function in the program.
@@ -303,9 +301,8 @@ static ARGUMENT_REGEX: OnceLock<Regex> = OnceLock::new();
 static RETURN_REGEX: OnceLock<Regex> = OnceLock::new();
 static VARIABLE_REGEX: OnceLock<Regex> = OnceLock::new();
 
-// All three are anchored. Unanchored, `Return(.*)?` matched "MyReturnType", which was silently
-// accepted as a `Return` port with access path `Type`; likewise any text could surround an
-// `Argument(n)`. A non-match now falls through to the existing `InvalidArgumentFormat`.
+// All three are anchored, so "MyReturnType" is not a `Return` port with access path `Type`, and
+// no text may surround an `Argument(n)`. A non-match falls through to `InvalidArgumentFormat`.
 
 #[inline]
 fn argument_regex() -> &'static Regex {
@@ -440,8 +437,8 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
     /// Evaluates one side of a bridge: the `where` constraints of a synthetic
     /// `{"find": "methods", "where": …}` generator, returning the fq-names it matched.
     ///
-    /// This is *the* reuse point. `find` is a constant on both sides of a bridge (§2.1 of the
-    /// design: a bridge attaches inside the matched method), so the caller supplies constraints
+    /// This is *the* reuse point. `find` is a constant on both sides of a bridge (a bridge
+    /// attaches inside the matched method), so the caller supplies constraints
     /// only, and everything else — `any_of`/`not`, `qualified-id`, the unknown-field and
     /// unknown-constraint hard errors — applies verbatim.
     ///
@@ -695,10 +692,9 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
     ///
     /// **This function reports no errors.** It runs once per candidate — per function arity,
     /// per class, and for `extends` inside a short-circuiting `any` over supertypes — so
-    /// reporting from here emitted one copy of the same authoring error per candidate
-    /// (thousands of identical lines on a real program, a count that depended on
-    /// short-circuiting for `extends`) and reported *nothing at all* when the candidate list
-    /// was empty, e.g. `parent` on a non-Java program. Every such error is a property of the
+    /// reporting from here would emit one copy of the same authoring error per candidate (a
+    /// count that depends on short-circuiting for `extends`) and *nothing at all* when the
+    /// candidate list is empty, e.g. `parent` on a non-Java program. Every such error is a property of the
     /// constraint's shape and the subject's kind, both fixed before the loop starts, so
     /// [`Self::validate_predicate`] is the single reporter and runs exactly once.
     fn eval_predicate(&self, c: &serde_json::Value, subj: Subject<'_>) -> bool {
@@ -1022,7 +1018,8 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         }
     }
 
-    /// Encodes models. It is assumed that each json element of the iterator represents an element of `model_generators`.
+    /// Encodes models. It is assumed that each json element of the iterator represents an
+    /// element of `model_generators`.
     pub fn encode_models(
         &mut self,
         batch: impl IntoIterator<Item = serde_json::Value>,
@@ -1043,7 +1040,6 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         batch: impl IntoIterator<Item = serde_json::Value>,
     ) -> Result<(), Error> {
         self.visit_models_from(start, batch);
-        // Check for any collected errors and return them
         self.take_errors()
     }
 
@@ -1353,10 +1349,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.methods[n] = UniverseSet::empty();
     }
 
-    /// Reports a field the traversal expected to be an array and found otherwise.
-    ///
-    /// The traversal used to `.as_array().unwrap()` on `where`, `propagation`, `sources` and
-    /// `sinks`, so a scalar there **panicked** instead of erroring. A model file is user input.
+    /// Reports a field the traversal expected to be an array and found otherwise, as a hard
+    /// error: a model file is user input.
     fn report_not_array(&mut self, n: usize, field: &str) {
         self.add_json_error(crate::error::JsonModelError::FieldNotArray {
             index: n,
@@ -1538,9 +1532,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         // not depend on the frontend or on whether `find` parsed.
         //
         // `parent`/`parents` stay honored unconditionally even though
-        // `program_method_parents` is populated only for the Java VMT. On a native VMT they
-        // intersect with the empty set and match nothing, which is fail-*closed* and matches
-        // the documented Java-only behavior of the standalone `parent` constraint. Rejecting
+        // `program_method_parents` is populated only for the Java and CIL VMTs. On any other
+        // VMT they intersect with the empty set and match nothing, which is fail-*closed* and
+        // matches the behavior of the standalone `parent` constraint. Rejecting
         // them per-frontend would make one model file valid or invalid depending on which
         // artifact it is loaded against.
         if !self.check_constraint_keys(
@@ -1644,10 +1638,10 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             // Exact, whole-string match on a method's fully-qualified id. Unlike `name` this
             // is neither a regex nor keyed on the bare name, so it is the one lever that can
             // pick out a single method on a frontend with no class hierarchy: `parent` is
-            // populated only for the Java VMT, and `signature_pattern` regexes (unanchored,
-            // and only incidentally over the fq name). An id naming no function in the
+            // populated only for the Java and CIL VMTs, and a `signature_pattern` regex is
+            // unanchored and only incidentally over the fq name. An id naming no function in the
             // program intersects with the empty set and matches nothing — the same
-            // fail-closed behavior an unmatched `name` has today.
+            // fail-closed behavior an unmatched `name` has.
             let has_qualified_ids = value
                 .get("qualified-ids")
                 .or(value.get("qualified-id"))
@@ -1695,9 +1689,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Intersects existing `self.methods[n]` with the matches for the constraint
     fn visit_signature_constraint(&mut self, n: usize, value: &serde_json::Value) {
         self.super_signature_constraint(n, value);
-        // A missing `pattern` used to fall out of the `let` chain below as a no-op, so
-        // `{"constraint": "signature", "name": ".*sink.*"}` — `name` where `pattern` was
-        // meant — matched every function in the program instead of failing.
+        // Without this, a missing `pattern` would fall out of the `let` chain below as a
+        // no-op, so `{"constraint": "signature", "name": ".*sink.*"}` — `name` where `pattern`
+        // was meant — would match every function in the program instead of failing.
         if !self.check_constraint_keys(n, value, &["pattern"]) {
             self.target_set_mut(n).intersect_with(UniverseSet::empty());
             return;
@@ -1757,9 +1751,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                 self.current_set = prev;
             }
             Some(FindMethod::Methods) => {
-                // There is no caller set to narrow under `find: methods`, so the constraint
-                // used to vanish silently, leaving the generator matching on its remaining
-                // constraints alone. That is a mis-authored model, not a harmless one.
+                // There is no caller set to narrow under `find: methods`. Ignoring the
+                // constraint would leave the generator matching on its remaining constraints
+                // alone, and that is a mis-authored model, not a harmless one.
                 self.add_json_error(crate::error::JsonModelError::UnexpectedField {
                     index: n,
                     field_name: "in_function".to_string(),
@@ -1783,8 +1777,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// constraints (whose backing per-parameter data does not exist in the IR) and any
     /// unrecognized discriminator are collected as [`crate::error::JsonModelError::UnexpectedConstraint`]
     /// — a hard error that fails model loading rather than a silent skip. This intentionally
-    /// removes forward-compatibility with schema-newer model files; model files are versioned
-    /// with the analyzer, and silent skips previously masked real bugs (see docs).
+    /// gives up forward-compatibility with schema-newer model files: model files are versioned
+    /// with the analyzer, and a silent skip masks real bugs.
     fn visit_where_constraint(&mut self, n: usize, value: &serde_json::Value) {
         match value["constraint"].as_str() {
             // A dispatch generator selects signature keys, and a key is not a function: there
@@ -2044,8 +2038,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.target_set_mut(n).intersect_with(matched);
     }
 
-    /// Matches methods whose owning class satisfies `inner`. Java-only (the class hierarchy
-    /// exists only for the Java VMT); on other frontends it warns and matches nothing.
+    /// Matches methods whose owning class satisfies `inner`. Java and CIL only (the VMTs that
+    /// record each method's class); on other frontends it warns and matches nothing.
     fn visit_parent_constraint(&mut self, n: usize, value: &serde_json::Value) {
         let Some(inner) = value.get("inner") else {
             self.add_json_error(crate::error::JsonModelError::MissingField {
@@ -2073,8 +2067,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.target_set_mut(n).intersect_with(matched);
     }
 
-    /// Matches methods a superclass/interface of whose owning class satisfies `inner`. Java-only;
-    /// on other frontends it warns and matches nothing.
+    /// Matches methods a superclass/interface of whose owning class satisfies `inner`. Java and
+    /// CIL only; on other frontends it warns and matches nothing.
     fn visit_extends_constraint(&mut self, n: usize, value: &serde_json::Value) {
         let Some(inner) = value.get("inner") else {
             self.add_json_error(crate::error::JsonModelError::MissingField {
@@ -2448,12 +2442,11 @@ pub(crate) struct ParsedPort<'a> {
     pub(crate) var_name: Option<&'a str>,
     /// The port's access path, parsed with the canonical grammar. Owned; the lifetime survives
     /// only for `var_name`. A `PathSegment::Offset` here is what lets a port name a real offset
-    /// (`Argument(1).[8].deref`), which the previous `Vec<&str>` could not express -- every
-    /// segment became a `Symbol` and could never match the offsets pcode emits.
+    /// (`Argument(1).[8].deref`) and so match the offsets pcode emits.
     pub(crate) ap: Vec<PathSegment>,
 }
 
-/// Entry point for parsing propagation inputs and inputs, which are called ports
+/// Entry point for parsing propagation inputs and outputs, which are called ports
 pub(crate) fn parse_port(
     text: &str,
     index: usize,
@@ -2505,9 +2498,8 @@ pub(crate) fn parse_port(
 /// Parses a port's trailing access path with the one canonical grammar, so `.[8]` is a real
 /// offset and a field name beginning with `[` is written `\[`.
 ///
-/// Note the two things this deliberately no longer does. `".*"` used to map to the empty path;
-/// it now parses as `Symbol("*")`, a literal field, which is what it always was everywhere else.
-/// And `.[*]` used to yield `Symbol("[*]")`; it is now an `InvalidOffset` error.
+/// `".*"` parses as `Symbol("*")`, a literal field, as it does everywhere else, and `.[*]` is
+/// an `InvalidOffset` error.
 fn parse_access_path(
     input_text: Option<&str>,
 ) -> Result<Vec<PathSegment>, crate::error::JsonModelError> {
@@ -2569,9 +2561,6 @@ pub trait ModelGeneratorVisitor {
 
     /// Called when a field the traversal requires to be an array is something else. The default
     /// is silence; [`ModelGeneratorIngest`] turns it into a hard error.
-    ///
-    /// This exists because the traversal used to `.as_array().unwrap()`, turning a scalar
-    /// `"where"` in a user-supplied model file into a panic.
     #[inline]
     fn report_not_array(&mut self, _n: usize, _field: &str) {}
 
@@ -2873,11 +2862,9 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
                 methods.iter().map(|t| t.2.to_string()).collect()
             }
             // The `functions` column, not `methods`: on lua "all" means every function, the
-            // same as it does on java and native. Reading `methods` here made a `where`-less
-            // generator select only the metatable-recovered class methods and silently skip
-            // every free function. `externals` joins it so this stays the mirror of the
-            // `universe` set built in [`ModelGeneratorIngest::new`] -- the two disagreeing is
-            // exactly the bug the `functions` column fixed.
+            // same as it does on java and native, not only the metatable-recovered class
+            // methods. `externals` joins it so this stays the mirror of the `universe` set
+            // [`ProgramMatchIndex`] builds.
             VirtualMethodTable::Lua {
                 functions,
                 externals,
@@ -2888,9 +2875,8 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
                 .map(|t| t.1.to_string())
                 .collect(),
             VirtualMethodTable::Unknown => {
-                // For PCODE (which uses Unknown), we don't have a list of all methods in the VMT
-                // but we should have been able to match them via names/signatures in ModelGeneratorIngest.
-                // If it's 'All', we might need to return all known functions in the program.
+                // The C and flowy frontends (which use Unknown) have no list of methods in the
+                // VMT, so an `All` set has nothing to enumerate here.
                 log::warn!(
                     "'all' methods requested for non-Java VMT; this may not return all functions"
                 );
@@ -2933,12 +2919,8 @@ mod parse_port_tests {
         assert_eq!(r.var_name, None);
     }
 
-    /// A model port can now name an offset.
-    ///
-    /// `docs/model-generators.md` and `ctadl-model-generator.schema.json` have advertised this
-    /// spelling all along, but every segment used to become a `Symbol`, so `Argument(1).[8]` was
-    /// `Symbol("[8]")` and could never match the `Offset(8)` that pcode's `push_offset` actually
-    /// emits.
+    /// A model port can name an offset: `Argument(1).[8]` is `Offset(8)`, which is what pcode's
+    /// `push_offset` emits, not `Symbol("[8]")`.
     #[test]
     fn port_can_name_an_offset() {
         let p = parse_port("Argument(1).[8].deref", 0).expect("parse");
@@ -2961,8 +2943,7 @@ mod parse_port_tests {
         assert_eq!(p.ap, vec![PathSegment::symbol("[_elem_]")]);
     }
 
-    /// `.*` used to be special-cased to the empty path. It is now `Symbol("*")`, a literal
-    /// field -- which is what it always was everywhere else in the tree.
+    /// `.*` is `Symbol("*")`, a literal field, as it is everywhere else in the tree.
     #[test]
     fn trailing_star_is_a_literal_field() {
         let p = parse_port("Argument(0).*", 0).expect("parse");
@@ -2978,7 +2959,7 @@ mod parse_port_tests {
         use crate::error::JsonModelError;
         use ctadl_ir::mir::PathSyntaxErrorKind;
 
-        // `.[*]` used to yield Symbol("[*]"), which matched nothing.
+        // `*` is not an offset.
         let e = parse_port("Argument(0).[*]", 7).unwrap_err();
         assert!(
             matches!(&e, JsonModelError::InvalidAccessPath { index: 7, source, .. }
@@ -2986,7 +2967,7 @@ mod parse_port_tests {
             "got {e:?}"
         );
 
-        // An empty segment used to become Symbol("").
+        // An empty segment is an error, not `Symbol("")`.
         let e = parse_port("Argument(0).a..b", 3).unwrap_err();
         assert!(
             matches!(&e, JsonModelError::InvalidAccessPath { index: 3, source, .. }
@@ -3007,14 +2988,13 @@ mod parse_port_tests {
         );
     }
 
-    /// The regexes are anchored. Unanchored, `Return(.*)?` matched "MyReturnType", which was
-    /// silently accepted as a `Return` port with access path `Type`; likewise arbitrary text
-    /// could surround an `Argument(n)`.
+    /// The regexes are anchored: "MyReturnType" is not a `Return` port with access path `Type`,
+    /// and no text may surround an `Argument(n)`.
     #[test]
     fn regexes_are_anchored() {
         use crate::error::JsonModelError;
 
-        // Junk *before* the selector: no regex matches at all, so this is the existing
+        // Junk *before* the selector: no regex matches at all, so this is
         // InvalidArgumentFormat.
         for text in [
             "MyReturnType",
