@@ -59,7 +59,7 @@ pub enum ClassFileError {
     /// heights.
     ///
     /// Structured rather than a formatted message so callers can recognize it
-    /// without matching on text (`xtask regression` counts these as skips).
+    /// without matching on text.
     StackHeightMismatch {
         method: Box<MethodContext>,
         /// Index and start pc of the block being entered.
@@ -288,8 +288,7 @@ mod tests {
         assert!(msg.contains("0xff"), "{msg}");
     }
 
-    /// The join error names class, method and both sides of the edge, and is a
-    /// structured variant so `xtask` can count it without matching on text.
+    /// The join error names class, method and both sides of the edge.
     #[test]
     fn stack_height_mismatch_names_the_edge() {
         let err = ClassFileError::StackHeightMismatch {
