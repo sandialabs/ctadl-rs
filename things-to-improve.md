@@ -52,7 +52,7 @@ The document has four parts:
 | P30. The transient at the end of scc 4 | S33 | Open; located (M10) |
 | P31. The context-free call rule joins before it tests the mode | S36 done | Fixed (M13) |
 | P32. The memory checkpoints read -1 on Linux | S37 done | Fixed |
-| P33. Query results depend on the order of the index's rows | S38 | Open |
+| P33. Query results depend on the order of the index's rows | S38 done | Fixed for tainted results; path tie-breaking still order-dependent |
 
 # Problems
 
@@ -603,7 +603,7 @@ cap's samples instead.
 
 ### P33. Query results depend on the order of the index's rows
 
-**Seen in:** WhatsApp, Element, OsmAnd~. **Measured in:** M13. **Solutions:** S38.
+**Seen in:** WhatsApp, Element, OsmAnd~. **Measured in:** M13. **Solutions:** S38 (done).
 
 Two indexes of the same import hold the same rows in every file, but the rows of `assign`,
 `summary`, `paths`, `resolved_call` and `index_source_map` come out in a different order on each
@@ -612,6 +612,23 @@ in 0.3-0.5% of its tainted-instruction results (WhatsApp: 97 and 79 of 35,837, b
 one binary); sources and sinks are the same. So the query, not the index, is order-dependent, and a
 results diff cannot tell an index change from a rerun. M13 compares the index files as row sets
 instead.
+
+**The cause was a lost-flow bug.** The search's `callee_by_site` (`query_engine/search.rs`) mapped
+each call site to one callee, the last row of `call` followed by `resolved_call`
+(`IndexResult::final_call`). Taint at a call argument entered only that callee, and
+`resolved_call`'s row order changes per run, so which callee won changed too. 5-6.5% of call sites
+have more than one callee (11,165 of 213,507 on WhatsApp, 76,533 of 1.17 M on Element), and every
+other callee's flows were dropped. The return direction and the Datalog engine used every callee.
+
+**What stays order-dependent.** The set of reached states is now a function of the index's row
+set, and the tainted instructions are a projection of it. Which shortest path a sink reports, and
+which source endpoint a state is attributed to, still follow the search's tie-breaking, which
+follows the adjacency lists' order, which follows `assign`'s row order. Sorting them by
+`FlowVariable` would not help: a named variable's id is its name's position in `Str`'s intern
+table, assigned in load order. That needs a sort on resolved names, or the index sorted at save.
+Two more maps keep one callee per site, last row wins: the formatter's `call_callee` (naming a
+source or sink after the method it models) and `compute_arg_arity` (widening `Argument(*)` to the
+actuals; reads `call` in a fixed order, so deterministic but incomplete).
 
 # Solutions
 
@@ -654,7 +671,7 @@ instead.
 | S35. (Merged into S14) | P29 | Merged into S14 |
 | S36. Test the mode first in the context-free call rule | P31 | Done (uncommitted) |
 | S37. Read the footprint on Linux | P32 | Done |
-| S38. Make the query independent of row order | P33 | Undecided |
+| S38. Make the query independent of row order | P33 | Done (uncommitted): every callee at a call site |
 
 ### S1. Merged into S2
 
@@ -1068,11 +1085,19 @@ sample taken just before, which still held P30's transient.
 
 ### S38. Make the query independent of row order
 
-**Applies to:** P33. **Status:** undecided, not investigated.
+**Applies to:** P33. **Status:** done for the tainted results (uncommitted); path tie-breaking
+open.
 
-Find the step in the query whose output depends on the order it reads the index's rows, or sort
-the relations on load (or at save, which would also make index files comparable byte for byte).
-Until then, check an index change with a row-set comparison of the index files, not a results diff.
+`callee_by_site` holds every callee of a site, sorted and deduplicated, and the search enters each
+one's formal (and checks each for an absorbing external function). Queries of three WhatsApp
+indexes and two Element indexes, with their rows in different orders, now give identical results.
+It only adds taint: no location or vertex is lost, and the broad query's tainted-instruction
+locations grow from 31,197 to 32,450 on WhatsApp (+4.0%) and from 54,273 to 68,885 on Element
+(+26.9%), with 42 k and 735 k more tainted vertices. `cargo test -p ctadl-ascent` passes unchanged.
+
+Open: deterministic tie-breaking for reported paths and source attribution (sort the adjacency
+lists on resolved names, or sort the index at save), and the formatter's and `compute_arg_arity`'s
+one-callee maps.
 
 # Measurements
 

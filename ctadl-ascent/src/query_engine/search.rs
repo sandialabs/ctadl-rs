@@ -136,7 +136,8 @@ pub struct TaintSearchGraph {
     /// Call sites indexed by callee, for formal-to-actual (function exit) steps.
     callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>>,
     /// Callees of each call site, for actual-to-formal (call entry) steps. Several when the
-    /// index resolved an indirect or virtual call to more than one target.
+    /// index resolved an indirect or virtual call to more than one target (CHA rows in `call`,
+    /// and the index's `resolved_call`). Sorted and deduplicated.
     callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>>,
     /// The materialized access paths; a step producing a non-materialized path
     /// is dropped, the same gate the closure engine's `paths(p)` premises apply.
@@ -234,6 +235,10 @@ impl TaintSearchGraph {
         for (site, callee) in &facts.call {
             callers_by_callee.entry(*callee).or_default().push(*site);
             callee_by_site.entry(*site).or_default().push(*callee);
+        }
+        for callees in callee_by_site.values_mut() {
+            callees.sort_unstable();
+            callees.dedup();
         }
 
         let paths = facts.paths.iter().map(|(p,)| *p).collect();
@@ -442,12 +447,13 @@ impl LazySuccessors for TaintSearchGraph {
         }
 
         // Actual-to-formal (call entry): taint on a call-arg vertex enters the
-        // callee's formal. The `Call` label puts the annotation in `Restricted`.
+        // formal of each of the site's callees. The `Call` label puts the
+        // annotation in `Restricted`.
         if let Some(packed) = v.as_call_arg() {
             let call_arg_id = CallArgId::try_from(packed).unwrap();
             let site = PackedInsnSiteId::try_from_parts(f, call_arg_id.insn_id).unwrap();
+            let formal_var = FlowVariable::formal_index(call_arg_id.formal());
             for callee in self.callee_by_site.get(&site).into_iter().flatten() {
-                let formal_var = FlowVariable::formal_index(call_arg_id.formal());
                 if self.formal_ty.contains_key(&(*callee, formal_var)) {
                     // A formal has no incoming copies the hop would follow (its
                     // `ParamFlow` write-backs are excluded), so `All` is inert here
@@ -993,5 +999,51 @@ mod tests {
             !result.taint_edge.is_empty(),
             "activity getIntent lifecycle bridge should reach the sink"
         );
+    }
+
+    /// A call site with two callees (a virtual call CHA resolves to both, or a
+    /// `resolved_call` row beside a `call` row) passes the taint into each one,
+    /// whichever order the index stored the rows in. The search used to keep
+    /// only the last callee of a site, so it dropped the other's flows, and
+    /// which one it kept followed the row order (P33 in things-to-improve.md).
+    #[test]
+    fn call_site_with_two_callees_enters_both() {
+        let caller = FunctionId::new(0);
+        let (g1, g2) = (FunctionId::new(1), FunctionId::new(2));
+        let x = FlowVariable::local("x".into());
+        let arg = FlowVariable::call_arg_packed(
+            PackedCallArg::try_from_parts(InsnId::new(7), FormalIndex::new(0)).unwrap(),
+        );
+        let formal0 = FlowVariable::formal_index(FormalIndex::new(0));
+        let site = PackedInsnSiteId::try_from_parts(caller, InsnId::new(7)).unwrap();
+
+        let run = |call: Vec<(PackedInsnSiteId, FunctionId)>| {
+            let facts = QueryFacts {
+                endpoints: vec![
+                    (source(caller.id, x, false),),
+                    (sink(g1.id, formal0),),
+                    (sink(g2.id, formal0),),
+                ],
+                formal_param: vec![
+                    (g1, formal0, FormalType::Shared),
+                    (g2, formal0, FormalType::Shared),
+                ],
+                call,
+                assign: vec![(caller, arg, Path::empty(), x, Path::empty())],
+                paths: vec![(Path::empty(),)],
+                ..Default::default()
+            };
+            // The callees whose formal 0 the source's taint reached.
+            taint_search(facts, None)
+                .taint
+                .iter()
+                .filter(|(_, _, v, _, ep)| *v == formal0 && ep.direction == TaintDirection::Forward)
+                .map(|(f, ..)| *f)
+                .collect::<BTreeSet<_>>()
+        };
+
+        let both = BTreeSet::from([g1, g2]);
+        assert_eq!(run(vec![(site, g1), (site, g2)]), both);
+        assert_eq!(run(vec![(site, g2), (site, g1)]), both);
     }
 }

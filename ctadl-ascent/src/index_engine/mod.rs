@@ -1498,7 +1498,13 @@ pub(crate) fn phys_footprint_mb() -> f64 {
         status
             .lines()
             .find_map(|l| l.strip_prefix(field))
-            .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse::<f64>().ok())
+            .and_then(|rest| {
+                rest.trim()
+                    .trim_end_matches("kB")
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+            })
     };
     match kb("RssAnon:") {
         Some(anon) => (anon + kb("VmSwap:").unwrap_or(0.0)) / 1024.0,
