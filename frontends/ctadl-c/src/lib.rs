@@ -45,9 +45,9 @@ use ctadl_ir::mir::*;
 
 use source_info::{ArtifactEncoding, ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 
+use anyhow::Result;
 use internment::ArcIntern;
 use streaming_iterator::StreamingIterator;
-use anyhow::Result;
 use tree_sitter::{Node, Parser, Query, QueryCursor, QueryMatch, Tree};
 
 #[cfg(test)]
