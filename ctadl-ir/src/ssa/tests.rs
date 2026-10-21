@@ -733,35 +733,21 @@ fn test_pipeline_threads_match_serial() {
     let program = || {
         let mut program = Program::default();
         for _ in 0..16 {
-            program.functions.extend(program_f().functions.iter().cloned());
-            program.functions.extend(program_h().functions.iter().cloned());
+            program
+                .functions
+                .extend(program_f().functions.iter().cloned());
+            program
+                .functions
+                .extend(program_h().functions.iter().cloned());
         }
         program
-    };
-    // Phi placement walks a `HashSet`, so the order of a block's phis differs from run to run
-    // even on one thread. Sorting each run of phi lines takes that order out of the comparison.
-    let normalize = |p: &Program| {
-        let mut out: Vec<String> = Vec::new();
-        let mut phis: Vec<String> = Vec::new();
-        for line in p.to_string().lines() {
-            if line.starts_with("phi ") {
-                phis.push(line.to_string());
-                continue;
-            }
-            phis.sort();
-            out.append(&mut phis);
-            out.push(line.to_string());
-        }
-        phis.sort();
-        out.append(&mut phis);
-        out.join("\n")
     };
     let mut serial = program();
     run_pipeline(&mut serial, Pipeline::index_default());
     let mut parallel = program();
     run_pipeline_with_threads(&mut parallel, Pipeline::index_default(), 4);
     assert!(serial.to_string().contains("phi "), "SSA ran");
-    assert_eq!(normalize(&serial), normalize(&parallel));
+    assert_eq!(serial.to_string(), parallel.to_string());
 }
 
 /// Checks that `Pipeline::none()` really runs no passes.
@@ -1034,4 +1020,47 @@ fn test_pruned_loop() {
     );
     assert!(!pruned.contains(&(header, d)), "`d` is never read");
     assert!(pruned.contains(&(header, i)), "`i` is loop-carried");
+}
+
+/// Phi placement visits variables in a fixed order, so transforming the same function twice gives
+/// the same phis in the same order.
+#[test]
+fn test_phi_order_deterministic() {
+    // def Wide() { if (..) { x0 = 1; ..; x11 = 1; } else { x0 = 2; ..; x11 = 2; } y = x0..x11; return y; }
+    let wide = || {
+        let mut f = FunctionData {
+            name: "Wide".to_string(),
+            ..Default::default()
+        };
+        f.set_return_type(ReturnType { arity: 1 });
+        let xs: Vec<_> = (0..12).map(|i| local(&mut f, &format!("x{i}"))).collect();
+        let y = local(&mut f, "y");
+        let blocks = f.blocks.blocks_mut();
+        blocks.push(BasicBlockData::new(goto(&[1, 2])));
+        let mut b1 = BasicBlockData::new(goto(&[3]));
+        b1.extend(xs.iter().map(|x| assign(x, [konst(1)])));
+        blocks.push(b1);
+        let mut b2 = BasicBlockData::new(goto(&[3]));
+        b2.extend(xs.iter().map(|x| assign(x, [konst(2)])));
+        blocks.push(b2);
+        let mut b3 = BasicBlockData::new(Some(Terminator::new_kind(TerminatorKind::Return {
+            args: smallvec![Exp::Variable(y.clone())],
+        })));
+        b3.extend([assign(&y, xs.iter().map(|x| Exp::Variable(x.clone())))]);
+        blocks.push(b3);
+        f
+    };
+    let transformed = || {
+        let mut f = wide();
+        transform(&mut f, true);
+        f.to_string()
+    };
+    let first = transformed();
+    assert!(
+        first.matches("phi ").count() >= 12,
+        "join block has a phi per x_i"
+    );
+    for _ in 0..20 {
+        assert_eq!(first, transformed());
+    }
 }

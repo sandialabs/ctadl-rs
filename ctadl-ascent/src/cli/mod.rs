@@ -248,7 +248,6 @@ pub fn index(
             import.name,
             program_info.program.functions.len()
         );
-        // The passes are function-local, so `-j N` runs them on N threads too.
         ssa::run_pipeline_with_threads(
             &mut program_info.program,
             ssa::Pipeline::index_default().prune(prune_unreachable_cfg_nodes),

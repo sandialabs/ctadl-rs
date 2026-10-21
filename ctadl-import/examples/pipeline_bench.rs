@@ -20,8 +20,7 @@ struct Fingerprint {
     statements: usize,
     phis: usize,
     loads: usize,
-    /// Hash of every function's text with each block's phis sorted, since phi order within a
-    /// block is not deterministic even on one thread.
+    /// Hash of every function's text.
     hash: u64,
 }
 
@@ -40,21 +39,15 @@ fn fingerprint(p: &Program) -> Fingerprint {
                 }
             }
         }
-        let mut pending: Vec<&str> = Vec::new();
-        let text = f.to_string();
-        for line in text.lines() {
-            if line.starts_with("phi ") {
-                pending.push(line);
-                continue;
-            }
-            pending.sort_unstable();
-            pending.drain(..).for_each(|l| l.hash(&mut h));
-            line.hash(&mut h);
-        }
-        pending.sort_unstable();
-        pending.drain(..).for_each(|l| l.hash(&mut h));
+        f.to_string().hash(&mut h);
     }
-    Fingerprint { blocks, statements, phis, loads, hash: h.finish() }
+    Fingerprint {
+        blocks,
+        statements,
+        phis,
+        loads,
+        hash: h.finish(),
+    }
 }
 
 fn main() {
@@ -72,12 +65,12 @@ fn main() {
     );
     println!("none: {:?}", fingerprint(&info.program));
     // No thread count can finish faster than the largest function takes on its own.
-    if let Some(big) = info
-        .program
-        .functions
-        .iter()
-        .max_by_key(|f| f.blocks.iter_enumerated().map(|(_, b)| b.iter().count()).sum::<usize>())
-    {
+    if let Some(big) = info.program.functions.iter().max_by_key(|f| {
+        f.blocks
+            .iter_enumerated()
+            .map(|(_, b)| b.iter().count())
+            .sum::<usize>()
+    }) {
         let mut one = Program::default();
         one.functions.push(big.clone());
         let t = Instant::now();
@@ -85,7 +78,10 @@ fn main() {
         println!("largest function {}: {:.2?} alone", big.name, t.elapsed());
     }
     let mut reference: Option<(usize, f64, Fingerprint)> = None;
-    for threads in args[2..].iter().map(|s| s.parse::<usize>().expect("thread count")) {
+    for threads in args[2..]
+        .iter()
+        .map(|s| s.parse::<usize>().expect("thread count"))
+    {
         let mut program = info.program.clone();
         let t = Instant::now();
         ssa::run_pipeline_with_threads(&mut program, pipeline, threads);

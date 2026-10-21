@@ -76,8 +76,7 @@ pub fn eliminate_dead_temps_function(function: &mut FunctionData) -> usize {
     // def keyed by the variable it defines. Terminator reads (return arguments)
     // count as uses so a returned temp is never considered dead.
     let mut uses: HashMap<Variable, u32> = HashMap::new();
-    let mut def_sites: HashMap<Variable, SmallVec<[(BasicBlockIdx, usize); 2]>> =
-        HashMap::new();
+    let mut def_sites: HashMap<Variable, SmallVec<[(BasicBlockIdx, usize); 2]>> = HashMap::new();
     for (bb, block) in function.blocks.iter_enumerated() {
         for (pos, stmt) in block.statements.iter().enumerate() {
             for v in stmt.iter_src_var() {
@@ -111,11 +110,10 @@ pub fn eliminate_dead_temps_function(function: &mut FunctionData) -> usize {
     // Propagate: deleting a def drops the uses it made, so a variable that
     // thereby reaches zero uses makes its own removable def(s) dead in turn.
     while let Some((bb, pos)) = worklist.pop() {
-        let read: SmallVec<[Variable; 4]> = function.blocks[bb].statements
-            [StatementIdx::new(pos)]
-        .iter_src_var()
-        .map(|v| v.variable.clone())
-        .collect();
+        let read: SmallVec<[Variable; 4]> = function.blocks[bb].statements[StatementIdx::new(pos)]
+            .iter_src_var()
+            .map(|v| v.variable.clone())
+            .collect();
         for var in read {
             let count = uses.get_mut(&var).expect("use was counted");
             *count -= 1;

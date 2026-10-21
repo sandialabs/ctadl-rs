@@ -417,9 +417,6 @@ pub enum Variable {
     Param(ParameterIdx),
 }
 
-// `VariableRef::variable` was an `ArcIntern<Variable>`, read through `as_ref()`. It is a plain
-// `Variable` now, because the shared refcount on popular variables such as `Local(0)` serialized
-// threads running passes on different functions. This keeps those call sites as they were.
 impl AsRef<Variable> for Variable {
     #[inline]
     fn as_ref(&self) -> &Variable {
@@ -431,6 +428,8 @@ impl AsRef<Variable> for Variable {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VariableRef {
+    /// Not interned: a shared refcount on common variables such as `Local(0)` would serialize
+    /// threads running passes on different functions.
     pub variable: Variable,
     pub version: Option<u32>,
 }

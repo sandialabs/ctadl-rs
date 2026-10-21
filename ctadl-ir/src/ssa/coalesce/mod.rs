@@ -223,11 +223,7 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 /// expressible as an [`Exp`] (field reads are [`StatementKind::Load`]s, which
 /// this pass leaves untouched), substitution is a plain variable/const copy:
 /// `t = y; use t` becomes `use y`.
-fn try_subst_exp(
-    exp: &mut Exp,
-    pending: &mut HashMap<Variable, Pending>,
-    dead: &mut Vec<usize>,
-) {
+fn try_subst_exp(exp: &mut Exp, pending: &mut HashMap<Variable, Pending>, dead: &mut Vec<usize>) {
     let Exp::Variable(vref) = exp else {
         return;
     };

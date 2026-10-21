@@ -13,7 +13,7 @@ After SSA conversion, one may depend on a few things:
   parameters.
 
 */
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use smallvec::{SmallVec, smallvec};
 
@@ -37,7 +37,7 @@ pub use copy_prop::{propagate_copies, propagate_copies_function};
 
 #[derive(Debug)]
 struct PhiPlace {
-    variables: HashSet<Variable>,
+    variables: BTreeSet<Variable>,
     dominators: DominatorTree<BasicBlockIdx>,
 }
 
@@ -58,7 +58,7 @@ struct SsaRename {
 /// existed, the order was four lines inside `ctadl index`, so anything else that read an import
 /// had to copy the order out of a command-line function and hope it was still current.
 /// [`Pipeline::index_default`] is now the one place that says what `ctadl index` runs, and
-/// [`run_pipeline`] is the one place that runs it.
+/// [`run_pipeline_with_threads`] is the one place that runs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pipeline {
     /// Run [`eliminate_dead_temps`], which drops temporaries that are assigned but never read.
@@ -169,8 +169,8 @@ impl Default for Pipeline {
 
 /// Runs the passes that `p` selects, in the only order that is valid for them, on one thread.
 ///
-/// `ctadl index` used to contain this code directly. Anything that reads an import and then
-/// generates facts should call this rather than list the passes again.
+/// Anything that reads an import and then generates facts should call this (or
+/// [`run_pipeline_with_threads`]) rather than list the passes again.
 pub fn run_pipeline(program: &mut Program, p: Pipeline) {
     run_pipeline_with_threads(program, p, 1);
 }
@@ -219,7 +219,12 @@ pub fn run_pipeline_with_threads(program: &mut Program, p: Pipeline, threads: us
         // picked up last and leaving every other thread idle while it runs.
         let mut work: Vec<&mut FunctionData> = functions.iter_mut().collect();
         work.sort_by_cached_key(|f| {
-            std::cmp::Reverse(f.blocks.iter_enumerated().map(|(_, b)| b.len()).sum::<usize>())
+            std::cmp::Reverse(
+                f.blocks
+                    .iter_enumerated()
+                    .map(|(_, b)| b.len())
+                    .sum::<usize>(),
+            )
         });
         pool.install(|| {
             work.into_par_iter()
@@ -229,13 +234,22 @@ pub fn run_pipeline_with_threads(program: &mut Program, p: Pipeline, threads: us
         })
     };
     if p.dead_temps {
-        log::debug!("dead_temps: deleted {} dead temporary def(s)", stats.dead_temps);
+        log::debug!(
+            "dead_temps: deleted {} dead temporary def(s)",
+            stats.dead_temps
+        );
     }
     if p.coalesce {
-        log::debug!("coalesce_copies: removed {} fused copy statement(s)", stats.coalesced);
+        log::debug!(
+            "coalesce_copies: removed {} fused copy statement(s)",
+            stats.coalesced
+        );
     }
     if p.copy_prop {
-        log::debug!("copy_prop: removed {} copy/trivial-phi statement(s)", stats.copy_prop);
+        log::debug!(
+            "copy_prop: removed {} copy/trivial-phi statement(s)",
+            stats.copy_prop
+        );
     }
 }
 
@@ -545,8 +559,7 @@ impl PhiPlace {
         let mut a: HashMap<Variable, SmallVec<[BasicBlockIdx; 4]>> = Default::default();
         // Maps each variable to the blocks that read it before any assignment to it in the same
         // block: the blocks where it is live on entry because of a use inside the block.
-        let mut upward_uses: HashMap<Variable, SmallVec<[BasicBlockIdx; 4]>> =
-            Default::default();
+        let mut upward_uses: HashMap<Variable, SmallVec<[BasicBlockIdx; 4]>> = Default::default();
         // Set of all variables.
         let variables = &mut phi_place.variables;
 
