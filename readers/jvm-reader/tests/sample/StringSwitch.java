@@ -6,8 +6,6 @@
  * String.hashCode() followed by a tableswitch on the synthetic index. Both
  * consume a selector. A decoder that models neither reaches the common
  * continuation with two phantom slots.
- *
- * Mirrors brut.androlib.res.decoder.ResFileDecoder.decode.
  */
 public class StringSwitch {
 

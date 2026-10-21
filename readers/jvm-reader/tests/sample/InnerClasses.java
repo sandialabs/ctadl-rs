@@ -1,6 +1,5 @@
 /**
- * A static nested class. Revives the `InnerClasses` fixture as source: compiles
- * to two `.class` files (so the JAR/multi-class paths see more than one entry)
+ * A static nested class. Compiles to two `.class` files (so the JAR/multi-class paths see more than one entry)
  * carrying an InnerClasses attribute, and exercises object construction
  * (`new`/`dup`/`invokespecial`), `putfield`/`getfield`, and a final-field ctor.
  */

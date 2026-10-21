@@ -1,5 +1,4 @@
-// LoopFlow.java - string concat in a loop (invokedynamic / iinc); used by
-// jvm-reader `flow.rs` stack-normalization tests and nightly `Jvm:LoopFlow`.
+// LoopFlow.java - string concat in a loop (invokedynamic / iinc).
 public final class LoopFlow {
     static String source() {
         return "tainted";

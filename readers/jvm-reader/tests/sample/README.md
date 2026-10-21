@@ -13,7 +13,7 @@ and re-checks the `.jar` (parsed classes compared against `jar tf`). See
 source here is read by both frontends.
 
 Nothing else compiles them. `jvm-reader`'s own unit tests are hermetic — they
-build the two-entry constant pool they need in Rust — so a plain `cargo test`
+build the constant pools they need in Rust — so a plain `cargo test`
 covers them and needs no JDK.
 
 **These are reader-level fixtures, not taint cases.** They exist to give the
@@ -45,8 +45,7 @@ survive this bytecode and describe it faithfully".
 
 ### Decoder regression fixtures
 
-One per root cause from the JVM-frontend defect report. Each reproduces a
-decoder bug on ordinary, verifiable major-version-52 bytecode straight out of
+Each reproduces a decoder failure shape on ordinary, verifiable major-version-52 bytecode straight out of
 `javac`, so a failure is never a question of malformed input.
 
 - **SparseSwitch.java** – sparse integer switch → `lookupswitch`, with the
@@ -75,8 +74,8 @@ decoder bug on ordinary, verifiable major-version-52 bytecode straight out of
   every class with a supplementary character in a literal, not just deliberately
   packed data.
 - **SurrogateConstants.java** – a well-formed pair, a lone high surrogate, a
-  lone low surrogate, and a packed table mixing them, in the style of the
-  generated `smaliFlexLexer` table that first surfaced this. Unpaired
+  lone low surrogate, and a packed table mixing them, in the style of a
+  generated lexer's packed table. Unpaired
   surrogates are legal in a class file and are used on purpose as UTF-16 data;
   Rust's `String` cannot hold them, so they survive as code units in
   `JvmString::Utf16` / `DexString::Utf16` and are only rendered lossily. These
