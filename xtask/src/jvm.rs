@@ -525,6 +525,11 @@ fn check_basic_blocks(samples: &[Sample]) -> Result<()> {
 /// After stack-slot normalization no relative stack locations remain, slot ids
 /// stay small, and across the samples we observe both a StackSlot and a reused
 /// destination slot id.
+///
+/// A method whose stack heights disagree at a join
+/// (`ClassFileError::StackHeightMismatch`, a shape the normalization does not
+/// support) is skipped rather than failed, recognized by the structured error;
+/// eight or more such skips fail the check.
 fn check_stack_slots(samples: &[Sample]) -> Result<()> {
     let mut saw_stack_slot = false;
     let mut saw_duplicate_dest = false;

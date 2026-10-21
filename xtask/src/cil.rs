@@ -4,8 +4,8 @@
 //!
 //! The dump format is the contract: `cil-dump` renders an assembly with
 //! cil-reader, `tools/CecilDump` renders it with Mono.Cecil, and the two must
-//! be byte-identical. The first six checks are of that; the rest check the
-//! flow layer, the frontend and the default models:
+//! be byte-identical. The checks through `cil:symbols` hold cil-reader to
+//! Cecil; the rest check the flow layer, the frontend and the default models:
 //!
 //! - `cil:must-fail`     — non-CLI inputs (`text_file.txt`) are rejected.
 //! - `cil:cecil-tests`   — cil-reader's ports of Cecil's own test suites, which
