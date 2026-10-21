@@ -1,8 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    ModelRun: see Program.cs. It references no NuGet packages, so it
-    restores and builds offline, inside the Nix sandbox (`modelRun` in
-    `nix/cil.nix`).
+    ModelRun: see Program.cs. `modelRun` in `nix/cil.nix` builds it.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
