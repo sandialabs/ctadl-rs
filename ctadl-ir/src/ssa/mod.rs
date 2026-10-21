@@ -46,7 +46,7 @@ struct SsaRename {
     /// S(*) in the paper is an array of stacks, one per variable, that hold the unique SSA
     /// version numbers. Top of S(V) is used to construct V_i that replaces a use of V.
     s: HashMap<Variable, Vec<usize>>,
-    /// C(*) is an array of integers, one per variable. The counte C(V) tells how many assignments
+    /// C(*) is an array of integers, one per variable. The count C(V) tells how many assignments
     /// to V have been processed.
     c: HashMap<Variable, usize>,
 }
@@ -82,8 +82,8 @@ impl Pipeline {
     /// Dead-temp elimination runs first for two reasons. It removes definitions that coalescing
     /// cannot remove, because a dead temporary has no use to merge it into. And it makes the
     /// program smaller before coalescing scans it. Both passes do nothing to a program that is
-    /// already in SSA form, such as a flowy import, which is why running the whole pipeline
-    /// twice gives the same result as running it once.
+    /// already in SSA form, such as a flowy import. SSA conversion itself must not run twice;
+    /// see [`transform`].
     #[inline]
     pub fn index_default() -> Self {
         Pipeline {
@@ -515,20 +515,17 @@ impl MutVisitor for SingleExitRewrite {
         _bb: BasicBlockIdx,
         data: &mut BasicBlockData,
     ) {
-        // Create assignment of <retvar>* = <return'd var>
         if let TerminatorKind::Return { args } = &data.terminator().kind {
             let args = args.clone();
-            // assign returned values into retvars
+            // Create assignment of <retvar>* = <return'd var>
             for (retvar, arg) in std::iter::zip(&self.retvars, &args) {
                 data.push_back(Statement::new_kind(StatementKind::assign(
                     retvar.clone(),
                     [arg.clone()],
                 )));
             }
-        }
-        // Finally, replace return with goto of exit block to get the graph into the shape
-        // we need it for dominators/ssa transformation.
-        if matches!(data.terminator().kind, TerminatorKind::Return { .. }) {
+            // Finally, replace return with goto of exit block to get the graph into the shape
+            // we need it for dominators/ssa transformation.
             *data.terminator_mut() = Terminator::new_kind(TerminatorKind::Goto {
                 targets: smallvec![self.exit],
             });
@@ -599,7 +596,7 @@ impl PhiPlace {
         // outer loop.
         let mut work: IndexVec<BasicBlockIdx, usize> =
             IndexVec::from_elem_n(0, function.blocks.num_nodes());
-        // has_already[x] indices whether a phi-function for v has been considered at x.
+        // has_already[x] indicates whether a phi-function for v has been considered at x.
         let mut has_already: IndexVec<BasicBlockIdx, usize> =
             IndexVec::from_elem_n(0, function.blocks.num_nodes());
         // defines[x] == iter_count means x assigns v; live_in[x] == iter_count means v is live on
