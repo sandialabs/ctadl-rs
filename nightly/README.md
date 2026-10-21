@@ -171,6 +171,15 @@ reported byte offset back to a source line via the dex linemap. A positive test
 **empty** `expected_lines` makes it a *negative* test: it passes only if **no**
 flow is reported (see `Reassignment.java` / `reassignment.json`).
 
+**Pure copies drop out of the code flow.** The query collapses each pure copy
+(`local = obj.data`, `local = arr[1]`, the body of a getter, setter or other
+callee that only passes its argument through) onto what it copies, through the
+`copy_alias` union-find (`compute_copy_alias` in
+`ctadl-ascent/src/query_engine/mod.rs`). The copy's line then appears in neither
+the human code flow nor the machine tainted-instructions, though the taint still
+reaches the sink, so it does not belong in `expected_lines`. A spec that leaves
+such a line out says which one and points here.
+
 ## Adding a pcode/C test
 
 1. Write `tests/c/foo.c` with functions matching the query's `source`/`sink`
