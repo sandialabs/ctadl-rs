@@ -839,14 +839,6 @@ impl VariableRef {
         }
     }
 
-    /// Creates a reference to the variable with no version
-    pub fn new_var_ref(variable: Variable) -> Self {
-        VariableRef {
-            variable,
-            version: None,
-        }
-    }
-
     /// Creates a local reference with no version from a local index
     #[inline]
     pub fn new_local_idx(idx: LocalIdx) -> Self {

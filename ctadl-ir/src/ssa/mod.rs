@@ -657,11 +657,11 @@ impl PhiPlace {
                             let operands = function
                                 .blocks
                                 .predecessors(y)
-                                .map(|pred| (pred, VariableRef::new_var_ref(v)))
+                                .map(|pred| (pred, VariableRef::new(v)))
                                 .collect();
                             let block_data = &mut function.blocks.blocks_mut_preserves_cfg()[y];
                             block_data.push_front(Statement::new_kind(StatementKind::Phi {
-                                dest: VariableRef::new_var_ref(v),
+                                dest: VariableRef::new(v),
                                 operands,
                             }));
                         }

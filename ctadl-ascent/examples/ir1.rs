@@ -185,7 +185,7 @@ fn program_h() -> Program {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
-        let global_ref = VariableRef::new_var_ref(Variable::GlobalHeap);
+        let global_ref = VariableRef::new(Variable::GlobalHeap);
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
                 AccessPath::without_fields(global_ref.clone()),
