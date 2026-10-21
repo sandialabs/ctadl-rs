@@ -552,11 +552,11 @@ macro_rules! impl_encode_newtype {
     };
 }
 
-// Custom encoding for Path since it's now VecDeque<mir::OffsetAccess> instead of Str
+// A `Path` is stored as its canonical string (`Path::to_dot_string`), which `Path::parse` reads
+// back.
 impl EncodeColumn<facts::Path> for DefaultEncoder {
     #[inline]
     fn encode_column(name: &str, col: Vec<facts::Path>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        // Convert each Path to escaped string format for parquet storage
         let strings: Vec<Str> = col
             .into_iter()
             .map(|path| path.to_dot_string().into())
@@ -914,9 +914,9 @@ impl DecodeColumn<facts::FlowEdge> for DefaultDecoder {
 }
 
 // A `CallTargetObject` spans three arrow columns: a `<name>_tag` byte (0 =
-// FunctionId, 1 = Symbol, 2 = LuaClass), a nullable `<name>_func` holding the target function id
-// (present iff the variant is `FunctionId`), and a nullable `<name>_symbol` holding
-// the class name (present iff the variant is `Symbol` or `LuaClass`).
+// FunctionId, 1 = Symbol, 2 = LuaClass, 3 = CilClass), a nullable `<name>_func` holding the target
+// function id (present iff the variant is `FunctionId`), and a nullable `<name>_symbol` holding
+// the class name (present iff the variant is `Symbol`, `LuaClass` or `CilClass`).
 impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
     #[inline]
     fn encode_column(
@@ -1187,8 +1187,6 @@ impl DecodeColumn<facts::IntentPairKind> for DefaultDecoder {
     }
 }
 
-// type QueryEndpointEncoding = (
-
 impl EncodeColumn<query_engine::QueryEndpoint> for DefaultEncoder {
     #[inline]
     fn encode_column(
@@ -1245,8 +1243,8 @@ impl DecodeColumn<query_engine::QueryEndpoint> for DefaultDecoder {
                 label,
                 direction,
                 call_site,
-                // Not persisted on disk (the parquet schema is unchanged): `saturating`
-                // is a search-graph concern re-derived from the model each query.
+                // Not persisted: `saturating` is a search-graph concern re-derived from the
+                // model each query.
                 saturating: false,
             },
         )
