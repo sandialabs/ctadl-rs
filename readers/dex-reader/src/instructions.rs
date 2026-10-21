@@ -79,8 +79,7 @@ impl DisplayInstr for TypeIdx {
 /// Quote a string constant for disassembly output.
 ///
 /// Scalar values are escaped as `char::escape_debug` does. An unpaired
-/// surrogate has no `char` to escape -- and a DEX string constant may legally
-/// hold one, since generated lexers use constants as packed UTF-16 tables --
+/// surrogate (which a [`DexString`] may legally hold) has no `char` to escape,
 /// so it is written the way baksmali writes every non-ASCII code unit,
 /// `\uXXXX`.
 fn quote_string_constant(s: &DexString) -> String {
