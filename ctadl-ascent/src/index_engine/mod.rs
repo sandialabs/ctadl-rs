@@ -525,7 +525,6 @@ impl std::fmt::Display for Parallelism {
 
 #[derive(Debug, Clone, Default)]
 pub struct IndexStats {
-    /// The fixpoint's relation sizes and SCC/rule times, saved with the index as `profile.json`.
     pub profile: profile::IndexProfile,
     pub initial_assign: usize,
     pub final_assign_like: usize,
