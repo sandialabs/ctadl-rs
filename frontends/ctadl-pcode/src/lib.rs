@@ -30,8 +30,6 @@ use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
 
-// `pub(crate)` for `GhidraSource::detect`, which the JNI registry scan uses to tell an artifact
-// that is a binary on disk from a `ghidra://` URL or a `.gpr` project.
 pub mod ghidra;
 
 // The `RegisterNatives` scanner. The module docs above say why it lives in this crate, and
@@ -59,10 +57,7 @@ pub fn import_pcode(import: &ctadl_import::project::ArtifactImport) -> Result<Pr
 
     let facts_dir = import_path.join("facts");
 
-    // Gzip the (large) fact tables Ghidra just produced so they take less room in
-    // the store. This also runs on the `CTADL_REUSE_FACTS` reuse path; it only
-    // touches `*.facts` and skips `*.facts.gz`, so it is idempotent. The reader
-    // below transparently handles either variant.
+    // Gzip the fact tables Ghidra just produced; the reader below handles either variant.
     ghidra::compress_facts_dir(&facts_dir)?;
 
     // Persist Ghidra's image base on the import config so downstream consumers
@@ -166,29 +161,28 @@ impl Addr {
 
 #[derive(Debug)]
 struct Context {
-    // Function mapping: pcode function ID -> CTADL function index
+    /// Function mapping: pcode function ID -> CTADL function index
     functions: BTreeMap<pcode_reader::HighFunc, FunctionIdx>,
-    // Basic block mapping: (function ID, pcode block ID) -> CTADL basic block index
+    /// Basic block mapping: (function ID, pcode block ID) -> CTADL basic block index
     basic_blocks: BTreeMap<(pcode_reader::HighFunc, pcode_reader::PcodeBlockBasic), BasicBlockIdx>,
-    // Basic block facts for function lookup
+    /// Basic block facts for function lookup
     bb_facts: BTreeMap<pcode_reader::PcodeBlockBasic, pcode_reader::BBData>,
-    // Mapping from instruction address to basic block
+    /// Mapping from instruction address to basic block
     address_to_bb: BTreeMap<i64, (pcode_reader::HighFunc, BasicBlockIdx)>,
-    // Constant propagation results
+    /// Constant propagation results
     cp_results:
         BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::constant_propagation::SymbolicProp>,
-    // Stack pointer register name
+    /// Stack pointer register name
     sp_name: Option<String>,
-    // Varnodes that Ghidra classifies as storage for a global variable
+    /// Varnodes that Ghidra classifies as storage for a global variable
     global_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
-    // Register facts needed for vnode conversion
+    /// Register facts needed for vnode conversion
     register_facts: Vec<pcode_reader::RegisterData>,
-    // Current function being processed
+    /// Current function being processed
     current_hfunc: Option<pcode_reader::HighFunc>,
-    // Function entry address -> the fully-qualified IR name of the function there. Keyed by the
-    // address Ghidra reports, which is `image_base + ELF vaddr`. Built alongside `functions` in
-    // `process_functions`; the JNI registry scan is its only consumer, resolving each recovered
-    // `fnPtr` to something `link` can name.
+    /// Function entry address -> the fully-qualified IR name of the function there. Keyed by the
+    /// address Ghidra reports, which is `image_base + ELF vaddr`. Built alongside `functions` in
+    /// `process_functions`.
     entry_points: BTreeMap<i64, String>,
     counter: i64,
 }
@@ -944,16 +938,9 @@ impl Context {
                 // Handle copy-like and unary operations as assignments
                 self.handle_copy_operation(pcode, vnode_facts, locals)
             }
-            "LOAD" => {
-                // Handle load operations
-                self.handle_load_operation(pcode, vnode_facts, locals)
-            }
-            "STORE" => {
-                // Handle store operations
-                self.handle_store_operation(pcode, vnode_facts, locals)
-            }
+            "LOAD" => self.handle_load_operation(pcode, vnode_facts, locals),
+            "STORE" => self.handle_store_operation(pcode, vnode_facts, locals),
             "CALL" | "CALLIND" => {
-                // Handle call operations
                 self.handle_call_operation(pcode, vnode_facts, hfunc_facts, program, locals)
             }
             "RETURN" | "BRANCH" | "CBRANCH" | "BRANCHIND" => {
@@ -1157,8 +1144,7 @@ impl Context {
                 // product wraps on the machine and has to wrap here. Constant
                 // propagation happily hands back a huge index (a folded pointer, a
                 // sentinel like -1), and `*` panics on overflow in a debug build --
-                // which is a crashed import, not a wrong offset. libtmessages.49.so out
-                // of Telegram's arm64 split APK does exactly this.
+                // which is a crashed import, not a wrong offset.
                 ap.push_offset(idx_c.wrapping_mul(s_val));
                 let mut stmts = Vec::new();
                 let src = Exp::access_path(self.load_ap(&mut stmts, ap, locals));
@@ -1257,7 +1243,7 @@ impl Context {
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
         locals: &mut Locals,
     ) -> Result<Vec<Statement>, Error> {
-        let (inputs, _) = (&pcode.inputs, &pcode.outputs);
+        let inputs = &pcode.inputs;
         if inputs.len() >= 3 {
             // STORE <space>, <offset>, <value>
             let mut dest = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts, locals)?;
@@ -1266,10 +1252,9 @@ impl Context {
             let mut stmts = Vec::new();
             let value_exp = self.get_exp(&mut stmts, &inputs[2], vnode_facts, locals)?;
 
-            // Store through the address's (composed) field path. Unlike the old Update lowering,
-            // this does NOT redefine the address base variable. Any loads needed to materialize
-            // the stored value (above) or intermediate dereferences of the address are emitted
-            // first.
+            // Store through the address's (composed) field path; the address base variable is
+            // not redefined. Any loads needed to materialize the stored value (above) or
+            // intermediate dereferences of the address are emitted first.
             self.push_assign_or_store(&mut stmts, dest, value_exp, locals);
             return Ok(stmts);
         }
@@ -1391,7 +1376,7 @@ impl Context {
     }
 
     /// Resolve an offset expression using constant propagation results if available.
-    /// If offset = x + c, returns an access path for x with [c] as a symbolic field.
+    /// If offset = x + c, returns an access path for x with the offset `[c]`.
     fn resolve_mem_exp(
         &mut self,
         _space_id: &pcode_reader::PcodeVarnode,
@@ -1428,7 +1413,6 @@ impl Context {
         program: &Program,
         locals: &mut Locals,
     ) -> Result<Vec<Statement>, Error> {
-        // Check if we have inputs and the first input is a call target
         let outputs: Result<SmallVec<[Addr; 4]>, _> = pcode
             .outputs
             .iter()
