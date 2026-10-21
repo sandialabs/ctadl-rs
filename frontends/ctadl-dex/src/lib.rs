@@ -12,7 +12,7 @@ use std::path::Path;
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
 use smallvec::{SmallVec, smallvec};
-use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
+use source_info::{ArtifactKey, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
@@ -51,7 +51,7 @@ pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
         APKParser::new(&data).err_context(|| format!("parsing APK: {}", file.display()))?;
     let dex_count = parser.dex_count();
     let mut ctx = Context::new();
-    let mut builders = Builders::new();
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
 
     for (sub_artifact_id, (dex_file_name, parser)) in
         parser.dex_parsers_with_filenames().into_iter().enumerate()
@@ -80,7 +80,7 @@ pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
     let parser =
         DexParser::new(&data).err_context(|| format!("parsing Dex file: {}", file.display()))?;
     let mut ctx = Context::new();
-    let mut builders = Builders::new();
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
     let key = ArtifactKey {
         path: file.to_string_lossy().to_string(),
         sub_artifact_id: 0,
@@ -91,24 +91,6 @@ pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
     ctx.process(&parser, key, &mut builders)
         .err_context(|| format!("converting Dex file: {}", file.display()))?;
     ctx.finish(builders)
-}
-
-/// Builders for program and metadata
-struct Builders {
-    program: Program,
-    vmt: VirtualMethodTable,
-    source_info_builder: SourceInfoBuilder,
-}
-
-impl Builders {
-    fn new() -> Self {
-        let artifact_metadata = source_info::ArtifactMetadata::new();
-        Self {
-            program: Program::default(),
-            vmt: VirtualMethodTable::new_java(),
-            source_info_builder: SourceInfoBuilder::new(artifact_metadata),
-        }
-    }
 }
 
 /// The translation of dex files into CTADL IR.
@@ -167,7 +149,7 @@ impl Context {
         &mut self,
         parser: &DexParser<'_>,
         artifact_key: ArtifactKey,
-        builders: &mut Builders,
+        builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
         for class_def in parser.classes() {
             let class_name = parser.class_name(class_def)?;
@@ -504,7 +486,7 @@ impl Context {
         Ok(())
     }
 
-    fn finish(&mut self, mut builders: Builders) -> Result<ProgramInfo, Error> {
+    fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         let program = builders.program;
         log::trace!("program: {program}");
         // Verify the generated program.

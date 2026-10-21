@@ -783,6 +783,27 @@ pub struct ProgramInfo {
     pub source_info: source_info::SourceInfo,
 }
 
+/// A [`ProgramInfo`] under construction, for a frontend to fill in.
+#[derive(Debug)]
+pub struct ProgramInfoBuilder {
+    pub program: Program,
+    pub vmt: VirtualMethodTable,
+    pub source_info_builder: source_info::SourceInfoBuilder,
+}
+
+impl ProgramInfoBuilder {
+    /// An empty program with no source information, whose methods `vmt` will describe.
+    pub fn new(vmt: VirtualMethodTable) -> Self {
+        Self {
+            program: Program::default(),
+            vmt,
+            source_info_builder: source_info::SourceInfoBuilder::new(
+                source_info::ArtifactMetadata::new(),
+            ),
+        }
+    }
+}
+
 impl SourceInfo {
     pub fn new(span_id: source_info::FileSpanId) -> Self {
         Self { span_id }

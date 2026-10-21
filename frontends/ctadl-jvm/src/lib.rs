@@ -10,7 +10,7 @@ use std::path::Path;
 use hashbrown::HashSet;
 use hashbrown::hash_map::HashMap;
 use smallvec::{SmallVec, smallvec};
-use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
+use source_info::{ArtifactKey, SpanLen};
 
 use ctadl_import::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
@@ -58,7 +58,7 @@ pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
     let parser =
         JarFileParser::open(file).err_context(|| format!("reading jar: {}", file.display()))?;
     let mut ctx = Context::new();
-    let mut builders = Builders::new();
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
 
     log::info!(
         "{}: {} class file(s)",
@@ -84,7 +84,7 @@ pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
     let parser = ClassFileParser::parse(&data)
         .err_context(|| format!("parsing class file: {}", file.display()))?;
     let mut ctx = Context::new();
-    let mut builders = Builders::new();
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_java());
     let key = ArtifactKey {
         path: file.to_string_lossy().to_string(),
         sub_artifact_id: 0,
@@ -95,24 +95,6 @@ pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
     ctx.process(&parser, key, &mut builders)
         .err_context(|| format!("converting class file: {}", file.display()))?;
     ctx.finish(builders)
-}
-
-/// Builders for program and metadata
-struct Builders {
-    program: Program,
-    vmt: VirtualMethodTable,
-    source_info_builder: SourceInfoBuilder,
-}
-
-impl Builders {
-    fn new() -> Self {
-        let artifact_metadata = source_info::ArtifactMetadata::new();
-        Self {
-            program: Program::default(),
-            vmt: VirtualMethodTable::new_java(),
-            source_info_builder: SourceInfoBuilder::new(artifact_metadata),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -182,7 +164,7 @@ impl Context {
         &mut self,
         parser: &ClassFileParser,
         artifact_key: ArtifactKey,
-        builders: &mut Builders,
+        builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
         for class_def in parser.classes() {
             let class_name = jvm_class_symbol(parser.class_name()?);
@@ -480,7 +462,7 @@ impl Context {
         Ok(())
     }
 
-    fn finish(&mut self, mut builders: Builders) -> Result<ProgramInfo, Error> {
+    fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         let mut program = builders.program;
         for (_sig, entry) in self.ext.drain() {
             if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {

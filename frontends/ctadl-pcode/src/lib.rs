@@ -19,7 +19,7 @@ use std::ops::Deref;
 use std::path::Path;
 
 use smallvec::{SmallVec, smallvec};
-use source_info::{ArtifactKey, SourceInfoBuilder};
+use source_info::ArtifactKey;
 use std::collections::{BTreeMap, BTreeSet};
 
 use ctadl_import::error::{Error, ErrorContext};
@@ -74,7 +74,7 @@ pub fn import_pcode(import: &ctadl_import::project::ArtifactImport) -> Result<Pr
     }
 
     let mut ctx = Context::new();
-    let mut builders = Builders::new();
+    let mut builders = ProgramInfoBuilder::new(VirtualMethodTable::new_native());
 
     let key = ArtifactKey {
         path: path.to_string_lossy().to_string(),
@@ -94,24 +94,6 @@ pub fn import_pcode(import: &ctadl_import::project::ArtifactImport) -> Result<Pr
     jni_registry::scan_import(import, image_base, &ctx.entry_points)?;
 
     ctx.finish(builders)
-}
-
-/// Builders for program and metadata
-struct Builders {
-    program: Program,
-    vmt: VirtualMethodTable,
-    source_info_builder: SourceInfoBuilder,
-}
-
-impl Builders {
-    fn new() -> Self {
-        let artifact_metadata = source_info::ArtifactMetadata::new();
-        Self {
-            program: Program::default(),
-            vmt: VirtualMethodTable::new_native(),
-            source_info_builder: SourceInfoBuilder::new(artifact_metadata),
-        }
-    }
 }
 
 enum VnodeRep {
@@ -232,7 +214,7 @@ impl Context {
         &mut self,
         facts_dir: &Path,
         artifact_key: ArtifactKey,
-        builders: &mut Builders,
+        builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
         // Use pcode-reader crate to read facts
         let reader = PcodeFactsReader::new(facts_dir);
@@ -337,7 +319,7 @@ impl Context {
         &mut self,
         pcode_facts: &pcode_reader::PcodeFacts,
         name_to_func_map: &BTreeMap<String, pcode_reader::HighFunc>,
-        builders: &mut Builders,
+        builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
         let hfunc_facts = &pcode_facts.hfunc_facts;
         let proto_facts = &pcode_facts.proto_facts;
@@ -480,7 +462,7 @@ impl Context {
     fn process_all_blocks(
         &mut self,
         pcode_facts: &pcode_reader::PcodeFacts,
-        builders: &mut Builders,
+        builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
         // Group basic blocks by function
         let mut func_to_bbs: BTreeMap<pcode_reader::HighFunc, Vec<pcode_reader::PcodeBlockBasic>> =
@@ -644,7 +626,7 @@ impl Context {
         &mut self,
         pcode_facts: &pcode_reader::PcodeFacts,
         artifact_key: ArtifactKey,
-        builders: &mut Builders,
+        builders: &mut ProgramInfoBuilder,
     ) -> Result<(), Error> {
         // Create a mapping from basic blocks to their functions
         let mut bb_to_function: BTreeMap<pcode_reader::PcodeBlockBasic, FunctionIdx> =
@@ -1658,7 +1640,7 @@ impl Context {
         VariableRef::new_local_idx(locals.get_or_intern(&format!("temp_{}", n)))
     }
 
-    fn finish(self, builders: Builders) -> Result<ProgramInfo, Error> {
+    fn finish(self, builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         log::trace!("final program: {}", builders.program);
         // Verify the program
         builders.program.verify()?;
