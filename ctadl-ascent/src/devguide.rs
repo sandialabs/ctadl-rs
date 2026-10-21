@@ -13,7 +13,7 @@ CTADL's overall flow is as follows:
 1. [`crate::cli::import`] translates a frontend language into CTADL IR [`ctadl_ir::ProgramInfo`].
    This includes translating data flow statements, calls, constants, standard control flow,
    exceptions. It must produce a well defined IR. The IR is stored into the CTADL store (see
-   [`crate::project`].
+   [`crate::project`]).
 2. [`crate::cli::index`] loads some number of imported programs and indexes them using Datalog. The
    process of turning the programs into indexable-facts is called code generation (codegen) because
    it's quite like what a compiler does. It turns the programs into SSA form, applies relevant
@@ -32,9 +32,9 @@ store it in a binary format.
 # Important Modules
 
 - [crate::project] - manages how CTADL stores all its information
-- [crate::languages::dex] - DEX language frontend
-- [crate::languages::jvm] - JVM language frontend
-- [crate::languages::tree_sitter_c] - C language frontend
+- [ctadl_dex] - DEX language frontend
+- [ctadl_jvm] - JVM language frontend
+- [ctadl_c] - C language frontend
 - [crate::codegen] - Frontend language to Datalog code generation
 - [crate::models] - Handles loading models for index/query
 - [crate::index_engine] - datalog, datatypes for core CTADL index phase
