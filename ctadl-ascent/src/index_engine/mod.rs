@@ -66,7 +66,6 @@ pub mod c_assign_like_trie;
 pub mod c_locals_trie;
 pub mod decision;
 pub mod hybrid_set;
-mod instrument;
 pub mod locals_trie;
 pub mod path_group;
 pub mod path_set;
@@ -2664,7 +2663,6 @@ pub fn taint_index_with_config(
             }
         );
 
-        instrument::after_run!(prog, id_map);
         let assign_like_out = prog.take_assign_like();
         let reached_variables = prog.num_reached_variables();
 

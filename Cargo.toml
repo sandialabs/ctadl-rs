@@ -61,9 +61,3 @@ lto = "thin"
 inherits = "release"
 debug = true
 strip = "none"
-
-# Investigation branch only, never merged: a patched Ascent macro (vendor/ascent_macro) whose
-# `run_timeout` keeps the stopped SCC's stores and which reports index sizes, per-iteration
-# deltas and per-rule derivation counts.
-[patch.crates-io]
-ascent_macro = { path = "vendor/ascent_macro" }
