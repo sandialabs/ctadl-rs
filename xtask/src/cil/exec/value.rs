@@ -408,7 +408,7 @@ fn shift(op: &Op, a: &Value, b: &Value) -> Result<Value, Fault> {
 }
 
 /// A unary operation of `Transfer::Derived`: neg, not, conv.
-pub fn unary(op: &Op, a: &Value) -> Result<Value, Fault> {
+pub fn unary(op: &Op, a: &Value, uint64_double_via_signed: bool) -> Result<Value, Fault> {
     match (op, a) {
         (Op::Neg, Value::I4(x)) => Ok(Value::I4(x.wrapping_neg())),
         (Op::Neg, Value::I8(x)) => Ok(Value::I8(x.wrapping_neg())),
@@ -418,7 +418,7 @@ pub fn unary(op: &Op, a: &Value) -> Result<Value, Fault> {
         (Op::Not, Value::I4(x)) => Ok(Value::I4(!x)),
         (Op::Not, Value::I8(x)) => Ok(Value::I8(!x)),
         (Op::Not, Value::I(x)) => Ok(Value::I(!x)),
-        (Op::Conv(t), _) => conv(t, a),
+        (Op::Conv(t), _) => conv(t, a, uint64_double_via_signed),
         _ => Err(invalid(op, a, None)),
     }
 }
@@ -453,7 +453,7 @@ fn int_result(ty: ConvType, x: i128) -> Value {
 }
 
 /// `conv.*`, `conv.ovf.*[.un]` and `conv.r.un` (Tables III.8 and III.9).
-pub fn conv(t: &ConvTarget, a: &Value) -> Result<Value, Fault> {
+pub fn conv(t: &ConvTarget, a: &Value, uint64_double_via_signed: bool) -> Result<Value, Fault> {
     // The source as an integer, read unsigned for `.un`, or as a float.
     // conv.u8 and conv.u zero-extend an int32 (Table III.8).
     let widen_unsigned = !t.flags.ovf && matches!(t.ty, ConvType::U8 | ConvType::U);
@@ -478,6 +478,11 @@ pub fn conv(t: &ConvTarget, a: &Value) -> Result<Value, Fault> {
             Err(f) => f as f32,
         })),
         ConvType::R8 | ConvType::R => Ok(Value::R8(match source {
+            // Match the reference JIT's two rounding steps exactly, rather than
+            // accepting an ULP tolerance on the trial's entire final state.
+            Ok(x) if uint64_double_via_signed && x > i64::MAX as i128 => {
+                (x as u64 as i64) as f64 + 18_446_744_073_709_551_616.0
+            }
             Ok(x) => x as f64,
             Err(f) => match a {
                 // conv.r8 of a float32 widens exactly.
@@ -581,6 +586,54 @@ pub fn truthy(v: &Value) -> Result<bool, Fault> {
 mod tests {
     use super::*;
     use cil_reader::flow::OpFlags;
+
+    fn conv(t: &ConvTarget, a: &Value) -> Result<Value, Fault> {
+        super::conv(t, a, false)
+    }
+
+    #[test]
+    fn unsigned_double_matches_reference_rounding() {
+        let to = ConvTarget {
+            ty: ConvType::R,
+            flags: UN,
+        };
+        // The three unique Linux CI failures, before the fixture adds its
+        // other operands. Check both runtime policies against exact bits.
+        for (input, direct, via_signed) in [
+            (
+                11_541_544_916_613_131_022_u64,
+                0x43e40579be763e1d,
+                0x43e40579be763e1e,
+            ),
+            (
+                11_651_163_550_426_862_920_u64,
+                0x43e43627f0986583,
+                0x43e43627f0986582,
+            ),
+            (
+                10_300_923_358_455_149_826_u64,
+                0x43e1de8766f8e7c7,
+                0x43e1de8766f8e7c6,
+            ),
+        ] {
+            for (policy, bits) in [(false, direct), (true, via_signed)] {
+                let Value::R8(actual) = super::conv(&to, &Value::I8(input as i64), policy).unwrap()
+                else {
+                    panic!("expected double");
+                };
+                assert_eq!(actual.to_bits(), bits, "input={input}, via_signed={policy}");
+            }
+        }
+        // The runtime policy must not reinterpret signed conversions.
+        let signed = ConvTarget {
+            ty: ConvType::R8,
+            flags: PLAIN,
+        };
+        assert_eq!(
+            super::conv(&signed, &Value::I8(-5), true),
+            Ok(Value::R8(-5.0))
+        );
+    }
 
     const PLAIN: OpFlags = OpFlags {
         ovf: false,
