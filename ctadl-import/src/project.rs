@@ -278,7 +278,8 @@ pub struct ArtifactImport {
     pub hash: Option<String>,
     /// Names of imports derived from this one: the native libraries extracted out of
     /// an APK and lowered through the pcode frontend (see
-    /// `ctadl_frontends::apk_native`). A project naming this import co-indexes
+    /// `ctadl_frontends::apk_native`), or an XAPK's split APKs and their libraries (see
+    /// `ctadl_frontends::xapk`). A project naming this import co-indexes
     /// these too, which is what lets the JNI bridge see both halves of the boundary
     /// from a single `ctadl import app.apk`. Empty for every other language.
     #[serde(default)]
@@ -444,7 +445,7 @@ impl ArtifactImport {
         self.import_path().join("source-info")
     }
 
-    /// Path to the IR program for this artifact
+    /// Path to this import's config file
     #[inline]
     pub fn config_path(&self) -> PathBuf {
         self.import_path().join(IMPORT_CONFIG_FILE)
@@ -540,16 +541,6 @@ pub fn is_ghidra_server_url(path: &Path) -> bool {
     path.to_string_lossy().starts_with("ghidra://")
 }
 
-/// Computes a stable, hex-encoded SHA-256 content hash of an artifact, which may be a
-/// single file or a directory (e.g. a directory of C sources or Ghidra pcode facts).
-///
-/// For a directory the hash covers every regular file underneath it, incorporating
-/// each file's path relative to the directory and its contents, in a deterministic
-/// (sorted) order so the result is independent of filesystem iteration order.
-///
-/// # Errors
-///
-/// If the artifact (or any file within it) cannot be read.
 /// SHA-256 over the *contents* of a set of files, independent of the order they are given in
 /// and of where they live: the contents are sorted and length-prefixed, so two different sets
 /// cannot collide by concatenation and the same file named two ways hashes alike.
@@ -579,6 +570,16 @@ pub fn hash_file_contents(paths: &[PathBuf]) -> Result<String, Error> {
     Ok(to_hex(&hasher.finalize()))
 }
 
+/// Computes a stable, hex-encoded SHA-256 content hash of an artifact, which may be a
+/// single file or a directory (e.g. a directory of C sources or Ghidra pcode facts).
+///
+/// For a directory the hash covers every regular file underneath it, incorporating
+/// each file's path relative to the directory and its contents, in a deterministic
+/// (sorted) order so the result is independent of filesystem iteration order.
+///
+/// # Errors
+///
+/// If the artifact (or any file within it) cannot be read.
 pub fn hash_artifact(path: &Path) -> Result<String, Error> {
     use source_info::ContentHasher;
 
@@ -714,7 +715,7 @@ impl AnalysisProject {
     ) -> AnalysisProject {
         // Expand each name to itself followed by its sub-imports, then dedup
         // (order-preserving): `index` co-indexes every argument, so a repeated program name
-        // (e.g. `index amuled amuled`) would codegen its facts twice and inflate every
+        // (e.g. `index p prog prog`) would codegen its facts twice and inflate every
         // relation. Indexing the same import twice is never meaningful.
         //
         // The expansion is what makes `ctadl import app.apk && ctadl index p app` pull in the
