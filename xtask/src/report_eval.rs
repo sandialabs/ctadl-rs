@@ -1,13 +1,10 @@
 //! `cargo xtask report-eval` -- run `ctadl report` across a corpus of real apps.
 //!
-//! This is the harness `spec.md` §7.3 asks for, and its job is questions 2 to 4 of §7.2:
-//! are the numbers stable, do the distributions have the long tail the intent predicts, and
-//! how concentrated is the imprecision. (Question 1, whether the static tier survives a
-//! 200 MB app, was answered before any of this existed, with `ctadl import` and
-//! `ctadl inspect` alone.)
+//! It answers three questions about the call graphs of real apps: are the numbers stable,
+//! do the distributions have a long tail, and how concentrated is the imprecision.
 //!
 //! It takes a **directory** of artifacts rather than a hard-coded path, deliberately. The
-//! large apps the intent names live on one machine, with no manifest, no hashes and no
+//! large apps it is meant for live on one machine, with no manifest, no hashes and no
 //! licence to redistribute, so nothing here may depend on them: point it at that directory,
 //! or at a TaintBench app tree, or at anything else. Any number quoted from a private corpus
 //! has to name the exact file it came from, which is why the summary table is keyed by
@@ -86,7 +83,7 @@ struct Dispatch {
 /// One app's measurements, as the summary table prints them.
 struct Row {
     artifact: String,
-    /// `None` when the app failed; the message says where.
+    /// `Err` when the app failed; the message says where.
     outcome: Result<Measured>,
 }
 
@@ -109,9 +106,8 @@ struct Measured {
     /// signature is what you would special-case.
     sig10: f64,
     sig100: f64,
-    /// The interface-versus-class-virtual split, which gets its own table: it is the
-    /// comparison the whole of phase 2 exists to make, and hanging six more columns off the
-    /// table above would bury it.
+    /// The interface-versus-class-virtual split, which gets its own table
+    /// ([`render_dispatch_table`]): hanging six more columns off the main one would bury it.
     dispatch: Dispatch,
     import_secs: f64,
     report_secs: f64,
@@ -221,7 +217,7 @@ fn measure_one(
     std::fs::write(json_dir.join(format!("{slug}.txt")), &text)
         .with_context(|| format!("writing the text report for {slug}"))?;
 
-    // §7.2 question 2: two reports over one import must agree. The tables this is built on
+    // Two reports over one import must agree. The tables this is built on
     // are documented as byte-stable, so this is an assertion rather than a hope.
     let again = json_dir.join(format!("{slug}.again.json"));
     let again_str = again.to_string_lossy().into_owned();
@@ -247,6 +243,11 @@ fn measure_one(
     )
 }
 
+/// One of `program`'s `worst_signatures` shares, 0 when absent.
+fn share(program: &Value, key: &str) -> f64 {
+    program["worst_signatures"][key].as_f64().unwrap_or(0.0)
+}
+
 /// Folds a report over a whole project into one row.
 ///
 /// An `.xapk` is several programs -- one per split -- so the counts are summed across them
@@ -254,10 +255,6 @@ fn measure_one(
 /// weighted merge of two programs' percentiles would need their full tables, which the JSON
 /// deliberately does not carry; naming the biggest program's shape is honest and is what a
 /// reader wants anyway.
-fn share(program: &Value, key: &str) -> f64 {
-    program["worst_signatures"][key].as_f64().unwrap_or(0.0)
-}
-
 fn summarize(
     doc: &Value,
     import_secs: f64,
@@ -402,8 +399,7 @@ fn timed(cmd: Command, what: &str, log: &Path) -> Result<(f64, Option<f64>)> {
     Ok((secs, peak))
 }
 
-/// Wraps `cmd` in `/usr/bin/time -l` when that exists, so the peak is a kernel high-water
-/// mark rather than something this process sampled. Returns whether it did.
+/// Wraps `cmd` in `/usr/bin/time -l` when that exists. Returns whether it did.
 fn wrap_with_time(cmd: Command) -> (Command, bool) {
     let time = Path::new("/usr/bin/time");
     if !time.is_file() {
