@@ -6,10 +6,10 @@ use anyhow::Result;
 use ctadl_ascent::codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program};
 use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
 use ctadl_ascent::index_engine::{FunctionSummary, IndexFacts, taint_index};
+use ctadl_ascent::facts::Path;
 // `DirectedGraph`/`Successors` are trait imports: they provide `num_nodes()` (used by
 // `check_block_count`) and `successors()` (used by `check_successors`). They look unused but
 // removing them breaks method resolution.
-use ctadl_ascent::facts::Path;
 use ctadl_ir::graph::{DirectedGraph, Successors};
 use ctadl_ir::mir::TerminatorKind;
 use ctadl_ir::mir::call::{CallEdges, CallStyle};
@@ -21,7 +21,7 @@ use ctadl_ir::{FieldRef, ParameterType, PathSegment, Program, ProgramInfo};
 
 pub(crate) fn init_test_logging() {
     let _ = env_logger::builder()
-        .filter_level(log::LevelFilter::Debug) // This forces it to Debug
+        .filter_level(log::LevelFilter::Debug)
         .is_test(true)
         .try_init();
 }
@@ -188,8 +188,7 @@ pub(crate) fn check_returns_const(prog: &Program, name: &str, value: &str) {
 /* Extracts every direct call (`CallStyle::DirectCall`) in function `name`, as `(callees, args)`
 pairs in source order: `callees` are the resolved callee name(s) on the call edge, `args` the
 argument expressions (access paths / constants). Returns an empty Vec if the function has no direct
-calls (or doesn't exist). The extraction primitive behind `check_direct_call` / the dex precedent of
-"pull out the narrow thing, then assert on it". */
+calls (or doesn't exist). The extraction primitive behind `check_direct_call`. */
 pub(crate) fn direct_calls_in(prog: &Program, name: &str) -> Vec<(Vec<String>, Vec<Exp>)> {
     let Some(fun) = function_named(prog, name) else {
         return Vec::new();
@@ -291,13 +290,11 @@ pub(crate) fn check_successors(prog: &Program, block: usize, expected: &[usize])
     assert_eq!(got, want, "block {block} successor mismatch\n{prog}");
 }
 
-// A debugging aid for inspecting parsed blocks.
 /// Parses the access-path tail of a DSL string with the one canonical grammar
 /// ([`ctadl_ir::mir::path_syntax`]), so a fixture means exactly what the same text means in a
 /// model port, a `.flowy` file, or a fact column.
 ///
-/// Panics on a malformed path — that is a broken fixture, and failing loudly beats the old
-/// behavior of silently dropping empty segments.
+/// Panics on a malformed path — that is a broken fixture.
 #[track_caller]
 fn parse_fields(s: &str) -> Vec<PathSegment> {
     ctadl_ir::mir::parse_segments(s)
@@ -361,7 +358,7 @@ fn access_path_from_str(s: &str, locals: &Locals) -> DslPath {
 }
 
 /* Builds a source expression from the DSL. A `#`-prefixed string is a constant literal (`"#7"` =>
-`Exp::Str("7")`, matching how the C frontend lowers a literal — see `flatten_expr` in mod.rs);
+`Exp::Str("7")`, matching how the C frontend lowers a literal — see `flatten_expr` in lib.rs);
 anything else is an access path (variable / param / global / field). */
 pub(crate) fn exp_from_str(s: &str, locals: &Locals) -> Exp {
     match s.strip_prefix('#') {
@@ -481,16 +478,15 @@ pub(crate) fn check_loads(prog: &Program, source_str: &str) {
 
 /* Iterates every statement of the (single) function, in block-then-statement order. The shared walk
 behind the destination-focused helpers below, and a handy primitive for ad-hoc structural assertions
-that need to scan statements (cf. the dex frontend's "pull out the narrow thing, then assert on it").
-Panics if the program isn't a single function. */
+that need to scan statements. Panics if the program isn't a single function. */
 pub(crate) fn statements_of(prog: &Program) -> impl Iterator<Item = &Statement> {
     let fun = get_only_function(prog).expect("expected exactly one function");
     fun.blocks.iter().flat_map(|b| b.statements.iter())
 }
 
 /* True if `kind` writes to `dst`, comparing only the destination -- the source(s) are ignored. A
-bare `dst` (no field path) matches an `Assign` to that variable; a `dst` with a field path matches an
-`Update` of that field. This is the same assign-vs-update split as `check_assign_or_update`'s
+bare `dst` (no field path) matches an `Assign` to that variable; a `dst` with a field path matches a
+`Store` to that field. This is the same assign-vs-update split as `check_assign_or_update`'s
 destination, minus the source constraint. */
 fn writes_dest(kind: &StatementKind, dst: &DslPath) -> bool {
     match kind {
@@ -696,8 +692,8 @@ fn fmt_endpoint(index: i16, path: &str) -> String {
 }
 
 /* Asserting wrappers around the summary predicates above. Unlike a bare `assert!(summary_*(...))`,
-these are `#[track_caller]` and print the actual summary on failure, so a Category B test shows what
-flows *were* present rather than just "assertion failed". The `bool` predicates are kept for
+these are `#[track_caller]` and print the actual summary on failure, so a summary-flow test shows
+what flows *were* present rather than just "assertion failed". The `bool` predicates are kept for
 composition — `check_no_flow` is the asserting form for the absence case (Flowy's `</-`). */
 
 #[track_caller]
@@ -1008,8 +1004,7 @@ mod ap_tests {
 
     #[test]
     fn unescaped_subscript_is_an_offset() {
-        // ... and the unescaped spelling now means a real offset, as it does everywhere else.
-        // Before, both spellings produced `Symbol("[3]")` and the distinction was unwritable.
+        // ... and the unescaped spelling is a real offset, as it is everywhere else.
         let mut locals = Locals::default();
         let f = locals.get_or_intern("f");
         assert_eq!(
