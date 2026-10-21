@@ -4,8 +4,8 @@ This directory holds the expanded DroidBench ICC / ICC-Bench-style validation.
 
 Cases are discovered by `cargo xtask regression --frontend android-icc` from `*.json5` specs in
 this directory. The APKs are not committed: the flake fetches them by hash (`droidbenchIccApks` in
-`nix/android-jvm.nix`)
-and points `CTADL_ANDROID_ICC_APKS` at the result, in both the dev shell and the regression check.
+`nix/android-jvm.nix`) and points `CTADL_ANDROID_ICC_APKS` at the result, in both the dev shell and
+the regression check.
 Outside the dev shell the variable is unset and every case reports `SKIP`.
 
 Spec format:
