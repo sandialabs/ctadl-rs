@@ -14,7 +14,7 @@ pub fn load_models(vmt: &VirtualMethodTable, facts: &mut IndexFacts, idmap: &IdM
             relation synth_call(PackedInsnSiteId, FunctionId);
             relation summary(FunctionSummary);
 
-            // This models finds calls to `AsyncTask.execute` and routes them to `doInBackground`
+            // This model finds calls to `AsyncTask.execute` and routes them to `doInBackground`
             synth_call(site_id, do_in_bg_f) <--
                 // Find calls to execute that return tasks
                 call(site_id, func_id),
