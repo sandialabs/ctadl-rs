@@ -54,10 +54,8 @@ struct SsaRename {
 /// The IR-to-IR passes that have to run after an import is read and before facts are
 /// generated.
 ///
-/// The order of the passes belongs to the pipeline, not to the caller. Before this type
-/// existed, the order was four lines inside `ctadl index`, so anything else that read an import
-/// had to copy the order out of a command-line function and hope it was still current.
-/// [`Pipeline::index_default`] is now the one place that says what `ctadl index` runs, and
+/// The order of the passes belongs to the pipeline, not to the caller.
+/// [`Pipeline::index_default`] is the one place that says what `ctadl index` runs, and
 /// [`run_pipeline_with_threads`] is the one place that runs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pipeline {
