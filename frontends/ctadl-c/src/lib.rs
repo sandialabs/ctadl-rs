@@ -231,7 +231,7 @@ impl<'a> CompoundProxy<'a> {
         }
     }
 }
-//used by if processing
+/// Is `node` an empty statement (`;`)?
 fn _is_empty(node: &Node<'_>) -> bool {
     node.kind() == ";" || node.kind() == "empty_statement"
 }
@@ -247,9 +247,8 @@ fn get_line_num(node: &Node<'_>) -> usize {
 const IMPLICIT_RETURN_LOCAL: &str = "<implicit-return>";
 
 /// The terminator to close a block with when the frontend, not the source, decides it
-/// returns -- emitted by [`link_blocks`] (falling off the end of a body),
-/// [`finalize_terminators`] (patching an unterminated block), and `walk_return` (a bare
-/// `return;` in a non-`void` function).
+/// returns: falling off the end of a body, an unterminated block, or a bare `return;` in a
+/// non-`void` function.
 ///
 /// A non-`void` function has return arity 1 and `verify()` rejects a `Return` of any other
 /// arity ([`ctadl_ir::mir::VerifyError::InconsistentReturns`]), so the synthesized return
@@ -791,22 +790,19 @@ struct Context<'a> {
     /// the IR it expands into (calls, loads, stores) points back at that statement.
     cur_span: SourceInfo,
     /// Record layouts: tag -> data members in declaration order, filled per unit by
-    /// [`collect_registry`]. Consulted only by [`Context::collect_initializer_list`] to map
-    /// a *positional* brace initializer onto members; an absent tag takes the
-    /// positional-element fallback, so an incomplete registry is always safe.
+    /// [`collect_registry`]. Maps a *positional* brace initializer onto members; an absent
+    /// tag takes the positional-element fallback, so an incomplete registry is always safe.
     struct_layouts: HashMap<String, Vec<MemberSlot>>,
     /// Every name this translation unit uses as a type, read off the `type_identifier` nodes
     /// tree-sitter produced -- a use in any declaration counts, which is the only evidence
     /// for a typedef living in an unexpanded system header (`u_char`, `uid_t`). Exists to
     /// tell a cast from a call: `(width_t)(x)` parses as a `call_expression` through a
-    /// parenthesized callee, the exact shape of a genuine `(fp)(x)`. Read by
-    /// [`Context::cast_shaped_call`] and [`Context::cast_prefix`]. A record TAG is
+    /// parenthesized callee, the exact shape of a genuine `(fp)(x)`. A record TAG is
     /// deliberately not recorded: `struct stat` is a type, but bare `stat` is the function.
     type_names: HashSet<String>,
     /// Names the unit declares as functions without defining them (prototypes). The positive
     /// evidence that `(zzz)(x)` is a call, symmetric to `type_names`' cast evidence; it keeps
-    /// the macro-suppression idiom `(free)(p)` quiet. Read through
-    /// [`Context::names_a_value`].
+    /// the macro-suppression idiom `(free)(p)` quiet.
     declared_functions: HashSet<String>,
     /// This unit's file-scope variables, `extern` included; `hook(v)` calls through one.
     global_variables: HashSet<String>,
@@ -1920,7 +1916,7 @@ fn define_extern_functions(program: &mut Program) {
     }
 }
 
-// This struct temporarily holds the specific book keeping needs of a function parse
+/// The bookkeeping the walk of a function body threads through each statement.
 #[derive(Debug, Clone)]
 struct ScopeView {
     pub func_name: String,
@@ -4048,7 +4044,7 @@ impl<'a> Context<'a> {
         assert_eq!(
             arg_list.kind(),
             "argument_list",
-            "extract_arguments called with node kind: {}",
+            "collect_arguments called with node kind: {}",
             arg_list.kind()
         );
 
@@ -4253,10 +4249,8 @@ impl<'a> Context<'a> {
         let arg_node = node.child_by_field_name("arguments").expect("always has");
         let args = self.collect_arguments(program, arg_node, source, scope_view)?;
 
-        // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
-        // dereference form `(*op_func)(...)` wraps the pointer in a
-        // parenthesized/pointer expression, so route it through flatten_expr to
-        // recover the underlying variable (`op_func`).
+        // Resolve the callee. A plain `foo(...)` (or `(*fp)(...)`, peeled above) is an
+        // identifier.
         let access_path = if func_node.kind() == "identifier" {
             self.build_access_path(
                 func_name,
@@ -4265,7 +4259,7 @@ impl<'a> Context<'a> {
                 &mut program[scope_view.fidx].locals,
             )
         } else {
-            // The callee is a call-target location (e.g. `(*op_func)(...)`); resolve it as an
+            // The callee is a call-target location (e.g. `o->op(...)`); resolve it as an
             // lvalue so its access path is preserved rather than lowered into a load.
             self.flatten_lvalue(program, func_node, source, scope_view)
                 .unwrap_or_else(|_| {
@@ -4463,7 +4457,7 @@ impl<'a> Context<'a> {
         let body_name = format!("{}.body", func_name);
         self.collect_params(source, &head.params, fdat, func_name, &para_scope_view)?;
 
-        //we have to build this one by hand, becuase we want the initial scope without the extra block
+        // We have to build this one by hand, because we want the initial scope without the extra block
         let block_scope = self.scope_tree.add_scope(body_name, Some(param_sidx));
         let block_scope_view = ScopeView {
             func_name: func_name.to_string(),
@@ -4586,7 +4580,8 @@ impl<'a> Context<'a> {
         ))
     }
 
-    //this is a helper function to take the SSA list and shove them all into the block
+    /// Appends `target = left_op [op right_op]` to the current block: an `assign` for a
+    /// pathless target, else the stores [`mir::store_access_path`] lowers it to.
     fn add_assign_to_program(
         &mut self,
         program: &mut Program,
@@ -4957,11 +4952,10 @@ impl<'a> Context<'a> {
     }
 }
 
-// A little helper to make grabbing stuff out of the tree-sitter iterator easier
 use anyhow::Result;
 use tree_sitter::Node;
 
-// A simple counter to generate unique temp names (t0, t1, t2...)
+/// Generates a function's temp names, `<t0>`, `<t1>`, ...
 #[derive(Debug, Default)]
 struct TempAllocator {
     counter: usize,
@@ -5172,6 +5166,7 @@ fn gnu_asm_operand_is_readwrite(operand: Node<'_>, source: &str) -> bool {
 /// * `node` - The current Tree-sitter node to print.
 /// * `depth` - The current recursion depth (start with 0).
 /// * `field_name` - The field name of the current node, if any (start with None).
+/// * `depth_limit` - The depth past which children are not printed, if any.
 fn debug_print_tree(
     node: Node<'_>,
     depth: usize,
