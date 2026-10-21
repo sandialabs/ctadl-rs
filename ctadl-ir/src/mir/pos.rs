@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use u64_dyn::{pack_u64_dyn as pack, unpack_u64_dyn as unpack};
 
-// Packade u64 offset
+// Packed u64 offset
 pub struct BytePos(Vec<u8>);
 #[derive(Copy, Clone)]
 pub struct ByteLen(u8);
