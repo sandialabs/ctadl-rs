@@ -283,11 +283,10 @@ fn test_endpoint_stats_merge_across_imports() {
 // ---------------------------------------------------------------------------
 // A model port can name a real offset.
 //
-// Port access paths used to be a `Vec<&str>` stored verbatim and revived through a
-// blanket `FromIterator<AsRef<str>>` that made *every* segment a `Symbol`. So
-// `Argument(1).[8].deref` was `Symbol("[8]"), Symbol("deref")` and could never match
-// the `Offset(8), Symbol("deref")` that pcode's `push_offset` emits — even though the
-// docs and the JSON schema have advertised exactly that spelling all along.
+// `Argument(1).[8].deref` must load as `Offset(8), Symbol("deref")`, the path pcode's
+// `push_offset` emits and the spelling the docs and the JSON schema advertise. Making every
+// segment a `Symbol` would turn it into `Symbol("[8]"), Symbol("deref")`, which never
+// matches.
 // ---------------------------------------------------------------------------
 
 /// A native (binary-frontend) program with one 2-parameter function per name.
@@ -383,8 +382,7 @@ fn offset_port_produces_a_real_offset() {
         paths.iter().map(|p| p.to_dot_string()).collect::<Vec<_>>()
     );
 
-    // ... and it is NOT the symbol whose name happens to be "[8]", which is what every
-    // segment used to become.
+    // ... and it is NOT the symbol whose name happens to be "[8]".
     let as_symbol = ctadl_ascent::facts::Path::from_accesses([
         PathSegment::symbol("[8]"),
         PathSegment::symbol("deref"),
