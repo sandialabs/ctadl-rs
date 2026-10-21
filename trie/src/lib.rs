@@ -207,8 +207,10 @@ where
             Some(std::cmp::Ordering::Equal)
         } else if self.is_subset(other) {
             Some(std::cmp::Ordering::Less)
-        } else {
+        } else if other.is_subset(self) {
             Some(std::cmp::Ordering::Greater)
+        } else {
+            None
         }
     }
 }
@@ -956,6 +958,26 @@ mod tests {
         assert!(empty.is_subset(&t1));
         assert!(!t1.is_subset(&empty));
         assert!(t1.is_superset(&empty));
+    }
+
+    #[test]
+    fn test_partial_cmp_orders_by_subset() {
+        use std::cmp::Ordering;
+
+        let mut t1 = Trie::new();
+        t1.insert("app".chars(), 1);
+
+        let mut t2 = t1;
+        t2.insert("banana".chars(), 2);
+
+        let mut t3 = Trie::new();
+        t3.insert("cherry".chars(), 3);
+
+        assert_eq!(t1.partial_cmp(&t1), Some(Ordering::Equal));
+        assert_eq!(t1.partial_cmp(&t2), Some(Ordering::Less));
+        assert_eq!(t2.partial_cmp(&t1), Some(Ordering::Greater));
+        assert_eq!(t1.partial_cmp(&t3), None);
+        assert_eq!(t3.partial_cmp(&t1), None);
     }
 
     #[test]
