@@ -7,8 +7,6 @@ end, or run the engine. Reading the APK's ZIP structure and its `classes*.dex` e
 handled one level up, in `ctadl-frontends`.
 */
 
-use std::fs::File;
-use std::io::{self, Read};
 use std::path::Path;
 
 use hashbrown::hash_map::HashMap;
@@ -48,7 +46,7 @@ pub struct ApkImport {
 /// need to distinguish the two check [`ApkImport::dex_count`].
 pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
     let file = file.as_ref();
-    let data = read_file_bytes(file).err_context(|| format!("reading APK: {}", file.display()))?;
+    let data = std::fs::read(file).err_context(|| format!("reading APK: {}", file.display()))?;
     let parser =
         APKParser::new(&data).err_context(|| format!("parsing APK: {}", file.display()))?;
     let dex_count = parser.dex_count();
@@ -78,7 +76,7 @@ pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
 pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
     let file = file.as_ref();
     let data =
-        read_file_bytes(file).err_context(|| format!("reading Dex file: {}", file.display()))?;
+        std::fs::read(file).err_context(|| format!("reading Dex file: {}", file.display()))?;
     let parser =
         DexParser::new(&data).err_context(|| format!("parsing Dex file: {}", file.display()))?;
     let mut ctx = Context::new();
@@ -978,14 +976,6 @@ fn reg_to_var(code_item: &CodeItem, reg: Reg, locals: &mut Locals) -> VariableRe
     } else {
         VariableRef::new_local_idx(locals.get_or_intern(&format!("v{}", reg.0)))
     }
-}
-
-fn read_file_bytes<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
-    let path = path.as_ref();
-    let mut f = File::open(path)?;
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf)?;
-    Ok(buf)
 }
 
 #[derive(Debug, Clone, Default)]

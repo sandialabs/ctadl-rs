@@ -5,8 +5,6 @@ touch the store, choose a front end, or run the engine. Reading `.class` and `.j
 `jvm-reader`'s job. What lives here is the lowering to MIR.
 */
 
-use std::fs::File;
-use std::io::{self, Read};
 use std::path::Path;
 
 use hashbrown::HashSet;
@@ -82,7 +80,7 @@ pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
 
 pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
     let data =
-        read_file_bytes(file).err_context(|| format!("reading class file: {}", file.display()))?;
+        std::fs::read(file).err_context(|| format!("reading class file: {}", file.display()))?;
     let parser = ClassFileParser::parse(&data)
         .err_context(|| format!("parsing class file: {}", file.display()))?;
     let mut ctx = Context::new();
@@ -1057,12 +1055,4 @@ impl Context {
             _ => VariableRef::new_local_idx(locals.get_or_intern("unknownLocationType")),
         }
     }
-}
-
-fn read_file_bytes<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
-    let path = path.as_ref();
-    let mut f = File::open(path)?;
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf)?;
-    Ok(buf)
 }
