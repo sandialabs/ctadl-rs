@@ -1087,7 +1087,7 @@ fn merge_keys<K: Ord>(lists: &[&[K]], mut visit: impl FnMut(&K, &[(usize, usize)
 }
 
 /// A key's `u64` words.
-fn words<K: Pod>(key: &K) -> &[u64] {
+pub(crate) fn words<K: Pod>(key: &K) -> &[u64] {
     bytemuck::cast_slice(bytemuck::bytes_of(key))
 }
 

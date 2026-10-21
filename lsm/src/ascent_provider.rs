@@ -40,7 +40,7 @@ use ascent::internal::{
 use bytemuck::{Pod, Zeroable};
 use smallvec::SmallVec;
 
-use crate::mmap::{IterAllRefs, KeysIter, MmapLsmMultiMap, PrefixGroups, ValsRefs};
+use crate::mmap::{IterAllRefs, KeysIter, MmapLsmMultiMap, PrefixGroups, ValsRefs, words};
 
 // ---------------------------------------------------------------------------
 // Process-wide per-map memtable limit.
@@ -707,11 +707,6 @@ impl<T: LsmTuple, const PREFIXES: u32> RelIndexMerge for LsmStore<T, PREFIXES> {
     fn move_index_contents(from: &mut Self, to: &mut Self) {
         to.set.absorb(&mut from.set);
     }
-}
-
-/// A key's `u64` words.
-fn words<K: Pod>(key: &K) -> &[u64] {
-    bytemuck::cast_slice(bytemuck::bytes_of(key))
 }
 
 /// The marker of the full index.
