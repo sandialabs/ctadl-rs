@@ -504,7 +504,7 @@ class HighFunctionExporter {
 
 			// The table ends when one of two things is true:
 			// 1. Reading a zero
-			if (funPtrInt == BigInteger.ZERO)
+			if (funPtrInt.signum() == 0)
 				break;
 
 			export(PredicateFile.VTABLE, className.toString(), addressString(tableAddr),
