@@ -91,9 +91,9 @@ neither. Do not re-add that tier without new evidence. Attributing nothing is of
 answer: a library whose Java classes ship outside `classes.dex` (a bundled BD-J stack, a
 feature-split dex) yields well-formed tables that match nothing, and no link is fabricated.
 
-Because the scan runs at import time, a library imported before this feature existed has no
-sidecar, and a re-import reuses it unchanged without creating one unless given `--force`. `--no-jni-registry` ignores the
-sidecar at index time, leaving the symbol convention alone.
+Because the scan runs at import time, a library imported without it has no sidecar, and a
+re-import reuses the import unchanged, without creating one, unless given `--force`.
+`--no-jni-registry` ignores the sidecar at index time, leaving the symbol convention alone.
 
 # How arguments are mapped
 
@@ -158,8 +158,7 @@ half by instruction address into the shared library. This works because `ctadl i
 instruction, which import its source span came from. Span ids are *per-import* indices -- each
 artifact's source-info database numbers its spans from zero, while function and instruction ids are
 project-global -- so a span read against the wrong import's database still resolves, to an
-unrelated line in an unrelated file. That is what used to happen: every result was rendered once per
-import, and a Java finding reappeared carrying an address in the `.so`.
+unrelated line in an unrelated file.
 
 # Diagnostics
 
@@ -245,11 +244,8 @@ use std::collections::BTreeMap;
 use ctadl_ir::ProgramInfo;
 use ctadl_ir::mir::call::VirtualMethodTable;
 
-/// Scans an ELF file for `RegisterNatives` calls. The code lives in [`ctadl_pcode`] because it
-/// needs Ghidra's image base and its map of entry points, and those exist only while
-/// `import_pcode` is running. This module uses the file that the scan wrote, not the scanner
-/// itself, so all it needs from that crate is the types. Re-exported so the name
-/// `jni::registry::…` works here.
+/// The `RegisterNatives` table scan and its run attribution. [`ctadl_pcode`]'s crate docs say
+/// why the scan lives there.
 pub use ctadl_pcode::jni_registry as registry;
 
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
@@ -571,8 +567,7 @@ pub fn internal_class_name(class: &str) -> &str {
 ///
 /// The code lives in [`ctadl_pcode::jni_registry`] rather than here, because the registry
 /// scanner uses it to tell a `JNINativeMethod`'s descriptor field from a pointer into unrelated
-/// data, and that scanner is in a crate below this one. Re-exported so the name
-/// `jni::descriptor_params` works here.
+/// data, and that scanner is in a crate below this one.
 pub use ctadl_pcode::jni_registry::descriptor_params;
 
 /// The parameter descriptor the long name mangles: the method descriptor with its parentheses and
@@ -743,7 +738,7 @@ impl JniObserver {
     /// none contributed a native half -- a symbol table *or* a recovered `RegisterNatives` table.
     ///
     /// The registry half counts on its own. A library that exports not one `Java_…` symbol and
-    /// binds all 28 of its natives through `RegisterNatives` is the ordinary case, not an exotic
+    /// binds all of its natives through `RegisterNatives` is the ordinary case, not an exotic
     /// one, and treating it as "nothing to link" would skip exactly the apps this exists for.
     pub fn is_empty(&self) -> bool {
         self.natives.is_empty() || (self.symbols.is_empty() && self.registries.is_empty())
@@ -769,7 +764,7 @@ pub struct LinkStats {
     pub unresolved: usize,
     /// Ones whose only candidate was an ambiguous short name.
     pub ambiguous: usize,
-    /// Recovered `RegisterNatives` entries that tier 1 could not attribute to a single class.
+    /// Recovered `RegisterNatives` entries that attribution could not pin to a single class.
     /// Not a subset of anything above: it counts table entries, not Java methods.
     pub unattributed: usize,
     /// Of those linked, ones whose implementation came from a `--summary` project rather than
@@ -1011,7 +1006,7 @@ fn warn_on_proto_check(method: &str, function: &str, check: &ProtoCheck) -> bool
     true
 }
 
-/// Runs tier-1 attribution over every import's recovered tables and returns the resulting
+/// Runs [`registry::attribute`] over every import's recovered tables and returns the resulting
 /// `Java method -> IR function` pairings, which [`resolve`] consults as tier 0.
 ///
 /// The table side is per import; the Java candidate side spans the project. That asymmetry is
@@ -1129,8 +1124,8 @@ fn attribute_registries<'a>(
 /// **Tier 0** is a `RegisterNatives` binding recovered by [`registry`]. It wins outright, because
 /// that is what the runtime does: a registered method runs the registered function whether or not
 /// a matching `Java_…` symbol exists. It also has to be consulted *before* the symbol tiers rather
-/// than as a fallback -- the `Ambiguous` arm below never reaches a fallback, and an overloaded
-/// native is exactly the case `RegisterNatives` matters most for.
+/// than as a fallback -- the `Ambiguous` arm in [`link`] never reaches a fallback, and an
+/// overloaded native is exactly the case `RegisterNatives` matters most for.
 ///
 /// Otherwise the symbol convention: prefer the long (descriptor-qualified) name when that symbol
 /// exists, otherwise fall back to the short name -- but only when the declaring class has exactly
