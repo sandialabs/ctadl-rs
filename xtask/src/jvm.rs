@@ -5,10 +5,6 @@
 //! line-map / basic-block / stack-slot analyses), then bundle them with `jar`
 //! and re-check the `.jar` (parsed classes compared against `jar tf`). No
 //! compiled `.class`/`.jar` artifacts are committed; everything is built here.
-//!
-//! These checks are a faithful port of the former `jvm-reader/tests/test_disas.rs`
-//! integration tests, restructured to report pass/fail rather than panic and to
-//! run against freshly compiled inputs instead of committed binaries.
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -36,7 +32,7 @@ struct Sample {
 
 /// Compile every sample and run all jvm-reader checks. Returns named
 /// (case, outcome) pairs to fold into the regression report. If the JDK tools
-/// are missing, returns a single Skip (mirrors the pcode Darwin skip).
+/// are missing, returns a single Skip.
 ///
 /// `cases` is the nightly Java case directory, whose programs `jvm:asm-flow`
 /// checks as well.
@@ -264,8 +260,7 @@ fn check_javap(samples: &[Sample]) -> Result<()> {
     Ok(())
 }
 
-/// Collapse runs of whitespace and trim each line, matching the old test's
-/// comparison rules.
+/// Collapse runs of whitespace and trim each line.
 fn normalize(input: &str) -> String {
     input
         .lines()
@@ -628,11 +623,9 @@ fn assert_normalized(loc: &Location, saw_stack_slot: &mut bool) -> Result<()> {
 
 // --- fixture-shape checks -------------------------------------------------
 //
-// These two came out of `jvm-reader`'s `flow.rs` unit tests, which used to load
-// compiled classes from a directory someone had to populate first. Everything
-// they asserted about *decoding* those fixtures is now covered end to end by
-// the `SwitchFlow` / `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint
-// cases, in both frontends. What is left is what a taint case cannot say.
+// The `SwitchFlow` / `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint
+// cases cover decoding these fixtures end to end, in both frontends. These two
+// check what a taint case cannot say.
 
 /// Read one sample's compiled `.class` by class name.
 fn class_bytes(samples: &[Sample], name: &str) -> Result<Vec<u8>> {
