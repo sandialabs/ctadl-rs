@@ -1,4 +1,4 @@
-//! Cross-assembly resolution (optional M7).
+//! Cross-assembly resolution.
 //!
 //! Port of `BaseAssemblyResolver` (directory probing) and `MetadataResolver`
 //! (type/field/method resolution incl. type forwarders and base-type walks).

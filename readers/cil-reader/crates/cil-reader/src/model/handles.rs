@@ -668,9 +668,9 @@ impl<'a> TypeSpec<'a> {
         SigReader::new(blob).type_sig()
     }
 
+    /// The [`full_name`](Self::full_name). Cecil's `Name` is shorter: the
+    /// element type's name, plus a suffix such as `[]` or `*` for some forms.
     pub fn name(&self) -> Result<String> {
-        // Close enough for display purposes: the full name's last segment
-        // semantics are not needed by the read tests; use full_name.
         self.full_name()
     }
 
