@@ -10,12 +10,12 @@
 //
 // DELIBERATELY ABSENT -- do not add:
 //   `table.insert`, `ipairs`, `pairs`, `select`: the frontend recognizes these syntactically
-//     and lowers them straight to dataflow (`lua/mod.rs`, `eval_builtin_call`), so no call
+//     and lowers them straight to dataflow (`frontends/ctadl-lua/src/lib.rs`, `eval_builtin_call`), so no call
 //     statement is emitted at all. A model would double-count.
 //   `setmetatable`: likewise lowered directly (`eval_setmetatable`) -- it never appears as a
 //     call target, so a model on it would be inert rather than wrong.
-//   `pcall`, `xpcall`, `coroutine.*`: these invoke a function-valued argument and need
-//     `forward_call`, which the loader does not implement (docs/model-generators.md).
+//   `pcall`, `xpcall`, `coroutine.*`: these invoke a function-valued argument, which a
+//     propagation model cannot express.
 //
 // Every port here is bare -- the strictly more permissive choice. The element field IS
 // modelable: the frontend emits `PathSegment::Symbol("[_elem_]")`, which a port spells
