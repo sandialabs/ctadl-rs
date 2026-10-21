@@ -1,9 +1,7 @@
 //! The error type that the store and every front end share.
 //!
-//! There is a second error type, `ctadl_ascent::error::Error`. The crate-level docs explain the
-//! rule that keeps the two apart: a file imports one [`ErrorContext`] trait or the other, never
-//! both, and the `#[from]` on `ctadl_ascent::Error::Import` converts between the two error types
-//! wherever `?` is used.
+//! There is a second error type, `ctadl_ascent::error::Error`. The crate-level docs give the
+//! rule that keeps the two apart.
 
 use std::path::PathBuf;
 use thiserror::Error;
