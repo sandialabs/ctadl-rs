@@ -428,7 +428,7 @@ impl AsRef<Variable> for Variable {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VariableRef {
-    /// The referenced variable, held by value.
+    /// The referenced variable.
     pub variable: Variable,
     pub version: Option<u32>,
 }
