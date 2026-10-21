@@ -192,7 +192,7 @@
 //! ```
 //!
 //! The third example is similar to the second, except now each node and
-//! edge now carries a reference to the string label for each node as well
+//! edge carries a reference to the string label for each node as well
 //! as that node's index. (This is another illustration of how to share
 //! structure with the graph itself, and why one might want to do so.)
 //!
@@ -413,12 +413,6 @@ impl<'a> Id<'a> {
     }
 }
 
-/// Each instance of a type that implements `Label<C>` maps to a
-/// unique identifier with respect to `C`, which is used to identify
-/// it in the generated .dot file. They can also provide more
-/// elaborate (and non-unique) label text that is used in the graphviz
-/// rendered output.
-///
 /// The graph instance is responsible for providing the DOT compatible
 /// identifiers for the nodes and (optionally) rendered labels for the nodes and
 /// edges, as well as an identifier for the graph itself.
@@ -563,16 +557,13 @@ impl<'a> LabelText<'a> {
 pub type Nodes<'a, N> = Cow<'a, [N]>;
 pub type Edges<'a, E> = Cow<'a, [E]>;
 
-// (The type parameters in GraphWalk should be associated items,
-// when/if Rust supports such.)
-
 /// GraphWalk is an abstraction over a directed graph = (nodes,edges)
-/// made up of node handles `N` and edge handles `E`, where each `E`
-/// can be mapped to its source and target nodes.
+/// made up of node handles `Node` and edge handles `Edge`, where each
+/// `Edge` can be mapped to its source and target nodes.
 ///
 /// The lifetime parameter `'a` is exposed in this trait (rather than
 /// introduced as a generic parameter on each method declaration) so
-/// that a client impl can choose `N` and `E` that have substructure
+/// that a client impl can choose `Node` and `Edge` that have substructure
 /// that is bound by the self lifetime `'a`.
 ///
 /// The `nodes` and `edges` method each return instantiations of
