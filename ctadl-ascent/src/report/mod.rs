@@ -7,9 +7,8 @@ handful of call sites, push hybrid inlining one frame deeper, or leave it alone.
 
 # Tiers
 
-`spec.md` describes two tiers: **static**, which needs only an import, and **resolved**,
-which reads an index. This version implements the static tier only, and says so in its first
-line. That is not a shortcut. Every rung of the [`CallResolutionStrategy::Mixed`] ladder is a
+There are two tiers: **static**, which needs only an import, and **resolved**, which reads
+an index. This version implements the static tier only, and says so in its first line. That is not a shortcut. Every rung of the [`CallResolutionStrategy::Mixed`] ladder is a
 function of the import -- a signature's CHA target count, the class hierarchy an
 `invoke-super` walks, and which signatures a model file names -- so the `policy` section
 simulates the whole classification without reading an index, which is what lets a user write a
@@ -90,7 +89,7 @@ pub struct ReportOptions {
     /// the graph fits underneath it -- the same run peaked at 24.9 GiB with this section and
     /// 24.1 GiB without.
     ///
-    /// It now runs Tarjan twice: once over the whole graph and once with the
+    /// It runs Tarjan twice: once over the whole graph and once with the
     /// interface-dispatched edges removed, which is what says how much of a program's largest
     /// cycle is interface resolution rather than the program. On the run above that went from
     /// 95 s to 114 s and did not move the peak, because both passes read one successor array
@@ -109,7 +108,6 @@ impl Default for ReportOptions {
     fn default() -> Self {
         Self {
             format: ReportFormat::Text,
-            // `intent.md` asks for the top 10.
             top: 10,
             recursion: true,
             no_default_models: false,

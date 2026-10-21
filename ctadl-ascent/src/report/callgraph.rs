@@ -134,7 +134,7 @@ impl DispatchCensus {
     }
 }
 
-/// Section 1: how many call sites there are, by kind.
+/// How many call sites there are, by kind.
 ///
 /// `virtual` counts every `JavaCall`. [`Self::by_dispatch`] splits that into the three
 /// dispatch instructions the frontends record. `invoke-interface` and `invoke-virtual` share
@@ -162,7 +162,7 @@ pub struct Census {
     pub unknown: usize,
 }
 
-/// Sections 2, 3, 4 and 6: how many methods a virtual call could reach.
+/// How many methods a virtual call could reach.
 #[derive(Debug, Serialize)]
 pub struct VirtualTargets {
     /// Distinct `(class, name, descriptor)` signatures across every virtual site.
@@ -215,19 +215,18 @@ pub struct DispatchTargets {
     pub sites_deferred_to_hybrid_inlining: usize,
 }
 
-/// Sections 3 and 5: the worst signatures, and how much of the imprecision they account for.
+/// The worst signatures, and how much of the imprecision they account for.
 ///
 /// "Worst" can mean three things here, and they answer different questions.
 ///
-/// **By site** is what `intent.md` asks for: the fraction of all call edges owned by the ten
+/// **By site** is the fraction of all call edges owned by the ten
 /// individual call instructions with the most targets. On a large app this fraction is
 /// necessarily tiny, since ten instructions out of millions cannot be much. That it is tiny
 /// is itself the result, not a measurement failure.
 ///
 /// **By target count** finds the least precise signature, such as an `Object.toString` with
-/// hundreds of possible targets. This is what the intent means by "the call sites with the
-/// most resolvents". On its own it over-weights a bad signature that is called from only one
-/// place.
+/// hundreds of possible targets. On its own it over-weights a bad signature that is called
+/// from only one place.
 ///
 /// **By excess** is the one to act on. Every resolved call site needs at least one target,
 /// and that edge is the call itself rather than imprecision. What imprecision costs is the
@@ -314,7 +313,7 @@ pub struct SignatureRow {
     pub excess: usize,
 }
 
-/// Section 7: what restricting to allocated types buys.
+/// What restricting to allocated types buys.
 ///
 /// **RTA here is a lower bound, not a more precise answer.** The set of allocated classes
 /// comes only from `new`-like expressions in imported code. An object created by a library
@@ -345,7 +344,7 @@ pub struct DispatchRta {
     pub edges_dropped: usize,
 }
 
-/// Section 8: one named hard case, aggregated over every class that declares it.
+/// One named hard case, aggregated over every class that declares it.
 #[derive(Debug, Serialize)]
 pub struct NamedCase {
     pub name: String,
@@ -362,7 +361,7 @@ pub struct NamedCase {
     pub max_targets: usize,
 }
 
-/// Section 11: Kotlin lambda call sites, found two different ways.
+/// Kotlin lambda call sites, found two different ways.
 ///
 /// Neither test is reliable on its own, and we have observed both fail. On one large app the
 /// receiver-type test found 31,622 sites while the method-name test found 57,383, so the
@@ -396,12 +395,11 @@ pub struct KotlinLambdas {
     pub receiver_type_sites_by_dispatch: Option<DispatchCensus>,
 }
 
-/// Section 12: functional interfaces in general, not only Kotlin's.
+/// Functional interfaces in general, not only Kotlin's.
 ///
 /// A functional interface declares exactly one abstract method. That is the shape a lambda,
-/// a method reference, or a `Runnable` compiles against. Recognising them needs two facts
-/// the IR did not carry before this phase: which types are interfaces, and which of their
-/// methods are abstract. Neither can be derived from the resolvent map, because its entries
+/// a method reference, or a `Runnable` compiles against. Recognising them needs two facts:
+/// which types are interfaces, and which of their methods are abstract. Neither can be derived from the resolvent map, because its entries
 /// for an interface hold every method of every implementer rather than the interface's own.
 ///
 /// Unlike [`KotlinLambdas`], this needs no name list and no package prefix, so it survives
@@ -433,7 +431,7 @@ pub struct FunctionalInterfaces {
     pub top: Vec<SignatureRow>,
 }
 
-/// Section 13: what the call-resolution policy would do to this program.
+/// What the call-resolution policy would do to this program.
 ///
 /// Simulates the [`CallResolutionStrategy::Mixed`] ladder over the complete key table without
 /// indexing anything, so a user can write dispatch models against their own app and see the
@@ -659,9 +657,9 @@ fn policy_section(
         }
     }
 
-    // Rank on the excess alone, cut to `top`, and only then build the rows. Under
-    // `--top 1000000` the eager form materialized a `SignatureRow` -- three owned strings --
-    // for every key in the program, three times over.
+    // Rank on the excess alone, cut to `top`, and only then build the rows: a `SignatureRow`
+    // holds three owned strings, and building one per key before the cut would do that for
+    // every key in the program, once per list.
     let rank = |rows: &mut Vec<(usize, usize, bool)>| {
         rows.sort_by_key(|r| std::cmp::Reverse(r.0));
         rows.truncate(opts.top);
@@ -733,7 +731,7 @@ fn policy_section(
     }
 }
 
-/// Section 9: how many sites call each method.
+/// How many sites call each method.
 ///
 /// Measured over the CHA call graph. A direct call contributes one edge, and a virtual site
 /// contributes one edge to every method CHA says it could reach. This is the fan-in an
@@ -763,7 +761,7 @@ pub struct FanInRow {
     pub via_interface: Option<usize>,
 }
 
-/// Section 10: where inlining cannot terminate on its own.
+/// Where inlining cannot terminate on its own.
 ///
 /// Strongly connected components of the CHA call graph, with edges deduplicated per
 /// (caller function, target). The graph carries every CHA resolvent, so this is an upper
@@ -784,7 +782,7 @@ pub struct Recursion {
     /// The same graph with every edge from an `invoke-interface` site removed, and Tarjan
     /// run over it again.
     ///
-    /// Phase 1 found one very large cycle on every large app we measured, in one case
+    /// Every large app we have measured has one very large cycle, in one case
     /// holding 37% of the program's functions. This comparison says how much of that cycle
     /// is interface dispatch. If the large component survives, interfaces are not what makes
     /// inlining fail to terminate. If it collapses, they are. The two cases are worth
@@ -1468,9 +1466,9 @@ fn kotlin_lambdas(w: &Walk, targets: &Targets) -> KotlinLambdas {
     k
 }
 
-/// Section 12. Functional interfaces in general: one interface, one abstract method.
+/// Functional interfaces in general: one interface, one abstract method.
 ///
-/// Both halves of that test are new data (see [`TypeFacts`]), and neither is a name or a
+/// Both halves of that test come from [`TypeFacts`], and neither is a name or a
 /// package, so unlike [`kotlin_lambdas`] this survives obfuscation. What it cannot see is an
 /// interface the import does not declare. That gap is reported directly rather than left to
 /// be inferred from a small number.
@@ -1529,16 +1527,15 @@ fn functional_interfaces(
     f
 }
 
-/// Section 9. Counts sites, so it reads the weighted table rather than the deduplicated
+/// Counts sites, so it reads the weighted table rather than the deduplicated
 /// graph: a method called from a thousand sites has fan-in one thousand even if all those
 /// sites sit in one function. This costs one pass over the target sets and builds no graph,
 /// which is why it is not gated the way [`recursion`] is.
 fn fan_in(w: &Walk, targets: &Targets, top: usize, split: bool) -> FanIn {
     let nodes = &w.nodes;
     let mut fanin = vec![0usize; nodes.len()];
-    // A second array rather than four. The intent asks only that interface dispatch not be
-    // averaged in with the rest, and splitting one method's fan-in four ways would add a
-    // column nobody reads. The per-kind totals are counted in scalars beside it.
+    // A second array rather than four. Interface dispatch only has to be kept out of the
+    // average, and splitting one method's fan-in four ways would add a column nobody reads. The per-kind totals are counted in scalars beside it.
     let mut via_interface = vec![0usize; if split { nodes.len() } else { 0 }];
     let mut edges_by_dispatch = [0usize; 4];
     let mut direct_edges = 0usize;
@@ -1590,7 +1587,7 @@ fn fan_in(w: &Walk, targets: &Targets, top: usize, split: bool) -> FanIn {
     }
 }
 
-/// Section 10, and the only part of the report that has to materialize the CHA call graph.
+/// The only part of the report that has to materialize the CHA call graph.
 ///
 /// That graph is not the size of the program. We have observed 1.9 million functions and
 /// 5.2 million virtual sites expand to 1.21 billion deduplicated edges, because a signature
@@ -1865,8 +1862,8 @@ mod tests {
         }
     }
 
-    /// The whole of phase 2 in one assertion set. Three calls that used to be recorded as
-    /// one indistinguishable kind are now counted, distributed, and ranked separately.
+    /// Three calls of different dispatch kinds are counted, distributed, and ranked
+    /// separately.
     #[test]
     fn dispatch_kinds_are_measured_separately() {
         let info = dispatch_program();
