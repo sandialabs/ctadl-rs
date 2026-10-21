@@ -121,6 +121,16 @@ fn file_spans_schema() -> Arc<Schema> {
 // Per-table write helpers
 // ---------------------------------------------------------------------------
 
+/// Writes `columns` as one record batch to `dir/{name}.parquet`.
+fn write_batch(dir: &Path, name: &str, schema: Arc<Schema>, columns: Vec<ArrayRef>) -> Result<()> {
+    let batch = RecordBatch::try_new(schema.clone(), columns)?;
+    let file = File::create(dir.join(format!("{name}.parquet")))?;
+    let mut writer = ArrowWriter::try_new(file, schema, None)?;
+    writer.write(&batch)?;
+    writer.close()?;
+    Ok(())
+}
+
 fn write_metadata_file(dir: &Path, metadata: &ArtifactMetadata) -> Result<()> {
     let schema = metadata_schema();
     let hash_algorithms: UInt8Array = vec![Some(metadata.hash_algorithm.to_u8())]
@@ -128,19 +138,16 @@ fn write_metadata_file(dir: &Path, metadata: &ArtifactMetadata) -> Result<()> {
         .collect();
     let hash_lens: UInt8Array = vec![Some(metadata.hash_len)].into_iter().collect();
     let versions: UInt32Array = vec![Some(metadata.version as u32)].into_iter().collect();
-    let batch = RecordBatch::try_new(
-        schema.clone(),
+    write_batch(
+        dir,
+        "metadata",
+        schema,
         vec![
             Arc::new(hash_algorithms) as ArrayRef,
             Arc::new(hash_lens) as ArrayRef,
             Arc::new(versions) as ArrayRef,
         ],
-    )?;
-    let file = File::create(dir.join("metadata.parquet"))?;
-    let mut writer = ArrowWriter::try_new(file, schema, None)?;
-    writer.write(&batch)?;
-    writer.close()?;
-    Ok(())
+    )
 }
 
 fn write_artifacts_file(dir: &Path, artifacts: &[ArtifactRecord]) -> Result<()> {
@@ -156,8 +163,10 @@ fn write_artifacts_file(dir: &Path, artifacts: &[ArtifactRecord]) -> Result<()> 
         .iter()
         .map(|a| Some(a.content_hash.as_slice()))
         .collect();
-    let batch = RecordBatch::try_new(
-        schema.clone(),
+    write_batch(
+        dir,
+        "artifacts",
+        schema,
         vec![
             Arc::new(artifact_ids) as ArrayRef,
             Arc::new(canonical_paths) as ArrayRef,
@@ -165,30 +174,22 @@ fn write_artifacts_file(dir: &Path, artifacts: &[ArtifactRecord]) -> Result<()> 
             Arc::new(encodings) as ArrayRef,
             Arc::new(content_hashes) as ArrayRef,
         ],
-    )?;
-    let file = File::create(dir.join("artifacts.parquet"))?;
-    let mut writer = ArrowWriter::try_new(file, schema, None)?;
-    writer.write(&batch)?;
-    writer.close()?;
-    Ok(())
+    )
 }
 
 fn write_files_file(dir: &Path, files: &[FileEntry]) -> Result<()> {
     let schema = files_schema();
     let file_ids: UInt32Array = (1u32..=files.len() as u32).map(Some).collect();
     let artifact_ids: UInt32Array = files.iter().map(|f| Some(f.artifact.0)).collect();
-    let batch = RecordBatch::try_new(
-        schema.clone(),
+    write_batch(
+        dir,
+        "files",
+        schema,
         vec![
             Arc::new(file_ids) as ArrayRef,
             Arc::new(artifact_ids) as ArrayRef,
         ],
-    )?;
-    let file = File::create(dir.join("files.parquet"))?;
-    let mut writer = ArrowWriter::try_new(file, schema, None)?;
-    writer.write(&batch)?;
-    writer.close()?;
-    Ok(())
+    )
 }
 
 fn write_spans_file(dir: &Path, spans: &[Span]) -> Result<()> {
@@ -212,20 +213,17 @@ fn write_spans_file(dir: &Path, spans: &[Span]) -> Result<()> {
             _ => None,
         })
         .collect();
-    let batch = RecordBatch::try_new(
-        schema.clone(),
+    write_batch(
+        dir,
+        "spans",
+        schema,
         vec![
             Arc::new(span_ids) as ArrayRef,
             Arc::new(starts) as ArrayRef,
             Arc::new(len_tags) as ArrayRef,
             Arc::new(len_values) as ArrayRef,
         ],
-    )?;
-    let file = File::create(dir.join("spans.parquet"))?;
-    let mut writer = ArrowWriter::try_new(file, schema, None)?;
-    writer.write(&batch)?;
-    writer.close()?;
-    Ok(())
+    )
 }
 
 fn write_file_spans_file(dir: &Path, file_spans: &[FileSpan]) -> Result<()> {
@@ -233,19 +231,16 @@ fn write_file_spans_file(dir: &Path, file_spans: &[FileSpan]) -> Result<()> {
     let file_span_ids: UInt32Array = (1u32..=file_spans.len() as u32).map(Some).collect();
     let file_ids: UInt32Array = file_spans.iter().map(|fs| Some(fs.file.0)).collect();
     let span_ids: UInt32Array = file_spans.iter().map(|fs| Some(fs.span.0)).collect();
-    let batch = RecordBatch::try_new(
-        schema.clone(),
+    write_batch(
+        dir,
+        "file_spans",
+        schema,
         vec![
             Arc::new(file_span_ids) as ArrayRef,
             Arc::new(file_ids) as ArrayRef,
             Arc::new(span_ids) as ArrayRef,
         ],
-    )?;
-    let file = File::create(dir.join("file_spans.parquet"))?;
-    let mut writer = ArrowWriter::try_new(file, schema, None)?;
-    writer.write(&batch)?;
-    writer.close()?;
-    Ok(())
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -285,30 +280,23 @@ pub fn write_parquet_source_info<P: AsRef<Path>>(dir: P, info: &SourceInfo) -> R
 // Per-table read helpers
 // ---------------------------------------------------------------------------
 
+/// Column `index` of `batch`, which must be a `T`; `name` is for the error.
+fn column<'a, T: 'static>(batch: &'a RecordBatch, index: usize, name: &str) -> Result<&'a T> {
+    batch
+        .column(index)
+        .as_any()
+        .downcast_ref::<T>()
+        .ok_or_else(|| ParquetError::InvalidData(format!("{name} column type mismatch")))
+}
+
 fn read_metadata_file(dir: &Path) -> Result<ArtifactMetadata> {
     let file = File::open(dir.join("metadata.parquet"))?;
     let mut reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
     if let Some(batch_result) = reader.next() {
         let batch = batch_result?;
-        let hash_algorithms = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<UInt8Array>()
-            .ok_or_else(|| {
-                ParquetError::InvalidData("hash_algorithm column type mismatch".to_string())
-            })?;
-        let hash_lens = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<UInt8Array>()
-            .ok_or_else(|| {
-                ParquetError::InvalidData("hash_len column type mismatch".to_string())
-            })?;
-        let versions = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .ok_or_else(|| ParquetError::InvalidData("version column type mismatch".to_string()))?;
+        let hash_algorithms = column::<UInt8Array>(&batch, 0, "hash_algorithm")?;
+        let hash_lens = column::<UInt8Array>(&batch, 1, "hash_len")?;
+        let versions = column::<UInt32Array>(&batch, 2, "version")?;
         if batch.num_rows() == 0 {
             return Err(ParquetError::MissingMetadata(
                 "metadata.parquet has no rows".to_string(),
@@ -331,34 +319,10 @@ fn read_artifacts_file(dir: &Path) -> Result<Vec<ArtifactRecord>> {
     let mut artifacts = Vec::new();
     for batch_result in reader {
         let batch = batch_result?;
-        let paths = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| {
-                ParquetError::InvalidData("canonical_path column type mismatch".to_string())
-            })?;
-        let sub_ids = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .ok_or_else(|| {
-                ParquetError::InvalidData("sub_artifact_id column type mismatch".to_string())
-            })?;
-        let encodings = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<UInt8Array>()
-            .ok_or_else(|| {
-                ParquetError::InvalidData("encoding column type mismatch".to_string())
-            })?;
-        let hashes = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .ok_or_else(|| {
-                ParquetError::InvalidData("content_hash column type mismatch".to_string())
-            })?;
+        let paths = column::<StringArray>(&batch, 1, "canonical_path")?;
+        let sub_ids = column::<UInt32Array>(&batch, 2, "sub_artifact_id")?;
+        let encodings = column::<UInt8Array>(&batch, 3, "encoding")?;
+        let hashes = column::<BinaryArray>(&batch, 4, "content_hash")?;
         for i in 0..batch.num_rows() {
             artifacts.push(ArtifactRecord {
                 canonical_path: paths.value(i).to_string(),
@@ -377,13 +341,7 @@ fn read_files_file(dir: &Path) -> Result<Vec<FileEntry>> {
     let mut files = Vec::new();
     for batch_result in reader {
         let batch = batch_result?;
-        let artifact_ids = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .ok_or_else(|| {
-                ParquetError::InvalidData("artifact_id column type mismatch".to_string())
-            })?;
+        let artifact_ids = column::<UInt32Array>(&batch, 1, "artifact_id")?;
         for i in 0..batch.num_rows() {
             files.push(FileEntry {
                 artifact: ArtifactId(artifact_ids.value(i)),
@@ -399,23 +357,9 @@ fn read_spans_file(dir: &Path) -> Result<Vec<Span>> {
     let mut spans = Vec::new();
     for batch_result in reader {
         let batch = batch_result?;
-        let starts = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .ok_or_else(|| ParquetError::InvalidData("start column type mismatch".to_string()))?;
-        let len_tags = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<UInt8Array>()
-            .ok_or_else(|| ParquetError::InvalidData("len_tag column type mismatch".to_string()))?;
-        let len_values = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .ok_or_else(|| {
-                ParquetError::InvalidData("len_value column type mismatch".to_string())
-            })?;
+        let starts = column::<UInt32Array>(&batch, 1, "start")?;
+        let len_tags = column::<UInt8Array>(&batch, 2, "len_tag")?;
+        let len_values = column::<UInt32Array>(&batch, 3, "len_value")?;
         for i in 0..batch.num_rows() {
             let len = match len_tags.value(i) {
                 0 => SpanLen::Empty,
@@ -438,16 +382,8 @@ fn read_file_spans_file(dir: &Path) -> Result<Vec<FileSpan>> {
     let mut file_spans = Vec::new();
     for batch_result in reader {
         let batch = batch_result?;
-        let file_ids = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .ok_or_else(|| ParquetError::InvalidData("file_id column type mismatch".to_string()))?;
-        let span_ids = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .ok_or_else(|| ParquetError::InvalidData("span_id column type mismatch".to_string()))?;
+        let file_ids = column::<UInt32Array>(&batch, 1, "file_id")?;
+        let span_ids = column::<UInt32Array>(&batch, 2, "span_id")?;
         for i in 0..batch.num_rows() {
             file_spans.push(FileSpan {
                 file: FileId(file_ids.value(i)),
