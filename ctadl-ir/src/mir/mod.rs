@@ -428,8 +428,7 @@ impl AsRef<Variable> for Variable {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VariableRef {
-    /// Not interned: a shared refcount on common variables such as `Local(0)` would serialize
-    /// threads running passes on different functions.
+    /// The referenced variable, held by value.
     pub variable: Variable,
     pub version: Option<u32>,
 }
