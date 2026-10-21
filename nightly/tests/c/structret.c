@@ -11,7 +11,7 @@
  * same round trip through an explicit out-parameter and does keep r.b clean.
  * The difference is not the return itself but how the frontend models the pcode
  * PIECE/SUBPIECE ops (both routed through handle_binop in
- * languages/pcode/mod.rs, which unions its operands and discards the byte-offset
+ * frontends/ctadl-pcode/src/lib.rs, which unions its operands and discards the byte-offset
  * operand). At -O0 both copies move 8 bytes at a time across a and b together;
  * Ghidra fuses the two fields into one varnode with PIECE and slices them back
  * out with SUBPIECE(w, offset). Because handle_binop ignores the offset, taint
