@@ -18,8 +18,7 @@ pub enum JavaDispatch {
     /// admits every unrelated class that implements it.
     Interface,
     /// Dex `invoke-super`, JVM `invokespecial` with a receiver: the target is fixed at the
-    /// named class rather than found from the receiver. CTADL still resolves it as a virtual
-    /// call, so it is counted separately in order to show what that costs.
+    /// named class rather than found from the receiver.
     ///
     /// The two frontends do not draw this line in the same place, and a cross-frontend
     /// comparison has to know it. On dex, `invoke-direct` -- constructors and private methods
@@ -92,8 +91,7 @@ pub enum CallStyle {
         cls: Symbol,
         simple_name: Symbol,
         descriptor: Symbol,
-        /// Which of `invoke-virtual` / `-interface` / `-super` this was. Resolution ignores
-        /// it; see [`JavaDispatch`].
+        /// Which of `invoke-virtual` / `-interface` / `-super` this was; see [`JavaDispatch`].
         dispatch: JavaDispatch,
         /// For `dispatch: Super`, the class the runtime begins method lookup at. `None` for
         /// every other dispatch kind and for a `Super` site whose frontend could not
@@ -341,10 +339,9 @@ pub enum VirtualMethodTable {
         functions: Vec<(Symbol, Symbol)>,
         /// Functions *called* by the import but defined nowhere in it — the Lua stdlib
         /// (`os.execute`, `string.format`), and anything from a module outside the import.
-        /// Without this column they are unmodelable: the IR names them correctly at their call
-        /// sites, but every model match index is built from the table, so a model naming
-        /// `execute` (or `qualified-id: "os.execute"`) matched nothing and a Lua propagation
-        /// model file was inert. dex/jvm answer the same question with their `Context::ext`
+        /// Without this column they would be unmodelable: the IR names them correctly at their
+        /// call sites, but every model match index is built from the table, so a model naming
+        /// `execute` (or `qualified-id: "os.execute"`) would match nothing. dex/jvm answer the same question with their `Context::ext`
         /// entries and pcode with real `<EXTERNAL>::…` thunks.
         ///
         /// The columns are as follows:
