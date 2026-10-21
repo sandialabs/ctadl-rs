@@ -373,8 +373,8 @@ fn dispatch_split(programs: &[Value], biggest: &Value) -> Dispatch {
 ///
 /// Wall time is measured here. Peak memory comes from `/usr/bin/time -l`, whose `peak memory
 /// footprint` is the kernel's high-water mark for the process -- nothing slips between polls.
-/// Where that is unavailable (any non-macOS host, or no `/usr/bin/time`), the column is
-/// simply absent rather than filled with a number measured a different way.
+/// Off macOS, or without `/usr/bin/time`, the column is simply absent rather than filled with a
+/// number measured a different way.
 fn timed(cmd: Command, what: &str, log: &Path) -> Result<(f64, Option<f64>)> {
     let (mut cmd, wrapped) = wrap_with_time(cmd);
     let start = Instant::now();
@@ -399,10 +399,10 @@ fn timed(cmd: Command, what: &str, log: &Path) -> Result<(f64, Option<f64>)> {
     Ok((secs, peak))
 }
 
-/// Wraps `cmd` in `/usr/bin/time -l` when that exists. Returns whether it did.
+/// Wraps `cmd` in `/usr/bin/time -l` on macOS when that exists. Returns whether it did.
 fn wrap_with_time(cmd: Command) -> (Command, bool) {
     let time = Path::new("/usr/bin/time");
-    if !time.is_file() {
+    if !cfg!(target_os = "macos") || !time.is_file() {
         return (cmd, false);
     }
     let mut wrapped = Command::new(time);
@@ -411,16 +411,12 @@ fn wrap_with_time(cmd: Command) -> (Command, bool) {
     (wrapped, true)
 }
 
-/// `peak memory footprint` (macOS) or `Maximum resident set size` (GNU time), in MB.
+/// The `peak memory footprint` line of macOS `/usr/bin/time -l`, in MB.
 fn peak_mb(stderr: &str) -> Option<f64> {
     for line in stderr.lines() {
         let line = line.trim();
         if let Some(bytes) = line.strip_suffix("peak memory footprint") {
             return bytes.trim().parse::<f64>().ok().map(|b| b / 1e6);
-        }
-        // GNU time reports kilobytes.
-        if let Some(kb) = line.strip_prefix("Maximum resident set size (kbytes): ") {
-            return kb.trim().parse::<f64>().ok().map(|k| k / 1e3);
         }
     }
     None
@@ -595,16 +591,11 @@ mod tests {
     }
 
     #[test]
-    fn peak_is_parsed_from_both_time_dialects() {
-        // macOS `/usr/bin/time -l`: the number leads, the label follows.
+    fn peak_is_parsed_from_time_output() {
+        // The number leads, the label follows.
         assert_eq!(
             peak_mb("        18377276800  peak memory footprint\n"),
             Some(18377.2768)
-        );
-        // GNU time -v.
-        assert_eq!(
-            peak_mb("\tMaximum resident set size (kbytes): 2048\n"),
-            Some(2.048)
         );
         assert_eq!(peak_mb("nothing here"), None);
     }
