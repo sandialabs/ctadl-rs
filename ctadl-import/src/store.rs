@@ -78,8 +78,8 @@ pub fn save_program_info(
     ArtifactImport::mark_complete(&import.name)
 }
 
-/// Reads the [`ProgramInfo`] out of the directory of an artifact that was already imported,
-/// returning an error if incomplete.
+/// Returns [`Error::IncompleteImport`] unless `import`, or the config stored for it on disk, is
+/// marked complete.
 fn refuse_unfinished(import: &ArtifactImport) -> Result<(), Error> {
     if import.is_complete() {
         return Ok(());
@@ -95,6 +95,8 @@ fn refuse_unfinished(import: &ArtifactImport) -> Result<(), Error> {
     })
 }
 
+/// Reads the [`ProgramInfo`] out of the directory of an artifact that was already imported,
+/// returning an error if incomplete.
 pub fn load_import(import: &ArtifactImport, src: SourceInfoMode) -> Result<ProgramInfo, Error> {
     let vmt = load_vmt(import)?;
     let path = &import.program_path();
@@ -150,8 +152,7 @@ pub fn load_vmt(import: &ArtifactImport) -> Result<VirtualMethodTable, Error> {
 /// # Errors
 ///
 /// Returns [`Error::IncompatibleImport`] if the import was written by a build with a different
-/// [`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION). Code that reads
-/// `ir-program.bitcode` directly cannot make that check, which is why this function exists.
+/// [`IMPORT_FORMAT_VERSION`](crate::project::IMPORT_FORMAT_VERSION).
 pub fn open_import(name_or_dir: &str, pipeline: ssa::Pipeline) -> Result<ProgramInfo, Error> {
     let import = resolve_import(name_or_dir)?;
     let mut program_info = load_import(&import, SourceInfoMode::Skip)?;
