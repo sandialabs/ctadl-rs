@@ -265,15 +265,10 @@ impl Context {
                         methods, natives, ..
                     } = &mut builders.vmt
                     {
-                        // In `methods` because CHA builds its resolvent map from that column:
-                        // without a row there, an `invoke-virtual` of a native method resolves
-                        // to nothing and the call site is lost -- bridge or no bridge. (A
-                        // `static` native is reached by `invoke-static`, which resolves by name
-                        // and never consults the table.) The jvm frontend lists native methods
-                        // there for the same reason, because it walks every declared method.
+                        // A row in both columns (see `natives` on `VirtualMethodTable::Java`).
+                        // A `static` native is reached by `invoke-static`, which resolves by
+                        // name and never consults the table.
                         methods.push((cls.clone(), simple.clone(), descr.clone(), method.clone()));
-                        // ... and in `natives` because that is where the JNI bridge looks, and
-                        // it is the only column carrying the staticness the bridge needs.
                         natives.push((
                             cls,
                             simple,
