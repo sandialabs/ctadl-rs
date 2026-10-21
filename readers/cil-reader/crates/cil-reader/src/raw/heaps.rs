@@ -401,7 +401,6 @@ mod tests {
         assert!(BlobHeap { data: b"\0\xc0" }.view(BlobIndex(1)).is_err());
     }
 
-    // Cecil's bounds check is `(index - 1) + 16 > length`.
     #[test]
     fn guid_indexes_past_the_heap() {
         let data: Vec<u8> = (1..=32).collect();

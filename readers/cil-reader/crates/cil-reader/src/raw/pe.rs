@@ -136,8 +136,7 @@ pub struct DebugHeaderEntry<'a> {
     pub time_date_stamp: u32,
     pub major_version: u16,
     pub minor_version: u16,
-    /// `ImageDebugType`: 2 = CodeView, 16 = Deterministic, 17 = EmbeddedPortablePdb,
-    /// 19 = PdbChecksum.
+    /// `ImageDebugType` (see [`image_debug_type`]).
     pub debug_type: u32,
     pub size_of_data: u32,
     pub address_of_raw_data: u32,
