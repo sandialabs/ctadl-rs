@@ -81,7 +81,7 @@ only Rust (`nix develop` at the repo root, or any recent toolchain):
 
 ```sh
 cargo test -p cil-reader                    # unit tests; needs no external inputs
-cargo xtask regression --frontend cil       # cil:must-fail, cil:cecil-tests, cil:read, cil:goldens, cil:cecil-compare, cil:flow
+cargo xtask regression --frontend cil       # every cil:* check; xtask/src/cil.rs lists them
 cargo dump <assembly> [--sections a,b,c] [--no-il] [--flow]   # from readers/cil-reader: the cil-dump CLI
 ```
 
