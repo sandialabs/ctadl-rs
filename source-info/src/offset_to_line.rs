@@ -4,7 +4,7 @@
 
 use crate::line_map::LineMap;
 
-/// 1-based line and column.
+/// 1-based line and 0-based column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LineColumn {

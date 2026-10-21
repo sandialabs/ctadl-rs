@@ -1,5 +1,5 @@
 //! Artifact table: immutable source artifacts with interning by
-//! (canonical_path, sub_artifact_id, content_hash).
+//! (canonical_path, sub_artifact_id, content_hash, encoding).
 
 use crate::ids::ArtifactId;
 use crate::store::{ArtifactsStore, KvStore};
