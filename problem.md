@@ -1,0 +1,224 @@
+# P9 / P24: R8-merged Kotlin lambdas - DO-NOT-MERGE
+
+R8 (Android's optimizer) merges many small classes, above all Kotlin lambdas and coroutine
+`SuspendLambda`s, into one class whose methods switch on a synthetic class-id field. The analysis
+does not see the switch, so each merged method behaves as the union of every lambda behind it, and
+virtual calls inside it dispatch on whatever any of those lambdas captured. These methods become
+dispatch hubs for the hybrid-context machinery, and the index stops converging (P9). Splitting the
+classes back apart at import fixes that, but done naively the split stores every lambda body once
+per id (P24).
+
+This branch is off `main`, which has neither fix. Both fixes (S10, S29) and the measurements are on
+`improve-native-handling`; `things-to-improve.md` there has the full record (P9, P15, P16, P24,
+P25, S10, S11, S29, S30, M2, M3, M9).
+
+## Starting point
+
+Both fixes exist and apply cleanly to `main`, so this branch starts by bringing them in and
+re-checking them on the current `main`:
+
+```sh
+git cherry-pick 9023a11c fb76eb0e
+```
+
+Hashes are on `improve-native-handling` as rebased onto `main` `076f6a60`; the subjects are given
+too, since a later rebase changes the hashes. Each cherry-pick below was tried on `076f6a60`.
+
+- `9023a11c` "Split R8 class-merged classes back apart at dex import" (S10), with the
+  `class-id-merged-flow` regression fixture.
+- `fb76eb0e` "Prune each R8 clone at import" (S29), which needs S10.
+- Both move `com.noto`'s pinned `ctadl report` counts in `xtask/src/apk.rs`. Re-pin by the
+  procedure in the comment there (import, `ctadl report app --format json`). On
+  `improve-native-handling` they are 181,441 sites, 101,263 virtual, 2,141,436 CHA edges and
+  2,075,579 RTA edges (`f265289b`); recompute them on this branch rather than copying.
+- Optional, S11 (`35e54141` "Key the call-target transitive rule on the tag's path prefix"): it
+  needs the probe counters from `e00e3dd6` "More recs", which needs `b47ed139` (below).
+  `e00e3dd6` conflicts only in `things-to-improve.md`, which `main` does not have; drop that file.
+  S11 helps `cpuinfo` but costs memory elsewhere (P17).
+- `main`'s Dex frontend changed since these were measured (#153 fixed reader and frontend
+  dataflow bugs), so re-run `cpuinfo` and NewPipe before relying on the numbers above.
+
+**Optional measurement tooling** (none of it is on `main`):
+
+```sh
+git cherry-pick b47ed139   # vendors a patched ascent_macro (a timed-out run keeps the running
+                           # scc's contents) and adds CTADL_LOCALS_CENSUS and CTADL_DEAD_PHIS
+git cherry-pick 5858fa78   # "Log the size of every relation and index" ([idxsizes])
+git cherry-pick 918c771a   # "Count each rule's rows derived and new, and log each iteration"
+                           # (per-rule counters, CTADL_ITER_LOG)
+git cherry-pick c1ee3d61 f9e5b24a   # scripts/blowup-rank.py, and the Windows memguard/ladder
+```
+
+These apply in that order; `f9e5b24a` conflicts only in `things-to-improve.md`, which `main`
+does not have (drop it). `b47ed139` is titled "WIP-EXPERIMENT: dead-phi pass, locals
+census, SSA/stack census examples"; its experiment hooks are off unless their variables are set.
+On Linux, `systemd-run --user --scope -p MemoryMax=<N>G -p MemorySwapMax=0` stands in for
+`scripts/memguard.ps1`. `main` already writes `profile.json` (#159), which covers relation counts
+and scc/rule times without the patched macro.
+
+## The problem
+
+### P9: merged lambdas are dispatch hubs
+
+In `com.kgurgul.cpuinfo` (the version measured on 2026-09-30) the functions holding the most
+`context_locals` rows were all R8-merged Kotlin suspend lambdas: `Li;->r` and `Li;->e`, `Lp8;->r`,
+`Lk;->r`, `Lt40;->r` (here `nv2` is `SuspendLambda`, `vk` is `BaseContinuationImpl`, `yp0` and
+`up0` are `Function2` and `Function1`).
+
+- **Many lambdas share one method.** `Li;` merges 29 lambdas behind a synthetic `int i` class id.
+  `r` (`invokeSuspend`) and `e` (`invoke`) switch on it, and the captured state of all 29 lives in
+  the untyped `Object` fields `k` and `l`. `r` is analyzed as the union of all 29 bodies, and its
+  virtual calls, on casts of `this.l`, dispatch on whatever any of 62 construction sites stored
+  there. At 320 s `Li;->r` had 1,734 decisions, 7,165 distinct decision sets (largest 318) and
+  726 M memberships.
+- **The union is instantiated many times over.** Each of `Li;->e`'s 30 switch cases calls
+  `this.p(..).r(Unit)`, so `r`'s union summary lands at 30 identical call sites. Each site's
+  receiver holds 3,129 call-target tags and has 20,181 out-edges: 63 M pairs per vertex, 1.9 B of
+  the 3.2 B pairs a full re-derivation of `call_target_assign_like` would visit.
+- **It recurs:** 75 `SuspendLambda` subclasses in `cpuinfo` carry a class id; merged classes are
+  in 12 of the 15 apps of the original corpus.
+- **It drives two more problems.** The union summaries make the decision sets churn (P15:
+  `context_locals` grows a set one decision at a time, 221 M unions for 39 M rows, and every update
+  re-runs the row through the contextual closure) and make the call-target join visit billions of
+  pairs (P16).
+
+### P24: the split stores every arm in every clone
+
+The fix for P9 (S10, below) clones each switching method once per class id and narrows only the
+switch, so each clone keeps every other id's arm as unreachable code. A class with n ids stores the
+merged body n times, and the body grows with n: quadratic in the ids (capped at 64). The fixpoint
+never sees the dead arms (the index prunes unreachable blocks before SSA), but the import, the
+stored program and the index's load all pay for them, and `ctadl report` counts them.
+
+On `org.schabi.newpipe` 0.29.1: 955 merged classes split into 4,889 ids, 1,671 switching methods
+into 9,451 clones holding 1,140,297 instructions, exactly ids × the original for every method. That
+was 43% of the imported IR in 11% of the functions (the largest, a Compose resources lambda, was 30
+ids × 2,648 instructions). 214 k of NewPipe's 528 k call sites, and 2.9 M of its 6.5 M CHA edges,
+could never execute.
+
+### P25 (related, precision only): small merged classes stay merged at CHA sites
+
+The split keeps the merged class `C` and its union methods for objects built with an id the import
+can't determine, and a CHA answer can't tell `C`'s method from its overrides in `C$r8id<k>`. So a
+site resolved by CHA reaches the union and every clone. On NewPipe that is 1,018 sites, 0.7% of call
+edges; the union's summary already holds every clone's flows, so nothing is lost, only precision.
+
+## Measurements
+
+**`cpuinfo` without a fix** (as on `main`): not a memory blowup but a fixpoint that never
+converges. After 640 s, scc 4 is still adding rows and minting decisions, and each iteration costs
+more per new row than the last.
+
+| Rung (`CTADL_INDEX_TIMEOUT_SECS`) | Iterations | Peak | `locals` | `context_locals` | `call_target_assign_like` | Decisions |
+|---|---|---|---|---|---|---|
+| 10 s | 41 | 2.5 GB | 3.1 M | 0.14 M | 1.1 M | 5.8 k |
+| 40 s | 95 | 6.9 GB | 15.2 M | 4.3 M | 5.8 M | 10.1 k |
+| 160 s | 118 | 16.0 GB | 34.9 M | 20.0 M | 7.8 M | 16.2 k |
+| 640 s | 127 | 28.9 GB | 56.9 M | 39.0 M | 8.7 M | 18.6 k |
+
+At 1800 s it was still running at 41.5 GB. The other hybrid-context modes don't finish either
+(`--hybrid-context none`: 31.5 GB at 1200 s, every caller gets the union of all resolved callees'
+summaries; `collapse`: removes the churn but not the volume).
+
+**With S10:** fixpoint in 116-119 s at 7.6-7.8 GB; decisions fall from 22 k (still growing) to
+7.2 k, and `context_locals` from 58 M (still growing) to 1.1 M. The regression suite's SARIF is
+unchanged, and a fixture added with S10 (`nightly/tests/java/class-id-merged-flow.json`, on
+`improve-native-handling`) loses a false positive.
+
+**With S29 on NewPipe:** stored program 112.4 → 74.9 MB, import peak 1.35 → 1.05 GB, the index's
+loaded IR 521 → 360 MB. Query results on `com.noto` unchanged.
+
+## How to reproduce
+
+On `main` (no fix), Dex only:
+
+```sh
+cargo build --release
+export XDG_STATE_HOME=$PWD/tmp/p9/state
+target/release/ctadl import -l apk --no-native-libs --name cpuinfo com.kgurgul.cpuinfo_60700.apk
+# A timeout gives a profile of a run that would not finish; repeat with 10, 40, 160, ...
+CTADL_INDEX_TIMEOUT_SECS=160 RUST_LOG='warn,ctadl=debug,ctadl_ir::ssa=info' \
+  systemd-run --user --scope -p MemoryMax=32G -p MemorySwapMax=0 \
+  target/release/ctadl index cpuinfo 2> tmp/p9/cpuinfo-160.log
+```
+
+What to look for:
+
+- `profile.json` in the index directory (`$XDG_STATE_HOME/ctadl/projects/<name>/index/`): every
+  relation's tuple count, each scc's iterations and rule times, and whether the run reached the
+  fixpoint or stopped at `CTADL_INDEX_TIMEOUT_SECS`. The same numbers are in the debug log.
+- `context_locals` and the decision count still climbing between rungs, and rule time per new row
+  rising (compare the rungs' `profile.json` files).
+- The hubs: find the functions holding the most `context_locals` rows; they should be methods of
+  R8-merged classes. To recognize one in `ctadl inspect cpuinfo --dump-ir`: a class with a
+  `final int` field that every constructor stores from an argument or a constant, and methods that
+  load it from `this` and `switch` on it. Class names change from build to build, so the names
+  above may not exist in this version.
+- On `main` a timed-out run loses the running scc's contents and timing;
+  `improve-native-handling` vendors a patched `ascent_macro` that keeps them and adds per-rule
+  row counters (`scripts/blowup-rank.py` ranks them).
+
+For P24, on `improve-native-handling` at a commit with S10 but before S29 (`9023a11c`), import
+NewPipe and compare `ir-program.bitcode` in the store with an import made after S29 (`fb76eb0e`);
+`ctadl inspect <name> --dump-ir` shows each `C$r8id<k>` clone carrying every arm. The repo's own
+`xtask/tests/dex/com.noto_54.apk` (137 merged classes) shows the same at small scale.
+
+## Ideas for solutions
+
+**S10, done on `improve-native-handling` (`9023a11c`): split R8-merged classes at import.**
+`frontends/ctadl-dex/src/merged.rs` finds a `final int` field that each constructor stores from an
+argument or a constant, and that methods load from `this` and switch on (a must-analysis of
+register values handles `move-object v4, p0` and constant ids). Each id gets a subclass
+`C$r8id<k>` with clones of the switching methods, each switch narrowed to arm `k`, and construction
+sites with a known id allocate the subclass. `final` is what makes it sound; the `synthetic` flag
+is not required. Fixes `cpuinfo` (above).
+
+**S29, done on `improve-native-handling` (`fb76eb0e`): prune each clone at import.** Run the pass
+the index already runs before SSA (`ctadl_ir::ssa::prune_unreachable_nodes`) on each clone right
+after lowering it, so a clone stores only its own arm. Fixes P24 (above).
+
+**S11 (keyed call-target join, on `improve-native-handling`):** splits each tag's path at every
+prefix so the transitive join only retrieves matching edges. Helps `cpuinfo` with S10 (82 s
+instead of 117 s), but costs memory everywhere else (P17); measured trade-offs are in
+`things-to-improve.md`.
+
+**Open:**
+
+- **S30 (P25):** when every construction site of `C` has a known id, nothing is allocated as `C`
+  itself, so leave `C`'s union methods out of the CHA targets (or don't emit them). Needs a
+  soundness check for `super` calls into `C` and for reflection. Small gain (1,018 sites on
+  NewPipe).
+- **Merged classes S10 does not recognize.** The detector needs a `final int` id set in every
+  constructor. Other R8 merging shapes (ids passed through a factory, non-`final` fields, merged
+  interfaces) would fall back to the union; nobody has counted how many remain.
+- **Bounding decision-set churn generally (S14):** `--hybrid-context bounded:k` and `spill:k`
+  exist; rejected for `cpuinfo` (S10 removed the need), never measured as a backstop.
+
+**How to check a fix:** `cpuinfo` converges, with decisions and `context_locals` near the S10
+numbers; NewPipe's stored program and import peak; the regression suite's SARIF unchanged, and
+`class-id-merged-flow` reporting only its two real flows.
+
+## Samples
+
+From F-Droid (`https://f-droid.org/repo/<file>`), except `com.noto`, which is in the repo.
+
+| App | Version | File | SHA-256 | Size |
+|---|---|---|---|---|
+| `com.kgurgul.cpuinfo` | 6.7.0 | `com.kgurgul.cpuinfo_60700.apk` | `add5b106513c85c99689134959f1ed522bbd9ef54478d9e522b7d5658b33849d` | 2.8 MB |
+| `org.schabi.newpipe` | 0.29.1 | `org.schabi.newpipe_1015.apk` | `1d66d19eedbab969b1be2e44e0ea35f5f8921cbe83b5c5ac810767ca1a84b7e8` | 11.5 MB |
+| `com.noto` | 2.2.3 | `xtask/tests/dex/com.noto_54.apk` (in the repo) | `282c78c15e55e7711a9bb2f351ce5e70d3552327470f0cbadaa634e269ea3028` | 6.7 MB |
+
+- `cpuinfo` 6.7.0 is newer than the version measured; check that it still has merged suspend
+  lambdas before relying on it (it is the same app and toolchain, so it very likely does).
+- NewPipe 0.29.1 build 1015 is the version measured in M9. F-Droid also lists
+  `org.schabi.newpipe_1015_cb84069.apk` (SHA-256
+  `18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79`), the same version built
+  separately; which of the two M9 used was not recorded.
+
+```sh
+mkdir -p samples && cd samples
+for f in com.kgurgul.cpuinfo_60700.apk org.schabi.newpipe_1015.apk; do
+  curl -fLO https://f-droid.org/repo/$f
+done
+sha256sum *.apk   # compare against the table
+```
