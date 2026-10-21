@@ -93,10 +93,12 @@ def sh(cmd, env=None, cwd=None):
     return os.waitstatus_to_exitcode(status), out, wall, peak_fp, rss
 
 
+# The optional parts match an older build, which also logged a `fidx` side-index and the
+# forward store's own share of the total.
 HEAP_RE = re.compile(
     r"locals store estimate: total ([\d.]+) MB over (\d+) rows \(([\d.]+) B/row\) \| "
-    r"fwd ([\d.]+) MB \((\d+)%\): (\d+) \(F,V\) groups, (\d+) \(F,V,P\) entries, (\d+) leaves \| "
-    r"fidx ([\d.]+) MB \((\d+)%\): (\d+) funcs, (\d+) V entries \| "
+    r"fwd(?: [\d.]+ MB \(\d+%\))?: (\d+) \(F,V\) groups, (\d+) \(F,V,P\) entries, (\d+) leaves \| "
+    r"(?:fidx [^|]*\| )?"
     r"groups: max (\d+), large (\d+), mean ([\d.]+), log2hist \[([^\]]*)\]"
 )
 # An older build logs the same line without the `groups:` shape suffix. Parse it too, so such a
@@ -127,17 +129,15 @@ def parse_log(log):
         g = m.groups()
         rec = {
             "store_mb": float(g[0]), "rows": int(g[1]), "b_per_row": float(g[2]),
-            "fwd_mb": float(g[3]), "groups": int(g[5]), "p_entries": int(g[6]),
-            "fidx_mb": float(g[8]), "funcs": int(g[10]),
-            "max_group": int(g[12]), "large": int(g[13]), "mean_group": float(g[14]),
-            "hist": g[15],
+            "groups": int(g[3]), "p_entries": int(g[4]),
+            "max_group": int(g[6]), "large": int(g[7]), "mean_group": float(g[8]),
+            "hist": g[9],
         }
     elif LEGACY_HEAP_RE.search(log):
         g = LEGACY_HEAP_RE.search(log).groups()
         rec = {
             "store_mb": float(g[0]), "rows": int(g[1]), "b_per_row": float(g[2]),
-            "fwd_mb": float(g[3]), "groups": int(g[5]), "p_entries": int(g[6]),
-            "fidx_mb": float(g[8]), "funcs": int(g[10]),
+            "groups": int(g[5]), "p_entries": int(g[6]),
             "max_group": 0, "large": 0,
             "mean_group": int(g[7]) / int(g[5]) if int(g[5]) else 0.0, "hist": "",
         }
@@ -148,8 +148,8 @@ def parse_log(log):
                                "in index output (was the index run with the index_engine module at DEBUG?)")
         rows, groups = int(m.group(1)), int(m.group(2))
         rec = {
-            "store_mb": 0.0, "rows": rows, "b_per_row": 0.0, "fwd_mb": 0.0,
-            "groups": groups, "p_entries": 0, "fidx_mb": 0.0, "funcs": 0,
+            "store_mb": 0.0, "rows": rows, "b_per_row": 0.0,
+            "groups": groups, "p_entries": 0,
             "max_group": 0, "large": 0,
             "mean_group": rows / groups if groups else 0.0, "hist": "",
         }
