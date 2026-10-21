@@ -4200,9 +4200,8 @@ impl<'a> Context<'a> {
         }
     }
 
-    /*
-    Call expression always 'assign' into a temp variable, that way the collect_assignment can be consistent
-     */
+    /// Lowers a call, assigning its result into the temp `temp_name` and yielding it, so a
+    /// call's value is an ordinary variable to whatever consumes it.
     // hmmm DEF TODO: figure out a x->v().. seems like  we need a path_vec containing the start
     fn collect_call(
         &mut self,
