@@ -110,7 +110,7 @@ fn function_g() -> FunctionData {
     g
 }
 
-// c1 is never set anywhere, this was a bug in ssa
+// c1 is never set anywhere: SSA must handle a use with no def.
 //def G1(b) {
 //  a = 1;
 //  c = F(a, b);
