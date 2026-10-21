@@ -178,7 +178,7 @@ impl<'a> BasicBlockBuilder<'a> {
         ))
     }
 
-    /// Create and insert a functional update `dest = update (source, dest.field := value)` (see
+    /// Create and insert a functional update `dest = update (source.field := value)` (see
     /// [`StatementKind::Update`]). Unlike [`Self::create_store`], the `dest` variable is defined (a
     /// new version of the aggregate), so the `source` aggregate is named separately.
     ///

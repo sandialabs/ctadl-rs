@@ -335,8 +335,11 @@ pub enum StatementKind {
     /// aggregate:
     ///
     /// ```text
-    /// dest = update (source, dest.field := value);
+    /// x = update (y.f := v)
     /// ```
+    ///
+    /// Here `x` is `dest.base`, `y` is `source`, `.f` is `dest.accesses` followed by `field`, and
+    /// `v` is `value`.
     ///
     /// An `Update` is exactly a [`StatementKind::Store`] — it writes a single symbolic `field` at
     /// the offset-only `dest` address — except that it names the `source` aggregate *separately*
@@ -346,8 +349,8 @@ pub enum StatementKind {
     /// Unlike `Store`, which defines no variable and reads its `dest` only as a location, an
     /// `Update` DEFINES `dest.base`: the new version of the aggregate. Specifying the
     /// `source` and destination separately is what lets SSA conversion rename `dest` to a fresh
-    /// version while still reading the previous `source` (e.g. `s = update (s, .foo := new_value)`
-    /// becomes `s_2 = update (s_1, .foo := new_value)`). This is the functional-update counterpart
+    /// version while still reading the previous `source` (e.g. `s = update (s.foo := new_value)`
+    /// becomes `s_2 = update (s_1.foo := new_value)`). This is the functional-update counterpart
     /// of `Store`; a frontend may emit whichever fits its memory model.
     Update {
         dest: AccessPath,
@@ -1370,7 +1373,7 @@ impl StatementKind {
         StatementKind::Store { dest, field, value }
     }
 
-    /// Constructs a functional update `dest = update (source, dest.field := value)`: `dest` becomes
+    /// Constructs a functional update `dest = update (source.field := value)`: `dest` becomes
     /// `source` with the single symbolic `field` at the offset-only `dest` address set to `value`.
     /// Unlike [`Self::store`], the resulting `dest` variable is defined (a new version of the
     /// aggregate), so the `source` and destination are given separately (see
