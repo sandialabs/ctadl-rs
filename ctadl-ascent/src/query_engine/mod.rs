@@ -23,18 +23,9 @@ use packed_struct::prelude::*;
 
 use crate::facts::{
     CallArgId, FlowEdge, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
-    FunctionId, IdMap, InsnId, InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path,
-    TaintDirection, TaintEndpoint, TaintState, isout,
+    FunctionId, IdMap, InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection,
+    TaintEndpoint, TaintState, isout,
 };
-
-/// Match the index's call vertices: every call shares its caller's heap formal.
-fn call_arg_vertex(insn: InsnId, formal: FormalIndex) -> FlowVariable {
-    if formal == crate::codegen::GLOBALS_INDEX.into() {
-        FlowVariable::formal_index(formal)
-    } else {
-        FlowVariable::call_arg_packed(PackedCallArg::try_from_parts(insn, formal).unwrap())
-    }
-}
 
 // same as a TaintEndpoint but with a functionId
 #[derive(
@@ -483,7 +474,7 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
                 (a.direction == TaintDirection::Backward /* && isin(n2.0) */),
             call(site_id, infunc),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**site_id).unwrap(),
-            let v1 = call_arg_vertex(insn_id, n2);
+            let v1 = FlowVariable::call_actual(insn_id, n2);
 
         // Actual-to-formal (Call in forward mode, Return in backward mode).
         taint(func, TaintState::Restricted, formal_var.clone(), p2.clone(), a.clone()),

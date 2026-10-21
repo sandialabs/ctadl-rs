@@ -766,6 +766,17 @@ impl FlowVariable {
         FlowVariableKind::CallArg(c).into()
     }
 
+    /// The vertex of the actual for parameter `formal` of the call at `insn`. The global heap
+    /// already aliases the caller's heap formal at every call site, so its actual is that formal
+    /// rather than a per-call copy.
+    pub fn call_actual(insn: InsnId, formal: FormalIndex) -> Self {
+        if formal == crate::codegen::GLOBALS_INDEX.into() {
+            FlowVariable::formal_index(formal)
+        } else {
+            FlowVariable::call_arg_packed(PackedCallArg::try_from_parts(insn, formal).unwrap())
+        }
+    }
+
     pub fn as_local(&self) -> Option<Str> {
         if self.is_local() {
             let idx = self.0 & DATA_MASK;

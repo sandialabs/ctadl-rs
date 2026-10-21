@@ -444,7 +444,7 @@ impl LazySuccessors for TaintSearchGraph {
                 out.push((
                     (
                         func_id,
-                        super::call_arg_vertex(insn_id, formal),
+                        FlowVariable::call_actual(insn_id, formal),
                         p,
                         level,
                         ObjectScope::All,
