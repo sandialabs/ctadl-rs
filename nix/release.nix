@@ -14,10 +14,9 @@
 #   x86_64-linux    | x86_64-unknown-linux-musl, x86_64-pc-windows-gnu
 #   aarch64-darwin  | aarch64-apple-darwin
 #
-# CI builds the two cross targets on ubuntu-latest and the Darwin one on a macOS
-# runner; see .github/workflows/release.yml. Asking a builder for a target it
-# cannot reach is not an error here, it just will not succeed: the attribute set
-# is the same on every system, and the failure comes from the build.
+# Asking a builder for a target it cannot reach is not an error here, it just
+# will not succeed: the attribute set is the same on every system, and the
+# failure comes from the build.
 #
 # Only `ctadl` ships. `xtask` is the in-tree test harness.
 {
@@ -69,10 +68,10 @@ let
         {
           inherit src version;
           # Without these, naersk names the derivation after the root manifest,
-          # which has no `[package]` -- so all three came out as
-          # `rust-workspace-unknown`. They are `ctadl-<version>` now. All three
-          # targets share that name; they are still distinct derivations, and
-          # the release workflow renames the artifacts per target anyway.
+          # which has no `[package]`: `rust-workspace-unknown`. All three
+          # targets share the name `ctadl-<version>`; they are still distinct
+          # derivations, and the release workflow renames the artifacts per
+          # target anyway.
           name = binName;
           # A cross build cannot run the tests it compiles, and the workspace's
           # tests run in the `test` workflow regardless.
