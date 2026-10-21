@@ -1,5 +1,5 @@
 /*!
-Flowy language.st:
+The flowy language.
 
 The language defines functions, assignments, calls. It provides constructs for requiring
 function summaries and taint flows, including requiring the absence of summaries and the
@@ -33,8 +33,8 @@ c.foo = b.bar.baz; // field update
 c = a, d.baz; // multiple flows to a variable
 ```
 
-A single field map be updated on the left-hand side. For a field update, the comma operator may not
-be used on the right hand side. To express multiple flows into a field, first a assign a variable,
+A single field may be updated on the left-hand side. For a field update, the comma operator may not
+be used on the right hand side. To express multiple flows into a field, first assign a variable,
 then update the field: `tmp = a, b; c.foo = tmp;`. The comma operator is used on the right-hand
 side to merge multiple flows into a variable.
 
@@ -287,8 +287,7 @@ pub struct Endpoint {
     /// The parameter index this endpoint's port denotes, if it is (a copy of) a parameter.
     /// `Some` anchors the endpoint at the function's call sites (the call-arg for this
     /// formal); `None` (a local such as a `source`'s returned value, or a global) keeps it
-    /// function-anchored. The front-end's `t? = c; sink(t?, ...)` lowering means the port is
-    /// usually a temp, so this is resolved from the copied parameter rather than the port.
+    /// function-anchored.
     pub formal: Option<i16>,
     pub source_info: SourceInfo,
     /// Optional expected number of distinct source->sink paths to assert for
@@ -346,7 +345,7 @@ impl Display for EndpointDirection {
 
 #[derive(Debug, Clone, Default)]
 struct Env {
-    /// Parameters or globals
+    /// Parameters by name.
     parameters: HashMap<String, VariableRef>,
     globals: HashSet<String>,
 }
@@ -488,7 +487,7 @@ impl FlowyCtx {
         )
     }
 
-    /// Parse the formals into a map so that we can look them up as they are referenced.
+    /// Builds the function `def` defines: its formals, where clause, blocks and gotos.
     fn parse_function_def(
         &mut self,
         def: &parse::FunctionDef<'_>,
@@ -949,8 +948,7 @@ impl FlowyCtx {
                             ));
                         }
                     }
-                    // `t0 = x.y.z` (loading the port's field path if any), keeping the reference
-                    // alive after the sink call is stripped.
+                    // `t0 = x.y.z`, loading the port's field path if any.
                     if let Some(port) = port_ref {
                         let port_val =
                             lower_ref(&mut self.counter, data, local_table, source_info, port);
@@ -972,7 +970,6 @@ impl FlowyCtx {
                     args
                 };
                 let rets = thin_vec![];
-                //let args = actuals.into_iter().map(|x| Exp::AccessPath(x));
                 let call = CallAssign { style, rets, args };
                 data.push_back(Statement::new(call, source_info));
             }
@@ -1024,7 +1021,7 @@ fn parse_summary_ap(env: &Env, path: &parse::Path<'_>) -> Result<Port, FlowyErro
             fields: field_accesses,
         });
     }
-    // The port has to refer to a formal, so error if it doesn't
+    // The port has to refer to a formal or a global.
     if let Some(v) = env.parameters.get(name) {
         Ok(Port {
             base: PortBase::Var(v.clone()),
@@ -1046,8 +1043,7 @@ fn parse_summary_ap(env: &Env, path: &parse::Path<'_>) -> Result<Port, FlowyErro
 /// Converts the segments of a path, rejecting `.*`.
 ///
 /// The grammar accepts `.*`, but flowy has no wildcard field, so there is no [`PathSegment`] to
-/// return for one. It used to *panic* — `x.* = y;` in a `.flowy` file crashed the tool — so
-/// rejecting it gives the user a positioned error instead of a backtrace.
+/// return for one: it is a positioned compile error.
 fn path_segments(segments: &[parse::Segment<'_>]) -> Result<ThinVec<PathSegment>, FlowyError> {
     segments
         .iter()
@@ -1263,7 +1259,7 @@ fn exp_to_count(e: &Exp) -> Option<usize> {
     usize::try_from(e.as_int()?).ok()
 }
 
-/// Visits the source/sink/errsource/errsink instructions and collect specs
+/// Visits the source/sink/errsource/errsink instructions and collects specs.
 #[derive(Debug, Default)]
 struct ExtractSpec {
     function: ArcIntern<str>,
@@ -1351,8 +1347,6 @@ impl MutVisitor for ExtractSpec {
                         args[0].variable_ref().unwrap().clone(),
                         OffsetAccesses::empty(),
                     );
-                    // The port is the `t? = x` temp the front-end sinks; recover the
-                    // parameter index it copies so the endpoint anchors at call sites.
                     let formal = self.formal_of(&port.0);
                     let endpoint = Endpoint {
                         infunc: infunc.clone(),
@@ -1382,10 +1376,6 @@ impl MutVisitor for ExtractSpec {
                 _ => (),
             }
         }
-        // If we found a source/sink spec, nop it out because it is not a real function call.
-        // if replace {
-        //     *stmt = Nop;
-        // }
     }
 }
 
@@ -1504,7 +1494,7 @@ s:
         }
     }
 
-    /// `.*` used to *panic*, so `x.* = y;` in a `.flowy` file crashed the tool.
+    /// `.*` is a positioned compile error, not a panic.
     #[test]
     fn star_path_is_a_compile_error_not_a_panic() {
         let err = compile("def F(a, b): 1\n{\ns:\n    a = b.*;\n    return a;\n}\n")
