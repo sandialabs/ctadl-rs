@@ -195,6 +195,20 @@ pub struct ImportArgs {
     /// self-contained publish ships some 200 of them.
     #[arg(long)]
     pub include_framework: bool,
+
+    /// Number of threads Ghidra may use to analyze and decompile native code.
+    ///
+    /// `0`, the default, or `-j` with no value, leaves it to Ghidra, which uses every core the
+    /// OS reports. Any other value caps Ghidra, and the JVM it runs in, at that many.
+    #[arg(
+        short = 'j',
+        long,
+        num_args = 0..=1,
+        default_value_t = 0,
+        default_missing_value = "0",
+        value_name = "N"
+    )]
+    pub jobs: usize,
 }
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
@@ -632,6 +646,12 @@ pub struct GoArgs {
     /// See `ctadl import --help`.
     #[arg(long)]
     pub include_framework: bool,
+
+    /// Number of threads to import and index with. Unset, the import uses every core and the
+    /// index runs serially, as `ctadl import` and `ctadl index` do by default.
+    /// See `ctadl import --help` and `ctadl index --help`.
+    #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
+    pub jobs: Option<usize>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -709,6 +729,7 @@ fn main() -> anyhow::Result<()> {
                     no_native_libs: args.no_native_libs,
                     native_abi: args.native_abi.clone(),
                     include_framework: args.include_framework,
+                    jobs: args.jobs.unwrap_or(0),
                 };
                 let name = import_artifact_to_store(&import_args).with_context(|| {
                     format!("importing artifact from: '{}'", artifact.display())
@@ -730,7 +751,7 @@ fn main() -> anyhow::Result<()> {
                 alias_rule: None,
                 hybrid_context: HybridContext::default(),
                 context_join: ContextJoin::default(),
-                jobs: None,
+                jobs: args.jobs,
                 lsm: false,
                 lsm_memtable_limit: None,
                 lsm_memory_budget: None,
@@ -864,6 +885,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 no_native_libs: false,
                 native_abi: None,
                 include_framework: false,
+                jobs: 0,
             };
             import_artifact_to_store(&import_args)?;
 
@@ -977,6 +999,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             native_libs: !args.no_native_libs,
             native_abi: args.native_abi.as_deref(),
             cil_include_framework: args.include_framework,
+            jobs: args.jobs,
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote

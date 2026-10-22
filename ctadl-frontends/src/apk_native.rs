@@ -227,7 +227,7 @@ pub fn import_native_libs(
         let dest = dest_dir.join(&entry.file_name);
         let name = sub_import_name(&parent.name, abi, &entry.file_name);
 
-        match import_one(&dest, &bytes, &name, opts.skip_existing) {
+        match import_one(&dest, &bytes, &name, opts) {
             Ok(Outcome::Imported) => names.push(name),
             Ok(Outcome::Reused) => {
                 reused += 1;
@@ -288,13 +288,13 @@ const NO_NATIVE_FRONTEND: &str = "this build was compiled without ctadl-frontend
 /// function, and not the extraction loop around it. When the feature is off,
 /// [`import_native_libs`] returns before anything calls this.
 #[cfg(feature = "pcode")]
-fn lower_native(child: &ArtifactImport) -> Result<(), Error> {
-    let program_info = ctadl_pcode::import_pcode(child)?;
+fn lower_native(child: &ArtifactImport, jobs: usize) -> Result<(), Error> {
+    let program_info = ctadl_pcode::import_pcode(child, jobs)?;
     ctadl_import::save_program_info(program_info, child)
 }
 
 #[cfg(not(feature = "pcode"))]
-fn lower_native(_child: &ArtifactImport) -> Result<(), Error> {
+fn lower_native(_child: &ArtifactImport, _jobs: usize) -> Result<(), Error> {
     unreachable!("import_native_libs returns early when the `pcode` feature is off")
 }
 
@@ -310,7 +310,7 @@ fn import_one(
     dest: &Path,
     bytes: &[u8],
     name: &str,
-    skip_existing: bool,
+    opts: ImportOptions<'_>,
 ) -> Result<Outcome, Error> {
     // Write before the up-to-date check: it compares the *content* hash recorded by the
     // previous import against the file on disk, so the file has to be the one this APK
@@ -321,13 +321,13 @@ fn import_one(
 
     // Disassembling a library takes minutes, so reusing an unchanged one is the
     // difference between a re-import that is cheap and one that is not.
-    if skip_existing && ArtifactImport::is_up_to_date(name, dest)? {
+    if opts.skip_existing && ArtifactImport::is_up_to_date(name, dest)? {
         log::info!("skipping native import '{name}': destination exists and hash matches");
         return Ok(Outcome::Reused);
     }
 
     let child = ArtifactImport::try_create(name, ArtifactLanguage::Pcode, dest)?;
-    lower_native(&child)?;
+    lower_native(&child, opts.jobs)?;
 
     // `import_pcode` records Ghidra's image base on the config and re-saves it, so
     // reload rather than writing the stale in-memory copy back over it.

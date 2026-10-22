@@ -43,10 +43,11 @@ use ctadl_ir::{ProgramInfo, ssa};
 
 /// Settings for one import, beyond the artifact itself and its language.
 ///
-/// Every field here but the last matters only for an APK, the one artifact that imports other
-/// artifacts out of itself: its native libraries. See [`apk_native`]. The last is the CIL
-/// front end's assembly selection. [`Default`] gives the simple behavior, which is to import
-/// everything an APK holds, reuse nothing, and leave the .NET framework out.
+/// The first three fields matter only for an APK, the one artifact that imports other
+/// artifacts out of itself: its native libraries. See [`apk_native`]. Then come the CIL front
+/// end's assembly selection and Ghidra's thread count. [`Default`] gives the simple behavior,
+/// which is to import everything an APK holds, reuse nothing, leave the .NET framework out,
+/// and let Ghidra use every core.
 #[derive(Debug, Clone, Copy)]
 pub struct ImportOptions<'a> {
     /// Reuse a sub-import that was already done, when the artifact hash stored with it still
@@ -61,6 +62,9 @@ pub struct ImportOptions<'a> {
     /// Import a .NET directory's framework assemblies too, rather than only reading their
     /// metadata. Off by default.
     pub cil_include_framework: bool,
+    /// How many threads Ghidra may use to disassemble native code. `0`, the default, leaves
+    /// it to Ghidra, which uses every core the OS reports.
+    pub jobs: usize,
 }
 
 impl Default for ImportOptions<'_> {
@@ -70,6 +74,7 @@ impl Default for ImportOptions<'_> {
             native_libs: true,
             native_abi: None,
             cil_include_framework: false,
+            jobs: 0,
         }
     }
 }
@@ -158,7 +163,7 @@ pub fn import_artifact(
         Jvm => return Err(unsupported(Jvm, "jvm")),
 
         #[cfg(feature = "pcode")]
-        Pcode => ctadl_pcode::import_pcode(import)?,
+        Pcode => ctadl_pcode::import_pcode(import, opts.jobs)?,
         #[cfg(not(feature = "pcode"))]
         Pcode => return Err(unsupported(Pcode, "pcode")),
 
