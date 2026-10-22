@@ -825,8 +825,9 @@ fn check_reimport(work: &Path, state: &Path, store: &Path, apk: &Path) -> Result
 ///
 /// The counts are a property of this APK, of the manifest decoder, and of intent resolution, so
 /// a deliberate change to any of them moves them; re-pin from `ctadl index app` and say in the commit
-/// message which change moved them. The index is the expensive part -- several minutes on this
-/// app, which is why this lives here and not under `cargo test`.
+/// message which change moved them. The index is the expensive part -- about two minutes on this
+/// app in a debug build, which is why this lives here and not under `cargo test`. It runs on every
+/// core (`-j 0`); the parallel engine derives the same relations as the serial one.
 fn check_manifest_and_intents(work: &Path, state: &Path, store: &Path) -> Result<()> {
     use ctadl_ascent::facts::IntentPairKind;
     use ctadl_ascent::languages::android_manifest::AndroidManifest;
@@ -873,7 +874,10 @@ fn check_manifest_and_intents(work: &Path, state: &Path, store: &Path) -> Result
         "NoteReminderReceiver is not an unexported component"
     );
 
-    exec::run_checked(command(work, state, &["index", IMPORT])?, "ctadl index")?;
+    exec::run_checked(
+        command(work, state, &["index", "-j", "0", IMPORT])?,
+        "ctadl index",
+    )?;
     let index = store.join(PROJECTS_DIR).join(IMPORT).join("index");
     let pairs = ctadl_ascent::facts::schema::intent_pair::try_load(&index)
         .with_context(|| format!("loading intent pairs from {}", index.display()))?;
