@@ -242,7 +242,7 @@ pub fn index(
         // variable count that SSA and the datalog fact base pay for. Dead-temp
         // elimination runs first: it removes defs that coalescing can't (a dead
         // temp has no use to fuse into) and shrinks the input coalescing scans.
-        // Both are no-ops on programs already in SSA form (e.g. flowy imports).
+        // Both are no-ops on programs already in SSA form.
         log::info!(
             "'{}': preprocessing {} function(s) (SSA) and generating facts",
             import.name,

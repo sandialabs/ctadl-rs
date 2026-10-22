@@ -379,8 +379,7 @@ impl Visitor for SsaCheck {
 }
 
 /// The cleanup passes are documented as doing nothing to a program that has already been
-/// through them. That is what lets `ctadl index` run them over a flowy import, which is already
-/// in SSA form. This test checks the claim instead of taking it on trust.
+/// through them. This test checks the claim instead of taking it on trust.
 ///
 /// Note what this does not check. [`transform`] requires that the function is not already in
 /// SSA form, and it means it: `complete` moves returns into a new exit block every time it
