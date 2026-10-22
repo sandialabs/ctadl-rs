@@ -1239,14 +1239,18 @@ pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
     let mut cmd = Command::new(cargo);
     // Run from the workspace root regardless of the caller's cwd. The xtask crate
     // lives at `<root>/xtask`, so its manifest dir's parent is the root.
+    //
+    // `--workspace` rather than `-p ctadl-ascent`: cargo resolves features across the packages it
+    // selects, and `-p ctadl-ascent` leaves out xtask's `boon`, which turns on `idna`'s `default`.
+    // That one feature changes the hash of `idna` and of every crate above it, so a `-p` build
+    // compiles its own copy of about forty crates instead of reusing the workspace build's.
     cmd.current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().context(
         "internal error: CARGO_MANIFEST_DIR has no parent; expected `<workspace>/xtask`",
     )?)
     .args([
         "build",
         "--message-format=json",
-        "-p",
-        "ctadl-ascent",
+        "--workspace",
         "--bin",
         "ctadl",
     ]);
