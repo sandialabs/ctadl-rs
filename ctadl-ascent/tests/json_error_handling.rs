@@ -447,7 +447,8 @@ fn extends_matches_superclass_java() {
 
 #[test]
 fn extends_on_non_java_matches_nothing() {
-    // `extends` is Java-only: on a native program it warns and matches nothing (not an error).
+    // `extends` needs a class hierarchy: on a native program it warns and matches nothing (not
+    // an error).
     let got = matched_functions(
         &native_program(),
         json!([{"constraint": "extends",

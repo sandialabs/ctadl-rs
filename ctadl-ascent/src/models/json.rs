@@ -2051,11 +2051,14 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             return;
         };
         // Validate before the frontend check below: a mis-authored predicate is a property
-        // of the model file, and reporting it only on Java programs would make the same file
-        // load cleanly or fail depending on the artifact.
+        // of the model file, and reporting it only on Java or CIL programs would make the same
+        // file load cleanly or fail depending on the artifact.
         self.validate_predicate(n, inner, SubjectKind::Class);
         let Some(entries) = self.class_entries(n) else {
-            log::warn!("'parent' constraint is Java-only; matching nothing on this frontend");
+            log::warn!(
+                "'parent' constraint needs a class hierarchy (Java or CIL); matching nothing on \
+                 this frontend"
+            );
             self.target_set_mut(n).intersect_with(UniverseSet::empty());
             return;
         };
