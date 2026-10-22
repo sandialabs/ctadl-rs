@@ -443,10 +443,6 @@ where
             large_groups: 0,
             group_hist: Vec::new(),
         };
-        // Counting distinct `P` per group needs a scratch set, because groups are unordered. One
-        // set, cleared per group, keeps the report to a single extra allocation. It holds `P` by
-        // value rather than by reference: the unfrozen `DashMap` hands out guarded values whose
-        // lifetime is the loop iteration, and `P` is a cheap handle to clone.
         let mut visit_group = |group: &Group<P, M, Fp>| {
             r.leaf_elems += group.len();
             r.max_group = r.max_group.max(group.len());
