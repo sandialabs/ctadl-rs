@@ -2186,9 +2186,7 @@ pub fn taint_index_with_config(
         copy_edge.len(),
         phys_footprint_mb()
     );
-    // Real field-stores from the ORIGINAL program: an assignment whose DESTINATION access path is
-    // non-empty (`v.p = ...`). Used to gate the aliasing rule so it only summarizes aliases that are
-    // actually stored through, killing spurious summaries from mere reachability.
+    // Assignments from the original program whose destination path is non-empty.
     let prog_store: Vec<_> = facts
         .assign
         .iter()
