@@ -26,7 +26,6 @@ use crate::query_engine;
 
 type Str = facts::Str;
 
-// maybe move to these
 pub trait Encoder<T> {
     type Output;
 
