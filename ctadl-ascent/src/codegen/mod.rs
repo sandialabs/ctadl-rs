@@ -481,9 +481,7 @@ struct CodegenVisitor<'a> {
     /// `callee_resolvents`, which is what lets the unified resolution rules resolve a reached
     /// function pointer to itself without a `C`-specific rule in the index engine.
     funcptr_targets: BTreeSet<fx::FunctionId>,
-    /// What the model files matched against this import. Phase 1 reads three of its fields:
-    /// `skip_analysis` (whose bodies are not lowered), `dispatch` (rung 1 of the ladder) and
-    /// `endpoints` (which refuses a dispatch model, see [`Self::key_facts`]).
+    /// What the model files matched against this import.
     matches: &'a crate::models::ProgramModelMatches,
     /// How [`CallResolutionStrategy::Mixed`] classifies a site.
     policy: CallPolicy,
