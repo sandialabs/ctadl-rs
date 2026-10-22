@@ -543,10 +543,10 @@ impl Context {
                 match call.call_kind {
                     CallKind::Dynamic => {
                         // I don't know why dynamic calls with no receiver exist, but apparently makeConcatWithConstants does this
-                        let class_name = "?unknown";
+                        let class_name = "L?unknown;";
                         let method_name = call.dynamic_name.as_ref().unwrap();
                         let descr = call.dynamic_type.as_ref().unwrap();
-                        let java_sig = "L".to_owned() + class_name + ";->" + method_name + descr;
+                        let java_sig = class_name.to_owned() + "->" + method_name + descr;
                         self.declare_extern(&java_sig, class_name, method_name, descr, false);
                         CallStyle::DirectCall {
                             call_edges: CallEdges::Explicit([java_sig].into_iter().collect()),
