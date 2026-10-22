@@ -10,8 +10,9 @@ fn test_janky_assert() {
 }
 #[test_log::test]
 fn type_def_func_params() {
-    // A typedef'd function-pointer parameter, called through and returned: the call is an
-    // indirect call through the parameter, and the parameter reaches the return.
+    // A typedef'd function-pointer parameter, called through and returned. Once aspirational and
+    // asserting nothing; it lowers now, so pin what it lowers to: the call is an indirect call
+    // through the parameter, and the parameter reaches the return.
     let src = r#"
         typedef void (*HelloCallback)(char*);
 
@@ -58,7 +59,9 @@ fn func_params() {
     let (_, dump) = program_from_string(src);
     dump_ir(&dump);
     // A call through a function-pointer PARAMETER is an INDIRECT call: the callee is
-    // unknown at the call site, arriving via `callback` (@p0).
+    // unknown at the call site, arriving via `callback` (@p0). (Previously asserted a
+    // direct call — the buggy behavior from when collect_params dropped function-pointer
+    // parameters, leaving `callback` unresolved.)
     assert!(check_match(&dump, "@p0 <indirect-call"));
 }
 
@@ -195,6 +198,8 @@ fn params_and_simple_assign_in_example_2() {
     let (program, dump) = program_from_string(src);
     dump_ir(&dump);
 
+    // Locals render by index (`%L{idx}`); resolve `a`'s index by name so the assertions stay
+    // readable rather than hard-coding `%L0`.
     let a = local_render(&program, "foo", "a");
     assert!(check_match(&dump, &format!("return {a}")), "has return a");
     assert!(
@@ -208,8 +213,14 @@ fn params_and_simple_assign_in_example_2() {
     );
 }
 
-// Dump-based CFG-edge matcher. Unused; kept as scratch scaffolding for exploratory tests,
-// alongside `janky_return`.
+// `simplest_calls` promoted to tests.rs as `call_arg_flows_through_return` (Category B: the call's
+// argument flows through the callee and back to the return -- subsumes the `direct-call tgt` check).
+// `params_into_calls` and `call_not_assign` promoted to tests.rs (structural call-site assertions
+// via direct_calls_in / check_direct_call / check_has_direct_call).
+
+// Dump-based CFG-edge matcher. Its callers were promoted to tests.rs (now using check_successors),
+// leaving it currently unused -- but kept here as scratch scaffolding for the partner's exploration
+// lane, alongside janky_return.
 #[allow(dead_code)]
 fn janky_goto(dump: &str, from_block: usize, to_block: &str) -> bool {
     check_match(
@@ -218,7 +229,8 @@ fn janky_goto(dump: &str, from_block: usize, to_block: &str) -> bool {
     )
 }
 
-// Companion to `janky_goto` for return terminators. Unused; kept as scratch scaffolding.
+// Companion to `janky_goto` for return terminators. Currently unused (its callers were promoted to
+// tests.rs) but kept here as scratch scaffolding for the partner's exploration lane.
 #[allow(dead_code)]
 fn janky_return(dump: &str, from_block: usize, ret_val: &str) -> bool {
     check_match(
@@ -273,7 +285,8 @@ fn block_without_return() {
         }
         ";
     let (program, dump) = program_from_string(src);
-    // Resolve `x` before `program` is consumed below.
+    // Resolve `x`'s interned index by name before `program` is consumed below, so the assertion
+    // reads in terms of the source name rather than a hard-coded `%L0`.
     let x = local_render(&program, "bar", "x");
     let program_info = ProgramInfo {
         program,
@@ -287,7 +300,7 @@ fn block_without_return() {
     assert!(check_match(&dump, &format!("assign {x}")));
 }
 
-// MSVC's `__try`/`__except` extension.
+//msvc has an extension for try/catch, tree-sitter
 #[test_log::test]
 #[ignore = "aspirational MSVC extension try catch"]
 fn try_catch() {

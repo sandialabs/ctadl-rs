@@ -45,10 +45,9 @@ use ctadl_ir::mir::*;
 
 use source_info::{ArtifactEncoding, ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 
-use anyhow::Result;
 use internment::ArcIntern;
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Node, Parser, Query, QueryCursor, QueryMatch, Tree};
+use tree_sitter::{Parser, Query, QueryCursor, QueryMatch, Tree};
 
 #[cfg(test)]
 pub(crate) mod test_utils;
@@ -99,10 +98,8 @@ enum BlockTypeRequest {
 struct VarDecl {
     pub name: String,
     pub kind: VarKind,
-    /// Whether this declaration shadows another of the same name. Set at creation time,
-    /// because the declaration is when the shadowing occurs: assigns that already happened
-    /// never ask about the variable again, so a `VarDecl` is never later "upgraded" to shadow.
-    pub shadows: bool,
+    pub shadows: bool, // this is set at creation time, because at the time of the declaration is when the shadowing occurs,
+    // so assigns that have already happened will never ask about the variable again.  you will never add a VarDecl that doesn't shadow, and then later "upgrade it to shadow"
     pub sidx: usize,
 }
 
@@ -139,13 +136,16 @@ impl ScopeTree {
     fn get_explainers(blocks: &[ScopeView], target_func: &str, target_blidx: u32) -> String {
         blocks
             .iter()
+            // 1. Keep only the ones that match your criteria
             .filter(|sv| sv.func_name == target_func && sv.blidx.get() == target_blidx)
+            // 2. Extract just the explainer string as a string slice (&str)
             .map(|sv| sv.explainer.as_str())
+            // 3. Collect them into a temporary Vec, then join them with a newline
             .collect::<Vec<&str>>()
             .join("&")
     }
 
-    /// The variable's IR name: its bare name, or `scope_name.sidx.name` when it shadows another.
+    // this returns just 'symbol' //name, or scope_name.sidx.var
     fn to_string(&self, var: &VarDecl) -> String {
         if var.shadows {
             if let Some(scope) = self.scopes.get(var.sidx) {
@@ -177,13 +177,16 @@ impl ScopeTree {
         while let Some(idx) = current_idx {
             let scope = &self.scopes[idx];
 
+            // Look for the variable in the current scope
             if let Some(var) = scope.variables.iter().find(|v| v.name == target_name) {
-                return Some(var);
+                return Some(var); // Found it! Return a reference to the VarDecl
             }
+
+            // Move up the linked list to the parent scope
             current_idx = scope.parent_idx;
         }
 
-        None
+        None // Variable not found in this scope or any parents
     }
 }
 
@@ -213,7 +216,7 @@ impl<'a> CompoundProxy<'a> {
             "expression_statement" => {
                 let child = body_node.child(0);
                 if let Some(c) = child
-                    && is_empty_statement(&c)
+                    && _is_empty(&c)
                 {
                     return Self {
                         nodes: vec![],
@@ -234,8 +237,8 @@ impl<'a> CompoundProxy<'a> {
         }
     }
 }
-/// Is `node` an empty statement (`;`)?
-fn is_empty_statement(node: &Node<'_>) -> bool {
+//used by if processing
+fn _is_empty(node: &Node<'_>) -> bool {
     node.kind() == ";" || node.kind() == "empty_statement"
 }
 
@@ -250,8 +253,9 @@ fn get_line_num(node: &Node<'_>) -> usize {
 const IMPLICIT_RETURN_LOCAL: &str = "<implicit-return>";
 
 /// The terminator to close a block with when the frontend, not the source, decides it
-/// returns: falling off the end of a body, an unterminated block, or a bare `return;` in a
-/// non-`void` function.
+/// returns -- emitted by [`link_blocks`] (falling off the end of a body),
+/// [`finalize_terminators`] (patching an unterminated block), and `walk_return` (a bare
+/// `return;` in a non-`void` function).
 ///
 /// A non-`void` function has return arity 1 and `verify()` rejects a `Return` of any other
 /// arity ([`ctadl_ir::mir::VerifyError::InconsistentReturns`]), so the synthesized return
@@ -793,19 +797,22 @@ struct Context<'a> {
     /// the IR it expands into (calls, loads, stores) points back at that statement.
     cur_span: SourceInfo,
     /// Record layouts: tag -> data members in declaration order, filled per unit by
-    /// [`collect_registry`]. Maps a *positional* brace initializer onto members; an absent
-    /// tag takes the positional-element fallback, so an incomplete registry is always safe.
+    /// [`collect_registry`]. Consulted only by [`Context::collect_initializer_list`] to map
+    /// a *positional* brace initializer onto members; an absent tag takes the
+    /// positional-element fallback, so an incomplete registry is always safe.
     struct_layouts: HashMap<String, Vec<MemberSlot>>,
     /// Every name this translation unit uses as a type, read off the `type_identifier` nodes
     /// tree-sitter produced -- a use in any declaration counts, which is the only evidence
     /// for a typedef living in an unexpanded system header (`u_char`, `uid_t`). Exists to
     /// tell a cast from a call: `(width_t)(x)` parses as a `call_expression` through a
-    /// parenthesized callee, the exact shape of a genuine `(fp)(x)`. A record TAG is
+    /// parenthesized callee, the exact shape of a genuine `(fp)(x)`. Read by
+    /// [`Context::cast_shaped_call`] and [`Context::cast_prefix`]. A record TAG is
     /// deliberately not recorded: `struct stat` is a type, but bare `stat` is the function.
     type_names: HashSet<String>,
     /// Names the unit declares as functions without defining them (prototypes). The positive
     /// evidence that `(zzz)(x)` is a call, symmetric to `type_names`' cast evidence; it keeps
-    /// the macro-suppression idiom `(free)(p)` quiet.
+    /// the macro-suppression idiom `(free)(p)` quiet. Read through
+    /// [`Context::names_a_value`].
     declared_functions: HashSet<String>,
     /// This unit's file-scope variables, `extern` included; `hook(v)` calls through one.
     global_variables: HashSet<String>,
@@ -892,12 +899,13 @@ impl<'query, 'cursor, 'tree> MatchExtractor<'query, 'cursor, 'tree> {
     }
 }
 fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
-    let mut result = String::with_capacity(ir_text.len() + 500);
+    let mut result = String::with_capacity(ir_text.len() + 500); // Pre-allocate some space
     let mut current_func = String::new();
 
     for line in ir_text.lines() {
         let trimmed = line.trim_start();
 
+        // 1. Track the current function name
         if trimmed.starts_with("define ") {
             // Extracts "simple_elif" from "define simple_elif(@p0..."
             if let Some(name_part) = trimmed.split(' ').nth(1)
@@ -910,6 +918,7 @@ fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
             continue;
         }
 
+        // 2. Find the blocks and inject the explainer
         if trimmed.starts_with("begin block_") {
             let mut explainer_text = String::from("**MISSING**");
 
@@ -922,6 +931,7 @@ fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
                     .collect();
 
                 if let Ok(blidx_val) = num_str.parse::<u32>() {
+                    // Fetch the explainer using your ScopeTree logic
                     let explainer = ScopeTree::get_explainers(views, &current_func, blidx_val);
                     if !explainer.is_empty() {
                         // Flatten newlines so it stays a single-line comment in the IR
@@ -930,10 +940,12 @@ fn inject_explainers_into_ir(ir_text: &str, views: &[ScopeView]) -> String {
                 }
             }
 
+            // Push exactly ONCE: The original line + comment + newline
             result.push_str(&format!("{} // {}\n", line, explainer_text));
             continue;
         }
 
+        // 3. Keep all other lines exactly as they are
         result.push_str(line);
         result.push('\n');
     }
@@ -1919,25 +1931,25 @@ fn define_extern_functions(program: &mut Program) {
     }
 }
 
-/// The bookkeeping the walk of a function body threads through each statement.
+// This struct temporarily holds the specific book keeping needs of a function parse
 #[derive(Debug, Clone)]
 struct ScopeView {
     pub func_name: String,
     pub fidx: FunctionIdx,
     pub blidx: BasicBlockIdx,
-    pub sidx: usize,
-    /// `None` is the fall-off-the-end sentinel: a continuation link to `None` becomes
-    /// an implicit `return` rather than a `goto` back to the entry block.
+    pub sidx: usize, // i tried to make my own idx like the blockidx, and fidx, but couldn't figure out how ot import newindex_type. or wahtever
+    // `None` is the fall-off-the-end sentinel: a continuation link to `None` becomes
+    // an implicit `return` rather than a `goto` back to the entry block.
     pub continuation_blidx: Option<BasicBlockIdx>,
-    /// Where a `break` jumps: the innermost enclosing `switch`/loop continuation.
-    /// `None` means there is no enclosing breakable construct (a `break` here is an
-    /// error). Like `continuation_blidx`, this rides along by value as we descend, so
-    /// a child scope that overrides it has the parent's value automatically restored
-    /// on return — no explicit stack/push/pop is needed.
+    // Where a `break` jumps: the innermost enclosing `switch`/loop continuation.
+    // `None` means there is no enclosing breakable construct (a `break` here is an
+    // error). Like `continuation_blidx`, this rides along by value as we descend, so
+    // a child scope that overrides it has the parent's value automatically restored
+    // on return — no explicit stack/push/pop is needed.
     pub break_target: Option<BasicBlockIdx>,
-    /// Where a `continue` jumps: the innermost enclosing loop's re-test/update block.
-    /// A `switch` deliberately leaves this untouched, so a `continue` inside a switch
-    /// arm still targets the enclosing loop (matching C semantics).
+    // Where a `continue` jumps: the innermost enclosing loop's re-test/update block.
+    // A `switch` deliberately leaves this untouched, so a `continue` inside a switch
+    // arm still targets the enclosing loop (matching C semantics).
     pub continue_target: Option<BasicBlockIdx>,
     pub explainer: String,
 }
@@ -2036,6 +2048,9 @@ impl<'a> Context<'a> {
         // The declaration's own record layout, if its type names a record we know.
         let own = declaration_type_tag(decl_node, source)
             .and_then(|tag| self.struct_layouts.get(tag).cloned());
+        // An array declarator's *rank*: `struct Q qs[2]` is 1, `int m[2][2]` is 2, a
+        // non-array 0. The declared type describes the innermost element, so its layout
+        // applies only once that many brace levels have been entered.
         let rank = array_declarator_rank(decl_ident);
 
         let base_ap = self.flatten_lvalue(program, decl_ident, source, scope_view)?;
@@ -2122,7 +2137,8 @@ impl<'a> Context<'a> {
                 continue; // skip the `{`, `,`, `}` tokens
             }
             // Pick this element's target sub-path, its value node, and the layout to lower a
-            // nested brace with.
+            // nested brace with: a member's own record type, or the array element layout once
+            // `depth` array levels have been entered.
             let (fields, value_node, nested) = if elem.kind() == "initializer_pair" {
                 // Designated: `.member = e` or `[n] = e`.
                 let designator = elem
@@ -2230,6 +2246,8 @@ impl<'a> Context<'a> {
         explainer: &str,
     ) -> Result<(ScopeView, CompoundProxy<'b>), Error> {
         let cp = CompoundProxy::from_node(node);
+        //is it this guy's job to add blocks? i should think so.
+
         match block_type {
             BlockTypeRequest::NewBlockOrScopedBlock => {
                 if cp.was_compound {
@@ -2255,7 +2273,7 @@ impl<'a> Context<'a> {
                         cp,
                     ))
                 }
-            }
+            } //end BTR::NewBLock
             BlockTypeRequest::JustScope => {
                 if cp.was_compound {
                     Ok((add_scope(scope_view, &mut self.scope_tree, explainer), cp))
@@ -2264,7 +2282,7 @@ impl<'a> Context<'a> {
                         "Requested JustScope on a non-compound node".to_string(),
                     ))
                 }
-            }
+            } // end BTR::JustScope
             BlockTypeRequest::JustBlock => Ok((
                 add_block(
                     program,
@@ -2409,7 +2427,7 @@ impl<'a> Context<'a> {
                 // `expression_statement` holding only the `;` token: nothing to lower, and
                 // the bare token must not reach `flatten_expr`'s catch-all.
                 if let Some(inner_child) = child.child(0)
-                    && !is_empty_statement(&inner_child)
+                    && !_is_empty(&inner_child)
                 {
                     self.flatten_expr(program, inner_child, source, scope_view)?;
                 }
@@ -2442,7 +2460,9 @@ impl<'a> Context<'a> {
                 self.walk_switch(source, program, scope_view, child)?;
             }
             // `return`/`break`/`continue` terminate the current block and have no
-            // fall-through, so they end the compound (skipping its end link).
+            // fall-through, so they end the compound (skipping its end link). A stray
+            // `break`/`continue` outside any loop/switch recovers as a no-op and
+            // reports `false`, so the compound continues normally.
             "return_statement" => {
                 self.walk_return(source, program, scope_view, child)?;
                 return Ok(true);
@@ -2453,7 +2473,12 @@ impl<'a> Context<'a> {
             "continue_statement" => {
                 return self.walk_continue(program, scope_view);
             }
+            // Unlike break/continue, a `goto` does NOT end the compound: code after it
+            // is unreachable but may hold labels that must still lower, so it updates
+            // `scope_view` (to a fresh block) and we fall through to the next sibling.
             "goto_statement" => self.walk_goto(source, program, scope_view, child)?,
+            // A label's body diverges iff its inner statement does; propagate that so a
+            // `L: return x;` at the tail of a compound doesn't leave a dangling block.
             "labeled_statement" => {
                 return self.walk_labeled_statement(source, program, scope_view, child);
             }
@@ -2462,7 +2487,9 @@ impl<'a> Context<'a> {
                 return self.walk_nested_case(source, program, scope_view, child);
             }
             // A syntax error in statement position: a problem in the analyzed source,
-            // not a gap in this frontend (see `Context::report_unparsable_construct`).
+            // not a gap in this frontend. This is the position in which tree-sitter's
+            // ERROR node still names the construct that defeated it, so it is quoted --
+            // see `Context::report_unparsable_construct`.
             "ERROR" => {
                 self.report_unparsable_construct(child, source)?;
             }
@@ -2811,6 +2838,8 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
+    // there is a lot of commonality between the top of the while and the top of the if.. then the if descends into madness.
+    // hopefully we can use "walk_while" more generically for all the looping constructs
     fn walk_while(
         &mut self,
         source: &'a str,
@@ -3222,6 +3251,8 @@ impl<'a> Context<'a> {
 
     fn get_param_idx(&self, func_name: &str, var_name: &str) -> Option<ParameterIdx> {
         let param_vec = self.param_names.get(func_name).unwrap();
+        // Find returns Option<(ParameterIdx, &String)>
+        // Map transforms it into Option<ParameterIdx>
         param_vec
             .iter_enumerated()
             .find(|&(_, &p)| p == var_name)
@@ -3287,7 +3318,7 @@ impl<'a> Context<'a> {
                     panic!("no parameter index for parameters");
                 }
             }
-        }
+        } // end match
     }
 
     fn toplevel(
@@ -3366,7 +3397,7 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> Result<Exp, Error> {
-        let text = to_str(&node, source);
+        let text = to_str(&node, source); //.to_string();
         match node.kind() {
             // A name tree-sitter inserted to repair the parse, quoting to the empty string.
             // It cannot become a path segment (see `report_missing_name`), so the read is
@@ -3391,6 +3422,8 @@ impl<'a> Context<'a> {
                     .is_none()
                     && (self.functions.contains_key(text) || self.declared_functions.contains(text))
                 {
+                    // Which definition of `text` this file means, when more than one file
+                    // defines one (see `Context::resolve_reference`).
                     let target = self.resolve_reference(text);
                     Ok(Exp::ObjectRef(CallObject::FunctionPtr(target.into())))
                 } else {
@@ -3546,9 +3579,10 @@ impl<'a> Context<'a> {
                     program[scope_view.fidx].locals.get_or_intern(&temp_name),
                 )))
             }
-            // A GNU statement expression `({ s1; s2; value; })`, reached through the
-            // `parenthesized_expression` arm (see `is_statement_expression`). See
-            // `lower_statement_expression_effects`.
+            // A GNU statement expression `({ s1; s2; value; })`. tree-sitter-c 0.24.1 has no
+            // node for the construct: it parses as a `parenthesized_expression` wrapping a
+            // `compound_statement`, so it lands here with `node.kind() == "compound_statement"`.
+            // See `lower_statement_expression_effects`.
             "compound_statement" => {
                 let outer_sidx = scope_view.sidx;
                 let outer_span = self.cur_span;
@@ -3685,7 +3719,7 @@ impl<'a> Context<'a> {
             Some(last) if last.kind() == "expression_statement" => {
                 self.cur_span = self.span_for_node(last);
                 // `({ ...; ; })` -- a trailing empty statement carries no expression.
-                last.child(0).filter(|inner| !is_empty_statement(inner))
+                last.child(0).filter(|inner| !_is_empty(inner))
             }
             // A `void`-valued statement expression, e.g.
             // `({ do { } while (0); })`. Well-defined C, not a gap: lower the statement here
@@ -3867,7 +3901,10 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
+        //how come only this declarator came up in expr? see pointer_decl way?
+        // ... well function_declarators come up too.  see the logic there
         if let Some(iden) = node.child_by_field_name("declarator") {
+            //oh noes.. look whats under that! a pointer declarator!
             if iden.kind() == "identifier" {
                 let symbol = to_str(&iden, source);
                 self.scope_tree
@@ -3904,10 +3941,13 @@ impl<'a> Context<'a> {
         source: &'a str,
         scope_view: &mut ScopeView,
     ) -> std::result::Result<Exp, Error> {
+        // 1. Extract the children
         let left_node = node.child_by_field_name("left").expect("missing left");
         let right_node = node.child_by_field_name("right").expect("missing right");
+        // 2. Recurse down! (Bottom-up evaluation)
         let left_val = self.flatten_expr(program, left_node, source, scope_view)?;
         let right_val = self.flatten_expr(program, right_node, source, scope_view)?;
+        // 3. Generate a new temporary for this specific operation
         let temp_name = self.allocator.next_temp();
         let target = self.build_access_path(
             temp_name.as_str(),
@@ -4031,7 +4071,7 @@ impl<'a> Context<'a> {
         assert_eq!(
             arg_list.kind(),
             "argument_list",
-            "collect_arguments called with node kind: {}",
+            "extract_arguments called with node kind: {}",
             arg_list.kind()
         );
 
@@ -4200,8 +4240,9 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// Lowers a call, assigning its result into the temp `temp_name` and yielding it, so a
-    /// call's value is an ordinary variable to whatever consumes it.
+    /*
+    Call expression always 'assign' into a temp variable, that way the collect_assignment can be consistent
+     */
     // hmmm DEF TODO: figure out a x->v().. seems like  we need a path_vec containing the start
     fn collect_call(
         &mut self,
@@ -4211,6 +4252,9 @@ impl<'a> Context<'a> {
         scope_view: &mut ScopeView,
         temp_name: String,
     ) -> Result<Exp, Error> {
+        // Grouping parentheses around the callee are peeled first: they change nothing about
+        // what is called, but a callee is named by its source text here, so `(f)(x)` without
+        // the peel names a function `(f)` that does not exist. See [`unparenthesized_callee`].
         let mut func_node =
             unparenthesized_callee(node.child_by_field_name("function").expect("always has"));
         // `(*fp)(x)` calls through `fp`, like `fp(x)`.
@@ -4224,14 +4268,18 @@ impl<'a> Context<'a> {
         }
         let func_name = to_str(&func_node, source);
 
+        // A call names the definition the *caller's* file holds when several files define
+        // that name; `resolve_reference` is the identity function for every other name.
         let call_edges =
             CallEdges::Explicit(ctadl_ir::thin_vec![self.resolve_reference(func_name)]);
 
         let arg_node = node.child_by_field_name("arguments").expect("always has");
         let args = self.collect_arguments(program, arg_node, source, scope_view)?;
 
-        // Resolve the callee. A plain `foo(...)` (or `(*fp)(...)`, peeled above) is an
-        // identifier.
+        // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
+        // dereference form `(*op_func)(...)` wraps the pointer in a
+        // parenthesized/pointer expression, so route it through flatten_expr to
+        // recover the underlying variable (`op_func`).
         let access_path = if func_node.kind() == "identifier" {
             self.build_access_path(
                 func_name,
@@ -4240,7 +4288,7 @@ impl<'a> Context<'a> {
                 &mut program[scope_view.fidx].locals,
             )
         } else {
-            // The callee is a call-target location (e.g. `o->op(...)`); resolve it as an
+            // The callee is a call-target location (e.g. `(*op_func)(...)`); resolve it as an
             // lvalue so its access path is preserved rather than lowered into a load.
             self.flatten_lvalue(program, func_node, source, scope_view)
                 .unwrap_or_else(|_| {
@@ -4356,6 +4404,7 @@ impl<'a> Context<'a> {
         let mut matches_iter = cursor.matches(query, tree.root_node(), source.as_bytes());
         while let Some(m) = matches_iter.next() {
             let extract = MatchExtractor::new(query, m);
+            //boo, so TREE_SITTER doesn't add a node for an implicit int function type
             let return_type = extract.get_opt("return_type");
             let body_node = extract.get("body")?;
             let def_node = extract.get("func.def")?;
@@ -4406,9 +4455,9 @@ impl<'a> Context<'a> {
         let fdat = &mut program.functions[fidx];
         fdat.name = func_name.to_string();
 
-        // No return type node is an implicit `int`, arity 1. A pointer return is a return:
-        // `void *xmalloc(size_t)` has `type: void` and an arity of 1, because the `void`
-        // describes the pointee, not the function.
+        //return type, remember C can have an implicit int return type. boo
+        // A pointer return is a return: `void *xmalloc(size_t)` has `type: void` and an
+        // arity of 1, because the `void` describes the pointee, not the function.
         let ret_ct = if head.returns_pointer {
             1
         } else if let Some(rt) = return_type
@@ -4437,7 +4486,7 @@ impl<'a> Context<'a> {
         let body_name = format!("{}.body", func_name);
         self.collect_params(source, &head.params, fdat, func_name, &para_scope_view)?;
 
-        // We have to build this one by hand, because we want the initial scope without the extra block
+        //we have to build this one by hand, becuase we want the initial scope without the extra block
         let block_scope = self.scope_tree.add_scope(body_name, Some(param_sidx));
         let block_scope_view = ScopeView {
             func_name: func_name.to_string(),
@@ -4452,9 +4501,13 @@ impl<'a> Context<'a> {
         self.scope_tree.add_block(&block_scope_view);
         let cp = CompoundProxy::from_node(body_node);
 
+        // Pre-create a block for every `goto` label in this function so forward
+        // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
         self.label_blocks.clear();
         self.walked_label_blocks.clear();
+        // Address-of aliases are function-local and confined to a straight-line block.
         self.addr_alias.clear();
+        // Union-typed locals are function-scoped.
         self.union_vars.clear();
         // Address-taken scalars live in memory; copy each such parameter into its cell.
         self.cells = addr_taken_scalars(
@@ -4491,8 +4544,6 @@ impl<'a> Context<'a> {
                 None,
             );
         }
-        // Pre-create a block for every `goto` label in this function so forward
-        // jumps (a `goto L` appearing before `L:`) resolve.
         let mut labels = Vec::new();
         collect_labels(body_node, source, &mut labels);
         for label in labels {
@@ -4558,8 +4609,7 @@ impl<'a> Context<'a> {
         ))
     }
 
-    /// Appends `target = left_op [op right_op]` to the current block: an `assign` for a
-    /// pathless target, else the stores [`mir::store_access_path`] lowers it to.
+    //this is a helper function to take the SSA list and shove them all into the block
     fn add_assign_to_program(
         &mut self,
         program: &mut Program,
@@ -4568,8 +4618,9 @@ impl<'a> Context<'a> {
         left_op: &Exp,
         right_op: Option<&Exp>,
     ) {
+        let val_exp = left_op; //todo get rid of val_exp and just use left_op
         if target.is_pathless() {
-            let mut fa: Vec<Exp> = [left_op.clone()].into();
+            let mut fa: Vec<Exp> = [val_exp.clone()].into();
             if let Some(righty) = right_op {
                 fa.push(righty.clone());
             }
@@ -4594,7 +4645,7 @@ impl<'a> Context<'a> {
             ctadl_ir::mir::store_access_path(
                 target.base.clone(),
                 fields,
-                left_op.clone(),
+                val_exp.clone(),
                 &mut stmts,
                 || VariableRef::new_local_idx(locals.get_or_intern(&allocator.next_temp())),
             );
@@ -4929,7 +4980,11 @@ impl<'a> Context<'a> {
     }
 }
 
-/// Generates a function's temp names, `<t0>`, `<t1>`, ...
+// A little helper to make grabbing stuff out of the tree-sitter iterator easier
+use anyhow::Result;
+use tree_sitter::Node;
+
+// A simple counter to generate unique temp names (t0, t1, t2...)
 #[derive(Debug, Default)]
 struct TempAllocator {
     counter: usize,
@@ -5140,20 +5195,22 @@ fn gnu_asm_operand_is_readwrite(operand: Node<'_>, source: &str) -> bool {
 /// * `node` - The current Tree-sitter node to print.
 /// * `depth` - The current recursion depth (start with 0).
 /// * `field_name` - The field name of the current node, if any (start with None).
-/// * `depth_limit` - The depth past which children are not printed, if any.
 fn debug_print_tree(
     node: Node<'_>,
     depth: usize,
     field_name: Option<&str>,
     depth_limit: Option<usize>,
 ) {
+    // 1. Create the visual indentation
     let indent = "  ".repeat(depth);
 
+    // 2. Format the field name nicely if it exists
     let field_prefix = match field_name {
         Some(name) => format!("{name}: "),
         None => String::new(),
     };
 
+    // 3. Print the current node
     log::debug!("{}|-- {}{}", indent, field_prefix, node.kind());
 
     if let Some(dl) = depth_limit
@@ -5161,11 +5218,14 @@ fn debug_print_tree(
     {
         return;
     }
+    // 4. Recurse into all children
     for i in 0..node.child_count() {
         let child = node
             .child(i.try_into().unwrap())
             .expect("Child node should exist");
         let child_field = node.field_name_for_child(i as u32);
+
+        // Increase the depth by 1 for the next level down
         debug_print_tree(child, depth + 1, child_field, depth_limit);
     }
 }
