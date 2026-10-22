@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
@@ -264,7 +264,7 @@ pub fn run(opts: &Options) -> Result<bool> {
     // More workers than tasks would just create idle scratch homes; no tasks at
     // all means no workers, and the empty report below reports the selection.
     let jobs = opts.jobs.unwrap_or_else(default_jobs).min(tasks.len());
-    let results = run_tasks(&tasks, opts, jobs)?;
+    let (results, mut timings) = run_tasks(&tasks, opts, jobs)?;
 
     if results.is_empty() {
         bail!("no test cases selected ({})", describe_selection(opts));
@@ -309,8 +309,19 @@ pub fn run(opts: &Options) -> Result<bool> {
         "\n{passed} passed, {skipped} skipped, {failures} failed, {xfails} xfail of {} case(s)",
         results.len()
     );
+    timings.sort_by_key(|(_, elapsed)| std::cmp::Reverse(*elapsed));
+    let slowest: Vec<String> = timings
+        .iter()
+        .take(SLOWEST_SHOWN)
+        .map(|(label, elapsed)| format!("{label} {:.1}s", elapsed.as_secs_f64()))
+        .collect();
+    println!("Slowest: {}", slowest.join(", "));
     Ok(failures == 0)
 }
+
+/// How many of the slowest tasks the report names, so a slow case is noticed before it is the
+/// one that sets the suite's wall clock.
+const SLOWEST_SHOWN: usize = 8;
 
 /// One independent unit of work. Each yields zero or more report entries.
 ///
@@ -349,6 +360,22 @@ enum Task<'a> {
 }
 
 impl Task<'_> {
+    /// The task's name in the timing summary.
+    fn label(&self) -> String {
+        match self {
+            Task::Case(case) => case.name.clone(),
+            Task::JvmChecks { .. } => "jvm checks".to_string(),
+            Task::DexChecks { .. } => "dex checks".to_string(),
+            Task::ApkChecks { .. } => "apk checks".to_string(),
+            Task::CilChecks { .. } => "cil checks".to_string(),
+            Task::ModelSchema { .. } => "model schema".to_string(),
+            Task::GhidraProject => GHIDRA_PROJECT_CASE.to_string(),
+        }
+    }
+
+    /// Run this task to completion. Infrastructure failures (analyzer crashed,
+    /// tool missing, etc.) are reported as failed entries rather than propagated,
+    /// so one broken case never aborts the run.
     /// Run this task to completion. Infrastructure failures (analyzer crashed,
     /// tool missing, etc.) are reported as failed entries rather than propagated,
     /// so one broken case never aborts the run.
@@ -435,13 +462,18 @@ fn retain_filtered(mut results: Vec<(String, Outcome)>, opts: &Options) -> Vec<(
     results
 }
 
-/// Run `tasks` across `jobs` workers, returning every result in task order.
+/// Run `tasks` across `jobs` workers, returning every result in task order, and how long each
+/// task took.
 ///
 /// Each worker pulls the next unclaimed task until the list is exhausted, so a
 /// slow case (a Ghidra import) never blocks the queue behind it. Results are
 /// tagged with their task index and sorted at the end rather than appended as
 /// they land, so the report reads identically no matter who finished first.
-fn run_tasks(tasks: &[Task<'_>], opts: &Options, jobs: usize) -> Result<Vec<(String, Outcome)>> {
+fn run_tasks(
+    tasks: &[Task<'_>],
+    opts: &Options,
+    jobs: usize,
+) -> Result<(Vec<(String, Outcome)>, Vec<(String, Duration)>)> {
     let workers = (0..jobs).map(Worker::new).collect::<Result<Vec<_>>>()?;
 
     let next = &AtomicUsize::new(0);
@@ -452,20 +484,27 @@ fn run_tasks(tasks: &[Task<'_>], opts: &Options, jobs: usize) -> Result<Vec<(Str
             scope.spawn(move || loop {
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 let Some(task) = tasks.get(index) else { break };
+                let start = Instant::now();
                 let outcomes = task.run(worker, opts);
+                let elapsed = start.elapsed();
                 // Held only to push a finished result; no test work happens
                 // under the lock.
-                results.lock().unwrap().push((index, outcomes));
+                results.lock().unwrap().push((index, outcomes, elapsed));
             });
         }
     });
 
     let mut collected = std::mem::take(&mut *results.lock().unwrap());
-    collected.sort_by_key(|(index, _)| *index);
-    Ok(collected
+    collected.sort_by_key(|(index, _, _)| *index);
+    let timings = collected
+        .iter()
+        .map(|(index, _, elapsed)| (tasks[*index].label(), *elapsed))
+        .collect();
+    let outcomes = collected
         .into_iter()
-        .flat_map(|(_, outcomes)| outcomes)
-        .collect())
+        .flat_map(|(_, outcomes, _)| outcomes)
+        .collect();
+    Ok((outcomes, timings))
 }
 
 /// Human-readable summary of what `--frontend`/`--filter` selected, so a short
