@@ -25,6 +25,9 @@ ctadl-dex = { path = "../frontends/ctadl-dex" }
 ctadl-cil = { path = "../frontends/ctadl-cil" }
 ctadl-frontends = { path = "../ctadl-frontends", features = ["apk", "xapk", "pcode", "lua", "c", "flowy", "cil"] }
 ctadl-index = { path = "../ctadl-index" }
+ctadl-index-lsm = { path = "../ctadl-index/engines/lsm" }
+ctadl-index-par = { path = "../ctadl-index/engines/par" }
+ctadl-index-serial = { path = "../ctadl-index/engines/serial" }
 ctadl-import = { path = "../ctadl-import", features = ["dex", "jvm", "pcode", "ts", "flowy", "cil"] }
 ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
 ctadl-jvm = { path = "../frontends/ctadl-jvm" }

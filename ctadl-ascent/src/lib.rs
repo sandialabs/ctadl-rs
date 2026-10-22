@@ -10,10 +10,10 @@ pub mod models;
 /// The CTADL store. It lives in [`ctadl_import`] so that reading an import does not require
 /// building the engine. Re-exported here so the name `crate::project::…` works.
 pub use ctadl_import::project;
-/// The facts schema and the index engine. They live in [`ctadl_index`], a crate of their own, so
-/// an edit elsewhere in the engine does not recompile them. Re-exported here so the names
-/// `crate::facts::…` and `crate::index_engine::…` work.
-pub use ctadl_index::{error, facts, index_engine};
+/// The facts schema. It lives in [`ctadl_index`], a crate of its own, so an edit elsewhere in the
+/// engine does not recompile it. Re-exported here so the name `crate::facts::…` works.
+pub use ctadl_index::{error, facts};
+pub mod index_engine;
 #[cfg(test)]
 mod index_engine_tests;
 pub mod query_engine;

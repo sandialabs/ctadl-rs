@@ -1157,6 +1157,9 @@ dependencies = [
  "ctadl-frontends",
  "ctadl-import",
  "ctadl-index",
+ "ctadl-index-lsm",
+ "ctadl-index-par",
+ "ctadl-index-serial",
  "ctadl-ir",
  "ctadl-jvm",
  "ctadl-lua",
@@ -1352,6 +1355,35 @@ dependencies = [
  "tailshare",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "ctadl-index-lsm"
+version = "0.1.4"
+dependencies = [
+ "ascent",
+ "ctadl-index",
+ "hashbrown 0.16.1",
+ "log",
+ "lsm",
+]
+
+[[package]]
+name = "ctadl-index-par"
+version = "0.1.4"
+dependencies = [
+ "ascent",
+ "ctadl-index",
+ "log",
+]
+
+[[package]]
+name = "ctadl-index-serial"
+version = "0.1.4"
+dependencies = [
+ "ascent",
+ "ctadl-index",
+ "log",
 ]
 
 [[package]]
