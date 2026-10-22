@@ -21,8 +21,7 @@ use parquet::{
 use paste::paste;
 
 use crate::error::{Error, ErrorContext};
-use crate::facts;
-use crate::query_engine;
+use crate::facts::{self, QueryEndpoint};
 
 type Str = facts::Str;
 
@@ -1186,12 +1185,9 @@ impl DecodeColumn<facts::IntentPairKind> for DefaultDecoder {
     }
 }
 
-impl EncodeColumn<query_engine::QueryEndpoint> for DefaultEncoder {
+impl EncodeColumn<QueryEndpoint> for DefaultEncoder {
     #[inline]
-    fn encode_column(
-        name: &str,
-        col: Vec<query_engine::QueryEndpoint>,
-    ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
+    fn encode_column(name: &str, col: Vec<QueryEndpoint>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
         DefaultEncoder::encode_all(
             &[
                 &(name.to_owned() + "_infunc"),
@@ -1217,12 +1213,12 @@ impl EncodeColumn<query_engine::QueryEndpoint> for DefaultEncoder {
     }
 }
 
-impl DecodeColumn<query_engine::QueryEndpoint> for DefaultDecoder {
+impl DecodeColumn<QueryEndpoint> for DefaultDecoder {
     #[inline]
     fn into_decode_array(
         name: &str,
         batch: &RecordBatch,
-    ) -> impl IntoIterator<Item = query_engine::QueryEndpoint> {
+    ) -> impl IntoIterator<Item = QueryEndpoint> {
         DefaultDecoder::decode_tuples(
             &[
                 &(name.to_owned() + "_infunc"),
@@ -1236,7 +1232,7 @@ impl DecodeColumn<query_engine::QueryEndpoint> for DefaultDecoder {
         )
         .into_iter()
         .map(
-            |(infunc, var, path, label, direction, call_site)| query_engine::QueryEndpoint {
+            |(infunc, var, path, label, direction, call_site)| QueryEndpoint {
                 infunc,
                 vertex: facts::FlowVertex(var, path),
                 label,

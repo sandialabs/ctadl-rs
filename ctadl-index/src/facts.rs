@@ -17,7 +17,10 @@ use crate::error::{Error, ErrorContext};
 use ctadl_ir::{Idx, mir, mir::Offset};
 
 pub mod parquet;
+mod query_endpoint;
 pub mod schema;
+
+pub use query_endpoint::{QueryEndpoint, QueryEndpointDisplay};
 
 use elsa::sync::FrozenVec;
 use std::collections::HashMap;
@@ -416,6 +419,12 @@ impl FromStr for Function {
 #[repr(transparent)]
 pub struct FormalIndex(i16);
 
+/// For passing globals reference in parameter list
+pub const GLOBALS_INDEX: i16 = i16::MIN;
+
+/// Start of return values. If there's more than one return value, uses -2, -3, etc
+pub const RETURN_INDEX: i16 = -1i16;
+
 impl FormalIndex {
     #[inline]
     pub fn new(i: i16) -> Self {
@@ -770,7 +779,7 @@ impl FlowVariable {
     /// already aliases the caller's heap formal at every call site, so its actual is that formal
     /// rather than a per-call copy.
     pub fn call_actual(insn: InsnId, formal: FormalIndex) -> Self {
-        if formal == crate::codegen::GLOBALS_INDEX.into() {
+        if formal == GLOBALS_INDEX.into() {
             FlowVariable::formal_index(formal)
         } else {
             FlowVariable::call_arg_packed(PackedCallArg::try_from_parts(insn, formal).unwrap())
@@ -871,7 +880,13 @@ impl FlowVariable {
     }
 
     pub fn is_globals(&self) -> bool {
-        crate::codegen::variable_is_globals(self)
+        match self.kind() {
+            FlowVariableKind::Formal(idx) => *idx == GLOBALS_INDEX,
+            // This has to be kept in sync with the name `ctadl-ascent`'s `CodegenVisitor` gives
+            // globals.
+            FlowVariableKind::Local(name) => name.starts_with("$globals_"),
+            _ => false,
+        }
     }
 
     /// Orders two flow variables by what they *denote*, not by their packed bits. This is usable as

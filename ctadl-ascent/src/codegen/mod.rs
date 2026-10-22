@@ -36,7 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use smallvec::SmallVec;
 
 use crate::facts as fx;
-use crate::facts::{FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, Str};
+use crate::facts::{FlowVariable, FlowVertex, FormalIndex, Str};
 use crate::index_engine::{IndexFacts, source_info::IndexSourceInfo};
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::{
@@ -390,20 +390,7 @@ pub fn codegen_function(
     v.finish();
 }
 
-/// For passing globals reference in parameter list
-pub const GLOBALS_INDEX: i16 = i16::MIN;
-
-/// Start of return values. If there's more than one return value, uses -2, -3, etc
-pub const RETURN_INDEX: i16 = -1i16;
-
-pub fn variable_is_globals(v: &FlowVariable) -> bool {
-    match v.kind() {
-        FlowVariableKind::Formal(idx) => *idx == GLOBALS_INDEX,
-        // This has to be kept in sync with the name given to globals in the CodegenVisitor
-        FlowVariableKind::Local(name) => name.starts_with("$globals_"),
-        _ => false,
-    }
-}
+pub use crate::facts::{GLOBALS_INDEX, RETURN_INDEX};
 
 /// The `call_target_assign` payload for an *object-valued* expression: the class of an
 /// allocation-site tag, in the receiving language's own [`fx::CallTargetObject`] variant.

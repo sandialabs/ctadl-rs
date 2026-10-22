@@ -1156,6 +1156,7 @@ dependencies = [
  "ctadl-flowy",
  "ctadl-frontends",
  "ctadl-import",
+ "ctadl-index",
  "ctadl-ir",
  "ctadl-jvm",
  "ctadl-lua",
@@ -1310,6 +1311,47 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tree-sitter",
+]
+
+[[package]]
+name = "ctadl-index"
+version = "0.1.4"
+dependencies = [
+ "arrow",
+ "ascent",
+ "ascent_base",
+ "bitcode",
+ "ctadl-flowy",
+ "ctadl-import",
+ "ctadl-ir",
+ "datafusion-common",
+ "derive_builder",
+ "dex-reader",
+ "elsa",
+ "hashbrown 0.16.1",
+ "immortal",
+ "internment",
+ "itertools 0.14.0",
+ "json5",
+ "jvm-reader",
+ "lazy_static",
+ "libc",
+ "log",
+ "lsm",
+ "packed_struct",
+ "parquet",
+ "paste",
+ "rayon",
+ "regex",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "source-info",
+ "streaming-iterator",
+ "tailshare",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

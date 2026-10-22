@@ -4,6 +4,7 @@ members = [
     "ctadl-ascent",
     "ctadl-frontends",
     "ctadl-import",
+    "ctadl-index",
     "ctadl-ir",
     "frontends/ctadl-c",
     "frontends/ctadl-cil",

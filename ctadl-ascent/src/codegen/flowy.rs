@@ -130,7 +130,7 @@ fn query_check_endpoints(
     let mut fail_count = 0;
     for (func_name, flow_specs) in endpoint_requires.requires {
         for (endpoint, flow_spec) in flow_specs.iter() {
-            let fx_endpoint: fx::TaintEndpoint = endpoint.into();
+            let fx_endpoint = taint_endpoint(endpoint);
             let func_id = sites.get_function_id(func_name.clone().into());
             if func_id.is_none() {
                 log::warn!("Function {func_name} not found in query results");
@@ -464,24 +464,21 @@ pub fn check_with_config<P: AsRef<Path>>(
     Ok(())
 }
 
-impl From<&flowy::Endpoint> for fx::TaintEndpoint {
-    #[inline]
-    fn from(e: &flowy::Endpoint) -> Self {
-        use flowy::*;
-        use fx::*;
-        let vertex = {
-            let (var, fields) = &e.port;
-            FlowVertex(var.try_into().unwrap(), fields.into())
-        };
-        Self {
-            infunc: Function(e.infunc.clone().into()),
-            vertex,
-            label: Label(e.label.clone().into()),
-            direction: match e.direction {
-                EndpointDirection::Source => TaintDirection::Forward,
-                EndpointDirection::Sink => TaintDirection::Backward,
-            },
-        }
+fn taint_endpoint(e: &flowy::Endpoint) -> fx::TaintEndpoint {
+    use flowy::*;
+    use fx::*;
+    let vertex = {
+        let (var, fields) = &e.port;
+        FlowVertex(var.try_into().unwrap(), fields.into())
+    };
+    TaintEndpoint {
+        infunc: Function(e.infunc.clone().into()),
+        vertex,
+        label: Label(e.label.clone().into()),
+        direction: match e.direction {
+            EndpointDirection::Source => TaintDirection::Forward,
+            EndpointDirection::Sink => TaintDirection::Backward,
+        },
     }
 }
 
