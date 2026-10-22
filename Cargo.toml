@@ -60,6 +60,18 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 debug = false
 
+# The CIL reader and frontend and the IR passes run hot in-process under `cargo test` and
+# `cargo xtask`: importing Mono.Android.dll takes 72 s at opt-level 1 and 226 s at 0. An edit to
+# them, or to anything downstream, builds no slower at 1.
+[profile.dev.package.cil-reader]
+opt-level = 1
+
+[profile.dev.package.ctadl-cil]
+opt-level = 1
+
+[profile.dev.package.ctadl-ir]
+opt-level = 1
+
 [profile.release]
 debug = false
 strip = "debuginfo"
