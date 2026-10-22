@@ -966,7 +966,6 @@ fn parse_summary_ap(env: &Env, path: &parse::Path<'_>) -> Result<Port, FlowyErro
             fields: field_accesses,
         })
     } else if env.globals.contains(name) {
-        // A global `name` is modeled as a symbolic field of the global heap.
         let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::symbol(name)];
         global_field_accesses.extend(field_accesses);
         Ok(Port {
@@ -1175,7 +1174,6 @@ fn parse_path(
     Ok(if let Some(v) = env.parameters.get(name) {
         (v.clone(), field_accesses)
     } else if env.globals.contains(name) {
-        // A global `name` is modeled as a symbolic field of the global heap.
         let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::symbol(name)];
         global_field_accesses.extend(field_accesses);
         (VariableRef::new_global(), global_field_accesses)
