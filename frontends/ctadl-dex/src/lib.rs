@@ -40,10 +40,10 @@ pub struct ApkImport {
 /// Imports the Dex code out of an APK.
 ///
 /// An APK with no `classes*.dex` yields an empty program rather than an error: a split
-/// APK out of an Android App Bundle -- `config.arm64_v8a.apk` inside an XAPK, as
-/// distributed by APKPure and friends -- puts the native libraries in one APK and the
-/// Dex in another, and the native half is still worth importing on its own. Callers that
-/// need to distinguish the two check [`ApkImport::dex_count`].
+/// APK out of an Android App Bundle -- `config.arm64_v8a.apk` inside an XAPK -- puts the
+/// native libraries in one APK and the Dex in another, and the native half is still worth
+/// importing on its own. Callers that need to distinguish the two check
+/// [`ApkImport::dex_count`].
 pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
     let file = file.as_ref();
     let data = std::fs::read(file).err_context(|| format!("reading APK: {}", file.display()))?;
