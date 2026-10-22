@@ -2,17 +2,16 @@
 //!
 //! A source span id is an index into *one* import's source-info database. Function and
 //! instruction ids are project-global, span ids are not, so a span read against the wrong
-//! import's database still resolves -- to an unrelated line in an unrelated file. The formatter
-//! used to render every result once per import and resolve every span in each, which turned a
-//! two-import project's log into each finding twice: once where it is, once carrying whatever
-//! the other artifact happened to have at that span id. `ctadl index` now records the import
-//! each span was numbered in (`index_source_map.import_id`) and the formatter resolves each span
-//! only there.
+//! import's database still resolves -- to an unrelated line in an unrelated file. A formatter
+//! that rendered every result once per import and resolved every span in each would report each
+//! finding of a two-import project twice: once where it is, once carrying whatever the other
+//! artifact happens to have at that span id. `ctadl index` records the import each span was
+//! numbered in (`index_source_map.import_id`) and the formatter resolves each span only there.
 //!
 //! Lua is the frontend used here for the same reason `port_semantics.rs` uses it: it is a real
 //! frontend that needs no external toolchain, so this runs everywhere `cargo test` does. The
 //! defect is frontend-independent -- it is about how many source-info databases a project has,
-//! not what wrote them. The two-artifact case that motivated it is JNI (a Dex plus a shared
+//! not what wrote them. The two-artifact case that matters in practice is JNI (a Dex plus a shared
 //! library), pinned end to end by `nightly/tests/jni/`, which needs Ghidra and a Java toolchain.
 
 use ctadl_ascent::cli;
@@ -207,7 +206,7 @@ fn each_flow_is_reported_once_in_its_own_artifact() {
 ///
 /// The debug profile carries each tainted instruction's `funcId`/`insnId`, which identify it
 /// project-wide, and the `import` its location was resolved in. One result per instruction, in
-/// the import that instruction belongs to, is precisely what rendering per import broke.
+/// the import that instruction belongs to, is what rendering per import would break.
 #[test]
 fn each_tainted_instruction_is_rendered_once() {
     let sarif = query_two_import_project("multi_import_debug", SarifProfile::Debug);

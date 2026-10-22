@@ -2,18 +2,14 @@
  * `iushr` followed by meaningful one-byte instructions, plus the whole shift
  * family.
  *
- * Two decoder defects meet here. `iushr` (0x7c) was decoded as if it had two
- * inline operand bytes, and the shift stack effects were assigned by opcode
- * *range* -- but the int and long shifts alternate, so the ranges gave `lshl`
- * the int effect and `iushr` the long one.
- *
  * iushr is a one-byte instruction. Giving it length 3 makes the linear decoder
  * skip the two instructions that follow it; those skipped instructions would
  * have consumed stack slots, so phantom slots pile up and surface at the next
  * control-flow join.
  *
- * Mirrors the R8-rewritten
- * brut.androlib.res.decoder.BinaryResourceParser.unpackLanguageOrRegion.
+ * The int and long shifts alternate by opcode, so assigning their stack
+ * effects by opcode *range* would give `lshl` the int effect and `iushr` the
+ * long one.
  */
 public class IushrLength {
 

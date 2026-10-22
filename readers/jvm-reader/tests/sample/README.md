@@ -9,11 +9,14 @@ against `javap`, plus line-map / basic-block / stack-slot analyses, and the
 `jvm:switch-shapes` / `jvm:utf8-constants` checks), then bundles them with `jar`
 and re-checks the `.jar` (parsed classes compared against `jar tf`). See
 `xtask/src/jvm.rs`. `xtask/src/dex.rs` compiles the same sources down to `.dex`
-(`javac --release 8` then `dx`) and runs the `dex:*` checks over them, so every
-source here is read by both frontends.
+(`javac --release 8` then `dx`) and runs the `dex:*` checks over them (parsing, line
+maps, and a diff against baksmali), so every source here is read by both
+frontends. Shapes that cannot be written as source or checked with `javap -c`
+have no sample: a deliberately corrupt class file, `module-info`, and
+annotation-only classes (`javap -c` does not render annotations).
 
 Nothing else compiles them. `jvm-reader`'s own unit tests are hermetic — they
-build the two-entry constant pool they need in Rust — so a plain `cargo test`
+build the constant pools they need in Rust — so a plain `cargo test`
 covers them and needs no JDK.
 
 **These are reader-level fixtures, not taint cases.** They exist to give the
@@ -45,8 +48,7 @@ survive this bytecode and describe it faithfully".
 
 ### Decoder regression fixtures
 
-One per root cause from the JVM-frontend defect report. Each reproduces a
-decoder bug on ordinary, verifiable major-version-52 bytecode straight out of
+Each reproduces a decoder failure shape on ordinary, verifiable major-version-52 bytecode straight out of
 `javac`, so a failure is never a question of malformed input.
 
 - **SparseSwitch.java** – sparse integer switch → `lookupswitch`, with the
@@ -75,25 +77,14 @@ decoder bug on ordinary, verifiable major-version-52 bytecode straight out of
   every class with a supplementary character in a literal, not just deliberately
   packed data.
 - **SurrogateConstants.java** – a well-formed pair, a lone high surrogate, a
-  lone low surrogate, and a packed table mixing them, in the style of the
-  generated `smaliFlexLexer` table that first surfaced this. Unpaired
+  lone low surrogate, and a packed table mixing them, in the style of a
+  generated lexer's packed table. Unpaired
   surrogates are legal in a class file and are used on purpose as UTF-16 data;
   Rust's `String` cannot hold them, so they survive as code units in
   `JvmString::Utf16` / `DexString::Utf16` and are only rendered lossily. These
   two are what `jvm:utf8-constants` and `dex:utf8-constants` read; there is no
   taint case for them, and there cannot be — an unpaired surrogate in a constant
   is inert data, so mangling it changes no flow.
-
-> These samples also feed the **dex-reader** checks (`xtask/src/dex.rs`): each is
-> compiled down to `.dex` and parsed, line-mapped, and diffed against baksmali.
->
-> The last three revive part of the old `classfile-parser` `.class` corpus that
-> was dropped when binaries were removed, as source. Members that can't be (or
-> aren't worth) expressing as source were left out on purpose: `malformed.class`
-> (a deliberately corrupt file — not producible by `javac`), and
-> `module-info` / `UnicodeStrings` / annotation-only fixtures (the original
-> `javap -c` comparison already skipped these, and `javap -c` doesn't render
-> annotations anyway).
 
 Both `xtask/src/jvm.rs` and `xtask/src/dex.rs` glob this directory rather than
 naming files, so a new `.java` dropped in here is picked up by both with nothing

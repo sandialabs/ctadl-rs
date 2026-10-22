@@ -1,4 +1,4 @@
-// TODO this test case needs "unexpected_lines" 7
+// Reassignment.java
 public final class Reassignment {
     static String source() { return "tainted"; }
     static void sink(String s) { System.out.println(s); }

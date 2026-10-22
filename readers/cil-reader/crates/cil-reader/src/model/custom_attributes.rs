@@ -88,7 +88,9 @@ impl CaType {
         }
     }
 
-    /// The Cecil `ElementType` enum-name (used by the tests' PrettyPrint).
+    /// The type as Cecil's test `PrettyPrint` names it: a primitive by its
+    /// `ElementType` name, an enum by its full name, an array by its
+    /// element's followed by `[]`.
     pub fn etype_name(&self) -> String {
         match self {
             CaType::Boolean => "Boolean".into(),

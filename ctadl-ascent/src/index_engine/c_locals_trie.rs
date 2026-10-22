@@ -1,14 +1,14 @@
 //! The parallel twin of [`super::locals_trie`], for `ascent_par!`.
 //!
 //! [`super::locals_trie`] holds `locals` in one shared store: a forward map `(F,V) -> {(P,M,Fp)}`
-//! whose groups are [`HybridSet`]s, plus a side-index `fidx: F -> {V}` that narrows the derived
-//! `0_3_4` probe. Every logical index is a lightweight *view* over that store. This module keeps
-//! all of that and changes exactly one thing: the two outer maps become `DashMap`s, so many rayon
-//! threads can insert at once.
+//! whose groups are [`PathGroup`]s. Every logical index is a lightweight *view* over that store.
+//! This module keeps all of that and changes exactly one thing: the outer map becomes a `DashMap`,
+//! so many rayon threads can insert at once.
 //!
-//! The groups stay [`HybridSet`]s, so the whole reason `locals_trie` exists survives: two-word
-//! groups, 24 B packed leaves, one allocation per group, and Swiss promotion above
-//! [`SMALL_THRESHOLD`] that keeps the delta->total merge at O(delta). `DashMap`'s own overhead is
+//! The groups stay [`PathGroup`]s, so the whole reason `locals_trie` exists survives: 24 B
+//! packed leaves, one allocation per small group, and promotion above
+//! [`SMALL_THRESHOLD`](super::hybrid_set::SMALL_THRESHOLD) that keeps the delta->total merge at
+//! O(delta). `DashMap`'s own overhead is
 //! per *shard* (`shards_count()` ~ 4x cores), which is nothing against a store measured in
 //! gigabytes.
 //!
@@ -32,13 +32,9 @@
 //! ## Reads are frozen; writes take one shard lock
 //!
 //! A concurrent insert takes the `DashMap` entry for `(f, v)` — one shard write lock — and
-//! inserts the leaf into that group's [`HybridSet`] under it. The lock makes the winner unique,
+//! inserts the leaf into that group's [`PathGroup`] under it. The lock makes the winner unique,
 //! so exactly one thread sees `true`, pushes the physical row, and sets `changed`. That
 //! uniqueness is what keeps semi-naive evaluation and the physical row count correct.
-//!
-//! On a vacant group we also record `v` in `fidx[f]`, after releasing the `fwd` shard. The two
-//! maps are therefore briefly out of step, which no reader can observe: readers only ever see
-//! frozen snapshots, and freezing happens between iterations, when no thread is inserting.
 //!
 //! Correctness note, same as the serial module: the *only* real `RelIndexMerge` lives on the
 //! ind_common ([`CLocalsIndCommon`]). Every index write target has a no-op merge, so nothing is
@@ -50,11 +46,9 @@
 //! and `CRelIndexReadAll::c_iter_all`. Those must return `ParallelIterator`s. Whole-store
 //! iteration ([`CAllRowsParIter`] and friends) splits over `DashMap`'s shards via ascent's
 //! `DashMapViewParIter`, which is where the real scaling has to come from. A *keyed* probe
-//! (`0_1`, `0_1_2`, `0_3_4`) instead collects its matches into a [`CollectedParIter`]: the median
-//! group holds one leaf, `0_3_4` is cold, and the allocation only happens when a keyed clause
-//! drives a parallel loop. A native `HybridSet` par-iterator (splitting the slot range, which
-//! both representations store as a flat array) would remove those collects; do that only if a
-//! profile asks for it.
+//! (`0_1`, `0_1_2`) instead collects its matches into a [`CollectedParIter`]: the median group
+//! holds one leaf, and the allocation only happens when a keyed clause drives a parallel loop. A native `PathGroup` par-iterator would remove those collects; do
+//! that only if a profile asks for it.
 
 use std::hash::{BuildHasherDefault, Hash};
 use std::marker::PhantomData;
@@ -79,8 +73,7 @@ use super::path_group::PathGroup;
 /// deterministic `FxHasher` rather than the DoS-resistant SipHash the std collections use. This is
 /// the same hasher ascent's own concurrent indices use, so shard counts line up.
 pub type Hasher = BuildHasherDefault<FxHasher>;
-type Set<T> = hashbrown::HashSet<T, Hasher>;
-/// The leaves of one `(F,V)` group. See [`super::locals_trie`] for why this is a [`HybridSet`].
+/// The leaves of one `(F,V)` group. See [`super::locals_trie`] for why this is a [`PathGroup`].
 type Group<P, M, Fp> = PathGroup<P, M, Fp>;
 
 // ---------------------------------------------------------------------------
@@ -289,11 +282,8 @@ where
     Fp: Clone + Eq + Hash,
 {
     /// Forward map: `(F,V)` -> the set of `(P, M, Fp)` leaves for that group. It serves the
-    /// `none`, `0_1`, `0_1_2`, and existence views directly, and the `0_3_4` view by *scanning*.
+    /// `none`, `0_1`, `0_1_2`, and existence views.
     fwd: CMap<(F, V), Group<P, M, Fp>>,
-    /// Side-index: `F` -> the set of `V` present for that function, kept in lockstep with `fwd`'s
-    /// outer keys. It lets a `0_3_4` probe visit one function's groups instead of all of `fwd`.
-    fidx: CMap<F, Set<V>>,
     /// Row count. Bumped once per winning insert, so it stays exact under concurrency.
     len: AtomicUsize,
 }
@@ -309,7 +299,6 @@ where
     fn default() -> Self {
         Self {
             fwd: CMap::default(),
-            fidx: CMap::default(),
             len: AtomicUsize::new(0),
         }
     }
@@ -326,7 +315,6 @@ where
     fn clone(&self) -> Self {
         Self {
             fwd: self.fwd.clone(),
-            fidx: self.fidx.clone(),
             len: AtomicUsize::new(self.len()),
         }
     }
@@ -342,11 +330,9 @@ where
 {
     fn freeze(&mut self) {
         self.fwd.freeze();
-        self.fidx.freeze();
     }
     fn unfreeze(&mut self) {
         self.fwd.unfreeze();
-        self.fidx.unfreeze();
     }
 }
 
@@ -390,33 +376,16 @@ where
     /// store, and true for exactly one caller when several race on the same tuple.
     ///
     /// The `(f, v)` entry is one shard write lock, held across the group insert (including a
-    /// possible Swiss promotion). That lock is the store's contention point: the pessimal shape is
-    /// many threads hitting one huge group. `fidx` is touched only when the group is new, and
-    /// strictly after the `fwd` shard lock is released, so the two maps are never held at once.
+    /// possible promotion). That lock is the store's contention point: the pessimal shape is
+    /// many threads hitting one huge group.
     fn c_insert(&self, key: &(F, V, P, M, Fp)) -> bool {
-        use ascent::dashmap::mapref::entry::Entry;
         let (f, v, p, m, fp) = key;
-        let leaf = (p.clone(), m.clone(), fp.clone());
-
-        let mut new_group = false;
-        let added = match self.fwd.unfrozen().entry((f.clone(), v.clone())) {
-            Entry::Occupied(mut occ) => occ.get_mut().insert(leaf),
-            Entry::Vacant(vac) => {
-                let mut group = Group::new();
-                group.insert(leaf);
-                // The `RefMut` this returns is dropped at the semicolon, releasing the shard.
-                vac.insert(group);
-                new_group = true;
-                true
-            }
-        };
-        if new_group {
-            self.fidx
-                .unfrozen()
-                .entry(f.clone())
-                .or_default()
-                .insert(v.clone());
-        }
+        let added = self
+            .fwd
+            .unfrozen()
+            .entry((f.clone(), v.clone()))
+            .or_default()
+            .insert((p.clone(), m.clone(), fp.clone()));
         if added {
             self.len.fetch_add(1, Ordering::Relaxed);
         }
@@ -426,7 +395,7 @@ where
     /// Merge `from` into `self`, taking the union. This is the delta->total move, and Ascent runs
     /// it single-threaded on `&mut` with both sides unfrozen.
     ///
-    /// Reusing [`HybridSet::merge`] keeps the merge O(delta) rather than O(accumulated total),
+    /// Reusing [`PathGroup::merge`] keeps the merge O(delta) rather than O(accumulated total),
     /// which is the whole point of promoting large groups.
     fn absorb(&mut self, from: &mut Self) {
         use ascent::dashmap::mapref::entry::Entry;
@@ -434,7 +403,6 @@ where
         {
             // Single-threaded here, so `entry()` on `&DashMap` cannot deadlock against anyone.
             let fwd = self.fwd.unfrozen();
-            let fidx = self.fidx.unfrozen();
             // Drain `from`'s shard tables in place. Draining rather than replacing the whole map
             // matters: `from` becomes the next `new` store, and a fresh `DashMap` would allocate a
             // whole shard array (`shards_count()` locked tables) on *every* fixpoint iteration.
@@ -442,12 +410,11 @@ where
             for shard in from.fwd.unfrozen_mut().shards_mut() {
                 for ((f, v), group) in shard.get_mut().drain() {
                     let group = group.into_inner();
-                    match fwd.entry((f.clone(), v.clone())) {
+                    match fwd.entry((f, v)) {
                         Entry::Occupied(mut occ) => added += occ.get_mut().merge(group),
                         Entry::Vacant(vac) => {
                             added += group.len();
                             vac.insert(group);
-                            fidx.entry(f).or_default().insert(v);
                         }
                     }
                 }
@@ -455,7 +422,6 @@ where
         }
         *self.len.get_mut() += added;
         *from.len.get_mut() = 0;
-        from.fidx.unfrozen().clear();
     }
 
     /// Estimated heap bytes, broken down per structure. Same report as the serial store, with the
@@ -465,8 +431,6 @@ where
     pub fn heap_report(&self) -> HeapReport {
         let sz_outer = std::mem::size_of::<((F, V), Group<P, M, Fp>)>();
         let sz_leaf = std::mem::size_of::<(P, M, Fp)>();
-        let sz_fidx_outer = std::mem::size_of::<(F, Set<V>)>();
-        let sz_fidx_val = std::mem::size_of::<V>();
 
         let mut r = HeapReport {
             rows: self.len(),
@@ -474,49 +438,28 @@ where
             p_entries: 0,
             leaf_elems: 0,
             fwd_bytes: self.fwd.table_bytes(sz_outer),
-            fidx_funcs: self.fidx.len(),
-            fidx_vs: 0,
-            fidx_bytes: self.fidx.table_bytes(sz_fidx_outer),
-            elem_sizes: (sz_outer, 0, sz_leaf, sz_fidx_outer, sz_fidx_val),
+            elem_sizes: (sz_outer, sz_leaf),
             max_group: 0,
             large_groups: 0,
             group_hist: Vec::new(),
         };
-        // Counting distinct `P` per group needs a scratch set, because groups are unordered. One
-        // set, cleared per group, keeps the report to a single extra allocation. It holds `P` by
-        // value rather than by reference: the unfrozen `DashMap` hands out guarded values whose
-        // lifetime is the loop iteration, and `P` is a cheap handle to clone.
-        // Each `visit_*` closure borrows `r` mutably, so it is scoped to end the borrow before
-        // the next one starts.
-        {
-            let mut visit_group = |group: &Group<P, M, Fp>| {
-                r.leaf_elems += group.len();
-                r.max_group = r.max_group.max(group.len());
-                let bucket = usize::BITS as usize - 1 - group.len().max(1).leading_zeros() as usize;
-                if r.group_hist.len() <= bucket {
-                    r.group_hist.resize(bucket + 1, 0);
-                }
-                r.group_hist[bucket] += 1;
-                if group.is_large() {
-                    r.large_groups += 1;
-                }
-                r.fwd_bytes += group.heap_bytes();
-                r.p_entries += group.num_paths();
-            };
-            match &self.fwd {
-                CMap::Frozen(v) => v.iter().for_each(|(_, group)| visit_group(group)),
-                CMap::Unfrozen(dm) => dm.iter().for_each(|e| visit_group(e.value())),
+        let mut visit_group = |group: &Group<P, M, Fp>| {
+            r.leaf_elems += group.len();
+            r.max_group = r.max_group.max(group.len());
+            let bucket = usize::BITS as usize - 1 - group.len().max(1).leading_zeros() as usize;
+            if r.group_hist.len() <= bucket {
+                r.group_hist.resize(bucket + 1, 0);
             }
-        }
-        {
-            let mut visit_vs = |vs: &Set<V>| {
-                r.fidx_vs += vs.len();
-                r.fidx_bytes += hb_bytes(vs.capacity(), sz_fidx_val);
-            };
-            match &self.fidx {
-                CMap::Frozen(v) => v.iter().for_each(|(_, vs)| visit_vs(vs)),
-                CMap::Unfrozen(dm) => dm.iter().for_each(|e| visit_vs(e.value())),
+            r.group_hist[bucket] += 1;
+            if group.is_large() {
+                r.large_groups += 1;
             }
+            r.fwd_bytes += group.heap_bytes();
+            r.p_entries += group.num_paths();
+        };
+        match &self.fwd {
+            CMap::Frozen(v) => v.iter().for_each(|(_, group)| visit_group(group)),
+            CMap::Unfrozen(dm) => dm.iter().for_each(|e| visit_group(e.value())),
         }
         r
     }
@@ -544,7 +487,7 @@ where
 
 /// A `Vec` of already-collected items, exposed as a `ParallelIterator`.
 ///
-/// This is how the *keyed* probes return their matches. A group is a `HybridSet`, which has no
+/// This is how the *keyed* probes return their matches. A group is a `PathGroup`, which has no
 /// native parallel iterator, and rayon needs a nameable `ParallelIterator + Clone` type. Since the
 /// median group holds one leaf, collecting is cheap; and it only ever happens when a keyed clause
 /// drives a parallel loop, which is rare.
@@ -838,13 +781,11 @@ macro_rules! noop_writes {
 marker!(CToNone, CViewNone);
 marker!(CTo01, CView01);
 marker!(CTo012, CView012);
-marker!(CTo034, CView034);
 marker!(CToFull, CViewFull);
 
 noop_writes!(CViewNone, (), (F, V, P, M, Fp));
 noop_writes!(CView01, (F, V), (P, M, Fp));
 noop_writes!(CView012, (F, V, P), (M, Fp));
-noop_writes!(CView034, (F, M, Fp), (V, P));
 
 // ---- none: () -> (F,V,P,M,Fp) ---------------------------------------------
 impl<'a, F, V, P, M, Fp> RelIndexRead<'a> for CViewNone<'a, F, V, P, M, Fp>
@@ -1103,141 +1044,6 @@ where
             fwd: self.0.fwd.frozen(),
         }
     }
-}
-
-// ---- 0_3_4: (F,M,Fp) -> (V,P) ---------------------------------------------
-//
-// Derived, not materialized. For the probed function `f` we visit only its flow-variables, found
-// through `fidx`, and yield every `(v, p)` whose group holds a leaf with this `(m, fp)`. A cold
-// path: rule 2.2 makes on the order of tens of probes.
-impl<'a, F, V, P, M, Fp> RelIndexRead<'a> for CView034<'a, F, V, P, M, Fp>
-where
-    F: Clone + Eq + Hash,
-    V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash,
-{
-    type Key = (F, M, Fp);
-    type Value = (&'a V, &'a P);
-    type IteratorType = DynIter<'a, Self::Value>;
-    #[inline]
-    fn index_get(&'a self, key: &(F, M, Fp)) -> Option<Self::IteratorType> {
-        let fwd = self.0.fwd.frozen();
-        let fidx = self.0.fidx.frozen();
-        let (f, m, fp) = key.clone();
-        Some(DynIter::new(move || {
-            let (f, m, fp) = (f.clone(), m.clone(), fp.clone());
-            // `fidx[f]` and `fwd` are in lockstep, so every V here has an `fwd` group.
-            fidx.get(&f).into_iter().flat_map(move |vs| {
-                let (f, m, fp) = (f.clone(), m.clone(), fp.clone());
-                vs.iter().flat_map(move |v| {
-                    let (m, fp) = (m.clone(), fp.clone());
-                    fwd.get(&(f.clone(), v.clone()))
-                        .into_iter()
-                        .flat_map(move |group| {
-                            let (m, fp) = (m.clone(), fp.clone());
-                            group.iter().filter_map(move |(p, mm, ffp)| {
-                                if *mm == m && *ffp == fp {
-                                    Some((v, p))
-                                } else {
-                                    None
-                                }
-                            })
-                        })
-                })
-            })
-        }))
-    }
-    #[inline]
-    fn len_estimate(&self) -> usize {
-        // There is no materialized inverse to size. `0_3_4` is only probed, never used as a join
-        // driver, so a large estimate is safe: it discourages the planner from choosing it as one.
-        self.0.len()
-    }
-}
-impl<'a, F, V, P, M, Fp> RelIndexReadAll<'a> for CView034<'a, F, V, P, M, Fp>
-where
-    F: Clone + Eq + Hash,
-    V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash,
-{
-    type Key = (&'a F, &'a M, &'a Fp);
-    type Value = (&'a V, &'a P);
-    type ValueIteratorType = DynIter<'a, Self::Value>;
-    type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
-    fn iter_all(&'a self) -> Self::AllIteratorType {
-        // Correct fallback: invert `fwd` on demand and throw the result away. Nothing iterates
-        // `0_3_4` as a driver; if this shows up in a profile, some rule has started to.
-        Box::new(invert_034(self.0).into_iter().map(|(key, vps)| {
-            let it = DynIter::new(move || vps.clone().into_iter());
-            (key, it)
-        }))
-    }
-}
-impl<'a, F, V, P, M, Fp> CRelIndexRead<'a> for CView034<'a, F, V, P, M, Fp>
-where
-    F: Clone + Eq + Hash + Send + Sync,
-    V: Clone + Eq + Hash + Send + Sync,
-    P: Clone + Eq + Hash + Send + Sync,
-    M: Clone + Eq + Hash + Send + Sync,
-    Fp: Clone + Eq + Hash + Send + Sync,
-{
-    type Key = (F, M, Fp);
-    type Value = (&'a V, &'a P);
-    type IteratorType = CollectedParIter<Self::Value>;
-    #[inline]
-    fn c_index_get(&'a self, key: &(F, M, Fp)) -> Option<Self::IteratorType> {
-        Some(CollectedParIter(
-            RelIndexRead::index_get(self, key)?.collect(),
-        ))
-    }
-}
-impl<'a, F, V, P, M, Fp> CRelIndexReadAll<'a> for CView034<'a, F, V, P, M, Fp>
-where
-    F: Clone + Eq + Hash + Send + Sync,
-    V: Clone + Eq + Hash + Send + Sync,
-    P: Clone + Eq + Hash + Send + Sync,
-    M: Clone + Eq + Hash + Send + Sync,
-    Fp: Clone + Eq + Hash + Send + Sync,
-{
-    type Key = (&'a F, &'a M, &'a Fp);
-    type Value = (&'a V, &'a P);
-    type ValueIteratorType = CollectedParIter<Self::Value>;
-    type AllIteratorType = CollectedParIter<(Self::Key, Self::ValueIteratorType)>;
-    fn c_iter_all(&'a self) -> Self::AllIteratorType {
-        CollectedParIter(
-            invert_034(self.0)
-                .into_iter()
-                .map(|(key, vps)| (key, CollectedParIter(vps)))
-                .collect(),
-        )
-    }
-}
-
-/// Builds the whole `(F,M,Fp) -> [(V,P)]` inverse of the frozen store. Only the two `0_3_4`
-/// whole-relation iterators use it, and neither is on a hot path.
-#[allow(clippy::type_complexity)]
-fn invert_034<'a, F, V, P, M, Fp>(
-    store: &'a CLocalsIndCommon<F, V, P, M, Fp>,
-) -> hashbrown::HashMap<(&'a F, &'a M, &'a Fp), Vec<(&'a V, &'a P)>, Hasher>
-where
-    F: Clone + Eq + Hash,
-    V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash,
-{
-    let mut groups: hashbrown::HashMap<(&'a F, &'a M, &'a Fp), Vec<(&'a V, &'a P)>, Hasher> =
-        hashbrown::HashMap::default();
-    for ((f, v), group) in store.fwd.frozen().iter() {
-        for (p, m, fp) in group.iter() {
-            groups.entry((f, m, fp)).or_default().push((v, p));
-        }
-    }
-    groups
 }
 
 // ---- full 0_1_2_3_4: existence and the one real writer ---------------------
@@ -1543,45 +1349,6 @@ mod tests {
         got.sort_unstable();
         assert_eq!(got, want, "`0_1_2` c_iter_all");
 
-        // `0_3_4`: (F,M,Fp) -> (V,P), derived by scanning through `fidx`.
-        let view = CView034(&store);
-        for &(f, _, _, m, fp) in &want {
-            let expect: Vec<_> = want
-                .iter()
-                .copied()
-                .filter(|r| r.0 == f && r.3 == m && r.4 == fp)
-                .collect();
-            let mut got: Vec<_> = view
-                .index_get(&(f, m, fp))
-                .unwrap()
-                .map(|(v, p)| (f, *v, *p, m, fp))
-                .collect();
-            got.sort_unstable();
-            assert_eq!(got, expect, "`0_3_4` view at {:?}", (f, m, fp));
-            let mut got: Vec<Row> = view
-                .c_index_get(&(f, m, fp))
-                .unwrap()
-                .map(|(v, p)| (f, *v, *p, m, fp))
-                .collect();
-            got.sort_unstable();
-            assert_eq!(got, expect, "`0_3_4` c_index_get at {:?}", (f, m, fp));
-        }
-        let mut got: Vec<_> = view
-            .iter_all()
-            .flat_map(|((f, m, fp), vals)| vals.map(move |(v, p)| (*f, *v, *p, *m, *fp)))
-            .collect();
-        got.sort_unstable();
-        assert_eq!(got, want, "`0_3_4` iter_all");
-        let mut got: Vec<Row> = view
-            .c_iter_all()
-            .flat_map(|((f, m, fp), vals)| {
-                let (f, m, fp) = (*f, *m, *fp);
-                vals.map(move |(v, p)| (f, *v, *p, m, fp))
-            })
-            .collect();
-        got.sort_unstable();
-        assert_eq!(got, want, "`0_3_4` c_iter_all");
-
         // The full existence index.
         let view = CViewFull(&store);
         for &(f, v, p, m, fp) in &want {
@@ -1632,7 +1399,7 @@ mod tests {
         let mut dup = rows(2, 4, 2);
         dup.extend_from_slice(&dup.clone());
         check_views(&dup);
-        // Straddle the small -> Swiss transition inside a group.
+        // Straddle the small -> by-path transition inside a group.
         for group in [
             SMALL_THRESHOLD - 1,
             SMALL_THRESHOLD,
@@ -1643,7 +1410,7 @@ mod tests {
         }
     }
 
-    /// `absorb` is the delta->total merge. It has to keep `len`, `fidx`, and the groups consistent,
+    /// `absorb` is the delta->total merge. It has to keep `len` and the groups consistent,
     /// whichever representation the two sides are in.
     #[test]
     fn absorb_unions_the_stores() {
@@ -1665,7 +1432,6 @@ mod tests {
             total.absorb(&mut delta);
 
             assert_eq!(delta.len(), 0, "absorbed delta must be empty");
-            assert_eq!(delta.fidx.len(), 0, "absorbed delta must drop its fidx");
             assert_eq!(delta.fwd.len(), 0, "absorbed delta must drop its groups");
 
             let mut want: Vec<_> = a_rows.iter().chain(b_rows.iter()).copied().collect();
@@ -1676,21 +1442,10 @@ mod tests {
             let report = total.heap_report();
             assert_eq!(report.rows, total.len());
             assert_eq!(report.leaf_elems, total.len(), "heap_report leaf count");
-            assert_eq!(
-                report.fidx_vs, report.fv_groups,
-                "fidx must hold exactly one V per group"
-            );
 
             total.freeze();
             for &(f, v, p, m, fp) in &want {
                 assert!(total.contains(&f, &v, &p, &m, &fp));
-            }
-            // `fidx` must list the V of every group, or `0_3_4` can no longer find them.
-            for ((f, v), _) in total.fwd.frozen().iter() {
-                assert!(
-                    total.fidx.frozen().get(f).is_some_and(|vs| vs.contains(v)),
-                    "fidx missing {v} of function {f}"
-                );
             }
         }
     }
@@ -1704,7 +1459,7 @@ mod tests {
         use rayon::prelude::*;
 
         // Keys chosen so threads collide: few groups, many overlapping leaves, and group sizes
-        // that straddle the Swiss promotion.
+        // that straddle the promotion.
         let base: Vec<Row> = rows(8, SMALL_THRESHOLD + 5, 3);
         // Every row is offered by 4 different "threads' worth" of work, in different orders.
         let batches: Vec<Vec<Row>> = (0..4)
@@ -1747,24 +1502,8 @@ mod tests {
         }
         assert_eq!(store.len(), serial.len(), "par and ser row counts agree");
 
-        // `fwd` and `fidx` are maintained under two independent locks, and a racing insert on a
-        // brand-new group releases the `fwd` shard before touching `fidx`. So the lockstep
-        // invariant — exactly one V in `fidx` per `(F,V)` group — is the thing concurrency could
-        // plausibly break, and `0_3_4` silently returns nothing for a V that goes missing.
-        let report = store.heap_report();
-        assert_eq!(
-            report.fidx_vs, report.fv_groups,
-            "fidx must hold exactly one V per group after concurrent inserts"
-        );
-
         let mut store = store;
         store.freeze();
-        for ((f, v), _) in store.fwd.frozen().iter() {
-            assert!(
-                store.fidx.frozen().get(f).is_some_and(|vs| vs.contains(v)),
-                "fidx missing {v} of function {f}"
-            );
-        }
         let mut got: Vec<Row> = CViewNone(&store)
             .c_index_get(&())
             .unwrap()
@@ -1772,20 +1511,5 @@ mod tests {
             .collect();
         got.sort_unstable();
         assert_eq!(got, want, "concurrent store contents");
-
-        // Every `0_3_4` probe must find its rows, which is what the `fidx` invariant buys.
-        let view = CView034(&store);
-        for &(f, v, p, m, fp) in &want {
-            let hits: Vec<_> = view
-                .index_get(&(f, m, fp))
-                .unwrap()
-                .map(|(vv, pp)| (*vv, *pp))
-                .collect();
-            assert!(
-                hits.contains(&(v, p)),
-                "`0_3_4` lost {:?}",
-                (f, v, p, m, fp)
-            );
-        }
     }
 }

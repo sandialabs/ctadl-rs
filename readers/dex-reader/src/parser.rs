@@ -717,11 +717,11 @@ pub fn parse_proto_ids(data: &[u8], header: &DexHeader) -> DexResult<Vec<ProtoId
 }
 
 impl ProtoId {
-    // Smali/baksmali method descriptors use the "dex descriptor" form:
-    //   (paramTypes...)returnType
-    //
-    // Where each type is a descriptor like:
-    //   I, J, D, Ljava/lang/String;, [I, etc.
+    /// The method descriptor in the smali/baksmali "dex descriptor" form:
+    ///   (paramTypes...)returnType
+    ///
+    /// Where each type is a descriptor like:
+    ///   I, J, D, Ljava/lang/String;, [I, etc.
     pub fn pretty_signature<'a>(
         &self,
         data: &[u8],
@@ -790,23 +790,8 @@ impl MethodId {
         proto_ids: &[ProtoId],
         data: &[u8],
     ) -> DexResult<String> {
-        // 1 Method name
-        let name = strings.get(self.name_idx as usize)?;
-
-        // 2 Proto
-        let proto: &ProtoId = proto_ids
-            .get(self.proto_idx as usize)
-            .ok_or(DexError::InvalidDex("proto_idx out of bounds"))?;
-
-        // 3 Class
-        let class_name = type_ids
-            .get(self.class_idx as usize)
-            .ok_or(DexError::InvalidDex("class_idx out of bounds"))?
-            .descriptor(strings)?;
-
-        // 4 Pretty-print full signature
-        let params = proto.pretty_signature(data, strings, type_ids)?; // returns (arg_types)->ret_type
-        Ok(format!("{}->{}{}", class_name, name, params))
+        let (class_name, name, descriptor) = self.vmt_triple(strings, type_ids, proto_ids, data)?;
+        Ok(format!("{}->{}{}", class_name, name, descriptor))
     }
 
     /// Returns (class name, simple name, descriptor)
@@ -817,22 +802,15 @@ impl MethodId {
         proto_ids: &[ProtoId],
         data: &[u8],
     ) -> DexResult<(String, String, String)> {
-        // 1 Method name
         let name = strings.get(self.name_idx as usize)?;
-
-        // 2 Proto
         let proto: &ProtoId = proto_ids
             .get(self.proto_idx as usize)
             .ok_or(DexError::InvalidDex("proto_idx out of bounds"))?;
-
-        // 3 Class
         let class_name = type_ids
             .get(self.class_idx as usize)
             .ok_or(DexError::InvalidDex("class_idx out of bounds"))?
             .descriptor(strings)?;
-
-        // 4 Pretty-print full signature
-        let descriptor = proto.pretty_signature(data, strings, type_ids)?; // returns (arg_types)->ret_type
+        let descriptor = proto.pretty_signature(data, strings, type_ids)?;
         Ok((class_name, name, descriptor))
     }
 }
@@ -1063,7 +1041,6 @@ pub fn parse_code_item(data: &[u8], offset: u32) -> DexResult<CodeItem> {
     let tries_size = read_u16_le(data, offset + 6)?;
     let debug_info_off = read_u32_le(data, offset + 8)?;
     let insns_size = read_u32_le(data, offset + 12)? as usize;
-    //println!("insns_size: {insns_size}");
 
     // Read instructions
     let insns_offset = offset + 16;

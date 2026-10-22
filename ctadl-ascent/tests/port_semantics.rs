@@ -12,14 +12,13 @@
 //! tree-sitter C frontends emit for a container element (`[_elem_]`, `[]`), and a port matches it
 //! only when the bracket is escaped: `.\[_elem_]`, JSON `"\\[_elem_]"`.
 //!
-//! That distinction is the substance of the whole grammar change. Unescaped, `.[1]` is a real
+//! That distinction is the substance of the port grammar. Unescaped, `.[1]` is a real
 //! `Offset(1)` and matches what pcode emits; escaped, `.\[1]` is a `Symbol` named `[1]` and
-//! matches what Lua emits for `t[1]`. The two ports were indistinguishable before, and getting
-//! them backwards silently matches nothing rather than failing.
+//! matches what Lua emits for `t[1]`. Getting them backwards silently matches nothing rather
+//! than failing.
 //!
 //! Every case probes at the level its port *predicts* under prefix substitution rather than at
-//! one fixed depth -- probing `u.f` for all six rows is what made the original semantics matrix
-//! read as four failures out of six when it was four correct answers.
+//! one fixed depth: probing `u.f` for all six rows would score correct answers as failures.
 //!
 //! The remaining matrix row -- an *unescaped* `.[_elem_]`, which must be a hard load error rather
 //! than a silent `Symbol("[_elem_]")` -- needs no program at all and is pinned in
@@ -237,9 +236,9 @@ fn escaped_element_port_matches_what_lua_emits() {
     );
 }
 
-/// The row that could not be written at all before the canonical grammar, when both spellings
-/// were the same `Symbol`. `t[1]` in Lua source is the SYMBOL named `[1]`; the unescaped port
-/// `.[1]` asks for `Offset(1)`, which is a different thing and which Lua never produces.
+/// The row that needs both spellings to be distinct. `t[1]` in Lua source is the SYMBOL named
+/// `[1]`; the unescaped port `.[1]` asks for `Offset(1)`, which is a different thing and which
+/// Lua never produces.
 #[test]
 fn an_unescaped_numeric_port_is_an_offset_and_lua_has_none() {
     assert!(

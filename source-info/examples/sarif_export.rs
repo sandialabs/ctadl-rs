@@ -15,7 +15,7 @@ use source_info::{LineMap, offset_to_line_column};
 use std::sync::Arc;
 
 // Synthetic source content shared across all three files in the parquet_out example.
-// ~300 bytes, multiple lines; byte offsets 10-14 correspond to "n ma" in "fn main()".
+// ~170 bytes, multiple lines; byte offsets 10-14 hold "fn ma" of "fn main()".
 const SOURCE: &[u8] = b"\
 // source\n\
 fn main() {\n\

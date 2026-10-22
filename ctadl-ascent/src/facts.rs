@@ -114,7 +114,7 @@ lazy_static::lazy_static! {
 ///
 /// The access path is represented as a stack of accesses, innermost first. So an access path like
 /// x.foo.bar.baz is represented as `cons(.foo, cons(.bar, cons(.baz)))`. This representation allows
-/// common suffix sharing, something provided by the [`SuffixSeq`] datatype.
+/// common suffix sharing, something provided by the [`tailshare::Seq`] datatype.
 ///
 /// Access paths are composed of field and offset accesses. Contiguous runs of offset accesses are
 /// summed, so there is never more than one offset access in a row. In effect, the offsets are
@@ -766,6 +766,17 @@ impl FlowVariable {
         FlowVariableKind::CallArg(c).into()
     }
 
+    /// The vertex of the actual for parameter `formal` of the call at `insn`. The global heap
+    /// already aliases the caller's heap formal at every call site, so its actual is that formal
+    /// rather than a per-call copy.
+    pub fn call_actual(insn: InsnId, formal: FormalIndex) -> Self {
+        if formal == crate::codegen::GLOBALS_INDEX.into() {
+            FlowVariable::formal_index(formal)
+        } else {
+            FlowVariable::call_arg_packed(PackedCallArg::try_from_parts(insn, formal).unwrap())
+        }
+    }
+
     pub fn as_local(&self) -> Option<Str> {
         if self.is_local() {
             let idx = self.0 & DATA_MASK;
@@ -934,7 +945,7 @@ impl TryFrom<&mir::VariableRef> for FlowVariable {
     fn try_from(v: &mir::VariableRef) -> Result<FlowVariable, Self::Error> {
         let mir::VariableRef { variable, version } = v;
         match version {
-            None => variable.as_ref().try_into(),
+            None => variable.try_into(),
             Some(version) => {
                 let name = format!("{variable}_{version}");
                 Ok(FlowVariableKind::Local(Str::from(name)).into())
@@ -961,8 +972,7 @@ impl Display for FlowVertex {
 /// latter resolved against the virtual method table at the call site.
 ///
 /// It appears both as a *stored* target — what an assignment writes at a vertex, in
-/// `call_target_assign` (unifying the former `func_ptr_assign` and `java_obj_assign`
-/// relations into one) — and as the *resolved* target carried through the `resolvent`
+/// `call_target_assign` — and as the *resolved* target carried through the `resolvent`
 /// relation during call resolution.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
 pub enum CallTargetObject {
@@ -1250,11 +1260,11 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> 
 /// without rebuilding and re-interning `suffix`.
 ///
 /// Every `Path` in the system is built through [`Path::from_accesses`], which collapses runs of
-/// adjacent [`PathSegment::Offset`]s, so neither an interned `new_prefix` nor a `suffix` returned
+/// adjacent [`mir::PathSegment::Offset`]s, so neither an interned `new_prefix` nor a `suffix` returned
 /// by [`match_prefix`] (a tail of an interned path, possibly with an offset-adjusted head) ever
 /// contains internal adjacent offsets. The *only* place `from_accesses` could merge is therefore
 /// the `new_prefix`/`suffix` junction — which this handles explicitly — so the result is
-/// byte-identical to the old rebuild while doing O(|new_prefix|) interns instead of
+/// identical to that rebuild while doing O(|new_prefix|) interns instead of
 /// O(|new_prefix| + |suffix|) (and zero when `new_prefix` is empty, the common copy/load case).
 #[inline]
 fn prepend_onto(
@@ -1292,8 +1302,8 @@ fn prepend_onto(
 /// Returns the suffix solving the equation ap = prefix + suffix, if there is one. The suffix may
 /// be empty. Otherwise returns none.
 ///
-/// This supports offset arithmetic. For example, if ap = .x.[2] and prefix = .x.[1],
-/// the suffix is .[1].
+/// This supports offset arithmetic. For example, if `ap = .x.[2]` and `prefix = .x.[1]`,
+/// the suffix is `.[1]`.
 #[inline]
 pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<tailshare::Seq<mir::PathSegment>> {
     use mir::{Offset, PathSegment};
@@ -1545,7 +1555,7 @@ mod tests {
         );
 
         // Round trip: forward then backward substitution is the identity, including the
-        // formerly non-injective exact-offset case.
+        // exact-offset case.
         for (ap_s, pre_s, np_s) in [
             (".x.[2]", ".x.[2]", ".y"),
             (".x.[2].f", ".x.[2]", ".y"),
@@ -1563,7 +1573,7 @@ mod tests {
             );
         }
 
-        // A nonzero adjustment still merges offsets as before.
+        // A nonzero adjustment merges offsets.
         let ap = parse_path(".x.[5]");
         let suffix = match_prefix(&ap, &prefix).unwrap();
         assert_eq!(
@@ -1573,12 +1583,12 @@ mod tests {
     }
 
     /// Locks the sharing-preserving `substitute_prefix` (via `prepend_onto`) to the exact output
-    /// of the old rebuild-everything implementation. The subtle case is the `new_prefix`/`suffix`
+    /// of flattening `new_prefix ++ suffix` and rebuilding with `from_accesses`. The subtle case is the `new_prefix`/`suffix`
     /// junction offset-merge; the common case is an empty `new_prefix` (result is the shared
     /// suffix, zero interning). A drift here would change analysis results.
     #[test]
     fn test_substitute_prefix_matches_rebuild() {
-        // Reference: the pre-optimization behavior — flatten new_prefix ++ suffix and rebuild.
+        // Reference: flatten new_prefix ++ suffix and rebuild.
         fn rebuild(ap: &Path, prefix: &Path, new_prefix: &Path) -> Option<Path> {
             match_prefix(ap, prefix).map(|suffix| {
                 Path::from_accesses(new_prefix.0.iter().chain(suffix.iter()).cloned())
@@ -1748,12 +1758,9 @@ mod tests {
         assert_eq!(path, parsed_back);
     }
 
-    /// `parse(to_dot_string(p)) == p` over the corpus the parquet layer used to destroy.
-    ///
-    /// Before the canonical grammar, `to_dot_string` escaped `.` but not `[`, and the parser read
-    /// a leading `[` as an offset. So on every index -> query round trip the frontends' bracketed
-    /// symbol names either vanished (`Symbol("[]")`, `Symbol("[_elem_]")` -> the empty path) or
-    /// changed type (`Symbol("[3]")` -> `Offset(3)`). Nothing pinned any of these.
+    /// `parse(to_dot_string(p)) == p` over paths whose symbol names look like offsets or contain
+    /// the grammar's metacharacters: a bracketed symbol (`Symbol("[]")`, `Symbol("[_elem_]")`,
+    /// `Symbol("[3]")`) must come back as that symbol, not as the empty path or an offset.
     #[test]
     fn test_path_round_trip_corpus() {
         use ctadl_ir::mir::{Offset, PathSegment};
@@ -1762,7 +1769,7 @@ mod tests {
 
         for segs in [
             vec![],
-            // The three the fact store was corrupting: dex/jvm, lua/C, and lua/C again.
+            // Bracketed symbols the frontends emit: dex/jvm, lua/C, and lua/C again.
             vec![sym("[]")],
             vec![sym("[_elem_]")],
             vec![sym("[3]")],
@@ -1808,8 +1815,8 @@ mod tests {
         assert_eq!(Path::parse(".x.[0]").unwrap(), Path::parse(".x").unwrap());
         assert_eq!(Path::parse(".[0]").unwrap(), Path::empty());
 
-        // Which is why `Symbol("[3]")` (a lua/C array field) and `Offset(3)` must stay distinct:
-        // before the escape, both spelled `.[3]` and the symbol lost.
+        // `Symbol("[3]")` (a lua/C array field) and `Offset(3)` stay distinct: the symbol's
+        // leading `[` is escaped.
         assert_ne!(
             Path::from_accesses([PathSegment::symbol("[3]")]),
             Path::from_accesses([PathSegment::Offset(Offset(3))])

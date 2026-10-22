@@ -27,14 +27,9 @@ jobs:
       - name: Set up Nix build cache
         uses: DeterminateSystems/flakehub-cache-action@main
 
-      # All expensive/long-running regression logic lives in the flake checks
-      # (checks.<system>.*): `regression` is the source-sink taint suite driven
-      # by the xtask harness (including the cil-reader checks against the pinned
-      # Mono.Cecil corpus, which plain `cargo test` lacks), and
-      # `dex-reader-tests` / `jvm-reader-tests` run the reader crates' tests.
-      # Add new expensive tests there, not in this YAML. The cheap
-      # fmt/clippy/unit checks run separately in the `test` workflow.
-      # ubuntu-latest runners are x86_64-linux.
+      # Every check here is defined under `checks` in flake.nix; add new
+      # expensive tests there, not in this YAML. ubuntu-latest runners are
+      # x86_64-linux.
       - name: Run nightly regression tests
         run: |
           nix build --print-build-logs \

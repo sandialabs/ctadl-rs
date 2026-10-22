@@ -1,8 +1,8 @@
 // SwitchFlow.java
 //
 // Taint carried across an integer switch whose default arm is a back edge to
-// the enclosing loop header -- the shape that first exposed the unmodelled
-// switch selector. `lookupswitch` and `tableswitch` each pop one int; if they
+// the enclosing loop header, the shape that shows an unmodelled switch
+// selector. `lookupswitch` and `tableswitch` each pop one int; if they
 // are given a zero stack effect the selector survives as a phantom slot and
 // the loop header sees height 1 where the StackMapTable says 0. The method
 // then fails to decode, so the flow inside it disappears entirely.

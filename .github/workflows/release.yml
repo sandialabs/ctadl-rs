@@ -1,7 +1,10 @@
 name: Release
 
-# Pushing a vX.Y.Z tag publishes a GitHub release carrying a `ctadl` binary for
-# each supported platform and a checksum for each binary.
+# Pushing a vX.Y.Z tag publishes a GitHub release, then attaches a `ctadl`
+# binary for each supported platform, and a checksum for each binary, as that
+# platform's build finishes. The macOS build takes far longer than the others,
+# so the release does not wait on it; and a build that fails can be re-run on
+# its own, to attach its binary to the release already out.
 #
 # workflow_dispatch runs the same builds and leaves the binaries as workflow
 # artifacts without publishing anything, so the cross-compiles can be exercised
@@ -16,132 +19,40 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: ${{ matrix.target }}
-    runs-on: ${{ matrix.runner }}
-    # A cold cache builds the whole dependency tree (datafusion, arrow, ascent)
-    # plus, for the cross targets, the toolchain that compiles it.
-    timeout-minutes: 180
+  release:
+    name: Publish release
+    # Only a tag publishes; a manual run skips this and goes straight to the
+    # builds.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
 
     permissions:
-      contents: read
-      # Needed for the (tokenless, OIDC-based) FlakeHub Nix cache.
-      id-token: write
-
-    strategy:
-      # One platform failing should not hide whether the others build.
-      fail-fast: false
-      matrix:
-        include:
-          # Linux and Windows both cross-compile from the same x86_64 Linux
-          # runner. macOS needs a runner of its own: Nix cannot cross-compile to
-          # Darwin, for want of a redistributable SDK. macos-latest is arm64.
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-latest
-            nix-system: x86_64-linux
-          - target: x86_64-pc-windows-gnu
-            runner: ubuntu-latest
-            nix-system: x86_64-linux
-            suffix: .exe
-          - target: aarch64-apple-darwin
-            runner: macos-latest
-            nix-system: aarch64-darwin
+      # Creating the release.
+      contents: write
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Set up Nix build cache
-        uses: DeterminateSystems/flakehub-cache-action@main
-
-      # How each target is built -- which toolchain, what it links against, and
-      # why the result runs on a machine without Nix -- lives in `release` in
-      # flake.nix, not here.
-      - name: Build ctadl
-        run: |
-          nix build --print-build-logs --out-link result \
-            '.#legacyPackages.${{ matrix.nix-system }}.release."${{ matrix.target }}"'
-
-      - name: Name the binary after the release
-        shell: bash
-        run: |
-          # On a tag this is the version; on a manual run it is the branch,
-          # whose name may contain characters a filename should not.
-          version="${GITHUB_REF_NAME//\//-}"
-          # The upload step below names the artifact after it too.
-          echo "version=$version" >> "$GITHUB_ENV"
-          mkdir -p dist
-          # The store is read-only, so copy rather than link, and restore the
-          # executable bit that copying out of it loses.
-          install -m 755 \
-            "result/bin/ctadl${{ matrix.suffix }}" \
-            "dist/ctadl-$version-${{ matrix.target }}${{ matrix.suffix }}"
-
-      - name: Upload the binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: ctadl-${{ env.version }}-${{ matrix.target }}
-          path: dist/
-          if-no-files-found: error
-
-  release:
-    name: Publish release
-    needs: build
-    # Only a tag publishes; a manual run stops after the builds above.
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-
-    permissions:
-      # Creating the release and uploading its assets.
-      contents: write
-
-    steps:
-      - name: Collect the binaries
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          # Flatten the per-target artifacts into one directory.
-          merge-multiple: true
-
       # The tree has one version: `[workspace.package] version` in the root
-      # Cargo.toml, which every crate inherits and which `ctadl --version`
-      # prints. Check the tag against the binary rather than against a
-      # Cargo.toml -- what gets checked is then what ships. The musl build is
-      # the one that runs here without further ado.
-      - name: Check the tag against the binary
+      # Cargo.toml, which every crate inherits. Check the tag against the
+      # version of the crate that builds `ctadl`, which is what
+      # `ctadl --version` prints -- before publishing, since the binaries only
+      # arrive afterwards.
+      - name: Check the tag against the version
         shell: bash
         run: |
-          cd dist
-          binary="ctadl-$GITHUB_REF_NAME-x86_64-unknown-linux-musl"
-          # Downloading an artifact does not preserve the executable bit.
-          chmod +x "$binary"
-          # `ctadl --version` prints "ctadl <version>". The tag carries a
-          # leading `v` that a Cargo version never does, so drop it before
-          # comparing.
+          reported=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.targets[].name == "ctadl") | .version')
+          # The tag carries a leading `v` that a Cargo version never does, so
+          # drop it before comparing.
           expected="${GITHUB_REF_NAME#v}"
-          reported=$(./"$binary" --version | awk '{ print $2 }')
           if [ "$reported" != "$expected" ]; then
-            echo "error: tag is $GITHUB_REF_NAME but the binary reports $reported" >&2
+            echo "error: tag is $GITHUB_REF_NAME but ctadl's version is $reported" >&2
             echo "Either tag [workspace.package] version, or bump it to match the tag." >&2
             exit 1
           fi
-          echo "tag and binary agree: $reported"
-
-      - name: Checksum each binary
-        shell: bash
-        run: |
-          cd dist
-          # sha256sum's own format, so a downloader can run
-          #   sha256sum -c ctadl-<version>-<target>.sha256
-          # to check the file next to it. The glob expands before the loop
-          # runs, so the sums it writes are not themselves summed.
-          for binary in ctadl-*; do
-            sha256sum "$binary" > "$binary.sha256"
-          done
-          ls -l
+          echo "tag and version agree: $reported"
 
       # How to use what the release carries. gh puts this ahead of the notes
       # `--generate-notes` derives from the commit log.
@@ -159,6 +70,9 @@ jobs:
           | macOS (Apple silicon) | `ctadl-<version>-aarch64-apple-darwin` |
           | Linux (x86-64) | `ctadl-<version>-x86_64-unknown-linux-musl` |
           | Windows (x86-64) | `ctadl-<version>-x86_64-pc-windows-gnu.exe` |
+
+          Each binary is attached as its build finishes. If one is missing, its
+          build is still running; the macOS one can take a couple of hours.
 
           ### Check the download
 
@@ -201,5 +115,105 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --verify-tag \
             --notes-file notes.md \
-            --generate-notes \
+            --generate-notes
+
+  build:
+    name: ${{ matrix.target }}
+    needs: release
+    # On a manual run the release job is skipped, which would skip the builds
+    # too; build unless the release job actually failed.
+    if: ${{ !cancelled() && needs.release.result != 'failure' }}
+    runs-on: ${{ matrix.runner }}
+    # A cold cache builds the whole dependency tree (datafusion, arrow, ascent)
+    # plus, for the cross targets, the toolchain that compiles it. The macOS
+    # runner is the slow one. 360 is the most a GitHub-hosted job may run.
+    timeout-minutes: 360
+
+    permissions:
+      # Attaching the binary to the release.
+      contents: write
+      # Needed for the (tokenless, OIDC-based) FlakeHub Nix cache.
+      id-token: write
+
+    strategy:
+      # One platform failing should not hide whether the others build.
+      fail-fast: false
+      matrix:
+        include:
+          # Linux and Windows both cross-compile from the same x86_64 Linux
+          # runner. macOS builds natively, so it needs a runner of its own
+          # (nix/release.nix says why). macos-latest is arm64.
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            nix-system: x86_64-linux
+          - target: x86_64-pc-windows-gnu
+            runner: ubuntu-latest
+            nix-system: x86_64-linux
+            suffix: .exe
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            nix-system: aarch64-darwin
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Set up Nix build cache
+        uses: DeterminateSystems/flakehub-cache-action@main
+
+      # How each target is built -- which toolchain, what it links against, and
+      # why the result runs on a machine without Nix -- lives in
+      # nix/release.nix, not here.
+      - name: Build ctadl
+        run: |
+          nix build --print-build-logs --out-link result \
+            '.#legacyPackages.${{ matrix.nix-system }}.release."${{ matrix.target }}"'
+
+      - name: Name the binary after the release
+        shell: bash
+        run: |
+          # On a tag this is the version; on a manual run it is the branch,
+          # whose name may contain characters a filename should not.
+          version="${GITHUB_REF_NAME//\//-}"
+          # The upload step below names the artifact after it too.
+          echo "version=$version" >> "$GITHUB_ENV"
+          mkdir -p dist
+          # The store is read-only, so copy rather than link, and restore the
+          # executable bit that copying out of it loses.
+          install -m 755 \
+            "result/bin/ctadl${{ matrix.suffix }}" \
+            "dist/ctadl-$version-${{ matrix.target }}${{ matrix.suffix }}"
+
+      - name: Checksum the binary
+        shell: bash
+        run: |
+          cd dist
+          binary="ctadl-$version-${{ matrix.target }}${{ matrix.suffix }}"
+          # sha256sum's own format, so a downloader can run
+          #   sha256sum -c ctadl-<version>-<target>.sha256
+          # to check the file next to it. `shasum -a 256` writes that format
+          # too, and unlike sha256sum, macOS has it.
+          shasum -a 256 "$binary" > "$binary.sha256"
+          ls -l
+
+      - name: Upload the binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctadl-${{ env.version }}-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
+      - name: Attach the binary to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # --clobber, so that re-running a build replaces what an earlier
+          # attempt attached.
+          gh release upload "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber \
             dist/*

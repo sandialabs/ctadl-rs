@@ -16,12 +16,6 @@ const RUN_FOOTER_LEN: i64 = 16;
 const DEFAULT_DISK_MEMTABLE_LIMIT: usize = 10_000;
 static NEXT_DISK_DIR_ID: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Clone, Debug)]
-struct Run<K, V> {
-    /// Invariant: no duplicate keys, sorted from max key to min key.
-    entries: Vec<(K, Vec<V>)>,
-}
-
 pub trait LsmDiskCodec: Sized {
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()>;
     fn decode<R: Read>(reader: &mut R) -> io::Result<Self>;
@@ -326,8 +320,6 @@ pub struct DiskLsmMultiMap<K, V> {
 
 impl<K, V> Drop for DiskLsmMultiMap<K, V> {
     fn drop(&mut self) {
-        // Only remove directories we created and own; never touch the filesystem
-        // for a temp map that never flushed.
         if self.is_temp && self.dir_created {
             let _ = fs::remove_dir_all(&self.dir);
         }
@@ -365,7 +357,6 @@ where
     ) -> Self {
         let id = NEXT_DISK_DIR_ID.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("lsm-disk-{}-{id}", std::process::id()));
-        // Lazily created: no directory is touched on disk until the first flush.
         Self {
             memtable: BTreeMap::new(),
             levels: Vec::new(),
@@ -465,11 +456,11 @@ where
     /// run's on-disk offset index. No keys are held in memory.
     pub fn contains_key(&self, key: &K) -> bool {
         self.memtable.contains_key(key)
-            || self.levels.iter().flatten().any(|run| {
-                Self::find_entry(run, key)
-                    .map(|entry| entry.is_some())
-                    .unwrap_or(false)
-            })
+            || self
+                .levels
+                .iter()
+                .flatten()
+                .any(|run| Self::find_entry(run, key).is_ok_and(|entry| entry.is_some()))
     }
 
     /// Returns all grouped entries, decoding payloads from disk each time.
@@ -523,8 +514,7 @@ where
         memtable
     }
 
-    /// Creates the backing directory on first use. Temp-directory maps defer this
-    /// syscall until they actually need to spill a run to disk.
+    /// Creates the backing directory on first use.
     fn ensure_dir(&mut self) -> io::Result<()> {
         if !self.dir_created {
             fs::create_dir_all(&self.dir)?;
@@ -550,16 +540,9 @@ where
         }
         self.ensure_dir()?;
         let memtable = std::mem::take(&mut self.memtable);
-        let run = Run {
-            entries: memtable.into_iter().rev().collect(),
-        };
         self.memtable_len = 0;
-        self.push_run(0, run)
-    }
-
-    fn push_run(&mut self, level: usize, run: Run<K, V>) -> io::Result<()> {
-        let disk_run = self.write_run(level, run)?;
-        self.push_disk_run(level, disk_run)
+        let disk_run = self.write_run(0, memtable)?;
+        self.push_disk_run(0, disk_run)
     }
 
     /// Places an already-written run at `level`, compacting (and cascading to the
@@ -577,11 +560,10 @@ where
         Ok(())
     }
 
-    fn write_run(&mut self, level: usize, run: Run<K, V>) -> io::Result<DiskRun<K>> {
+    fn write_run(&mut self, level: usize, entries: BTreeMap<K, Vec<V>>) -> io::Result<DiskRun<K>> {
         let path = self.new_run_path(level);
         let mut writer = RunWriter::new(path)?;
-        // `run.entries` is stored max-to-min; `.rev()` yields ascending order.
-        for (key, values) in run.entries.into_iter().rev() {
+        for (key, values) in entries {
             writer.push(&key, &values)?;
         }
         writer.finish()
@@ -786,11 +768,7 @@ mod tests {
 
     #[test]
     fn disk_lsm_writes_reads_and_reopens_runs() {
-        let dir = std::env::temp_dir().join(format!(
-            "lsm-disk-test-{}-{}",
-            std::process::id(),
-            NEXT_DISK_DIR_ID.fetch_add(1, Ordering::Relaxed)
-        ));
+        let dir = test_dir("test");
 
         {
             let mut lsm = DiskLsmMultiMap::<(i32,), (i32,)>::open(&dir, 2).unwrap();
@@ -819,11 +797,7 @@ mod tests {
 
     #[test]
     fn disk_lsm_level_fanout_is_configurable() {
-        let dir = std::env::temp_dir().join(format!(
-            "lsm-disk-fanout-test-{}-{}",
-            std::process::id(),
-            NEXT_DISK_DIR_ID.fetch_add(1, Ordering::Relaxed)
-        ));
+        let dir = test_dir("fanout-test");
 
         let mut lsm =
             DiskLsmMultiMap::<(i32,), (i32,)>::open_with_level_fanout(&dir, 1, 1).unwrap();

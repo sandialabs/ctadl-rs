@@ -208,12 +208,11 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
         )));
     };
     let known_path = xtask_dir.join(KNOWN_FILE);
-    let known: Known = if known_path.is_file() {
-        json5::from_str(&std::fs::read_to_string(&known_path)?)
-            .with_context(|| format!("parsing {}", known_path.display()))?
-    } else {
-        Known::default()
-    };
+    let known: Known = json5::from_str(
+        &std::fs::read_to_string(&known_path)
+            .with_context(|| format!("reading CIL known exceptions {}", known_path.display()))?,
+    )
+    .with_context(|| format!("parsing {}", known_path.display()))?;
     let unavailable: BTreeSet<&str> = known.unavailable.iter().map(|u| u.cls.as_str()).collect();
     for u in &known.unavailable {
         if u.why.trim().is_empty() {

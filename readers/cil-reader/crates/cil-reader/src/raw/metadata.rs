@@ -3,7 +3,7 @@
 //!
 //! Port of `ImageReader.ReadMetadata`/`ReadTableHeap`/`ComputeTableInformations`,
 //! except where Cecil and the CLR lay the tables out differently: there the
-//! CLR's reading wins (see `from_image`).
+//! CLR's reading wins (see `from_streams`).
 
 use crate::error::{Error, Result};
 use crate::raw::coded::{CODED_INDEX_COUNT, CodedIndexKind};

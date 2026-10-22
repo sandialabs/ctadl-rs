@@ -39,7 +39,7 @@ use cil_reader::flow::FlowOptions;
 use cil_reader::Module;
 
 use super::parallel_map;
-use super::parity::which;
+use crate::exec::which;
 use crate::regression::Outcome;
 
 pub(super) mod interp;
@@ -66,6 +66,9 @@ pub(super) struct Trial {
     pub method: u32,
     pub name: String,
     pub trial: u32,
+    /// Measured by FlowRun: the reference JIT's ulong-to-double conversion.
+    #[serde(rename = "uint64DoubleViaSigned")]
+    pub uint64_double_via_signed: bool,
     pub args: Vec<Json>,
     pub statics: Vec<(u32, Json)>,
     pub heap: Vec<Json>,
@@ -365,6 +368,7 @@ pub(super) fn setup(
     trial: &Trial,
 ) -> Result<(std::rc::Rc<Prepared>, Vec<Value>), Stop> {
     let bad = |what: &str| Stop::Bug(format!("flow-run printed a bad {what}"));
+    interp.uint64_double_via_signed = trial.uint64_double_via_signed;
     let p = interp.prepare(trial.method)?;
 
     // The heap first, as placeholders, so values can refer to any object.

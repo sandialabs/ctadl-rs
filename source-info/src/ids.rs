@@ -24,5 +24,5 @@ pub struct SpanId(pub u32);
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileSpanId(pub u32);
 
-/// No source info. Table indices start at 1, so 0 means "none".
+/// No source info.
 pub const NO_SPAN: FileSpanId = FileSpanId(0);

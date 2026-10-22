@@ -50,10 +50,8 @@ use ctadl_ir::{ProgramInfo, ssa};
 #[derive(Debug, Clone, Copy)]
 pub struct ImportOptions<'a> {
     /// Reuse a sub-import that was already done, when the artifact hash stored with it still
-    /// matches, instead of importing it again. `main` does the same check for the parent
-    /// artifact. The `ctadl` CLI sets it unless given `--force`; [`Default`] leaves it off. This
-    /// field carries it down to the sub-imports, where skipping the work saves much more time,
-    /// because each one is a full disassembly run.
+    /// matches, instead of importing it again. [`Default`] leaves it off. Skipping saves much
+    /// time, because each sub-import is a full disassembly run.
     pub skip_existing: bool,
     /// Import the native libraries packaged inside an APK. On by default.
     pub native_libs: bool,
@@ -279,8 +277,8 @@ fn record_sub_imports(import: &ArtifactImport, sub_imports: Vec<String>) -> Resu
 /// `artifact` is the file on disk. `name` is what the import is called in the store. The import
 /// is redone when the store holds nothing under that name, or when the content hash recorded
 /// for it no longer matches `artifact`. The IR then comes back through
-/// [`ctadl_import::open_import`], so the version check and the preprocessing passes are the
-/// same ones `ctadl index` uses.
+/// [`ctadl_import::open_import`], so it gets the same version check as `ctadl index`, and the
+/// passes `pipeline` names.
 pub fn open_or_import(
     name: &str,
     artifact: &std::path::Path,
@@ -290,8 +288,7 @@ pub fn open_or_import(
 ) -> Result<ProgramInfo, Error> {
     if !ArtifactImport::is_up_to_date(name, artifact)? {
         let import = ArtifactImport::try_create(name, language, artifact)?;
-        let program_info = import_artifact(&import, opts)?;
-        ctadl_import::save_program_info(program_info, &import)?;
+        import_and_save(&import, opts)?;
         // `import_artifact` may have rewritten the config, adding sub-imports or a Ghidra
         // image base. So record the hash on a freshly loaded copy, not on the one created
         // above.

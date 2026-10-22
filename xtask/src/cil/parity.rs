@@ -177,7 +177,7 @@ impl CecilDump {
     pub fn locate() -> Option<Self> {
         let program = std::env::var_os(CECIL_DUMP_ENV)
             .map(PathBuf::from)
-            .or_else(|| which("cecil-dump"))?;
+            .or_else(|| crate::exec::which("cecil-dump"))?;
         Some(CecilDump { program })
     }
 
@@ -213,11 +213,4 @@ impl CecilDump {
         }
         String::from_utf8(output.stdout).map_err(|e| e.to_string())
     }
-}
-
-pub(super) fn which(tool: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(tool))
-        .find(|p| p.is_file())
 }

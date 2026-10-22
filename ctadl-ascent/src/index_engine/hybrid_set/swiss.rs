@@ -1,11 +1,11 @@
 //! The Swiss-table machinery that [`super::raw::RawTable`] runs on once a set is large: control
 //! bytes, word-parallel group scans, quadratic group probing, and hashbrown's sizing rules.
 //!
-//! The spec this implements asks for the above-threshold representation to be "implemented like a
-//! `hashbrown::HashTable` … not actually use the `HashTable` type or any built-in hashtable". So
-//! we rebuild the SwissTable design here: **one control byte per bucket**
-//! holding the top 7 bits of the hash, scanned a whole **group** at a time with word-parallel
-//! arithmetic, over a power-of-two bucket array held at 87.5% load or less.
+//! The above-threshold representation is implemented like a `hashbrown::HashTable` without
+//! using that type or any built-in hash table, so we rebuild the SwissTable design here: **one
+//! control byte per bucket** holding the top 7 bits of the hash, scanned a whole **group** at a
+//! time with word-parallel arithmetic, over a power-of-two bucket array held at 87.5% load or
+//! less.
 //!
 //! ```text
 //!   ctrl:  [ 0x2f | EMPTY | 0x71 | EMPTY | 0x03 | ... | mirror of the first 8 ]
