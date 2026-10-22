@@ -237,6 +237,7 @@ pub fn run(opts: &Options) -> Result<bool> {
     }
     if let Some(apk) = dex_apk.as_deref().filter(|_| wants_dex) {
         tasks.push(Task::ApkChecks { apk });
+        tasks.push(Task::ApkIndexCheck { apk });
     }
     // Ghidra existing-project smoke check: drive the pcode importer against an
     // *existing* Ghidra project (not a fresh binary). Only meaningful when Ghidra
@@ -249,6 +250,11 @@ pub fn run(opts: &Options) -> Result<bool> {
     // reports as a Skip rather than vanishing from the report.
     if wants_cil {
         tasks.push(Task::CilChecks {
+            goldens: cil_goldens.as_deref(),
+            cecil: cecil_src.as_deref(),
+            fixtures: cil_fixtures.as_deref(),
+        });
+        tasks.push(Task::CilFrontend {
             goldens: cil_goldens.as_deref(),
             cecil: cecil_src.as_deref(),
             fixtures: cil_fixtures.as_deref(),
@@ -344,8 +350,18 @@ enum Task<'a> {
     ApkChecks {
         apk: &'a Path,
     },
+    /// `apk:manifest-and-intents`, which indexes the app; see [`apk::run_index_check`].
+    ApkIndexCheck {
+        apk: &'a Path,
+    },
     /// cil-reader's Cecil parity checks; see [`crate::cil`].
     CilChecks {
+        goldens: Option<&'a Path>,
+        cecil: Option<&'a Path>,
+        fixtures: Option<&'a Path>,
+    },
+    /// `cil:frontend`; see [`cil::frontend_check`].
+    CilFrontend {
         goldens: Option<&'a Path>,
         cecil: Option<&'a Path>,
         fixtures: Option<&'a Path>,
@@ -360,6 +376,12 @@ enum Task<'a> {
 }
 
 impl Task<'_> {
+    /// Whether workers take this task before the single cases. These each run many checks or one
+    /// long one, so started last they would run on after everything else had finished.
+    fn is_long(&self) -> bool {
+        !matches!(self, Task::Case(_) | Task::ModelSchema { .. })
+    }
+
     /// The task's name in the timing summary.
     fn label(&self) -> String {
         match self {
@@ -367,15 +389,14 @@ impl Task<'_> {
             Task::JvmChecks { .. } => "jvm checks".to_string(),
             Task::DexChecks { .. } => "dex checks".to_string(),
             Task::ApkChecks { .. } => "apk checks".to_string(),
+            Task::ApkIndexCheck { .. } => "apk index check".to_string(),
             Task::CilChecks { .. } => "cil checks".to_string(),
+            Task::CilFrontend { .. } => "cil:frontend".to_string(),
             Task::ModelSchema { .. } => "model schema".to_string(),
             Task::GhidraProject => GHIDRA_PROJECT_CASE.to_string(),
         }
     }
 
-    /// Run this task to completion. Infrastructure failures (analyzer crashed,
-    /// tool missing, etc.) are reported as failed entries rather than propagated,
-    /// so one broken case never aborts the run.
     /// Run this task to completion. Infrastructure failures (analyzer crashed,
     /// tool missing, etc.) are reported as failed entries rather than propagated,
     /// so one broken case never aborts the run.
@@ -413,6 +434,17 @@ impl Task<'_> {
                     });
                 retain_filtered(results, opts)
             }
+            Task::ApkIndexCheck { apk } => {
+                let results = scratch_dir("apk-index")
+                    .and_then(|work| apk::run_index_check(apk, &work))
+                    .unwrap_or_else(|err| {
+                        vec![(
+                            "apk:manifest-and-intents".to_string(),
+                            Outcome::Fail(format!("{err:#}")),
+                        )]
+                    });
+                retain_filtered(results, opts)
+            }
             Task::CilChecks {
                 goldens,
                 cecil,
@@ -422,6 +454,21 @@ impl Task<'_> {
                     .and_then(|work| cil::run_checks(*goldens, *cecil, *fixtures, &work))
                     .unwrap_or_else(|err| {
                         vec![("cil".to_string(), Outcome::Fail(format!("{err:#}")))]
+                    });
+                retain_filtered(results, opts)
+            }
+            Task::CilFrontend {
+                goldens,
+                cecil,
+                fixtures,
+            } => {
+                let results = scratch_dir("cil-frontend")
+                    .and_then(|work| cil::frontend_check(*goldens, *cecil, *fixtures, &work))
+                    .unwrap_or_else(|err| {
+                        vec![(
+                            "cil:frontend".to_string(),
+                            Outcome::Fail(format!("{err:#}")),
+                        )]
                     });
                 retain_filtered(results, opts)
             }
@@ -466,7 +513,9 @@ fn retain_filtered(mut results: Vec<(String, Outcome)>, opts: &Options) -> Vec<(
 /// task took.
 ///
 /// Each worker pulls the next unclaimed task until the list is exhausted, so a
-/// slow case (a Ghidra import) never blocks the queue behind it. Results are
+/// slow case (a Ghidra import) never blocks the queue behind it. The long tasks
+/// ([`Task::is_long`]) are pulled first, so the suite does not end waiting on one
+/// that started late. Results are
 /// tagged with their task index and sorted at the end rather than appended as
 /// they land, so the report reads identically no matter who finished first.
 fn run_tasks(
@@ -476,14 +525,19 @@ fn run_tasks(
 ) -> Result<(Vec<(String, Outcome)>, Vec<(String, Duration)>)> {
     let workers = (0..jobs).map(Worker::new).collect::<Result<Vec<_>>>()?;
 
+    let mut order: Vec<usize> = (0..tasks.len()).collect();
+    order.sort_by_key(|&index| !tasks[index].is_long());
+    let order = &order;
     let next = &AtomicUsize::new(0);
     let results = &Mutex::new(Vec::new());
 
     std::thread::scope(|scope| {
         for worker in &workers {
             scope.spawn(move || loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(task) = tasks.get(index) else { break };
+                let Some(&index) = order.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                    break;
+                };
+                let task = &tasks[index];
                 let start = Instant::now();
                 let outcomes = task.run(worker, opts);
                 let elapsed = start.elapsed();

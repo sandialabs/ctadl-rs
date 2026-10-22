@@ -49,7 +49,15 @@ pub fn run(inputs: &[Input], fixtures: &Path, goldens: &Path, work: &Path) -> Re
     let dir = work.join("cil-frontend");
     std::fs::create_dir_all(&dir)?;
     let opts = ctadl_cil::ImportOptions::default();
-    let sweeps = parallel_map(inputs, |input| sweep(&input.path, &opts));
+    // Largest first. Mono.Android.dll takes longer to import than the rest of the corpus put
+    // together, so the sweep takes as long as it does; started first, it overlaps the others.
+    let mut order: Vec<usize> = (0..inputs.len()).collect();
+    order.sort_by_key(|&i| {
+        std::cmp::Reverse(std::fs::metadata(&inputs[i].path).map_or(0, |m| m.len()))
+    });
+    let mut swept = parallel_map(&order, |&i| (i, sweep(&inputs[i].path, &opts)));
+    swept.sort_by_key(|(i, _)| *i);
+    let sweeps = swept.into_iter().map(|(_, result)| result);
     let mut failures = Vec::new();
     let mut summary = String::new();
     let mut total = Totals::default();
