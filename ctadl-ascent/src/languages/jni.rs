@@ -841,7 +841,7 @@ pub fn link(
     // enough -- both spellings intern to the same `FunctionId` -- and deduplicating here also
     // keeps the overload count below from mistaking a re-observation for a second overload. The
     // first observation wins, so a method seen through two frontends keeps the first one's slot
-    // model; the two agree except on `long`/`double` parameters.
+    // model.
     let mut seen: HashSet<&str> = HashSet::new();
     let natives: Vec<&JavaNative> = obs
         .natives
