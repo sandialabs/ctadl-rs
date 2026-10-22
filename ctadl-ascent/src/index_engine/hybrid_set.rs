@@ -14,14 +14,13 @@
 //!   8-bucket group. A real index holds about 400k such tiny sets, and at that multiple the
 //!   slack *is* the store.
 //! * A linear scan is wrong for 10 000 elements. So is anything that re-copies the whole set
-//!   when a delta is merged into it. That is what made large groups quadratic to build.
+//!   when a delta is merged into it, which makes large groups quadratic to build.
 //!
 //! So a [`HybridSet`] probes linearly up to [`SMALL_THRESHOLD`] elements, and switches to Swiss
-//! probing above that. The spec this implements asks us to write the upper representation here
-//! rather than take it from a library. [`swiss`] is therefore a SwissTable built from scratch,
-//! with control bytes, word-parallel group scans, and hashbrown's sizing rules. Its own module
-//! docs describe it, including the three places where it deliberately parts company with
-//! hashbrown.
+//! probing above that. The upper representation is written here rather than taken from a
+//! library: [`swiss`] is a SwissTable built from scratch, with control bytes, word-parallel
+//! group scans, and hashbrown's sizing rules. Its own module docs describe it, including the
+//! three places where it deliberately parts company with hashbrown.
 //!
 //! ## Not an enum
 //!
@@ -43,16 +42,15 @@
 //! Both regimes keep their metadata at `ptr` and their elements below it. So one allocation
 //! routine, one element addressing rule, one `Drop`, one `Clone`, one growth path, and one
 //! iterator serve both, and `len` and `capacity` do not branch at all. `raw`'s module docs give
-//! the full argument. The short version is that the enum this replaces cost a discriminant on
-//! every access, two of every impl, and 16 bytes on **every** entry of the enclosing map,
+//! the full argument. The short version is that an enum over the two would cost a discriminant
+//! on every access, two of every impl, and 16 bytes on **every** entry of the enclosing map,
 //! whether or not that entry ever grew past two elements.
 //!
 //! ## Choosing the threshold
 //!
-//! [`SMALL_THRESHOLD`] is 64: the spec's value, and the largest a `u64` occupancy bitmask
-//! admits. It is not hard-wired, though. It is the default of the `SMALL` const parameter, so a
-//! measurement can sweep it without editing the structure. Setting `SMALL = 0` gives a pure
-//! Swiss table, which is the A/B the `hybrid_set` bench runs against `hashbrown`.
+//! [`SMALL_THRESHOLD`] is 64, the largest a `u64` occupancy bitmask admits. It is not
+//! hard-wired, though. It is the default of the `SMALL` const parameter, so a measurement can
+//! sweep it without editing the structure. Setting `SMALL = 0` gives a pure Swiss table, which is the A/B the `hybrid_set` bench runs against `hashbrown`.
 //!
 //! What the threshold decides is **how much of the size distribution pays for promotion**, and
 //! promotion roughly doubles the bytes a set spends per element: a Swiss table holds a 24 B
@@ -710,8 +708,8 @@ mod tests {
 
     /// The set is two words wide, whatever it holds. Those two words are a pointer into one
     /// allocation, at its metadata, with its elements lying below, and a packed slot-or-bucket
-    /// count and element count. That is 16 bytes narrower than the 32-byte enum it replaced, on
-    /// every entry of the enclosing map.
+    /// count and element count. That is 16 bytes narrower than a 32-byte enum over the two
+    /// representations, on every entry of the enclosing map.
     #[test]
     fn set_is_two_words() {
         let word = std::mem::size_of::<usize>();

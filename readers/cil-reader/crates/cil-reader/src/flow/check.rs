@@ -232,8 +232,7 @@ pub fn layer1_violations(ins: &Ins<'_>, flow: &InsFlow, cx: &FlowCx<'_>) -> Vec<
     let n_in = flow.inputs.len();
     let n_out = flow.outputs as usize;
 
-    // 7.1: pop and push counts. An Opaque fallback for a signature that did
-    // not resolve has no counts to check.
+    // 7.1: pop and push counts.
     match stack_counts(ins, cx) {
         Some((pop, push)) => {
             if (n_in, n_out) != (pop, push) {

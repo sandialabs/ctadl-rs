@@ -1,4 +1,4 @@
-// Regression test: a call site may pass MORE actuals than the callee declares
+// A call site may pass MORE actuals than the callee declares
 // formals. The analysis must (1) keep propagating through the declared formals
 // correctly regardless of the trailing extra actuals, (2) preserve formal/actual
 // index alignment, and (3) not let an actual beyond the declared formals leak

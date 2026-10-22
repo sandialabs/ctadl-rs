@@ -53,19 +53,15 @@ fn tnt_test<P: AsRef<std::path::Path>>(filename: P) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Tests that the "require Loads" IR representation (field reads lower to `Load` instructions
-/// rather than living in an assignment source) cannot currently satisfy.
+/// Fixtures the engine cannot satisfy yet.
 ///
 /// `substitute_prefix_demo.tnt` demonstrates offset-arithmetic path substitution through a
-/// field-to-field copy (`result.c.[10] = p_val.a.[60]`). The engine's `substitute_prefix` rule
-/// previously worked because that copy was a single fact `result.c.[10] <- p_val.a.[60]`, letting
-/// taint move directly between two *syntactic* program paths (both in the terminating `paths`
-/// gate). With loads required, the copy becomes `t = load p_val.a.[60]; store result.c.[10] := t`,
-/// and the intermediate taint path produced by the offset arithmetic (`.[40]...` = `[100]-[60]`)
-/// is not a syntactic program path, so the `paths` gate stops it. Widening the gate to admit
-/// arithmetic-derived paths would reintroduce the unbounded growth this work is fighting; the
-/// proper fix is the planned Smaragdakis/Balatsouras points-to analysis, which reasons about heap
-/// objects instead of syntactic path composition. Restore this file once that lands.
+/// field-to-field copy (`result.c.[10] = p_val.a.[60]`). Field reads lower to `Load`
+/// instructions, so the copy is `t = load p_val.a.[60]; store result.c.[10] := t`, and the
+/// intermediate taint path produced by the offset arithmetic (`.[40]...` = `[100]-[60]`) is not
+/// a syntactic program path, so the `paths` gate stops it. Widening the gate to admit
+/// arithmetic-derived paths would let the path set grow without bound; covering this case needs
+/// an analysis that reasons about heap objects instead of syntactic path composition.
 ///
 /// `path_composition_store.tnt` and `alias_cycle.tnt` reproduce two misses `cil:taint` accepts as
 /// known: a path built by storing an object whose own field was stored, which no statement

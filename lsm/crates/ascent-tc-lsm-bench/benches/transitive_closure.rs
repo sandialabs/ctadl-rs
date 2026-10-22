@@ -44,7 +44,6 @@ fn sweep_leftover_run_files() {
 
 fn bench_transitive_closure(c: &mut Criterion) {
     sweep_leftover_run_files();
-    // Configure the provider with the limit this benchmark depends on.
     set_memtable_limit(MEMTABLE_LIMIT);
 
     let edges = chain_edges(NODES);
@@ -56,7 +55,6 @@ fn bench_transitive_closure(c: &mut Criterion) {
         b.iter(|| run_transitive_closure(black_box(edges.clone())));
     });
 
-    // Head-to-head baseline: Ascent's default relation data structures.
     group.bench_function("chain_graph_default", |b| {
         b.iter(|| run_transitive_closure_default(black_box(edges.clone())));
     });

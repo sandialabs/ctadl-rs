@@ -9,7 +9,6 @@ of a variable that is defined exactly once and used exactly once — with the
 def and use in the same basic block — into its use, then deletes the def:
 
 - `t = a, b; x = t`          becomes `x = a, b`
-- `t = y.f; x = t.g`         becomes `x = y.f.g`
 - `t = y; f(t, z)`           becomes `f(y, z)`
 - `t = y; return t`          becomes `return y`
 
@@ -217,9 +216,9 @@ pub fn coalesce_function(function: &mut FunctionData) -> usize {
 }
 
 /// If `exp` is the (single) read of a pending pure-copy def, substitute the
-/// def's source into it and mark the def dead. Since a field read is no longer
-/// expressible as an [`Exp`] (field reads are [`StatementKind::Load`]s, which
-/// this pass leaves untouched), substitution is a plain variable/const copy:
+/// def's source into it and mark the def dead. A field read is not an [`Exp`]
+/// (field reads are [`StatementKind::Load`]s, which this pass leaves
+/// untouched), so substitution is a plain variable/const copy:
 /// `t = y; use t` becomes `use y`.
 fn try_subst_exp(exp: &mut Exp, pending: &mut HashMap<Variable, Pending>, dead: &mut Vec<usize>) {
     let Exp::Variable(vref) = exp else {
@@ -243,7 +242,7 @@ fn try_subst_exp(exp: &mut Exp, pending: &mut HashMap<Variable, Pending>, dead: 
 
 /// [`try_subst_exp`] for a bare [`AccessPath`] read position (indirect-call
 /// callee). Only a variable-copy source substitutes here; the callee's own
-/// field path is preserved, with its base variable rewritten to the def's source.
+/// offsets are preserved, with its base variable rewritten to the def's source.
 fn try_subst_access_path(
     ap: &mut AccessPath,
     pending: &mut HashMap<Variable, Pending>,

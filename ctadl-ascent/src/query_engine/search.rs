@@ -24,15 +24,14 @@ The regime:
    ([`TaintSearchGraph`]). Expansion reaches the aliases of a node (the copy
    sources holding the same object, when its scope allows the hop; the bases
    of the loads that defined it) as well as its direct assignment successors.
-   The search
-   threads a [`TaintState`] annotation along the edges so call/return matching
-   is respected: a `Call` edge enters `Restricted`, and a `Return` edge is only
-   traversable while `Free`.
+   The search threads a [`TaintState`] annotation along the edges so
+   call/return matching is respected: a `Call` edge enters `Restricted`, and a
+   `Return` edge is only traversable while `Free`.
 4. Sink endpoints are the search targets. Every sink reached gets a
    (breadth-first shortest) path from the source set, and found paths are
    reported through the existing means: the returned [`QueryResult`] carries
-   the reached states as `taint` rows and the search forest as `taint_edge`
-   rows, which the SARIF formatter walks exactly as before.
+   the reached states as `taint` rows and the found paths as `taint_edge`
+   rows, which the SARIF formatter walks (see [`taint_search`]).
 */
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -65,7 +64,7 @@ use super::{QueryEndpoint, QueryFacts, QueryResult};
 /// `src`. So value taint (empty path) only ever moves forward along a copy,
 /// while field taint (non-empty path) may also hop *backward* along it.
 ///
-/// Doing that hop naively re-creates the unification this replaced: hop back
+/// Doing that hop naively amounts to unification: hop back
 /// from `dst` to `src`, forward to a sibling `t = src`, back from `t` to its
 /// other source in `t = phi(src, u)`, forward to every copy of `u` -- and `u`'s
 /// object never aliased `dst`'s at all. The bit below is what stops it.
@@ -86,7 +85,7 @@ pub enum ObjectScope {
     /// store -- starts a fresh `All` derivation at the destination. But it does
     /// NOT hop backward: doing so would chase `v`'s *other* incoming copies, whose
     /// objects never carried this taint, and that transitive back-and-forth is
-    /// exactly the unification (and the false positives) this replaced.
+    /// exactly unification, with its false positives.
     Fixed,
 }
 
@@ -126,8 +125,8 @@ pub struct TaintSearchGraph {
     /// `x`, regardless of whether `q` matches the tainted path.
     loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>>,
     /// Address computations `dst.dp = src.(k·[n])` -- edges whose source path
-    /// ends in an offset, like C's `&a[2]` or pcode's `PTRADD` -- indexed by source and keyed by the path `k` before
-    /// the offset: `(f, src) -> [(k, dst, dp)]`. The address depends on the
+    /// ends in an offset, like C's `&a[2]` or pcode's `PTRADD` -- indexed by
+    /// source and keyed by the path `k` before the offset: `(f, src) -> [(k, dst, dp)]`. The address depends on the
     /// value at `src.k`, so a taint on that value reaches `dst.dp`; the direct
     /// `assign_by_src` step only carries taint that lies under the offset.
     addrs_by_src: HashMap<(FunctionId, FlowVariable), Vec<(Path, FlowVariable, Path)>>,
@@ -346,7 +345,7 @@ impl LazySuccessors for TaintSearchGraph {
         // itself is about the value `x` holds, not the field it was read from,
         // and following it back put a tainted call return onto the fields its
         // summary read (tests/tnt/callsite_smear_field.tnt). The
-        // closure engine additionally gated its alias seeding on the base being
+        // closure engine additionally gates its alias seeding on the base being
         // tainted — a flooding mitigation the demand-driven expansion doesn't
         // need, since only reached states are ever expanded.
         // The base `a` is read off whichever object it holds, so the taint on
@@ -430,7 +429,7 @@ impl LazySuccessors for TaintSearchGraph {
         // heap formal for globals, a per-site call-arg for other parameters). The
         // `Return` label makes the edge traversable only in the `Free` state,
         // enforcing call/return matching exactly as the closure engine's
-        // `TaintState::Free` premise did.
+        // `TaintState::Free` premise does.
         if let Some(fty) = self.formal_ty.get(&(f, v))
             && let Some(formal) = v.as_formal()
             && isout(&formal, *fty, &p)
@@ -519,7 +518,7 @@ impl LazyAnnotation<TaintSearchGraph> for TaintState {
 ///
 /// Only what downstream consumers actually read is materialized — the search
 /// visits its states and drops them, rather than persisting the whole closure
-/// the way the fixpoint engine did:
+/// the way the fixpoint engine does:
 ///
 /// - `taint` holds a seed row per endpoint; a row per reached *call-arg* state
 ///   (tagged with the source endpoint the state descends from) — these drive
@@ -534,7 +533,7 @@ impl LazyAnnotation<TaintSearchGraph> for TaintState {
 ///   can only descend a sink's unique root-path, so path-union edges carry
 ///   exactly the same source/sink connectivity the full forest would.
 /// - `tainted_insn` / `absorbing_functions` are the same projections of `taint`
-///   the closure engine derived (call-arg rows are all retained, so these are
+///   the closure engine derives (call-arg rows are all retained, so these are
 ///   identical to a full-closure emission).
 pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     let graph = TaintSearchGraph::new(&facts);
@@ -565,7 +564,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
 
     let mut taint: Vec<(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)> = Vec::new();
     // Seed rows for every endpoint (both directions), as the closure engine's
-    // seed rule emitted.
+    // seed rule emits.
     for (ep,) in &facts.endpoints {
         taint.push((
             ep.infunc,
@@ -642,7 +641,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
                 continue;
             }
             // Emission drops the level and the scope (the "collapse"): every
-            // reached state is a plain tainted row, exactly as before.
+            // reached state is a plain tainted row.
             let ep = &endpoints[origin[i] as usize];
             taint.push((st.node.0, st.annot, st.node.1, st.node.2, ep.clone()));
         }
@@ -784,7 +783,7 @@ mod tests {
     }
 
     /// A saturating source reconnects an offset/field read off its base to the
-    /// read's destination (the `argv[1]` regression, in miniature): the base
+    /// read's destination (`argv[1]`, in miniature): the base
     /// `p` is the source, and the sink `q` is read via a *sibling* load `q =
     /// p.field` whose path is never matched by precise, path-sensitive
     /// propagation. Only saturation reconnects it, so a `Saturating` seed

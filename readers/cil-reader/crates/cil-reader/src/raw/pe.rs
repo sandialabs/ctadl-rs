@@ -136,8 +136,7 @@ pub struct DebugHeaderEntry<'a> {
     pub time_date_stamp: u32,
     pub major_version: u16,
     pub minor_version: u16,
-    /// `ImageDebugType`: 2 = CodeView, 16 = Deterministic, 17 = EmbeddedPortablePdb,
-    /// 19 = PdbChecksum.
+    /// `ImageDebugType` (see [`image_debug_type`]).
     pub debug_type: u32,
     pub size_of_data: u32,
     pub address_of_raw_data: u32,
@@ -449,7 +448,7 @@ fn read_aligned_string<'a>(cur: &mut Cur<'a>, max: usize) -> Result<Cow<'a, str>
     let consumed = cur.pos() - start;
     let aligned = (read + 4) & !3;
     cur.skip(aligned - consumed)?;
-    let mut end = Cur::at(cur_data(cur), start);
+    let mut end = Cur::at(cur.data(), start);
     Ok(latin1(end.bytes(read)?))
 }
 
@@ -459,11 +458,6 @@ fn latin1(bytes: &[u8]) -> Cow<'_, str> {
         Ok(s) if s.is_ascii() => Cow::Borrowed(s),
         _ => Cow::Owned(bytes.iter().map(|&b| char::from(b)).collect()),
     }
-}
-
-// Small helper so read_aligned_string can re-slice the original buffer.
-fn cur_data<'a>(cur: &Cur<'a>) -> &'a [u8] {
-    cur.data()
 }
 
 #[cfg(test)]

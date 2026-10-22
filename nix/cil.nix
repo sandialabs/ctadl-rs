@@ -62,6 +62,13 @@ let
       '';
     };
 
+  # The quiet, telemetry-free .NET CLI environment every build here runs in.
+  dotnetEnv = {
+    DOTNET_NOLOGO = "1";
+    DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+    DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+  };
+
   # A .NET console project, the directory `src`, built in Release and wrapped
   # as bin/<bin> to run on the .NET 8 runtime. `buildFlags` are extra
   # `dotnet build` arguments; `tag`, if given, is appended to the derivation
@@ -86,11 +93,7 @@ let
         pkgs.dotnet-sdk_8
         pkgs.makeWrapper
       ];
-      env = {
-        DOTNET_NOLOGO = "1";
-        DOTNET_CLI_TELEMETRY_OPTOUT = "1";
-        DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
-      };
+      env = dotnetEnv;
       buildPhase = ''
         runHook preBuild
         export HOME="$TMPDIR" DOTNET_CLI_HOME="$TMPDIR" NUGET_PACKAGES="$TMPDIR/nuget"
@@ -176,10 +179,7 @@ let
       ptrGen
       gapGen
     ];
-    env = {
-      DOTNET_NOLOGO = "1";
-      DOTNET_CLI_TELEMETRY_OPTOUT = "1";
-      DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+    env = dotnetEnv // {
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
     };
     buildPhase = ''

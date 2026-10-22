@@ -32,15 +32,10 @@ members = [
 [workspace.package]
 version = "0.1.4"
 
-# Section defining rustc compiler lint rules for the workspace
 [workspace.lints.rust]
-
-# Fail on violations of the `rust-2018-idioms` lint group
 rust-2018-idioms = "deny"
 
-# Section defining Clippy lint rules for the workspace
 [workspace.lints.clippy]
-
 # Require a "SAFETY" comment preceding any unsafe code
 undocumented_unsafe_blocks = "deny"
 

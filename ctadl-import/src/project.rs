@@ -112,10 +112,6 @@ fn absolutize(path: &Path) -> PathBuf {
 pub const IMPORT_FORMAT_VERSION: &str = "9";
 
 /// Filename of the serialized IR program inside an import directory.
-///
-/// Shared with the `inspect` command, which recognizes a raw path into the store by filename
-/// rather than by resolving an [`ArtifactImport`]. Keeping the spelling in one place means
-/// renaming an artifact file cannot silently desync the writer from the inspector.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 
 /// Filename of the serialized virtual method table inside an import directory.
@@ -278,7 +274,8 @@ pub struct ArtifactImport {
     pub hash: Option<String>,
     /// Names of imports derived from this one: the native libraries extracted out of
     /// an APK and lowered through the pcode frontend (see
-    /// `ctadl_frontends::apk_native`). A project naming this import co-indexes
+    /// `ctadl_frontends::apk_native`), or an XAPK's split APKs and their libraries (see
+    /// `ctadl_frontends::xapk`). A project naming this import co-indexes
     /// these too, which is what lets the JNI bridge see both halves of the boundary
     /// from a single `ctadl import app.apk`. Empty for every other language.
     #[serde(default)]
@@ -392,11 +389,8 @@ impl ArtifactImport {
 
     /// Whether the store holds an import under `name` at all, without reading it.
     ///
-    /// This is the difference between "there is no such import" and "there is one and it
-    /// cannot be read", which callers that fall back from a project name to an import name
-    /// have to tell apart: a stale import is a real import, and its error -- which says to
-    /// re-import it -- is the one worth showing. Deciding that on the config file's existence
-    /// keeps the store's layout in this module rather than spreading it into `main.rs`.
+    /// This tells "there is no such import" apart from "there is one and it cannot be read":
+    /// a stale import still exists.
     pub fn exists_by_name(name: &str) -> bool {
         Self::config_path_by_name(name).is_file()
     }
@@ -444,7 +438,7 @@ impl ArtifactImport {
         self.import_path().join("source-info")
     }
 
-    /// Path to the IR program for this artifact
+    /// Path to this import's config file
     #[inline]
     pub fn config_path(&self) -> PathBuf {
         self.import_path().join(IMPORT_CONFIG_FILE)
@@ -540,16 +534,6 @@ pub fn is_ghidra_server_url(path: &Path) -> bool {
     path.to_string_lossy().starts_with("ghidra://")
 }
 
-/// Computes a stable, hex-encoded SHA-256 content hash of an artifact, which may be a
-/// single file or a directory (e.g. a directory of C sources or Ghidra pcode facts).
-///
-/// For a directory the hash covers every regular file underneath it, incorporating
-/// each file's path relative to the directory and its contents, in a deterministic
-/// (sorted) order so the result is independent of filesystem iteration order.
-///
-/// # Errors
-///
-/// If the artifact (or any file within it) cannot be read.
 /// SHA-256 over the *contents* of a set of files, independent of the order they are given in
 /// and of where they live: the contents are sorted and length-prefixed, so two different sets
 /// cannot collide by concatenation and the same file named two ways hashes alike.
@@ -579,6 +563,16 @@ pub fn hash_file_contents(paths: &[PathBuf]) -> Result<String, Error> {
     Ok(to_hex(&hasher.finalize()))
 }
 
+/// Computes a stable, hex-encoded SHA-256 content hash of an artifact, which may be a
+/// single file or a directory (e.g. a directory of C sources or Ghidra pcode facts).
+///
+/// For a directory the hash covers every regular file underneath it, incorporating
+/// each file's path relative to the directory and its contents, in a deterministic
+/// (sorted) order so the result is independent of filesystem iteration order.
+///
+/// # Errors
+///
+/// If the artifact (or any file within it) cannot be read.
 pub fn hash_artifact(path: &Path) -> Result<String, Error> {
     use source_info::ContentHasher;
 
@@ -701,10 +695,8 @@ impl AnalysisProject {
 
     /// The same project value [`Self::try_create`] would build, without writing anything.
     ///
-    /// This is what lets `ctadl query my-import -m models.json5` work on a name that was only
-    /// ever imported: the query has an import list to match models against, and the store is
-    /// left exactly as it was. Nothing that reads or writes the project's directory may be
-    /// called on the result -- notably [`Self::index_path`], which creates it.
+    /// Nothing that reads or writes the project's directory may be called on the result --
+    /// notably [`Self::index_path`], which creates it.
     ///
     /// `sub_imports` says which expanded sub-imports to keep; see [`SubImports`].
     pub fn ephemeral<S: AsRef<str>>(
@@ -714,7 +706,7 @@ impl AnalysisProject {
     ) -> AnalysisProject {
         // Expand each name to itself followed by its sub-imports, then dedup
         // (order-preserving): `index` co-indexes every argument, so a repeated program name
-        // (e.g. `index amuled amuled`) would codegen its facts twice and inflate every
+        // (e.g. `index p prog prog`) would codegen its facts twice and inflate every
         // relation. Indexing the same import twice is never meaningful.
         //
         // The expansion is what makes `ctadl import app.apk && ctadl index p app` pull in the

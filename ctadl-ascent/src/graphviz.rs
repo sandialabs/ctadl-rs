@@ -466,8 +466,8 @@ mod tests {
 
     /// Two vertices whose labels differ only in punctuation must still get distinct DOT
     /// ids. `.a.b` and `.a_b` are distinct access paths, but sanitizing the label into
-    /// DOT's identifier alphabet mapped both to `local_t__a_b`, and graphviz then drew
-    /// them as one node owning both incident edges.
+    /// DOT's identifier alphabet maps both to `local_t__a_b`; ids derived that way would
+    /// make graphviz draw them as one node owning both incident edges.
     #[test]
     fn node_ids_survive_labels_that_differ_only_in_punctuation() {
         let mut ids = IdMap::new();

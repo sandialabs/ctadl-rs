@@ -1,9 +1,7 @@
 {
   // Flow: arr[1] = source() (13) -> local = arr[1] (14) -> sink(local) (15).
-  // Line 14 is dropped: `local = arr[1]` is a pure copy, so the copy_alias
-  // union-find (the query's Theta(C^2)->O(C) optimization) collapses `local`
-  // onto `arr[1]`, and the read at line 14 appears in neither the human code
-  // flow nor the machine tainted-instructions. The taint still reaches the sink.
+  // Line 14 is dropped: `local = arr[1]` is a pure copy
+  // (see "Pure copies" in nightly/README.md).
   "expected_lines": [
     13,
     15

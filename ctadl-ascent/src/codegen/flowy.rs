@@ -241,9 +241,9 @@ fn check_human_profile_paths(
             // query seeded: a declaration on a callee's formal fans out to one
             // endpoint per call site. Count how many distinct human-profile paths
             // touch *any* of them -- that is what a declared `path_count` (the
-            // trailing integer on `source`/`sink`) asserts, and the two flows that
-            // differ only in their call site now land on distinct call-arg
-            // endpoints instead of collapsing onto the shared formal vertex.
+            // trailing integer on `source`/`sink`) asserts. Two flows that differ
+            // only in their call site land on distinct call-arg endpoints, not on
+            // the shared formal vertex.
             let qes: std::collections::HashSet<QueryEndpoint> =
                 from_flowy_endpoint(sites, &format_facts.call, endpoint)
                     .into_iter()
@@ -321,7 +321,7 @@ pub fn check_with_config<P: AsRef<Path>>(
 
     // Models are loaded before `codegen_program`, which consumes the `ProgramInfo`. A flowy
     // import has `VirtualMethodTable::Unknown`, so a generator matches by the IR function name
-    // directly (`ModelGeneratorIngest::new`'s fallback arm) and gets no default models of its
+    // directly (`ProgramMatchIndex`'s fallback arm) and gets no default models of its
     // own. That makes flowy the cheapest place to pin what a *model port* means, which is what
     // `port_semantics/` uses it for.
     let match_index = crate::models::ProgramMatchIndex::new(
@@ -463,23 +463,6 @@ pub fn check_with_config<P: AsRef<Path>>(
     println!("{} checks passed, {} failed", pass_count, fail_count);
     Ok(())
 }
-
-//fn from_endpoint(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> fx::TaintEndpoint2 {
-//    //let infunc = sites.get_function(endpoint.infunc.clone().into()).unwrap();
-//    let vertex = {
-//        let (var, fields) = &endpoint.port;
-//        fx::FlowVertex2(var.try_into().unwrap(), fields.into())
-//    };
-//    fx::TaintEndpoint2 {
-//        infunc: endpoint.infunc.clone().into(),
-//        vertex,
-//        label: fx::Label(endpoint.label.clone().into()),
-//        direction: match endpoint.direction {
-//            flowy::EndpointDirection::Source => fx::TaintDirection::Forward,
-//            flowy::EndpointDirection::Sink => fx::TaintDirection::Backward,
-//        },
-//    }
-//}
 
 impl From<&flowy::Endpoint> for fx::TaintEndpoint {
     #[inline]

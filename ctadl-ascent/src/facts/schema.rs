@@ -82,7 +82,6 @@ pub mod callee_info {
     use crate::facts::CallDispatchKey;
     /// An indirect / virtual call site awaiting resolution: the receiver vertex
     /// (`recv_var`, `recv_path`) plus the frontend-specific [`CallDispatchKey`].
-    /// Unifies the former `java_call` and `indirect_call` relations.
     pub type Record = (FunctionId, InsnId, FlowVariable, Path, CallDispatchKey);
     pub const COLUMNS: [&str; 5] = ["func_id", "insn_id", "recv_var", "recv_path", "context"];
     pub const FILENAME: &str = "callee_info.parquet";
@@ -93,9 +92,7 @@ pub mod callee_resolvents {
     use super::*;
     use crate::facts::{CallDispatchKey, CallTargetObject};
     /// How a stored call-target [`CallTargetObject`] resolves, under a given
-    /// [`CallDispatchKey`], to a concrete callee `target`. Unifies the former
-    /// `java_resolvents` (CHA) relation and the identity resolution of C function
-    /// pointers.
+    /// [`CallDispatchKey`], to a concrete callee `target`.
     pub type Record = (CallTargetObject, CallDispatchKey, FunctionId);
     pub const COLUMNS: [&str; 3] = ["object", "context", "target_id"];
     pub const FILENAME: &str = "callee_resolvents.parquet";
@@ -317,8 +314,8 @@ mod tests {
     }
 
     /// The `callee_info` schema encodes a [`CallDispatchKey`] (tag + nullable name/desc
-    /// symbol columns). The `Java`, `C` and `Lua` arms must all survive a parquet round-trip;
-    /// `Lua` populates the name column but leaves the descriptor null.
+    /// symbol columns). The `Java`, `C`, `Lua` and `Cil` arms must all survive a parquet
+    /// round-trip; `Lua` populates the name column but leaves the descriptor null.
     #[test]
     fn callee_info_dispatch_key_round_trips() {
         use crate::facts::CallDispatchKey;
@@ -368,8 +365,8 @@ mod tests {
 
     /// The `callee_resolvents` schema encodes both a [`CallTargetObject`] and a
     /// [`CallDispatchKey`] (each a tag + nullable columns). The JVM CHA (`Symbol`/`Java`), the
-    /// identity function-pointer (`FunctionId`/`C`) and the Lua CHA (`LuaClass`/`Lua`)
-    /// resolutions must all round-trip.
+    /// identity function-pointer (`FunctionId`/`C`), the Lua CHA (`LuaClass`/`Lua`) and the
+    /// .NET CHA (`CilClass`/`Cil`) resolutions must all round-trip.
     #[test]
     fn callee_resolvents_round_trips() {
         use crate::facts::CallDispatchKey;

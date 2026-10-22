@@ -1,5 +1,5 @@
 /*!
-Flowy language.st:
+The flowy language.
 
 The language defines functions, assignments, calls. It provides constructs for requiring
 function summaries and taint flows, including requiring the absence of summaries and the
@@ -33,8 +33,8 @@ c.foo = b.bar.baz; // field update
 c = a, d.baz; // multiple flows to a variable
 ```
 
-A single field map be updated on the left-hand side. For a field update, the comma operator may not
-be used on the right hand side. To express multiple flows into a field, first a assign a variable,
+A single field may be updated on the left-hand side. For a field update, the comma operator may not
+be used on the right hand side. To express multiple flows into a field, first assign a variable,
 then update the field: `tmp = a, b; c.foo = tmp;`. The comma operator is used on the right-hand
 side to merge multiple flows into a variable.
 
@@ -287,8 +287,7 @@ pub struct Endpoint {
     /// The parameter index this endpoint's port denotes, if it is (a copy of) a parameter.
     /// `Some` anchors the endpoint at the function's call sites (the call-arg for this
     /// formal); `None` (a local such as a `source`'s returned value, or a global) keeps it
-    /// function-anchored. The front-end's `t? = c; sink(t?, ...)` lowering means the port is
-    /// usually a temp, so this is resolved from the copied parameter rather than the port.
+    /// function-anchored.
     pub formal: Option<i16>,
     pub source_info: SourceInfo,
     /// Optional expected number of distinct source->sink paths to assert for
@@ -346,7 +345,7 @@ impl Display for EndpointDirection {
 
 #[derive(Debug, Clone, Default)]
 struct Env {
-    /// Parameters or globals
+    /// Parameters by name.
     parameters: HashMap<String, VariableRef>,
     globals: HashSet<String>,
 }
@@ -488,7 +487,7 @@ impl FlowyCtx {
         )
     }
 
-    /// Parse the formals into a map so that we can look them up as they are referenced.
+    /// Builds the function `def` defines: its formals, where clause, blocks and gotos.
     fn parse_function_def(
         &mut self,
         def: &parse::FunctionDef<'_>,
@@ -774,49 +773,17 @@ impl FlowyCtx {
             }
             parse::StmtKind::AssignCall { dest, callee, args } => {
                 let (lhs_base, lhs_segments) = parse_path(locals, local_table, dest)?;
-                let (variable, segments) = parse_path(locals, local_table, callee)?;
+                let callee = parse_path(locals, local_table, callee)?;
                 let actuals = parse_actuals(locals, local_table, args, defined_functions)?;
-                let style = if !segments.is_empty() {
-                    // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
-                    let callee = lower_callee_addr(
-                        &mut self.counter,
-                        data,
-                        local_table,
-                        source_info,
-                        variable,
-                        segments,
-                    );
-                    CallStyle::FuncPtrCall {
-                        callee,
-                        signature: None,
-                    }
-                } else {
-                    let is_direct = match &variable.variable {
-                        Variable::Local(idx) => {
-                            let name = local_table.name(*idx);
-                            name == "source"
-                                || name == "errsource"
-                                || defined_functions.contains(name)
-                        }
-                        _ => false,
-                    };
-
-                    if is_direct {
-                        let Variable::Local(idx) = &variable.variable else {
-                            unreachable!()
-                        };
-                        let name = local_table.name(*idx);
-                        CallStyle::DirectCall {
-                            call_edges: CallEdges::Explicit(vec![name.to_string()].into()),
-                        }
-                    } else {
-                        // Indirect call with parameter, global, or undefined function
-                        CallStyle::FuncPtrCall {
-                            callee: AccessPath::without_fields(variable),
-                            signature: None,
-                        }
-                    }
-                };
+                let style = lower_call_style(
+                    &mut self.counter,
+                    data,
+                    local_table,
+                    source_info,
+                    callee,
+                    &["source", "errsource"],
+                    defined_functions,
+                );
 
                 let is_source = matches!(
                     &style,
@@ -875,48 +842,18 @@ impl FlowyCtx {
                 }
             }
             parse::StmtKind::Call { callee, args } => {
-                let (variable, segments) = parse_path(locals, local_table, callee)?;
+                let callee = parse_path(locals, local_table, callee)?;
                 let actuals = parse_actuals(locals, local_table, args, defined_functions)?;
 
-                let style = if !segments.is_empty() {
-                    // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
-                    let callee = lower_callee_addr(
-                        &mut self.counter,
-                        data,
-                        local_table,
-                        source_info,
-                        variable,
-                        segments,
-                    );
-                    CallStyle::FuncPtrCall {
-                        callee,
-                        signature: None,
-                    }
-                } else {
-                    let is_direct = match &variable.variable {
-                        Variable::Local(idx) => {
-                            let name = local_table.name(*idx);
-                            name == "sink" || name == "errsink" || defined_functions.contains(name)
-                        }
-                        _ => false,
-                    };
-
-                    if is_direct {
-                        let Variable::Local(idx) = &variable.variable else {
-                            unreachable!()
-                        };
-                        let name = local_table.name(*idx);
-                        CallStyle::DirectCall {
-                            call_edges: CallEdges::Explicit(vec![name.to_string()].into()),
-                        }
-                    } else {
-                        // Indirect call with parameter, global, or undefined function
-                        CallStyle::FuncPtrCall {
-                            callee: AccessPath::without_fields(variable),
-                            signature: None,
-                        }
-                    }
-                };
+                let style = lower_call_style(
+                    &mut self.counter,
+                    data,
+                    local_table,
+                    source_info,
+                    callee,
+                    &["sink", "errsink"],
+                    defined_functions,
+                );
 
                 let is_sink = matches!(
                     &style,
@@ -949,8 +886,7 @@ impl FlowyCtx {
                             ));
                         }
                     }
-                    // `t0 = x.y.z` (loading the port's field path if any), keeping the reference
-                    // alive after the sink call is stripped.
+                    // `t0 = x.y.z`, loading the port's field path if any.
                     if let Some(port) = port_ref {
                         let port_val =
                             lower_ref(&mut self.counter, data, local_table, source_info, port);
@@ -972,7 +908,6 @@ impl FlowyCtx {
                     args
                 };
                 let rets = thin_vec![];
-                //let args = actuals.into_iter().map(|x| Exp::AccessPath(x));
                 let call = CallAssign { style, rets, args };
                 data.push_back(Statement::new(call, source_info));
             }
@@ -1024,14 +959,13 @@ fn parse_summary_ap(env: &Env, path: &parse::Path<'_>) -> Result<Port, FlowyErro
             fields: field_accesses,
         });
     }
-    // The port has to refer to a formal, so error if it doesn't
+    // The port has to refer to a formal or a global.
     if let Some(v) = env.parameters.get(name) {
         Ok(Port {
             base: PortBase::Var(v.clone()),
             fields: field_accesses,
         })
     } else if env.globals.contains(name) {
-        // A global `name` is modeled as a symbolic field of the global heap.
         let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::symbol(name)];
         global_field_accesses.extend(field_accesses);
         Ok(Port {
@@ -1046,8 +980,7 @@ fn parse_summary_ap(env: &Env, path: &parse::Path<'_>) -> Result<Port, FlowyErro
 /// Converts the segments of a path, rejecting `.*`.
 ///
 /// The grammar accepts `.*`, but flowy has no wildcard field, so there is no [`PathSegment`] to
-/// return for one. It used to *panic* — `x.* = y;` in a `.flowy` file crashed the tool — so
-/// rejecting it gives the user a positioned error instead of a backtrace.
+/// return for one: it is a positioned compile error.
 fn path_segments(segments: &[parse::Segment<'_>]) -> Result<ThinVec<PathSegment>, FlowyError> {
     segments
         .iter()
@@ -1175,6 +1108,39 @@ fn lower_callee_addr(
     addr
 }
 
+/// Chooses how to call `callee`: directly when it names one of `builtins` or a function defined in
+/// this program, otherwise through a function pointer, lowering any symbolic derefs in the callee
+/// path to loads that leave an offset-only callee.
+fn lower_call_style(
+    counter: &mut Counter,
+    data: &mut BasicBlockData,
+    local_table: &mut Locals,
+    source_info: SourceInfo,
+    (variable, segments): (VariableRef, ThinVec<PathSegment>),
+    builtins: &[&str],
+    defined_functions: &HashSet<String>,
+) -> CallStyle {
+    if !segments.is_empty() {
+        let callee = lower_callee_addr(counter, data, local_table, source_info, variable, segments);
+        return CallStyle::FuncPtrCall {
+            callee,
+            signature: None,
+        };
+    }
+    if let Variable::Local(idx) = &variable.variable {
+        let name = local_table.name(*idx);
+        if builtins.contains(&name) || defined_functions.contains(name) {
+            return CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(vec![name.to_string()].into()),
+            };
+        }
+    }
+    CallStyle::FuncPtrCall {
+        callee: AccessPath::without_fields(variable),
+        signature: None,
+    }
+}
+
 /// Rejects a store whose target is an offset-only location with no symbolic field (e.g. `x.[10]`).
 /// A store always writes a symbolic field; a write to a bare offset address is a memory write that
 /// must spell its dereference explicitly (e.g. `x.[10].deref = ..`).
@@ -1208,7 +1174,6 @@ fn parse_path(
     Ok(if let Some(v) = env.parameters.get(name) {
         (v.clone(), field_accesses)
     } else if env.globals.contains(name) {
-        // A global `name` is modeled as a symbolic field of the global heap.
         let mut global_field_accesses: ThinVec<PathSegment> = thin_vec![PathSegment::symbol(name)];
         global_field_accesses.extend(field_accesses);
         (VariableRef::new_global(), global_field_accesses)
@@ -1263,7 +1228,7 @@ fn exp_to_count(e: &Exp) -> Option<usize> {
     usize::try_from(e.as_int()?).ok()
 }
 
-/// Visits the source/sink/errsource/errsink instructions and collect specs
+/// Visits the source/sink/errsource/errsink instructions and collects specs.
 #[derive(Debug, Default)]
 struct ExtractSpec {
     function: ArcIntern<str>,
@@ -1351,8 +1316,6 @@ impl MutVisitor for ExtractSpec {
                         args[0].variable_ref().unwrap().clone(),
                         OffsetAccesses::empty(),
                     );
-                    // The port is the `t? = x` temp the front-end sinks; recover the
-                    // parameter index it copies so the endpoint anchors at call sites.
                     let formal = self.formal_of(&port.0);
                     let endpoint = Endpoint {
                         infunc: infunc.clone(),
@@ -1382,10 +1345,6 @@ impl MutVisitor for ExtractSpec {
                 _ => (),
             }
         }
-        // If we found a source/sink spec, nop it out because it is not a real function call.
-        // if replace {
-        //     *stmt = Nop;
-        // }
     }
 }
 
@@ -1504,7 +1463,7 @@ s:
         }
     }
 
-    /// `.*` used to *panic*, so `x.* = y;` in a `.flowy` file crashed the tool.
+    /// `.*` is a positioned compile error, not a panic.
     #[test]
     fn star_path_is_a_compile_error_not_a_panic() {
         let err = compile("def F(a, b): 1\n{\ns:\n    a = b.*;\n    return a;\n}\n")

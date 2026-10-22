@@ -8,9 +8,8 @@
  * U+D800) and is perfectly legal there. Rust's char cannot represent one, so
  * char::from_u32 rejects it.
  *
- * This is exactly what packed lexer tables such as
- * com/android/tools/smali/smali/smaliFlexLexer do: they abuse String constants
- * as arbitrary UTF-16 code-unit arrays.
+ * This is what the packed tables of generated lexers do: they abuse String
+ * constants as arbitrary UTF-16 code-unit arrays.
  *
  * The source is deliberately kept ASCII; every non-ASCII code unit below is
  * written as a unicode escape, so nothing depends on this file's own encoding.

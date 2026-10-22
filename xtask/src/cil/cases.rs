@@ -90,7 +90,7 @@ pub fn query_model(config: &Config) -> Value {
 
 /// The `dotnet` to build with, if there is one.
 pub fn dotnet() -> Option<PathBuf> {
-    super::parity::which("dotnet")
+    exec::which("dotnet")
 }
 
 /// Builds the case into `out` and returns what to import: the assembly, or `out` itself for

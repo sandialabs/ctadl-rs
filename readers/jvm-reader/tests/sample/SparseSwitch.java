@@ -2,8 +2,7 @@
  * A sparse integer switch, which javac lowers to `lookupswitch`, with a
  * back-edge join.
  *
- * Mirrors brut.androlib.res.decoder.BinaryResourceParser.parseTable: a
- * while-loop whose body switches on a freshly computed int and whose default
+ * A while-loop whose body switches on a freshly computed int and whose default
  * arm branches back to the loop header. The case values are sparse, so javac
  * emits lookupswitch.
  *

@@ -158,7 +158,6 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
     })?;
     let launch_script = script_dir.join("launch.sh");
 
-    let facts_dir = output_dir.join("facts");
     fs::create_dir_all(&facts_dir)
         .err_context(|| format!("creating pcode facts dir: {}", facts_dir.display()))?;
 
@@ -409,8 +408,6 @@ fn find_analyze_headless(ghidra_base: &Path) -> Result<PathBuf, Error> {
     )))
 }
 
-// No more need for find_export_script
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,8 +416,8 @@ mod tests {
     //
     // The end-to-end test that actually builds a Ghidra project and exports pcode
     // from it lives in the xtask regression suite (`cargo xtask regression`, case
-    // `Pcode:GhidraProject`), which runs under Nix where Ghidra and a `tee` binary
-    // are guaranteed to be present.
+    // `Pcode:GhidraProject`), which runs under Nix where Ghidra is guaranteed to be
+    // present.
 
     #[test]
     fn detect_ordinary_file_is_binary() {

@@ -1,7 +1,6 @@
 use regex::Error as RegexError;
 use thiserror::Error;
 
-/// CTADL error. This is used for interface functions in this crate.
 /// Errors that can occur during JSON model parsing
 #[derive(Debug)]
 pub enum JsonModelError {

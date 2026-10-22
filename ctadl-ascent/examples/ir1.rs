@@ -51,7 +51,6 @@ fn function_f() -> FunctionData {
                 [Exp::from(a.clone())]
             ))
         ];
-        // stmts.extend(]));
         let body_block = &mut f[body];
         body_block.extend(stmts);
         body_block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
@@ -111,7 +110,7 @@ fn function_g() -> FunctionData {
     g
 }
 
-// c1 is never set anywhere, this was a bug in ssa
+// c1 is never set anywhere: SSA must handle a use with no def.
 //def G1(b) {
 //  a = 1;
 //  c = F(a, b);
@@ -165,7 +164,7 @@ fn function_g1() -> FunctionData {
 
 // def F(p)
 // {
-//   %global.bar = update(p;
+//   %global.bar = p;
 // }
 fn program_h() -> Program {
     let mut program = Program::default();

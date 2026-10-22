@@ -274,10 +274,7 @@ pub fn aliases<'c>(namer: &Namer<'c, '_>, module: &'c Module<'c>, td: TypeDef<'c
     for b in &chain {
         queue.extend(b.interfaces(namer));
     }
-    let mut interfaces_named = 0usize;
-    if let Ok(list) = td.interfaces() {
-        interfaces_named = list.len();
-    }
+    let interfaces_named = td.interfaces().map_or(0, |list| list.len());
     if queue.len() < interfaces_named {
         missing_metadata.push(format!(
             "{} interface(s) of {}",

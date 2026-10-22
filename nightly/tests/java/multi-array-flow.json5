@@ -1,7 +1,7 @@
 {
   // `throughGrid` carries the taint past a two-dimensional `multianewarray`.
-  // The stores at lines 20 and 22 are pure copies the copy_alias union-find
-  // collapses, so they do not appear as their own code-flow steps.
+  // The stores at lines 20 and 22 are dropped: pure copies
+  // (see "Pure copies" in nightly/README.md).
   "expected_lines": [14, 28],
   "model_generators": [
     {
