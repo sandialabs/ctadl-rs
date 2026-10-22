@@ -1389,13 +1389,10 @@ ascent_source! {
     relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
     // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
     relation prog_store(FunctionId, FlowVariable, Path);
-    // A variable that whole-aliases a formal purely through original program copies. This is
-    // the copy-closure of `locals(v, empty, formal, empty)` restricted to original assigns,
-    // followed only in the direction of assignment: it finds strictly fewer aliases (drops
-    // inter-procedural / summary-derived copies, and the `ParamFlow` write-backs onto the formal
-    // node that would make the closure unification-like) but every alias reachable forward from a
-    // formal through original program assignments. Feeds the aliasing summary rule.
-    // Precomputed above in its own fixpoint (see `compute_alias_of_formal`).
+    // A variable that whole-aliases a formal through original program copies, precomputed by
+    // `compute_alias_of_formal`. Unlike `locals(v, empty, formal, empty)`, it leaves out
+    // inter-procedural / summary-derived copies and the `ParamFlow` write-backs onto the formal.
+    // Feeds the aliasing summary rule.
     relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
     // Call targets propagated across `assign_like` to the receiver vertices of critical calls.
     relation call_target_assign_like(FunctionId, FlowVariable, Path, CallTargetObject);
