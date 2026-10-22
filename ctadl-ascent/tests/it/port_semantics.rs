@@ -28,25 +28,11 @@
 //! built entirely on `.deref`, which `tests/tnt/port_in_deref.tnt` pins as the ordinary symbol
 //! segment it is, and on `.[<numeric>]`, pinned by `tests/tnt/port_in_offset.tnt`.
 
+use crate::common::store_dir;
 use ctadl_ascent::cli;
-use ctadl_ascent::project::{
-    AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports, init_store_path,
-};
+use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports};
 use ctadl_ascent::query_engine::formatter::SarifProfile;
-use std::path::{Path, PathBuf};
-use std::sync::Once;
-
-static INIT: Once = Once::new();
-
-/// One store for the whole test binary; each case gets its own import/project name.
-fn store_dir() -> &'static Path {
-    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    let dir = DIR.get_or_init(|| tempfile::tempdir().expect("temp store"));
-    INIT.call_once(|| {
-        init_store_path(Some(dir.path())).expect("init store");
-    });
-    dir.path()
-}
+use std::path::PathBuf;
 
 /// The program every case runs, with the store and the probe filled in.
 ///

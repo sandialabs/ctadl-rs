@@ -205,7 +205,7 @@ fn check_no_native_libs(store: &Path) -> Result<()> {
 /// `ctadl query` would happily use.
 ///
 /// The synthetic-program half of this -- what `check_programs` decides, given programs and no
-/// store -- stays in `ctadl-ascent/tests/model_check.rs`, which needs no artifact and runs in
+/// store -- stays in `ctadl-ascent/tests/it/model_check.rs`, which needs no artifact and runs in
 /// milliseconds. What is here is the half that needs a real import.
 fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
     let models = work.join("models.json");

@@ -12,26 +12,13 @@
 //! `cargo test` does. Nothing being checked is Lua-specific: it is about the import root, which
 //! every frontend has.
 
+use crate::common::store_dir;
 use ctadl_ascent::cli;
-use ctadl_ascent::project::{
-    AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports, init_store_path,
-};
+use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports};
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use serde_json::Value;
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
-use std::sync::Once;
-
-static INIT: Once = Once::new();
-
-fn store_dir() -> &'static Path {
-    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    let dir = DIR.get_or_init(|| tempfile::tempdir().expect("temp store"));
-    INIT.call_once(|| {
-        init_store_path(Some(dir.path())).expect("init store");
-    });
-    dir.path()
-}
+use std::path::PathBuf;
 
 /// The tainted flow, in a module one directory down from the import root. Where it lives is the
 /// point: a flow in a top-level file cannot tell a root-relative URI from a bare file name.

@@ -17,7 +17,7 @@
  *     reach the constant sibling `dry_run` here, and would "find" the tutorial's flow through
  *     the pointer `arg` at the empty path rather than through the bytes.
  *
- * See `test_cli_query_c_pointer_field_without_models` in tests/cli.rs.
+ * See `test_cli_query_c_pointer_field_without_models` in tests/it/cli.rs.
  */
 char *source(void);
 void  sink_hit(const char *s);

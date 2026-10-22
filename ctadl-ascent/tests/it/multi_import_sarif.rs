@@ -14,26 +14,13 @@
 //! not what wrote them. The two-artifact case that matters in practice is JNI (a Dex plus a shared
 //! library), pinned end to end by `nightly/tests/jni/`, which needs Ghidra and a Java toolchain.
 
+use crate::common::store_dir;
 use ctadl_ascent::cli;
-use ctadl_ascent::project::{
-    AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports, init_store_path,
-};
+use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports};
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use serde_json::Value;
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
-use std::sync::Once;
-
-static INIT: Once = Once::new();
-
-fn store_dir() -> &'static Path {
-    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    let dir = DIR.get_or_init(|| tempfile::tempdir().expect("temp store"));
-    INIT.call_once(|| {
-        init_store_path(Some(dir.path())).expect("init store");
-    });
-    dir.path()
-}
+use std::path::PathBuf;
 
 /// First artifact: a source-to-sink flow on lines 11 and 12.
 const PROGRAM_A: &str = r#"-- multi_import_a.lua

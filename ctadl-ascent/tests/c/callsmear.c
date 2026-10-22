@@ -1,7 +1,7 @@
 /* Precision at call sites and through operands: every `sink_clean*` must stay
  * silent, every `sink_hit*` must be reached. Each clean sink reads a value that
  * shares a call site, an expression or a struct with a tainted one but holds
- * nothing from it. See `test_cli_query_c_no_callsite_smear` in tests/cli.rs.
+ * nothing from it. See `test_cli_query_c_no_callsite_smear` in tests/it/cli.rs.
  */
 int source(void);
 char *source_buf(void);
