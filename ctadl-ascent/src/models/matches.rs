@@ -207,8 +207,7 @@ pub struct EndpointMatch {
 ///
 /// "Unmatched" means *not matched anywhere in the project*, so these sets union over imports
 /// rather than being classified per import. A scope that admits no import at all leaves both
-/// sets empty, which is the same condition and gets the same warning -- deliberately, rather
-/// than a separate configuration-error category.
+/// sets empty.
 #[derive(Clone, Debug, Default)]
 pub struct BridgeSideMatches {
     /// fq-names side A (the call side) matched.
