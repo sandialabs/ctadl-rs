@@ -47,13 +47,18 @@ pub fn ghidra_available() -> bool {
     ghidra::available()
 }
 
-/// Import pcode facts from an artifact by running Ghidra and then converting the facts
-pub fn import_pcode(import: &ctadl_import::project::ArtifactImport) -> Result<ProgramInfo, Error> {
+/// Import pcode facts from an artifact by running Ghidra and then converting the facts.
+///
+/// `jobs` caps Ghidra's threads; see [`ghidra::run_ghidra_export`].
+pub fn import_pcode(
+    import: &ctadl_import::project::ArtifactImport,
+    jobs: usize,
+) -> Result<ProgramInfo, Error> {
     let path = &import.artifact_path;
     let import_path = import.import_path();
 
     // Run Ghidra to generate facts
-    ghidra::run_ghidra_export(path, &import_path)?;
+    ghidra::run_ghidra_export(path, &import_path, jobs)?;
 
     let facts_dir = import_path.join("facts");
 
