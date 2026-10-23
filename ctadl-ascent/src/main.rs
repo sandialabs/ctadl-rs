@@ -477,6 +477,44 @@ pub struct IndexArgs {
     /// program's facts still take what they take.
     #[arg(long, requires = "lsm", value_name = "SIZE", value_parser = parse_size)]
     pub lsm_memory_budget: Option<usize>,
+
+    /// How stack slots of native code are promoted to locals before SSA.
+    ///
+    /// A slot whose address escapes (passed to a call, stored, copied, returned) stays in
+    /// memory, and the policy says how far an escaped address reaches: `window:N` (the next N
+    /// slots; `window:8` is the default), `exact` (the slot alone) or `above` (every slot above
+    /// it). `off` promotes nothing.
+    ///
+    /// Experimental: `full` promotes every slot, escaped or not, in a function with more than
+    /// 1000 direct stack accesses (`full:N` for another threshold), and `window:8` elsewhere. It
+    /// cuts the index of a large native function by a large factor, but a callee or a copy of
+    /// the address no longer sees what the function stored directly. Each function where this
+    /// may lose flows is named in the index's `notifications.log` and in the query's SARIF.
+    /// `CTADL_MEM2REG` in the environment sets the default, for a harness that does
+    /// not pass the flag.
+    #[arg(
+        long,
+        value_name = "POLICY",
+        default_value = "window:8",
+        env = "CTADL_MEM2REG",
+        value_parser = parse_mem2reg
+    )]
+    pub mem2reg: Mem2RegFlag,
+}
+
+/// The value of `--mem2reg`: `None` is `off`.
+#[derive(Debug, Clone, Copy)]
+pub struct Mem2RegFlag(Option<ctadl_ir::ssa::Mem2Reg>);
+
+fn parse_mem2reg(s: &str) -> Result<Mem2RegFlag, String> {
+    if s == "off" {
+        return Ok(Mem2RegFlag(None));
+    }
+    ctadl_ir::ssa::Mem2Reg::parse(s)
+        .map(|m| Mem2RegFlag(Some(m)))
+        .ok_or_else(|| {
+            format!("`{s}` is not a policy; use window:N, exact, above, full, full:N or off")
+        })
 }
 
 /// Parses a size like `512M`, `1.5G` or `4096`: a number with an optional `K`, `M`, `G` or
@@ -769,6 +807,7 @@ fn main() -> anyhow::Result<()> {
                 lsm: false,
                 lsm_memtable_limit: None,
                 lsm_memory_budget: None,
+                mem2reg: Mem2RegFlag(ctadl_ir::ssa::Pipeline::index_default().mem2reg),
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -926,6 +965,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 lsm: false,
                 lsm_memtable_limit: None,
                 lsm_memory_budget: None,
+                mem2reg: Mem2RegFlag(ctadl_ir::ssa::Pipeline::index_default().mem2reg),
             };
             index_artifacts_to_store(&index_args)?;
         }
@@ -1069,6 +1109,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
             } else {
                 Storage::Memory
             },
+            mem2reg: args.mem2reg.0,
         },
     )?;
     Ok(())

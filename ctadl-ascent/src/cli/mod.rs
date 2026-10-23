@@ -90,6 +90,8 @@ pub struct IndexOptions {
     pub parallelism: Parallelism,
     /// Where the large relations are stored; see [`Storage`].
     pub storage: Storage,
+    /// How stack slots are promoted before SSA; see [`ssa::Mem2Reg`]. `None` promotes none.
+    pub mem2reg: Option<ssa::Mem2Reg>,
 }
 
 impl Default for IndexOptions {
@@ -105,6 +107,7 @@ impl Default for IndexOptions {
             context_join: ContextJoin::default(),
             parallelism: Parallelism::Serial,
             storage: Storage::Memory,
+            mem2reg: ssa::Pipeline::index_default().mem2reg,
         }
     }
 }
@@ -134,6 +137,7 @@ pub fn index(
         context_join,
         parallelism,
         storage,
+        mem2reg,
     } = opts;
     use crate::index_engine::phys_footprint_mb;
     log::info!(
@@ -263,7 +267,9 @@ pub fn index(
         );
         if let Some(report) = ssa::run_pipeline_with(
             &mut program_info.program,
-            ssa::Pipeline::index_default().prune(prune_unreachable_cfg_nodes),
+            ssa::Pipeline::index_default()
+                .prune(prune_unreachable_cfg_nodes)
+                .mem2reg(mem2reg),
             &HashMap::new(),
         ) {
             notifications.extend(report.notes.iter().map(ssa::EscapeNote::message));
