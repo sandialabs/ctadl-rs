@@ -61,7 +61,16 @@ unsupported pcode mnemonics): each fact is stated once, never once per site.
   into SARIF's `toolExecutionNotifications` at warning level. A missing flow can then be traced
   to a function the analysis treated unsoundly, without reading through noise.
 
-## Open questions
+## Measurement
 
-1. **Measurement.** Run `uclited`, `androidudpbus` and `glxy` under `full`, and use the regression
-   suite with S28 (losses fail) to count which cases lose flows.
+- **Baseline:** S3 (`window:8`) cherry-picked onto `main` `076f6a60`, re-measured first, since #150
+  and #154 landed after the earlier numbers.
+- **Apps:** `uclited`, `androidudpbus` and `glxy`, each under a memory cap. Record peak memory,
+  `locals` rows, the share held by the largest function, and the notifications.
+- **Keep it if:** `uclited` comes within about 1.5x of `exact`'s 15 M `locals` rows, and
+  `androidudpbus` peaks well below S3's 15.8 GB. `glxy` is only reported (its suspect is P6, not the
+  stack).
+- **Regression suite:** the default run stays as it is. Its functions are below the threshold, so
+  it runs `window:8`. A second run with `full:0` promotes every function fully. It only reports
+  and does not gate: it lists each lost flow and checks that a notification names that flow's
+  function. A lost flow with no notification is a bug in detection.
