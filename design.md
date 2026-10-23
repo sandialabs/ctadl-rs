@@ -39,6 +39,11 @@ stored directly:
 - **Stored or copied addresses** (`p = &buf; ...; *p`): reads see only writes through the address, not
   direct stores, and the reverse.
 
+There is no write-back before calls, by choice. It would restore the inputs-by-pointer case, but
+memory is flow-insensitive, so a value written back before one call reaches every read of the
+slot. That is S4's write-through again, and it would bring back S4's cost (P24). The
+notification names each function where this happens (kind `call input`).
+
 ### Notifications
 
 The notifications log is high signal and low noise, like `log_once::warn_once!` (already used for
@@ -58,8 +63,5 @@ unsupported pcode mnemonics): each fact is stated once, never once per site.
 
 ## Open questions
 
-1. **Write-back before calls.** Write-back before a call passed a reaching address would also
-   restore the inputs-by-pointer case, but it is S4's write-through in all but name. Is it
-   worth measuring as a third mode, or should we leave it out?
-2. **Measurement.** Run `uclited`, `androidudpbus` and `glxy` under `full`, and use the regression
+1. **Measurement.** Run `uclited`, `androidudpbus` and `glxy` under `full`, and use the regression
    suite with S28 (losses fail) to count which cases lose flows.
