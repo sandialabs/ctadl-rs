@@ -605,9 +605,21 @@ but not its fields".
 
 ### `modes`
 
-Analysis directives. One defined value: `["skip-analysis"]` — don't analyze the
-body of the matched function. Index time only; `ctadl query` reports it as
-ignored, like a `propagation`.
+Analysis directives, index time only; `ctadl query` reports them as ignored,
+like a `propagation`. Three defined values:
+
+- `"skip-analysis"`: don't analyze the body of the matched function. The rest of
+  this section is about it.
+- `"mem2reg-full"` and `"mem2reg-window"`: force or forbid full stack-slot
+  promotion for the matched native function, whatever its size. See
+  `ctadl index --help` for `--mem2reg`. Full promotion gives every stack slot
+  its own local, even a slot whose address escapes, which cuts the index of a
+  large native function by a large factor. In exchange, a callee or a copy of
+  the address no longer sees what the function stored to that slot directly.
+  `ctadl index` names each function where this may lose flows in its
+  `notifications.log`, and `ctadl query` repeats it in the SARIF. A
+  `mem2reg-full` model works without `--mem2reg full`. When generators
+  disagree on a function, the last one read wins.
 
 **A model without it ADDS to a body; a model with it REPLACES the body.** That is
 the whole feature, and it is not obvious from the outside: `summary` is both an

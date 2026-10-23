@@ -314,6 +314,10 @@ pub struct ProgramModelMatches {
     /// derived from those bodies exists to begin with -- the model's own `propagation` rows
     /// become the function's whole behaviour.
     pub skip_analysis: BTreeSet<facts::Str>,
+    /// Functions a `modes: ["mem2reg-full"]` or `["mem2reg-window"]` generator matched. The
+    /// SSA pipeline reads this before codegen, to force or forbid full stack-slot promotion.
+    /// When generators disagree on a function, the last one read wins.
+    pub mem2reg_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FullMode>,
     /// Matched bridge sides, parallel to the scanned specs.
     pub bridges: BridgeMatches,
     /// Signatures a `find: "dispatch"` generator matched. Index time, and the second field
@@ -369,6 +373,7 @@ impl ProgramModelMatches {
             && self.endpoints.is_empty()
             && self.access_paths.is_empty()
             && self.skip_analysis.is_empty()
+            && self.mem2reg_modes.is_empty()
             && self.bridges.is_empty()
             && self.dispatch.is_empty()
             && self.closure_shaped.is_empty()

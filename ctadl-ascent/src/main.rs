@@ -489,8 +489,9 @@ pub struct IndexArgs {
     /// 1000 direct stack accesses (`full:N` for another threshold), and `window:8` elsewhere. It
     /// cuts the index of a large native function by a large factor, but a callee or a copy of
     /// the address no longer sees what the function stored directly. Each function where this
-    /// may lose flows is named in the index's `notifications.log` and in the query's SARIF.
-    /// `CTADL_MEM2REG` in the environment sets the default, for a harness that does
+    /// may lose flows is named in the index's `notifications.log` and in the query's SARIF. A
+    /// model's `modes: ["mem2reg-full"]` or `["mem2reg-window"]` forces or forbids it for one
+    /// function. `CTADL_MEM2REG` in the environment sets the default, for a harness that does
     /// not pass the flag.
     #[arg(
         long,

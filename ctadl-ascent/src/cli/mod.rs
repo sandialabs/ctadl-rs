@@ -265,12 +265,17 @@ pub fn index(
             import.name,
             program_info.program.functions.len()
         );
+        let mem2reg_modes: HashMap<String, ssa::FullMode> = model_matches
+            .mem2reg_modes
+            .iter()
+            .map(|(f, mode)| (f.to_string(), *mode))
+            .collect();
         if let Some(report) = ssa::run_pipeline_with(
             &mut program_info.program,
             ssa::Pipeline::index_default()
                 .prune(prune_unreachable_cfg_nodes)
                 .mem2reg(mem2reg),
-            &HashMap::new(),
+            &mem2reg_modes,
         ) {
             notifications.extend(report.notes.iter().map(ssa::EscapeNote::message));
         }

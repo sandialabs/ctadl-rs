@@ -1429,7 +1429,10 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
 
     /// Records the functions a `modes` directive applies to.
     ///
-    /// `skip-analysis` is the one defined value: codegen never lowers the matched function's
+    /// `mem2reg-full` and `mem2reg-window` force and forbid full stack-slot promotion for the
+    /// matched function, whatever its size (see `ctadl_ir::ssa::FullMode`).
+    ///
+    /// `skip-analysis`: codegen never lowers the matched function's
     /// body, so whatever the same generator's `propagation` list says is that function's entire
     /// behaviour. Without it a model *adds* to the body-derived summary rather
     /// than replacing it, which is what makes a hand-written model unable to cut a degenerate
@@ -1458,6 +1461,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             return;
         }
         let mut skip = false;
+        let mut mem2reg = None;
         for item in items {
             let Some(text) = item.as_str() else {
                 self.add_json_error(crate::error::JsonModelError::FieldNotString {
@@ -1468,22 +1472,29 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             };
             match text {
                 "skip-analysis" => skip = true,
+                "mem2reg-full" => mem2reg = Some(ctadl_ir::ssa::FullMode::Force),
+                "mem2reg-window" => mem2reg = Some(ctadl_ir::ssa::FullMode::Forbid),
                 other => self.add_json_error(crate::error::JsonModelError::UnexpectedField {
                     index: n,
                     field_name: "modes".to_string(),
                     message: format!(
-                        "unknown mode '{other}'; the defined value is 'skip-analysis'"
+                        "unknown mode '{other}'; the defined values are 'skip-analysis', \
+                         'mem2reg-full' and 'mem2reg-window'"
                     ),
                 }),
             }
         }
-        if !skip {
+        if !skip && mem2reg.is_none() {
             return;
         }
         for func in matched_functions(&self.methods[n], self.index.vmt) {
-            self.out
-                .skip_analysis
-                .insert(facts::Str::from(func.as_str()));
+            let func = facts::Str::from(func.as_str());
+            if let Some(mode) = mem2reg {
+                self.out.mem2reg_modes.insert(func, mode);
+            }
+            if skip {
+                self.out.skip_analysis.insert(func);
+            }
         }
     }
 
