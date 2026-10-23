@@ -16,9 +16,9 @@ Otherwise, on the e tier, two kinds of work are never mixed:
 Tiers follow the activity gate:
 
 * p tier (normal priority) only after the machine has been quiet for `required_quiet_s`.
-* When the user comes back, every run started on the p tier -- builds, imports, sweep units
-  alike -- is killed and requeued, so the cores are theirs at once. A unit killed
-  `max_activity_kills` times runs on the e tier from then on.
+* When the user has been back for `yield_after_s`, every run started on the p tier -- builds,
+  imports, sweep units alike -- is killed and requeued, so the cores are theirs at once. A
+  unit killed `max_activity_kills` times runs on the e tier from then on.
 * e-tier work is promoted when the machine goes quiet, and demoted again when the user comes
   back; its wall time is then not clean.
 * Memory pressure: no new work starts; units are shed youngest first (killed and requeued)
@@ -84,6 +84,8 @@ class Daemon:
         self.memguard = self.bench_repo / "bench" / "memguard.sh"
         self.active: list[Active] = []
         self.last_busy = time.time()   # assume busy at startup; quiet has to be observed
+        self.input_burst_at: float | None = None  # first keystroke since input last went idle
+        self.other_busy_at: float | None = None   # since when a reason other than typing has held
         self.next_poll = 0.0
         self.next_gc = 0.0
         self.xtask: str | None = None
@@ -133,8 +135,11 @@ class Daemon:
 
     # --- the activity gate ---------------------------------------------------------------------
 
-    def observe(self) -> tuple[activity.Snapshot, bool, bool]:
-        """Returns (snapshot, user_here, p_ok)."""
+    def observe(self) -> tuple[activity.Snapshot, bool, bool, bool]:
+        """Returns (snapshot, user_here, p_ok, must_yield). `must_yield`: the user has been here
+        for `yield_after_s`. One input event (giving the mosh window focus sends one) reads as
+        typing for `input_idle_s`, so typing counts only once a keystroke arrives
+        `yield_after_s` after the first of its burst."""
         snap = activity.snapshot(self.gate, {a.run.pid for a in self.active},
                                  building=any(a.kind == "build" for a in self.active))
         now = snap.at
@@ -144,17 +149,33 @@ class Daemon:
             self.foreign_cpu.popleft()
         snap.foreign_cpu = sum(c for _, c in self.foreign_cpu) / len(self.foreign_cpu)
         reasons = snap.busy_reasons(self.gate)
-        if any(not r.startswith("typed") for r in reasons):
+        typed = any(r.startswith("typed") for r in reasons)
+        other = any(not r.startswith("typed") for r in reasons)
+        if other:
             self.last_busy = now
         self.last_busy = max(self.last_busy, now - snap.input_age_s)
         quiet_for = now - self.last_busy
         user_here = bool(reasons)
         p_ok = quiet_for >= activity.required_quiet_s(self.gate, now)
+
+        grace = self.gate["yield_after_s"]
+        input_at = now - snap.input_age_s
+        if not typed:
+            self.input_burst_at = None
+        elif self.input_burst_at is None:
+            self.input_burst_at = input_at
+        if not other:
+            self.other_busy_at = None
+        elif self.other_busy_at is None:
+            self.other_busy_at = now
+        must_yield = ((typed and input_at - self.input_burst_at >= grace)
+                      or (other and now - self.other_busy_at >= grace))
+
         state = "p-ok" if p_ok else "busy" if user_here else "quiet"
         if state != self.last_gate_state:
             self.log("gate", f"{state}: quiet {quiet_for:.0f}s; " + "; ".join(reasons))
             self.last_gate_state = state
-        return snap, user_here, p_ok
+        return snap, user_here, p_ok, must_yield
 
     # --- tracking the branch -------------------------------------------------------------------
 
@@ -696,12 +717,12 @@ class Daemon:
         signal.signal(signal.SIGHUP, lambda *_: stopping.append(1))
         while not stopping:
             try:
-                snap, user_here, p_ok = self.observe()
+                snap, user_here, p_ok, must_yield = self.observe()
                 if time.time() >= self.next_poll:
                     self.poll()
                 if time.time() >= self.next_gc:
                     self.gc_stores()
-                if user_here:
+                if must_yield:
                     self.yield_cores(snap)
                 for a in list(self.active):
                     self.supervise(a, snap, user_here, p_ok)

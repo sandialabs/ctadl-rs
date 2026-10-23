@@ -23,6 +23,9 @@ quiet_night_s = 900         # quiet this long before a p-tier run starts, at nig
 quiet_day_s = 900           # ...and during the day
 night_start_hour = 23
 night_end_hour = 7
+# Busy this long before p-tier work is killed. Typing counts once a keystroke comes this long
+# after the first of its burst, so focusing the terminal alone kills nothing.
+yield_after_s = 20
 # A unit killed this many times because the user came back runs on the e tier from then on,
 # so a busy week still gets every unit measured.
 max_activity_kills = 3

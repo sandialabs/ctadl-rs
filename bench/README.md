@@ -57,8 +57,9 @@ daemon, and foreign CPU use averaged over a minute. System daemons our own work 
 * **e tier**: `taskpolicy -b`, i.e. the efficiency cores and throttled I/O. Instruction
   counts, cycles and peak memory are recorded on either tier; instruction counts agree across
   tiers to well under 1%.
-* User returns during p-tier work: every run started on the p tier (builds, imports and sweep
-  units included) is killed and requeued, so the cores are free at once; e-tier work that was
+* User returns during p-tier work and stays 20 seconds (`yield_after_s`; for typing, a
+  keystroke 20 seconds after the first, so focusing the terminal is not enough): every run
+  started on the p tier (builds, imports and sweep units included) is killed and requeued, so the cores are free at once; e-tier work that was
   promoted is demoted back. After 3 such kills a unit runs on the e tier.
 * Memory pressure: nothing new starts; units are shed youngest first, and the last is paused.
 * Off the p tier, commit passes and builds run alone, and the sweep uses 3 workers.
