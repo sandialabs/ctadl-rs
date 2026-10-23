@@ -101,6 +101,50 @@ arm64 libraries), 1800 s timeout, 55 GiB guard:
 
 ## How to reproduce
 
+### Quick: `uclited` from the firmware sweep (about a minute)
+
+The benchmark runner (`bench/` in `ct-bench`) flags this binary as over its memory budget:
+`firmware-sweep` benchmark `40c87ee3d0be0b74`, TP-Link `TL_WPA8630P_EU_UK_V2.1_171117`
+`fs/usr/bin/uclited` in the Operation Mango `large_dataset` (MIPS32 big-endian, stripped, with
+zlib linked in), SHA-256 `40c87ee3d0be0b7429e9c4bf2ef067223ef7fa3340ef9d8e24dee7f2699e7320`.
+The sweep measured 10.9 GiB at `dfccbcab` (59x the budget). On `main` `076f6a60`:
+
+| | Peak | Fixpoint | `locals` rows |
+|---|---|---|---|
+| as is | 10.4 GiB (56x budget, 2.0 MB IR) | 36 s | 189 M |
+| zlib's `inflate` skipped | 0.02 GiB | 0.3 s | 0.46 M |
+
+`inflate` (381 blocks) is the P1 function. Its loop keeps the decoder state in 17 stack slots
+(`%__stack_top.[-96]` through `[-44]`; here the slots hang off `__stack_top` rather than `%L3_0`),
+with about 60 stores and 175 loads per slot, 899 stores and 2,629 loads in all. The two `locals`
+rules joined on `ext_dst` take 21 s of the 36 s fixpoint. The import takes 18 s.
+
+```sh
+cargo build --release
+export GHIDRA_HOME=...                    # Ghidra, JDK 21
+M=<ct-bench>/firmware-eval/models/cmdi-firmware.json5   # the sweep's model
+target/release/ctadl --store tmp/p1/store import -l pcode -n uclited <path>/uclited
+target/release/ctadl --store tmp/p1/store index uclited -m $M   # under a 16 GiB cap
+# profile.json: locals ~189 M rows, the ext_dst locals rules on top
+cat tmp/p1/store/projects/uclited/index/profile.json
+# confirm the hub function: skip inflate's body and locals falls ~400x
+cat > tmp/p1/skip-inflate.json5 <<'EOF'
+{ "model_generators": [ { "find": "methods",
+    "where": [{ "constraint": "signature_match", "name": "inflate" }],
+    "model": { "modes": ["skip-analysis"] } } ] }
+EOF
+target/release/ctadl --store tmp/p1/store index uclited -m $M -m tmp/p1/skip-inflate.json5
+target/release/ctadl --store tmp/p1/store inspect uclited --dump-ir --function inflate
+```
+
+Other over-budget binaries from the same runner, if one more native shape is needed:
+`firmware7/AC15-usr-bin-nginx` (Tenda, ARM; at least 15x the budget, killed at the 16 GiB cap
+after about 2 minutes, not analyzed here) and `firmware-sweep` `4bbd3a7ad4b4484f` (Netgear
+MBM621 `bin/chat`; 1.9 GiB, 17x, 30 s; `locals` 23 M rows). The runner's
+`over-budget` events (`events` table of `bench.db`, or `./run.sh report`) list the rest.
+
+### Full apps
+
 Needs Ghidra (`GHIDRA_HOME` set, JDK 21) so that `ctadl import` disassembles the APK's `.so` files.
 Use a memory cap: without one these runs can take the whole machine.
 
@@ -198,7 +242,7 @@ versions still carry.
 Not on F-Droid: `com.whatsapp_2.17.79-451676_minAPI14.apk` (29 MB, 4.1 MB `libwhatsapp.so`),
 SHA-256 `84444d1d222dcc9b8b7aceccf59bd71038be5e84336d888047705da56cedc00a`.
 
-Start with `androidudpbus` (smallest, the best-studied function) and `glxy` (the `libgdx` shape).
+For a quick run, use `uclited` (How to reproduce). Of the apps, start with `androidudpbus` (smallest, the best-studied function) and `glxy` (the `libgdx` shape).
 
 ```sh
 mkdir -p samples && cd samples
