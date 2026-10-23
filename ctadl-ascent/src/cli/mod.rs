@@ -177,6 +177,19 @@ pub fn index(
     // What phase 1 of codegen did, summed over the imports: skipped bodies, the call-site
     // bucket counts, and any dispatch model a matched endpoint refused.
     let mut codegen_report = crate::codegen::CodegenReport::default();
+    // What `notifications.log` says about this index; see [`crate::index_engine::notifications`].
+    let mut notifications: BTreeSet<String> = BTreeSet::new();
+    // A summary project's unsound functions reach this index through their summaries.
+    for summary_project in &summary_projects {
+        let dir = summary_project.index_path()?;
+        let lines = crate::index_engine::notifications::load(&dir)
+            .err_context(|| format!("loading notifications from: {}", dir.display()))?;
+        notifications.extend(
+            lines
+                .into_iter()
+                .map(|line| format!("summary project '{}': {line}", summary_project.name)),
+        );
+    }
     for import in project.iter_imports() {
         let import = import?;
         // Everything codegen records from here to the next import belongs to this one. Source
@@ -248,10 +261,13 @@ pub fn index(
             import.name,
             program_info.program.functions.len()
         );
-        ssa::run_pipeline(
+        if let Some(report) = ssa::run_pipeline_with(
             &mut program_info.program,
             ssa::Pipeline::index_default().prune(prune_unreachable_cfg_nodes),
-        );
+            &HashMap::new(),
+        ) {
+            notifications.extend(report.notes.iter().map(ssa::EscapeNote::message));
+        }
         log::debug!(
             "[mem cp] after SSA transform: {:.1} MB",
             phys_footprint_mb()
@@ -478,6 +494,16 @@ pub fn index(
     result
         .try_save(&path)
         .err_context(|| format!("saving index: {}", path.display()))?;
+    if !notifications.is_empty() {
+        log::warn!(
+            "{} function(s) were analyzed in a way that may miss flows; see {}",
+            notifications.len(),
+            path.join(crate::index_engine::notifications::NOTIFICATIONS_FILE)
+                .display()
+        );
+    }
+    crate::index_engine::notifications::save(&path, &notifications)
+        .err_context(|| format!("saving notifications: {}", path.display()))?;
     // Last, so a run that dies partway through leaves no stamp claiming the index is readable.
     project.write_index_config(Some(call_policy_record(
         strategy,
@@ -634,6 +660,8 @@ pub fn query(
             .map(|a| a.to_string_lossy().into_owned())
             .collect(),
         start_time_utc,
+        index_notifications: crate::index_engine::notifications::load(&index_path)
+            .err_context(|| format!("loading notifications from: {}", index_path.display()))?,
         ..Default::default()
     };
 

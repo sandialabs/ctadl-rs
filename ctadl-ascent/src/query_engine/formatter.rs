@@ -195,6 +195,7 @@ const NOTIF_MATCH_SUMMARY: &str = "CTADL0100.endpoint-match-summary";
 const NOTIF_PATHS_DISABLED: &str = "CTADL0101.path-generation-disabled";
 const NOTIF_NO_PATHS: &str = "CTADL0102.no-paths-found";
 const NOTIF_PATH_DROPPED: &str = "CTADL0103.path-dropped-no-location";
+const NOTIF_INDEX: &str = "CTADL0104.index-notification";
 
 /// Everything the SARIF writer needs to explain what the query *did*, independent of what
 /// it *found*. Assembled in `cli::query`, which is the only place that sees both the model
@@ -221,6 +222,9 @@ pub struct QueryDiagnostics {
     pub arguments: Vec<String>,
     /// SARIF-format UTC timestamp; see [`utc_timestamp`].
     pub start_time_utc: String,
+    /// The lines of the index's `notifications.log`: each place `ctadl index` analyzed in a way
+    /// that may miss flows. See [`crate::index_engine::notifications`].
+    pub index_notifications: Vec<String>,
     /// Set only when the project had no index and the run checked the model files against the
     /// imported programs instead. See [`ModelCheck`], and `cli::query` for when that happens.
     pub model_check: Option<ModelCheck>,
@@ -842,6 +846,17 @@ fn build_invocation(
                 "droppedPaths".to_string(),
                 serde_json::json!(path_stats.dropped_no_location),
             )]),
+        ));
+    }
+
+    // Warnings, not notes: a flow these name may be missing from the results.
+    for line in &diagnostics.index_notifications {
+        exec_notifications.push(notification(
+            NOTIF_INDEX,
+            "warning",
+            vec![line.clone()],
+            format!("ctadl index: {line}"),
+            BTreeMap::new(),
         ));
     }
 
@@ -1481,6 +1496,12 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
             "A path was found but could not be reported",
             "{0} source-to-sink path(s) were found but discarded because no reporting location \
              could be resolved for them.",
+        ),
+        notification_descriptor(
+            NOTIF_INDEX,
+            "Index notification",
+            "ctadl index analyzed part of the program in a way that may miss flows",
+            "ctadl index: {0}",
         ),
     ]
 }

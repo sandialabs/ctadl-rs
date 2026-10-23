@@ -67,6 +67,7 @@ pub mod c_locals_trie;
 pub mod decision;
 pub mod hybrid_set;
 pub mod locals_trie;
+pub mod notifications;
 pub mod path_group;
 pub mod path_set;
 pub mod profile;
