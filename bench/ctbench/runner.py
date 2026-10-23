@@ -563,7 +563,9 @@ class Daemon:
         victims = []
         for a in self.active:
             r = a.run
-            if r.tier != "p" or r.kill_reason is not None:
+            # One that has already exited ended on its own -- memguard's kill, say -- and is
+            # recorded as such when reaped, not as yielded.
+            if r.tier != "p" or r.kill_reason is not None or r.popen.poll() is not None:
                 continue
             if r.start_tier == "e":
                 proc.demote(r)
