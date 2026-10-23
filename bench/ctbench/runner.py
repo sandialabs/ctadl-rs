@@ -91,7 +91,7 @@ class Daemon:
         self.xtask: str | None = None
         self.xtask_retry_at = 0.0
         self.last_gate_state = None
-        self.foreign_cpu: deque[tuple[float, float]] = deque()
+        self.foreign_cpu: deque[tuple[float, activity.Snapshot]] = deque()
         self.next_shed = 0.0
         self.peaks = self.load_peaks()
         self.git = inputs.get("git", "git")
@@ -144,10 +144,10 @@ class Daemon:
                                  building=any(a.kind == "build" for a in self.active))
         now = snap.at
         # A single sample spikes with anything that wakes briefly; average over a window.
-        self.foreign_cpu.append((now, snap.foreign_cpu))
+        self.foreign_cpu.append((now, snap))
         while self.foreign_cpu[0][0] < now - self.gate["foreign_cpu_window_s"]:
             self.foreign_cpu.popleft()
-        snap.foreign_cpu = sum(c for _, c in self.foreign_cpu) / len(self.foreign_cpu)
+        snap.foreign_cpu = sum(s.foreign_cpu for _, s in self.foreign_cpu) / len(self.foreign_cpu)
         reasons = snap.busy_reasons(self.gate)
         typed = any(r.startswith("typed") for r in reasons)
         other = any(not r.startswith("typed") for r in reasons)
@@ -575,6 +575,22 @@ class Daemon:
             proc.kill(a.run, reason)  # reaped and requeued on the next tick
         if victims:
             self.log("yield", f"killed {len(victims)} p-tier run(s): {reason}")
+            if snap.foreign_cpu > self.gate["foreign_cpu_pct"]:
+                self.log("foreign-cpu", self.foreign_cpu_culprits())
+
+    def foreign_cpu_culprits(self, top: int = 10) -> str:
+        """Who used the foreign CPU, averaged over the window as the gate's figure is: by command,
+        heaviest first, with its pids."""
+        n = len(self.foreign_cpu)
+        cpu: dict[str, float] = {}
+        pids: dict[str, set[int]] = {}
+        for _, s in self.foreign_cpu:
+            for (comm, pid), c in s.foreign_by.items():
+                cpu[comm] = cpu.get(comm, 0.0) + c / n
+                pids.setdefault(comm, set()).add(pid)
+        heaviest = [c for c in sorted(cpu, key=cpu.get, reverse=True)[:top] if cpu[c] >= 1]
+        return ", ".join(f"{c}({','.join(map(str, sorted(pids[c])[:3]))}"
+                         f"{',...' if len(pids[c]) > 3 else ''}) {cpu[c]:.0f}%" for c in heaviest)
 
     def relieve_pressure(self, snap) -> None:
         if snap.pressure == 1 or time.time() < self.next_shed:

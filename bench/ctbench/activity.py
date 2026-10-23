@@ -39,6 +39,7 @@ class Snapshot:
     input_age_s: float          # since the user last typed, on any attached tty
     dev_procs: list[str]        # "name(pid)" of matching development processes, not ours
     foreign_cpu: float          # percent of one core used by processes that are not ours
+    foreign_by: dict[tuple[str, int], float]  # that CPU by (comm, pid), busy processes only
     pressure: int               # kern.memorystatus_vm_pressure_level: 1 normal, 2 warn, 4 critical
     load1: float
     notes: list[str] = field(default_factory=list)
@@ -124,12 +125,14 @@ def snapshot(cfg, ours: set[int], building: bool = False) -> Snapshot:
     dev = [f"{p.comm}({p.pid})" for p in procs
            if p.pid not in mine and p.comm in dev_names
            and not (p.comm == "nix-daemon" and (p.ppid == 1 or building))]
-    foreign = sum(p.cpu for p in procs if p.pid not in mine and p.comm not in ignored)
+    foreign_by = {(p.comm, p.pid): p.cpu for p in procs
+                  if p.pid not in mine and p.comm not in ignored and p.cpu > 0}
     return Snapshot(
         at=now,
         input_age_s=input_age_s(now),
         dev_procs=dev,
-        foreign_cpu=foreign,
+        foreign_cpu=sum(foreign_by.values()),
+        foreign_by=foreign_by,
         pressure=pressure_level(),
         load1=os.getloadavg()[0],
     )

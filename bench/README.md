@@ -48,7 +48,8 @@ The activity gate (`ctbench/activity.py`) decides when the machine is in use. Ke
 time is useless over ssh/mosh, so it reads the access time of every tty with a process attached
 (any keystroke over any transport updates it), plus development processes not started by the
 daemon, and foreign CPU use averaged over a minute. System daemons our own work wakes
-(Spotlight, XProtect, `sysmond`; `[gate] ignore_cpu`) do not count as foreign.
+(Spotlight, XProtect, `sysmond`; `[gate] ignore_cpu`) do not count as foreign. A kill for
+foreign CPU is followed by a `foreign-cpu` event naming the heaviest processes over the window.
 
 * **p tier** (normal priority, all cores) only after 15 minutes of quiet. Then one pool
   saturates the machine: builds, pass units (the pass in progress, then newest commit first)
