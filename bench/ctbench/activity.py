@@ -113,11 +113,13 @@ def pressure_level() -> int:
 
 
 def snapshot(cfg, ours: set[int], building: bool = False) -> Snapshot:
-    """`ours` are the pids whose trees belong to the benchmark job, excluded everywhere.
+    """`ours` are the pids whose trees belong to the benchmark job, excluded everywhere. Each
+    leads its own process group, which also claims a member whose parent died first and left it
+    to launchd -- a ctadl memguard killed, still freeing its memory after `time` is gone.
     `building`: one of ours is a build, whose `nix develop` gets its own nix-daemon worker."""
     now = time.time()
     procs = list_procs()
-    mine = descendants(procs, ours | {os.getpid()})
+    mine = descendants(procs, ours | {os.getpid()}) | {p.pid for p in procs if p.pgid in ours}
     dev_names = set(cfg["dev_processes"])
     ignored = set(cfg.get("ignore_cpu", []))
     # The nix daemon itself always runs (a child of launchd); its per-build workers are what
