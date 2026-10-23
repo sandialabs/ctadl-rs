@@ -38,7 +38,9 @@ pub use copy_prop::{propagate_copies, propagate_copies_function};
 
 mod mem2reg;
 pub use mem2reg::{
-    EscapePolicy, Mem2RegStats, STACK_TOP, promote_stack_slots, promote_stack_slots_function,
+    DEFAULT_FULL_THRESHOLD, EscapeKind, EscapeNote, EscapePolicy, FullMode, Mem2Reg, Mem2RegReport,
+    Mem2RegStats, STACK_TOP, promote_function, promote_stack_slots, promote_stack_slots_function,
+    promote_stack_slots_with,
 };
 
 #[derive(Debug)]
@@ -71,9 +73,9 @@ pub struct Pipeline {
     pub dead_temps: bool,
     /// Run [`coalesce_copies`], which merges away copy temporaries that have a single use.
     pub coalesce: bool,
-    /// Run [`promote_stack_slots`] with this policy, which turns stack slots into locals so SSA
-    /// versions them. `None` skips it.
-    pub mem2reg: Option<EscapePolicy>,
+    /// Run [`promote_stack_slots`] with this configuration, which turns stack slots into locals
+    /// so SSA versions them. `None` skips it.
+    pub mem2reg: Option<Mem2Reg>,
     /// Run [`transform_program`], which places pruned phi nodes using Cytron's algorithm and renames
     /// variables into SSA form.
     pub ssa: bool,
@@ -103,7 +105,10 @@ impl Pipeline {
             // An escaped frame address is assumed to reach 8 slots. On `androidudpbus` this cuts
             // the index from 849 s and 52 GB to 163 s and 15 GB, and it loses no flow in the
             // regression suite. `Exact` is as fast but loses the flow in `example.c`.
-            mem2reg: Some(EscapePolicy::Window(8)),
+            mem2reg: Some(Mem2Reg {
+                escape: EscapePolicy::Window(8),
+                full_above: None,
+            }),
             ssa: true,
             copy_prop: true,
             prune_unreachable: true,
@@ -139,6 +144,14 @@ impl Pipeline {
     #[must_use]
     pub fn prune(mut self, prune_unreachable: bool) -> Self {
         self.prune_unreachable = prune_unreachable;
+        self
+    }
+
+    /// Sets [`Pipeline::mem2reg`], for the same reason as [`Pipeline::prune`].
+    #[inline]
+    #[must_use]
+    pub fn mem2reg(mut self, mem2reg: Option<Mem2Reg>) -> Self {
+        self.mem2reg = mem2reg;
         self
     }
 
@@ -189,21 +202,32 @@ impl Default for Pipeline {
 /// `ctadl index` used to contain this code directly. Anything that reads an import and then
 /// generates facts should call this rather than list the passes again.
 pub fn run_pipeline(program: &mut Program, p: Pipeline) {
+    run_pipeline_with(program, p, &HashMap::new());
+}
+
+/// [`run_pipeline`], with full stack-slot promotion forced or forbidden for the functions
+/// `modes` names (see [`promote_stack_slots_with`]). Returns what mem2reg did, if it ran.
+pub fn run_pipeline_with(
+    program: &mut Program,
+    p: Pipeline,
+    modes: &HashMap<String, FullMode>,
+) -> Option<Mem2RegReport> {
     if p.dead_temps {
         eliminate_dead_temps(program);
     }
     if p.coalesce {
         coalesce_copies(program);
     }
-    if let Some(policy) = p.mem2reg {
-        promote_stack_slots(program, policy);
-    }
+    let report = p
+        .mem2reg
+        .map(|config| promote_stack_slots_with(program, config, modes));
     if p.ssa {
         transform_program(program, p.prune_unreachable);
     }
     if p.copy_prop {
         propagate_copies(program);
     }
+    report
 }
 
 /// Transforms every function in the program into SSA form by calling [`transform`] on each one.

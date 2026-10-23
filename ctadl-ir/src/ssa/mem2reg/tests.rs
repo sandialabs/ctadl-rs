@@ -261,3 +261,184 @@ fn parse_policies() {
     assert_eq!(EscapePolicy::parse("window:0"), None);
     assert_eq!(EscapePolicy::parse("bogus"), None);
 }
+
+/// Full promotion, at any size.
+fn full() -> Mem2Reg {
+    Mem2Reg {
+        escape: EscapePolicy::Window(8),
+        full_above: Some(0),
+    }
+}
+
+/// `x = __stack_top.[k]`: the address of slot `k` is copied.
+fn copy_addr(f: &mut F, x: &str, k: i64) -> Statement {
+    let x = f.local(x);
+    let a = Exp::AccessPath(f.st(k));
+    Statement::new_kind(StatementKind::assign(x, [a]))
+}
+
+/// `transfer(&x.b); sink(x.b)`, which is `example.c`'s shape: the callee writes the slot and
+/// the function reads it back. Full promotion reloads the slot after the call, and loses
+/// nothing it needs to say.
+#[test]
+fn full_reloads_after_a_call_that_reaches_the_slot() {
+    let mut f = F::new();
+    let e = f.escape_call(-32);
+    let l = f.load("b", -28);
+    let mut f = f.one_block(vec![e, l]);
+    let (stats, note) = promote_function(&mut f, full(), None);
+    assert_eq!(stats.full_functions, 1);
+    assert_eq!(stats.escaped_slots, 1);
+    assert_eq!(stats.reloads, 1);
+    assert_eq!(note, None);
+    assert_eq!(frame_loads(&f), vec![-28], "{f}");
+    // `%L2` is `__stack_m28`.
+    assert_eq!(
+        stmts(&f),
+        vec![
+            "direct-call f(%L0.[-32])",
+            "%L2 = load %L0.[-28].deref",
+            "assign %L1 = %L2"
+        ]
+    );
+}
+
+#[test]
+fn full_store_writes_only_the_local() {
+    let mut f = F::new();
+    let s = f.store(-32, "a");
+    let e = f.escape_call(-32);
+    let l = f.load("b", -32);
+    let mut f = f.one_block(vec![s, e, l]);
+    let (stats, note) = promote_function(&mut f, full(), None);
+    assert_eq!(stats.promoted_accesses, 2);
+    assert_eq!(stats.kept_accesses, 0);
+    assert!(
+        !stmts(&f).iter().any(|s| s.starts_with("store")),
+        "{:?}",
+        stmts(&f)
+    );
+    // The callee no longer sees `a`.
+    let note = note.unwrap();
+    assert_eq!(
+        note.kinds.keys().copied().collect::<Vec<_>>(),
+        vec![EscapeKind::CallInput]
+    );
+    assert_eq!(
+        note.message(),
+        "mem2reg full: : frame address escapes (call input); flows through those slots may be \
+         missed"
+    );
+}
+
+#[test]
+fn full_skips_calls_that_do_not_reach_the_slot() {
+    let mut f = F::new();
+    let e = f.escape_call(-64);
+    let s = f.store(-32, "a");
+    let e2 = f.escape_call(-32);
+    let l = f.load("b", -32);
+    let mut f = f.one_block(vec![e, s, e2, l]);
+    let (stats, _) = promote_function(&mut f, full(), None);
+    assert_eq!(stats.reloads, 1);
+}
+
+#[test]
+fn full_notes_copied_and_stored_addresses() {
+    let mut f = F::new();
+    let c = copy_addr(&mut f, "p", -16);
+    let addr = Exp::AccessPath(f.st(-8));
+    let g = f.local("g");
+    let st = Statement::new_kind(StatementKind::store(
+        AccessPath::without_fields(g),
+        FieldRef::symbol(DEREF),
+        addr,
+    ));
+    let l1 = f.load("a", -16);
+    let l2 = f.load("b", -8);
+    let mut f = f.one_block(vec![c, st, l1, l2]);
+    let (stats, note) = promote_function(&mut f, full(), None);
+    assert_eq!(stats.reloads, 0);
+    let note = note.unwrap();
+    assert_eq!(
+        note.kinds,
+        BTreeMap::from([(EscapeKind::Copied, 1), (EscapeKind::Stored, 1)])
+    );
+    assert!(note.message().contains("(copied, stored)"));
+}
+
+#[test]
+fn full_takes_functions_above_the_threshold() {
+    let build = || {
+        let mut f = F::new();
+        let e = f.escape_call(-32);
+        let s = f.store(-32, "a");
+        let l = f.load("b", -32);
+        f.one_block(vec![e, s, l])
+    };
+    let run = |above, mode| {
+        let mut f = build();
+        let config = Mem2Reg {
+            escape: EscapePolicy::Window(8),
+            full_above: above,
+        };
+        promote_function(&mut f, config, mode).0.full_functions
+    };
+    assert_eq!(run(Some(1), None), 1);
+    assert_eq!(run(Some(2), None), 0);
+    assert_eq!(run(None, None), 0);
+    assert_eq!(run(None, Some(FullMode::Force)), 1);
+    assert_eq!(run(Some(0), Some(FullMode::Forbid)), 0);
+}
+
+#[test]
+fn full_second_run_changes_nothing() {
+    let mut f = F::new();
+    let s = f.store(-32, "a");
+    let e = f.escape_call(-32);
+    let l = f.load("b", -32);
+    let mut f = f.one_block(vec![s, e, l]);
+    promote_function(&mut f, full(), None);
+    let once = stmts(&f);
+    let (again, _) = promote_function(&mut f, full(), None);
+    assert_eq!(again.promoted_accesses, 0);
+    assert_eq!(again.reloads, 0);
+    assert_eq!(stmts(&f), once);
+}
+
+#[test]
+fn parse_configs() {
+    assert_eq!(
+        Mem2Reg::parse("full"),
+        Some(Mem2Reg {
+            escape: EscapePolicy::Window(8),
+            full_above: Some(DEFAULT_FULL_THRESHOLD),
+        })
+    );
+    assert_eq!(Mem2Reg::parse("full:0"), Some(full()));
+    assert_eq!(
+        Mem2Reg::parse("window:4"),
+        Some(EscapePolicy::Window(4).into())
+    );
+    assert_eq!(Mem2Reg::parse("full:x"), None);
+    assert_eq!(full().tag(), "w8,full>0");
+}
+
+/// `keep` in `nightly/tests/jni/JniWide.c`: the pcode frontend returns the value in slot 4 as
+/// the slot's address, so the slot stays in memory even under full promotion.
+#[test]
+fn full_keeps_a_returned_slot() {
+    let mut f = F::new();
+    let s = f.store(4, "a");
+    let ret = Exp::AccessPath(f.st(4));
+    let mut f = f.0;
+    let mut block = BasicBlockData::new(Some(Terminator::new_kind(TerminatorKind::Return {
+        args: smallvec![ret],
+    })));
+    block.statements.push_back(s);
+    f.blocks.push(block);
+    let (stats, note) = promote_function(&mut f, full(), None);
+    assert_eq!(stats.promoted_slots, 0);
+    assert_eq!(stats.kept_accesses, 1);
+    assert_eq!(note, None);
+}
