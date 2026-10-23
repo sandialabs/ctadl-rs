@@ -99,6 +99,59 @@ arm64 libraries), 1800 s timeout, 55 GiB guard:
   Java code), and the `locals` join takes 154 s of the 438 s main loop. That is this shape; which
   function holds the rows was not checked.
 
+## Analysis: `uclited` has three causes, not one
+
+`uclited` (see How to reproduce) was taken apart with the `index-instrument` branch's
+instrumentation (`804d35cc`, "Index blowup instrumentation"; `INVESTIGATING.md` there is the
+recipe), with S3 (`b1b52de8`) cherry-picked on top for the promotion rows. zlib's `inflate` holds
+98-99% of `locals` in every configuration. It is a decoder state machine: a 32-way `switch` at the
+loop head (block 10), reached by about 34 back edges.
+
+| `uclited` on `076f6a60` | `locals` | Fixpoint | Peak (`time -l`) | Budget |
+|---|---|---|---|---|
+| `main` | 189 M | 35 s | 10.4 GiB | 56x |
+| S3, `window:8` | 41 M | 10 s | 1.36 GB | 6.8x |
+| every slot promoted (`exact`) | 15 M | 4 s | 0.68 GB | 3.4x |
+| `inflate` skipped | 0.46 M | 0.3 s | 0.02 GiB | |
+
+The `exact` row is the most any stack-slot fix (S4 included) can reach, and it is still 32x the
+rest of the program. Three causes multiply:
+
+1. **Stack slots (12.6x, P1 proper).** Most of the stores into the 17 slots are harmless: Ghidra's
+   phis on a slot, lowered as loads of that slot merged and stored straight back (about 540 of the
+   899 stores are such merges, 270 more are a load stored back to its own slot). A few slots take
+   17-20 real values. The tell is `flush`, an `int`: on `main` 625 of `inflate`'s 1,013 sources are
+   paths *into* it (`@p1.[k].deref`, `@p1.deref.[k].deref`, ...), because its value reaches pointers
+   through the slots. With every slot promoted they are gone. S3 recovers 4.6x of the 12.6x; the
+   rest (41 M to 15 M) is the escaped slots, S4's target.
+2. **The state-machine loop is one cycle through most of the function.** With every slot
+   promoted, `inflate`'s `assign_like` graph (variables only, paths dropped) has one strongly
+   connected component of 4,941 of its 8,313 variables, and 79% of them are downstream of it. The
+   cycle is ordinary SSA: loop-carried values (input and output pointers, bit buffer, counts)
+   merge in the phis at the head. A binary operator is lowered as a merge of its operands
+   (`x = a op b` becomes `assign x = a, b`), so a pointer combined with an integer (a table lookup
+   indexed by the bit buffer) shares paths with it. Of 364 sources, the median reaches 54% of
+   `inflate`'s 65,750 `(v, p)` and the top tenth 98%.
+3. **Offsets pile up around the loop.** 242 of those 364 sources are four shapes
+   (`@p0.deref.[k]`, `@p0.deref.[k].deref`, `@p0.deref.deref.[k]`, `@p0.deref.deref.[k].deref`)
+   at about 60 offsets each: every byte 0-32, then sparse up to 152, plus 5552 and 4433408. The
+   input pointer is incremented in the loop (`__src' = __src.[1]`), so each trip around the cycle
+   adds 1 to the source path's offset. The only bound is the program-wide `path_set`: offsets 7,
+   15, 142 and 143 never occur in `inflate`, only in other functions. Every variant of a shape
+   reaches the same 64,746 `(v, p)`, so they multiply rows without adding information. Collapsing
+   them would cut `locals` about 3x (estimated, not tried).
+
+How the rows were attributed:
+
+- `main`: a run stopped at 10 s (`CTADL_INDEX_TIMEOUT_SECS=10 CTADL_INDEX_DUMP=<dir>`; 35 M rows
+  by the time it dumped, 1.9 GB of TSV), counted by function, variable, path shape and source.
+- `exact`: a complete run, dumped the same way.
+- The `exact` and `off` rows used a scratch `CTADL_MEM2REG=off|exact|window:N` override of
+  `Pipeline::index_default`'s policy. It is on no branch.
+- The SCC was computed over the `exact` dump's `assign_like.tsv`.
+- The 10.4 GiB peak is from memguard. The others are from `time -l`: memguard samples too rarely
+  on runs this short (it read 1.04 GiB for `window:8`).
+
 ## How to reproduce
 
 ### Quick: `uclited` from the firmware sweep (about a minute)
@@ -116,8 +169,9 @@ The sweep measured 10.9 GiB at `dfccbcab` (59x the budget). On `main` `076f6a60`
 
 `inflate` (381 blocks) is the P1 function. Its loop keeps the decoder state in 17 stack slots
 (`%__stack_top.[-96]` through `[-44]`; here the slots hang off `__stack_top` rather than `%L3_0`),
-with about 60 stores and 175 loads per slot, 899 stores and 2,629 loads in all. The two `locals`
-rules joined on `ext_dst` take 21 s of the 36 s fixpoint. The import takes 18 s.
+with about 60 stores and 175 loads per slot, 899 stores and 2,629 loads in all (most of them
+Ghidra's phis on the slot; see Analysis). The two `locals` rules joined on `ext_dst` take 21 s of
+the 36 s fixpoint. The import takes 18 s.
 
 ```sh
 cargo build --release
@@ -202,6 +256,9 @@ between escapes are then in SSA, and only the values live at an escape mix. Wher
 `androidudpbus`: 1,714 frame addresses passed to calls (1,697 to functions in the library, 132 of
 them to `memcpy`, 17 through function pointers), 3,118 stored to memory and 1,291 copied inside the
 function. The calls are only 28%, so the spill points have to cover stores and copies too.
+On `uclited` S4 can reach at best the `exact` row of the Analysis (15 M rows, 3.4x the budget);
+the rest needs a fix for causes 2 and 3 there, such as collapsing the offsets of a pointer
+incremented in a loop, or one of the directions below.
 
 **A mitigation on `main`: `ctadl index --lsm`** (experimental, #155) keeps `locals` and the other
 large relations in memory-mapped run files, read through the page cache, so a run that would not
