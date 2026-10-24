@@ -596,7 +596,7 @@ The practical consequence is for testing: probe at the level the port *predicts*
 not at one fixed depth. A fixture that always reads `u.f` scores nothing on rows
 2 and 3 above while the models are doing exactly what they say. The worked matrix
 is `ctadl-ascent/tests/tnt/port_*.tnt` (flowy) and
-`ctadl-ascent/tests/port_semantics.rs` (Lua).
+`ctadl-ascent/tests/integration/port_semantics.rs` (Lua).
 
 One asymmetry worth knowing: a **sink** port materializes over the paths reachable
 at its vertex, so a sink written `Return` also seeds `Return.f`. Reading a whole

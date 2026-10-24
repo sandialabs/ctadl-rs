@@ -1,0 +1,12 @@
+[package]
+name = "ctadl-index-par"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+ascent = "0.8.0"
+ctadl-index = { path = "../.." }
+log = "0.4"
+
+[lints]
+workspace = true

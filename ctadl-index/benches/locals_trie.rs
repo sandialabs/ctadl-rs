@@ -3,8 +3,8 @@
 //! module's design (a linear-probing small set vs. a promoted Swiss table) turns on.
 //!
 //! Run with:
-//!     cargo bench -p ctadl-ascent --bench locals_trie
-//!     cargo bench -p ctadl-ascent --bench locals_trie -- --tsv   # machine-readable
+//!     cargo bench -p ctadl-index --bench locals_trie
+//!     cargo bench -p ctadl-index --bench locals_trie -- --tsv   # machine-readable
 //!
 //! Why a bench and not the end-to-end `ctadl index` measurement (see
 //! `scripts/locals-bench.py`): process `phys_footprint` cannot attribute bytes to one
@@ -36,9 +36,9 @@ use std::time::Instant;
 use ascent::internal::{
     CRelFullIndexWrite, RelFullIndexWrite, RelIndexMerge, ToRelIndex, ToRelIndex0,
 };
-use ctadl_ascent::index_engine::c_locals_trie::{CLocalsIndCommon, CToFull};
-use ctadl_ascent::index_engine::hybrid_set::HybridSet;
-use ctadl_ascent::index_engine::locals_trie::{LocalsIndCommon, ToFull};
+use ctadl_index::index_engine::c_locals_trie::{CLocalsIndCommon, CToFull};
+use ctadl_index::index_engine::hybrid_set::HybridSet;
+use ctadl_index::index_engine::locals_trie::{LocalsIndCommon, ToFull};
 use rayon::prelude::*;
 use rustc_hash::FxHasher;
 

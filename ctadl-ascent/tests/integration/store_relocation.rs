@@ -3,25 +3,18 @@ The store is relocatable: copy the directory somewhere else, point `--store` at 
 everything in it still resolves. That holds only as long as no config *inside* the store records
 where the store lives, which is what these tests check.
 
-Like `cli.rs`, this binary can set the store root only once per process, so both tests share the
-one root and use distinct import and project names.
+Like every test in this binary, both tests share the one store root (see [`crate::common`]) and use
+distinct import and project names.
 */
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Once;
 
 use ctadl_ascent::project::*;
 use tempfile::{TempDir, tempdir};
 
-static INIT: Once = Once::new();
-
-/// Points the store at a temp directory, once, and returns the root as the store itself
-/// resolves it.
+/// The shared store's root, as the store itself resolves it.
 fn store_root() -> PathBuf {
-    INIT.call_once(|| {
-        let dir = tempdir().unwrap();
-        init_store_path(Some(dir)).unwrap();
-    });
+    crate::common::store_dir();
     StorePaths::root().to_path_buf()
 }
 

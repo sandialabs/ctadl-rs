@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
@@ -237,6 +237,7 @@ pub fn run(opts: &Options) -> Result<bool> {
     }
     if let Some(apk) = dex_apk.as_deref().filter(|_| wants_dex) {
         tasks.push(Task::ApkChecks { apk });
+        tasks.push(Task::ApkIndexCheck { apk });
     }
     // Ghidra existing-project smoke check: drive the pcode importer against an
     // *existing* Ghidra project (not a fresh binary). Only meaningful when Ghidra
@@ -253,6 +254,11 @@ pub fn run(opts: &Options) -> Result<bool> {
             cecil: cecil_src.as_deref(),
             fixtures: cil_fixtures.as_deref(),
         });
+        tasks.push(Task::CilFrontend {
+            goldens: cil_goldens.as_deref(),
+            cecil: cecil_src.as_deref(),
+            fixtures: cil_fixtures.as_deref(),
+        });
     }
     // Schema drift check on the model files ctadl ships. It reads three small
     // files and runs no external tool, so it is never gated on a frontend: the
@@ -264,7 +270,7 @@ pub fn run(opts: &Options) -> Result<bool> {
     // More workers than tasks would just create idle scratch homes; no tasks at
     // all means no workers, and the empty report below reports the selection.
     let jobs = opts.jobs.unwrap_or_else(default_jobs).min(tasks.len());
-    let results = run_tasks(&tasks, opts, jobs)?;
+    let (results, mut timings) = run_tasks(&tasks, opts, jobs)?;
 
     if results.is_empty() {
         bail!("no test cases selected ({})", describe_selection(opts));
@@ -309,8 +315,19 @@ pub fn run(opts: &Options) -> Result<bool> {
         "\n{passed} passed, {skipped} skipped, {failures} failed, {xfails} xfail of {} case(s)",
         results.len()
     );
+    timings.sort_by_key(|(_, elapsed)| std::cmp::Reverse(*elapsed));
+    let slowest: Vec<String> = timings
+        .iter()
+        .take(SLOWEST_SHOWN)
+        .map(|(label, elapsed)| format!("{label} {:.1}s", elapsed.as_secs_f64()))
+        .collect();
+    println!("Slowest: {}", slowest.join(", "));
     Ok(failures == 0)
 }
+
+/// How many of the slowest tasks the report names, so a slow case is noticed before it is the
+/// one that sets the suite's wall clock.
+const SLOWEST_SHOWN: usize = 8;
 
 /// One independent unit of work. Each yields zero or more report entries.
 ///
@@ -333,8 +350,18 @@ enum Task<'a> {
     ApkChecks {
         apk: &'a Path,
     },
+    /// `apk:manifest-and-intents`, which indexes the app; see [`apk::run_index_check`].
+    ApkIndexCheck {
+        apk: &'a Path,
+    },
     /// cil-reader's Cecil parity checks; see [`crate::cil`].
     CilChecks {
+        goldens: Option<&'a Path>,
+        cecil: Option<&'a Path>,
+        fixtures: Option<&'a Path>,
+    },
+    /// `cil:frontend`; see [`cil::frontend_check`].
+    CilFrontend {
         goldens: Option<&'a Path>,
         cecil: Option<&'a Path>,
         fixtures: Option<&'a Path>,
@@ -349,6 +376,27 @@ enum Task<'a> {
 }
 
 impl Task<'_> {
+    /// Whether workers take this task before the single cases. These each run many checks or one
+    /// long one, so started last they would run on after everything else had finished.
+    fn is_long(&self) -> bool {
+        !matches!(self, Task::Case(_) | Task::ModelSchema { .. })
+    }
+
+    /// The task's name in the timing summary.
+    fn label(&self) -> String {
+        match self {
+            Task::Case(case) => case.name.clone(),
+            Task::JvmChecks { .. } => "jvm checks".to_string(),
+            Task::DexChecks { .. } => "dex checks".to_string(),
+            Task::ApkChecks { .. } => "apk checks".to_string(),
+            Task::ApkIndexCheck { .. } => "apk index check".to_string(),
+            Task::CilChecks { .. } => "cil checks".to_string(),
+            Task::CilFrontend { .. } => "cil:frontend".to_string(),
+            Task::ModelSchema { .. } => "model schema".to_string(),
+            Task::GhidraProject => GHIDRA_PROJECT_CASE.to_string(),
+        }
+    }
+
     /// Run this task to completion. Infrastructure failures (analyzer crashed,
     /// tool missing, etc.) are reported as failed entries rather than propagated,
     /// so one broken case never aborts the run.
@@ -386,6 +434,17 @@ impl Task<'_> {
                     });
                 retain_filtered(results, opts)
             }
+            Task::ApkIndexCheck { apk } => {
+                let results = scratch_dir("apk-index")
+                    .and_then(|work| apk::run_index_check(apk, &work))
+                    .unwrap_or_else(|err| {
+                        vec![(
+                            "apk:manifest-and-intents".to_string(),
+                            Outcome::Fail(format!("{err:#}")),
+                        )]
+                    });
+                retain_filtered(results, opts)
+            }
             Task::CilChecks {
                 goldens,
                 cecil,
@@ -395,6 +454,21 @@ impl Task<'_> {
                     .and_then(|work| cil::run_checks(*goldens, *cecil, *fixtures, &work))
                     .unwrap_or_else(|err| {
                         vec![("cil".to_string(), Outcome::Fail(format!("{err:#}")))]
+                    });
+                retain_filtered(results, opts)
+            }
+            Task::CilFrontend {
+                goldens,
+                cecil,
+                fixtures,
+            } => {
+                let results = scratch_dir("cil-frontend")
+                    .and_then(|work| cil::frontend_check(*goldens, *cecil, *fixtures, &work))
+                    .unwrap_or_else(|err| {
+                        vec![(
+                            "cil:frontend".to_string(),
+                            Outcome::Fail(format!("{err:#}")),
+                        )]
                     });
                 retain_filtered(results, opts)
             }
@@ -435,37 +509,56 @@ fn retain_filtered(mut results: Vec<(String, Outcome)>, opts: &Options) -> Vec<(
     results
 }
 
-/// Run `tasks` across `jobs` workers, returning every result in task order.
+/// Run `tasks` across `jobs` workers, returning every result in task order, and how long each
+/// task took.
 ///
 /// Each worker pulls the next unclaimed task until the list is exhausted, so a
-/// slow case (a Ghidra import) never blocks the queue behind it. Results are
+/// slow case (a Ghidra import) never blocks the queue behind it. The long tasks
+/// ([`Task::is_long`]) are pulled first, so the suite does not end waiting on one
+/// that started late. Results are
 /// tagged with their task index and sorted at the end rather than appended as
 /// they land, so the report reads identically no matter who finished first.
-fn run_tasks(tasks: &[Task<'_>], opts: &Options, jobs: usize) -> Result<Vec<(String, Outcome)>> {
+fn run_tasks(
+    tasks: &[Task<'_>],
+    opts: &Options,
+    jobs: usize,
+) -> Result<(Vec<(String, Outcome)>, Vec<(String, Duration)>)> {
     let workers = (0..jobs).map(Worker::new).collect::<Result<Vec<_>>>()?;
 
+    let mut order: Vec<usize> = (0..tasks.len()).collect();
+    order.sort_by_key(|&index| !tasks[index].is_long());
+    let order = &order;
     let next = &AtomicUsize::new(0);
     let results = &Mutex::new(Vec::new());
 
     std::thread::scope(|scope| {
         for worker in &workers {
             scope.spawn(move || loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(task) = tasks.get(index) else { break };
+                let Some(&index) = order.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                    break;
+                };
+                let task = &tasks[index];
+                let start = Instant::now();
                 let outcomes = task.run(worker, opts);
+                let elapsed = start.elapsed();
                 // Held only to push a finished result; no test work happens
                 // under the lock.
-                results.lock().unwrap().push((index, outcomes));
+                results.lock().unwrap().push((index, outcomes, elapsed));
             });
         }
     });
 
     let mut collected = std::mem::take(&mut *results.lock().unwrap());
-    collected.sort_by_key(|(index, _)| *index);
-    Ok(collected
+    collected.sort_by_key(|(index, _, _)| *index);
+    let timings = collected
+        .iter()
+        .map(|(index, _, elapsed)| (tasks[*index].label(), *elapsed))
+        .collect();
+    let outcomes = collected
         .into_iter()
-        .flat_map(|(_, outcomes)| outcomes)
-        .collect())
+        .flat_map(|(_, outcomes, _)| outcomes)
+        .collect();
+    Ok((outcomes, timings))
 }
 
 /// Human-readable summary of what `--frontend`/`--filter` selected, so a short
@@ -1239,14 +1332,18 @@ pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
     let mut cmd = Command::new(cargo);
     // Run from the workspace root regardless of the caller's cwd. The xtask crate
     // lives at `<root>/xtask`, so its manifest dir's parent is the root.
+    //
+    // `--workspace` rather than `-p ctadl-ascent`: cargo resolves features across the packages it
+    // selects, and `-p ctadl-ascent` leaves out xtask's `boon`, which turns on `idna`'s `default`.
+    // That one feature changes the hash of `idna` and of every crate above it, so a `-p` build
+    // compiles its own copy of about forty crates instead of reusing the workspace build's.
     cmd.current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().context(
         "internal error: CARGO_MANIFEST_DIR has no parent; expected `<workspace>/xtask`",
     )?)
     .args([
         "build",
         "--message-format=json",
-        "-p",
-        "ctadl-ascent",
+        "--workspace",
         "--bin",
         "ctadl",
     ]);

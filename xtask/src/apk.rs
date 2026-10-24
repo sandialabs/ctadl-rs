@@ -8,8 +8,10 @@
 //! SARIF it emits, so the argument wiring, the exit status, and the on-disk layout are all in
 //! scope -- skipping an up-to-date re-import, for one, is decided entirely in `main.rs`.
 //!
-//! The import is the expensive part (~13 s) and every check needs the same one, so it is done
-//! once and the checks read the same store.
+//! The import takes ~13 s and the checks read one shared store, except
+//! `apk:manifest-and-intents`. It indexes, which takes longer than everything else here together,
+//! and writes the project `apk:model-check` asserts is absent, so it imports into a store of its
+//! own ([`run_index_check`]) and runs alongside the others.
 //!
 //! Nothing here needs a toolchain: the APK is prebuilt and checked in, so unlike the `dex:*` and
 //! `jvm:*` checks there is no javac, no `dx`, and no Ghidra in the loop. All it needs is `ctadl`.
@@ -39,8 +41,11 @@ pub const CHECKS: &[&str] = &[
     "apk:report",
     "apk:report-invariants",
     "apk:reimport",
-    "apk:manifest-and-intents",
+    INDEX_CHECK,
 ];
+
+/// The check [`run_index_check`] runs. The rest of [`CHECKS`] are [`run_checks`]'s.
+const INDEX_CHECK: &str = "apk:manifest-and-intents";
 
 // The store layout `ctadl` writes. Duplicated from `ctadl_import::project` rather than imported,
 // even though xtask links the analyzer: these checks are *about* the on-disk contract, so a path
@@ -62,13 +67,14 @@ const MODELS: &str = r#"{"model_generators": [
    "model": {"sources": [{"kind": "k", "port": "Return"}]}}
 ]}"#;
 
-/// Import the app once, then run every check against that store. Returns named (check, outcome)
-/// pairs to fold into the regression report.
+/// Import the app once, then run every check but [`INDEX_CHECK`] against that store. Returns named
+/// (check, outcome) pairs to fold into the regression report.
 ///
 /// The import is shared, so a failure in it is not one failed check -- there is nothing for the
 /// others to look at. It is reported as `apk:import` failing and the rest are Skipped naming it,
 /// which reads as what happened rather than as several independent breakages.
 pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
+    let shared = &CHECKS[..CHECKS.len() - 1];
     let state = work.join("state");
     std::fs::create_dir_all(&state).with_context(|| format!("creating {}", state.display()))?;
     let store = state.join("ctadl");
@@ -78,7 +84,7 @@ pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
 
     if let Err(err) = import(work, &state, &apk, &[]) {
         let mut results = vec![("apk:import".to_string(), Outcome::Fail(format!("{err:#}")))];
-        results.extend(CHECKS.iter().skip(1).map(|name| {
+        results.extend(shared.iter().skip(1).map(|name| {
             (
                 (*name).to_string(),
                 Outcome::Skip("the shared import failed; see apk:import".to_string()),
@@ -90,8 +96,7 @@ pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
     // Positional, and in the order [`CHECKS`] names them -- the checks share a store, so the
     // order is part of the arrangement rather than a presentation choice. `apk:model-check` runs
     // before `apk:reimport` because it wants the store exactly as the first import left it,
-    // and `apk:reimport` re-imports. `apk:manifest-and-intents` runs last because it indexes,
-    // which writes the project `apk:model-check` asserts is absent.
+    // and `apk:reimport` re-imports.
     let outcomes = [
         to_outcome(check_import(work, &state, &store, &apk)),
         to_outcome(check_no_native_libs(&store)),
@@ -99,13 +104,25 @@ pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
         to_outcome(check_report(work, &state, &store)),
         to_outcome(check_report_invariants(work, &state)),
         to_outcome(check_reimport(work, &state, &store, &apk)),
-        to_outcome(check_manifest_and_intents(work, &state, &store)),
     ];
-    Ok(CHECKS
+    Ok(shared
         .iter()
         .map(|name| (*name).to_string())
         .zip(outcomes)
         .collect())
+}
+
+/// Import the app into a store of its own and run [`INDEX_CHECK`] against it. Apart from
+/// [`run_checks`], so the index, the slowest step here, runs alongside the other checks.
+pub fn run_index_check(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
+    let state = work.join("state");
+    std::fs::create_dir_all(&state).with_context(|| format!("creating {}", state.display()))?;
+    let store = state.join("ctadl");
+    let apk = std::fs::canonicalize(apk)
+        .with_context(|| format!("failed to canonicalize {}", apk.display()))?;
+    let outcome = import(work, &state, &apk, &[])
+        .and_then(|()| check_manifest_and_intents(work, &state, &store));
+    Ok(vec![(INDEX_CHECK.to_string(), to_outcome(outcome))])
 }
 
 fn to_outcome(result: Result<()>) -> Outcome {
@@ -205,7 +222,7 @@ fn check_no_native_libs(store: &Path) -> Result<()> {
 /// `ctadl query` would happily use.
 ///
 /// The synthetic-program half of this -- what `check_programs` decides, given programs and no
-/// store -- stays in `ctadl-ascent/tests/model_check.rs`, which needs no artifact and runs in
+/// store -- stays in `ctadl-ascent/tests/integration/model_check.rs`, which needs no artifact and runs in
 /// milliseconds. What is here is the half that needs a real import.
 fn check_model_check(work: &Path, state: &Path, store: &Path) -> Result<()> {
     let models = work.join("models.json");
@@ -808,8 +825,9 @@ fn check_reimport(work: &Path, state: &Path, store: &Path, apk: &Path) -> Result
 ///
 /// The counts are a property of this APK, of the manifest decoder, and of intent resolution, so
 /// a deliberate change to any of them moves them; re-pin from `ctadl index app` and say in the commit
-/// message which change moved them. The index is the expensive part -- several minutes on this
-/// app, which is why this lives here and not under `cargo test`.
+/// message which change moved them. The index is the expensive part -- about two minutes on this
+/// app in a debug build, which is why this lives here and not under `cargo test`. It runs on every
+/// core (`-j 0`); the parallel engine derives the same relations as the serial one.
 fn check_manifest_and_intents(work: &Path, state: &Path, store: &Path) -> Result<()> {
     use ctadl_ascent::facts::IntentPairKind;
     use ctadl_ascent::languages::android_manifest::AndroidManifest;
@@ -856,7 +874,10 @@ fn check_manifest_and_intents(work: &Path, state: &Path, store: &Path) -> Result
         "NoteReminderReceiver is not an unexported component"
     );
 
-    exec::run_checked(command(work, state, &["index", IMPORT])?, "ctadl index")?;
+    exec::run_checked(
+        command(work, state, &["index", "-j", "0", IMPORT])?,
+        "ctadl index",
+    )?;
     let index = store.join(PROJECTS_DIR).join(IMPORT).join("index");
     let pairs = ctadl_ascent::facts::schema::intent_pair::try_load(&index)
         .with_context(|| format!("loading intent pairs from {}", index.display()))?;
@@ -939,12 +960,18 @@ fn modified(path: &Path) -> Result<SystemTime> {
 mod tests {
     use super::*;
 
-    /// [`run_checks`] fills [`CHECKS`] positionally, so a check added to one and not the other
-    /// would silently drop a result or mislabel one. The count is what a compiler cannot catch.
+    /// [`run_checks`] fills all of [`CHECKS`] but [`INDEX_CHECK`] positionally, so a check added
+    /// to one and not the other would silently drop a result or mislabel one. The count is what a
+    /// compiler cannot catch.
     #[test]
     fn every_check_is_named() {
         assert_eq!(CHECKS.len(), 7, "CHECKS and run_checks must stay in step");
         assert_eq!(CHECKS[0], "apk:import", "the shared import reports first");
+        assert_eq!(
+            CHECKS.last(),
+            Some(&INDEX_CHECK),
+            "run_index_check's check is last"
+        );
         assert!(
             CHECKS.iter().all(|n| n.starts_with("apk:")),
             "the family prefix is what --filter selects on: {CHECKS:?}"

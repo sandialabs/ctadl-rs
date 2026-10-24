@@ -18,21 +18,14 @@ sub-imports, and everything asserted here still holds.
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Once;
 
 use ctadl_ascent::cli;
 use ctadl_ascent::project::*;
 use tempfile::tempdir;
 
-static INIT: Once = Once::new();
-
-/// Points the store at a temp directory, once per process.
+/// The shared store's root, as the store itself resolves it.
 fn store_root() -> PathBuf {
-    INIT.call_once(|| {
-        let dir = tempdir().unwrap();
-        // Leaked on purpose: the store has to outlive every test in this binary.
-        init_store_path(Some(Box::leak(Box::new(dir)).path())).unwrap();
-    });
+    crate::common::store_dir();
     StorePaths::root().to_path_buf()
 }
 

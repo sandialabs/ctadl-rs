@@ -1987,7 +1987,7 @@ fn field_increment_is_update() {
 // A second store into the same aggregate creates a new SSA version of the receiver, and
 // the stored target must propagate across it to reach the indirect call: the transitive
 // rule gates on `paths(p_new)`, so a call's *receiver* path must be registered as a
-// program path (ctadl-ascent/src/index_engine/mod.rs):
+// program path (ctadl-index/src/index_engine/mod.rs):
 //     program_paths(p) <-- callee_info(_, _, _, p, _);
 //
 // Each test routes param 1 through `id` and back; a `return <- @p1` summary can only come

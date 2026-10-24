@@ -4,23 +4,9 @@
 //! `cargo xtask regression --frontend jni`. This file checks what can be checked with Lua alone,
 //! which needs no toolchain.
 
+use crate::common::store_dir;
 use ctadl_ascent::cli;
-use ctadl_ascent::project::{
-    AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports, init_store_path,
-};
-use std::path::Path;
-use std::sync::Once;
-
-static INIT: Once = Once::new();
-
-fn store_dir() -> &'static Path {
-    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    let dir = DIR.get_or_init(|| tempfile::tempdir().expect("temp store"));
-    INIT.call_once(|| {
-        init_store_path(Some(dir.path())).expect("init store");
-    });
-    dir.path()
-}
+use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports};
 
 fn import_lua(name: &str, text: &str) -> ArtifactImport {
     let src = store_dir().join(format!("{name}.lua"));

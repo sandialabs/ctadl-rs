@@ -8,12 +8,12 @@ use std::path;
 use source_info::FileSpanId;
 
 use crate::error::Error;
+use crate::facts::QueryEndpoint;
 use crate::facts::parquet;
 use crate::facts::{
     FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, ImportId, InsnId, Path,
     TaintState,
 };
-use crate::query_engine::QueryEndpoint;
 
 // Captures the Record type and FILENAME and COLUMNS constants.
 //

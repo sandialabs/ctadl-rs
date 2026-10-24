@@ -16,25 +16,12 @@
 //! `Jni:<stem>+bridge` cases run the same join declaratively under `--no-jni-bridge`, as a direct
 //! A/B against the built-in pass.
 
+use crate::common::store_dir;
 use ctadl_ascent::cli;
-use ctadl_ascent::project::{
-    AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports, init_store_path,
-};
+use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, SubImports};
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
-use std::sync::Once;
-
-static INIT: Once = Once::new();
-
-fn store_dir() -> &'static Path {
-    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    let dir = DIR.get_or_init(|| tempfile::tempdir().expect("temp store"));
-    INIT.call_once(|| {
-        init_store_path(Some(dir.path())).expect("init store");
-    });
-    dir.path()
-}
+use std::path::PathBuf;
 
 /// The app. `alpha_stub` is called and never defined here, so it is an *external* of this
 /// import: a matchable, bodyless callee with no `FunctionData` at all. Nothing in this artifact

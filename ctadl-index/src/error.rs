@@ -191,7 +191,7 @@ pub enum Error {
     #[error("flowy error")]
     Flowy(#[from] ctadl_flowy::FlowyError),
     #[error("datafusion error")]
-    DataFusion(#[from] datafusion::error::DataFusionError),
+    DataFusion(#[from] datafusion_common::DataFusionError),
     #[error("error converting facts: {0}")]
     FactsConvert(String),
     #[error("JSON model parsing error")]
@@ -241,7 +241,7 @@ from_import!(
 /// error. Unlike anyhow, it just uses our error types to do so.
 ///
 /// ```
-/// use ctadl_ascent::error::{Error, ErrorContext};
+/// use ctadl_index::error::{Error, ErrorContext};
 /// fn example() -> Result<u32, Error> {
 ///   // Imagine this produced an error
 ///   let result: Result<u32, Error> = Err(todo!());

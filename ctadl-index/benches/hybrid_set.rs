@@ -3,12 +3,12 @@
 //! representations it is competing with.
 //!
 //! This is the data structure on its own — no `locals` store, no Ascent, no views. The
-//! store-level and end-to-end numbers come from `cargo bench -p ctadl-ascent --bench locals_trie`
+//! store-level and end-to-end numbers come from `cargo bench -p ctadl-index --bench locals_trie`
 //! and `scripts/locals-bench.py`.
 //!
 //! Run with:
-//!     cargo bench -p ctadl-ascent --bench hybrid_set
-//!     cargo bench -p ctadl-ascent --bench hybrid_set -- --tsv   # machine-readable
+//!     cargo bench -p ctadl-index --bench hybrid_set
+//!     cargo bench -p ctadl-index --bench hybrid_set -- --tsv   # machine-readable
 //!
 //! Four representations, all holding the production leaf `(Path, FormalIndex, Path)` = 24 B:
 //!
@@ -32,7 +32,7 @@ use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use ctadl_ascent::index_engine::hybrid_set::{DefaultHashBuilder, HybridSet, SMALL_THRESHOLD};
+use ctadl_index::index_engine::hybrid_set::{DefaultHashBuilder, HybridSet, SMALL_THRESHOLD};
 use rustc_hash::FxHasher;
 
 // ---------------------------------------------------------------------------

@@ -1,12 +1,11 @@
 /*!
 NOTE: Tests in this file have a special structure.
 
-We have to be careful to set up a temporary store path for the tests. This should be done only once
-per process, so we do it in `initialize`. This sets up the store to point to a temp directory. To
-ensure this happens for your store tests, wrap the test body in [`run_store_test`].
+The store is a temp directory shared by every test in this binary (see [`crate::common`]). To make
+sure it is set up for your store tests, wrap the test body in [`run_store_test`].
 
-Also, tests need to be sure their artifact import and project names are distinct. This needs to be
-done manually.
+Also, tests need to be sure their artifact import and project names are distinct, across every
+file in this binary. This needs to be done manually.
 
 Every test kept here runs in milliseconds. Keep it that way: a case that needs a real artifact
 belongs in `xtask`, and one that needs only a synthetic one belongs here.
@@ -14,27 +13,17 @@ belongs in `xtask`, and one that needs only a synthetic one belongs here.
 */
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Once;
 use tempfile::tempdir;
 
 use ctadl_ascent::cli;
 use ctadl_ascent::project::*;
-
-static INIT: Once = Once::new();
-
-pub fn initialize() {
-    INIT.call_once(|| {
-        let dir = tempdir().unwrap();
-        init_store_path(Some(dir)).unwrap();
-    });
-}
 
 /// Wrap the body of your store tests in this. See the note at the top of the file.
 fn run_store_test<F>(test: F)
 where
     F: FnOnce() + std::panic::UnwindSafe,
 {
-    initialize();
+    crate::common::store_dir();
     let result = std::panic::catch_unwind(test);
     assert!(result.is_ok())
 }
