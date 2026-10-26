@@ -123,3 +123,21 @@ Two causes, both fixed:
 
 After the fixes, `full:0` passes 46 of 46, and 7 cases' indexes name a function (`main` or
 `handler`).
+
+### After merging `main` `7c98b73e`
+
+`main` now runs the SSA passes per function on threads, and mem2reg runs there too. Re-measured
+the same way, on a quiet machine:
+
+| App | `--mem2reg` | `locals` | Fixpoint | Peak | Notifications |
+|---|---|---|---|---|---|
+| `uclited` | `full` | 12.1 M | 3.0 s | 0.54 GiB | 2 |
+| `androidudpbus` | `window:8` | 337.9 M | 166 s | 13.27 GiB | |
+| | `full` | 30.9 M | 22 s | 2.09 GiB | 27 |
+| `glxy` | `window:8` | 100.4 M | 44 s | 4.07 GiB | |
+| | `full` | 83.7 M | 38 s | 3.64 GiB | 3 |
+
+mem2reg's counts are identical to before the merge; the rows fall 1-5% from `main`'s own changes.
+The conclusions stand. The regression suite passes 46 of 46 by default and under `full:0`, which
+`cargo xtask regression --mem2reg full:0` now runs and judges: a lost flow is an XFAIL when an
+index notification names a function, and a FAIL when none does.
