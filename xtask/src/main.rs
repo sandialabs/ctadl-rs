@@ -11,6 +11,7 @@
 //!     cargo xtask regression --frontend pcode
 //!     cargo xtask regression --filter <name>
 //!     cargo xtask regression --tests-dir <dir>
+//!     cargo xtask regression --frontend pcode,jni --mem2reg full:0
 //!     cargo xtask report-eval --apks <dir>
 //!     cargo xtask dex-opcodes [--avd <name>] [--save]
 //!     cargo xtask cil bless|bless-flow|bless-mir|codegen|exec|models|taint
@@ -113,6 +114,9 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
             }
             "--release" => {
                 opts.release = true;
+            }
+            "--mem2reg" => {
+                opts.mem2reg = Some(args.next().context("--mem2reg requires a value")?);
             }
             "--tests-dir" => {
                 let dir = args.next().context("--tests-dir requires a value")?;
@@ -371,6 +375,11 @@ Tasks:
                              capped). Cases are independent and each runs in its
                              own scratch dir, so this only trades memory for wall
                              clock; `-j 1` reverts to running them one at a time.
+    --mem2reg <policy>       Index every case with `ctadl index --mem2reg <policy>`
+                             (default: ctadl's own default). For a policy that
+                             can lose flows, such as `full:0`: a case that loses
+                             its flow is an XFAIL when an index notification
+                             names a function, and a FAIL when none does.
     --release                Build and exercise the release `ctadl` binary
                              (default: debug). Either way the binary is rebuilt
                              from current source before any case runs, so the

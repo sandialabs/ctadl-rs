@@ -97,6 +97,10 @@ pub struct Options {
     /// Either way the binary is rebuilt from current source before any case
     /// runs; see [`build_ctadl`].
     pub release: bool,
+    /// The `--mem2reg` policy every `ctadl index` runs with, through [`MEM2REG_ENV`]. `None`
+    /// runs the default. A policy that can lose flows (`full:0` promotes every function fully)
+    /// turns a lost flow into a report; see [`explain_lost_flow`].
+    pub mem2reg: Option<String>,
 }
 
 impl Default for Options {
@@ -113,6 +117,7 @@ impl Default for Options {
             cil_fixtures: None,
             jobs: None,
             release: false,
+            mem2reg: None,
         }
     }
 }
@@ -153,6 +158,13 @@ pub(crate) enum Outcome {
 /// Run the suite. Returns `Ok(true)` if every selected case passed or was
 /// skipped, `Ok(false)` if any failed.
 pub fn run(opts: &Options) -> Result<bool> {
+    // Every `ctadl` the cases spawn inherits this, so it is set before any worker starts. Without
+    // `--mem2reg` it is cleared, so a value left in the caller's shell cannot change the default
+    // run.
+    match &opts.mem2reg {
+        Some(policy) => std::env::set_var(MEM2REG_ENV, policy),
+        None => std::env::remove_var(MEM2REG_ENV),
+    }
     let tests_dir = discovery::resolve_tests_dir(opts.tests_dir.as_deref())?;
 
     let mut cases = discovery::discover(&tests_dir)?;
@@ -405,10 +417,11 @@ impl Task<'_> {
             Task::Case(case) => {
                 let outcome =
                     run_case(case, worker).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")));
-                vec![(
-                    case.name.clone(),
-                    apply_xfail_allowlists(&case.name, outcome),
-                )]
+                let mut outcome = apply_xfail_allowlists(&case.name, outcome);
+                if let Some(policy) = &opts.mem2reg {
+                    outcome = explain_lost_flow(&scratch_path(&case.name), policy, outcome);
+                }
+                vec![(case.name.clone(), outcome)]
             }
             Task::JvmChecks { samples, cases } => {
                 let results = scratch_dir("jvm")
@@ -754,6 +767,52 @@ fn apply_xfail_allowlists(name: &str, outcome: Outcome) -> Outcome {
         }
         other => other,
     }
+}
+
+/// The environment variable `ctadl index` reads its `--mem2reg` default from.
+const MEM2REG_ENV: &str = "CTADL_MEM2REG";
+
+/// Judges a failed case run under `--mem2reg <policy>` by the notifications its indexes wrote.
+///
+/// A policy like `full:0` is expected to lose flows, and `ctadl index` names each function it
+/// analyzed in a way that may lose them in its `notifications.log`. A lost flow is then an XFAIL
+/// that lists those lines. A lost flow with no notification under `work` is a FAIL: the index
+/// missed a function it should have named. The check is per case, not per flow: it does not
+/// match a notification to the function the flow went through.
+fn explain_lost_flow(work: &Path, policy: &str, outcome: Outcome) -> Outcome {
+    let Outcome::Fail(why) = outcome else {
+        return outcome;
+    };
+    let mut lines = BTreeSet::new();
+    if let Err(err) = index_notifications(work, &mut lines) {
+        return Outcome::Fail(format!("{why}\nreading notifications: {err:#}"));
+    }
+    if lines.is_empty() {
+        return Outcome::Fail(format!(
+            "{why}\nlost under --mem2reg {policy}, and no index notification names a function"
+        ));
+    }
+    let lines: Vec<String> = lines.into_iter().collect();
+    Outcome::Xfail(format!(
+        "{why}\nlost under --mem2reg {policy}; the index notifications:\n  {}",
+        lines.join("\n  ")
+    ))
+}
+
+/// Adds the lines of every `notifications.log` under `dir`, the case's scratch directory, which
+/// holds each project the case indexed.
+fn index_notifications(dir: &Path, lines: &mut BTreeSet<String>) -> Result<()> {
+    for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let path = entry?.path();
+        if path.is_dir() {
+            index_notifications(&path, lines)?;
+        } else if path.file_name().is_some_and(|n| n == "notifications.log") {
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            lines.extend(text.lines().filter(|l| !l.is_empty()).map(str::to_string));
+        }
+    }
+    Ok(())
 }
 
 fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
@@ -2625,25 +2684,61 @@ fn run_root() -> PathBuf {
 static SCRATCH_NAMES: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
 fn scratch_dir(name: &str) -> Result<PathBuf> {
-    // Colons are invalid in Windows directory names (e.g. `Jvm:Foo`).
-    let safe_name = name.replace(':', "_");
-    if !SCRATCH_NAMES.lock().unwrap().insert(safe_name.clone()) {
-        bail!("two regression cases claim the same scratch directory `{safe_name}`");
+    let dir = scratch_path(name);
+    if !SCRATCH_NAMES
+        .lock()
+        .unwrap()
+        .insert(dir.display().to_string())
+    {
+        bail!(
+            "two regression cases claim the same scratch directory `{}`",
+            dir.display()
+        );
     }
-    let dir = run_root().join(&safe_name);
     exec::fresh_dir(&dir)?;
     Ok(dir)
 }
 
+/// Where [`scratch_dir`] puts the work of the case `name`.
+fn scratch_path(name: &str) -> PathBuf {
+    // Colons are invalid in Windows directory names (e.g. `Jvm:Foo`).
+    run_root().join(name.replace(':', "_"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{apply_xfail_allowlists, from_summary_links, Outcome};
+    use super::{apply_xfail_allowlists, explain_lost_flow, from_summary_links, Outcome};
 
     /// A failing JVM case fails the suite unless it is a known failure.
     #[test]
     fn a_failing_jvm_case_is_enforced() {
         let outcome = apply_xfail_allowlists("Jvm:NewCase", Outcome::Fail("no flow".into()));
         assert!(matches!(outcome, Outcome::Fail(_)));
+    }
+
+    /// Under `--mem2reg`, a lost flow is an XFAIL when an index named a function, wherever under
+    /// the case's directory that index is, and a FAIL when none did.
+    #[test]
+    fn a_lost_flow_needs_a_notification() {
+        let work = std::env::temp_dir().join(format!("xtask_lost_flow_{}", std::process::id()));
+        let index = work.join("state/ctadl/projects/app/index");
+        std::fs::create_dir_all(&index).unwrap();
+        let lost = || Outcome::Fail("no code flow connects a source to a sink".into());
+
+        let outcome = explain_lost_flow(&work, "full:0", lost());
+        assert!(
+            matches!(&outcome, Outcome::Fail(why) if why.contains("no index notification")),
+            "no notifications.log: still a failure"
+        );
+
+        std::fs::write(index.join("notifications.log"), "mem2reg full: main: ...\n").unwrap();
+        let outcome = explain_lost_flow(&work, "full:0", lost());
+        assert!(matches!(&outcome, Outcome::Xfail(why) if why.contains("mem2reg full: main")));
+        assert!(matches!(
+            explain_lost_flow(&work, "full:0", Outcome::Pass),
+            Outcome::Pass
+        ));
+        std::fs::remove_dir_all(&work).unwrap();
     }
 
     #[test]
