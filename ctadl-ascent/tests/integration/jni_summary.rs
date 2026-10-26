@@ -157,3 +157,66 @@ fn provenance_says_when_it_cannot_check_staleness() {
         }]
     );
 }
+
+/// A summary project's notifications reach the app through its summaries, so the app's index
+/// repeats them, naming the project, and the app's query reports them. Indexing the app again
+/// without the summary project drops them.
+#[test]
+fn summary_project_notifications_reach_the_app_and_its_sarif() {
+    use ctadl_ascent::index_engine::notifications;
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    import_lua(
+        "notes_lib",
+        "local function f(x)\n  return x\nend\nreturn f\n",
+    );
+    let summary = AnalysisProject::try_create("notes_sp", &["notes_lib"], SubImports::All)
+        .expect("summary project");
+    cli::index(&summary, &[], &[], false, cli::IndexOptions::default()).expect("indexing sp");
+    // Lua has no stack slots to promote, so the note stands in for one mem2reg would write.
+    let note = "mem2reg full: f: frame address escapes (call input); flows through those slots \
+                may be missed";
+    let summary_index = summary.index_path().expect("summary index path");
+    notifications::save(&summary_index, &[note.to_string()].into()).expect("writing note");
+
+    import_lua("notes_app", "print(io.read())\n");
+    let app = AnalysisProject::try_create("notes_app", &["notes_app"], SubImports::All)
+        .expect("app project");
+    let app_index = app.index_path().expect("app index path");
+    let expected = format!("summary project 'notes_sp': {note}");
+    cli::index(
+        &app,
+        &["notes_sp".to_string()],
+        &[],
+        false,
+        cli::IndexOptions::default(),
+    )
+    .expect("indexing app");
+    assert_eq!(
+        notifications::load(&app_index).expect("reading app notes"),
+        std::slice::from_ref(&expected)
+    );
+
+    let sarif = store_dir().join("notes_app.sarif");
+    cli::query(&app, &[], &sarif, SarifProfile::default(), None).expect("querying");
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sarif).expect("reading sarif"))
+            .expect("parsing sarif");
+    let warnings: Vec<&str> = doc["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+        .as_array()
+        .expect("toolExecutionNotifications")
+        .iter()
+        .filter(|n| n["descriptor"]["id"] == "CTADL0104.index-notification")
+        .map(|n| {
+            assert_eq!(n["level"], "warning");
+            n["message"]["text"].as_str().expect("message text")
+        })
+        .collect();
+    assert_eq!(warnings, [format!("ctadl index: {expected}")]);
+
+    cli::index(&app, &[], &[], false, cli::IndexOptions::default()).expect("reindexing app");
+    assert_eq!(
+        notifications::load(&app_index).expect("reading app notes"),
+        Vec::<String>::new()
+    );
+}
