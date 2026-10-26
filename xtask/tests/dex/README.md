@@ -2,7 +2,8 @@
 
 `com.noto_54.apk` is a real third-party Android application, kept here as a
 robustness fixture for the dex-reader regression checks (`cargo xtask
-regression`, the `dex:apk` case). It exercises dex-reader against a large,
+regression`, the `dex:apk` case) and the `apk:*` end-to-end checks
+(`xtask/src/apk.rs`). It exercises dex-reader against a large,
 multi-`classes*.dex` app that no synthetic sample reproduces.
 
 ## Why this is a committed binary
@@ -19,10 +20,9 @@ parse the result — see `xtask/src/dex.rs`.
 
 xtask owns this fixture. The regression harness finds it automatically at
 `xtask/tests/dex/com.noto_54.apk`, or via `cargo xtask regression --dex-apk
-<path>`. The Nix `regression` check passes the path explicitly. Nothing else reads it:
-the `ctadl-ascent/tests/cli.rs` import smoke test that once did has moved here as
-the `apk:*` checks, which is why that file's own rule -- synthetic input, temp
-store, milliseconds -- holds without exception.
+<path>`. The Nix `regression` check passes the path explicitly. Outside xtask, only
+a unit test in `ctadl-ascent/src/languages/android_manifest.rs` reads it, and it
+skips when the file is absent.
 
 # `all-opcodes.smali`
 

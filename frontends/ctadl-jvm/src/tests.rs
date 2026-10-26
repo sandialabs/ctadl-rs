@@ -1,9 +1,16 @@
 use super::import_class;
 use ctadl_ir::mir::TerminatorKind;
+use ctadl_ir::mir::call::VirtualMethodTable;
 
 /// A class file for `Demo` with a `public static` method for each
 /// `(name, descriptor, bytecode)`.
 fn class_with_methods(methods: &[(&str, &str, &[u8])]) -> Vec<u8> {
+    class_with_pool(&[], methods)
+}
+
+/// [`class_with_methods`], with `pool` appended to the constant pool. Its
+/// entries are numbered from `6 + 2 * methods.len()`.
+fn class_with_pool(pool: &[&[u8]], methods: &[(&str, &str, &[u8])]) -> Vec<u8> {
     fn utf8(out: &mut Vec<u8>, s: &str) {
         out.push(1);
         out.extend((s.len() as u16).to_be_bytes());
@@ -14,7 +21,7 @@ fn class_with_methods(methods: &[(&str, &str, &[u8])]) -> Vec<u8> {
     out.extend(0u16.to_be_bytes());
     out.extend(49u16.to_be_bytes());
     // Entries 1..=5, then a name and a descriptor per method.
-    out.extend((6 + 2 * methods.len() as u16).to_be_bytes());
+    out.extend((6 + 2 * methods.len() as u16 + pool.len() as u16).to_be_bytes());
     utf8(&mut out, "Demo"); // 1
     out.extend([7, 0, 1]); // 2: Class Demo
     utf8(&mut out, "java/lang/Object"); // 3
@@ -23,6 +30,9 @@ fn class_with_methods(methods: &[(&str, &str, &[u8])]) -> Vec<u8> {
     for (name, descriptor, _) in methods {
         utf8(&mut out, name);
         utf8(&mut out, descriptor);
+    }
+    for entry in pool {
+        out.extend(*entry);
     }
     out.extend(0x0021u16.to_be_bytes()); // public super
     out.extend(2u16.to_be_bytes());
@@ -130,4 +140,46 @@ fn value_return_returns_the_top_of_the_stack() {
     assert_eq!(returned("->int(II)I"), "stack1");
     assert_eq!(returned("->long(IJ)J"), "stack1");
     assert_eq!(returned("->alone(I)I"), "stack0");
+}
+
+/// A receiver-less `invokedynamic` targets an extern whose class is named in
+/// the same `L…;` form as its signature's class.
+#[test]
+fn receiverless_invokedynamic_extern_class_matches_its_signature() {
+    fn utf8(s: &str) -> Vec<u8> {
+        let mut out = vec![1];
+        out.extend((s.len() as u16).to_be_bytes());
+        out.extend(s.as_bytes());
+        out
+    }
+    let name = utf8("makeConcatWithConstants"); // 8
+    let descriptor = utf8("()Ljava/lang/String;"); // 9
+    let name_and_type = [12, 0, 8, 0, 9]; // 10
+    let invokedynamic = [18, 0, 0, 0, 10]; // 11: bootstrap method 0
+    // invokedynamic #11; pop; return
+    let code = [0xba, 0x00, 0x0b, 0x00, 0x00, 0x57, 0xb1];
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("Demo.class");
+    std::fs::write(
+        &path,
+        class_with_pool(
+            &[&name, &descriptor, &name_and_type, &invokedynamic],
+            &[("cat", "()V", &code)],
+        ),
+    )
+    .expect("write class");
+
+    let info = import_class(&path).expect("the class imports");
+    let VirtualMethodTable::Java { methods, .. } = &info.vmt else {
+        panic!("a Java VMT");
+    };
+    let (class, _, _, method) = methods
+        .iter()
+        .find(|(_, simple_name, _, _)| simple_name.0 == "makeConcatWithConstants")
+        .expect("the invokedynamic target is in the VMT");
+    assert_eq!(class.0, "L?unknown;");
+    assert_eq!(
+        method.0,
+        "L?unknown;->makeConcatWithConstants()Ljava/lang/String;"
+    );
 }

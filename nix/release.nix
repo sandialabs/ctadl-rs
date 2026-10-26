@@ -14,10 +14,9 @@
 #   x86_64-linux    | x86_64-unknown-linux-musl, x86_64-pc-windows-gnu
 #   aarch64-darwin  | aarch64-apple-darwin
 #
-# CI builds the two cross targets on ubuntu-latest and the Darwin one on a macOS
-# runner; see .github/workflows/release.yml. Asking a builder for a target it
-# cannot reach is not an error here, it just will not succeed: the attribute set
-# is the same on every system, and the failure comes from the build.
+# Asking a builder for a target it cannot reach is not an error here, it just
+# will not succeed: the attribute set is the same on every system, and the
+# failure comes from the build.
 #
 # Only `ctadl` ships. `xtask` is the in-tree test harness.
 {
@@ -69,10 +68,10 @@ let
         {
           inherit src version;
           # Without these, naersk names the derivation after the root manifest,
-          # which has no `[package]` -- so all three came out as
-          # `rust-workspace-unknown`. They are `ctadl-<version>` now. All three
-          # targets share that name; they are still distinct derivations, and
-          # the release workflow renames the artifacts per target anyway.
+          # which has no `[package]`: `rust-workspace-unknown`. All three
+          # targets share the name `ctadl-<version>`; they are still distinct
+          # derivations, and the release workflow renames the artifacts per
+          # target anyway.
           name = binName;
           # A cross build cannot run the tests it compiles, and the workspace's
           # tests run in the `test` workflow regardless.
@@ -83,13 +82,14 @@ let
           # this workspace exists yet.
           copyBinsFilter = ''select(.reason == "compiler-artifact" and .executable != null and .profile.test == false and .target.name == "${binName}")'';
           CARGO_BUILD_TARGET = target;
-          # Fat LTO for what ships: optimize the whole program as one LLVM
-          # module rather than thin LTO's per-unit summaries. It buys a smaller
-          # binary for a longer link. Set here, as a profile override, rather
-          # than in `[profile.release]`, so only the release derivations pay
-          # for it -- a developer's `cargo build --release` keeps the tree's
-          # `lto = "thin"`. The Darwin target opts back out; see there.
-          CARGO_PROFILE_RELEASE_LTO = "fat";
+          # Thin LTO, not fat. A fat link optimizes and generates code for the
+          # whole program in one single-threaded LLVM process: on the Linux
+          # runner (4 cores, 16 GB) it runs out of memory, and on the macOS
+          # runner (3 cores, 7 GB) it takes longer than the release job can
+          # wait. Thin LTO spreads that work over the cores, in less memory.
+          # Set here, as a profile override, so the release builds do not
+          # depend on `[profile.release]`.
+          CARGO_PROFILE_RELEASE_LTO = "thin";
         }
         // attrs
       );
@@ -164,11 +164,6 @@ in
       # re-signs (ad-hoc) in fixupPhase what the rewrite below breaks.
       pkgs.darwin.autoSignDarwinBinariesHook
     ];
-    # Thin LTO, not fat. A fat link optimizes and generates code for the whole
-    # program in one single-threaded LLVM process, which on the small macOS
-    # runner (3 cores, 7 GB) takes longer than the release job can wait. Thin
-    # LTO spreads that work over the cores, in less memory.
-    CARGO_PROFILE_RELEASE_LTO = "thin";
     # rustc links libiconv out of /nix/store. Point it back at the system copy:
     # macOS resolves /usr/lib/libiconv.2.dylib from the dyld shared cache, so
     # that path works even though no such file exists. Then fail the build if

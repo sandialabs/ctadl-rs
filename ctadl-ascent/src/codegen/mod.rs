@@ -3,7 +3,7 @@
 # Introduction
 
 Codegen is the process of generating Datalog code from CTADL IR. CTADL IR, the input, is expressed
-as a [`ctadl_ir::mir::ProgramInfo`] [`crate::index_engine::IndexFacts`] is the output type. This
+as a [`ctadl_ir::mir::ProgramInfo`]; [`crate::index_engine::IndexFacts`] is the output type. This
 phase provides a hook in [`crate::models::codegen`] to run arbitrary code that generates models for
 indexing.
 
@@ -16,7 +16,7 @@ Parameters in IR are mapped to the same indices in the Datalog. Return values ar
 
 # Resolving a Java call
 
-Under [`CallResolutionStrategy::Mixed`] every Java call site is classified by one function,
+Under [`CallResolutionStrategy::Mixed`] every Java and CIL call site is classified by one function,
 `CodegenVisitor::classify`, which runs a four-rung ladder: super resolution, a dispatch model,
 a target-count threshold, then hybrid inlining. Each site lands in exactly one of four counted
 buckets, and [`codegen_program`] asserts that the counts add up. The other strategies have a
@@ -36,7 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use smallvec::SmallVec;
 
 use crate::facts as fx;
-use crate::facts::{FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, Str};
+use crate::facts::{FlowVariable, FlowVertex, FormalIndex, Str};
 use crate::index_engine::{IndexFacts, source_info::IndexSourceInfo};
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::{
@@ -81,12 +81,10 @@ pub enum DispatchOrder {
 /// Default for [`CallPolicy::cha_threshold`].
 ///
 /// Chosen for what it costs the *engine*, not for the size of the call graph. Raising it keeps
-/// shrinking the share of sites hybrid inlining has to take -- 19.4% of antennapod's sites at
-/// the legacy rule, 3.3% here, 0.6% at 32 -- but each step also turns deferred sites into CHA
-/// edges, and on a program with a large recursive strongly connected component the fixpoint
-/// cost of those is superlinear. Measured on antennapod, indexing takes 19 s at 4 and 106 s at
-/// 32 for 2.7 further points; on xbot_android_samp it is flat through 8, eight times slower at
-/// 16, and out of memory at 32.
+/// shrinking the share of sites hybrid inlining has to take, but each step also turns deferred
+/// sites into CHA edges, and on a program with a large recursive strongly connected component
+/// the fixpoint cost of those is superlinear: a threshold of 16 or 32 can index several times
+/// slower than 4, or run out of memory, for a few further points.
 ///
 /// So 4 buys most of the soundness win for no index cost at all. A run that wants the last
 /// points, and can pay for them, raises the flag.
@@ -392,20 +390,7 @@ pub fn codegen_function(
     v.finish();
 }
 
-/// For passing globals reference in parameter list
-pub const GLOBALS_INDEX: i16 = i16::MIN;
-
-/// Start of return values. If there's more than one return value, uses -2, -3, etc
-pub const RETURN_INDEX: i16 = -1i16;
-
-pub fn variable_is_globals(v: &FlowVariable) -> bool {
-    match v.kind() {
-        FlowVariableKind::Formal(idx) => *idx == GLOBALS_INDEX,
-        // This has to be kept in sync with the name given to globals in the CodegenVisitor
-        FlowVariableKind::Local(name) => name.starts_with("$globals_"),
-        _ => false,
-    }
-}
+pub use crate::facts::{GLOBALS_INDEX, RETURN_INDEX};
 
 /// The `call_target_assign` payload for an *object-valued* expression: the class of an
 /// allocation-site tag, in the receiving language's own [`fx::CallTargetObject`] variant.
@@ -483,9 +468,7 @@ struct CodegenVisitor<'a> {
     /// `callee_resolvents`, which is what lets the unified resolution rules resolve a reached
     /// function pointer to itself without a `C`-specific rule in the index engine.
     funcptr_targets: BTreeSet<fx::FunctionId>,
-    /// What the model files matched against this import. Phase 1 reads three of its fields:
-    /// `skip_analysis` (whose bodies are not lowered), `dispatch` (rung 1 of the ladder) and
-    /// `endpoints` (which refuses a dispatch model, see [`Self::key_facts`]).
+    /// What the model files matched against this import.
     matches: &'a crate::models::ProgramModelMatches,
     /// How [`CallResolutionStrategy::Mixed`] classifies a site.
     policy: CallPolicy,
@@ -805,10 +788,9 @@ impl<'a> CodegenVisitor<'a> {
     /// Gens the dedup'd paths to the facts
     fn finish(&mut self) {
         // The empty path (whole-variable flow) must always be in the `paths` gate so the
-        // forward field-propagation rules can reach a scalar. Previously this was implied by
-        // every pathless `Exp::AccessPath` carrying an (empty) field-access list that the
-        // visitor inserted; now that a pathless read is `Exp::Variable` (no field-access list),
-        // insert it explicitly. It is trivially bounded, so it does not affect termination.
+        // forward field-propagation rules can reach a scalar. A pathless read is
+        // `Exp::Variable`, which has no field-access list for the visitor to insert, so it is
+        // inserted here. It is trivially bounded, so it does not affect termination.
         if std::env::var_os("CTADL_NO_EMPTY_PATH").is_none() {
             self.paths_dedup.insert((fx::Path::empty(),));
         }
@@ -1186,10 +1168,7 @@ impl Visitor for CodegenVisitor<'_> {
                                     // dataflow reaches its allocation tag -- a module singleton,
                                     // a `self` handed in from opaque code, a computed metatable
                                     // -- the deferred path resolves to nothing at all and the
-                                    // call site simply loses its callees. Measured on Prosody
-                                    // 13.0.6 (examples/prosody): deferring alone drops
-                                    // `--strategy mixed` from 2865 matched sinks / 806
-                                    // tainted-path findings to 2145 / 263. So the sound CHA set
+                                    // call site simply loses its callees. So the sound CHA set
                                     // is always emitted, with `callee_info` on top to add the
                                     // context-sensitive resolution for the receivers whose class
                                     // the engine CAN reach.
@@ -1372,7 +1351,7 @@ impl Visitor for CodegenVisitor<'_> {
                 // This is the field-store form of the `Assign` arm's object-ref handling:
                 // record the store at its field path so indirect-call resolution can follow
                 // it to the call site. Must run before `value` is lowered, since trans_exp()
-                // returns None for an ObjectRef and would otherwise drop the binding (F1).
+                // returns None for an ObjectRef and would otherwise drop the binding.
                 if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = value {
                     let target = fx::Function(name.clone().into());
                     let target = self.source_info.sites.get_or_add_function(target);
@@ -1509,7 +1488,7 @@ impl CodegenVisitor<'_> {
 
     #[inline]
     fn trans_variable_ref(&mut self, v: &VariableRef) -> FlowVariable {
-        match (v.variable.as_ref(), v.version) {
+        match (&v.variable, v.version) {
             // The one global heap maps to the globals index
             (Variable::GlobalHeap, None) => FlowVariable::formal_index(GLOBALS_INDEX.into()),
             // A versioned global heap is a local variable
@@ -1613,7 +1592,7 @@ impl ClassHierarchyAnalysis {
                     .collect();
                 // Sort for determinism
                 direct_superclass.sort_unstable();
-                // Which types are interfaces, now that the frontends record it.
+                // Which types are interfaces.
                 let interface_type = interfaces.iter().map(|c| (c.clone().into(),)).collect();
                 let super_interface = Default::default();
                 let instantiated_classes_vec =
@@ -1790,8 +1769,8 @@ impl ClassHierarchyAnalysis {
     ///
     /// A uniquely-named method — the common case — yields a singleton, which is an exact call
     /// edge. When the name is shared across unrelated classes the union is sound but imprecise,
-    /// which is why [`CallResolutionStrategy::Mixed`] defers to `callee_info` instead of
-    /// emitting it (see the [`CallStyle::LuaCall`] codegen arm).
+    /// which is why [`CallResolutionStrategy::Mixed`] adds a deferred `callee_info` row beside it
+    /// (see the [`CallStyle::LuaCall`] codegen arm).
     pub(crate) fn lua_resolvents_by_method(&self, method: &Symbol) -> BTreeSet<Symbol> {
         Self::lua_lookup(&self.resolvents, method)
     }
@@ -1908,7 +1887,8 @@ pub fn synthetic_dispatch_function(key: &SignatureKey) -> String {
 
 /// Emits the `callee_resolvents` rows for a completed CHA, under the language's own
 /// `(CallTargetObject, CallDispatchKey)` pair: `(Symbol(cls), Java(name, desc))` for JVM/Dex,
-/// `(LuaClass(cls), Lua(name))` for Lua. The `""` descriptor the Lua CHA arm feeds `run_cha`
+/// `(LuaClass(cls), Lua(name))` for Lua, `(CilClass(cls), Cil(name, desc))` for CIL. The `""`
+/// descriptor the Lua CHA arm feeds `run_cha`
 /// stays an implementation detail of that arm and never reaches a fact.
 ///
 /// `wanted` holds the `(name, descriptor)` pairs some site deferred to hybrid inlining. Those

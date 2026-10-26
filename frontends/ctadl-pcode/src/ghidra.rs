@@ -9,7 +9,8 @@ use std::process::{Command, ExitStatus, Stdio};
 
 const MAXMEM: &str = "40G";
 const LAUNCH_MODE: &str = "fg";
-const VMARG_LIST: &str = "-XX:ParallelGCThreads=4 -XX:CICompilerCount=4 ";
+/// Upper bound on the JVM's garbage-collector and JIT compiler threads.
+const MAX_JVM_HELPER_THREADS: usize = 4;
 
 /// Name of the file, inside the import directory, that captures everything Ghidra
 /// writes to its stdout/stderr. See [`run_and_log`].
@@ -125,16 +126,27 @@ fn project_from_gpr(gpr: &Path) -> Result<GhidraSource, Error> {
 /// Runs the pcode exporter against `artifact_path`, auto-detecting whether it is a
 /// binary to import, an existing local Ghidra project, or a Ghidra Server URL. See
 /// [`GhidraSource::detect`].
-pub fn run_ghidra_export(artifact_path: &Path, output_dir: &Path) -> Result<(), Error> {
+///
+/// `jobs` caps the threads Ghidra analyzes and decompiles with. `0` leaves the count to
+/// Ghidra, which sizes its pools from the cores the OS reports.
+pub fn run_ghidra_export(
+    artifact_path: &Path,
+    output_dir: &Path,
+    jobs: usize,
+) -> Result<(), Error> {
     let source = GhidraSource::detect(artifact_path)?;
-    run_ghidra_export_source(&source, output_dir)
+    run_ghidra_export_source(&source, output_dir, jobs)
 }
 
 /// Runs the pcode exporter against an explicit [`GhidraSource`]. Binaries are
 /// imported into a throwaway project (which is deleted afterwards); existing
 /// projects and server repositories are opened read-only via `-process`, so the
-/// user's data is never modified.
-pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Result<(), Error> {
+/// user's data is never modified. See [`run_ghidra_export`] for `jobs`.
+pub fn run_ghidra_export_source(
+    source: &GhidraSource,
+    output_dir: &Path,
+    jobs: usize,
+) -> Result<(), Error> {
     // Benchmark/dev escape hatch: reuse already-exported pcode facts and skip the (slow) Ghidra
     // run, so re-import only re-runs the facts→IR conversion (which is what changes when the
     // frontend lowering changes). Enabled by `CTADL_REUSE_FACTS` when the facts dir is non-empty.
@@ -158,7 +170,6 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
     })?;
     let launch_script = script_dir.join("launch.sh");
 
-    let facts_dir = output_dir.join("facts");
     fs::create_dir_all(&facts_dir)
         .err_context(|| format!("creating pcode facts dir: {}", facts_dir.display()))?;
 
@@ -187,7 +198,7 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
         "jdk",
         "Ghidra-Headless",
         MAXMEM,
-        VMARG_LIST,
+        &jvm_args(jobs),
         "ghidra.app.util.headless.AnalyzeHeadless",
     ]);
 
@@ -223,6 +234,12 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
             // Never mutate the server repository.
             command.arg("-readOnly");
         }
+    }
+
+    // Ghidra's shared pools, among them the parallel decompiler's, run one thread more than
+    // `-max-cpu`.
+    if jobs > 0 {
+        command.arg("-max-cpu").arg((jobs - 1).to_string());
     }
 
     command
@@ -269,6 +286,27 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
     }
 
     Ok(())
+}
+
+/// The JVM options `launch.sh` takes as one space-separated argument.
+///
+/// Under a `jobs` limit, `ActiveProcessorCount` makes the JVM report that many cores, which
+/// bounds every pool sized from `availableProcessors()`: the JVM's own, Ghidra's, and the
+/// export script's.
+fn jvm_args(jobs: usize) -> String {
+    if jobs == 0 {
+        return format!(
+            "-XX:ParallelGCThreads={MAX_JVM_HELPER_THREADS} \
+             -XX:CICompilerCount={MAX_JVM_HELPER_THREADS}"
+        );
+    }
+    let helpers = jobs.min(MAX_JVM_HELPER_THREADS);
+    // The tiered JIT refuses fewer than two compiler threads.
+    let compilers = helpers.max(2);
+    format!(
+        "-XX:ActiveProcessorCount={jobs} -XX:ParallelGCThreads={helpers} \
+         -XX:CICompilerCount={compilers}"
+    )
 }
 
 /// Runs `command` to completion with its stdout and stderr redirected into
@@ -409,8 +447,6 @@ fn find_analyze_headless(ghidra_base: &Path) -> Result<PathBuf, Error> {
     )))
 }
 
-// No more need for find_export_script
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,8 +455,8 @@ mod tests {
     //
     // The end-to-end test that actually builds a Ghidra project and exports pcode
     // from it lives in the xtask regression suite (`cargo xtask regression`, case
-    // `Pcode:GhidraProject`), which runs under Nix where Ghidra and a `tee` binary
-    // are guaranteed to be present.
+    // `Pcode:GhidraProject`), which runs under Nix where Ghidra is guaranteed to be
+    // present.
 
     #[test]
     fn detect_ordinary_file_is_binary() {
@@ -500,6 +536,23 @@ mod tests {
     }
 
     // --- Fact compression ------------------------------------------------------
+
+    #[test]
+    fn jvm_args_leave_the_core_count_alone_by_default() {
+        assert!(!jvm_args(0).contains("ActiveProcessorCount"));
+    }
+
+    #[test]
+    fn jvm_args_cap_the_core_count_and_helper_threads() {
+        let one = jvm_args(1);
+        assert!(one.contains("-XX:ActiveProcessorCount=1 "));
+        assert!(one.contains("-XX:ParallelGCThreads=1 "));
+        assert!(one.ends_with("-XX:CICompilerCount=2"));
+        let many = jvm_args(16);
+        assert!(many.contains("-XX:ActiveProcessorCount=16 "));
+        assert!(many.contains("-XX:ParallelGCThreads=4 "));
+        assert!(many.ends_with("-XX:CICompilerCount=4"));
+    }
 
     fn gunzip(path: &Path) -> Vec<u8> {
         use std::io::Read;

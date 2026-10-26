@@ -4,7 +4,7 @@ A line map is a JSON file produced by `jvm-reader [--jar] --linemap-json <path> 
 `collect_line_map_entries` / `write_line_map_json` API). It maps bytecode positions that have a recorded
 source line in the class file’s **`LineNumberTable`** to their source file and line number.
 
-The JSON shape matches dex-reader’s `linemap-format.md` so the same consumers can process both DEX and JVM output; the `dex_offset` field name is kept for parity (see below).
+The JSON shape matches dex-reader’s line map (`dex_reader::debug_info::write_line_map_json`) so the same consumers can process both DEX and JVM output; the `dex_offset` field name is kept for parity (see below).
 
 ## Top-level structure
 

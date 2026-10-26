@@ -3,8 +3,8 @@
 //!
 //! Each case runs in its own scratch directory so that ctadl project state
 //! (kept under `XDG_STATE_HOME`) and build artifacts never collide between
-//! cases. Unlike the old `set -e` scripts, a single failing case does not abort
-//! the run: we execute every selected case and report them all.
+//! cases. A single failing case does not abort the run: we execute every
+//! selected case and report them all.
 //!
 //! Cases are independent, so they run on a pool of `--jobs` workers rather than
 //! one after another. The two things that are *not* per-case -- the scratch
@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
@@ -32,21 +32,15 @@ use crate::jvm;
 use crate::models;
 use crate::sarif;
 
-/// Historical fallback base address for SARIF that predates the analyzer
-/// emitting `relativeAddress`. Newer output carries the section-relative offset
-/// directly (Ghidra's real image base, via the `PROGRAM_IMAGE_BASE` fact), so
-/// this is only used when `relativeAddress` is absent.
+/// Fallback base address for SARIF that predates the analyzer emitting
+/// `relativeAddress`; see [`tainted_offsets`].
 const PCODE_BASE_ADDRESS: i64 = 0x10_0000;
 
 /// Lua cases that are known to fail because they exercise analysis capabilities not yet
 /// implemented. They run for visibility but report as XFAIL rather than counting toward the
 /// suite exit code.
 ///
-/// Currently empty: every `tests/lua/` case is expected to pass. `Lua:closure-flow` used to be
-/// listed here, because returning a closure out of one function and calling it in another needs
-/// the engine to propagate call-target objects through a *return*; that gap was engine-wide, not
-/// Lua-specific, and is closed by the return-direction rule in `index_engine` (the
-/// language-neutral reproducer is `tests/c/funcptrfactory.c`). Add an entry back only for a
+/// Currently empty: every `tests/lua/` case is expected to pass. Add an entry only for a
 /// genuinely unimplemented capability, never to paper over a regression.
 const LUA_XFAIL: &[&str] = &[];
 
@@ -63,9 +57,7 @@ const JVM_KNOWN_FAILURES: &[&str] = &[];
 /// Enforcement is the default and only these named gaps are exempt. Each entry
 /// is a current limitation, not a permanent waiver -- delete it once the case
 /// passes so a later regression is caught rather than silently re-quarantined.
-/// These names are the `C:`-prefixed reporting names, so they cannot collide
-/// with the Pcode case over the same source, and quarantining one never affects
-/// that Pcode case.
+/// These names are the `C:`-prefixed reporting names.
 const C_KNOWN_FAILURES: &[&str] = &[
     // A known-answer test for the *shipped* propagation defaults, so it can only
     // pass for the frontend those defaults are written for. The chain it asserts
@@ -82,8 +74,7 @@ const C_KNOWN_FAILURES: &[&str] = &[
 
 pub struct Options {
     pub filter: Option<String>,
-    /// Frontends to exercise. Defaults to all of them, so an unqualified
-    /// `xtask regression` behaves exactly as before.
+    /// Frontends to exercise. Defaults to all of them.
     pub frontends: BTreeSet<Frontend>,
     pub tests_dir: Option<PathBuf>,
     pub jvm_samples: Option<PathBuf>,
@@ -130,10 +121,10 @@ impl Default for Options {
 ///
 /// A case is mostly spent inside external processes that are already parallel on
 /// their own (Ghidra's JVM, ctadl's rayon pool), so workers stop buying wall clock
-/// well before they stop buying cores: on a 20-core machine the full suite ran in
-/// 3m24s at 1 job, 52s at 4, 34s at 8, and 30s at 16. Past this the extra Ghidra
-/// JVMs -- each asking for a large heap -- cost more memory than the seconds are
-/// worth. Raise it with `--jobs` on a machine with headroom to spare.
+/// well before they stop buying cores: wall clock falls steeply up to a handful of
+/// jobs and flattens out past about eight. Past this the extra Ghidra JVMs -- each
+/// asking for a large heap -- cost more memory than the seconds are worth. Raise it
+/// with `--jobs` on a machine with headroom to spare.
 const MAX_DEFAULT_JOBS: usize = 8;
 
 /// Worker count when `--jobs` is not given: one per available core, capped.
@@ -208,9 +199,8 @@ pub fn run(opts: &Options) -> Result<bool> {
     // The APK is read by two independent families: `dex:apk`, which parses it
     // with `dex-reader` alongside the compiled samples, and the `apk:*`
     // end-to-end checks, which only need `ctadl`. So it is resolved for `dex`
-    // alone -- not, as it once was, only when the Java samples resolved too,
-    // which would have made the `apk:*` checks vanish on a machine with no
-    // sample sources for a reason that has nothing to do with them.
+    // alone, whether or not the Java samples resolved: the `apk:*` checks must
+    // not vanish on a machine with no sample sources.
     let dex_apk = if wants_dex {
         resolve_dex_apk(opts.dex_apk.as_deref())?
     } else {
@@ -245,13 +235,14 @@ pub fn run(opts: &Options) -> Result<bool> {
             apk: dex_apk.as_deref(),
         });
     }
+    if let Some(apk) = dex_apk.as_deref().filter(|_| wants_dex) {
+        tasks.push(Task::ApkChecks { apk });
+        tasks.push(Task::ApkIndexCheck { apk });
+    }
     // Ghidra existing-project smoke check: drive the pcode importer against an
     // *existing* Ghidra project (not a fresh binary). Only meaningful when Ghidra
     // and a target binary are available (guaranteed under the Nix regression env),
     // and self-skips otherwise, so it is cheap to always attempt.
-    if let Some(apk) = dex_apk.as_deref().filter(|_| wants_dex) {
-        tasks.push(Task::ApkChecks { apk });
-    }
     if ghidra_selected {
         tasks.push(Task::GhidraProject);
     }
@@ -259,6 +250,11 @@ pub fn run(opts: &Options) -> Result<bool> {
     // reports as a Skip rather than vanishing from the report.
     if wants_cil {
         tasks.push(Task::CilChecks {
+            goldens: cil_goldens.as_deref(),
+            cecil: cecil_src.as_deref(),
+            fixtures: cil_fixtures.as_deref(),
+        });
+        tasks.push(Task::CilFrontend {
             goldens: cil_goldens.as_deref(),
             cecil: cecil_src.as_deref(),
             fixtures: cil_fixtures.as_deref(),
@@ -274,7 +270,7 @@ pub fn run(opts: &Options) -> Result<bool> {
     // More workers than tasks would just create idle scratch homes; no tasks at
     // all means no workers, and the empty report below reports the selection.
     let jobs = opts.jobs.unwrap_or_else(default_jobs).min(tasks.len());
-    let results = run_tasks(&tasks, opts, jobs)?;
+    let (results, mut timings) = run_tasks(&tasks, opts, jobs)?;
 
     if results.is_empty() {
         bail!("no test cases selected ({})", describe_selection(opts));
@@ -319,8 +315,19 @@ pub fn run(opts: &Options) -> Result<bool> {
         "\n{passed} passed, {skipped} skipped, {failures} failed, {xfails} xfail of {} case(s)",
         results.len()
     );
+    timings.sort_by_key(|(_, elapsed)| std::cmp::Reverse(*elapsed));
+    let slowest: Vec<String> = timings
+        .iter()
+        .take(SLOWEST_SHOWN)
+        .map(|(label, elapsed)| format!("{label} {:.1}s", elapsed.as_secs_f64()))
+        .collect();
+    println!("Slowest: {}", slowest.join(", "));
     Ok(failures == 0)
 }
+
+/// How many of the slowest tasks the report names, so a slow case is noticed before it is the
+/// one that sets the suite's wall clock.
+const SLOWEST_SHOWN: usize = 8;
 
 /// One independent unit of work. Each yields zero or more report entries.
 ///
@@ -343,8 +350,18 @@ enum Task<'a> {
     ApkChecks {
         apk: &'a Path,
     },
+    /// `apk:manifest-and-intents`, which indexes the app; see [`apk::run_index_check`].
+    ApkIndexCheck {
+        apk: &'a Path,
+    },
     /// cil-reader's Cecil parity checks; see [`crate::cil`].
     CilChecks {
+        goldens: Option<&'a Path>,
+        cecil: Option<&'a Path>,
+        fixtures: Option<&'a Path>,
+    },
+    /// `cil:frontend`; see [`cil::frontend_check`].
+    CilFrontend {
         goldens: Option<&'a Path>,
         cecil: Option<&'a Path>,
         fixtures: Option<&'a Path>,
@@ -359,6 +376,27 @@ enum Task<'a> {
 }
 
 impl Task<'_> {
+    /// Whether workers take this task before the single cases. These each run many checks or one
+    /// long one, so started last they would run on after everything else had finished.
+    fn is_long(&self) -> bool {
+        !matches!(self, Task::Case(_) | Task::ModelSchema { .. })
+    }
+
+    /// The task's name in the timing summary.
+    fn label(&self) -> String {
+        match self {
+            Task::Case(case) => case.name.clone(),
+            Task::JvmChecks { .. } => "jvm checks".to_string(),
+            Task::DexChecks { .. } => "dex checks".to_string(),
+            Task::ApkChecks { .. } => "apk checks".to_string(),
+            Task::ApkIndexCheck { .. } => "apk index check".to_string(),
+            Task::CilChecks { .. } => "cil checks".to_string(),
+            Task::CilFrontend { .. } => "cil:frontend".to_string(),
+            Task::ModelSchema { .. } => "model schema".to_string(),
+            Task::GhidraProject => GHIDRA_PROJECT_CASE.to_string(),
+        }
+    }
+
     /// Run this task to completion. Infrastructure failures (analyzer crashed,
     /// tool missing, etc.) are reported as failed entries rather than propagated,
     /// so one broken case never aborts the run.
@@ -367,16 +405,12 @@ impl Task<'_> {
             Task::Case(case) => {
                 let outcome =
                     run_case(case, worker).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")));
-                let outcome = apply_lua_allowlist(&case.name, outcome);
                 vec![(
                     case.name.clone(),
                     apply_xfail_allowlists(&case.name, outcome),
                 )]
             }
             Task::JvmChecks { samples, cases } => {
-                // jvm-reader checks: compile the sample .java and exercise
-                // jvm-reader on the resulting .class files and a jar built from
-                // them.
                 let results = scratch_dir("jvm")
                     .and_then(|work| jvm::run_checks(samples, *cases, &work))
                     .unwrap_or_else(|err| {
@@ -385,8 +419,6 @@ impl Task<'_> {
                 retain_filtered(results, opts)
             }
             Task::DexChecks { samples, apk } => {
-                // dex-reader checks: compile the same samples down to .dex and
-                // parse them, plus a real-world APK that xtask owns.
                 let results = scratch_dir("dex")
                     .and_then(|work| dex::run_checks(samples, *apk, &work))
                     .unwrap_or_else(|err| {
@@ -395,12 +427,21 @@ impl Task<'_> {
                 retain_filtered(results, opts)
             }
             Task::ApkChecks { apk } => {
-                // `ctadl import` of a real app, then what the store and the
-                // model check say about it. One import, shared by every check.
                 let results = scratch_dir("apk")
                     .and_then(|work| apk::run_checks(apk, &work))
                     .unwrap_or_else(|err| {
                         vec![("apk:import".to_string(), Outcome::Fail(format!("{err:#}")))]
+                    });
+                retain_filtered(results, opts)
+            }
+            Task::ApkIndexCheck { apk } => {
+                let results = scratch_dir("apk-index")
+                    .and_then(|work| apk::run_index_check(apk, &work))
+                    .unwrap_or_else(|err| {
+                        vec![(
+                            "apk:manifest-and-intents".to_string(),
+                            Outcome::Fail(format!("{err:#}")),
+                        )]
                     });
                 retain_filtered(results, opts)
             }
@@ -413,6 +454,21 @@ impl Task<'_> {
                     .and_then(|work| cil::run_checks(*goldens, *cecil, *fixtures, &work))
                     .unwrap_or_else(|err| {
                         vec![("cil".to_string(), Outcome::Fail(format!("{err:#}")))]
+                    });
+                retain_filtered(results, opts)
+            }
+            Task::CilFrontend {
+                goldens,
+                cecil,
+                fixtures,
+            } => {
+                let results = scratch_dir("cil-frontend")
+                    .and_then(|work| cil::frontend_check(*goldens, *cecil, *fixtures, &work))
+                    .unwrap_or_else(|err| {
+                        vec![(
+                            "cil:frontend".to_string(),
+                            Outcome::Fail(format!("{err:#}")),
+                        )]
                     });
                 retain_filtered(results, opts)
             }
@@ -453,37 +509,56 @@ fn retain_filtered(mut results: Vec<(String, Outcome)>, opts: &Options) -> Vec<(
     results
 }
 
-/// Run `tasks` across `jobs` workers, returning every result in task order.
+/// Run `tasks` across `jobs` workers, returning every result in task order, and how long each
+/// task took.
 ///
 /// Each worker pulls the next unclaimed task until the list is exhausted, so a
-/// slow case (a Ghidra import) never blocks the queue behind it. Results are
+/// slow case (a Ghidra import) never blocks the queue behind it. The long tasks
+/// ([`Task::is_long`]) are pulled first, so the suite does not end waiting on one
+/// that started late. Results are
 /// tagged with their task index and sorted at the end rather than appended as
 /// they land, so the report reads identically no matter who finished first.
-fn run_tasks(tasks: &[Task<'_>], opts: &Options, jobs: usize) -> Result<Vec<(String, Outcome)>> {
+fn run_tasks(
+    tasks: &[Task<'_>],
+    opts: &Options,
+    jobs: usize,
+) -> Result<(Vec<(String, Outcome)>, Vec<(String, Duration)>)> {
     let workers = (0..jobs).map(Worker::new).collect::<Result<Vec<_>>>()?;
 
+    let mut order: Vec<usize> = (0..tasks.len()).collect();
+    order.sort_by_key(|&index| !tasks[index].is_long());
+    let order = &order;
     let next = &AtomicUsize::new(0);
     let results = &Mutex::new(Vec::new());
 
     std::thread::scope(|scope| {
         for worker in &workers {
             scope.spawn(move || loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(task) = tasks.get(index) else { break };
+                let Some(&index) = order.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                    break;
+                };
+                let task = &tasks[index];
+                let start = Instant::now();
                 let outcomes = task.run(worker, opts);
+                let elapsed = start.elapsed();
                 // Held only to push a finished result; no test work happens
                 // under the lock.
-                results.lock().unwrap().push((index, outcomes));
+                results.lock().unwrap().push((index, outcomes, elapsed));
             });
         }
     });
 
     let mut collected = std::mem::take(&mut *results.lock().unwrap());
-    collected.sort_by_key(|(index, _)| *index);
-    Ok(collected
+    collected.sort_by_key(|(index, _, _)| *index);
+    let timings = collected
+        .iter()
+        .map(|(index, _, elapsed)| (tasks[*index].label(), *elapsed))
+        .collect();
+    let outcomes = collected
         .into_iter()
-        .flat_map(|(_, outcomes)| outcomes)
-        .collect())
+        .flat_map(|(_, outcomes, _)| outcomes)
+        .collect();
+    Ok((outcomes, timings))
 }
 
 /// Human-readable summary of what `--frontend`/`--filter` selected, so a short
@@ -663,37 +738,20 @@ fn preflight_java() -> Result<()> {
     );
 }
 
-/// Known-unimplemented Lua failures are reported as XFAIL so the suite can stay green while the
-/// frontend and engine mature. See [`LUA_XFAIL`].
-fn apply_lua_allowlist(name: &str, outcome: Outcome) -> Outcome {
-    match outcome {
-        Outcome::Fail(why) if LUA_XFAIL.contains(&name) => Outcome::Xfail(why),
-        other => other,
-    }
-}
-
-/// Convert a failure to XFAIL when it belongs to a frontend's maturity
-/// allowlist, leaving passes, skips, and enforced failures untouched. Applied to
-/// every case so a maturing frontend's known gaps keep the suite green without
-/// hiding regressions in the cases that are enforced.
+/// Convert a failure to XFAIL when the case is in a frontend's known-failure list
+/// ([`LUA_XFAIL`], [`JVM_KNOWN_FAILURES`], [`C_KNOWN_FAILURES`]), leaving passes,
+/// skips, and enforced failures untouched. Applied to every case so a maturing
+/// frontend's known gaps keep the suite green without hiding regressions in the
+/// cases that are enforced.
 fn apply_xfail_allowlists(name: &str, outcome: Outcome) -> Outcome {
-    apply_c_allowlist(name, apply_jvm_allowlist(name, outcome))
-}
-
-/// Known-failing JVM E2E cases are reported as XFAIL; every other JVM case is
-/// enforced. See [`JVM_KNOWN_FAILURES`].
-fn apply_jvm_allowlist(name: &str, outcome: Outcome) -> Outcome {
     match outcome {
-        Outcome::Fail(why) if JVM_KNOWN_FAILURES.contains(&name) => Outcome::Xfail(why),
-        other => other,
-    }
-}
-
-/// Known-failing tree-sitter C cases are reported as XFAIL; every other C case
-/// is enforced. See [`C_KNOWN_FAILURES`].
-fn apply_c_allowlist(name: &str, outcome: Outcome) -> Outcome {
-    match outcome {
-        Outcome::Fail(why) if C_KNOWN_FAILURES.contains(&name) => Outcome::Xfail(why),
+        Outcome::Fail(why)
+            if [LUA_XFAIL, JVM_KNOWN_FAILURES, C_KNOWN_FAILURES]
+                .iter()
+                .any(|list| list.contains(&name)) =>
+        {
+            Outcome::Xfail(why)
+        }
         other => other,
     }
 }
@@ -867,34 +925,7 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
     let state = work.join("state");
     std::fs::create_dir_all(&state)?;
 
-    // Compile to a DEX inside the scratch dir. We copy only this source so the
-    // `*.class` glob handed to `dx` cannot pick up unrelated classes.
-    let src = work.join(format!("{name}.java"));
-    std::fs::copy(java, &src)
-        .with_context(|| format!("failed to copy {} into scratch dir", java.display()))?;
-
-    let mut javac = Command::new("javac");
-    javac
-        .current_dir(&work)
-        .args(["--release", "8", "-encoding", "UTF-8"])
-        .arg(&src);
-    exec::run_checked(javac, "javac")?;
-
-    let classes = class_files(&work)?;
-    if classes.is_empty() {
-        bail!("javac produced no .class files");
-    }
-    let dex = work.join(format!("{name}.dex"));
-    let mut dx = Command::new("dx");
-    dx.current_dir(&work)
-        .arg("--dex")
-        .arg(format!("--output={}", dex.display()));
-    // `dx` derives the package path from the class file path, so pass bare file
-    // names (relative to the scratch cwd) rather than absolute paths.
-    for class in &classes {
-        dx.arg(class.file_name().context("class file has no name")?);
-    }
-    exec::run_checked(dx, "dx")?;
+    let dex = compile_dex(&work, java, name)?;
 
     // Analyze: import / index / query. The human profile carries the code flows
     // (the traced source -> ... -> sink path); the machine profile carries the tainted
@@ -947,6 +978,40 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
 
     let outcome = check_flow_case(config, &sarif, &machine_sarif, &linemap)?;
     with_valid_sarif(&work, &[&sarif, &machine_sarif], outcome)
+}
+
+/// Compile `java` to `work/<stem>.dex`, with `work` as the scratch cwd.
+///
+/// Only this source is copied into `work`, so the `*.class` set handed to `dx`
+/// cannot pick up an unrelated class.
+fn compile_dex(work: &Path, java: &Path, stem: &str) -> Result<PathBuf> {
+    let src = work.join(format!("{stem}.java"));
+    std::fs::copy(java, &src)
+        .with_context(|| format!("failed to copy {} into scratch dir", java.display()))?;
+
+    let mut javac = Command::new("javac");
+    javac
+        .current_dir(work)
+        .args(["--release", "8", "-encoding", "UTF-8"])
+        .arg(&src);
+    exec::run_checked(javac, "javac")?;
+
+    let classes = class_files(work)?;
+    if classes.is_empty() {
+        bail!("javac produced no .class files");
+    }
+    let dex = work.join(format!("{stem}.dex"));
+    let mut dx = Command::new("dx");
+    dx.current_dir(work)
+        .arg("--dex")
+        .arg(format!("--output={}", dex.display()));
+    // `dx` derives the package path from the class file path, so pass bare file
+    // names (relative to the scratch cwd) rather than absolute paths.
+    for class in &classes {
+        dx.arg(class.file_name().context("class file has no name")?);
+    }
+    exec::run_checked(dx, "dx")?;
+    Ok(dex)
 }
 
 // --- JVM / Java -----------------------------------------------------------
@@ -1051,15 +1116,11 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
 /// (tainted instructions) of one case:
 ///
 ///  1. *Code-flow integrity*: a human-profile code flow connects a source to a sink.
-///     This is what regressed when the step dedup collapsed every flow to its lone
-///     source step; a lines-only check can't see it, because the source line alone
-///     satisfies line coverage. Negative cases (`expected_lines` empty) invert this:
-///     no such flow may exist.
-///  2. *Reached lines*: every `expected_lines` entry maps from some offset in the union
-///     of the code-flow offsets and the tainted-instruction offsets. The union is used
-///     because aliasing legitimately elides a pure copy hop (`local = tainted_field`)
-///     from the traced flow while it still shows up as a tainted instruction -- so a
-///     line the flow visits only "through" an alias is covered by the machine profile.
+///     A lines-only check can't see a flow collapsed to its lone source step, because
+///     the source line alone satisfies line coverage. Negative cases (`expected_lines`
+///     empty) invert this: no such flow may exist.
+///  2. *Reached lines*: every `expected_lines` entry is among [`ReachedLines::reached`],
+///     the union of the code-flow lines and the tainted-instruction lines.
 ///  3. *Unexpected lines*: no `unexpected_lines` entry is among the reached lines.
 ///
 /// No DEX or JVM case uses `unexpected_lines` today. [`check_jni_case`] does, and
@@ -1217,24 +1278,15 @@ static CTADL_BIN: OnceLock<PathBuf> = OnceLock::new();
 /// `target/{release,debug}` and running whatever exists is a correctness hazard:
 /// a stale `target/release/ctadl` from an older commit is silently exercised
 /// against current source, so the suite can report all-green while the code under
-/// test is actually broken. That really happened -- a stale release binary masked
-/// a total taint-flow regression in the PHP frontend. The only path that can be
-/// returned is the one [`build_ctadl`] just built from the current tree.
+/// test is actually broken. The only path that can be returned is the one
+/// [`build_ctadl`] just built from the current tree, or the one `$CTADL_BIN`
+/// names (see [`prebuilt_ctadl`]).
 pub(crate) fn ctadl_bin() -> Result<PathBuf> {
     CTADL_BIN.get().cloned().context(
         "internal error: ctadl binary requested before it was built; preflight must run first",
     )
 }
 
-/// Build the `ctadl` binary from the current source tree and return the path to
-/// the executable cargo produced.
-///
-/// The binary is rebuilt in this same invocation, so it is guaranteed to
-/// correspond to the tree under test -- the whole point of replacing the old
-/// on-disk discovery (see [`ctadl_bin`]). We parse cargo's `--message-format=json`
-/// stream and take the `executable` path from the `ctadl` compiler-artifact
-/// message, so there is no guessing about the profile directory or a `.exe`
-/// suffix: cargo tells us exactly where it wrote the binary.
 /// A prebuilt `ctadl` binary to run against, taken from `$CTADL_BIN`.
 ///
 /// The default flow rebuilds `ctadl` from the tree under test so a stale binary
@@ -1261,6 +1313,14 @@ pub(crate) fn prebuilt_ctadl() -> Result<Option<PathBuf>> {
     Ok(Some(path))
 }
 
+/// Build the `ctadl` binary from the current source tree and return the path to
+/// the executable cargo produced.
+///
+/// The binary is rebuilt in this same invocation, so it is guaranteed to
+/// correspond to the tree under test (see [`ctadl_bin`]). We parse cargo's
+/// `--message-format=json` stream and take the `executable` path from the `ctadl`
+/// compiler-artifact message, so there is no guessing about the profile directory
+/// or a `.exe` suffix: cargo tells us exactly where it wrote the binary.
 pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
     // `cargo` sets `$CARGO` for the subcommands it spawns (`cargo xtask` is one),
     // so prefer it; fall back to the bare name for a direct `xtask` invocation.
@@ -1272,14 +1332,18 @@ pub(crate) fn build_ctadl(release: bool) -> Result<PathBuf> {
     let mut cmd = Command::new(cargo);
     // Run from the workspace root regardless of the caller's cwd. The xtask crate
     // lives at `<root>/xtask`, so its manifest dir's parent is the root.
+    //
+    // `--workspace` rather than `-p ctadl-ascent`: cargo resolves features across the packages it
+    // selects, and `-p ctadl-ascent` leaves out xtask's `boon`, which turns on `idna`'s `default`.
+    // That one feature changes the hash of `idna` and of every crate above it, so a `-p` build
+    // compiles its own copy of about forty crates instead of reusing the workspace build's.
     cmd.current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().context(
         "internal error: CARGO_MANIFEST_DIR has no parent; expected `<workspace>/xtask`",
     )?)
     .args([
         "build",
         "--message-format=json",
-        "-p",
-        "ctadl-ascent",
+        "--workspace",
         "--bin",
         "ctadl",
     ]);
@@ -1501,14 +1565,11 @@ fn check_pcode_case(
     let expected = assertions::read_expected_lines(query)?;
 
     // Code-flow integrity, at parity with the DEX/JVM check (see `check_flow_case`):
-    // a human-profile code flow must connect a source to a sink. This is exactly
-    // what would regress if step dedup ever collapsed a pcode flow to its lone
-    // source step -- and the whole-document address check below cannot see such a
-    // collapse, because the tainted-instruction result locations carry the
-    // addresses regardless of whether any flow was actually traced. Pcode steps key
-    // on `address.absoluteAddress`, so the specific dedup bug we fixed never
-    // manifested here; this check guards against a future regression, not a current
-    // one. A negative case inverts it: no such flow may exist.
+    // a human-profile code flow must connect a source to a sink. The whole-document
+    // address check below cannot see a flow collapsed to its lone source step,
+    // because the tainted-instruction result locations carry the addresses
+    // regardless of whether any flow was actually traced. A negative case inverts
+    // it: no such flow may exist.
     let connects = assertions::codeflow_connects_source_and_sink(sarif)?;
     if expected.is_empty() {
         return Ok(if connects {
@@ -1520,19 +1581,7 @@ fn check_pcode_case(
         });
     }
 
-    // Prefer the section-relative offsets the analyzer now emits (image base
-    // already subtracted via the `PROGRAM_IMAGE_BASE` fact). Fall back to
-    // absolute addresses minus the historical base for older SARIF that
-    // predates `relativeAddress`.
-    let relative = assertions::collect_relative_addresses(sarif)?;
-    let offsets: Vec<i64> = if !relative.is_empty() {
-        relative.into_iter().collect()
-    } else {
-        assertions::collect_absolute_addresses(sarif)?
-            .into_iter()
-            .map(|addr| addr - PCODE_BASE_ADDRESS)
-            .collect()
-    };
+    let offsets: Vec<i64> = tainted_offsets(sarif)?.into_iter().collect();
     // A positive case must carry a connected source -> sink flow. This is checked
     // before the tainted-instruction guard below so a lost flow reports as one, on
     // every platform. (This used to be a SKIP on Darwin, which hid a lost flow.)
@@ -1567,9 +1616,23 @@ fn check_pcode_case(
         return Ok(Outcome::Fail(why));
     }
 
-    // PASS only if every expected line was found (the pcode criterion) and no
-    // unexpected line was.
     Ok(Outcome::Pass)
+}
+
+/// The section-relative offsets of the tainted instructions in a pcode SARIF.
+///
+/// Prefers the `relativeAddress`es the analyzer emits (image base already subtracted via
+/// the `PROGRAM_IMAGE_BASE` fact), and falls back to absolute addresses minus
+/// [`PCODE_BASE_ADDRESS`] for older SARIF that predates `relativeAddress`.
+fn tainted_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
+    let relative = assertions::collect_relative_addresses(sarif)?;
+    if !relative.is_empty() {
+        return Ok(relative);
+    }
+    Ok(assertions::collect_absolute_addresses(sarif)?
+        .into_iter()
+        .map(|addr| addr - PCODE_BASE_ADDRESS)
+        .collect())
 }
 
 /// Map section-relative offsets in `binary` back to source lines with `addr2line`.
@@ -1607,8 +1670,8 @@ fn parse_addr2line_line(output: &str) -> Option<i64> {
     digits.parse().ok()
 }
 
-/// Mirror the old script's compiler/addr2line selection: prefer an x86_64 Linux
-/// (cross-)compiler, fall back to the native tools.
+/// Pick the compiler and `addr2line`: prefer an x86_64 Linux (cross-)compiler,
+/// fall back to the native tools.
 ///
 /// `abi` is the Android ABI a JNI case builds for. `x86` selects the 32-bit x86 toolchain, with
 /// no fallback: a native compiler would build the wrong ABI. Every other ABI gets the x86_64 one
@@ -1757,33 +1820,7 @@ fn run_jni(
         .with_context(|| format!("invalid java file name: {}", java.display()))?
         .to_string();
 
-    // Compile the Java half to a DEX. Only this source is copied in, so the
-    // `*.class` glob handed to `dx` cannot pick up an unrelated class.
-    let src = work.join(format!("{class}.java"));
-    std::fs::copy(java, &src)
-        .with_context(|| format!("failed to copy {} into scratch dir", java.display()))?;
-    let mut javac = Command::new("javac");
-    javac
-        .current_dir(&work)
-        .args(["--release", "8", "-encoding", "UTF-8"])
-        .arg(&src);
-    exec::run_checked(javac, "javac")?;
-
-    let classes = class_files(&work)?;
-    if classes.is_empty() {
-        bail!("javac produced no .class files");
-    }
-    let dex = work.join(format!("{class}.dex"));
-    let mut dx = Command::new("dx");
-    dx.current_dir(&work)
-        .arg("--dex")
-        .arg(format!("--output={}", dex.display()));
-    // `dx` derives the package path from the class file path, so pass bare file
-    // names relative to the scratch cwd.
-    for class_file in &classes {
-        dx.arg(class_file.file_name().context("class file has no name")?);
-    }
-    exec::run_checked(dx, "dx")?;
+    let dex = compile_dex(&work, java, &class)?;
 
     // Compile the native half to a real shared library, not a relocatable object:
     // the point of the case is the ABI a `System.loadLibrary` target actually has.
@@ -1835,7 +1872,6 @@ fn run_jni(
     let lib_entry = format!("lib/{abi}/{}", file_name_of(&lib)?);
     match packaging {
         Packaging::SingleApk => {
-            // Both artifacts in one APK, the way an ordinary Android app ships them.
             let packaged = work.join(format!("{class}.apk"));
             write_apk(&packaged, &[("classes.dex", &dex), (&lib_entry, &lib)])?;
             ctadl(
@@ -1849,8 +1885,6 @@ fn run_jni(
             )?;
         }
         Packaging::SplitApks => {
-            // One APK each, the way an app bundle ships them. The native one has no
-            // `classes*.dex` at all -- that is the whole point of the variant.
             let base = work.join(format!("{class}.apk"));
             let split = work.join(format!("{class}.config.{}.apk", abi.replace('-', "_")));
             write_apk(&base, &[("classes.dex", &dex)])?;
@@ -2252,11 +2286,8 @@ fn check_jni_case(
 ///
 /// Reads the *addresses* out of both profiles' SARIF and maps them with `addr2line`, the same
 /// way [`check_pcode_case`] does for a single-import pcode case. Only a pcode import carries
-/// an `address`, so every address in a JNI case's output is native by construction -- which is
-/// exactly what made this check impossible before: the formatter used to resolve each span
-/// against every import's source-info database in turn, so Java-side results reappeared
-/// carrying addresses in the shared library and any set of lines derived from them was
-/// fiction. Now each span is resolved only in the import that numbered it.
+/// an `address`, and the formatter resolves each span only in the import that numbered it, so
+/// every address in a JNI case's output is native by construction.
 fn native_lines(
     human_sarif: &Path,
     machine_sarif: &Path,
@@ -2266,18 +2297,7 @@ fn native_lines(
 ) -> Result<BTreeSet<i64>> {
     let mut offsets: BTreeSet<i64> = BTreeSet::new();
     for sarif in [human_sarif, machine_sarif] {
-        // Prefer the section-relative offsets (image base already subtracted), falling back
-        // to absolute addresses minus the historical base, as `check_pcode_case` does.
-        let relative = assertions::collect_relative_addresses(sarif)?;
-        if relative.is_empty() {
-            offsets.extend(
-                assertions::collect_absolute_addresses(sarif)?
-                    .into_iter()
-                    .map(|addr| addr - PCODE_BASE_ADDRESS),
-            );
-        } else {
-            offsets.extend(relative);
-        }
+        offsets.extend(tainted_offsets(sarif)?);
     }
     let offsets: Vec<i64> = offsets.into_iter().collect();
     addr2line_lines(&offsets, lib, work, addr2line)
@@ -2353,8 +2373,6 @@ fn run_c(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
         ));
     }
 
-    // The frontend's SARIF carries source spans, so the reached lines come
-    // straight off the code-flow step regions -- no compiler or addr2line.
     let found = assertions::collect_codeflow_start_lines(&sarif)?;
     if found.is_empty() {
         return Ok(Outcome::Fail(
@@ -2559,10 +2577,9 @@ impl Worker {
                 .with_context(|| format!("failed to create {}", dir.display()))?;
         }
 
-        // A purpose-built HOME also settles the question the old write-probe
-        // asked: Ghidra needs a writable HOME, and the ambient one may be unset,
-        // read-only, or `/var/empty` under a Nix sandbox. This one is writable by
-        // construction.
+        // Ghidra also needs a writable HOME, and the ambient one may be unset,
+        // read-only, or `/var/empty` under a Nix sandbox. This purpose-built one is
+        // writable by construction.
         let mut ghidra_env = vec![
             ("HOME".to_string(), home.display().to_string()),
             (
@@ -2600,8 +2617,8 @@ fn run_root() -> PathBuf {
 /// Scratch names already handed out in this process.
 ///
 /// `scratch_dir` *clears* the directory it returns, so two claimants of one name
-/// means one deletes the other's working tree -- and now that cases run
-/// concurrently, it would do so while the other is still working in it. The names
+/// means one deletes the other's working tree, possibly while the other is still
+/// working in it. The names
 /// are distinct today; this keeps that a checked invariant rather than a
 /// coincidence of what the test directories happen to contain, since the failure
 /// it guards is silent and would look like a flaky case rather than a collision.

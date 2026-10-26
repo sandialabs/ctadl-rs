@@ -6,15 +6,15 @@
  * structret.c returns such a struct, but nothing else here passes one in by
  * value through the stack.
  *
- * This is the case the by-value-through-memory fix restored: the callee reads
- * the argument out of a stack slot the caller wrote, so the flow only exists if
- * the stack parameter is bound to that slot (and bound to its contents, not its
- * address). Before the fix this produced no tainted instructions at all.
+ * The callee reads the argument out of a stack slot the caller wrote, so the
+ * flow only exists if the stack parameter is bound to that slot (and bound to
+ * its contents, not its address). Left unbound, the case produces no tainted
+ * instructions at all.
  *
  * KNOWN IMPRECISION: sink(w.b) is reported tainted here even though w.b is
  * written clean, which is why it is not in `unexpected_lines`. The root cause is
  * how the frontend models the pcode PIECE/SUBPIECE ops (both routed through
- * handle_binop in languages/pcode/mod.rs, which unions its operands and discards
+ * handle_binop in frontends/ctadl-pcode/src/lib.rs, which unions its operands and discards
  * the byte-offset operand). At -O0 the caller copies the aggregate into the
  * argument area 8 bytes at a time, so Ghidra fuses w.a and w.b into a single
  * varnode with PIECE (a and b share the first eightbyte); that word is tainted

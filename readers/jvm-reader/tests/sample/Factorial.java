@@ -1,7 +1,7 @@
 /**
- * Recursion and a counted loop. Revives the `Factorial` classfile-parser
- * fixture as source: exercises a self `invokestatic`, `imul`/`lmul`, an `i2l`
- * widening, and forward/back branches that none of the flat int samples cover.
+ * Recursion and a counted loop: exercises a self `invokestatic`, `imul`/`lmul`,
+ * an `i2l` widening, and forward/back branches that none of the flat int
+ * samples cover.
  */
 public class Factorial {
     static int recursive(int n) {

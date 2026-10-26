@@ -38,13 +38,13 @@ pub mod lsm_bin_rel_provider {
     pub use lsm_bin_rel_provider_ind_common as rel_ind_common;
 }
 
-/// A binary-relation provider backed *only* by the disk LSM, with no in-memory
-/// mirror at all. The two maps `by_left` (left → rights) and `by_right`
+/// A binary-relation provider backed *only* by two [`MmapLsmMultiMap`]s, with no
+/// in-memory mirror at all. The two maps `by_left` (left → rights) and `by_right`
 /// (right → lefts) are the left/right indices the `ByodsBinRel` trait needs.
 ///
-/// Reads are served by [`MmapLsmMultiMap`]'s borrowing reads, so with a small
-/// memtable limit the bulk of the data lives in `mmap`'d pages while the trait
-/// still gets the borrowed references it requires.
+/// Reads are served by the maps' borrowing reads, so with a small memtable limit
+/// the bulk of the data lives in `mmap`'d pages while the trait still gets the
+/// borrowed references it requires.
 #[derive(Debug)]
 pub struct DiskLsmBinRel<T0, T1>
 where
@@ -183,8 +183,7 @@ where
     }
 
     fn insert(&mut self, x0: Self::T0, x1: Self::T1) -> bool {
-        // Dedup against the store itself (memtable + runs); a present (x0, x1)
-        // means the pair already exists.
+        // Dedup against the store itself (memtable + runs).
         if self.contains(&x0, &x1) {
             return false;
         }

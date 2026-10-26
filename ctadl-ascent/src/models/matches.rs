@@ -11,14 +11,14 @@ This is one structure spanning two phases, and each field is consumed by exactly
   ([`crate::codegen::model_matches`]) turns them into `facts.summary` rows.
 - [`ProgramModelMatches::access_paths`] -- index time. Phase 2 seeds them into the initial
   indexer paths.
-- [`ProgramModelMatches::skip_analysis`] -- index time, and the one field phase *1* reads:
+- [`ProgramModelMatches::skip_analysis`] -- index time, and read by phase *1*:
   [`crate::codegen::codegen_program`] lowers those functions' signatures and drops their bodies,
   so nothing about them ever enters the fact base.
 - [`ProgramModelMatches::bridges`] -- index time. Phase 2 pairs the two sides and emits the
   `call`/`actual_param`/`assign`/`formal_param` rows.
-- [`ProgramModelMatches::dispatch`] -- index time, and the second field phase *1* reads:
-  codegen classifies every Java call site against it before it emits anything for the site,
-  and phase 2 writes the matched summaries against the synthetic functions phase 1 named.
+- [`ProgramModelMatches::dispatch`] -- index time, and also read by phase *1*:
+  codegen classifies every Java and CIL call site against it before it emits anything for the
+  site, and phase 2 writes the matched summaries against the synthetic functions phase 1 named.
 - [`ProgramModelMatches::closure_shaped`] -- report time. A note about what hybrid inlining is
   for; nothing resolves differently for being on it.
 - [`ProgramModelMatches::endpoints`] -- query time. Stage 2
@@ -29,8 +29,7 @@ This is one structure spanning two phases, and each field is consumed by exactly
 Each phase therefore ignores the other's half, and both say so rather than dropping them in
 silence: `ctadl index` warns that the given files declare source/sink models it ignores, and
 `ctadl query` warns that they declare propagation/bridging models it ignores (both in
-`cli::mod`). That symmetry is deliberate -- each phase used to discard what the other consumes
-without a word.
+`cli::mod`).
 
 The alternative -- a second, sibling structure for the query-time half -- was considered and
 rejected: one matcher pass produces both halves, and splitting its output across two
@@ -208,8 +207,7 @@ pub struct EndpointMatch {
 ///
 /// "Unmatched" means *not matched anywhere in the project*, so these sets union over imports
 /// rather than being classified per import. A scope that admits no import at all leaves both
-/// sets empty, which is the same condition and gets the same warning -- deliberately, rather
-/// than a separate configuration-error category.
+/// sets empty.
 #[derive(Clone, Debug, Default)]
 pub struct BridgeSideMatches {
     /// fq-names side A (the call side) matched.
@@ -320,8 +318,8 @@ pub struct ProgramModelMatches {
     pub mem2reg_modes: std::collections::BTreeMap<facts::Str, ctadl_ir::ssa::FullMode>,
     /// Matched bridge sides, parallel to the scanned specs.
     pub bridges: BridgeMatches,
-    /// Signatures a `find: "dispatch"` generator matched. Index time, and the second field
-    /// phase *1* reads: codegen classifies each Java call site against this map before it
+    /// Signatures a `find: "dispatch"` generator matched. Index time, and also read by phase
+    /// *1*: codegen classifies each Java and CIL call site against this map before it
     /// emits anything for the site.
     ///
     /// A `BTreeMap` so iteration order does not depend on hashing: the synthetic functions
@@ -396,8 +394,7 @@ pub fn observe_import(
     matches.bridges.prepare(specs);
     // The ingest emits into `matches`, so it holds that borrow for as long as it lives and
     // `matches.bridges` cannot be written through it. Collect each spec's matched names while
-    // the ingest is alive, release it, then fold. `match_where` already returns an owned
-    // `Vec<String>` per side, so this allocates nothing the old shape did not.
+    // the ingest is alive, release it, then fold.
     let mut matched: Vec<(Vec<String>, Vec<String>)> = Vec::with_capacity(specs.len());
     let result = {
         let mut ingest = ModelGeneratorIngest::new(index, matches);
@@ -430,7 +427,7 @@ pub fn observe_import(
         ingest.take_errors()
     };
     // Folded in even when the evaluation errored: an errored side yields no matches, and the
-    // sides that did match were already recorded before the error under the old shape.
+    // sides that did match keep theirs.
     for (i, (from, to)) in matched.into_iter().enumerate() {
         let side = matches.bridges.side_mut(i);
         side.from
@@ -444,16 +441,14 @@ pub fn observe_import(
 /// The verdict on one bridge spec's accumulated sides: `on-unmatched` per side, then
 /// `on-ambiguous`.
 ///
-/// Returns what to *say*, not the saying of it. Evaluation was eager -- both sides are matched
-/// per import as imports stream by -- because side B's import may arrive before side A's, so
-/// whether `from` matched is unknowable at match time. The conditionality is applied here, once,
-/// over the whole project: "unmatched" means *not matched anywhere*, not "not matched in this
-/// import".
+/// Returns what to *say*, not the saying of it. This is where the conditional `to`-side
+/// semantics are applied (see the module docs), once, over the whole project: "unmatched" means
+/// *not matched anywhere*, not "not matched in this import".
 ///
 /// This reads nothing but the spec and the two match sets, which is what lets `ctadl query`
-/// render the same verdict with no index in existence (see `cli::model_check`). Phase 2 of codegen wraps it
-/// in [`crate::codegen::model_matches::classify`], which is the only caller that acts on the
-/// severity.
+/// render the same verdict with no index in existence (see `cli::model_check`). Phase 2 of
+/// codegen wraps it in [`crate::codegen::model_matches::classify`], which is the only caller that
+/// acts on the severity.
 pub(crate) fn diagnose(spec: &BridgeSpec, side: &BridgeSideMatches) -> Option<(Severity, String)> {
     let where_ = spec.provenance();
     if side.from.is_empty() {
@@ -467,9 +462,6 @@ pub(crate) fn diagnose(spec: &BridgeSpec, side: &BridgeSideMatches) -> Option<(S
                  nothing is bridged. Check the 'where' constraints and the 'in' scope."
             ),
         ));
-        // Note there is no `to`-side report here. "If the from side doesn't match anything, the
-        // to side isn't even attempted" is exactly this: reporting semantics, not evaluation
-        // order.
     }
     if side.to.is_empty() {
         return Some((

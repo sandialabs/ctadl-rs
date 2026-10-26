@@ -10,8 +10,8 @@ use crate::error::*;
 ///
 /// A class file stores strings as UTF-16 code units, so an entry may legally
 /// hold surrogates that no Rust `str` can represent: generated lexers abuse
-/// string constants as packed UTF-16 tables, and `smaliFlexLexer` has 25
-/// deliberately unpaired ones. Well-formed *pairs* are the far more common
+/// string constants as packed UTF-16 tables, with deliberately unpaired
+/// surrogates among them. Well-formed *pairs* are the far more common
 /// case -- every emoji, CJK extension and supplementary symbol in a literal is
 /// one -- and those recombine into ordinary scalar values.
 ///
@@ -52,10 +52,6 @@ impl JvmString {
     }
 
     /// The string with each unpaired surrogate replaced by `replacement`.
-    ///
-    /// The disassembler wants `?` here rather than `U+FFFD`: no charset can
-    /// encode a lone surrogate, so `javap`'s own output stream substitutes one,
-    /// and matching it keeps the two listings comparable.
     pub fn to_string_replacing(&self, replacement: char) -> Cow<'_, str> {
         match self {
             JvmString::Utf8(s) => Cow::Borrowed(s.as_str()),

@@ -141,8 +141,8 @@ jobs:
       matrix:
         include:
           # Linux and Windows both cross-compile from the same x86_64 Linux
-          # runner. macOS needs a runner of its own: Nix cannot cross-compile to
-          # Darwin, for want of a redistributable SDK. macos-latest is arm64.
+          # runner. macOS builds natively, so it needs a runner of its own
+          # (nix/release.nix says why). macos-latest is arm64.
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-latest
             nix-system: x86_64-linux
@@ -165,8 +165,8 @@ jobs:
         uses: DeterminateSystems/flakehub-cache-action@main
 
       # How each target is built -- which toolchain, what it links against, and
-      # why the result runs on a machine without Nix -- lives in `release` in
-      # flake.nix, not here.
+      # why the result runs on a machine without Nix -- lives in
+      # nix/release.nix, not here.
       - name: Build ctadl
         run: |
           nix build --print-build-logs --out-link result \

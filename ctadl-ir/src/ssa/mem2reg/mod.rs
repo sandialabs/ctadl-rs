@@ -61,8 +61,6 @@ pass does not classify (a phi, a param-flow, an update of the frame itself).
 */
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use internment::ArcIntern;
-
 use crate::index::idx::Idx;
 use crate::mir::call::CallStyle;
 use crate::mir::*;
@@ -292,18 +290,20 @@ pub fn promote_stack_slots_with(
         let mode = modes.get(&f.name).copied();
         let (stats, note) = promote_function(f, config, mode);
         report.stats += stats;
-        if let Some(note) = note {
-            log::debug!(
-                "{}: {:?}; e.g. {}",
-                note.message(),
-                note.kinds,
-                note.samples.join("; ")
-            );
-            report.notes.push(note);
-        }
+        report.notes.extend(note.inspect(log_escape_note));
     }
     log::info!("mem2reg({}): {:?}", config.tag(), report.stats);
     report
+}
+
+/// Logs a note with what its message leaves out: the count of each kind and sample sites.
+pub(super) fn log_escape_note(note: &EscapeNote) {
+    log::debug!(
+        "{}: {:?}; e.g. {}",
+        note.message(),
+        note.kinds,
+        note.samples.join("; ")
+    );
 }
 
 /// The sum of an address path's offsets: the slot it names.
@@ -312,10 +312,10 @@ fn slot(ap: &AccessPath) -> i64 {
 }
 
 /// If `e` is an address on the frame base, its offset.
-fn exp_slot(e: &Exp, st: &ArcIntern<Variable>) -> Option<i64> {
+fn exp_slot(e: &Exp, st: Variable) -> Option<i64> {
     match e {
-        Exp::Variable(v) if v.variable == *st => Some(0),
-        Exp::AccessPath(ap) if ap.base.variable == *st => Some(slot(ap)),
+        Exp::Variable(v) if v.variable == st => Some(0),
+        Exp::AccessPath(ap) if ap.base.variable == st => Some(slot(ap)),
         _ => None,
     }
 }
@@ -330,8 +330,8 @@ enum Use {
 
 /// Classifies every use of `st` in `kind`, pushing each onto `out`. The caller checks the number
 /// pushed against the number of `st` reads the statement makes, so a use this misses is caught.
-fn classify(kind: &StatementKind, st: &ArcIntern<Variable>, out: &mut Vec<Use>) {
-    let is_st = |v: &VariableRef| v.variable == *st;
+fn classify(kind: &StatementKind, st: Variable, out: &mut Vec<Use>) {
+    let is_st = |v: &VariableRef| v.variable == st;
     let esc = |e: &Exp, how: EscapeKind, out: &mut Vec<Use>| {
         if let Some(k) = exp_slot(e, st) {
             out.push(Use::Escape(k, how));
@@ -369,7 +369,7 @@ fn classify(kind: &StatementKind, st: &ArcIntern<Variable>, out: &mut Vec<Use>) 
 }
 
 /// Calls `f` with each frame address a call is passed or calls through.
-fn call_escapes(kind: &StatementKind, st: &ArcIntern<Variable>, mut f: impl FnMut(i64)) {
+fn call_escapes(kind: &StatementKind, st: Variable, mut f: impl FnMut(i64)) {
     if let StatementKind::CallAssign { style, args, .. } = kind {
         for e in args {
             if let Some(k) = exp_slot(e, st) {
@@ -377,7 +377,7 @@ fn call_escapes(kind: &StatementKind, st: &ArcIntern<Variable>, mut f: impl FnMu
             }
         }
         if let CallStyle::FuncPtrCall { callee, .. } = style
-            && callee.base.variable == *st
+            && callee.base.variable == st
         {
             f(slot(callee));
         }
@@ -417,7 +417,7 @@ pub fn promote_function(
     else {
         return (stats, None);
     };
-    let st = ArcIntern::new(Variable::Local(st_idx));
+    let st = Variable::Local(st_idx);
 
     // Pass 1: classify every use of the frame base. Bail on anything unclassified.
     let mut uses: Vec<Use> = Vec::new();
@@ -431,7 +431,7 @@ pub fn promote_function(
             }
             let reads = s.iter_src_var().filter(|v| v.variable == st).count();
             let before = uses.len();
-            classify(&s.kind, &st, &mut uses);
+            classify(&s.kind, st, &mut uses);
             if uses.len() - before != reads {
                 stats.skipped_functions = 1;
                 return (stats, None);
@@ -447,7 +447,7 @@ pub fn promote_function(
             let mut n = 0;
             if let TerminatorKind::Return { args } = &t.kind {
                 for e in args {
-                    if let Some(k) = exp_slot(e, &st) {
+                    if let Some(k) = exp_slot(e, st) {
                         escapes.push((k, EscapeKind::Returned, bb, data.statements.len()));
                         n += 1;
                     }
@@ -582,7 +582,7 @@ pub fn promote_function(
                     }
                 }
                 StatementKind::CallAssign { .. } if !escaped.is_empty() => {
-                    call_escapes(&s.kind, &st, |j| {
+                    call_escapes(&s.kind, st, |j| {
                         reload.extend(escaped.keys().filter(|&&k| policy.reaches(j, k)));
                     });
                 }

@@ -28,12 +28,10 @@ stages:
 
 # Template for stable jobs
 .rust_stable:
-  image: rust:1.94.1
+  image: rust:1.94.1 # keep in sync with rust-toolchain.toml
   variables:
     CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
     CARGO_TARGET_DIR: "$CI_PROJECT_DIR/target"
-    # Optional:
-    # CARGO_INCREMENTAL: "0"
   cache:
     # 1) Cargo downloads: shared broadly (safe to share)
     - key:

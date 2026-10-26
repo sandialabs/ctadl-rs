@@ -2,7 +2,7 @@
   <!--
     dnlib's sources are compiled straight into this executable, as CecilDump
     does with Cecil's, so it restores and builds offline inside the Nix
-    sandbox, where the root flake's `cilPtrFixtures` derivation runs it.
+    sandbox, where the root flake's `cilFixtures` derivation runs it.
 
     DnlibSrc is the dnlib checkout; it defaults to a hand-cloned extern/dnlib.
   -->

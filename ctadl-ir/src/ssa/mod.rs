@@ -13,9 +13,8 @@ After SSA conversion, one may depend on a few things:
   parameters.
 
 */
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-use internment::ArcIntern;
 use smallvec::{SmallVec, smallvec};
 
 use crate::graph::dominators::{DominanceFrontier, DominatorTree};
@@ -37,6 +36,7 @@ mod copy_prop;
 pub use copy_prop::{propagate_copies, propagate_copies_function};
 
 mod mem2reg;
+use mem2reg::log_escape_note;
 pub use mem2reg::{
     DEFAULT_FULL_THRESHOLD, EscapeKind, EscapeNote, EscapePolicy, FullMode, Mem2Reg, Mem2RegReport,
     Mem2RegStats, STACK_TOP, promote_function, promote_stack_slots, promote_stack_slots_function,
@@ -45,7 +45,7 @@ pub use mem2reg::{
 
 #[derive(Debug)]
 struct PhiPlace {
-    variables: HashSet<ArcIntern<Variable>>,
+    variables: BTreeSet<Variable>,
     dominators: DominatorTree<BasicBlockIdx>,
 }
 
@@ -53,20 +53,18 @@ struct PhiPlace {
 struct SsaRename {
     /// S(*) in the paper is an array of stacks, one per variable, that hold the unique SSA
     /// version numbers. Top of S(V) is used to construct V_i that replaces a use of V.
-    s: HashMap<ArcIntern<Variable>, Vec<usize>>,
-    /// C(*) is an array of integers, one per variable. The counte C(V) tells how many assignments
+    s: HashMap<Variable, Vec<usize>>,
+    /// C(*) is an array of integers, one per variable. The count C(V) tells how many assignments
     /// to V have been processed.
-    c: HashMap<ArcIntern<Variable>, usize>,
+    c: HashMap<Variable, usize>,
 }
 
 /// The IR-to-IR passes that have to run after an import is read and before facts are
 /// generated.
 ///
-/// The order of the passes belongs to the pipeline, not to the caller. Before this type
-/// existed, the order was four lines inside `ctadl index`, so anything else that read an import
-/// had to copy the order out of a command-line function and hope it was still current.
-/// [`Pipeline::index_default`] is now the one place that says what `ctadl index` runs, and
-/// [`run_pipeline`] is the one place that runs it.
+/// The order of the passes belongs to the pipeline, not to the caller.
+/// [`Pipeline::index_default`] is the one place that says what `ctadl index` runs, and
+/// [`run_pipeline_with_threads`] is the one place that runs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pipeline {
     /// Run [`eliminate_dead_temps`], which drops temporaries that are assigned but never read.
@@ -92,11 +90,8 @@ pub struct Pipeline {
 impl Pipeline {
     /// The passes `ctadl index` runs. This function is the only definition of that set.
     ///
-    /// Dead-temp elimination runs first for two reasons. It removes definitions that coalescing
-    /// cannot remove, because a dead temporary has no use to merge it into. And it makes the
-    /// program smaller before coalescing scans it. Both passes do nothing to a program that is
-    /// already in SSA form, such as a flowy import, which is why running the whole pipeline
-    /// twice gives the same result as running it once.
+    /// Dead-temp elimination runs before coalescing (see [`eliminate_dead_temps`]). SSA
+    /// conversion itself must not run twice; see [`transform`].
     #[inline]
     pub fn index_default() -> Self {
         Pipeline {
@@ -197,37 +192,141 @@ impl Default for Pipeline {
     }
 }
 
-/// Runs the passes that `p` selects, in the only order that is valid for them.
+/// Runs the passes that `p` selects, in the only order that is valid for them, on one thread.
 ///
-/// `ctadl index` used to contain this code directly. Anything that reads an import and then
-/// generates facts should call this rather than list the passes again.
+/// Anything that reads an import and then generates facts should call this (or
+/// [`run_pipeline_with_threads`]) rather than list the passes again.
 pub fn run_pipeline(program: &mut Program, p: Pipeline) {
-    run_pipeline_with(program, p, &HashMap::new());
+    run_pipeline_with_threads(program, p, 1);
 }
 
-/// [`run_pipeline`], with full stack-slot promotion forced or forbidden for the functions
-/// `modes` names (see [`promote_stack_slots_with`]). Returns what mem2reg did, if it ran.
+/// What [`run_function_pipeline`] did to one function, summed over a program for the log.
+#[derive(Debug, Default, Clone)]
+struct PipelineStats {
+    dead_temps: usize,
+    coalesced: usize,
+    copy_prop: usize,
+    mem2reg: Mem2RegStats,
+    notes: Vec<EscapeNote>,
+}
+
+impl std::ops::Add for PipelineStats {
+    type Output = Self;
+    fn add(mut self, o: Self) -> Self {
+        self.dead_temps += o.dead_temps;
+        self.coalesced += o.coalesced;
+        self.copy_prop += o.copy_prop;
+        self.mem2reg += o.mem2reg;
+        self.notes.extend(o.notes);
+        self
+    }
+}
+
+/// [`run_pipeline`] on `threads` threads. `0` and `1` both mean the calling thread only.
+///
+/// Every pass reads and writes one function and nothing else, so running all of them on one
+/// function before moving to the next gives the same program as running each pass over the whole
+/// program in turn. That is what lets the functions be handed out to threads: each thread runs the
+/// whole pipeline on the functions it takes. The threads come from a pool built for this call, not
+/// rayon's global one, so `threads` is exactly the number used.
+pub fn run_pipeline_with_threads(program: &mut Program, p: Pipeline, threads: usize) {
+    run_pipeline_with(program, p, threads, &HashMap::new());
+}
+
+/// [`run_pipeline_with_threads`], with full stack-slot promotion forced or forbidden for the
+/// functions `modes` names (see [`promote_stack_slots_with`]). Returns what mem2reg did, if it
+/// ran, with its notes ordered by function name.
 pub fn run_pipeline_with(
     program: &mut Program,
     p: Pipeline,
+    threads: usize,
     modes: &HashMap<String, FullMode>,
 ) -> Option<Mem2RegReport> {
+    let functions = &mut program.functions.raw;
+    let mut stats = if threads <= 1 {
+        functions
+            .iter_mut()
+            .map(|f| run_function_pipeline(f, p, modes))
+            .fold(PipelineStats::default(), |a, b| a + b)
+    } else {
+        use rayon::prelude::*;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("ctadl-ssa-{i}"))
+            .build()
+            .expect("spawning the IR pass thread pool");
+        // Function sizes are skewed: one function can take a large share of the pipeline's
+        // time. Starting the largest functions first keeps one of them from being picked up last
+        // and leaving every other thread idle while it runs.
+        let mut work: Vec<&mut FunctionData> = functions.iter_mut().collect();
+        work.sort_by_cached_key(|f| {
+            std::cmp::Reverse(
+                f.blocks
+                    .iter_enumerated()
+                    .map(|(_, b)| b.len())
+                    .sum::<usize>(),
+            )
+        });
+        pool.install(|| {
+            work.into_par_iter()
+                .with_max_len(1)
+                .map(|f| run_function_pipeline(f, p, modes))
+                .reduce(PipelineStats::default, |a, b| a + b)
+        })
+    };
     if p.dead_temps {
-        eliminate_dead_temps(program);
+        log::debug!(
+            "dead_temps: deleted {} dead temporary def(s)",
+            stats.dead_temps
+        );
     }
     if p.coalesce {
-        coalesce_copies(program);
-    }
-    let report = p
-        .mem2reg
-        .map(|config| promote_stack_slots_with(program, config, modes));
-    if p.ssa {
-        transform_program(program, p.prune_unreachable);
+        log::debug!(
+            "coalesce_copies: removed {} fused copy statement(s)",
+            stats.coalesced
+        );
     }
     if p.copy_prop {
-        propagate_copies(program);
+        log::debug!(
+            "copy_prop: removed {} copy/trivial-phi statement(s)",
+            stats.copy_prop
+        );
     }
-    report
+    let config = p.mem2reg?;
+    log::info!("mem2reg({}): {:?}", config.tag(), stats.mem2reg);
+    stats.notes.sort_by(|a, b| a.function.cmp(&b.function));
+    Some(Mem2RegReport {
+        stats: stats.mem2reg,
+        notes: stats.notes,
+    })
+}
+
+/// Runs the passes that `p` selects on one function, in pipeline order.
+fn run_function_pipeline(
+    f: &mut FunctionData,
+    p: Pipeline,
+    modes: &HashMap<String, FullMode>,
+) -> PipelineStats {
+    let mut stats = PipelineStats::default();
+    if p.dead_temps {
+        stats.dead_temps = eliminate_dead_temps_function(f);
+    }
+    if p.coalesce {
+        stats.coalesced = coalesce_function(f);
+    }
+    if let Some(config) = p.mem2reg {
+        let (m2r, note) = promote_function(f, config, modes.get(&f.name).copied());
+        stats.mem2reg = m2r;
+        stats.notes.extend(note.inspect(log_escape_note));
+    }
+    if p.ssa {
+        log::debug!("f: {f}");
+        transform_with(f, p.prune_unreachable, PhiMode::Pruned);
+    }
+    if p.copy_prop {
+        stats.copy_prop = propagate_copies_function(f);
+    }
+    stats
 }
 
 /// Transforms every function in the program into SSA form by calling [`transform`] on each one.
@@ -321,10 +420,7 @@ fn transform_with(function: &mut FunctionData, prune: bool, mode: PhiMode) {
     // Set version 0 of global heap to global
     {
         let blocks = function.blocks.blocks_mut_preserves_cfg();
-        let variable = VariableRef {
-            variable: ArcIntern::new(Variable::GlobalHeap),
-            version: None,
-        };
+        let variable = VariableRef::new_global();
         blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
             dest: variable.with_version(0),
             sources: smallvec![Exp::Variable(variable)],
@@ -478,20 +574,17 @@ impl MutVisitor for SingleExitRewrite {
         _bb: BasicBlockIdx,
         data: &mut BasicBlockData,
     ) {
-        // Create assignment of <retvar>* = <return'd var>
         if let TerminatorKind::Return { args } = &data.terminator().kind {
             let args = args.clone();
-            // assign returned values into retvars
+            // Create assignment of <retvar>* = <return'd var>
             for (retvar, arg) in std::iter::zip(&self.retvars, &args) {
                 data.push_back(Statement::new_kind(StatementKind::assign(
                     retvar.clone(),
                     [arg.clone()],
                 )));
             }
-        }
-        // Finally, replace return with goto of exit block to get the graph into the shape
-        // we need it for dominators/ssa transformation.
-        if matches!(data.terminator().kind, TerminatorKind::Return { .. }) {
+            // Finally, replace return with goto of exit block to get the graph into the shape
+            // we need it for dominators/ssa transformation.
             *data.terminator_mut() = Terminator::new_kind(TerminatorKind::Goto {
                 targets: smallvec![self.exit],
             });
@@ -514,11 +607,10 @@ impl PhiPlace {
             dominators,
         };
         // Script-a in the paper. Maps variable to all the blocks that assign that variable.
-        let mut a: HashMap<ArcIntern<Variable>, SmallVec<[BasicBlockIdx; 4]>> = Default::default();
+        let mut a: HashMap<Variable, SmallVec<[BasicBlockIdx; 4]>> = Default::default();
         // Maps each variable to the blocks that read it before any assignment to it in the same
         // block: the blocks where it is live on entry because of a use inside the block.
-        let mut upward_uses: HashMap<ArcIntern<Variable>, SmallVec<[BasicBlockIdx; 4]>> =
-            Default::default();
+        let mut upward_uses: HashMap<Variable, SmallVec<[BasicBlockIdx; 4]>> = Default::default();
         // Set of all variables.
         let variables = &mut phi_place.variables;
 
@@ -526,34 +618,34 @@ impl PhiPlace {
         // writes its destinations, so `x = x + 1` is an upward-exposed use of `x`. A use that
         // already names a version (a parameter's write-back from `complete`) is not a use of
         // whatever version reaches it, so it keeps nothing live.
-        let mut killed: HashSet<ArcIntern<Variable>> = HashSet::new();
-        let mut used: HashSet<ArcIntern<Variable>> = HashSet::new();
+        let mut killed: HashSet<Variable> = HashSet::new();
+        let mut used: HashSet<Variable> = HashSet::new();
         for (bb, data) in function.blocks.iter_enumerated() {
             killed.clear();
             used.clear();
             let mut note_use = |v: &VariableRef, killed: &HashSet<_>| {
-                if !killed.contains(&v.variable) && used.insert(v.variable.clone()) {
-                    upward_uses.entry(v.variable.clone()).or_default().push(bb);
+                if !killed.contains(&v.variable) && used.insert(v.variable) {
+                    upward_uses.entry(v.variable).or_default().push(bb);
                 }
             };
             for stmt in data.iter() {
                 for v in stmt.iter_src_var().filter(|v| v.version.is_none()) {
-                    variables.insert(v.variable.clone());
+                    variables.insert(v.variable);
                     note_use(v, &killed);
                 }
                 for v in stmt.iter_dst_var() {
-                    a.entry(v.variable.clone()).or_default().push(bb);
-                    variables.insert(v.variable.clone());
-                    killed.insert(v.variable.clone());
+                    a.entry(v.variable).or_default().push(bb);
+                    variables.insert(v.variable);
+                    killed.insert(v.variable);
                 }
             }
             for v in data.terminator().iter_src_var() {
-                variables.insert(v.variable.clone());
+                variables.insert(v.variable);
                 note_use(v, &killed);
             }
         }
 
-        let assigns_of = |variable: &ArcIntern<Variable>| -> SmallVec<[BasicBlockIdx; 4]> {
+        let assigns_of = |variable: &Variable| -> SmallVec<[BasicBlockIdx; 4]> {
             a.get(variable).cloned().unwrap_or_default()
         };
 
@@ -563,7 +655,7 @@ impl PhiPlace {
         // outer loop.
         let mut work: IndexVec<BasicBlockIdx, usize> =
             IndexVec::from_elem_n(0, function.blocks.num_nodes());
-        // has_already[x] indices whether a phi-function for v has been considered at x.
+        // has_already[x] indicates whether a phi-function for v has been considered at x.
         let mut has_already: IndexVec<BasicBlockIdx, usize> =
             IndexVec::from_elem_n(0, function.blocks.num_nodes());
         // defines[x] == iter_count means x assigns v; live_in[x] == iter_count means v is live on
@@ -618,11 +710,11 @@ impl PhiPlace {
                             let operands = function
                                 .blocks
                                 .predecessors(y)
-                                .map(|pred| (pred, VariableRef::new_var_ref(v.clone())))
+                                .map(|pred| (pred, VariableRef::new(v)))
                                 .collect();
                             let block_data = &mut function.blocks.blocks_mut_preserves_cfg()[y];
                             block_data.push_front(Statement::new_kind(StatementKind::Phi {
-                                dest: VariableRef::new_var_ref(v.clone()),
+                                dest: VariableRef::new(v),
                                 operands,
                             }));
                         }
@@ -649,8 +741,8 @@ impl SsaRename {
         let mut s: HashMap<_, _> = Default::default();
         // Initialize so that version 0 is the already-set version of each variable.
         for v in &place.variables {
-            s.insert(v.clone(), vec![0]);
-            c.insert(v.clone(), 1);
+            s.insert(*v, vec![0]);
+            c.insert(*v, 1);
         }
         // Rewrite all the blocks
         let mut result = Self { s, c };
@@ -719,22 +811,22 @@ impl SsaRename {
     }
 
     #[inline]
-    fn s(&self, v: &ArcIntern<Variable>) -> &Vec<usize> {
+    fn s(&self, v: &Variable) -> &Vec<usize> {
         self.s.get(v).unwrap()
     }
 
     #[inline]
-    fn s_mut(&mut self, v: &ArcIntern<Variable>) -> &mut Vec<usize> {
+    fn s_mut(&mut self, v: &Variable) -> &mut Vec<usize> {
         self.s.get_mut(v).unwrap()
     }
 
     #[inline]
-    fn c(&self, v: &ArcIntern<Variable>) -> &usize {
+    fn c(&self, v: &Variable) -> &usize {
         self.c.get(v).unwrap()
     }
 
     #[inline]
-    fn c_mut(&mut self, v: &ArcIntern<Variable>) -> &mut usize {
+    fn c_mut(&mut self, v: &Variable) -> &mut usize {
         self.c.get_mut(v).unwrap()
     }
 }

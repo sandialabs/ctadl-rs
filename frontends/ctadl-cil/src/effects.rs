@@ -1,5 +1,4 @@
-//! Effects to statements. One `match` over [`Effect`] with no `_` arm, so a review compares a
-//! row of the table to an arm.
+//! Effects to statements.
 //!
 //! `F(field)` is the field symbol: `<cls::f>` for a named field, `[]` for an element,
 //! `length`, and `DEREF_FIELD` for `Deref` and `Block`. The dereference is never spelled as a

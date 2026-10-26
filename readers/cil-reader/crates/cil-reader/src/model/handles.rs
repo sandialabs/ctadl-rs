@@ -668,9 +668,9 @@ impl<'a> TypeSpec<'a> {
         SigReader::new(blob).type_sig()
     }
 
+    /// The [`full_name`](Self::full_name). Cecil's `Name` is shorter: the
+    /// element type's name, plus a suffix such as `[]` or `*` for some forms.
     pub fn name(&self) -> Result<String> {
-        // Close enough for display purposes: the full name's last segment
-        // semantics are not needed by the read tests; use full_name.
         self.full_name()
     }
 
@@ -1047,9 +1047,7 @@ pub mod param_attributes {
 }
 
 impl<'a> MethodDef<'a> {
-    /// Cecil's `IsDeleted`: a SpecialName member named `_Deleted`, which
-    /// edit-and-continue leaves behind. Cecil reads it, but leaves it out of
-    /// its type's members.
+    /// `IsDeleted`, as [`FieldDef::is_deleted`].
     pub fn is_deleted(&self) -> Result<bool> {
         Ok(self.attributes()? & method_attributes::SPECIAL_NAME != 0 && self.name()? == "_Deleted")
     }
@@ -1226,7 +1224,7 @@ impl<'a> MethodDef<'a> {
         }
     }
 
-    /// `MethodReference.FullName`: "<ret> <declaring>::<name>(<params>)".
+    /// `MethodReference.FullName`: `<ret> <declaring>::<name>(<params>)`.
     pub fn full_name(&self) -> Result<String> {
         let ctx = self.generic_context()?;
         let sig = self.signature()?;
@@ -1312,9 +1310,7 @@ pub struct PInvokeInfo<'a> {
 }
 
 impl<'a> PropertyDef<'a> {
-    /// Cecil's `IsDeleted`: a SpecialName member named `_Deleted`, which
-    /// edit-and-continue leaves behind. Cecil reads it, but leaves it out of
-    /// its type's members.
+    /// `IsDeleted`, as [`FieldDef::is_deleted`].
     pub fn is_deleted(&self) -> Result<bool> {
         Ok(self.attributes()? & SPECIAL_NAME != 0 && self.name()? == "_Deleted")
     }
@@ -1383,7 +1379,7 @@ impl<'a> PropertyDef<'a> {
         Ok(Vec::new())
     }
 
-    /// `PropertyDefinition.FullName`: "<type> <declaring>::<name>(<params>)",
+    /// `PropertyDefinition.FullName`: `<type> <declaring>::<name>(<params>)`,
     /// with the [`parameters`](Self::parameters).
     pub fn full_name(&self) -> Result<String> {
         let sig = self.signature()?;
@@ -1412,9 +1408,7 @@ impl<'a> PropertyDef<'a> {
 }
 
 impl<'a> EventDef<'a> {
-    /// Cecil's `IsDeleted`: a SpecialName member named `_Deleted`, which
-    /// edit-and-continue leaves behind. Cecil reads it, but leaves it out of
-    /// its type's members.
+    /// `IsDeleted`, as [`FieldDef::is_deleted`].
     pub fn is_deleted(&self) -> Result<bool> {
         Ok(self.attributes()? & SPECIAL_NAME != 0 && self.name()? == "_Deleted")
     }
@@ -1670,7 +1664,7 @@ impl<'a> MethodSpec<'a> {
     }
 
     /// `GenericInstanceMethod.FullName`:
-    /// "<ret> <declaring>::<name><args>(<element params>)", everything
+    /// `<ret> <declaring>::<name><args>(<element params>)`, everything
     /// rendered against the *element* method's signature.
     pub fn full_name(&self) -> Result<String> {
         let method = self.raw()?.method;

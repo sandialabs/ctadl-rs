@@ -1,8 +1,7 @@
 //! Compare dex-reader's smali disassembly against baksmali as ground truth.
 //!
-//! Ported from the dex-reader-orig `tests/baksmali_diff.rs`, which was dropped
-//! when the crate was vendored here. We run `baksmali d` (provided by the Nix
-//! environment — see the `baksmali` wrapper in flake.nix) on a
+//! We run `baksmali d` (provided by the Nix environment — see the `baksmali`
+//! wrapper in nix/android-jvm.nix) on a
 //! compiled-from-source `.dex`, parse its per-method smali, apply a battery of
 //! representation normalizations, and require dex-reader's own smali output to
 //! match baksmali method-for-method.
@@ -103,18 +102,10 @@ fn read_smali_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> 
     Ok(())
 }
 
-// --- normalization (ported verbatim from baksmali_diff.rs) -----------------
+// --- normalization ----------------------------------------------------------
 
 fn keep_directive(s: &str) -> bool {
-    matches!(
-        s,
-        ".packed-switch"
-            | ".sparse-switch"
-            | ".array-data"
-            | ".end packed-switch"
-            | ".end sparse-switch"
-            | ".end array-data"
-    ) || s.starts_with(".packed-switch")
+    s.starts_with(".packed-switch")
         || s.starts_with(".sparse-switch")
         || s.starts_with(".array-data")
         || s.starts_with(".end packed-switch")
@@ -185,7 +176,7 @@ fn normalize_numeric_literals(line: &str) -> String {
 /// `char::escape_debug`, which leaves printable non-ASCII literal and uses
 /// `\u{XXXX}` for the rest, plus `\uXXXX` for the code units that have no
 /// `char` at all. Neither form is a subset of the other -- a supplementary
-/// character is one `\u{1f600}` on our side and two `😀` units on
+/// character is one `\u{1f600}` on our side and two `\ud83d\ude00` units on
 /// baksmali's -- so both sides are decoded back to the code-unit sequence they
 /// denote and re-emitted the same way.
 fn normalize_const_string(line: &str) -> String {
@@ -431,10 +422,6 @@ fn normalize_line_common(line: &str) -> Option<String> {
     Some(s)
 }
 
-fn normalize_baksmali_line(line: &str) -> Option<String> {
-    normalize_line_common(line)
-}
-
 fn method_ins_size_from_descriptor(desc: &str, is_static: bool) -> usize {
     // desc is the dex method descriptor "(...)R". Count parameter registers:
     // each param is 1 reg, except J/D which are 2. Add 1 for `this` if
@@ -602,15 +589,13 @@ fn parse_baksmali_methods(smali_path: &Path) -> Result<HashMap<String, Vec<Strin
             }
             if let Some(rest) = line.strip_prefix(".locals") {
                 if let Ok(locals) = rest.trim().parse::<usize>() {
-                    let total_regs = locals + current_ins_size;
-                    if total_regs >= current_ins_size {
-                        current_p_base = Some(total_regs - current_ins_size);
-                    }
+                    // The parameters follow the locals.
+                    current_p_base = Some(locals);
                 }
                 continue;
             }
 
-            if let Some(mut n) = normalize_baksmali_line(raw) {
+            if let Some(mut n) = normalize_line_common(raw) {
                 if let Some(p_base) = current_p_base {
                     n = rewrite_p_registers_to_v(&n, p_base);
                 }

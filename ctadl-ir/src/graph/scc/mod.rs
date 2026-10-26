@@ -1,7 +1,7 @@
 /*!
 Routine to compute the strongly connected components (SCCs) of a graph.
 
-Also computes as the resulting DAG if each SCC is replaced with a
+Also computes the resulting DAG if each SCC is replaced with a
 node in the graph. This uses [Tarjan's algorithm](
 https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm)
 that completes in *O*(*n*) time.
@@ -15,7 +15,6 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::Range;
 
-//use rustc_index::{Idx, IndexSlice, IndexVec};
 use crate::index::{idx::Idx, index_vec::IndexVec, slice::IndexSlice};
 
 use crate::graph::{DirectedGraph, NumEdges, Successors};
@@ -34,7 +33,7 @@ mod tests;
 /// that P holds).
 pub trait Annotation: Debug + Copy {
     /// Merge two existing annotations into one during
-    /// path compression.o
+    /// path compression.
     fn merge_scc(self, other: Self) -> Self;
 
     /// Merge a successor into this annotation.
@@ -91,7 +90,7 @@ pub struct Sccs<N: Idx, S: Idx> {
     scc_data: SccData<S>,
 }
 
-/// Information about an invidividual SCC node.
+/// Information about an individual SCC node.
 struct SccDetails {
     /// For this SCC, the range of `all_successors` where its
     /// successors can be found.
@@ -184,7 +183,7 @@ impl<N: Idx, S: Idx + Ord> Successors for Sccs<N, S> {
 }
 
 impl<S: Idx> SccData<S> {
-    /// Number of SCCs,
+    /// Number of SCCs.
     fn len(&self) -> usize {
         self.scc_details.len()
     }
@@ -197,7 +196,7 @@ impl<S: Idx> SccData<S> {
     /// Creates a new SCC with `successors` as its successors and
     /// returns the resulting index.
     fn create_scc(&mut self, successors: impl IntoIterator<Item = S>) -> S {
-        // Store the successors on `scc_successors_vec`, remembering
+        // Store the successors on `all_successors`, remembering
         // the range of indices.
         let all_successors_start = self.all_successors.len();
         self.all_successors.extend(successors);
@@ -332,7 +331,7 @@ where
             .map(|node| match this.start_walk_from(node) {
                 WalkReturn::Complete { scc_index, .. } => scc_index,
                 WalkReturn::Cycle { min_depth, .. } => {
-                    panic!("`start_walk_node({node:?})` returned cycle with depth {min_depth:?}")
+                    panic!("`start_walk_from({node:?})` returned cycle with depth {min_depth:?}")
                 }
             })
             .collect();
@@ -580,8 +579,7 @@ where
             let successors = match successors {
                 Some(successors) => successors,
                 None => {
-                    // This None marks that we still have the initialize this node's frame.
-                    //log::trace!(?depth, ?node);
+                    // This None marks that we still have to initialize this node's frame.
 
                     assert!(matches!(self.node_states[node], NodeState::NotVisited));
 
@@ -612,10 +610,8 @@ where
                 .into_iter()
                 .map(|walk| (*successor_node, Some(walk)));
 
-            let successor_walk = successors.map(|successor_node| {
-                //log::trace!(?node, ?successor_node);
-                (successor_node, self.inspect_node(successor_node))
-            });
+            let successor_walk = successors
+                .map(|successor_node| (successor_node, self.inspect_node(successor_node)));
             for (successor_node, walk) in returned_walk.chain(successor_walk) {
                 match walk {
                     // The starting node `node` leads to a cycle whose earliest node,
@@ -630,7 +626,6 @@ where
                         // Track the minimum depth we can reach.
                         assert!(successor_min_depth <= depth);
                         if successor_min_depth < *min_depth {
-                            //log::trace!(?node, ?successor_min_depth);
                             *min_depth = successor_min_depth;
                             *min_cycle_root = successor_node;
                         }
@@ -647,7 +642,6 @@ where
                         );
                         // Push the completed SCC indices onto
                         // the `successors_stack` for later.
-                        //log::trace!(?node, ?successor_scc_index);
                         successors_stack.push(successor_scc_index);
                         current_component_annotation.update_reachable(successor_annotation);
                     }
@@ -655,7 +649,6 @@ where
                     None => {
                         let depth = depth + 1;
                         log::trace!("Recursing down into {successor_node:?} at depth {depth:?}");
-                        //log::trace!(?depth, ?successor_node);
                         // Remember which node the return value will come from.
                         frame.successor_node = successor_node;
                         // Start a new stack frame, then step into it.
@@ -730,7 +723,7 @@ where
             } else {
                 // We are not the head of the cycle. Return back to our
                 // caller. They will take ownership of the
-                // `self.successors` data that we pushed.
+                // `successors_stack` entries that we pushed.
                 self.node_states[node] = NodeState::InCycleWith {
                     parent: frame.min_cycle_root,
                 };

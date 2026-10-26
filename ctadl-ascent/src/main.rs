@@ -156,7 +156,7 @@ pub struct ImportArgs {
     #[arg(long, short)]
     pub name: Option<String>,
 
-    /// Language/IR family for the artifact: jvm, dex, or auto
+    /// Language/IR family for the artifact, or auto to detect it
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
 
@@ -195,6 +195,20 @@ pub struct ImportArgs {
     /// self-contained publish ships some 200 of them.
     #[arg(long)]
     pub include_framework: bool,
+
+    /// Number of threads Ghidra may use to analyze and decompile native code.
+    ///
+    /// `0`, the default, or `-j` with no value, leaves it to Ghidra, which uses every core the
+    /// OS reports. Any other value caps Ghidra, and the JVM it runs in, at that many.
+    #[arg(
+        short = 'j',
+        long,
+        num_args = 0..=1,
+        default_value_t = 0,
+        default_missing_value = "0",
+        value_name = "N"
+    )]
+    pub jobs: usize,
 }
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
@@ -299,6 +313,78 @@ pub struct ReportArgs {
     pub dispatch_order: DispatchOrder,
 }
 
+/// The call-resolution strategy, and the ladder flags `--strategy mixed` reads.
+#[derive(Debug, Clone, Args)]
+pub struct CallPolicyArgs {
+    /// Call resolution strategy: cha, hi, mixed, legacy-mixed
+    ///
+    /// `mixed` is the ladder: an `invoke-super` resolves to its one real target, then a
+    /// dispatch model, then the threshold below, then hybrid inlining. `legacy-mixed` is CHA
+    /// when the site has exactly one target and hybrid inlining otherwise.
+    #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
+    pub strategy: CallResolutionStrategy,
+
+    /// Resolve a call site with CHA when it has at most this many targets, and defer it to
+    /// hybrid inlining above that. `--strategy mixed` only.
+    ///
+    /// `0` resolves nothing with CHA; a very large value never defers. Raising it leaves less
+    /// to hybrid inlining but costs the index engine: on a program with a large recursive
+    /// strongly connected component the CHA edges it adds are superlinear in the fixpoint. The
+    /// default is where that cost starts; going higher is worth it only when the extra
+    /// precision is.
+    #[arg(long, default_value_t = ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD)]
+    pub cha_threshold: usize,
+
+    /// `--cha-threshold` for interface-dispatched sites, which are a different population:
+    /// about a tenth of them resolve to a single target against four fifths of ordinary
+    /// virtual calls. Defaults to `--cha-threshold`.
+    #[arg(long)]
+    pub cha_threshold_interface: Option<usize>,
+
+    /// Ignore `find: "dispatch"` models, so every site takes the threshold instead.
+    #[arg(long)]
+    pub no_dispatch_models: bool,
+
+    /// Ignore `find: "dispatch"` models at interface-dispatched sites only.
+    #[arg(long)]
+    pub no_dispatch_models_interface: bool,
+
+    /// Whether a matched dispatch model beats the threshold or the other way round.
+    ///
+    /// `model-first` takes a modelled signature out of the analysis whatever its target count.
+    /// `threshold-first` resolves a signature with few enough targets exactly even when a model
+    /// matches it, for a precision-sensitive run.
+    #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
+    pub dispatch_order: DispatchOrder,
+}
+
+impl CallPolicyArgs {
+    /// The ladder flags as one policy. `--cha-threshold-interface` defaults to
+    /// `--cha-threshold`, so setting one flag gives one threshold and the second exists only
+    /// for the population that behaves differently.
+    ///
+    /// Warns when a ladder flag is given with a strategy that does not read it: the policy is
+    /// recorded in the index config as given either way, so a silent no-op would be
+    /// indistinguishable from a policy that took effect.
+    pub fn call_policy(&self) -> CallPolicy {
+        let policy = CallPolicy {
+            cha_threshold: self.cha_threshold,
+            cha_threshold_interface: self.cha_threshold_interface.unwrap_or(self.cha_threshold),
+            dispatch_models: !self.no_dispatch_models,
+            dispatch_models_interface: !self.no_dispatch_models
+                && !self.no_dispatch_models_interface,
+            order: self.dispatch_order,
+        };
+        if self.strategy != CallResolutionStrategy::Mixed && policy != CallPolicy::default() {
+            log::warn!(
+                "the call-policy flags apply to --strategy mixed; --strategy {:?} ignores them",
+                self.strategy
+            );
+        }
+        policy
+    }
+}
+
 #[derive(Debug, Args)]
 pub struct IndexArgs {
     /// Name for the analysis project (index name)
@@ -349,8 +435,8 @@ pub struct IndexArgs {
     ///
     /// When a Java/Dex artifact is co-indexed with native code, CTADL joins each `native` method
     /// to the `Java_…` symbol implementing it, mapping arguments across the JNI ABI's two-slot
-    /// shift so taint flows both ways. Pass this to reproduce the pre-bridge behaviour, or to
-    /// measure what the bridge contributes. See `ctadl_ascent::languages::jni`.
+    /// shift so taint flows both ways. Pass this to measure what the bridge contributes. See
+    /// `ctadl_ascent::languages::jni`.
     #[arg(long)]
     pub no_jni_bridge: bool,
 
@@ -364,46 +450,8 @@ pub struct IndexArgs {
     #[arg(long)]
     pub no_jni_registry: bool,
 
-    /// Call resolution strategy: cha, hi, mixed, legacy-mixed
-    ///
-    /// `mixed` is the ladder: an `invoke-super` resolves to its one real target, then a
-    /// dispatch model, then the threshold below, then hybrid inlining. `legacy-mixed` is CHA
-    /// when the site has exactly one target and hybrid inlining otherwise.
-    #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
-    pub strategy: CallResolutionStrategy,
-
-    /// Resolve a call site with CHA when it has at most this many targets, and defer it to
-    /// hybrid inlining above that. `--strategy mixed` only.
-    ///
-    /// `0` resolves nothing with CHA; a very large value never defers. Raising it leaves less
-    /// to hybrid inlining but costs the index engine: on a program with a large recursive
-    /// strongly connected component the CHA edges it adds are superlinear in the fixpoint. The
-    /// default is where that cost starts; going higher is worth it only when the extra
-    /// precision is.
-    #[arg(long, default_value_t = ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD)]
-    pub cha_threshold: usize,
-
-    /// `--cha-threshold` for interface-dispatched sites, which are a different population:
-    /// about a tenth of them resolve to a single target against four fifths of ordinary
-    /// virtual calls. Defaults to `--cha-threshold`.
-    #[arg(long)]
-    pub cha_threshold_interface: Option<usize>,
-
-    /// Ignore `find: "dispatch"` models, so every site takes the threshold instead.
-    #[arg(long)]
-    pub no_dispatch_models: bool,
-
-    /// Ignore `find: "dispatch"` models at interface-dispatched sites only.
-    #[arg(long)]
-    pub no_dispatch_models_interface: bool,
-
-    /// Whether a matched dispatch model beats the threshold or the other way round.
-    ///
-    /// `model-first` takes a modelled signature out of the analysis whatever its target count.
-    /// `threshold-first` resolves a signature with few enough targets exactly even when a model
-    /// matches it, for a precision-sensitive run.
-    #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
-    pub dispatch_order: DispatchOrder,
+    #[command(flatten)]
+    pub call: CallPolicyArgs,
 
     /// Prune unreachable CFG nodes before SSA transformation.
     ///
@@ -447,7 +495,8 @@ pub struct IndexArgs {
     ///
     /// `1`, the default, runs the serial index engine. Any larger value runs the parallel
     /// engine on exactly that many threads. `0`, or `-j` with no value, uses every core the OS
-    /// reports. Both engines evaluate the same rules and derive the same relations.
+    /// reports. Both engines evaluate the same rules and derive the same relations. The IR
+    /// passes that run before the engine (SSA and its cleanups) use the same number of threads.
     #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
     pub jobs: Option<usize>,
 
@@ -545,33 +594,6 @@ fn parse_size(s: &str) -> Result<usize, String> {
     Ok((number * scale as f64) as usize)
 }
 
-impl IndexArgs {
-    /// The ladder flags as one policy. `--cha-threshold-interface` defaults to
-    /// `--cha-threshold`, so setting one flag gives one threshold and the second exists only
-    /// for the population that behaves differently.
-    ///
-    /// Warns when a ladder flag is given with a strategy that does not read it: the policy is
-    /// recorded in the index config as given either way, so a silent no-op would be
-    /// indistinguishable from a policy that took effect.
-    pub fn call_policy(&self) -> CallPolicy {
-        let policy = CallPolicy {
-            cha_threshold: self.cha_threshold,
-            cha_threshold_interface: self.cha_threshold_interface.unwrap_or(self.cha_threshold),
-            dispatch_models: !self.no_dispatch_models,
-            dispatch_models_interface: !self.no_dispatch_models
-                && !self.no_dispatch_models_interface,
-            order: self.dispatch_order,
-        };
-        if self.strategy != CallResolutionStrategy::Mixed && policy != CallPolicy::default() {
-            log::warn!(
-                "the call-policy flags apply to --strategy mixed; --strategy {:?} ignores them",
-                self.strategy
-            );
-        }
-        policy
-    }
-}
-
 #[derive(Debug, Args)]
 pub struct QueryArgs {
     /// Analysis project (index) name
@@ -637,48 +659,10 @@ pub struct GoArgs {
     #[arg(long)]
     pub dump_taint_graph: Option<PathBuf>,
 
-    /// Call resolution strategy: cha, hi, mixed, legacy-mixed
-    ///
-    /// `mixed` is the ladder: an `invoke-super` resolves to its one real target, then a
-    /// dispatch model, then the threshold below, then hybrid inlining. `legacy-mixed` is CHA
-    /// when the site has exactly one target and hybrid inlining otherwise.
-    #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
-    pub strategy: CallResolutionStrategy,
+    #[command(flatten)]
+    pub call: CallPolicyArgs,
 
-    /// Resolve a call site with CHA when it has at most this many targets, and defer it to
-    /// hybrid inlining above that. `--strategy mixed` only.
-    ///
-    /// `0` resolves nothing with CHA; a very large value never defers. Raising it leaves less
-    /// to hybrid inlining but costs the index engine: on a program with a large recursive
-    /// strongly connected component the CHA edges it adds are superlinear in the fixpoint. The
-    /// default is where that cost starts; going higher is worth it only when the extra
-    /// precision is.
-    #[arg(long, default_value_t = ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD)]
-    pub cha_threshold: usize,
-
-    /// `--cha-threshold` for interface-dispatched sites, which are a different population:
-    /// about a tenth of them resolve to a single target against four fifths of ordinary
-    /// virtual calls. Defaults to `--cha-threshold`.
-    #[arg(long)]
-    pub cha_threshold_interface: Option<usize>,
-
-    /// Ignore `find: "dispatch"` models, so every site takes the threshold instead.
-    #[arg(long)]
-    pub no_dispatch_models: bool,
-
-    /// Ignore `find: "dispatch"` models at interface-dispatched sites only.
-    #[arg(long)]
-    pub no_dispatch_models_interface: bool,
-
-    /// Whether a matched dispatch model beats the threshold or the other way round.
-    ///
-    /// `model-first` takes a modelled signature out of the analysis whatever its target count.
-    /// `threshold-first` resolves a signature with few enough targets exactly even when a model
-    /// matches it, for a precision-sensitive run.
-    #[arg(long, value_enum, default_value_t = DispatchOrder::ModelFirst)]
-    pub dispatch_order: DispatchOrder,
-
-    /// Language/IR family for the artifact: jvm, dex, or auto
+    /// Language/IR family for the artifact, or auto to detect it
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
 
@@ -701,6 +685,12 @@ pub struct GoArgs {
     /// See `ctadl import --help`.
     #[arg(long)]
     pub include_framework: bool,
+
+    /// Number of threads to import and index with. Unset, the import uses every core and the
+    /// index runs serially, as `ctadl import` and `ctadl index` do by default.
+    /// See `ctadl import --help` and `ctadl index --help`.
+    #[arg(short = 'j', long, num_args = 0..=1, default_missing_value = "0", value_name = "N")]
+    pub jobs: Option<usize>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -778,6 +768,7 @@ fn main() -> anyhow::Result<()> {
                     no_native_libs: args.no_native_libs,
                     native_abi: args.native_abi.clone(),
                     include_framework: args.include_framework,
+                    jobs: args.jobs.unwrap_or(0),
                 };
                 let name = import_artifact_to_store(&import_args).with_context(|| {
                     format!("importing artifact from: '{}'", artifact.display())
@@ -794,17 +785,12 @@ fn main() -> anyhow::Result<()> {
                 no_default_models: args.no_default_models,
                 no_jni_bridge: args.no_jni_bridge,
                 no_jni_registry: args.no_jni_registry,
-                strategy: args.strategy,
-                cha_threshold: args.cha_threshold,
-                cha_threshold_interface: args.cha_threshold_interface,
-                no_dispatch_models: args.no_dispatch_models,
-                no_dispatch_models_interface: args.no_dispatch_models_interface,
-                dispatch_order: args.dispatch_order,
+                call: args.call.clone(),
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 hybrid_context: HybridContext::default(),
                 context_join: ContextJoin::default(),
-                jobs: None,
+                jobs: args.jobs,
                 lsm: false,
                 lsm_memtable_limit: None,
                 lsm_memory_budget: None,
@@ -939,6 +925,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 no_native_libs: false,
                 native_abi: None,
                 include_framework: false,
+                jobs: 0,
             };
             import_artifact_to_store(&import_args)?;
 
@@ -952,12 +939,14 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 no_default_models: false,
                 no_jni_bridge: false,
                 no_jni_registry: false,
-                strategy: CallResolutionStrategy::Mixed,
-                cha_threshold: ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD,
-                cha_threshold_interface: None,
-                no_dispatch_models: false,
-                no_dispatch_models_interface: false,
-                dispatch_order: DispatchOrder::ModelFirst,
+                call: CallPolicyArgs {
+                    strategy: CallResolutionStrategy::Mixed,
+                    cha_threshold: ctadl_ascent::codegen::DEFAULT_CHA_THRESHOLD,
+                    cha_threshold_interface: None,
+                    no_dispatch_models: false,
+                    no_dispatch_models_interface: false,
+                    dispatch_order: DispatchOrder::ModelFirst,
+                },
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
                 hybrid_context: HybridContext::default(),
@@ -1051,6 +1040,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             native_libs: !args.no_native_libs,
             native_abi: args.native_abi.as_deref(),
             cil_include_framework: args.include_framework,
+            jobs: args.jobs,
         },
     )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote
@@ -1069,7 +1059,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
 ///
 /// # Errors
 ///
-/// If there ary any loading or writing errors
+/// If there are any loading or writing errors
 fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
     if args.lsm {
         log::warn!("--lsm is experimental");
@@ -1098,8 +1088,8 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         cli::IndexOptions {
             no_jni_bridge: args.no_jni_bridge,
             no_jni_registry: args.no_jni_registry,
-            strategy: args.strategy,
-            call_policy: args.call_policy(),
+            strategy: args.call.strategy,
+            call_policy: args.call.call_policy(),
             prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
             alias_rule: args.alias_rule.unwrap_or(true),
             hybrid_context: args.hybrid_context,
@@ -1171,7 +1161,7 @@ fn report_project(args: &ReportArgs) -> anyhow::Result<()> {
 ///
 /// `ctadl index app` creates a project named `app` out of the import named `app`, so before it
 /// has ever run there is no project to load -- and that is exactly when checking a model file
-/// against the import is most useful. Falling back to [`AnalysisProject::ephemeral`] gives
+/// against the import is most useful. Falling back to [`project::AnalysisProject::ephemeral`] gives
 /// `ctadl query` the same import list, with the same `sub_imports` expansion (an APK's native
 /// libraries), and writes nothing to the store. The query itself then finds no index and says
 /// so; see [`cli::query`].

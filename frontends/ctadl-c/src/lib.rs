@@ -4313,8 +4313,8 @@ impl<'a> Context<'a> {
         // Direct or indirect, decided by what the callee *resolved to*, not how it was
         // spelled: a name is a direct call; a location holding a function pointer is a call
         // through what it holds. Every arm below reads the resolved access path.
-        let var = access_path.base.variable.clone();
-        let style = match &*var {
+        let var = access_path.base.variable;
+        let style = match &var {
             Variable::Local(name) => {
                 log::debug!(
                     "This is an Indirect LOCAL call: {}",

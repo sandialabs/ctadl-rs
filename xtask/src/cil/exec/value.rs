@@ -597,8 +597,8 @@ mod tests {
             ty: ConvType::R,
             flags: UN,
         };
-        // The three unique Linux CI failures, before the fixture adds its
-        // other operands. Check both runtime policies against exact bits.
+        // Inputs above i64::MAX whose two rounding policies differ in the
+        // last bit. Check both runtime policies against exact bits.
         for (input, direct, via_signed) in [
             (
                 11_541_544_916_613_131_022_u64,

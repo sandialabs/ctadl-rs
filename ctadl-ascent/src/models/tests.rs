@@ -153,11 +153,6 @@ fn a_variable_port_carries_its_local_index() {
 /// The two spellings a bracketed segment can have must stay distinguishable, or a port naming
 /// the real `Offset(8)` a binary frontend emits and one naming the synthetic `Symbol("[]")` the
 /// dex/jvm/lua frontends emit collapse into each other.
-///
-/// This used to be pinned by round-tripping a segment through the model layer's columnar
-/// access-path encoding, which stored one canonical escaped spelling per row. That encoding is
-/// gone -- a matched port is a `facts::Path` from the moment it parses -- so the guarantee is
-/// pinned where it now lives, at the spelling functions themselves.
 #[test]
 fn bracketed_segment_spellings_stay_distinct() {
     use ctadl_ir::mir::Offset;
@@ -313,7 +308,7 @@ mod capture {
     use super::*;
     use crate::models::json::MatchedFunctions;
 
-    /// A frontend with no method table -- what pcode uses. The match index falls back to the
+    /// A frontend with no method table -- what C and flowy use. The match index falls back to the
     /// IR function names, so a `where` still matches; it is only `matched_functions(&All)`
     /// that has nothing to enumerate.
     fn unknown_vmt_program(names: &[&str]) -> ProgramInfo {
@@ -397,7 +392,7 @@ mod capture {
         }
     }
 
-    /// The pcode-shaped case, spelled out: a `where`-narrowed generator on an `Unknown` VMT
+    /// The `Unknown`-VMT case, spelled out: a `where`-narrowed generator on an `Unknown` VMT
     /// captures a real count even though the `All` arm of `matched_functions` could not.
     #[test]
     fn a_narrowed_generator_counts_on_an_unknown_vmt() {

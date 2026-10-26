@@ -46,7 +46,6 @@ fn function_f() -> FunctionData {
                 [Exp::from(a.clone())]
             )),
         ];
-        // stmts.extend(]));
         let body_block = &mut f[body];
         body_block.extend(stmts);
         body_block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
@@ -106,7 +105,7 @@ fn function_g() -> FunctionData {
     g
 }
 
-// c1 is never set anywhere, this was a bug in ssa
+// c1 is never set anywhere.
 //def G1(b) {
 //  a = 1;
 //  c = F(a, b);
@@ -164,7 +163,7 @@ fn function_g1() -> FunctionData {
 
 // def F(p)
 // {
-//   %global.bar = update(p;
+//   store %global.bar := p;
 // }
 fn program_h() -> Program {
     let mut program = Program::default();
@@ -184,7 +183,7 @@ fn program_h() -> Program {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
-        let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
+        let global_ref = VariableRef::new_global();
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::store(
                 AccessPath::without_fields(global_ref.clone()),
@@ -227,7 +226,7 @@ fn program_h_update() -> Program {
             base: VariableRef::new_parameter(ParameterIdx::new(0)),
             accesses: Default::default(),
         };
-        let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
+        let global_ref = VariableRef::new_global();
         let stmts: IndexVec<StatementIdx, _> =
             indexvec![Statement::new_kind(StatementKind::update(
                 AccessPath::without_fields(global_ref.clone()),
@@ -379,308 +378,8 @@ impl Visitor for SsaCheck {
     }
 }
 
-//#[test]
-//fn test_simple_nopred() {
-//    // a = 42
-//    // b = a
-//    // c = a + b
-//    // a = c
-//    // c = a
-//    let blocks = BasicBlocks::new(
-//        indexvec![BasicBlockData {
-//            statements: indexvec![
-//                StatementKind::Assign {
-//                    dst: "a".into(),
-//                    src: vec![Exp::Const(42)]
-//                },
-//                StatementKind::Assign {
-//                    dst: "b".into(),
-//                    src: vec![Exp::AccessPath("a".into())]
-//                },
-//                StatementKind::Assign {
-//                    dst: "c".into(),
-//                    src: vec![Exp::AccessPath("a".into()), Exp::AccessPath("b".into())]
-//                },
-//                StatementKind::Assign {
-//                    dst: "a".into(),
-//                    src: vec![Exp::AccessPath("c".into()), Exp::Const(23)]
-//                },
-//                StatementKind::Assign {
-//                    dst: "c".into(),
-//                    src: vec![Exp::AccessPath("a".into())]
-//                },
-//            ],
-//        }],
-//        Default::default(),
-//    );
-//    let function = FunctionData::new("test", Params::new([]), blocks);
-//    let mut ctx = SsaContext::new(&function);
-//    assert_eq!(ctx.counter.count, 1);
-//    ctx.build();
-//    // v1: 42
-//    // v2: v1 + v1
-//    // v3: 23
-//    // v4: v2 + v3
-//    assert!(ctx.uses.get(&Value::Id(2)).unwrap().contains(&Value::Id(1)));
-//    assert!(ctx.uses.get(&Value::Id(4)).unwrap().contains(&Value::Id(2)));
-//    assert!(ctx.uses.get(&Value::Id(4)).unwrap().contains(&Value::Id(3)));
-//}
-
-//#[test]
-//fn test_simple_pred() {
-//    // block 0:
-//    // d = 192
-//    //
-//    // block 1:
-//    // a = 42
-//    // b = a
-//    // c = a + b
-//    // a = c
-//    // note that d is not defined
-//    // c = a + d
-
-//    let basic_blocks = indexvec![
-//        // block 0:
-//        BasicBlockData {
-//            statements: indexvec![StatementKind::Assign {
-//                dst: "d".into(),
-//                src: vec![Exp::Const(192)]
-//            }],
-//        },
-//        // block 1:
-//        BasicBlockData {
-//            statements: indexvec![
-//                StatementKind::Assign {
-//                    dst: "a".into(),
-//                    src: vec![Exp::Const(42)]
-//                },
-//                StatementKind::Assign {
-//                    dst: "b".into(),
-//                    src: vec![Exp::AccessPath("a".into())]
-//                },
-//                StatementKind::Assign {
-//                    dst: "c".into(),
-//                    src: vec![Exp::AccessPath("a".into()), Exp::AccessPath("b".into())]
-//                },
-//                StatementKind::Assign {
-//                    dst: "a".into(),
-//                    src: vec![Exp::AccessPath("c".into()), Exp::Const(23)]
-//                },
-//                StatementKind::Assign {
-//                    dst: "c".into(),
-//                    src: vec![Exp::AccessPath("a".into()), Exp::AccessPath("d".into())]
-//                },
-//            ],
-//        }
-//    ];
-//    let edges = vec![(BasicBlockIdx::new(0), BasicBlockIdx::new(1))];
-//    let blocks = BasicBlocks::new(basic_blocks, edges);
-//    let function = FunctionData::new("test", Params::new([]), blocks);
-//    let mut ctx = SsaContext::new(&function);
-//    assert_eq!(ctx.counter.count, 1);
-//    ctx.build();
-//    // v1: 192
-//    //
-//    // v2: 42
-//    // v3: v2 + v2
-//    // v4: 23
-//    // v5: v3 + v4
-//    // v6: v5 + v1
-//    assert!(ctx.uses.get(&Value::Id(3)).unwrap().contains(&Value::Id(2)));
-//    assert!(ctx.uses.get(&Value::Id(5)).unwrap().contains(&Value::Id(3)));
-//    assert!(ctx.uses.get(&Value::Id(5)).unwrap().contains(&Value::Id(4)));
-//    assert!(ctx.uses.get(&Value::Id(6)).unwrap().contains(&Value::Id(5)));
-//    assert!(ctx.uses.get(&Value::Id(6)).unwrap().contains(&Value::Id(1)));
-//}
-
-//#[test]
-//fn test_simple_recursive() {
-//    let basic_blocks = indexvec![
-//        // block 0:
-//        // s0: x = 42
-//        BasicBlockData {
-//            statements: indexvec![StatementKind::Assign {
-//                dst: "x".into(),
-//                src: vec![Exp::Const(42)]
-//            }],
-//        },
-//        // block 1:
-//        // loop header
-//        BasicBlockData {
-//            statements: indexvec![],
-//        },
-//        // block 2:
-//        // if test
-//        BasicBlockData {
-//            statements: indexvec![],
-//        },
-//        // block 3:
-//        // [if true]
-//        // s0: x = something
-//        BasicBlockData {
-//            statements: indexvec![StatementKind::Assign {
-//                dst: "x".into(),
-//                src: vec![Exp::Const(90)]
-//            }],
-//        },
-//        // block 4:
-//        // if false
-//        BasicBlockData {
-//            statements: indexvec![],
-//        },
-//        // block 5:
-//        // join after if
-//        BasicBlockData {
-//            statements: indexvec![],
-//        },
-//        // block 6:
-//        // use of x after loop
-//        // s0: y = x + 1
-//        BasicBlockData {
-//            statements: indexvec![StatementKind::Assign {
-//                dst: "y".into(),
-//                src: vec![Exp::AccessPath("x".into()), Exp::Const(1)]
-//            }],
-//        },
-//    ];
-//    let edges = vec![
-//        (BasicBlockIdx::new(0), BasicBlockIdx::new(1)),
-//        (BasicBlockIdx::new(1), BasicBlockIdx::new(2)),
-//        (BasicBlockIdx::new(1), BasicBlockIdx::new(6)),
-//        (BasicBlockIdx::new(2), BasicBlockIdx::new(3)),
-//        (BasicBlockIdx::new(2), BasicBlockIdx::new(4)),
-//        (BasicBlockIdx::new(3), BasicBlockIdx::new(5)),
-//        (BasicBlockIdx::new(4), BasicBlockIdx::new(5)),
-//        (BasicBlockIdx::new(5), BasicBlockIdx::new(1)),
-//    ];
-//    let blocks = BasicBlocks::new(basic_blocks, edges);
-//    let function = FunctionData::new("test", Params::new([]), blocks);
-//    let mut ctx = SsaContext::new(&function);
-//    ctx.set_counter_value(0); // this example starts at 0 in paper, sigh
-//    // Fill the blocks in order of the paper
-//    for &i in &[0, 3, 6] {
-//        ctx.seal_block(i.into());
-//        ctx.fill_block(i.into());
-//    }
-//}
-
-//#[test]
-//fn test_access_path_recursive() {
-//    let basic_blocks = indexvec![
-//        // block 0:
-//        // s0: x = 42
-//        BasicBlockData {
-//            statements: indexvec![StatementKind::Assign {
-//                dst: AccessPath::new("x".into(), ["foo".to_string(), "bar".to_string()]),
-//                src: vec![Exp::Const(42)]
-//            }],
-//        },
-//        // block 1:
-//        // loop header
-//        BasicBlockData {
-//            statements: indexvec![],
-//        },
-//        // block 2:
-//        // if test
-//        BasicBlockData {
-//            statements: indexvec![],
-//        },
-//        // block 3:
-//        // [if true]
-//        // s0: x = something
-//        BasicBlockData {
-//            statements: indexvec![StatementKind::Assign {
-//                dst: "x".into(),
-//                src: vec![Exp::Const(90)]
-//            }],
-//        },
-//        // block 4:
-//        // if false
-//        BasicBlockData {
-//            statements: indexvec![],
-//        },
-//        // block 5:
-//        // join after if
-//        BasicBlockData {
-//            statements: indexvec![],
-//        },
-//        // block 6:
-//        // use of x after loop
-//        // s0: y = x + 1
-//        BasicBlockData {
-//            statements: indexvec![StatementKind::Assign {
-//                dst: "y".into(),
-//                src: vec![
-//                    Exp::AccessPath(AccessPath::new(
-//                        "x".into(),
-//                        ["foo".to_string(), "bar".to_string()]
-//                    )),
-//                    Exp::Const(1)
-//                ]
-//            }],
-//        },
-//    ];
-//    let edges = vec![
-//        (BasicBlockIdx::new(0), BasicBlockIdx::new(1)),
-//        (BasicBlockIdx::new(1), BasicBlockIdx::new(2)),
-//        (BasicBlockIdx::new(1), BasicBlockIdx::new(6)),
-//        (BasicBlockIdx::new(2), BasicBlockIdx::new(3)),
-//        (BasicBlockIdx::new(2), BasicBlockIdx::new(4)),
-//        (BasicBlockIdx::new(3), BasicBlockIdx::new(5)),
-//        (BasicBlockIdx::new(4), BasicBlockIdx::new(5)),
-//        (BasicBlockIdx::new(5), BasicBlockIdx::new(1)),
-//    ];
-//    let blocks = BasicBlocks::new(basic_blocks, edges);
-//    let function = FunctionData::new("test", Params::new([]), blocks);
-//    let mut ctx = SsaContext::new(&function);
-//    ctx.set_counter_value(0); // this example starts at 0 in paper, sigh
-//    // Fill the blocks in order of the paper
-//    for &i in &[0, 3, 6] {
-//        ctx.seal_block(i.into());
-//        ctx.fill_block(i.into());
-//        //eprintln!("{ctx}");
-//    }
-//}
-
-//#[test]
-//fn test_irreducible_ssa() {
-//    let basic_blocks = indexvec![
-//        // block 0:
-//        // s0: x = 42
-//        BasicBlockData {
-//            statements: indexvec![StatementKind::Assign {
-//                dst: "x".into(),
-//                src: vec![Exp::Const(42)]
-//            }],
-//        },
-//        Default::default(), // block 1
-//        Default::default(), // block 2
-//        // block 4
-//        BasicBlockData {
-//            statements: indexvec![StatementKind::Assign {
-//                dst: "y".into(),
-//                src: vec![Exp::AccessPath("x".into())]
-//            }],
-//        },
-//    ];
-//    let edges: Vec<(BasicBlockIdx, BasicBlockIdx)> = vec![
-//        (0.into(), 1.into()),
-//        (0.into(), 2.into()),
-//        (1.into(), 2.into()),
-//        (2.into(), 1.into()),
-//        (2.into(), 3.into()),
-//    ];
-//    let blocks = BasicBlocks::new(basic_blocks, edges);
-//    let function = FunctionData::new("test", Params::new([]), blocks);
-//    let df = SsaDataFlow::new(&function);
-//    // Minimal SSA has no phis
-//    assert!(df.phis.len() > 0);
-//    log::trace!("irreducible df: {:#?}", df);
-//}
-
 /// The cleanup passes are documented as doing nothing to a program that has already been
-/// through them. That is what lets `ctadl index` run them over a flowy import, which is already
-/// in SSA form. This test checks the claim instead of taking it on trust.
+/// through them. This test checks the claim instead of taking it on trust.
 ///
 /// Note what this does not check. [`transform`] requires that the function is not already in
 /// SSA form, and it means it: `complete` moves returns into a new exit block every time it
@@ -730,6 +429,30 @@ fn test_pipeline_tag() {
     // Pruning does nothing without SSA, and the tag says so instead of suggesting that a pass
     // ran.
     assert_eq!(Pipeline::none().prune(true).tag(), "none");
+}
+
+/// Running the pipeline on several threads hands each thread whole functions, so it has to give
+/// the same program as running it on one.
+#[test]
+fn test_pipeline_threads_match_serial() {
+    let program = || {
+        let mut program = Program::default();
+        for _ in 0..16 {
+            program
+                .functions
+                .extend(program_f().functions.iter().cloned());
+            program
+                .functions
+                .extend(program_h().functions.iter().cloned());
+        }
+        program
+    };
+    let mut serial = program();
+    run_pipeline(&mut serial, Pipeline::index_default());
+    let mut parallel = program();
+    run_pipeline_with_threads(&mut parallel, Pipeline::index_default(), 4);
+    assert!(serial.to_string().contains("phi "), "SSA ran");
+    assert_eq!(serial.to_string(), parallel.to_string());
 }
 
 /// Checks that `Pipeline::none()` really runs no passes.
@@ -843,7 +566,7 @@ fn function_loop() -> FunctionData {
     f
 }
 
-type Placement = (BasicBlockIdx, ArcIntern<Variable>);
+type Placement = (BasicBlockIdx, Variable);
 
 /// Every phi in `f`, as (block, unversioned variable).
 fn phi_placements(f: &FunctionData) -> HashSet<Placement> {
@@ -852,7 +575,7 @@ fn phi_placements(f: &FunctionData) -> HashSet<Placement> {
         for s in data.iter() {
             if let StatementKind::Phi { dest, .. } = &s.kind {
                 assert!(
-                    out.insert((bb, dest.variable.clone())),
+                    out.insert((bb, dest.variable)),
                     "two phis for {dest} in {bb:?}"
                 );
             }
@@ -885,9 +608,7 @@ fn live_phi_placements(f: &FunctionData) -> HashSet<Placement> {
             work.extend(ops.iter().cloned());
         }
     }
-    live.into_iter()
-        .map(|v| (phis[&v].0, v.variable.clone()))
-        .collect()
+    live.into_iter().map(|v| (phis[&v].0, v.variable)).collect()
 }
 
 fn placements_named(p: &HashSet<Placement>, f: &FunctionData, name: &str) -> usize {
@@ -997,9 +718,52 @@ fn test_pruned_loop() {
     let i = local(&mut f.clone(), "i").variable;
     let d = local(&mut f.clone(), "d").variable;
     assert!(
-        minimal.contains(&(header, d.clone())),
+        minimal.contains(&(header, d)),
         "minimal SSA merges the dead `d`"
     );
     assert!(!pruned.contains(&(header, d)), "`d` is never read");
     assert!(pruned.contains(&(header, i)), "`i` is loop-carried");
+}
+
+/// Phi placement visits variables in a fixed order, so transforming the same function twice gives
+/// the same phis in the same order.
+#[test]
+fn test_phi_order_deterministic() {
+    // def Wide() { if (..) { x0 = 1; ..; x11 = 1; } else { x0 = 2; ..; x11 = 2; } y = x0..x11; return y; }
+    let wide = || {
+        let mut f = FunctionData {
+            name: "Wide".to_string(),
+            ..Default::default()
+        };
+        f.set_return_type(ReturnType { arity: 1 });
+        let xs: Vec<_> = (0..12).map(|i| local(&mut f, &format!("x{i}"))).collect();
+        let y = local(&mut f, "y");
+        let blocks = f.blocks.blocks_mut();
+        blocks.push(BasicBlockData::new(goto(&[1, 2])));
+        let mut b1 = BasicBlockData::new(goto(&[3]));
+        b1.extend(xs.iter().map(|x| assign(x, [konst(1)])));
+        blocks.push(b1);
+        let mut b2 = BasicBlockData::new(goto(&[3]));
+        b2.extend(xs.iter().map(|x| assign(x, [konst(2)])));
+        blocks.push(b2);
+        let mut b3 = BasicBlockData::new(Some(Terminator::new_kind(TerminatorKind::Return {
+            args: smallvec![Exp::Variable(y.clone())],
+        })));
+        b3.extend([assign(&y, xs.iter().map(|x| Exp::Variable(x.clone())))]);
+        blocks.push(b3);
+        f
+    };
+    let transformed = || {
+        let mut f = wide();
+        transform(&mut f, true);
+        f.to_string()
+    };
+    let first = transformed();
+    assert!(
+        first.matches("phi ").count() >= 12,
+        "join block has a phi per x_i"
+    );
+    for _ in 0..20 {
+        assert_eq!(first, transformed());
+    }
 }
