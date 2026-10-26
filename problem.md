@@ -5,32 +5,19 @@ relation (which access paths reach which variables) grows to hundreds of million
 because the stack frame acts as one function-wide mixing pool. Apps with this shape need 5-15x
 the memory budget (100x the imported IR), and before any fix they did not finish at all.
 
-This branch is off `main`. The partial fix (S3 below) and the measurements are on
-`improve-native-handling`; `things-to-improve.md` there has the full record (P1, S3, S4, M1, M7).
+This branch is off `main` (merged up to `7c98b73e`). It has S3 (stack-slot promotion, `window:8`
+by default) and S5 (full promotion of large functions, behind `ctadl index --mem2reg full`);
+`design.md` has S5's design and measurements. `improve-native-handling` has the earlier record:
+`things-to-improve.md` there covers P1, S3, S4, M1 and M7.
 
 ## Starting point
 
-`main` lacks S3 (stack-slot promotion), which takes the worst app from 52 GB to 15 GB. Work on the
-open part of P1 (the escaped slots, S4) should start from it:
-
-```sh
-git cherry-pick b47ed139 b1b52de8
-```
-
-Hashes are on `improve-native-handling` as rebased onto `main` `076f6a60`; the subjects are given
-too, since a later rebase changes the hashes. Each cherry-pick below was tried on `076f6a60`.
-
-- `b1b52de8` "Promote stack slots to locals before SSA (mem2reg), window:8 by default": S3, its
-  tests, and S28 (the regression suite fails on a lost flow instead of skipping on Darwin).
-- It applies cleanly after `b47ed139` (below). On its own it conflicts in
-  `ctadl-ir/src/ssa/mod.rs`, only on `b47ed139`'s dead-phi lines: keep `main`'s side and add the
-  `if let Some(policy) = p.mem2reg { promote_stack_slots(program, policy); }` call before
-  `transform_program`.
-- Optional, for native apps that also link libc++abi's demangler (P4, not P1):
-  `bb9cc766` "Model __cxa_demangle and skip the helpers only it reaches" (S6).
-- `main` changed SSA (#154, every parameter written back at its entry version) and C pointers
-  (#150) since S3 was measured. The cherry-pick is clean, but the M1/M7 numbers above have not been
-  re-measured on top of them; re-run `androidudpbus` and `glxy` first.
+- **S3** (`b1b52de8` on `improve-native-handling`) is cherry-picked here, with S28 (the regression
+  suite fails on a lost flow instead of skipping on Darwin).
+- **S5** is on this branch. `ctadl index --mem2reg <policy>` (or `CTADL_MEM2REG`) picks the
+  policy: `window:N`, `exact`, `above`, `full[:N]` or `off`.
+- **Optional, for native apps that also link libc++abi's demangler** (P4, not P1): `bb9cc766`
+  "Model __cxa_demangle and skip the helpers only it reaches" (S6).
 
 **Optional measurement tooling** (none of it is on `main`):
 
@@ -43,10 +30,12 @@ git cherry-pick 918c771a   # "Count each rule's rows derived and new, and log ea
 git cherry-pick c1ee3d61 f9e5b24a   # scripts/blowup-rank.py, and the Windows memguard/ladder
 ```
 
-These apply in that order; `f9e5b24a` conflicts only in `things-to-improve.md`, which `main`
-does not have (drop it). `b47ed139` is titled "WIP-EXPERIMENT: dead-phi pass, locals
-census, SSA/stack census examples"; its experiment hooks are off unless their variables are set.
-On Linux, `systemd-run --user --scope -p MemoryMax=<N>G -p MemorySwapMax=0` stands in for
+These were written against `076f6a60`, before `main` moved the index engine into `ctadl-index`
+and ran the SSA passes per function on threads, so expect conflicts. For the census alone, the
+S5 measurements applied `b47ed139`'s `CTADL_LOCALS_CENSUS` hunks by hand in a scratch worktree.
+`b47ed139` is titled "WIP-EXPERIMENT: dead-phi pass, locals census, SSA/stack census examples";
+its experiment hooks are off unless their variables are set. On Linux,
+`systemd-run --user --scope -p MemoryMax=<N>G -p MemorySwapMax=0` stands in for
 `scripts/memguard.ps1`. `main` already writes `profile.json` (#159), which covers relation counts
 and scc/rule times without the patched macro.
 
@@ -99,6 +88,34 @@ arm64 libraries), 1800 s timeout, 55 GiB guard:
   Java code), and the `locals` join takes 154 s of the 438 s main loop. That is this shape; which
   function holds the rows was not checked.
 
+## Current state
+
+The table above is from before S3 was re-measured on `main`. On this branch (`main` `7c98b73e`
+with S3 and S5), on macOS (arm64), one run at a time, peaks from `time -l`:
+
+| App | `--mem2reg` | `locals` | Fixpoint | Peak | Largest function's share |
+|---|---|---|---|---|---|
+| `uclited` | `window:8` (default) | 41.4 M | 10.2 s | 1.26 GiB | `inflate` 99.3% |
+| | `full` | 12.1 M | 3.0 s | 0.54 GiB | `inflate` 97.7% |
+| `androidudpbus` | `window:8` (default) | 337.9 M | 166 s | 13.27 GiB | `FUN_00144f04` 71.7% |
+| | `full` | 30.9 M | 22 s | 2.09 GiB | `FUN_00156cb8` 35.8% |
+| `glxy` | `window:8` (default) | 100.4 M | 44 s | 4.07 GiB | `FUN_0010b408` 90.2% |
+| | `full` | 83.7 M | 38 s | 3.64 GiB | `FUN_0010b408` 88.8% |
+
+The shares are from the census build before the merge (`design.md`), on row counts within 5% of
+these. `uclited`'s `window:8` row is from before the merge too; its `full` row was re-run after.
+
+What is left of P1:
+
+- **`uclited`:** `inflate` still holds 98% under `full`. Its stack is done; causes 2 and 3 of the
+  Analysis below (the loop's SCC, the offsets) are what remain.
+- **`glxy`:** promoting `FUN_0010b408` fully cuts only 16%, so its rows are not from the stack.
+  P6 is the suspect.
+- **`androidudpbus`:** the hub `FUN_00144f04` drops from 243 M rows to 0.2 M. The largest function
+  is now `FUN_00156cb8` (11 M rows), below the 1,000-access threshold, so it still runs
+  `window:8`; a lower threshold may shrink it.
+- **The other apps in the table above** have not been run with `full`.
+
 ## Analysis: `uclited` has three causes, not one
 
 `uclited` (see How to reproduce) was taken apart with the `index-instrument` branch's
@@ -147,7 +164,7 @@ How the rows were attributed:
   by the time it dumped, 1.9 GB of TSV), counted by function, variable, path shape and source.
 - `exact`: a complete run, dumped the same way.
 - The `exact` and `off` rows used a scratch `CTADL_MEM2REG=off|exact|window:N` override of
-  `Pipeline::index_default`'s policy. It is on no branch.
+  `Pipeline::index_default`'s policy, which is now `ctadl index --mem2reg`.
 - The SCC was computed over the `exact` dump's `assign_like.tsv`.
 - The 10.4 GiB peak is from memguard. The others are from `time -l`: memguard samples too rarely
   on runs this short (it read 1.04 GiB for `window:8`).
@@ -250,15 +267,23 @@ over budget, because **the slots that stay in memory are the busiest ones**: in 
 profile as before. Ghidra can't bound these regions (it recovers 4-8 byte high variables, not the
 Rust structs behind them).
 
-**S4, not started: promote escaped slots anyway and spill them around their escapes.** Store the
-local back to the slot before each escape or call, and reload it after a call. Direct accesses
-between escapes are then in SSA, and only the values live at an escape mix. Where escapes go, in
+**S4, tried on `improve-native-handling` (`aa0b4cda`) and dropped: promote escaped slots and
+write them through.** Every store to an escaped slot also went to memory, and the local was
+reloaded after each call. It doubled `androidudpbus`'s `locals`: writing every direct store
+through brings back, for every slot, the deep paths memory had been dropping (P24). Where escapes go, in
 `androidudpbus`: 1,714 frame addresses passed to calls (1,697 to functions in the library, 132 of
 them to `memcpy`, 17 through function pointers), 3,118 stored to memory and 1,291 copied inside the
 function. The calls are only 28%, so the spill points have to cover stores and copies too.
-On `uclited` S4 can reach at best the `exact` row of the Analysis (15 M rows, 3.4x the budget);
-the rest needs a fix for causes 2 and 3 there, such as collapsing the offsets of a pointer
-incremented in a loop, or one of the directions below.
+
+**S5, on this branch: full promotion of large functions (`--mem2reg full`, off by default).** In a
+function with more than 1,000 direct stack accesses, promote every directly accessed slot, escaped
+or not. Direct stores go only to the local; after a call passed an address that reaches the slot
+(under `window:8`), reload the local from it. Nothing is written back before a call, so a callee or
+a copy of the address no longer sees what the function stored directly. Each function where that
+may lose a flow is named in the index's `notifications.log` and, as a `CTADL0104` warning, in the
+query's SARIF. A slot a returned address reaches stays in memory (the pcode frontend returns a
+stack-held value as the slot's address). Model modes `mem2reg-full` and `mem2reg-window` force or
+forbid it for one function. See Current state for what it does to the apps.
 
 **A mitigation on `main`: `ctadl index --lsm`** (experimental, #155) keeps `locals` and the other
 large relations in memory-mapped run files, read through the page cache, so a run that would not
@@ -274,10 +299,12 @@ has not been tried on these apps.
   `skip-exclusive-callees` model mode, on `improve-native-handling`) does for libc++abi's
   demangler.
 
-**How to check a fix:** the regression families `pcode`, `jni` and `android-native` must keep
-every flow. Watch for silent losses: `exact` lost `example.c`'s only flow while the suite still
+**How to check a fix:** the regression families `pcode` and `jni` (which includes the APK
+packagings) must keep every flow: `cargo xtask regression --frontend pcode,jni`. For a policy
+that may lose flows, `--mem2reg full:0` runs every case under it, and reports a lost flow as an
+XFAIL when an index notification names a function, and as a FAIL when none does. Watch for silent losses: `exact` lost `example.c`'s only flow while the suite still
 passed, because on `main` that case is a SKIP on Darwin ("no tainted instructions on Darwin");
-`improve-native-handling` makes it a FAIL (S28). Then the apps above: peak against budget, `locals` rows, and the share held by the
+S28 makes it a FAIL. Then the apps above: peak against budget, `locals` rows, and the share held by the
 largest function.
 
 ## Samples
