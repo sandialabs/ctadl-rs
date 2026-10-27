@@ -98,12 +98,20 @@ with S3 and S5), on macOS (arm64), one run at a time, peaks from `time -l`:
 | `uclited` | `window:8` (default) | 41.4 M | 10.2 s | 1.26 GiB | `inflate` 99.3% |
 | | `full` | 12.1 M | 3.0 s | 0.54 GiB | `inflate` 97.7% |
 | `androidudpbus` | `window:8` (default) | 337.9 M | 166 s | 13.27 GiB | `FUN_00144f04` 71.7% |
+| | `exact` | 349.7 M | 143 s | 15.11 GiB | |
 | | `full` | 30.9 M | 22 s | 2.09 GiB | `FUN_00156cb8` 35.8% |
 | `glxy` | `window:8` (default) | 100.4 M | 44 s | 4.07 GiB | `FUN_0010b408` 90.2% |
+| | `exact` | 98.2 M | 44 s | 4.01 GiB | |
 | | `full` | 83.7 M | 38 s | 3.64 GiB | `FUN_0010b408` 88.8% |
 
 The shares are from the census build before the merge (`design.md`), on row counts within 5% of
 these. `uclited`'s `window:8` row is from before the merge too; its `full` row was re-run after.
+The `exact` rows were run after the merge without the census, so they have no share.
+
+`exact` (S3's rejected policy) does not help the apps. On `androidudpbus` it keeps 29% fewer
+accesses in memory than `window:8` (121 k against 170 k) but `locals` grows 3.5% and the peak
+1.8 GiB: the slots an address escapes from, which `exact` still keeps, are the busy ones, so
+promoting their neighbors removes nothing. On `glxy` it cuts 2%. Only `full` moves either app.
 
 What is left of P1:
 
