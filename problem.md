@@ -91,18 +91,19 @@ arm64 libraries), 1800 s timeout, 55 GiB guard:
 ## Current state
 
 The table above is from before S3 was re-measured on `main`. On this branch (`main` `7c98b73e`
-with S3 and S5), on macOS (arm64), one run at a time, peaks from `time -l`:
+with S3 and S5), on macOS (arm64), one run at a time, peaks from `time -l`. The budget is 100x
+the imported IR, as in the table above (`uclited` 2.0 MB, `androidudpbus` 28.2 MB, `glxy` 15.1 MB):
 
-| App | `--mem2reg` | `locals` | Fixpoint | Peak | Largest function's share |
-|---|---|---|---|---|---|
-| `uclited` | `window:8` (default) | 41.4 M | 10.2 s | 1.26 GiB | `inflate` 99.3% |
-| | `full` | 12.1 M | 3.0 s | 0.54 GiB | `inflate` 97.7% |
-| `androidudpbus` | `window:8` (default) | 337.9 M | 166 s | 13.27 GiB | `FUN_00144f04` 71.7% |
-| | `exact` | 349.7 M | 143 s | 15.11 GiB | |
-| | `full` | 30.9 M | 22 s | 2.09 GiB | `FUN_00156cb8` 35.8% |
-| `glxy` | `window:8` (default) | 100.4 M | 44 s | 4.07 GiB | `FUN_0010b408` 90.2% |
-| | `exact` | 98.2 M | 44 s | 4.01 GiB | |
-| | `full` | 83.7 M | 38 s | 3.64 GiB | `FUN_0010b408` 88.8% |
+| App | `--mem2reg` | `locals` | Fixpoint | Peak | Against budget | Largest function's share |
+|---|---|---|---|---|---|---|
+| `uclited` | `window:8` (default) | 41.4 M | 10.2 s | 1.26 GiB | 6.8x over | `inflate` 99.3% |
+| | `full` | 12.1 M | 3.0 s | 0.54 GiB | 2.9x over | `inflate` 97.7% |
+| `androidudpbus` | `window:8` (default) | 337.9 M | 166 s | 13.27 GiB | 5.1x over | `FUN_00144f04` 71.7% |
+| | `exact` | 349.7 M | 143 s | 15.11 GiB | 5.8x over | |
+| | `full` | 30.9 M | 22 s | 2.09 GiB | **under (0.8x)** | `FUN_00156cb8` 35.8% |
+| `glxy` | `window:8` (default) | 100.4 M | 44 s | 4.07 GiB | 2.9x over | `FUN_0010b408` 90.2% |
+| | `exact` | 98.2 M | 44 s | 4.01 GiB | 2.9x over | |
+| | `full` | 83.7 M | 38 s | 3.64 GiB | 2.6x over | `FUN_0010b408` 88.8% |
 
 The shares are from the census build before the merge (`design.md`), on row counts within 5% of
 these. `uclited`'s `window:8` row is from before the merge too; its `full` row was re-run after.
