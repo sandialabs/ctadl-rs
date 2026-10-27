@@ -310,7 +310,7 @@ fn a_missing_find_is_an_error() {
     assert!(msg.contains("find"), "{msg}");
 }
 
-/// The older traversal did `.as_array().unwrap()` on `where`, so a scalar there panicked.
+/// A scalar `where` is reported, not unwrapped.
 #[test]
 fn a_non_array_where_is_an_error_not_a_panic() {
     let msg = errors_of(scan_one(serde_json::json!({

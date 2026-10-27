@@ -219,7 +219,7 @@ pub fn parameters(sig: &MethodSig) -> Vec<ParameterType> {
     params
 }
 
-/// Gives `fdat` the shape of a function with signature `sig` and no blocks.
+/// Gives `fdat` the name and parameters of a function, the two-slot return, and no blocks.
 pub fn shape(fdat: &mut FunctionData, name: String, params: Vec<ParameterType>) {
     fdat.name = name;
     fdat.params = Params {
@@ -333,7 +333,6 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
         for (index, ins) in block.instrs.iter().enumerate() {
             em.source_info = lines.span(spans, ins.flow.offset, ins.flow.size.max(1));
             let at = InsId { block: b, index };
-            lower.cur = at;
             lower.cross_check(at, ins);
             lower.instruction(&mut em, at, ins);
         }

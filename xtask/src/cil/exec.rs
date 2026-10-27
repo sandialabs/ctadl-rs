@@ -39,7 +39,7 @@ use cil_reader::flow::FlowOptions;
 use cil_reader::Module;
 
 use super::parallel_map;
-use super::parity::which;
+use crate::exec::which;
 use crate::regression::Outcome;
 
 pub(super) mod interp;

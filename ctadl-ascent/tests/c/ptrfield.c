@@ -5,20 +5,19 @@
  * It pins two engine properties at once, so it fails on either half alone:
  *
  *   - `sink_hit` must be reached. The bytes behind `req->arg` are the source's bytes, and no
- *     libc call is on the data path. Before this test, an index built with no models could
- *     not carry taint through a pointer stored in a field: `compute_paths` admits a compound
- *     access path (`arg.deref`) only by concatenating a *model* path with a program path, and
- *     nothing in this program spells `.arg.deref` in one frame (`run` loads the pointer, the
- *     sink derefs its own formal). So `arg.deref` was never admissible and the flow was lost.
+ *     libc call is on the data path. Nothing in this program spells `.arg.deref` in one frame
+ *     (`run` loads the pointer, the sink derefs its own formal), so if `compute_paths` admitted
+ *     a compound access path only by concatenating a *model* path with a program path,
+ *     `arg.deref` would never be admissible and an index built with no models would lose the
+ *     flow.
  *
  *   - `sink_clean` must stay silent. `req->verb = line[0]` really taints `verb` (a byte of
- *     the buffer), and `req->arg` is a sibling. The call-site smear (fixed by
- *     `test_cli_query_c_no_callsite_smear`) used to leak a saturating field's taint onto its
- *     siblings, which is how the tutorial's flow was "found" before: through the pointer
- *     `arg` at the empty path, never through the bytes. That same leak would reach the
- *     constant sibling `dry_run` here.
+ *     the buffer), and `req->arg` is a sibling. A call-site smear that leaks a saturating
+ *     field's taint onto its siblings (pinned by `test_cli_query_c_no_callsite_smear`) would
+ *     reach the constant sibling `dry_run` here, and would "find" the tutorial's flow through
+ *     the pointer `arg` at the empty path rather than through the bytes.
  *
- * See `test_cli_query_c_pointer_field_without_models` in tests/cli.rs.
+ * See `test_cli_query_c_pointer_field_without_models` in tests/integration/cli.rs.
  */
 char *source(void);
 void  sink_hit(const char *s);

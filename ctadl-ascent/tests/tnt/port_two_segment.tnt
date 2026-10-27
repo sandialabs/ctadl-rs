@@ -1,7 +1,7 @@
 // PORT SEMANTICS 6/6 -- two-segment ports, on both sides.
 //
-// A two-segment port is a TWO-level shift, and it is the case the canonical grammar work was
-// motivated by: `.[8].deref` mixes a real offset with an ordinary symbol in one path. The native
+// A two-segment port is a TWO-level shift, and the case the canonical grammar exists for:
+// `.[8].deref` mixes a real offset with an ordinary symbol in one path. The native
 // default models use the output-side form for `getline`/`getdelim` (`A(2).deref ->
 // A(0).deref.deref`) and `strtok_r` (`A(0).deref -> A(2).deref.deref`), so this row gates those.
 //

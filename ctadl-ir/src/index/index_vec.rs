@@ -6,7 +6,7 @@ use std::{fmt, slice, vec};
 
 use crate::index::{idx::Idx, slice::IndexSlice};
 
-/// An owned contiguous collection of `T`s, indexed by `I` rather than:e  by `usize`.
+/// An owned contiguous collection of `T`s, indexed by `I` rather than by `usize`.
 ///
 /// ## Why use this instead of a `Vec`?
 ///
@@ -18,8 +18,8 @@ use crate::index::{idx::Idx, slice::IndexSlice};
 /// immediately clear what the `usize` means, while a `HashMap<FieldIdx, Something>` makes it obvious.
 ///
 /// ```compile_fail
-/// use crate::index::idx::{Idx};
-/// use crate::index::index_vec:{IndexVec};
+/// use ctadl_ir::index::idx::Idx;
+/// use ctadl_ir::index::index_vec::IndexVec;
 ///
 /// fn f<I1: Idx, I2: Idx>(vec1: IndexVec<I1, u8>, idx1: I1, idx2: I2) {
 ///   &vec1[idx1]; // Ok
@@ -68,10 +68,10 @@ impl<I: Idx, T> IndexVec<I, T> {
     /// type inference as it ensures that the resulting vector uses the same
     /// index type as `universe`, rather than something potentially surprising.
     ///
-    /// For example, if you want to store data for each local in a MIR body,
-    /// using `let mut uses = IndexVec::from_elem(vec![], &body.local_decls);`
-    /// ensures that `uses` is an `IndexVec<Local, _>`, and thus can give
-    /// better error messages later if one accidentally mismatches indices.
+    /// For example, `IndexVec::from_elem(vec![], &basic_blocks)`, over an
+    /// `IndexVec<BasicBlockIdx, BasicBlockData>`, is an `IndexVec<BasicBlockIdx, _>`,
+    /// and thus can give better error messages later if one accidentally mismatches
+    /// indices.
     #[inline]
     pub fn from_elem<S>(elem: T, universe: &IndexSlice<I, S>) -> Self
     where
@@ -186,7 +186,7 @@ impl<I: Idx, T> IndexVec<I, T> {
         &mut self[elem]
     }
 
-    /// Inserts the value it index. This takes linear time.
+    /// Inserts the value at `index`. This takes linear time.
     pub fn insert_at(&mut self, index: I, value: T) {
         self.raw.insert(index.index(), value);
     }

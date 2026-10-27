@@ -4,9 +4,6 @@
 //! When artifact is missing: emit byteOffset, byteLength and a warning.
 
 use crate::artifact::ArtifactTable;
-
-/// Function that provides artifact content by path (e.g. from a file loader).
-pub type ContentProvider = dyn Fn(&str) -> Option<Vec<u8>>;
 use crate::error::{ArtifactMissing, HashMismatch};
 use crate::file_span_table::FileSpanTable;
 use crate::file_table::FileTable;
@@ -15,6 +12,9 @@ use crate::line_map::LineMap;
 use crate::offset_to_line::offset_to_line_column;
 use crate::span::SpanLen;
 use crate::span_table::SpanTable;
+
+/// Function that provides artifact content by path (e.g. from a file loader).
+pub type ContentProvider = dyn Fn(&str) -> Option<Vec<u8>>;
 
 /// Resolved location for a diagnostic. Either line/column (when artifact content is available)
 /// or byte offset/length (fallback when artifact is missing).

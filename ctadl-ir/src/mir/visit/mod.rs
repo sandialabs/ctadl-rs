@@ -4,7 +4,7 @@ CTADL IR visitor.
 The visitor in this module is modeled after the design in the Rust MIR. The visitors are generated
 by a macro; there's an immutable and mutable version. The mutable version allows you to generate
 AST code whereas the immutable version is just for walking and reading from the AST. Every
-`visit_xxx` method has a `super_xxx` method that simple visits every sub-AST. The cases in the
+`visit_xxx` method has a `super_xxx` method that simply visits every sub-AST. The cases in the
 `super_xxx` methods are written deliberately to use exhaustive pattern matching, rather than
 structure field access, to maximize the opportunity for the compiler to throw errors if the AST
 changes.

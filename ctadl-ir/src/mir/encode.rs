@@ -20,11 +20,8 @@ pub fn decode_program(bytes: &[u8]) -> Result<Program, Error> {
 /// Encodes a [`VirtualMethodTable`] into the `ir-vmt.bitcode` file that sits next to the
 /// program.
 ///
-/// The one place that wrote the table used to call `bitcode::serialize` directly. That left the
-/// store's second file without a helper to match [`encode_program`], so anything that read an
-/// import had to know how the table was written and repeat it. Both the encoder and the decoder
-/// now live here. The encoding is the same one that call site used, so files written earlier
-/// still read back correctly.
+/// Like [`encode_program`] for the store's other file, so that a reader of an import does not
+/// have to know how the table was written.
 #[cfg(feature = "serde")]
 #[inline]
 pub fn encode_vmt(vmt: &VirtualMethodTable) -> Result<Vec<u8>, Error> {
@@ -43,9 +40,8 @@ mod tests {
     use super::*;
     use crate::mir::call::VirtualMethodTable;
 
-    /// Checks that both store files survive a trip through their own encode and decode
-    /// helpers. The table helpers are the new ones. They exist so that a reader does not have
-    /// to know the writer called `bitcode::serialize` directly.
+    /// Checks that each kind of table survives a trip through [`encode_vmt`] and
+    /// [`decode_vmt`].
     #[test]
     fn vmt_round_trips() {
         for vmt in [

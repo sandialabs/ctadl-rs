@@ -11,7 +11,7 @@ What is reported, per configuration:
 
   * store bytes    -- `LocalsIndCommon::heap_report()` (logged at DEBUG by the index phase).
                       Cross-checked against a counting allocator by
-                      `cargo bench -p ctadl-ascent --bench locals_trie`: accurate to <1% for
+                      `cargo bench -p ctadl-index --bench locals_trie`: accurate to <1% for
                       the whole store, so it is used here as the per-structure number that
                       process-level memory cannot provide.
   * fixpoint time  -- wall time of the SCC containing the `locals` rules, from Ascent's own
@@ -19,9 +19,8 @@ What is reported, per configuration:
                       and codegen, which dominate the process at these sizes.
   * process memory -- physical footprint before/after the fixpoint (`[mem cp]` log lines),
                       plus the peak physical footprint and peak RSS of the whole index run.
-                      Physical footprint, not RSS, is the real number on macOS (see
-                      `.claude/skills/measure-process-memory`); RSS is kept only as a
-                      cross-check.
+                      Physical footprint, not RSS, is the real number on macOS: RSS
+                      leaves out compressed memory. RSS is kept only as a cross-check.
 
 Usage:
     scripts/locals-bench.py                        # default sweep
@@ -73,7 +72,7 @@ def sh(cmd, env=None, cwd=None):
                 if "phys_footprint:" in line:
                     fields = line.split()
                     # "phys_footprint: 1868136 B" -- the value is field 1, NOT the last field
-                    # (which is the unit "B"). Reading $NF here silently yields 0.
+                    # (which is the unit "B").
                     if len(fields) >= 2 and fields[1].isdigit():
                         peak_fp = max(peak_fp, int(fields[1]))
                     break
@@ -94,16 +93,17 @@ def sh(cmd, env=None, cwd=None):
     return os.waitstatus_to_exitcode(status), out, wall, peak_fp, rss
 
 
+# The optional parts match an older build, which also logged a `fidx` side-index and the
+# forward store's own share of the total.
 HEAP_RE = re.compile(
     r"locals store estimate: total ([\d.]+) MB over (\d+) rows \(([\d.]+) B/row\) \| "
-    r"fwd ([\d.]+) MB \((\d+)%\): (\d+) \(F,V\) groups, (\d+) \(F,V,P\) entries, (\d+) leaves \| "
-    r"fidx ([\d.]+) MB \((\d+)%\): (\d+) funcs, (\d+) V entries \| "
+    r"fwd(?: [\d.]+ MB \(\d+%\))?: (\d+) \(F,V\) groups, (\d+) \(F,V,P\) entries, (\d+) leaves \| "
+    r"(?:fidx [^|]*\| )?"
     r"groups: max (\d+), large (\d+), mean ([\d.]+), log2hist \[([^\]]*)\]"
 )
-# A build from before this branch (e.g. `main`) logs the same line without the `groups:` shape
-# suffix, which `HeapReport` grew here. Parse it too, so `main` itself can be measured; note that
-# its `hb_bytes` assumed hashbrown's minimum table was 8 buckets rather than 4, so it reports
-# every table of <=3 elements at twice its real size.
+# An older build logs the same line without the `groups:` shape suffix. Parse it too, so such a
+# build can be measured; note that its `hb_bytes` assumed hashbrown's minimum table was 8 buckets
+# rather than 4, so it reports every table of <=3 elements at twice its real size.
 LEGACY_HEAP_RE = re.compile(
     r"locals store estimate: total ([\d.]+) MB over (\d+) rows \(([\d.]+) B/row\) \| "
     r"fwd ([\d.]+) MB \((\d+)%\): (\d+) \(F,V\) groups, (\d+) \(F,V,P\) entries, (\d+) leaves \| "
@@ -129,17 +129,15 @@ def parse_log(log):
         g = m.groups()
         rec = {
             "store_mb": float(g[0]), "rows": int(g[1]), "b_per_row": float(g[2]),
-            "fwd_mb": float(g[3]), "groups": int(g[5]), "p_entries": int(g[6]),
-            "fidx_mb": float(g[8]), "funcs": int(g[10]),
-            "max_group": int(g[12]), "large": int(g[13]), "mean_group": float(g[14]),
-            "hist": g[15],
+            "groups": int(g[3]), "p_entries": int(g[4]),
+            "max_group": int(g[6]), "large": int(g[7]), "mean_group": float(g[8]),
+            "hist": g[9],
         }
     elif LEGACY_HEAP_RE.search(log):
         g = LEGACY_HEAP_RE.search(log).groups()
         rec = {
             "store_mb": float(g[0]), "rows": int(g[1]), "b_per_row": float(g[2]),
-            "fwd_mb": float(g[3]), "groups": int(g[5]), "p_entries": int(g[6]),
-            "fidx_mb": float(g[8]), "funcs": int(g[10]),
+            "groups": int(g[5]), "p_entries": int(g[6]),
             "max_group": 0, "large": 0,
             "mean_group": int(g[7]) / int(g[5]) if int(g[5]) else 0.0, "hist": "",
         }
@@ -150,8 +148,8 @@ def parse_log(log):
                                "in index output (was the index run with the index_engine module at DEBUG?)")
         rows, groups = int(m.group(1)), int(m.group(2))
         rec = {
-            "store_mb": 0.0, "rows": rows, "b_per_row": 0.0, "fwd_mb": 0.0,
-            "groups": groups, "p_entries": 0, "fidx_mb": 0.0, "funcs": 0,
+            "store_mb": 0.0, "rows": rows, "b_per_row": 0.0,
+            "groups": groups, "p_entries": 0,
             "max_group": 0, "large": 0,
             "mean_group": rows / groups if groups else 0.0, "hist": "",
         }
@@ -187,10 +185,9 @@ def run_config(ctadl, workdir, funcs, group_size, paths, keep):
     if rc != 0:
         raise RuntimeError(f"import failed for group_size={group_size}:\n{out}")
 
-    # The store estimate, the scc times and the `[mem cp]` lines all live in
-    # `ctadl_ascent::index_engine` and moved from INFO to DEBUG in main `e27e1466`. Raise that
-    # one module rather than the whole log, so no other module's DEBUG output lands in the
-    # fixpoint's hot path and taxes the time being measured.
+    # The store estimate, the scc times and the `[mem cp]` lines are all logged at DEBUG by
+    # `ctadl_ascent::index_engine`. Raise that one module rather than the whole log, so no other
+    # module's DEBUG output lands in the fixpoint's hot path and taxes the time being measured.
     env = dict(os.environ, RUST_LOG="info,ctadl_ascent::index_engine=debug")
     rc, out, wall, peak_fp, peak_rss = sh(
         [ctadl, "--store", str(store), "index", "bench"], env=env)

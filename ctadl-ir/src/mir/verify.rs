@@ -178,17 +178,16 @@ impl Visitor for MirVerify {
             return;
         }
         // Check that referenced variable exists.
-        if let Variable::Param(idx) = variable.variable.as_ref()
+        if let Variable::Param(idx) = &variable.variable
             && *idx >= self.params_len.unwrap()
         {
-            //self.error = Some(Box::new(VerifyError::ParameterDoesNotExist));
             self.add_error(VerifyError::ParameterDoesNotExist {
                 function: self.name.clone(),
                 parameter: *idx,
             });
         }
         // Check that referenced local exists.
-        if let Variable::Local(idx) = variable.variable.as_ref()
+        if let Variable::Local(idx) = &variable.variable
             && idx.index() >= self.locals_len.unwrap()
         {
             self.add_error(VerifyError::LocalDoesNotExist {

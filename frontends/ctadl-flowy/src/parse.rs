@@ -2,8 +2,7 @@
 //!
 //! The grammar is a PEG, so alternatives are ordered and the first that matches wins. Keywords are
 //! not reserved: `return` is an ordinary identifier wherever a keyword cannot appear, which is how
-//! a summary names the return port (`return <- a`). A keyword must not run into an identifier, so
-//! `returnx;` is a parse error rather than `return x;`.
+//! a summary names the return port (`return <- a`).
 
 use std::ops::Range;
 
@@ -212,9 +211,7 @@ peg::parser! {
             = start:position!() kind:stmt_kind() end:position!()
             { Stmt { kind, span: start..end, pos: lines.pos(start) } }
 
-        // A functional update `x2 = [x1.foo := val];` reads "x2 is x1, but with .foo set to val".
-        // The brackets are what distinguish it from the assignment `x2.foo = val`, which writes
-        // through x1.
+        // `x2 = [x1.foo := val];` is a functional update; see the crate docs.
         rule stmt_kind() -> StmtKind<'input>
             = dest:path() _ "=" _ "[" _ source:path() _ ":=" _ value:ap() _ "]" _ ";"
               { StmtKind::Update { dest, source, value } }

@@ -1,9 +1,8 @@
 {
   // Flow: holder.setData(source()) (13) -> retrieved = holder.getData() (14) ->
   // sink(retrieved) (15). Lines 7 and 8 (the setData/getData bodies:
-  // `this.data = d` and `return this.data`) are dropped: their copy-through
-  // getters/setters are collapsed by copy_alias, so those instructions appear in
-  // neither the human code flow nor the machine tainted-instructions.
+  // `this.data = d` and `return this.data`) are dropped: copy-through
+  // getters/setters (see "Pure copies" in nightly/README.md).
   "expected_lines": [
     13,
     14,

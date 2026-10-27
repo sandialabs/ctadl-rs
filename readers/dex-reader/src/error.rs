@@ -27,9 +27,9 @@ pub enum DexError {
     /// A well-formed modified-UTF-8 string that holds unpaired UTF-16 surrogate
     /// code units, used where a Rust `str` is required.
     ///
-    /// Such a string is legal in a DEX file -- generated lexers use string
-    /// constants as packed UTF-16 tables -- but it is not a Unicode scalar
-    /// sequence, so `str` cannot hold it. Type, method and field names can
+    /// Such a string is legal in a DEX file (see [`crate::types::DexString`])
+    /// but it is not a Unicode scalar sequence, so `str` cannot hold it. Type,
+    /// method and field names can
     /// never legally contain one, so this is a hard error at those call sites;
     /// string *constants* keep their code units and go through
     /// [`crate::types::DexString::to_string_lossy`] instead.

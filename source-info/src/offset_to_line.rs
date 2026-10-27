@@ -1,10 +1,10 @@
 //! Offset to line/column: given a byte offset and LineMap, compute (line, column).
 //!
-//! Column is in the same units as the artifact encoding (UTF-8 or UTF-16 code units).
+//! Column is a byte count from the line start, whatever the artifact encoding.
 
 use crate::line_map::LineMap;
 
-/// 1-based line and column.
+/// 1-based line and 0-based column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LineColumn {

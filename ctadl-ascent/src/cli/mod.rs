@@ -242,15 +242,19 @@ pub fn index(
         // variable count that SSA and the datalog fact base pay for. Dead-temp
         // elimination runs first: it removes defs that coalescing can't (a dead
         // temp has no use to fuse into) and shrinks the input coalescing scans.
-        // Both are no-ops on programs already in SSA form (e.g. flowy imports).
+        // Both are no-ops on programs already in SSA form.
         log::info!(
             "'{}': preprocessing {} function(s) (SSA) and generating facts",
             import.name,
             program_info.program.functions.len()
         );
-        ssa::run_pipeline(
+        ssa::run_pipeline_with_threads(
             &mut program_info.program,
             ssa::Pipeline::index_default().prune(prune_unreachable_cfg_nodes),
+            match parallelism {
+                Parallelism::Serial => 1,
+                Parallelism::Threads(n) => n.get(),
+            },
         );
         log::debug!(
             "[mem cp] after SSA transform: {:.1} MB",
@@ -272,19 +276,11 @@ pub fn index(
             phys_footprint_mb()
         );
     }
-    // Measured, not assumed. Streaming matching retains only the *matches* -- one interned
-    // name plus two (tag, index, path) triples per propagation -- and drops each import's
-    // match index and IR with the import. On a 6.4 MB APK (`com.noto_54.apk`, 1224 propagation
-    // matches from the shipped Java defaults plus a bridge spec) this checkpoint reads the same
-    // 406.7 MB as the `after codegen_program` one immediately before it: the retained matches
-    // are below the resolution of the gauge. Peak physical footprint for that whole run was
-    // 2.27 GB, in `ascent_run`, not here.
-    //
-    // Still unquantified: the APK + `.so` pair. It is no longer an exotic shape -- importing
-    // an APK now imports its native libraries as pcode sub-imports (see
-    // [`ctadl_frontends::apk_native`]), so a project naming one APK routinely walks several
-    // programs here -- but the loop drops each import's IR before loading the next, so the
-    // posture is per-import peak rather than the sum.
+    // Streaming matching retains only the *matches* -- one interned name plus two
+    // (tag, index, path) triples per propagation -- and drops each import's match index and IR
+    // with the import, so memory here stays near the per-import peak rather than the sum, even
+    // when an APK brings its native libraries in as pcode sub-imports (see
+    // [`ctadl_frontends::apk_native`]).
     log::debug!(
         "[mem cp] after import loop ({} propagation match(es), {} declared path(s), {} bridge \
          spec(s) retained): {:.1} MB",
@@ -738,7 +734,7 @@ pub fn query(
 
         // Declared: model *ports* of that direction, plus flowy's already-resolved
         // endpoints (one port each). Matched: post-fan-out `QueryEndpoint`s. Counting
-        // (generator, direction) keys here instead made `CTADL0100` compare a count of
+        // (generator, direction) keys here instead would make `CTADL0100` compare a count of
         // generators against a count of endpoints.
         let count_declared = |direction| {
             diagnostics
@@ -973,7 +969,7 @@ fn dump_taint_graph_dot(
     }
 
     // The persisted taint edges are already in data-flow (execution) order
-    // (source → derived, matching `find_path`) and no longer carry the
+    // (source → derived, matching `find_path`) and do not carry the
     // exploration direction, so draw each edge as-is and dedup. Approximate an
     // edge's cone from the cones its endpoints already carry (from the
     // authoritative `facts.taint` classification above); a `Call`/`Return`/`Intra`
@@ -1271,16 +1267,13 @@ fn load_and_map_summaries(
     let summary_project_name = summary_project.name.as_str();
     log::info!("Loading summaries from project: {}", summary_project_name);
 
-    // Load summaries directly using schema::summary::try_load
     let summary_index_path = summary_project.index_path()?;
     let source_summaries = crate::facts::schema::summary::try_load(&summary_index_path)
         .err_context(|| format!("loading source project summaries: {}", summary_project_name))?;
 
-    // Load the source project's id map for function name resolution
     let source_id_map = facts::IdMap::try_load(&summary_index_path)
         .err_context(|| format!("loading source project id map: {}", summary_project_name))?;
 
-    // Get the current project's id map
     let current_id_map = &current_source_info.sites;
 
     log::info!(
@@ -1288,38 +1281,28 @@ fn load_and_map_summaries(
         source_summaries.len()
     );
 
-    // Map summaries from source project to current project
     let mut mapped_summaries = 0;
     let mut discarded_summaries = 0;
 
     for (source_func_id, dst_index, dst_path, src_index, src_path) in source_summaries {
-        // Get the function name from the source project
-        let source_func_name = match source_id_map.get_function(source_func_id) {
-            Some(func) => func,
-            None => {
-                log::warn!(
-                    "Source function ID {} not found in source id map",
-                    source_func_id.id
-                );
-                discarded_summaries += 1;
-                continue;
-            }
+        let Some(source_func_name) = source_id_map.get_function(source_func_id) else {
+            log::warn!(
+                "Source function ID {} not found in source id map",
+                source_func_id.id
+            );
+            discarded_summaries += 1;
+            continue;
         };
 
-        // Check if this function exists in the current project
-        let target_func_id = match current_id_map.get_function_id(source_func_name.clone()) {
-            Some(func_id) => func_id,
-            None => {
-                log::trace!(
-                    "Function {} not found in current project, discarding summary",
-                    source_func_name
-                );
-                discarded_summaries += 1;
-                continue;
-            }
+        let Some(target_func_id) = current_id_map.get_function_id(source_func_name.clone()) else {
+            log::trace!(
+                "Function {} not found in current project, discarding summary",
+                source_func_name
+            );
+            discarded_summaries += 1;
+            continue;
         };
 
-        // Add the mapped summary to current facts
         current_facts
             .summary
             .push((target_func_id, dst_index, dst_path, src_index, src_path));
@@ -1769,7 +1752,7 @@ fn human_bytes(bytes: u64) -> String {
 /// Renders a finished project's index (assign-like) graph to a Graphviz DOT file.
 ///
 /// Reads `assign.parquet` and `function_id.parquet` out of the project's index directory -- the
-/// same rows `ctadl index` used to hold in memory -- so no re-index is needed. Sorts assigns for
+/// rows `ctadl index` wrote -- so no re-index is needed. Sorts assigns for
 /// stability.
 ///
 /// # Errors
@@ -1984,8 +1967,8 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
     if filename == crate::project::PROGRAM_BITCODE_FILE {
         let program =
             ctadl_ir::encode::decode_program(&data).err_context(|| decode_failed("program"))?;
-        // Resolve locals through each function's table: a dump full of `%L7` is unreadable now
-        // that the name lives in `FunctionData::locals` rather than in the variable itself.
+        // Resolve locals through each function's table: a dump full of `%L7` is unreadable,
+        // since the name lives in `FunctionData::locals` rather than in the variable itself.
         println!("{}", ctadl_ir::mir::WithLocalNames(&program));
     } else if filename == crate::project::VMT_BITCODE_FILE {
         let vmt: ctadl_ir::call::VirtualMethodTable =
@@ -1999,17 +1982,6 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
 
     Ok(())
 }
-
-// fn build_query_facts(project: &AnalysisProject) -> Result<IndexResult, Error> {
-//     // Get the original programs to
-//     for import in project.iter_imports() {
-//         let import = import?;
-//         let program_info = load_import(&import, SourceInfoMode::Skip)?;
-//     }
-//     let path = &project.index_path()?;
-//     let index = IndexResult::try_load(path)?;
-//     Ok(index)
-// }
 
 pub fn inspect_index_facts(
     facts: &IndexFacts,

@@ -406,7 +406,7 @@ pub struct InsFlow {
     /// reported as the last prefix with no effects.
     pub opcode: OpCode,
     pub prefixes: Prefixes,
-    /// One role per popped operand: inputs[i] describes In(i).
+    /// One role per popped operand: `inputs[i]` describes `In(i)`.
     pub inputs: Vec<Role>,
     /// Number of Out slots.
     pub outputs: u8,

@@ -209,7 +209,6 @@ pub fn collect_line_map_entries(parser: &DexParser<'_>) -> Vec<LineMapEntry> {
     let mut result = Vec::new();
 
     for class_def in parser.classes() {
-        // Resolve the source file for this class.
         let class_source_file = class_def
             .source_file(&parser.strings)
             .and_then(|r| r.ok())
@@ -255,7 +254,6 @@ pub fn collect_line_map_entries(parser: &DexParser<'_>) -> Vec<LineMapEntry> {
                 continue;
             }
 
-            // Build the fully-qualified method label.
             let method_label = parser
                 .get_method(enc_method.method_idx as usize)
                 .and_then(|mid| parser.method_signature(mid).ok())

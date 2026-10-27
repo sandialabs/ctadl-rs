@@ -247,8 +247,7 @@ fn discover_android_icc(dir: &Path) -> Result<Vec<TestCase>> {
 }
 
 /// Pair each `Foo.java` with its kebab-cased `foo.json`. A `.java` without a
-/// matching config (e.g. `MultiImplFlow.java`) is skipped, exactly as the old
-/// `tests.sh` skipped it.
+/// matching config (e.g. `MultiImplFlow.java`) is skipped.
 fn discover_dex(java_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = Vec::new();
     if !java_dir.is_dir() {
@@ -290,8 +289,8 @@ fn discover_dex(java_dir: &Path) -> Result<Vec<TestCase>> {
 /// tree-sitter `C` frontend, mirroring how a single `.java` yields both a `Dex`
 /// and a `Jvm` case. The two are distinct `TestCase`s with distinct names, so
 /// each is selected, run, and reported on its own -- a C failure cannot mask or
-/// fail a Pcode case and vice versa. The Pcode case keeps the bare stem so
-/// existing `--filter`/names are unchanged; the C case is prefixed `C:`.
+/// fail a Pcode case and vice versa. The Pcode case keeps the bare stem; the C
+/// case is prefixed `C:`.
 fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = Vec::new();
     if !c_dir.is_dir() {
@@ -316,8 +315,8 @@ fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
         cases.push(TestCase {
             name: stem.clone(),
             kind: Kind::Pcode {
-                source: absolute(&entry)?,
-                query: absolute(&query)?,
+                source: source.clone(),
+                query: query.clone(),
             },
         });
         cases.push(TestCase {
@@ -386,99 +385,40 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
             continue;
         }
         let abi = crate::assertions::read_native_abi(&config)?;
-        cases.push(TestCase {
-            name: format!("Jni:{stem}"),
-            kind: Kind::Jni {
-                java: absolute(&entry)?,
-                native: absolute(&native)?,
-                config: absolute(&config)?,
-                bridge: None,
-                packaging: Packaging::Separate,
-                abi: abi.clone(),
-                untyped: false,
-            },
-        });
-        // The same two artifacts and the same claims, but packaged the way a real
-        // Android app ships them and imported with one command. If the APK importer
-        // finds and disassembles `lib/<abi>` correctly, both cases pass identically.
-        cases.push(TestCase {
-            name: format!("Jni:{stem}+apk"),
-            kind: Kind::Jni {
-                java: absolute(&entry)?,
-                native: absolute(&native)?,
-                config: absolute(&config)?,
-                bridge: None,
-                packaging: Packaging::SingleApk,
-                abi: abi.clone(),
-                untyped: false,
-            },
-        });
-        // And the way an app *bundle* ships them: two APKs, the native one carrying no
-        // DEX at all. Same claims again, so this is an A/B on whether a DEX-less APK
-        // imports and co-indexes like any other native half.
-        cases.push(TestCase {
-            name: format!("Jni:{stem}+split-apks"),
-            kind: Kind::Jni {
-                java: absolute(&entry)?,
-                native: absolute(&native)?,
-                config: absolute(&config)?,
-                bridge: None,
-                packaging: Packaging::SplitApks,
-                abi: abi.clone(),
-                untyped: false,
-            },
-        });
-        // And the summary workflow: the library indexed on its own, the app indexed without
-        // its libraries against that project. Same claims about the Java half; the native
-        // half is reached only through the library's summaries.
-        cases.push(TestCase {
-            name: format!("Jni:{stem}+summary"),
-            kind: Kind::Jni {
-                java: absolute(&entry)?,
-                native: absolute(&native)?,
-                config: absolute(&config)?,
-                bridge: None,
-                packaging: Packaging::SummaryApk,
-                abi: abi.clone(),
-                untyped: false,
-            },
-        });
-        // A sibling `<kebab>.bridge.jsonl` turns the case into an A/B: the same two artifacts
-        // and the same claims, joined by a hand-written `model.bridge` under
-        // `--no-jni-bridge` instead of by the built-in pass. If the declarative construct is
-        // as expressive as the pass for this boundary, both cases pass identically.
-        let bridge = jni_dir.join(format!("{kebab}.bridge.jsonl"));
-        if bridge.is_file() {
+        let (java, native, config) = (absolute(&entry)?, absolute(&native)?, absolute(&config)?);
+        let mut push = |suffix: &str, packaging, bridge, untyped| {
             cases.push(TestCase {
-                name: format!("Jni:{stem}+bridge"),
+                name: format!("Jni:{stem}{suffix}"),
                 kind: Kind::Jni {
-                    java: absolute(&entry)?,
-                    native: absolute(&native)?,
-                    config: absolute(&config)?,
-                    bridge: Some(absolute(&bridge)?),
-                    packaging: Packaging::Separate,
+                    java: java.clone(),
+                    native: native.clone(),
+                    config: config.clone(),
+                    bridge,
+                    packaging,
                     abi: abi.clone(),
-                    untyped: false,
+                    untyped,
                 },
             });
+        };
+        push("", Packaging::Separate, None, false);
+        push("+apk", Packaging::SingleApk, None, false);
+        push("+split-apks", Packaging::SplitApks, None, false);
+        push("+summary", Packaging::SummaryApk, None, false);
+        let bridge = jni_dir.join(format!("{kebab}.bridge.jsonl"));
+        if bridge.is_file() {
+            push(
+                "+bridge",
+                Packaging::Separate,
+                Some(absolute(&bridge)?),
+                false,
+            );
         }
         // The library again with its debug info stripped, so Ghidra recovers no types and a
         // `long` on a 32-bit ABI shows up as two parameters. Co-indexed only: stripped, Ghidra
         // infers no return value for an export nothing calls, so the flow cannot come back to
         // Java, and a sink inside the library is out of reach of a `+summary` app index.
         if crate::assertions::read_untyped_native_layout(&config)?.is_some() {
-            cases.push(TestCase {
-                name: format!("Jni:{stem}+untyped"),
-                kind: Kind::Jni {
-                    java: absolute(&entry)?,
-                    native: absolute(&native)?,
-                    config: absolute(&config)?,
-                    bridge: None,
-                    packaging: Packaging::Separate,
-                    abi: abi.clone(),
-                    untyped: true,
-                },
-            });
+            push("+untyped", Packaging::Separate, None, true);
         }
     }
     Ok(cases)

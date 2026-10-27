@@ -40,11 +40,7 @@ impl FileTable {
     }
 
     pub fn get(&self, id: FileId) -> Option<&FileEntry> {
-        let idx = id.0 as usize;
-        if idx == 0 || idx > self.files.len() {
-            return None;
-        }
-        self.files.get(idx - 1)
+        self.files.get((id.0 as usize).checked_sub(1)?)
     }
 
     /// Builds a table from a list of entries (e.g. when deserializing). Assigns IDs 1, 2, ...
