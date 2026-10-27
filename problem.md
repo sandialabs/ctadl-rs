@@ -56,6 +56,67 @@ On Linux, `systemd-run --user --scope -p MemoryMax=<N>G -p MemorySwapMax=0` stan
 `scripts/memguard.ps1`. `main` already writes `profile.json` (#159), which covers relation counts
 and scc/rule times without the patched macro.
 
+## Status on current `main` (2026-10-27)
+
+This branch now carries S10 and S29, ported onto `main` `7c98b73e` (merged in as `f6ce4131`), and
+`com.noto`'s report totals re-pinned for them. Measured on a Linux machine with 62 GB of RAM, each
+app imported Dex only and indexed under a 32 GB cap, without the fix (`main`) and with it.
+
+**P9 as described does not reproduce on current `main` with the samples at hand.** Every app reaches
+a fixpoint without the fix. `cpuinfo` 6.7.0, the sample listed below, has no merged classes at all;
+the version measured in M2 was most likely 6.6.1 (`com.kgurgul.cpuinfo_60601.apk`, SHA-256
+`54cc5595b9a07e8c92b9949642794cf2503bbe42d7711a0ab2c6d6097ea0c3e3`), not yet tested. CENO and
+NewPipe have the most merging and take its place.
+
+**P24 does not exist on `main`:** without the split there are no clones. It is the split's own cost,
+and S29 keeps it to about +12% of the stored program.
+
+| App | Merged classes (ids) | Peak | Fixpoint | Main loop | `context_locals` | Call-target tags | Stored program |
+|---|---|---|---|---|---|---|---|
+| `com.noto` | 137 (528) | 2.19 → 2.20 GB | 32 → 35 s | 251 → 251 it | 41 k → 39 k | 756 k → 766 k | 30 → 31 MB |
+| NewPipe 0.29.1 | 955 (4,889) | 4.02 → 4.17 GB | 80 → 85 s | 467 → 467 it | 1.02 M → 0.99 M | 1.65 M → 1.71 M | 64 → 72 MB |
+| CENO 2.11.7 | 996 (5,877) | 3.87 → 3.56 GB | 66 → 51 s | 366 → 215 it | 63 k → 25 k | 1.82 M → 0.89 M | 63 → 73 MB |
+| OsmAnd~ | 7 (68) | 12.90 → 12.91 GB | 369 → 321 s | | 938 k → 937 k | 3.50 M → 3.50 M | |
+| Element | 10 (206) | 16.05 → 16.15 GB | 440 → 397 s | | 221 k → 221 k | 4.39 M → 4.39 M | |
+
+(Single runs, not back-to-back pairs; times vary by 10-30% on this machine, relation sizes don't.)
+
+**Results.** The broad query (`scripts/broad-android-model.json` on `improve-native-handling`)
+reports the same sources everywhere and, on `com.noto`, the same results, with instruction ids
+masked (the split renumbers them). On the two merge-heavy apps the split removes about half the
+tainted instructions and adds none:
+
+| App | Tainted-instruction locations | Sinks | Gained |
+|---|---|---|---|
+| NewPipe | 33,177 → 17,019 | 359 → 358 | 0 |
+| CENO | 29,728 → 15,316 | 205 → 204 | 0 |
+
+**The removed results are union flows, in every case traced.** Each sampled lost location was made a
+sink (that call's argument, in that caller) and queried on both indexes. 23 of 23 traceable samples
+(11 NewPipe, 12 CENO; one more was not traceable this way) have a path before the split that runs
+through classes the split separates, and no path after it (CENO's one exception keeps 4 of 2,708
+paths, to another call of the same callee in the same union method). The same few merged lambdas
+recur as junctions: `ZipFilesKt$$ExternalSyntheticLambda3`, `Data$$ExternalSyntheticLambda0`,
+`FeedFragment$$ExternalSyntheticLambda10`, `Player$$ExternalSyntheticLambda4` in NewPipe;
+`ImageKt$$ExternalSyntheticLambda0`, `Regex$$ExternalSyntheticLambda0`, `WindowFeature$start$1` in
+CENO. One example: `Cursor.getString` taint enters `ZipFilesKt$$ExternalSyntheticLambda3.invoke`,
+then `Data$$ExternalSyntheticLambda0.invoke`, and is stored into `Unit.INSTANCE` and
+`EmptyList.INSTANCE`, which no arm of either lambda writes. Each lost sink is a sink endpoint
+expanded over an access path that existed only through such edges (NewPipe: `FeedGroupIcon`'s enum
+entries into a crash report's `Log.w`; CENO: `BrowserState.tabs` into a reader-view listener's
+`putString`); after the split the path is gone from the index, so the endpoint is not generated.
+
+**Checks.** `cargo test` passes for `ctadl-ascent` (370), `ctadl-dex`, `ctadl-import` and
+`dex-reader` (86). `cargo xtask regression --frontend dex,jvm`: 133 passed, 6 skipped (no `smali`
+or ASM here), 0 failed, including the Dex `ClassIdMergedFlow` fixture, which asserts the split keeps
+only its two real flows. (`dx` came from Ubuntu's `dalvik-exchange` package, symlinked as `dx`.)
+
+**What this means for the branch.** The split is now mainly a precision fix (about half of the
+tainted results on merge-heavy apps are union artifacts) and a cost reduction where merging is
+heavy (CENO), rather than a fix for non-convergence. Open: test `cpuinfo` 6.6.1 for the original
+non-convergence; P25/S30 (union methods left for unknown ids); classes the detector does not split
+(`merged classes: not splitting` at debug level).
+
 ## The problem
 
 ### P9: merged lambdas are dispatch hubs
