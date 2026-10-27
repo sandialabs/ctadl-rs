@@ -98,21 +98,30 @@ the imported IR, as in the table above (`uclited` 2.0 MB, `androidudpbus` 28.2 M
 |---|---|---|---|---|---|---|
 | `uclited` | `window:8` (default) | 41.4 M | 10.2 s | 1.26 GiB | 6.8x over | `inflate` 99.3% |
 | | `full` | 12.1 M | 3.0 s | 0.54 GiB | 2.9x over | `inflate` 97.7% |
+| | `full:0` | 11.8 M | 2.7 s | 0.52 GiB | 2.8x over | |
 | `androidudpbus` | `window:8` (default) | 337.9 M | 166 s | 13.27 GiB | 5.1x over | `FUN_00144f04` 71.7% |
 | | `exact` | 349.7 M | 143 s | 15.11 GiB | 5.8x over | |
 | | `full` | 30.9 M | 22 s | 2.09 GiB | **under (0.8x)** | `FUN_00156cb8` 35.8% |
+| | `full:0` | 23.2 M | 16 s | 1.87 GiB | **under (0.7x)** | |
 | `glxy` | `window:8` (default) | 100.4 M | 44 s | 4.07 GiB | 2.9x over | `FUN_0010b408` 90.2% |
 | | `exact` | 98.2 M | 44 s | 4.01 GiB | 2.9x over | |
 | | `full` | 83.7 M | 38 s | 3.64 GiB | 2.6x over | `FUN_0010b408` 88.8% |
+| | `full:0` | 83.1 M | 37 s | 3.64 GiB | 2.6x over | |
 
 The shares are from the census build before the merge (`design.md`), on row counts within 5% of
 these. `uclited`'s `window:8` row is from before the merge too; its `full` row was re-run after.
-The `exact` rows were run after the merge without the census, so they have no share.
+The `exact` and `full:0` rows were run after the merge without the census, so they have no share.
 
 `exact` (S3's rejected policy) does not help the apps. On `androidudpbus` it keeps 29% fewer
 accesses in memory than `window:8` (121 k against 170 k) but `locals` grows 3.5% and the peak
 1.8 GiB: the slots an address escapes from, which `exact` still keeps, are the busy ones, so
 promoting their neighbors removes nothing. On `glxy` it cuts 2%. Only `full` moves either app.
+
+`full:0` promotes every function fully, not just those above 1,000 accesses. It adds little over
+`full`: `androidudpbus` falls a further 25% (30.9 M to 23.2 M, with 505 functions promoted fully
+instead of 27), `uclited` 3% and `glxy` 1%. It also names many more functions in
+`notifications.log` (496 in `androidudpbus`, 103 in `uclited`, 34 in `glxy`), so `full`'s threshold
+keeps most of the gain with far fewer functions treated unsoundly.
 
 What is left of P1:
 
@@ -122,7 +131,8 @@ What is left of P1:
   P6 is the suspect.
 - **`androidudpbus`:** the hub `FUN_00144f04` drops from 243 M rows to 0.2 M. The largest function
   is now `FUN_00156cb8` (11 M rows), below the 1,000-access threshold, so it still runs
-  `window:8`; a lower threshold may shrink it.
+  `window:8`. Promoting every function fully (`full:0`) cuts the app a further 25%; it is already
+  under budget without that.
 - **The other apps in the table above** have not been run with `full`.
 
 ## Analysis: `uclited` has three causes, not one
