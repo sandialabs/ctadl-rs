@@ -94,8 +94,9 @@ byte-for-byte as on `main`:
 
 **R13. Safe handles.**
 - Safe code cannot build a handle that was never handed out.
-- Any conversion from raw bits back to a handle (for example in LSM run files) is
-  checked.
+- Any conversion from raw bits back to a handle is checked. The exception is
+  bits this process wrote itself and never let leave it, which may be trusted
+  (C6).
 
 **R14. Limits fail loudly.** Running out of handle space panics with a message
 naming the type. Handles are never truncated silently.
@@ -250,8 +251,13 @@ call site must state which.
 
 **C6. Opaque handles vs. LSM storage (R13).**
 - **Constraint.** LSM run files hold raw bits, which must become handles again.
-- **What the check must do.** Reject any value that was never handed out, without
-  breaking R3.
+  `LsmCol::ref_from` reinterprets the slot bytes as `&T` without copying, so
+  there is no decode step to check.
+- **Fact.** Every slot was written by `to_slots` in this process. Run files don't
+  outlive the process, and handles are never invalidated (C2).
+- **Decision.** LSM storage counts as trusted in-process storage, under
+  `LsmCol`'s existing `unsafe` contract. Release builds don't check it. Debug
+  builds assert that every handle read back was handed out.
 
 **C7. Changing `Str`'s width (R1 vs. R11).**
 - **Risk.** `Str` derives `Serialize` over its raw id. If anything persists `Str`
