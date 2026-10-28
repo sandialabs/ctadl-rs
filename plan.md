@@ -1,4 +1,4 @@
-# Plan notes: u32 handles (input to the plan)
+# Plan notes: u32 handles (input to the plan) - DO-NOT-MERGE
 
 These are notes from the survey session. They suggest an approach and an order
 for meeting `spec.md`, and nothing here is binding. Requirement numbers (R*)
