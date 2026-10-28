@@ -30,11 +30,24 @@ use crate::facts::{CallTargetObject, FormalIndex, Path};
 ///
 /// The key names *what* was decided, never the route it arrived by, so two routes that
 /// establish the same decision share one closure and both get the result.
+///
+/// `Ord` compares the target by handle; sort with [`Decision::content_cmp`] wherever the order
+/// is printed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Decision {
     pub formal: FormalIndex,
     pub path: Path,
     pub target: CallTargetObject,
+}
+
+impl Decision {
+    /// Orders by content, not by handle, so a sort that feeds output is reproducible.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.formal
+            .cmp(&other.formal)
+            .then_with(|| self.path.cmp(&other.path))
+            .then_with(|| self.target.content_cmp(&other.target))
+    }
 }
 
 impl Display for Decision {

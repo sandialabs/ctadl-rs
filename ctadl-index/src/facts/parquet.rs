@@ -921,14 +921,14 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
         name: &str,
         col: Vec<facts::CallTargetObject>,
     ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        use facts::CallTargetObject::*;
+        use facts::CallTargetObjectKind::*;
         let tag_column_name = name.to_owned() + "_tag";
         let func_column_name = name.to_owned() + "_func";
         let symbol_column_name = name.to_owned() + "_symbol";
         let (mut fields, mut arrays) = <Self as EncodeColumn<u8>>::encode_column(
             &tag_column_name,
             col.iter()
-                .map(|o| match o {
+                .map(|o| match o.kind() {
                     FunctionId(_) => 0u8,
                     Symbol(_) => 1,
                     LuaClass(_) => 2,
@@ -940,7 +940,7 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
             <Self as EncodeColumn<Option<facts::FunctionId>>>::encode_column(
                 &func_column_name,
                 col.iter()
-                    .map(|o| match o {
+                    .map(|o| match o.kind() {
                         FunctionId(f) => Some(*f),
                         Symbol(_) | LuaClass(_) | CilClass(_) => None,
                     })
@@ -949,10 +949,10 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
         let (symbol_fields, symbol_arrays) =
             <Self as EncodeColumn<Option<ArcIntern<str>>>>::encode_column(
                 &symbol_column_name,
-                col.into_iter()
-                    .map(|o| match o {
+                col.iter()
+                    .map(|o| match o.kind() {
                         FunctionId(_) => None,
-                        Symbol(s) | LuaClass(s) | CilClass(s) => Some(s),
+                        Symbol(s) | LuaClass(s) | CilClass(s) => Some(s.clone()),
                     })
                     .collect_vec(),
             );
@@ -970,7 +970,7 @@ impl DecodeColumn<facts::CallTargetObject> for DefaultDecoder {
         name: &str,
         batch: &RecordBatch,
     ) -> impl IntoIterator<Item = facts::CallTargetObject> {
-        use facts::CallTargetObject::*;
+        use facts::CallTargetObjectKind::*;
         let tag_column_name = name.to_owned() + "_tag";
         let func_column_name = name.to_owned() + "_func";
         let symbol_column_name = name.to_owned() + "_symbol";
@@ -991,6 +991,7 @@ impl DecodeColumn<facts::CallTargetObject> for DefaultDecoder {
                 3 => CilClass(symbol.expect("CilClass CallTargetObject missing symbol")),
                 _ => panic!("bad encoding of CallTargetObject"),
             })
+            .map(facts::CallTargetObject::from)
             .collect_vec()
     }
 }
@@ -1005,14 +1006,14 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
         name: &str,
         col: Vec<facts::CallDispatchKey>,
     ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        use facts::CallDispatchKey::*;
+        use facts::CallDispatchKeyKind::*;
         let tag_column_name = name.to_owned() + "_tag";
         let name_column_name = name.to_owned() + "_name";
         let desc_column_name = name.to_owned() + "_desc";
         let (mut fields, mut arrays) = <Self as EncodeColumn<u8>>::encode_column(
             &tag_column_name,
             col.iter()
-                .map(|c| match c {
+                .map(|c| match c.kind() {
                     Java(_, _) => 0u8,
                     C => 1,
                     Lua(_) => 2,
@@ -1024,7 +1025,7 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
             <Self as EncodeColumn<Option<ArcIntern<str>>>>::encode_column(
                 &name_column_name,
                 col.iter()
-                    .map(|c| match c {
+                    .map(|c| match c.kind() {
                         Java(n, _) | Lua(n) | Cil(n, _) => Some(n.clone()),
                         C => None,
                     })
@@ -1033,9 +1034,9 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
         let (desc_fields, desc_arrays) =
             <Self as EncodeColumn<Option<ArcIntern<str>>>>::encode_column(
                 &desc_column_name,
-                col.into_iter()
-                    .map(|c| match c {
-                        Java(_, d) | Cil(_, d) => Some(d),
+                col.iter()
+                    .map(|c| match c.kind() {
+                        Java(_, d) | Cil(_, d) => Some(d.clone()),
                         C | Lua(_) => None,
                     })
                     .collect_vec(),
@@ -1054,7 +1055,7 @@ impl DecodeColumn<facts::CallDispatchKey> for DefaultDecoder {
         name: &str,
         batch: &RecordBatch,
     ) -> impl IntoIterator<Item = facts::CallDispatchKey> {
-        use facts::CallDispatchKey::*;
+        use facts::CallDispatchKeyKind::*;
         let tag_column_name = name.to_owned() + "_tag";
         let name_column_name = name.to_owned() + "_name";
         let desc_column_name = name.to_owned() + "_desc";
@@ -1081,6 +1082,7 @@ impl DecodeColumn<facts::CallDispatchKey> for DefaultDecoder {
                 ),
                 _ => panic!("bad encoding of CallDispatchKey"),
             })
+            .map(facts::CallDispatchKey::from)
             .collect_vec()
     }
 }

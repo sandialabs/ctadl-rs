@@ -399,13 +399,13 @@ pub use crate::facts::{GLOBALS_INDEX, RETURN_INDEX};
 fn call_target_object(exp: &Exp) -> Option<fx::CallTargetObject> {
     match exp {
         Exp::ObjectRef(CallObject::JavaObject(cls)) => {
-            Some(fx::CallTargetObject::Symbol(cls.0.clone()))
+            Some(fx::CallTargetObjectKind::Symbol(cls.0.clone()).into())
         }
         Exp::ObjectRef(CallObject::LuaClass(cls)) => {
-            Some(fx::CallTargetObject::LuaClass(cls.clone()))
+            Some(fx::CallTargetObjectKind::LuaClass(cls.clone()).into())
         }
         Exp::ObjectRef(CallObject::CilObject(cls)) => {
-            Some(fx::CallTargetObject::CilClass(cls.0.clone()))
+            Some(fx::CallTargetObjectKind::CilClass(cls.0.clone()).into())
         }
         _ => None,
     }
@@ -803,8 +803,8 @@ impl<'a> CodegenVisitor<'a> {
             .callee_resolvents
             .extend(funcptr_targets.into_iter().map(|f| {
                 (
-                    fx::CallTargetObject::FunctionId(f),
-                    fx::CallDispatchKey::C,
+                    fx::CallTargetObjectKind::FunctionId(f).into(),
+                    fx::CallDispatchKey::c(),
                     f,
                 )
             }));
@@ -999,7 +999,7 @@ impl Visitor for CodegenVisitor<'_> {
                         self.facts.call_target_assign.push((
                             site,
                             FlowVertex(dest, fx::Path::empty()),
-                            fx::CallTargetObject::FunctionId(target),
+                            fx::CallTargetObjectKind::FunctionId(target).into(),
                         ));
                         self.funcptr_targets.insert(target);
                     }
@@ -1134,7 +1134,7 @@ impl Visitor for CodegenVisitor<'_> {
                         let deferred = (
                             site,
                             FlowVertex(recv_var, fx::Path::empty()),
-                            fx::CallDispatchKey::Lua(method.clone()),
+                            fx::CallDispatchKeyKind::Lua(method.clone()).into(),
                         );
                         match self.strategy {
                             CallResolutionStrategy::Cha => {
@@ -1197,7 +1197,7 @@ impl Visitor for CodegenVisitor<'_> {
                         let vertex = self.trans_access_path(callee);
                         self.facts
                             .callee_info
-                            .push((site, vertex, fx::CallDispatchKey::C));
+                            .push((site, vertex, fx::CallDispatchKey::c()));
                     }
                     _ => log::warn!("unhandled call style: {style:?}"),
                 }
@@ -1226,7 +1226,7 @@ impl Visitor for CodegenVisitor<'_> {
                         self.facts.call_target_assign.push((
                             site,
                             FlowVertex(call_arg_var, fx::Path::empty()),
-                            fx::CallTargetObject::FunctionId(target),
+                            fx::CallTargetObjectKind::FunctionId(target).into(),
                         ));
                         self.funcptr_targets.insert(target);
                     }
@@ -1358,7 +1358,7 @@ impl Visitor for CodegenVisitor<'_> {
                     self.facts.call_target_assign.push((
                         site,
                         dest,
-                        fx::CallTargetObject::FunctionId(target),
+                        fx::CallTargetObjectKind::FunctionId(target).into(),
                     ));
                     self.funcptr_targets.insert(target);
                 }
@@ -1402,7 +1402,7 @@ impl Visitor for CodegenVisitor<'_> {
                     self.facts.call_target_assign.push((
                         site,
                         dest_vertex,
-                        fx::CallTargetObject::FunctionId(target),
+                        fx::CallTargetObjectKind::FunctionId(target).into(),
                     ));
                     self.funcptr_targets.insert(target);
                 }
@@ -1721,9 +1721,11 @@ impl ClassHierarchyAnalysis {
     /// table's language. Lua sites build their own key, since theirs has no descriptor.
     pub(crate) fn dispatch_key(&self, name: &Symbol, descriptor: &Symbol) -> fx::CallDispatchKey {
         match self.language {
-            ChaLanguage::Cil => fx::CallDispatchKey::Cil(name.clone(), descriptor.clone()),
+            ChaLanguage::Cil => {
+                fx::CallDispatchKeyKind::Cil(name.clone(), descriptor.clone()).into()
+            }
             ChaLanguage::Java | ChaLanguage::Lua => {
-                fx::CallDispatchKey::Java(name.clone(), descriptor.clone())
+                fx::CallDispatchKeyKind::Java(name.clone(), descriptor.clone()).into()
             }
         }
     }
@@ -1906,27 +1908,25 @@ fn emit_callee_resolvents(
         if !wanted.contains(&(name.clone(), desc.clone())) {
             continue;
         }
-        let (object, key) = match cha.language {
+        let (object, key): (fx::CallTargetObject, fx::CallDispatchKey) = match cha.language {
             ChaLanguage::Java => (
-                fx::CallTargetObject::Symbol(cls.clone()),
-                fx::CallDispatchKey::Java(name.clone(), desc.clone()),
+                fx::CallTargetObjectKind::Symbol(cls.clone()).into(),
+                fx::CallDispatchKeyKind::Java(name.clone(), desc.clone()).into(),
             ),
             ChaLanguage::Lua => (
-                fx::CallTargetObject::LuaClass(cls.clone()),
-                fx::CallDispatchKey::Lua(name.clone()),
+                fx::CallTargetObjectKind::LuaClass(cls.clone()).into(),
+                fx::CallDispatchKeyKind::Lua(name.clone()).into(),
             ),
             ChaLanguage::Cil => (
-                fx::CallTargetObject::CilClass(cls.clone()),
-                fx::CallDispatchKey::Cil(name.clone(), desc.clone()),
+                fx::CallTargetObjectKind::CilClass(cls.clone()).into(),
+                fx::CallDispatchKeyKind::Cil(name.clone(), desc.clone()).into(),
             ),
         };
         for target in targets {
             let func_id = source_info
                 .sites
                 .get_or_add_function(fx::Function(target.clone().into()));
-            facts
-                .callee_resolvents
-                .push((object.clone(), key.clone(), func_id));
+            facts.callee_resolvents.push((object, key, func_id));
         }
     }
 }

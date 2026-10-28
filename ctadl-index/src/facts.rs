@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt::{self, Debug, Display};
 use std::ops::Deref;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use ctadl_ir::Symbol;
 use derive_builder::Builder;
@@ -966,15 +967,60 @@ impl Display for FlowVertex {
     }
 }
 
+/// What an `id_handle!` over a content enum shares: building it from its content, reading the
+/// content back, a content order, and `Display` and serde through the content.
+macro_rules! interned_enum_impls {
+    ($handle:ident, $kind:ident) => {
+        impl From<$kind> for $handle {
+            fn from(kind: $kind) -> Self {
+                $handle::intern(&kind)
+            }
+        }
+
+        impl $handle {
+            /// The value this handle stands for, without a lock.
+            pub fn kind(self) -> &'static $kind {
+                self.get()
+            }
+
+            /// Orders by content, not by id, so a sort that feeds output is reproducible.
+            pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+                if self == other {
+                    return std::cmp::Ordering::Equal;
+                }
+                self.get().cmp(other.get())
+            }
+        }
+
+        impl Display for $handle {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                Display::fmt(self.get(), f)
+            }
+        }
+
+        impl Serialize for $handle {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                self.get().serialize(serializer)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $handle {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                $kind::deserialize(deserializer).map(Into::into)
+            }
+        }
+    };
+}
+
 /// A call target: either a concrete function (a C-style function pointer, `v = ptr<f>`,
 /// a [`FunctionId`]) or a class name (a Java object, `v = new Foo()`, a [`Symbol`]), the
 /// latter resolved against the virtual method table at the call site.
 ///
 /// It appears both as a *stored* target — what an assignment writes at a vertex, in
 /// `call_target_assign` — and as the *resolved* target carried through the `resolvent`
-/// relation during call resolution.
+/// relation during call resolution. [`CallTargetObject`] is its interned handle.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
-pub enum CallTargetObject {
+pub enum CallTargetObjectKind {
     FunctionId(FunctionId),
     Symbol(Symbol),
     /// A Lua class-table symbol (`lua$class$Account`), the projection of
@@ -988,16 +1034,25 @@ pub enum CallTargetObject {
     CilClass(Symbol),
 }
 
-impl Display for CallTargetObject {
+impl Display for CallTargetObjectKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CallTargetObject::FunctionId(func_id) => write!(f, "ptr<{}>", func_id.id),
-            CallTargetObject::Symbol(cls) => write!(f, "java<{cls}>"),
-            CallTargetObject::LuaClass(cls) => write!(f, "lua<{cls}>"),
-            CallTargetObject::CilClass(cls) => write!(f, "cil<{cls}>"),
+            CallTargetObjectKind::FunctionId(func_id) => write!(f, "ptr<{}>", func_id.id),
+            CallTargetObjectKind::Symbol(cls) => write!(f, "java<{cls}>"),
+            CallTargetObjectKind::LuaClass(cls) => write!(f, "lua<{cls}>"),
+            CallTargetObjectKind::CilClass(cls) => write!(f, "cil<{cls}>"),
         }
     }
 }
+
+immortal::id_handle! {
+    /// An interned [`CallTargetObjectKind`]: a 4-byte handle into a process-wide interner that
+    /// never frees. Ordered by id, so sort with `content_cmp` wherever the order is printed.
+    /// `Display` and serde go through the content.
+    pub struct CallTargetObject(CallTargetObjectKind);
+}
+
+interned_enum_impls!(CallTargetObject, CallTargetObjectKind);
 
 /// The frontend-specific dispatch key that, together with a [`CallTargetObject`], resolves an
 /// indirect / virtual call to concrete callee function(s). It is the *single extension point*
@@ -1017,8 +1072,10 @@ impl Display for CallTargetObject {
 /// - `Cil(simple_name, descriptor)` — a .NET `callvirt`, resolved exactly as `Java` is but in
 ///   its own key space: `callee_resolvents(CallTargetObject::CilClass(class), Cil(name, desc),
 ///   target)`.
+///
+/// [`CallDispatchKey`] is its interned handle.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
-pub enum CallDispatchKey {
+pub enum CallDispatchKeyKind {
     /// JVM / Dex virtual call: (method simple name, method descriptor).
     Java(Symbol, Symbol),
     /// C-style function-pointer call: no additional key beyond the stored target.
@@ -1029,14 +1086,31 @@ pub enum CallDispatchKey {
     Cil(Symbol, Symbol),
 }
 
-impl Display for CallDispatchKey {
+impl Display for CallDispatchKeyKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CallDispatchKey::Java(name, desc) => write!(f, "java_call<{name}{desc}>"),
-            CallDispatchKey::C => write!(f, "c_call"),
-            CallDispatchKey::Lua(name) => write!(f, "lua_call<{name}>"),
-            CallDispatchKey::Cil(name, desc) => write!(f, "cil_call<{name}{desc}>"),
+            CallDispatchKeyKind::Java(name, desc) => write!(f, "java_call<{name}{desc}>"),
+            CallDispatchKeyKind::C => write!(f, "c_call"),
+            CallDispatchKeyKind::Lua(name) => write!(f, "lua_call<{name}>"),
+            CallDispatchKeyKind::Cil(name, desc) => write!(f, "cil_call<{name}{desc}>"),
         }
+    }
+}
+
+immortal::id_handle! {
+    /// An interned [`CallDispatchKeyKind`], a 4-byte handle like [`CallTargetObject`].
+    pub struct CallDispatchKey(CallDispatchKeyKind);
+}
+
+interned_enum_impls!(CallDispatchKey, CallDispatchKeyKind);
+
+static C_DISPATCH: LazyLock<CallDispatchKey> = LazyLock::new(|| CallDispatchKeyKind::C.into());
+
+impl CallDispatchKey {
+    /// `C`'s handle. The first call interns it, so call this before a fixpoint whose rules
+    /// compare against it; after that it takes no lock.
+    pub fn c() -> CallDispatchKey {
+        *C_DISPATCH
     }
 }
 
@@ -1451,6 +1525,30 @@ mod tests {
         let back: FlowVariable =
             serde_json::from_str(&serde_json::to_string(&local).unwrap()).unwrap();
         assert_eq!(back, local);
+    }
+
+    #[test]
+    fn call_handles_are_four_bytes_and_shown_by_content() {
+        assert_eq!(std::mem::size_of::<Option<CallTargetObject>>(), 4);
+        assert_eq!(std::mem::size_of::<Option<CallDispatchKey>>(), 4);
+
+        // Interned in reverse content order, so ids and content disagree.
+        let b: CallTargetObject = CallTargetObjectKind::Symbol("call_handles/b".into()).into();
+        let a: CallTargetObject = CallTargetObjectKind::Symbol("call_handles/a".into()).into();
+        assert_eq!(a.content_cmp(&b), std::cmp::Ordering::Less);
+        assert_eq!(b.content_cmp(&a), std::cmp::Ordering::Greater);
+        assert_eq!(a.to_string(), "java<call_handles/a>");
+
+        let json = serde_json::to_string(&a).unwrap();
+        assert_eq!(
+            json,
+            serde_json::to_string(&CallTargetObjectKind::Symbol("call_handles/a".into())).unwrap()
+        );
+        assert_eq!(serde_json::from_str::<CallTargetObject>(&json).unwrap(), a);
+
+        let c = CallDispatchKey::c();
+        assert_eq!(c, CallDispatchKeyKind::C.into());
+        assert_eq!(c.to_string(), "c_call");
     }
 
     #[test]

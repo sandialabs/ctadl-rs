@@ -43,9 +43,9 @@ use streaming_iterator::StreamingIterator;
 
 use crate::error::{Error, ErrorContext};
 use crate::facts::{
-    CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex,
-    FormalType, FunctionId, IdMap, InsnId, InsnSiteId, IntentKind, IntentPairKind,
-    PackedInsnSiteId, Path, Str,
+    CallDispatchKey, CallTargetObject, CallTargetObjectKind, FlowVariable, FlowVariableKind,
+    FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, IntentKind,
+    IntentPairKind, PackedInsnSiteId, Path, Str,
 };
 pub use crate::index_engine::decision::{Decision, DecisionId, DecisionSet};
 use crate::index_engine::path_set::{PathSet, PathSetRef};
@@ -170,7 +170,7 @@ impl IndexFacts {
                     let InsnSiteId { func_id, insn_id } =
                         InsnSiteId::unpack_from_slice(&**site_id).unwrap();
                     let FlowVertex(variable, path) = vertex;
-                    (func_id, insn_id, *variable, *path, target.clone())
+                    (func_id, insn_id, *variable, *path, *target)
                 }),
         )?;
         callee_info::try_save(
@@ -181,7 +181,7 @@ impl IndexFacts {
                     let InsnSiteId { func_id, insn_id } =
                         InsnSiteId::unpack_from_slice(&**site_id).unwrap();
                     let FlowVertex(variable, path) = vertex;
-                    (func_id, insn_id, *variable, *path, dispatch_key.clone())
+                    (func_id, insn_id, *variable, *path, *dispatch_key)
                 }),
         )?;
         callee_resolvents::try_save(&dir, self.callee_resolvents.iter().cloned())?;
@@ -1147,14 +1147,14 @@ impl std::fmt::Display for HybridInliningRelations<'_> {
         let mut rows = self.call_target_assign_like.stream();
         while let Some((func_id, var, path, tgt)) = rows.next() {
             let name = func_name(self.id_map, *func_id);
-            let tgt_str = match tgt {
-                CallTargetObject::FunctionId(tgt) => {
+            let tgt_str = match tgt.kind() {
+                CallTargetObjectKind::FunctionId(tgt) => {
                     let tgt_name = func_name(self.id_map, *tgt);
                     format!("ptr {}({})", tgt_name, tgt.id)
                 }
-                CallTargetObject::Symbol(cls) => format!("java<{cls}>"),
-                CallTargetObject::LuaClass(cls) => format!("lua<{cls}>"),
-                CallTargetObject::CilClass(cls) => format!("cil<{cls}>"),
+                CallTargetObjectKind::Symbol(cls) => format!("java<{cls}>"),
+                CallTargetObjectKind::LuaClass(cls) => format!("lua<{cls}>"),
+                CallTargetObjectKind::CilClass(cls) => format!("cil<{cls}>"),
             };
 
             writeln!(
@@ -1775,7 +1775,7 @@ ascent_source! {
     fnptr_call(caller, insn, callee) <--
         resolved_call(caller, insn, callee),
         callee_info(caller, insn, _, _, key),
-        if *key == CallDispatchKey::C;
+        if *key == CallDispatchKey::c();
 
     // 3.2: apply a conditional summary at the callers whose route established its decision.
     // The two rules mirror 2.1 and 2.2, which is what makes them complete: a caller that holds
@@ -2473,6 +2473,8 @@ macro_rules! run_engine {
         prog.alias_of_formal = alias_of_formal.into_iter().collect();
         prog.paths = paths.iter().cloned().collect();
         prog.path_set = vec![(path_set.clone(),)].into_iter().collect();
+        // `fnptr_call` compares against `C`'s handle: intern it here, not mid-run (R6).
+        $crate::facts::CallDispatchKey::c();
 
         let fixpoint_start = std::time::Instant::now();
         let reached_fixpoint = prog.run_timeout(index_timeout);
