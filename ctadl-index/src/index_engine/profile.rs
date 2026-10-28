@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+pub use immortal::Stats;
+
 use crate::facts::{CallDispatchKey, CallTargetObject, PathId, Str};
 use crate::index_engine::locals_trie::HeapReport;
 
@@ -29,6 +31,9 @@ pub struct IndexProfile {
     pub relations: BTreeMap<String, usize>,
     pub sccs: Vec<SccProfile>,
     pub memory: MemoryProfile,
+    /// How many times a rule asked the path set to split a path that is not in it. Each is a
+    /// bug that drops rows, so this is 0.
+    pub split_misses: usize,
 }
 
 /// Where the index's bytes are, so a memory regression can be traced to a store (C2).
@@ -39,20 +44,34 @@ pub struct MemoryProfile {
     pub locals: Option<HeapReport>,
     /// Entries and heap bytes of each store of interned values, by name. See
     /// [`MemoryProfile::read_interned`].
-    pub interned: BTreeMap<&'static str, immortal::Stats>,
+    pub interned: BTreeMap<&'static str, Stats>,
+    /// The entries each interner that the fixpoint may only read gained while it ran. All 0
+    /// when this process built one index at a time (R6).
+    pub fixpoint_interned: BTreeMap<&'static str, usize>,
 }
 
 impl MemoryProfile {
-    /// Reads the size of every store of interned values: each `id_handle!` interner, and any
-    /// table frozen from them for the fixpoint to read. Interned values are never freed, so the
-    /// sizes cover every index this process has built, up to the moment of the call.
+    /// Reads the size of each `id_handle!` interner into `interned`, beside the frozen path set
+    /// that the engine put there (`PathSet`, whose entries are its members). Interned values are
+    /// never freed, so the sizes cover every index this process has built, up to the moment of
+    /// the call.
     pub fn read_interned(&mut self) {
-        self.interned = BTreeMap::from([
+        self.interned.extend([
             ("Str", Str::stats()),
             ("CallTargetObject", CallTargetObject::stats()),
             ("CallDispatchKey", CallDispatchKey::stats()),
             ("Path", PathId::stats()),
         ]);
+    }
+
+    /// The entries of each interner that the fixpoint may not add to (R6), by name.
+    pub fn frozen_interner_entries() -> BTreeMap<&'static str, usize> {
+        BTreeMap::from([
+            ("Str", Str::stats().entries),
+            ("CallTargetObject", CallTargetObject::stats().entries),
+            ("CallDispatchKey", CallDispatchKey::stats().entries),
+            ("Path", PathId::stats().entries),
+        ])
     }
 }
 

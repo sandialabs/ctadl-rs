@@ -2504,9 +2504,17 @@ macro_rules! run_engine {
         // `fnptr_call` compares against `C`'s handle: intern it here, not mid-run (R6).
         $crate::facts::CallDispatchKey::c();
 
+        let interned_before = $crate::index_engine::profile::MemoryProfile::frozen_interner_entries();
         let fixpoint_start = std::time::Instant::now();
         let reached_fixpoint = prog.run_timeout(index_timeout);
         let fixpoint_secs = fixpoint_start.elapsed().as_secs_f64();
+        let interned_after = $crate::index_engine::profile::MemoryProfile::frozen_interner_entries();
+        if path_set.split_misses() > 0 {
+            log::warn!(
+                "the path set was asked to split {} non-member path(s); their wild rows are missing",
+                path_set.split_misses()
+            );
+        }
         if !reached_fixpoint {
             log::warn!(
                 "index run TIMED OUT after {:?} without reaching fixpoint; results and stats below are PARTIAL",
@@ -2583,6 +2591,18 @@ macro_rules! run_engine {
             log::debug!("{report}");
         }
         profile.memory.locals = locals_heap;
+        profile.memory.fixpoint_interned = interned_after
+            .into_iter()
+            .map(|(name, n)| (name, n - interned_before[name]))
+            .collect();
+        profile.memory.interned.insert(
+            "PathSet",
+            $crate::index_engine::profile::Stats {
+                entries: path_set.len(),
+                bytes: path_set.bytes(),
+            },
+        );
+        profile.split_misses = path_set.split_misses();
         if let Some(mut dump) = $crate::index_engine::dump::RelationDump::from_env(id_map) {
             $crate::dump_relations!(&mut dump, prog);
             prog.dump_stores(&mut dump);
