@@ -62,17 +62,23 @@ This branch now carries S10 and S29, ported onto `main` `7c98b73e` (merged in as
 `com.noto`'s report totals re-pinned for them. Measured on a Linux machine with 62 GB of RAM, each
 app imported Dex only and indexed under a 32 GB cap, without the fix (`main`) and with it.
 
-**P9 as described does not reproduce on current `main` with the samples at hand.** Every app reaches
-a fixpoint without the fix. `cpuinfo` 6.7.0, the sample listed below, has no merged classes at all;
-the version measured in M2 was most likely 6.6.1 (`com.kgurgul.cpuinfo_60601.apk`, SHA-256
-`54cc5595b9a07e8c92b9949642794cf2503bbe42d7711a0ab2c6d6097ea0c3e3`), not yet tested. CENO and
-NewPipe have the most merging and take its place.
+**P9's non-convergence does not reproduce on current `main`, not even on the app it was found in.**
+`cpuinfo` 6.7.0, the sample listed below, has no merged classes at all. 6.6.1
+(`com.kgurgul.cpuinfo_60601.apk`, SHA-256
+`54cc5595b9a07e8c92b9949642794cf2503bbe42d7711a0ab2c6d6097ea0c3e3`) is the version M2 measured: the
+split finds exactly M2's 620 classes, 3,562 ids, 1,068 switching methods and 4,296 construction
+sites. On `main` without the fix it reaches a fixpoint in 38 s at 1.73 GB, where M2's baseline ran
+past 1800 s and 41 GB with 58 M `context_locals` rows and growing. Something on `main` since M2
+defused the hubs' churn; it has not been bisected. Candidates: #154 (every parameter written back at
+its entry version, `main`'s form of S16), #153 (Dex dataflow fixes), #162 (the caller's heap formal
+shared across calls).
 
 **P24 does not exist on `main`:** without the split there are no clones. It is the split's own cost,
 and S29 keeps it to about +12% of the stored program.
 
 | App | Merged classes (ids) | Peak | Fixpoint | Main loop | `context_locals` | Call-target tags | Stored program |
 |---|---|---|---|---|---|---|---|
+| `cpuinfo` 6.6.1 | 620 (3,562) | 1.73 → 1.94 GB | 25 → 17 s | 337 → 192 it | 54 k → 33 k | 456 k → 509 k | |
 | `com.noto` | 137 (528) | 2.19 → 2.20 GB | 32 → 35 s | 251 → 251 it | 41 k → 39 k | 756 k → 766 k | 30 → 31 MB |
 | NewPipe 0.29.1 | 955 (4,889) | 4.02 → 4.17 GB | 80 → 85 s | 467 → 467 it | 1.02 M → 0.99 M | 1.65 M → 1.71 M | 64 → 72 MB |
 | CENO 2.11.7 | 996 (5,877) | 3.87 → 3.56 GB | 66 → 51 s | 366 → 215 it | 63 k → 25 k | 1.82 M → 0.89 M | 63 → 73 MB |
@@ -88,18 +94,19 @@ tainted instructions and adds none:
 
 | App | Tainted-instruction locations | Sinks | Gained |
 |---|---|---|---|
+| `cpuinfo` 6.6.1 | 20,904 → 1,850 | 65 → 65 | 0 |
 | NewPipe | 33,177 → 17,019 | 359 → 358 | 0 |
 | CENO | 29,728 → 15,316 | 205 → 204 | 0 |
 
 **The removed results are union flows, in every case traced.** Each sampled lost location was made a
-sink (that call's argument, in that caller) and queried on both indexes. 23 of 23 traceable samples
-(11 NewPipe, 12 CENO; one more was not traceable this way) have a path before the split that runs
+sink (that call's argument, in that caller) and queried on both indexes. 29 of 29 traceable samples
+(11 NewPipe, 12 CENO, 6 `cpuinfo`; three more were not traceable this way) have a path before the split that runs
 through classes the split separates, and no path after it (CENO's one exception keeps 4 of 2,708
 paths, to another call of the same callee in the same union method). The same few merged lambdas
 recur as junctions: `ZipFilesKt$$ExternalSyntheticLambda3`, `Data$$ExternalSyntheticLambda0`,
 `FeedFragment$$ExternalSyntheticLambda10`, `Player$$ExternalSyntheticLambda4` in NewPipe;
 `ImageKt$$ExternalSyntheticLambda0`, `Regex$$ExternalSyntheticLambda0`, `WindowFeature$start$1` in
-CENO. One example: `Cursor.getString` taint enters `ZipFilesKt$$ExternalSyntheticLambda3.invoke`,
+CENO; in `cpuinfo`, `Li;`, the hub M2 found. One example: `Cursor.getString` taint enters `ZipFilesKt$$ExternalSyntheticLambda3.invoke`,
 then `Data$$ExternalSyntheticLambda0.invoke`, and is stored into `Unit.INSTANCE` and
 `EmptyList.INSTANCE`, which no arm of either lambda writes. Each lost sink is a sink endpoint
 expanded over an access path that existed only through such edges (NewPipe: `FeedGroupIcon`'s enum
@@ -113,8 +120,9 @@ only its two real flows. (`dx` came from Ubuntu's `dalvik-exchange` package, sym
 
 **What this means for the branch.** The split is now mainly a precision fix (about half of the
 tainted results on merge-heavy apps are union artifacts) and a cost reduction where merging is
-heavy (CENO), rather than a fix for non-convergence. Open: test `cpuinfo` 6.6.1 for the original
-non-convergence; P25/S30 (union methods left for unknown ids); classes the detector does not split
+heavy (CENO, `cpuinfo`), rather than a fix for non-convergence: on `cpuinfo` 91% of the tainted
+instructions are union artifacts. Open: which `main` change defused the non-convergence (a bisect
+is cheap: `cpuinfo` 6.6.1 indexes in under a minute); P25/S30 (union methods left for unknown ids); classes the detector does not split
 (`merged classes: not splitting` at debug level).
 
 ## The problem
