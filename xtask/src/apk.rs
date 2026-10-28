@@ -42,10 +42,22 @@ pub const CHECKS: &[&str] = &[
     "apk:report-invariants",
     "apk:reimport",
     INDEX_CHECK,
+    MERGED_CHECK,
 ];
 
-/// The check [`run_index_check`] runs. The rest of [`CHECKS`] are [`run_checks`]'s.
+/// The checks [`run_index_check`] runs. The rest of [`CHECKS`] are [`run_checks`]'s.
 const INDEX_CHECK: &str = "apk:manifest-and-intents";
+const MERGED_CHECK: &str = "apk:merged-classes";
+
+/// What the dex frontend's split of R8-merged classes does with this app, from its guardrail
+/// line: classes split, split classes it could not close (their merged methods stay live), classes
+/// over the id cap, and allocations of split classes with no known id, of all of them. Pinned
+/// because each of these moved with a fix to the split (the clones, emptied merged methods, a
+/// `new-instance` that ends its block, a subclass object built by a superclass constructor), and
+/// a regression in any of them moves them back. Re-pin from the `merged classes guardrail:` line
+/// of `RUST_LOG=info ctadl import -l apk --name app xtask/tests/dex/com.noto_54.apk`, and say in
+/// the commit message which change moved them.
+const MERGED_CLASSES: (u64, u64, u64, u64, u64) = (140, 3, 0, 3, 667);
 
 // The store layout `ctadl` writes. Duplicated from `ctadl_import::project` rather than imported,
 // even though xtask links the analyzer: these checks are *about* the on-disk contract, so a path
@@ -74,7 +86,11 @@ const MODELS: &str = r#"{"model_generators": [
 /// others to look at. It is reported as `apk:import` failing and the rest are Skipped naming it,
 /// which reads as what happened rather than as several independent breakages.
 pub fn run_checks(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>> {
-    let shared = &CHECKS[..CHECKS.len() - 1];
+    let shared: Vec<&str> = CHECKS
+        .iter()
+        .copied()
+        .filter(|c| ![INDEX_CHECK, MERGED_CHECK].contains(c))
+        .collect();
     let state = work.join("state");
     std::fs::create_dir_all(&state).with_context(|| format!("creating {}", state.display()))?;
     let store = state.join("ctadl");
@@ -120,9 +136,67 @@ pub fn run_index_check(apk: &Path, work: &Path) -> Result<Vec<(String, Outcome)>
     let store = state.join("ctadl");
     let apk = std::fs::canonicalize(apk)
         .with_context(|| format!("failed to canonicalize {}", apk.display()))?;
-    let outcome = import(work, &state, &apk, &[])
-        .and_then(|()| check_manifest_and_intents(work, &state, &store));
-    Ok(vec![(INDEX_CHECK.to_string(), to_outcome(outcome))])
+    let log = match import_logged(work, &state, &apk) {
+        Ok(log) => log,
+        Err(err) => {
+            let why = format!("{err:#}");
+            return Ok(vec![
+                (INDEX_CHECK.to_string(), Outcome::Fail(why.clone())),
+                (MERGED_CHECK.to_string(), Outcome::Fail(why)),
+            ]);
+        }
+    };
+    Ok(vec![
+        (
+            INDEX_CHECK.to_string(),
+            to_outcome(check_manifest_and_intents(work, &state, &store)),
+        ),
+        (MERGED_CHECK.to_string(), to_outcome(check_merged_classes(&log))),
+    ])
+}
+
+/// Like [`import`], with the log at `info` returned, for [`check_merged_classes`].
+fn import_logged(work: &Path, state: &Path, apk: &Path) -> Result<String> {
+    let apk = apk.to_string_lossy();
+    let mut cmd = command(work, state, &["import", "-l", "apk", "--name", IMPORT, &apk])?;
+    cmd.env("RUST_LOG", "info");
+    let out = cmd.output().context("running ctadl import")?;
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    ensure!(out.status.success(), "ctadl import failed:\n{log}");
+    Ok(log)
+}
+
+/// The split of R8-merged classes still works on this app: its guardrail line reports
+/// [`MERGED_CLASSES`], and the guardrail warned about nothing.
+fn check_merged_classes(log: &str) -> Result<()> {
+    let re = regex::Regex::new(
+        r"merged classes guardrail: (\d+) split, (\d+) not closed, (\d+) over \d+ ids, (\d+) of (\d+) allocations",
+    )?;
+    let caps = re
+        .captures(log)
+        .context("the import logged no `merged classes guardrail:` line")?;
+    let n = |i: usize| caps[i].parse::<u64>().unwrap_or(u64::MAX);
+    let got = (n(1), n(2), n(3), n(4), n(5));
+    ensure!(
+        got == MERGED_CLASSES,
+        "merged classes (split, not closed, over the id cap, allocations with no known id, \
+         allocations): the import says {got:?}, this APK has {MERGED_CLASSES:?}. Re-pin \
+         MERGED_CLASSES in xtask/src/apk.rs if a frontend change really moved them"
+    );
+    let warnings: Vec<&str> = log
+        .lines()
+        .filter(|l| l.contains("merged classes:") && l.to_lowercase().contains("warn"))
+        .collect();
+    ensure!(
+        warnings.is_empty(),
+        "the merged-classes guardrail warned:\n{}",
+        warnings.join("\n")
+    );
+    Ok(())
 }
 
 fn to_outcome(result: Result<()>) -> Outcome {

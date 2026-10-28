@@ -140,8 +140,10 @@ impl MergedClasses {
                 log::warn!("merged classes: skipping construction sites in dex {dex}: {e}");
             }
         }
+        let mut over_cap = 0;
         this.classes.retain(|name, c| {
             let keep = (2..=MAX_IDS).contains(&c.ids.len());
+            over_cap += usize::from(c.ids.len() > MAX_IDS);
             if !keep {
                 log::debug!("merged classes: not splitting {name}: {} ids", c.ids.len());
             }
@@ -170,6 +172,7 @@ impl MergedClasses {
             this.classes.values().filter(|c| c.closed).count(),
             this.classes.len()
         );
+        this.guardrail(over_cap);
         log::info!(
             "merged classes: {} split into {} ids, {} switching methods cloned into {} clones, {} \
              construction sites in {} methods",
@@ -184,6 +187,46 @@ impl MergedClasses {
             this.sites.len(),
         );
         this
+    }
+
+    /// Warns when the split is visibly not working: merged classes it cannot split or close, or
+    /// objects it cannot tell the id of. Each of these leaves merged methods, the union of every
+    /// arm, live, and with them false flows across the merged lambdas; P9 in
+    /// things-to-improve.md is what that looked like. The thresholds sit between the apps
+    /// measured with the split working (2-4% of classes not closed, about 0.1% of allocations
+    /// unresolved) and before its fixes (12-15%, 2-4%).
+    fn guardrail(&self, over_cap: usize) {
+        let split = self.classes.len();
+        let open = self.classes.values().filter(|c| !c.closed).count();
+        let allocs: usize = self.classes.values().map(|c| c.allocs).sum();
+        let unresolved: usize = self
+            .classes
+            .values()
+            .map(|c| c.allocs.saturating_sub(c.known_allocs))
+            .sum();
+        log::info!(
+            "merged classes guardrail: {split} split, {open} not closed, {over_cap} over {MAX_IDS} \
+             ids, {unresolved} of {allocs} allocations with no known id"
+        );
+        if over_cap > 0 && over_cap * 10 > split + over_cap {
+            log::warn!(
+                "merged classes: {over_cap} merged classes have more than {MAX_IDS} ids and stay \
+                 merged; their methods are the union of every lambda behind them"
+            );
+        }
+        if split >= 20 && open * 10 > split {
+            log::warn!(
+                "merged classes: {open} of {split} split classes still have live merged methods (an \
+                 object of the class itself may exist); calls resolved by class hierarchy reach the \
+                 union of every arm"
+            );
+        }
+        if allocs >= 100 && unresolved * 50 > allocs {
+            log::warn!(
+                "merged classes: {unresolved} of {allocs} allocations of merged classes have no known \
+                 id and build the merged class instead of its split class"
+            );
+        }
     }
 
     pub(crate) fn class(&self, name: &str) -> Option<&MergedClass> {

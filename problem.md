@@ -182,6 +182,31 @@ into Rhino's `ScriptRuntime`; the allocations of those lambdas now build clones.
 `main` → this branch, the broad query's tainted instructions go from 20,904 to 617 on `cpuinfo`
 6.6.1, 33,177 to 7,553 on NewPipe and 29,728 to 10,237 on CENO, with no result gained.
 
+**Regression tests.** `nightly/tests/java/ClassIdMergedTryFlow` (a negative case: a 5-id merged
+class's object built inside a `try` must not reach every arm) fails with the scan from before the
+`try` fix and passes after it; the jvm frontend does not split, so `Jvm:ClassIdMergedTryFlow` is a
+known failure. `apk:merged-classes` (in `cargo xtask regression`, beside the other `apk:*`
+checks) imports `com.noto` and pins the split's guardrail line, 140 classes split, 3 not closed,
+0 over the id cap, 3 of 667 allocations with no known id, and fails if the guardrail warns.
+`com.noto`'s `apk:report` counts moved with every change above and stay pinned. While building
+the guardrail, a miscount (more allocations with a known id than allocations) exposed one more
+bug: a subclass object initialized through a merged superclass's constructor was retagged as the
+superclass's clone. Fixed; results unchanged on the four apps.
+
+**Guardrail.** Coarse checks that log `merged classes guardrail:` lines at `info` and warn when
+the split is visibly failing:
+
+| Where | Warns when | Measured: split working | Measured: broken |
+|---|---|---|---|
+| import | over 10% of merged classes exceed the 64-id cap | 0 | (not seen) |
+| import | over 10% of split classes keep live merged methods | 2-4% | 12-15% (before the `try` fix) |
+| import | over 2% of allocations of split classes have no known id | 0.1% | 2-4% (before the `try` fix) |
+| import | clones hold over 35% of the program's statements | 2-24% | 43% (NewPipe before S29) |
+| index | over 300 call edges reach large (50+ statements) live merged methods | 0-8 | 195-1,073 (before S30, estimated from the index tables) |
+
+Checked: on all four apps the current branch logs no warning; with the `try` fix disabled, both
+allocation and closure warnings fire on `cpuinfo` and NewPipe.
+
 **What this means for the branch.** The split is now mainly a precision fix (about half of the
 tainted results on merge-heavy apps are union artifacts) and a cost reduction where merging is
 heavy (CENO, `cpuinfo`), rather than a fix for non-convergence: on `cpuinfo` 91% of the tainted

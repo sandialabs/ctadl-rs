@@ -29,6 +29,11 @@ use dex_reader::{APKParser, DexParser};
 
 mod merged;
 
+/// The statements in a function's body.
+fn statement_count(f: &FunctionData) -> usize {
+    f.blocks.iter_enumerated().map(|(_, b)| b.statements.len()).sum()
+}
+
 /// A body that returns at once, with no flows: what a merged method of a class with no object of
 /// its own gets (see `MergedClass::empties_union`). It stays in the dispatch table, so a call's
 /// targets, and with them whether the index resolves it by class hierarchy or by its call-target
@@ -140,6 +145,8 @@ struct Context {
     /// names, by pc, and the pc of the instruction being lowered.
     retag: HashMap<usize, String>,
     pc: usize,
+    /// Statements in the clones of merged methods, for the guardrail in [`Context::finish`].
+    clone_statements: usize,
 }
 
 /// What lowering an `invoke-super` needs to know about the class the call appears in.
@@ -164,6 +171,7 @@ impl Context {
             merged: Default::default(),
             retag: Default::default(),
             pc: 0,
+            clone_statements: 0,
         }
     }
 
@@ -607,6 +615,7 @@ impl Context {
             // (39% of the IR of `org.schabi.newpipe`). The index would prune the same blocks
             // before SSA anyway; doing it here keeps them out of the stored program.
             ctadl_ir::ssa::prune_unreachable_nodes(fdat);
+            self.clone_statements += statement_count(fdat);
             if let VirtualMethodTable::Java {
                 methods, hierarchy, ..
             } = &mut builders.vmt
@@ -631,6 +640,24 @@ impl Context {
     fn finish(&mut self, mut builders: ProgramInfoBuilder) -> Result<ProgramInfo, Error> {
         let program = builders.program;
         log::trace!("program: {program}");
+        // Guardrail: the clones of merged methods should be a modest share of the program. Each
+        // stores only its own arm, so a large share means they are storing the whole merged body
+        // again (P24 in things-to-improve.md: 43% of NewPipe's program; with the arms pruned
+        // 2-24% of the apps measured, the most for cpuinfo's 620 merged classes).
+        if self.clone_statements > 0 {
+            let total: usize = program.functions.iter().map(statement_count).sum();
+            log::info!(
+                "merged classes guardrail: clones hold {} of {total} statements",
+                self.clone_statements
+            );
+            if self.clone_statements * 100 > total * 35 {
+                log::warn!(
+                    "merged classes: the clones of merged methods hold {} of the program's {total} \
+                     statements; a clone should keep only its own id's arm",
+                    self.clone_statements
+                );
+            }
+        }
         // Verify the generated program.
         program.verify()?;
         let mut ext: Vec<_> = self.ext.drain().collect();
