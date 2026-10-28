@@ -520,6 +520,11 @@ the version that reaches it, and joins get `st_k = phi(...)`. The pipeline:
    `store st.[k].deref := v`, a syntactic rewrite. It must run before SSA, after which the versions
    are separate variables. This replaces `full:N`'s threshold as the cost valve: keep `Update` where
    it is affordable, coarsen in a hub if the versions cost too much. Model modes can force either.
+   Coarsening every function gives exactly the IR pcode emits today, so today's pipeline is this
+   one with step 2 set to "coarsen all". That is the first check of a frontend change (the same
+   rows and flows as today) and the default until `Update` proves itself. Writes through a copy of
+   the frame address (`%stack = %__stack_top`, then `store %stack.[k].deref`) do not write `st` and
+   stay `Store`s either way.
 3. Optionally, promote the slots no escape reaches (mem2reg). With a versioned frame an escape is a
    use of one `st_n`, so no window is guessed; promotion only saves cost, since a scalar is
    cheaper than a frame version. mem2reg skips any function that defines `__stack_top` today, so
