@@ -1,4 +1,4 @@
-# P9 / P24: R8-merged Kotlin lambdas - DO-NOT-MERGE
+# P9 / P24: R8-merged Kotlin lambdas
 
 R8 (Android's optimizer) merges many small classes, above all Kotlin lambdas and coroutine
 `SuspendLambda`s, into one class whose methods switch on a synthetic class-id field. The analysis
