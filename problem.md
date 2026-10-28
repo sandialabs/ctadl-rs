@@ -354,8 +354,8 @@ target/release/ctadl --store tmp/p1/store inspect uclited --dump-ir --function i
 
 Other over-budget binaries from the same runner, if one more native shape is needed:
 `firmware7/AC15-usr-bin-nginx` (Tenda, ARM; at least 15x the budget, killed at the 16 GiB cap
-after about 2 minutes, not analyzed here) and `firmware-sweep` `4bbd3a7ad4b4484f` (Netgear
-MBM621 `bin/chat`; 1.9 GiB, 17x, 30 s; `locals` 23 M rows). The runner's
+after about 2 minutes) and `firmware-sweep` `4bbd3a7ad4b4484f` (Netgear MBM621 `bin/chat`; 1.9 GiB,
+17x, 30 s; `locals` 23 M rows). Neither looks like a stack problem; see Two more firmware binaries. The runner's
 `over-budget` events (`events` table of `bench.db`, or `./run.sh report`) list the rest.
 
 ### Full apps
