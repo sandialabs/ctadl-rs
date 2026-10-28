@@ -385,6 +385,19 @@ impl<T: ?Sized + Internable, B: 'static, const S: usize> IdInterner<T, B, S> {
         unsafe { Self::with_limit(Self::CAP) }
     }
 
+    /// An empty interner whose ids all fit in the low `bits` bits, so a handle can keep the
+    /// bits above them for a tag of its own. Each shard holds just under `2^(bits - log2 S)`
+    /// values.
+    ///
+    /// # Safety
+    ///
+    /// As [`new`](Self::new).
+    pub const unsafe fn with_id_bits(bits: u32) -> Self {
+        assert!(bits > Self::LOG2_S && bits <= 32, "id bits");
+        // SAFETY: the caller's contract.
+        unsafe { Self::with_limit(((1u64 << (bits - Self::LOG2_S)) - 1) as u32) }
+    }
+
     /// # Safety
     ///
     /// As [`new`](Self::new).
@@ -580,6 +593,8 @@ impl<T: ?Sized + Internable, B: 'static, const S: usize> IdInterner<T, B, S> {
 /// ```
 ///
 /// The shard count defaults to 256; `struct Name(str) in 16 shards;` sets it.
+/// `struct Name(str) in 256 shards, 31 bits;` also keeps every id below `2^31`, so a
+/// wrapper can use the top bit as a tag.
 ///
 /// Handles of different types never mix, even over the same value type:
 ///
@@ -594,6 +609,12 @@ macro_rules! id_handle {
         $crate::id_handle! { $(#[$meta])* $vis struct $name($inner) in 256 shards; }
     };
     ($(#[$meta:meta])* $vis:vis struct $name:ident($inner:ty) in $shards:literal shards;) => {
+        $crate::id_handle! { $(#[$meta])* $vis struct $name($inner) in $shards shards, 32 bits; }
+    };
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident($inner:ty) in $shards:literal shards, $bits:literal bits;
+    ) => {
         $(#[$meta])*
         #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
         #[repr(transparent)]
@@ -603,10 +624,11 @@ macro_rules! id_handle {
         impl $name {
             #[inline(always)]
             fn interner() -> &'static $crate::IdInterner<$inner, $name, $shards> {
+                const BITS: u32 = $bits;
                 static INTERNER: $crate::IdInterner<$inner, $name, $shards> =
                     // SAFETY: the brand is `$name`, which this invocation declares, and
                     // this static, in a non-generic fn, is the only interner branded `$name`.
-                    unsafe { $crate::IdInterner::new() };
+                    unsafe { $crate::IdInterner::with_id_bits(BITS) };
                 &INTERNER
             }
 
@@ -788,6 +810,26 @@ mod tests {
                 assert_eq!(*I.get(id), k);
             }
         }
+    }
+
+    #[test]
+    fn id_bits_cap_every_id() {
+        id_handle! { struct H(u64) in 4 shards, 4 bits; }
+        // Each of the 4 shards holds 3 values, all below 2^4.
+        let mut ids = Vec::new();
+        let err = std::panic::catch_unwind(|| {
+            for k in 0..40u64 {
+                H::intern(&k);
+            }
+        })
+        .expect_err("40 values overfill 4 shards of 3");
+        let msg = err.downcast_ref::<String>().unwrap();
+        assert!(msg.contains("H") && msg.contains("full"), "{msg}");
+        for k in 0..40u64 {
+            ids.extend(H::try_get(&k));
+        }
+        assert!((3..=12).contains(&ids.len()), "{}", ids.len());
+        assert!(ids.iter().all(|id| id.raw() < 16));
     }
 
     #[test]
