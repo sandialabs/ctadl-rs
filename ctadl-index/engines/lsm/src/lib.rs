@@ -13,6 +13,7 @@
 )]
 
 use ascent::ascent;
+use ctadl_index::index_engine::dump::RelationDump;
 use ctadl_index::index_engine::rules_prelude::*;
 use ctadl_index::index_engine::{
     AssignLikeRow, EngineInput, EngineStores, IndexResult, LocalsProbe, StoreSizes,
@@ -92,6 +93,26 @@ impl EngineStores for LsmIndexProg {
     }
     fn locals_probe(&self) -> &dyn LocalsProbe {
         &self.__locals_ind_common
+    }
+    fn dump_stores(&self, dump: &mut RelationDump<'_>) {
+        macro_rules! stores {
+            ($($rel:ident: $store:ident),* $(,)?) => {$(
+                dump.relation(stringify!($rel), |w| self.$store.iter().for_each(|r| w.row(&r)));
+            )*};
+        }
+        stores!(
+            locals: __locals_ind_common,
+            assign_like: __assign_like_ind_common,
+            locals_key: __locals_key_ind_common,
+            edge_split: __edge_split_ind_common,
+            ext_dst: __ext_dst_ind_common,
+            reach_vp: __reach_vp_ind_common,
+            edge_split_wild: __edge_split_wild_ind_common,
+            locals_key_wild: __locals_key_wild_ind_common,
+            actual_param: __actual_param_ind_common,
+            alias_of_formal: __alias_of_formal_ind_common,
+            prog_store: __prog_store_ind_common,
+        );
     }
 }
 

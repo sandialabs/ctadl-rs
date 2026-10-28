@@ -54,6 +54,7 @@ pub mod assign_like_trie;
 pub mod c_assign_like_trie;
 pub mod c_locals_trie;
 pub mod decision;
+pub mod dump;
 pub mod hybrid_set;
 pub mod locals_trie;
 pub mod path_group;
@@ -984,6 +985,8 @@ pub trait EngineStores {
     /// The distinct `(f, v)` that `locals` reaches.
     fn num_reached_variables(&self) -> usize;
     fn locals_probe(&self) -> &dyn LocalsProbe;
+    /// Writes the store-backed relations, whose fields hold no rows, to `dump`.
+    fn dump_stores(&self, dump: &mut dump::RelationDump<'_>);
 }
 
 pub type AssignLikeRow = (FunctionId, FlowVariable, Path, FlowVariable, Path);
@@ -2368,6 +2371,23 @@ macro_rules! trie_stores {
             fn locals_probe(&self) -> &dyn $crate::index_engine::LocalsProbe {
                 &self.__locals_ind_common
             }
+            fn dump_stores(&self, dump: &mut $crate::index_engine::dump::RelationDump<'_>) {
+                dump.relation("locals", |w| {
+                    self.__locals_ind_common.for_each_row(|r| w.row(&r))
+                });
+                dump.relation("locals_key", |w| {
+                    self.__locals_key_ind_common.for_each_row(|r| w.row(&r))
+                });
+                dump.relation("edge_split", |w| {
+                    self.__edge_split_ind_common.for_each_row(|r| w.row(&r))
+                });
+                dump.relation("assign_like", |w| {
+                    self.__assign_like_ind_common.for_each_row(|r| w.row(&r))
+                });
+                dump.relation("ext_dst", |w| {
+                    self.__ext_dst_ind_common.for_each_row(|r| w.row(&r))
+                });
+            }
         }
     };
 }
@@ -2522,6 +2542,11 @@ macro_rules! run_engine {
         );
         for report in prog.heap_reports() {
             log::debug!("{report}");
+        }
+        if let Some(mut dump) = $crate::index_engine::dump::RelationDump::from_env(id_map) {
+            $crate::dump_relations!(&mut dump, prog);
+            prog.dump_stores(&mut dump);
+            dump.finish(&prog.relation_sizes_summary());
         }
         log::trace!(
             "hybrid inlining relations:\n{}",

@@ -174,6 +174,14 @@ impl<K: Clone + Eq + Hash, V> CMap<K, V> {
         }
     }
 
+    /// Visits every entry, in either state. Takes each shard's read lock in turn when unfrozen.
+    pub fn for_each(&self, mut f: impl FnMut(&K, &V)) {
+        match self {
+            CMap::Unfrozen(dm) => dm.iter().for_each(|e| f(e.key(), e.value())),
+            CMap::Frozen(v) => v.iter().for_each(|(k, val)| f(k, val)),
+        }
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -351,6 +359,15 @@ where
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Visits every row, for the relation dump ([`super::dump`]).
+    pub fn for_each_row(&self, mut f: impl FnMut((&F, &V, &P, &M, &Fp))) {
+        self.fwd.for_each(|(fk, v), group| {
+            for (p, m, fp) in group.iter() {
+                f((fk, v, p, m, fp));
+            }
+        });
     }
 
     /// Number of distinct `(F, V)` groups, that is, of variables reached by some formal. O(shards).

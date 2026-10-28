@@ -233,6 +233,15 @@ where
         )
     }
 
+    /// Visits every row, for the relation dump ([`super::dump`]).
+    pub fn for_each_row(&self, mut f: impl FnMut((&F, &Vd, &Pd, &Vs, &Ps))) {
+        for ((fk, vs), group) in &self.fwd {
+            for (ps, vd, pd) in group.iter() {
+                f((fk, vd, pd, vs, ps));
+            }
+        }
+    }
+
     /// Rebuild the logical relation as full tuples `(F, Vd, Pd, Vs, Ps)`, consuming the store.
     ///
     /// We use this to materialize the saved `assign_like` output after the run, because the

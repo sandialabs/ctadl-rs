@@ -64,7 +64,7 @@ impl IndexProfile {
 }
 
 /// Lines of the form `<relation> size: <n>`.
-fn parse_relation_sizes(text: &str) -> BTreeMap<String, usize> {
+pub(crate) fn parse_relation_sizes(text: &str) -> BTreeMap<String, usize> {
     text.lines()
         .filter_map(|line| {
             let (name, n) = line.rsplit_once(" size: ")?;
