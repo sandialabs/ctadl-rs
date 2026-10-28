@@ -89,6 +89,9 @@ byte-for-byte as on `main`:
 - `Display` and `Path::parse`
 - serde
 
+The exception is `Str`'s serde, which on `main` writes the raw id. It now
+writes the string, and with it every type that derives serde from `Str` (C7).
+
 **R12. No growth at output.** Writing results does not intern anything new. On
 `main` today it does: `parquet.rs:555` interns every output path's string.
 
@@ -260,9 +263,14 @@ call site must state which.
   builds assert that every handle read back was handed out.
 
 **C7. Changing `Str`'s width (R1 vs. R11).**
-- **Risk.** `Str` derives `Serialize` over its raw id. If anything persists `Str`
-  through serde, its format changes.
-- **Action.** Confirm that nothing does before `Str` changes.
+- **Fact.** On `main`, `Str` derives serde over its raw id, which only means
+  something inside the process that interned it.
+- **Checked.** Nothing persists `Str` through serde:
+  - bitcode files hold `ctadl-ir` types, which use `ArcIntern<str>`
+  - the serde_json outputs (profile, report, model check) contain no `Str`
+  - parquet encodes `Str` by content through `EncodeColumn`
+- **Decision.** `Str` serializes as its string, and deserializing interns it.
+  R11 makes this an explicit exception to "byte-for-byte as on `main`".
 
 **C8. LSM gains nothing (R2 vs. R15).**
 - **Constraint.** The provider stores every column in a 64-bit slot.
