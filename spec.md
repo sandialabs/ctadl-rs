@@ -242,9 +242,13 @@ call site must state which.
   to be rekeyed by handle.
 - **Constraint.** The two ⊤ values (exact and collapsing) and the empty set must
   still be expressible in 4 bytes.
-- **Fact.** The kind of set, exact or collapsing, is fixed once per run, and
-  `Eq` and `Hash` already ignore `collapse`. So the handle need not carry a
-  `collapse` bit.
+- **Fact.** The kind of set, exact or collapsing, is fixed once per run in
+  production, and `Eq` and `Hash` already ignore `collapse`.
+- **But not per process.** Tests build both kinds in one process
+  (`decision.rs`), and parallel tests may hold indexes of different kinds at
+  once (R16). The rules read the kind per set (`mod.rs:1793`, `1845`). So the
+  kind can't be a process-wide setting, and a set's handle must determine its
+  kind.
 - **Cost.** Reading a set's members (`contains`, `is_subset`, `ids()`) gains a
   handle-to-arena load on the contextual closure's hot path.
 - **Gain.** Lattice tuples shrink. The union cache can shrink too, from about
