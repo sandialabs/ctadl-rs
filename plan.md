@@ -49,7 +49,7 @@ The suggested hybrid:
 - **Shard count.** Configurable. 256–1024 for `-j 16`; going from 64 to 1024
   shards halved the time for lookups of existing keys.
 - **`from_raw`.** Check against the shard's length, which is one atomic load
-  (R12, C6).
+  (R13, C6).
 - **Later.** A bump arena for `str`.
 
 ## Candidate `Path` representation (for D3)
@@ -58,14 +58,14 @@ The suggested hybrid:
   This is front-cons, as tailshare is, so `tail()` costs nothing. The mirror shape
   used in access-tree (parent plus last step) makes `tail()` expensive instead.
 - **Empty path.** A reserved constant id.
-- **Comparison.** `content_cmp` walks both paths through the arena (R8).
+- **Comparison.** `content_cmp` walks both paths through the arena (R9).
 
 ## Candidate freeze (for D2, C1)
 
 - **The global arena stays.** It is global, append-only and lock-free. Rules
   already resolve paths through it.
 - **Each index gets a frozen table.** The `PathSet` takes a read-only
-  `(head, tail id) → PathId` table with no locks, which satisfies R6 and R15.
+  `(head, tail id) → PathId` table with no locks, which satisfies R6 and R16.
 - **What seeding must intern:**
   - every set path, its split keys and rests, and its `tail`s
   - each path's `split_trailing_offset` result, precomputed as `id → (prefix, offset)`
@@ -88,7 +88,7 @@ The suggested hybrid:
 - **Sort audit (C3).** Audit sorts in dumps and debugging code
   (`docs/debugging.md`, `scripts/fact-dump-diff.sh`). The LSM seed sort
   (`engines/lsm/src/lib.rs:62`) and the test sorts can stay sorted by handle.
-- **Parquet (R11).** Write paths to an arrow `StringArray` straight from
+- **Parquet (R12).** Write paths to an arrow `StringArray` straight from
   `to_dot_string()`, without going through `Str`.
 - **LSM.** `lsm_col!(Path, 1)` decodes with `from_raw`. Update the comment at
   `mod.rs:64-67`.
@@ -100,7 +100,7 @@ The suggested hybrid:
    - `try_get` never inserts
    - `size_of::<Option<Id>>() == 4`
    - `from_raw` rejects ids that were never handed out
-2. Move `Str` onto it, and fix parquet path encoding (R11). This is low risk and
+2. Move `Str` onto it, and fix parquet path encoding (R12). This is low risk and
    proves the interner on simple data.
 3. Make `Path` a u32 handle, add `content_cmp`, and audit sorts. Measure `locals`
    on glxy here; most of R2 should be visible already.

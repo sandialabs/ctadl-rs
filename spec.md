@@ -59,42 +59,54 @@ at least 0.8 GB less than on `main`, and peak RSS falls by about as much.
 - Getting a set from its handle takes no lock.
 - The cost of joins and interning counts toward R3.
 
-**R8. Ordering.** This is a decision already made.
+**R8. Membership tests on candidates.** During the fixpoint, a rule can test
+whether a candidate path is in the path set without materializing it. This holds
+whenever the candidate is described as a composition of existing handles and
+segments: concatenation, prefix substitution, or an offset adjustment to a step.
+The test:
+- neither interns nor allocates
+- takes no lock
+- costs time proportional to the part of the candidate that is new, not its full
+  length
+
+A miss means the candidate is not in the set, and nothing is left behind.
+
+**R9. Ordering.** This is a decision already made.
 - `Ord` on `Path` compares handles, not contents.
 - A content comparison and a way to iterate paths in content order exist, and
   any output that must be reproducible uses them. That covers graphviz, dumps
   and debugging output.
 
-**R9. `DecisionSet` order.**
+**R10. `DecisionSet` order.**
 - `DecisionSet`'s `PartialOrd`, and its lattice join, stay the semantic lattice
   order they are on `main` (`decision.rs:455`).
 - This covers both the exact-set mode and the collapsing mode (`⊥ < {d} < ⊤`).
 - Only `Eq` and `Hash` may act on the handle alone.
 
-**R10. Formats unchanged.** These encode every handle type in R1 by content,
+**R11. Formats unchanged.** These encode every handle type in R1 by content,
 byte-for-byte as on `main`:
 - parquet
 - `Display` and `Path::parse`
 - serde
 
-**R11. No growth at output.** Writing results does not intern anything new. On
+**R12. No growth at output.** Writing results does not intern anything new. On
 `main` today it does: `parquet.rs:555` interns every output path's string.
 
-**R12. Safe handles.**
+**R13. Safe handles.**
 - Safe code cannot build a handle that was never handed out.
 - Any conversion from raw bits back to a handle (for example in LSM run files) is
   checked.
 
-**R13. Limits fail loudly.** Running out of handle space panics with a message
+**R14. Limits fail loudly.** Running out of handle space panics with a message
 naming the type. Handles are never truncated silently.
 
-**R14. All engines.** serial, par and lsm build and pass every test. lsm must not
+**R15. All engines.** serial, par and lsm build and pass every test. lsm must not
 regress; it need not shrink (C8).
 
-**R15. Several indexes per process.** More than one index can be built, in
-parallel, in one process (as the tests do), and each meets R4–R7.
+**R16. Several indexes per process.** More than one index can be built, in
+parallel, in one process (as the tests do), and each meets R4–R8.
 
-**R16. Workspace policy.** Nothing committed names a machine-specific path. That
+**R17. Workspace policy.** Nothing committed names a machine-specific path. That
 includes build directories, benchmark directories and data directories, in code,
 config, scripts and docs.
 
@@ -121,7 +133,7 @@ left to `plan.md`.
 - a checked conversion from raw bits to a handle
 - a way to pre-size it
 
-Its properties are R5, R12 and R13. Handles of different types do not mix.
+Its properties are R5, R13 and R14. Handles of different types do not mix.
 
 **D2. Phases.** An index has two phases:
 - **Seeding.** Inputs are converted to relations. Interning is allowed here,
@@ -129,15 +141,17 @@ Its properties are R5, R12 and R13. Handles of different types do not mix.
 - **Fixpoint.** Rules run to fixpoint. Lookups only (R6), except that
   `DecisionSet` may be interned (R7).
 
-Every `Path` value that a rule can produce or probe must already have a handle
-when the fixpoint starts. When a rule's lookup misses, that must mean "this path
-is not in the index's path set". Whether a miss is an ordinary answer or a bug
-depends on the call site, and each call site must state which.
+Every `Path` value that a rule can produce must already have a handle when the
+fixpoint starts. A rule that only tests a candidate (`ps.contains`, `paths(&p)`,
+`ps.splits`, `ps.concat`) does so through R8 and needs no handle for it. When a
+lookup misses, that must mean "this path is not in the index's path set".
+Whether a miss is an ordinary answer or a bug depends on the call site, and each
+call site must state which.
 
 **D3. The R1 types are handles.**
 - `Eq` and `Hash` work on the handle alone and never read the value.
 - For every type except `DecisionSet`, `Ord` does too. `DecisionSet` keeps its
-  lattice order (R9), and may cache it.
+  lattice order (R10), and may cache it.
 - Every operation the rules perform on a path (split, concat, tail, offsets,
   prefixes) works within D2.
 
@@ -146,11 +160,11 @@ depends on the call site, and each call site must state which.
   decode and `EngineInput::new`.
 - **Handle to content.** Handles become content only at output: `IndexResult`,
   parquet encode and rendering.
-- **Opaque storage.** The LSM provider may store raw handle bits, under R12.
+- **Opaque storage.** The LSM provider may store raw handle bits, under R13.
 
 ## Concerns and conflicts
 
-**C1. Rule bodies have no context (R6 vs. R15).**
+**C1. Rule bodies have no context (R6 vs. R16).**
 - **Constraint.** Rules can only resolve handles through something global.
 - **Conflict.** One process may hold several indexes that are each in a
   different phase, so one global "frozen" state can't express D2.
@@ -166,14 +180,14 @@ depends on the call site, and each call site must state which.
 - **Effect of D2.** It removes today's interning, during the fixpoint, of
   candidate paths that are then rejected.
 
-**C3. Handle order vs. reproducibility (R8).**
+**C3. Handle order vs. reproducibility (R9).**
 - **Constraint.** Under `par`, handles depend on the order in which threads first
   intern a value, so anything sorted by `Ord` and printed changes between runs.
 - **What the plan must do.** Audit every sort that feeds printed output.
 - **Risk.** A sort that was missed shows up as flaky output, not as a wrong
   answer, so tests may not catch it.
 
-**C4. `CallTargetObject` and `CallDispatchKey` change order (R1 vs. R8).**
+**C4. `CallTargetObject` and `CallDispatchKey` change order (R1 vs. R9).**
 - **Change.** Both derive `Ord` over their content today. Ordering by handle
   changes how any collection sorted by them iterates.
 - **What the plan must do.** Include them in the C3 audit.
@@ -186,17 +200,17 @@ depends on the call site, and each call site must state which.
 - **What the plan must do.** Show the join and interning cost stays within R3
   on a contextual (Android) benchmark, where the decision lattices are large.
 
-**C6. Opaque handles vs. LSM storage (R12).**
+**C6. Opaque handles vs. LSM storage (R13).**
 - **Constraint.** LSM run files hold raw bits, which must become handles again.
 - **What the check must do.** Reject any value that was never handed out, without
   breaking R3.
 
-**C7. Changing `Str`'s width (R1 vs. R10).**
+**C7. Changing `Str`'s width (R1 vs. R11).**
 - **Risk.** `Str` derives `Serialize` over its raw id. If anything persists `Str`
   through serde, its format changes.
 - **Action.** Confirm that nothing does before `Str` changes.
 
-**C8. LSM gains nothing (R2 vs. R14).**
+**C8. LSM gains nothing (R2 vs. R15).**
 - **Constraint.** The provider stores every column in a 64-bit slot.
 - **Consequence.** R2 applies to serial and par only.
 
@@ -207,7 +221,7 @@ depends on the call site, and each call site must state which.
   `paths` relation and the `PathSet` contain exactly the same paths.
 - **Action.** Confirm that before relying on it.
 
-**C10. Benchmark baseline vs. workspace policy (R2 vs. R16).**
+**C10. Benchmark baseline vs. workspace policy (R2 vs. R17).**
 - **Constraint.** The glxy and udpbus inputs live in machine-local directories,
-  and R16 forbids committing those paths.
+  and R17 forbids committing those paths.
 - **Consequence.** Each engineer reproduces the baseline locally.
