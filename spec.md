@@ -192,9 +192,18 @@ call site must state which.
 - **Constraint.** Interned values live for the whole process, across every index
   in it.
 - **Consequence.** In production there is one index per process (R16), so the pool
-  grows across indexes only in test runs. This spec accepts that.
-- **Effect of D2.** It removes today's interning, during the fixpoint, of
+  grows across indexes only in test runs.
+- **What stays interned that the index doesn't need:**
+  - path-set by-products from seeding, such as prefix keys and rests, which grow
+    O(depth²) per path
+  - intermediate `DecisionSet`s produced by joins
+  - arena slack
+- **Effect of R6 and R8.** They remove today's interning, during the fixpoint, of
   candidate paths that are then rejected.
+- **Decision.** Interning stays append-only and never frees. `profile.json`
+  reports each interner's entry count and bytes, so this cost is measured and
+  any R2 regression can be traced to it. Growth across indexes in tests is
+  accepted.
 
 **C3. Handle order vs. reproducibility (R9).**
 - **Constraint.** Under `par`, handles depend on the order in which threads first
