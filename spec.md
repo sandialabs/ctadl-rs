@@ -176,13 +176,17 @@ call site must state which.
   ("seeding" or "frozen") can express D2.
 - **Conflict, in tests only.** Parallel tests can hold several indexes at once,
   each in a different phase, and one global phase can't describe them all.
-- **What the plan must do.** Choose one of these:
-  - scope lookups to each index
-  - use a global phase, and have tests either serialize index construction or
-    fall back to a slower path that still gives correct results when indexes
-    overlap
-
-  Either way, an overlap in tests must never produce wrong results.
+- **Also.** Having a handle is not the same as being in this index's path set:
+  the global table also holds prefix keys, rests and other indexes' paths. So
+  R8's test must ask this index's set.
+- **Decision.** Each index's path set owns its frozen, lock-free table from
+  path to handle, and rules reach it through the `path_set(ps)` column. Turning
+  a handle back into a path stays global, through an append-only arena that is
+  lock-free to read.
+- **Consequences.**
+  - This is correct for any number of indexes, with no change to tests.
+  - A rule that tests a candidate path joins `path_set(ps)`. That is a one-row
+    join.
 
 **C2. Values are never freed vs. the memory goal (R2).**
 - **Constraint.** Interned values live for the whole process, across every index
