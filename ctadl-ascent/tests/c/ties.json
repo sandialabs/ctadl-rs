@@ -1,0 +1,24 @@
+{
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "names": ["src_zeta"] }],
+      "model": { "sources": [{ "kind": "zeta", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "names": ["src_alpha"] }],
+      "model": { "sources": [{ "kind": "alpha", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature", "pattern": "^sink_.*" }],
+      "model": {
+        "sinks": [
+          { "kind": "zeta", "port": "Argument(0)" },
+          { "kind": "alpha", "port": "Argument(0)" }
+        ]
+      }
+    }
+  ]
+}
