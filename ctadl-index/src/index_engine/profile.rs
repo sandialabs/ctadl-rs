@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::facts::Str;
+use crate::facts::{CallDispatchKey, CallTargetObject, Str};
 use crate::index_engine::locals_trie::HeapReport;
 
 pub const PROFILE_FILE: &str = "profile.json";
@@ -47,7 +47,11 @@ impl MemoryProfile {
     /// table frozen from them for the fixpoint to read. Interned values are never freed, so the
     /// sizes cover every index this process has built, up to the moment of the call.
     pub fn read_interned(&mut self) {
-        self.interned = BTreeMap::from([("Str", Str::stats())]);
+        self.interned = BTreeMap::from([
+            ("Str", Str::stats()),
+            ("CallTargetObject", CallTargetObject::stats()),
+            ("CallDispatchKey", CallDispatchKey::stats()),
+        ]);
     }
 }
 
@@ -177,12 +181,18 @@ mod tests {
     #[test]
     fn memory_reports_each_interner() {
         Str::intern("memory_reports_each_interner");
+        CallTargetObject::intern(&crate::facts::CallTargetObjectKind::Symbol(
+            "memory_reports_each_interner".into(),
+        ));
+        CallDispatchKey::c();
         let mut p = IndexProfile::default();
         p.memory.read_interned();
         let json = serde_json::to_value(&p).unwrap();
-        let s = &json["memory"]["interned"]["Str"];
-        assert!(s["entries"].as_u64().unwrap() >= 1);
-        assert!(s["bytes"].as_u64().unwrap() > 0);
+        for name in ["Str", "CallTargetObject", "CallDispatchKey"] {
+            let s = &json["memory"]["interned"][name];
+            assert!(s["entries"].as_u64().unwrap() >= 1, "{name}");
+            assert!(s["bytes"].as_u64().unwrap() > 0, "{name}");
+        }
         assert!(json["memory"]["locals"].is_null());
     }
 
