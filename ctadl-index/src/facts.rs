@@ -348,12 +348,6 @@ impl Path {
         mir::path_to_string(self.iter())
     }
 
-    /// Orders by the accesses, for sorts that feed output. `Ord` does the same today, but
-    /// once `Path` is a handle it orders by id and this stays the content order.
-    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.cmp(other)
-    }
-
     /// Iterates from the innermost access out
     pub fn iter(&self) -> PathIter {
         PathIter(*self)
