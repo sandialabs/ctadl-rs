@@ -183,6 +183,35 @@ of those that finished in the runner (64x, 57x and 44x at `dfccbcab`), one per s
   `context_locals` next. The `locals` and `context_locals` joins on `edge_split` take the most rule
   time in both. Which functions hold the rows was not checked. Each import takes 22-25 s.
 
+#### A screen for stack hubs
+
+The mem2reg counts do not find a hub: under `window:8`, `uclited` keeps 931 stack accesses in
+memory and `full` promotes 304 more, no different from binaries without one. What does find one is
+indexing under both policies and comparing. The 40 most over-budget distinct `firmware-sweep`
+binaries (at least 22x in the runner, more than 0.5 MB of IR, `uclited`'s copies left out) were
+each indexed under `window:8` and `full` for 30 s, six at a time, against `uclited` (1.21 GiB to
+0.53 GiB, `locals` 41.4 M to 12.1 M). 34 change by 5% or less. The ones that fall, run to the end
+(three at a time, so the times are loose):
+
+| Binary | IR | `--mem2reg` | `locals` | Fixpoint | Peak | Against budget |
+|---|---|---|---|---|---|---|
+| D-Link COVR-2600R `sbin/ntfs-3g` (ARM, dynamic) | 5.4 MB | `window:8` (default) | 283.8 M | 227 s | 15.04 GiB | 29.9x over |
+| | | `full` | 199.3 M | 96 s | 10.22 GiB | 20.3x over |
+| D-Link DAP-2310B `sbin/wifitool` (MIPS32 BE, static, debug info) | 1.9 MB | `window:8` (default) | 47.7 M | 168 s | 4.56 GiB | 26.0x over |
+| | | `full` | 36.1 M | 125 s | 3.91 GiB | 22.3x over |
+| Linksys MX5300 `bin/ntfslabel` (ARM, dynamic) | 6.0 MB | `window:8` (default) | 28.5 M | 13.7 s | 1.68 GiB | 3.0x over |
+| | | `full` | 15.0 M | 6.7 s | 1.05 GiB | 1.9x over |
+
+- **`ntfs-3g` is the best new sample:** the largest stack effect in absolute terms (85 M rows,
+  4.8 GiB, 131 s) and still 20x over budget under `full`, so a hub remains. `full` promotes 5
+  functions fully (`FUN_00016d24`, `FUN_0001f97c`, `FUN_0002aa84`, `FUN_0003c4f4`,
+  `FUN_00042810`); which of them holds the rows was not checked. `firmware-sweep` benchmark
+  `46ad36214ff2f30b`.
+- **The Linksys ntfs-3g tools share the shape on a smaller scale:** `ntfslabel` halves under `full`
+  (11 functions promoted fully), as do EA6350v4 `ntfsdebug` (21.8 M to 11.5 M) and EA6900v2
+  `ntfslabel` (19.6 M to 11.1 M) in the 30 s screen.
+- **`wifitool` falls 24%:** `full` promotes `FUN_0040d740` and three uClibc functions.
+
 ## S5: full stack-slot promotion, behind a flag
 
 `--mem2reg full` (off by default; the default stays `window:8`) promotes every directly accessed
