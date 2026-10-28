@@ -25,7 +25,7 @@ pub use query_endpoint::{QueryEndpoint, QueryEndpointDisplay};
 
 immortal::id_handle! {
     /// An interned string: a 4-byte handle into a process-wide interner that never frees.
-    /// Ordered by id, so sort by content wherever the order is printed. Serde writes the
+    /// Ordered by id, so sort with `content_cmp` wherever the order is printed. Serde writes the
     /// string and interns it on reading.
     pub struct Str(str);
 }
@@ -63,6 +63,14 @@ impl From<ArcIntern<str>> for Str {
 impl Str {
     pub fn as_str(&self) -> &'static str {
         self.get()
+    }
+
+    /// Orders by the string, not by id, so a sort that feeds output is reproducible.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        if self == other {
+            return std::cmp::Ordering::Equal;
+        }
+        self.as_str().cmp(other.as_str())
     }
 }
 
@@ -340,6 +348,12 @@ impl Path {
         mir::path_to_string(self.iter())
     }
 
+    /// Orders by the accesses, for sorts that feed output. `Ord` does the same today, but
+    /// once `Path` is a handle it orders by id and this stays the content order.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.cmp(other)
+    }
+
     /// Iterates from the innermost access out
     pub fn iter(&self) -> PathIter {
         PathIter(*self)
@@ -603,6 +617,13 @@ impl Deref for Function {
     type Target = Str;
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl Function {
+    /// Orders by name, not by the name's id.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.content_cmp(&other.0)
     }
 }
 
@@ -1232,6 +1253,15 @@ impl Debug for FlowVertex {
     }
 }
 
+impl FlowVertex {
+    /// Orders by what the variable and path denote, not by their ids.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0
+            .content_cmp(&other.0)
+            .then_with(|| self.1.content_cmp(&other.1))
+    }
+}
+
 impl Display for FlowVertex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let FlowVertex(var, path, ..) = self;
@@ -1469,6 +1499,13 @@ impl From<ArcIntern<str>> for Label {
     #[inline]
     fn from(s: ArcIntern<str>) -> Self {
         Label(Str::from(s))
+    }
+}
+
+impl Label {
+    /// Orders by name, not by the name's id.
+    pub fn content_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.content_cmp(&other.0)
     }
 }
 
